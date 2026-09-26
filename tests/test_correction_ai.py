@@ -25,7 +25,7 @@ from lemely.core.schemas import (
 from lemely.io import correction_ai
 from lemely.io.correction_ai import _build_mcq_corrected, _flatten_answers, correct_paper
 from lemely.io.gemini import GeminiClient
-from lemely.runtime.config import PathsSettings, load_settings
+from lemely.runtime.config import MarkingOptions, PathsSettings, load_settings
 from lemely.runtime.errors import ConfigError, CostCeilingError, ExternalServiceError
 from lemely.runtime.events import EventType, bus
 
@@ -4203,8 +4203,7 @@ class ECFSubstitutionTests(unittest.TestCase):
                 mark_scheme=scheme,
                 extracted_answers=extracted,
                 gemini_client=MagicMock(),
-                equivalence_gate=True,
-                ecf_substitution=True,
+                options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
             )
 
         self.assertEqual(mock_mark.call_count, 3)  # (a), (b) pass 1, (b) ECF re-mark
@@ -4241,8 +4240,7 @@ class ECFSubstitutionTests(unittest.TestCase):
                 mark_scheme=scheme,
                 extracted_answers=extracted,
                 gemini_client=MagicMock(),
-                equivalence_gate=True,
-                ecf_substitution=True,
+                options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
             )
 
         self.assertEqual(mock_mark.call_count, 2)  # no third (ECF) call
@@ -4280,8 +4278,7 @@ class ECFSubstitutionTests(unittest.TestCase):
                 mark_scheme=scheme,
                 extracted_answers=extracted,
                 gemini_client=MagicMock(),
-                equivalence_gate=True,
-                ecf_substitution=True,
+                options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
             )
 
         self.assertEqual(mock_mark.call_count, 1)  # no second call -- no prerequisite exists
@@ -4305,8 +4302,7 @@ class ECFSubstitutionTests(unittest.TestCase):
                 mark_scheme=scheme,
                 extracted_answers=extracted,
                 gemini_client=MagicMock(),
-                equivalence_gate=True,
-                ecf_substitution=True,
+                options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
             )
 
         self.assertEqual(mock_mark.call_count, 2)  # no ECF call -- gate closed
@@ -4330,8 +4326,7 @@ class ECFSubstitutionTests(unittest.TestCase):
                 mark_scheme=scheme,
                 extracted_answers=extracted,
                 gemini_client=MagicMock(),
-                equivalence_gate=True,
-                ecf_substitution=True,
+                options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
             )
 
         self.assertEqual(mock_mark.call_count, 2)  # already at max -- never re-marked
@@ -4356,8 +4351,7 @@ class ECFSubstitutionTests(unittest.TestCase):
                 mark_scheme=scheme,
                 extracted_answers=extracted,
                 gemini_client=MagicMock(),
-                equivalence_gate=True,
-                ecf_substitution=False,
+                options=MarkingOptions(equivalence_gate=True, ecf_substitution=False),
             )
 
         self.assertEqual(mock_mark.call_count, 2)  # never a third (ECF) call
@@ -4391,8 +4385,7 @@ class ECFSubstitutionTests(unittest.TestCase):
                 mark_scheme=scheme,
                 extracted_answers=extracted,
                 gemini_client=MagicMock(),
-                equivalence_gate=False,
-                ecf_substitution=True,
+                options=MarkingOptions(equivalence_gate=False, ecf_substitution=True),
             )
 
         self.assertEqual(mock_mark.call_count, 2)  # no billed ECF re-mark call
@@ -4476,8 +4469,7 @@ class ECFSubstitutionTests(unittest.TestCase):
                 mark_scheme=scheme,
                 extracted_answers=extracted,
                 gemini_client=MagicMock(),
-                equivalence_gate=True,
-                ecf_substitution=True,
+                options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
             )
 
         self.assertEqual(mock_mark.call_count, 1)  # no ECF re-mark call at all
@@ -4523,8 +4515,7 @@ class ECFSubstitutionTests(unittest.TestCase):
                 mark_scheme=scheme,
                 extracted_answers=extracted,
                 gemini_client=MagicMock(),
-                equivalence_gate=True,
-                ecf_substitution=True,
+                options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
             )
 
         cq_ii = next(q for q in result.questions if q.question_id == "1a_ii")
@@ -4652,8 +4643,7 @@ class ECFSubstitutionTests(unittest.TestCase):
                 mark_scheme=scheme,
                 extracted_answers=extracted,
                 gemini_client=MagicMock(),
-                equivalence_gate=True,
-                ecf_substitution=True,
+                options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
             )
 
         cq_ii = next(q for q in result.questions if q.question_id == "1a_ii")
@@ -4688,8 +4678,7 @@ class ECFSubstitutionTests(unittest.TestCase):
                 mark_scheme=scheme,
                 extracted_answers=extracted,
                 gemini_client=MagicMock(),
-                equivalence_gate=True,
-                ecf_substitution=True,
+                options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
             )
 
         cq_ii = next(q for q in result.questions if q.question_id == "1a_ii")
@@ -4724,8 +4713,7 @@ class ECFSubstitutionTests(unittest.TestCase):
                 mark_scheme=scheme,
                 extracted_answers=extracted,
                 gemini_client=MagicMock(),
-                equivalence_gate=True,
-                ecf_substitution=True,
+                options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
             )
 
     def test_no_version_bump(self) -> None:

@@ -651,15 +651,13 @@ def test_detection_failure_is_recorded_without_failing_the_upload(
 # ---------------------------------------------------------------------------
 
 
-def test_grade_paper_forwards_equivalence_gate_when_enabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The flag must reach ``correct_paper``, not merely exist in settings.
+def test_grade_paper_forwards_marking_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both flags must reach ``correct_paper``, not merely exist in settings.
 
-    US-005b's own criteria tested only the OFF state, which passed happily
-    while nothing could turn the flag ON. A test that checks the default
-    cannot detect an unreachable flag.
+    A test of the default alone cannot detect an unreachable flag; US-005b's
+    original criteria passed while nothing could turn the gate on.
     """
+    from lemely.runtime.config import MarkingOptions
     from lemely.web.services import grading as grading_service
 
     seen: dict[str, object] = {}
@@ -669,12 +667,14 @@ def test_grade_paper_forwards_equivalence_gate_when_enabled(
         raise _StopForTest
 
     monkeypatch.setattr(grading_service, "correct_paper", _spy)
+    opts = MarkingOptions(equivalence_gate=True, ecf_substitution=True)
     with pytest.raises(_StopForTest):
-        grading_service.grade_paper(_scheme(), {}, equivalence_gate=True)
-    assert seen["equivalence_gate"] is True
+        grading_service.grade_paper(_scheme(), {}, options=opts)
+    assert seen["options"] == opts
 
 
-def test_grade_paper_defaults_equivalence_gate_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_grade_paper_defaults_marking_options_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lemely.runtime.config import MarkingOptions
     from lemely.web.services import grading as grading_service
 
     seen: dict[str, object] = {}
@@ -686,7 +686,7 @@ def test_grade_paper_defaults_equivalence_gate_off(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(grading_service, "correct_paper", _spy)
     with pytest.raises(_StopForTest):
         grading_service.grade_paper(_scheme(), {})
-    assert seen["equivalence_gate"] is False
+    assert seen["options"] == MarkingOptions()
 
 
 def test_upload_with_mark_scheme_grades_instead_of_stalling_at_queued(
@@ -990,6 +990,59 @@ def test_console_upload_writes_no_history_record(
     assert history_store.list_students() == []
     # The marks are still reachable — they just live on the paper, not a student.
     assert client.get(f"/api/papers/{paper_id}").json()["awardedMarks"] == 2
+
+
+def test_grading_job_passes_marking_options_from_settings(
+    client: TestClient,
+    settings: Settings,
+    paper_repo: TeacherPaperRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The teacher grading job forwards ``settings.grading.marking_options()``.
+
+    Copies ``test_console_upload_writes_no_history_record``'s arrangement
+    (patch ``resolve_mark_scheme``/``extract_answers``/``grade_paper``, upload,
+    settle) but turns both flags on and asserts the ``options`` kwarg
+    ``grade_paper`` received.
+
+    Deliberately does NOT follow the env-var + ``deps.reset_singletons()``
+    recipe: this file's ``client`` fixture overrides FastAPI's
+    ``get_settings`` dependency directly with the ``settings`` fixture object
+    (see the ``client`` fixture above), which never calls the real,
+    ``lru_cache``d ``lemely.web.deps.get_settings()`` at all -- so an env var
+    change and a singleton-cache reset would have no path to this route's
+    ``settings``. The override is swapped for one carrying the flags instead,
+    the same way ``_key_settings``/``_key_client`` swap in a dummy API key.
+    """
+    from lemely.runtime.config import MarkingOptions
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    report = _report(needs_review=False, grade="A")
+    seen: dict[str, object] = {}
+
+    def _grade(*_a: object, **kwargs: object) -> AccuracyReport:
+        seen["options"] = kwargs.get("options")
+        return report
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: {"5b": "42"})
+    monkeypatch.setattr(grading_service, "grade_paper", _grade)
+
+    marking_settings = settings.model_copy(
+        update={
+            "grading": settings.grading.model_copy(
+                update={"equivalence_gate": True, "ecf_substitution": True}
+            )
+        }
+    )
+    client.app.dependency_overrides[get_settings] = lambda: marking_settings  # type: ignore[union-attr]
+
+    paper_id = _upload(client)
+    row = _settle(paper_repo, paper_id)
+
+    assert teacher._row_kind(row) == "graded"
+    assert seen["options"] == MarkingOptions(equivalence_gate=True, ecf_substitution=True)
 
 
 def test_progress_tracker_survives_another_streams_end_of_stream(

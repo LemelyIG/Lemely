@@ -38,6 +38,7 @@ from lemely.io.prompts.correction_ai import (
     build_marker_user_prompt,
 )
 from lemely.io.validation import validate_mark_scheme
+from lemely.runtime.config import MarkingOptions
 from lemely.runtime.errors import ConfigError, CostCeilingError, LemelyError
 from lemely.runtime.events import EventType, bus
 
@@ -1854,8 +1855,7 @@ def correct_paper(
     *,
     gemini_client: GeminiClient | None = None,
     mcq_only: bool = False,
-    equivalence_gate: bool = False,
-    ecf_substitution: bool = False,
+    options: MarkingOptions = MarkingOptions(),  # noqa: B008 -- frozen, immutable dataclass
 ) -> CorrectionResult:
     """Hybrid paper correction: MCQ deterministic, non-MCQ via AICorrector.
 
@@ -1864,23 +1864,21 @@ def correct_paper(
         extracted_answers: per-question student responses.
         gemini_client: required when paper contains non-MCQ questions and mcq_only is False.
         mcq_only: if True, skip AI; non-MCQ questions get marker_source="missing".
-        equivalence_gate: forwarded to ``_build_ai_corrected`` (US-005b,
-            defaults False -- see ``GradingSettings.equivalence_gate`` and
-            ``_verify_calculated_answers``). Never auto-awards a mark in
-            this story regardless of value.
-        ecf_substitution: I7 (US-013, D19), defaults False. Threaded
-            INDEPENDENTLY of ``equivalence_gate`` -- see
-            ``GradingSettings.ecf_substitution`` and
-            :func:`_maybe_apply_ecf_substitution` for the gate/chain rules,
-            why it has no observable effect unless ``equivalence_gate`` is
-            ALSO True, and the measured activation ceiling: 26 gated points /
-            10 of 289 schemes, 438 genuine cross-leaf chains, 0 in the
-            intersection -- provably inert on the committed corpus by
-            construction.
+        options: the marking flags, built by
+            ``GradingSettings.marking_options()``. ``options.equivalence_gate``
+            (US-005b) selects the verdicts marking path with the SymPy award
+            gate. ``options.ecf_substitution`` (I7, US-013) applies
+            error-carried-forward by substitution and has no effect unless
+            ``equivalence_gate`` is also on: see
+            :func:`_maybe_apply_ecf_substitution` for the gate/chain rules and
+            the measured activation ceiling (0 on the committed corpus by
+            construction). Defaults to both off.
 
     Raises:
         ConfigError: paper has non-MCQ questions, mcq_only=False, and gemini_client is None.
     """
+    equivalence_gate = options.equivalence_gate
+    ecf_substitution = options.ecf_substitution
     scheme = _load_mark_scheme(mark_scheme)
     answers = _flatten_answers(extracted_answers)
     dropped_ids = _dropped_question_ids(extracted_answers)

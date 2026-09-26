@@ -329,6 +329,7 @@ def correct_paper_cmd(
     from lemely.core.loose_schemas import MarkScheme
     from lemely.io.correction_ai import correct_paper as hybrid_correct_paper
     from lemely.io.gemini import GeminiClient
+    from lemely.runtime.config import log_marking_flags
 
     ms = MarkScheme.model_validate(_load_json_file(mark_scheme))
 
@@ -349,6 +350,8 @@ def correct_paper_cmd(
             extracted = parse_answer_input(payload)
 
     settings = _get_settings(ctx)
+    marking_options = settings.grading.marking_options()
+    log_marking_flags(marking_options)
     client = None if mcq_only else GeminiClient(settings)
 
     correction = hybrid_correct_paper(
@@ -356,7 +359,7 @@ def correct_paper_cmd(
         extracted_answers=extracted,  # type: ignore[arg-type]
         gemini_client=client,
         mcq_only=mcq_only,
-        equivalence_gate=settings.grading.equivalence_gate,
+        options=marking_options,
     )
     from lemely.io.grade_boundaries import GradeBoundaryStore
 

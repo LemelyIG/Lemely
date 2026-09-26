@@ -492,7 +492,7 @@ def _run_grading_job(
                 gemini_client=gemini_client,
                 student_id=None,
                 history_store=None,
-                equivalence_gate=settings.grading.equivalence_gate,
+                options=settings.grading.marking_options(),
             )
             repo.finish(paper_id, report)
     except Exception as exc:

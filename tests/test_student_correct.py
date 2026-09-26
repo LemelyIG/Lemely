@@ -458,6 +458,89 @@ def test_correct_does_not_pass_the_upload_id_as_paper_id(
     assert "paper_id" not in persist.call_args.kwargs
 
 
+def test_upload_flow_passes_marking_options_from_settings(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both flags must reach ``grade_paper`` through the student upload/correct flow.
+
+    Mirrors ``test_correct_passes_the_resolved_mark_scheme_to_persist_correction``'s
+    arrangement (upload -> correct, assert on a patched call's kwargs), on
+    ``student.grade_paper`` instead, with the settings' marking flags on.
+
+    Deliberately does NOT follow the env-var + ``deps.reset_singletons()``
+    recipe: the ``client`` fixture overrides FastAPI's ``get_settings``
+    dependency directly with a fixed ``settings`` object (see the ``client``
+    fixture above), never the real ``lru_cache``d
+    ``lemely.web.deps.get_settings()`` -- so an env var and a singleton-cache
+    reset have no path to this route's ``settings``. The override is
+    swapped for one carrying the flags instead, the same way this file's
+    ``client`` fixture itself installs its overrides.
+    """
+    from lemely.runtime.config import MarkingOptions
+
+    api, _, _ = client
+    seen: dict[str, object] = {}
+    report = AccuracyReport(
+        correction=CorrectionResult(
+            metadata=ExamMetadata(
+                subject_code="0580",
+                session_month="May/June",
+                session_year=2024,
+                paper_number=2,
+                paper_variant=1,
+            ),
+            questions=[
+                CorrectedQuestion(
+                    question_id="1",
+                    awarded_marks=1,
+                    maximum_marks=1,
+                    confidence=ConfidenceBand.HIGH,
+                    confidence_score=0.99,
+                    needs_teacher_review=False,
+                    marker_source="deterministic",
+                )
+            ],
+        ),
+        weaknesses=WeaknessReport(weak_areas=[]),
+        grade_prediction=GradePrediction(
+            awarded_marks=1,
+            maximum_marks=1,
+            percentage=100.0,
+            grade="A",
+            confidence=ConfidenceBand.HIGH,
+        ),
+    )
+
+    def _grade(*_a: object, **kwargs: object) -> AccuracyReport:
+        seen["options"] = kwargs.get("options")
+        return report
+
+    monkeypatch.setattr(student, "grade_paper", _grade)
+
+    settings = cast("FastAPI", api.app).dependency_overrides[get_settings]()
+    marking_settings = settings.model_copy(
+        update={
+            "grading": settings.grading.model_copy(
+                update={"equivalence_gate": True, "ecf_substitution": True}
+            )
+        }
+    )
+    cast("FastAPI", api.app).dependency_overrides[get_settings] = lambda: marking_settings
+
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    assert up.status_code == 200, up.text
+    paper_id = up.json()["paperId"]
+
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert resp.status_code == 200
+
+    assert seen["options"] == MarkingOptions(equivalence_gate=True, ecf_substitution=True)
+
+
 def test_correct_complete_frame_includes_full_questions(
     client: tuple[TestClient, str, StudentUploadRepository],
 ) -> None:
