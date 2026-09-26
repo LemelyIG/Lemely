@@ -227,6 +227,19 @@ class GeminiSettings(BaseModel):
     # SAME model as the primary, on a different prompt, is the whole point
     # of that variant.
     second_read_model: str | None = "gemini-3.8-flash"
+    # Spec 2026-09-26 §4-5: the I1 crop-and-re-read stage. `max_rereads_per_paper`
+    # caps the zoomed re-read calls per paper (0 disables the stage; the
+    # default keeps I1's 15). `reread_concurrency` worker threads run them;
+    # they are I/O-bound, so 4 costs nothing on one vCPU and finishes 15
+    # re-reads in ~4 rounds. `reread_budget_seconds` is the wall clock for the
+    # whole stage: no re-read STARTS after it (in-flight calls finish); 45 s
+    # is 15% of Cloud Run's 300 s request window, which bounds the student
+    # grading run end to end. `upload_concurrency` bounds the parallel Files
+    # API uploads of page images before the extraction call (§7).
+    max_rereads_per_paper: int = Field(default=15, ge=0)
+    reread_concurrency: int = Field(default=4, ge=1, le=16)
+    reread_budget_seconds: float = Field(default=45.0, gt=0)
+    upload_concurrency: int = Field(default=4, ge=1, le=16)
 
     def model_for(self, task_tag: str) -> str:
         """Resolve the Gemini model name for a task, falling back to the global default.

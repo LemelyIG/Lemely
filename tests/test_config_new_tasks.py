@@ -481,3 +481,52 @@ class TestMarkingFlagsEvent:
         assert fields["reason"] == (
             "ecf_substitution has no effect unless equivalence_gate is also on"
         )
+
+
+class TestRereadStageSettings:
+    """Spec 2026-09-26 §4: the crop re-read cap, its concurrency and its
+    wall-clock budget, and the Files API upload concurrency, are settings."""
+
+    def test_defaults(self) -> None:
+        s = GeminiSettings()
+        assert (
+            s.max_rereads_per_paper,
+            s.reread_concurrency,
+            s.reread_budget_seconds,
+            s.upload_concurrency,
+        ) == (15, 4, 45.0, 4)
+
+    def test_env_overrides_load(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LEMELY_GEMINI__MAX_REREADS_PER_PAPER", "0")
+        monkeypatch.setenv("LEMELY_GEMINI__REREAD_CONCURRENCY", "2")
+        monkeypatch.setenv("LEMELY_GEMINI__REREAD_BUDGET_SECONDS", "10.5")
+        monkeypatch.setenv("LEMELY_GEMINI__UPLOAD_CONCURRENCY", "8")
+        g = Settings().gemini
+        assert (
+            g.max_rereads_per_paper,
+            g.reread_concurrency,
+            g.reread_budget_seconds,
+            g.upload_concurrency,
+        ) == (
+            0,
+            2,
+            10.5,
+            8,
+        )
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            ("max_rereads_per_paper", -1),
+            ("reread_concurrency", 0),
+            ("reread_concurrency", 17),
+            ("reread_budget_seconds", 0.0),
+            ("upload_concurrency", 0),
+            ("upload_concurrency", 17),
+        ],
+    )
+    def test_bounds_are_enforced(self, field: str, value: object) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            GeminiSettings(**{field: value})

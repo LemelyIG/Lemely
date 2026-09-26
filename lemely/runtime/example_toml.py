@@ -90,6 +90,16 @@ def render_example_toml() -> str:
     lines.append("# per_run_token_ceiling = 2000000")
     lines.append("")
 
+    lines.append("# I1 crop-and-re-read stage (spec 2026-09-26 §4-5): per-paper cap on the")
+    lines.append("# zoomed re-read calls (0 disables the stage), worker threads for the stage,")
+    lines.append("# and its wall-clock budget in seconds -- no re-read STARTS after the budget.")
+    lines.append(f"max_rereads_per_paper = {s.gemini.max_rereads_per_paper}")
+    lines.append(f"reread_concurrency = {s.gemini.reread_concurrency}")
+    lines.append(f"reread_budget_seconds = {s.gemini.reread_budget_seconds}")
+    lines.append("# Parallel Files API uploads of page images before the extraction call (§7).")
+    lines.append(f"upload_concurrency = {s.gemini.upload_concurrency}")
+    lines.append("")
+
     lines.append("# gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.")
     lines.append('# gemini_api_key = "sk-..."')
     lines.append("")

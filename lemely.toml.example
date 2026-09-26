@@ -53,6 +53,15 @@ backoff_seconds = 2.0
 # for the whole run; the accuracy programme uses 2000000 (~17 sweeps).
 # per_run_token_ceiling = 2000000
 
+# I1 crop-and-re-read stage (spec 2026-09-26 §4-5): per-paper cap on the
+# zoomed re-read calls (0 disables the stage), worker threads for the stage,
+# and its wall-clock budget in seconds -- no re-read STARTS after the budget.
+max_rereads_per_paper = 15
+reread_concurrency = 4
+reread_budget_seconds = 45.0
+# Parallel Files API uploads of page images before the extraction call (§7).
+upload_concurrency = 4
+
 # gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.
 # gemini_api_key = "sk-..."
 
