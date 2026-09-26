@@ -23,8 +23,9 @@ from lemely.io.gemini import (
     process_token_totals_by_task,
 )
 from lemely.runtime.config import PathsSettings, load_settings
-from lemely.runtime.errors import ExternalServiceError, ParseError
+from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus
+from tests.gemini_fakes import fake_genai_client
 
 
 class _SimpleSchema(BaseModel):
@@ -1610,6 +1611,225 @@ class SpendLockTests(unittest.TestCase):
         self.assertAlmostEqual(process_token_totals_by_task()["soak"], 400 * per_call, places=9)
         ledger = CostLedger(settings.paths.output_dir / "gemini_spend.json")
         self.assertAlmostEqual(ledger.total(), 400 * per_call, places=9)
+
+
+class ImageUploadsTests(unittest.TestCase):
+    """Spec 2026-09-26 §7, client half."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        _reset_process_counters()
+
+    def _client(self, **gemini_overrides: object) -> tuple[GeminiClient, MagicMock]:
+        mock_genai = fake_genai_client()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "x"}')
+        return GeminiClient(
+            _make_settings(self.tmp, **gemini_overrides), _genai_client=mock_genai
+        ), mock_genai
+
+    def _call(self, client: GeminiClient, images: list[bytes], uploads) -> None:  # type: ignore[no-untyped-def]
+        client.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            image_parts=images,
+            image_uploads=uploads,
+            media_resolution="medium",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            task_tag="extraction",
+        )
+
+    def test_generate_structured_sends_file_uri_parts_and_no_inline_data(self) -> None:
+        client, mock_genai = self._client()
+        images = [b"page-0", b"page-1"]
+        with client.image_uploads(images, concurrency=2) as uploads:
+            self._call(client, images, uploads)
+        contents = mock_genai.models.generate_content.call_args.kwargs["contents"]
+        parts = contents[1:]
+        self.assertEqual(len(parts), 2)
+        for part in parts:
+            self.assertIsNone(part.inline_data)
+            self.assertTrue(part.file_data.file_uri.endswith(("files/fake-1", "files/fake-2")))
+            self.assertEqual(part.file_data.mime_type, "image/png")
+        self.assertEqual([u[0] for u in mock_genai.files.uploads], images)
+
+    def test_uploads_are_lazy_and_skipped_on_a_cache_hit(self) -> None:
+        """The cache key is computed from the page BYTES, exactly as for an
+        inline call, and a hit returns before anything is uploaded -- so an
+        inline call and an uploads call with the same bytes share one cache
+        entry, and a warm harness sweep uploads nothing."""
+        client, mock_genai = self._client()
+        images = [b"page-0"]
+        client.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            image_parts=images,
+            media_resolution="medium",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            task_tag="extraction",
+        )
+        with client.image_uploads(images, concurrency=2) as uploads:
+            self._call(client, images, uploads)
+        self.assertEqual(mock_genai.models.generate_content.call_count, 1)
+        self.assertEqual(mock_genai.files.uploads, [])
+        self.assertEqual(mock_genai.files.deleted, [])
+
+    def test_ensure_uploads_once_across_two_calls(self) -> None:
+        client, mock_genai = self._client()
+        images = [b"page-0", b"page-1", b"page-2"]
+        with client.image_uploads(images, concurrency=2) as uploads:
+            self._call(client, images, uploads)
+            client.generate_structured(
+                system_prompt="second read",
+                user_prompt="u",
+                image_parts=images,
+                image_uploads=uploads,
+                media_resolution="medium",
+                response_schema=_SimpleSchema,
+                prompt_version="1",
+                task_tag="second_read",
+            )
+        self.assertEqual(len(mock_genai.files.uploads), 3)
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+    def test_uploads_overlap_up_to_upload_concurrency(self) -> None:
+        client, mock_genai = self._client()
+        barrier = threading.Barrier(4, timeout=5)
+        mock_genai.files.upload_hook = lambda _data: barrier.wait()
+        images = [b"a", b"b", b"c", b"d"]
+        with client.image_uploads(images, concurrency=4) as uploads:
+            files = uploads.ensure()
+        # Four parties met at the barrier, so four uploads were in flight at once.
+        self.assertEqual(sorted(f.name for f in files), [f"files/fake-{i}" for i in (1, 2, 3, 4)])
+
+    def test_uploaded_files_keep_page_order(self) -> None:
+        client, mock_genai = self._client()
+        images = [b"a", b"b", b"c", b"d", b"e", b"f"]
+        with client.image_uploads(images, concurrency=3) as uploads:
+            files = uploads.ensure()
+        by_name = {
+            name: data for data, cfg in mock_genai.files.uploads for name in [cfg["display_name"]]
+        }
+        self.assertEqual([by_name[f"page-{i}"] for i in range(6)], images)
+        self.assertEqual(len(files), 6)
+
+    def test_a_transient_upload_error_is_retried_then_raised_as_external_service_error(
+        self,
+    ) -> None:
+        client, mock_genai = self._client(max_retries=0)
+        mock_genai.files.upload_hook = lambda _data: (_ for _ in ()).throw(
+            RuntimeError("503 unavailable")
+        )
+        with (
+            client.image_uploads([b"a"], concurrency=1) as uploads,
+            self.assertRaises(ExternalServiceError),
+        ):
+            uploads.ensure()
+
+    def test_a_transient_upload_error_is_retried_and_then_succeeds(self) -> None:
+        client, mock_genai = self._client(max_retries=1, backoff_seconds=0.01)
+        attempts: list[int] = []
+
+        def _flaky(_data: bytes) -> None:
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise RuntimeError("503 unavailable")
+
+        mock_genai.files.upload_hook = _flaky
+        with (
+            patch("lemely.io.gemini.time.sleep"),
+            client.image_uploads([b"a"], concurrency=1) as uploads,
+        ):
+            files = uploads.ensure()
+        self.assertEqual(len(files), 1)
+        self.assertEqual(len(attempts), 2)
+
+    def test_cost_ceiling_is_checked_before_any_upload(self) -> None:
+        from lemely.io.cost_ledger import CostLedger
+
+        client, mock_genai = self._client(total_usd_ceiling=1.0)
+        CostLedger(client._settings.paths.output_dir / "gemini_spend.json").add(1.5, thresholds=[])
+        images = [b"page-0"]
+        with (
+            client.image_uploads(images, concurrency=1) as uploads,
+            self.assertRaises(CostCeilingError),
+        ):
+            self._call(client, images, uploads)
+        self.assertEqual(mock_genai.files.uploads, [])
+
+    def test_non_active_file_is_polled_until_active(self) -> None:
+        client, mock_genai = self._client()
+        mock_genai.files.initial_state = "PROCESSING"
+        with (
+            patch("lemely.io.gemini.time.sleep"),
+            client.image_uploads([b"a"], concurrency=1) as uploads,
+        ):
+            files = uploads.ensure()
+        self.assertEqual(files[0].state, "ACTIVE")
+        self.assertEqual(mock_genai.files.get_calls, ["files/fake-1"])
+
+    def test_a_failed_file_raises_external_service_error(self) -> None:
+        client, mock_genai = self._client()
+        mock_genai.files.initial_state = "FAILED"
+        with (
+            client.image_uploads([b"a"], concurrency=1) as uploads,
+            self.assertRaises(ExternalServiceError),
+        ):
+            uploads.ensure()
+
+    def test_processing_forever_times_out(self) -> None:
+        from lemely.io import gemini as gemini_module
+
+        client, mock_genai = self._client()
+        mock_genai.files.initial_state = "PROCESSING"
+        mock_genai.files.get_state = "PROCESSING"
+        with (
+            patch("lemely.io.gemini.time.sleep"),
+            patch.object(gemini_module, "_UPLOAD_ACTIVE_TIMEOUT_SECONDS", 0.0),
+            client.image_uploads([b"a"], concurrency=1) as uploads,
+            self.assertRaises(ExternalServiceError),
+        ):
+            uploads.ensure()
+
+    def test_delete_removes_every_file_and_a_delete_failure_only_warns(self) -> None:
+        client, mock_genai = self._client()
+
+        def _fail_first(name: str) -> None:
+            if name.endswith("fake-1"):
+                raise RuntimeError("boom")
+
+        mock_genai.files.delete_hook = _fail_first
+        with client.image_uploads([b"a", b"b"], concurrency=2) as uploads:
+            uploads.ensure()
+        self.assertEqual(mock_genai.files.deleted, ["files/fake-2"])
+        self.assertIsNone(uploads.files)
+
+    def test_retry_of_the_generate_call_does_not_re_upload(self) -> None:
+        client, mock_genai = self._client(max_retries=1, backoff_seconds=0.01)
+        mock_genai.models.generate_content.side_effect = [
+            RuntimeError("503 unavailable"),
+            _mock_response('{"value": "x"}'),
+        ]
+        images = [b"page-0", b"page-1"]
+        with (
+            patch("lemely.io.gemini.time.sleep"),
+            client.image_uploads(images, concurrency=2) as uploads,
+        ):
+            self._call(client, images, uploads)
+        self.assertEqual(len(mock_genai.files.uploads), 2)
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+    def test_image_uploads_without_image_parts_is_a_value_error(self) -> None:
+        client, _ = self._client()
+        with client.image_uploads([b"a"], concurrency=1) as uploads, self.assertRaises(ValueError):
+            client.generate_structured(
+                system_prompt="s",
+                user_prompt="u",
+                image_uploads=uploads,
+                response_schema=_SimpleSchema,
+                prompt_version="1",
+            )
 
 
 class US034MissingFlashRowTests(unittest.TestCase):

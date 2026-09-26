@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
+import io
 import json
 import re
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
@@ -245,6 +248,21 @@ _process_cost_by_task: dict[str, float] = {}
 #: guards is module-level.
 _SPEND_LOCK = threading.Lock()
 
+_TRANSIENT_MARKERS = ("500", "503", "rate limit", "resource exhausted", "connection")
+_UPLOAD_ACTIVE_POLL_SECONDS = 0.5
+_UPLOAD_ACTIVE_TIMEOUT_SECONDS = 30.0
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """Whether an SDK exception is worth retrying (the `_call_once` rule, shared)."""
+    msg = str(exc).lower()
+    return any(t in msg for t in _TRANSIENT_MARKERS)
+
+
+def _file_state_name(state: object) -> str:
+    """``types.FileState.ACTIVE`` -> ``"ACTIVE"``; a bare string or mock -> ``str()`` of it."""
+    return str(getattr(state, "name", None) or state)
+
 
 def _reset_process_counters() -> None:
     global \
@@ -432,6 +450,115 @@ class _DefaultLedger:
 #: explicit ``ledger=None`` to run with no ceiling check, no ledger file and
 #: no budget events (the web process; spec DS3).
 DEFAULT_LEDGER = _DefaultLedger()
+
+
+class ImageUploads:
+    """Lazy, shared, bounded-parallel Files API uploads for one paper's pages.
+
+    Spec 2026-09-26 §7. Built by :meth:`GeminiClient.image_uploads`; passed
+    to every whole-paper :meth:`GeminiClient.generate_structured` call for
+    the paper (the extraction and the optional second read) so each page is
+    uploaded once. :meth:`ensure` uploads on its first call only -- and
+    `generate_structured` calls it only after its cache check misses and the
+    cost ceiling passes, so a cache hit uploads nothing. :meth:`delete`
+    removes every uploaded file, best effort; ``__exit__`` calls it on the
+    success and the failure path alike. The 48 h server-side expiry is the
+    backstop for a delete that fails.
+    """
+
+    def __init__(
+        self,
+        client: GeminiClient,
+        images: list[bytes],
+        *,
+        concurrency: int,
+        mime_type: str = "image/png",
+    ) -> None:
+        self._client = client
+        self._images = images
+        self._concurrency = max(1, concurrency)
+        self._mime_type = mime_type
+        self._lock = threading.Lock()
+        self.files: list[Any] | None = None
+        self._log = structlog.get_logger().bind(component="gemini_client", tool="files_api")
+
+    def __enter__(self) -> ImageUploads:
+        """Context-manager entry: no-op, returns ``self``."""
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        """Context-manager exit: :meth:`delete` on success and on failure alike."""
+        self.delete()
+
+    def ensure(self) -> list[Any]:
+        """Upload every image once, in page order; idempotent and thread-safe."""
+        with self._lock:
+            if self.files is not None:
+                return self.files
+            if not self._images:
+                self.files = []
+                return self.files
+            workers = min(self._concurrency, len(self._images))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [
+                    pool.submit(contextvars.copy_context().run, self._upload_one, index, data)
+                    for index, data in enumerate(self._images)
+                ]
+                self.files = [f.result() for f in futures]
+            return self.files
+
+    def _upload_one(self, index: int, data: bytes) -> Any:
+        raw = self._client._client
+        try:
+            for attempt in self._client._retry_policy(self._log, task_tag="upload", model="files"):
+                with attempt:
+                    try:
+                        uploaded = raw.files.upload(
+                            file=io.BytesIO(data),
+                            config={"mime_type": self._mime_type, "display_name": f"page-{index}"},
+                        )
+                    except Exception as exc:
+                        if _is_transient(exc):
+                            raise _TransientError(str(exc)) from exc
+                        raise ExternalServiceError(str(exc)) from exc
+                    return self._wait_until_active(uploaded)
+        except _TransientError as exc:
+            raise ExternalServiceError(str(exc)) from exc
+        raise ExternalServiceError("Unreachable")  # pragma: no cover
+
+    def _wait_until_active(self, uploaded: Any) -> Any:
+        """Images come back ACTIVE at once; the poll is a guard, not the path."""
+        raw = self._client._client
+        deadline = time.monotonic() + _UPLOAD_ACTIVE_TIMEOUT_SECONDS
+        current = uploaded
+        while _file_state_name(current.state) == "PROCESSING":
+            if time.monotonic() >= deadline:
+                raise ExternalServiceError(
+                    f"Files API upload {current.name} still PROCESSING after "
+                    f"{_UPLOAD_ACTIVE_TIMEOUT_SECONDS:.0f}s"
+                )
+            time.sleep(_UPLOAD_ACTIVE_POLL_SECONDS)
+            current = raw.files.get(name=current.name)
+        if _file_state_name(current.state) == "FAILED":
+            raise ExternalServiceError(f"Files API upload {current.name} FAILED")
+        return current
+
+    def delete(self) -> None:
+        """Best effort: a delete that fails is logged and never fails the paper."""
+        with self._lock:
+            files, self.files = self.files, None
+        if not files:
+            return
+        raw = self._client._client
+
+        def _delete_one(uploaded: Any) -> None:
+            try:
+                raw.files.delete(name=uploaded.name)
+            except Exception as exc:
+                self._log.warning("gemini_file_delete_failed", name=uploaded.name, error=str(exc))
+
+        with ThreadPoolExecutor(max_workers=min(self._concurrency, len(files))) as pool:
+            list(pool.map(_delete_one, files))
 
 
 class GeminiClient:
@@ -738,6 +865,7 @@ class GeminiClient:
         file_paths: list[Path] | None = None,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
+        image_uploads: ImageUploads | None = None,
         response_schema: type[_T],
         prompt_version: str,
         model: str | None = None,
@@ -756,13 +884,19 @@ class GeminiClient:
         ``media_resolution`` (e.g. ``"medium"``/``"high"``) is applied to every
         part in ``image_parts`` and is folded into the cache-key fingerprint
         (:meth:`_params_fingerprint`) so it never collides with a call that set
-        no media resolution.
+        no media resolution. ``image_uploads`` (spec 2026-09-26 §7) sends the
+        same images as Files API URIs instead of inline bytes; the cache key
+        still comes from ``image_parts``.
         """
         if cache_mode is None:
             cache_mode = self.default_cache_mode
         if cache_mode not in ("read_write", "bypass", "refresh"):
             raise ValueError(
                 f"cache_mode must be one of 'read_write', 'bypass', 'refresh'; got {cache_mode!r}"
+            )
+        if image_uploads is not None and not image_parts:
+            raise ValueError(
+                "image_uploads requires image_parts (the bytes the cache key is derived from)"
             )
         g = self._settings.gemini
         if model is not None:
@@ -812,6 +946,11 @@ class GeminiClient:
 
         self._check_cost_ceiling()
 
+        if image_uploads is not None:
+            # Spec §7: upload lazily, only on a cache miss, and OUTSIDE the
+            # retry loop so a retried generate call never re-uploads.
+            image_uploads.ensure()
+
         bus.publish(
             EventType.GEMINI_CALL_START,
             task=task_tag or "untagged",
@@ -828,6 +967,7 @@ class GeminiClient:
             task_tag,
             image_parts=image_parts,
             media_resolution=media_resolution,
+            image_uploads=image_uploads,
         )
         latency_ms = int((time.monotonic() - t0) * 1000)
         log.debug("gemini_latency_ms", latency_ms=latency_ms)
@@ -857,6 +997,7 @@ class GeminiClient:
                 task_tag,
                 image_parts=image_parts,
                 media_resolution=media_resolution,
+                image_uploads=image_uploads,
             )
             try:
                 result = response_schema.model_validate_json(raw_text)
@@ -1057,6 +1198,36 @@ class GeminiClient:
             latency_ms=latency_ms,
         )
 
+    def image_uploads(
+        self, images: list[bytes], *, concurrency: int, mime_type: str = "image/png"
+    ) -> ImageUploads:
+        """One paper's page images as lazy, shared Files API uploads (spec §7)."""
+        return ImageUploads(self, images, concurrency=concurrency, mime_type=mime_type)
+
+    def _retry_policy(self, log: Any, *, task_tag: str | None, model: str) -> Retrying:
+        """The tenacity policy every paid or upload call runs under."""
+
+        def _before_sleep(state: RetryCallState) -> None:
+            exc = state.outcome.exception() if state.outcome else None
+            err = str(exc) if exc else ""
+            log.warning("gemini_retry", attempt=state.attempt_number, error=err)
+            bus.publish(
+                EventType.GEMINI_RETRY,
+                task=task_tag or "untagged",
+                model=model,
+                attempt=state.attempt_number,
+                error=err[:80],
+            )
+
+        g = self._settings.gemini
+        return Retrying(
+            stop=stop_after_attempt(g.max_retries + 1),
+            wait=wait_exponential(multiplier=g.backoff_seconds, min=1, max=60),
+            retry=retry_if_exception_type(_TransientError),
+            before_sleep=_before_sleep,
+            reraise=True,
+        )
+
     def _call_with_retry(
         self,
         model: str,
@@ -1069,32 +1240,10 @@ class GeminiClient:
         *,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
+        image_uploads: ImageUploads | None = None,
     ) -> str:
-        def _before_sleep(state: RetryCallState) -> None:
-            exc = state.outcome.exception() if state.outcome else None
-            err = str(exc) if exc else ""
-            log.warning(
-                "gemini_retry",
-                attempt=state.attempt_number,
-                error=err,
-            )
-            bus.publish(
-                EventType.GEMINI_RETRY,
-                task=task_tag or "untagged",
-                model=model,
-                attempt=state.attempt_number,
-                error=err[:80],
-            )
-
-        g = self._settings.gemini
         try:
-            for attempt in Retrying(
-                stop=stop_after_attempt(g.max_retries + 1),
-                wait=wait_exponential(multiplier=g.backoff_seconds, min=1, max=60),
-                retry=retry_if_exception_type(_TransientError),
-                before_sleep=_before_sleep,
-                reraise=True,
-            ):
+            for attempt in self._retry_policy(log, task_tag=task_tag, model=model):
                 with attempt:
                     return self._call_once(
                         model,
@@ -1106,12 +1255,11 @@ class GeminiClient:
                         task_tag,
                         image_parts=image_parts,
                         media_resolution=media_resolution,
+                        image_uploads=image_uploads,
                     )
         except _TransientError as exc:
-            # Retries exhausted on a transient (503/rate-limit) failure. Surface the
-            # public ExternalServiceError so callers never see the private signal type.
             raise ExternalServiceError(str(exc)) from exc
-        raise ParseError("Unreachable")  # pragma: no cover  # pragma: no cover
+        raise ParseError("Unreachable")  # pragma: no cover
 
     def _call_once(
         self,
@@ -1125,21 +1273,31 @@ class GeminiClient:
         *,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
+        image_uploads: ImageUploads | None = None,
     ) -> str:
         from google.genai import types
 
-        # I1: image_parts (in-memory rasterised page PNGs) are sent as inline
-        # `Part`s so each one can carry its own `media_resolution` — the
-        # Files API upload path below has no such per-part knob. Mutually
-        # exclusive with file_paths; image_parts wins when both are given
-        # (generate_structured never passes both today).
+        # I1: image_parts are sent inline; spec 2026-09-26 §7: when
+        # `image_uploads` is given the same images are sent as Files API
+        # URIs — `Part.from_uri` carries `media_resolution` in google-genai
+        # 2.10 — and inline_data is never built. The `file_paths` branch
+        # (mark-scheme parsers) is unchanged.
         resolved_media_resolution = (
             _MEDIA_RESOLUTION_LEVELS.get(media_resolution, media_resolution)
             if media_resolution is not None
             else None
         )
         file_parts: list[Any] = []
-        if image_parts:
+        if image_uploads is not None:
+            for uploaded in image_uploads.ensure():
+                file_parts.append(
+                    types.Part.from_uri(
+                        file_uri=uploaded.uri,
+                        mime_type=uploaded.mime_type,
+                        media_resolution=resolved_media_resolution,
+                    )
+                )
+        elif image_parts:
             for data in image_parts:
                 file_parts.append(
                     types.Part.from_bytes(
@@ -1198,10 +1356,7 @@ class GeminiClient:
                 contents=[user_prompt, *file_parts],
             )
         except Exception as exc:
-            msg = str(exc).lower()
-            if any(
-                t in msg for t in ("500", "503", "rate limit", "resource exhausted", "connection")
-            ):
+            if _is_transient(exc):
                 raise _TransientError(str(exc)) from exc
             raise ExternalServiceError(str(exc)) from exc
 
