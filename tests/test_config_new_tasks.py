@@ -16,6 +16,19 @@ from lemely.runtime.config import (
 )
 
 
+def _reenable_dot_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Undo the suite-wide ``tests/conftest.py::_disable_dotenv_file`` fixture.
+
+    That session fixture sets ``Settings.model_config["env_file"] = None`` so
+    a developer's real repo-root ``.env`` can never leak into the suite. The
+    dot-env tests here need the opposite for their one assertion, so they
+    restore the class's real ``env_file=".env"`` for their own duration only;
+    ``monkeypatch`` reverts it (back to the session fixture's ``None``) at
+    teardown.
+    """
+    monkeypatch.setitem(Settings.model_config, "env_file", ".env")
+
+
 class TestModelForNewTags:
     def test_generation_default_is_f1_3x(self) -> None:
         """F1: generation_model has its own explicit 3.x default, not a fallback."""
@@ -325,6 +338,13 @@ class TestFindRemovedConfigKeys:
         found = find_removed_config_keys(toml_path=toml)
         assert found == ["integrity.ai_detection_enabled"]
 
+    def test_finds_removed_key_set_in_dot_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".env").write_text("lemely_integrity__ai_detection_enabled=true\n")
+        assert find_removed_config_keys(cwd=tmp_path) == ["integrity.ai_detection_enabled"]
+
 
 class TestLoadSettingsDropsRemovedKeys:
     """F-6: ``load_settings`` must not crash on a removed key however it is
@@ -364,6 +384,27 @@ class TestLoadSettingsDropsRemovedKeys:
         monkeypatch.setenv("LEMELY_INTEGRITY__AI_DETECTION_ENABLD", "true")
         with pytest.raises(ValidationError):
             load_settings(cwd=tmp_path)
+
+    def test_a_removed_key_in_dot_env_does_not_crash_load_settings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Spec 2026-09-26 §11 (#6): pydantic reads `.env` from the process
+        cwd as a third source; the F4 filter covered only os.environ and
+        TOML, so a stale `.env` line crashed every startup."""
+        _reenable_dot_env_file(monkeypatch)
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".env").write_text("LEMELY_INTEGRITY__AI_DETECTION_ENABLED=true\n")
+        settings = load_settings(cwd=tmp_path)
+        assert settings.integrity.plagiarism_enabled is True
+
+    def test_a_real_key_in_dot_env_still_loads(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _reenable_dot_env_file(monkeypatch)
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".env").write_text("LEMELY_GEMINI__ESCALATION_CONFIDENCE_THRESHOLD=0.5\n")
+        settings = load_settings(cwd=tmp_path)
+        assert settings.gemini.escalation_confidence_threshold == 0.5
 
 
 class TestMarkingOptions:

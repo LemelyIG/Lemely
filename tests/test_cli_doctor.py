@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import unittest
@@ -153,6 +154,34 @@ class DoctorTests(unittest.TestCase):
         payload = json.loads(result.output)
         push = next(c for c in payload["checks"] if c["name"] == "push_transport")
         self.assertTrue(push["ok"], msg=push)
+
+    def test_doctor_warns_on_a_stale_key_in_dot_env_without_failing(self) -> None:
+        """Spec 2026-09-26 §11 (#6): a removed key left in `.env` is reported
+        the way a TOML one is (advisory, exit 0), instead of crashing
+        load_settings before doctor can run at all."""
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            toml_path = Path(tmp) / "lemely.toml"
+            toml_path.write_text("[integrity]\nplagiarism_enabled = true\n")
+            (Path(tmp) / ".env").write_text("LEMELY_INTEGRITY__AI_DETECTION_ENABLED=true\n")
+            with contextlib.chdir(tmp):
+                result = self.runner.invoke(
+                    cli,
+                    ["--json", "--config", str(toml_path), "doctor", "--no-network"],
+                    env={
+                        "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                        "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                        "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                        "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                    },
+                )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        self.assertTrue(payload["all_passed"], msg=result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "no_removed_config_keys")
+        self.assertFalse(check["ok"])
+        self.assertIn("integrity.ai_detection_enabled", check["detail"])
 
 
 class DoctorRemovedConfigKeysTests(unittest.TestCase):

@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import structlog
+from dotenv import dotenv_values
 from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 
 def _blank_to_none(value: object) -> object:
@@ -869,6 +876,20 @@ class EmailSettings(BaseModel):
     api_base_url: str = "https://api.resend.com"
 
 
+class _RemovedKeysDotEnvSource(DotEnvSettingsSource):
+    """pydantic-settings' ``.env`` source minus every F4-removed key.
+
+    The same filter :func:`_pop_removed_env_vars` applies to ``os.environ``
+    and :func:`_drop_removed_config_keys` applies to TOML, on the third
+    source ``Settings`` reads (spec 2026-09-26 §11, #6). Keys arrive
+    lower-cased under ``case_sensitive=False``, hence the ``.upper()``.
+    """
+
+    def _load_env_vars(self) -> Mapping[str, str | None]:
+        lookup = _removed_env_var_lookup()
+        return {k: v for k, v in super()._load_env_vars().items() if k.upper() not in lookup}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LEMELY_",
@@ -920,7 +941,7 @@ class Settings(BaseSettings):
         # Precedence: env > .env > init (which we use for TOML) > file-secrets > defaults
         return (
             env_settings,  # highest: LEMELY_* env vars
-            dotenv_settings,  # .env file
+            _RemovedKeysDotEnvSource(settings_cls),  # .env file, minus F4-removed keys
             init_settings,  # TOML payload from load_settings(**toml_data)
             file_secret_settings,
         )
@@ -939,8 +960,8 @@ def _discover_toml(cwd: Path) -> Path | None:
 
 # F4-removed keys, by the TOML section they used to live under. Every
 # settings model in this file uses ``extra="forbid"``, so — without the carve
-# out below — a stale ``lemely.toml`` OR environment variable that still sets
-# one of these would fail ``Settings(...)`` with a bare Pydantic
+# out below — a stale ``lemely.toml``, environment variable, or ``.env`` line
+# that still sets one of these would fail ``Settings(...)`` with a bare Pydantic
 # ValidationError that does not say *why*, for every single caller of
 # ``load_settings`` (the CLI, the web app, every test that loads real
 # config), not just ``lemely doctor``. ``load_settings`` drops these specific
@@ -952,8 +973,9 @@ def _discover_toml(cwd: Path) -> Path | None:
 # :func:`find_removed_config_keys`, reading the raw TOML and the raw
 # environment before either drop happens, so a developer actually learns
 # their config is stale instead of the key silently doing nothing forever.
-# Both supply paths get the same outcome deliberately: a user who moved a
-# setting from ``lemely.toml`` into ``LEMELY_INTEGRITY__AI_DETECTION_ENABLED``
+# All three supply paths (TOML, env var, ``.env``) get the same outcome
+# deliberately: a user who moved a setting from ``lemely.toml`` into
+# ``LEMELY_INTEGRITY__AI_DETECTION_ENABLED``
 # after upgrading deserves the same warning as one who left it in the file,
 # not a crash one way and a silent no-op the other.
 _REMOVED_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
@@ -1014,11 +1036,11 @@ def _drop_removed_config_keys(toml_data: dict[str, Any]) -> dict[str, Any]:
 def find_removed_config_keys(
     *, toml_path: Path | None = None, cwd: Path | None = None
 ) -> list[str]:
-    """Return dotted ``section.key`` names for F4-removed keys set via TOML or env var.
+    """Return dotted ``section.key`` names for F4-removed keys set via TOML, env var or ``.env``.
 
     Reads the TOML file and ``os.environ`` directly, without constructing a
     :class:`Settings`. Returns an empty list when no removed key is set
-    either way. A key set in both places is reported once.
+    either way. A key set in more than one place is reported once.
     """
     found: list[str] = []
     toml_data = _load_toml(toml_path, cwd)
@@ -1034,6 +1056,16 @@ def find_removed_config_keys(
         dotted = f"{section}.{key}"
         if env_name in env_upper and dotted not in found:
             found.append(dotted)
+
+    # The third source: pydantic resolves ``env_file=".env"`` against the
+    # PROCESS working directory, so read the same file `Settings` would.
+    dotenv_path = Path.cwd() / ".env"
+    if dotenv_path.is_file():
+        dotenv_upper = {name.upper() for name in dotenv_values(dotenv_path)}
+        for env_name, (section, key) in _removed_env_var_lookup().items():
+            dotted = f"{section}.{key}"
+            if env_name in dotenv_upper and dotted not in found:
+                found.append(dotted)
     return found
 
 
