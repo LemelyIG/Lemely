@@ -330,8 +330,12 @@ To try a flag on staging only:
 2. Re-run the deploy workflow for staging (`workflow_dispatch` with
    `environment: staging`, or push to `develop` — see "Triggers" above).
 3. Confirm the new revision's mode in Cloud Run logs. Every revision logs one
-   `marking_flags` line at startup with both values. If ECF is on without the
-   gate, that line is a warning with `ecf_inert=true`.
+   `marking_flags` line at startup with both values. Find it with the query
+   `jsonPayload.event="marking_flags"`. If ECF is on without the gate, that
+   entry's payload has `level: "warning"` and `ecf_inert: true` — our JSON
+   logs carry a `level` field, not the `severity` field Cloud Logging reads
+   for its own severity column, so the entry does not show at WARNING
+   severity; look at the payload fields instead of filtering by severity.
 
 Production is unaffected until its own `production` environment variable is
 set and production is redeployed.
