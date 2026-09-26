@@ -292,12 +292,32 @@ class TestVerifyQuestionSympyGate:
     @pytest.mark.parametrize(
         ("solution_expr", "answer"),
         [
+            # The original six (Task 5, round 1).
             ("22/7", "3.14"),
             ("9.81*2", "19.6"),
             ("100/3", "33.3"),
             ("sqrt(2)", "1.41"),
             ("2*pi", "6.28"),
             ("0.5*3*4**2", "24 J"),
+            # Fix round 2, Critical 1: the SAME irrational constant, written
+            # identically or in an algebraically-equal different form. The
+            # round-1 bug N()'d only the exact side, turning these into a
+            # symbolic-vs-numeric term-key mismatch (false NOT_EQUAL).
+            ("sqrt(2)", "sqrt(2)"),
+            ("4*pi", "4*pi"),
+            ("1/sqrt(2)", "sqrt(2)/2"),
+            # Fix round 2, Critical 2: bare scientific notation, no unit --
+            # the round-1 unit-stripper's regex truncated "2e3" to "2".
+            ("2000", "2e3"),
+            ("0.0015", "1.5e-3"),
+            # Fix round 2, Important 3: a compound unit, and pi written with
+            # a space instead of `*` (round 1's greedy letter-strip regex
+            # discarded the `pi` factor entirely).
+            ("9.81*2", "19.6 m/s"),
+            ("2*pi", "2 pi"),
+            # Fix round 2: "<mantissa> x 10^<exp>" magnitude notation is
+            # PARSED (not refused) -- see _expand_sci_x_notation.
+            ("24000", "2.4 x 10^4 J"),
         ],
     )
     def test_rounded_or_unit_bearing_stated_answers_verify_at_gate_sig_figs(
@@ -317,6 +337,53 @@ class TestVerifyQuestionSympyGate:
         result = verify_question(client, question, subject_code="0625")
 
         assert result.verified_by == "sympy", result.rejection_reason
+        client.generate_with_code_execution.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("solution_expr", "answer"),
+        [
+            # Fix round 2, Critical 2: a genuinely wrong scientific-notation
+            # answer must still be rejected -- not accidentally accepted by
+            # a broken unit-stripper corrupting the comparison.
+            ("2", "2e3"),
+            ("1.5", "1.5e-3"),
+            # Fix round 2, Important 3: "x 10^n" magnitude, wrong by orders
+            # of magnitude once correctly parsed.
+            ("2.4", "2.4 x 10^4 J"),
+            ("3", "3.0 x 10^8 m/s"),
+            # Fix round 2, Important 3: a genuinely different quantity
+            # (a factor of pi, or an extra free-symbol term) must never be
+            # silently reduced to the bare number by over-eager stripping.
+            ("24", "24 pi"),
+            ("6", "6x"),
+            ("6", "6 x"),
+            ("24", "24 x - 1"),
+            ("24", "24 J 5"),
+            # Plain wrong answers, no unit/notation involved at all.
+            ("27.5", "25"),
+            ("100/4", "27.5"),
+        ],
+    )
+    def test_incorrect_or_malformed_stated_answers_are_rejected_by_sympy_not_sandbox(
+        self, solution_expr: str, answer: str
+    ) -> None:
+        """Fix round 2: every one of these must be a HARD sympy-step
+        rejection (a real disproof) -- never routed to the sandbox, which
+        would mean the sig-fig gate merely failed to prove rather than
+        actively disproved."""
+        question = _generated_question(
+            "Speed",
+            question_type=QuestionType.CALCULATION,
+            solution_expr=solution_expr,
+            answer=answer,
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by is None
+        assert result.rejection_reason is not None
+        assert "sympy" in result.rejection_reason
         client.generate_with_code_execution.assert_not_called()
 
 

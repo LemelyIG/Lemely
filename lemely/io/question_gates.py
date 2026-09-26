@@ -85,40 +85,125 @@ MAX_GENERATION_ATTEMPTS = 3
 #: deriving its tolerance from the scheme (`lemely.core.equivalence`).
 GATE_SIG_FIGS = 3
 
-#: A stated answer of the shape ``<number> <unit>`` ("24 J", "19.6 m/s").
-#: The exponent is consumed by the value group first, so "2e3" is a number
-#: and "2 eV" is a value with a unit.
-_TRAILING_UNIT_RE = re.compile(
-    r"^\s*(?P<value>[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)"
-    r"\s*(?P<unit>[A-Za-zµΩ°%][A-Za-z0-9µΩ°%/^*·.\-\s]*)$"
+#: Fix round 2: CAIE physics notation for scientific-notation magnitude,
+#: "<mantissa> x 10^<exp>" (also accepting the multiplication-sign glyph in
+#: place of the ASCII 'x'/'X'). That glyph stands for "times" here, never
+#: SymPy's algebra variable ``x`` -- without this being consumed FIRST,
+#: "2.4 x 10^4 J" parses (via implicit multiplication) as
+#: ``24000.0*J*x``, a spurious free-symbol product, not the number 24000
+#: with a unit.
+_SCI_X_NOTATION_RE = re.compile(
+    r"^\s*(?P<mantissa>[-+]?(?:\d+\.?\d*|\.\d+))"
+    r"\s*[xX\u00d7]\s*10\s*\^\s*(?P<exponent>[-+]?\d+)"
+    r"(?P<rest>.*)$"
+)
+
+#: Fix round 2 (Important 3): an SI prefix, applied to a base unit below.
+_UNIT_PREFIX_RE = r"(?:k|M|G|m|µ|u|n|c|d|da|p|T)"
+
+#: Fix round 2 (Important 3): a whitelist of base unit symbols. Deliberately
+#: closed -- an unrecognised letter (``x``, ``pi``) is never treated as a
+#: unit, which is what makes "24 pi"/"6x" fall through to a real (numeric
+#: or structural) disproof instead of being silently stripped away.
+_UNIT_BASE_RE = r"(?:kg|ohm|mol|eV|Pa|Hz|°C|m|s|g|J|N|W|V|A|K|C|L|Ω|%)"
+
+_UNIT_ATOM_RE = rf"(?:{_UNIT_PREFIX_RE})?(?:{_UNIT_BASE_RE})(?:\^-?\d+)?"
+
+#: A stated answer of the shape ``<number> <unit>`` ("24 J", "19.6 m/s",
+#: "kg m/s^2"), where ``<unit>`` is one or more `_UNIT_ATOM_RE`s joined by
+#: '/', '·', '*' or a single space, and NOTHING else -- so "6x" ('x' is not
+#: whitelisted), "24 pi" ('pi' is not whitelisted) and "24 J 5" (a unit
+#: atom followed by a bare, non-unit "5") never match at all.
+_UNIT_TAIL_RE = re.compile(
+    rf"^\s*(?P<value>[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*"
+    rf"(?P<unit>{_UNIT_ATOM_RE}(?:(?:[/·*]|\s){_UNIT_ATOM_RE})*)\s*$"
 )
 
 
+def _expand_sci_x_notation(stated: str) -> str:
+    """``"2.4 x 10^4 J"`` -> ``"24000.0 J"``; anything else is unchanged."""
+    match = _SCI_X_NOTATION_RE.match(stated)
+    if match is None:
+        return stated
+    mantissa = float(match.group("mantissa"))
+    exponent = int(match.group("exponent"))
+    return f"{mantissa * 10.0**exponent}{match.group('rest')}"
+
+
 def _strip_trailing_unit(stated: str) -> str:
-    """``"24 J"`` -> ``"24"``; anything that is not ``<number> <unit>`` is returned as is."""
-    match = _TRAILING_UNIT_RE.match(stated)
+    """Normalise CAIE-style magnitude/unit notation, or return unchanged.
+
+    Two independent, sequential transforms: :func:`_expand_sci_x_notation`
+    resolves an "x 10^n" magnitude first (never a unit tail --
+    :data:`_UNIT_TAIL_RE` only ever sees a plain number afterwards), then a
+    trailing tail is dropped ONLY when it fully matches
+    :data:`_UNIT_TAIL_RE` -- one or more whitelisted unit atoms and nothing
+    else, so ``"24 J"`` strips to ``"24"`` but ``"6x"``, ``"24 pi"`` and
+    ``"24 J 5"`` are all left alone.
+    """
+    stated = _expand_sci_x_notation(stated)
+    match = _UNIT_TAIL_RE.match(stated)
     return match.group("value") if match else stated
 
 
 def _compare_stated(exact: str, stated: str) -> Verdict:
     """Compare a stated answer against an exact one at :data:`GATE_SIG_FIGS`.
 
-    When ``exact`` parses to a constant (no free symbols) it is evaluated
-    numerically first -- ``sympy.N`` -- because a constant symbolic
-    difference such as ``sqrt(2) - 1.41`` gets no tolerance window from
-    :func:`lemely.core.equivalence.equivalent` (its window applies per term
-    key, and ``sqrt(2)`` and ``1.41`` are different keys); and one trailing
-    unit is stripped from ``stated``, because a unit parses as a symbol
-    (``24 J`` -> ``24*J``) that the unitless exact side can never equal. An
-    unparseable ``exact`` takes the ordinary path, with the tolerance added.
+    Fix round 2: three attempts, in order, each returned as soon as it
+    proves equality.
+
+    1. :func:`~lemely.core.equivalence.equivalent` on ``exact``/``stated``
+       UNMODIFIED. This alone handles a stated answer already within
+       tolerance when both sides are plain numbers (``"22/7"`` vs
+       ``"3.14"``), and an exact match written in a different but
+       algebraically identical symbolic form (``"1/sqrt(2)"`` vs
+       ``"sqrt(2)/2"``, or the SAME irrational constant on both sides,
+       ``"sqrt(2)"`` vs ``"sqrt(2)"``, or ``"2*pi"`` vs ``"2 pi"`` --
+       ``pi`` is a numeric constant to SymPy, not a free symbol, so this
+       parses and simplifies exactly like any other pure-number pair).
+    2. When step 1 fails to prove equality AND both sides parse to a
+       constant (no free symbols), numerically evaluate BOTH sides
+       (``sympy.N``) and retry. This is for an exact IRRATIONAL constant
+       against a decimal approximation (``"sqrt(2)"`` vs ``"1.41"``):
+       ``equivalent``'s tolerance window is keyed per algebraic term, and
+       ``sqrt(2)`` and ``1.41`` are different keys, so step 1 gets no
+       tolerance leniency there at all. N()-ing only ONE side (the
+       pre-fix-round-2 approach) broke the identical-form case above --
+       ``"sqrt(2)"`` vs ``"sqrt(2)"`` would then compare a decimal against
+       a still-symbolic ``sqrt(2)``, a term-key mismatch of exactly the
+       same shape -- which is why step 1 must run FIRST and unmodified;
+       this step is only a fallback for what it could not prove.
+    3. When that also fails, strip a trailing unit or an "x 10^n" magnitude
+       from ``stated`` (:func:`_strip_trailing_unit`) and retry the whole
+       comparison recursively -- ``"24 J"`` -> ``"24"``, ``"2.4 x 10^4 J"``
+       -> ``"24000.0"``. A ``stated`` that is genuinely wrong (``"24
+       pi"``, ``"6x"``, ``"24 J 5"``) either fails step 2 on its own merits
+       (a real numeric or structural mismatch) or is never touched by the
+       stripper at all (no whitelisted unit tail to strip), so it falls
+       through to whichever verdict step 1 or step 2 already computed --
+       never silently stripped into a false match.
     """
+    verdict = equivalent(exact, stated, sig_figs=GATE_SIG_FIGS)
+    if verdict.kind is VerdictKind.EQUAL_PROVEN:
+        return verdict
     exact_expr = parse_expr_safe(exact)
-    if exact_expr is None:
-        return equivalent(exact, stated, sig_figs=GATE_SIG_FIGS)
-    if not exact_expr.free_symbols:
-        exact_expr = sympy.N(exact_expr)
-        stated = _strip_trailing_unit(stated)
-    return equivalent(exact_expr, stated, sig_figs=GATE_SIG_FIGS)
+    stated_expr = parse_expr_safe(stated)
+    if (
+        exact_expr is not None
+        and stated_expr is not None
+        and not exact_expr.free_symbols
+        and not stated_expr.free_symbols
+    ):
+        numeric_verdict = equivalent(
+            sympy.N(exact_expr), sympy.N(stated_expr), sig_figs=GATE_SIG_FIGS
+        )
+        if numeric_verdict.kind is VerdictKind.EQUAL_PROVEN:
+            return numeric_verdict
+        verdict = numeric_verdict
+    stripped = _strip_trailing_unit(stated)
+    if stripped != stated:
+        return _compare_stated(exact, stripped)
+    return verdict
 
 
 def check_validity(
