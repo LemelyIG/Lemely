@@ -9,14 +9,16 @@ that omits options= fails here instead of silently marking with the
 defaults, and a call site that passes a literal `MarkingOptions(...)` fails
 too, because that hard-codes defaults and defeats the point.
 
-The guard matches by the literal identifier used at the call site (the
-`Name.id` or `Attribute.attr` on the call's `func`), not by resolving
-imports. An import alias -- `from lemely.io.correction_ai import
-correct_paper as _cp` -- would call through a different name and escape it
-undetected. `hybrid_correct_paper` is matched by name exactly like the
-other two targets, so an alias of it would escape the same way. No caller
-in this codebase uses such an alias today (`tests/test_marking_options_wiring.py`
-scans `lemely/` and `scripts/` for every plain and aliased-free call).
+The guard matches by name: the `Name.id` or `Attribute.attr` on the call's
+`func`, not by resolving imports. A call through an import alias, such as
+`from lemely.io.correction_ai import correct_paper as _cp` followed by
+`_cp(...)`, would escape the guard undetected, because the name at the
+call site is `_cp`, not `correct_paper`. `hybrid_correct_paper` is matched
+by name exactly like the other two targets, so an alias of it would escape
+the same way too. The Gradio app happens to import `correct_paper` under
+the alias `hybrid_correct_paper` (`lemely/app/gradio_app.py`); since that
+alias collides with one of the three target names, the call it makes is
+still caught -- but the guard would not catch an alias to any other name.
 """
 
 from __future__ import annotations
@@ -28,20 +30,26 @@ _TARGETS = {"correct_paper", "hybrid_correct_paper", "grade_paper"}
 _ROOT = Path(__file__).resolve().parent.parent
 _SCAN_ROOTS = ("lemely", "scripts")
 
-# The exact known call sites, as "path:function". Listed so that removing one
-# (or adding an uncounted one) fails loudly instead of the guard silently
-# finding a different count. 7 real callers (CLI, both web grading flows,
-# quiz marking, the accuracy harness, Gradio, and this accuracy script) plus
-# one internal forward -- `grade_paper` calling `correct_paper` -- makes 8.
-_KNOWN_CALL_SITES = (
-    "lemely/accuracy/harness.py:measure_accuracy",  # accuracy harness caller
-    "lemely/app/cli.py:correct_paper_cmd",  # CLI caller
-    "lemely/app/gradio_app.py:_grade",  # Gradio caller
-    "lemely/db/quiz_marking_repo.py:mark_submission",  # quiz marking caller
-    "lemely/web/routers/student.py:run",  # student paper upload caller
-    "lemely/web/routers/teacher.py:_run_grading_job",  # teacher grading job caller
-    "lemely/web/services/grading.py:grade_paper",  # internal forward to correct_paper
-    "scripts/run_real_paper_accuracy.py:run_or_replay_fixture",  # accuracy script caller
+# The exact known call sites, as "<path relative to repo root>:<enclosing
+# function>". Listed explicitly, and compared below as a set rather than a
+# count, so that swapping one site for another, or mislabelling one (the
+# Gradio call site once read "_grade" here, but the call is inside the
+# nested `_run` closure defined within `_grade`), fails loudly instead of
+# the guard silently agreeing as long as the number of sites is unchanged.
+# 7 real callers (CLI, both web grading flows, quiz marking, the accuracy
+# harness, Gradio, and this accuracy script) plus one internal forward --
+# `grade_paper` calling `correct_paper` -- makes 8.
+_KNOWN_CALL_SITES = frozenset(
+    {
+        "lemely/accuracy/harness.py:measure_accuracy",  # accuracy harness caller
+        "lemely/app/cli.py:correct_paper_cmd",  # CLI caller
+        "lemely/app/gradio_app.py:_run",  # Gradio caller (nested inside _grade)
+        "lemely/db/quiz_marking_repo.py:mark_submission",  # quiz marking caller
+        "lemely/web/routers/student.py:run",  # student paper upload caller
+        "lemely/web/routers/teacher.py:_run_grading_job",  # teacher grading job caller
+        "lemely/web/services/grading.py:grade_paper",  # internal forward to correct_paper
+        "scripts/run_real_paper_accuracy.py:run_or_replay_fixture",  # accuracy script caller
+    }
 )
 
 
@@ -51,6 +59,39 @@ def _called_name(node: ast.Call) -> str | None:
     if isinstance(node.func, ast.Attribute):
         return node.func.attr
     return None
+
+
+def _collect_call_sites(source: str, filename: str) -> set[str]:
+    """Collect every marking-target call site in *source*.
+
+    Each site is labelled ``"<filename>:<enclosing function>"``. Walks the
+    tree keeping a stack of enclosing ``FunctionDef``/``AsyncFunctionDef``
+    names and labels a call with the innermost one, or ``"<module>"`` when
+    the call sits at module level (matching by call-site name only, per the
+    module docstring, so an aliased import can still slip past unlabelled).
+    """
+    sites: set[str] = set()
+    stack: list[str] = []
+
+    class _Visitor(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            stack.append(node.name)
+            self.generic_visit(node)
+            stack.pop()
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            stack.append(node.name)
+            self.generic_visit(node)
+            stack.pop()
+
+        def visit_Call(self, node: ast.Call) -> None:
+            if _called_name(node) in _TARGETS:
+                enclosing = stack[-1] if stack else "<module>"
+                sites.add(f"{filename}:{enclosing}")
+            self.generic_visit(node)
+
+    _Visitor().visit(ast.parse(source, filename=filename))
+    return sites
 
 
 def _is_hardcoded_marking_options(value: ast.expr) -> bool:
@@ -109,20 +150,24 @@ def test_every_marking_call_passes_options() -> None:
 
 
 def test_the_guard_sees_every_known_call_site() -> None:
-    """The guard is not vacuous: it finds exactly the known call sites."""
-    found: list[str] = []
+    """The guard is not vacuous: it finds exactly the known call sites.
+
+    Compares the *set* of sites, not just its size, so swapping one site
+    for another -- or mislabelling one, as the old comment did by naming
+    ``_grade`` instead of the ``_run`` closure nested inside it -- fails
+    loudly instead of staying green as long as the count matches.
+    """
+    found: set[str] = set()
     for root_name in _SCAN_ROOTS:
         for path in sorted((_ROOT / root_name).rglob("*.py")):
             rel = path.relative_to(_ROOT)
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            found.extend(
-                f"{rel}:{node.lineno} {_called_name(node)}(...)"
-                for node in ast.walk(tree)
-                if isinstance(node, ast.Call) and _called_name(node) in _TARGETS
-            )
-    assert len(found) == len(_KNOWN_CALL_SITES), (
-        f"expected exactly {len(_KNOWN_CALL_SITES)} marking call sites "
-        f"({', '.join(_KNOWN_CALL_SITES)}), found {len(found)}:\n" + "\n".join(found)
+            found |= _collect_call_sites(path.read_text(encoding="utf-8"), str(rel))
+    missing = _KNOWN_CALL_SITES - found
+    unexpected = found - _KNOWN_CALL_SITES
+    assert not missing and not unexpected, (
+        "marking call sites drifted from the expected set:\n"
+        f"missing (expected, not found): {sorted(missing)}\n"
+        f"unexpected (found, not expected): {sorted(unexpected)}"
     )
 
 
