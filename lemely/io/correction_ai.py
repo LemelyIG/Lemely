@@ -660,9 +660,13 @@ def _check_coherence(
        On the verdict path the caller passes ``groups`` -- the
        ``(group_key, cap)`` per scheme point from
        :func:`lemely.core.point_groups.group_points` -- and each matched
-       group contributes at least its largest matched tariff and at most
-       ``min(cap, sum of matched tariffs)``. The legacy path passes no
-       groups and keeps the global rule (spec 2026-09-26 §1, out of scope):
+       group contributes at least ``min(cap, its largest matched tariff)``
+       and at most ``min(cap, sum of matched tariffs)`` -- the floor is
+       capped too, so a group whose cap binds below its largest matched
+       tariff (a pool that shares its leftover with an earlier pool, or a
+       ``select_count`` room smaller than one member's own tariff) narrows
+       rather than inverts the interval. The legacy path passes no groups
+       and keeps the global rule (spec 2026-09-26 §1, out of scope):
 
        ``implied_min = sum(primary marks) + max(non-additive marks, default 0)``
        ``implied_max = sum(primary marks) + sum(non-additive marks)``
@@ -727,7 +731,7 @@ def _check_coherence(
             else:
                 by_group.setdefault(key, (cap or 0, []))[1].append(p.marks)
         for cap, tariffs in by_group.values():
-            implied_min += max(tariffs)
+            implied_min += min(cap, max(tariffs))
             implied_max += min(cap, sum(tariffs))
     else:
         primary = [p for p in matched_points if not p.is_alternative and not p.is_optional]
@@ -904,9 +908,15 @@ def _awarded_from_verdicts(
     A repeated ``point_id`` is deduplicated first, via
     ``dedupe_point_verdicts`` (:mod:`lemely.core.schemas`) -- the same rule
     ``derive_point_rows`` (:mod:`lemely.db.question_points`) applies to the
-    same list. Emits ``point_verdict_duplicate_dropped`` for each dropped
-    duplicate; ``lemely.db.attempt_repo`` emits a second, differently-shaped
-    record for the SAME duplicate one layer down, deliberately.
+    same list.
+
+    Emits ``point_verdict_duplicate_dropped`` for each dropped duplicate.
+    ``lemely.db.attempt_repo._warn_if_point_verdicts_were_deduplicated`` emits
+    a second, differently-shaped record for the SAME duplicate one layer
+    down, under the distinct name
+    ``point_verdict_duplicate_dropped_at_persist`` -- when this function ran
+    first (the normal path), that is a deliberate second record, not a bug;
+    see that function's docstring for why both are kept.
     """
     kept, dropped = dedupe_point_verdicts(point_verdicts)
     if dropped:
@@ -1451,9 +1461,12 @@ def _build_dropped_corrected(question: Question) -> CorrectedQuestion:
     already knew was unusable.
 
     COVERAGE LIMIT (review MUST-FIX F1) -- which questions reach it is the
-    limit. Only ids in ``ExtractedAnswers.dropped_question_ids`` do, and only
-    two of extraction's five drop reasons put an id there: ``missing_answer``
-    and ``malformed_answer``. ``missing_question_id``,
+    limit. Only an id in ``ExtractedAnswers.dropped_question_ids`` with no
+    surviving entry in ``answers`` does (spec 2026-09-26 §2 (#4): a dropped
+    ENTRY is not a verdict on the question when another, well-formed entry
+    for the same id survived), and only two of extraction's five drop
+    reasons put an id there in the first place: ``missing_answer`` and
+    ``malformed_answer``. ``missing_question_id``,
     ``malformed_question_id`` and ``malformed_answer_shape`` (the MF6 case --
     one unusable element in the ``answers`` list) leave no id to attribute the
     flag to, so those three never arrive here and keep the pre-MF7 behaviour

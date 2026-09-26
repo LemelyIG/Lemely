@@ -58,7 +58,7 @@ Groups come from scheme order, so the result does not depend on the order of the
 
 Capping without a flag needs two more changes. The probe showed that without them the capped total trips the coherence check ("implies between 2 and 2").
 
-- `_check_coherence` mode 2 becomes group-aware **on the verdict path only**, through a new `groups=` keyword. For each matched group the minimum contribution is the largest member tariff, and the maximum is `min(cap, sum of member tariffs)`. The legacy call (`:1160`) passes no groups and keeps today's global rule.
+- `_check_coherence` mode 2 becomes group-aware **on the verdict path only**, through a new `groups=` keyword. For each matched group the minimum contribution is the smaller of the group cap and the largest member tariff, and the maximum is `min(cap, sum of member tariffs)`. The legacy call (`:1160`) passes no groups and keeps today's global rule.
 - The coverage check (`:967`) compares against `additive`, not `capped`. A marker that awarded both alternatives and claimed 2 is then not reported as "answer_points may not fully describe its marking scheme".
 
 ### 2. A surviving answer beats a dropped duplicate (#4)

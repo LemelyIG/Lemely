@@ -2340,6 +2340,95 @@ class GroupCappedVerdictTotalTests(unittest.TestCase):
         self.assertTrue(cq.needs_teacher_review)
         self.assertIn("may not fully describe", cq.review_reason or "")
 
+    def test_a_later_pool_capped_to_zero_by_a_shared_leftover_does_not_flag(self):
+        """Fix round 1 (reviewer): when ``group_points`` gives a pool a cap
+        BELOW its largest matched tariff -- here because an earlier pool
+        already spent the leftover the two pools share -- the coherence
+        floor must not exceed the ceiling. Before the fix, ``implied_min``
+        used the group's largest matched tariff unconditionally, so a
+        matched point in the zero-capped second pool inflated the floor
+        past the ceiling and produced an inverted-interval review flag
+        ("implies between 2 and 1") even though the cap -- not a real
+        under-award -- explains the gap. User decision: cap only, no flag."""
+        from lemely.core.loose_schemas import AnswerPoint
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question(
+            [
+                *(
+                    AnswerPoint(id=f"a{i}", point=f"a{i}", marks=1, is_optional=True)
+                    for i in range(3)
+                ),
+                AnswerPoint(id="x", point="x", marks=1),
+                *(
+                    AnswerPoint(id=f"b{i}", point=f"b{i}", marks=1, is_optional=True)
+                    for i in range(3)
+                ),
+            ],
+            marks=3,
+        )
+        verdicts = [
+            PointVerdict(point_id="a0", verdict="awarded", evidence_span="a0"),
+            PointVerdict(point_id="b0", verdict="awarded", evidence_span="b0"),
+        ]
+        cq = _build_ai_corrected(q, "a0 b0", self._mark(verdicts, claimed=1), equivalence_gate=True)
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
+
+    def test_a_pool_cap_below_a_members_own_tariff_does_not_flag(self):
+        """Fix round 1 (reviewer): a pool whose ``select_count`` room is
+        smaller than one member's own tariff (a 2-mark option in a 2-mark
+        question that already spent 1 mark on an independent point) must
+        cap without flagging, the same "cap only" rule as the either/or
+        case."""
+        from lemely.core.loose_schemas import AnswerPoint
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question(
+            [
+                AnswerPoint(id="i1", point="i1", marks=1),
+                AnswerPoint(id="o0", point="o0", marks=2, is_optional=True),
+                AnswerPoint(id="o1", point="o1", marks=2, is_optional=True),
+            ],
+            marks=2,
+            select_count=1,
+        )
+        verdicts = [
+            PointVerdict(point_id="i1", verdict="awarded", evidence_span="i1"),
+            PointVerdict(point_id="o0", verdict="awarded", evidence_span="o0"),
+        ]
+        cq = _build_ai_corrected(q, "i1 o0", self._mark(verdicts, claimed=2), equivalence_gate=True)
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
+
+    def test_coverage_check_reads_additive_not_capped(self):
+        """Fix round 1 (reviewer, minor): pins the :func:`_build_ai_corrected_from_verdicts`
+        coverage check to ``totals.additive``, not ``totals.capped`` --
+        mutating that one name back to ``capped`` must turn this test red.
+        Both halves of the either/or pair are awarded (additive sum 2, at
+        the question's maximum) and the marker's own claim (2) matches that
+        additive sum, so no coverage mismatch exists; using ``capped`` (1,
+        because the group caps to 1) instead would wrongly see the marker's
+        claim (2) as exceeding an under-covering total and flag review."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        verdicts = [
+            PointVerdict(point_id="p1", verdict="awarded", evidence_span="gravity"),
+            PointVerdict(point_id="p1a", verdict="awarded", evidence_span="weight"),
+            PointVerdict(point_id="p2", verdict="withheld", evidence_span=""),
+        ]
+        cq = _build_ai_corrected(
+            self._either_or(),
+            "gravity and weight",
+            self._mark(verdicts, claimed=2),
+            equivalence_gate=True,
+        )
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
+
     def test_end_to_end_through_correct_paper(self):
         scheme = MarkScheme.model_validate(
             {
