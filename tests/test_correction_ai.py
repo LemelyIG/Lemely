@@ -2204,6 +2204,183 @@ class PointVerdictBuildTests(unittest.TestCase):
             PointVerdict(point_id="p1", verdict="awarded", evidence_box=None)
 
 
+class GroupCappedVerdictTotalTests(unittest.TestCase):
+    """Spec 2026-09-26 §1 (#1): the verdict path caps each scheme group at
+    its maximum -- an either/or pair is worth its best member, an "any N
+    from" pool is worth its N largest tariffs -- and does NOT flag review
+    when the cap binds (user decision: cap only)."""
+
+    def _question(self, points, marks=2, select_count=None):
+        from lemely.core.loose_schemas import Question, QuestionType
+
+        return Question.model_construct(
+            id="7",
+            marks=marks,
+            type=QuestionType.EXPLANATION,
+            answer_points=points,
+            select_count=select_count,
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+
+    def _either_or(self):
+        from lemely.core.loose_schemas import AnswerPoint
+
+        return self._question(
+            [
+                AnswerPoint(id="p1", point="gravity", marks=1),
+                AnswerPoint(id="p1a", point="weight", marks=1, is_alternative=True),
+                AnswerPoint(id="p2", point="speed", marks=1),
+            ]
+        )
+
+    def _mark(self, verdicts, claimed=1, confidence=0.95):
+        from lemely.core.schemas import AIMarkResponse
+
+        return AIMarkResponse(
+            awarded_marks=claimed,
+            confidence=confidence,
+            matched_point_ids=[],
+            feedback="fb",
+            point_verdicts=verdicts,
+        )
+
+    def test_either_or_alternatives_cap_at_the_group_maximum_without_a_flag(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        verdicts = [
+            PointVerdict(point_id="p1", verdict="awarded", evidence_span="gravity"),
+            PointVerdict(point_id="p1a", verdict="awarded", evidence_span="weight"),
+            PointVerdict(point_id="p2", verdict="withheld", evidence_span=""),
+        ]
+        cq = _build_ai_corrected(
+            self._either_or(), "gravity and weight", self._mark(verdicts), equivalence_gate=True
+        )
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
+
+    def test_any_n_from_pool_caps_at_select_count(self):
+        from lemely.core.loose_schemas import AnswerPoint
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question(
+            [
+                AnswerPoint(id=f"o{i}", point=f"opt {i}", marks=1, is_optional=True)
+                for i in range(4)
+            ],
+            marks=2,
+            select_count=2,
+        )
+        verdicts = [
+            PointVerdict(point_id=f"o{i}", verdict="awarded", evidence_span=f"opt {i}")
+            for i in range(3)
+        ] + [PointVerdict(point_id="o3", verdict="withheld", evidence_span="")]
+        cq = _build_ai_corrected(
+            q, "opt 0 opt 1 opt 2", self._mark(verdicts, claimed=2), equivalence_gate=True
+        )
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertFalse(cq.needs_teacher_review)
+
+    def test_group_cap_is_order_independent(self):
+        import random
+
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        verdicts = [
+            PointVerdict(point_id="p2", verdict="withheld", evidence_span=""),
+            PointVerdict(point_id="p1a", verdict="awarded", evidence_span="weight"),
+            PointVerdict(point_id="p1", verdict="awarded", evidence_span="gravity"),
+        ]
+        totals = set()
+        for seed in range(5):
+            shuffled = list(verdicts)
+            random.Random(seed).shuffle(shuffled)
+            cq = _build_ai_corrected(
+                self._either_or(), "gravity and weight", self._mark(shuffled), equivalence_gate=True
+            )
+            totals.add((cq.awarded_marks, cq.needs_teacher_review))
+        self.assertEqual(totals, {(1, False)})
+
+    def test_marker_claim_above_the_additive_sum_still_trips_coverage(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        verdicts = [
+            PointVerdict(point_id="p1", verdict="awarded", evidence_span="gravity"),
+            PointVerdict(point_id="p2", verdict="withheld", evidence_span=""),
+        ]
+        cq = _build_ai_corrected(
+            self._either_or(), "gravity", self._mark(verdicts, claimed=2), equivalence_gate=True
+        )
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("may not fully describe", cq.review_reason or "")
+
+    def test_end_to_end_through_correct_paper(self):
+        scheme = MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 4,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2020,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 2,
+                    "scheme_format": "point_based",
+                },
+                "questions": [
+                    {
+                        "id": "1",
+                        "marks": 2,
+                        "type": "explanation",
+                        "answer_points": [
+                            {"id": "p1", "point": "gravity", "marks": 1},
+                            {"id": "p1a", "point": "weight", "marks": 1, "is_alternative": True},
+                            {"id": "p2", "point": "speed", "marks": 1},
+                        ],
+                    }
+                ],
+            }
+        )
+        extracted = ExtractedAnswers(
+            paper_id="t",
+            source_scan="s.pdf",
+            answers=[ExtractedAnswer(question_id="1", answer="gravity and weight", confidence=0.9)],
+        )
+        body = {
+            "awarded_marks": 1,
+            "confidence": 0.95,
+            "matched_point_ids": [],
+            "feedback": "ok",
+            "point_verdicts": [
+                {"point_id": "p1", "verdict": "awarded", "evidence_span": "gravity", "note": ""},
+                {"point_id": "p1a", "verdict": "awarded", "evidence_span": "weight", "note": ""},
+                {"point_id": "p2", "verdict": "withheld", "evidence_span": "", "note": ""},
+            ],
+        }
+        resp = MagicMock(
+            text=json.dumps(body),
+            candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
+            usage_metadata=MagicMock(prompt_token_count=10, candidates_token_count=20),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            client = _client_with_seq(tmp, [resp])
+            result = correct_paper(
+                scheme,
+                extracted,
+                gemini_client=client,
+                options=MarkingOptions(equivalence_gate=True),
+            )
+        q = result.questions[0]
+        self.assertEqual(
+            (q.awarded_marks, q.needs_teacher_review, q.review_reason), (1, False, None)
+        )
+
+
 class DuplicatePointVerdictTests(unittest.TestCase):
     """Task #30 review MUST-FIX 1: a repeated ``point_id`` in
     ``point_verdicts`` used to inflate marks (``_awarded_from_verdicts``

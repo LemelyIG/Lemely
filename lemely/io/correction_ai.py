@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping
-from typing import Literal
+from collections.abc import Mapping, Sequence
+from typing import Literal, NamedTuple
 
 import structlog
 
@@ -19,6 +19,7 @@ from lemely.core.loose_schemas import (
     Question,
     QuestionType,
 )
+from lemely.core.point_groups import group_points
 from lemely.core.schemas import (
     REVIEW_CONFIDENCE_THRESHOLD,
     AIMarkResponse,
@@ -607,6 +608,7 @@ def _check_coherence(
     awarded_marks: int,
     *,
     point_verdicts: list[PointVerdict] | None = None,
+    groups: Sequence[tuple[str | None, int | None]] | None = None,
 ) -> str | None:
     """Coherence check (M1.5, #40).
 
@@ -646,14 +648,13 @@ def _check_coherence(
        resolve against), so this falls out of the same code path rather than
        needing a separate branch.
     2. ``awarded_marks`` falls outside the RANGE of marks the matched points
-       can imply. ``is_alternative``/``is_optional`` points are non-additive:
-       a matched OR-group contributes at least its single highest-value
-       member and at most the sum of all matched members of that group.
-       ``AnswerPoint`` carries no group identifier, so the number of distinct
-       OR-groups among the matched non-additive points is unknowable from the
-       data alone — a global point estimate (e.g. "the max of all of them")
-       would wrongly cap a legitimate "any 3 from 5" award or two independent
-       OR-groups down to one point's marks. Instead:
+       can imply. ``is_alternative``/``is_optional`` points are non-additive.
+       On the verdict path the caller passes ``groups`` -- the
+       ``(group_key, cap)`` per scheme point from
+       :func:`lemely.core.point_groups.group_points` -- and each matched
+       group contributes at least its largest matched tariff and at most
+       ``min(cap, sum of matched tariffs)``. The legacy path passes no
+       groups and keeps the global rule (spec 2026-09-26 §1, out of scope):
 
        ``implied_min = sum(primary marks) + max(non-additive marks, default 0)``
        ``implied_max = sum(primary marks) + sum(non-additive marks)``
@@ -702,11 +703,30 @@ def _check_coherence(
         return None
 
     matched_points = [points_by_id[pid] for pid in matched_point_ids]
-    primary = [p for p in matched_points if not p.is_alternative and not p.is_optional]
-    non_additive = [p for p in matched_points if p.is_alternative or p.is_optional]
-    primary_sum = sum(p.marks for p in primary)
-    implied_min = primary_sum + max((p.marks for p in non_additive), default=0)
-    implied_max = primary_sum + sum(p.marks for p in non_additive)
+    if groups is not None:
+        scheme_points, _ = _scheme_groups(question)
+        group_of = {
+            point.id: (key, cap) for point, (key, cap) in zip(scheme_points, groups, strict=True)
+        }
+        implied_min = 0
+        implied_max = 0
+        by_group: dict[str, tuple[int, list[int]]] = {}
+        for p in matched_points:
+            key, cap = group_of.get(p.id, (None, None))
+            if key is None:
+                implied_min += p.marks
+                implied_max += p.marks
+            else:
+                by_group.setdefault(key, (cap or 0, []))[1].append(p.marks)
+        for cap, tariffs in by_group.values():
+            implied_min += max(tariffs)
+            implied_max += min(cap, sum(tariffs))
+    else:
+        primary = [p for p in matched_points if not p.is_alternative and not p.is_optional]
+        non_additive = [p for p in matched_points if p.is_alternative or p.is_optional]
+        primary_sum = sum(p.marks for p in primary)
+        implied_min = primary_sum + max((p.marks for p in non_additive), default=0)
+        implied_max = primary_sum + sum(p.marks for p in non_additive)
     if not (implied_min <= awarded_marks <= implied_max):
         return (
             f"awarded {awarded_marks} mark(s) but {COHERENCE_TRIGGER_MARKER} implies "
@@ -816,16 +836,58 @@ def _check_point_evidence(
     return None
 
 
+class _VerdictTotals(NamedTuple):
+    """What the verdict path derived from a marker's ``point_verdicts``.
+
+    ``capped`` is the mark the student gets: independent points add their
+    tariff, each scheme group adds ``min(group cap, awarded tariffs in the
+    group)``, and the whole is capped at ``question.marks``. ``additive`` is
+    the plain sum the coverage check compares the marker's own claim against
+    (spec 2026-09-26 §1: a marker that awarded both halves of an either/or
+    and claimed 2 must not be reported as under-described answer_points).
+    """
+
+    capped: int
+    additive: int
+    matched_point_ids: list[str]
+
+
+def _dedupe_scheme_points(points: list[AnswerPoint]) -> list[AnswerPoint]:
+    """First occurrence of a repeated scheme point id wins.
+
+    ``derive_point_rows`` applies the same rule to the same list, so both
+    sides read the same group structure.
+    """
+    kept: list[AnswerPoint] = []
+    seen: set[str] = set()
+    for point in points:
+        if point.id in seen:
+            continue
+        seen.add(point.id)
+        kept.append(point)
+    return kept
+
+
+def _scheme_groups(
+    question: Question,
+) -> tuple[list[AnswerPoint], list[tuple[str | None, int | None]]]:
+    """The deduplicated scheme points and their ``(group_key, cap)`` pairs."""
+    points = _dedupe_scheme_points(list(question.answer_points))
+    groups = group_points(points, total=question.marks, select_count=question.select_count)
+    return points, groups
+
+
 def _awarded_from_verdicts(
     question: Question, point_verdicts: list[PointVerdict]
-) -> tuple[int, list[str]]:
+) -> _VerdictTotals:
     """I6 (US-013): ``awarded_marks`` computed in Python from the verdicts.
 
-    Capped at ``question.marks`` -- the model no longer reports a trusted
-    total (see ``AIMarkResponse.point_verdicts``'s docstring). A plain sum
-    over ``point_id`` membership, which is order-independent by
-    construction: shuffling ``point_verdicts`` cannot change the result
-    (I6 acceptance 1's metamorphic property).
+    Group-capped (spec 2026-09-26 §1): an either/or pair is worth its best
+    member and an "any N from" pool its N largest tariffs, exactly as
+    :func:`lemely.core.point_groups.group_points` records them for the
+    ledger and as the self-review write path enforces them. The groups come
+    from scheme order, so the result cannot depend on the order of the
+    verdicts (I6 acceptance 1's metamorphic property still holds).
 
     Unresolved (dangling) point ids are excluded from the sum here -- the
     same dangling id is separately caught as a structural violation by
@@ -834,19 +896,10 @@ def _awarded_from_verdicts(
     A repeated ``point_id`` is deduplicated first, via
     ``dedupe_point_verdicts`` (:mod:`lemely.core.schemas`) -- the same rule
     ``derive_point_rows`` (:mod:`lemely.db.question_points`) applies to the
-    same list, so the two can no longer disagree about a repeat. Without
-    this, a repeated ``verdict="awarded"`` point summed its ``marks`` once
-    per occurrence.
-
-    Emits ``point_verdict_duplicate_dropped`` for each dropped duplicate.
-    ``lemely.db.attempt_repo._warn_if_point_verdicts_were_deduplicated`` emits
-    a second, differently-shaped record for the SAME duplicate one layer
-    down, under the distinct name
-    ``point_verdict_duplicate_dropped_at_persist`` -- when this function ran
-    first (the normal path), that is a deliberate second record, not a bug;
-    see that function's docstring for why both are kept.
+    same list. Emits ``point_verdict_duplicate_dropped`` for each dropped
+    duplicate; ``lemely.db.attempt_repo`` emits a second, differently-shaped
+    record for the SAME duplicate one layer down, deliberately.
     """
-    points_by_id = {p.id: p for p in question.answer_points}
     kept, dropped = dedupe_point_verdicts(point_verdicts)
     if dropped:
         log = structlog.get_logger()
@@ -858,8 +911,26 @@ def _awarded_from_verdicts(
                 verdict=pv.verdict,
             )
     matched_point_ids = [pv.point_id for pv in kept if pv.verdict == "awarded"]
-    total = sum(points_by_id[pid].marks for pid in matched_point_ids if pid in points_by_id)
-    return min(total, question.marks), matched_point_ids
+    awarded_ids = set(matched_point_ids)
+    points, groups = _scheme_groups(question)
+    additive = 0
+    independent = 0
+    by_group: dict[str, tuple[int, int]] = {}  # key -> (cap, awarded tariff sum)
+    for point, (key, cap) in zip(points, groups, strict=True):
+        if point.id not in awarded_ids:
+            continue
+        additive += point.marks
+        if key is None:
+            independent += point.marks
+        else:
+            prev_cap, prev_sum = by_group.get(key, (cap or 0, 0))
+            by_group[key] = (prev_cap, prev_sum + point.marks)
+    grouped = sum(min(cap, tariff_sum) for cap, tariff_sum in by_group.values())
+    return _VerdictTotals(
+        capped=min(independent + grouped, question.marks),
+        additive=min(additive, question.marks),
+        matched_point_ids=matched_point_ids,
+    )
 
 
 #: I6 (US-013, D11): auto-added to feedback when a question earned full
@@ -956,17 +1027,23 @@ def _build_ai_corrected_from_verdicts(
        docstring -- no new enum member, no new trigger.
     5. ``mark.confidence < REVIEW_CONFIDENCE_THRESHOLD``.
     """
-    capped, matched_point_ids = _awarded_from_verdicts(question, mark.point_verdicts)
+    totals = _awarded_from_verdicts(question, mark.point_verdicts)
+    capped, matched_point_ids = totals.capped, totals.matched_point_ids
+    _, scheme_groups = _scheme_groups(question)
 
     coherence_reason = _check_coherence(
-        question, matched_point_ids, capped, point_verdicts=mark.point_verdicts
+        question,
+        matched_point_ids,
+        capped,
+        point_verdicts=mark.point_verdicts,
+        groups=scheme_groups,
     )
     coherence_mismatch = coherence_reason is not None
 
     coverage_reason: str | None = None
-    if capped < question.marks and mark.awarded_marks > capped:
+    if totals.additive < question.marks and mark.awarded_marks > totals.additive:
         coverage_reason = (
-            f"verdict-derived total {capped} is below the {question.marks}-mark "
+            f"verdict-derived total {totals.additive} is below the {question.marks}-mark "
             f"maximum but the marker's own claim ({mark.awarded_marks}) was higher -- "
             "this question's answer_points may not fully describe its marking scheme"
         )
