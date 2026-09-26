@@ -22,6 +22,7 @@ import {
   Megaphone,
   Gear,
   List,
+  Trash,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -49,6 +50,9 @@ import { ForwardArrow } from "@/components/ui/inline-arrow"
 // exports (not default), hence the `.then((m) => ({ default: m.X }))` shape.
 const Overview = lazy(() => import("./screens/Overview").then((m) => ({ default: m.Overview })))
 const Grading = lazy(() => import("./screens/Grading").then((m) => ({ default: m.Grading })))
+const RecentlyDeleted = lazy(() =>
+  import("./screens/RecentlyDeleted").then((m) => ({ default: m.RecentlyDeleted })),
+)
 const Review = lazy(() => import("./screens/Review").then((m) => ({ default: m.Review })))
 const ReviewItem = lazy(() => import("./screens/ReviewItem").then((m) => ({ default: m.ReviewItem })))
 const Classes = lazy(() => import("./screens/Classes").then((m) => ({ default: m.Classes })))
@@ -58,6 +62,9 @@ const ClassDetailLayout = lazy(() =>
 const ClassRoster = lazy(() => import("./screens/ClassRoster").then((m) => ({ default: m.ClassRoster })))
 const ClassAnalytics = lazy(() =>
   import("./screens/ClassAnalytics").then((m) => ({ default: m.ClassAnalytics })),
+)
+const ClassPapers = lazy(() =>
+  import("./screens/ClassPapers").then((m) => ({ default: m.ClassPapers })),
 )
 // D7.10 / Task 21 — the create-first-class step `teacherFirstClassRedirect`
 // (below) sends a zero-class teacher to. Lazy for the same reason as every
@@ -127,6 +134,7 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
   announcements: Megaphone,
   notifications: Bell,
   settings: Gear,
+  deleted: Trash,
 }
 
 /*
@@ -633,6 +641,11 @@ export const teacherRoute: RouteObject = {
       handle: { title: "Grading console", skeleton: "page-header" },
     },
     {
+      path: "deleted",
+      element: <RecentlyDeleted />,
+      handle: { title: "Recently deleted", skeleton: "list" },
+    },
+    {
       path: "review",
       element: <Review />,
       handle: { title: "Review queue", skeleton: "list" },
@@ -664,6 +677,11 @@ export const teacherRoute: RouteObject = {
           path: "analytics",
           element: <ClassAnalytics />,
           handle: { title: "Class analytics", skeleton: "page-header" },
+        },
+        {
+          path: "papers",
+          element: <ClassPapers />,
+          handle: { title: "Class papers", skeleton: "page-header" },
         },
       ],
     },
@@ -739,7 +757,9 @@ export const teacherRoute: RouteObject = {
         },
         {
           path: "notifications",
-          element: <NotificationSettingsSection />,
+          // R10: the only portal that shows `reviewWithdrawn` — it fires
+          // only for a teacher (Task 9's `_notify_withdrawn_reviewers`).
+          element: <NotificationSettingsSection showTeacherOnly />,
           handle: { title: "Notification settings", skeleton: "page-header" },
         },
         {

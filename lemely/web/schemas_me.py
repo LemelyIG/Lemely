@@ -21,8 +21,11 @@ class NotificationPreferencesDTO(ApiModel):
     One field per :class:`~lemely.db.models.enums.NotificationType` member,
     plus the quiet-hours pair. ``atRiskAlert`` is ``null`` for every role
     except teacher/parent (UI spec §G-12: "teacher/at-risk alerts (teacher
-    and parent only)") — ``lemely.web.routers.me`` decides the filtering;
-    this DTO just carries the optional value.
+    and parent only)"); ``reviewWithdrawn`` is ``null`` for every role but
+    teacher (Task 17, R10) — it fires only for a teacher whose review item a
+    student's own deletion withdrew (Task 9's ``_notify_withdrawn_reviewers``
+    never targets any other role). ``lemely.web.routers.me`` decides the
+    filtering for both; this DTO just carries the optional values.
     """
 
     gradeReady: bool
@@ -30,6 +33,7 @@ class NotificationPreferencesDTO(ApiModel):
     streakWarning: bool
     studyPlanReminder: bool
     atRiskAlert: bool | None = None
+    reviewWithdrawn: bool | None = None
     quietHoursStart: time | None = None
     quietHoursEnd: time | None = None
 
@@ -94,6 +98,7 @@ class NotificationPreferencesUpdateDTO(ApiModel):
     streakWarning: bool | None = None
     studyPlanReminder: bool | None = None
     atRiskAlert: bool | None = None
+    reviewWithdrawn: bool | None = None
     quietHoursStart: time | None = None
     quietHoursEnd: time | None = None
 

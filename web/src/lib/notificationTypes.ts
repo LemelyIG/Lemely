@@ -9,15 +9,15 @@
  */
 
 /**
- * The five `NotificationType` values the backend can send. Kept as a union
+ * The six `NotificationType` values the backend can send. Kept as a union
  * rather than a `string` so a screen that routes on the type gets a compile
- * error when the backend grows a sixth, instead of silently falling through to
- * a default.
+ * error when the backend grows a seventh, instead of silently falling through
+ * to a default.
  *
  * UI spec §G-12 also lists a "weekly summary" toggle. There is deliberately no
- * `weekly_summary` member here: the enum has exactly five values, no column, no
- * sender and no row, and offering a switch that gates nothing is what UI spec
- * §1.4 forbids.
+ * `weekly_summary` member here: the enum has no matching column, no sender
+ * and no row, and offering a switch that gates nothing is what UI spec §1.4
+ * forbids.
  */
 export type NotificationType =
   | "grade_ready"
@@ -25,6 +25,7 @@ export type NotificationType =
   | "streak_warning"
   | "study_plan_reminder"
   | "at_risk_alert"
+  | "review_withdrawn"
 
 export interface Notification {
   notificationId: string

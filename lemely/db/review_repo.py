@@ -105,6 +105,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import sqlalchemy as sa
 import structlog
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -117,6 +118,7 @@ from lemely.core.analytics import (
 )
 from lemely.core.schemas import AccuracyReport, CorrectedQuestion, ExamMetadata
 from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
+from lemely.db.models.deletion import ClassPaperExclusion
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
     AttemptOrigin,
@@ -347,7 +349,9 @@ class ReviewService:
         query's result set, not a narrower query, so ``total`` and ``rows``
         can never fall out of sync with each other or with the tenant scope.
         """
-        visible = self._visible_class_map(caller_id, caller_role, class_id_filter=class_id)
+        visible, student_classes = self._visible_rosters(
+            caller_id, caller_role, class_id_filter=class_id
+        )
         reason_enum: ReviewReason | None = None
         if reason is not None:
             try:
@@ -372,7 +376,17 @@ class ReviewService:
                 )
                 if reason_enum is not None:
                     stmt = stmt.where(ReviewQueueItem.reason == reason_enum)
+                unshared_from = _unshared_from(session, student_classes)
                 for item, attempt, qr in session.execute(stmt).all():
+                    # R3/R8: a read filter, never a status write — `withdrawn`
+                    # means only "the student deleted it". The item leaves
+                    # this caller's queue once its paper is unshared from
+                    # *every* one of their classes that rosters the student
+                    # (the one class, when `class_id` narrows the listing);
+                    # still shared via any of them, it stays. Resharing
+                    # restores it with its original `created_at`.
+                    if student_classes[attempt.user_id] <= unshared_from.get(attempt.id, set()):
+                        continue
                     class_id_, class_name, display_name = visible[attempt.user_id]
                     results.append(
                         _to_row(item, attempt, qr, class_id_, class_name, display_name, now=now)
@@ -619,8 +633,15 @@ class ReviewService:
         caller_uuid = _as_uuid(caller_id)
         visible = self._visible_class_map(caller_id, caller_role)
         with self._sessionmaker() as session, session.begin():
+            # Locked, as in `resolve`: a close must serialize with a deletion
+            # withdrawing the same item.
             item, attempt, qr, paper = self._find_any_item(
-                session, item_id, visible, caller_id=caller_id, caller_role=caller_role
+                session,
+                item_id,
+                visible,
+                caller_id=caller_id,
+                caller_role=caller_role,
+                for_update=True,
             )
             if item.reason not in (ReviewReason.plagiarism_flag, ReviewReason.ai_detection_flag):
                 raise ReviewValidationError(
@@ -662,8 +683,12 @@ class ReviewService:
         approved: list[uuid.UUID] = []
         skipped: list[BulkApproveSkip] = []
         now = datetime.now(UTC)
-        with self._sessionmaker() as session, session.begin():
-            for item_uuid in item_ids:
+        for item_uuid in item_ids:
+            # One transaction per item, so a batch holds at most one item row
+            # lock at a time. A paper deletion withdraws its items in one
+            # multi-row UPDATE; a batch holding item X while waiting on Y,
+            # against a deletion holding Y and waiting on X, would deadlock.
+            with self._sessionmaker() as session, session.begin():
                 # Reuse the single-item loader so both sources are checked by
                 # exactly the rule their own tenancy defines, then translate
                 # its exceptions into this call's skip reasons — a batch must
@@ -681,9 +706,25 @@ class ReviewService:
                 if item.status != ReviewStatus.open:
                     skipped.append(BulkApproveSkip(item_id=item_uuid, reason="already_closed"))
                     continue
-                item.status = ReviewStatus.resolved
-                item.resolved_by = caller_uuid
-                item.resolved_at = now
+                # Conditional, never a write-back of the status read above: a
+                # deletion may withdraw the item after that read. Postgres
+                # re-checks `status` once the row lock is ours, so a withdrawn
+                # item is skipped rather than turned into a teacher closure —
+                # which for an integrity item would lift the student's own
+                # D8 hold (R4a).
+                closed = session.scalars(
+                    sa.update(ReviewQueueItem)
+                    .where(
+                        ReviewQueueItem.id == item_uuid,
+                        ReviewQueueItem.status == ReviewStatus.open,
+                    )
+                    .values(status=ReviewStatus.resolved, resolved_by=caller_uuid, resolved_at=now)
+                    .returning(ReviewQueueItem.id),
+                    execution_options={"synchronize_session": False},
+                ).one_or_none()
+                if closed is None:
+                    skipped.append(BulkApproveSkip(item_id=item_uuid, reason="already_closed"))
+                    continue
                 approved.append(item_uuid)
         return BulkApproveResult(approved=approved, skipped=skipped)
 
@@ -703,7 +744,26 @@ class ReviewService:
         roster-union tenancy rule as
         ``lemely.web.routers.teacher._visible_students`` (see module docstring).
         """
+        mapping, _ = self._visible_rosters(caller_id, caller_role, class_id_filter=class_id_filter)
+        return mapping
+
+    def _visible_rosters(
+        self,
+        caller_id: uuid.UUID | str,
+        caller_role: Role | str,
+        *,
+        class_id_filter: uuid.UUID | str | None = None,
+    ) -> tuple[dict[uuid.UUID, tuple[uuid.UUID, str, str]], dict[uuid.UUID, set[uuid.UUID]]]:
+        """:meth:`_visible_class_map`, plus every visible class each student is in.
+
+        The first map keeps one display class per student (the last one
+        listed, exactly as before). The second holds the whole set — what
+        :meth:`list_queue`'s R8 unshare filter needs, since a student in two
+        of the caller's classes can be unshared from one and not the other.
+        One roster pass builds both.
+        """
         mapping: dict[uuid.UUID, tuple[uuid.UUID, str, str]] = {}
+        student_classes: dict[uuid.UUID, set[uuid.UUID]] = {}
         rows = self._class_service.list_classes(caller_id, caller_role)
         if class_id_filter is not None:
             class_uuid = _as_uuid(class_id_filter)
@@ -711,7 +771,8 @@ class ReviewService:
         for row in rows:
             for entry in self._class_service.roster(caller_id, caller_role, row.class_id):
                 mapping[entry.student_id] = (row.class_id, row.name, entry.display_name)
-        return mapping
+                student_classes.setdefault(entry.student_id, set()).add(row.class_id)
+        return mapping, student_classes
 
     def _find_any_item(
         self,
@@ -749,14 +810,34 @@ class ReviewService:
             role = _as_role(caller_role)
             if role is Role.platform_admin:
                 raise ReviewOwnershipError(f"Caller may not access review item {item_uuid}")
-            paper = session.scalars(
-                select(TeacherPaper).where(
-                    TeacherPaper.id == item.teacher_paper_id,
-                    teacher_paper_visible(_as_uuid(caller_id), role),
+            # ``for_update`` locks the paper row: the lock a teacher's delete
+            # takes before it withdraws this paper's items. If the delete
+            # commits first, this re-read sees the paper gone and the close is
+            # refused; otherwise the delete waits and skips a closed item.
+            stmt = select(TeacherPaper).where(
+                TeacherPaper.id == item.teacher_paper_id,
+                teacher_paper_visible(_as_uuid(caller_id), role),
+            )
+            if for_update:
+                stmt = stmt.with_for_update(of=TeacherPaper).execution_options(
+                    populate_existing=True
                 )
-            ).one_or_none()
+            paper = session.scalars(stmt).one_or_none()
             if paper is None:
                 raise ReviewOwnershipError(f"Caller may not access review item {item_uuid}")
+            if for_update:
+                # The item was read before the lock; its status must be the
+                # one committed by whoever held the paper before us. A
+                # regrade's `finish` deletes a paper's open items under that
+                # same lock, so the item may be gone.
+                fresh = session.scalars(
+                    select(ReviewQueueItem)
+                    .where(ReviewQueueItem.id == item_uuid)
+                    .execution_options(populate_existing=True)
+                ).one_or_none()
+                if fresh is None:
+                    raise ReviewNotFoundError(f"Unknown review item: {item_uuid}")
+                item = fresh
             return item, None, None, paper
         # ``for_update`` takes the same attempt-then-question lock, in the same
         # order, that ``SelfReviewService._owned_question`` takes. Mutual
@@ -790,6 +871,26 @@ class ReviewService:
     def _boundaries_for(self, attempt: Attempt) -> tuple[dict[str, float], BoundarySource]:
         """Delegates to :func:`boundaries_for`."""
         return boundaries_for(attempt, self._boundaries)
+
+
+def _unshared_from(
+    session: Session, student_classes: dict[uuid.UUID, set[uuid.UUID]]
+) -> dict[uuid.UUID, set[uuid.UUID]]:
+    """Map each attempt to the caller's classes it is unshared from (D9, R8).
+
+    One query over every class in ``student_classes``, not one per student
+    or per item.
+    """
+    class_ids = set().union(*student_classes.values())
+    if not class_ids:
+        return {}
+    stmt = select(ClassPaperExclusion.attempt_id, ClassPaperExclusion.class_id).where(
+        ClassPaperExclusion.class_id.in_(class_ids)
+    )
+    unshared: dict[uuid.UUID, set[uuid.UUID]] = {}
+    for attempt_id, class_id in session.execute(stmt).all():
+        unshared.setdefault(attempt_id, set()).add(class_id)
+    return unshared
 
 
 def recompute_attempt_totals(
@@ -991,6 +1092,16 @@ def _console_question(
     return next((q for q in report.correction.questions if q.question_id == question_id), None)
 
 
+def console_paper_label(paper: TeacherPaper) -> str:
+    """The console's name for ``paper``, parsing its stored report for the metadata.
+
+    For a caller holding one paper rather than a queue page, such as the
+    teacher's recently-deleted list, so it reads the same as the card and the
+    queue row.
+    """
+    return _console_paper_label(paper, _console_report(paper))
+
+
 def _console_paper_label(paper: TeacherPaper, report: AccuracyReport | None) -> str:
     """The console's own name for a paper — its identity line in the queue.
 
@@ -1160,6 +1271,7 @@ __all__ = [
     "ReviewService",
     "ReviewValidationError",
     "boundaries_for",
+    "console_paper_label",
     "recompute_attempt_totals",
     "recompute_weakness_records",
 ]

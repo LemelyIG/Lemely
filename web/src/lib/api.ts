@@ -28,6 +28,20 @@ export class ApiError extends Error {
    */
   detail?: unknown
   /**
+   * The full parsed JSON error body, when the response was JSON — additive
+   * next to `detail`, never a replacement for it (Task 14 review, Critical
+   * 1). `detail` stays exactly what it always was (the `detail` key alone,
+   * unwrapped), because ~10 existing callers already read it as that. This
+   * exists for the body shapes FastAPI returns *flat*, where a sibling key
+   * beside `detail` carries the rest of the answer — the paper-deletion 409
+   * hold is `{"detail": "...", "deletableFrom": "..."}` (design §8: no
+   * reason, just the string and the date), not `{"detail": {...}}`. A caller
+   * that only had `detail` could see the sentence but never the date it
+   * refers to. `undefined` under the same conditions `detail` is: the body
+   * wasn't JSON, or was empty.
+   */
+  body?: unknown
+  /**
    * Seconds to wait before retrying, parsed from a 429 (or 503)'s
    * `Retry-After` header via `parseRetryAfter` (`lib/routeError.ts`) — the
    * live countdown `RouteErrorScreen`/`PortalErrorFallback` show for
@@ -37,11 +51,18 @@ export class ApiError extends Error {
    * test in this codebase that builds one by hand).
    */
   retryAfter?: number
-  constructor(status: number, message: string, detail?: unknown, retryAfter?: number) {
+  constructor(
+    status: number,
+    message: string,
+    detail?: unknown,
+    retryAfter?: number,
+    body?: unknown,
+  ) {
     super(message)
     this.status = status
     this.detail = detail
     this.retryAfter = retryAfter
+    this.body = body
   }
 }
 
@@ -198,17 +219,32 @@ async function tokenForRequest(): Promise<string | undefined> {
  * `${status} ${statusText}` — the same fallback a body that isn't JSON, or
  * isn't present at all, gets.
  */
-function parseErrorBody(
+/**
+ * Exported (Task 14 review, Critical 1) so a caller-facing test can prove a
+ * refusal renders through the REAL parsing path — the exact function
+ * `request()`/`streamActivity()`/`uploadWithProgress()` all call on a
+ * non-OK response — rather than a hand-built `ApiError` that could pass
+ * while the real parser still dropped the field a test never exercised.
+ */
+export function parseErrorBody(
   status: number,
   statusText: string,
   bodyText: string,
-): { message: string; detail?: unknown } {
+): { message: string; detail?: unknown; body?: unknown } {
   let message = `${status} ${statusText}`
   let detail: unknown
+  let body: unknown
   try {
-    const body: unknown = JSON.parse(bodyText)
-    if (body && typeof body === "object" && "detail" in body) {
-      detail = (body as { detail: unknown }).detail
+    const parsed: unknown = JSON.parse(bodyText)
+    if (parsed && typeof parsed === "object") {
+      // Kept separate from `detail` below (Task 14 review, Critical 1):
+      // this is the WHOLE body, unwrapped, for a caller that needs a
+      // sibling key FastAPI sent flat next to `detail` — `detail` itself is
+      // unchanged, still exactly the `detail` key's own value.
+      body = parsed
+    }
+    if (parsed && typeof parsed === "object" && "detail" in parsed) {
+      detail = (parsed as { detail: unknown }).detail
       if (typeof detail === "string" && detail.length > 0) {
         message = detail
       }
@@ -216,7 +252,7 @@ function parseErrorBody(
   } catch {
     // Body wasn't JSON (or empty) — keep the generic status text.
   }
-  return { message, detail }
+  return { message, detail, body }
 }
 
 export async function request<T>(
@@ -265,12 +301,12 @@ export async function request<T>(
       // real backend detail thrown away, not just here. Falls back to the
       // status text when the body isn't JSON or carries no `detail` string
       // (e.g. a 204, or a non-FastAPI failure upstream).
-      const { message, detail } = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
+      const { message, detail, body } = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
       // `Retry-After` matters here specifically because this is the one path
       // a 429 or a 503 from every ordinary API call comes through — see the
       // field's own doc on `ApiError` above.
       const retryAfter = parseRetryAfter(res.headers.get("Retry-After"), new Date())
-      throw new ApiError(res.status, message, detail, retryAfter ?? undefined)
+      throw new ApiError(res.status, message, detail, retryAfter ?? undefined, body)
     }
     // A 204 (e.g. `DELETE /classes/{id}`) has no body — `res.json()` would
     // throw on the empty string. `T` is `void` at every such call site.
@@ -360,9 +396,9 @@ export async function* streamActivity(
    * `ApiError.detail` must get the same shape from all three.
    */
   if (!res.ok) {
-    const { message, detail } = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
+    const { message, detail, body } = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
     const retryAfter = parseRetryAfter(res.headers.get("Retry-After"), new Date())
-    throw new ApiError(res.status, message, detail, retryAfter ?? undefined)
+    throw new ApiError(res.status, message, detail, retryAfter ?? undefined, body)
   }
   if (!res.body) return
   const reader = res.body.getReader()
@@ -589,9 +625,9 @@ async function uploadOnce<T>(
     if (renewed) result = await sendXhr(path, form, renewed, onProgress, signal, headers)
   }
   if (result.status < 200 || result.status >= 300) {
-    const { message, detail } = parseErrorBody(result.status, result.statusText, result.text)
+    const { message, detail, body } = parseErrorBody(result.status, result.statusText, result.text)
     const retryAfter = parseRetryAfter(result.getHeader("Retry-After"), new Date())
-    throw new ApiError(result.status, message, detail, retryAfter ?? undefined)
+    throw new ApiError(result.status, message, detail, retryAfter ?? undefined, body)
   }
   // Same 204 special-case as `request()` — `JSON.parse("")` would throw.
   if (result.status === 204) return undefined as T

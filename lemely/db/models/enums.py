@@ -170,6 +170,14 @@ class ReviewStatus(enum.Enum):
     open = "open"
     resolved = "resolved"
     dismissed = "dismissed"
+    withdrawn = "withdrawn"
+    """The subject of the review went away — the student deleted the paper.
+
+    Distinct from ``dismissed``, which is a teacher's judgement and stamps
+    ``resolved_by``. Recording a student's deletion as ``dismissed`` would lie
+    in the audit column and make every dismissed-by-teacher metric count
+    deletions (design 2026-09-22 §6).
+    """
 
 
 class ReviewReason(enum.Enum):
@@ -190,6 +198,7 @@ class NotificationType(enum.Enum):
     streak_warning = "streak_warning"
     study_plan_reminder = "study_plan_reminder"
     at_risk_alert = "at_risk_alert"
+    review_withdrawn = "review_withdrawn"
 
 
 class XpSource(enum.Enum):

@@ -37,6 +37,7 @@ export interface NavItem {
     | "announcements"
     | "notifications"
     | "settings"
+    | "deleted"
   /** Index route match (Overview lives at /teacher). */
   end?: boolean
   /** A live count rendered beside the label. `"unread-notifications"` is the
@@ -85,6 +86,9 @@ export const navItems: NavItem[] = [
   // real active state belongs beside the rest of this teacher's sections
   // rather than set apart as an account-level afterthought.
   { to: "/teacher/settings", label: "Settings", icon: "settings" },
+  // R2/D4: the same full recovery surface the student portal gives its own
+  // deletion flow, not a hidden safety net reachable only from a toast.
+  { to: "/teacher/deleted", label: "Recently deleted", icon: "deleted" },
 ]
 
 /* ── Breadcrumb trail (P3.1 / DECISION D1.5) ─────────────────────────────── */
@@ -163,6 +167,16 @@ export function resolveTrail(pathname: string): TrailCrumb[] {
   const classDetail = path.match(/^\/teacher\/classes\/[^/]+$/)
   if (classDetail) {
     return [root, { label: "Classes", to: "/teacher/classes" }, { label: "This class" }]
+  }
+
+  const classPapers = path.match(/^\/teacher\/classes\/([^/]+)\/papers$/)
+  if (classPapers) {
+    return [
+      root,
+      { label: "Classes", to: "/teacher/classes" },
+      { label: "This class", to: `/teacher/classes/${classPapers[1]}` },
+      { label: "Papers" },
+    ]
   }
 
   // Reached by drilling in from a class roster or the at-risk list, and until

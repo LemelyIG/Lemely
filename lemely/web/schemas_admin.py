@@ -146,6 +146,10 @@ class PipelineHealthDTO(ApiModel):
     produced by the accuracy harness into ``reports/``, not by anything a request
     can reach, and a figure read off a file the screen cannot date would be worse
     than saying where it lives.
+
+    ``purgeBacklog`` is the count of attempts and console papers more than a
+    day past their purge cutoff and still present — a purge sweep that keeps
+    failing, made visible.
     """
 
     subjects: list[SubjectCoverageDTO]
@@ -155,6 +159,7 @@ class PipelineHealthDTO(ApiModel):
     uploadsByStatus: dict[str, int]
     recentFailedUploadIds: list[str]
     markingAccuracyNote: str
+    purgeBacklog: int
 
 
 # ── Schools (D7.8, spec §1.1: the account graph's missing first link) ─────────

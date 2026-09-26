@@ -331,6 +331,7 @@ module = [
   "lemely.web.schemas_devices",
   "lemely.web.schemas_student_classes",
   "lemely.web.schemas_student_self_review",
+  "lemely.web.schemas_student_deletion",
   "lemely.web.schemas_xp",
   "lemely.web.schemas_invites",
   "lemely.web.schemas_client_errors",

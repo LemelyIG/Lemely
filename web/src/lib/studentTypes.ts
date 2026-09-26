@@ -261,6 +261,38 @@ export interface QuestionResult extends BaseQuestionResult {
   questionResultId?: string | null
 }
 
+// ── Paper deletion (spec 2026-09-22) ──────────────────────────────────────
+
+/**
+ * One row of `GET /student/attempts/deleted` — one per upload (R7): deleting
+ * a paper deletes every marking run of that scan, and the list reflects that
+ * rather than surfacing a row per run.
+ */
+export interface DeletedPaper {
+  attemptId: string
+  paperLabel: string
+  subjectCode: string | null
+  deletedAt: string
+  restoreDeadline: string
+}
+
+/** Payload for `GET /student/attempts/deleted`. */
+export interface DeletedPapers {
+  papers: DeletedPaper[]
+  retentionDays: number
+}
+
+/**
+ * The flat 409 body `DELETE /student/attempts/{attemptId}` returns for an
+ * integrity hold (Task 8 amendment). `deletableFrom` is absent for the
+ * "only uploaded papers can be deleted" 409, which is not a hold and has
+ * nothing to count down to.
+ */
+export interface DeletionRefusal {
+  detail: string
+  deletableFrom?: string | null
+}
+
 // ── Standings ─────────────────────────────────────────────────────────────
 
 /** A subject's rank line (mirrors `SubjectRankDTO`). */

@@ -179,6 +179,34 @@ export interface SeedContract {
     activeSessionCount: number
     completedSessionCount: number
   }
+  /**
+   * Paper deletion (Task 18 e2e, spec 2026-09-22). A dedicated class plus
+   * three students backing `paper-deletion.spec.ts`'s eight design scenarios
+   * plus R7 — kept off every other class in this contract so none of their
+   * pinned numbers (teacher-journey.spec.ts's 3/69%/2, at-risk-flags.spec.ts's
+   * exact reason lists) move.
+   */
+  deletion: {
+    classId: string
+    className: string
+    /** Four distinct papers (paper_number 1..4, oldest to newest,
+     * `attemptIds[3]` the latest and the one seeded low-confidence — R3/R9). */
+    student: SeedAccount & { subjectCode: string; attemptIds: string[] }
+    /** One paper, plagiarism-flagged (D8's hold), recorded "now" so the hold
+     * is live. */
+    integrityStudent: SeedAccount & {
+      subjectCode: string
+      attemptId: string
+      reviewItemId: string
+    }
+    /** One scan marked twice: two attempts sharing one `upload_id` (R7). */
+    remarkStudent: SeedAccount & { attemptIds: string[] }
+    /** The `low_confidence` review-queue item on `student.attemptIds[3]`. */
+    reviewItemId: string
+    /** A teacher-console paper (uploaded directly, no student), for the R2
+     * console-deletion scenario. */
+    consolePaperId: string
+  }
   /** Phase-5 engagement preconditions (P5.11). */
   engagement: {
     /**

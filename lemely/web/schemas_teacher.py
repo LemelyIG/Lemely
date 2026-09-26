@@ -16,6 +16,7 @@ values; none of the mock's demo numbers are hard-coded.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import Field
@@ -104,6 +105,11 @@ class PaperSummaryDTO(ApiModel):
     D1.12), so rendering it put a bare 32-char uuid on every card.
 
     ``error`` is populated only for ``kind == "failed"`` and carries why.
+
+    ``canDelete`` is True only when the viewer uploaded this paper — it mirrors
+    the uploader-only rule enforced by ``DELETE /papers/{id}``, so the UI can
+    hide the Delete action on papers it cannot actually delete (a school or
+    platform admin viewing another teacher's paper).
     """
 
     id: str
@@ -116,6 +122,7 @@ class PaperSummaryDTO(ApiModel):
     needsReview: bool = False
     pageCount: int | None = None
     error: str | None = None
+    canDelete: bool = False
 
 
 class PaperListDTO(ApiModel):
@@ -527,6 +534,63 @@ class AcknowledgeAtRiskRequestDTO(ApiModel):
     note: str | None = None
 
 
+# ── Console paper deletion (R2, design §2.2) ────────────────────────────────
+
+
+class DeletedTeacherPaperDTO(ApiModel):
+    """One restorable console deletion, with its countdown (R2).
+
+    Mirrors ``DeletedPaperDTO`` (student side), less ``subjectCode`` and
+    ``attemptId``: a console paper is not an attempt and carries no subject
+    field of its own — ``label`` is its card name, the same string
+    ``PaperSummaryDTO.name`` uses.
+    """
+
+    paperId: str
+    label: str
+    deletedAt: datetime
+    restoreDeadline: datetime
+
+
+class DeletedTeacherPapersDTO(ApiModel):
+    """``GET /papers/deleted``'s whole payload (R2)."""
+
+    papers: list[DeletedTeacherPaperDTO]
+    retentionDays: int
+
+
+# ── Class-scoped paper visibility (controller addition, Task 13's review) ──
+
+
+class ClassPaperRowDTO(ApiModel):
+    """One rostered student's paper, as seen from a class (D9).
+
+    Exists so a teacher can see which papers are unshared from *this class's*
+    view rather than only being able to hide one — an unshare with no
+    matching visibility was Task 13's review finding: a student who leaves
+    and rejoins has an exclusion silently re-applied, and without this row a
+    teacher has no way to notice the paper is gone from this class's
+    analytics.
+    """
+
+    attemptId: str
+    studentId: str
+    studentName: str
+    subjectCode: str
+    paperNumber: int
+    paperVariant: int
+    sessionMonth: str
+    sessionYear: int | None
+    recordedAt: str
+    unshared: bool
+
+
+class ClassPapersDTO(ApiModel):
+    """``GET /classes/{class_id}/papers``'s whole payload."""
+
+    papers: list[ClassPaperRowDTO]
+
+
 __all__ = [
     "AcknowledgeAtRiskRequestDTO",
     "AtRiskAcknowledgementDTO",
@@ -534,7 +598,11 @@ __all__ = [
     "BatchTabDTO",
     "ClassDetailDTO",
     "ClassListDTO",
+    "ClassPaperRowDTO",
+    "ClassPapersDTO",
     "ClassSummaryDTO",
+    "DeletedTeacherPaperDTO",
+    "DeletedTeacherPapersDTO",
     "DetectedFieldDTO",
     "DistributionBarDTO",
     "GradingQueueDTO",

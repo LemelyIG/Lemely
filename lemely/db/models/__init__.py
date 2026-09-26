@@ -17,6 +17,7 @@ from lemely.db.models.auth_cooldowns import AuthCooldown
 from lemely.db.models.auth_tokens import AuthToken
 from lemely.db.models.billing import PlanTier, Subscription
 from lemely.db.models.catalogue import SubjectTopic, SyllabusPaper
+from lemely.db.models.deletion import ClassPaperExclusion
 from lemely.db.models.engagement import Streak, XpEvent
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
@@ -105,6 +106,7 @@ def import_all_models() -> None:
         auth_tokens,
         billing,
         catalogue,
+        deletion,
         engagement,
         flashcards,
         invites,
@@ -150,6 +152,7 @@ __all__ = [
     "BoundarySource",
     "CardSource",
     "ClassEnrollment",
+    "ClassPaperExclusion",
     "ComponentThreshold",
     "ConfidenceBand",
     "DeckOrigin",

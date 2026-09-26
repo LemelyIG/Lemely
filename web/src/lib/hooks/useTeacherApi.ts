@@ -19,10 +19,12 @@ import type {
   ClassDetail,
   ClassInviteCode,
   ClassList,
+  ClassPapers,
   ClassSummary,
   CreateClassRequest,
   CreateQuizAssignmentRequest,
   CreateQuizRequest,
+  DeletedTeacherPapers,
   DismissReviewRequest,
   EnrollStudentRequest,
   GenerateQuizQuestionsResponse,
@@ -953,6 +955,132 @@ export function useUploadScheme(): UseMutationResult<SchemeRow, Error, File> {
         method: "POST",
         body: form,
       })
+    },
+  })
+}
+
+// ── Console paper deletion (spec 2026-09-22, Task 17, R2) ─────────────────
+
+export const deletedTeacherPapersKey = ["teacher", "papers", "deleted"] as const
+
+/** `GET /papers/deleted` — this teacher's own restorable console deletions, newest first. */
+export function useDeletedTeacherPapers(): UseQueryResult<DeletedTeacherPapers, Error> {
+  return useQuery({
+    queryKey: deletedTeacherPapersKey,
+    queryFn: () => request<DeletedTeacherPapers>("/papers/deleted"),
+  })
+}
+
+/**
+ * `DELETE /papers/{paperId}` → 204. Refusals (404 not-yours/not-found, 410
+ * past the restore window) arrive as errors for the caller to render —
+ * never pre-signalled, never swallowed here.
+ *
+ * Invalidates the console list and the deleted list, mirroring
+ * `useDeletePaper` (student side): `usePapers`'s own optimistic removal is
+ * not trusted for anything beyond the one row that disappeared. Also
+ * invalidates the review queue and the overview — a withdrawn console item
+ * would otherwise stay visible in `["teacher", "review"]` (a stale row 403s
+ * on click) and the overview's "Need your eyes" count would stay stale.
+ */
+export function useDeleteTeacherPaper(): UseMutationResult<void, Error, { paperId: string }> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ paperId }: { paperId: string }) =>
+      request<void>(`/papers/${encodeURIComponent(paperId)}`, { method: "DELETE" }),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["teacher", "papers"] }),
+        queryClient.invalidateQueries({ queryKey: deletedTeacherPapersKey }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "review"] }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] }),
+      ]),
+  })
+}
+
+/**
+ * `POST /papers/{paperId}/restore` → 204; 410 once past the window, 404
+ * otherwise. Invalidates the same surfaces a delete does — a restore is a
+ * delete undone.
+ */
+export function useRestoreTeacherPaper(): UseMutationResult<void, Error, { paperId: string }> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ paperId }: { paperId: string }) =>
+      request<void>(`/papers/${encodeURIComponent(paperId)}/restore`, { method: "POST" }),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["teacher", "papers"] }),
+        queryClient.invalidateQueries({ queryKey: deletedTeacherPapersKey }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "review"] }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] }),
+      ]),
+  })
+}
+
+// ── Class-scoped paper visibility (controller addition, Task 13's review) ─
+
+/** `GET /classes/{classId}/papers` — every rostered paper, with unshared state visible. */
+export function useClassPapers(classId: string | undefined): UseQueryResult<ClassPapers, Error> {
+  return useQuery({
+    queryKey: ["teacher", "class", classId, "papers"],
+    queryFn: () => request<ClassPapers>(`/classes/${classId}/papers`),
+    enabled: !!classId,
+  })
+}
+
+/**
+ * `POST /classes/{classId}/papers/{attemptId}/unshare` → 204. Hides one
+ * paper from this class's view and analytics (D9) — the student's own copy
+ * is untouched.
+ */
+export function useUnshareClassPaper(): UseMutationResult<
+  void,
+  Error,
+  { classId: string; attemptId: string }
+> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ classId, attemptId }) =>
+      request<void>(
+        `/classes/${classId}/papers/${encodeURIComponent(attemptId)}/unshare`,
+        { method: "POST" },
+      ),
+    // The `["teacher", "class", classId]` prefix already covers
+    // `["teacher", "class", classId, "papers"]` (react-query's default
+    // `exact: false`), so a third, narrower invalidation of the papers key
+    // alone would be redundant with the second. `["teacher", "review"]` is
+    // its own prefix, not a descendant of either: R3 filters the queue by
+    // this class's exclusion set, so an unshare/reshare changes which items
+    // that filter lets through, and the queue must refetch to reflect it.
+    onSuccess: (_data, { classId }) => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "class", classId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "review"] })
+    },
+  })
+}
+
+/** The reshare undo of `useUnshareClassPaper` — same route, `DELETE`. Idempotent. */
+export function useReshareClassPaper(): UseMutationResult<
+  void,
+  Error,
+  { classId: string; attemptId: string }
+> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ classId, attemptId }) =>
+      request<void>(
+        `/classes/${classId}/papers/${encodeURIComponent(attemptId)}/unshare`,
+        { method: "DELETE" },
+      ),
+    // Same three invalidations as `useUnshareClassPaper`, for the same
+    // reasons — a reshare moves the class-papers/class-detail/classes-list
+    // surfaces and the review queue exactly as far as an unshare does.
+    onSuccess: (_data, { classId }) => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "class", classId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "review"] })
     },
   })
 }

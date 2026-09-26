@@ -1,4 +1,9 @@
-"""Teacher paper persistence (spec 2026-09-03 §4.2). Only writer of ``teacher_papers``.
+"""Teacher paper persistence (spec 2026-09-03 §4.2). Writer of ``teacher_papers`` run state.
+
+Deletion, restore and purge write ``deleted_at`` elsewhere
+(:class:`~lemely.db.deletion_repo.TeacherPaperDeletionService`,
+:func:`~lemely.web.purge.purge_expired_teacher_papers`); every run-state write
+here skips a deleted row, and :meth:`TeacherPaperRepository.finish` refuses one.
 
 It is also the writer of the **console-sourced** half of ``review_queue``
 (migration ``0034``): :meth:`TeacherPaperRepository.finish` stores a finished
@@ -66,6 +71,7 @@ from lemely.db.models.enums import (
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.models.orgs import SchoolMembership
 from lemely.db.models.teacher_papers import TeacherPaper
+from lemely.db.session import INCLUDE_DELETED
 
 if TYPE_CHECKING:
     import uuid
@@ -94,6 +100,14 @@ def _rowcount(result: object) -> int:
     no-explicit-``Any`` rule.
     """
     return int(cast("_HasRowcount", result).rowcount or 0)
+
+
+class TeacherPaperDeletedError(Exception):
+    """The paper was deleted (or purged) while a run on it was in flight.
+
+    Raised by :meth:`TeacherPaperRepository.finish` rather than writing a report
+    and review items onto a row the teacher can no longer see (design §13).
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,6 +292,9 @@ class TeacherPaperRepository:
             sa.update(TeacherPaper)
             .where(
                 TeacherPaper.id == paper_id,
+                # An UPDATE carries no loader criterion, so a deleted paper is
+                # excluded here, not by the session listener.
+                TeacherPaper.deleted_at.is_(None),
                 or_(
                     TeacherPaper.status.in_(
                         [UploadStatus.pending, UploadStatus.failed, UploadStatus.complete]
@@ -326,8 +343,32 @@ class TeacherPaperRepository:
         ``report_json`` and the queue read ``review_queue``, and only the
         student path ever wrote the latter. Committing the report without its
         review rows would reopen that gap on any crash in between.
+
+        The row is locked first, deleted or not, and a deleted (or purged)
+        paper is refused. A teacher's delete takes the same lock
+        (:class:`~lemely.db.deletion_repo.TeacherPaperDeletionService`), so the
+        two serialize: a run that finishes first leaves open items the delete
+        then withdraws, and a delete that commits first makes this raise
+        rather than queue reviews on a paper nobody can see (design §13).
+
+        A restore while an old run is still in flight makes the row live again,
+        so that run's ``finish`` lands on it, and a new ``claim_run`` may start
+        a second run beside it. Both write the same paper; the last ``finish``
+        wins. That is benign, and stated so nobody is surprised by it.
+
+        Raises:
+            TeacherPaperDeletedError: the paper was deleted or purged while
+                this run was in flight; nothing was written.
         """
         with self._sm.begin() as session:
+            paper = session.scalars(
+                select(TeacherPaper)
+                .where(TeacherPaper.id == paper_id)
+                .with_for_update()
+                .execution_options(**{INCLUDE_DELETED: True}, populate_existing=True)
+            ).one_or_none()
+            if paper is None or paper.deleted_at is not None:
+                raise TeacherPaperDeletedError("This paper was deleted while it was being marked.")
             session.execute(
                 sa.update(TeacherPaper)
                 .where(TeacherPaper.id == paper_id)
@@ -360,9 +401,17 @@ class TeacherPaperRepository:
     # -- helpers --------------------------------------------------------------
 
     def _update(self, paper_id: uuid.UUID, **values: object) -> None:
+        """Write run state onto a live paper; a deleted one is left as delete ended it.
+
+        A run in flight when its paper is deleted keeps calling these. The
+        ``deleted_at IS NULL`` condition is explicit because an UPDATE carries
+        no loader criterion.
+        """
         with self._sm.begin() as session:
             session.execute(
-                sa.update(TeacherPaper).where(TeacherPaper.id == paper_id).values(**values)
+                sa.update(TeacherPaper)
+                .where(TeacherPaper.id == paper_id, TeacherPaper.deleted_at.is_(None))
+                .values(**values)
             )
 
     def _snapshot(self, row: TeacherPaper) -> TeacherPaperRow:
@@ -399,4 +448,9 @@ class TeacherPaperRepository:
         )
 
 
-__all__ = ["TeacherPaperRepository", "TeacherPaperRow", "teacher_paper_visible"]
+__all__ = [
+    "TeacherPaperDeletedError",
+    "TeacherPaperRepository",
+    "TeacherPaperRow",
+    "teacher_paper_visible",
+]

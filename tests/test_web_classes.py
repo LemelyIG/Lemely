@@ -30,8 +30,10 @@ from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.base import Base
+from lemely.db.class_exclusion_repo import ClassExclusionRepository
 from lemely.db.class_repo import ClassService, JoinCodeError
-from lemely.db.models import School, SchoolMembership, Seat, User
+from lemely.db.history_repo import DbHistoryStore
+from lemely.db.models import ClassPaperExclusion, School, SchoolMembership, Seat, User
 from lemely.db.models.enums import MembershipRole, Role, SeatStatus
 from lemely.io.history_store import HistoryStore
 from lemely.runtime.config import DatabaseSettings, Settings, load_settings
@@ -40,6 +42,7 @@ from lemely.web.deps import (
     AuthContext,
     get_at_risk_ack_service,
     get_auth_context,
+    get_class_exclusion_repository,
     get_class_service,
     get_history_store,
     get_settings,
@@ -127,6 +130,12 @@ def client(
     # ``tests/test_web_teacher.py``'s ``_use_class_service`` helper).
     app.dependency_overrides[get_at_risk_ack_service] = lambda: AtRiskAckService(
         class_service._sessionmaker, class_service
+    )
+    # ``ClassScopedHistoryStore`` (T12) needs the real exclusion set for each
+    # class request; bind it to the same throwaway Postgres database as
+    # ``class_service`` rather than the ambient dev sessionmaker.
+    app.dependency_overrides[get_class_exclusion_repository] = lambda: ClassExclusionRepository(
+        class_service._sessionmaker
     )
     yield TestClient(app)
     app.dependency_overrides.clear()
@@ -1095,3 +1104,97 @@ def test_raise_for_maps_an_unenumerated_class_error_to_409() -> None:
     with pytest.raises(HTTPException) as excinfo:
         _raise_for(JoinCodeError("some other class-domain failure"))
     assert excinfo.value.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# D9 (Task 12/13 review fix): a real ``ClassPaperExclusion`` row actually
+# changes what a class sees — proving ``ClassExclusionRepository``'s SQL is
+# exercised, not just the wrapper's in-memory filtering (already covered by
+# ``tests/test_class_scoped_history.py``, which builds stores from literal
+# frozensets and never touches this table).
+# ---------------------------------------------------------------------------
+
+
+def test_class_summary_hides_a_students_paper_only_from_the_class_it_was_unshared_from(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+) -> None:
+    """Insert a real ``ClassPaperExclusion`` row for one student's latest paper
+    in class A only; class A's average must drop to reflect the paper it can
+    still see, class B's must not move, and this only works with a real
+    ``DbHistoryStore`` (not the JSON fixture) since exclusion is addressed by
+    ``attempt_id``, which only a DB-backed record carries.
+    """
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Amelia")
+    class_a = class_service.create_class(teacher, "Class A")
+    class_b = class_service.create_class(teacher, "Class B")
+    assert class_a.join_code is not None
+    assert class_b.join_code is not None
+    class_service.join_by_code(student, class_a.join_code)
+    class_service.join_by_code(student, class_b.join_code)
+
+    db_history = DbHistoryStore(pg_sessionmaker)
+    metadata = ExamMetadata(
+        subject_code="0625",
+        paper_number=1,
+        paper_variant=1,
+        session_month="May/June",
+        session_year=2019,
+    )
+    db_history.append(
+        str(student),
+        PaperRecord(
+            student_id=str(student),
+            metadata=metadata,
+            awarded_marks=40,
+            maximum_marks=80,
+            percentage=50.0,
+            grade="D",
+            weak_areas=[],
+            recorded_at="2026-01-01T00:00:00+00:00",
+        ),
+    )
+    db_history.append(
+        str(student),
+        PaperRecord(
+            student_id=str(student),
+            metadata=metadata,
+            awarded_marks=72,
+            maximum_marks=80,
+            percentage=90.0,
+            grade="A",
+            weak_areas=[],
+            recorded_at="2026-02-01T00:00:00+00:00",
+        ),
+    )
+    records = db_history.load(str(student)).records
+    latest_attempt_id = records[-1].attempt_id
+    assert latest_attempt_id is not None  # DB-backed record; never the file store's None
+
+    client.app.dependency_overrides[get_history_store] = lambda: db_history
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+
+    def _average(class_id: object) -> float | None:
+        classes = client.get("/api/teacher/classes").json()["classes"]
+        return next(c for c in classes if c["id"] == str(class_id))["average"]
+
+    # Presence first: with no exclusion row, both classes see the latest paper.
+    assert _average(class_a.class_id) == 90.0
+    assert _average(class_b.class_id) == 90.0
+
+    # Unshare the latest paper from class A only.
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            ClassPaperExclusion(
+                class_id=class_a.class_id,
+                attempt_id=uuid.UUID(latest_attempt_id),
+            )
+        )
+
+    # Class A now falls back to the still-visible earlier (D) paper; class B unaffected.
+    assert _average(class_a.class_id) == 50.0
+    assert _average(class_b.class_id) == 90.0
