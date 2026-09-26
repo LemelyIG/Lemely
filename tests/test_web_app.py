@@ -646,6 +646,25 @@ def test_the_sweeper_is_started_on_startup_and_stopped_on_shutdown(
     assert seen["stopped"] is True
 
 
+@pytest.mark.usefixtures("_fresh_settings")
+def test_startup_logs_the_marking_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every revision records which marking mode it runs, in its own logs."""
+    from structlog.testing import capture_logs
+
+    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "0")
+    monkeypatch.setenv("LEMELY_GRADING__ECF_SUBSTITUTION", "true")
+
+    with capture_logs() as logs, TestClient(create_app()) as client:
+        assert client.get("/api/health").status_code == 200
+
+    flags = [e for e in logs if e["event"] == "marking_flags"]
+    assert len(flags) == 1
+    assert flags[0]["log_level"] == "warning"
+    assert flags[0]["equivalence_gate"] is False
+    assert flags[0]["ecf_substitution"] is True
+    assert flags[0]["ecf_inert"] is True
+
+
 def test_a_client_without_the_context_manager_never_starts_a_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

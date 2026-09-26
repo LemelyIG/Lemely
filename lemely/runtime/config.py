@@ -590,15 +590,13 @@ class GradingSettings(BaseModel):
     # claim, not an enforced one -- `equivalence_gate` was declared here but
     # read by no `correct_paper` caller off a loaded config, so no
     # `lemely.toml` could ever enable US-005b's marking gate (US-040).
-    # `08df9302` closed US-040: this field is now read off a loaded config
-    # at all three existing `correct_paper` entry points -- `cli.py`'s
-    # `correct_paper_cmd`, `web/routers/student.py`'s upload flow and
-    # `web/routers/teacher.py`'s grading job -- each forwarding
-    # `settings.grading.equivalence_gate` through `grading.grade_paper` to
-    # `correct_paper`. Setting `equivalence_gate = true` in `lemely.toml`
-    # now changes how a live run marks non-MCQ answers. `ecf_substitution`
-    # immediately below is NOT wired the same way -- see its own comment --
-    # so these two adjacent flags do not behave alike.
+    # Every `correct_paper` caller now reads this field through
+    # `GradingSettings.marking_options()` (spec 2026-09-26): the CLI, both
+    # web grading flows, quiz marking, the accuracy harness and the Gradio
+    # app. `tests/test_marking_options_wiring.py` fails if a call site omits
+    # `options=`. Setting `equivalence_gate = true` changes how every one of
+    # them marks non-MCQ answers. In the deployed service it is set by
+    # `LEMELY_GRADING__EQUIVALENCE_GATE`; see `docs/ci-cd.md`.
     equivalence_gate: bool = False
     # I7 (US-013, D19): error-carried-forward by substitution. Defaults
     # False, threaded INDEPENDENTLY of `equivalence_gate` above -- neither
@@ -628,10 +626,11 @@ class GradingSettings(BaseModel):
     # CONSTRUCTION; this is an input-data limit (the feature targets
     # Gemini-parsed schemes), not a reason to widen the gate.
     #
-    # Whole-branch review Minor C: same as `equivalence_gate` above -- this
-    # field is not read by any `correct_paper` caller off a loaded config
-    # either. Setting `ecf_substitution = true` in `lemely.toml` currently
-    # has NO effect on a live `correct_paper` run; see US-040.
+    # Read by every `correct_paper` caller through `marking_options()`, the
+    # same as `equivalence_gate`. Setting it without `equivalence_gate` is
+    # legal but inert, and each process logs a `marking_flags` warning at
+    # startup when that is the case. In the deployed service it is set by
+    # `LEMELY_GRADING__ECF_SUBSTITUTION`.
     ecf_substitution: bool = False
 
     def marking_options(self) -> MarkingOptions:

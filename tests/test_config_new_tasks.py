@@ -156,18 +156,17 @@ class TestEcfSubstitutionSettings:
 
 
 class TestUnwiredFlagsAreDisclosedInProse:
-    """Whole-branch review Minor C, now asymmetric after `08df9302`.
-    ``ecf_substitution`` (US-013) is still declared here but read by no
-    ``correct_paper`` caller off a loaded config -- it is only ever passed
-    as an explicit keyword argument, e.g. by tests and by the accuracy
-    harness; US-040 stays half-closed on that account.  ``equivalence_gate``
-    (US-005b) is DIFFERENT: `08df9302` wired it into all three existing
-    `correct_paper` entry points, so setting it in ``lemely.toml`` now has a
-    real effect. What this pins is that the comment BESIDE each field tells
-    the truth for THAT field, so an operator reading
-    ``lemely.toml.example`` (or the source) is neither told
-    ``ecf_substitution`` works when it does not, nor told
-    ``equivalence_gate`` is a silent no-op when it is not.
+    """Whole-branch review Minor C. Was asymmetric after `08df9302`:
+    ``ecf_substitution`` (US-013) was declared here but read by no
+    ``correct_paper`` caller off a loaded config, while ``equivalence_gate``
+    (US-005b) had already been wired into all three existing `correct_paper`
+    entry points. Task 5 (spec 2026-09-26) closed that asymmetry: both flags
+    are now read through ``GradingSettings.marking_options()`` by every
+    caller, and ``tests/test_marking_options_wiring.py`` is the structural
+    guard that keeps it that way. What this pins is that the comment BESIDE
+    each field tells the truth for THAT field, so an operator reading
+    ``lemely.toml.example`` (or the source) is not told either flag is a
+    silent no-op when neither is.
     """
 
     def _comment_block_before(self, field_line: str) -> str:
@@ -190,16 +189,22 @@ class TestUnwiredFlagsAreDisclosedInProse:
     def test_equivalence_gate_names_us040(self) -> None:
         block = self._comment_block_before("equivalence_gate: bool = False")
         assert "US-040" in block
-        # Wired by `08df9302`: the comment must say so, and must no longer
-        # carry the pre-wiring "not read by any" disclaimer.
-        assert "cli.py" in block
-        assert "08df9302" in block
+        # Task 5 restated the wiring note in terms of `marking_options()`,
+        # which now covers every caller, not just the three `08df9302` named
+        # individually -- and it must not carry the pre-wiring "not read by
+        # any" disclaimer.
+        assert "marking_options" in block
         assert "not read by any" not in block
 
     def test_ecf_substitution_names_us040(self) -> None:
         block = self._comment_block_before("ecf_substitution: bool = False")
-        assert "US-040" in block
-        assert "not read by any" in block
+        # Task 5 closed this field's half of the US-040 asymmetry: it is now
+        # read through the same `marking_options()` every other caller uses,
+        # so the comment no longer needs to name the ticket for this field
+        # specifically, but must no longer carry the "not read by any"
+        # disclaimer that was true before the fix.
+        assert "marking_options" in block
+        assert "not read by any" not in block
 
     def test_ecf_substitution_gate_population_figure_is_current(self) -> None:
         """`4759d116` dropped `\\bdep\\b` from `_ECF_MARKER_RE`, narrowing the
