@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from lemely.app.cli import cli
@@ -14,7 +15,7 @@ from lemely.core.schemas import WeakArea, WeaknessReport
 from lemely.io.question_gates import MAX_GENERATION_ATTEMPTS, verify_question
 from lemely.io.question_generation import QuestionGenerator
 from lemely.io.teacher_quiz import TeacherQuizBuilder
-from lemely.runtime.errors import ParseError
+from lemely.runtime.errors import CostCeilingError, ParseError
 
 
 def _weakness(topics: list[str]) -> WeaknessReport:
@@ -208,6 +209,23 @@ class TestRegenerationLimits:
         ][1]
         assert "sympy" in second_call.kwargs["user_prompt"]
 
+    def test_a_cost_ceiling_breach_in_the_sandbox_stops_the_generator(self) -> None:
+        """The regenerate loop must not turn a budget stop into one more
+        attempt: the error propagates out of QuestionGenerator.generate."""
+        unprovable = _generated_question(
+            "Circuits", question_type=QuestionType.CALCULATION, solution_expr="N/A", answer="12"
+        )
+        client = _dispatch_client(
+            quiz_sequence=[GeneratedQuiz(subject_code="0625", questions=[unprovable])] * 3,
+            validity_sequence=[_validity_response()] * 3,
+        )
+        client.generate_with_code_execution.side_effect = CostCeilingError("USD ceiling exceeded")
+        with pytest.raises(CostCeilingError):
+            QuestionGenerator(client).generate(
+                _weakness(["Circuits"]), subject_code="0625", count=1
+            )
+        client.generate_with_code_execution.assert_called_once()
+
 
 class TestVerifyQuestionValidityGate:
     def test_ill_posed_item_rejected_by_validity_pass(self) -> None:
@@ -319,6 +337,20 @@ class TestVerifyQuestionSandboxGate:
         result = verify_question(client, question, subject_code="0625")
 
         assert result.verified_by == "sandbox"
+
+    def test_cost_ceiling_breach_in_the_sandbox_call_propagates(self) -> None:
+        """Spec 2026-09-26 §9 (#8): CostCeilingError subclasses
+        ExternalServiceError, so the sandbox handler used to swallow a
+        budget stop as "produced no usable result" and reject the question
+        instead of stopping the run."""
+        question = _generated_question(
+            "Circuits", question_type=QuestionType.CALCULATION, solution_expr="N/A", answer="12"
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        client.generate_with_code_execution.side_effect = CostCeilingError("USD ceiling exceeded")
+        with pytest.raises(CostCeilingError):
+            verify_question(client, question, subject_code="0625")
 
 
 class TestRecallScopedToNumeric:

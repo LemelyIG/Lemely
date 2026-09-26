@@ -64,7 +64,7 @@ from lemely.io.prompts.question_generation import (
     build_validity_check_system_prompt,
     build_validity_check_user_prompt,
 )
-from lemely.runtime.errors import ExternalServiceError, ParseError
+from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 
 if TYPE_CHECKING:
     from lemely.io.gemini import GeminiClient
@@ -159,6 +159,15 @@ def _run_code_execution(client: GeminiClient, question: GeneratedQuestion) -> st
             task_tag="question_validity",
             extra_cache_key=f"{question.topic}:{question.prompt}",
         )
+    except CostCeilingError:
+        # `CostCeilingError` subclasses `ExternalServiceError`, so the
+        # handler below used to file a per-run budget breach as "the sandbox
+        # produced no usable result" and let the regenerate loop keep going.
+        # A ceiling breach is a stop signal for the whole run and is never
+        # retryable, so it propagates. Must stay the FIRST clause: placing
+        # the broader `ExternalServiceError` above it silently reinstates
+        # the bug (same ruling as lemely/io/mark_schemes.py).
+        raise
     except (ParseError, ExternalServiceError):
         return None
     raw = raw.strip()
