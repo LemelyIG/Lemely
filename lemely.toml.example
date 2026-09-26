@@ -59,7 +59,8 @@ backoff_seconds = 2.0
 max_rereads_per_paper = 15
 reread_concurrency = 4
 reread_budget_seconds = 45.0
-# Parallel Files API uploads of page images before the extraction call (§7).
+# Parallel Files API uploads of page images before the extraction call
+# (spec 2026-09-26 §7).
 upload_concurrency = 4
 
 # gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.

@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 from click.testing import CliRunner
 
 from lemely.app.cli import cli
+from lemely.runtime.config import Settings
 
 
 class DoctorTests(unittest.TestCase):
@@ -158,24 +159,38 @@ class DoctorTests(unittest.TestCase):
     def test_doctor_warns_on_a_stale_key_in_dot_env_without_failing(self) -> None:
         """Spec 2026-09-26 §11 (#6): a removed key left in `.env` is reported
         the way a TOML one is (advisory, exit 0), instead of crashing
-        load_settings before doctor can run at all."""
-        with TemporaryDirectory() as tmp:
-            (Path(tmp) / "Sources").mkdir()
-            (Path(tmp) / "outputs").mkdir()
-            toml_path = Path(tmp) / "lemely.toml"
-            toml_path.write_text("[integrity]\nplagiarism_enabled = true\n")
-            (Path(tmp) / ".env").write_text("LEMELY_INTEGRITY__AI_DETECTION_ENABLED=true\n")
-            with contextlib.chdir(tmp):
-                result = self.runner.invoke(
-                    cli,
-                    ["--json", "--config", str(toml_path), "doctor", "--no-network"],
-                    env={
-                        "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
-                        "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
-                        "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
-                        "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
-                    },
-                )
+        load_settings before doctor can run at all.
+
+        Fix round 1: the suite's own ``tests/conftest.py::_disable_dotenv_file``
+        fixture sets ``Settings.model_config["env_file"] = None`` for every
+        test, so it must be re-enabled here for the ``load_settings`` call
+        inside ``doctor_cmd`` to actually read this test's ``.env`` -- without
+        that, the crash-avoidance claim above would be true only because the
+        removed key is never read in the first place, not because the fix
+        (``_RemovedKeysDotEnvSource``) works.
+        """
+        original_env_file = Settings.model_config.get("env_file")
+        Settings.model_config["env_file"] = ".env"
+        try:
+            with TemporaryDirectory() as tmp:
+                (Path(tmp) / "Sources").mkdir()
+                (Path(tmp) / "outputs").mkdir()
+                toml_path = Path(tmp) / "lemely.toml"
+                toml_path.write_text("[integrity]\nplagiarism_enabled = true\n")
+                (Path(tmp) / ".env").write_text("LEMELY_INTEGRITY__AI_DETECTION_ENABLED=true\n")
+                with contextlib.chdir(tmp):
+                    result = self.runner.invoke(
+                        cli,
+                        ["--json", "--config", str(toml_path), "doctor", "--no-network"],
+                        env={
+                            "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                            "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                            "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                            "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                        },
+                    )
+        finally:
+            Settings.model_config["env_file"] = original_env_file
         self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.output)
         self.assertTrue(payload["all_passed"], msg=result.output)

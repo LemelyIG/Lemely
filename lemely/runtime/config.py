@@ -238,7 +238,7 @@ class GeminiSettings(BaseModel):
     # API uploads of page images before the extraction call (§7).
     max_rereads_per_paper: int = Field(default=15, ge=0)
     reread_concurrency: int = Field(default=4, ge=1, le=16)
-    reread_budget_seconds: float = Field(default=45.0, gt=0)
+    reread_budget_seconds: float = Field(default=45.0, gt=0, allow_inf_nan=False)
     upload_concurrency: int = Field(default=4, ge=1, le=16)
 
     def model_for(self, task_tag: str) -> str:
@@ -574,8 +574,8 @@ class IntegritySettings(BaseModel):
 class MarkingOptions:
     """The marking flags every ``correct_paper`` caller forwards together.
 
-    Built by :meth:`GradingSettings.marking_options`. Both flags travel in
-    one object so a caller cannot pass one and forget the other: three of
+    Built by :meth:`GradingSettings.marking_options`. All three flags travel
+    in one object so a caller cannot pass one and forget the others: three of
     six callers once passed ``equivalence_gate`` and none passed
     ``ecf_substitution``. Defaults are off, which marks exactly as a
     caller that sets nothing.
@@ -970,7 +970,17 @@ class Settings(BaseSettings):
         # Precedence: env > .env > init (which we use for TOML) > file-secrets > defaults
         return (
             env_settings,  # highest: LEMELY_* env vars
-            _RemovedKeysDotEnvSource(settings_cls),  # .env file, minus F4-removed keys
+            # .env file, minus F4-removed keys. Built from `dotenv_settings`'
+            # own resolved `env_file`/`env_file_encoding` (rather than letting
+            # `_RemovedKeysDotEnvSource` re-derive them from `settings_cls`
+            # alone) so a caller that overrides either via
+            # ``Settings(_env_file=..., _env_file_encoding=...)`` keeps
+            # working through this source too.
+            _RemovedKeysDotEnvSource(
+                settings_cls,
+                env_file=getattr(dotenv_settings, "env_file", None),
+                env_file_encoding=getattr(dotenv_settings, "env_file_encoding", None),
+            ),
             init_settings,  # TOML payload from load_settings(**toml_data)
             file_secret_settings,
         )
@@ -993,10 +1003,13 @@ def _discover_toml(cwd: Path) -> Path | None:
 # that still sets one of these would fail ``Settings(...)`` with a bare Pydantic
 # ValidationError that does not say *why*, for every single caller of
 # ``load_settings`` (the CLI, the web app, every test that loads real
-# config), not just ``lemely doctor``. ``load_settings`` drops these specific
-# keys silently before validating — from the TOML dict
-# (:func:`_drop_removed_config_keys`) AND from the environment
-# (:func:`_pop_removed_env_vars`) — so a still-shipped config with one of them
+# config), not just ``lemely doctor``. These keys are dropped silently before
+# validating, from every one of the three sources: the TOML dict
+# (:func:`_drop_removed_config_keys`), the environment
+# (:func:`_pop_removed_env_vars`, used by ``load_settings``), and the
+# ``.env`` file (:class:`_RemovedKeysDotEnvSource`, wired into every
+# :class:`Settings` construction via ``settings_customise_sources``, not
+# just ``load_settings``) — so a still-shipped config with one of them
 # keeps working exactly as it did before F4 removed the feature, however it
 # was supplied. ``lemely doctor`` is what surfaces the fact via
 # :func:`find_removed_config_keys`, reading the raw TOML and the raw
@@ -1065,11 +1078,18 @@ def _drop_removed_config_keys(toml_data: dict[str, Any]) -> dict[str, Any]:
 def find_removed_config_keys(
     *, toml_path: Path | None = None, cwd: Path | None = None
 ) -> list[str]:
-    """Return dotted ``section.key`` names for F4-removed keys set via TOML, env var or ``.env``.
+    """Return dotted ``section.key`` names for F4-removed keys set via TOML, env vars or ``.env``.
 
-    Reads the TOML file and ``os.environ`` directly, without constructing a
-    :class:`Settings`. Returns an empty list when no removed key is set
-    either way. A key set in more than one place is reported once.
+    Reads the TOML file, ``os.environ`` and the ``.env`` file directly,
+    without constructing a :class:`Settings`. Returns an empty list when no
+    removed key is set any of those ways. A key set in more than one place is
+    reported once. The ``.env`` file, if any, is the one named by
+    ``Settings.model_config["env_file"]`` (``None`` disables it, as the
+    suite's own ``tests/conftest.py::_disable_dotenv_file`` fixture does — see
+    :class:`_RemovedKeysDotEnvSource`, which follows the same setting) —
+    resolved against the PROCESS working directory, exactly as pydantic
+    resolves it for ``Settings`` itself, not against the ``cwd`` argument
+    above (which only steers TOML discovery).
     """
     found: list[str] = []
     toml_data = _load_toml(toml_path, cwd)
@@ -1080,21 +1100,28 @@ def find_removed_config_keys(
                 continue
             found.extend(f"{section}.{key}" for key in keys if key in section_data)
 
-    env_upper = {name.upper() for name in os.environ}
+    matched_upper = {name.upper() for name in os.environ}
+
+    env_file = Settings.model_config.get("env_file")
+    if env_file is not None:
+        # `env_file` is pydantic-settings' `DotenvType`: a single path, or a
+        # sequence of them (later files may override earlier ones for
+        # `Settings` itself, but for "was this key set anywhere" a plain
+        # union of the files' keys is all this check needs). A bare `str` is
+        # itself a `Sequence[str]`, so it must be checked before the
+        # sequence branch or it would be iterated character by character.
+        env_files = [env_file] if isinstance(env_file, str | os.PathLike) else env_file
+        for raw_path in env_files:
+            dotenv_path = Path(raw_path)
+            if not dotenv_path.is_absolute():
+                dotenv_path = Path.cwd() / dotenv_path
+            if dotenv_path.is_file():
+                matched_upper |= {name.upper() for name in dotenv_values(dotenv_path)}
+
     for env_name, (section, key) in _removed_env_var_lookup().items():
         dotted = f"{section}.{key}"
-        if env_name in env_upper and dotted not in found:
+        if env_name in matched_upper and dotted not in found:
             found.append(dotted)
-
-    # The third source: pydantic resolves ``env_file=".env"`` against the
-    # PROCESS working directory, so read the same file `Settings` would.
-    dotenv_path = Path.cwd() / ".env"
-    if dotenv_path.is_file():
-        dotenv_upper = {name.upper() for name in dotenv_values(dotenv_path)}
-        for env_name, (section, key) in _removed_env_var_lookup().items():
-            dotted = f"{section}.{key}"
-            if env_name in dotenv_upper and dotted not in found:
-                found.append(dotted)
     return found
 
 

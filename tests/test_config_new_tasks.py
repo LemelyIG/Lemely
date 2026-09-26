@@ -341,14 +341,35 @@ class TestFindRemovedConfigKeys:
     def test_finds_removed_key_set_in_dot_env(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        _reenable_dot_env_file(monkeypatch)
         monkeypatch.chdir(tmp_path)
         (tmp_path / ".env").write_text("lemely_integrity__ai_detection_enabled=true\n")
         assert find_removed_config_keys(cwd=tmp_path) == ["integrity.ai_detection_enabled"]
 
+    def test_ignores_dot_env_when_settings_has_it_disabled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fix round 1: reading ``Path.cwd() / ".env"`` unconditionally made
+        this function (and every caller of it, including ``lemely doctor``'s
+        ``no_removed_config_keys`` check) see a developer's REAL repo-root
+        ``.env`` even under the suite's own ``_disable_dotenv_file`` fixture
+        (which sets ``Settings.model_config["env_file"] = None`` so real
+        secrets can never leak into a test). On a machine whose ``.env``
+        happens to hold a removed key, that made ~10 unrelated tests fail
+        with the real key's name mixed into their assertions -- and CI never
+        caught it, because CI checks out a clean tree with no ``.env`` at
+        all. This must follow ``Settings.model_config["env_file"]`` the same
+        way :class:`_RemovedKeysDotEnvSource` does, so the *fixture's* default
+        (dotenv disabled) is respected here too."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".env").write_text("LEMELY_INTEGRITY__AI_DETECTION_ENABLED=true\n")
+        assert find_removed_config_keys(cwd=tmp_path) == []
+
 
 class TestLoadSettingsDropsRemovedKeys:
     """F-6: ``load_settings`` must not crash on a removed key however it is
-    supplied — TOML and env var get the same (silent-drop) outcome."""
+    supplied — TOML, env var and ``.env`` all get the same (silent-drop)
+    outcome."""
 
     def test_toml_removed_key_does_not_crash(self, tmp_path: Path) -> None:
         toml = tmp_path / "lemely.toml"
@@ -538,18 +559,43 @@ class TestRereadStageSettings:
         )
 
     @pytest.mark.parametrize(
-        "field, value",
+        "field, value, error_type",
         [
-            ("max_rereads_per_paper", -1),
-            ("reread_concurrency", 0),
-            ("reread_concurrency", 17),
-            ("reread_budget_seconds", 0.0),
-            ("upload_concurrency", 0),
-            ("upload_concurrency", 17),
+            ("max_rereads_per_paper", -1, "greater_than_equal"),
+            ("reread_concurrency", 0, "greater_than_equal"),
+            ("reread_concurrency", 17, "less_than_equal"),
+            ("reread_budget_seconds", 0.0, "greater_than"),
+            ("upload_concurrency", 0, "greater_than_equal"),
+            ("upload_concurrency", 17, "less_than_equal"),
         ],
     )
-    def test_bounds_are_enforced(self, field: str, value: object) -> None:
+    def test_bounds_are_enforced(self, field: str, value: object, error_type: str) -> None:
+        """Fix round 1: assert the error *type* per case, not just "some
+        ValidationError" -- a typo'd field name (e.g. testing a field pydantic
+        does not have) would raise ``extra_forbidden`` and this would stay
+        green regardless of whether the intended bound exists."""
         from pydantic import ValidationError
 
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as exc_info:
             GeminiSettings(**{field: value})
+        assert exc_info.value.errors()[0]["type"] == error_type
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            ("max_rereads_per_paper", 0),
+            ("reread_concurrency", 1),
+            ("reread_concurrency", 16),
+            ("upload_concurrency", 1),
+            ("upload_concurrency", 16),
+        ],
+    )
+    def test_accepted_edges(self, field: str, value: int) -> None:
+        assert getattr(GeminiSettings(**{field: value}), field) == value
+
+    def test_reread_budget_seconds_rejects_infinity(self) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            GeminiSettings(reread_budget_seconds=float("inf"))
+        assert exc_info.value.errors()[0]["type"] == "finite_number"

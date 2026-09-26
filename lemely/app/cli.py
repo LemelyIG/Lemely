@@ -506,7 +506,7 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         record(
             "no_removed_config_keys",
             False,
-            "lemely.toml or the environment sets removed key(s): "
+            "lemely.toml, .env or the environment sets removed key(s): "
             + ", ".join(removed_keys)
             + " — the AI-generated-answer detector was removed (F4); delete these",
         )

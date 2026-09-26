@@ -96,7 +96,8 @@ def render_example_toml() -> str:
     lines.append(f"max_rereads_per_paper = {s.gemini.max_rereads_per_paper}")
     lines.append(f"reread_concurrency = {s.gemini.reread_concurrency}")
     lines.append(f"reread_budget_seconds = {s.gemini.reread_budget_seconds}")
-    lines.append("# Parallel Files API uploads of page images before the extraction call (§7).")
+    lines.append("# Parallel Files API uploads of page images before the extraction call")
+    lines.append("# (spec 2026-09-26 §7).")
     lines.append(f"upload_concurrency = {s.gemini.upload_concurrency}")
     lines.append("")
 
