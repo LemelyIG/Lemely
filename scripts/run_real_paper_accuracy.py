@@ -213,7 +213,12 @@ def run_or_replay_fixture(
     extracted = extract_answers(spec["scan"], mark_scheme, gemini_client=gemini_client)
 
     log(f"[{spec['fixture_id']}] grading")
-    report = grade_paper(mark_scheme, extracted, gemini_client=gemini_client)
+    report = grade_paper(
+        mark_scheme,
+        extracted,
+        gemini_client=gemini_client,
+        options=settings.grading.marking_options(),
+    )
 
     rows = [
         QuestionRow(
