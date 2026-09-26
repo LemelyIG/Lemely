@@ -103,7 +103,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 
 import structlog
 from pydantic import ValidationError
@@ -115,8 +115,13 @@ from lemely.core.analytics import (
     grade_for_percentage,
     group_weak_areas,
 )
-from lemely.core.schemas import AccuracyReport, CorrectedQuestion, ExamMetadata
-from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
+from lemely.core.schemas import (
+    AccuracyReport,
+    CorrectedQuestion,
+    ExamMetadata,
+    SourceBox,
+)
+from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
     AttemptOrigin,
@@ -138,6 +143,17 @@ if TYPE_CHECKING:
     from lemely.db.class_repo import ClassService
 
 log = structlog.get_logger(__name__)
+
+CROP_ABSENT_DETAIL = "No scan crop for review item {item_id}"
+"""The one wording every "there is no crop here" answer uses.
+
+Shared with :mod:`lemely.web.routers.review` rather than spelled twice, because
+the whole point is that the caller cannot tell *which* absence it hit — no such
+item, a console item, no upload, no box, or a stored object that has since
+expired. Two copies of this string would drift, and the drift would be an
+existence oracle for a student's scan. The interpolated id is the caller's own
+input and so carries nothing back it did not already supply.
+"""
 
 
 class ReviewError(Exception):
@@ -218,6 +234,43 @@ class ReviewQueuePage:
     total: int
 
 
+#: The narrowed wire type for :attr:`ReviewItemPoint.verdict`. Re-exported
+#: from :data:`lemely.core.schemas.PointVerdictWire`, the same ``Literal``
+#: :attr:`~lemely.core.schemas.PointVerdict.verdict` is annotated with.
+#: ``QuestionResultPoint.verdict`` is stored as loose ``str | None`` (its
+#: docstring: a fourth verdict must not require a migration), so this alias
+#: is where the DB string gets narrowed back to the three known members on
+#: the way out. See ``EvidenceVerdictWire`` at
+#: ``lemely/web/schemas_student_self_review.py:27`` for the same pattern at
+#: the wire boundary.
+from lemely.core.schemas import PointVerdictWire as PointVerdictWire  # noqa: E402
+
+_KNOWN_POINT_VERDICTS: frozenset[str] = frozenset(get_args(PointVerdictWire))
+
+
+def _narrow_point_verdict(raw: str | None, *, mark_point_id: str) -> PointVerdictWire | None:
+    """Narrow the DB's loose ``str | None`` to the three known members.
+
+    ``QuestionResultPoint.verdict`` is narrowed once, here, at the point the
+    DB row is read.
+
+    A value outside the three members is a data defect, not a fourth verdict
+    to render (the only producer, ``derive_point_rows``, writes
+    ``PointVerdict.verdict``, itself already this ``Literal``; anything else
+    means manual SQL or a future migration nobody taught this function
+    about). It is logged and carried as ``None`` — rendered as "no verdict
+    recorded" — rather than crashing a teacher's screen or being silently
+    shown as one of the three real verdicts, either of which would be worse
+    than an honest gap.
+    """
+    if raw is None:
+        return None
+    if raw in _KNOWN_POINT_VERDICTS:
+        return raw  # type: ignore[return-value]  # narrowed by the membership check above
+    log.warning("review_point_verdict_unknown", mark_point_id=mark_point_id, verdict=raw)
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class ReviewItemPoint:
     """One mark point's self-review state.
@@ -227,6 +280,17 @@ class ReviewItemPoint:
     the aggregate fields ``ReviewItemDetail`` already carried (``feedback``,
     ``matched_point_ids``) — never the student's own claim or evidence, the
     exact sentence the queue row exists to have them adjudicate.
+
+    ``verdict``/``evidence_span``/``ecf_applied`` are I6/I7 (US-013)'s marker
+    verdict, read off ``QuestionResultPoint`` regardless of whether the
+    student ever self-marked this point — unlike ``student_selfmark`` et al.
+    below, which answer a different question (what the student claimed).
+
+    ``rationale`` is the marker's own per-point reasoning. It is populated on
+    BOTH paths -- ``PointVerdict.note`` on the verdict path, ``point_notes``
+    on the legacy one, with the precedence rule in
+    :func:`lemely.db.question_points.derive_point_rows` -- so unlike
+    ``verdict`` it is present today with ``equivalence_gate`` off.
     """
 
     mark_point_id: str
@@ -235,6 +299,11 @@ class ReviewItemPoint:
     student_selfmark: bool | None  # the student's claim, None if not self-marked
     student_evidence: str | None
     evidence_verdict: str | None  # EvidenceVerdict.value, or None if never judged
+    verdict: PointVerdictWire | None  # I6: None for a legacy-path point or an unknown DB value
+    evidence_span: str  # I6: '' for a legacy-path point; a row whose verdict
+    # failed to narrow can still carry one
+    ecf_applied: bool  # I7: True only when verdict was reached after an ECF re-mark
+    rationale: str | None  # the marker's own reasoning for this point, either path
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +332,23 @@ class ReviewItemDetail:
 
     ``question_result_points`` rows, the same reason its override fields are
     always empty (see :func:`_console_item_detail`).
+    """
+    has_source_box: bool = False
+    """True when all five `source_box_*` columns are set AND the attempt has an
+    upload, so a crop may exist. The crop route can still fail (404 when the
+    stored object has expired, 422 when the scan cannot be rendered), so a
+    client must render any failure as absence, never as an error. Always
+    False for a console paper's item, even when its question has a box: the
+    crop route serves only attempt-backed items (see :func:`_console_item_detail`).
+
+    Storage expiry is deliberately not checked: it is a *timing* condition, so
+    nothing checked when this DTO is built can promise anything about the
+    object at crop time, and a check here would add a query and a race without
+    changing what the flag can honestly claim.
+
+    A flag rather than the coordinates: the client asks the route for an
+    image and never does the arithmetic, and coordinates on the wire would be
+    student-derived data with no consumer. False is the common case.
     """
 
 
@@ -469,11 +555,31 @@ class ReviewService:
                         student_selfmark=p.student_selfmark,
                         student_evidence=p.student_evidence,
                         evidence_verdict=p.evidence_verdict.value if p.evidence_verdict else None,
+                        verdict=_narrow_point_verdict(p.verdict, mark_point_id=p.mark_point_id),
+                        evidence_span=p.evidence_span,
+                        ecf_applied=p.ecf_applied,
+                        rationale=p.rationale,
                     )
                     for p in qr.points
                 ]
                 if qr is not None
                 else []
+            )
+            # One column suffices as the box test: `source_box_all_or_none`
+            # makes the five all-or-nothing, so `source_box_page` alone is never
+            # `NULL` while the other four are set (or vice versa). Read here,
+            # not below, for the same reason as `points` above -- it is a
+            # scalar column so it would work either way, but it belongs next
+            # to the other reads made while the session is still open.
+            #
+            # `upload_id` is in the test because a box with no scan behind it is
+            # a real combination (a quiz, an imported attempt) for which the
+            # crop route is *certain* to 404 -- so reporting `true` for it would
+            # be the flag lying rather than the flag being approximate. Free:
+            # `attempt` is already in hand from the line above, no second query.
+            # Storage expiry stays out on purpose; see `has_source_box`.
+            has_source_box = (
+                qr is not None and qr.source_box_page is not None and attempt.upload_id is not None
             )
         return ReviewItemDetail(
             row=row,
@@ -494,7 +600,102 @@ class ReviewService:
             resolved_by=item.resolved_by,
             resolved_at=item.resolved_at,
             points=points,
+            has_source_box=has_source_box,
         )
+
+    def get_item_crop_source(
+        self, caller_id: uuid.UUID | str, caller_role: Role | str, item_id: uuid.UUID | str
+    ) -> tuple[str, SourceBox]:
+        """Return the stored object path and box for one review item's scan crop.
+
+        Applies the SAME visibility rule as :meth:`get_item` —
+        :meth:`_visible_class_map` then :meth:`_find_any_item` — rather than
+        letting the crop route implement its own. An image endpoint that
+        resolves its own authorization is where IDOR gets written, because it
+        reads as "just serve bytes".
+
+        The returned :class:`~lemely.core.schemas.SourceBox` is reconstructed
+        from the five columns rather than handed out as a live ORM read, so its
+        validator runs once more on the way out and every caller gets its own
+        object to scale into pixels.
+
+        Raises:
+            ReviewNotFoundError: no such item; or the item is console-sourced;
+                or the item has no upload; or the item has no persisted box.
+                All of these are "there is no image here" and are deliberately
+                indistinguishable to the caller — same type, same message: a
+                404 that varied by reason would let a caller probe which
+                students have scans, and confirm that a guessed id names a real
+                item. The distinguishable reason is logged server-side.
+            ReviewOwnershipError: the item exists but its attempt's owner is not
+                one of the caller's visible students (403).
+            ReviewValidationError: the five columns do not form a usable box
+                (422). Unreachable while
+                ``ck_question_results_source_box_positive_area`` and its
+                siblings hold; kept because the consequence of trusting a bad
+                box is a blank crop rendered beside a real student's answer,
+                which ``CorrectedQuestion.source_box`` forbids outright.
+        """
+        item_uuid = _as_uuid(item_id)
+        absent = CROP_ABSENT_DETAIL.format(item_id=item_uuid)
+        visible = self._visible_class_map(caller_id, caller_role)
+        with self._sessionmaker() as session:
+            try:
+                item, attempt, qr, paper = self._find_any_item(
+                    session, item_uuid, visible, caller_id=caller_id, caller_role=caller_role
+                )
+            except ReviewNotFoundError:
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="no_such_item")
+                raise ReviewNotFoundError(absent) from None
+            if paper is not None:
+                # Console papers are out of scope (issue #245) — not for want of
+                # a scan, which a `TeacherPaper` upload holds, but because
+                # reaching it needs a second lookup against
+                # `teacher_paper_visible`, whose `platform_admin` grant this
+                # queue refuses on purpose (see `_find_any_item`). Declining
+                # here rather than widening keeps that refusal intact.
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="console_item")
+                raise ReviewNotFoundError(absent)
+            attempt = _require_attempt(item, attempt)
+            if attempt.upload_id is None:
+                # A quiz, or a seeded/imported attempt: no scan was ever stored.
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="no_upload")
+                raise ReviewNotFoundError(absent)
+            # All five columns, not just `source_box_page`: the all-or-none
+            # CHECK makes the other four redundant as a test, but reading them
+            # explicitly is what narrows them from `int | None` for the
+            # constructor below, and leaves the box usable if that CHECK is ever
+            # relaxed rather than trusting it from one column.
+            if (
+                qr is None
+                or qr.source_box_page is None
+                or qr.source_box_ymin is None
+                or qr.source_box_xmin is None
+                or qr.source_box_ymax is None
+                or qr.source_box_xmax is None
+            ):
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="no_box")
+                raise ReviewNotFoundError(absent)
+            coords = [
+                qr.source_box_ymin,
+                qr.source_box_xmin,
+                qr.source_box_ymax,
+                qr.source_box_xmax,
+            ]
+            page = qr.source_box_page
+            upload = session.get(Upload, attempt.upload_id)
+            if upload is None:
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="upload_row_missing")
+                raise ReviewNotFoundError(absent)
+            storage_path = upload.storage_path
+        try:
+            box = SourceBox(page=page, box=coords)
+        except ValidationError as exc:
+            log.warning("review_crop_box_invalid", item_id=str(item_uuid), page=page, box=coords)
+            raise ReviewValidationError(
+                f"Stored crop region for review item {item_uuid} is not usable"
+            ) from exc
+        return storage_path, box
 
     # -- Mutations --------------------------------------------------------------
 
@@ -605,10 +806,12 @@ class ReviewService:
     ) -> ReviewQueueRow:
         """Dismiss an integrity flag. Leaves no student-visible record (see module docstring).
 
-        Restricted to ``plagiarism_flag`` / ``ai_detection_flag`` items —
-        UI-spec T-08 ties "dismiss without a record reaching the student"
-        specifically to integrity flags; a ``low_confidence``/``manual`` item
-        is resolved (accept-as-is), never dismissed.
+        Restricted to ``plagiarism_flag`` items — UI-spec T-08 ties "dismiss
+        without a record reaching the student" specifically to integrity
+        flags; a ``low_confidence``/``manual``/``random_audit`` item is
+        resolved (accept-as-is), never dismissed. (F4 removed the other
+        integrity reason this restriction used to also name, the
+        AI-generated-answer detector's flag.)
 
         Raises:
             ReviewNotFoundError: No item exists with ``item_id`` (404).
@@ -622,7 +825,7 @@ class ReviewService:
             item, attempt, qr, paper = self._find_any_item(
                 session, item_id, visible, caller_id=caller_id, caller_role=caller_role
             )
-            if item.reason not in (ReviewReason.plagiarism_flag, ReviewReason.ai_detection_flag):
+            if item.reason is not ReviewReason.plagiarism_flag:
                 raise ReviewValidationError(
                     f"Only integrity flags may be dismissed; item {item.id} has "
                     f"reason {item.reason.value}"
@@ -1124,6 +1327,15 @@ def _console_item_detail(
         resolved_by=item.resolved_by,
         resolved_at=item.resolved_at,
         points=[],  # no question_result_points row exists for a console item
+        # A source_box frequently *does* exist here: `correct_paper`
+        # (`correction_ai.py`) attaches one to `CorrectedQuestion` whenever the
+        # extractor found one, console papers included, exactly as it does for
+        # an attempt. This stays `False` anyway, because the crop route
+        # (`GET /api/teacher/review/{item_id}/crop`) serves only
+        # attempt-backed items -- a console item's `upload_id` is NULL, so the
+        # route 404s there. Reporting `True` would promise a crop affordance
+        # that 404s.
+        has_source_box=False,
     )
 
 

@@ -16,10 +16,13 @@ shell's exported vars (if any) still apply, exactly as in CI.
 
 from __future__ import annotations
 
+import logging
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+import structlog
 
 import lemely.runtime.config as config_module
 from lemely.core.loose_schemas import (
@@ -39,6 +42,52 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from sqlalchemy.orm import Session, sessionmaker
+
+
+# US-036: `sys.flags.optimize != 0` (CPython `-O`/`-OO`, or `PYTHONOPTIMIZE`
+# set in the environment) strips every bare `assert` statement in the
+# process running this hook. A pytest test file built on bare `assert`s (the
+# convention this whole suite uses; pytest's own assertion-rewriting import
+# hook is what lets `assert x == y` still produce a readable failure -- but
+# rewriting only applies to files pytest itself imports as test modules, not
+# to arbitrary `assert`s a fixture or the code under test executes) then
+# "passes" having asserted nothing. This is not hypothetical on this branch:
+# `impl-us038`'s very first run of this suite reported a clean PASSED with
+# zero real assertions, because this session exports `PYTHONOPTIMIZE=2` on
+# shell entry -- an ambient setting outside the repo (not in
+# ~/.claude/settings.json, not in pyproject.toml, not in any shell profile
+# under version control here) that no per-agent warning can reliably survive.
+#
+# `env -u PYTHONOPTIMIZE .venv/bin/python -m pytest ...` is the correct
+# invocation and is documented everywhere in this repo that runs tests, but
+# a human or agent forgetting the flag must not get a silent, meaningless
+# PASSED -- they must get a loud, immediate refusal instead. Hence this hook,
+# not a fixture: `pytest_configure` runs before collection, so the whole
+# session is refused before a single (possibly vacuous) test executes,
+# rather than after some tests have already reported false confidence.
+#
+# No escape hatch: nothing in this suite legitimately needs the *pytest
+# process itself* to run under `-O`/`-OO`. The one place this branch
+# deliberately exercises `-OO` behaviour
+# (`tests/test_answer_extraction.py::WireSchemaSurvivesPythonOptimizeTests`)
+# does so by spawning `sys.executable -OO -c ...` as a SEPARATE subprocess --
+# that subprocess's optimize level is independent of this (the parent pytest
+# process's) `sys.flags.optimize`, so this guard and that test do not
+# conflict at any optimize level the parent process might be run under.
+def pytest_configure(config: pytest.Config) -> None:
+    if sys.flags.optimize != 0:
+        raise pytest.UsageError(
+            f"Refusing to run: sys.flags.optimize == {sys.flags.optimize} "
+            "(PYTHONOPTIMIZE is set, or python was launched with -O/-OO). "
+            "CPython strips every bare `assert` statement under -O/-OO, and "
+            "this suite's tests are ordinary `assert`-based pytest tests -- "
+            "so a run under this flag can report PASSED having checked "
+            "nothing, which already happened once on this branch. Re-run as: "
+            "  env -u PYTHONOPTIMIZE .venv/bin/python -m pytest ...\n"
+            "Do not add PYTHONDONTWRITEBYTECODE alongside it -- combined "
+            "with -O that forces a sympy recompile per subprocess and has "
+            "already broken a timeout-bounded test on this branch."
+        )
 
 
 def _scheme() -> MarkScheme:
@@ -448,6 +497,77 @@ def _seed_ambient_grade_boundaries() -> Iterator[None]:
         except sa.exc.SQLAlchemyError:
             pass
         invalidate_reference_cache()
+
+
+@pytest.fixture(autouse=True)
+def _reset_structlog_after_each_test() -> Iterator[None]:
+    """Undo any process-wide structlog configuration a test performs.
+
+    `lemely.runtime.logging.configure_logging()` calls `structlog.configure(...,
+    cache_logger_on_first_use=True)` and installs a bridge handler on the
+    stdlib root logger. It is invoked for real (not mocked) by a lot more of
+    this suite than its own tests: every CLI test that drives
+    `lemely.app.cli.main` reaches the `cli()` click group's callback, which
+    calls `configure_logging()` on *every single invocation*
+    (`lemely/app/cli.py:184`) -- and that is dozens of test functions across
+    `test_cli*.py`, `test_accuracy_harness.py`, `test_question_generation.py`,
+    `test_vapid_keygen.py`, and `tests/eval/test_labeller_cli.py`.
+    `tests/test_runtime_logging.py` and `tests/test_web_entrypoint.py` call it
+    directly too.
+
+    Once `cache_logger_on_first_use=True` is set, it is never reset by
+    anyone -- and every subsequent real `configure_logging()` call builds a
+    brand new `processors` list and replaces `structlog`'s global one with it
+    (`structlog.configure(processors=[...])`, a *new* list object each time,
+    not a mutation of the old one). Any module-level logger
+    (`log = structlog.get_logger(__name__)`, e.g. `lemely/db/review_repo.py`)
+    that has already been bound -- which happens the first time it is used
+    while caching is on -- keeps a permanent reference to whichever processors
+    list was live *at that moment*. A later, unrelated `configure_logging()`
+    call elsewhere in the suite orphans that reference for good: the logger
+    goes on using the old list forever, while
+    `structlog.testing.capture_logs()` (used by this suite's `capture_logs()`
+    tests) works by mutating *the current* global list in place. Once a
+    logger's cached reference and the current global list are different
+    objects, `capture_logs()` can mutate all it wants and that logger's output
+    will never show up in the captured entries -- reproduced in isolation as:
+    `configure_logging(); log.info(...)` (caches); `configure_logging()` again
+    (orphans it); `with capture_logs(): log.info(...)` yields `[]`.
+
+    This is exactly why `tests/test_web_review.py`'s crop-route tests
+    (`test_crop_route_404s_for_an_item_whose_attempt_has_no_upload` and
+    siblings) saw an empty captured-log list only when the full suite ran, and
+    passed every time the file ran alone: alphabetically-earlier CLI tests (and
+    `test_runtime_logging.py`/`test_web_entrypoint.py`) are what call
+    `configure_logging()` for real before `lemely.db.review_repo`'s logger
+    ever gets used, and it is *that* accumulated pollution -- not
+    `test_web_entrypoint.py` alone -- that orphans it. Fixing only
+    `test_web_entrypoint.py`'s own tests would leave the CLI tests free to
+    keep doing the same thing to the next logger some other test's
+    `capture_logs()` depends on. Resetting `structlog`'s global defaults after
+    *every* test, regardless of which one touched them, is the only fix that
+    covers all of these call sites at once without having to find, and keep
+    finding, every place that calls `configure_logging()` for real.
+
+    Restoring the stdlib root logger's handlers/level the same way
+    `test_web_entrypoint.py`'s own `pristine_root_logger` fixture already does
+    covers the other half of what `configure_logging()` mutates (it clears
+    root's handlers and installs its own bridge handler), so nothing here is
+    redundant with that fixture -- this one just makes the guarantee
+    suite-wide instead of local to one file.
+    """
+    root = logging.getLogger()
+    saved_handlers = list(root.handlers)
+    saved_level = root.level
+    try:
+        yield
+    finally:
+        structlog.reset_defaults()
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+        for handler in saved_handlers:
+            root.addHandler(handler)
+        root.setLevel(saved_level)
 
 
 @pytest.fixture

@@ -116,6 +116,30 @@ class ExtractedAnswerTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ExtractedAnswer(question_id="1", answer="A", confidence=1.5)
 
+    def test_extraction_agreement_defaults_to_none(self) -> None:
+        """extraction_agreement (I3, cross-read second opinion) is distinct
+        from reread_agreement (I1, crop-and-re-read) and unset by default."""
+        ea = ExtractedAnswer(question_id="1", answer="A", confidence=0.9)
+        self.assertIsNone(ea.extraction_agreement)
+        self.assertIsNone(ea.reread_agreement)
+
+    def test_extraction_agreement_and_reread_agreement_are_independent_fields(self) -> None:
+        """Setting one must never affect the other -- they are two different
+        measurements, not aliases of the same value."""
+        ea = ExtractedAnswer(
+            question_id="1",
+            answer="A",
+            confidence=0.9,
+            extraction_agreement=0.42,
+            reread_agreement=0.99,
+        )
+        self.assertEqual(ea.extraction_agreement, 0.42)
+        self.assertEqual(ea.reread_agreement, 0.99)
+
+    def test_extraction_agreement_out_of_range_raises(self) -> None:
+        with self.assertRaises(ValidationError):
+            ExtractedAnswer(question_id="1", answer="A", confidence=0.9, extraction_agreement=1.5)
+
     def test_extracted_answers_round_trip(self) -> None:
         ea = ExtractedAnswers(
             paper_id="0625_MayJune_2020_p12",
@@ -223,6 +247,63 @@ class SubjectResultTests(unittest.TestCase):
                 session_month="May/June",
                 session_year=2020,
                 paper_results=[p1, p2],
+                weaknesses=WeaknessReport(weak_areas=[]),
+            )
+
+
+class SubjectCodeValidatorTests(unittest.TestCase):
+    """F1 acceptance (3): subject_code moved off `Field(pattern=...)` to a
+    Pydantic validator on every site that carries it (3.x models reject the
+    `pattern` JSON-Schema keyword) — the shape check itself must still hold."""
+
+    def test_exam_metadata_rejects_non_four_digit_code(self) -> None:
+        with self.assertRaises(ValidationError):
+            ExamMetadata(
+                subject_code="12a",
+                paper_number=1,
+                paper_variant=2,
+                session_month="Oct/Nov",
+                session_year=2022,
+            )
+
+    def test_exam_metadata_rejects_trailing_newline(self) -> None:
+        """F1 review FIX 6: ``re.match(r"^\\d{4}$")`` lets "1234\\n" through —
+        Python's ``$`` matches just before a trailing newline as well as at
+        true end-of-string, a leniency ``.match()`` doesn't cancel out but
+        Pydantic's Rust-backed ``Field(pattern=...)`` (this replaced) did not
+        share. ``.fullmatch()`` has no such exception."""
+        with self.assertRaises(ValidationError):
+            ExamMetadata(
+                subject_code="1234\n",
+                paper_number=1,
+                paper_variant=2,
+                session_month="Oct/Nov",
+                session_year=2022,
+            )
+
+    def test_exam_metadata_schema_has_no_pattern_keyword(self) -> None:
+        import json
+
+        self.assertNotIn("pattern", json.dumps(ExamMetadata.model_json_schema()))
+
+    def test_subject_result_rejects_non_four_digit_code(self) -> None:
+        with self.assertRaises(ValidationError):
+            SubjectResult(
+                subject_code="99",
+                session_month="May/June",
+                session_year=2020,
+                paper_results=[
+                    CorrectionResult(
+                        metadata=ExamMetadata(
+                            subject_code="99",
+                            paper_number=1,
+                            paper_variant=1,
+                            session_month="May/June",
+                            session_year=2020,
+                        ),
+                        questions=[],
+                    )
+                ],
                 weaknesses=WeaknessReport(weak_areas=[]),
             )
 

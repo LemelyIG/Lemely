@@ -1015,7 +1015,7 @@ const REVIEW_ITEMS = [
      queue used to call confident. This row is the capture of the chunk-D
      finding. */
   { itemId: "r2", attemptId: "a2", questionResultId: "q2", studentId: "s2", studentDisplayName: "Yusuf Rahman", classId: "c1", className: "Y11 Physics A", subjectCode: "0625", paperNumber: 4, paperVariant: 1, sessionMonth: "Nov", sessionYear: 2024, questionId: "5(a)", reason: "low_confidence", status: "open", createdAt: "2026-08-12T10:30:00Z", waitingHours: 26, aiAwardedMarks: 1, maximumMarks: 2, confidenceScore: 0.85 },
-  { itemId: "r3", attemptId: "a3", questionResultId: null, studentId: "s3", studentDisplayName: "Mariam Adel", classId: "c2", className: "Y11 Physics B", subjectCode: null, paperNumber: null, paperVariant: null, sessionMonth: null, sessionYear: null, questionId: "2", reason: "ai_detection_flag", status: "open", createdAt: "2026-08-13T07:15:00Z", waitingHours: 5, aiAwardedMarks: null, maximumMarks: null, confidenceScore: null },
+  { itemId: "r3", attemptId: "a3", questionResultId: null, studentId: "s3", studentDisplayName: "Mariam Adel", classId: "c2", className: "Y11 Physics B", subjectCode: null, paperNumber: null, paperVariant: null, sessionMonth: null, sessionYear: null, questionId: "2", reason: "plagiarism_flag", status: "open", createdAt: "2026-08-13T07:15:00Z", waitingHours: 5, aiAwardedMarks: null, maximumMarks: null, confidenceScore: null },
 ]
 
 /*

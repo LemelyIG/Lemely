@@ -155,6 +155,309 @@ class DoctorTests(unittest.TestCase):
         self.assertTrue(push["ok"], msg=push)
 
 
+class DoctorRemovedConfigKeysTests(unittest.TestCase):
+    """F4 acceptance (5): ``lemely doctor`` warns, but does not fail, when a
+    ``lemely.toml`` still sets a key F4 removed."""
+
+    def setUp(self) -> None:
+        self.runner = CliRunner()
+
+    def test_doctor_warns_on_stale_integrity_key_without_failing(self) -> None:
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            toml_path = Path(tmp) / "lemely.toml"
+            toml_path.write_text("[integrity]\nai_detection_enabled = true\n")
+            result = self.runner.invoke(
+                cli,
+                ["--json", "--config", str(toml_path), "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        # Advisory: reported unhealthy but does not flip all_passed.
+        self.assertTrue(payload["all_passed"], msg=result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "no_removed_config_keys")
+        self.assertFalse(check["ok"])
+        self.assertIn("integrity.ai_detection_enabled", check["detail"])
+
+    def test_doctor_reports_no_removed_keys_on_a_clean_toml(self) -> None:
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            toml_path = Path(tmp) / "lemely.toml"
+            toml_path.write_text("[integrity]\nplagiarism_enabled = true\n")
+            result = self.runner.invoke(
+                cli,
+                ["--json", "--config", str(toml_path), "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "no_removed_config_keys")
+        self.assertTrue(check["ok"])
+
+    def test_doctor_warns_when_promo_pricing_window_is_within_30_days_of_expiry(self) -> None:
+        """US-026: `lemely doctor` warns, but does not fail, when the 3.8/3.7/
+        3.6-flash promotional pricing window (see FLASH_3X_PROMO_END_DATE in
+        lemely.io.gemini) is within 30 days of lapsing to the real rate."""
+        from datetime import timedelta
+        from unittest.mock import patch
+
+        from lemely.io.gemini import FLASH_3X_PROMO_END_DATE
+
+        near_expiry = FLASH_3X_PROMO_END_DATE - timedelta(days=10)
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            with patch("lemely.io.gemini._today", return_value=near_expiry):
+                result = self.runner.invoke(
+                    cli,
+                    ["--json", "doctor", "--no-network"],
+                    env={
+                        "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                        "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                        "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                        "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                    },
+                )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        self.assertTrue(payload["all_passed"], msg=result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_promo_pricing_window")
+        self.assertFalse(check["ok"], msg=check)
+        self.assertIn("in 10 day(s)", check["detail"])
+        self.assertIn(str(FLASH_3X_PROMO_END_DATE), check["detail"])
+
+    def test_doctor_does_not_warn_when_promo_pricing_window_is_not_near_expiry(self) -> None:
+        from datetime import timedelta
+        from unittest.mock import patch
+
+        from lemely.io.gemini import FLASH_3X_PROMO_END_DATE
+
+        far_from_expiry = FLASH_3X_PROMO_END_DATE - timedelta(days=90)
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            with patch("lemely.io.gemini._today", return_value=far_from_expiry):
+                result = self.runner.invoke(
+                    cli,
+                    ["--json", "doctor", "--no-network"],
+                    env={
+                        "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                        "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                        "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                        "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                    },
+                )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_promo_pricing_window")
+        self.assertTrue(check["ok"], msg=check)
+
+    def test_doctor_warns_on_an_unparseable_cost_ledger_without_failing(self) -> None:
+        """US-035: a present-but-corrupt gemini_spend.json is advisory, never
+        fatal (fail-open, per ruling) — but `doctor` must name it."""
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            outputs = Path(tmp) / "outputs"
+            outputs.mkdir()
+            (outputs / "gemini_spend.json").write_text("{ not valid json", encoding="utf-8")
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(outputs),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["all_passed"], msg=result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_cost_ledger")
+        self.assertFalse(check["ok"], msg=check)
+        self.assertIn("gemini_spend.json", check["detail"])
+
+    def test_doctor_does_not_warn_on_an_absent_cost_ledger(self) -> None:
+        """Absent is the legitimate first-run state, not corruption."""
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            outputs = Path(tmp) / "outputs"
+            outputs.mkdir()
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(outputs),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_cost_ledger")
+        self.assertTrue(check["ok"], msg=check)
+
+    def test_doctor_does_not_warn_on_a_healthy_cost_ledger(self) -> None:
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            outputs = Path(tmp) / "outputs"
+            outputs.mkdir()
+            from lemely.io.cost_ledger import CostLedger
+
+            CostLedger(outputs / "gemini_spend.json").add(1.0, thresholds=[])
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(outputs),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_cost_ledger")
+        self.assertTrue(check["ok"], msg=check)
+
+    def test_doctor_warns_on_a_pricing_override_that_bypasses_the_promo_gate(self) -> None:
+        """Review finding 3: a `lemely.toml` `[gemini.pricing]` override pinned
+        on a promo model bypasses `FLASH_3X_PROMO_END_DATE` entirely — that is
+        pre-existing, intentional override-wins behaviour, but the advisory
+        must name the override rather than claim a post-promo rate it never
+        checked. Frozen well past expiry so a bug that fell through to the
+        date branch would say something false ("...post-promo rate...")."""
+        from datetime import timedelta
+        from unittest.mock import patch
+
+        from lemely.io.gemini import FLASH_3X_PROMO_END_DATE
+
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            toml_path = Path(tmp) / "lemely.toml"
+            toml_path.write_text('[gemini.pricing]\n"gemini-3.8-flash" = [0.00075, 0.00375]\n')
+            with patch(
+                "lemely.io.gemini._today",
+                return_value=FLASH_3X_PROMO_END_DATE + timedelta(days=365),
+            ):
+                result = self.runner.invoke(
+                    cli,
+                    ["--json", "--config", str(toml_path), "doctor", "--no-network"],
+                    env={
+                        "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                        "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                        "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                        "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                    },
+                )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        self.assertTrue(payload["all_passed"], msg=result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_promo_pricing_window")
+        self.assertFalse(check["ok"], msg=check)
+        self.assertIn("gemini-3.8-flash", check["detail"])
+        self.assertIn("pins a fixed price", check["detail"])
+        self.assertNotIn("post-promo rate", check["detail"])
+
+    def test_doctor_warns_on_a_stale_key_set_as_an_env_var_without_failing(self) -> None:
+        """Review finding F-6: the same warning, without a crash, however the
+        removed key was supplied — a bare TOML file (no removed key of its
+        own) with the key set as an env var instead."""
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            toml_path = Path(tmp) / "lemely.toml"
+            toml_path.write_text("[integrity]\nplagiarism_enabled = true\n")
+            result = self.runner.invoke(
+                cli,
+                ["--json", "--config", str(toml_path), "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                    "LEMELY_INTEGRITY__AI_DETECTION_ENABLED": "true",
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        self.assertTrue(payload["all_passed"], msg=result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "no_removed_config_keys")
+        self.assertFalse(check["ok"])
+        self.assertIn("integrity.ai_detection_enabled", check["detail"])
+
+
+class US034FallbackPricingVisibilityTests(unittest.TestCase):
+    """US-034: `lemely doctor` must name any configured model resolving
+    through the unrecognised-model pricing fallback, and must NOT name any of
+    the three real configured models (none of which hits the fallback
+    today)."""
+
+    def setUp(self) -> None:
+        self.runner = CliRunner()
+
+    def test_doctor_names_a_nonexistent_configured_model_as_hitting_the_fallback(self) -> None:
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                    "LEMELY_GEMINI__EXTRACTION_MODEL": "totally-fake-model-does-not-exist",
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        # Advisory: reported unhealthy but does not flip all_passed.
+        self.assertTrue(payload["all_passed"], msg=result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_fallback_pricing")
+        self.assertFalse(check["ok"], msg=check)
+        self.assertIn("totally-fake-model-does-not-exist", check["detail"])
+        self.assertIn("extraction", check["detail"])
+
+    def test_doctor_does_not_name_any_real_configured_model_as_hitting_the_fallback(self) -> None:
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        self.assertTrue(payload["all_passed"], msg=result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_fallback_pricing")
+        self.assertTrue(check["ok"], msg=check)
+        for real_model in ("gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"):
+            self.assertNotIn(real_model, check["detail"])
+
+
 class DoctorTestsEnvLeakTests(unittest.TestCase):
     """Regression test for #121: DoctorTests.setUp must not leak env deletions."""
 

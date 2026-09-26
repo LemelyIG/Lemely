@@ -20,8 +20,11 @@ from lemely.eval.analyses import exclusion_funnel
 from lemely.eval.manifest import RunManifest, Split
 from lemely.eval.records import Arm, EvalRecord
 from lemely.eval.test_touch import DEFAULT_LEDGER_PATH, authorize_test_split_join
+from lemely.io.answer_extraction import EXTRACTION_MEDIA_RESOLUTION
 from lemely.io.correction_ai import COHERENCE_TRIGGER_MARKER
 from lemely.io.gemini import _MAX_OUTPUT_TOKENS
+from lemely.runtime.config import log_marking_flags, marking_options_from
+from lemely.runtime.errors import CostCeilingError
 
 log = structlog.get_logger()
 
@@ -111,6 +114,48 @@ class GoldenCase:
     #: :func:`load_golden_cases`.
     renders: dict[str, Path] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Enforce the ``scan_path``/``renders`` invariant documented above.
+
+        US-029 review SF-1: `_corpus_digest` folds ``renders``, but
+        `measure_accuracy` sends ``scan_path`` to extraction — two
+        independent dataclass fields with no prior enforcement that they
+        agree. A case constructed with a real ``scan_path`` and an empty (or
+        disagreeing) ``renders`` would silently exclude its own scan bytes
+        from the digest: exactly the pre-US-029 defect, one field away.
+
+        Raises rather than silently populating ``renders`` from
+        ``scan_path``: this dataclass is constructed directly at ~20 sites
+        across the test suite (not only via `load_golden_cases`), and an
+        auto-populate would hide the same class of mistake it exists to
+        catch. `load_golden_cases` already satisfies this invariant
+        (`renders[DEFAULT_RENDER] = scan_path` iff the scan exists), so
+        enforcing it here does not move any digest that loader produces.
+
+        The comparison is exact ``Path`` **equality, not same-file
+        identity** — deliberately. A differently-spelled path to the same
+        file (symlink-resolved vs. not, a ``..`` detour, absolute vs.
+        relative) is rejected on purpose: most cases carry nonexistent scan
+        paths (e.g. arm-override tests), so no same-file check
+        (``os.path.samefile``) is even available — it requires both paths
+        to exist. Resolving one or both sides first (``Path.resolve()``)
+        would make this invariant depend on filesystem state and add a
+        syscall to every construction, for a case this codebase does not
+        exercise. Two fields meant to denote the same file should also
+        simply *read* identically. This costs nothing in practice:
+        ``pathlib`` already normalises ``.``, repeated separators, and
+        trailing slashes at parse time, so the common ``Path(str(p))``
+        round-trip compares equal.
+        """
+        if self.scan_path is not None and self.renders.get(DEFAULT_RENDER) != self.scan_path:
+            raise ValueError(
+                "GoldenCase invariant violated: renders[DEFAULT_RENDER] must "
+                f"equal scan_path when scan_path is set (scan_path={self.scan_path!r}, "
+                f"renders.get(DEFAULT_RENDER)={self.renders.get(DEFAULT_RENDER)!r}) "
+                "(compared by exact path spelling, not same-file identity — "
+                "pass the same Path to both fields)"
+            )
+
     @property
     def render_names(self) -> list[str]:
         """Available render names, ``DEFAULT_RENDER`` first when present."""
@@ -127,7 +172,43 @@ class GoldenCase:
         return self.renders.get(name)
 
 
-def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
+class GoldenCaseLoadResult(list[GoldenCase]):
+    """``load_golden_cases``'s return value (US-037).
+
+    A ``list[GoldenCase]`` plus the case directories it had to drop.
+    ``golden_case_load_error``/``golden_case_marker_load_error`` (below) had
+    exactly one producer and zero consumers before this fix: a structlog
+    warning on a stream a batch sweep's operator is not reading, changing
+    neither the case count, nor any metric, nor the exit code. A corpus of
+    40 papers where one fails to parse printed "Loaded 39 golden case(s)."
+    and proceeded as though 39 were the whole corpus. This subclass is the
+    consumer: it makes the drop an attribute a caller can act on.
+
+    Subclassing ``list`` rather than returning a tuple or a dataclass is
+    deliberate (spec: "do not force a breaking signature change on callers
+    that do not need it if an additive one works") — every existing call
+    site (``len(cases)``, ``for case in cases``, ``cases[0]``, list
+    comprehensions, passing it straight into ``measure_accuracy``) keeps
+    working completely unmodified; only a caller that wants the new signal
+    reads ``.unparseable``.
+    """
+
+    def __init__(self, cases: list[GoldenCase], unparseable: list[Path]) -> None:
+        super().__init__(cases)
+        #: Case directories dropped because they could not be turned into a
+        #: usable ``GoldenCase`` — a broken ``mark_scheme.json``/
+        #: ``answers.json``, or a ``case.json`` excerpt marker that could not
+        #: be trusted. Deliberately does NOT include a directory that is
+        #: legitimately not a case at all (not a directory, or missing
+        #: ``mark_scheme.json``/``answers.json``) — that distinction already
+        #: exists at the point of decision in `load_golden_cases`: those
+        #: skips log nothing, while a genuine parse failure logs
+        #: `golden_case_load_error`/`golden_case_marker_load_error` naming
+        #: the directory and the reason.
+        self.unparseable: list[Path] = unparseable
+
+
+def load_golden_cases(golden_dir: Path) -> GoldenCaseLoadResult:
     """Load all golden cases from direct subdirectories of *golden_dir*.
 
     Each subdirectory must contain:
@@ -148,7 +229,12 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
     that file round-trips through ``MarkScheme.model_validate_json``, whose
     ``MarkSchemeMetadata`` is the production Gemini-parser schema and would
     silently drop an unrecognised key. A missing sidecar (or a missing
-    ``is_excerpt`` key within it) defaults to ``False``.
+    ``is_excerpt`` key within it) defaults to ``False``. A sidecar that
+    EXISTS but cannot be trusted (invalid JSON, or a non-bool ``is_excerpt``)
+    is a different case from a missing one: defaulting it to ``False`` would
+    silently promote what may actually be an EXCERPT case into a FULL-PAPER
+    case, so the case is rejected instead (US-037) — see ``.unparseable`` on
+    the returned :class:`GoldenCaseLoadResult`.
 
     **Extra renders never add cases.** ``scan.<render>.pdf`` siblings are
     collected onto the one ``GoldenCase`` for that directory (see
@@ -158,8 +244,18 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
     leaves keyed ``(paper_id, question_id)`` (DA6), so a render that produced
     its own case would inflate ``n`` with a duplicate of a leaf that already
     exists.
+
+    **A directory that fails to parse is not the same as a directory that is
+    not a case** (US-037): a missing ``mark_scheme.json``/``answers.json`` is
+    a normal, silent skip — plenty of ``golden_dir`` entries are not cases at
+    all. A directory that HAS both files but fails to parse them, or whose
+    ``case.json`` marker cannot be trusted, is reported in
+    :attr:`GoldenCaseLoadResult.unparseable` rather than only logged, because
+    a caller iterating a batch sweep never reads stdout/stderr closely enough
+    to notice its denominator shrank by one.
     """
     cases: list[GoldenCase] = []
+    unparseable: list[Path] = []
     for case_dir in sorted(golden_dir.iterdir()):
         if not case_dir.is_dir():
             continue
@@ -174,6 +270,7 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
             ground_truth = {qid: GoldenAnswer.model_validate(v) for qid, v in raw.items()}
         except Exception as exc:
             log.warning("golden_case_load_error", case_dir=str(case_dir), error=str(exc))
+            unparseable.append(case_dir)
             continue
         scan_path = case_dir / "scan.pdf"
         # Renders are siblings of scan.pdf, named scan.<render>.pdf (#137).
@@ -200,7 +297,17 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
                     )
                 is_excerpt = raw_flag
             except Exception as exc:
+                # US-037 (second instance): this used to log and fall through
+                # with is_excerpt left at its False default — silently
+                # promoting a case whose EXCERPT status could not actually be
+                # read into a FULL-PAPER case. That changes what the
+                # denominator MEANS, not just its size, so the case is
+                # rejected instead of guessed at: it is reported via
+                # `.unparseable` exactly like a broken mark_scheme/answers
+                # pair, not appended to `cases`.
                 log.warning("golden_case_marker_load_error", case_dir=str(case_dir), error=str(exc))
+                unparseable.append(case_dir)
+                continue
         cases.append(
             GoldenCase(
                 paper_id=paper_id,
@@ -212,7 +319,7 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
                 renders=renders,
             )
         )
-    return cases
+    return GoldenCaseLoadResult(cases, unparseable)
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +337,18 @@ class QuestionResult:
     truth_marks: int
     confidence_score: float
     needs_teacher_review: bool
+    #: US-039 consumer fixes, Finding H: True iff a marker actually formed an
+    #: opinion about this leaf. ``_build_blank_corrected`` and
+    #: ``_build_missing_corrected`` short-circuit to
+    #: ``confidence_score=0.0``/``needs_teacher_review=False`` for a leaf no
+    #: engine ever looked at (``not marker_scored(marker_source)``) --
+    #: a genuine blank scored 0 against a truth of 0 is a real correct
+    #: prediction for ``mark_accuracy``, but it is not a confidence signal:
+    #: it manufactures a "correct at 0.0 confidence" datum that pollutes the
+    #: calibration curve (see ``_build_calibration``). Defaults to True so
+    #: every pre-existing call site (tests included) keeps its old meaning;
+    #: only the real marker_source-aware construction site sets it False.
+    scored: bool = True
     extraction_confidence: float | None = None
     maximum_marks: int | None = None
     review_reason: str | None = None
@@ -341,6 +460,26 @@ def _assign_to_bucket(buckets: list[CalibrationBucket], score: float, correct: b
 def _compute_metrics(
     results: list[QuestionResult], id_match_rate: float | None = None
 ) -> AccuracyMetrics:
+    """Aggregate per-question :class:`QuestionResult` rows into :class:`AccuracyMetrics`.
+
+    Whole-branch review Minor D: unlike :func:`_build_calibration`, this
+    does NOT check ``r.scored`` before folding a row into
+    ``flag_precision_high``/``flag_recall``. Post-US-039, a genuine blank
+    (``scored=False``) is confident (``needs_teacher_review=False``, no
+    marker was ever consulted) and, since it earns 0 marks against a truth
+    of 0, also "correct" -- a free correct-unflagged row that inflates
+    ``flag_precision_high``. A US-042 false blank is wrong-and-unflagged,
+    which instead lowers ``flag_recall``. This is deliberate: filtering
+    ``scored`` here (as ``_build_calibration`` does) is NOT recommended --
+    the metric is honest about what the deployed system actually released
+    on the leaf, which is exactly what these two gate. But it means
+    ``flag_precision_high``/``flag_recall`` moved population for the same
+    reason calibration did when 877869c9 landed, and that was not disclosed
+    at the time. Numbers from these two metrics measured before US-039's
+    blank short-circuit are not comparable to numbers measured after it;
+    do not diff them as though they were. The next baseline for both should
+    be taken post-merge.
+    """
     total = len(results)
     if total == 0:
         return AccuracyMetrics(0.0, 0.0, id_match_rate, 0.0, 1.0)
@@ -460,8 +599,20 @@ def question_result_to_eval_record(
 
     `extraction_conf` is read from `result.extraction_confidence`
     (spec §4 M1.1): extraction-side confidence, threaded from
-    `ExtractedAnswer.confidence` through `CorrectedQuestion.extraction_confidence`,
-    is `None` only when no answer was extracted for this question.
+    `ExtractedAnswer.confidence` through `CorrectedQuestion.extraction_confidence`.
+    US-031 review SHOULD-FIX C: `None` here has TWO distinct causes, not
+    one -- either the model genuinely returned no answer for this question,
+    or it returned one that extraction discarded as malformed before it
+    could reach `ExtractedAnswers.answers` (see
+    `lemely.io.answer_extraction`'s per-answer salvage-or-drop step and
+    `ExtractedAnswers.dropped_question_ids`). The two are NOT separable from
+    `extraction_conf` alone; `result.review_reason` (threaded from
+    `CorrectedQuestion.review_reason`, set by
+    `lemely.io.correction_ai._build_dropped_corrected` to a fixed,
+    distinguishing string for the dropped case) is the signal that tells
+    them apart, when that distinction matters to a caller of this adapter.
+    `QuestionResult` carries no dedicated boolean for this today -- reading
+    `review_reason` is the only way to recover it.
     `maximum_marks` (spec §4 M1.1) is read from `result.maximum_marks` --
     the question's tariff, threaded from `CorrectedQuestion.maximum_marks`,
     used by `paper_grade_confidence` to weight by marks available rather
@@ -530,6 +681,23 @@ def _metrics_from_eval_records(
     that isn't a leaf in the mark scheme) are dropped from the denominator,
     mirroring :func:`lemely.eval.analyses._scored`: they carry no marking
     evidence and must not be scored as wrong.
+
+    Whole-branch review Minor D: a genuinely-blank leaf (``QuestionResult.scored
+    is False``, ``question_result_to_eval_record`` does not read that field)
+    is NOT an ``excluded`` row here -- it has an ``outcome`` and empty
+    ``triggers`` like any other row -- so it is NOT dropped from
+    ``flag_precision_high``/``flag_recall``'s population the way it is
+    dropped from the calibration curve (see :func:`_build_calibration`).
+    Post-US-039 this is a free correct-unflagged row for ``flag_precision_high``
+    and, for a US-042 false blank, a free wrong-unflagged row that lowers
+    ``flag_recall``. Filtering it out is deliberately NOT done: these two
+    metrics gate what the deployed system actually released on the leaf,
+    which a scored/unscored split would obscure. But the population moved
+    for the same reason the calibration curve's did when 877869c9 disclosed
+    that break -- this was not disclosed at the time. Numbers from these two
+    metrics measured before US-039's blank short-circuit are not comparable
+    to numbers measured after it; do not diff them as though they were. The
+    next baseline for both should be taken post-merge.
     """
     qlevel = [r for r in records if r.mark_point_id is None and r.outcome != "excluded"]
     total = len(qlevel)
@@ -565,7 +733,7 @@ def _metrics_from_eval_records(
 
 
 def _build_calibration(results: list[QuestionResult]) -> list[CalibrationBucket]:
-    """Build calibration buckets from every question result, MCQ and theory alike.
+    """Build calibration buckets from every SCORED question result, MCQ and theory alike.
 
     D19 (spec §2.1): previously filtered to ``question_type == "theory"``
     only, silently excluding every MCQ result from the calibration curve.
@@ -573,9 +741,24 @@ def _build_calibration(results: list[QuestionResult]) -> list[CalibrationBucket]
     belongs in the same curve. This does not touch `mark_accuracy_theory`'s
     own theory-only selection in `_compute_metrics` — D19 is specifically
     about the calibration curve.
+
+    US-039 consumer fixes, Finding H: ``r.scored is False`` means no marker
+    ever formed an opinion about this leaf (a genuine blank, or a leaf
+    ``correct_paper`` skipped marking entirely) — its
+    ``confidence_score=0.0`` is not a confidence judgement, it is the
+    absence of one. Including it would add a "correct prediction at zero
+    confidence" datum to the lowest bucket for every such leaf, flattening
+    the calibration curve by an amount proportional to the corpus's blank
+    rate. Excluding it here — and ONLY here, `mark_accuracy` still wants the
+    row since a blank scored 0 against a truth of 0 is a genuinely correct
+    prediction for that metric — invalidates every calibration baseline
+    measured before this fix; that is accepted, not incidental. See the
+    commit message and CHANGELOG.
     """
     buckets = _make_calibration_buckets()
     for r in results:
+        if not r.scored:
+            continue
         _assign_to_bucket(buckets, r.confidence_score, r.is_correct)
     return buckets
 
@@ -602,19 +785,82 @@ def _current_git_sha() -> str:
 def _corpus_digest(cases: list[GoldenCase]) -> str:
     """Digest of the exact golden corpus fed into this run.
 
-    Derived from what was actually loaded — each case's ``paper_id``,
-    ``fixture_variant``, and its ground-truth leaves — not a placeholder: two
-    runs over the same corpus reproduce the same digest, and a corpus change
-    (a fixture added/edited/removed) changes it.
+    Folds in, per case (sorted by ``(paper_id, fixture_variant)`` for
+    deterministic ordering):
+
+    - ``paper_id`` and ``fixture_variant``
+    - the mark scheme *content* (``mark_scheme.model_dump_json()``) — a
+      superset of the mark-scheme JSON actually sent to the model (the
+      per-question payload built at
+      ``lemely/io/prompts/correction_ai.py``'s ``question.model_dump_json``
+      is a further subset of this), so folding the whole model is the safe
+      direction: it can only over-detect a change, never miss one. Two
+      runs against different mark schemes must not produce the same digest
+      (US-029; previously it did not, so two sweeps against different mark
+      schemes could produce the same digest and look like a like-for-like
+      A/B when they were not)
+    - each ground-truth leaf's ``awarded_marks`` and ``student_answer``,
+      sorted by question id
+    - every declared render's *name*, and its scan *bytes* when the file
+      exists on disk (streamed in chunks, sorted by render name) — bytes
+      are the other input actually sent to the model, so a re-rendered scan
+      must also move the digest. Folding the name before checking existence
+      means a render that is declared but missing on disk still moves the
+      digest relative to one that was never declared — the two are not the
+      same corpus. A render whose file does not exist on disk (e.g. a case
+      built directly in a test, without a real fixture) contributes no
+      *bytes*, since such a case never had scan bytes to send in the first
+      place.
+
+    Deliberately excluded: paths and mtimes. An absolute path would make the
+    digest machine-dependent, and ``mtime`` is not a change detector in this
+    repo (pre-commit restores it on every run).
+
+    Two runs over an unchanged corpus reproduce the same digest; a corpus
+    change (a fixture's mark scheme, ground truth, or scan bytes
+    added/edited/removed) changes it. Two known, deliberate
+    over-approximations — both safe (they can only cause an unrelated digest
+    move, never a missed one):
+
+    - Adding a field to :class:`~lemely.core.loose_schemas.MarkScheme` (or
+      ``MarkSchemeMetadata``) changes ``model_dump_json()`` for *every*
+      case, moving every corpus's digest even though no fixture changed.
+    - ``MarkSchemeMetadata.assessment_objectives_weighting``'s dict *key
+      order* moves the digest for a semantically identical mark scheme,
+      because ``model_dump_json()`` serialises dicts in their own key
+      order, not sorted.
+
+    Two things that do *not* move it, which is what makes the digest track
+    *parsed* content rather than file text: the mark scheme JSON's top-level
+    key order (Pydantic serialises fields in model-definition order), and
+    unknown extra keys in the source JSON (``model_config`` defaults
+    ``extra`` to ignore, so an unrecognised key is dropped before it ever
+    reaches ``model_dump_json()``).
     """
     h = hashlib.sha256()
     for case in sorted(cases, key=lambda c: (c.paper_id, c.fixture_variant or "")):
         h.update(case.paper_id.encode())
         h.update(b"|")
         h.update((case.fixture_variant or "").encode())
+        h.update(b"|")
+        h.update(case.mark_scheme.model_dump_json().encode())
         for qid in sorted(case.ground_truth):
             gt = case.ground_truth[qid]
             h.update(f"|{qid}:{gt.awarded_marks}:{gt.student_answer}".encode())
+        for render_name in sorted(case.renders):
+            render_path = case.renders[render_name]
+            # SF-2: fold the render's NAME before checking existence, so a
+            # declared-but-missing render is distinguishable from one that
+            # was never declared at all. Folding only after the check made
+            # {default: real, handwritten: missing} and {default: real,
+            # photo: missing} and {default: real} collide on one digest —
+            # three different corpora reading as identical.
+            h.update(f"|render:{render_name}:".encode())
+            if not render_path.exists():
+                continue
+            with render_path.open("rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
     return h.hexdigest()[:16]
 
 
@@ -626,6 +872,7 @@ def _build_run_manifest(
     gemini_client: object = None,
     split: Split = "dev",
     arm: Arm | None = None,
+    n_unparseable: int = 0,
 ) -> RunManifest:
     """Construct the :class:`RunManifest` this run's `EvalRecord`s join to (spec §3.3).
 
@@ -649,6 +896,17 @@ def _build_run_manifest(
     the very access it guards (spec §4 M0.7a). ``measure_accuracy`` authorises
     up front instead, and this function trusts the already-authorised value —
     which also keeps the ledger at exactly one entry per run rather than two.
+
+    ``n_cases`` (US-037) is always ``len(cases)`` -- the count of cases this
+    run actually measured, recorded honestly regardless of whether the
+    corpus that produced ``cases`` was complete. It is the complement to
+    ``corpus_digest``: the digest is a real hash of the loaded corpus, but it
+    hashes the SAME already-shrunken corpus, so two sweeps over 40 and 39
+    papers are not distinguishable from ``corpus_digest`` alone.
+    ``n_unparseable`` is threaded through from the caller (``measure_accuracy``
+    does not itself call ``load_golden_cases``, so it cannot discover this on
+    its own) and defaults to ``0`` -- "no caller told me otherwise", not "the
+    corpus was verified clean".
     """
     gemini = getattr(settings, "gemini", None)
     if gemini is not None:
@@ -656,6 +914,27 @@ def _build_run_manifest(
             "mark_scheme": gemini.model_for("mark_scheme"),
             "extraction": gemini.model_for("extraction"),
             "correction": gemini.model_for("correction"),
+            # F1 review MUST-FIX 1: correction_borderline and escalation are
+            # independently resolvable tags (config.py model_for()) — a run
+            # can differ on escalation without differing on "correction"
+            # itself (e.g. escalation_model == correction_model but a
+            # different thinking_level_for["escalation"]). Both must be
+            # named here for the same reason "correction" is: two runs that
+            # actually issued different calls must not archive the same
+            # fingerprint.
+            "correction_borderline": gemini.model_for("correction_borderline"),
+            "escalation": gemini.model_for("escalation"),
+            # US-028: scan_metadata_model is a resolvable tag of the pipeline
+            # config this run is an instance of, recorded for the same
+            # reason "mark_scheme" is above — not because this harness path
+            # issues a scan-metadata call itself (it doesn't: scan_metadata
+            # is only ever resolved on the ingestion path, lemely/io/
+            # scan_metadata.py, same as mark_scheme's golden schemas are
+            # loaded pre-parsed off disk rather than generated by a call
+            # made here). Recording the whole resolved pipeline config,
+            # including tags this run's own calls never touch, is the
+            # existing "mark_scheme" bar and this is consistent with it.
+            "scan_metadata": gemini.model_for("scan_metadata"),
         }
         # The models MUST be in the hash. Without them two runs on different
         # models record the same params_fingerprint, and M0.3's A/B reads that
@@ -678,12 +957,67 @@ def _build_run_manifest(
         # (``arm is not None``) so a run with no override keeps hashing
         # exactly as it did before this knob existed — "no override" is not
         # itself a fourth, distinguishable value.
+        #
+        # F1 review MUST-FIX 1 (2026-09-17): ``thinking_level_for`` is folded
+        # in too — after the Gemini 3.x migration it is the dominant knob on
+        # the correction/escalation models (2.5's ``thinking_budget_for`` is
+        # kept for the mark_scheme tag and 2.5-and-earlier models). Without
+        # this, two sweeps differing only in
+        # ``thinking_level_for["correction"]`` archived the same
+        # params_fingerprint despite issuing genuinely different API calls —
+        # exactly the failure this hash exists to prevent.
         fingerprint_raw = (
             f"{sorted(models_by_task.items())}"
             f"|{gemini.temperature}|{gemini.top_p}|{gemini.seed}"
+            # US-028: temperature_for/top_p_for/seed_for are live only for a
+            # 2.5-and-earlier tag — GeminiClient._resolved_gen_params (F1)
+            # returns temperature=top_p=seed=None unconditionally for any 3.x
+            # model and never reads these dicts at all (gemini.py), so on
+            # today's config only "mark_scheme" (still 2.5-flash, D20) can
+            # actually differ by them; correction/correction_borderline/
+            # escalation/extraction/scan_metadata are all 3.x and inert here.
+            # A sweep may still repoint any tag at a 2.5 model, so the dicts
+            # are hashed unconditionally rather than only for tags currently
+            # on 2.5 — a deliberate over-approximation, not a precise
+            # per-call claim: it can move this fingerprint for a change that
+            # is inert on an all-3.x run (errs toward "different", the safe
+            # direction for two runs to be told apart), but it will never
+            # miss the case where the dicts genuinely do change a 2.5-tag
+            # call.
+            f"|{sorted(gemini.temperature_for.items())}"
+            f"|{sorted(gemini.top_p_for.items())}"
+            f"|{sorted(gemini.seed_for.items())}"
             f"|{sorted(gemini.thinking_budget_for.items())}"
+            f"|{sorted(gemini.thinking_level_for.items())}"
             f"|{_MAX_OUTPUT_TOKENS}"
+            # US-028: escalation_confidence_threshold decides WHICH calls a
+            # run issues (whether a low-confidence mark escalates to the
+            # stronger escalation_model at all), not just what a given call
+            # looks like — a legitimate knob for a measurement sweep to vary
+            # (spec §3.3's "changes what the run does" bar), so two sweeps
+            # differing only here must not collide either.
+            f"|{gemini.escalation_confidence_threshold}"
+            # I1: media_resolution is a per-call knob on the extraction task
+            # (GeminiClient._params_fingerprint takes it directly, not via a
+            # settings.gemini field), and nothing set it before this story.
+            # Folding the constant in here means a run made after I1 landed
+            # (every extraction call now carries media_resolution) never
+            # archives the same params_fingerprint as a pre-I1 run that set
+            # none at all — the exact false-zero-delta failure every other
+            # line in this hash already guards against.
+            f"|extraction_media_resolution={EXTRACTION_MEDIA_RESOLUTION}"
         )
+        # Spec 2026-09-26: the marking flags decide which calls a run issues
+        # (the verdicts path, ECF re-marks), so two sweeps differing only in
+        # them must not share a fingerprint. Each segment is appended only
+        # when its flag is ON, so a flags-off run hashes exactly as it did
+        # before the flags were read here and every existing baseline stays
+        # comparable.
+        marking = marking_options_from(settings)
+        if marking.equivalence_gate:
+            fingerprint_raw += "|equivalence_gate=True"
+        if marking.ecf_substitution:
+            fingerprint_raw += "|ecf_substitution=True"
         if arm is not None:
             fingerprint_raw += f"|arm={arm}"
     else:
@@ -701,6 +1035,37 @@ def _build_run_manifest(
         split=split,
         corpus_digest=_corpus_digest(cases),
         arm=arm,
+        n_cases=len(cases),
+        n_unparseable=n_unparseable,
+    )
+
+
+def _ceiling_aborted_sweep(
+    exc: CostCeilingError,
+    paper_id: str,
+    stage: Literal["extraction", "marking"],
+    position: int,
+    cases: list[GoldenCase],
+) -> CostCeilingError:
+    """Re-label a ceiling breach as the sweep abort it is (US-030).
+
+    A :class:`~lemely.runtime.errors.CostCeilingError` reaching the per-case
+    body means the run blew its budget partway through. ``measure_accuracy``
+    must not return an :class:`AccuracyResult` for it: no ``RunManifest`` is
+    built, so nothing downstream (``save_result``, ``format_report``, the
+    review-rate gate) can archive a partial run as a completed measurement.
+
+    The breach carries no position of its own, so this folds in the paper and
+    the stage it stopped at — a partial run's reach is evidence about how much
+    of the corpus was actually paid for, and "aborted after 3 of 40 cases" is
+    the difference between a usable partial and a run to discard. The relabelled
+    exception is returned rather than raised so the caller can chain it with
+    ``raise ... from exc``, keeping the original breach as ``__cause__``.
+    """
+    return CostCeilingError(
+        f"{exc} Sweep ABORTED during {stage} of paper {paper_id} "
+        f"(case {position} of {len(cases)}); no accuracy report and no RunManifest "
+        f"were archived for this partial run."
     )
 
 
@@ -714,8 +1079,20 @@ def measure_accuracy(
     test_split_token: str | None = None,
     ledger_path: Path = DEFAULT_LEDGER_PATH,
     arm: Literal["extract+mark", "oracle+mark"] | None = None,
+    n_unparseable: int = 0,
 ) -> AccuracyResult:
     """Run correction over all golden cases; compute metrics.
+
+    ``n_unparseable`` (US-037): the count of golden-case directories the
+    caller's `load_golden_cases` call could not parse and dropped before
+    building *cases* — this function does not call `load_golden_cases`
+    itself, so it has no way to discover this on its own. Recorded onto
+    `RunManifest.n_unparseable` (alongside `RunManifest.n_cases`) purely so
+    the run's own archived record states honestly whether it measured a
+    complete corpus, regardless of what a caller upstream chose to do about
+    an incomplete one. Defaults to ``0`` for the many existing call sites
+    (this file's own tests included) that construct *cases* directly and
+    have no unparseable count to report.
 
     Cases with ``scan_path`` set run the real end-to-end pipeline: Gemini vision
     extraction (:func:`lemely.web.services.grading.extract_answers`) followed by
@@ -755,6 +1132,8 @@ def measure_accuracy(
     ``_build_run_manifest`` therefore trusts the ``split`` it is handed and
     does not re-gate, so exactly one ledger entry is written per run.
     """
+    marking_options = marking_options_from(settings)
+    log_marking_flags(marking_options)
     if run_id is None:
         run_id = f"run-{uuid.uuid4().hex[:12]}"
 
@@ -772,7 +1151,7 @@ def measure_accuracy(
                 f"measure_accuracy(arm='extract+mark') requires every case to have "
                 f"a scan_path; missing for: {missing}"
             )
-    from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+    from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers, marker_scored
     from lemely.io.correction_ai import correct_paper
     from lemely.io.prompts.answer_extraction import VERSION as EXT_VERSION
     from lemely.io.prompts.correction_ai import VERSION as COR_VERSION
@@ -786,7 +1165,7 @@ def measure_accuracy(
     total_extraction_questions = 0
     funnel = FunnelCounts()
 
-    for case in cases:
+    for case_position, case in enumerate(cases, start=1):
         # Terminology (spec §1): real vision extraction is "extract+mark"; the
         # correction-only bypass injects ground-truth text and marks only,
         # i.e. "oracle+mark". Default per-case selection is by scan_path
@@ -812,11 +1191,16 @@ def measure_accuracy(
                     "scan_path; the pre-loop validation should have caught this"
                 )
             ran_extraction = True
-            extracted = extract_answers(
-                scan_path,
-                case.mark_scheme,
-                gemini_client=gemini_client,  # type: ignore[arg-type]
-            )
+            try:
+                extracted = extract_answers(
+                    scan_path,
+                    case.mark_scheme,
+                    gemini_client=gemini_client,  # type: ignore[arg-type]
+                )
+            except CostCeilingError as exc:
+                raise _ceiling_aborted_sweep(
+                    exc, case.paper_id, "extraction", case_position, cases
+                ) from exc
             extracted_ids = {a.question_id for a in extracted.answers}
             total_extraction_questions += len(case.ground_truth)
             matched_extraction_ids += sum(1 for qid in case.ground_truth if qid in extracted_ids)
@@ -835,11 +1219,17 @@ def measure_accuracy(
             )
             extracted_ids = set(case.ground_truth)
 
-        correction = correct_paper(
-            case.mark_scheme,
-            extracted,
-            gemini_client=gemini_client,  # type: ignore[arg-type]
-        )
+        try:
+            correction = correct_paper(
+                case.mark_scheme,
+                extracted,
+                gemini_client=gemini_client,  # type: ignore[arg-type]
+                options=marking_options,
+            )
+        except CostCeilingError as exc:
+            raise _ceiling_aborted_sweep(
+                exc, case.paper_id, "marking", case_position, cases
+            ) from exc
         cq_by_id = {cq.question_id: cq for cq in correction.questions}
 
         # Iterate the ground-truth leaves, not correction.questions (D18,
@@ -887,7 +1277,7 @@ def measure_accuracy(
 
             if not extracted_this_leaf:
                 # Attempted (correct_paper marked it, typically
-                # marker_source="missing") but the extractor never returned
+                # marker_source="missing"/"blank") but the extractor never returned
                 # an answer for it — stays in the denominator as unmatched,
                 # never counted as correct.
                 eval_records.append(
@@ -919,6 +1309,13 @@ def measure_accuracy(
                 truth_marks=gt.awarded_marks,
                 confidence_score=cq.confidence_score,
                 needs_teacher_review=cq.needs_teacher_review,
+                # Finding H (US-039 consumer fixes): "missing"/"dropped"/
+                # "blank" all mean no engine ever formed an opinion about this
+                # leaf -- its confidence_score is a placeholder, not a signal,
+                # and must not enter the calibration curve. The set itself is
+                # `lemely.core.schemas.UNSCORED_MARKER_SOURCES`; see
+                # QuestionResult.scored and _build_calibration.
+                scored=marker_scored(cq.marker_source),
                 # Only real vision extraction produces a measured extraction
                 # confidence; the oracle+mark bypass injects a constant 1.0
                 # `ExtractedAnswer.confidence` purely to satisfy the schema
@@ -967,6 +1364,7 @@ def measure_accuracy(
             gemini_client=gemini_client,
             split=split,
             arm=arm,
+            n_unparseable=n_unparseable,
         ),
         eval_records=eval_records,
         funnel=funnel,
@@ -1034,6 +1432,12 @@ def format_report(result: AccuracyResult, targets: object) -> str:
         ok = "?" if score is None else ("✓" if score >= target else "✗")
         lines.append(f"{stage:<12} {metric:<26} {score_s:>8} {_target(target):>8} {ok}  {desc}")
     lines.append(sep)
+    lines.append(
+        "NOTE: flag_precision (HIGH) / flag_recall population changed under "
+        "US-039 (see _metrics_from_eval_records docstring, whole-branch review "
+        "Minor D) -- numbers from before that fix are not comparable to "
+        "numbers measured after it. Take the next baseline post-merge."
+    )
 
     lines.append("")
     lines.append(
@@ -1053,15 +1457,19 @@ def format_report(result: AccuracyResult, targets: object) -> str:
     )
 
     # Exclusion funnel (spec §4 M0.5): how many ground-truth leaves survived
-    # each stage. `scored` comes from analyses.exclusion_funnel() — the
-    # single, DA6a-aware source of truth for the mark_accuracy/wilson/
-    # review_rate denominator — not recomputed here.
+    # each stage. `funnel_scored` comes from analyses.exclusion_funnel() —
+    # the single, DA6a-aware source of truth for the mark_accuracy/wilson/
+    # review_rate denominator — not recomputed here. Named `funnel_scored`
+    # rather than `scored` (whole-branch review Minor E) because it is a
+    # different thing from `QuestionResult.scored` ("a marker ran"): this is
+    # "the leaf was attempted" per DA6a. The printed label stays `scored=`
+    # -- that is the funnel stage's name, not this Python identifier.
     f = result.funnel
-    scored = exclusion_funnel(result.eval_records)["scored"]
+    funnel_scored = exclusion_funnel(result.eval_records)["scored"]
     lines.append("")
     lines.append(
         f"Exclusion funnel: leaves={f.leaves} -> matched={f.matched} -> "
-        f"marked={f.marked} -> scored={scored}"
+        f"marked={f.marked} -> scored={funnel_scored}"
     )
     # `extracted` is NOT a nested stage of this chain: it counts leaves the
     # extractor returned an id for, while `matched` counts leaves

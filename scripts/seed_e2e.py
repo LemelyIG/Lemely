@@ -62,6 +62,20 @@ scenario the Playwright/Puppeteer harnesses need across all 5 roles:
   :meth:`~lemely.db.attempt_repo.AttemptRepository._persist`'s real fan-out
   queue it for review, through the same single writer every attempt in this
   script goes through. Never a hand-inserted ``review_queue`` row.
+* (task #67) a SECOND review-queue item, on its own dedicated student/class,
+  carrying a mark scheme but neither a verdict nor a rationale on any point —
+  the legacy shape ``MarkerVerdicts``' section-suppression guard exists to
+  hide (``web/src/portals/teacher/screens/ReviewItem.tsx``), and the only
+  shape production sees today. See ``legacy_review_scheme()`` and
+  ``reviewItem.legacyItemId``/``legacyAttemptId`` below.
+* (final review) a THIRD review-queue item, on its own dedicated
+  student/class, carrying a mark scheme and a marker's ``rationale``
+  (``point_notes``) but no ``verdict`` on any point — the shape production
+  ships whenever a marker writes a note without ``equivalence_gate`` on, and
+  the shape ``MarkerVerdicts``' guard was widened
+  (``p.verdict !== null || p.rationale``) to keep visible. See
+  ``rationale_only_review_scheme()`` and
+  ``reviewItem.rationaleOnlyItemId``/``rationaleOnlyAttemptId`` below.
 * (P3.10 chunk e1) a **quiz** (T-09/T-10): 5 MCQ ``question_bank`` rows
   (:func:`build_quiz_bank_questions`, D3.7's empty-bank workaround), built
   into a quiz, assigned to the seeded class, and submitted — every answer
@@ -88,13 +102,12 @@ mark, 2 at-risk).
 
 **Zero Gemini calls, by construction.** Every seeded question is MCQ, so
 :func:`~lemely.core.correction.correct_paper` never builds an ``AICorrector``
-call, and the default :class:`~lemely.runtime.config.IntegritySettings`
-(``ai_detection_enabled=False``) means ``apply_integrity_checks`` never
-constructs an ``AIContentDetector`` either — the Gemini client's lazy
-``_client`` property is never touched, so no API key is required and no
-request reaches the network. Verified against the live stack's real cost
-ledger before/after a seed run, not merely asserted (see the P3.10 chunk e1
-report).
+call, and ``apply_integrity_checks``'s only remaining check (plagiarism,
+since F4 removed the Gemini-backed AI-generated-answer detector) runs pure
+``difflib`` — the Gemini client's lazy ``_client`` property is never touched,
+so no API key is required and no request reaches the network. Verified
+against the live stack's real cost ledger before/after a seed run, not
+merely asserted (see the P3.10 chunk e1 report).
 
 Idempotent-friendly: every email (including both parents') is namespaced under
 a per-run ``runTag`` (default: 12 random hex chars), so repeated runs never
@@ -132,7 +145,10 @@ path::
       "parent": {"userId": "...", "email": "...", "password": "...",
                  "accessToken": "...", "linkedStudent": "declining"},
       "reviewItem": {"itemId": "<review_queue.id>", "attemptId": "<attempt uuid>",
-                     "studentKey": "inactive"},
+                     "studentKey": "inactive",
+                     "legacyItemId": "<review_queue.id>", "legacyAttemptId": "<attempt uuid>",
+                     "rationaleOnlyItemId": "<review_queue.id>",
+                     "rationaleOnlyAttemptId": "<attempt uuid>"},
       "quiz": {"quizId": "...", "assignmentId": "...", "submissionId": "...",
                "submittedBy": "control", "status": "marked"},
       "emptyTeacher": {"userId": "...", "email": "...", "password": "...",
@@ -314,14 +330,18 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExamMetadata,
     GradePrediction,
+    PointVerdict,
+    SourceBox,
     WeaknessReport,
 )
+from lemely.db.models.attempts import Upload
 from lemely.db.models.engagement import XpEvent
 from lemely.db.models.enums import (
     DifficultySource,
     QuestionSource,
     QuizQuestionStatus,
     Role,
+    UploadStatus,
     XpSource,
 )
 from lemely.db.models.flashcards import DeckOrigin, ReviewGrade
@@ -408,6 +428,341 @@ EMAIL_DOMAIN = "e2e.lemely.local"
 #: numbers (teacher-journey.spec.ts: 3 students, 69% average, 2 at-risk) never
 #: see a 4th enrolled student or a 4th grade-bearing attempt.
 REVIEW_ITEM_CONFIDENCE_SCORE = 0.55
+
+#: Task #66: `matched_point_ids` for the review-queue item's own question,
+#: paired with `review_item_point_verdicts()` below -- only `p1`'s verdict is
+#: `"awarded"`, so this is the one list both `derive_point_rows`'s `awarded`
+#: column and `_awarded_from_verdicts`'s real-pipeline invariant agree on
+#: (`derive_point_rows`'s `awarded` comes from `matched_point_ids`, never from
+#: `verdict`, so the two are supplied separately here and must be kept in
+#: step by hand).
+REVIEW_ITEM_MATCHED_POINT_IDS = ["p1"]
+
+#: Task #72: the review-queue item's own question also carries a persisted
+#: `source_box`, so `web/e2e/teacher-review.spec.ts` has a real crop to load.
+#: `[ymin, xmin, ymax, xmax]`, 0-1000 scale (`SourceBox`'s own doc) -- well
+#: inside a single page, not near an edge, so `crop_and_upscale`'s 8% padding
+#: never clips against the page bounds.
+REVIEW_ITEM_SOURCE_BOX = SourceBox(page=0, box=[100, 100, 400, 400])
+
+
+#: Box fill colour per `review_item_source_scan` variant, drawn EXACTLY
+#: box-aligned to `REVIEW_ITEM_SOURCE_BOX` (never a whole-page fill -- see
+#: that function's own doc for why a whole-page fill cannot prove the crop
+#: route cropped the right region at all). Two boxed items (the `inactive`
+#: student's, and the rationale-only student's, both below) need to be
+#: tellable apart by their rendered crop alone, for the C1 navigation test
+#: (`web/e2e/teacher-review.spec.ts`): open boxed item A, boxed item B, back
+#: to A, assert the crop shown is A's colour, never B's.
+_REVIEW_ITEM_SCAN_BOX_FILL: dict[str, tuple[int, int, int]] = {
+    "a": (255, 0, 0),  # red
+    "b": (0, 200, 0),  # green
+}
+
+#: A scheme similar to `tests/test_web_review.py`'s `_synthetic_scan`, not the
+#: same one (that test draws a small rectangle well outside the box; this seed
+#: fills the whole page background): a colour OUTSIDE the box, distinct from
+#: either variant's box colour, so a crop of the wrong region (or the whole
+#: uncropped page) reads as neither pure red nor pure green -- it is a mix of
+#: this and the box colour, or this alone.
+_REVIEW_ITEM_SCAN_OUTSIDE_FILL: tuple[int, int, int] = (0, 0, 255)  # blue
+
+
+def _fill(rgb: tuple[int, int, int]) -> list[float]:
+    """`draw_rect(fill=...)` wants 0-1 floats; `rgb` is documented in 0-255."""
+    return [channel / 255 for channel in rgb]
+
+
+def review_item_source_scan(variant: str = "a") -> bytes:
+    """A one-page PDF standing in for a boxed review item's scan.
+
+    Only `GET /teacher/review/{itemId}/crop` (task #71) ever opens this file:
+    it renders page 0 with PyMuPDF and crops `REVIEW_ITEM_SOURCE_BOX` out of
+    it. A whole-page-uniform fill (this function's first version) cannot
+    prove that happened correctly: `naturalWidth > 0` passes identically for
+    the right region, the wrong region, the wrong page, and a blank image of
+    the right size, since every one of those renders SOME PNG the browser can
+    decode. So the fill is box-ALIGNED, not page-uniform: a colour EXACTLY at
+    `REVIEW_ITEM_SOURCE_BOX`'s coordinates (`_REVIEW_ITEM_SCAN_BOX_FILL`),
+    a DIFFERENT colour everywhere else (`_REVIEW_ITEM_SCAN_OUTSIDE_FILL`) --
+    the same scheme `tests/test_web_review.py`'s `_synthetic_scan` already
+    uses for exactly this reason. A correctly-cropped, correctly-padded
+    region samples as the box colour at its centre; the wrong region, the
+    whole page, or a blank image do not.
+
+    The label text sits at the bottom of the page (`y=800` on an 842pt-tall
+    page), well clear of `REVIEW_ITEM_SOURCE_BOX`'s `[100, 100, 400, 400]`
+    (0-1000 scale, so roughly the page's own top-left third) -- it labels the
+    page for anyone opening the PDF directly, and must never fall inside the
+    box itself, which needs to stay a pure, unbroken fill for the pixel
+    sample above to be deterministic.
+
+    **This repository is public and this is the seed everyone runs.** The
+    page is generated colour blocks plus machine-set label text, not a
+    render of anything resembling handwriting on a real script -- no
+    scanned-paper texture, no simulated ruled lines, nothing a screenshot of
+    this fixture could be mistaken for a student's actual work. Team-lead
+    review of task #72's seed extension named this explicitly: synthetic
+    shapes are fine, anything incidentally script-like is not.
+    """
+    import pymupdf
+
+    doc = pymupdf.open()
+    try:
+        page = doc.new_page(width=595, height=842)  # A4 at 72 dpi
+        page.draw_rect(page.rect, color=None, fill=_fill(_REVIEW_ITEM_SCAN_OUTSIDE_FILL))
+        ymin, xmin, ymax, xmax = REVIEW_ITEM_SOURCE_BOX.box
+        page.draw_rect(
+            pymupdf.Rect(
+                xmin / 1000 * page.rect.width,
+                ymin / 1000 * page.rect.height,
+                xmax / 1000 * page.rect.width,
+                ymax / 1000 * page.rect.height,
+            ),
+            color=None,
+            fill=_fill(_REVIEW_ITEM_SCAN_BOX_FILL[variant]),
+        )
+        page.insert_text(
+            (40, 800),
+            f"SEED FIXTURE {variant.upper()} -- NOT A REAL SCAN",
+            fontsize=14,
+            color=(1, 1, 1),
+        )
+        return doc.tobytes()
+    finally:
+        doc.close()
+
+
+def review_item_scheme() -> MarkScheme:
+    """The point-based scheme behind the review-queue item's own question (T-08).
+
+    Three independent points, one mark each -- deliberately not the same
+    scheme object as :func:`self_review_scheme` (a different question, a
+    different student's attempt, and a different paper number): confusing
+    the two would mean a Playwright spec against ``/teacher/review`` and one
+    against the self-review panel could pass against each other's fixture by
+    accident.
+    """
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code=SUBJECT_CODE,
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2024,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=3,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="1",
+                marks=3,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="Correct method shown", marks=1),
+                    AnswerPoint(id="p2", point="Correct substitution", marks=1),
+                    AnswerPoint(id="p3", point="Final answer to correct precision", marks=1),
+                ],
+            ),
+        ],
+    )
+
+
+def review_item_point_verdicts() -> list[PointVerdict]:
+    """All three I6 verdicts (US-013) on the review-queue item's one question.
+
+    Exactly what T-08's review-queue row needed and never had before task
+    #66: a first Playwright spec against ``/teacher/review`` (task #7) can
+    now assert the "Marker's per-point verdicts" section renders one chip per
+    verdict, a quoted evidence span on ``p1``, and an ECF chip on ``p3``
+    (``web/src/portals/teacher/screens/ReviewItem.tsx``'s ``POINT_VERDICT_LABEL``).
+    """
+    return [
+        PointVerdict(
+            point_id="p1",
+            verdict="awarded",
+            evidence_span="a = (v - u) / t = (20 - 0) / 4 = 5 m/s^2",
+        ),
+        PointVerdict(
+            point_id="p2",
+            verdict="withheld",
+            note="No substitution shown",
+        ),
+        PointVerdict(
+            point_id="p3",
+            verdict="unverifiable",
+            note="Carried forward from p2's substituted value; final figure illegible",
+            ecf_applied=True,
+        ),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Task #67: a SECOND review-queue row, deliberately carrying NEITHER a verdict
+# NOR a rationale on any point -- the legacy shape `MarkerVerdicts`' section
+# guard exists to suppress (`web/src/portals/teacher/screens/ReviewItem.tsx`),
+# and the ONLY shape production sees today (`equivalence_gate` defaults off).
+# `review_item_scheme()`/`review_item_point_verdicts()` above cannot stand in
+# for this: every point there carries a verdict. This is a separate student,
+# in a separate (THIRD) class of the same teacher's -- never the roster class
+# (`class_row`, whose 3-student/69%-average/2-at-risk figures
+# `teacher-journey.spec.ts` hardcodes) and never the below-target class
+# (`below_target_class_row`, whose own single-purpose docstring this would
+# muddy) -- so this addition cannot move a number any existing spec asserts.
+# ---------------------------------------------------------------------------
+
+#: A recent, unremarkable single attempt -- recent so it can never fire the
+#: inactive rule (>=14 days), and the student's only attempt so it can never
+#: fire the declining-trend rule (needs 3). No target grade is ever set for
+#: this student, so the below-target rule has nothing to evaluate either.
+#: This account is intentionally NOT exposed under the contract's `students`
+#: key -- nothing needs to log in as it, only to read the review-queue row
+#: its attempt produced.
+LEGACY_REVIEW_SCORE: tuple[float, str] = (60.0, "C")
+LEGACY_REVIEW_DAYS_AGO = 1
+
+#: Below `REVIEW_CONFIDENCE_THRESHOLD` (0.90), same as `REVIEW_ITEM_CONFIDENCE_SCORE`
+#: -- the one thing that makes this attempt's real fan-out queue it for review.
+LEGACY_REVIEW_CONFIDENCE_SCORE = 0.5
+
+
+def legacy_review_scheme() -> MarkScheme:
+    """A second, independent point-based scheme for the legacy review row.
+
+    Deliberately its own question text -- distinct from `review_item_scheme()`
+    -- so a Playwright spec that opened the wrong item id could never pass by
+    accident against the other row's fixture. `accuracy_report_for_score` is
+    called for this row with neither `matched_point_ids` nor `point_verdicts`
+    (both default to empty) and no `point_notes` either, so
+    `derive_point_rows` leaves every point's `verdict` AND `rationale` `None`
+    -- an ordinary legacy shape (the marker returning no per-point
+    commentary), not a contrived one.
+    """
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code=SUBJECT_CODE,
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2024,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=2,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="1",
+                marks=2,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="States the correct formula", marks=1),
+                    AnswerPoint(id="p2", point="Gives the answer to the correct unit", marks=1),
+                ],
+            ),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Final-review coverage gap: a THIRD review-queue row, carrying a marker's
+# per-point `rationale` (`point_notes`) but no `verdict` on any point --
+# exactly the shape production ships today whenever a marker writes a note
+# without `equivalence_gate` on. Neither `review_item_scheme()` (every point
+# has a verdict) nor `legacy_review_scheme()` (no point has anything) can
+# stand in for this: `MarkerVerdicts`' section guard
+# (`web/src/portals/teacher/screens/ReviewItem.tsx`) was widened to
+# `p.verdict !== null || p.rationale` specifically so a rationale-only point
+# still renders, and that widening had no seeded row to prove it against
+# until now. A separate (FOURTH) class of the same teacher's, like
+# `legacy_review_class_row` -- never the roster class, the below-target
+# class, or the legacy-review class -- so this addition cannot move a number
+# any existing spec asserts.
+# ---------------------------------------------------------------------------
+
+#: A recent, unremarkable single attempt -- same reasoning as
+#: `LEGACY_REVIEW_SCORE`: recent so the inactive rule can never fire, and the
+#: student's only attempt so the declining-trend rule can never fire either.
+RATIONALE_ONLY_REVIEW_SCORE: tuple[float, str] = (58.0, "D")
+RATIONALE_ONLY_REVIEW_DAYS_AGO = 2
+
+#: Below `REVIEW_CONFIDENCE_THRESHOLD` (0.90), same reasoning as
+#: `REVIEW_ITEM_CONFIDENCE_SCORE`/`LEGACY_REVIEW_CONFIDENCE_SCORE` -- the one
+#: thing that makes this attempt's real fan-out queue it for review.
+RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE = 0.6
+
+#: The marker's per-point note on `p1` only -- `p2` gets none, so this
+#: fixture cannot be confused with one where every point carries commentary.
+#: Hardcoded, verbatim, in `web/e2e/teacher-review.spec.ts` too (the two are
+#: kept in lockstep by hand, same as every other seeded string this suite
+#: asserts on).
+RATIONALE_ONLY_REVIEW_NOTE = (
+    "Working shown but the final line is illegible; benefit of the doubt given."
+)
+
+
+def rationale_only_review_recorded_at(now: datetime) -> datetime:
+    """The single, deliberately RECENT timestamp for the rationale-only-review student.
+
+    Recent, and this student's only attempt, so neither the inactive rule
+    (>=14 days) nor the declining-trend rule (needs 3 records) can ever fire
+    on it -- this account carries no `expectedAtRiskReasons` at all and is
+    not exposed under the contract's `students` key, exactly like
+    `legacy_review_recorded_at`'s account.
+    """
+    return now - timedelta(days=RATIONALE_ONLY_REVIEW_DAYS_AGO)
+
+
+def rationale_only_review_scheme() -> MarkScheme:
+    """A third, independent point-based scheme for the rationale-only review row.
+
+    Deliberately its own question text -- distinct from `review_item_scheme()`
+    and `legacy_review_scheme()` -- so a Playwright spec that opened the wrong
+    item id could never pass by accident against another row's fixture.
+    """
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code=SUBJECT_CODE,
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2024,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=2,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="1",
+                marks=2,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="Shows the correct working", marks=1),
+                    AnswerPoint(
+                        id="p2", point="States the final answer with correct unit", marks=1
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def rationale_only_review_point_notes() -> dict[str, str]:
+    """`point_notes` for the rationale-only review row.
+
+    Passed to `accuracy_report_for_score` with neither `matched_point_ids`
+    nor `point_verdicts` -- the whole point of this row is the legacy path
+    (`equivalence_gate` off) where a marker's per-point note is the only
+    thing ever recorded: `derive_point_rows` leaves `verdict` `None` on every
+    point and falls back to `point_notes` for `rationale` (see that
+    function's own docstring, the `pv is None` branch), exactly the shape
+    `MarkerVerdicts`' widened guard exists to keep visible.
+    """
+    return {"p1": RATIONALE_ONLY_REVIEW_NOTE}
+
 
 #: `allocate_difficulty(None, 5)` (`lemely.core.difficulty`) for an untargeted
 #: quiz, worked out by hand: the balanced (0.2, 0.6, 0.2) mix * 5 questions =
@@ -657,6 +1012,17 @@ def below_target_recorded_at(now: datetime) -> datetime:
     return now - timedelta(days=BELOW_TARGET_DAYS_AGO)
 
 
+def legacy_review_recorded_at(now: datetime) -> datetime:
+    """The single, deliberately RECENT timestamp for the legacy-review student.
+
+    Recent, and this student's only attempt, so neither the inactive rule
+    (>=14 days) nor the declining-trend rule (needs 3 records) can ever fire
+    on it -- this account carries no `expectedAtRiskReasons` at all and is
+    not exposed under the contract's `students` key.
+    """
+    return now - timedelta(days=LEGACY_REVIEW_DAYS_AGO)
+
+
 def paper_record_for_scenario(
     student_id: str, score: tuple[float, str], recorded_at: datetime, *, paper_number: int
 ) -> PaperRecord:
@@ -698,6 +1064,10 @@ def accuracy_report_for_score(
     confidence: ConfidenceBand = ConfidenceBand.HIGH,
     confidence_score: float = 0.95,
     needs_teacher_review: bool = False,
+    matched_point_ids: list[str] | None = None,
+    point_verdicts: list[PointVerdict] | None = None,
+    point_notes: dict[str, str] | None = None,
+    source_box: SourceBox | None = None,
 ) -> AccuracyReport:
     """Build a minimal, valid :class:`AccuracyReport` carrying ``score``.
 
@@ -718,6 +1088,27 @@ def accuracy_report_for_score(
     fan-out (never a hand-inserted ``review_queue`` row) — see
     ``REVIEW_ITEM_CONFIDENCE_SCORE``'s docstring for why the score/date/subject
     stay untouched.
+
+    ``matched_point_ids``/``point_verdicts``/``point_notes`` default to empty
+    (``None`` for the last, exactly like :class:`CorrectedQuestion`'s own
+    field), and every original caller is unaffected. Task #66 passes the
+    first two, alongside ``mark_scheme=`` at the ``persist_correction`` call
+    site, so the review-queue item's own question (still ``question_id="1"``)
+    gets a real per-point verdict ledger through
+    :func:`~lemely.db.question_points.derive_point_rows`, the same as
+    :func:`self_review_report`. ``marker_source`` becomes ``"ai"`` whenever
+    verdicts are attached — I6 verdicts are an AI-marking concept, and a seed
+    row claiming ``"deterministic"`` marking while carrying them would be a
+    lie the real pipeline never tells. ``point_notes`` alone (no verdicts) is
+    the legacy path instead — :func:`rationale_only_review_point_notes` uses
+    it to seed a row with a marker's ``rationale`` but no ``verdict`` on any
+    point, and ``marker_source`` correctly stays ``"deterministic"`` for it.
+
+    ``source_box`` (task #72) defaults to ``None``, same as
+    :class:`CorrectedQuestion`'s own field -- every original caller is
+    unaffected. Set only for the ``inactive`` student's attempt, alongside a
+    real ``upload_id`` (see ``seed()``): a box with no upload behind it is a
+    box the crop route is certain to 404 on, which would test nothing.
     """
     percentage, grade = score
     awarded = round(percentage)
@@ -737,7 +1128,11 @@ def accuracy_report_for_score(
         student_answer="seeded",
         expected_answer="seeded",
         topic="Seed topic",
-        marker_source="deterministic",
+        marker_source="deterministic" if point_verdicts is None else "ai",
+        matched_point_ids=matched_point_ids or [],
+        point_verdicts=point_verdicts or [],
+        point_notes=point_notes,
+        source_box=source_box,
     )
     correction = CorrectionResult(metadata=_exam_metadata(paper_number), questions=[question])
     weaknesses = WeaknessReport(weak_areas=[])
@@ -802,7 +1197,16 @@ def self_review_scheme() -> MarkScheme:
 
 
 def self_review_report() -> AccuracyReport:
-    """A 3/5 paper: "1" fully earned and confident; "2" 1/3 and low-confidence."""
+    """A 3/5 paper: "1" fully earned and confident; "2" 1/3 and low-confidence.
+
+    Task #66: "2"'s three points carry all three I6 verdicts (``p1``
+    ``"awarded"``, ``p2`` ``"withheld"``, ``p3`` ``"unverifiable"``), matching
+    its existing ``matched_point_ids=["p1"]`` exactly (only ``p1``'s verdict
+    is ``"awarded"``) so the "1 to 3 out of 3" self-mark story
+    ``web/e2e/self-review.spec.ts`` already tells stays true. Before this, the
+    verdict column was NULL for every seeded row and the spec's post-reveal
+    verdict-chip assertion could not be written.
+    """
     questions = [
         CorrectedQuestion(
             question_id="1",
@@ -831,6 +1235,27 @@ def self_review_report() -> AccuracyReport:
             review_reason="Working hard to read",
             feedback="Method shown, but the substitution and rounding were not clear.",
             matched_point_ids=["p1"],
+            point_verdicts=[
+                PointVerdict(
+                    point_id="p1",
+                    verdict="awarded",
+                    evidence_span="F = ma = 2 x 6 = 12",
+                ),
+                PointVerdict(
+                    point_id="p2",
+                    verdict="withheld",
+                    note="Substitution not shown",
+                ),
+                PointVerdict(
+                    point_id="p3",
+                    verdict="unverifiable",
+                    note=(
+                        "Carried forward from p2's substituted value; "
+                        "rounding to 2 s.f. not confirmed"
+                    ),
+                    ecf_applied=True,
+                ),
+            ],
         ),
     ]
     correction = CorrectionResult(
@@ -1297,29 +1722,77 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     _persist_attempts(below_target["userId"], [BELOW_TARGET_SCORE], [below_target_recorded_at(now)])
 
     _log("Persisting the declining-trend run (single subject, 3 papers)")
+    student_profile_service.mark_onboarding_complete(declining["userId"])
     _persist_attempts(declining["userId"], DECLINING_SCORES, declining_recorded_ats(now))
 
     _log(
         "Persisting the >=14-day-inactive attempt (deliberately LOW-confidence: T-08's "
-        "real review-queue item, same score/date as always)"
+        "real review-queue item, same score/date as always, now with a per-point "
+        "verdict ledger — task #66)"
     )
+    # "inactive" describes this account's last-activity gap (>=14 days), not its
+    # onboarding state — it must be onboarded like the others so any /student/*
+    # spec driving it doesn't get bounced to /student/onboard.
+    student_profile_service.mark_onboarding_complete(inactive["userId"])
+    _log(
+        "Storing a real scan behind the inactive attempt (task #72), so its "
+        "review item's source_box resolves to an actual crop"
+    )
+    inactive_uuid = uuid.UUID(inactive["userId"])
+    inactive_upload_id = uuid.uuid4()
+    inactive_scan_object_path = f"students/{inactive_uuid}/{inactive_upload_id.hex}/scan.pdf"
+    inactive_scan_bytes = review_item_source_scan("a")
+    with get_sessionmaker()() as upload_session, upload_session.begin():
+        upload_session.add(
+            Upload(
+                id=inactive_upload_id,
+                user_id=inactive_uuid,
+                storage_path=inactive_scan_object_path,
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=len(inactive_scan_bytes),
+                # This attempt is already fully marked by the time this row is
+                # written -- `pending` (the server default) would misstate a
+                # fixture that never goes through the real extract/grade
+                # pipeline this status otherwise tracks.
+                status=UploadStatus.complete,
+            )
+        )
+    # The same backend `lemely.web.deps.get_storage_backend` hands the running
+    # app (`local` by default -- `StorageSettings`'s own doc), so a crop
+    # request against this item during an e2e run finds a real object, not a
+    # 404 from a box with nothing behind it.
+    deps.get_storage_backend().upload(
+        deps.get_settings().storage.bucket,
+        inactive_scan_object_path,
+        inactive_scan_bytes,
+        "application/pdf",
+    )
+
     inactive_report = accuracy_report_for_score(
         INACTIVE_SCORE,
         paper_number=1,
         confidence=ConfidenceBand.LOW,
         confidence_score=REVIEW_ITEM_CONFIDENCE_SCORE,
         needs_teacher_review=True,
+        matched_point_ids=REVIEW_ITEM_MATCHED_POINT_IDS,
+        point_verdicts=review_item_point_verdicts(),
+        source_box=REVIEW_ITEM_SOURCE_BOX,
     )
     inactive_attempt_id = attempt_repo.persist_correction(
         user_id=inactive["userId"],
         report=inactive_report,
+        upload_id=inactive_upload_id,
         recorded_at=inactive_recorded_at(now).isoformat(),
+        mark_scheme=review_item_scheme(),
     )
 
     _log("Persisting the healthy control's improving run")
+    student_profile_service.mark_onboarding_complete(control["userId"])
     _persist_attempts(control["userId"], CONTROL_SCORES, control_recorded_ats(now))
 
     _log("Persisting the standalone corrected paper")
+    student_profile_service.mark_onboarding_complete(corrected["userId"])
     corrected_attempt_ids = _persist_attempts(
         corrected["userId"], [CORRECTED_SCORE], [corrected_recorded_at(now)]
     )
@@ -1375,6 +1848,147 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
             "may no longer be below REVIEW_CONFIDENCE_THRESHOLD."
         )
     review_item_row = review_rows[0]
+
+    _log(
+        "Signing up a legacy-review student and persisting a SECOND, deliberately "
+        "verdict-free and rationale-free low-confidence attempt (task #67's other "
+        "T-08 review-queue row -- the shape every row has in production today, "
+        "since equivalence_gate defaults off)"
+    )
+    legacy_review = _signup_account("legacy-review", Role.student, run_tag)
+    # A dedicated THIRD class -- never the roster class (`class_row`, whose
+    # 3-student/69%-average/2-at-risk figures `teacher-journey.spec.ts`
+    # hardcodes) and never the below-target class (`below_target_class_row`,
+    # a different rule's own single-purpose fixture) -- so this student's
+    # presence can never move a number an existing spec already asserts.
+    legacy_review_class_row = class_service.create_class(
+        uuid.UUID(teacher["userId"]), f"P67 Legacy Review Class {run_tag}"
+    )
+    assert legacy_review_class_row.join_code is not None  # noqa: S101 - always generated, see create_class
+    class_service.join_by_code(
+        uuid.UUID(legacy_review["userId"]), legacy_review_class_row.join_code
+    )
+    legacy_review_report = accuracy_report_for_score(
+        LEGACY_REVIEW_SCORE,
+        paper_number=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=LEGACY_REVIEW_CONFIDENCE_SCORE,
+        needs_teacher_review=True,
+        # Deliberately NEITHER matched_point_ids NOR point_verdicts: the
+        # legacy shape this row exists to seed has neither, so
+        # derive_point_rows leaves every point's verdict AND rationale None.
+    )
+    legacy_review_attempt_id = attempt_repo.persist_correction(
+        user_id=legacy_review["userId"],
+        report=legacy_review_report,
+        recorded_at=legacy_review_recorded_at(now).isoformat(),
+        mark_scheme=legacy_review_scheme(),
+    )
+
+    _log("Locating the review-queue row the legacy-review attempt's fan-out created (task #67)")
+    legacy_review_rows = review_service.list_queue(
+        uuid.UUID(teacher["userId"]),
+        Role.teacher,
+        class_id=legacy_review_class_row.class_id,
+        reason="low_confidence",
+    ).rows
+    legacy_review_rows = [r for r in legacy_review_rows if r.attempt_id == legacy_review_attempt_id]
+    if len(legacy_review_rows) != 1:
+        raise RuntimeError(
+            f"Expected exactly 1 low_confidence review-queue row for attempt "
+            f"{legacy_review_attempt_id}, found {len(legacy_review_rows)} — "
+            "LEGACY_REVIEW_CONFIDENCE_SCORE may no longer be below REVIEW_CONFIDENCE_THRESHOLD."
+        )
+    legacy_review_item_row = legacy_review_rows[0]
+
+    _log(
+        "Signing up a rationale-only-review student and persisting a THIRD low-confidence "
+        "attempt whose one point carries a marker's rationale (point_notes) but no verdict "
+        "-- the shape production ships whenever a marker writes a note without "
+        "equivalence_gate on, and the shape MarkerVerdicts' widened guard exists to render"
+    )
+    rationale_only_review = _signup_account("rationale-only-review", Role.student, run_tag)
+    # A dedicated FOURTH class -- never the roster class, the below-target
+    # class, or the legacy-review class -- so this student's presence can
+    # never move a number an existing spec already asserts.
+    rationale_only_review_class_row = class_service.create_class(
+        uuid.UUID(teacher["userId"]), f"Rationale Only Review Class {run_tag}"
+    )
+    assert rationale_only_review_class_row.join_code is not None  # noqa: S101 - always generated, see create_class
+    class_service.join_by_code(
+        uuid.UUID(rationale_only_review["userId"]), rationale_only_review_class_row.join_code
+    )
+    _log(
+        "Storing a second, visually distinct scan behind the rationale-only "
+        "attempt (C1 review of task #72), so the navigation test has two "
+        "boxed items whose crops are tellable apart"
+    )
+    rationale_only_upload_id = uuid.uuid4()
+    rationale_only_uuid = uuid.UUID(rationale_only_review["userId"])
+    rationale_only_scan_object_path = (
+        f"students/{rationale_only_uuid}/{rationale_only_upload_id.hex}/scan.pdf"
+    )
+    rationale_only_scan_bytes = review_item_source_scan("b")
+    with (
+        get_sessionmaker()() as rationale_only_upload_session,
+        rationale_only_upload_session.begin(),
+    ):
+        rationale_only_upload_session.add(
+            Upload(
+                id=rationale_only_upload_id,
+                user_id=rationale_only_uuid,
+                storage_path=rationale_only_scan_object_path,
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=len(rationale_only_scan_bytes),
+                # See the `inactive` upload's own comment above -- same reason.
+                status=UploadStatus.complete,
+            )
+        )
+    deps.get_storage_backend().upload(
+        deps.get_settings().storage.bucket,
+        rationale_only_scan_object_path,
+        rationale_only_scan_bytes,
+        "application/pdf",
+    )
+
+    rationale_only_review_report = accuracy_report_for_score(
+        RATIONALE_ONLY_REVIEW_SCORE,
+        paper_number=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE,
+        needs_teacher_review=True,
+        point_notes=rationale_only_review_point_notes(),
+        # Deliberately no matched_point_ids/point_verdicts -- see
+        # rationale_only_review_point_notes()'s own docstring.
+        source_box=REVIEW_ITEM_SOURCE_BOX,
+    )
+    rationale_only_review_attempt_id = attempt_repo.persist_correction(
+        user_id=rationale_only_review["userId"],
+        report=rationale_only_review_report,
+        upload_id=rationale_only_upload_id,
+        recorded_at=rationale_only_review_recorded_at(now).isoformat(),
+        mark_scheme=rationale_only_review_scheme(),
+    )
+
+    _log("Locating the review-queue row the rationale-only-review attempt's fan-out created")
+    rationale_only_review_rows = review_service.list_queue(
+        uuid.UUID(teacher["userId"]),
+        Role.teacher,
+        class_id=rationale_only_review_class_row.class_id,
+        reason="low_confidence",
+    ).rows
+    rationale_only_review_rows = [
+        r for r in rationale_only_review_rows if r.attempt_id == rationale_only_review_attempt_id
+    ]
+    if len(rationale_only_review_rows) != 1:
+        raise RuntimeError(
+            f"Expected exactly 1 low_confidence review-queue row for attempt "
+            f"{rationale_only_review_attempt_id}, found {len(rationale_only_review_rows)} — "
+            "RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE may no longer be below "
+            "REVIEW_CONFIDENCE_THRESHOLD."
+        )
+    rationale_only_review_item_row = rationale_only_review_rows[0]
 
     _log("Seeding the quiz's question bank (generated rows, paper_id=None — D3.7)")
     teacher_uuid = uuid.UUID(teacher["userId"])
@@ -1600,6 +2214,19 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         "itemId": str(review_item_row.item_id),
         "attemptId": str(review_item_row.attempt_id),
         "studentKey": "inactive",
+        # Task #67: a SECOND review-queue row whose one question carries no
+        # verdict and no rationale on any point -- the legacy shape
+        # `MarkerVerdicts`' section guard exists to suppress. Not tied to a
+        # `students` entry -- the account behind it exists only to own this
+        # attempt, and no spec needs to log in as it.
+        "legacyItemId": str(legacy_review_item_row.item_id),
+        "legacyAttemptId": str(legacy_review_attempt_id),
+        # A THIRD review-queue row whose one question carries a marker's
+        # rationale (point_notes) but no verdict on any point -- the shape
+        # `MarkerVerdicts`' guard was widened to render. Not tied to a
+        # `students` entry, same as `legacyItemId` above.
+        "rationaleOnlyItemId": str(rationale_only_review_item_row.item_id),
+        "rationaleOnlyAttemptId": str(rationale_only_review_attempt_id),
     }
     quiz = {
         "quizId": str(quiz_row.quiz_id),

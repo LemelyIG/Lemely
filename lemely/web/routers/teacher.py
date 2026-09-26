@@ -62,6 +62,7 @@ from lemely.core.schemas import (
     AccuracyReport,
     ExamMetadata,
     WeaknessReport,
+    marker_scored,
 )
 from lemely.db.at_risk_repo import (
     AtRiskAcknowledgementRow,
@@ -81,6 +82,7 @@ from lemely.db.teacher_paper_repo import TeacherPaperRepository, TeacherPaperRow
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+from lemely.db.review_queue_rules import review_reasons_for
 from lemely.db.review_repo import ReviewService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.gemini import GeminiClient
@@ -485,7 +487,12 @@ def _run_grading_job(
             # is always null today), so there is nobody to record a history
             # entry for. The marks live on this row and are served from it.
             report = grade_paper(
-                scheme, extracted, gemini_client=gemini_client, student_id=None, history_store=None
+                scheme,
+                extracted,
+                gemini_client=gemini_client,
+                student_id=None,
+                history_store=None,
+                options=settings.grading.marking_options(),
             )
             repo.finish(paper_id, report)
     except Exception as exc:
@@ -597,13 +604,40 @@ def _graded_pipeline_steps(report: AccuracyReport) -> list[PipelineStepDTO]:
     """
     questions = report.correction.questions
     total = len(questions)
-    marked = sum(1 for q in questions if q.marker_source != "missing")
-    confident = sum(1 for q in questions if q.confidence_score >= _REVIEW_CONFIDENCE)
+    # Task #36: `marker_scored`, not `!= "missing"`. This was the third
+    # genuinely-different formulation of the same question and the only one that
+    # counted an unscored question as marked -- `"dropped"` (US-038) and
+    # `"blank"` (US-039) both mean no marker formed an opinion, and
+    # `0038_marker_source_dropped`'s own docstring predicted this call site would
+    # need widening once the enum could express them.
+    marked = sum(1 for q in questions if marker_scored(q.marker_source))
+    # Finding F (US-039 consumer-fixes brief): count over the same population
+    # `/grading/queue` uses (`review_reasons_for`), not a second copy of the
+    # `>= _REVIEW_CONFIDENCE` threshold rule. A genuine blank has
+    # `confidence_score == 0.0`, which used to count it as a confidence-check
+    # failure here while the queue -- correctly, per the US-039 exemption --
+    # reports zero rows for it. This label means "needs no human check", so
+    # it must agree with the one place that actually decides that.
+    #
+    # Minor F (final-branch-review): that fix left the denominator at `total`,
+    # so a paper with 8 unattempted parts and 2 clean marks read
+    # "Confidence check 10 / 10" -- every one of the 8 blanks/dropped/missing
+    # questions is exempt from review, which the count then reported as
+    # having *passed* a check that never ran on it. `_paper_summary`'s
+    # confidence minimum (below) already narrows to `marker_scored` for the
+    # same reason; narrow this count the same way so the two card-facing
+    # confidence figures rest on the same population and neither implies more
+    # was checked than was.
+    confident = sum(
+        1
+        for q in questions
+        if marker_scored(q.marker_source) and next(review_reasons_for(q), None) is None
+    )
     return [
         PipelineStepDTO(label="Scan ingested", count=f"{total} / {total}", state="done"),
         PipelineStepDTO(label="Handwriting read", count=f"{total} / {total}", state="done"),
         PipelineStepDTO(label="Mark scheme aligned", count=f"{marked} / {total}", state="done"),
-        PipelineStepDTO(label="Confidence check", count=f"{confident} / {total}", state="done"),
+        PipelineStepDTO(label="Confidence check", count=f"{confident} / {marked}", state="done"),
         PipelineStepDTO(label="Grade boundaries", count=f"{total} / {total}", state="done"),
     ]
 
@@ -776,8 +810,19 @@ def _paper_summary(row: TeacherPaperRow) -> PaperSummaryDTO:
             error=_row_error(row),
         )
     correction = report.correction
+    # Finding E (US-039 consumer-fixes brief): the minimum must be over
+    # questions a marker actually scored, not every question. A genuine
+    # US-039 blank carries `confidence_score == 0.0` with
+    # `needs_teacher_review == False`, so an unfiltered `min` renders a
+    # ten-question "Graded" paper with one blank as "Graded · 0.00". Using
+    # `marker_scored` here rather than `review_reasons_for` (as
+    # `_graded_pipeline_steps` does for Finding F) because this population is
+    # "was this question scored at all", not "does it need review" -- a
+    # genuinely low-confidence *scored* question must still pull the minimum
+    # down.
+    scored = [q for q in correction.questions if marker_scored(q.marker_source)]
     min_conf = min(
-        (q.confidence_score for q in correction.questions),
+        (q.confidence_score for q in scored),
         default=1.0,
     )
     return PaperSummaryDTO(
@@ -963,7 +1008,22 @@ def grading_queue(
     auth: Annotated[AuthContext, Depends(get_auth_context)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
 ) -> GradingQueueDTO:
-    """Return low-confidence questions flagged for teacher review across visible papers."""
+    """Return low-confidence questions flagged for teacher review across visible papers.
+
+    Membership uses :func:`~lemely.db.review_queue_rules.review_reasons_for` --
+    the *same* predicate that decides whether a ``ReviewQueueItem`` row gets
+    written for this question (``AttemptRepository.persist_correction``,
+    ``TeacherPaperRepository._review_items_for``) -- rather than
+    re-deriving ``needs_teacher_review or confidence_score < _REVIEW_CONFIDENCE``
+    inline. This route does not read ``ReviewQueueItem`` at all (it
+    recomputes straight from ``report_json``), which is exactly how it
+    diverged from both repos: before this fix, a genuine US-039 blank
+    (``confidence_score == 0.0``) sorted to the very top of this
+    ascending-by-confidence list, so a paper with several unattempted parts
+    put every one of them as the first rows a teacher sees here -- the
+    product-owner-rejected outcome, on the most visible surface, with no
+    ``ReviewQueueItem`` row involved.
+    """
     viewer_id, viewer_role = _viewer(auth)
     rows: list[QueueRowDTO] = []
     for row in repo.list_visible(viewer_id=viewer_id, viewer_role=viewer_role):
@@ -971,20 +1031,21 @@ def grading_queue(
         if report is None:
             continue
         for question in report.correction.questions:
-            if question.needs_teacher_review or question.confidence_score < _REVIEW_CONFIDENCE:
-                rows.append(
-                    QueueRowDTO(
-                        paperId=str(row.id),
-                        # `student_id` is always null today (D1.12), so a
-                        # queue row is named for its paper, same as the grid.
-                        name=_paper_label(row),
-                        questionId=question.question_id,
-                        topic=question.topic,
-                        confidence=round(question.confidence_score, 2),
-                        awardedMarks=question.awarded_marks,
-                        maxMarks=question.maximum_marks,
-                    )
+            if next(review_reasons_for(question), None) is None:
+                continue
+            rows.append(
+                QueueRowDTO(
+                    paperId=str(row.id),
+                    # `student_id` is always null today (D1.12), so a
+                    # queue row is named for its paper, same as the grid.
+                    name=_paper_label(row),
+                    questionId=question.question_id,
+                    topic=question.topic,
+                    confidence=round(question.confidence_score, 2),
+                    awardedMarks=question.awarded_marks,
+                    maxMarks=question.maximum_marks,
                 )
+            )
     rows.sort(key=lambda r: r.confidence if r.confidence is not None else 1.0)
     return GradingQueueDTO(rows=rows)
 

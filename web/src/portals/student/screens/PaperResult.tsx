@@ -18,7 +18,7 @@ import { Tabs, TabsList } from "@/components/ui/tabs"
 import { useToast } from "@/components/ui/toast"
 import { SelfReviewPanel } from "@/portals/student/components/SelfReviewPanel"
 import { ApiError } from "@/lib/api"
-import { confidenceSummaryOf, confidenceTierFor } from "@/lib/markingConfidence"
+import { confidenceSummaryOf, confidenceTierFor, markerScored } from "@/lib/markingConfidence"
 import { filterQuestions, markState, type QuestionFilter } from "@/lib/questionFilter"
 import { shareResult } from "@/lib/share"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
@@ -87,6 +87,37 @@ const NO_BOUNDARIES: GradeBoundary[] = []
 const NO_QUESTION_DETAIL = {
   heading: "No per-question detail for this paper",
   body: "Per-question detail is only available right after correcting a paper.",
+}
+
+/**
+ * Display label for `QuestionResult.markerSource`.
+ *
+ * US-038: migration `0038_marker_source_dropped` lets a student-attempt
+ * question now round-trip as `"dropped"` where it previously always arrived
+ * as `"missing"` — the model returned an answer for this question, but
+ * extraction discarded it as malformed before marking ever saw it. The raw
+ * token reads as an internal/technical word a student would not recognise,
+ * so it is mapped to student-facing copy here rather than shipped verbatim.
+ *
+ * `"missing"` gets the same "not marked" label (second independent review of
+ * the US-039 blank-exemption fix): the docstring here used to claim
+ * `"missing"` "at least names a marking method", which stopped being true
+ * once `_build_blank_corrected` started using `marker_source="missing"` for
+ * a genuine blank the AI never saw at all (US-039) — no method ran, so the
+ * raw token is exactly as misleading as `"dropped"` was.
+ *
+ * `"blank"` (task #36) joins them by asking `markerScored`, which is the one
+ * statement of that set. Deliberately the SAME copy, not new copy for the new
+ * value: this label still does not invent wording that implies the answer was
+ * marked, nor explain WHY nothing was marked (a genuine blank vs.
+ * `--mcq-only`/no client vs. a false-blank extraction miss, US-042, all render
+ * identically). The backend can now tell those apart, but what a student
+ * should be TOLD about each is a product decision and remains unmade —
+ * distinguishing them here would be this fix inventing it.
+ * `"deterministic"`/`"ai"` are left as the existing raw pass-through.
+ */
+export function markerSourceLabel(source: QuestionResult["markerSource"]): string {
+  return markerScored(source) ? source : "not marked"
 }
 
 function IntegrityMark({ row }: { row: IntegrityRow }) {
@@ -297,12 +328,13 @@ const FILTER_EMPTY_COPY: Record<
  * app has no separate question-detail route, so the expand affordance is
  * where that content actually lives.
  *
- * Deliberately drops the old per-question "Plagiarism flagged" / "AI-detection
- * flagged" pills that used to render here: QUALITY-BAR.md is explicit that
- * integrity flags are teacher-only and must never read as an accusation on a
- * student-facing screen. `plagiarismFlagged`/`aiDetectionFlagged` stay on the
- * DTO (no data-flow change) but are no longer rendered to the student. Noted
- * in the P2.5.3 report as a deliberate deviation.
+ * Deliberately drops the old per-question "Plagiarism flagged" pill that used
+ * to render here: QUALITY-BAR.md is explicit that integrity flags are
+ * teacher-only and must never read as an accusation on a student-facing
+ * screen. `plagiarismFlagged` stays on the DTO (no data-flow change) but is
+ * no longer rendered to the student. Noted in the P2.5.3 report as a
+ * deliberate deviation. (F4 removed the sibling AI-generated-answer flag
+ * this comment used to also name.)
  *
  * C3a adds the All / Lost / Flagged tabs above the row list, reading
  * `filterQuestions` — the tabs themselves only render when there is a real
@@ -400,14 +432,25 @@ function QuestionList({
           >
             <div className="flex flex-col gap-2.5">
               <Chip tone="neutral" className="w-fit">
-                {q.markerSource}
+                {markerSourceLabel(q.markerSource)}
               </Chip>
               {q.feedback ? (
                 <div className="rounded-md bg-paper-sunk px-3.5 py-3 text-pretty text-body-md text-ink-muted">
                   {q.feedback}
                 </div>
               ) : null}
-              {q.reviewReason ? (
+              {/* US-039 MUST-FIX 2 (independent review, blocking 674f309d): a set
+                  `reviewReason` alone used to mean "needs review" for every
+                  case except `_build_blank_corrected`'s unflagged blank,
+                  which sets a `reviewReason` message purely so the review
+                  queue/DB can distinguish it from every other blank-shaped
+                  state, while deliberately leaving `needsTeacherReview`
+                  false. Gated the same way as `markingConfidence.ts` and
+                  `questionFilter.ts` so this warn-coloured, student-facing
+                  line doesn't render for a question the backend explicitly
+                  decided needs no review. `undefined` (every other
+                  `reviewReason`) preserves today's behaviour. */}
+              {q.reviewReason && q.needsTeacherReview !== false ? (
                 <div className="text-body-md leading-snug text-warn">
                   Needs review: {q.reviewReason}
                 </div>
@@ -557,6 +600,7 @@ export function PaperResult() {
             confident={summary.confident}
             uncertain={summary.uncertain}
             needsReview={summary.needsReview}
+            notMarked={summary.notMarked}
           />
         ) : null}
         <QuestionList

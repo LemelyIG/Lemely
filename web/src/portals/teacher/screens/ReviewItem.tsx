@@ -15,9 +15,15 @@ import {
   useDismissReviewItem,
   useResolveReviewItem,
   useReviewItem,
+  useReviewItemCrop,
   useReviewQueue,
 } from "@/lib/hooks/useTeacherApi"
-import type { ReviewBreakdown, ReviewItemDetail, ReviewItemPoint } from "@/lib/teacherTypes"
+import type {
+  PointVerdictWire,
+  ReviewBreakdown,
+  ReviewItemDetail,
+  ReviewItemPoint,
+} from "@/lib/teacherTypes"
 import { queuePosition } from "@/lib/queuePosition"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import {
@@ -35,8 +41,13 @@ import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Review item — remark (T-08). `GET /teacher/review/{itemId}`
- * (`useReviewItem()`) is the single fetch every panel below projects
- * directly.
+ * (`useReviewItem()`) is the main fetch this screen is built around, but
+ * NOT the only one: `useReviewItemCrop` (task #72) issues a second request,
+ * `GET /teacher/review/{itemId}/crop`, whenever `hasSourceBox` is true, and
+ * the crop card below is a panel projecting from that second fetch. The
+ * whole "a 404 renders as absence" contract lives in that second call, not
+ * in `useReviewItem()` -- a reader chasing crop behaviour who stops at this
+ * paragraph will not find it.
  *
  * **Route, not a pane beside the queue** (`/teacher/review/:itemId`). T-07's
  * filter querystring (`class_id`/`reason`/`min_age_hours`) is carried
@@ -47,25 +58,48 @@ import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
  * (2) the item is independently deep-linkable/bookmarkable/back-button-able
  * like every other drill-down route in this portal (T-03→T-05, T-06→T-05),
  * rather than a mode of the list that a page refresh or a shared link loses.
- * The filtered queue fetch usually costs nothing extra — same query key as
+ * The filtered queue fetch usually costs nothing extra -- same query key as
  * `Review.tsx` just used to get here, so react-query serves it from cache.
+ * That same cache behaviour -- react-query's 5-minute default `gcTime`, not
+ * overridden by `queryClient.ts` -- is exactly what makes a stale
+ * `useReviewItemCrop` render reachable when a teacher revisits a boxed item
+ * within that window (see `useReviewItemCrop`'s own doc for the fix).
  *
  * **D3.14 §1 drives the whole evidence layout.** The spec asks for "the
- * student's actual scan crop, side by side with the mark scheme extract" —
- * neither is persisted anywhere in this product (`ReviewItemDetailDTO`'s own
- * docstring). What's rendered instead, explicitly labelled as such, with a
- * banner stating the scan/scheme extract don't exist rather than a
+ * student's actual scan crop, side by side with the mark scheme extract".
+ * Task #72 renders the first half -- a crop, question-level and never per
+ * mark point, guarded on `hasSourceBox` AND a 2xx from the crop route (a
+ * `true` flag alone does not guarantee bytes; see `useReviewItemCrop`'s
+ * doc) -- but the second half, a side-by-side extract of the mark scheme's
+ * own wording, is still not rendered here: that text is not persisted
+ * anywhere in this product (`ReviewItemDetailDTO`'s own docstring,
+ * `schemas_review.py`, documents `hasSourceBox` and the crop route, not an
+ * absent extract -- it is no longer the citation for this clause). What's
+ * rendered as an honest substitute for THAT still-missing half, with no
  * placeholder image or skeleton frame standing in for a missing asset:
- *  - `studentAnswer` -> "Lemely's transcription of the student's answer —
- *    not the scan."
+ *  - the crop card, when `hasSourceBox` is true and the route answers 2xx --
+ *    the region of the scan the answer was read from, captioned as exactly
+ *    that.
+ *  - `studentAnswer` -> "Lemely's transcription of the student's answer,
+ *    not the scan" -- the banner above it states plainly whether the crop
+ *    card is also showing a region of the scan on this particular render.
  *  - `expectedAnswer` -> "Expected answer" (the mark scheme's target, not
  *    its full prose).
  *  - `matchedPointIds` -> rendered as bare identifier chips, labelled
- *    "identifiers only — the scheme's own wording isn't stored" — never
- *    reconstructed into scheme-sounding prose (UI-spec §1.4: never invent
- *    precision the data doesn't support).
+ *    "Matched mark-scheme point identifiers" -- never reconstructed into
+ *    scheme-sounding prose (UI-spec §1.4: never invent precision the data
+ *    doesn't support). Demoted below `MarkerVerdicts` (I6, US-013): a bare
+ *    id is no longer this backend's best marking evidence, only a fallback
+ *    for a legacy item with no `question_result_points` rows at all.
  *
- * **Integrity items (`plagiarism_flag`/`ai_detection_flag`) get dismiss
+ * **`MarkerVerdicts` renders I6/I7's marker verdict for every point**,
+ * unlike `SelfReviewPoints` beside it, which stays filtered to what the
+ * student self-marked (a different question, and merging the two lists
+ * loses the ability to tell them apart). `withheld` and `unverifiable` both
+ * collapse to `awarded: false`, so they get distinct tones AND distinct
+ * labels, not just one or the other.
+ *
+ * **Integrity items (`plagiarism_flag`) get dismiss
  * only on this screen; accept/adjust-marks controls render for every other
  * reason instead, never both on the same item.** The backend's `resolve`
  * endpoint has no reason restriction, so a teacher *could* also
@@ -117,6 +151,26 @@ const EVIDENCE_VERDICT_LABEL: Record<string, string> = {
   not_required: "No reason was required for this point",
 }
 
+/*
+ * I6/I7 (US-013) marker verdicts. `withheld` and `unverifiable` both collapse
+ * to `awarded: false` on the same point, and that collapse is the whole
+ * distinction I6 exists to carry: a teacher seeing "not awarded" cannot tell
+ * "the marker judged this absent" from "the marker could not verify it".
+ * Distinct tones AND distinct labels, not just one or the other, so the
+ * difference survives someone scanning tone alone or reading text alone.
+ */
+const POINT_VERDICT_LABEL: Record<PointVerdictWire, string> = {
+  awarded: "Awarded",
+  withheld: "Withheld, judged absent",
+  unverifiable: "Unverifiable, could not confirm",
+}
+
+const POINT_VERDICT_TONE: Record<PointVerdictWire, "ok" | "neutral" | "warn"> = {
+  awarded: "ok",
+  withheld: "neutral",
+  unverifiable: "warn",
+}
+
 /**
  * The student's self-review of one mark point, for a teacher deciding a
  * `student_evidence_unjudged` item (S2 part2+3 final review, I-2). Without
@@ -149,9 +203,9 @@ function SelfReviewPoints({ points }: { points: ReviewItemPoint[] }) {
               index === 0 ? "flex flex-col gap-2" : "flex flex-col gap-2 border-t border-rule pt-4"
             }
           >
+            <div className="text-eyebrow text-ink-faint">{point.markPointId}</div>
             <p className="text-body-md text-ink m-0 text-pretty">{point.pointText}</p>
             <div className="flex flex-wrap items-center gap-2">
-              <Chip tone="neutral">Marker: {point.awarded ? "awarded" : "not awarded"}</Chip>
               <Chip tone="neutral">
                 Student claims: {point.studentSelfmark ? "earned" : "not earned"}
               </Chip>
@@ -166,6 +220,83 @@ function SelfReviewPoints({ points }: { points: ReviewItemPoint[] }) {
             {point.studentEvidence ? (
               <p className="text-body-md text-ink-muted leading-[1.5] m-0 text-pretty whitespace-pre-wrap">
                 "{point.studentEvidence}"
+              </p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * I6/I7 (US-013) marker verdicts, for every point, not filtered by
+ * `studentSelfmark`. `SelfReviewPoints` above answers "what did the student
+ * claim", and its `studentSelfmark !== null` filter is correct for that
+ * question, but it meant a point the marker verdicted and the student never
+ * touched rendered nowhere on this screen at all. This is that point's own
+ * surface.
+ *
+ * `verdict === null` covers two indistinguishable cases on purpose
+ * (`ReviewItemPoint`'s doc comment in `teacherTypes.ts`): a legacy
+ * (non-verdict) point, or a raw DB value the backend could not narrow to one
+ * of the three real members. It does NOT mean nothing is known about the
+ * point: `awarded` is the marker's own verdict on every path, including the
+ * legacy one, and `derive_point_rows` never wrote anything else before I6 —
+ * so `null` falls back to rendering `awarded`, never to a bare denial that a
+ * verdict exists. It is still never guessed into one of the three richer
+ * verdicts; that stays reserved for a real `verdict` value.
+ */
+function MarkerVerdicts({ points }: { points: ReviewItemPoint[] }) {
+  // Section-level suppression. With `equivalence_gate` off every `verdict` is
+  // null, so without this the screen shows a section whose every row repeats
+  // the `awarded` boolean the matched-point chips already implied. A per-point
+  // filter would instead re-create the invisible-point defect this component
+  // exists to fix -- a reviewer demonstrated that a guard inside the map
+  // callback passes every unit assertion with a clean tsc.
+  //
+  // `|| p.rationale` matters on its own: with the gate off, `verdict` is
+  // always null, so a `verdict !== null`-only guard suppresses this section
+  // even when a point carries a marker's `rationale` -- the one thing this
+  // component exists to surface today. Testing both keeps the section
+  // suppressed when it would only restate the headline, while still letting
+  // a real rationale through.
+  if (points.length === 0 || !points.some((p) => p.verdict !== null || p.rationale)) return null
+  return (
+    <section className="flex flex-col gap-3" role="region" aria-label="Marker's per-point verdicts">
+      <div className="text-display-sm">Marker's per-point verdicts</div>
+      <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
+        {points.map((point, index) => (
+          <div
+            key={point.markPointId}
+            data-testid="marker-verdict-row"
+            className={
+              index === 0 ? "flex flex-col gap-2" : "flex flex-col gap-2 border-t border-rule pt-4"
+            }
+          >
+            <div className="text-eyebrow text-ink-faint">{point.markPointId}</div>
+            <p className="text-body-md text-ink m-0 text-pretty">{point.pointText}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              {point.verdict ? (
+                <Chip tone={POINT_VERDICT_TONE[point.verdict]}>{POINT_VERDICT_LABEL[point.verdict]}</Chip>
+              ) : (
+                <Chip tone={point.awarded ? "ok" : "neutral"}>
+                  Marker: {point.awarded ? "awarded" : "not awarded"} (no richer verdict recorded)
+                </Chip>
+              )}
+              {point.ecfApplied ? <Chip tone="info">Carried forward from a prior point (ECF)</Chip> : null}
+            </div>
+            {point.evidenceSpan ? (
+              <p className="text-body-md text-ink-muted leading-[1.5] m-0 text-pretty whitespace-pre-wrap">
+                "{point.evidenceSpan}"
+              </p>
+            ) : null}
+            {point.rationale ? (
+              <p
+                className="text-body-sm text-ink-faint leading-[1.5] m-0 text-pretty line-clamp-3"
+                title={point.rationale}
+              >
+                {point.rationale}
               </p>
             ) : null}
           </div>
@@ -452,6 +583,15 @@ export function ReviewItem() {
 
   const detailQuery = useReviewItem(itemId)
   const queueQuery = useReviewQueue({ classId, reason: filterReason, minAgeHours })
+  // Called here, at the top level, rather than inside the `<QueryState>`
+  // render prop below: `detailQuery.data` is already available at this
+  // point, and a hook called inside that render prop would belong to
+  // `QueryState`'s own fiber, not this component's — see every other hook
+  // in this file, all called up here for the same reason.
+  const { url: cropUrl, onDecodeError: onCropDecodeError } = useReviewItemCrop(
+    itemId,
+    detailQuery.data?.hasSourceBox ?? false,
+  )
 
   const acceptHandlerRef = useRef<(() => void) | null>(null)
   const registerAccept = useCallback((fn: (() => void) | null) => {
@@ -544,6 +684,17 @@ export function ReviewItem() {
       >
         {(detail) => {
           const integrity = isIntegrityReason(detail.reason)
+          // `detail.hasSourceBox` alone is not enough to claim the scan is
+          // shown (D3.14 §1 / task #71's docstring): the flag means a box and
+          // an upload exist, not that the crop route actually has bytes to serve --
+          // `cropUrl` is `null` for both "no box" and "box, but the route
+          // failed (404 or 422)". Carrying the URL itself, not a derived
+          // boolean, is what lets the banner and the image below share ONE
+          // condition instead of two that could drift: TypeScript narrows `scanCropUrl` to
+          // `string` wherever it's checked truthy, so there is no second
+          // `&& cropUrl` needed at the render site the way a boolean would
+          // have required.
+          const scanCropUrl = detail.hasSourceBox ? cropUrl : null
 
           return (
             <>
@@ -613,14 +764,51 @@ export function ReviewItem() {
                 </Button>
               </div>
 
-              {/* Evidence: honest substitutes for the scan crop / mark-scheme extract (D3.14 §1) */}
+              {/* Evidence: the scan crop when one is available (D3.14 §1's
+                  first half), Lemely's own transcription and the mark
+                  scheme's target as honest substitutes for its second half
+                  (a side-by-side extract of the scheme's own wording, which
+                  is not persisted anywhere in this product -- see the module
+                  doc above). The crop card renders FIRST, ahead of the
+                  transcription/expected-answer grid: it is the source the
+                  transcription was read from, and derived text reading ahead
+                  of its own source is backwards. */}
               <section className="flex flex-col gap-3">
                 <div className="text-display-sm">What Lemely saw</div>
                 <div className="text-body-sm text-ink-muted bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
-                  The original scan image and the mark scheme's own wording aren't stored anywhere in
-                  this product. What's below is the closest honest record: Lemely's own transcription
-                  of the student's answer, and the identifiers of the mark-scheme points it matched.
+                  {scanCropUrl
+                    ? "This screen shows the region of the student's scan this answer was read from, alongside Lemely's own transcription of it."
+                    : "This screen does not display the original scan. What's below is Lemely's own transcription of the student's answer."}
                 </div>
+                {/* Question-level, not per mark point (D3.14 §1 / task #71):
+                    marking is text-only, so nothing here attributes this
+                    region to any one awarded mark -- the caption says only
+                    where the answer was read from.
+                    `max-h-[420px] w-auto max-w-full object-contain`: the
+                    rendered crop is upscaled 2x (`crop_and_upscale`) and can
+                    run over a thousand pixels tall for a normally-proportioned
+                    box, which at card width would push "What Lemely awarded"
+                    below the fold -- bounded by height, not just width, the
+                    same way `Grading.tsx`'s own scan thumbnail is.
+                    `onError={onCropDecodeError}`: a 2xx response is not proof
+                    the bytes decode (see `useReviewItemCrop`'s own doc) --
+                    without this, a decode failure would sit here as a
+                    bordered card around a broken-image icon, exactly the
+                    fallback-image affordance this task was told never to add. */}
+                {scanCropUrl ? (
+                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
+                    <img
+                      src={scanCropUrl}
+                      alt="The region of the student's scan this question's answer was read from"
+                      className="rounded-md border border-rule max-h-[420px] w-auto max-w-full object-contain"
+                      decoding="async"
+                      onError={onCropDecodeError}
+                    />
+                    <div className="text-body-sm text-ink-faint">
+                      The region of the student's scan this answer was read from
+                    </div>
+                  </div>
+                ) : null}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
                     <div className="text-eyebrow text-ink-faint">
@@ -634,36 +822,17 @@ export function ReviewItem() {
                       <p className="text-body-md text-ink-faint m-0">No transcription recorded for this question.</p>
                     )}
                   </div>
-                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3 min-w-0">
-                    <div>
-                      <div className="text-eyebrow text-ink-faint">
-                        Expected answer
-                      </div>
-                      {detail.expectedAnswer ? (
-                        <p className="text-body-lg leading-[1.55] text-pretty whitespace-pre-wrap mt-1 mb-0">
-                          {detail.expectedAnswer}
-                        </p>
-                      ) : (
-                        <p className="text-body-md text-ink-faint mt-1 mb-0">No expected answer recorded.</p>
-                      )}
+                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] min-w-0">
+                    <div className="text-eyebrow text-ink-faint">
+                      Expected answer
                     </div>
-                    <div>
-                      <div className="text-eyebrow text-ink-faint">
-                        Matched mark-scheme points, identifiers only. The scheme's own wording isn't
-                        stored
-                      </div>
-                      {detail.matchedPointIds.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          {detail.matchedPointIds.map((id) => (
-                            <Chip key={id} tone="neutral">
-                              {id}
-                            </Chip>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-body-md text-ink-faint mt-1 mb-0">No points matched.</p>
-                      )}
-                    </div>
+                    {detail.expectedAnswer ? (
+                      <p className="text-body-lg leading-[1.55] text-pretty whitespace-pre-wrap mt-1 mb-0">
+                        {detail.expectedAnswer}
+                      </p>
+                    ) : (
+                      <p className="text-body-md text-ink-faint mt-1 mb-0">No expected answer recorded.</p>
+                    )}
                   </div>
                 </div>
                 {detail.topic ? <div className="text-body-sm text-ink-faint">Topic: {detail.topic}</div> : null}
@@ -705,6 +874,35 @@ export function ReviewItem() {
                   ) : null}
                 </div>
               </section>
+
+              <MarkerVerdicts points={detail.points} />
+
+              {/* Demoted beneath the real per-point verdicts above (I6, US-013):
+                  a bare identifier is what this backend had before it could
+                  actually say what happened to each point. Kept, not removed,
+                  because a legacy item with no `question_result_points` rows
+                  at all still has `matchedPointIds` and nothing else. */}
+              {detail.matchedPointIds.length > 0 ? (
+                <section className="flex flex-col gap-1.5">
+                  <div className="text-eyebrow text-ink-faint">
+                    Matched mark-scheme point identifiers
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {detail.matchedPointIds.map((id) => (
+                      <Chip key={id} tone="neutral">
+                        {id}
+                      </Chip>
+                    ))}
+                  </div>
+                </section>
+              ) : detail.points.length === 0 ? (
+                <section className="flex flex-col gap-1.5">
+                  <div className="text-eyebrow text-ink-faint">
+                    Matched mark-scheme point identifiers
+                  </div>
+                  <p className="text-body-md text-ink-faint m-0">No points matched.</p>
+                </section>
+              ) : null}
 
               <SelfReviewPoints points={detail.points} />
 

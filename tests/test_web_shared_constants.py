@@ -30,7 +30,13 @@ from pathlib import Path
 
 import pytest
 
-from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
+from lemely.core.schemas import (
+    REVIEW_CONFIDENCE_THRESHOLD,
+    UNSCORED_MARKER_SOURCES,
+    CorrectedQuestion,
+)
+from lemely.db.models.enums import MarkerSource
+from lemely.web.schemas import MarkerSource as WireMarkerSource
 
 WEB_SRC = Path(__file__).resolve().parents[1] / "web" / "src"
 
@@ -122,3 +128,120 @@ def test_the_confidence_floor_gate_catches_a_renamed_variable() -> None:
     assert pattern.search("  const ok = conf > 0.9")
     # And does not fire on things that merely contain a number.
     assert not pattern.search("  const width = size >= 0.8 ? 'wide' : 'narrow'")
+
+
+# ── The one formulation of "did a marker score this question?" (task #36) ─────
+#
+# The frontend copy of `UNSCORED_MARKER_SOURCES` is the same cross-language
+# duplication `REVIEW_CONFIDENCE_THRESHOLD` above is, pinned the same way and
+# for a sharper reason: that set is the answer to a question eight sites used to
+# answer independently, and the ninth consumer found was a grading-AUTHORITY
+# gate (`attempt_repo.is_marking_low_confidence`).
+
+
+def _ts_string_set(relative: str, name: str) -> set[str]:
+    """Read `export const <name>: ... = new Set([...])` out of a TypeScript module."""
+    source = (WEB_SRC / relative).read_text(encoding="utf-8")
+    match = re.search(
+        rf"^export const {re.escape(name)}[^=]*= new Set\(\[(.*?)\]\)",
+        source,
+        re.MULTILINE | re.DOTALL,
+    )
+    if match is None:
+        pytest.fail(
+            f"{relative} no longer exports a `new Set` named `{name}`. "
+            "If it moved, move this pin with it rather than deleting it."
+        )
+    return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+
+def _ts_union(relative: str, name: str) -> set[str]:
+    """Read `export type <name> = "a" | "b" | ...` out of a TypeScript module."""
+    source = (WEB_SRC / relative).read_text(encoding="utf-8")
+    match = re.search(rf"^export type {re.escape(name)} = (.+)$", source, re.MULTILINE)
+    if match is None:
+        pytest.fail(f"{relative} no longer exports a `type {name}` union.")
+    return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+
+def test_client_unscored_marker_sources_match_the_backend() -> None:
+    """Both sides must agree on which marker sources mean "nobody looked"."""
+    client = _ts_string_set("lib/markingConfidence.ts", "UNSCORED_MARKER_SOURCES")
+    assert client == set(UNSCORED_MARKER_SOURCES), (
+        f"web/src/lib/markingConfidence.ts says {sorted(client)}, "
+        f"lemely.core.schemas says {sorted(UNSCORED_MARKER_SOURCES)}. "
+        "A value in one set and not the other renders a question no marker read "
+        "as a confident or uncertain mark on whichever side is missing it."
+    )
+
+
+def test_every_layer_declares_the_same_marker_source_values() -> None:
+    """Four declarations of one vocabulary: core, the DB enum, the wire, the client.
+
+    Task #36 added ``"blank"`` to all four. A migration that adds a sixth member
+    to the DB enum without widening the others makes
+    ``routers/practice._marker_source`` raise on a real row; this pins that from
+    the other side, before a row exists to trip over.
+    """
+    annotation = CorrectedQuestion.model_fields["marker_source"].annotation
+    core = set(annotation.__args__)  # type: ignore[union-attr]
+    db = {member.value for member in MarkerSource}
+    wire = set(WireMarkerSource.__args__)  # type: ignore[attr-defined]
+    client = _ts_union("lib/types.ts", "MarkerSource")
+    assert core == db == wire == client, (
+        f"core={sorted(core)} db={sorted(db)} wire={sorted(wire)} client={sorted(client)}"
+    )
+
+
+def test_the_unscored_values_are_a_subset_of_the_vocabulary() -> None:
+    """A typo in the set would silently make a real value scored again."""
+    assert set(UNSCORED_MARKER_SOURCES) <= {member.value for member in MarkerSource}
+
+
+#: Every web module may ASK whether a question was scored; only
+#: `markingConfidence.ts` may say what the answer is made of.
+_MARKER_SOURCE_OWNER = "markingConfidence.ts"
+
+#: Identifiers that hold a marker source under some name.
+_MARKER_SOURCE_ALIASES = ("markerSource", "marker_source", "source", "msrc")
+
+#: `markerSource === "missing" || markerSource === "dropped"` — the shape that
+#: shipped twice (here and in `Review.tsx`) and that would have silently
+#: excluded `"blank"` in both. Both call `markerScored` now.
+_UNSCORED_SPELLING = re.compile(
+    r"\b(?:" + "|".join(_MARKER_SOURCE_ALIASES) + r")\b\s*[=!]==?\s*"
+    r'"(?:missing|dropped|blank)"'
+)
+
+
+def test_no_other_web_module_spells_out_the_unscored_marker_set() -> None:
+    """One place decides this, because two places is how nine consumers happened."""
+    offenders: list[str] = []
+    for path in WEB_SRC.rglob("*.ts*"):
+        if path.name == _MARKER_SOURCE_OWNER:
+            continue
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            stripped = line.strip()
+            # Comments record the removed spelling; a gate that fails on its own
+            # fix note is the trap `utilityExistence.test.ts` documents.
+            if stripped.startswith(("*", "//", "/*")):
+                continue
+            if _UNSCORED_SPELLING.search(line):
+                offenders.append(f"{path.relative_to(WEB_SRC)}:{line_no}: {stripped}")
+    assert not offenders, (
+        "the unscored-marker-source set is spelled out outside "
+        f"{_MARKER_SOURCE_OWNER} — call `markerScored` instead:\n" + "\n".join(offenders)
+    )
+
+
+def test_the_unscored_marker_gate_catches_the_spelling_it_replaced() -> None:
+    """Inversion, so the gate is known to fire on the real removed lines."""
+    assert _UNSCORED_SPELLING.search(
+        '    (q.markerSource === "missing" || q.markerSource === "dropped")'
+    )
+    assert _UNSCORED_SPELLING.search(
+        '  if (markerSource === "missing" || markerSource === "dropped") return "neutral"'
+    )
+    assert _UNSCORED_SPELLING.search('  return source === "blank" ? "not marked" : source')
+    # And does not fire on an unrelated string comparison.
+    assert not _UNSCORED_SPELLING.search('  if (kind === "graded") return "ok"')

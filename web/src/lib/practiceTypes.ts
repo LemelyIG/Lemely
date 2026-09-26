@@ -74,7 +74,16 @@ export interface PracticeExport {
 
 /** One marked question's outcome. `confidenceBand`/`confidenceScore` are
  * non-nullable by construction — every displayed mark carries its
- * confidence. No model-answer field exists here either. */
+ * confidence. No model-answer field exists here either.
+ *
+ * `markerSource`/`needsTeacherReview` mirror `QuestionResultDTO`'s fields
+ * (`types.ts`) — a genuine blank (`confidenceBand: "low"`,
+ * `needsTeacherReview: false`, `markerSource: "blank"`) must be told apart
+ * from a real low-confidence mark. Since task #36 the blank has its own
+ * `markerSource` value, so it no longer shares one with a flagged extraction
+ * failure and `needsTeacherReview` is no longer load-bearing for that
+ * distinction; it stays because it is the marker's own flag. See
+ * `practiceData.ts::confidenceBandTier`. */
 export interface PracticeResultQuestion {
   questionRef: string
   position: number
@@ -83,6 +92,8 @@ export interface PracticeResultQuestion {
   awardedMarks: number
   confidenceBand: string
   confidenceScore: number
+  markerSource: string
+  needsTeacherReview: boolean
 }
 
 /**

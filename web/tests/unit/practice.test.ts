@@ -204,4 +204,36 @@ describe("confidenceBandTier — maps the wire ConfidenceBand onto the shared C-
   it("inverse: an unrecognised band reads as uncertain, never silently as confident", () => {
     expect(confidenceBandTier("some_future_band")).toBe("uncertain")
   })
+
+  /*
+   * Important A (US-039 final branch review): `_build_blank_corrected` sets
+   * `confidence_band=LOW`, `needs_teacher_review=False`,
+   * `marker_source="missing"` on a genuine blank -- the same unflagged-zero
+   * shape finding G fixed on the quiz result screen (`markingConfidence.ts`).
+   * Before this fix `confidenceBandTier` only ever looked at `band`, so this
+   * exact wire shape rendered "needs-review" -- telling the student a marker
+   * looked at their blank and was unsure, when no marker ever looked at all.
+   */
+  it("US-039 Important A: a genuine blank (low band, unflagged) is 'not-marked', not 'needs-review'", () => {
+    expect(confidenceBandTier("low", "missing", false)).toBe("not-marked")
+    expect(confidenceBandTier("low", "dropped", false)).toBe("not-marked")
+  })
+
+  it("Important A: a flagged extraction failure with the same markerSource still needs review", () => {
+    // Same `markerSource` as a blank, but `needsTeacherReview: true` --
+    // this question genuinely needs a human, and must not go quiet just
+    // because it shares a marker source with the unflagged-blank shape.
+    expect(confidenceBandTier("low", "missing", true)).toBe("needs-review")
+    expect(confidenceBandTier("low", "dropped", true)).toBe("needs-review")
+  })
+
+  it("Important A: markerSource/needsTeacherReview omitted (every caller that predates this field) is unchanged", () => {
+    expect(confidenceBandTier("low")).toBe("needs-review")
+    expect(confidenceBandTier("high")).toBe("confident")
+  })
+
+  it("Important A: a real deterministic/AI mark with a low band is still needs-review, not not-marked", () => {
+    expect(confidenceBandTier("low", "ai", false)).toBe("needs-review")
+    expect(confidenceBandTier("low", "deterministic", false)).toBe("needs-review")
+  })
 })

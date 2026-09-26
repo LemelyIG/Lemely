@@ -142,13 +142,12 @@ export interface PaperList {
 /**
  * Per-question grading result carried in `PaperDetailDTO.questions` (mirrors
  * `QuestionResultDTO` in `lemely/web/schemas.py`). `types.ts` already
- * declares a `QuestionResult` missing the two flag fields the DTO carries, so
+ * declares a `QuestionResult` missing the flag field the DTO carries, so
  * this extends it rather than duplicating it — same approach `studentTypes.ts`
  * uses for `StudentCorrectFrame`'s `questions` field.
  */
 export interface QuestionResult extends BaseQuestionResult {
   plagiarismFlagged: boolean
-  aiDetectionFlagged: boolean
 }
 
 /**
@@ -626,8 +625,8 @@ export interface AcknowledgeAtRiskRequest {
 
 /**
  * One T-07 queue row (mirrors `ReviewQueueItemDTO`). `reason` is a
- * `ReviewReason` value (`low_confidence` / `plagiarism_flag` /
- * `ai_detection_flag` / `manual`) and `status` a `ReviewStatus` value
+ * `ReviewReason` value (`low_confidence` / `plagiarism_flag` / `manual` /
+ * `random_audit`) and `status` a `ReviewStatus` value
  * (`open` / `resolved` / `dismissed`) — both plain strings on the wire, not
  * union-typed here, matching every other enum-backed string field elsewhere
  * in this file (e.g. `AtRiskFlag.reason`). `questionResultId`/`questionId`
@@ -724,7 +723,34 @@ export interface ReviewBreakdown {
  * student-facing surface — QUALITY-BAR's integrity sanitising is per call
  * site and does not apply here), but always rendered as plain text, never
  * interpreted as markup.
+ *
+ * `verdict`/`evidenceSpan`/`ecfApplied` are I6/I7 (US-013)'s marker verdict —
+ * populated regardless of `studentSelfmark`, because they answer a different
+ * question than the self-review fields above. `awarded` only ever says
+ * "earned the mark or not"; `verdict` is what tells a teacher, when it
+ * can't, *why* a point reads `awarded: false` — the marker judged it
+ * genuinely absent (`"withheld"`) versus could not confirm it either way
+ * (`"unverifiable"`), a distinction `awarded` alone collapses. `null` means
+ * either a legacy (non-verdict) point, or a DB value the backend could not
+ * narrow to one of the three members — the two are deliberately
+ * indistinguishable here (`lemely.db.review_repo._narrow_point_verdict`):
+ * an unrecognised value must render exactly like a legacy point, never as
+ * one of the three real verdicts. It must NOT render as an absence of
+ * information, either: `awarded` is still populated and still the marker's
+ * own verdict on both paths (`derive_point_rows` never wrote anything
+ * richer before I6), so a renderer's `verdict === null` branch should fall
+ * back to `awarded`, not to a bare "no verdict recorded" denial.
  */
+/**
+ * The three verdicts a marker can reach on one mark-scheme point (I6, US-013).
+ * Mirrors `lemely.core.schemas.PointVerdictWire`, the single Python alias every
+ * wire boundary narrows back to. Declared once here for the same reason it is
+ * declared once there: this project spent migration `0040` curing eight
+ * formulations of one concept, and an inline union repeated per use site is how
+ * that starts.
+ */
+export type PointVerdictWire = "awarded" | "withheld" | "unverifiable"
+
 export interface ReviewItemPoint {
   markPointId: string
   pointText: string
@@ -732,6 +758,15 @@ export interface ReviewItemPoint {
   studentSelfmark: boolean | null
   studentEvidence: string | null
   evidenceVerdict: string | null
+  verdict: PointVerdictWire | null
+  evidenceSpan: string
+  ecfApplied: boolean
+  /**
+   * The marker's own reasoning for this point. Present on BOTH marking paths
+   * (`PointVerdict.note` on the verdict path, `point_notes` on the legacy one),
+   * so unlike `verdict` this is populated today with `equivalence_gate` off.
+   */
+  rationale: string | null
 }
 
 /**
@@ -742,12 +777,33 @@ export interface ReviewItemPoint {
  * **`studentAnswer` is Lemely's transcription of the student's handwriting,
  * not the scan image; `expectedAnswer`/`matchedPointIds` are the mark
  * scheme's expected answer and the identifiers of the points the AI matched
- * — not the scheme's prose.** Neither the original scan crop nor the mark
- * scheme's extract text is persisted anywhere in this product (D3.14 §1,
- * `ReviewItemDetailDTO`'s own docstring) — T-08 must label these as exactly
- * what they are and say plainly that the scan/scheme extract don't exist,
- * never render a placeholder image or reconstruct scheme prose from the
- * point ids (inventing precision, UI-spec §1.4).
+ * — not the scheme's prose.** The mark scheme's extract text is still not
+ * persisted anywhere in this product (D3.14 §1, `ReviewItemDetailDTO`'s own
+ * docstring) — T-08 must label `expectedAnswer`/`matchedPointIds` as exactly
+ * what they are, never reconstruct scheme prose from the point ids
+ * (inventing precision, UI-spec §1.4). That gap is real and stays real: it
+ * is not what the paragraph below narrows. A scan crop is a different
+ * matter, but `hasSourceBox: true` is not itself a guarantee of one: it means
+ * all five `source_box_*` columns are set AND the attempt has an upload, so a
+ * crop MAY exist, fetched on demand from the crop route rather than persisted
+ * here. `GET /teacher/review/{itemId}/crop` can still fail (404 when the
+ * stored object has expired, 422 when the scan cannot be rendered), so a
+ * client must render any failure as absence, never as an error (see
+ * `useReviewItemCrop` in `lib/hooks/useTeacherApi.ts`). When a crop
+ * does render, it is QUESTION-level — where the answer was read from on the
+ * page — never per mark point, so it must not be read as showing which
+ * pixels justify any one awarded mark.
+ *
+ * Where `points` (`ReviewItemPoint`) carries a real per-point `verdict` and
+ * quoted evidence span (I6, US-013 — an attempt-backed row with a mark
+ * scheme, once the marker actually returns verdicts), it is strictly richer
+ * marking evidence than a bare matched-point identifier, so a bare
+ * `matchedPointIds` chip list is demoted beneath the real per-point verdicts
+ * on this screen. On a `"console_paper"` row and on a no-scheme question (a
+ * quiz), `points` is `[]` and `matchedPointIds` is the only marking evidence
+ * this backend has. On a legacy row `points` still carries each point's
+ * snapshotted scheme text and `awarded` flag — richer than a bare identifier
+ * — but no `verdict`, so the withheld/unverifiable distinction is absent.
  */
 export interface ReviewItemDetail extends ReviewQueueItem {
   studentAnswer: string | null
@@ -767,6 +823,18 @@ export interface ReviewItemDetail extends ReviewQueueItem {
   resolvedBy: string | null
   resolvedAt: string | null
   points: ReviewItemPoint[]
+  /**
+   * True when all five `source_box_*` columns are set server-side AND the
+   * attempt has an upload, so a crop MAY exist. Fetch it from the crop route;
+   * this DTO never carries coordinates (see `ReviewItemDetailDTO.hasSourceBox`).
+   * `true` does NOT guarantee a crop: `GET /teacher/review/{itemId}/crop` can
+   * still fail (404 when the stored object has expired, 422 when the scan
+   * cannot be rendered), and a client must render any failure as absence,
+   * never as an error. Always `false` for
+   * a `"console_paper"` row, even when its question has a box, because the
+   * crop route serves only attempt-backed items.
+   */
+  hasSourceBox: boolean
 }
 
 /**
@@ -791,8 +859,8 @@ export interface ResolveReviewRequest {
  * `DismissReviewRequestDTO`). Dismisses an integrity flag; `note` is an
  * internal record only. Never touches the underlying `QuestionResult` — no
  * student-visible record survives a dismissal (see `ReviewService.dismiss`'s
- * docstring). Restricted server-side to `plagiarism_flag`/`ai_detection_flag`
- * items — a 422 otherwise. */
+ * docstring). Restricted server-side to `plagiarism_flag` items — a 422
+ * otherwise. */
 export interface DismissReviewRequest {
   note?: string | null
 }

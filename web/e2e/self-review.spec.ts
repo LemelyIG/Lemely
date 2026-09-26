@@ -38,6 +38,18 @@ test("a student self-marks a low-confidence question and the verdict is revealed
   // Nothing about the marker's verdict is in the DOM before submission.
   await expect(page.getByTestId("self-review-outcome")).toHaveCount(0)
   await expect(page.getByText(/^Marker:/)).toHaveCount(0)
+  // The three student-facing verdict strings (I6, task #63) use student
+  // wording, deliberately distinct from the teacher screen's, and appear
+  // only post-reveal. Nothing about them may leak into the DOM before the
+  // student commits their own self-mark (the fields live on the revealed
+  // shape only, `lemely/db/review_repo.py`'s `ReviewItemPoint`) -- this
+  // assertion stays exactly this strict even though the post-reveal half
+  // below now exercises the same three strings for real.
+  await expect(
+    page.getByText(
+      /Marked correct|We did not see this step in your answer|The marker credited this, but we could not confirm your value/,
+    ),
+  ).toHaveCount(0)
 
   const submit = form.getByRole("button", { name: /submit and reveal/i })
   await expect(submit).toBeDisabled()
@@ -58,6 +70,16 @@ test("a student self-marks a low-confidence question and the verdict is revealed
   ).toBeVisible()
   await expect(outcome.getByText("Your mark was applied")).toHaveCount(2)
   await expect(outcome.getByText("You and the marker agree")).toHaveCount(1)
+
+  // The three I6 verdicts question "2" carries (p1 awarded, p2 withheld, p3
+  // unverifiable -- `scripts/seed_e2e.py::self_review_report`) now render in
+  // student wording, verbatim, only after this reveal -- the exact three
+  // strings the pre-submit assertion above just proved absent.
+  await expect(outcome.getByText("Marked correct")).toBeVisible()
+  await expect(outcome.getByText("We did not see this step in your answer")).toBeVisible()
+  await expect(
+    outcome.getByText("The marker credited this, but we could not confirm your value"),
+  ).toBeVisible()
   await expect(page.getByTestId("self-review-form")).toHaveCount(0)
 
   // One pass per question: a reload shows the revealed state, never the form.

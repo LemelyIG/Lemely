@@ -329,6 +329,7 @@ def correct_paper_cmd(
     from lemely.core.loose_schemas import MarkScheme
     from lemely.io.correction_ai import correct_paper as hybrid_correct_paper
     from lemely.io.gemini import GeminiClient
+    from lemely.runtime.config import log_marking_flags
 
     ms = MarkScheme.model_validate(_load_json_file(mark_scheme))
 
@@ -349,6 +350,8 @@ def correct_paper_cmd(
             extracted = parse_answer_input(payload)
 
     settings = _get_settings(ctx)
+    marking_options = settings.grading.marking_options()
+    log_marking_flags(marking_options)
     client = None if mcq_only else GeminiClient(settings)
 
     correction = hybrid_correct_paper(
@@ -356,6 +359,7 @@ def correct_paper_cmd(
         extracted_answers=extracted,  # type: ignore[arg-type]
         gemini_client=client,
         mcq_only=mcq_only,
+        options=marking_options,
     )
     from lemely.io.grade_boundaries import GradeBoundaryStore
 
@@ -480,7 +484,7 @@ def version_cmd(ctx: click.Context) -> None:
 @click.option("--no-network", is_flag=True, help="Skip the live Gemini ping.")
 @click.pass_context
 def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
-    from lemely.runtime.config import load_settings
+    from lemely.runtime.config import find_removed_config_keys, load_settings
     from lemely.runtime.errors import ConfigError
 
     checks: list[dict[str, object]] = []
@@ -488,10 +492,29 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     def record(name: str, ok: bool, detail: str = "") -> None:
         checks.append({"name": name, "ok": ok, "detail": detail})
 
-    try:
-        settings = load_settings(
-            toml_path=Path(ctx.obj["config_path"]) if ctx.obj.get("config_path") else None
+    config_path = Path(ctx.obj["config_path"]) if ctx.obj.get("config_path") else None
+
+    # F4 removed two now-orphaned config knobs along with the
+    # AI-generated-answer detector they gated (see
+    # lemely.runtime.config._REMOVED_CONFIG_KEYS for the exact names).
+    # `load_settings` below silently drops either one if still set — via
+    # lemely.toml OR an env var, the same outcome either way — so a stale
+    # config keeps working. This check is what actually tells a developer
+    # their config still names a removed key, since nothing else would.
+    removed_keys = find_removed_config_keys(toml_path=config_path)
+    if removed_keys:
+        record(
+            "no_removed_config_keys",
+            False,
+            "lemely.toml or the environment sets removed key(s): "
+            + ", ".join(removed_keys)
+            + " — the AI-generated-answer detector was removed (F4); delete these",
         )
+    else:
+        record("no_removed_config_keys", True)
+
+    try:
+        settings = load_settings(toml_path=config_path)
         record("config_loads", True)
     except Exception as exc:
         record("config_loads", False, str(exc))
@@ -501,6 +524,56 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # Accept GEMINI_API_KEY (standard) or LEMELY_GEMINI_API_KEY (prefixed).
     has_key = bool((settings.gemini_api_key is not None) or os.environ.get("GEMINI_API_KEY"))
     record("gemini_api_key", has_key)
+
+    # F1 (Gemini 3.x migration): surface what model_for() actually resolves to
+    # per task tag, so a config mistake (e.g. escalation falling back to the
+    # global 2.5 model) is visible without reading lemely.toml by hand.
+    model_table_tags = (
+        "correction",
+        "correction_borderline",
+        "escalation",
+        "extraction",
+        "generation",
+        "mark_scheme",
+        "scan_metadata",
+        "study_plan",
+    )
+    configured_models = {tag: settings.gemini.model_for(tag) for tag in model_table_tags}
+    model_table = ", ".join(f"{tag}={model}" for tag, model in configured_models.items())
+    record("gemini_model_table", True, detail=model_table)
+
+    # US-026: the $14 total_usd_ceiling is only as honest as the pricing table
+    # it's ledgered against — warn (advisory, never fatal) once the 3.8/3.7/
+    # 3.6-flash promotional rate is close to lapsing to the real, doubled
+    # rate, so a developer notices before the ceiling starts guarding a stale
+    # price. See FLASH_3X_PROMO_END_DATE / promo_pricing_status in gemini.py.
+    from lemely.io.gemini import fallback_pricing_status, promo_pricing_status
+
+    promo_ok, promo_detail = promo_pricing_status(settings)
+    record("gemini_promo_pricing_window", promo_ok, detail=promo_detail)
+
+    # US-034: names any configured model that would silently resolve through
+    # the unrecognised-model pricing fallback (billed at gemini-2.5-flash's
+    # rate) instead of an exact or promo-dated row. Advisory, never fatal —
+    # see fallback_pricing_status's docstring in gemini.py.
+    fallback_ok, fallback_detail = fallback_pricing_status(settings, configured_models)
+    record("gemini_fallback_pricing", fallback_ok, detail=fallback_detail)
+
+    # US-035: an unreadable gemini_spend.json already logged a warning
+    # (`CostLedger._read`'s `cost_ledger_corrupt` event) but had zero code
+    # consumers, so the $14 USD ceiling read $0.00 forever after one corrupt
+    # write with nothing able to act on it — logged, but not consumed. The
+    # absent/corrupt separation and the warning both already existed; this
+    # check gives a caller (here, `doctor`) an observable it can act on.
+    # Advisory, never fatal — the ledger is
+    # dev-only and fail-closed here was explicitly rejected (it could wedge
+    # a funded sweep on a transient disk error with no production blast
+    # radius to justify that). Same path GeminiClient's default ledger uses
+    # (`lemely/io/gemini.py`'s `_DefaultLedger`).
+    from lemely.io.cost_ledger import ledger_status
+
+    ledger_ok, ledger_detail = ledger_status(settings.paths.output_dir / "gemini_spend.json")
+    record("gemini_cost_ledger", ledger_ok, detail=ledger_detail)
 
     record(
         "sources_dir_readable",
@@ -588,7 +661,15 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # the web app's avatar/upload routes, and web push only needs keys once a
     # deployment wants real pushes. All three are reported honestly and none
     # decides the exit code.
-    advisory_checks = {"gradio_extra_installed", "storage_backend", "push_transport"}
+    advisory_checks = {
+        "gradio_extra_installed",
+        "storage_backend",
+        "push_transport",
+        "no_removed_config_keys",
+        "gemini_promo_pricing_window",
+        "gemini_fallback_pricing",
+        "gemini_cost_ledger",
+    }
     fatal_checks = [c for c in checks if c["name"] not in advisory_checks]
     all_passed = all(c["ok"] for c in fatal_checks)
 
@@ -1150,6 +1231,24 @@ def measure_accuracy_cmd(
     if not cases:
         raise click.ClickException(f"No golden cases found in {golden_path}")
 
+    # US-037: `load_golden_cases` used to only LOG a dropped case
+    # (`golden_case_load_error`/`golden_case_marker_load_error`) with no
+    # consumer anywhere — this command would print "Loaded N golden
+    # case(s)." and publish an accuracy figure over N as though N were the
+    # whole corpus. This command is specifically the one that turns a
+    # corpus into a published figure, so it refuses outright rather than
+    # recording-and-continuing (the choice a library caller of
+    # `measure_accuracy` still has via its `n_unparseable` argument): an
+    # operator must fix or remove the offending fixture before this figure
+    # means what it claims to mean.
+    if cases.unparseable:
+        bad = ", ".join(str(p) for p in cases.unparseable)
+        raise click.ClickException(
+            f"{len(cases.unparseable)} golden case(s) could not be parsed and were "
+            f"dropped, which would understate the corpus this run measures against: "
+            f"{bad}. Fix or remove them before running measure-accuracy."
+        )
+
     click.echo(f"Loaded {len(cases)} golden case(s). Running accuracy measurement…")
 
     client = GeminiClient(
@@ -1161,6 +1260,7 @@ def measure_accuracy_cmd(
         client,
         settings,
         arm=cast("Literal['extract+mark', 'oracle+mark'] | None", arm),
+        n_unparseable=len(cases.unparseable),
     )
     click.echo(format_report(result, settings.accuracy_eval))
 

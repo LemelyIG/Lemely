@@ -549,8 +549,12 @@ def get_quiz_marking_service() -> QuizMarkingService:
     with a service built on a throwaway Postgres database and a stubbed
     Gemini client (never a live call — the budget is hard-capped).
     """
+    settings = get_settings()
     return QuizMarkingService(
-        get_sessionmaker(get_settings()), get_attempt_repo(), get_gemini_client()
+        get_sessionmaker(settings),
+        get_attempt_repo(),
+        get_gemini_client(),
+        marking_options=settings.grading.marking_options(),
     )
 
 

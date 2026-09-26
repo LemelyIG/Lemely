@@ -42,7 +42,9 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExamMetadata,
     GradePrediction,
+    MarkerSourceValue,
 )
+from lemely.core.schemas import PointVerdict as MarkerPointVerdict
 from lemely.core.self_review import JudgeRequest, JudgeVerdict
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
@@ -168,8 +170,24 @@ def _question(
     confidence_score: float = 0.95,
     needs_review: bool = False,
     plagiarism_flagged: bool = False,
-    ai_detection_flagged: bool = False,
+    marker_source: MarkerSourceValue = "ai",
+    review_reason: str | None = None,
 ) -> CorrectedQuestion:
+    """One marked question for the self-review fixtures.
+
+    ``marker_source`` and ``review_reason`` are parameters rather than the
+    constants they used to be. That is not a tidy-up: this helper hardcoded
+    ``marker_source="ai"`` with no ``review_reason`` and no way to override
+    either, and every fixture in this ~2500-line file routes through it — so
+    the two fields the US-039 blank exemption reads could not vary, and no test
+    here could reach the row where a student self-awards every mark on a
+    question they left empty. The producer-level enumeration that closes that
+    class is ``tests/test_self_review_authority_builders.py``; these overrides
+    just mean this suite is no longer structurally unable to express the case.
+
+    ``ai_detection_flagged`` is gone with the detector (F4,
+    ``0037_remove_ai_detection``).
+    """
     return CorrectedQuestion(
         question_id=question_id,
         awarded_marks=len(matched),
@@ -180,12 +198,33 @@ def _question(
         student_answer=f"answer-{question_id}",
         expected_answer=f"expected-{question_id}",
         topic="Waves",
-        marker_source="ai",
+        marker_source=marker_source,
+        review_reason=review_reason,
         feedback="Method not shown.",
         plagiarism_flagged=plagiarism_flagged,
-        ai_detection_flagged=ai_detection_flagged,
         matched_point_ids=matched,
     )
+
+
+#: The ``review_reason`` segment ``apply_integrity_checks`` appends for a flagged
+#: answer (``lemely/io/integrity.py``, ``f"plagiarism (score {finding.score:.2f})"``).
+#:
+#: Fixtures below that set ``plagiarism_flagged=True`` MUST also set this, and it
+#: is not decoration. ``apply_integrity_checks`` is the only thing that raises the
+#: flag, and it both forces ``needs_teacher_review`` True and APPENDS this segment
+#: — so a flagged row with ``review_reason=None`` is a state no producer in this
+#: codebase can emit. The merged ``low_confidence`` predicate reads the reason
+#: rather than the bare boolean (finding A: a fully-confident but out-of-range
+#: mark that is also flagged must keep its ``low_confidence`` row, because that
+#: row is the sole signal the marker misread the mark scheme), so a fixture
+#: without the segment now describes an unproducible row AND gets the opposite
+#: verdict from the one it means.
+#:
+#: Only the ``"plagiarism (score"`` prefix is load-bearing
+#: (``review_queue_rules._is_solely_plagiarism_flagged``);
+#: ``tests/test_attempt_repo.py::_real_plagiarism_review_reason`` derives the
+#: whole string from the real pipeline where the exact score matters.
+_INTEGRITY_ONLY_REASON = "plagiarism (score 0.94)"
 
 
 def _low(question_id: str = "2", *, matched: list[str] | None = None) -> CorrectedQuestion:
@@ -198,6 +237,35 @@ def _low(question_id: str = "2", *, matched: list[str] | None = None) -> Correct
 def _high(question_id: str = "1", *, matched: list[str] | None = None) -> CorrectedQuestion:
     """Question "1" (2 marks) at confidence 0.95 — high-confidence."""
     return _question(question_id, matched=matched if matched is not None else ["p1"], maximum=2)
+
+
+def _question_with_verdicts(
+    question_id: str, point_verdicts: list[MarkerPointVerdict], *, maximum: int
+) -> CorrectedQuestion:
+    """A question carrying the marker's per-point verdicts (I6/I7 US-013),
+    for the revealed-point wire fields ``verdict``/``evidence_span``/
+    ``ecf_applied`` this file's ``verdict_span_and_ecf`` test pins.
+
+    Mirrors ``tests/test_review_repo.py::_question_with_verdicts``:
+    ``awarded``/``matched_point_ids`` are derived from ``point_verdicts``
+    rather than set independently, since ``RevealedPoint.awarded`` and
+    ``.verdict`` are meant to agree.
+    """
+    awarded_ids = [v.point_id for v in point_verdicts if v.verdict == "awarded"]
+    return CorrectedQuestion(
+        question_id=question_id,
+        awarded_marks=len(awarded_ids),
+        maximum_marks=maximum,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.95,
+        needs_teacher_review=False,
+        student_answer=f"answer-{question_id}",
+        expected_answer=f"expected-{question_id}",
+        topic="Waves",
+        marker_source="ai",
+        matched_point_ids=awarded_ids,
+        point_verdicts=point_verdicts,
+    )
 
 
 def _report(questions: list[CorrectedQuestion]) -> AccuracyReport:
@@ -327,6 +395,73 @@ def test_get_before_submission_is_pending_and_carries_no_verdict(
     }
 
 
+def test_revealed_point_carries_verdict_span_and_ecf(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """I6/I7's marker verdict, evidence span and ECF flag reach the revealed
+    point -- the same three fields ``test_review_repo.py`` already pins on
+    ``ReviewItemPoint``, now on the student's own ``RevealedPoint``. Two
+    points, one ``withheld`` and one ``awarded``, so the test also proves
+    ``withheld`` and ``awarded`` do not collapse into the same wire value.
+
+    ``p1``'s combination (``withheld`` + a non-empty ``evidence_span`` +
+    ``ecf_applied=True``) is not a shape the real marking pipeline produces
+    -- ``ecf_applied`` is set only by code, on a point the ECF-substitution
+    path re-marked, never alongside a fresh ``withheld`` verdict. It is used
+    here purely to prove these three columns thread through independently
+    of each other and of ``verdict``, not to model a realistic marking
+    outcome.
+    """
+    student = _seed_user(pg_sessionmaker)
+    question = _question_with_verdicts(
+        "1",
+        [
+            MarkerPointVerdict(
+                point_id="p1", verdict="withheld", evidence_span="v = 12.5", ecf_applied=True
+            ),
+            MarkerPointVerdict(point_id="p2", verdict="awarded"),
+        ],
+        maximum=2,
+    )
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [question])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    view = _service(pg_sessionmaker).submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+
+    by_id = {p.mark_point_id: p for p in view.points}
+    assert by_id["p1"].verdict == "withheld"
+    assert by_id["p1"].evidence_span == "v = 12.5"
+    assert by_id["p1"].ecf_applied is True
+    assert by_id["p2"].verdict == "awarded"
+    assert by_id["p2"].evidence_span == ""
+    assert by_id["p2"].ecf_applied is False
+
+
+def test_revealed_point_defaults_when_no_verdict_was_ever_persisted(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The legacy path: a question marked before I6/I7 existed writes no
+    ``point_verdicts`` row at all -- exactly the shape ``_high()``/``_low()``
+    seed, and what production ships today since ``equivalence_gate`` defaults
+    off. The three fields do NOT default together in one obvious way:
+    ``verdict`` goes to ``None`` while ``evidence_span``/``ecf_applied`` fall
+    back to the column defaults ``""``/``False``. Pin all three together, the
+    same way ``test_revealed_point_carries_verdict_span_and_ecf`` pins the
+    I6/I7 path -- so a future reader can't get the "they all just look empty"
+    case wrong.
+    """
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    view = _service(pg_sessionmaker).submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+
+    p1 = next(p for p in view.points if p.mark_point_id == "p1")
+    assert p1.verdict is None
+    assert p1.evidence_span == ""
+    assert p1.ecf_applied is False
+
+
 def test_get_reports_evidence_required_on_a_high_confidence_question(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
@@ -343,7 +478,14 @@ def test_get_treats_an_integrity_only_flag_as_high_confidence(
 ) -> None:
     """Integrity flags grant no authority — and nothing in the view says why."""
     student = _seed_user(pg_sessionmaker)
-    flagged = _question("1", matched=["p1"], maximum=2, needs_review=True, plagiarism_flagged=True)
+    flagged = _question(
+        "1",
+        matched=["p1"],
+        maximum=2,
+        needs_review=True,
+        plagiarism_flagged=True,
+        review_reason=_INTEGRITY_ONLY_REASON,
+    )
     attempt_id = _seed_attempt(pg_sessionmaker, student, [flagged, _low()])
     view = _service(pg_sessionmaker).get(
         student, attempt_id, _qr_id(pg_sessionmaker, attempt_id, "1")
@@ -674,9 +816,30 @@ def test_no_judge_still_logs_a_forged_fence_marker_as_evidence_sanitised(
 def test_integrity_only_flag_behaves_as_high_confidence(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
+    """A purely plagiarism-flagged question grants the student no authority.
+
+    The integrity flag is the ONLY reason on record — ``review_reason`` carries
+    the segment ``apply_integrity_checks`` appends and nothing else — so the
+    marking side had no complaint of its own and the question is not
+    low-confidence. Integrity flags grant no authority and are never shown to
+    a student.
+
+    This test used to use ``ai_detection_flagged``, which F4 removed along with
+    the detector; ``plagiarism_flagged`` is the surviving flag and makes the
+    same point. Setting ``review_reason`` is load-bearing rather than
+    decorative: the merged predicate treats a flag as integrity-only when the
+    segment stands ALONE, so that a structural reason underneath it is not
+    swallowed (finding A) — see
+    ``tests/test_attempt_repo.py::test_a_structural_reason_survives_an_integrity_flag_landing_on_top``.
+    """
     student = _seed_user(pg_sessionmaker)
     flagged = _question(
-        "1", matched=["p1"], maximum=2, needs_review=True, ai_detection_flagged=True
+        "1",
+        matched=["p1"],
+        maximum=2,
+        needs_review=True,
+        plagiarism_flagged=True,
+        review_reason=_INTEGRITY_ONLY_REASON,
     )
     attempt_id = _seed_attempt(pg_sessionmaker, student, [flagged, _low()])
     qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
@@ -685,10 +848,45 @@ def test_integrity_only_flag_behaves_as_high_confidence(
 
     assert view.effective_marks == 1 and view.student_marks is None
     # The integrity row is never touched by a self-mark.
-    assert [r.reason for r in _queue_rows(pg_sessionmaker, qr_id)] == [
-        ReviewReason.ai_detection_flag
-    ]
+    assert [r.reason for r in _queue_rows(pg_sessionmaker, qr_id)] == [ReviewReason.plagiarism_flag]
     assert _queue_rows(pg_sessionmaker, qr_id)[0].status is ReviewStatus.open
+
+
+def test_a_us039_blank_requires_evidence_and_faces_the_judge(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The merge Critical, through the real repository rather than the predicate.
+
+    A genuine blank reaches ``_to_view`` with ``confidence_score=0.0`` and
+    ``needs_teacher_review=False``, which satisfies the bare
+    ``< REVIEW_CONFIDENCE_THRESHOLD`` disjunct — so before the US-039 exemption
+    reached ``is_marking_low_confidence``, ``evidence_required`` came back
+    ``False`` and ``decide_point`` granted every challenged point outright: a
+    student self-awarding full marks on a question they left empty, with no
+    evidence and without the lenient judge being consulted.
+
+    The panel stays available deliberately (US-042's false blank: the student
+    may have written something extraction missed). What must not happen is the
+    mark moving on their word alone.
+    """
+    from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
+
+    student = _seed_user(pg_sessionmaker)
+    blank = _question(
+        "1",
+        matched=[],
+        maximum=2,
+        confidence_score=0.0,
+        needs_review=False,
+        marker_source="blank",
+        review_reason=_BLANK_ANSWER_REVIEW_REASON,
+    )
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [blank, _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    view = _service(pg_sessionmaker).get(student, attempt_id, qr_id)
+
+    assert view.evidence_required is True
 
 
 def test_teacher_override_already_recorded_wins_and_skips_nothing_else(
@@ -1760,7 +1958,12 @@ _FLAG = {
     ),
     "high": lambda: _question("1", matched=["p1"], maximum=2),
     "integrity_only": lambda: _question(
-        "1", matched=["p1"], maximum=2, needs_review=True, plagiarism_flagged=True
+        "1",
+        matched=["p1"],
+        maximum=2,
+        needs_review=True,
+        plagiarism_flagged=True,
+        review_reason=_INTEGRITY_ONLY_REASON,
     ),
 }
 

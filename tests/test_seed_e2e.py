@@ -36,6 +36,9 @@ from scripts.seed_e2e import (
     DECLINING_DAYS_AGO,
     DECLINING_SCORES,
     INACTIVE_SCORE,
+    LEGACY_REVIEW_CONFIDENCE_SCORE,
+    LEGACY_REVIEW_DAYS_AGO,
+    LEGACY_REVIEW_SCORE,
     PLACEMENT_MATHS_SAMPLE,
     PLACEMENT_MCQ_ANSWER,
     PLACEMENT_PAPER_NUMBER,
@@ -47,6 +50,8 @@ from scripts.seed_e2e import (
     QUIZ_BANK_ANSWERS,
     QUIZ_BANK_BANDS,
     QUIZ_REQUESTED_COUNT,
+    RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE,
+    RATIONALE_ONLY_REVIEW_SCORE,
     REVIEW_ITEM_CONFIDENCE_SCORE,
     SUBJECT_CODE,
     accuracy_report_for_score,
@@ -63,6 +68,8 @@ from scripts.seed_e2e import (
     default_run_tag,
     inactive_recorded_at,
     is_placement_seed_prompt,
+    legacy_review_recorded_at,
+    legacy_review_scheme,
     paper_record_for_scenario,
     wrong_mcq_answer,
 )
@@ -132,6 +139,13 @@ class TestDateArithmetic:
         """Recent is what keeps rule 3 out of this account's flag list."""
         at = below_target_recorded_at(_NOW)
         assert (_NOW - at).days < 14
+
+    def test_legacy_review_recorded_at_is_recent(self) -> None:
+        """Recent, and the account's only attempt -- neither the inactive nor
+        the declining-trend rule can ever fire on this student (task #67)."""
+        at = legacy_review_recorded_at(_NOW)
+        assert (_NOW - at).days < 14
+        assert (_NOW - at).days == LEGACY_REVIEW_DAYS_AGO
 
 
 # ---------------------------------------------------------------------------
@@ -650,7 +664,13 @@ def _payload_kwargs(**overrides: object) -> dict[str, object]:
             "accessToken": "tok-p1",
             "linkedStudent": "declining",
         },
-        "review_item": {"itemId": "ri1", "attemptId": "at1", "studentKey": "inactive"},
+        "review_item": {
+            "itemId": "ri1",
+            "attemptId": "at1",
+            "studentKey": "inactive",
+            "legacyItemId": "ri2",
+            "legacyAttemptId": "at2",
+        },
         "quiz": {
             "quizId": "q1",
             "assignmentId": "as1",
@@ -753,7 +773,13 @@ class TestBuildResultPayload:
                 "accessToken": "tok-p1",
                 "linkedStudent": "declining",
             },
-            "reviewItem": {"itemId": "ri1", "attemptId": "at1", "studentKey": "inactive"},
+            "reviewItem": {
+                "itemId": "ri1",
+                "attemptId": "at1",
+                "studentKey": "inactive",
+                "legacyItemId": "ri2",
+                "legacyAttemptId": "at2",
+            },
             "quiz": {
                 "quizId": "q1",
                 "assignmentId": "as1",
@@ -852,7 +878,151 @@ class TestSelfReviewSeed:
         assert by_id["1"].confidence_score >= REVIEW_CONFIDENCE_THRESHOLD
         assert by_id["2"].confidence_score < REVIEW_CONFIDENCE_THRESHOLD
         assert by_id["2"].needs_teacher_review is True
-        assert not by_id["2"].plagiarism_flagged and not by_id["2"].ai_detection_flagged
+        assert not by_id["2"].plagiarism_flagged
         assert len(derive_point_rows(by_id["2"], scheme)) == 3
         assert [r["awarded"] for r in derive_point_rows(by_id["2"], scheme)] == [True, False, False]
         assert report.correction.awarded_marks == 3 and report.correction.maximum_marks == 5
+
+    def test_question_2_points_carry_all_three_verdicts(self) -> None:
+        """Task #66: without this, every seeded row leaves ``verdict`` NULL and
+        no Playwright spec can assert a verdict chip renders (self-review's
+        own post-reveal assertion is blocked on exactly this)."""
+        from lemely.db.question_points import derive_point_rows
+        from scripts.seed_e2e import self_review_report, self_review_scheme
+
+        report = self_review_report()
+        scheme = self_review_scheme()
+        by_id = {q.question_id: q for q in report.correction.questions}
+        rows = derive_point_rows(by_id["2"], scheme)
+        assert [r["verdict"] for r in rows] == ["awarded", "withheld", "unverifiable"]
+        assert any(r["evidence_span"] for r in rows)
+        assert any(r["ecf_applied"] for r in rows)
+        # The verdict path's own "awarded" boolean must still agree with
+        # matched_point_ids -- the same invariant _awarded_from_verdicts
+        # enforces on the real marking path.
+        assert [r["awarded"] for r in rows] == [True, False, False]
+
+
+class TestReviewItemVerdicts:
+    """Task #66: the review-queue item (T-08) must also carry a per-point
+    verdict ledger, so a first Playwright spec against ``/teacher/review``
+    (task #7) has something non-null to assert on."""
+
+    def test_review_item_question_carries_all_three_verdicts(self) -> None:
+        from lemely.db.question_points import derive_point_rows
+        from scripts.seed_e2e import (
+            REVIEW_ITEM_MATCHED_POINT_IDS,
+            review_item_point_verdicts,
+            review_item_scheme,
+        )
+
+        report = accuracy_report_for_score(
+            INACTIVE_SCORE,
+            paper_number=1,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=REVIEW_ITEM_CONFIDENCE_SCORE,
+            needs_teacher_review=True,
+            matched_point_ids=REVIEW_ITEM_MATCHED_POINT_IDS,
+            point_verdicts=review_item_point_verdicts(),
+        )
+        scheme = review_item_scheme()
+        question = report.correction.questions[0]
+        rows = derive_point_rows(question, scheme)
+        assert [r["verdict"] for r in rows] == ["awarded", "withheld", "unverifiable"]
+        assert any(r["evidence_span"] for r in rows)
+        assert any(r["ecf_applied"] for r in rows)
+        assert [r["awarded"] for r in rows] == [True, False, False]
+        # Score/grade untouched by attaching a scheme + verdicts -- same
+        # invariant TestAccuracyReportForScore.
+        # test_low_confidence_override_carries_the_score_and_needs_review pins.
+        assert report.grade_prediction.percentage == INACTIVE_SCORE[0]
+        assert report.grade_prediction.grade == INACTIVE_SCORE[1]
+
+
+class TestLegacyReviewItem:
+    """Task #67: the review queue's SECOND row -- a question with a mark
+    scheme but neither a verdict nor a rationale on any point, the ordinary
+    legacy shape `MarkerVerdicts`' section-suppression guard exists to hide
+    (`web/src/portals/teacher/screens/ReviewItem.tsx`) and the only shape
+    production sees today (`equivalence_gate` defaults off)."""
+
+    def test_legacy_review_question_carries_no_verdict_and_no_rationale(self) -> None:
+        from lemely.db.question_points import derive_point_rows
+
+        report = accuracy_report_for_score(
+            LEGACY_REVIEW_SCORE,
+            paper_number=1,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=LEGACY_REVIEW_CONFIDENCE_SCORE,
+            needs_teacher_review=True,
+            # Deliberately no matched_point_ids/point_verdicts -- see
+            # legacy_review_scheme()'s own docstring.
+        )
+        scheme = legacy_review_scheme()
+        question = report.correction.questions[0]
+        rows = derive_point_rows(question, scheme)
+        assert len(rows) == 2
+        assert [r["verdict"] for r in rows] == [None, None]
+        assert [r["rationale"] for r in rows] == [None, None]
+        assert [r["evidence_span"] for r in rows] == ["", ""]
+        assert [r["ecf_applied"] for r in rows] == [False, False]
+        # Marker-source stays "deterministic" -- unlike the verdict-bearing
+        # review item, nothing here is an I6 verdict.
+        assert question.marker_source == "deterministic"
+        assert question.needs_teacher_review is True
+        assert question.confidence_score == LEGACY_REVIEW_CONFIDENCE_SCORE
+        assert question.confidence_score < REVIEW_CONFIDENCE_THRESHOLD
+        # Score/grade untouched by attaching a scheme -- same invariant
+        # TestReviewItemVerdicts pins for the verdict-bearing row.
+        assert report.grade_prediction.percentage == LEGACY_REVIEW_SCORE[0]
+        assert report.grade_prediction.grade == LEGACY_REVIEW_SCORE[1]
+
+
+class TestRationaleOnlyReviewItem:
+    """Final-review coverage gap: a THIRD review-queue row, carrying a
+    marker's per-point ``rationale`` (``point_notes``) but no ``verdict`` on
+    any point -- the shape production ships today whenever a marker writes a
+    note without ``equivalence_gate`` on. Neither `TestReviewItemVerdicts`
+    (every point has a verdict) nor `TestLegacyReviewItem` (no point has
+    anything) can stand in for this: `MarkerVerdicts`' section guard
+    (`web/src/portals/teacher/screens/ReviewItem.tsx`) was widened to
+    `p.verdict !== null || p.rationale` specifically so this rationale-only
+    shape still renders, and that widening had no seeded row to prove it
+    against until now."""
+
+    def test_rationale_only_question_carries_rationale_but_no_verdict(self) -> None:
+        from lemely.db.question_points import derive_point_rows
+        from scripts.seed_e2e import (
+            RATIONALE_ONLY_REVIEW_NOTE,
+            rationale_only_review_point_notes,
+            rationale_only_review_scheme,
+        )
+
+        report = accuracy_report_for_score(
+            RATIONALE_ONLY_REVIEW_SCORE,
+            paper_number=1,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE,
+            needs_teacher_review=True,
+            point_notes=rationale_only_review_point_notes(),
+            # Deliberately no matched_point_ids/point_verdicts -- see
+            # rationale_only_review_point_notes()'s own docstring.
+        )
+        scheme = rationale_only_review_scheme()
+        question = report.correction.questions[0]
+        rows = derive_point_rows(question, scheme)
+        assert len(rows) == 2
+        assert [r["verdict"] for r in rows] == [None, None]
+        assert [r["rationale"] for r in rows] == [RATIONALE_ONLY_REVIEW_NOTE, None]
+        assert [r["evidence_span"] for r in rows] == ["", ""]
+        assert [r["ecf_applied"] for r in rows] == [False, False]
+        # Marker-source stays "deterministic" -- point_notes alone is the
+        # legacy path, never an I6 verdict.
+        assert question.marker_source == "deterministic"
+        assert question.needs_teacher_review is True
+        assert question.confidence_score == RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE
+        assert question.confidence_score < REVIEW_CONFIDENCE_THRESHOLD
+        # Score/grade untouched by attaching a scheme -- same invariant
+        # TestLegacyReviewItem/TestReviewItemVerdicts pin for the other rows.
+        assert report.grade_prediction.percentage == RATIONALE_ONLY_REVIEW_SCORE[0]
+        assert report.grade_prediction.grade == RATIONALE_ONLY_REVIEW_SCORE[1]

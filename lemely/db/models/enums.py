@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from typing import Literal
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
@@ -69,8 +70,15 @@ class SessionMonth(enum.Enum):
     specimen = "specimen"
 
 
-#: Display labels for :class:`SessionMonth` members.
-SESSION_MONTH_LABELS: dict[SessionMonth, str] = {
+#: Display labels for :class:`SessionMonth` members. Typed onto the exact
+#: ``Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]`` that
+#: ``lemely.core.schemas.ExamMetadata.session_month`` declares (same four
+#: values), rather than the wider ``str`` this dict used to carry -- a
+#: ``dict[SessionMonth, str]`` let ``history_repo.py``/``review_repo.py``
+#: feed a value with no static guarantee of membership into that ``Literal``
+#: field, which mypy's pydantic plugin does not check on construction.
+#: Typing the lookup table itself closes every call site at once.
+SESSION_MONTH_LABELS: dict[SessionMonth, Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]] = {
     SessionMonth.may_june: "May/June",
     SessionMonth.oct_nov: "Oct/Nov",
     SessionMonth.feb_mar: "Feb/Mar",
@@ -99,11 +107,35 @@ class ConfidenceBand(enum.Enum):
 
 
 class MarkerSource(enum.Enum):
-    """Which engine produced a question mark."""
+    """Which engine produced a question mark.
+
+    ``dropped`` (US-038, migration ``0038_marker_source_dropped``): the model
+    DID return an answer for this question, but extraction discarded it as
+    malformed (unrecoverable ``question_id``/``answer`` shape) -- see
+    ``lemely.core.schemas.CorrectedQuestion.marker_source``. Distinct from
+    ``missing``, which covers "nothing was ever attempted". Before this
+    migration the native Postgres enum had no fourth member, so
+    ``AttemptRepository`` mapped ``"dropped"`` onto ``missing`` on write and
+    the two review-detail readers (``review_repo.py``) disagreed on what a
+    teacher saw for the identical situation -- this member removes that
+    mapping and the disagreement it caused.
+
+    ``blank`` (task #36, migration ``0040_marker_source_blank``): the student
+    left the question empty and no marking call was made -- US-039's unflagged
+    zero. It reused ``missing`` until this member existed, carrying the
+    distinction in ``review_reason`` prose instead.
+
+    ``missing``, ``dropped`` and ``blank`` all mean "no marker formed an
+    opinion". ``lemely.core.schemas.UNSCORED_MARKER_SOURCES`` is the one place
+    that set is written down, and ``lemely.core.schemas.marker_scored`` the one
+    way to ask.
+    """
 
     deterministic = "deterministic"
     ai = "ai"
     missing = "missing"
+    dropped = "dropped"
+    blank = "blank"
 
 
 class BoundarySource(enum.Enum):
@@ -173,12 +205,32 @@ class ReviewStatus(enum.Enum):
 
 
 class ReviewReason(enum.Enum):
-    """Why a question result was flagged for teacher review."""
+    """Why a question result was flagged for teacher review.
+
+    F4 removed the AI-generated-answer detector's review reason (migration
+    ``0037``): the detector it named had no measured false-positive rate and
+    JCQ guidance is that such a detector must never be sole evidence.
+    Existing rows carrying that reason were rewritten to ``manual`` (one-way;
+    see the migration's docstring). ``random_audit`` (N2) is a new member
+    added in the same migration, so the two changes share one Alembic head
+    instead of racing for it.
+
+    ``student_evidence_unjudged`` arrives from the student self-review spec
+    (``0037_question_result_pts``, which reaches this member with
+    ``ALTER TYPE ... ADD VALUE IF NOT EXISTS``). Because that revision and
+    ``0037_remove_ai_detection`` are Alembic *siblings* off
+    ``0036_upload_idempotency_key``, whichever order the merge head resolves
+    them in must leave the same member set — so ``0037_remove_ai_detection``'s
+    enum REBUILD names this member in both its member lists rather than
+    relying on develop's revision having already run. Dropping it is not a
+    cosmetic loss: ``lemely.db.self_review_repo`` writes it into
+    ``review_queue.reason``.
+    """
 
     low_confidence = "low_confidence"
     plagiarism_flag = "plagiarism_flag"
-    ai_detection_flag = "ai_detection_flag"
     manual = "manual"
+    random_audit = "random_audit"
     student_evidence_unjudged = "student_evidence_unjudged"
 
 

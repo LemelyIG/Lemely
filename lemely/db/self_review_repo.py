@@ -85,6 +85,7 @@ from lemely.db.models.attempts import (
 from lemely.db.models.enums import EvidenceVerdict, ReviewReason, ReviewStatus, RevisionSource
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.review_repo import (
+    _narrow_point_verdict,
     recompute_attempt_totals,
     recompute_weakness_records,
 )
@@ -96,6 +97,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session, sessionmaker
 
+    from lemely.core.schemas import PointVerdictWire
     from lemely.core.self_review import EvidenceJudge
 
 log = structlog.get_logger(__name__)
@@ -157,7 +159,15 @@ class PendingPoint:
 
 @dataclass(frozen=True, slots=True)
 class RevealedPoint:
-    """A mark point after the reveal: the marker's verdict beside the student's."""
+    """A mark point after the reveal: the marker's verdict beside the student's.
+
+    ``verdict``/``evidence_span``/``ecf_applied`` are I6/I7's marker verdict
+    (US-013) -- the same three fields ``lemely.db.review_repo.ReviewItemPoint``
+    carries for the teacher screen, read here off the same
+    ``QuestionResultPoint`` columns so ``withheld`` and ``unverifiable`` (both
+    ``awarded=False``) do not collapse into one value on the student's own
+    result either.
+    """
 
     mark_point_id: str
     ordinal: int
@@ -175,6 +185,9 @@ class RevealedPoint:
     mark_changed: bool
     absorbed_by_group: bool
     judge_reason: str | None
+    verdict: PointVerdictWire | None
+    evidence_span: str
+    ecf_applied: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +246,16 @@ class AttemptQuestion:
     the queue as it stands, so it drops to ``False`` the moment a self-mark
     (or anything else) resolves the row, even though ``review_reason`` still
     reads exactly as it did.
+
+    ``needs_teacher_review`` is the OTHER one, and the pair is not redundant:
+    it is the marker's flag frozen at marking time, which ``pending_teacher``
+    is deliberately allowed to outrank. Both reach the screen because
+    ``markingConfidence.ts``'s ``confidenceTierFor`` needs both — US-039's
+    unflagged blank is identified by ``needs_teacher_review is False`` plus a
+    ``missing``/``dropped`` marker source, and no amount of queue state
+    substitutes for it (a blank opens no queue row, so ``pending_teacher`` is
+    ``False`` for it too, and reading that alone renders a blank as
+    "confident": the marker confident about a question no marker read).
     """
 
     question_result_id: uuid.UUID
@@ -243,6 +266,7 @@ class AttemptQuestion:
     confidence_score: float
     feedback: str | None
     review_reason: str | None
+    needs_teacher_review: bool
     topic: str | None
     matched_point_ids: list[str]
     self_reviewable: bool
@@ -608,6 +632,7 @@ class SelfReviewService:
                     confidence_score=qr.confidence_score,
                     feedback=qr.feedback,
                     review_reason=qr.review_reason,
+                    needs_teacher_review=qr.needs_teacher_review,
                     topic=qr.topic,
                     matched_point_ids=list(qr.matched_point_ids),
                     self_reviewable=bool(group_flags.get(qr.id))
@@ -964,6 +989,9 @@ def _revealed_view(
                 mark_changed=_snapshot_bool(entries, p, "mark_changed", default=_mark_changed(p)),
                 absorbed_by_group=_snapshot_bool(entries, p, "absorbed_by_group", default=False),
                 judge_reason=_snapshot_str(entries, p, "judge_reason"),
+                verdict=_narrow_point_verdict(p.verdict, mark_point_id=p.mark_point_id),
+                evidence_span=p.evidence_span,
+                ecf_applied=p.ecf_applied,
             )
             for p in qr.points
         ],

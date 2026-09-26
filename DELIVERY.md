@@ -70,7 +70,7 @@ cell, and the fuller version is in §5.
 | Mark-scheme fetch / parse / store (32 of 72 papers parse for 0625) | 2 | Delivered (limited) | `lemely/io/mark_schemes.py`, `lemely/io/det/` | `tests/test_mark_schemes.py`, `tests/test_parsers_det.py` |
 | Method-mark marking + confidence (83.8% agreement vs a ≥95% target, historical — §5.1) | 2 | Delivered (limited) | `lemely/core/correction.py`, `lemely/io/correction_ai.py` | `tests/test_correction.py`, `tests/test_accuracy_synth.py`, `tests/test_accuracy_real_papers.py` |
 | Plagiarism flag (advisory signal, never modifies a mark) | 2 | Delivered | `lemely/core/plagiarism.py`, `lemely/io/integrity.py` | `tests/test_integrity.py` |
-| AI-detection flag (advisory signal, never modifies a mark) | 2 | Delivered | `lemely/io/integrity.py`, `lemely/core/integrity_schemas.py` | `tests/test_integrity.py` |
+| AI-detection flag (advisory signal, never modifies a mark) | 2 | Removed (F4, migration `0037`) — no measured false-positive rate; JCQ guidance is that such a detector must never be sole evidence | — | `tests/test_integrity.py` (retains the plagiarism-only suite), `tests/test_migration_0037_remove_ai_detection.py` |
 | Letter / numerical / total grade | 2 | Delivered | `lemely/core/analytics.py` (`grade_for_percentage`) | `tests/test_grade_boundaries.py` |
 | Predicted grade after boundary | 2 | Delivered | `lemely/core/analytics.py` (`predict_grade`), `lemely/io/grade_boundaries.py` | `tests/test_grade_boundaries.py` |
 | Mistakes + weakness identification | 2 | Delivered | `lemely/core/analytics.py`, `lemely/core/topics.py` | `tests/test_topics.py`, `tests/test_compare_performance.py` |
@@ -164,6 +164,17 @@ not better) against a target of flagging 100% of disagreements. Threshold
   Propagating extraction confidence into per-question confidence on the
   deterministic MCQ path changes the marking contract and was deliberately not
   patched unattended.
+- **I1 (per-page image extraction with bounding boxes) acceptance criterion
+  (1) is BLOCKED, not satisfied.** The plan requires every extracted answer
+  on the 16-page, 0-text-char `handwritten-59` fixture to carry a
+  `source_box` whose page index exists and whose box has positive area, on
+  Gemini's *actual* output for that fixture. `tests/test_answer_extraction.py`'s
+  `SourceBoxAndRequestRecorderTests` exercises the sanitisation/parsing path
+  against hand-written fixture `source_box` values with `GeminiClient`
+  mocked throughout — it demonstrates the code handles a well-formed
+  response correctly, not that Gemini actually produces one for this
+  fixture. That requires a live, paid call this no-spend branch does not
+  make. Do not read a green test run as having satisfied criterion (1).
 
 ### 5.2 Content corpus
 

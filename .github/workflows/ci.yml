@@ -60,6 +60,17 @@ jobs:
       - name: Mypy
         run: mypy lemely
 
+      # Task #42: mypy's pydantic plugin type-checks a BaseModel(...) call's
+      # keyword arity but not each field's declared type against the value
+      # passed (e.g. a plain `str` fed into a `Literal[...]` field) — pyright
+      # catches this class of wire-boundary defect and mypy structurally
+      # cannot (see sdd/briefs/type-gate-gap-report.md). Scoped to `lemely`,
+      # same as mypy above; residual noise (third-party stub gaps and a
+      # handful of pre-existing, out-of-scope findings) is excluded per-file
+      # per-rule with a named reason in pyproject.toml's [tool.pyright].
+      - name: Pyright
+        run: pyright lemely
+
       - name: Import-linter
         run: lint-imports
 

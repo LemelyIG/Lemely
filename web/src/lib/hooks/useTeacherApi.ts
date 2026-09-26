@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
   useMutation,
   useQuery,
@@ -389,6 +389,140 @@ export function useReviewItem(itemId: string | undefined): UseQueryResult<Review
     queryFn: () => request<ReviewItemDetail>(`/teacher/review/${itemId}`),
     enabled: !!itemId,
   })
+}
+
+/** What `useReviewItemCrop` fetched, tagged with the `itemId` it was fetched
+ * for. `null` before anything has resolved, or once cleared. */
+export interface FetchedCrop {
+  itemId: string
+  url: string
+}
+
+/**
+ * Pure identity check backing `useReviewItemCrop`'s return value (C1
+ * review of task #72): a fetched URL is only ever valid for the `itemId` it
+ * was fetched for.
+ *
+ * Broken out of the hook so this one rule — the actual fix for C1, not the
+ * blob lifecycle around it — has its own fast, DOM-free unit test
+ * (`reviewItemMarkerVerdicts.test.ts`), rather than only a Playwright
+ * assertion that needs the real stack to run at all.
+ */
+export function cropUrlFor(itemId: string | undefined, fetched: FetchedCrop | null): string | null {
+  return fetched !== null && fetched.itemId === itemId ? fetched.url : null
+}
+
+/** `useReviewItemCrop`'s return value. `url` is the object URL to render, or
+ * `null` for absence (never rendered, still loading, 404'd, or the decoded
+ * image turned out to be broken). `onDecodeError` must be wired to the
+ * rendered `<img>`'s own `onError` — see the hook's doc for why a 2xx
+ * response is not the end of the failure surface. */
+export interface ReviewItemCrop {
+  url: string | null
+  onDecodeError: () => void
+}
+
+/**
+ * `GET /teacher/review/{itemId}/crop` (task #71/#72) — the boxed region of
+ * the student's scan the question's answer was read from, fetched as a blob
+ * and handed to `<img src>` as an object URL. Same reason and the same
+ * ownership pattern as `useScanPreview` below: the route sits behind
+ * `require_role`, and `<img src>` cannot send an `Authorization` header on
+ * its own.
+ *
+ * `enabled` should be `hasSourceBox`. `false` means the route is certain to
+ * answer nothing (no box, no upload, or a console paper's item), so it must
+ * not cost a request. `true` means a box AND an upload exist, so a crop may
+ * exist, but it does not guarantee one: the route can still fail (404 when
+ * the stored object has expired, 422 when the scan cannot be rendered).
+ * `fetchBlobUrl` rejects on any non-2xx response, and that rejection resolves
+ * `url` to `null` exactly like a network failure would — the caller must
+ * render that as absence, never as a broken-image icon or an error toast.
+ *
+ * A 2xx response is still not the end of the failure surface: the bytes
+ * could fail to DECODE (a truncated stream, a body that claims `image/png`
+ * and isn't) after this hook has already committed a `url`. `onDecodeError`
+ * exists for exactly that — wire it to the rendered `<img>`'s own `onError`,
+ * and this hook clears the stored URL the same way a 404 would, so a decode
+ * failure degrades to the same absence rather than sitting in a bordered
+ * card as a broken-image icon.
+ *
+ * **C1 (review of task #72).** The returned URL is tagged with the `itemId`
+ * it was fetched for (`cropUrlFor`), and the identity check — does the tag
+ * match the CURRENT `itemId` — happens at RENDER time, in `cropUrlFor`, not
+ * only in the effect. An effect runs *after* the render it would need to
+ * guard: `ReviewItem`'s route (`portals/teacher/index.tsx`) carries no `key`,
+ * so navigating from boxed item A to boxed item B and back to A (still
+ * react-query-cached, `queryClient.ts`'s default `gcTime`) keeps the same
+ * fiber, and the first render with `itemId=A` restored still holds this
+ * hook's *state* from B — B's object URL — because state survives a render;
+ * only the *effect* would clear it, and effects commit after paint. Without
+ * the render-time tag, that first render would show B's crop under A's name
+ * and avatar, for at least one paint. Resetting in the effect (still done,
+ * see below) cannot prevent this: it fixes the state for the render AFTER
+ * the one that already leaked. Tagging every stored URL with its own
+ * `itemId` and checking that tag on every render closes it without racing
+ * effect timing at all — a stale tag simply cannot match a new `itemId`,
+ * whichever render observes it first.
+ *
+ * The effect-time reset is kept anyway, harmless and no longer load-bearing:
+ * see its own comment.
+ */
+export function useReviewItemCrop(itemId: string | undefined, enabled: boolean): ReviewItemCrop {
+  const [fetched, setFetched] = useState<FetchedCrop | null>(null)
+
+  useEffect(() => {
+    // Reset before the new fetch even starts, not only in the catch below —
+    // `itemId`/`enabled` changing means a DIFFERENT student's review item is
+    // now on screen, and carrying the previous item's object URL forward
+    // even briefly would show one student's handwriting under another
+    // student's name. A disclosure problem, not just a caching nicety. The
+    // returned `url` no longer depends on this (C1: it depends on
+    // `cropUrlFor`'s `itemId` tag comparison instead), but tidying the state
+    // promptly is still worth doing on its own.
+    setFetched(null)
+    if (!enabled || !itemId) return
+
+    let cancelled = false
+    let objectUrl: string | null = null
+
+    fetchBlobUrl(`/teacher/review/${itemId}/crop`)
+      .then((fetchedUrl) => {
+        if (cancelled) {
+          // Unmounted, or `itemId`/`enabled` changed, while in flight —
+          // nothing will ever render this one, so release it instead of
+          // stranding it.
+          URL.revokeObjectURL(fetchedUrl)
+          return
+        }
+        objectUrl = fetchedUrl
+        setFetched({ itemId, url: fetchedUrl })
+      })
+      .catch(() => {
+        // 404 (no upload, no box, an expired object) or any other failure —
+        // see this hook's own doc for why every one of these renders as
+        // absence, not as an error.
+        if (!cancelled) setFetched(null)
+      })
+
+    return () => {
+      cancelled = true
+      if (objectUrl !== null) URL.revokeObjectURL(objectUrl)
+    }
+  }, [itemId, enabled])
+
+  // A decoded 2xx blob can still fail to render (see this hook's own doc).
+  // The functional updater reads the CURRENT `fetched` without needing it in
+  // a dependency array, so this stays a stable callback across renders while
+  // still revoking whichever URL was actually live at the moment it broke.
+  const onDecodeError = useCallback(() => {
+    setFetched((current) => {
+      if (current !== null) URL.revokeObjectURL(current.url)
+      return null
+    })
+  }, [])
+
+  return { url: cropUrlFor(itemId, fetched), onDecodeError }
 }
 
 /**

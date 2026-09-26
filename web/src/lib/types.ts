@@ -6,8 +6,21 @@
 
 export type PortalId = "teacher" | "student"
 
-/** How a question was marked — the mock's 🔢 / 🤖 / ❓ legend. */
-export type MarkerSource = "deterministic" | "ai" | "missing"
+/** How a question was marked — the mock's 🔢 / 🤖 / ❓ legend.
+ *
+ * "dropped" (US-038, migration `0038_marker_source_dropped`): the model
+ * returned an answer for this question, but extraction discarded it as
+ * malformed. Distinct from "missing" — nothing was ever attempted.
+ *
+ * "blank" (task #36, migration `0040_marker_source_blank`): the student left
+ * the question empty and no marking call was made — US-039's unflagged zero.
+ * It shared "missing" until then, which made a question nobody read
+ * indistinguishable from one the AI was never asked about.
+ *
+ * "missing", "dropped" and "blank" all mean no marker formed an opinion. Ask
+ * that through `markerScored` (`markingConfidence.ts`), never by re-spelling
+ * the membership test. */
+export type MarkerSource = "deterministic" | "ai" | "missing" | "dropped" | "blank"
 
 /*
  * The vocabulary is data now, served per subject and tier by
@@ -31,12 +44,32 @@ export interface QuestionResult {
   matchedPointIds?: string[]
   reviewReason?: string
   topic?: string
+  /**
+   * The backend's own "does this question need a human" signal (mirrors
+   * `QuestionResultDTO.needsTeacherReview` in `lemely/web/schemas.py`),
+   * distinct from the paper-level `GradeResult.needsTeacherReview`.
+   *
+   * US-039: `reviewReason` alone used to mean "needs review" for every case
+   * -- true for every builder except the unflagged blank
+   * (`_build_blank_corrected`), which sets a `reviewReason` message purely
+   * to distinguish a genuine blank from every other blank-shaped state,
+   * while deliberately setting `needsTeacherReview` false. `undefined`
+   * (older payloads, or callers that never set it) preserves today's
+   * behaviour everywhere else -- see `lib/markingConfidence.ts` and
+   * `lib/questionFilter.ts`, both of which gate on
+   * `!== false` rather than requiring this field to be present.
+   */
+  needsTeacherReview?: boolean
   /** Mirrors `QuestionResultDTO.pendingTeacher` — whether a teacher still has
    * an open review queued for this question right now, as opposed to
    * `reviewReason`'s frozen record of why it was once flagged. `undefined`
    * on every source that has no queue to ask (a teacher-console grade, a
    * live `/student/correct` frame); only the student self-review list sets
-   * it, and only there should a `false` be read as "settled". */
+   * it, and only there should a `false` be read as "settled".
+   *
+   * NOT a rename of `needsTeacherReview` above: that is the marker's flag
+   * frozen at marking time, this is the live queue state. `confidenceTierFor`
+   * and `isFlagged` read both. */
   pendingTeacher?: boolean
 }
 

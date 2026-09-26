@@ -29,6 +29,15 @@ dependencies = [
   "pypdfium2>=4,<6",
   "numpy>=2,<3",
   "fonttools>=4.63,<5",
+  # lemely/core/equivalence.py: symbolic equality for A-mark verification
+  # and question-generation solving (I8, D12). Pinned floor at the release
+  # this module's parser (parse_expr with the implicit_multiplication_
+  # application/convert_xor transformations) was developed against. The
+  # spec's light-LaTeX arm (SymPy's Lark backend) is deferred, not
+  # implemented — every mark scheme/answer observed so far is plain
+  # text/unicode notation, which this module's own text normalisation
+  # handles; do not read this pin as evidence a Lark parser exists here.
+  "sympy>=1.14,<2",
 ]
 
 [project.optional-dependencies]
@@ -75,6 +84,10 @@ dev = [
   # floor said `>=1.13`, i.e. the declared range spanned a major this build has
   # never run a gate on.
   "mypy>=2.1,<2.2",
+  # Minor-capped for the same reason as mypy above: pyright ships new checks
+  # in minor releases, so an unpinned range is a gate whose verdict can move
+  # without a commit. Installed here: 1.1.414.
+  "pyright>=1.1.414,<1.2",
   "pre-commit>=4,<5",      # installed: 4.6.0
   "import-linter>=2.1,<3", # installed: 2.12
   # Parallel test execution, used only by `scripts/check.sh --fast` (the
@@ -165,6 +178,11 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/io/det/question_papers.py" = ["ANN401", "RUF001", "RUF003"]
 "lemely/io/validation.py" = ["RUF001"]
 "lemely/io/correction_ai.py" = ["BLE001", "ANN401", "TCH"]
+# CAIE notation is the entire subject matter (×, −, unit superscripts); the
+# numeric fallback's sample points need reproducibility, not cryptographic
+# randomness (S311).
+"lemely/core/equivalence.py" = ["RUF001", "RUF002", "RUF003", "S311"]
+"tests/test_equivalence.py" = ["RUF001", "T201", "S603"]
 "lemely/io/subject.py" = ["TCH"]
 "lemely/io/answer_extraction.py" = ["ANN401", "TCH"]
 # Injectable-SDK-client precedent (lemely/io/gemini.py's `_genai_client`): the
@@ -193,6 +211,7 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/web/routers/school.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/admin.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/schemas_teacher.py" = ["TC001", "TC002", "TC003"]
+"lemely/web/schemas_review.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/schemas_analytics.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/schemas_quiz.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/quiz.py" = ["TC001", "TC002", "TC003"]
@@ -258,6 +277,13 @@ module = [
   "google.cloud.*",
   "google.auth.*",
   "google.api_core.*",
+  # sympy ships no py.typed marker either (same class of gap as above);
+  # used by lemely/core/equivalence.py (I8).
+  "sympy.*",
+  # pypdfium2 ships no py.typed marker either (same class of gap as above);
+  # used by lemely/io/rasterise.py (I1), following
+  # scripts/rasterise_handwritten_fixtures.py's existing use of the library.
+  "pypdfium2.*",
 ]
 ignore_missing_imports = true
 
@@ -291,6 +317,8 @@ module = [
   # above).
   "lemely.io.storage_gcs",
   "lemely.io.answer_extraction",
+  "lemely.io.scan_hygiene",
+  "lemely.io.reread",
   "lemely.io.correction_ai",
   "lemely.io.subject",
   "lemely.io.ciegt",
@@ -413,3 +441,119 @@ forbidden_modules = [
 [tool.pyright]
 venvPath = '.'
 venv = '.venv'
+include = ["lemely"]
+
+# Residual findings after task #42's `Field(default=...)` migration (which
+# removed the 7 `reportCallIssue` false positives caused by this codebase's
+# previously-positional `Field(None, ...)` style — pyright only recognises a
+# pydantic default via the `default=` keyword). Each entry below is scoped to
+# one file (or one tight file group) and one or two specific rules, never a
+# whole-file or project-wide suppression, and each has a named cause. See
+# `.omc/state/sessions/33cebc31-5947-4575-89df-8ae6f47c7c04/sdd/briefs/type-gate-gap-report.md`
+# for the full investigation each entry below is drawn from.
+
+# =====================================================================
+# NOT A DEFECT — third-party stub gaps / pyright limitations.
+#
+# pyright is wrong here, not the code. These are permanent: there is no
+# fix to land and no follow-up task tracks them. Re-review only if the
+# underlying library ships real stubs, or pyright fixes the artifact.
+# =====================================================================
+
+# NOT A DEFECT: gradio's stubs don't reflect its actual re-export surface
+# for `gradio.themes.*`.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/app/gradio_app.py"
+reportPrivateImportUsage = "none"
+
+# NOT A DEFECT: `sqlalchemy.dialects` is a lazily-imported submodule;
+# pyright's stub view of the `sqlalchemy` package top-level doesn't see it
+# get bound. Scoped to the three migrations that reference it this way,
+# not the whole `versions/` tree.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/db/migrations/versions/0016_announcement_reads.py"
+reportAttributeAccessIssue = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "lemely/db/migrations/versions/0017_exam_dates.py"
+reportAttributeAccessIssue = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "lemely/db/migrations/versions/0018_push_subscriptions.py"
+reportAttributeAccessIssue = "none"
+
+# NOT A DEFECT: `anyio.to_thread.run_sync` overload resolution artifact —
+# pyright picks an unrelated overload branch (`BrokenWorkerInterpreter`)
+# that happens to lack `run_sync`; unrelated to the actual call shape used
+# at these sites.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/web/routers/student.py"
+reportAttributeAccessIssue = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "lemely/web/routers/teacher.py"
+reportAttributeAccessIssue = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "lemely/web/sse.py"
+reportAttributeAccessIssue = "none"
+
+# NOT A DEFECT: sympy ships no `py.typed` / stubs; pyright's fallback
+# typing of `Basic` doesn't know `.name` or `.evalf(subs=...)`'s real
+# signature.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/core/equivalence.py"
+reportAttributeAccessIssue = "none"
+reportArgumentType = "none"
+
+# NOT A DEFECT: `hasattr(payload, "model_dump")` inside a ternary doesn't
+# narrow `payload: object` for pyright here; functionally correct code,
+# pyright limitation (mypy's narrower checker doesn't hit this line at
+# all).
+[[tool.pyright.executionEnvironments]]
+root = "lemely/app/cli.py"
+reportAttributeAccessIssue = "none"
+
+# NOT A DEFECT: `points_are_settleable(qr.points)` expects
+# `Iterable[_HasGroupFlags]`; `qr.points: list[QuestionResultPoint]` does
+# NOT structurally satisfy `_HasGroupFlags` per pyright — but this was
+# confirmed to be a pyright artifact, not a real attribute gap, and is not
+# task #44 material. `QuestionResultPoint` declares all four columns
+# (`is_alternative`, `is_optional`, `group_key`, `group_max_marks`) with
+# the exact runtime types the Protocol wants; pyright instead sees each as
+# `Mapped[bool]` / `Mapped[str | None]` / `Mapped[int | None]` — the
+# *class-level* SQLAlchemy ORM descriptor type — because pyright has no
+# SQLAlchemy plugin to know that *instance* attribute access resolves
+# `Mapped[T]` to plain `T` (mypy's `sqlalchemy.ext.mypy.plugin` does know
+# this). Repro: isolating the same Protocol + `QuestionResultPoint` pair
+# and checking it with mypy alone (no pydantic plugin involved) reports
+# zero issues. Resolves the open question in the type-gate-gap report —
+# this Protocol gates marking settlement, so it mattered to check rather
+# than assume.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/db/self_review_repo.py"
+reportArgumentType = "none"
+
+# =====================================================================
+# DEFERRED (task #44) — real findings, excluded to land the pyright gate.
+#
+# These ARE genuine defects, not pyright artifacts. Excluding them here
+# means the gate currently asserts "pyright finds nothing" only because
+# it was told not to look at these five sites. Each is out of scope for
+# task #42 (Field-default migration + gating pyright itself), tracked by
+# task #44, and MUST be removed from this file when fixed or reclassified
+# as not-a-defect — do not let this block sit unactioned.
+# =====================================================================
+
+# NOT A DEFECT: pypdfium2's stub types `render`'s `scale` param as `int`;
+# `rasterise_pdf_to_pages` passes `dpi / 72.0`, a float. MEASURED, not
+# assumed: `PdfPage.render` computes
+# `src_width = math.ceil(self.get_width() * scale)` — it ceils the PRODUCT,
+# never `scale` itself, so a float is honoured at full resolution. Rendering
+# `tests/fixtures/0580_s11_gt.pdf` (595x842 pt) gives 1653x2339 at
+# `scale=2.7778` (EXTRACTION_DPI 200) versus 1190x1684 at `scale=2`, so
+# truncation would have cost ~28% of linear resolution — it does not happen.
+# Upstream stub inaccuracy, not a code defect.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/io/rasterise.py"
+reportArgumentType = "none"

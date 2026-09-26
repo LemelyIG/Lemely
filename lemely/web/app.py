@@ -17,6 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from lemely import __version__
+from lemely.runtime.config import log_marking_flags
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web.deps import get_settings, get_sweeper
 from lemely.web.routers import (
@@ -72,6 +73,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     ``TestClient(app)``, which is why every pre-existing test is unaffected.
     """
     settings = get_settings()
+    log_marking_flags(settings.grading.marking_options())
     stop = asyncio.Event()
     task: asyncio.Task[None] | None = None
     if settings.notifications.sweeper_enabled:

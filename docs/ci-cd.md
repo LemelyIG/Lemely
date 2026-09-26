@@ -274,6 +274,72 @@ Repo → **Settings → Secrets and variables → Actions**:
   (all three printed by `gcp-bootstrap.sh`), `CLOUDFLARE_ACCOUNT_ID`.
 - **Secrets** tab (repo-level): `CLOUDFLARE_API_TOKEN`.
 
+## Configuring the deployed service
+
+The API reads its settings in this order: environment variables, then
+`.env`, then `lemely.toml`, then built-in defaults
+(`lemely/runtime/config.py`). The Docker image ships no `lemely.toml` and no
+`.env`, so on Cloud Run a setting is either an environment variable or its
+default.
+
+**Naming.** Any setting maps to an environment variable: prefix `LEMELY_`,
+section and key joined by `__`, in capitals. `[grading] equivalence_gate`
+becomes `LEMELY_GRADING__EQUIVALENCE_GATE`; `[storage] bucket` becomes
+`LEMELY_STORAGE__BUCKET`.
+
+**Where the value comes from.** `deploy.yml` sets the service's environment
+in the Cloud Run step's `env_vars` block. Each line takes its value from
+GitHub:
+
+- `${{ vars.NAME }}` for anything that is not a secret, such as feature
+  flags, bucket names and URLs.
+- `${{ secrets.NAME }}` for credentials.
+
+Both are defined per environment under **Settings → Environments →
+`staging` / `production`**. The deploy job runs inside the environment it
+targets, so the same line picks up staging's value on a staging deploy and
+production's value on a production deploy.
+
+**Adding a new setting takes two steps.** Setting a GitHub variable alone
+does nothing:
+
+1. Add a line to `env_vars` in `deploy.yml`, with a default:
+   `LEMELY_SECTION__KEY=${{ vars.SECTION_KEY || 'default' }}`.
+2. Set `SECTION_KEY` in each environment where it should differ from the
+   default, then redeploy that environment.
+
+### The marking flags
+
+Two settings change how answers are marked:
+
+| Setting | GitHub variable | Default | Effect |
+|---|---|---|---|
+| `LEMELY_GRADING__EQUIVALENCE_GATE` | `GRADING_EQUIVALENCE_GATE` | `false` | Marks non-MCQ answers on the verdicts path with the SymPy award gate. |
+| `LEMELY_GRADING__ECF_SUBSTITUTION` | `GRADING_ECF_SUBSTITUTION` | `false` | Applies error-carried-forward by substitution. Has no effect unless `GRADING_EQUIVALENCE_GATE` is also `true`. |
+
+Both apply to every marking path: paper uploads, the teacher grading job,
+quiz marking and the CLI. Turning one on changes marks for real students, so
+measure it first with an accuracy sweep. The harness reads the same
+settings, and a flag-on sweep gets a different `params_fingerprint` from a
+flag-off one, so the two can be compared.
+
+To try a flag on staging only:
+
+1. **Settings → Environments → `staging` → Environment variables → Add**:
+   `GRADING_EQUIVALENCE_GATE` = `true`.
+2. Re-run the deploy workflow for staging (`workflow_dispatch` with
+   `environment: staging`, or push to `develop` — see "Triggers" above).
+3. Confirm the new revision's mode in Cloud Run logs. Every revision logs one
+   `marking_flags` line at startup with both values. Find it with the query
+   `jsonPayload.event="marking_flags"`. If ECF is on without the gate, that
+   entry's payload has `level: "warning"` and `ecf_inert: true` — our JSON
+   logs carry a `level` field, not the `severity` field Cloud Logging reads
+   for its own severity column, so the entry does not show at WARNING
+   severity; look at the payload fields instead of filtering by severity.
+
+Production is unaffected until its own `production` environment variable is
+set and production is redeployed.
+
 ## Credentials checklist
 
 Everything the pipeline needs, where to get it, and where it goes. Add

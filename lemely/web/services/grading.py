@@ -30,7 +30,7 @@ from lemely.io.correction_ai import correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.integrity import apply_integrity_checks
-from lemely.runtime.config import IntegritySettings
+from lemely.runtime.config import IntegritySettings, MarkingOptions
 
 
 def extract_answers(
@@ -63,6 +63,7 @@ def grade_paper(
     history_store: HistoryStoreProtocol | None = None,
     boundary_store: GradeBoundaryStore | None = None,
     integrity_settings: IntegritySettings | None = None,
+    options: MarkingOptions = MarkingOptions(),  # noqa: B008 -- frozen, immutable dataclass
 ) -> AccuracyReport:
     """Grade a paper and optionally record it to a student's history.
 
@@ -81,8 +82,12 @@ def grade_paper(
         student_id: When set, the paper is recorded under this id.
         history_store: Store used to persist the record; required for recording.
         boundary_store: Grade-boundary source; a default store is used if omitted.
-        integrity_settings: Plagiarism/AI-detection advisory-flag settings; the
-            defensive defaults (plagiarism on, AI-detection off) apply if omitted.
+        integrity_settings: Plagiarism advisory-flag settings (F4 removed the
+            AI-detection half); the defensive default (plagiarism on) applies
+            if omitted.
+        options: The marking flags, forwarded to `correct_paper`. Defaults to
+            both off, so behaviour is unchanged unless a caller opts in.
+            Callers pass `settings.grading.marking_options()`.
 
     Returns:
         The assembled accuracy report.
@@ -92,6 +97,7 @@ def grade_paper(
         extracted_answers=extracted_answers,
         gemini_client=gemini_client,
         mcq_only=mcq_only,
+        options=options,
     )
     correction = apply_integrity_checks(
         correction,

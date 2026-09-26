@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from lemely.web.schemas import ApiModel
+from lemely.web.schemas import ApiModel, MarkerSource
 
 
 class PracticeRequestDTO(ApiModel):
@@ -90,6 +90,24 @@ class PracticeResultQuestionDTO(ApiModel):
     ``PracticeExportQuestionDTO``). ``confidenceBand``/``confidenceScore``
     are the marking engine's own confidence for this mark — every displayed
     mark carries its confidence (QUALITY-BAR.md).
+
+    ``markerSource``/``needsTeacherReview`` are the US-039/finding-G signal
+    ``QuestionResultDTO`` carries on the quiz wire. A genuine blank
+    (``_build_blank_corrected``: ``confidence_band=LOW``,
+    ``needs_teacher_review=False``) is indistinguishable from a real
+    low-confidence mark by ``confidenceBand`` alone, so the frontend must be
+    able to tell "nobody looked at this" apart from "somebody looked and is
+    unsure" without re-deriving that rule (see
+    ``practiceData.ts::confidenceBandTier``, finding A in the US-039 final
+    branch review).
+
+    ``markerSource`` alone now settles it: task #36 gave the blank its own
+    ``"blank"`` value (migration ``0040_marker_source_blank``), so it no longer
+    shares ``"missing"`` with a *flagged* extraction failure and
+    ``needsTeacherReview`` is no longer load-bearing for that distinction.
+    ``needsTeacherReview`` stays on the wire because it is its own signal — the
+    marker's flag, which ``confidenceTierFor`` reads for questions that WERE
+    scored — not as the second half of a twin.
     """
 
     questionRef: str
@@ -99,6 +117,8 @@ class PracticeResultQuestionDTO(ApiModel):
     awardedMarks: int
     confidenceBand: str
     confidenceScore: float
+    markerSource: MarkerSource
+    needsTeacherReview: bool
 
 
 class PracticeResultDTO(ApiModel):

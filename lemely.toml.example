@@ -22,23 +22,30 @@ format = "auto"
 model = "gemini-2.5-flash"
 
 # Per-task model overrides (omit a key to use the global `model` above).
-# mark_scheme_model = "gemini-2.5-pro"   # one-off parse; accuracy matters
-# extraction_model  = "gemini-2.5-flash" # vision-heavy, per paper
-# correction_model  = "gemini-2.5-flash" # per question; highest call volume
+# F1 (Gemini 3.x migration, 2026-09-17): these are the shipped defaults, so
+# they are commented out here purely as documentation of what you are
+# overriding if you uncomment one. correction/escalation default to
+# gemini-3.8-flash; extraction/generation/scan_metadata default to
+# gemini-3.5-flash-lite; mark_scheme stays on gemini-2.5-flash (its chunked
+# parser and thinking_budget tuning predate the 3.x migration, D20). Run
+# `lemely doctor` to see what model_for() actually resolves for every tag.
+# mark_scheme_model    = "gemini-2.5-flash"
+# extraction_model     = "gemini-3.5-flash-lite"
+# correction_model     = "gemini-3.8-flash"
+# generation_model     = "gemini-3.5-flash-lite"
+# scan_metadata_model  = "gemini-3.5-flash-lite"
 
-# Escalation: re-mark with a stronger model when confidence < threshold.
-# escalation_model = "gemini-2.5-pro"
+# Escalation: re-mark with a stronger/thinking-harder model when confidence <
+# threshold. Reachable even when escalation_model == correction_model (F1):
+# the gate compares (model, thinking) tuples, not model names alone.
+# escalation_model = "gemini-3.8-flash"
 # escalation_confidence_threshold = 0.8
-
-# Thinking budget per task (tokens; 0 = disabled).
-[gemini.thinking_budget_for]
-mark_scheme = 8000
-# correction_borderline = 2000  # retry borderline marks before Pro escalation
 
 max_retries = 3
 backoff_seconds = 2.0
-# Persistent cumulative-USD hard cap (survives process restarts).
-# total_usd_ceiling = 8.0
+# Persistent cumulative-USD hard cap (survives process restarts). $14 is the
+# shipped default (raised from $8 by the user 2026-09-17, F1/D4).
+# total_usd_ceiling = 14.0
 # usd_warning_thresholds = [4.0, 6.0]
 # Budgets one RUN — every sweep that run drives, not each sweep separately.
 # A golden sweep is ~70 calls / ~115k tokens, so 200000 (the old example value)
@@ -48,6 +55,26 @@ backoff_seconds = 2.0
 
 # gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.
 # gemini_api_key = "sk-..."
+
+# Thinking budget per task (tokens; 0 = disabled) — 2.5-and-earlier models
+# only. 3.x models read [gemini.thinking_level_for] instead (see below). NOTE:
+# TOML table headers stay open until the next one, so every scalar [gemini]
+# key must come before this point in the file — [gemini] cannot be reopened
+# after a subtable like this one starts.
+[gemini.thinking_budget_for]
+mark_scheme = 8000
+# correction_borderline = 2000  # retry borderline marks before Pro escalation
+
+# Thinking level per task ("minimal"/"low"/"medium"/"high") — 3.x models
+# only; a 2.5-and-earlier model ignores this table entirely. Shipped
+# defaults shown; "minimal" is only honoured on gemini-3.6-flash /
+# gemini-3.5-flash-lite and falls back to "low" on any other 3.x model.
+[gemini.thinking_level_for]
+correction = "low"
+correction_borderline = "high"  # Step-1 retry before Step-2 escalation
+escalation = "high"
+extraction = "minimal"
+generation = "low"
 
 [accuracy_eval]
 mark_accuracy_target = 0.95
@@ -163,13 +190,27 @@ email_otp_ttl_seconds = 600
 # dead run (its instance died) and may be reclaimed by the next regrade.
 stale_run_after_seconds = 900
 
+# US-005b's marking gate (US-040, closed by `08df9302`): read by every
+# marking path -- the CLI, student paper uploads, the teacher grading job,
+# quiz marking, the accuracy harness and Gradio. Enabling it CHANGES HOW
+# PAPERS ARE MARKED, on every one of those paths at once. This branch ships
+# no accuracy evidence that the verdict path marks better than the legacy
+# path -- that evidence needs a label campaign that has not started. Not a
+# safe default to flip; leave commented out until that evidence exists.
+# Deployed, it is set by LEMELY_GRADING__EQUIVALENCE_GATE; see docs/ci-cd.md.
+# equivalence_gate = true
+# Error-carried-forward by substitution (I7/US-013). Threaded independently
+# of `equivalence_gate` above -- neither flag implies the other -- but it has
+# no observable effect unless `equivalence_gate` is ALSO true. Deployed, it
+# is set by LEMELY_GRADING__ECF_SUBSTITUTION.
+ecf_substitution = false
+
 [integrity]
-# AI-generated-text detection is opt-in and costs one Gemini call per
-# question — plagiarism detection alone needs no Gemini key.
+# Plagiarism detection needs no Gemini key (stdlib difflib only). F4 removed
+# the AI-generated-answer detector that used to live here — no evidence base,
+# JCQ guidance says a detector must never be sole evidence.
 plagiarism_enabled = true
-ai_detection_enabled = false
 plagiarism_threshold = 0.85
-ai_detection_threshold = 0.8
 
 [email]
 # Transactional mail for account verification and password reset (D7.7).

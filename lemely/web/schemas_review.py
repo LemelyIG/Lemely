@@ -7,6 +7,13 @@ Converters live in :mod:`lemely.web.routers.review`.
 
 from __future__ import annotations
 
+#: Re-exported from :data:`lemely.core.schemas.PointVerdictWire`, the same
+#: ``Literal`` :attr:`~lemely.core.schemas.PointVerdict.verdict` is annotated
+#: with; mirrors ``lemely.db.review_repo.PointVerdictWire``, the other
+#: re-export of the same alias. The wire boundary is where this ``Literal``
+#: is load-bearing — pyright, not mypy, is what catches a plain ``str``
+#: reaching it (see ``ReviewItemPointDTO.verdict``'s docstring).
+from lemely.core.schemas import PointVerdictWire as PointVerdictWire
 from lemely.web.schemas import ApiModel
 
 
@@ -90,6 +97,21 @@ class ReviewItemPointDTO(ApiModel):
     without this, a teacher opening such an item has no way to see the
     student's own claim or evidence — the sentence the queue row exists to
     have them adjudicate.
+
+    ``verdict``/``evidenceSpan``/``ecfApplied`` are I6/I7 (US-013)'s marker
+    verdict, populated regardless of whether the student ever self-marked
+    this point. ``verdict`` is typed as the narrowed ``PointVerdictWire``, not
+    ``str``, because **the pydantic mypy plugin checks constructor keyword
+    arity, not field types** — mypy cannot see a plain ``str`` reaching a
+    ``Literal`` field here, only pyright can. ``lemely.db.review_repo``
+    already narrowed the DB's loose ``str | None`` before this DTO is built,
+    so this field's ``Literal`` is never violated by a well-formed caller;
+    pyright is what makes that provable at every call site rather than
+    merely true today.
+
+    ``rationale`` is the marker's own per-point reasoning. Unlike ``verdict``,
+    it is present on both the verdict and legacy marking paths, so it reaches
+    this DTO today, with ``equivalence_gate`` off.
     """
 
     markPointId: str
@@ -98,17 +120,38 @@ class ReviewItemPointDTO(ApiModel):
     studentSelfmark: bool | None
     studentEvidence: str | None
     evidenceVerdict: str | None
+    verdict: PointVerdictWire | None
+    evidenceSpan: str
+    ecfApplied: bool
+    rationale: str | None
 
 
 class ReviewItemDetailDTO(ApiModel):
     """Response for ``GET /api/teacher/review/{item_id}`` (T-08).
 
     Extends :class:`ReviewQueueItemDTO`'s fields with the question content,
-    AI marking evidence, and any recorded teacher override. There is no
-    persisted mark-scheme extract or scan-crop image on
+    AI marking evidence, and any recorded teacher override. There is still no
+    persisted mark-scheme extract on
     :class:`~lemely.db.models.attempts.QuestionResult` (see its docstring) —
-    ``matchedPointIds`` and ``studentAnswer`` are the honest substitutes this
-    backend can actually provide.
+    that part of the gap is real and stays real, so a future screen must not
+    invent scheme-prose precision this backend cannot provide. A scan crop is
+    a different matter: one may exist when ``hasSourceBox`` is ``true``,
+    served on demand by ``GET /api/teacher/review/{item_id}/crop``, which can
+    still fail (404 when the stored object has expired, 422 when the scan
+    cannot be rendered). It is QUESTION-level — where the
+    answer was read from on the page — never per mark point, so it must not
+    be read as showing which pixels justify any one awarded mark.
+    Where ``points`` (``ReviewItemPointDTO``) carries a real per-point
+    ``verdict`` and quoted evidence span (I6, US-013 — an attempt-backed row
+    with a mark scheme, once the marker actually returns verdicts), it is
+    strictly richer marking evidence than a bare matched-point identifier.
+    That is not every row: on a ``"console_paper"`` row ``points`` is always
+    ``[]`` (there is no ``question_result_points`` row for a console item —
+    see below) and on a no-scheme question (a quiz) it is also ``[]``; on
+    either, ``matchedPointIds`` is the only marking evidence this backend has.
+    On a legacy row ``points`` still carries each point's snapshotted scheme
+    text and ``awarded`` flag — richer than a bare identifier — but no
+    ``verdict``, so the withheld/unverifiable distinction is absent.
 
     On a ``"console_paper"`` row the marking evidence is read from the paper's
     stored report, but every **override** field (``isOverridden``,
@@ -159,6 +202,15 @@ class ReviewItemDetailDTO(ApiModel):
     resolvedAt: str | None
     points: list[ReviewItemPointDTO]
     """Empty for a ``"console_paper"`` row — see ``ReviewItemDetail.points``."""
+    hasSourceBox: bool = False
+    """True when all five ``source_box_*`` columns are set AND the attempt has
+    an upload, so a crop may exist. ``GET /api/teacher/review/{item_id}/crop``
+    can still fail (404 when the stored object has expired, 422 when the scan
+    cannot be rendered), so a client must render any failure as absence, never
+    as an error. Always false for a ``"console_paper"`` row, even when its
+    question has a box: the crop route serves only attempt-backed items. See
+    ``ReviewItemDetail.has_source_box``.
+    The client never receives the coordinates themselves."""
 
 
 class ResolveReviewRequestDTO(ApiModel):

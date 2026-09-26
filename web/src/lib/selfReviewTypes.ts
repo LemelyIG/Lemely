@@ -39,6 +39,12 @@ export interface SelfReviewRevealedPoint extends SelfReviewPendingPoint {
   /** The verdict was accepted but its group was already at its worth, so no mark moved (Task 6b). */
   absorbedByGroup: boolean
   judgeReason: string | null
+  /** I6: the marker's own verdict. Null on the legacy marking path. */
+  verdict: "awarded" | "withheld" | "unverifiable" | null
+  /** The marker's verbatim quote from this student's own answer. `""` when none. */
+  evidenceSpan: string
+  /** I7: this point was re-marked using the student's earlier value, so one slip did not cascade. */
+  ecfApplied: boolean
 }
 
 interface SelfReviewBase {

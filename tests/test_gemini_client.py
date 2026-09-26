@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from lemely.io.gemini import (
+    _MAX_OUTPUT_TOKENS,
     GeminiClient,
+    _is_3x,
     _reset_process_counters,
     _strip_schema,
     process_token_totals,
@@ -23,6 +26,12 @@ from lemely.runtime.events import EventType, bus
 
 class _SimpleSchema(BaseModel):
     value: str
+
+
+class _PatternSchema(BaseModel):
+    """A schema carrying a JSON-Schema `pattern` keyword (F1 3.x strip target)."""
+
+    subject_code: str = Field(pattern=r"^\d{4}$")
 
 
 class _RecursiveSchema(BaseModel):
@@ -50,6 +59,33 @@ class StripSchemaTests(unittest.TestCase):
         props = result.get("properties", {})
         children_items = props.get("children", {}).get("items", {})
         self.assertEqual(children_items, {"type": "object"})
+
+    def test_pattern_dropped_for_3x(self) -> None:
+        """F1 acceptance (3): no schema sent to a 3.x model contains `pattern`."""
+        schema = _PatternSchema.model_json_schema()
+        self.assertIn("pattern", schema["properties"]["subject_code"])
+        result = _strip_schema(schema, is_3x=True)
+        self.assertNotIn("pattern", result["properties"]["subject_code"])
+
+    def test_pattern_kept_for_25(self) -> None:
+        """2.5 still accepts (and receives) the `pattern` keyword."""
+        schema = _PatternSchema.model_json_schema()
+        result = _strip_schema(schema, is_3x=False)
+        self.assertIn("pattern", result["properties"]["subject_code"])
+
+
+def _level(v: object) -> str | None:
+    """Normalise a ``types.ThinkingLevel`` (or a plain string) to lowercase.
+
+    The SDK coerces the ``thinking_level`` kwarg into a
+    ``types.ThinkingLevel`` enum member (``ThinkingLevel.LOW``, value
+    ``"LOW"``), so a bare string comparison against the lowercase config
+    value always fails even though the level round-tripped correctly.
+    """
+    if v is None:
+        return None
+    value = getattr(v, "value", v)
+    return str(value).lower()
 
 
 def _mock_response(
@@ -98,6 +134,46 @@ def _mock_response_without_thoughts_attr(
     um.prompt_token_count = in_tok
     um.candidates_token_count = out_tok
     resp.usage_metadata = um
+    return resp
+
+
+def _mock_code_execution_response(
+    output: str, in_tok: int = 10, out_tok: int = 20, thoughts_tok: int = 0
+) -> MagicMock:
+    """A stubbed Gemini response carrying a ``code_execution_result`` part,
+    shaped like the real ``google-genai`` SDK response to a call with the
+    ``code_execution`` tool enabled: ``candidates[0].content.parts`` holds
+    one part whose ``code_execution_result.output`` is the executed code's
+    printed output."""
+    resp = MagicMock()
+    part = MagicMock()
+    part.code_execution_result.output = output
+    content = MagicMock()
+    content.parts = [part]
+    cand = MagicMock()
+    cand.content = content
+    resp.candidates = [cand]
+    resp.usage_metadata = MagicMock(
+        prompt_token_count=in_tok,
+        candidates_token_count=out_tok,
+        thoughts_token_count=thoughts_tok,
+    )
+    return resp
+
+
+def _mock_response_without_code_execution_result(in_tok: int = 10, out_tok: int = 20) -> MagicMock:
+    """A response whose parts carry no ``code_execution_result`` at all —
+    the model answered in prose instead of running code."""
+    resp = MagicMock()
+    part = MagicMock(spec=[])
+    content = MagicMock()
+    content.parts = [part]
+    cand = MagicMock()
+    cand.content = content
+    resp.candidates = [cand]
+    resp.usage_metadata = MagicMock(
+        prompt_token_count=in_tok, candidates_token_count=out_tok, thoughts_token_count=0
+    )
     return resp
 
 
@@ -634,3 +710,841 @@ class GeminiClientTests(unittest.TestCase):
         self.assertEqual(events, [])
         self.assertFalse((settings.paths.output_dir / "gemini_spend.json").exists())
         self.assertEqual(mock_genai.models.generate_content.call_count, 1)
+
+
+class F1MigrationTests(unittest.TestCase):
+    """F1 (Gemini 3.x migration) acceptance tests: request shape and cache-key
+    fingerprint behaviour on the two disjoint API lines."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        _reset_process_counters()
+
+    def test_is_3x_detector(self) -> None:
+        self.assertTrue(_is_3x("gemini-3.8-flash"))
+        self.assertTrue(_is_3x("gemini-3.5-flash-lite"))
+        self.assertFalse(_is_3x("gemini-2.5-flash"))
+        self.assertFalse(_is_3x("gemini-2.5-pro"))
+
+    def test_3x_request_omits_determinism_params_has_thinking_level(self) -> None:
+        """F1 acceptance (2): a recorded 3.x request has no temperature/top_p/
+        seed/candidate_count and does contain thinking_level."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "hi"}')
+        mock_genai.files.upload.return_value = MagicMock()
+        settings = _make_settings(self.tmp, model="gemini-3.8-flash")
+        client = GeminiClient(settings, _genai_client=mock_genai)
+
+        client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+
+        config = mock_genai.models.generate_content.call_args.kwargs["config"]
+        self.assertIsNone(config.temperature)
+        self.assertIsNone(config.top_p)
+        self.assertIsNone(config.seed)
+        self.assertFalse(hasattr(config, "candidate_count") and config.candidate_count)
+        self.assertEqual(_level(config.thinking_config.thinking_level), "low")
+        self.assertIsNone(config.thinking_config.thinking_budget)
+        # 3.x uses response_json_schema, not response_schema (google-genai
+        # 2.10.0, types.py:6029 GenerateContentConfig.response_json_schema).
+        self.assertIsNotNone(config.response_json_schema)
+        self.assertIsNone(config.response_schema)
+
+    def test_25_request_still_has_thinking_budget(self) -> None:
+        """F1 acceptance (2): a 2.5 request still carries thinking_budget
+        (and the temperature/top_p/seed substrate, and response_schema)."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "hi"}')
+        mock_genai.files.upload.return_value = MagicMock()
+        settings = _make_settings(
+            self.tmp, model="gemini-2.5-flash", temperature=0.1, top_p=0.9, seed=7
+        )
+        client = GeminiClient(settings, _genai_client=mock_genai)
+
+        client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+
+        config = mock_genai.models.generate_content.call_args.kwargs["config"]
+        self.assertEqual(config.temperature, 0.1)
+        self.assertEqual(config.top_p, 0.9)
+        self.assertEqual(config.seed, 7)
+        self.assertEqual(config.thinking_config.thinking_budget, 0)
+        self.assertIsNone(config.thinking_config.thinking_level)
+        self.assertIsNotNone(config.response_schema)
+        self.assertIsNone(config.response_json_schema)
+
+    def test_extraction_minimal_falls_back_to_low_off_supported_models(self) -> None:
+        """F1 approach (b) note ‡: "minimal" is only honoured on 3.6-flash /
+        3.5-flash-lite; every other 3.x model demotes it to "low"."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "hi"}')
+        mock_genai.files.upload.return_value = MagicMock()
+        # task_tag="extraction" resolves via extraction_model, not the global
+        # `model` — override the tag-specific field so this actually exercises
+        # a non-minimal-capable 3.x model.
+        settings = _make_settings(self.tmp, extraction_model="gemini-3.8-flash")
+        client = GeminiClient(settings, _genai_client=mock_genai)
+
+        client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            task_tag="extraction",
+        )
+        config = mock_genai.models.generate_content.call_args.kwargs["config"]
+        # thinking_level_for["extraction"] defaults to "minimal", but
+        # gemini-3.8-flash is not one of the two models that honour it.
+        self.assertEqual(_level(config.thinking_config.thinking_level), "low")
+
+    def test_extraction_minimal_honoured_on_flash_lite(self) -> None:
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "hi"}')
+        mock_genai.files.upload.return_value = MagicMock()
+        settings = _make_settings(self.tmp, extraction_model="gemini-3.5-flash-lite")
+        client = GeminiClient(settings, _genai_client=mock_genai)
+
+        client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            task_tag="extraction",
+        )
+        config = mock_genai.models.generate_content.call_args.kwargs["config"]
+        self.assertEqual(_level(config.thinking_config.thinking_level), "minimal")
+
+    def test_cache_key_3x_ignores_temperature_reads_thinking_level(self) -> None:
+        """F1 acceptance (4): on a 3.x model, changing temperature_for["correction"]
+        leaves _cache_key unchanged; changing thinking_level_for["correction"]
+        changes it."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "a"}'),
+            _mock_response('{"value": "b"}'),
+            _mock_response('{"value": "c"}'),
+        ]
+        mock_genai.files.upload.return_value = MagicMock()
+
+        # task_tag="correction" resolves via correction_model — F1's default
+        # already points it at gemini-3.8-flash, made explicit here.
+        base = _make_settings(self.tmp, correction_model="gemini-3.8-flash")
+        client = GeminiClient(base, _genai_client=mock_genai)
+        r1 = client.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            task_tag="correction",
+        )
+        self.assertEqual(r1.value, "a")
+
+        # Changing temperature_for["correction"] is inert on a 3.x model -> cache hit.
+        temp_changed = base.model_copy(
+            update={
+                "gemini": base.gemini.model_copy(update={"temperature_for": {"correction": 0.99}})
+            }
+        )
+        client2 = GeminiClient(temp_changed, _genai_client=mock_genai)
+        r2 = client2.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            task_tag="correction",
+        )
+        self.assertEqual(r2.value, "a")  # cache hit, not "b"
+        self.assertEqual(mock_genai.models.generate_content.call_count, 1)
+
+        # Changing thinking_level_for["correction"] DOES change the fingerprint -> cache miss.
+        level_changed = base.model_copy(
+            update={
+                "gemini": base.gemini.model_copy(
+                    update={
+                        "thinking_level_for": {
+                            **base.gemini.thinking_level_for,
+                            "correction": "high",
+                        }
+                    }
+                )
+            }
+        )
+        client3 = GeminiClient(level_changed, _genai_client=mock_genai)
+        r3 = client3.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            task_tag="correction",
+        )
+        self.assertEqual(r3.value, "b")
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+    def test_cache_key_25_reads_temperature_ignores_thinking_level(self) -> None:
+        """F1 acceptance (4), the mirror case: on a 2.5 model, the reverse holds."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "a"}'),
+            _mock_response('{"value": "b"}'),
+        ]
+        mock_genai.files.upload.return_value = MagicMock()
+
+        # task_tag="correction" resolves via correction_model, not the global
+        # `model` — override the tag-specific field to actually get a 2.5 call.
+        base = _make_settings(self.tmp, correction_model="gemini-2.5-flash")
+        client = GeminiClient(base, _genai_client=mock_genai)
+        r1 = client.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            task_tag="correction",
+        )
+        self.assertEqual(r1.value, "a")
+
+        # thinking_level_for is inert on a 2.5 model -> cache hit.
+        level_changed = base.model_copy(
+            update={
+                "gemini": base.gemini.model_copy(
+                    update={
+                        "thinking_level_for": {
+                            **base.gemini.thinking_level_for,
+                            "correction": "high",
+                        }
+                    }
+                )
+            }
+        )
+        client2 = GeminiClient(level_changed, _genai_client=mock_genai)
+        r2 = client2.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            task_tag="correction",
+        )
+        self.assertEqual(r2.value, "a")
+        self.assertEqual(mock_genai.models.generate_content.call_count, 1)
+
+        # temperature_for DOES change the fingerprint on a 2.5 model -> cache miss.
+        temp_changed = base.model_copy(
+            update={
+                "gemini": base.gemini.model_copy(update={"temperature_for": {"correction": 0.4}})
+            }
+        )
+        client3 = GeminiClient(temp_changed, _genai_client=mock_genai)
+        r3 = client3.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            task_tag="correction",
+        )
+        self.assertEqual(r3.value, "b")
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+
+class F1PricingTests(unittest.TestCase):
+    def test_3x_pricing_rows_present(self) -> None:
+        from lemely.io.gemini import _DEFAULT_PRICING
+
+        self.assertIn("gemini-3.5-flash-lite", _DEFAULT_PRICING)
+        self.assertEqual(_DEFAULT_PRICING["gemini-3.5-flash-lite"], (0.000300, 0.002500))
+
+
+class US026PromoPricingBoundaryTests(unittest.TestCase):
+    """US-026: the 3.8/3.7/3.6-flash promotional rate ($0.75/$3.75 per 1M)
+    lapses to the real Google rate ($1.50/$7.50 per 1M) on
+    ``FLASH_3X_PROMO_END_DATE`` — pinned on BOTH sides of that boundary with an
+    injectable clock so the assertion cannot rot as the real calendar moves."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+
+    def test_promo_rate_applies_on_the_last_promotional_day(self) -> None:
+        from datetime import date
+
+        from lemely.io.gemini import FLASH_3X_PROMO_END_DATE, _resolve_pricing
+
+        settings = _make_settings(self.tmp)
+        for model in ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"):
+            with self.subTest(model=model):
+                price = _resolve_pricing(model, settings, today=lambda: FLASH_3X_PROMO_END_DATE)
+                self.assertEqual(price, (0.000750, 0.003750))
+        self.assertEqual(FLASH_3X_PROMO_END_DATE, date(2026, 12, 31))
+
+    def test_post_promo_rate_applies_the_day_after(self) -> None:
+        from datetime import date, timedelta
+
+        from lemely.io.gemini import FLASH_3X_PROMO_END_DATE, _resolve_pricing
+
+        settings = _make_settings(self.tmp)
+        day_after = FLASH_3X_PROMO_END_DATE + timedelta(days=1)
+        self.assertEqual(day_after, date(2027, 1, 1))
+        for model in ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"):
+            with self.subTest(model=model):
+                price = _resolve_pricing(model, settings, today=lambda: day_after)
+                self.assertEqual(price, (0.001500, 0.007500))
+
+    def test_default_clock_resolves_pricing_without_an_explicit_today(self) -> None:
+        """The `today` param is optional — the real ledger call site (`_call_once`)
+        never passes one, so the module clock must be used by default. Patches the
+        module clock `_today` (rather than passing `today=`) and pins the exact
+        resulting rate, so this is not the vacuous "either value is fine" check the
+        adversarial review flagged (US-026 review, NIT 4)."""
+        from datetime import date
+        from unittest.mock import patch
+
+        from lemely.io.gemini import FLASH_3X_PROMO_END_DATE, _resolve_pricing
+
+        settings = _make_settings(self.tmp)
+        post_promo_day = date(FLASH_3X_PROMO_END_DATE.year + 1, 6, 1)
+        with patch("lemely.io.gemini._today", return_value=post_promo_day):
+            price = _resolve_pricing("gemini-3.8-flash", settings)
+        self.assertEqual(price, (0.001500, 0.007500))
+
+    def test_module_clock_patch_reaches_resolve_pricing_default(self) -> None:
+        """Review finding 2: `_resolve_pricing`'s `today` default must resolve
+        `_today` BY NAME at call time, not capture the function object at def
+        time — otherwise `mock.patch("lemely.io.gemini._today", ...)` would
+        silently fail to reach it, and a test relying on that patch would pass
+        vacuously whenever the real calendar happened to agree anyway."""
+        from datetime import timedelta
+        from unittest.mock import patch
+
+        from lemely.io.gemini import FLASH_3X_PROMO_END_DATE, _resolve_pricing
+
+        settings = _make_settings(self.tmp)
+        promo_day = FLASH_3X_PROMO_END_DATE
+        post_promo_day = FLASH_3X_PROMO_END_DATE + timedelta(days=1)
+
+        with patch("lemely.io.gemini._today", return_value=promo_day):
+            self.assertEqual(_resolve_pricing("gemini-3.8-flash", settings), (0.000750, 0.003750))
+        with patch("lemely.io.gemini._today", return_value=post_promo_day):
+            self.assertEqual(_resolve_pricing("gemini-3.8-flash", settings), (0.001500, 0.007500))
+
+    def test_a_correctly_priced_lite_row_is_not_shadowed_by_the_promo_merge(self) -> None:
+        """Review finding 1: the promo rate must be merged into a COPY of
+        `_DEFAULT_PRICING` under the three exact promo-model keys, so the
+        existing length-descending substring match keeps governing lookup.
+        Before the fix, an unanchored `promo_model in model` check ran BEFORE
+        that sort and unconditionally won for any `gemini-3.8-flash*` string —
+        proven by injecting a correctly priced `-lite` row and observing it
+        was still shadowed by the (wrong) promo rate."""
+        from unittest.mock import patch
+
+        from lemely.io.gemini import _DEFAULT_PRICING, FLASH_3X_PROMO_END_DATE, _resolve_pricing
+
+        settings = _make_settings(self.tmp)
+        lite_price = (0.000100, 0.000400)
+        with (
+            patch.dict(_DEFAULT_PRICING, {"gemini-3.8-flash-lite": lite_price}),
+            patch("lemely.io.gemini._today", return_value=FLASH_3X_PROMO_END_DATE),
+        ):
+            lite_result = _resolve_pricing("gemini-3.8-flash-lite", settings)
+            flash_result = _resolve_pricing("gemini-3.8-flash", settings)
+        # The longer, more specific key wins for the -lite model...
+        self.assertEqual(lite_result, lite_price)
+        # ...while the bare flash model still gets the promo rate.
+        self.assertEqual(flash_result, (0.000750, 0.003750))
+
+
+class US026PromoPricingOverrideTests(unittest.TestCase):
+    """Review finding 3: a `settings.gemini.pricing` override on a promo model
+    bypasses `FLASH_3X_PROMO_END_DATE` entirely (pre-existing, intentional
+    override-wins precedence) — but `promo_pricing_status`'s advisory text
+    must not then claim a post-promo rate it never checked."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+
+    def test_override_bypasses_the_date_gate_regardless_of_today(self) -> None:
+        from datetime import date
+
+        from lemely.io.gemini import _resolve_pricing
+
+        settings = _make_settings(self.tmp, pricing={"gemini-3.8-flash": [0.000750, 0.003750]})
+        far_future = date(2030, 1, 1)
+        price = _resolve_pricing("gemini-3.8-flash", settings, today=lambda: far_future)
+        self.assertEqual(price, (0.000750, 0.003750))
+
+    def test_status_reports_the_override_instead_of_a_false_post_promo_claim(self) -> None:
+        from datetime import timedelta
+
+        from lemely.io.gemini import FLASH_3X_PROMO_END_DATE, promo_pricing_status
+
+        settings = _make_settings(self.tmp, pricing={"gemini-3.8-flash": [0.000750, 0.003750]})
+        far_future = FLASH_3X_PROMO_END_DATE + timedelta(days=365)
+        ok, detail = promo_pricing_status(settings, today=far_future)
+        self.assertFalse(ok)
+        self.assertIn("gemini-3.8-flash", detail)
+        self.assertIn("pins a fixed price", detail)
+        # Must NOT assert the post-promo rate is in effect — the override means
+        # it never checked.
+        self.assertNotIn("post-promo rate", detail)
+
+    def test_status_is_unaffected_when_no_promo_model_is_overridden(self) -> None:
+        from datetime import timedelta
+
+        from lemely.io.gemini import FLASH_3X_PROMO_END_DATE, promo_pricing_status
+
+        settings = _make_settings(self.tmp, pricing={"gemini-2.5-pro": [0.00125, 0.01]})
+        ok, detail = promo_pricing_status(
+            settings, today=FLASH_3X_PROMO_END_DATE - timedelta(days=90)
+        )
+        self.assertTrue(ok)
+        self.assertNotIn("pins a fixed price", detail)
+
+
+class F1LedgerCeilingDefaultTests(unittest.TestCase):
+    """F1 acceptance (6), the shipped-default path specifically.
+
+    The pre-existing ``ExternalServiceError``-path tests
+    (``test_default_client_enforces_the_file_ledger_ceiling``,
+    ``test_usd_ceiling_raises_from_persistent_ledger``) prove the *mechanism*
+    works, but both override ``total_usd_ceiling`` explicitly (0.0, and a
+    pre-loaded ledger against no override respectively) rather than exercising
+    the actual shipped $14 default end-to-end against a genuinely fresh ($0)
+    ledger. This closes that gap directly.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        _reset_process_counters()
+
+    def test_fresh_ledger_reads_zero_and_the_14_default_is_not_yet_tripped(self) -> None:
+        from lemely.io.cost_ledger import CostLedger
+
+        settings = _make_settings(self.tmp)  # no override: real 14.0 default
+        self.assertEqual(settings.gemini.total_usd_ceiling, 14.0)
+        ledger = CostLedger(settings.paths.output_dir / "gemini_spend.json")
+        self.assertEqual(ledger.total(), 0.0, "a freshly created ledger must read $0")
+
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "hi"}')
+        mock_genai.files.upload.return_value = MagicMock()
+        client = GeminiClient(settings, _genai_client=mock_genai)
+
+        # A normal call succeeds — the $14 default ceiling does not trip at $0.
+        client.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        self.assertEqual(mock_genai.models.generate_content.call_count, 1)
+
+    def test_14_default_ceiling_is_enforced_once_the_ledger_reaches_it(self) -> None:
+        from lemely.io.cost_ledger import CostLedger
+
+        settings = _make_settings(self.tmp)  # real 14.0 default, not overridden
+        ledger = CostLedger(settings.paths.output_dir / "gemini_spend.json")
+        ledger.add(14.0, thresholds=[])
+
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "hi"}')
+        mock_genai.files.upload.return_value = MagicMock()
+        client = GeminiClient(settings, _genai_client=mock_genai)
+
+        with self.assertRaisesRegex(ExternalServiceError, "USD ceiling"):
+            client.generate_structured(
+                system_prompt="s",
+                user_prompt="u",
+                response_schema=_SimpleSchema,
+                prompt_version="1",
+            )
+        self.assertEqual(mock_genai.models.generate_content.call_count, 0)
+
+
+class I1MediaResolutionTests(unittest.TestCase):
+    """I1 acceptance (5): the request recorder shows media_resolution set per
+    image part, and it is folded into the cache-key fingerprint so a
+    media_resolution call never collides with one that set none."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        _reset_process_counters()
+
+    def test_image_parts_carry_media_resolution_per_part(self) -> None:
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "hi"}')
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            image_parts=[b"page-0-bytes", b"page-1-bytes"],
+            media_resolution="medium",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            task_tag="extraction",
+        )
+
+        contents = mock_genai.models.generate_content.call_args.kwargs["contents"]
+        image_parts = [p for p in contents if getattr(p, "inline_data", None) is not None]
+        self.assertEqual(len(image_parts), 2)
+        for part in image_parts:
+            self.assertIsNotNone(part.media_resolution)
+            self.assertEqual(
+                str(part.media_resolution.level).upper().rsplit(".", 1)[-1],
+                "MEDIA_RESOLUTION_MEDIUM",
+            )
+        # No Files API upload call — image_parts take the inline-bytes path.
+        mock_genai.files.upload.assert_not_called()
+
+    def test_media_resolution_none_does_not_warn_and_uses_files_upload(self) -> None:
+        """The pre-I1 file_paths path is untouched: no media_resolution is
+        set (so no PartMediaResolutionLevel warning fires), and the Files
+        API upload path is used exactly as before."""
+        import warnings
+
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "hi"}')
+        mock_genai.files.upload.return_value = MagicMock()
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        scan = Path(self.tmp) / "scan.pdf"
+        scan.write_bytes(b"%PDF-1.4 fake")
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            client.generate_structured(
+                system_prompt="sys",
+                user_prompt="user",
+                file_paths=[scan],
+                response_schema=_SimpleSchema,
+                prompt_version="1",
+            )
+        mock_genai.files.upload.assert_called_once()
+
+    def test_media_resolution_changes_the_cache_key(self) -> None:
+        """Two calls identical except for media_resolution must NOT share a
+        cache entry — the exact collision I1's harness/GeminiClient
+        fingerprint fix exists to prevent."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "a"}'),
+            _mock_response('{"value": "b"}'),
+        ]
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        r1 = client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            image_parts=[b"same-bytes"],
+            media_resolution="medium",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        r2 = client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            image_parts=[b"same-bytes"],
+            media_resolution="high",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        self.assertEqual((r1.value, r2.value), ("a", "b"))
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+    def test_media_resolution_none_vs_set_also_changes_the_cache_key(self) -> None:
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "a"}'),
+            _mock_response('{"value": "b"}'),
+        ]
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        r1 = client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            image_parts=[b"same-bytes"],
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        r2 = client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            image_parts=[b"same-bytes"],
+            media_resolution="medium",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        self.assertEqual((r1.value, r2.value), ("a", "b"))
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+    def test_different_image_bytes_with_identical_prompt_issue_two_api_calls(self) -> None:
+        """I1 review MUST-FIX 4: making ``_cache_key`` ignore ``image_parts``
+        entirely broke zero of the 18 I1 tests -- with that branch gone,
+        every paper in a sweep (same system/user prompt) would share one
+        cache key and one paper's answers would be read back as every
+        paper's. Guard the mechanism directly: two otherwise-identical calls
+        whose page bytes differ must not share a cache entry."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "a"}'),
+            _mock_response('{"value": "b"}'),
+        ]
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        r1 = client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            image_parts=[b"page-bytes-one"],
+            media_resolution="medium",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        r2 = client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            image_parts=[b"page-bytes-two"],
+            media_resolution="medium",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        self.assertEqual((r1.value, r2.value), ("a", "b"))
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+    def test_reread_cache_key_never_collides_with_its_primary(self) -> None:
+        """I1 review MUST-FIX 4, part (ii): the same page bytes at the same
+        media_resolution, once shaped like a primary extraction call and
+        once shaped like the re-read call it triggers (differing only by
+        ``extra_cache_key``, exactly as ``Rereader.reread`` sets it), must
+        not collide."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "primary"}'),
+            _mock_response('{"value": "reread"}'),
+        ]
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        r1 = client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            image_parts=[b"same-bytes"],
+            media_resolution="high",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            extra_cache_key="manifestkey",
+        )
+        r2 = client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            image_parts=[b"same-bytes"],
+            media_resolution="high",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            extra_cache_key="manifestkey:reread:1:0:[1, 2, 3, 4]",
+        )
+        self.assertEqual((r1.value, r2.value), ("primary", "reread"))
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+
+class CodeExecutionTests(unittest.TestCase):
+    """N3 (US-012): `generate_with_code_execution` and its cache-key
+    separation from plain `generate_structured` calls
+    (docs/plans/ai-improvements-plan.md:615, "cache key includes tool
+    flag"). This is Gemini's own `code_execution` tool, not a locally-built
+    sandbox — every test here mocks the `google-genai` client, so none of
+    it spends real API budget."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        _reset_process_counters()
+
+    def test_returns_the_code_execution_result_output(self) -> None:
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_code_execution_response("42")
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        result = client.generate_with_code_execution(prompt="compute 6*7", prompt_version="1")
+
+        self.assertEqual(result, "42")
+
+    def test_no_code_execution_result_part_raises_parse_error(self) -> None:
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = (
+            _mock_response_without_code_execution_result()
+        )
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        with self.assertRaises(ParseError):
+            client.generate_with_code_execution(prompt="compute 6*7", prompt_version="1")
+
+    def test_repeated_call_hits_its_own_cache(self) -> None:
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_code_execution_response("42")
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        r1 = client.generate_with_code_execution(prompt="compute 6*7", prompt_version="1")
+        r2 = client.generate_with_code_execution(prompt="compute 6*7", prompt_version="1")
+
+        self.assertEqual((r1, r2), ("42", "42"))
+        self.assertEqual(mock_genai.models.generate_content.call_count, 1)
+
+    def test_params_fingerprint_tool_flag_changes_the_fingerprint(self) -> None:
+        """The load-bearing pin: `tool` alone, with everything else held
+        fixed (including `response_schema=None`, which a real code-execution
+        call always has), must change `_params_fingerprint`'s output — this
+        is the exact mechanism `_cache_key` relies on to keep a
+        code-execution call out of a plain call's cache entry."""
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=MagicMock())
+
+        fp_plain = client._params_fingerprint("gemini-2.5-flash", "question_validity", None)
+        fp_tool = client._params_fingerprint(
+            "gemini-2.5-flash", "question_validity", None, tool="code_execution"
+        )
+
+        self.assertNotEqual(fp_plain, fp_tool)
+
+    def test_plain_call_fingerprint_unaffected_by_tool_param_existence(self) -> None:
+        """The companion pin: a `tool=None` call (every plain
+        `generate_structured` call has one) must produce the exact
+        fingerprint the pre-N3 format did — the `|tool` segment must be
+        entirely absent when tool is None, not present as `|none`.
+        Appending it unconditionally moves EVERY plain call's fingerprint
+        (measured against the parent module: a correction+schema call's
+        fingerprint moved from `c484bb603401` to `b7cbee1f90ef`), which
+        orphans the entire on-disk cache the moment this runs against a
+        populated one."""
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=MagicMock())
+        model = "gemini-2.5-flash"
+        params = client._resolved_gen_params("question_validity", model)
+        api_line = "3x" if _is_3x(model) else "2x"
+        expected_raw = (
+            f"{model}|{api_line}|{params['temperature']}|{params['top_p']}"
+            f"|{params['seed']}|{params['thinking_budget']}|{params['thinking_level']}"
+            f"|{_MAX_OUTPUT_TOKENS}||none"
+        )
+        expected = hashlib.sha256(expected_raw.encode()).hexdigest()[:12]
+
+        actual = client._params_fingerprint(model, "question_validity", None)
+
+        self.assertEqual(actual, expected)
+
+    def test_code_execution_call_does_not_hit_a_plain_calls_cache_entry(self) -> None:
+        """The observable-behaviour version of the pin above: a plain
+        `generate_structured` call and a `generate_with_code_execution`
+        call built from the SAME text (so their `prompt_hash` component is
+        identical — `system_prompt=""` + `user_prompt=X` on one side,
+        `prompt=X` + `""` on the other) must still issue two separate API
+        calls, never a cache hit across them. If this ever collapsed to one
+        API call, a verification that never ran would be silently satisfied
+        by a cached plain reply — the failure mode the plan's cache-key
+        note exists to prevent."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "plain"}'),
+            _mock_code_execution_response("42"),
+        ]
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        plain = client.generate_structured(
+            system_prompt="",
+            user_prompt="same prompt text",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        code_exec = client.generate_with_code_execution(
+            prompt="same prompt text", prompt_version="1"
+        )
+
+        self.assertEqual(plain.value, "plain")
+        self.assertEqual(code_exec, "42")
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+    def test_cache_mode_bypass_never_reads_or_writes(self) -> None:
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_code_execution_response("1"),
+            _mock_code_execution_response("2"),
+        ]
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        r1 = client.generate_with_code_execution(
+            prompt="p", prompt_version="1", cache_mode="bypass"
+        )
+        r2 = client.generate_with_code_execution(
+            prompt="p", prompt_version="1", cache_mode="bypass"
+        )
+
+        self.assertEqual((r1, r2), ("1", "2"))
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+
+class US034MissingFlashRowTests(unittest.TestCase):
+    """US-034: `gemini-3.5-flash` had no row in `_DEFAULT_PRICING`, so it fell
+    through the length-descending substring match to the unrecognised-model
+    fallback and was silently billed at the `gemini-2.5-flash` rate
+    ($0.30/$2.50 per 1M) instead of its real rate ($1.50/$9.00 per 1M,
+    ai.google.dev/gemini-api/docs/pricing, retrieved 2026-09-21) — understating
+    the $14 total_usd_ceiling's ledger for any run configured to use it."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+
+    def test_default_pricing_has_gemini_3_5_flash_row(self) -> None:
+        from lemely.io.gemini import _DEFAULT_PRICING
+
+        self.assertEqual(_DEFAULT_PRICING["gemini-3.5-flash"], (0.001500, 0.009000))
+
+    def test_gemini_3_5_flash_resolves_to_its_own_row_not_the_2_5_flash_fallback(self) -> None:
+        """The regression that matters: the length-descending substring match
+        must resolve `gemini-3.5-flash` to its own row, not let
+        `gemini-2.5-flash` (or any other key) shadow it via the fallback."""
+        from lemely.io.gemini import _resolve_pricing
+
+        settings = _make_settings(self.tmp)
+        price = _resolve_pricing("gemini-3.5-flash", settings)
+        self.assertEqual(price, (0.001500, 0.009000))
+        self.assertNotEqual(price, (0.000300, 0.002500))
+
+
+class US034FallbackVisibilityTests(unittest.TestCase):
+    """US-034: `lemely doctor` must name any configured model resolving
+    through `_resolve_pricing`'s unrecognised-model fallback rather than an
+    exact or promo-dated row, so a future misconfiguration is visible instead
+    of silently under-billing the $14 ceiling."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+
+    def test_an_unrecognised_model_is_reported_as_resolving_via_fallback(self) -> None:
+        from lemely.io.gemini import fallback_pricing_status
+
+        settings = _make_settings(self.tmp)
+        ok, detail = fallback_pricing_status(settings, {"extraction": "totally-fake-model-xyz"})
+        self.assertFalse(ok)
+        self.assertIn("totally-fake-model-xyz", detail)
+        self.assertIn("extraction", detail)
+
+    def test_the_three_really_configured_models_do_not_hit_the_fallback(self) -> None:
+        """No currently configured model hits the fallback today (US-034) —
+        this is a no-op guard until someone configures a model this table
+        does not recognise."""
+        from lemely.io.gemini import fallback_pricing_status
+
+        settings = _make_settings(self.tmp)
+        configured = {
+            "extraction": settings.gemini.extraction_model,
+            "correction": settings.gemini.correction_model,
+            "mark_scheme": settings.gemini.mark_scheme_model,
+        }
+        ok, detail = fallback_pricing_status(settings, configured)
+        self.assertTrue(ok, msg=detail)
+
+    def test_a_pricing_override_is_not_reported_as_a_fallback_hit(self) -> None:
+        from lemely.io.gemini import fallback_pricing_status
+
+        settings = _make_settings(self.tmp, pricing={"totally-custom-model": [0.001, 0.002]})
+        ok, detail = fallback_pricing_status(settings, {"extraction": "totally-custom-model"})
+        self.assertTrue(ok, msg=detail)

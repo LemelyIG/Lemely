@@ -91,6 +91,14 @@ class PrinciplesAreThreadedFromTheMarkSchemeTests(unittest.TestCase):
         client._settings.gemini.escalation_confidence_threshold = 0.0
         client._settings.gemini.escalation_model = None
         client._settings.gemini.model_for.return_value = "m"
+        # F1 review MUST-FIX 2: the escalation gates now call
+        # GeminiClient.resolved_thinking() directly instead of re-deriving
+        # the level/budget from `_settings.gemini` themselves, so a fully
+        # mocked client needs this stubbed too — otherwise the (precomputed,
+        # unconditional) gate comparison compares two MagicMocks. Both calls
+        # return the same value so `thinking_rank(a) > thinking_rank(b)` is
+        # False either way; this test only cares about principle threading.
+        client.resolved_thinking.return_value = 0
 
         def _capture(**kwargs: object) -> AIMarkResponse:
             captured["user_prompt"] = str(kwargs["user_prompt"])

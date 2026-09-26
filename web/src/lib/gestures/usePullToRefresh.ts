@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react"
-import { pullStartAllowed, pullState, usesOwnScrollTop } from "./pullMath"
+import { pullStartDecision, pullState, usesOwnScrollTop } from "./pullMath"
 import { useDragGesture } from "./useDragGesture"
+import { GESTURE_INTERACTIVE_SELECTOR } from "./interactiveSelector"
 import { EDGE_ZONE_PX } from "@/lib/nav/edgeSwipeBack"
 
 /*
@@ -102,15 +103,71 @@ export function usePullToRefresh(
     // to do nothing — and no `touchAction` here on purpose: this surface must
     // keep panning vertically or the page stops scrolling through it.
     transformClamp: "positive",
+    // Issue #246/#247: a plain tap on a button or `<Link>` at the scroll top
+    // used to arm this gesture exactly like a real drag would —
+    // `useDragGesture`'s `onPointerDown` calls `setPointerCapture`
+    // regardless of whether the pointer ever moves, and a captured pointer
+    // retargets the tap's `click` away from whatever was under it. That
+    // silently killed "Mark as read"/"Show more" on Announcements, "Mark as
+    // read"/"Open"/"Mark all as read" on Notifications, and `<Link>`
+    // navigation on Overview's subject rows — confirmed broken on all three
+    // screens, not assumed from matching structure.
+    //
+    // A tap on an interactive control is now refused outright
+    // (`pullStartDecision`'s `interactive` check, `pullMath.ts`), and that
+    // is correct on its own terms, not a limitation accepted to route
+    // around a cost. `startFilter`'s own doc comment already enumerates
+    // this exact case among what should fall through rather than start a
+    // drag: "scroll, native selection, a nested interactive control". A
+    // control owns its own press; this fix makes the gesture honour a
+    // contract it already claimed, not a new restriction on it.
+    //
+    // Promoting a press-then-drag on a control into a pull — considered, and
+    // would not even work reliably: `shouldCommitDrag` (`dragMath.ts`) also
+    // requires the dominant axis to outrun the other by more than 2x, so a
+    // hesitant pull that wanders sideways as it goes down would not commit
+    // even if capture were deferred to allow it. A fix that works
+    // *sometimes* is indistinguishable from broken, which is what #246 was.
+    //
+    // There is no user need traded away here to note as a cost: all three
+    // screens this reaches (Announcements, Notifications, Overview) render a
+    // heading above the content a student would tap, a pull from there still
+    // refreshes normally, and pulling by
+    // pressing directly on a button was never how anyone reaches for this
+    // gesture.
+    //
+    // Kept as a secondary note so a future pass does not re-propose
+    // deferring capture as a *correctness* improvement: it would not be
+    // one. Capture at `pointerdown` is what guarantees `pointerup`/
+    // `pointercancel` ever reach the surface, wherever the pointer travels.
+    // Deferred, those listeners only fire while the pointer is still inside
+    // the surface's own subtree — `pointercancel` included, since the
+    // browser dispatches it to whatever is currently under the pointer, not
+    // to whoever asked for it. A release outside that subtree before
+    // capture ever happens means `endDrag` never runs: `stateRef.current`
+    // stays non-null, and `onPointerDown`'s own guard
+    // (`if (stateRef.current !== null) return`) then ignores every later
+    // press on that surface, permanently. `useDragGesture.ts`'s own `H5`
+    // fix already documents this exact class of bug happening once, for a
+    // different trigger (a stale `enabled` toggle mid-drag left a card
+    // "permanently offset ... still holding pointer capture and swallowing
+    // every tap that landed on it").
     startFilter: (event) => {
+      const target = event.target
+      const interactive = target instanceof Element && target.closest(GESTURE_INTERACTIVE_SELECTOR) !== null
       const el = ref.current
       if (el === null) return false
       scrollSourceRef.current = scrollSourceOf(el)
-      if (!isAtScrollTop(scrollSourceRef.current)) return false
       // `EdgeSwipeBack` listens on `document`, so this pointerdown reaches it
       // too. Ceding the two edge strips keeps the zones disjoint instead of
       // letting both gestures capture the same pointer (C3).
-      return pullStartAllowed(event.clientX, window.innerWidth, EDGE_ZONE_PX)
+      return pullStartDecision({
+        interactive,
+        atTop: isAtScrollTop(scrollSourceRef.current),
+        clientX: event.clientX,
+        viewportWidth: window.innerWidth,
+        edgeZonePx: EDGE_ZONE_PX,
+      })
     },
     onProgress: (_dx, dy) => {
       const el = ref.current

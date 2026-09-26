@@ -45,6 +45,30 @@ class ExternalServiceError(LemelyError):
     exit_code = 7
 
 
+class CostCeilingError(ExternalServiceError):
+    """A per-run token or USD spend ceiling was exceeded.
+
+    Distinct from a plain :class:`ExternalServiceError` (I1 review round 2,
+    MUST-FIX 1) so a caller that legitimately absorbs a transient per-call
+    transport failure (e.g. the crop-and-re-read step degrading to the
+    primary answer on a 503) does not also absorb a budget-ceiling breach,
+    which is a stop signal for the whole run, not a per-call failure. Stays
+    a subclass of ``ExternalServiceError`` so existing ``except
+    ExternalServiceError`` call sites and ``assertRaisesRegex(
+    ExternalServiceError, ...)`` tests keep working; a caller that must tell
+    the two apart catches ``CostCeilingError`` first and re-raises it.
+
+    Its own ``exit_code`` (I1 review round 4, SHOULD-FIX D): inheriting
+    ``ExternalServiceError``'s 7 made a budget-ceiling breach and a
+    transient, genuinely-retryable 503 indistinguishable to a process-level
+    caller (a CI job or retry wrapper keyed on "exit 7 -> retry"), which is
+    exactly the distinction this class exists to make -- a ceiling breach is
+    a stop signal, retrying into it is never correct.
+    """
+
+    exit_code = 10
+
+
 class PartialFailureError(LemelyError):
     """Batch completed with one or more per-item errors. exit_code stays 1."""
 

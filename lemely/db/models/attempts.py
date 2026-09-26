@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -21,6 +22,13 @@ from lemely.db.models.enums import (
     TimestampMixin,
     UploadStatus,
 )
+
+if TYPE_CHECKING:
+    # Type-check only: `ops` maps `ReviewQueueItem.question_result` back onto
+    # this module's `QuestionResult`, so a runtime import here would be a cycle.
+    # SQLAlchemy resolves the relationship from its own class registry (the
+    # `"ReviewQueueItem"` string below), not from this name.
+    from lemely.db.models.ops import ReviewQueueItem
 
 
 class Upload(TimestampMixin, Base):
@@ -165,7 +173,44 @@ class QuestionResult(TimestampMixin, Base):
     """
 
     __tablename__ = "question_results"
-    __table_args__ = (sa.Index("ix_question_results_attempt_id", "attempt_id"),)
+    __table_args__ = (
+        sa.Index("ix_question_results_attempt_id", "attempt_id"),
+        # Mirrors migration `0042_question_result_source_box`'s four CHECK
+        # constraints. Names are UNPREFIXED for the same reason as there:
+        # `Base.metadata`'s naming convention (`ck_%(table_name)s_%(constraint_name)s`)
+        # treats a `name=` you pass as the `constraint_name` token, so a name that
+        # already starts with `ck_question_results_` comes out doubled. Passing
+        # the bare suffix here lets the convention apply once, producing the
+        # same names `0042` creates -- so a `create_all()` schema (tests only;
+        # production always runs `alembic upgrade head`) carries the identical
+        # constraints instead of silently omitting them.
+        sa.CheckConstraint(
+            "source_box_page IS NULL OR source_box_page >= 0",
+            name="source_box_page_non_negative",
+        ),
+        sa.CheckConstraint(
+            "(source_box_ymin IS NULL OR (source_box_ymin >= 0 AND source_box_ymin <= 1000)) "
+            "AND (source_box_xmin IS NULL OR (source_box_xmin >= 0 AND source_box_xmin <= 1000)) "
+            "AND (source_box_ymax IS NULL OR (source_box_ymax >= 0 AND source_box_ymax <= 1000)) "
+            "AND (source_box_xmax IS NULL OR (source_box_xmax >= 0 AND source_box_xmax <= 1000))",
+            name="source_box_range",
+        ),
+        # The leading `IS NULL` guards must stand alone: this constraint may
+        # not assume `source_box_all_or_none` holds, and vice versa.
+        sa.CheckConstraint(
+            "source_box_ymax IS NULL OR source_box_xmax IS NULL "
+            "OR (source_box_ymax > source_box_ymin AND source_box_xmax > source_box_xmin)",
+            name="source_box_positive_area",
+        ),
+        sa.CheckConstraint(
+            "(source_box_page IS NULL AND source_box_ymin IS NULL AND source_box_xmin IS NULL "
+            "AND source_box_ymax IS NULL AND source_box_xmax IS NULL) "
+            "OR (source_box_page IS NOT NULL AND source_box_ymin IS NOT NULL "
+            "AND source_box_xmin IS NOT NULL AND source_box_ymax IS NOT NULL "
+            "AND source_box_xmax IS NOT NULL)",
+            name="source_box_all_or_none",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -230,21 +275,19 @@ class QuestionResult(TimestampMixin, Base):
     Computed by the pipeline (``CorrectedQuestion.extraction_confidence``) and,
     before spec 2026-09-17, discarded at persist time.
     """
-    plagiarism_flagged: Mapped[bool] = mapped_column(
-        sa.Boolean, nullable=False, server_default=sa.text("false")
-    )
-    ai_detection_flagged: Mapped[bool] = mapped_column(
-        sa.Boolean, nullable=False, server_default=sa.text("false")
-    )
-    """Integrity flags, persisted rather than only fanned out to the review queue.
-
-    Teacher-only on every surface (QUALITY-BAR.md): these must never be
-    rendered on a student-facing screen, where they would read as an
-    accusation. They are, however, present in the ``/api/student/correct``
-    complete frame (``lemely/web/schemas.py``) and typed on the frontend
-    (``web/src/lib/studentTypes.ts``) — the UI simply does not render them.
-    """
     rationale: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    source_box_page: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    """0-based rasterised-page index for `source_box_*` (migration `0042`).
+
+    Question-level, not per mark point: marking is text-only, so the marker
+    never sees the page. See `CorrectedQuestion.source_box`. All five
+    `source_box_*` columns are all-or-nothing, enforced by
+    `ck_question_results_source_box_all_or_none`.
+    """
+    source_box_ymin: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    source_box_xmin: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    source_box_ymax: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    source_box_xmax: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     student_selfmark_marks: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     student_selfmarked_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
@@ -252,9 +295,31 @@ class QuestionResult(TimestampMixin, Base):
     """Written by the student self-review spec. Created here per its D5."""
 
     attempt: Mapped[Attempt] = relationship("Attempt", back_populates="question_results")
-    review_queue_items: Mapped[list] = relationship(  # type: ignore[type-arg]
+    review_queue_items: Mapped[list[ReviewQueueItem]] = relationship(
         "ReviewQueueItem", back_populates="question_result"
     )
+    """The queue rows this question earned, and the ONLY persisted record of its
+    integrity findings.
+
+    The annotation was a bare ``Mapped[list]`` until task #36 made this the
+    first reader. SQLAlchemy cannot see a collection in ``list`` with no
+    element type, so it configured the relationship ``uselist=False`` — a
+    ONETOMANY mapped as a scalar, returning ``None`` on a transient instance
+    and a single row on a loaded one. Nothing read it, so nothing failed; the
+    element type makes it the collection it was always declared to be.
+
+    There is deliberately no ``plagiarism_flagged`` column (nor its
+    ``ai_detection_flagged`` twin). ``0037_question_result_pts`` — develop's
+    revision, written before F4 deleted the detector — added both;
+    ``0039_merge_heads`` dropped the detector's and
+    ``0040_marker_source_blank`` dropped this one, per the task #36 ruling: the
+    plagiarism signal is dead end to end and a new persisted column on a signal
+    nothing produces is the wrong direction. ``review_reasons_for`` opens a
+    ``ReviewReason.plagiarism_flag`` row here from
+    ``CorrectedQuestion.plagiarism_flagged`` (which still exists, in memory, in
+    core), so the row IS the flag —
+    ``attempt_repo._integrity_flagged`` is the one reader.
+    """
     points: Mapped[list[QuestionResultPoint]] = relationship(
         "QuestionResultPoint",
         back_populates="question_result",
@@ -396,6 +461,73 @@ class QuestionResultPoint(TimestampMixin, Base):
     ``0038_point_group_key`` keep ``NULL`` (no backfill, spec 1 D7).
     """
     rationale: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    """The marker's own reasoning for this point, from whichever path scored
+
+    it. Deliberately ONE column for two producers rather than a second
+    ``note`` column beside it: I6's verdict path (``PointVerdict.note``) and
+    the legacy path (``CorrectedQuestion.point_notes``) both describe "did a
+    marker score this and why", and a second formulation would be the ninth
+    version of that idea -- the exact defect ``0040_marker_source_blank``'s
+    docstring describes curing for ``marker_source``, where eight
+    formulations cost nine hand-found consumers. See
+    :func:`lemely.db.question_points.derive_point_rows` for which producer
+    wins when both are present.
+    """
+    verdict: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    """I6 (US-013): the marker's own judgement on this point --
+
+    ``"awarded"``, ``"withheld"`` or ``"unverifiable"`` (``PointVerdict``'s
+    ``Literal``, stored loosely since this table predates a native enum for
+    it and a fourth verdict must not require a migration). ``NULL`` when this
+    point was scored by the legacy (non-verdict) path, which has no such
+    distinction to record.
+
+    ``awarded`` (above) is NOT re-derived from this column and keeps its own
+    live consumers (``SelfReviewPoints``, ``points_are_settleable``,
+    ``_settle_groups``); ``verdict`` is strictly richer beside it. A
+    repeated ``point_id`` in the marker's own ``point_verdicts`` output used
+    to make ``awarded`` and ``verdict`` disagree for that point --
+    ``lemely.io.correction_ai._awarded_from_verdicts`` summed every awarded
+    entry (inflating marks) while ``lemely.db.question_points.derive_point_rows``
+    kept the LAST entry, so an awarded-then-withheld pair could persist
+    ``awarded=True`` beside ``verdict="withheld"``. That specific
+    disagreement is now closed structurally: both consumers dedupe the same
+    list via the one shared ``lemely.core.schemas.dedupe_point_verdicts``
+    helper (deterministic first-occurrence-wins), so they can no longer
+    resolve a repeat differently -- see ``tests/test_question_points.py``.
+    A repeat is also, in its own right, a structural inconsistency in the
+    marker's raw output: on the verdict path,
+    ``lemely.io.correction_ai._check_coherence`` flags it as a coherence
+    violation, which routes the question to teacher review rather than
+    reconciling it silently -- see ``tests/test_correction_ai.py``. This
+    closes only the duplicate-``point_id`` case: ``awarded`` can still
+    diverge from ``verdict`` when ``_verify_calculated_answers`` rejects a
+    point's mark after its verdict was formed (the point's raw ``"awarded"``
+    verdict is not revised), a separate gap this fix does not touch.
+    ``verdict`` is what tells a teacher, that could not tell from
+    ``awarded`` alone, that the marker judged the point absent
+    (``withheld``) rather than unable to verify it (``unverifiable``) --
+    both of which collapse to ``awarded=False``.
+    """
+    evidence_span: Mapped[str] = mapped_column(
+        sa.Text, nullable=False, server_default=sa.text("''")
+    )
+    """The verbatim substring of the student's answer/working the marker
+
+    quoted as evidence for this point's verdict (``PointVerdict.evidence_span``).
+    ``''`` (not ``NULL``) when this point carries no verdict, matching
+    ``PointVerdict``'s own default so an absent verdict and an empty quote are
+    not distinguished at this column either.
+    """
+    ecf_applied: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    """I7 (US-013): True when this point's verdict was reached only after
+
+    re-marking with a substituted prior value (error carried forward) --
+    mirrors ``PointVerdict.ecf_applied``. ``False`` for a legacy-path point,
+    which never re-marks against a substituted prior.
+    """
     student_selfmark: Mapped[bool | None] = mapped_column(sa.Boolean, nullable=True)
     student_selfmark_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True

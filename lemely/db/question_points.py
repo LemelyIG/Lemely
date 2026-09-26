@@ -30,6 +30,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from lemely.core.schemas import dedupe_point_verdicts
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -52,9 +54,10 @@ def derive_point_rows(
     Returns:
         A list of dicts carrying ``mark_point_id``, ``ordinal``, ``mark_type``,
         ``tariff``, ``tariff_defaulted``, ``point_text``, ``awarded``,
-        ``is_alternative``, ``is_optional``, ``rationale``, ``group_key`` and
-        ``group_max_marks``. Empty when there is no scheme, no matching
-        question, or the question has no answer points.
+        ``is_alternative``, ``is_optional``, ``rationale``, ``group_key``,
+        ``group_max_marks``, ``verdict``, ``evidence_span`` and
+        ``ecf_applied``. Empty when there is no scheme, no matching question,
+        or the question has no answer points.
     """
     if mark_scheme is None:
         return []
@@ -65,6 +68,17 @@ def derive_point_rows(
 
     matched = set(cq.matched_point_ids)
     notes = cq.point_notes or {}
+    # First occurrence of a repeated point_id wins -- the SAME rule
+    # ``lemely.io.correction_ai._awarded_from_verdicts`` applies to the same
+    # list, via the one shared helper, so the two can no longer disagree
+    # about a repeat (they used to: that function kept every awarded entry,
+    # this dict comprehension kept the LAST one, so an awarded-then-withheld
+    # pair for one id used to award marks for a point this function then
+    # persisted as ``verdict='withheld'``). Dropped duplicates are not logged
+    # here -- this module stays pure, no session, no I/O (module docstring)
+    # -- ``lemely.db.attempt_repo`` logs on this function's behalf.
+    kept_verdicts, _dropped_verdicts = dedupe_point_verdicts(cq.point_verdicts)
+    verdicts = {pv.point_id: pv for pv in kept_verdicts}
 
     kept: list[AnswerPoint] = []
     seen_ids: set[str] = set()
@@ -93,25 +107,40 @@ def derive_point_rows(
         total=question.marks or cq.maximum_marks,
         select_count=question.select_count,
     )
-    return [
-        {
-            "mark_point_id": point.id,
-            "ordinal": ordinal,
-            "mark_type": point.math_mark_type.value if point.math_mark_type else None,
-            "tariff": point.marks,
-            "tariff_defaulted": point.marks_defaulted,
-            "point_text": point.point,
-            "awarded": point.id in matched,
-            "is_alternative": point.is_alternative,
-            "is_optional": point.is_optional,
-            "rationale": notes.get(point.id),
-            "group_key": group_key,
-            "group_max_marks": group_max_marks,
-        }
-        for ordinal, (point, (group_key, group_max_marks)) in enumerate(
-            zip(kept, groups, strict=True)
+    rows: list[dict[str, object]] = []
+    for ordinal, (point, (group_key, group_max_marks)) in enumerate(zip(kept, groups, strict=True)):
+        # US-045: when I6's verdict path scored this point, its `PointVerdict`
+        # is the richer, code-computed record — `verdict` distinguishes
+        # `withheld` from `unverifiable` where `awarded` alone collapses both
+        # to False, and its `note` wins over `point_notes[point.id]` even when
+        # empty, rather than falling back to it (PLAN-point-verdicts.md,
+        # US-045 precedence rule). A point with no verdict entry (the legacy
+        # path, or a verdict-path question this point simply wasn't scored
+        # under) has no such record: `verdict` stays `None`, `evidence_span`/
+        # `ecf_applied` stay at their column defaults, and `rationale` falls
+        # back to `point_notes`.
+        pv = verdicts.get(point.id)
+        rationale = pv.note or None if pv is not None else notes.get(point.id)
+        rows.append(
+            {
+                "mark_point_id": point.id,
+                "ordinal": ordinal,
+                "mark_type": point.math_mark_type.value if point.math_mark_type else None,
+                "tariff": point.marks,
+                "tariff_defaulted": point.marks_defaulted,
+                "point_text": point.point,
+                "awarded": point.id in matched,
+                "is_alternative": point.is_alternative,
+                "is_optional": point.is_optional,
+                "rationale": rationale,
+                "group_key": group_key,
+                "group_max_marks": group_max_marks,
+                "verdict": pv.verdict if pv is not None else None,
+                "evidence_span": pv.evidence_span if pv is not None else "",
+                "ecf_applied": pv.ecf_applied if pv is not None else False,
+            }
         )
-    ]
+    return rows
 
 
 def _group_points(
