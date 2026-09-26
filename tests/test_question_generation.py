@@ -289,6 +289,36 @@ class TestVerifyQuestionSympyGate:
         assert result.rejection_reason is None
         client.generate_with_code_execution.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("solution_expr", "answer"),
+        [
+            ("22/7", "3.14"),
+            ("9.81*2", "19.6"),
+            ("100/3", "33.3"),
+            ("sqrt(2)", "1.41"),
+            ("2*pi", "6.28"),
+            ("0.5*3*4**2", "24 J"),
+        ],
+    )
+    def test_rounded_or_unit_bearing_stated_answers_verify_at_gate_sig_figs(
+        self, solution_expr: str, answer: str
+    ) -> None:
+        """Spec 2026-09-26 §10 (#5): a stated answer rounded to 3 s.f., an
+        exact symbolic solution against a decimal, and a unit-bearing
+        answer all verify at the SymPy step with no paid sandbox call."""
+        question = _generated_question(
+            "Speed",
+            question_type=QuestionType.CALCULATION,
+            solution_expr=solution_expr,
+            answer=answer,
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by == "sympy", result.rejection_reason
+        client.generate_with_code_execution.assert_not_called()
+
 
 class TestVerifyQuestionSandboxGate:
     def test_nonparseable_expression_routes_to_code_execution(self) -> None:
@@ -334,6 +364,17 @@ class TestVerifyQuestionSandboxGate:
         client = MagicMock()
         client.generate_structured.return_value = _validity_response()
         client.generate_with_code_execution.return_value = "12"
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by == "sandbox"
+
+    def test_sandbox_result_rounded_differently_still_verifies(self) -> None:
+        question = _generated_question(
+            "Circuits", question_type=QuestionType.CALCULATION, solution_expr="N/A", answer="19.6"
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        client.generate_with_code_execution.return_value = "19.62"
         result = verify_question(client, question, subject_code="0625")
 
         assert result.verified_by == "sandbox"

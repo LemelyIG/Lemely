@@ -46,11 +46,13 @@ supports.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import structlog
+import sympy
 
-from lemely.core.equivalence import VerdictKind, equivalent, parse_expr_safe
+from lemely.core.equivalence import Verdict, VerdictKind, equivalent, parse_expr_safe
 from lemely.core.generation import (
     SOLVABLE_QUESTION_TYPES,
     GeneratedQuestion,
@@ -75,6 +77,48 @@ if TYPE_CHECKING:
 #: dropped from the quiz once this is exhausted (see
 #: lemely.io.question_generation.QuestionGenerator).
 MAX_GENERATION_ATTEMPTS = 3
+
+#: Spec 2026-09-26 §10 (#5). The IGCSE/A-level convention: a calculated
+#: answer is stated to 3 significant figures. This is a GENERATION-GATE
+#: policy -- the generator's own stated answer is compared against its own
+#: exact solution -- not a marking tolerance; the marking path keeps
+#: deriving its tolerance from the scheme (`lemely.core.equivalence`).
+GATE_SIG_FIGS = 3
+
+#: A stated answer of the shape ``<number> <unit>`` ("24 J", "19.6 m/s").
+#: The exponent is consumed by the value group first, so "2e3" is a number
+#: and "2 eV" is a value with a unit.
+_TRAILING_UNIT_RE = re.compile(
+    r"^\s*(?P<value>[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)"
+    r"\s*(?P<unit>[A-Za-zµΩ°%][A-Za-z0-9µΩ°%/^*·.\-\s]*)$"
+)
+
+
+def _strip_trailing_unit(stated: str) -> str:
+    """``"24 J"`` -> ``"24"``; anything that is not ``<number> <unit>`` is returned as is."""
+    match = _TRAILING_UNIT_RE.match(stated)
+    return match.group("value") if match else stated
+
+
+def _compare_stated(exact: str, stated: str) -> Verdict:
+    """Compare a stated answer against an exact one at :data:`GATE_SIG_FIGS`.
+
+    When ``exact`` parses to a constant (no free symbols) it is evaluated
+    numerically first -- ``sympy.N`` -- because a constant symbolic
+    difference such as ``sqrt(2) - 1.41`` gets no tolerance window from
+    :func:`lemely.core.equivalence.equivalent` (its window applies per term
+    key, and ``sqrt(2)`` and ``1.41`` are different keys); and one trailing
+    unit is stripped from ``stated``, because a unit parses as a symbol
+    (``24 J`` -> ``24*J``) that the unitless exact side can never equal. An
+    unparseable ``exact`` takes the ordinary path, with the tolerance added.
+    """
+    exact_expr = parse_expr_safe(exact)
+    if exact_expr is None:
+        return equivalent(exact, stated, sig_figs=GATE_SIG_FIGS)
+    if not exact_expr.free_symbols:
+        exact_expr = sympy.N(exact_expr)
+        stated = _strip_trailing_unit(stated)
+    return equivalent(exact_expr, stated, sig_figs=GATE_SIG_FIGS)
 
 
 def check_validity(
@@ -213,7 +257,7 @@ def verify_question(
 
     verdict = None
     if question.solution_expr and question.answer:
-        verdict = equivalent(question.solution_expr, question.answer)
+        verdict = _compare_stated(question.solution_expr, question.answer)
         if verdict.kind is VerdictKind.EQUAL_PROVEN:
             return question.model_copy(update={"verified_by": "sympy", "rejection_reason": None})
         if verdict.kind is VerdictKind.NOT_EQUAL:
@@ -249,7 +293,7 @@ def verify_question(
             attempt=attempt,
         )
 
-    sandbox_verdict = equivalent(sandbox_answer, question.answer)
+    sandbox_verdict = _compare_stated(sandbox_answer, question.answer)
     if sandbox_verdict.kind is VerdictKind.EQUAL_PROVEN:
         return question.model_copy(update={"verified_by": "sandbox", "rejection_reason": None})
 
