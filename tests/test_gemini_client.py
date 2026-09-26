@@ -1769,34 +1769,37 @@ class ImageUploadsTests(unittest.TestCase):
         self.assertEqual(sorted(f.name for f in files), [f"files/fake-{i}" for i in (1, 2, 3, 4)])
 
     def test_uploads_never_exceed_the_configured_concurrency(self) -> None:
-        """Fix round 1: `concurrency=2` over 6 pages must never let a third
-        upload run at once. A `Barrier(3)` that only 2 threads can ever
-        reach times out (proving the cap held); a counter proves the cap
-        was actually exercised (reached 2, not silently serialised to 1)."""
+        """Fix round 3, Minor 3: replaces round 1's `Barrier(3, timeout=0.3)`
+        -- whose PASS depended on nobody reaching a third slot inside a
+        0.3s wall-clock window, flaky on a loaded runner -- with a
+        deterministic proof. A `Barrier(2)` rendezvous only returns once a
+        SECOND thread reaches it too, so it proves "at least 2 concurrent"
+        without any timing dependency on the happy path; its `timeout` is
+        a hang-guard for a genuine regression, not the pass/fail signal
+        (`ThreadPoolExecutor(max_workers=2)` itself mechanically prevents a
+        third from ever running at once, so there is nothing to time out
+        on if concurrency is wired correctly). The counter confirms
+        `concurrency` was actually threaded through as 2, not silently 1."""
         client, mock_genai = self._client()
         lock = threading.Lock()
         in_flight = 0
         max_in_flight = 0
-        barrier = threading.Barrier(3, timeout=0.3)
-        barrier_broke = threading.Event()
+        rendezvous = threading.Barrier(2, timeout=5)
 
         def _hook(_data: bytes) -> None:
             nonlocal in_flight, max_in_flight
             with lock:
                 in_flight += 1
                 max_in_flight = max(max_in_flight, in_flight)
-            try:
-                barrier.wait()
-            except threading.BrokenBarrierError:
-                barrier_broke.set()
+            rendezvous.wait()
             with lock:
                 in_flight -= 1
 
         mock_genai.files.upload_hook = _hook
         images = [b"a", b"b", b"c", b"d", b"e", b"f"]
         with client.image_uploads(images, concurrency=2) as uploads:
-            uploads.ensure()
-        self.assertTrue(barrier_broke.is_set())
+            files = uploads.ensure()
+        self.assertEqual(len(files), 6)
         self.assertEqual(max_in_flight, 2)
 
     def test_uploaded_files_keep_page_order(self) -> None:
@@ -1897,6 +1900,29 @@ class ImageUploadsTests(unittest.TestCase):
         self.assertEqual(uploaded_data, [b"a", b"b"])
         self.assertEqual(sorted(mock_genai.files.deleted), ["files/fake-1", "files/fake-2"])
 
+    def test_a_second_ensure_after_a_failure_reraises_the_original_cause(self) -> None:
+        """Fix round 3, Minor 2: a second `ensure()` call after a failed
+        first one used to resubmit every page fresh -- and since
+        `_stop_event` was already set, each one immediately raised a
+        generic "page N skipped" message instead of the real cause (the
+        400). It must now re-raise the SAME real exception, both times."""
+        client, mock_genai = self._client(max_retries=0)
+
+        def _fail_on_b(data: bytes) -> None:
+            if data == b"b":
+                raise RuntimeError("400 bad request")
+
+        mock_genai.files.upload_hook = _fail_on_b
+        with client.image_uploads([b"a", b"b"], concurrency=1) as uploads:
+            with self.assertRaises(ExternalServiceError) as first:
+                uploads.ensure()
+            with self.assertRaises(ExternalServiceError) as second:
+                uploads.ensure()
+        self.assertIn("400 bad request", str(first.exception))
+        self.assertIn("400 bad request", str(second.exception))
+        # The second call must not have re-uploaded "a" again.
+        self.assertEqual(len(mock_genai.files.uploads), 1)
+
     def test_cost_ceiling_is_checked_before_any_upload(self) -> None:
         from lemely.io.cost_ledger import CostLedger
 
@@ -1987,6 +2013,45 @@ class ImageUploadsTests(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertEqual(warnings[0]["name"], "files/fake-1")
         self.assertEqual(warnings[0]["error"], "boom")
+
+    def test_delete_racing_an_in_flight_ensure_still_deletes_everything(self) -> None:
+        """Fix round 3, Minor 1: `delete()` used to drain `_uploaded`
+        BEFORE taking `_lock` -- so a `delete()` called from another
+        thread while `ensure()` was still uploading snapshotted whatever
+        had been recorded SO FAR (nothing, if called while every upload is
+        still in flight) and missed every page `ensure()` went on to
+        upload afterwards. `delete()` now takes `_lock` first -- the same
+        lock `ensure()` holds for its whole pass -- so it blocks until
+        `ensure()` is done before draining."""
+        client, mock_genai = self._client()
+        lock = threading.Lock()
+        started = 0
+        both_started = threading.Event()
+        release = threading.Event()
+
+        def _hook(_data: bytes) -> None:
+            nonlocal started
+            with lock:
+                started += 1
+                if started == 2:
+                    both_started.set()
+            self.assertTrue(release.wait(timeout=5))
+
+        mock_genai.files.upload_hook = _hook
+        uploads = client.image_uploads([b"a", b"b"], concurrency=2)
+        ensure_thread = threading.Thread(target=uploads.ensure)
+        ensure_thread.start()
+        # Both uploads are now blocked INSIDE the hook -- before FakeFiles
+        # ever records them -- so `_uploaded` is guaranteed empty at this
+        # instant. A `delete()` racing in here is the exact scenario Minor
+        # 1 fixes.
+        self.assertTrue(both_started.wait(timeout=5))
+        delete_thread = threading.Thread(target=uploads.delete)
+        delete_thread.start()
+        release.set()
+        ensure_thread.join(timeout=5)
+        delete_thread.join(timeout=5)
+        self.assertEqual(sorted(mock_genai.files.deleted), ["files/fake-1", "files/fake-2"])
 
     def test_retry_of_the_generate_call_does_not_re_upload(self) -> None:
         client, mock_genai = self._client(max_retries=1, backoff_seconds=0.01)

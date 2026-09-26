@@ -504,6 +504,15 @@ class ImageUploads:
         # `concurrency=1`; best effort above it) -- so a page queued behind
         # an already-failed one is never even attempted.
         self._stop_event = threading.Event()
+        # Fix round 3, Minor 2: the FIRST real exception any page raised,
+        # set (under `_error_lock`, and always before `_stop_event`) by
+        # whichever `_upload_one` call gets there first. Every later
+        # "skipped" page re-raises THIS, not a generic placeholder message
+        # -- and a second `ensure()` call after a failed first one
+        # re-raises it too, instead of resubmitting every page only to
+        # have each one immediately report "skipped" with no real cause.
+        self._first_error: BaseException | None = None
+        self._error_lock = threading.Lock()
         self._log = structlog.get_logger().bind(component="gemini_client", tool="files_api")
 
     def matches(self, image_parts: list[bytes]) -> bool:
@@ -527,16 +536,28 @@ class ImageUploads:
         failure). On the first failure, every future not yet started is
         cancelled; futures already running still finish (so they, too, are
         recorded) but nothing new begins.
+
+        Fix round 3, Minor 2: the exception raised at the end is always
+        `self._first_error` (never a per-call local variable) -- at
+        `concurrency` above 1, `as_completed` can yield a sibling's generic
+        "skipped" exception before the real failure that caused it, and a
+        SECOND `ensure()` call after a failed first one hits `_stop_event`
+        on every page without attempting any of them; either way, the
+        exception actually raised must be the ONE real cause, not
+        whichever exception object happened to surface first.
         """
         with self._lock:
             if self.files is not None:
                 return self.files
+            with self._error_lock:
+                if self._first_error is not None:
+                    raise self._first_error
             if not self._images:
                 self.files = []
                 return self.files
             workers = min(self._concurrency, len(self._images))
             results: dict[int, Any] = {}
-            first_error: BaseException | None = None
+            cancelled = False
             pool = ThreadPoolExecutor(max_workers=workers)
             try:
                 future_to_index = {
@@ -549,28 +570,47 @@ class ImageUploads:
                     index = future_to_index[future]
                     try:
                         results[index] = future.result()
-                    except BaseException as exc:
-                        if first_error is None:
-                            first_error = exc
+                    except BaseException:
+                        if not cancelled:
+                            cancelled = True
                             for pending in future_to_index:
                                 pending.cancel()
             finally:
                 pool.shutdown(wait=True, cancel_futures=True)
-            if first_error is not None:
-                raise first_error
+            with self._error_lock:
+                if self._first_error is not None:
+                    raise self._first_error
             self.files = [results[i] for i in sorted(results)]
             return self.files
 
     def _upload_one(self, index: int, data: bytes) -> Any:
         if self._stop_event.is_set():
-            raise ExternalServiceError(
+            with self._error_lock:
+                if self._first_error is not None:
+                    raise self._first_error
+            # `_first_error` is always set BEFORE `_stop_event` (see
+            # `_record_first_error`), so no other thread can observe the
+            # event set with `_first_error` still `None` -- this is an
+            # unreachable defensive fallback, not a real path.
+            raise ExternalServiceError(  # pragma: no cover
                 f"Files API upload for page {index} skipped: an earlier page failed"
             )
         try:
             return self._upload_and_wait(index, data)
-        except BaseException:
-            self._stop_event.set()
+        except BaseException as exc:
+            self._record_first_error(exc)
             raise
+
+    def _record_first_error(self, exc: BaseException) -> None:
+        """Keep only the FIRST real exception.
+
+        Every later one is discarded (its page still failed, but this is
+        the cause the caller sees).
+        """
+        with self._error_lock:
+            if self._first_error is None:
+                self._first_error = exc
+        self._stop_event.set()
 
     def _upload_and_wait(self, index: int, data: bytes) -> Any:
         uploaded = self._upload_with_retry(index, data)
@@ -645,10 +685,20 @@ class ImageUploads:
         Drains :attr:`_uploaded` (every page that was actually created on
         Google's side), not :attr:`files` (only set on a fully successful
         :meth:`ensure`) -- see Fix round 1, Important 1.
+
+        Fix round 3, Minor 1: takes `_lock` FIRST, the same lock
+        :meth:`ensure` holds for its ENTIRE upload pass -- so a `delete()`
+        racing an in-flight `ensure()` call (from another thread) blocks
+        until that pass finishes (successfully or not) before draining
+        `_uploaded`, rather than snapshotting whatever had been recorded so
+        far and missing every page `ensure()` still went on to upload.
+        Lock order is always `_lock` -> `_uploaded_lock`, the same order a
+        worker thread never needs to invert (a worker only ever takes
+        `_uploaded_lock` on its own, briefly, in `_upload_and_wait`).
         """
-        with self._uploaded_lock:
-            uploaded_files, self._uploaded = list(self._uploaded.values()), {}
         with self._lock:
+            with self._uploaded_lock:
+                uploaded_files, self._uploaded = list(self._uploaded.values()), {}
             self.files = None
         if not uploaded_files:
             return
