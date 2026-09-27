@@ -378,11 +378,23 @@ def _visit_resource(
     image is not content -- its pixels are checked separately, from
     ``page.get_images``, never its stream. A Type3 font is not content
     itself, but its glyph procedures (``/CharProcs``) and its own
-    ``/Resources`` are. Anything else found this way (``/ColorSpace``,
-    ``/ExtGState``, ``/Shading``, ``/Properties`` entries) is out of this
-    round's scope and is left alone -- except a bare stream this service
-    cannot otherwise classify, counted defensively rather than silently
-    ignored.
+    ``/Resources`` are. A bare stream this service cannot otherwise
+    classify is counted defensively rather than silently ignored.
+
+    Fix round 2, Important 1 + minor 1. Anything left over -- not a stream,
+    not one of the typed leaves above -- is one level further from a leaf
+    than the code above expects, not a dead end: an indirect ``/XObject``,
+    ``/Font``, ``/Pattern``, ``/ColorSpace`` or ``/ExtGState`` dict (its
+    entries are themselves indirect -- ``/Resources << /XObject 12 0 R >>``
+    where object 12 *is* the name -> object map ``page.get_xobjects()``
+    would have resolved for us), an ``/AP`` appearance-state dict stored as
+    its own object, or an ExtGState's ``/SMask`` -> ``/G`` transparency-group
+    form at whatever depth of indirection it is stored. Every one of these
+    is just another dictionary of references one level further out, found
+    the same way :func:`_collection_refs` already flattens any dict/array
+    text -- so it is treated as one: its own object text is scanned for
+    references, and each one visited the same way, recursively. Bounded by
+    the same ``seen`` (cycle guard) and object cap as everything else.
     """
     if not _enter(ref, seen=seen, budget=budget, page_index=page_index):
         return
@@ -404,6 +416,9 @@ def _visit_resource(
         return
     if doc.xref_is_stream(ref):  # type: ignore[no-untyped-call]
         _count_stream(doc, ref, page_index=page_index, budget=budget)
+        return
+    for sub_ref in _collection_refs(doc, "xref", f"{ref} 0 R"):
+        _visit_resource(doc, sub_ref, page_index=page_index, seen=seen, budget=budget)
 
 
 def _walk_charprocs(
@@ -447,13 +462,35 @@ def _walk_annotations(
             _visit_resource(doc, ap_ref, page_index=page_index, seen=seen, budget=budget)
 
 
+def _resolve_int(doc: pymupdf.Document, kind: str, value: str) -> int | None:
+    r"""An integer dict value, resolving one level of indirection.
+
+    Mirrors :func:`_normalise_filter`'s handling of an indirect ``/Filter``:
+    ``kind == "xref"`` means the value itself is a bare number object
+    (``5 0 obj\n40000\nendobj``), read back via ``xref_object`` and parsed.
+    """
+    if kind == "xref":
+        text = doc.xref_object(int(value.split()[0])).strip()  # type: ignore[no-untyped-call]
+        try:
+            return int(text)
+        except ValueError:
+            return None
+    if kind == "int":
+        return int(value)
+    return None
+
+
 def _check_mask_pixels(doc: pymupdf.Document, xref: int, *, page_index: int) -> None:
-    """:data:`MAX_DECODE_PX` against a mask stream's own declared size."""
-    width_kind, width_value = doc.xref_get_key(xref, "Width")  # type: ignore[no-untyped-call]
-    height_kind, height_value = doc.xref_get_key(xref, "Height")  # type: ignore[no-untyped-call]
-    if width_kind != "int" or height_kind != "int":
+    """:data:`MAX_DECODE_PX` against a mask stream's own declared size.
+
+    Fix round 2, Important 2: an indirect ``/Width``/``/Height`` (unusual
+    but legal, the same spelling :func:`_normalise_filter` already resolves
+    for ``/Filter``) used to make this silently return without checking.
+    """
+    width = _resolve_int(doc, *doc.xref_get_key(xref, "Width"))  # type: ignore[no-untyped-call]
+    height = _resolve_int(doc, *doc.xref_get_key(xref, "Height"))  # type: ignore[no-untyped-call]
+    if width is None or height is None:
         return
-    width, height = int(width_value), int(height_value)
     if width * height > MAX_DECODE_PX:
         raise ScanTooLargeError(
             _IMAGE_TOO_LARGE_MESSAGE.format(page=page_index + 1, mpx=width * height // 1_000_000)

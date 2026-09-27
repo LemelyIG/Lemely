@@ -35,11 +35,15 @@ from tests.pdf_fakes import (
     annot_ap_bomb_pdf,
     assemble_pdf,
     encrypted_pdf_bytes,
+    extgstate_smask_bomb_pdf,
     filtered_page_pdf,
     flate_bomb_ops,
     form_xobject_cycle_pdf,
     image_bomb_pdf,
+    indirect_ap_state_bomb_pdf,
     indirect_filter_page_pdf,
+    indirect_smask_dimension_bomb_pdf,
+    indirect_xobject_dict_bomb_pdf,
     many_form_xobjects_pdf,
     page_bomb_pdf,
     pdf_stream,
@@ -371,6 +375,30 @@ class AnnotationPatternType3BombTests(unittest.TestCase):
         with patch.object(scan_limits, "_MAX_OBJECTS_PER_PAGE", 5):
             check_pdf_content_bytes(many_form_xobjects_pdf(3))
 
+    def test_an_indirect_xobject_dict_bomb_is_rejected(self) -> None:
+        # Fix round 2, Important 1: /Resources << /XObject 6 0 R >> --
+        # object 6 (not /Resources itself) is the name->ref map.
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(indirect_xobject_dict_bomb_pdf(112_000_000))
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(indirect_xobject_dict_bomb_pdf(112_000_000))
+
+    def test_an_indirect_ap_state_dict_bomb_is_rejected(self) -> None:
+        # Fix round 2, Important 1: /AP << /N 6 0 R >> -- object 6 is the
+        # /Off//On appearance-state dict, not the appearance stream itself.
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(indirect_ap_state_bomb_pdf(112_000_000))
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(indirect_ap_state_bomb_pdf(112_000_000))
+
+    def test_an_extgstate_smask_transparency_group_bomb_is_rejected(self) -> None:
+        # Fix round 2, minor 1: /ExtGState -> /SMask -> /G is a Form
+        # XObject the renderer draws.
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(extgstate_smask_bomb_pdf(112_000_000))
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(extgstate_smask_bomb_pdf(112_000_000))
+
 
 class ImageMaskBombTests(unittest.TestCase):
     """Fix round 1, Important 3: an image's /SMask and stream-valued /Mask
@@ -387,6 +415,13 @@ class ImageMaskBombTests(unittest.TestCase):
 
     def test_a_600_dpi_smask_passes(self) -> None:
         check_pdf_content_bytes(smask_bomb_pdf(4_960, 7_016))  # 34.8 Mpx
+
+    def test_an_smask_with_an_indirect_width_is_rejected(self) -> None:
+        # Fix round 2, Important 2: /Width 7 0 R where object 7 is a bare
+        # `40000` -- used to silently pass (kind != "int") without checking.
+        with self.assertRaises(ScanTooLargeError) as ctx:
+            check_pdf_content_bytes(indirect_smask_dimension_bomb_pdf(40_000, 40_000))
+        self.assertIn("megapixel", str(ctx.exception))
 
 
 class NonPdfDocumentTests(unittest.TestCase):

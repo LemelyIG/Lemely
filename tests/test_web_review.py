@@ -1562,17 +1562,33 @@ def test_crop_route_refuses_a_stored_content_stream_bomb(
     storage_backend: FakeStorageBackend,
 ) -> None:
     """Task 11b: the crop renders a stored page with pymupdf; a stored bomb
-    (uploaded before the check existed) must be refused, not rendered."""
+    (uploaded before the check existed) must be refused, not rendered.
+
+    Fix round 2, minor 3: this route does not mock its renderer either, so
+    patches pymupdf's `Page.get_pixmap` the same way the preview route's
+    counterpart test now does, and asserts it is never called -- a future
+    regression fails cleanly instead of rendering the real 112 MB bomb.
+    """
+    from unittest.mock import patch
+
+    import pymupdf
+
     from tests.pdf_fakes import page_bomb_pdf
 
     teacher, item_id = _seed_boxed_review_item(
-        pg_sessionmaker, class_service, storage=storage_backend, scan=page_bomb_pdf(112_000_000), page=0
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=page_bomb_pdf(112_000_000),
+        page=0,
     )
     _use_review_service(client, review_service)
     _use_storage(client, storage_backend)
     _auth_as(client, teacher, Role.teacher)
 
-    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    with patch.object(pymupdf.Page, "get_pixmap") as get_pixmap:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    get_pixmap.assert_not_called()
     assert resp.status_code == 422, resp.text
     assert "drawing" in resp.json()["detail"]
 

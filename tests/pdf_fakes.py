@@ -361,6 +361,103 @@ def indirect_filter_page_pdf(data: bytes) -> bytes:
     )
 
 
+def indirect_xobject_dict_bomb_pdf(inflated_bytes: int) -> bytes:
+    """A page whose ``/Resources /XObject`` is itself an indirect reference.
+
+    Fix round 2, Important 1: ``/Resources << /XObject 6 0 R >>`` where
+    object 6 -- not the page's ``/Resources`` object, the ``/XObject`` name
+    map *inside* it -- is its own object (``<< /Fm1 5 0 R >>``). Round 1's
+    ``page.get_xobjects()`` resolved this level of indirection for us;
+    ``_collection_refs`` alone, called once on ``/Resources``, does not.
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /XObject 6 0 R >> >>",
+            pdf_stream(b"", b"q /Fm1 Do Q"),
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Filter /FlateDecode",
+                flate_bomb_ops(inflated_bytes),
+            ),
+            b"<< /Fm1 5 0 R >>",
+        ]
+    )
+
+
+def indirect_ap_state_bomb_pdf(inflated_bytes: int) -> bytes:
+    """An annotation whose ``/AP /N`` appearance-state dict is its own object.
+
+    Fix round 2, Important 1: ``/AP << /N 6 0 R >>`` where object 6 is the
+    ``/Off``/``/On`` appearance-state dict (``<< /Off 7 0 R /On 8 0 R >>``),
+    not the appearance stream directly. Object 8 (``/On``) carries the bomb.
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Annots [5 0 R] >>",
+            pdf_stream(b"", b"q Q"),
+            b"<< /Type /Annot /Subtype /Stamp /Rect [0 0 10 10] /AP << /N 6 0 R >> >>",
+            b"<< /Off 7 0 R /On 8 0 R >>",
+            pdf_stream(b"/Type /XObject /Subtype /Form /BBox [0 0 10 10]", b"q Q"),
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Filter /FlateDecode",
+                flate_bomb_ops(inflated_bytes),
+            ),
+        ]
+    )
+
+
+def extgstate_smask_bomb_pdf(inflated_bytes: int) -> bytes:
+    """A page whose graphics state's ``/SMask`` -> ``/G`` transparency-group
+    form carries the bomb.
+
+    Fix round 2, minor 1. The soft mask itself (object 6) is a plain
+    ``/Type /Mask`` dict, not a stream -- only its ``/G`` (a Form XObject,
+    object 7) is content.
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /ExtGState << /GS1 5 0 R >> >> >>",
+            pdf_stream(b"", b"/GS1 gs q Q"),
+            b"<< /Type /ExtGState /SMask 6 0 R >>",
+            b"<< /Type /Mask /S /Luminosity /G 7 0 R >>",
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /Group 8 0 R /BBox [0 0 10 10] "
+                b"/Filter /FlateDecode",
+                flate_bomb_ops(inflated_bytes),
+            ),
+            b"<< /Type /Group /S /Transparency >>",
+        ]
+    )
+
+
+def indirect_smask_dimension_bomb_pdf(width: int, height: int) -> bytes:
+    """A small image whose ``/SMask``'s ``/Width`` is an indirect reference
+    to a bare number object -- unusual but legal PDF syntax (fix round 2,
+    Important 2)."""
+    smask = pdf_stream(
+        f"/Type /XObject /Subtype /Image /Width 7 0 R /Height {height} "
+        "/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode".encode(),
+        zlib.compress(b"\x00"),
+    )
+    image = pdf_stream(
+        b"/Type /XObject /Subtype /Image /Width 1 /Height 1 "
+        b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /SMask 6 0 R",
+        zlib.compress(b"\x00"),
+    )
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /XObject << /Im0 5 0 R >> >> >>",
+            pdf_stream(b"", b"q 1 0 0 1 0 0 cm /Im0 Do Q"),
+            image,
+            smask,
+            str(width).encode(),
+        ]
+    )
+
+
 def many_form_xobjects_pdf(count: int) -> bytes:
     """A page whose ``/Resources``/``/XObject`` dict lists ``count`` distinct,
     otherwise-harmless Form XObjects -- for the per-page object-visit cap."""
@@ -382,11 +479,15 @@ __all__ = [
     "annot_ap_bomb_pdf",
     "assemble_pdf",
     "encrypted_pdf_bytes",
+    "extgstate_smask_bomb_pdf",
     "filtered_page_pdf",
     "flate_bomb_ops",
     "form_xobject_cycle_pdf",
     "image_bomb_pdf",
+    "indirect_ap_state_bomb_pdf",
     "indirect_filter_page_pdf",
+    "indirect_smask_dimension_bomb_pdf",
+    "indirect_xobject_dict_bomb_pdf",
     "many_form_xobjects_pdf",
     "page_bomb_pdf",
     "pdf_stream",

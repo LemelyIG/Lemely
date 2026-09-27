@@ -636,7 +636,19 @@ def test_preview_refuses_a_stored_content_stream_bomb(
 ) -> None:
     """A stored upload that pre-dates the upload check is refused at render,
     not rendered into an OOM. Seeded directly into storage: the upload route
-    now rejects the bomb, which is the point."""
+    now rejects the bomb, which is the point.
+
+    Fix round 2, minor 3: this route does not mock its renderer, so a
+    regression in `check_pdf_content` would render the real 112 MB bomb here
+    -- unlike the rasterise-level tests, which already patch pdfium's
+    `render`. Patches pymupdf's `Page.get_pixmap` the same way and asserts it
+    is never called, so a future regression fails this test cleanly instead
+    of rendering the bomb for real and risking the CI runner.
+    """
+    from unittest.mock import patch
+
+    import pymupdf
+
     from tests.pdf_fakes import page_bomb_pdf
 
     bomb = page_bomb_pdf(112_000_000)
@@ -653,7 +665,9 @@ def test_preview_refuses_a_stored_content_stream_bomb(
         byte_size=len(bomb),
     )
 
-    preview = client.get(f"/api/papers/{paper_id}/preview")
+    with patch.object(pymupdf.Page, "get_pixmap") as get_pixmap:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+    get_pixmap.assert_not_called()
     assert preview.status_code == 422
     assert "drawing" in preview.json()["detail"]
 
@@ -1625,6 +1639,29 @@ def test_preview_of_an_image_upload_still_succeeds(client: TestClient) -> None:
     resp = client.post(
         "/api/papers/upload",
         files={"scan": ("scan.png", buf.getvalue(), "image/png")},
+    )
+    assert resp.status_code == 200
+    paper_id = resp.json()["paperId"]
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_preview_of_a_jpeg_upload_still_succeeds(client: TestClient) -> None:
+    """Fix round 2, minor 2: the same guard covers every non-PDF format the
+    console accepts, not just PNG."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 100), "white").save(buf, "JPEG")
+
+    resp = client.post(
+        "/api/papers/upload",
+        files={"scan": ("scan.jpg", buf.getvalue(), "image/jpeg")},
     )
     assert resp.status_code == 200
     paper_id = resp.json()["paperId"]
