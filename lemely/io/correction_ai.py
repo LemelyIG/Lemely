@@ -111,17 +111,72 @@ def _flatten_answers(
     return {str(k): _FlatAnswer(str(v), None, 1.0, None, None, None) for k, v in extracted.items()}
 
 
+def _disagreeing_agreement(flat: _FlatAnswer) -> float | None:
+    """The re-read's agreement score when it disagrees, else ``None``.
+
+    Spec 2026-09-26 §4: "disagrees" means ``reread_agreement`` is not
+    ``None`` and is below :data:`REREAD_REVIEW_AGREEMENT_THRESHOLD`. Fix
+    round 1: gives callers the narrowed ``float`` in one step instead
+    of a boolean plus a defensive ``flat.reread_agreement or 0.0`` that was
+    both dead (this function's own check already guarantees non-``None``)
+    and wrong in spirit (``0.0`` is a legitimate agreement score, not a
+    fallback value).
+    """
+    agreement = flat.reread_agreement
+    if agreement is not None and agreement < REREAD_REVIEW_AGREEMENT_THRESHOLD:
+        return agreement
+    return None
+
+
 def _disagrees(flat: _FlatAnswer) -> bool:
     """The crop re-read disagreed with the first read (spec 2026-09-26 §4)."""
-    return (
-        flat.reread_agreement is not None
-        and flat.reread_agreement < REREAD_REVIEW_AGREEMENT_THRESHOLD
-    )
+    return _disagreeing_agreement(flat) is not None
 
 
-def _substitutes(flat: _FlatAnswer) -> bool:
-    """Under ``reread_substitution``: disagreed AND the re-read text is usable."""
-    return _disagrees(flat) and bool((flat.answer_reread or "").strip())
+#: Fix round 1 (spec 2026-09-26 §4): the letters ``_build_mcq_corrected``
+#: accepts. A re-read that normalises to anything else is not usable for
+#: substitution on an MCQ leaf, whatever the raw text says.
+_MCQ_LETTERS = frozenset({"A", "B", "C", "D"})
+
+#: Surrounding characters a re-read may be wrapped in ("(A)", "A.", "[A]")
+#: that carry no signal about which letter was read. Straight quotes only
+#: (ruff RUF001): curly quotes are not stripped, so a re-read genuinely
+#: wrapped in them is left to the embedded-punctuation "nothing usable"
+#: path rather than silently treated the same as straight ones.
+_MCQ_STRIP_CHARS = "()[]{}<>.,;:!?\"'"
+
+
+def _normalise_mcq_reread(text: str) -> str | None:
+    """Strip surrounding punctuation/brackets and upper-case a re-read.
+
+    Fix round 1: substitution used to hand ``_build_mcq_corrected`` the raw
+    re-read text verbatim, so a re-read of "A." or "(A)" on a correctly-read
+    "A" was marked ``0`` ("invalid MCQ answer") instead of left alone or
+    correctly substituted. Returns ``None`` unless what remains after
+    stripping is a single letter :func:`_build_mcq_corrected` itself
+    accepts -- embedded punctuation (e.g. "A/B") is not "surrounding" and is
+    deliberately NOT stripped, so it still returns ``None`` for that case.
+    """
+    stripped = text.strip(_MCQ_STRIP_CHARS).upper()
+    return stripped if stripped in _MCQ_LETTERS else None
+
+
+def _substituted_answer(flat: _FlatAnswer, *, is_mcq: bool) -> str | None:
+    """The text substitution would mark instead of the first read.
+
+    ``None`` when the re-read is not usable for substitution: it agrees
+    with the first read, it is blank, or -- on an MCQ leaf, fix round 1 --
+    it does not normalise to a single option letter. Non-MCQ leaves
+    substitute the stripped re-read text verbatim (fix round 1: previously
+    unstripped, so a re-read with incidental leading/trailing whitespace
+    would have been quoted and marked with it).
+    """
+    if not _disagrees(flat):
+        return None
+    reread = (flat.answer_reread or "").strip()
+    if not reread:
+        return None
+    return _normalise_mcq_reread(reread) if is_mcq else reread
 
 
 def _quote(text: str | None) -> str:
@@ -2011,6 +2066,7 @@ def _attach_extraction_context(
     answers: dict[str, _FlatAnswer],
     original: dict[str, _FlatAnswer],
     options: MarkingOptions,
+    leaf_by_id: dict[str, Question],
 ) -> CorrectedQuestion:
     """The ONE place the finished row learns what extraction knew about it.
 
@@ -2021,22 +2077,54 @@ def _attach_extraction_context(
     first read sends an ``ai`` or ``deterministic`` row to teacher review,
     joined onto any reason the builder already gave -- whether or not
     ``reread_substitution`` marked the re-read text, because substitution
-    must never hide a disagreement from the teacher. Dropped, blank and
-    missing rows are left alone: no answer was read for them.
+    must never hide a disagreement from the teacher. The reason quotes the
+    text substitution actually used (fix round 1: :func:`_substituted_answer`
+    re-run against ``original``, not the raw ``answer_reread``), so
+    ``student_answer`` and the reason always agree.
+
+    Fix round 1: a ``blank`` row -- the first read was empty -- is ALSO
+    flagged when its re-read found non-blank text, using the
+    substitution-off reason shape (the first-read quote is empty). This
+    branch is only ever reached with ``reread_substitution`` off: a blank
+    first read whose non-blank re-read disagrees is exactly what the
+    pre-loop substitution step above would already have substituted away
+    were the flag on, so the leaf loop would not have taken the blank
+    short-circuit at all in that case. Dropped and missing rows are left
+    alone: no answer was read for them.
     """
     if cq.question_id not in answers:
         return cq
     flat = answers[cq.question_id]
+    first = original[cq.question_id]
     update: dict[str, object] = {
         "source_box": flat.source_box.model_copy(deep=True) if flat.source_box is not None else None
     }
-    if cq.marker_source in ("ai", "deterministic") and _disagrees(flat):
-        first = original[cq.question_id]
+    agreement = _disagreeing_agreement(flat)
+    if cq.marker_source in ("ai", "deterministic") and agreement is not None:
+        reread_for_reason: str | None
+        if options.reread_substitution:
+            leaf = leaf_by_id.get(cq.question_id)
+            is_mcq = leaf is not None and leaf.type == QuestionType.MCQ
+            substituted = _substituted_answer(first, is_mcq=is_mcq)
+            reread_for_reason = substituted if substituted is not None else ""
+        else:
+            reread_for_reason = first.answer_reread
+        reason = _reread_reason(
+            first_read=first.answer,
+            reread=reread_for_reason,
+            agreement=agreement,
+            substitution=options.reread_substitution,
+        )
+        update["needs_teacher_review"] = True
+        update["review_reason"] = _join_reason(cq.review_reason, reason)
+    elif (
+        cq.marker_source == "blank" and agreement is not None and not _is_blank(flat.answer_reread)
+    ):
         reason = _reread_reason(
             first_read=first.answer,
             reread=first.answer_reread,
-            agreement=flat.reread_agreement or 0.0,
-            substitution=options.reread_substitution,
+            agreement=agreement,
+            substitution=False,
         )
         update["needs_teacher_review"] = True
         update["review_reason"] = _join_reason(cq.review_reason, reason)
@@ -2074,18 +2162,30 @@ def correct_paper(
     equivalence_gate = options.equivalence_gate
     ecf_substitution = options.ecf_substitution
     scheme = _load_mark_scheme(mark_scheme)
-    # Spec 2026-09-26 §4 (#9): under `reread_substitution`, a leaf whose crop
-    # re-read disagreed with the first read (and whose re-read text is not
-    # blank) is marked on the re-read text. Substituted ONCE, here, before the
-    # loop, so marking, the blank check, ECF prerequisite text and the
-    # dropped-id subtraction all see the text that is actually marked;
-    # `original` keeps the first read for the review reason below.
+    leaves = [q for q in scheme.all_questions_flat() if _is_leaf_marked(q)]
+    leaf_by_id: dict[str, Question] = {q.id: q for q in leaves}
+    # Fix round 1 (spec 2026-09-26 §4): substitution needs to know whether a
+    # leaf is MCQ before it can decide the re-read is usable, so `leaf_by_id`
+    # is built before the substitution step now, not after it.
     original = _flatten_answers(extracted_answers)
+
+    def _is_mcq_leaf(qid: str) -> bool:
+        leaf = leaf_by_id.get(qid)
+        return leaf is not None and leaf.type == QuestionType.MCQ
+
+    def _substitute(qid: str, flat: _FlatAnswer) -> _FlatAnswer:
+        sub = _substituted_answer(flat, is_mcq=_is_mcq_leaf(qid))
+        return flat._replace(answer=sub) if sub is not None else flat
+
+    # Spec 2026-09-26 §4 (#9): under `reread_substitution`, a leaf whose crop
+    # re-read disagreed with the first read (and whose re-read text is
+    # usable -- see :func:`_substituted_answer`) is marked on the re-read
+    # text. Substituted ONCE, here, before the loop, so marking, the blank
+    # check, ECF prerequisite text and the dropped-id subtraction all see
+    # the text that is actually marked; `original` keeps the first read for
+    # the review reason below.
     answers = (
-        {
-            qid: flat._replace(answer=str(flat.answer_reread)) if _substitutes(flat) else flat
-            for qid, flat in original.items()
-        }
+        {qid: _substitute(qid, flat) for qid, flat in original.items()}
         if options.reread_substitution
         else original
     )
@@ -2104,8 +2204,6 @@ def correct_paper(
             message=f"Mark scheme validation [{w.question_id}]: {w.message}",
         )
 
-    leaves = [q for q in scheme.all_questions_flat() if _is_leaf_marked(q)]
-    leaf_by_id: dict[str, Question] = {q.id: q for q in leaves}
     prior_results_accumulated: dict[str, int] = {}  # question_id -> awarded_marks
     # I7: for _point_was_awarded. Predates the post-loop `source_box`
     # assembly rewrite below -- every `CorrectedQuestion` stored here is the
@@ -2316,5 +2414,7 @@ def correct_paper(
             total=total_leaves,
         )
 
-    corrected = [_attach_extraction_context(cq, answers, original, options) for cq in corrected]
+    corrected = [
+        _attach_extraction_context(cq, answers, original, options, leaf_by_id) for cq in corrected
+    ]
     return CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected)

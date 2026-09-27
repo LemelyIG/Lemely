@@ -4550,6 +4550,55 @@ class ECFSubstitutionTests(unittest.TestCase):
             {"1a_i": "answer: wrong value\ndepends on: (a=) (v-u)/t in any form"},
         )
 
+    def test_ecf_prerequisite_text_sees_the_substituted_answer(self) -> None:
+        """Fix round 1 coverage: when the prerequisite leaf's OWN first
+        read disagreed with its re-read and reread_substitution replaced
+        it, the ECF substitution prompt must carry the SUBSTITUTED text,
+        never the discarded first read -- ``_maybe_apply_ecf_substitution``
+        reads ``prior_values`` from the post-substitution ``answers``
+        mapping, not ``original``."""
+        scheme = self._scheme()
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(
+                    question_id="1a_i",
+                    answer="wrong value",
+                    confidence=0.9,
+                    answer_reread="corrected value",
+                    reread_agreement=0.0,
+                ),
+                ExtractedAnswer(question_id="1a_ii", answer="consistent working", confidence=0.9),
+            ],
+        )
+        mark_1a_i = self._mark([self._pv("p1", "withheld")])
+        mark_1a_ii_pass1 = self._mark([self._pv("p1", "withheld")])
+        mark_1a_ii_pass2 = self._mark([self._pv("p1", "awarded", span="consistent")])
+
+        with patch.object(
+            correction_ai.AICorrector,
+            "mark_question",
+            side_effect=[mark_1a_i, mark_1a_ii_pass1, mark_1a_ii_pass2],
+        ) as mock_mark:
+            result = correct_paper(
+                mark_scheme=scheme,
+                extracted_answers=extracted,
+                gemini_client=MagicMock(),
+                options=MarkingOptions(
+                    equivalence_gate=True, ecf_substitution=True, reread_substitution=True
+                ),
+            )
+
+        self.assertEqual(mock_mark.call_count, 3)
+        _, third_call_kwargs = mock_mark.call_args_list[2]
+        self.assertEqual(
+            third_call_kwargs["prior_values"],
+            {"1a_i": "answer: corrected value\ndepends on: (a=) (v-u)/t in any form"},
+        )
+        cq_i = next(q for q in result.questions if q.question_id == "1a_i")
+        self.assertEqual(cq_i.student_answer, "corrected value")
+
     def test_correct_prerequisite_never_triggers_substitution(self) -> None:
         """Direction 2 of the false-positive axis -- the dangerous one: a
         CORRECT (a) must never cause a second marking call for (b), even
@@ -5510,4 +5559,244 @@ class RereadDisagreementTests(unittest.TestCase):
         result = correct_paper(self.ms, extracted, gemini_client=None, mcq_only=True)
         q2 = next(q for q in result.questions if q.question_id == "2")
         self.assertEqual(q2.marker_source, "dropped")
+        self.assertNotIn("re-read", q2.review_reason or "")
+
+
+class RereadFixRound1Tests(unittest.TestCase):
+    """Fix round 1: a reviewer reproduced substitution marking a correct
+    MCQ answer 0 ("invalid MCQ answer") when the re-read carried harmless
+    surrounding punctuation ("A.", "(B)") -- the raw re-read text was
+    handed to ``_build_mcq_corrected`` verbatim. Also covers the
+    ``_text_agreement`` case/whitespace fix, extending the review flag to a
+    blank first read whose re-read found text, and the coverage gaps named
+    in the fix-round brief (60-char truncation, missing/failed rows staying
+    unflagged, ECF prerequisite text seeing the substituted answer)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.ms = _hybrid_paper_mark_scheme()  # q1 MCQ answer A (1 mark); q2 explanation p1/p2
+
+    def _mcq_only_scheme(self, mcq_answer: str) -> MarkScheme:
+        return MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 4,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2020,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 1,
+                    "scheme_format": "mixed",
+                },
+                "questions": [{"id": "1", "marks": 1, "type": "mcq", "mcq_answer": mcq_answer}],
+            }
+        )
+
+    def _mcq(self, answer: str, reread: str | None, agreement: float | None) -> ExtractedAnswers:
+        return ExtractedAnswers(
+            paper_id="t",
+            source_scan="s.pdf",
+            answers=[
+                ExtractedAnswer(
+                    question_id="1",
+                    answer=answer,
+                    confidence=0.9,
+                    answer_reread=reread,
+                    reread_agreement=agreement,
+                )
+            ],
+        )
+
+    def test_reread_substitution_strips_mcq_trailing_punctuation(self) -> None:
+        """A re-read of "A." on a correctly-read "A" must not be marked
+        "invalid MCQ answer" -- surrounding punctuation is stripped before
+        the letter is checked, so the normalised substitution is still "A"."""
+        result = correct_paper(
+            self.ms,
+            self._mcq("A", "A.", 0.0),
+            gemini_client=None,
+            mcq_only=True,
+            options=MarkingOptions(reread_substitution=True),
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.awarded_marks, 1)
+        self.assertEqual(q1.student_answer, "A")
+        self.assertTrue(q1.needs_teacher_review)
+        self.assertNotIn("invalid MCQ answer", q1.review_reason or "")
+
+    def test_reread_substitution_strips_mcq_surrounding_brackets(self) -> None:
+        """A re-read of "(B)" on a B-answer question normalises to "B" and
+        is substituted, earning the mark."""
+        scheme = self._mcq_only_scheme("B")
+        extracted = ExtractedAnswers(
+            paper_id="t",
+            source_scan="s.pdf",
+            answers=[
+                ExtractedAnswer(
+                    question_id="1",
+                    answer="A",
+                    confidence=0.9,
+                    answer_reread="(B)",
+                    reread_agreement=0.0,
+                )
+            ],
+        )
+        result = correct_paper(
+            scheme,
+            extracted,
+            gemini_client=None,
+            mcq_only=True,
+            options=MarkingOptions(reread_substitution=True),
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.awarded_marks, 1)
+        self.assertEqual(q1.student_answer, "B")
+        self.assertTrue(q1.needs_teacher_review)
+        self.assertIn("marked the re-read 'B', the first read was 'A'", q1.review_reason or "")
+
+    def test_reread_substitution_rejects_mcq_reread_with_embedded_punctuation(self) -> None:
+        """ "A/B" does not normalise to a single letter -- embedded
+        punctuation is not "surrounding" and is not stripped. The first
+        read is kept and the nothing-usable shape is used, never "invalid
+        MCQ answer" from marking on the raw slash-joined text."""
+        result = correct_paper(
+            self.ms,
+            self._mcq("A", "A/B", 0.0),
+            gemini_client=None,
+            mcq_only=True,
+            options=MarkingOptions(reread_substitution=True),
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.awarded_marks, 1)  # first read "A" kept, correct
+        self.assertEqual(q1.student_answer, "A")
+        self.assertTrue(q1.needs_teacher_review)
+        self.assertIn(
+            "the re-read returned nothing usable, marked the first read 'A'", q1.review_reason or ""
+        )
+        self.assertNotIn("invalid MCQ answer", q1.review_reason or "")
+
+    def test_text_agreement_is_case_and_whitespace_insensitive(self) -> None:
+        """ "A" vs " a" must score 1.0 -- an MCQ re-read differing only in
+        case or incidental surrounding whitespace is not a disagreement."""
+        from lemely.io.reread import _text_agreement
+
+        self.assertEqual(_text_agreement("A", " a"), 1.0)
+
+    def test_blank_first_read_with_disagreeing_nonblank_reread_gets_flagged(self) -> None:
+        """A blank first read whose re-read found non-blank, disagreeing
+        text means the re-read saw something extraction missed -- the
+        teacher must see it, even though a genuine blank is normally
+        unflagged."""
+        extracted = ExtractedAnswers(
+            paper_id="t",
+            source_scan="s.pdf",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(
+                    question_id="2",
+                    answer="",
+                    confidence=0.9,
+                    answer_reread="gravity acts on it",
+                    reread_agreement=0.0,
+                ),
+            ],
+        )
+        client = _client_with_seq(self.tmp, [])
+        result = correct_paper(self.ms, extracted, gemini_client=client)
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.marker_source, "blank")
+        self.assertTrue(q2.needs_teacher_review)
+        self.assertIn(
+            "extraction re-read disagreed with the first read (agreement 0.00 < 0.80)",
+            q2.review_reason or "",
+        )
+        self.assertIn(
+            "marked the first read '', the re-read gave 'gravity acts on it'",
+            q2.review_reason or "",
+        )
+
+    def test_blank_first_read_with_blank_reread_stays_unflagged(self) -> None:
+        """A blank first read whose re-read ALSO found nothing is a genuine
+        blank -- the unflagged-zero ruling still applies."""
+        extracted = ExtractedAnswers(
+            paper_id="t",
+            source_scan="s.pdf",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(
+                    question_id="2",
+                    answer="",
+                    confidence=0.9,
+                    answer_reread="",
+                    reread_agreement=0.0,
+                ),
+            ],
+        )
+        client = _client_with_seq(self.tmp, [])
+        result = correct_paper(self.ms, extracted, gemini_client=client)
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.marker_source, "blank")
+        self.assertFalse(q2.needs_teacher_review)
+
+    def test_quote_truncates_at_60_chars_with_ellipsis(self) -> None:
+        """Coverage: the 60-char boundary itself, and one character past
+        it, for :func:`correction_ai._quote`."""
+        exactly_60 = "x" * 60
+        self.assertEqual(correction_ai._quote(exactly_60), repr(exactly_60))
+        over_60 = "x" * 61
+        self.assertEqual(correction_ai._quote(over_60), repr("x" * 60 + "…"))
+
+    def test_missing_row_with_disagreeing_reread_is_not_joined(self) -> None:
+        """A ``missing`` row (--mcq-only: no AI marking was ever attempted)
+        is already unconditionally flagged by ``_build_missing_corrected``
+        for an unrelated reason -- but the re-read logic must never touch
+        its OWN reason onto it: no answer was scored for it, so there is
+        nothing a re-read disagreement could be reporting on."""
+        extracted = ExtractedAnswers(
+            paper_id="t",
+            source_scan="s.pdf",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(
+                    question_id="2",
+                    answer="some text",
+                    confidence=0.9,
+                    answer_reread="other text",
+                    reread_agreement=0.0,
+                ),
+            ],
+        )
+        result = correct_paper(self.ms, extracted, gemini_client=None, mcq_only=True)
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.marker_source, "missing")
+        self.assertEqual(
+            q2.review_reason, "non-MCQ question not marked (--mcq-only or no AI client)"
+        )
+        self.assertNotIn("re-read", q2.review_reason or "")
+
+    def test_ai_failed_row_with_disagreeing_reread_is_not_joined(self) -> None:
+        """An AI-marking-failed row (also ``marker_source="missing"``) is
+        already flagged for the failure itself -- the re-read logic must
+        not join its own reason onto it either."""
+        extracted = ExtractedAnswers(
+            paper_id="t",
+            source_scan="s.pdf",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(
+                    question_id="2",
+                    answer="some text",
+                    confidence=0.9,
+                    answer_reread="other text",
+                    reread_agreement=0.0,
+                ),
+            ],
+        )
+        client = _client_with_seq(self.tmp, [])  # no responses queued -> mark_question raises
+        result = correct_paper(self.ms, extracted, gemini_client=client)
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.marker_source, "missing")
+        self.assertTrue((q2.review_reason or "").startswith("AI marking failed"))
         self.assertNotIn("re-read", q2.review_reason or "")

@@ -159,8 +159,15 @@ def _text_agreement(a: str, b: str) -> float:
     agreement metric: I1 needs *a* number to store in ``reread_agreement``,
     not I3's specific algorithm, which ships with the ``SecondReader``
     protocol it is defined for and is a separate, dedicated story.
+
+    Fix round 1 (spec 2026-09-26 §4): compared case- and whitespace-folded
+    (``.strip().casefold()``), not raw -- an MCQ re-read of "a" against a
+    first read of "A" (or either with incidental surrounding whitespace)
+    scored 0.00 unfolded, flagging every case-only OCR difference as a
+    disagreement the review queue and ``reread_substitution`` should not
+    have seen at all.
     """
-    return difflib.SequenceMatcher(None, a, b).ratio()
+    return difflib.SequenceMatcher(None, a.strip().casefold(), b.strip().casefold()).ratio()
 
 
 class Rereader:

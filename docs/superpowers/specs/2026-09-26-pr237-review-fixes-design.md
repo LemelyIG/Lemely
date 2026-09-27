@@ -73,7 +73,7 @@ Capping without a flag needs two more changes. The probe showed that without the
 
 **Review reason.** In `lemely/io/reread.py`, `REREAD_REVIEW_AGREEMENT_THRESHOLD = 0.8` is the plan's 0.8 applied to the difflib agreement measure. It carries the same caveat as `second_read.py:77-84`.
 
-`_flatten_answers` returns a `_FlatAnswer` NamedTuple that also carries `answer_reread` and `reread_agreement`. A re-read disagrees when `reread_agreement` is not `None` and is below the threshold. The flag and reason are added at one place: the post-loop assembly in `correct_paper`, where the question list is finished. They apply to rows whose `marker_source` is `ai` or `deterministic`. Any existing reason is kept and joined with `" | "`. Dropped, blank and missing rows are not touched.
+`_flatten_answers` returns a `_FlatAnswer` NamedTuple that also carries `answer_reread` and `reread_agreement`. A re-read disagrees when `reread_agreement` is not `None` and is below the threshold. The flag and reason are added at one place: the post-loop assembly in `correct_paper`, where the question list is finished. They apply to rows whose `marker_source` is `ai` or `deterministic`. Any existing reason is kept and joined with `" | "`. Dropped and missing rows are not touched, and a blank row is flagged only when its re-read found text (fix round 1): a blank first read whose re-read disagrees and is non-blank means the re-read saw something the first read missed, and the teacher should see that.
 
 The reason quotes both readings, each cut to 60 characters. It has three shapes:
 
