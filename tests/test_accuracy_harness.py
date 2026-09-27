@@ -1689,7 +1689,9 @@ class RunManifestTests(unittest.TestCase):
             raise _Stop
 
         settings = self._settings_with_models()
-        settings.grading = GradingSettings(equivalence_gate=True, ecf_substitution=True)
+        settings.grading = GradingSettings(
+            equivalence_gate=True, ecf_substitution=True, reread_substitution=True
+        )
 
         with (
             patch("lemely.io.correction_ai.correct_paper", side_effect=_spy),
@@ -1699,7 +1701,7 @@ class RunManifestTests(unittest.TestCase):
 
         self.assertEqual(
             recorded.get("options"),
-            MarkingOptions(equivalence_gate=True, ecf_substitution=True),
+            MarkingOptions(equivalence_gate=True, ecf_substitution=True, reread_substitution=True),
         )
 
     def test_params_fingerprint_distinguishes_temperature_for(self):

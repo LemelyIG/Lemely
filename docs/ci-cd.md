@@ -316,7 +316,7 @@ Three settings change how answers are marked:
 |---|---|---|---|
 | `LEMELY_GRADING__EQUIVALENCE_GATE` | `GRADING_EQUIVALENCE_GATE` | `false` | Marks non-MCQ answers on the verdicts path with the SymPy award gate. |
 | `LEMELY_GRADING__ECF_SUBSTITUTION` | `GRADING_ECF_SUBSTITUTION` | `false` | Applies error-carried-forward by substitution. Has no effect unless `GRADING_EQUIVALENCE_GATE` is also `true`. |
-| `LEMELY_GRADING__REREAD_SUBSTITUTION` | `GRADING_REREAD_SUBSTITUTION` | `false` | Marks an answer on its crop re-read text when the re-read disagrees with the first read. The teacher-review flag fires on the disagreement either way. |
+| `LEMELY_GRADING__REREAD_SUBSTITUTION` | `GRADING_REREAD_SUBSTITUTION` | `false` | Marks an answer on its second, cropped read when that read disagrees with the first read and is not blank. The teacher-review flag fires on the disagreement either way. |
 
 All three apply to every marking path: paper uploads, the teacher grading job,
 quiz marking and the CLI. Turning one on changes marks for real students, so
