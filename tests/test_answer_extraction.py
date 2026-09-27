@@ -1934,6 +1934,45 @@ class SecondReadWiringTests(unittest.TestCase):
         # nothing about this being a genuine disagreement.
         self.assertLess(agreement, REREAD_AGREEMENT_THRESHOLD)
 
+    def test_a_failed_second_read_keeps_the_primary_answers_unflagged(self) -> None:
+        """Spec 2026-09-26 §8 (#3): the second read is an optional extra
+        call; a failure in it must not throw away the paid primary."""
+        body = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
+        client, _ = _client_with_responses(self.tmp, [body], second_reader="cross_model")
+        reader = MagicMock()
+        reader.read.side_effect = ExternalServiceError("503 unavailable")
+        failures: list[dict] = []
+
+        def _spy(**payload: object) -> None:
+            failures.append(payload)
+
+        bus.subscribe(EventType.SECOND_READ_FAILED, _spy)
+        try:
+            with patch("lemely.io.answer_extraction.build_second_reader", return_value=reader):
+                result = GeminiAnswerExtractor(client)(
+                    scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme()
+                )
+        finally:
+            bus.unsubscribe(EventType.SECOND_READ_FAILED, _spy)
+
+        self.assertEqual([a.answer for a in result.answers], ["A"])
+        self.assertIsNone(result.answers[0].extraction_agreement)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("503", failures[0]["error"])
+
+    def test_a_cost_ceiling_breach_in_the_second_read_still_propagates(self) -> None:
+        body = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
+        client, _ = _client_with_responses(self.tmp, [body], second_reader="cross_model")
+        reader = MagicMock()
+        reader.read.side_effect = CostCeilingError("USD ceiling exceeded")
+        with (
+            patch("lemely.io.answer_extraction.build_second_reader", return_value=reader),
+            self.assertRaises(CostCeilingError),
+        ):
+            GeminiAnswerExtractor(client)(
+                scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme()
+            )
+
 
 class AgreementTriggeredRereadTests(unittest.TestCase):
     """I3 (US-010): the plan says agreement < 0.8 fires a re-read. This is

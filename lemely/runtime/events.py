@@ -55,6 +55,9 @@ class EventType(StrEnum):
     # dict construction.
     DUPLICATE_QUESTION_ID = "duplicate_question_id"
     REREAD_FAILED = "reread_failed"
+    # Spec 2026-09-26 §8 (#3): the optional I3 second read failed; extraction
+    # continued on the primary answers with extraction_agreement unset.
+    SECOND_READ_FAILED = "second_read_failed"
     REREAD_CAP_REACHED = "reread_cap_reached"
     MARKING_PROGRESS = "marking_progress"
     MARK_SCHEME_PROGRESS = "mark_scheme_progress"

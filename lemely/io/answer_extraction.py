@@ -951,16 +951,30 @@ class GeminiAnswerExtractor:
             # keeps extraction_agreement=None (see compute_agreement).
             second_reader = build_second_reader(self._client, g)
             if second_reader is not None:
-                second_read_texts = second_reader.read(
-                    mark_scheme, page_bytes, extra_cache_key=manifest_key, image_uploads=uploads
-                )
-                agreements = compute_agreement(answers, second_read_texts)
-                answers = [
-                    a.model_copy(update={"extraction_agreement": agreements[a.question_id]})
-                    if a.question_id in agreements
-                    else a
-                    for a in answers
-                ]
+                try:
+                    second_read_texts: dict[str, str] | None = second_reader.read(
+                        mark_scheme, page_bytes, extra_cache_key=manifest_key, image_uploads=uploads
+                    )
+                except CostCeilingError:
+                    # A per-run ceiling breach is a stop signal for the whole
+                    # run (I1 review round 2, MUST-FIX 1) -- re-raised first,
+                    # exactly as the re-read block below does.
+                    raise
+                except LemelyError as exc:
+                    # Spec 2026-09-26 §8 (#3): the second read is an
+                    # enhancement on a paid primary extraction and must never
+                    # take it down. Keep the primary answers (agreement stays
+                    # None) and surface the failure.
+                    bus.publish(EventType.SECOND_READ_FAILED, error=str(exc))
+                    second_read_texts = None
+                if second_read_texts is not None:
+                    agreements = compute_agreement(answers, second_read_texts)
+                    answers = [
+                        a.model_copy(update={"extraction_agreement": agreements[a.question_id]})
+                        if a.question_id in agreements
+                        else a
+                        for a in answers
+                    ]
 
             # Crop-and-re-read: a second, zoomed-in look at exactly the pixels
             # each low-confidence answer's own box says the answer lives in.
