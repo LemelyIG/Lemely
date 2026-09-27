@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from PIL import Image, ImageDraw
 
@@ -15,11 +16,13 @@ from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 from lemely.io.answer_extraction import GeminiAnswerExtractor, _calibrate_confidence
 from lemely.io.gemini import GeminiClient
+from lemely.io.rasterise import RasterisedPage
 from lemely.io.reread import DEFAULT_CONFIDENCE_THRESHOLD
 from lemely.io.second_read import REREAD_AGREEMENT_THRESHOLD
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus
+from tests.gemini_fakes import fake_genai_client
 
 
 def _write_minimal_pdf(path: Path, *, pages: int = 1) -> None:
@@ -125,15 +128,14 @@ class _IsolatedEnv:
         os.environ.update(self._snap)
 
 
-def _client_with_response(tmp: str, body: dict) -> GeminiClient:
-    mock_genai = MagicMock()
+def _client_with_response(tmp: str, body: dict, **gemini_overrides: object) -> GeminiClient:
+    mock_genai = fake_genai_client()
     resp = MagicMock(
         text=json.dumps(body),
         candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
         usage_metadata=MagicMock(prompt_token_count=5, candidates_token_count=30),
     )
     mock_genai.models.generate_content.return_value = resp
-    mock_genai.files.upload.return_value = MagicMock()
     with _IsolatedEnv():
         settings = load_settings(toml_path=None, cwd=Path(tmp))
     settings = settings.model_copy(
@@ -144,17 +146,23 @@ def _client_with_response(tmp: str, body: dict) -> GeminiClient:
             )
         }
     )
+    if gemini_overrides:
+        settings = settings.model_copy(
+            update={"gemini": settings.gemini.model_copy(update=gemini_overrides)}
+        )
     return GeminiClient(settings, _genai_client=mock_genai)
 
 
 def _client_with_responses(
-    tmp: str, bodies: list[dict], *, second_reader: str = "none"
+    tmp: str, bodies: list[dict], *, second_reader: str = "none", **gemini_overrides: object
 ) -> tuple[GeminiClient, MagicMock]:
     """Like ``_client_with_response`` but returns the mock too and issues
     ``bodies`` in order across successive ``generate_content`` calls (I3,
     US-010: a second-read variant issues a SECOND call, distinct from the
-    primary extraction's first)."""
-    mock_genai = MagicMock()
+    primary extraction's first). ``mock_genai.files`` is a
+    ``tests.gemini_fakes.FakeFiles`` (spec 2026-09-26 §7: every whole-paper
+    call uploads its pages through the Files API)."""
+    mock_genai = fake_genai_client()
     mock_genai.models.generate_content.side_effect = [
         MagicMock(
             text=json.dumps(body),
@@ -163,7 +171,6 @@ def _client_with_responses(
         )
         for body in bodies
     ]
-    mock_genai.files.upload.return_value = MagicMock()
     with _IsolatedEnv():
         settings = load_settings(toml_path=None, cwd=Path(tmp))
     settings = settings.model_copy(
@@ -172,7 +179,9 @@ def _client_with_responses(
                 cache_dir=Path(tmp) / ".cache",
                 output_dir=Path(tmp) / "outputs",
             ),
-            "gemini": settings.gemini.model_copy(update={"second_reader": second_reader}),
+            "gemini": settings.gemini.model_copy(
+                update={"second_reader": second_reader, **gemini_overrides}
+            ),
         }
     )
     return GeminiClient(settings, _genai_client=mock_genai), mock_genai
@@ -602,39 +611,25 @@ class SourceBoxAndRequestRecorderTests(unittest.TestCase):
     def test_request_carries_one_image_part_per_page_at_medium_resolution(self) -> None:
         """Acceptance (5): the request recorder shows media_resolution set
         per part -- every one of the 16 page images, not a global config
-        knob."""
-        mock_genai = MagicMock()
-        resp = MagicMock(
-            text=json.dumps({"answers": []}),
-            candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
-            usage_metadata=MagicMock(prompt_token_count=5, candidates_token_count=5),
-        )
-        mock_genai.models.generate_content.return_value = resp
-        with _IsolatedEnv():
-            settings = load_settings(toml_path=None, cwd=Path(self.tmp))
-        settings = settings.model_copy(
-            update={
-                "paths": PathsSettings(
-                    cache_dir=Path(self.tmp) / ".cache",
-                    output_dir=Path(self.tmp) / "outputs",
-                )
-            }
-        )
-        client = GeminiClient(settings, _genai_client=mock_genai)
+        knob. Spec 2026-09-26 §7: pages now go through the Files API as
+        ``file_data`` parts (never ``inline_data``), so this asserts on the
+        URI-carrying part, not the old inline-bytes one."""
+        client, mock_genai = _client_with_responses(self.tmp, [{"answers": []}])
         extractor = GeminiAnswerExtractor(client)
 
         extractor(scan_path=self._FIXTURE, mark_scheme=_theory_mark_scheme())
 
         contents = mock_genai.models.generate_content.call_args.kwargs["contents"]
-        image_parts = [p for p in contents if getattr(p, "inline_data", None) is not None]
+        image_parts = [p for p in contents if getattr(p, "file_data", None) is not None]
         self.assertEqual(len(image_parts), 16)
         for part in image_parts:
+            self.assertIsNone(part.inline_data)
             self.assertIsNotNone(part.media_resolution)
             self.assertEqual(
                 str(part.media_resolution.level).upper().rsplit(".", 1)[-1],
                 "MEDIA_RESOLUTION_MEDIUM",
             )
-        mock_genai.files.upload.assert_not_called()
+        self.assertEqual(len(mock_genai.files.uploads), 16)
 
 
 class ExtractorWireSchemaTests(unittest.TestCase):
@@ -849,7 +844,7 @@ class MalformedSourceBoxCoordinateTests(unittest.TestCase):
         _write_minimal_pdf(self.scan, pages=2)
 
     def _run_with_source_box(self, source_box: object) -> tuple[ExtractedAnswers, MagicMock]:
-        mock_genai = MagicMock()
+        mock_genai = fake_genai_client()
         resp = MagicMock(
             text=json.dumps(
                 {
@@ -945,7 +940,7 @@ class MalformedSourceBoxCoordinateTests(unittest.TestCase):
         produce these for us (a Python ``float`` already collapses ``1e400``
         to ``inf`` at parse time, so there is no way to round-trip the
         literal text through it)."""
-        mock_genai = MagicMock()
+        mock_genai = fake_genai_client()
         raw_text = (
             '{"answers": [{"question_id": "1", "answer": "B", "confidence": 0.8, '
             f'"source_box": {source_box_json}}}]}}'
@@ -2031,3 +2026,123 @@ class AgreementTriggeredRereadTests(unittest.TestCase):
         extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
 
         extractor._rereader.reread.assert_not_called()
+
+
+class PageUploadLifecycleTests(unittest.TestCase):
+    """Spec 2026-09-26 §7, extractor half: pages are uploaded once per paper,
+    shared with the second read, and deleted whatever happens."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.scan = Path(self.tmp) / "scan.pdf"
+        _write_minimal_pdf(self.scan, pages=2)
+
+    def _parts(self, mock_genai: MagicMock, call_index: int = 0) -> list:
+        return mock_genai.models.generate_content.call_args_list[call_index].kwargs["contents"][1:]
+
+    def test_extraction_sends_page_uris_not_inline_bytes(self) -> None:
+        body = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
+        client, mock_genai = _client_with_responses(self.tmp, [body])
+        GeminiAnswerExtractor(client)(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        self.assertEqual(len(mock_genai.files.uploads), 2)
+        parts = self._parts(mock_genai)
+        self.assertEqual(len(parts), 2)
+        self.assertTrue(all(p.file_data is not None and p.inline_data is None for p in parts))
+
+    def test_second_read_reuses_the_extraction_uploads(self) -> None:
+        primary = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
+        second = {"answers": [{"question_id": "1", "answer": "A"}]}
+        client, mock_genai = _client_with_responses(
+            self.tmp, [primary, second], second_reader="cross_model"
+        )
+        GeminiAnswerExtractor(client)(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        self.assertEqual(len(mock_genai.files.uploads), 2)
+        first = [p.file_data.file_uri for p in self._parts(mock_genai, 0)]
+        second_uris = [p.file_data.file_uri for p in self._parts(mock_genai, 1)]
+        self.assertEqual(first, second_uris)
+
+    def test_uploaded_files_are_deleted_on_success(self) -> None:
+        body = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
+        client, mock_genai = _client_with_responses(self.tmp, [body])
+        GeminiAnswerExtractor(client)(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        self.assertEqual(sorted(mock_genai.files.deleted), ["files/fake-1", "files/fake-2"])
+
+    def test_uploaded_files_are_deleted_when_extraction_raises(self) -> None:
+        client, mock_genai = _client_with_responses(self.tmp, [], max_retries=0)
+        mock_genai.models.generate_content.side_effect = RuntimeError("400 bad request")
+        with self.assertRaises(ExternalServiceError):
+            GeminiAnswerExtractor(client)(
+                scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme()
+            )
+        self.assertEqual(len(mock_genai.files.uploads), 2)
+        self.assertEqual(sorted(mock_genai.files.deleted), ["files/fake-1", "files/fake-2"])
+
+    def test_uploaded_files_are_deleted_when_the_ceiling_trips_in_a_reread(self) -> None:
+        body = {
+            "answers": [
+                {
+                    "question_id": "1",
+                    "answer": "low",
+                    "confidence": 0.10,
+                    "source_box": {"page": 0, "box": [100, 100, 200, 400]},
+                }
+            ]
+        }
+        client, mock_genai = _client_with_responses(self.tmp, [body])
+        extractor = GeminiAnswerExtractor(client)
+        extractor._rereader.reread = MagicMock(  # type: ignore[method-assign]
+            side_effect=CostCeilingError("USD ceiling exceeded")
+        )
+        with self.assertRaises(CostCeilingError):
+            extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        self.assertEqual(sorted(mock_genai.files.deleted), ["files/fake-1", "files/fake-2"])
+
+    def test_rereads_still_send_inline_crops(self) -> None:
+        body = {
+            "answers": [
+                {
+                    "question_id": "1",
+                    "answer": "low",
+                    "confidence": 0.10,
+                    "source_box": {"page": 0, "box": [100, 100, 200, 400]},
+                }
+            ]
+        }
+        reread = {"answer": "low"}
+        client, mock_genai = _client_with_responses(self.tmp, [body, reread])
+        GeminiAnswerExtractor(client)(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        self.assertEqual(len(mock_genai.files.uploads), 2)  # pages only, no crop upload
+        crop_parts = self._parts(mock_genai, 1)
+        self.assertEqual(len(crop_parts), 1)
+        self.assertIsNotNone(crop_parts[0].inline_data)
+
+    def test_a_40_page_worst_case_paper_never_builds_an_inline_payload(self) -> None:
+        noise = Image.frombytes("L", (1414, 1414), os.urandom(1414 * 1414))
+        buf = io.BytesIO()
+        noise.save(buf, format="PNG")
+        page_png = buf.getvalue()
+        self.assertGreater(len(page_png), 1_500_000)  # incompressible: ~2 MB per page
+        pages = [
+            RasterisedPage(index=i, width=1414, height=1414, png_bytes=page_png) for i in range(40)
+        ]
+        body = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
+        client, mock_genai = _client_with_responses(self.tmp, [body])
+        with patch("lemely.io.answer_extraction.rasterise_scan_to_pages", return_value=pages):
+            GeminiAnswerExtractor(client)(
+                scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme()
+            )
+        self.assertEqual(len(mock_genai.files.uploads), 40)
+        parts = self._parts(mock_genai)
+        self.assertEqual(len(parts), 40)
+        inline_bytes = sum(len(p.inline_data.data) for p in parts if p.inline_data is not None)
+        self.assertEqual(inline_bytes, 0)
+
+    def test_extraction_cache_hit_uploads_nothing_and_deletes_nothing(self) -> None:
+        body = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
+        client, mock_genai = _client_with_responses(self.tmp, [body])
+        extractor = GeminiAnswerExtractor(client)
+        extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        uploads_after_first = len(mock_genai.files.uploads)
+        extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        self.assertEqual(len(mock_genai.files.uploads), uploads_after_first)
+        self.assertEqual(mock_genai.models.generate_content.call_count, 1)

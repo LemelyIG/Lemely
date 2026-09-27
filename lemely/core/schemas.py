@@ -627,7 +627,9 @@ class ExtractedAnswers(StrictModel):
     with this ambiguity meant a malformed-JSON drop and a genuine student
     blank were indistinguishable to every downstream consumer. Remapped to
     real manifest ids by :func:`normalize_extracted_answers`, the same as
-    ``answers``' own ids. Empty when nothing was dropped with a known id."""
+    ``answers``' own ids. Empty when nothing was dropped with a known id.
+    An id here means an entry for it was dropped; ``correct_paper`` only
+    short-circuits an id with no surviving answer (spec 2026-09-26 §2)."""
     rereads_eligible: int = 0
     """How many answers were low-confidence enough (below
     ``reread_threshold``) to be eligible for a crop-and-re-read, before the

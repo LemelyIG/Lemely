@@ -119,6 +119,16 @@ class BuildSecondReaderTests(unittest.TestCase):
         reader = build_second_reader(client, settings)
         self.assertIsInstance(reader, StructuralSecondReader)
 
+    def test_read_forwards_image_uploads_to_the_client(self) -> None:
+        for cls in (CrossModelSecondReader, StructuralSecondReader):
+            client = MagicMock()
+            client.generate_structured.return_value = MagicMock(answers=[])
+            uploads = object()
+            cls(client, model="m").read(
+                MagicMock(), [b"page"], extra_cache_key="k", image_uploads=uploads
+            )
+            self.assertIs(client.generate_structured.call_args.kwargs["image_uploads"], uploads)
+
 
 class ComputeAgreementTests(unittest.TestCase):
     def test_matches_by_question_id_and_bounds_hold(self) -> None:

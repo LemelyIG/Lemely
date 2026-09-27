@@ -65,7 +65,7 @@ from lemely.io.prompts.answer_extraction import (
 if TYPE_CHECKING:
     from lemely.core.loose_schemas import MarkScheme
     from lemely.core.schemas import ExtractedAnswer
-    from lemely.io.gemini import GeminiClient
+    from lemely.io.gemini import GeminiClient, ImageUploads
     from lemely.runtime.config import GeminiSettings
 
 # Plan (I3): "Re-read (I1) fires on agreement < 0.8." Consumed by
@@ -110,12 +110,16 @@ class SecondReader(Protocol):
         image_parts: list[bytes],
         *,
         extra_cache_key: str,
+        image_uploads: ImageUploads | None = None,
     ) -> dict[str, str]:
         """Return ``{question_id: answer_text}`` for the second read.
 
         A question_id the second read could not find is simply absent from
         the result -- callers must treat a missing key as "no second
         opinion for this question", not implicitly agree or disagree.
+        ``image_uploads`` (spec 2026-09-26 §7) is the extraction's own
+        uploaded pages, so the second read reuses them instead of uploading
+        again.
         """
         ...
 
@@ -133,11 +137,13 @@ class CrossModelSecondReader:
         image_parts: list[bytes],
         *,
         extra_cache_key: str,
+        image_uploads: ImageUploads | None = None,
     ) -> dict[str, str]:
         result = self._client.generate_structured(
             system_prompt=EXTRACTOR_SYSTEM_PROMPT,
             user_prompt=build_extractor_user_prompt(mark_scheme, page_count=len(image_parts)),
             image_parts=image_parts,
+            image_uploads=image_uploads,
             media_resolution=SECOND_READ_MEDIA_RESOLUTION,
             response_schema=SecondReadOutput,
             prompt_version=VERSION,
@@ -166,11 +172,13 @@ class StructuralSecondReader:
         image_parts: list[bytes],
         *,
         extra_cache_key: str,
+        image_uploads: ImageUploads | None = None,
     ) -> dict[str, str]:
         result = self._client.generate_structured(
             system_prompt=FIELD_GUIDED_SYSTEM_PROMPT,
             user_prompt=build_extractor_user_prompt(mark_scheme, page_count=len(image_parts)),
             image_parts=image_parts,
+            image_uploads=image_uploads,
             media_resolution=SECOND_READ_MEDIA_RESOLUTION,
             response_schema=SecondReadOutput,
             prompt_version=VERSION,

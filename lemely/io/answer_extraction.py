@@ -770,7 +770,12 @@ class GeminiAnswerExtractor:
         # per-page call would lose.
         pages: list[RasterisedPage] = rasterise_scan_to_pages(scan_path)
 
-        hygiene = check_scan_hygiene(pages)
+        # Carry-over from spec 2026-09-26 review: a page can be rendered
+        # below EXTRACTION_DPI (lemely.io.scan_limits' downscale-on-oversize
+        # path), so the hygiene check must be told the real DPI it was
+        # rasterised at -- otherwise a downscaled scan's warning claims
+        # "200 DPI" when the page was actually rendered lower.
+        hygiene = check_scan_hygiene(pages, dpi=min(p.dpi for p in pages))
         if hygiene.warnings:
             # T2.6: never silent. Surfaced as a bus event regardless of
             # severity -- the UI/caller decides what to do with it, this
@@ -781,6 +786,8 @@ class GeminiAnswerExtractor:
                 page_count_actual=hygiene.page_count_actual,
                 page_count_expected=hygiene.page_count_expected,
             )
+
+        g = self._client._settings.gemini
 
         reread_kwargs = (
             {}
@@ -794,263 +801,270 @@ class GeminiAnswerExtractor:
         if effective_reread_threshold is None:
             effective_reread_threshold = DEFAULT_CONFIDENCE_THRESHOLD
 
-        raw = self._client.generate_structured(
-            system_prompt=EXTRACTOR_SYSTEM_PROMPT,
-            user_prompt=build_extractor_user_prompt(mark_scheme, page_count=len(pages)),
-            image_parts=[p.png_bytes for p in pages],
-            media_resolution=EXTRACTION_MEDIA_RESOLUTION,
-            response_schema=_ExtractorOutput,
-            prompt_version=VERSION,
-            extra_cache_key=manifest_key,
-            task_tag="extraction",
-        )
-        # Build a type-hint map from mark scheme for calibration
-        type_hint_map: dict[str, str] = {}
-        for q in mark_scheme.all_questions_flat():
-            if not q.parts and q.marks > 0:
-                type_hint_map[q.id] = q.type.value
-
-        # US-031 review MUST-FIX 6: validate each list element individually
-        # -- a malformed element (a bare string, a positional list, `null`)
-        # must not fail pydantic validation for the whole `answers` list and
-        # lose every other, possibly good, answer with it. An element that
-        # cannot be shaped into a _RawExtractedAnswer at all is folded into
-        # the same "whole answer dropped" bucket _to_extracted_answer's own
-        # unrecoverable question_id/answer case uses, under the
-        # "malformed_answer_shape" reason.
-        converted: list[tuple[ExtractedAnswer | None, dict[str, str], str | None]] = []
-        for raw_answer, shape_reason in _parse_raw_answers(raw.answers):
-            if raw_answer is None:
-                converted.append((None, {"shape": shape_reason or "malformed_answer_shape"}, None))
-                continue
-            converted.append(_to_extracted_answer(raw_answer, len(pages)))
-        answers = [a for a, _reasons, _dropped_qid in converted if a is not None]
-
-        # US-031: a bad question_id/answer/list-element shape drops the
-        # whole *answer* here (there is nothing left to key or grade), never
-        # the whole paper -- counted the same way I1 review finding 5
-        # already counts source_box drops, so the loss is visible rather
-        # than a paper silently coming back short.
-        answer_drops: dict[str, int] = {}
-        # I1 review finding 5: an out-of-range page index and a malformed
-        # coordinate are both silently dropped to source_box=None inside
-        # _to_extracted_answer -- surface the count so a later box-hit-rate
-        # metric's denominator shape is visible rather than implicit. Kept
-        # (not just published) below on ExtractedAnswers.source_box_drops
-        # (I1 review round 2, should-fix 4) so the count travels with the
-        # record a box-hit-rate metric actually reads, not only a live event.
-        source_box_drops: dict[str, int] = {}
-        # US-031: confidence can't be dropped to None like source_box (it is
-        # required) -- an unusable value is instead replaced with
-        # _FALLBACK_CONFIDENCE, and that repair is counted here the same
-        # way, so a metric reading ExtractedAnswers can tell "the model gave
-        # a real confidence" from "this run had to fabricate one".
-        confidence_repairs: dict[str, int] = {}
-        # Review NIT A: source_region/working_out are cosmetic (not part of
-        # marking or matching), so a bad value here never drops the answer
-        # -- but it must still be counted, not silently discarded, to keep
-        # the same (value, drop_reason) idiom every other field follows.
-        field_repairs: dict[str, int] = {}
-        # US-031 review MUST-FIX 7 (stronger fix): the subset of dropped
-        # answers whose question_id survived coercion -- i.e. the answer
-        # itself, not its identity, was unusable. correct_paper needs this
-        # to tell "extracted and dropped" apart from "never extracted at
-        # all"; see ExtractedAnswers.dropped_question_ids.
-        dropped_question_ids: list[str] = []
-        for a, reasons, dropped_qid in converted:
-            if a is None:
-                reason = (
-                    reasons.get("shape")
-                    or reasons.get("question_id")
-                    or reasons.get("answer")
-                    or "unknown"
-                )
-                answer_drops[reason] = answer_drops.get(reason, 0) + 1
-                if dropped_qid is not None:
-                    dropped_question_ids.append(dropped_qid)
-                continue
-            if "confidence" in reasons:
-                reason = reasons["confidence"]
-                confidence_repairs[reason] = confidence_repairs.get(reason, 0) + 1
-            if "source_box" in reasons:
-                reason = reasons["source_box"]
-                source_box_drops[reason] = source_box_drops.get(reason, 0) + 1
-            for field_name in ("source_region", "working_out"):
-                if field_name in reasons:
-                    reason = reasons[field_name]
-                    field_repairs[reason] = field_repairs.get(reason, 0) + 1
-        if source_box_drops:
-            bus.publish(
-                EventType.SOURCE_BOX_DROPPED,
-                counts=source_box_drops,
-                total_answers=len(converted),
+        # Spec 2026-09-26 §7: page images go through the Files API, uploaded
+        # lazily (only on a cache miss) and once per paper -- the second read
+        # below reuses the same URIs -- and deleted on exit, whatever happens.
+        page_bytes = [p.png_bytes for p in pages]
+        with self._client.image_uploads(page_bytes, concurrency=g.upload_concurrency) as uploads:
+            raw = self._client.generate_structured(
+                system_prompt=EXTRACTOR_SYSTEM_PROMPT,
+                user_prompt=build_extractor_user_prompt(mark_scheme, page_count=len(pages)),
+                image_parts=page_bytes,
+                image_uploads=uploads,
+                media_resolution=EXTRACTION_MEDIA_RESOLUTION,
+                response_schema=_ExtractorOutput,
+                prompt_version=VERSION,
+                extra_cache_key=manifest_key,
+                task_tag="extraction",
             )
-        # US-031 review MUST-FIX 7: a comment here previously claimed this
-        # loss was "visible… the same way source_box drops are" while
-        # publishing nothing -- answer_drops/confidence_repairs had zero
-        # consumers anywhere in the tree. Publish for real, the same way
-        # SOURCE_BOX_DROPPED is published immediately above, so the claim is
-        # true. This event is TELEMETRY, not the review gate: the flagging is
-        # wired through `ExtractedAnswers.dropped_question_ids`, which
-        # `correct_paper` short-circuits on before dispatching to the MCQ or
-        # AI path (review MUST-FIX 7, stronger fix). So a dropped answer is
-        # flagged and costs no marking call -- but only for the two reasons
-        # that leave a usable question_id (`missing_answer`,
-        # `malformed_answer`). The other three (`missing_question_id`,
-        # `malformed_question_id`, `malformed_answer_shape`) have no id to
-        # attribute a flag to, and what that costs depends on the leaf. On a
-        # non-MCQ leaf with an AI marker configured the paid call is CERTAIN
-        # (`ai.mark_question` is reached unconditionally) and the confident
-        # unflagged mark is CONTINGENT -- it needs the model's response to
-        # clear all four of `_build_ai_corrected`'s review gates, which it
-        # CAN. An MCQ leaf (or `--mcq-only`/no client) is already flagged at
-        # 0.0 with no call, but only because the absent id looks exactly like a
-        # genuine blank, so review_reason carries that path's blank message
-        # instead of the truth. See `CorrectedQuestion.marker_source`'s
-        # coverage-limit note (review MUST-FIX F1) for the full split.
-        # These counts are also KEPT, not only published: `answer_drops` is a
-        # field on `ExtractedAnswers`, the same reasoning as `source_box_drops`
-        # above, so the per-reason totals travel with the record and this event
-        # is not the only trace of what was dropped.
-        if answer_drops or confidence_repairs or field_repairs:
-            bus.publish(
-                EventType.ANSWER_DROPPED,
-                answer_drops=answer_drops,
-                confidence_repairs=confidence_repairs,
-                field_repairs=field_repairs,
-                total_answers=len(converted),
-            )
+            # Build a type-hint map from mark scheme for calibration
+            type_hint_map: dict[str, str] = {}
+            for q in mark_scheme.all_questions_flat():
+                if not q.parts and q.marks > 0:
+                    type_hint_map[q.id] = q.type.value
 
-        calibrated: list[ExtractedAnswer] = []
-        for a in answers:
-            hint = type_hint_map.get(a.question_id)
-            new_conf = _calibrate_confidence(a, question_type_hint=hint)
-            a = a.model_copy(update={"confidence": new_conf})
-            calibrated.append(a)
-        answers = calibrated
-
-        # I3 (US-010, label-free half): an independent second read of the
-        # whole paper, if configured (default "none" -- no second call, no
-        # behaviour change). Populates extraction_agreement per answer,
-        # matched by question_id; an answer the second read did not return
-        # keeps extraction_agreement=None (see compute_agreement).
-        g = self._client._settings.gemini
-        second_reader = build_second_reader(self._client, g)
-        if second_reader is not None:
-            second_read_texts = second_reader.read(
-                mark_scheme, [p.png_bytes for p in pages], extra_cache_key=manifest_key
-            )
-            agreements = compute_agreement(answers, second_read_texts)
-            answers = [
-                a.model_copy(update={"extraction_agreement": agreements[a.question_id]})
-                if a.question_id in agreements
-                else a
-                for a in answers
-            ]
-
-        # Crop-and-re-read: a second, zoomed-in look at exactly the pixels
-        # each low-confidence answer's own box says the answer lives in.
-        #
-        # I1 review finding 9: uncapped, a paper with 30 low-confidence
-        # answers issued 31 total API calls. Cap the number of re-reads
-        # actually run per paper (DEFAULT_MAX_REREADS_PER_PAPER /
-        # max_rereads_per_paper), spending the cap on the lowest-confidence
-        # answers first since those are the ones re-reading helps most, and
-        # record when the cap binds so the count is visible rather than the
-        # re-read set silently truncating.
-        #
-        # I3: low cross-read agreement (< REREAD_AGREEMENT_THRESHOLD) also
-        # makes an answer eligible, alongside should_reread's confidence-only
-        # check -- wired HERE rather than inside should_reread
-        # (lemely.io.reread) because reread.py is outside this story's file
-        # ownership; should_reread's own contract is unchanged. With the
-        # default second_reader="none", extraction_agreement is always None
-        # and this condition can never fire, so behaviour is unchanged on
-        # every existing path. The same cap/sort logic below stays generic
-        # over why an answer became eligible.
-        def _agreement_triggers_reread(a: ExtractedAnswer) -> bool:
-            return (
-                a.source_box is not None
-                and a.extraction_agreement is not None
-                and a.extraction_agreement < REREAD_AGREEMENT_THRESHOLD
-            )
-
-        eligible_indices = [
-            i
-            for i, a in enumerate(answers)
-            if should_reread(a, **reread_kwargs) or _agreement_triggers_reread(a)
-        ]
-        to_reread = sorted(eligible_indices, key=lambda i: answers[i].confidence)[
-            : self._max_rereads_per_paper
-        ]
-        if len(eligible_indices) > len(to_reread):
-            bus.publish(
-                EventType.REREAD_CAP_REACHED,
-                eligible=len(eligible_indices),
-                cap=self._max_rereads_per_paper,
-                skipped=len(eligible_indices) - len(to_reread),
-            )
-        to_reread_set = set(to_reread)
-
-        reread: list[ExtractedAnswer] = []
-        for i, a in enumerate(answers):
-            if i in to_reread_set:
-                try:
-                    a = self._rereader.reread(a, pages, extra_cache_key=manifest_key)
-                except CostCeilingError:
-                    # I1 review round 2, MUST-FIX 1: a per-run token/USD
-                    # ceiling breach is a stop signal for the whole run, not
-                    # a per-answer failure the re-read step is allowed to
-                    # absorb -- swallowing it as a REREAD_FAILED event turned
-                    # the $14 spend guard advisory. Re-raise so the run
-                    # actually stops here rather than issuing further paid
-                    # calls.
-                    raise
-                except LemelyError as exc:
-                    # I1 review MUST-FIX 2: the re-read is an enhancement on
-                    # a low-confidence answer, and must never be able to
-                    # take the whole paper's extraction down with it. Keep
-                    # the primary answer (answer_reread/reread_agreement
-                    # stay None) and surface the failure rather than
-                    # swallowing it.
-                    bus.publish(
-                        EventType.REREAD_FAILED,
-                        question_id=a.question_id,
-                        error=str(exc),
+            # US-031 review MUST-FIX 6: validate each list element individually
+            # -- a malformed element (a bare string, a positional list, `null`)
+            # must not fail pydantic validation for the whole `answers` list and
+            # lose every other, possibly good, answer with it. An element that
+            # cannot be shaped into a _RawExtractedAnswer at all is folded into
+            # the same "whole answer dropped" bucket _to_extracted_answer's own
+            # unrecoverable question_id/answer case uses, under the
+            # "malformed_answer_shape" reason.
+            converted: list[tuple[ExtractedAnswer | None, dict[str, str], str | None]] = []
+            for raw_answer, shape_reason in _parse_raw_answers(raw.answers):
+                if raw_answer is None:
+                    converted.append(
+                        (None, {"shape": shape_reason or "malformed_answer_shape"}, None)
                     )
-            reread.append(a)
-        answers = reread
-        # `index` is the 1-based position inside `answers` (from enumerate), not a
-        # tally of frames already emitted. Should a publish ever be skipped for one
-        # answer, the later indices still match the real work list, so the UI's
-        # "Question 7 of 21" keeps pointing at the question actually being reported.
-        total_answers = len(answers)
-        for index, a in enumerate(answers, start=1):
-            bus.publish(
-                EventType.EXTRACTION_PROGRESS,
-                question_id=a.question_id,
-                confidence=a.confidence,
-                has_working=a.working_out is not None,
-                index=index,
-                total=total_answers,
+                    continue
+                converted.append(_to_extracted_answer(raw_answer, len(pages)))
+            answers = [a for a, _reasons, _dropped_qid in converted if a is not None]
+
+            # US-031: a bad question_id/answer/list-element shape drops the
+            # whole *answer* here (there is nothing left to key or grade), never
+            # the whole paper -- counted the same way I1 review finding 5
+            # already counts source_box drops, so the loss is visible rather
+            # than a paper silently coming back short.
+            answer_drops: dict[str, int] = {}
+            # I1 review finding 5: an out-of-range page index and a malformed
+            # coordinate are both silently dropped to source_box=None inside
+            # _to_extracted_answer -- surface the count so a later box-hit-rate
+            # metric's denominator shape is visible rather than implicit. Kept
+            # (not just published) below on ExtractedAnswers.source_box_drops
+            # (I1 review round 2, should-fix 4) so the count travels with the
+            # record a box-hit-rate metric actually reads, not only a live event.
+            source_box_drops: dict[str, int] = {}
+            # US-031: confidence can't be dropped to None like source_box (it is
+            # required) -- an unusable value is instead replaced with
+            # _FALLBACK_CONFIDENCE, and that repair is counted here the same
+            # way, so a metric reading ExtractedAnswers can tell "the model gave
+            # a real confidence" from "this run had to fabricate one".
+            confidence_repairs: dict[str, int] = {}
+            # Review NIT A: source_region/working_out are cosmetic (not part of
+            # marking or matching), so a bad value here never drops the answer
+            # -- but it must still be counted, not silently discarded, to keep
+            # the same (value, drop_reason) idiom every other field follows.
+            field_repairs: dict[str, int] = {}
+            # US-031 review MUST-FIX 7 (stronger fix): the subset of dropped
+            # answers whose question_id survived coercion -- i.e. the answer
+            # itself, not its identity, was unusable. correct_paper needs this
+            # to tell "extracted and dropped" apart from "never extracted at
+            # all"; see ExtractedAnswers.dropped_question_ids.
+            dropped_question_ids: list[str] = []
+            for a, reasons, dropped_qid in converted:
+                if a is None:
+                    reason = (
+                        reasons.get("shape")
+                        or reasons.get("question_id")
+                        or reasons.get("answer")
+                        or "unknown"
+                    )
+                    answer_drops[reason] = answer_drops.get(reason, 0) + 1
+                    if dropped_qid is not None:
+                        dropped_question_ids.append(dropped_qid)
+                    continue
+                if "confidence" in reasons:
+                    reason = reasons["confidence"]
+                    confidence_repairs[reason] = confidence_repairs.get(reason, 0) + 1
+                if "source_box" in reasons:
+                    reason = reasons["source_box"]
+                    source_box_drops[reason] = source_box_drops.get(reason, 0) + 1
+                for field_name in ("source_region", "working_out"):
+                    if field_name in reasons:
+                        reason = reasons[field_name]
+                        field_repairs[reason] = field_repairs.get(reason, 0) + 1
+            if source_box_drops:
+                bus.publish(
+                    EventType.SOURCE_BOX_DROPPED,
+                    counts=source_box_drops,
+                    total_answers=len(converted),
+                )
+            # US-031 review MUST-FIX 7: a comment here previously claimed this
+            # loss was "visible… the same way source_box drops are" while
+            # publishing nothing -- answer_drops/confidence_repairs had zero
+            # consumers anywhere in the tree. Publish for real, the same way
+            # SOURCE_BOX_DROPPED is published immediately above, so the claim is
+            # true. This event is TELEMETRY, not the review gate: the flagging is
+            # wired through `ExtractedAnswers.dropped_question_ids`, which
+            # `correct_paper` short-circuits on before dispatching to the MCQ or
+            # AI path (review MUST-FIX 7, stronger fix). So a dropped answer is
+            # flagged and costs no marking call -- but only for the two reasons
+            # that leave a usable question_id (`missing_answer`,
+            # `malformed_answer`). The other three (`missing_question_id`,
+            # `malformed_question_id`, `malformed_answer_shape`) have no id to
+            # attribute a flag to, and what that costs depends on the leaf. On a
+            # non-MCQ leaf with an AI marker configured the paid call is CERTAIN
+            # (`ai.mark_question` is reached unconditionally) and the confident
+            # unflagged mark is CONTINGENT -- it needs the model's response to
+            # clear all four of `_build_ai_corrected`'s review gates, which it
+            # CAN. An MCQ leaf (or `--mcq-only`/no client) is already flagged at
+            # 0.0 with no call, but only because the absent id looks exactly like a
+            # genuine blank, so review_reason carries that path's blank message
+            # instead of the truth. See `CorrectedQuestion.marker_source`'s
+            # coverage-limit note (review MUST-FIX F1) for the full split.
+            # These counts are also KEPT, not only published: `answer_drops` is a
+            # field on `ExtractedAnswers`, the same reasoning as `source_box_drops`
+            # above, so the per-reason totals travel with the record and this event
+            # is not the only trace of what was dropped.
+            if answer_drops or confidence_repairs or field_repairs:
+                bus.publish(
+                    EventType.ANSWER_DROPPED,
+                    answer_drops=answer_drops,
+                    confidence_repairs=confidence_repairs,
+                    field_repairs=field_repairs,
+                    total_answers=len(converted),
+                )
+
+            calibrated: list[ExtractedAnswer] = []
+            for a in answers:
+                hint = type_hint_map.get(a.question_id)
+                new_conf = _calibrate_confidence(a, question_type_hint=hint)
+                a = a.model_copy(update={"confidence": new_conf})
+                calibrated.append(a)
+            answers = calibrated
+
+            # I3 (US-010, label-free half): an independent second read of the
+            # whole paper, if configured (default "none" -- no second call, no
+            # behaviour change). Populates extraction_agreement per answer,
+            # matched by question_id; an answer the second read did not return
+            # keeps extraction_agreement=None (see compute_agreement).
+            second_reader = build_second_reader(self._client, g)
+            if second_reader is not None:
+                second_read_texts = second_reader.read(
+                    mark_scheme, page_bytes, extra_cache_key=manifest_key, image_uploads=uploads
+                )
+                agreements = compute_agreement(answers, second_read_texts)
+                answers = [
+                    a.model_copy(update={"extraction_agreement": agreements[a.question_id]})
+                    if a.question_id in agreements
+                    else a
+                    for a in answers
+                ]
+
+            # Crop-and-re-read: a second, zoomed-in look at exactly the pixels
+            # each low-confidence answer's own box says the answer lives in.
+            #
+            # I1 review finding 9: uncapped, a paper with 30 low-confidence
+            # answers issued 31 total API calls. Cap the number of re-reads
+            # actually run per paper (DEFAULT_MAX_REREADS_PER_PAPER /
+            # max_rereads_per_paper), spending the cap on the lowest-confidence
+            # answers first since those are the ones re-reading helps most, and
+            # record when the cap binds so the count is visible rather than the
+            # re-read set silently truncating.
+            #
+            # I3: low cross-read agreement (< REREAD_AGREEMENT_THRESHOLD) also
+            # makes an answer eligible, alongside should_reread's confidence-only
+            # check -- wired HERE rather than inside should_reread
+            # (lemely.io.reread) because reread.py is outside this story's file
+            # ownership; should_reread's own contract is unchanged. With the
+            # default second_reader="none", extraction_agreement is always None
+            # and this condition can never fire, so behaviour is unchanged on
+            # every existing path. The same cap/sort logic below stays generic
+            # over why an answer became eligible.
+            def _agreement_triggers_reread(a: ExtractedAnswer) -> bool:
+                return (
+                    a.source_box is not None
+                    and a.extraction_agreement is not None
+                    and a.extraction_agreement < REREAD_AGREEMENT_THRESHOLD
+                )
+
+            eligible_indices = [
+                i
+                for i, a in enumerate(answers)
+                if should_reread(a, **reread_kwargs) or _agreement_triggers_reread(a)
+            ]
+            to_reread = sorted(eligible_indices, key=lambda i: answers[i].confidence)[
+                : self._max_rereads_per_paper
+            ]
+            if len(eligible_indices) > len(to_reread):
+                bus.publish(
+                    EventType.REREAD_CAP_REACHED,
+                    eligible=len(eligible_indices),
+                    cap=self._max_rereads_per_paper,
+                    skipped=len(eligible_indices) - len(to_reread),
+                )
+            to_reread_set = set(to_reread)
+
+            reread: list[ExtractedAnswer] = []
+            for i, a in enumerate(answers):
+                if i in to_reread_set:
+                    try:
+                        a = self._rereader.reread(a, pages, extra_cache_key=manifest_key)
+                    except CostCeilingError:
+                        # I1 review round 2, MUST-FIX 1: a per-run token/USD
+                        # ceiling breach is a stop signal for the whole run, not
+                        # a per-answer failure the re-read step is allowed to
+                        # absorb -- swallowing it as a REREAD_FAILED event turned
+                        # the $14 spend guard advisory. Re-raise so the run
+                        # actually stops here rather than issuing further paid
+                        # calls.
+                        raise
+                    except LemelyError as exc:
+                        # I1 review MUST-FIX 2: the re-read is an enhancement on
+                        # a low-confidence answer, and must never be able to
+                        # take the whole paper's extraction down with it. Keep
+                        # the primary answer (answer_reread/reread_agreement
+                        # stay None) and surface the failure rather than
+                        # swallowing it.
+                        bus.publish(
+                            EventType.REREAD_FAILED,
+                            question_id=a.question_id,
+                            error=str(exc),
+                        )
+                reread.append(a)
+            answers = reread
+            # `index` is the 1-based position inside `answers` (from enumerate), not a
+            # tally of frames already emitted. Should a publish ever be skipped for one
+            # answer, the later indices still match the real work list, so the UI's
+            # "Question 7 of 21" keeps pointing at the question actually being reported.
+            total_answers = len(answers)
+            for index, a in enumerate(answers, start=1):
+                bus.publish(
+                    EventType.EXTRACTION_PROGRESS,
+                    question_id=a.question_id,
+                    confidence=a.confidence,
+                    has_working=a.working_out is not None,
+                    index=index,
+                    total=total_answers,
+                )
+            manifest_ids = [
+                q.id for q in mark_scheme.all_questions_flat() if q.marks > 0 and not q.parts
+            ]
+            normalized_result = normalize_extracted_answers(
+                ExtractedAnswers(
+                    paper_id=_build_paper_id(mark_scheme),
+                    source_scan=str(scan_path),
+                    answers=answers,
+                    source_box_drops=source_box_drops,
+                    answer_drops=answer_drops,
+                    confidence_repairs=confidence_repairs,
+                    field_repairs=field_repairs,
+                    dropped_question_ids=dropped_question_ids,
+                    rereads_eligible=len(eligible_indices),
+                    reread_attempts=len(to_reread),
+                    reread_threshold=effective_reread_threshold,
+                ),
+                manifest_ids,
             )
-        manifest_ids = [
-            q.id for q in mark_scheme.all_questions_flat() if q.marks > 0 and not q.parts
-        ]
-        normalized_result = normalize_extracted_answers(
-            ExtractedAnswers(
-                paper_id=_build_paper_id(mark_scheme),
-                source_scan=str(scan_path),
-                answers=answers,
-                source_box_drops=source_box_drops,
-                answer_drops=answer_drops,
-                confidence_repairs=confidence_repairs,
-                field_repairs=field_repairs,
-                dropped_question_ids=dropped_question_ids,
-                rereads_eligible=len(eligible_indices),
-                reread_attempts=len(to_reread),
-                reread_threshold=effective_reread_threshold,
-            ),
-            manifest_ids,
-        )
         return normalized_result
