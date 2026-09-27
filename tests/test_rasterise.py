@@ -135,9 +135,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         return path
 
     def test_a_within_band_pdf_page_comes_back_downscaled_with_its_dpi_recorded(self) -> None:
-        # A1 (1684x2384pt, ~31 Mpx at 200 DPI) -- see the note in
-        # test_scan_limits.py's matching test for why this is A1's dimensions,
-        # not the brief's mislabelled "a2.pdf".
+        # A1: 1684x2384 pt is ~31 Mpx at 200 DPI, which gives 143 DPI.
         pages = rasterise_pdf_to_pages(self._pdf("a1.pdf", (1684.0, 2384.0)))
         self.assertEqual(pages[0].dpi, 143.0)
         self.assertLessEqual(pages[0].width * pages[0].height, 16_000_000)

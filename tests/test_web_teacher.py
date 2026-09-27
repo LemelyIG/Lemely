@@ -614,20 +614,29 @@ def test_upload_rejects_an_oversized_page_geometry_with_422(
     assert storage_backend._objects == {}, "a rejected scan must never reach storage"
 
 
-def test_upload_with_a_malformed_page_tree_still_succeeds(client: TestClient) -> None:
+def test_upload_with_a_malformed_page_tree_still_succeeds(
+    client: TestClient, paper_repo: TeacherPaperRepository
+) -> None:
     """Regression: a PDF that opens but has a page that will not load (a
     broken ``/Kids`` entry, an inflated ``/Count``) used to crash this route
     with a 500 (``lemely.io.scan_limits.plan_pdf_pages`` raised pypdfium2's
     own ``PdfiumError``, uncaught). It must upload exactly like any other
     scan this module cannot fully make sense of -- extraction handles it
-    later, same as before this task existed."""
-    from tests.test_scan_limits import _pdf_with_missing_kid_object
+    later, same as before this task existed.
+
+    ``_settle`` drains the background grading job before the test (and its
+    DB fixtures) tear down -- without it, that job can still be rasterising
+    the malformed PDF (and legitimately failing on it) when the throwaway
+    Postgres connection it holds is closed underneath it.
+    """
+    from tests.pdf_fakes import pdf_with_missing_kid_object
 
     resp = client.post(
         "/api/papers/upload",
-        files={"scan": ("scan.pdf", _pdf_with_missing_kid_object(), "application/pdf")},
+        files={"scan": ("scan.pdf", pdf_with_missing_kid_object(), "application/pdf")},
     )
     assert resp.status_code == 200
+    _settle(paper_repo, resp.json()["paperId"])
 
 
 def test_detection_failure_is_recorded_without_failing_the_upload(

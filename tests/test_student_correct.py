@@ -764,6 +764,26 @@ def test_upload_rejects_an_oversized_page_geometry_with_422(
     assert "too large to process" in resp.json()["detail"]
 
 
+def test_upload_with_a_malformed_page_tree_still_succeeds(
+    client: tuple[TestClient, str, StudentUploadRepository],
+) -> None:
+    """Regression: a PDF that opens but has a page that will not load (a
+    broken ``/Kids`` entry) used to crash this route with a 500 (see
+    ``tests/test_web_teacher.py``'s route-level counterpart and
+    ``tests/test_scan_limits.py``'s unit-level coverage). It must upload
+    exactly like any other scan this module cannot fully make sense of --
+    extraction handles it later, same as before this task existed."""
+    from tests.pdf_fakes import pdf_with_missing_kid_object
+
+    api, _, _ = client
+    resp = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", pdf_with_missing_kid_object(), "application/pdf")},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["paperId"]
+
+
 def test_correct_marks_upload_complete(
     client: tuple[TestClient, str, StudentUploadRepository],
 ) -> None:
