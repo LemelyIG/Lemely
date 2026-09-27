@@ -32,7 +32,9 @@ import pypdfium2 as pdfium
 from lemely.io.scan_limits import (
     EXTRACTION_DPI,
     PDF_MAGIC,
+    ScanRejectedError,
     ScanTooLargeError,
+    check_pdf_content_path,
     looks_like_pdf,
     plan_image,
     plan_pdf_pages,
@@ -45,6 +47,7 @@ __all__ = [
     "EXTRACTION_DPI",
     "PDF_MAGIC",
     "RasterisedPage",
+    "ScanRejectedError",
     "ScanTooLargeError",
     "looks_like_pdf",
     "rasterise_pdf_to_pages",
@@ -76,10 +79,16 @@ def rasterise_pdf_to_pages(pdf_path: Path, *, dpi: float = EXTRACTION_DPI) -> li
 
     Raises :class:`ScanTooLargeError` before any render when the document
     has more than ``MAX_SCAN_PAGES`` pages or a page beyond
-    ``MAX_DECODE_PX``, and :class:`ValueError` if the PDF has no pages — an
-    empty extraction call would silently carry no evidence at all rather
-    than fail loudly.
+    ``MAX_DECODE_PX``, or a page whose content streams decode past
+    ``MAX_PAGE_CONTENT_BYTES`` (``ScanTooLargeError``), or a content encoding
+    that cannot be bounded (``ScanUnsupportedEncodingError``), and
+    :class:`ValueError` if the PDF has no pages — an empty extraction call
+    would silently carry no evidence at all rather than fail loudly.
     """
+    # Task 11b: an old stored upload can pre-date the upload-time check, and
+    # pypdfium2 parses a page's whole content stream on render -- measured at
+    # 2.2 GB for a 218 KB bomb. Refuse from the raw streams first.
+    check_pdf_content_path(pdf_path)
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
         plans = plan_pdf_pages(pdf, dpi=dpi)

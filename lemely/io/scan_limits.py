@@ -19,8 +19,11 @@ from __future__ import annotations
 
 import io
 import math
+import zlib
 from dataclasses import dataclass
+from pathlib import Path
 
+import pymupdf
 import pypdfium2 as pdfium
 from PIL import Image
 
@@ -48,10 +51,43 @@ PDF_MAGIC = b"%PDF-"
 #: Integer reductions Pillow can apply; JPEG can also decode natively at
 #: 1/2, 1/4 and 1/8.
 _REDUCE_FACTORS = (1, 2, 4, 8)
+#: Task 11b. The decoded size of one page's content streams plus every Form
+#: XObject reachable from the page, each xref counted once. The committed
+#: fixture's largest page content is 47 bytes (a scanned page is
+#: ``q ... cm /Im0 Do Q``); a dense born-digital vector page runs 20-100 KB.
+#: pdfium's parse footprint measured ~20x the decoded content (112 MB ->
+#: 2,251 MB), so 8 MB caps a page's parse near 160 MB inside the 1 GiB worker.
+MAX_PAGE_CONTENT_BYTES = 8_000_000
+#: The sum of the per-page totals over the scan: pages render one at a time,
+#: so this bounds cumulative parse time (~28 MB/s measured) and guards against
+#: parsed pages kept alive across the loop.
+MAX_SCAN_CONTENT_BYTES = 64_000_000
+#: Bounded inflate step: the most decoded content held at once.
+_INFLATE_CHUNK = 1 << 20
+#: Rev 2: an image XObject's declared pixels, read from its dictionary. Reuses
+#: MAX_DECODE_PX (40 Mpx): a 600 dpi A4 scan is ~35 Mpx and passes.
+_IMAGE_TOO_LARGE_MESSAGE = (
+    "Page {page} of this PDF contains an image of about {mpx} megapixels, which is "
+    "too large to process safely. Rescan at 600 dpi or lower."
+)
+#: The message when the scan cap, not the page cap, is what bit.
+_WHOLE_SCAN_MESSAGE = (
+    "This PDF's pages contain far more drawing data than a scanned paper can "
+    f"(over {MAX_SCAN_CONTENT_BYTES // 1_000_000} MB across the whole scan). "
+    "Re-export it as a plain scan."
+)
 
 
-class ScanTooLargeError(LemelyError):
-    """A scan's declared geometry is beyond what extraction will render."""
+class ScanRejectedError(LemelyError):
+    """A scan this service will not render; the message says why and what to do."""
+
+
+class ScanTooLargeError(ScanRejectedError):
+    """A scan's declared geometry or content is beyond what extraction will render."""
+
+
+class ScanUnsupportedEncodingError(ScanRejectedError):
+    """A page content stream uses an encoding whose decoded size cannot be bounded."""
 
 
 @dataclass(frozen=True)
@@ -126,6 +162,150 @@ def plan_image(width: int, height: int) -> int:
     return _REDUCE_FACTORS[-1]  # pragma: no cover -- 40 Mpx / 64 is always under the target
 
 
+def _bounded_inflate_size(raw: bytes, *, budget: int, page_index: int) -> int:
+    """The decoded length of a Flate stream, or ``ScanTooLargeError`` past ``budget``.
+
+    Never holds more than :data:`_INFLATE_CHUNK` of decoded bytes: the 112 MB
+    bomb is refused after 8 MB in ~12 ms. A corrupt or truncated stream
+    (``zlib.error``) counts what it yielded -- pdfium renders what it can of
+    such a stream, so the cap measures the same thing.
+    """
+    decompressor = zlib.decompressobj()
+    size = 0
+    data = raw
+    try:
+        while data:
+            size += len(decompressor.decompress(data, _INFLATE_CHUNK))
+            if size > budget:
+                raise ScanTooLargeError(
+                    f"Page {page_index + 1} of this PDF contains far more drawing data than a "
+                    f"scanned page can (over {MAX_PAGE_CONTENT_BYTES // 1_000_000} MB once "
+                    "decompressed). Re-export it as a plain scan."
+                )
+            data = decompressor.unconsumed_tail
+            if decompressor.eof:
+                break
+    except zlib.error:
+        return size
+    return size
+
+
+def decoded_stream_size(doc: pymupdf.Document, xref: int, *, budget: int, page_index: int) -> int:
+    """The decoded size of stream ``xref``, measured without decoding it wholesale.
+
+    An unfiltered stream is its raw length. A single ``/FlateDecode`` is
+    inflated in bounded chunks. Anything else -- ``/LZWDecode``,
+    ``/ASCII85Decode``, a filter array, ``/Crypt`` -- cannot be bounded
+    without a full decode and is refused: every mainstream producer writes
+    Flate content streams, so this costs nothing real and closes the
+    obvious evasion.
+    """
+    raw = doc.xref_stream_raw(xref)
+    kind, value = doc.xref_get_key(xref, "Filter")
+    if kind == "null":
+        size = len(raw)
+        if size > budget:
+            raise ScanTooLargeError(
+                f"Page {page_index + 1} of this PDF contains far more drawing data than a "
+                f"scanned page can (over {MAX_PAGE_CONTENT_BYTES // 1_000_000} MB). "
+                "Re-export it as a plain scan."
+            )
+        return size
+    if kind == "name" and value == "/FlateDecode":
+        return _bounded_inflate_size(raw, budget=budget, page_index=page_index)
+    raise ScanUnsupportedEncodingError(
+        f"Page {page_index + 1} of this PDF uses a content encoding ({value}) this service "
+        "cannot measure safely; re-export the PDF with standard (Flate) compression."
+    )
+
+
+def check_pdf_content(doc: pymupdf.Document) -> None:
+    """Refuse a document whose page content would blow the render (Task 11b).
+
+    Per page: every content stream (``page.get_contents()`` flattens a
+    ``/Contents`` array) plus every Form XObject reachable from the page
+    (``page.get_xobjects()`` already walks nested XObjects and reports each
+    with its invoker; the same xref reachable under two names is counted
+    once). The per-page total is capped at :data:`MAX_PAGE_CONTENT_BYTES`,
+    the sum over pages at :data:`MAX_SCAN_CONTENT_BYTES`. Image XObjects are
+    not content and their streams are never read; instead (rev 2) each
+    image's DECLARED ``/Width x /Height`` -- ``page.get_images(full=True)``
+    reads the dictionary only and lists images referenced from Form XObjects
+    too -- is checked against :data:`MAX_DECODE_PX`, because pdfium decodes
+    an image at its declared size to render it. An encrypted document is
+    left alone: its streams cannot be read, and extraction fails on it later
+    as today.
+    """
+    if doc.needs_pass:
+        return
+    scan_total = 0
+    for page_index in range(doc.page_count):
+        page = doc.load_page(page_index)
+        for image in page.get_images(full=True):
+            width, height = int(image[2]), int(image[3])
+            if width * height > MAX_DECODE_PX:
+                raise ScanTooLargeError(
+                    _IMAGE_TOO_LARGE_MESSAGE.format(
+                        page=page_index + 1, mpx=width * height // 1_000_000
+                    )
+                )
+        xrefs: list[int] = list(page.get_contents())
+        seen = set(xrefs)
+        for xobject in page.get_xobjects():
+            xref = int(xobject[0])
+            if xref in seen:
+                continue
+            seen.add(xref)
+            if doc.xref_get_key(xref, "Subtype") == ("name", "/Form"):
+                xrefs.append(xref)
+        page_total = 0
+        for xref in xrefs:
+            page_budget = MAX_PAGE_CONTENT_BYTES - page_total
+            scan_budget = MAX_SCAN_CONTENT_BYTES - scan_total - page_total
+            try:
+                page_total += decoded_stream_size(
+                    doc, xref, budget=min(page_budget, scan_budget), page_index=page_index
+                )
+            except ScanTooLargeError:
+                if scan_budget < page_budget:
+                    # The scan cap bit, not the page cap: say so.
+                    raise ScanTooLargeError(_WHOLE_SCAN_MESSAGE) from None
+                raise
+        scan_total += page_total
+
+
+def check_pdf_content_bytes(data: bytes) -> None:
+    """:func:`check_pdf_content` on an in-memory PDF; bytes pymupdf cannot open pass."""
+    try:
+        doc = pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
+    except Exception:  # noqa: BLE001 -- unparseable is "not our call"; extraction decides later
+        return
+    try:
+        check_pdf_content(doc)
+    except ScanRejectedError:
+        raise
+    except Exception:  # noqa: BLE001 -- a malformed page tree: same rule as the geometry check
+        return
+    finally:
+        doc.close()
+
+
+def check_pdf_content_path(path: Path) -> None:
+    """:func:`check_pdf_content` on a file; the extraction and CLI entry point."""
+    try:
+        doc = pymupdf.open(str(path))  # type: ignore[no-untyped-call]
+    except Exception:  # noqa: BLE001 -- same rule as check_pdf_content_bytes
+        return
+    try:
+        check_pdf_content(doc)
+    except ScanRejectedError:
+        raise
+    except Exception:  # noqa: BLE001
+        return
+    finally:
+        doc.close()
+
+
 def check_scan_bytes(data: bytes) -> None:
     """The upload-time check: page sizes and image headers only, nothing rendered.
 
@@ -138,6 +318,8 @@ def check_scan_bytes(data: bytes) -> None:
     the same case: ``plan_pdf_pages`` can raise pypdfium2's own
     ``PdfiumError`` reading such a page's size, and that is not our call to
     make either -- extraction fails on it later exactly as it does today.
+    And, for a PDF, the decoded size of each page's content streams (Task
+    11b) -- read from the raw streams with a bounded inflate, never rendered.
     """
     if looks_like_pdf(data):
         try:
@@ -152,6 +334,7 @@ def check_scan_bytes(data: bytes) -> None:
             return
         finally:
             pdf.close()
+        check_pdf_content_bytes(data)  # Task 11b: geometry first, then content
         return
     try:
         with Image.open(io.BytesIO(data)) as opened:

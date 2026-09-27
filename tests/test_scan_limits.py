@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import io
+import time
+import tracemalloc
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
+import pymupdf
 import pypdfium2 as pdfium
 from PIL import Image
 
@@ -13,17 +17,33 @@ from lemely.io.scan_limits import (
     MAX_DECODE_PX,
     MAX_PAGE_PX,
     MAX_SCAN_PAGES,
+    MAX_PAGE_CONTENT_BYTES,
+    MAX_SCAN_CONTENT_BYTES,
+    ScanRejectedError,
     ScanTooLargeError,
+    ScanUnsupportedEncodingError,
+    check_pdf_content_bytes,
+    check_pdf_content_path,
     check_scan_bytes,
+    decoded_stream_size,
     plan_image,
     plan_page_dpi,
     plan_pdf_pages,
 )
 from tests.pdf_fakes import (
+    assemble_pdf,
     encrypted_pdf_bytes,
+    filtered_page_pdf,
+    flate_bomb_ops,
+    image_bomb_pdf,
+    page_bomb_pdf,
+    pdf_stream,
     pdf_with_inflated_count,
     pdf_with_missing_kid_object,
+    xobject_bomb_pdf,
 )
+
+_FIXTURE = Path(__file__).parent / "fixtures" / "handwritten-59" / "0625_w24_qp_42.pdf"
 
 
 def _pdf_bytes(*sizes_pt: tuple[float, float]) -> bytes:
@@ -145,6 +165,128 @@ class CheckScanBytesTests(unittest.TestCase):
 
     def test_bounds_are_the_documented_values(self) -> None:
         self.assertEqual((MAX_SCAN_PAGES, MAX_PAGE_PX, MAX_DECODE_PX), (40, 16_000_000, 40_000_000))
+
+
+class ContentStreamBombTests(unittest.TestCase):
+    """Task 11b: a small PDF whose page content inflates to hundreds of MB
+    must be refused from its raw streams, without inflating it."""
+
+    def test_bomb_pdf_is_small_but_inflates_far_past_the_cap(self) -> None:
+        data = page_bomb_pdf(112_000_000)
+        self.assertLess(len(data), 400_000)
+
+    def test_a_page_content_bomb_is_rejected_quickly_without_inflating_it(self) -> None:
+        data = page_bomb_pdf(112_000_000)
+        tracemalloc.start()
+        started = time.perf_counter()
+        try:
+            with self.assertRaises(ScanTooLargeError) as ctx:
+                check_pdf_content_bytes(data)
+            elapsed = time.perf_counter() - started
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertIn("drawing", str(ctx.exception))
+        self.assertLess(elapsed, 2.0)
+        self.assertLess(peak, 64_000_000)  # 1 MB chunks, never the 112 MB
+
+    def test_a_form_xobject_bomb_is_rejected(self) -> None:
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(xobject_bomb_pdf(112_000_000))
+
+    def test_a_form_xobject_reachable_twice_is_counted_once(self) -> None:
+        # 5 MB once is under the 8 MB page cap; counted twice it would trip it.
+        check_pdf_content_bytes(xobject_bomb_pdf(5_000_000))
+
+    def test_page_and_scan_caps_are_the_documented_values(self) -> None:
+        self.assertEqual((MAX_PAGE_CONTENT_BYTES, MAX_SCAN_CONTENT_BYTES), (8_000_000, 64_000_000))
+
+    def test_content_just_under_the_page_cap_passes(self) -> None:
+        check_pdf_content_bytes(page_bomb_pdf(MAX_PAGE_CONTENT_BYTES - 100_000))
+
+    def test_the_scan_cap_binds_across_pages(self) -> None:
+        # 9 pages x 7.5 MB = 67.5 MB: every page under its cap, the scan over its.
+        raw = flate_bomb_ops(7_500_000)
+        pages = [
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents {12 + i} 0 R >>".encode()
+            for i in range(9)
+        ]
+        streams = [pdf_stream(b"/Filter /FlateDecode", raw) for _ in range(9)]
+        kids = " ".join(f"{3 + i} 0 R" for i in range(9))
+        objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            f"<< /Type /Pages /Kids [{kids}] /Count 9 >>".encode(),
+            *pages,
+            *streams,
+        ]
+        with self.assertRaises(ScanTooLargeError) as ctx:
+            check_pdf_content_bytes(assemble_pdf(objects))
+        self.assertIn("whole scan", str(ctx.exception))
+
+    def test_an_unfiltered_stream_is_measured_by_its_raw_length(self) -> None:
+        check_pdf_content_bytes(filtered_page_pdf(b"", b"q /Im0 Do Q"))
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(filtered_page_pdf(b"", b"0 0 m 1 1 l S\n" * 700_000))
+
+    def test_an_unknown_content_filter_is_rejected_as_unsupported(self) -> None:
+        for entry in (b"/Filter /LZWDecode", b"/Filter [/ASCIIHexDecode /FlateDecode]"):
+            with self.assertRaises(ScanUnsupportedEncodingError) as ctx:
+                check_pdf_content_bytes(filtered_page_pdf(entry, b"00>"))
+            self.assertIsInstance(ctx.exception, ScanRejectedError)
+            self.assertIn("re-export", str(ctx.exception))
+
+    def test_a_corrupt_flate_stream_counts_what_it_yielded(self) -> None:
+        # pdfium renders what it can of a truncated stream; so should the cap.
+        truncated = flate_bomb_ops(100_000)[:-40]
+        check_pdf_content_bytes(filtered_page_pdf(b"/Filter /FlateDecode", truncated))
+
+    def test_unparseable_and_encrypted_bytes_pass(self) -> None:
+        check_pdf_content_bytes(b"%PDF-1.4 fake")
+        check_pdf_content_bytes(b"not a pdf")
+
+    @unittest.skipUnless(_FIXTURE.is_file(), "handwritten-59 fixture not present")
+    def test_the_committed_fixture_passes_with_room_to_spare(self) -> None:
+        check_pdf_content_path(_FIXTURE)
+        doc = pymupdf.open(str(_FIXTURE))
+        try:
+            largest = max(
+                sum(
+                    decoded_stream_size(doc, xref, budget=MAX_PAGE_CONTENT_BYTES, page_index=i)
+                    for xref in doc[i].get_contents()
+                )
+                for i in range(doc.page_count)
+            )
+        finally:
+            doc.close()
+        self.assertLess(largest, 1_000)  # a scanned page is `q ... cm /Im0 Do Q`
+
+    def test_check_scan_bytes_applies_the_content_cap_to_pdfs(self) -> None:
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(page_bomb_pdf(112_000_000))
+
+
+class ImageXObjectBombTests(unittest.TestCase):
+    """Task 11b rev 2: an image XObject declaring more pixels than
+    MAX_DECODE_PX is refused from its dictionary, on the page or inside a
+    Form XObject, without reading the image stream."""
+
+    def test_a_declared_1_6_gigapixel_image_is_rejected(self) -> None:
+        data = image_bomb_pdf(40_000, 40_000)
+        self.assertLess(len(data), 2_000)  # one grey pixel; only the header lies
+        with self.assertRaises(ScanTooLargeError) as ctx:
+            check_pdf_content_bytes(data)
+        self.assertIn("megapixel", str(ctx.exception))
+
+    def test_an_oversized_image_inside_a_form_xobject_is_rejected(self) -> None:
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(image_bomb_pdf(40_000, 40_000, nested=True))
+
+    def test_a_600_dpi_a4_scan_image_passes(self) -> None:
+        check_pdf_content_bytes(image_bomb_pdf(4_960, 7_016))  # 34.8 Mpx, under 40 Mpx
+
+    def test_check_scan_bytes_applies_the_image_cap_to_pdfs(self) -> None:
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(image_bomb_pdf(40_000, 40_000))
 
 
 if __name__ == "__main__":

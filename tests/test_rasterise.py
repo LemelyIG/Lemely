@@ -17,6 +17,7 @@ from lemely.io.rasterise import (
     rasterise_scan_to_pages,
 )
 from lemely.io.scan_limits import ScanTooLargeError
+from tests.pdf_fakes import image_bomb_pdf, page_bomb_pdf
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "handwritten-59" / "0625_w24_qp_42.pdf"
 
@@ -173,6 +174,20 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
     def test_the_committed_fixture_is_unaffected(self) -> None:
         pages = rasterise_pdf_to_pages(_FIXTURE)
         self.assertEqual((pages[0].width, pages[0].height, pages[0].dpi), (1655, 2339, 200.0))
+
+    def test_a_content_bomb_is_rejected_before_any_render(self) -> None:
+        path = Path(self.tmp) / "bomb.pdf"
+        path.write_bytes(page_bomb_pdf(112_000_000))
+        with patch.object(pdfium.PdfPage, "render") as render, self.assertRaises(ScanTooLargeError):
+            rasterise_pdf_to_pages(path)
+        render.assert_not_called()
+
+    def test_an_image_xobject_bomb_is_rejected_before_any_render(self) -> None:
+        path = Path(self.tmp) / "image-bomb.pdf"
+        path.write_bytes(image_bomb_pdf(40_000, 40_000))
+        with patch.object(pdfium.PdfPage, "render") as render, self.assertRaises(ScanTooLargeError):
+            rasterise_pdf_to_pages(path)
+        render.assert_not_called()
 
 
 if __name__ == "__main__":

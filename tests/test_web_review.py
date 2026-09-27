@@ -1554,6 +1554,29 @@ def test_crop_route_returns_a_png_of_the_boxed_region(
     assert abs(got.width / got.height - expected_aspect) < 0.03 * expected_aspect
 
 
+def test_crop_route_refuses_a_stored_content_stream_bomb(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """Task 11b: the crop renders a stored page with pymupdf; a stored bomb
+    (uploaded before the check existed) must be refused, not rendered."""
+    from tests.pdf_fakes import page_bomb_pdf
+
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=page_bomb_pdf(112_000_000), page=0
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == 422, resp.text
+    assert "drawing" in resp.json()["detail"]
+
+
 def _synthetic_image_scan() -> bytes:
     """A single-page scan that is a PNG, not a PDF.
 

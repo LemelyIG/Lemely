@@ -6,13 +6,16 @@ plays for :class:`~lemely.io.storage.StorageBackend`): the regression these
 back is that a scan whose bytes open but whose page tree does not fully
 parse must pass ``lemely.io.scan_limits.check_scan_bytes`` and both upload
 routes exactly like a document that fails to open at all -- see spec
-2026-09-26 §6 and task-11-report.md's "Fix round 1".
+2026-09-26 §6 and task-11-report.md's "Fix round 1". Also the Task 11b bomb
+builders: small files whose page content or declared image size is far
+larger than any scan's -- generated in-test, nothing committed.
 """
 
 from __future__ import annotations
 
 import io
 import re
+import zlib
 
 import pymupdf
 
@@ -84,8 +87,137 @@ def encrypted_pdf_bytes() -> bytes:
     return buf.getvalue()
 
 
+def assemble_pdf(objects: list[bytes]) -> bytes:
+    """A PDF from 1-based numbered object bodies, with a correct xref table.
+
+    Unlike :func:`_hand_rolled_pdf` every object is supplied by the caller,
+    so a test can attach arbitrary streams, XObjects and resources.
+    """
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{number} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    for offset in offsets:
+        out += f"{offset:010d} 00000 n \n".encode()
+    out += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+    ).encode()
+    return bytes(out)
+
+
+def pdf_stream(dict_entries: bytes, data: bytes) -> bytes:
+    """A stream object body with ``dict_entries`` plus the correct ``/Length``."""
+    return (
+        b"<< " + dict_entries + f" /Length {len(data)} >>\nstream\n".encode() + data + b"\nendstream"
+    )
+
+
+def flate_bomb_ops(inflated_bytes: int) -> bytes:
+    """``inflated_bytes`` of path operators, Flate-compressed (~500:1)."""
+    op = b"0 0 m 1 1 l S\n"
+    return zlib.compress(op * (inflated_bytes // len(op)), 9)
+
+
+_A4_PAGE = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R"
+_CATALOG_AND_PAGES = [
+    b"<< /Type /Catalog /Pages 2 0 R >>",
+    b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+]
+
+
+def page_bomb_pdf(inflated_bytes: int) -> bytes:
+    """One A4 page whose only content stream inflates to ``inflated_bytes``.
+
+    112,000,000 is the reviewer's reproduction: ~218 KB on the wire, and a
+    2.2 GB / 4 s parse under pypdfium2.
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" >>",
+            pdf_stream(b"/Filter /FlateDecode", flate_bomb_ops(inflated_bytes)),
+        ]
+    )
+
+
+def xobject_bomb_pdf(inflated_bytes: int) -> bytes:
+    """A tiny page stream (``q /Fm1 Do Q``) whose Form XObject carries the bomb
+    and references itself again under a second name, so the same xref is
+    reachable twice and must be counted once."""
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /XObject << /Fm1 5 0 R >> >> >>",
+            pdf_stream(b"", b"q /Fm1 Do Q"),
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 595 842] /Filter /FlateDecode "
+                b"/Resources << /XObject << /Fm2 5 0 R >> >>",
+                flate_bomb_ops(inflated_bytes),
+            ),
+        ]
+    )
+
+
+def filtered_page_pdf(filter_entry: bytes, data: bytes) -> bytes:
+    """One A4 page whose content stream carries ``filter_entry`` verbatim."""
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" >>",
+            pdf_stream(filter_entry, data),
+        ]
+    )
+
+
+def image_bomb_pdf(width: int, height: int, *, nested: bool = False) -> bytes:
+    """A one-pixel Flate image XObject whose dictionary DECLARES ``width x height``.
+
+    The stream is a single grey byte; only the header lies, which is exactly
+    what a decoder allocates against. ``nested=True`` draws the image from
+    inside a Form XObject instead of the page, so the check must look through
+    XObject resources (``page.get_images(full=True)`` does).
+    """
+    image = pdf_stream(
+        f"/Type /XObject /Subtype /Image /Width {width} /Height {height} "
+        "/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode".encode(),
+        zlib.compress(b"\x00"),
+    )
+    if not nested:
+        return assemble_pdf(
+            [
+                *_CATALOG_AND_PAGES,
+                _A4_PAGE + b" /Resources << /XObject << /Im0 5 0 R >> >> >>",
+                pdf_stream(b"", b"q 595 0 0 842 0 0 cm /Im0 Do Q"),
+                image,
+            ]
+        )
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /XObject << /Fm1 5 0 R >> >> >>",
+            pdf_stream(b"", b"q /Fm1 Do Q"),
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 595 842] "
+                b"/Resources << /XObject << /Im0 6 0 R >> >>",
+                b"q 595 0 0 842 0 0 cm /Im0 Do Q",
+            ),
+            image,
+        ]
+    )
+
+
 __all__ = [
+    "assemble_pdf",
     "encrypted_pdf_bytes",
+    "filtered_page_pdf",
+    "flate_bomb_ops",
+    "image_bomb_pdf",
+    "page_bomb_pdf",
+    "pdf_stream",
     "pdf_with_inflated_count",
     "pdf_with_missing_kid_object",
+    "xobject_bomb_pdf",
 ]

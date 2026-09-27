@@ -764,6 +764,20 @@ def test_upload_rejects_an_oversized_page_geometry_with_422(
     assert "too large to process" in resp.json()["detail"]
 
 
+def test_upload_rejects_a_content_stream_bomb_with_422(
+    client: tuple[TestClient, str, StudentUploadRepository],
+) -> None:
+    from tests.pdf_fakes import page_bomb_pdf
+
+    api, _, _ = client
+    resp = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", page_bomb_pdf(112_000_000), "application/pdf")},
+    )
+    assert resp.status_code == 422
+    assert "drawing" in resp.json()["detail"]
+
+
 def test_upload_with_a_malformed_page_tree_still_succeeds(
     client: tuple[TestClient, str, StudentUploadRepository],
 ) -> None:

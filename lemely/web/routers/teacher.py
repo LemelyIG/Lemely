@@ -87,6 +87,7 @@ from lemely.db.review_repo import ReviewService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.gemini import GeminiClient
 from lemely.io.question_generation import QuestionGenerator
+from lemely.io.scan_limits import ScanRejectedError, check_pdf_content
 from lemely.io.scan_metadata import ScanMetadataExtractor
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.io.teacher_quiz import TeacherQuizBuilder
@@ -979,6 +980,7 @@ def get_paper_preview(
         with pymupdf.open(  # type: ignore[no-untyped-call]
             stream=data, filetype=_pymupdf_filetype(row.content_type)
         ) as doc:
+            check_pdf_content(doc)
             if doc.page_count == 0:
                 raise HTTPException(status_code=422, detail="Stored scan has no pages")
             # ~600px on the long edge of an A4 page. Sized against the consumer:
@@ -989,6 +991,9 @@ def get_paper_preview(
             png: bytes = pixmap.tobytes("png")
     except HTTPException:
         raise
+    except ScanRejectedError as exc:
+        log.warning("paper_preview_rejected", paper_id=paper_id, reason=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         # A scan that cannot be rendered is not a server fault — it is a file the
         # teacher uploaded that is not the document type it claimed to be.

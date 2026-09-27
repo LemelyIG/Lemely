@@ -614,6 +614,50 @@ def test_upload_rejects_an_oversized_page_geometry_with_422(
     assert storage_backend._objects == {}, "a rejected scan must never reach storage"
 
 
+def test_upload_rejects_a_content_stream_bomb_with_422(client: TestClient) -> None:
+    """Task 11b: normal A4 geometry, 218 KB on the wire, 112 MB of path
+    operators once inflated -- refused at upload from the raw stream."""
+    from tests.pdf_fakes import page_bomb_pdf
+
+    resp = client.post(
+        "/api/papers/upload",
+        files={"scan": ("scan.pdf", page_bomb_pdf(112_000_000), "application/pdf")},
+    )
+    assert resp.status_code == 422
+    assert "drawing" in resp.json()["detail"]
+
+
+def test_preview_refuses_a_stored_content_stream_bomb(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """A stored upload that pre-dates the upload check is refused at render,
+    not rendered into an OOM. Seeded directly into storage: the upload route
+    now rejects the bomb, which is the point."""
+    from tests.pdf_fakes import page_bomb_pdf
+
+    bomb = page_bomb_pdf(112_000_000)
+    paper_id = uuid.uuid4()
+    key = f"teacher/{teacher_user}/{paper_id.hex}/scan.pdf"
+    storage_backend.upload(settings.storage.bucket, key, bomb, "application/pdf")
+    paper_repo.create(
+        paper_id=paper_id,
+        uploaded_by=teacher_user,
+        storage_path=key,
+        scheme_storage_path=None,
+        original_filename="scan.pdf",
+        content_type="application/pdf",
+        byte_size=len(bomb),
+    )
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+    assert preview.status_code == 422
+    assert "drawing" in preview.json()["detail"]
+
+
 def test_upload_with_a_malformed_page_tree_still_succeeds(
     client: TestClient, paper_repo: TeacherPaperRepository
 ) -> None:

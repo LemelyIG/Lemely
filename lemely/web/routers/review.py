@@ -41,7 +41,7 @@ from lemely.db.review_repo import (
 )
 from lemely.io.rasterise import RasterisedPage, looks_like_pdf
 from lemely.io.reread import REREAD_UPSCALE, crop_and_upscale, padded_crop_rect
-from lemely.io.scan_limits import MAX_DECODE_PX as _MAX_DECODE_PX
+from lemely.io.scan_limits import MAX_DECODE_PX as _MAX_DECODE_PX, ScanRejectedError, check_pdf_content
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 
 # A runtime import, not a TYPE_CHECKING one: FastAPI resolves
@@ -497,7 +497,19 @@ def _crop_pdf_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
     # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
     # call needs the ignore. Narrowed to this one code, not the module.
     with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+        # `_require_page_in_range` first: it reads only `doc.page_count`, no
+        # `load_page` -- an out-of-range box must still cost a bounds check,
+        # not a page load, exactly as `_require_page_in_range`'s own docstring
+        # promises (test_crop_route_422s_for_a_page_out_of_range_without_rendering
+        # booby-traps `load_page` to prove it). `check_pdf_content` itself calls
+        # `load_page` per page, so it runs after, but still before this
+        # function's own `load_page(box.page)` a few lines down.
         _require_page_in_range(box, doc.page_count, item_id=item_id)
+        try:
+            check_pdf_content(doc)
+        except ScanRejectedError as exc:
+            log.warning("review_crop_scan_rejected", item_id=item_id, page=box.page, reason=str(exc))
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         page = doc.load_page(box.page)
         # A fresh list, so nothing downstream can rescale this request's box.
         plan = _pdf_crop_plan(page.rect, list(box.box))
