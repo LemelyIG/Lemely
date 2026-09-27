@@ -23,7 +23,6 @@ from lemely.io.prompts.answer_extraction import (
 from lemely.io.rasterise import RasterisedPage, rasterise_scan_to_pages
 from lemely.io.reread import (
     DEFAULT_CONFIDENCE_THRESHOLD,
-    DEFAULT_MAX_REREADS_PER_PAPER,
     Rereader,
     should_reread,
 )
@@ -754,12 +753,21 @@ class GeminiAnswerExtractor:
         gemini_client: GeminiClient,
         *,
         reread_confidence_threshold: float | None = None,
-        max_rereads_per_paper: int = DEFAULT_MAX_REREADS_PER_PAPER,
+        max_rereads_per_paper: int | None = None,
     ) -> None:
         self._client = gemini_client
         self._rereader = Rereader(gemini_client)
         self._reread_confidence_threshold = reread_confidence_threshold
-        self._max_rereads_per_paper = max_rereads_per_paper
+        # Spec 2026-09-26 §4: the keyword is an explicit override (tests, the
+        # harness); `None` -- what every production construction site passes
+        # -- reads `gemini.max_rereads_per_paper`, so the cap is configured,
+        # not hard-coded. 0 disables the stage.
+        settings = gemini_client._settings.gemini
+        self._max_rereads_per_paper = (
+            max_rereads_per_paper
+            if max_rereads_per_paper is not None
+            else settings.max_rereads_per_paper
+        )
 
     def __call__(self, scan_path: Path, mark_scheme: MarkScheme) -> ExtractedAnswers:
         manifest_key = build_question_manifest_hash_key(mark_scheme)
@@ -981,9 +989,10 @@ class GeminiAnswerExtractor:
             #
             # I1 review finding 9: uncapped, a paper with 30 low-confidence
             # answers issued 31 total API calls. Cap the number of re-reads
-            # actually run per paper (DEFAULT_MAX_REREADS_PER_PAPER /
-            # max_rereads_per_paper), spending the cap on the lowest-confidence
-            # answers first since those are the ones re-reading helps most, and
+            # actually run per paper (gemini.max_rereads_per_paper, spec
+            # 2026-09-26 §4 -- overridable via the constructor keyword of the
+            # same name), spending the cap on the lowest-confidence answers
+            # first since those are the ones re-reading helps most, and
             # record when the cap binds so the count is visible rather than the
             # re-read set silently truncating.
             #

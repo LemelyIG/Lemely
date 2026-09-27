@@ -1832,6 +1832,39 @@ class RereadCapTests(unittest.TestCase):
             bus.unsubscribe(EventType.REREAD_CAP_REACHED, _spy)
         self.assertEqual(events, [])
 
+    def test_the_cap_defaults_from_settings_and_zero_disables_the_stage(self) -> None:
+        """Spec 2026-09-26 §4: the constructor keyword stays, but its default
+        is the `gemini.max_rereads_per_paper` setting -- so the three
+        construction sites that pass nothing pick up the configured cap."""
+        body = {
+            "answers": [
+                {
+                    "question_id": "1",
+                    "answer": "low",
+                    "confidence": 0.10,
+                    "source_box": {"page": 0, "box": [10, 10, 20, 20]},
+                }
+            ]
+        }
+        extractor = GeminiAnswerExtractor(
+            _client_with_response(self.tmp, body, max_rereads_per_paper=0)
+        )
+        extractor._rereader.reread = MagicMock()  # type: ignore[method-assign]
+        events: list[dict] = []
+
+        def _spy(**payload: object) -> None:
+            events.append(payload)
+
+        bus.subscribe(EventType.REREAD_CAP_REACHED, _spy)
+        try:
+            result = extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        finally:
+            bus.unsubscribe(EventType.REREAD_CAP_REACHED, _spy)
+
+        extractor._rereader.reread.assert_not_called()
+        self.assertEqual((result.rereads_eligible, result.reread_attempts), (1, 0))
+        self.assertEqual(events[0]["cap"], 0)
+
 
 class ScanQualityWarningPublishTests(unittest.TestCase):
     """I1 review should-fix 7: nothing in the suite drives
