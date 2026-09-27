@@ -59,6 +59,9 @@ class EventType(StrEnum):
     # continued on the primary answers with extraction_agreement unset.
     SECOND_READ_FAILED = "second_read_failed"
     REREAD_CAP_REACHED = "reread_cap_reached"
+    # Spec 2026-09-26 §5: the re-read stage's wall-clock budget ran out;
+    # `started` re-reads were issued, `skipped` answers kept their first read.
+    REREAD_BUDGET_EXHAUSTED = "reread_budget_exhausted"
     MARKING_PROGRESS = "marking_progress"
     MARK_SCHEME_PROGRESS = "mark_scheme_progress"
     BUDGET_WARNING = "budget_warning"

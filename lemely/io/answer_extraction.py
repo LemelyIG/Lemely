@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import contextvars
 import math
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -769,6 +773,88 @@ class GeminiAnswerExtractor:
             else settings.max_rereads_per_paper
         )
 
+    def _run_rereads(
+        self,
+        answers: list[ExtractedAnswer],
+        to_reread: list[int],
+        pages: list[RasterisedPage],
+        *,
+        extra_cache_key: str,
+    ) -> tuple[list[ExtractedAnswer], int, int]:
+        """Run the crop re-reads for ``to_reread`` concurrently under a budget.
+
+        Spec 2026-09-26 §5. ``to_reread`` is lowest-confidence first. Up to
+        ``gemini.reread_concurrency`` workers run; each checks the deadline
+        and the stop event BEFORE issuing its call, so no re-read starts
+        after ``gemini.reread_budget_seconds`` or after a ceiling breach --
+        calls already in flight finish (an HTTPS call cannot be aborted; the
+        retry policy bounds it). Every worker runs under
+        ``contextvars.copy_context().run`` so its bus events carry the run
+        id. A ``CostCeilingError`` in any worker sets the stop event, the
+        pool drains, and the error is re-raised. Any other ``LemelyError``
+        publishes ``REREAD_FAILED`` for that answer, as before. Results come
+        back in the extractor's answer order whatever order they finished
+        in; an answer not re-read keeps its first read.
+
+        Returns ``(answers, started, skipped_by_budget)``.
+        """
+        g = self._client._settings.gemini
+        deadline = time.monotonic() + g.reread_budget_seconds
+        stop = threading.Event()
+
+        def _one(index: int) -> tuple[int, str, ExtractedAnswer | BaseException | None]:
+            if stop.is_set():
+                return index, "stopped", None
+            if time.monotonic() >= deadline:
+                return index, "budget", None
+            answer = answers[index]
+            try:
+                return (
+                    index,
+                    "done",
+                    self._rereader.reread(answer, pages, extra_cache_key=extra_cache_key),
+                )
+            except CostCeilingError as exc:
+                # I1 review round 2, MUST-FIX 1: a ceiling breach is a stop
+                # signal for the whole run, never a per-answer failure.
+                stop.set()
+                return index, "ceiling", exc
+            except LemelyError as exc:
+                # I1 review MUST-FIX 2: a re-read is an enhancement and must
+                # never take the paper's extraction down with it.
+                bus.publish(EventType.REREAD_FAILED, question_id=answer.question_id, error=str(exc))
+                return index, "failed", exc
+
+        results: dict[int, ExtractedAnswer] = {}
+        started = 0
+        skipped_by_budget = 0
+        ceiling: BaseException | None = None
+        if to_reread:
+            with ThreadPoolExecutor(max_workers=min(g.reread_concurrency, len(to_reread))) as pool:
+                futures = [
+                    pool.submit(contextvars.copy_context().run, _one, index) for index in to_reread
+                ]
+                for future in futures:
+                    index, outcome, value = future.result()
+                    if outcome in ("done", "failed", "ceiling"):
+                        started += 1
+                    if outcome == "done" and isinstance(value, ExtractedAnswer):
+                        results[index] = value
+                    elif outcome == "ceiling" and isinstance(value, BaseException):
+                        ceiling = value
+                    elif outcome == "budget":
+                        skipped_by_budget += 1
+        if ceiling is not None:
+            raise ceiling
+        if skipped_by_budget:
+            bus.publish(
+                EventType.REREAD_BUDGET_EXHAUSTED,
+                budget_seconds=g.reread_budget_seconds,
+                started=started,
+                skipped=skipped_by_budget,
+            )
+        return [results.get(i, a) for i, a in enumerate(answers)], started, skipped_by_budget
+
     def __call__(self, scan_path: Path, mark_scheme: MarkScheme) -> ExtractedAnswers:
         manifest_key = build_question_manifest_hash_key(mark_scheme)
 
@@ -993,8 +1079,10 @@ class GeminiAnswerExtractor:
             # 2026-09-26 §4 -- overridable via the constructor keyword of the
             # same name), spending the cap on the lowest-confidence answers
             # first since those are the ones re-reading helps most, and
-            # record when the cap binds so the count is visible rather than the
-            # re-read set silently truncating.
+            # record when the cap binds so the count is visible rather than
+            # the re-read set silently truncating. The capped set then runs
+            # through ``_run_rereads`` (spec 2026-09-26 §5: concurrent,
+            # budgeted), not a plain sequential loop.
             #
             # I3: low cross-read agreement (< REREAD_AGREEMENT_THRESHOLD) also
             # makes an answer eligible, alongside should_reread's confidence-only
@@ -1027,36 +1115,9 @@ class GeminiAnswerExtractor:
                     cap=self._max_rereads_per_paper,
                     skipped=len(eligible_indices) - len(to_reread),
                 )
-            to_reread_set = set(to_reread)
-
-            reread: list[ExtractedAnswer] = []
-            for i, a in enumerate(answers):
-                if i in to_reread_set:
-                    try:
-                        a = self._rereader.reread(a, pages, extra_cache_key=manifest_key)
-                    except CostCeilingError:
-                        # I1 review round 2, MUST-FIX 1: a per-run token/USD
-                        # ceiling breach is a stop signal for the whole run, not
-                        # a per-answer failure the re-read step is allowed to
-                        # absorb -- swallowing it as a REREAD_FAILED event turned
-                        # the $14 spend guard advisory. Re-raise so the run
-                        # actually stops here rather than issuing further paid
-                        # calls.
-                        raise
-                    except LemelyError as exc:
-                        # I1 review MUST-FIX 2: the re-read is an enhancement on
-                        # a low-confidence answer, and must never be able to
-                        # take the whole paper's extraction down with it. Keep
-                        # the primary answer (answer_reread/reread_agreement
-                        # stay None) and surface the failure rather than
-                        # swallowing it.
-                        bus.publish(
-                            EventType.REREAD_FAILED,
-                            question_id=a.question_id,
-                            error=str(exc),
-                        )
-                reread.append(a)
-            answers = reread
+            answers, reread_started, reread_skipped_by_budget = self._run_rereads(
+                answers, to_reread, pages, extra_cache_key=manifest_key
+            )
             # `index` is the 1-based position inside `answers` (from enumerate), not a
             # tally of frames already emitted. Should a publish ever be skipped for one
             # answer, the later indices still match the real work list, so the UI's
@@ -1085,7 +1146,8 @@ class GeminiAnswerExtractor:
                     field_repairs=field_repairs,
                     dropped_question_ids=dropped_question_ids,
                     rereads_eligible=len(eligible_indices),
-                    reread_attempts=len(to_reread),
+                    reread_attempts=reread_started,
+                    reread_skipped_by_budget=reread_skipped_by_budget,
                     reread_threshold=effective_reread_threshold,
                 ),
                 manifest_ids,

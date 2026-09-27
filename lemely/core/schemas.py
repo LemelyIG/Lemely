@@ -639,18 +639,20 @@ class ExtractedAnswers(StrictModel):
     low-confidence" from "the cap truncated far more than N down to it" (I1
     review round 4, SHOULD-FIX E)."""
     reread_attempts: int = 0
-    """How many crop-and-re-read calls this extraction *attempted*, after
-    the per-paper cap. Renamed from ``rereads_run`` (I1 review round 4,
-    SHOULD-FIX E): the old name and docstring claimed this counted calls
-    actually *issued* to Gemini, but it is the size of the capped re-read
-    set computed before the loop runs -- on a fully cache-hit re-run it
-    reports N attempts for zero calls actually issued, and a re-read that
-    raised and was absorbed (see the ``LemelyError`` handler in
-    ``GeminiAnswerExtractor.__call__``) still counts here as one attempt.
-    Useful for sizing the loop and the cap's effect, not as a paid-call
-    count -- ``lemely.io.gemini``'s ``GEMINI_CALL_START``/
-    ``GEMINI_CACHE_HIT`` bus events are the source of truth for actual API
-    calls issued."""
+    """How many crop-and-re-read calls this extraction actually STARTED
+    (spec 2026-09-26 §5), after the per-paper cap and the wall-clock budget.
+    A re-read skipped by the budget is not an attempt (see
+    ``reread_skipped_by_budget``); a re-read that raised and was absorbed
+    (the ``LemelyError`` handler in ``GeminiAnswerExtractor._run_rereads``)
+    still counts as one. On a fully cache-hit re-run every started re-read
+    is served from cache, so this is not a paid-call count --
+    ``lemely.io.gemini``'s ``GEMINI_CALL_START``/``GEMINI_CACHE_HIT`` bus
+    events are the source of truth for actual API calls issued."""
+    reread_skipped_by_budget: int = 0
+    """How many eligible, capped-in answers were NOT re-read because the
+    stage's wall-clock budget (``GeminiSettings.reread_budget_seconds``) ran
+    out before their call could start (spec 2026-09-26 §5). Such an answer
+    keeps its first read with ``answer_reread``/``reread_agreement`` unset."""
     reread_threshold: float | None = None
     """The confidence threshold that gated which answers were eligible for
     a re-read on this run. ``None`` only when this ``ExtractedAnswers`` was

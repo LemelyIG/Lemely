@@ -6,7 +6,10 @@ import io
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -21,7 +24,7 @@ from lemely.io.reread import DEFAULT_CONFIDENCE_THRESHOLD
 from lemely.io.second_read import REREAD_AGREEMENT_THRESHOLD
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
-from lemely.runtime.events import EventType, bus
+from lemely.runtime.events import EventType, bus, current_run_id
 from tests.gemini_fakes import fake_genai_client
 
 
@@ -2218,3 +2221,148 @@ class PageUploadLifecycleTests(unittest.TestCase):
         extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
         self.assertEqual(len(mock_genai.files.uploads), uploads_after_first)
         self.assertEqual(mock_genai.models.generate_content.call_count, 1)
+
+
+def _boxed_answers(n: int) -> dict:
+    """``n`` low-confidence boxed answers, confidence rising with the id so
+    ``to_reread``'s lowest-confidence-first order equals id order."""
+    return {
+        "answers": [
+            {
+                "question_id": str(i),
+                "answer": f"first-{i}",
+                "confidence": round(0.01 * i, 3),
+                "source_box": {"page": 0, "box": [10, 10, 20, 20]},
+            }
+            for i in range(n)
+        ]
+    }
+
+
+class ConcurrentRereadTests(unittest.TestCase):
+    """Spec 2026-09-26 §5. Fakes sit at the Rereader level, keyed on the
+    question id, because answers complete out of order under concurrency."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.scan = Path(self.tmp) / "scan.pdf"
+        _write_minimal_pdf(self.scan, pages=1)
+
+    def _extractor(self, body: dict, **overrides: object) -> GeminiAnswerExtractor:
+        return GeminiAnswerExtractor(_client_with_response(self.tmp, body, **overrides))
+
+    @staticmethod
+    def _reread_ok(answer, pages, *, extra_cache_key):  # type: ignore[no-untyped-def]
+        return answer.model_copy(
+            update={"answer_reread": f"reread-{answer.question_id}", "reread_agreement": 0.5}
+        )
+
+    def test_rereads_overlap_up_to_the_configured_concurrency(self) -> None:
+        extractor = self._extractor(_boxed_answers(4), reread_concurrency=4)
+        barrier = threading.Barrier(4, timeout=5)
+
+        def _reread(answer, pages, *, extra_cache_key):  # type: ignore[no-untyped-def]
+            barrier.wait()  # sequential execution can never satisfy 4 parties
+            return self._reread_ok(answer, pages, extra_cache_key=extra_cache_key)
+
+        extractor._rereader.reread = MagicMock(side_effect=_reread)  # type: ignore[method-assign]
+        result = extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        self.assertEqual(
+            [a.answer_reread for a in result.answers], [f"reread-{i}" for i in range(4)]
+        )
+        self.assertEqual(result.reread_attempts, 4)
+
+    def test_no_reread_starts_after_the_budget_is_exhausted(self) -> None:
+        extractor = self._extractor(
+            _boxed_answers(5), reread_concurrency=1, reread_budget_seconds=0.05
+        )
+
+        def _slow(answer, pages, *, extra_cache_key):  # type: ignore[no-untyped-def]
+            time.sleep(0.2)
+            return self._reread_ok(answer, pages, extra_cache_key=extra_cache_key)
+
+        extractor._rereader.reread = MagicMock(side_effect=_slow)  # type: ignore[method-assign]
+        events: list[dict] = []
+
+        def _spy(**payload: object) -> None:
+            events.append(payload)
+
+        bus.subscribe(EventType.REREAD_BUDGET_EXHAUSTED, _spy)
+        try:
+            result = extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        finally:
+            bus.unsubscribe(EventType.REREAD_BUDGET_EXHAUSTED, _spy)
+
+        self.assertEqual(extractor._rereader.reread.call_count, 1)
+        self.assertEqual((result.reread_attempts, result.reread_skipped_by_budget), (1, 4))
+        self.assertEqual(result.answers[0].answer_reread, "reread-0")
+        self.assertTrue(all(a.answer_reread is None for a in result.answers[1:]))
+        self.assertEqual(len(events), 1)
+        self.assertEqual((events[0]["started"], events[0]["skipped"]), (1, 4))
+        self.assertEqual(events[0]["budget_seconds"], 0.05)
+
+    def test_a_cost_ceiling_in_one_worker_stops_the_rest_and_propagates(self) -> None:
+        extractor = self._extractor(_boxed_answers(6), reread_concurrency=2)
+
+        def _reread(answer, pages, *, extra_cache_key):  # type: ignore[no-untyped-def]
+            if answer.question_id == "1":
+                raise CostCeilingError("USD ceiling exceeded")
+            time.sleep(0.05)
+            return self._reread_ok(answer, pages, extra_cache_key=extra_cache_key)
+
+        extractor._rereader.reread = MagicMock(side_effect=_reread)  # type: ignore[method-assign]
+        with self.assertRaises(CostCeilingError):
+            extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        self.assertLessEqual(extractor._rereader.reread.call_count, 3)
+
+    def test_reread_results_keep_the_extractor_answer_order(self) -> None:
+        extractor = self._extractor(_boxed_answers(4), reread_concurrency=4)
+
+        def _reread(answer, pages, *, extra_cache_key):  # type: ignore[no-untyped-def]
+            time.sleep(0.05 * (3 - int(answer.question_id)))  # the last finishes first
+            return self._reread_ok(answer, pages, extra_cache_key=extra_cache_key)
+
+        extractor._rereader.reread = MagicMock(side_effect=_reread)  # type: ignore[method-assign]
+        result = extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        self.assertEqual([a.question_id for a in result.answers], ["0", "1", "2", "3"])
+        self.assertEqual(
+            [a.answer_reread for a in result.answers], [f"reread-{i}" for i in range(4)]
+        )
+
+    def test_worker_events_carry_the_run_id(self) -> None:
+        """A scoped queue also receives events published with NO run id
+        (events.py), so receipt proves nothing -- the captured event's
+        run_id must equal the run's."""
+        extractor = self._extractor(_boxed_answers(2), reread_concurrency=2)
+
+        def _reread(answer, pages, *, extra_cache_key):  # type: ignore[no-untyped-def]
+            if answer.question_id == "1":
+                raise ExternalServiceError("503 unavailable")
+            return self._reread_ok(answer, pages, extra_cache_key=extra_cache_key)
+
+        extractor._rereader.reread = MagicMock(side_effect=_reread)  # type: ignore[method-assign]
+        queue = bus.subscribe_queue("run-x")
+        token = current_run_id.set("run-x")
+        try:
+            extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        finally:
+            current_run_id.reset(token)
+            bus.unsubscribe_queue(queue)
+        failed = []
+        while not queue.empty():
+            event = queue.get_nowait()
+            if event is not None and event.type is EventType.REREAD_FAILED:
+                failed.append(event)
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0].run_id, "run-x")
+
+    def test_concurrency_and_budget_come_from_settings(self) -> None:
+        extractor = self._extractor(
+            _boxed_answers(3), reread_concurrency=2, reread_budget_seconds=9.0
+        )
+        extractor._rereader.reread = MagicMock(side_effect=self._reread_ok)  # type: ignore[method-assign]
+        with patch(
+            "lemely.io.answer_extraction.ThreadPoolExecutor", wraps=ThreadPoolExecutor
+        ) as pool:
+            extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        self.assertEqual(pool.call_args.kwargs["max_workers"], 2)
