@@ -2366,3 +2366,40 @@ class ConcurrentRereadTests(unittest.TestCase):
         ) as pool:
             extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
         self.assertEqual(pool.call_args.kwargs["max_workers"], 2)
+        self.assertEqual(extractor._client._settings.gemini.reread_budget_seconds, 9.0)
+
+    def test_an_unexpected_exception_in_one_worker_bounds_further_calls(self) -> None:
+        """Fix round 1: an exception outside CostCeilingError/LemelyError
+        used to leave `stop` unset, so every already-queued worker still
+        issued its (paid) re-read call before the exception could
+        propagate. A ValueError on the first-processed answer must stop
+        anything not already in flight."""
+        extractor = self._extractor(_boxed_answers(8), reread_concurrency=2)
+
+        def _reread(answer, pages, *, extra_cache_key):  # type: ignore[no-untyped-def]
+            if answer.question_id == "0":
+                raise ValueError("boom")
+            time.sleep(0.05)
+            return self._reread_ok(answer, pages, extra_cache_key=extra_cache_key)
+
+        extractor._rereader.reread = MagicMock(side_effect=_reread)  # type: ignore[method-assign]
+        with self.assertRaises(ValueError):
+            extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        self.assertLessEqual(extractor._rereader.reread.call_count, 2)
+
+    def test_an_unexpected_exception_never_masks_a_concurrent_ceiling_breach(self) -> None:
+        """An unrelated crash on one worker must never hide a genuine
+        CostCeilingError raised by a sibling worker in the same batch --
+        the ceiling is the one that must reach the caller."""
+        extractor = self._extractor(_boxed_answers(2), reread_concurrency=2)
+        barrier = threading.Barrier(2, timeout=5)
+
+        def _reread(answer, pages, *, extra_cache_key):  # type: ignore[no-untyped-def]
+            barrier.wait()  # both workers raise together, order undetermined
+            if answer.question_id == "0":
+                raise ValueError("boom")
+            raise CostCeilingError("USD ceiling exceeded")
+
+        extractor._rereader.reread = MagicMock(side_effect=_reread)  # type: ignore[method-assign]
+        with self.assertRaises(CostCeilingError):
+            extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())

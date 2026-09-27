@@ -9,7 +9,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, GetJsonSchemaHandler, ValidationError
 from pydantic.json_schema import JsonSchemaValue
@@ -751,6 +751,12 @@ def _to_extracted_answer(
     return answer, reasons, None
 
 
+# Spec 2026-09-26 §5: the tag each `_run_rereads` worker reports for one
+# answer -- "stopped"/"budget" never issue a call; "done"/"failed"/"ceiling"
+# all count as started (see `_run_rereads`'s docstring).
+_RereadOutcome = Literal["stopped", "budget", "done", "failed", "ceiling"]
+
+
 class GeminiAnswerExtractor:
     def __init__(
         self,
@@ -788,11 +794,23 @@ class GeminiAnswerExtractor:
         and the stop event BEFORE issuing its call, so no re-read starts
         after ``gemini.reread_budget_seconds`` or after a ceiling breach --
         calls already in flight finish (an HTTPS call cannot be aborted; the
-        retry policy bounds it). Every worker runs under
+        retry policy bounds it), so the per-run token/USD ceiling can still
+        be overshot by up to ``reread_concurrency - 1`` calls already in
+        flight when the breach is detected. Every worker runs under
         ``contextvars.copy_context().run`` so its bus events carry the run
-        id. A ``CostCeilingError`` in any worker sets the stop event, the
-        pool drains, and the error is re-raised. Any other ``LemelyError``
-        publishes ``REREAD_FAILED`` for that answer, as before. Results come
+        id.
+
+        Fix round 1: ANY exception escaping a worker (not only
+        ``CostCeilingError``) sets the stop event before propagating --
+        without this, an unrelated crash (a bug, a bare ``ValueError``) left
+        `stop` unset, so every already-queued worker still issued its
+        (paid) re-read call before the exception could even be observed.
+        The result loop drains every future to completion before deciding
+        what to raise, so a ``CostCeilingError`` on one worker is never
+        masked by an unrelated exception that another worker happened to
+        raise (or that this loop observed) first -- the ceiling always
+        wins. Any ``LemelyError`` short of a ceiling breach still degrades
+        to a per-answer ``REREAD_FAILED`` event, as before. Results come
         back in the extractor's answer order whatever order they finished
         in; an answer not re-read keeps its first read.
 
@@ -802,7 +820,7 @@ class GeminiAnswerExtractor:
         deadline = time.monotonic() + g.reread_budget_seconds
         stop = threading.Event()
 
-        def _one(index: int) -> tuple[int, str, ExtractedAnswer | BaseException | None]:
+        def _one(index: int) -> tuple[int, _RereadOutcome, ExtractedAnswer | BaseException | None]:
             if stop.is_set():
                 return index, "stopped", None
             if time.monotonic() >= deadline:
@@ -824,28 +842,50 @@ class GeminiAnswerExtractor:
                 # never take the paper's extraction down with it.
                 bus.publish(EventType.REREAD_FAILED, question_id=answer.question_id, error=str(exc))
                 return index, "failed", exc
+            except BaseException:
+                # Fix round 1: an exception this method does not otherwise
+                # know how to degrade (not a LemelyError) must still stop
+                # every worker that has not yet started its own call --
+                # re-raising alone, with `stop` left unset, let each
+                # already-queued worker run to completion first.
+                stop.set()
+                raise
 
         results: dict[int, ExtractedAnswer] = {}
         started = 0
         skipped_by_budget = 0
         ceiling: BaseException | None = None
+        unexpected: BaseException | None = None
         if to_reread:
             with ThreadPoolExecutor(max_workers=min(g.reread_concurrency, len(to_reread))) as pool:
                 futures = [
                     pool.submit(contextvars.copy_context().run, _one, index) for index in to_reread
                 ]
+                # Fix round 1: drain EVERY future before deciding what to
+                # raise -- a `future.result()` call that raises immediately
+                # would abandon the rest of the loop, so a CostCeilingError
+                # returned (not raised -- see `_one`) by a later future
+                # could be lost behind an earlier, unrelated crash.
                 for future in futures:
-                    index, outcome, value = future.result()
+                    try:
+                        index, outcome, value = future.result()
+                    except BaseException as exc:
+                        if unexpected is None:
+                            unexpected = exc
+                        continue
                     if outcome in ("done", "failed", "ceiling"):
                         started += 1
-                    if outcome == "done" and isinstance(value, ExtractedAnswer):
-                        results[index] = value
-                    elif outcome == "ceiling" and isinstance(value, BaseException):
-                        ceiling = value
+                    if outcome == "done":
+                        results[index] = cast(ExtractedAnswer, value)
+                    elif outcome == "ceiling":
+                        if ceiling is None:
+                            ceiling = cast(BaseException, value)
                     elif outcome == "budget":
                         skipped_by_budget += 1
         if ceiling is not None:
             raise ceiling
+        if unexpected is not None:
+            raise unexpected
         if skipped_by_budget:
             bus.publish(
                 EventType.REREAD_BUDGET_EXHAUSTED,
