@@ -3,10 +3,8 @@
 Triggered by low extraction confidence and by low cross-read agreement (via
 ``extraction_agreement`` on ``ExtractedAnswer``, wired in ``GeminiAnswerExtractor``
 in ``lemely.io.answer_extraction.py``; both triggers are capped by
-``GeminiSettings.max_rereads_per_paper``, default 15 -- Task 14 moved the cap
-there from this module's own ``DEFAULT_MAX_REREADS_PER_PAPER``, which now
-only supplies that default's value). Crops ``source_box`` plus 8% padding out
-of the page it names, upscales it 2x, and resends it alone at
+``GeminiSettings.max_rereads_per_paper`` (default 15)). Crops ``source_box``
+plus 8% padding out of the page it names, upscales it 2x, and resends it alone at
 ``media_resolution="high"`` with a single-answer prompt — the point being to
 give the model a second, zoomed-in look at exactly the pixels its own box
 says the answer lives in, rather than re-running the whole-paper extraction
@@ -54,15 +52,15 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.60
 # more re-reads would fix.
 #
 # Task 14 (04b71901, spec 2026-09-26 §4-5) moved the actual cap into
-# ``GeminiSettings.max_rereads_per_paper`` (`lemely/runtime/config.py`,
-# `ge=0`, default 15) -- it IS a ``lemely.toml`` setting now, reversing I1's
-# original file-boundary call above. ``GeminiAnswerExtractor`` reads the
-# setting when its own ``max_rereads_per_paper`` constructor keyword is
-# ``None`` (the default); passing an explicit int, including ``0`` to
-# disable the stage entirely, still overrides it per-instance the same way
-# it always has. This constant now serves ONLY as the value that setting's
-# own default was taken from -- change the setting's default in
-# ``config.py``, not this constant, to change the deployed behaviour.
+# ``GeminiSettings.max_rereads_per_paper`` (``lemely.toml``'s ``[gemini]``
+# section, default 15; ``0`` disables the re-read stage entirely) --
+# reversing I1's file-boundary call above. ``GeminiAnswerExtractor`` reads
+# the setting whenever its own ``max_rereads_per_paper`` constructor
+# keyword is ``None`` (every production construction site); an explicit
+# kwarg -- including ``0`` -- still overrides the setting per-instance,
+# the same way it always has. This constant is now kept only as the value
+# that setting's own default was taken from -- change the setting's
+# default in ``config.py``, not this constant, to change deployed behaviour.
 DEFAULT_MAX_REREADS_PER_PAPER = 15
 
 #: Spec 2026-09-26 §4 (#9): a re-read whose ``reread_agreement`` is below this
