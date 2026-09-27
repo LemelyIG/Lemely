@@ -878,6 +878,30 @@ class GeminiAnswerExtractor:
                     try:
                         index, outcome, value = future.result()
                     except BaseException as exc:
+                        # Fix round 2: `future.result()` re-raises whatever
+                        # `_one` raised in ITS worker thread (already
+                        # covered by round 1's fix, which sets `stop`
+                        # there) -- but it can ALSO raise a real
+                        # KeyboardInterrupt/SystemExit delivered to THIS
+                        # (main) thread while it was blocked waiting, which
+                        # never touches `_one` or its own `stop.set()` at
+                        # all. Set `stop` here unconditionally so that case
+                        # is covered too, then treat a non-Exception
+                        # BaseException (KeyboardInterrupt/SystemExit/
+                        # GeneratorExit) as un-degradable: propagate it
+                        # immediately rather than deferring it into
+                        # `unexpected` and draining the rest of the futures
+                        # first -- deferring it let an already-resolved
+                        # CostCeilingError on a LATER future (round 1
+                        # regression) win the ceiling-vs-unexpected
+                        # precedence below and lose the interrupt entirely.
+                        # The pool's `with` still only waits for whatever
+                        # is already in flight (an HTTPS call can't be
+                        # aborted); nothing not yet started issues a call,
+                        # since `_one` checks `stop` before doing anything.
+                        stop.set()
+                        if not isinstance(exc, Exception):
+                            raise
                         if unexpected is None:
                             unexpected = exc
                         continue

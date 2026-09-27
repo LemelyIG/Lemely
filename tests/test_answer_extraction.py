@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _thread
 import io
 import json
 import os
@@ -2473,7 +2474,10 @@ class ConcurrentRereadTests(unittest.TestCase):
         ) as pool:
             extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
         self.assertEqual(pool.call_args.kwargs["max_workers"], 2)
-        self.assertEqual(extractor._client._settings.gemini.reread_budget_seconds, 9.0)
+        # The budget's actual USE (the deadline computed from it) is
+        # covered by test_no_reread_starts_after_the_budget_is_exhausted;
+        # asserting the settings object here (fix round 2) would only
+        # check this test's own setup, not that `_run_rereads` read it.
 
     def test_an_unexpected_exception_in_one_worker_bounds_further_calls(self) -> None:
         """Fix round 1: an exception outside CostCeilingError/LemelyError
@@ -2510,3 +2514,54 @@ class ConcurrentRereadTests(unittest.TestCase):
         extractor._rereader.reread = MagicMock(side_effect=_reread)  # type: ignore[method-assign]
         with self.assertRaises(CostCeilingError):
             extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+
+    def test_a_real_interrupt_during_a_drain_propagates_over_a_concurrent_ceiling(self) -> None:
+        """Fix round 2: a KeyboardInterrupt landing in the MAIN thread while
+        it blocks inside future.result() must propagate immediately -- round
+        1's drain loop caught BaseException into `unexpected` and kept
+        draining, so a CostCeilingError already resolved on a LATER future
+        in the same drain took precedence over an already-observed
+        interrupt once the loop finished, and the Ctrl-C was lost.
+
+        Deterministic timing: the interrupt fires only after answer "0"'s
+        worker has actually STARTED (a `threading.Event` it sets itself,
+        rather than a fixed delay racing against however long rasterising
+        the fixture and the primary call take before `_run_rereads` is even
+        reached) -- so the main thread is guaranteed to already be past
+        submitting both futures, and answer "0"'s own long sleep keeps it
+        blocked in `future.result()` for that first-submitted future when
+        the interrupt lands."""
+        extractor = self._extractor(_boxed_answers(2), reread_concurrency=2)
+        started = threading.Event()
+
+        def _reread(answer, pages, *, extra_cache_key):  # type: ignore[no-untyped-def]
+            if answer.question_id == "0":
+                # Submission order == answer id order, so the main thread's
+                # future.result() for THIS future is the first (and, given
+                # the fix, only) one it ever waits on.
+                started.set()
+                time.sleep(0.5)
+                return self._reread_ok(answer, pages, extra_cache_key=extra_cache_key)
+            raise CostCeilingError("USD ceiling exceeded")
+
+        extractor._rereader.reread = MagicMock(side_effect=_reread)  # type: ignore[method-assign]
+
+        def _fire_once_started() -> None:
+            # By the time "0"'s worker is running, the main thread has
+            # already submitted BOTH futures (submission happens before
+            # the drain loop starts, in the same thread) -- the extra 20ms
+            # is slack for it to have reached future.result() for future[0].
+            started.wait(5)
+            time.sleep(0.02)
+            _thread.interrupt_main()
+
+        interrupter = threading.Thread(target=_fire_once_started, daemon=True)
+        interrupter.start()
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        finally:
+            interrupter.join(timeout=5)
+        # Bounded at exactly the 2 answers dispatched before the interrupt
+        # landed -- nothing extra snuck in during the pool's drain.
+        self.assertLessEqual(extractor._rereader.reread.call_count, 2)
