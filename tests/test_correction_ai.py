@@ -5683,6 +5683,52 @@ class RereadFixRound1Tests(unittest.TestCase):
         self.assertTrue(q1.needs_teacher_review)
         self.assertIn("marked the re-read 'A', the first read was 'B'", q1.review_reason or "")
 
+    def test_reread_substitution_recovers_when_first_read_needs_normalising_too(self) -> None:
+        """Fix round 2 re-review: `_mcq_agrees` must require the FIRST READ
+        to already be a bare letter `_build_mcq_corrected` accepts before a
+        normalised-equal re-read counts as agreement. Without this, first
+        read "(A)" against re-read "A" was wrongly treated as agreement --
+        skipping substitution and leaving the un-normalised "(A)" to reach
+        `_build_mcq_corrected`, which does not strip, scoring 0 ("invalid
+        MCQ answer") where round 1 had correctly recovered it to 1."""
+        result = correct_paper(
+            self.ms,
+            self._mcq("(A)", "A", 0.0),
+            gemini_client=None,
+            mcq_only=True,
+            options=MarkingOptions(reread_substitution=True),
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.awarded_marks, 1)
+        self.assertEqual(q1.student_answer, "A")
+        self.assertTrue(q1.needs_teacher_review)
+        self.assertNotIn("invalid MCQ answer", q1.review_reason or "")
+
+    def test_normalise_mcq_reread_strips_whitespace_before_punctuation(self) -> None:
+        """Fix round 2 re-review: ``str.strip(chars)`` only strips the given
+        chars, so a leading/trailing SPACE outside the punctuation set
+        (e.g. " (A) ") stopped stripping immediately and never reached the
+        parentheses. A plain ``.strip()`` must run first."""
+        self.assertEqual(correction_ai._normalise_mcq_reread("A. "), "A")
+        self.assertEqual(correction_ai._normalise_mcq_reread(" (A) "), "A")
+
+    def test_reread_substitution_agreement_survives_incidental_whitespace(self) -> None:
+        """ "A. " and " (A) " against a first read of "A" must still count
+        as agreement -- no flag, no substitution -- despite the extra
+        whitespace outside the stripped punctuation."""
+        for reread in ("A. ", " (A) "):
+            with self.subTest(reread=reread):
+                result = correct_paper(
+                    self.ms,
+                    self._mcq("A", reread, 0.0),
+                    gemini_client=None,
+                    mcq_only=True,
+                    options=MarkingOptions(reread_substitution=True),
+                )
+                q1 = next(q for q in result.questions if q.question_id == "1")
+                self.assertFalse(q1.needs_teacher_review, reread)
+                self.assertIsNone(q1.review_reason, reread)
+
     def test_reread_substitution_rejects_mcq_reread_with_embedded_punctuation(self) -> None:
         """ "A/B" does not normalise to a single letter -- embedded
         punctuation is not "surrounding" and is not stripped. The first

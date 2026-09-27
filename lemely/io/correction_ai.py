@@ -129,7 +129,7 @@ _MCQ_STRIP_CHARS = "()[]{}<>.,;:!?\"'"
 
 
 def _normalise_mcq_reread(text: str) -> str | None:
-    """Strip surrounding punctuation/brackets and upper-case a re-read.
+    """Strip surrounding whitespace, punctuation and brackets, upper-case.
 
     Fix round 1: substitution used to hand ``_build_mcq_corrected`` the raw
     re-read text verbatim, so a re-read of "A." or "(A)" on a correctly-read
@@ -138,8 +138,13 @@ def _normalise_mcq_reread(text: str) -> str | None:
     stripping is a single letter :func:`_build_mcq_corrected` itself
     accepts -- embedded punctuation (e.g. "A/B") is not "surrounding" and is
     deliberately NOT stripped, so it still returns ``None`` for that case.
+
+    Fix round 2 re-review: ``str.strip(chars)`` strips only the given chars
+    and stops at the first character outside that set -- so " (A) " (a
+    leading SPACE, not in :data:`_MCQ_STRIP_CHARS`) was left completely
+    unstripped. A plain ``.strip()`` (whitespace) now runs first.
     """
-    stripped = text.strip(_MCQ_STRIP_CHARS).upper()
+    stripped = text.strip().strip(_MCQ_STRIP_CHARS).upper()
     return stripped if stripped in _MCQ_LETTERS else None
 
 
@@ -150,11 +155,19 @@ def _mcq_agrees(first_read: str, reread: str | None) -> bool:
     disagreement -- both readings say the same thing once surrounding
     punctuation is stripped, so there is nothing here for the flag or
     substitution to act on.
+
+    Fix round 2 re-review: this must hold ONLY when the first read is
+    ALREADY a bare letter :func:`_build_mcq_corrected` accepts as-is --
+    ``first_read.upper() in _MCQ_LETTERS``, no stripping. If the first read
+    itself needs normalising too ("(A)", "a."), treating it as agreement
+    would skip substitution entirely and leave the UN-normalised first read
+    to reach ``_build_mcq_corrected``, which does not strip -- scoring 0
+    ("invalid MCQ answer") instead of being substituted to the letter both
+    readings actually agree on.
     """
-    if reread is None:
+    if reread is None or first_read.upper() not in _MCQ_LETTERS:
         return False
-    first_letter = _normalise_mcq_reread(first_read)
-    return first_letter is not None and first_letter == _normalise_mcq_reread(reread)
+    return first_read.upper() == _normalise_mcq_reread(reread)
 
 
 def _disagreeing_agreement(flat: _FlatAnswer, *, is_mcq: bool = False) -> float | None:
@@ -2110,14 +2123,19 @@ def _attach_extraction_context(
     flagged ``blank`` row makes ``low_confidence_review_needed``
     (``review_queue_rules.py``) return True, which makes
     ``is_marking_low_confidence`` True, and ``self_review.decide_point``
-    then GRANTS any challenged point on that row with NO evidence -- a
-    student could self-mark an empty answer to full marks by supplying a
-    plausible re-read (first read "", re-read "a"). Known gap, deliberately
-    left open: there is no signal available here that distinguishes "the
-    re-read genuinely recovered a missed answer" from "the re-read text is
-    exactly what a challenge flow would need to say" without reopening that
-    exploit, so a blank row is left untouched, like every dropped/missing
-    row: no answer was read for it.
+    then GRANTS any challenged point on that row with NO evidence. The
+    re-read text comes from the MODEL, not the student -- it is Gemini's
+    own second look at the crop, not anything the student supplied -- so
+    the risk is not a student writing a fake re-read: it is that ANY
+    non-blank re-read on a genuinely blank first read, including one the
+    model simply hallucinated over blank pixels, would grant self-mark
+    authority on a question the student left blank, with the student never
+    having entered anything a human could point to as evidence. Known gap,
+    deliberately left open: the proper fix belongs in the self-review
+    authority gate itself (deciding what counts as evidence for a GRANT),
+    not here in correction, which has no way to tell a genuine recovered
+    answer from a hallucinated one. A blank row is left untouched, like
+    every dropped/missing row: no answer was read for it.
     """
     if cq.question_id not in answers:
         return cq
