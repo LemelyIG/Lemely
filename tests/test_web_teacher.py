@@ -1610,6 +1610,31 @@ def test_preview_renders_page_one_as_png(client: TestClient) -> None:
     assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def test_preview_of_an_image_upload_still_succeeds(client: TestClient) -> None:
+    """Fix round 1, Important 1: `get_paper_preview` now runs
+    `check_pdf_content` on every stored scan, image uploads included --
+    `page.get_contents()` asserts on a document pymupdf opened as an image,
+    not a PDF, so a PNG/JPEG paper's preview must not turn into a 422."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 100), "white").save(buf, "PNG")
+
+    resp = client.post(
+        "/api/papers/upload",
+        files={"scan": ("scan.png", buf.getvalue(), "image/png")},
+    )
+    assert resp.status_code == 200
+    paper_id = resp.json()["paperId"]
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
 def test_preview_for_unknown_paper_is_404(client: TestClient) -> None:
     """An id with no stored scan cannot produce a preview, and does not pretend to."""
     assert client.get("/api/papers/nope/preview").status_code == 404

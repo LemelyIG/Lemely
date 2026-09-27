@@ -17,7 +17,7 @@ from lemely.io.rasterise import (
     rasterise_scan_to_pages,
 )
 from lemely.io.scan_limits import ScanTooLargeError
-from tests.pdf_fakes import image_bomb_pdf, page_bomb_pdf
+from tests.pdf_fakes import annot_ap_bomb_pdf, image_bomb_pdf, page_bomb_pdf
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "handwritten-59" / "0625_w24_qp_42.pdf"
 
@@ -185,6 +185,17 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
     def test_an_image_xobject_bomb_is_rejected_before_any_render(self) -> None:
         path = Path(self.tmp) / "image-bomb.pdf"
         path.write_bytes(image_bomb_pdf(40_000, 40_000))
+        with patch.object(pdfium.PdfPage, "render") as render, self.assertRaises(ScanTooLargeError):
+            rasterise_pdf_to_pages(path)
+        render.assert_not_called()
+
+    def test_an_annotation_appearance_stream_bomb_is_rejected_before_any_render(self) -> None:
+        # Fix round 1: the new content-walk paths (annotations, patterns,
+        # Type3 CharProcs) all go through the same check_pdf_content_path
+        # call as the page-content/Form-XObject bomb above; this pins that
+        # the mechanism reaches rasterise for one of them, representatively.
+        path = Path(self.tmp) / "annot-bomb.pdf"
+        path.write_bytes(annot_ap_bomb_pdf(112_000_000))
         with patch.object(pdfium.PdfPage, "render") as render, self.assertRaises(ScanTooLargeError):
             rasterise_pdf_to_pages(path)
         render.assert_not_called()

@@ -13,12 +13,13 @@ import pymupdf
 import pypdfium2 as pdfium
 from PIL import Image
 
+import lemely.io.scan_limits as scan_limits
 from lemely.io.scan_limits import (
     MAX_DECODE_PX,
-    MAX_PAGE_PX,
-    MAX_SCAN_PAGES,
     MAX_PAGE_CONTENT_BYTES,
+    MAX_PAGE_PX,
     MAX_SCAN_CONTENT_BYTES,
+    MAX_SCAN_PAGES,
     ScanRejectedError,
     ScanTooLargeError,
     ScanUnsupportedEncodingError,
@@ -31,15 +32,23 @@ from lemely.io.scan_limits import (
     plan_pdf_pages,
 )
 from tests.pdf_fakes import (
+    annot_ap_bomb_pdf,
     assemble_pdf,
     encrypted_pdf_bytes,
     filtered_page_pdf,
     flate_bomb_ops,
+    form_xobject_cycle_pdf,
     image_bomb_pdf,
+    indirect_filter_page_pdf,
+    many_form_xobjects_pdf,
     page_bomb_pdf,
     pdf_stream,
     pdf_with_inflated_count,
     pdf_with_missing_kid_object,
+    repeated_xobject_pdf,
+    smask_bomb_pdf,
+    tiling_pattern_bomb_pdf,
+    type3_charproc_bomb_pdf,
     xobject_bomb_pdf,
 )
 
@@ -208,7 +217,9 @@ class ContentStreamBombTests(unittest.TestCase):
         # 9 pages x 7.5 MB = 67.5 MB: every page under its cap, the scan over its.
         raw = flate_bomb_ops(7_500_000)
         pages = [
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents {12 + i} 0 R >>".encode()
+            (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents {12 + i} 0 R >>"
+            ).encode()
             for i in range(9)
         ]
         streams = [pdf_stream(b"/Filter /FlateDecode", raw) for _ in range(9)]
@@ -234,6 +245,26 @@ class ContentStreamBombTests(unittest.TestCase):
                 check_pdf_content_bytes(filtered_page_pdf(entry, b"00>"))
             self.assertIsInstance(ctx.exception, ScanRejectedError)
             self.assertIn("re-export", str(ctx.exception))
+            # Fix round 1, minor: the raw filter token is attacker-controlled
+            # PDF syntax, not information a re-export needs -- must not leak.
+            self.assertNotIn("LZW", str(ctx.exception))
+            self.assertNotIn("ASCIIHex", str(ctx.exception))
+
+    def test_a_one_element_flate_array_is_accepted(self) -> None:
+        # Fix round 1, minor: `[/FlateDecode]` is a legitimate spelling.
+        check_pdf_content_bytes(filtered_page_pdf(b"/Filter [/FlateDecode]", flate_bomb_ops(1_000)))
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(
+                filtered_page_pdf(b"/Filter [/FlateDecode]", flate_bomb_ops(9_000_000))
+            )
+
+    def test_the_fl_abbreviation_is_accepted(self) -> None:
+        # Fix round 1, minor: `/Fl` is the inline-image abbreviation (Table 93).
+        check_pdf_content_bytes(filtered_page_pdf(b"/Filter /Fl", flate_bomb_ops(1_000)))
+
+    def test_an_indirect_filter_naming_flatedecode_is_accepted(self) -> None:
+        # Fix round 1, minor: `/Filter 5 0 R` where object 5 is `/FlateDecode`.
+        check_pdf_content_bytes(indirect_filter_page_pdf(flate_bomb_ops(1_000)))
 
     def test_a_corrupt_flate_stream_counts_what_it_yielded(self) -> None:
         # pdfium renders what it can of a truncated stream; so should the cap.
@@ -287,6 +318,94 @@ class ImageXObjectBombTests(unittest.TestCase):
     def test_check_scan_bytes_applies_the_image_cap_to_pdfs(self) -> None:
         with self.assertRaises(ScanTooLargeError):
             check_scan_bytes(image_bomb_pdf(40_000, 40_000))
+
+
+class AnnotationPatternType3BombTests(unittest.TestCase):
+    """Fix round 1, Important 2: annotation appearance streams, tiling
+    patterns and Type3 CharProcs must count toward the same content
+    budgets -- both renderers (pdfium at extraction, pymupdf at the crop
+    and preview routes) draw all three, not just page content and Form
+    XObjects."""
+
+    def test_an_annotation_appearance_stream_bomb_is_rejected(self) -> None:
+        with self.assertRaises(ScanTooLargeError) as ctx:
+            check_pdf_content_bytes(annot_ap_bomb_pdf(112_000_000))
+        self.assertIn("drawing", str(ctx.exception))
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(annot_ap_bomb_pdf(112_000_000))
+
+    def test_a_tiling_pattern_bomb_is_rejected(self) -> None:
+        with self.assertRaises(ScanTooLargeError) as ctx:
+            check_pdf_content_bytes(tiling_pattern_bomb_pdf(112_000_000))
+        self.assertIn("drawing", str(ctx.exception))
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(tiling_pattern_bomb_pdf(112_000_000))
+
+    def test_a_type3_charproc_bomb_is_rejected(self) -> None:
+        with self.assertRaises(ScanTooLargeError) as ctx:
+            check_pdf_content_bytes(type3_charproc_bomb_pdf(112_000_000))
+        self.assertIn("drawing", str(ctx.exception))
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(type3_charproc_bomb_pdf(112_000_000))
+
+    def test_a_form_xobject_cycle_terminates(self) -> None:
+        # Two Form XObjects referencing each other: must return, not hang.
+        check_pdf_content_bytes(form_xobject_cycle_pdf())
+
+    def test_a_form_xobject_drawn_many_times_is_counted_once(self) -> None:
+        # 5 MB once is under the page cap; the page draws it 500 times, but
+        # /Resources lists it once, so the walk visits (and counts) it once.
+        # Repeated *rendering* cost is a separate, still-open concern -- see
+        # repeated_xobject_pdf's docstring and the report's follow-up.
+        check_pdf_content_bytes(repeated_xobject_pdf(times=500, inflated_bytes=5_000_000))
+
+    def test_hitting_the_object_cap_is_rejected(self) -> None:
+        with (
+            patch.object(scan_limits, "_MAX_OBJECTS_PER_PAGE", 5),
+            self.assertRaises(ScanTooLargeError) as ctx,
+        ):
+            check_pdf_content_bytes(many_form_xobjects_pdf(10))
+        self.assertIn("drawing objects", str(ctx.exception))
+
+    def test_well_under_the_object_cap_passes(self) -> None:
+        with patch.object(scan_limits, "_MAX_OBJECTS_PER_PAGE", 5):
+            check_pdf_content_bytes(many_form_xobjects_pdf(3))
+
+
+class ImageMaskBombTests(unittest.TestCase):
+    """Fix round 1, Important 3: an image's /SMask and stream-valued /Mask
+    are themselves image objects with their own declared size, and pdfium
+    decodes each at that declared size to render it -- same rule as the
+    image itself."""
+
+    def test_a_declared_smask_bomb_is_rejected(self) -> None:
+        with self.assertRaises(ScanTooLargeError) as ctx:
+            check_pdf_content_bytes(smask_bomb_pdf(40_000, 40_000))
+        self.assertIn("megapixel", str(ctx.exception))
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(smask_bomb_pdf(40_000, 40_000))
+
+    def test_a_600_dpi_smask_passes(self) -> None:
+        check_pdf_content_bytes(smask_bomb_pdf(4_960, 7_016))  # 34.8 Mpx
+
+
+class NonPdfDocumentTests(unittest.TestCase):
+    """Fix round 1, Important 1: an image-type pymupdf document (the
+    teacher console's preview route opens a PNG/JPEG upload the same way it
+    opens a PDF) has no PDF page tree -- `page.get_contents()` asserts on
+    one. `check_pdf_content` must return, not crash, so an image paper's
+    preview stays a 200."""
+
+    def test_a_png_document_is_left_alone(self) -> None:
+        import pymupdf
+
+        buf = io.BytesIO()
+        Image.new("RGB", (100, 100), "white").save(buf, "PNG")
+        doc = pymupdf.open(stream=buf.getvalue(), filetype="png")  # type: ignore[no-untyped-call]
+        try:
+            scan_limits.check_pdf_content(doc)
+        finally:
+            doc.close()  # type: ignore[no-untyped-call]
 
 
 if __name__ == "__main__":

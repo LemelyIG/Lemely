@@ -111,7 +111,11 @@ def assemble_pdf(objects: list[bytes]) -> bytes:
 def pdf_stream(dict_entries: bytes, data: bytes) -> bytes:
     """A stream object body with ``dict_entries`` plus the correct ``/Length``."""
     return (
-        b"<< " + dict_entries + f" /Length {len(data)} >>\nstream\n".encode() + data + b"\nendstream"
+        b"<< "
+        + dict_entries
+        + f" /Length {len(data)} >>\nstream\n".encode()
+        + data
+        + b"\nendstream"
     )
 
 
@@ -209,15 +213,188 @@ def image_bomb_pdf(width: int, height: int, *, nested: bool = False) -> bytes:
     )
 
 
+def annot_ap_bomb_pdf(inflated_bytes: int) -> bytes:
+    """One annotation whose appearance stream (``/AP`` -> ``/N``) carries the bomb.
+
+    Fix round 1, Important 2(a). An appearance stream is a Form XObject per
+    spec, so the walk must find it via ``/Annots``, not just page resources.
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Annots [5 0 R] >>",
+            pdf_stream(b"", b"q Q"),
+            b"<< /Type /Annot /Subtype /Widget /Rect [0 0 10 10] /AP << /N 6 0 R >> >>",
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Filter /FlateDecode",
+                flate_bomb_ops(inflated_bytes),
+            ),
+        ]
+    )
+
+
+def tiling_pattern_bomb_pdf(inflated_bytes: int) -> bytes:
+    """A page painted with a tiling pattern whose own stream carries the bomb.
+
+    Fix round 1, Important 2(b).
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /Pattern << /P1 5 0 R >> >> >>",
+            pdf_stream(b"", b"/Pattern cs /P1 scn 0 0 595 842 re f"),
+            pdf_stream(
+                b"/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+                b"/BBox [0 0 10 10] /XStep 10 /YStep 10 /Filter /FlateDecode",
+                flate_bomb_ops(inflated_bytes),
+            ),
+        ]
+    )
+
+
+def type3_charproc_bomb_pdf(inflated_bytes: int) -> bytes:
+    """A Type3 font whose one glyph procedure (``/CharProcs``) carries the bomb.
+
+    Fix round 1, Important 2(c).
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /Font << /F1 5 0 R >> >> >>",
+            pdf_stream(b"", b"BT /F1 12 Tf (A) Tj ET"),
+            b"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] "
+            b"/FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /A 6 0 R >> "
+            b"/Encoding << /Type /Encoding /Differences [65 /A] >> "
+            b"/FirstChar 65 /LastChar 65 /Widths [1000] >>",
+            pdf_stream(b"/Filter /FlateDecode", flate_bomb_ops(inflated_bytes)),
+        ]
+    )
+
+
+def smask_bomb_pdf(width: int, height: int) -> bytes:
+    """A one-pixel image whose ``/SMask`` declares ``width`` x ``height``.
+
+    Fix round 1, Important 3. Only the mask's own header lies -- its stream
+    is one grey byte, same trick as :func:`image_bomb_pdf`.
+    """
+    smask = pdf_stream(
+        f"/Type /XObject /Subtype /Image /Width {width} /Height {height} "
+        "/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode".encode(),
+        zlib.compress(b"\x00"),
+    )
+    image = pdf_stream(
+        b"/Type /XObject /Subtype /Image /Width 1 /Height 1 "
+        b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /SMask 6 0 R",
+        zlib.compress(b"\x00"),
+    )
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /XObject << /Im0 5 0 R >> >> >>",
+            pdf_stream(b"", b"q 1 0 0 1 0 0 cm /Im0 Do Q"),
+            image,
+            smask,
+        ]
+    )
+
+
+def form_xobject_cycle_pdf() -> bytes:
+    """Two Form XObjects that reference each other; the walk must terminate.
+
+    Fix round 1, Important 2(e). An annotation-appearance cycle would
+    terminate the same way, through the same ``seen``-by-xref guard, once
+    the AP stream is found -- it is handed to the identical Form-XObject
+    walker (see :func:`~lemely.io.scan_limits._visit_resource`).
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /XObject << /Fm1 5 0 R >> >> >>",
+            pdf_stream(b"", b"q /Fm1 Do Q"),
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 10 10] "
+                b"/Resources << /XObject << /Fm2 6 0 R >> >>",
+                b"q /Fm2 Do Q",
+            ),
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 10 10] "
+                b"/Resources << /XObject << /Fm1 5 0 R >> >>",
+                b"q /Fm1 Do Q",
+            ),
+        ]
+    )
+
+
+def repeated_xobject_pdf(*, times: int, inflated_bytes: int) -> bytes:
+    """A page whose content stream draws the same Form XObject ``times`` times.
+
+    The walk visits ``/Resources`` once, not once per ``Do`` -- a page that
+    fits under the cap despite drawing its (cheap) form many times proves
+    the dedup is by object, not by draw. Repetition itself still costs real
+    render time proportional to ``times``; not solved here, see the module
+    docstring's inline-image note and the report's follow-up.
+    """
+    ops = b"q /Fm1 Do Q\n" * times
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /XObject << /Fm1 5 0 R >> >> >>",
+            pdf_stream(b"", ops),
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Filter /FlateDecode",
+                flate_bomb_ops(inflated_bytes),
+            ),
+        ]
+    )
+
+
+def indirect_filter_page_pdf(data: bytes) -> bytes:
+    """One page whose content stream's ``/Filter`` is an indirect reference
+    to a bare name object -- unusual but legal PDF syntax (fix round 1)."""
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" >>",
+            pdf_stream(b"/Filter 5 0 R", data),
+            b"/FlateDecode",
+        ]
+    )
+
+
+def many_form_xobjects_pdf(count: int) -> bytes:
+    """A page whose ``/Resources``/``/XObject`` dict lists ``count`` distinct,
+    otherwise-harmless Form XObjects -- for the per-page object-visit cap."""
+    forms = [
+        pdf_stream(b"/Type /XObject /Subtype /Form /BBox [0 0 1 1]", b"") for _ in range(count)
+    ]
+    xobject_dict = " ".join(f"/Fm{i} {5 + i} 0 R" for i in range(count))
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + f" /Resources << /XObject << {xobject_dict} >> >> >>".encode(),
+            pdf_stream(b"", b"q Q"),
+            *forms,
+        ]
+    )
+
+
 __all__ = [
+    "annot_ap_bomb_pdf",
     "assemble_pdf",
     "encrypted_pdf_bytes",
     "filtered_page_pdf",
     "flate_bomb_ops",
+    "form_xobject_cycle_pdf",
     "image_bomb_pdf",
+    "indirect_filter_page_pdf",
+    "many_form_xobjects_pdf",
     "page_bomb_pdf",
     "pdf_stream",
     "pdf_with_inflated_count",
     "pdf_with_missing_kid_object",
+    "repeated_xobject_pdf",
+    "smask_bomb_pdf",
+    "tiling_pattern_bomb_pdf",
+    "type3_charproc_bomb_pdf",
     "xobject_bomb_pdf",
 ]

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 import math
+import re
 import zlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -78,6 +79,28 @@ _WHOLE_SCAN_MESSAGE = (
     "This PDF's pages contain far more drawing data than a scanned paper can "
     f"(over {MAX_SCAN_CONTENT_BYTES // 1_000_000} MB across the whole scan). "
     "Re-export it as a plain scan."
+)
+#: Fix round 1. Every distinct object a page's content walk (Form XObjects,
+#: tiling patterns, Type3 CharProcs, annotation appearance streams, and their
+#: own nested resources) may visit before it is refused outright -- a second,
+#: independent bound alongside the byte caps: a document engineered with a
+#: huge *number* of small, cheap-to-decode objects costs real time to walk
+#: and classify one by one even though no single stream is large.
+_MAX_OBJECTS_PER_PAGE = 10_000
+#: The spellings of Flate compression this module can bound without a full
+#: decode. ``/Fl`` is the inline-image abbreviation (PDF spec Table 93);
+#: legitimate, not an evasion, so accepted alongside the full name.
+_FLATE_FILTER_NAMES = ("/FlateDecode", "/Fl")
+#: Fix round 1: the filter token is deliberately not named in the message --
+#: it is attacker-controlled PDF syntax, not information a re-export needs.
+_UNSUPPORTED_FILTER_MESSAGE = (
+    "Page {page} of this PDF uses a content encoding this service cannot measure "
+    "safely; re-export the PDF with standard (Flate) compression."
+)
+#: Fix round 1.
+_TOO_MANY_OBJECTS_MESSAGE = (
+    "Page {page} of this PDF references far more drawing objects than a scanned "
+    "page can. Re-export it as a plain scan."
 )
 
 
@@ -193,21 +216,49 @@ def _bounded_inflate_size(raw: bytes, *, budget: int, page_index: int) -> int:
     return size
 
 
+def _normalise_filter(doc: pymupdf.Document, kind: str, value: str) -> list[str] | None:
+    """The declared ``/Filter`` name(s), resolving every legitimate spelling.
+
+    ``None`` means unfiltered. Handles a bare name, a filter *array*
+    (``decoded_stream_size`` itself still rejects one with more than one
+    entry -- only the single-element spelling, ``[/FlateDecode]``, is
+    legitimate), and one level of indirection (``/Filter 5 0 R`` where
+    object 5 is itself a name or array) -- no PDF producer chains an
+    indirect ``/Filter`` further than that, so a single resolution step is
+    all this needs.
+    """
+    if kind == "xref":
+        text = doc.xref_object(int(value.split()[0])).strip()  # type: ignore[no-untyped-call]
+        if text.startswith("["):
+            kind, value = "array", text
+        elif text.startswith("/"):
+            kind, value = "name", text
+        else:
+            return None
+    if kind == "name":
+        return [value]
+    if kind == "array":
+        return re.findall(r"/[^\s/\[\]<>]+", value)
+    return None
+
+
 def decoded_stream_size(doc: pymupdf.Document, xref: int, *, budget: int, page_index: int) -> int:
     """The decoded size of stream ``xref``, measured without decoding it wholesale.
 
-    An unfiltered stream is its raw length. A single ``/FlateDecode`` is
-    inflated in bounded chunks. Anything else -- ``/LZWDecode``,
-    ``/ASCII85Decode``, a filter array, ``/Crypt`` -- cannot be bounded
-    without a full decode and is refused: every mainstream producer writes
-    Flate content streams, so this costs nothing real and closes the
-    obvious evasion.
+    An unfiltered stream is its raw length. A single ``/FlateDecode`` (or
+    its ``/Fl`` abbreviation, plain or one-element-array or one level of
+    indirection -- see :func:`_normalise_filter`) is inflated in bounded
+    chunks. Anything else -- ``/LZWDecode``, ``/ASCII85Decode``, a
+    multi-entry filter array, ``/Crypt`` -- cannot be bounded without a full
+    decode and is refused: every mainstream producer writes Flate content
+    streams, so this costs nothing real and closes the obvious evasion.
     """
     raw = doc.xref_stream_raw(xref)  # type: ignore[no-untyped-call]
     if raw is None:
         raw = b""
     kind, value = doc.xref_get_key(xref, "Filter")  # type: ignore[no-untyped-call]
-    if kind == "null":
+    filters = _normalise_filter(doc, kind, value)
+    if filters is None:
         size = len(raw)
         if size > budget:
             raise ScanTooLargeError(
@@ -216,68 +267,298 @@ def decoded_stream_size(doc: pymupdf.Document, xref: int, *, budget: int, page_i
                 "Re-export it as a plain scan."
             )
         return size
-    if kind == "name" and value == "/FlateDecode":
+    if len(filters) == 1 and filters[0] in _FLATE_FILTER_NAMES:
         return _bounded_inflate_size(raw, budget=budget, page_index=page_index)
-    raise ScanUnsupportedEncodingError(
-        f"Page {page_index + 1} of this PDF uses a content encoding ({value}) this service "
-        "cannot measure safely; re-export the PDF with standard (Flate) compression."
+    raise ScanUnsupportedEncodingError(_UNSUPPORTED_FILTER_MESSAGE.format(page=page_index + 1))
+
+
+_REF_RE = re.compile(r"(\d+)\s+\d+\s+R")
+
+
+@dataclass
+class _ContentBudget:
+    """Running totals shared across one page's content walk.
+
+    ``scan_total`` is fixed for the duration of a page (everything counted
+    on *earlier* pages); ``page_total`` and ``objects`` accumulate as the
+    current page is walked, then fold into ``scan_total`` once it is done.
+    """
+
+    scan_total: int = 0
+    page_total: int = 0
+    objects: int = 0
+
+
+def _collection_refs(doc: pymupdf.Document, kind: str, value: str) -> list[int]:
+    """Every indirect reference named inside a dict/array-shaped value.
+
+    Covers both an inline sub-dictionary or array (``kind`` is ``"dict"``
+    or ``"array"``, ``value`` is pymupdf's literal source text for it) and
+    one stored as its own object (``kind == "xref"``: read *that* object's
+    own source instead, so a two-level structure -- a ``/Resources`` object
+    whose own ``/XObject``/``/Pattern``/``/Font`` sub-dictionaries are
+    themselves inline -- is flattened in the same pass). A reference's PDF
+    *name* (which resource-map key it sits under, an appearance state's
+    name, a glyph name) is never needed here -- only whether it is
+    reachable at all -- so one regex over the whole resolved text finds
+    every reference regardless of how many dictionary levels it is nested
+    inside, without a bespoke parser for each of the differently-shaped
+    dictionaries (``/Resources``, ``/AP``, ``/CharProcs``) this walk visits.
+    """
+    if kind == "xref":
+        text = doc.xref_object(int(value.split()[0]))  # type: ignore[no-untyped-call]
+    elif kind in ("dict", "array"):
+        text = value
+    else:
+        return []
+    return [int(m.group(1)) for m in _REF_RE.finditer(text)]
+
+
+def _enter(xref: int, *, seen: set[int], budget: _ContentBudget, page_index: int) -> bool:
+    """Register a visit to ``xref``; ``False`` if already visited (skip it).
+
+    The single choke point for both cycle prevention (``seen``) and the
+    per-page object cap (:data:`_MAX_OBJECTS_PER_PAGE`) -- every walker
+    below visits an object through this before doing anything else with it.
+    """
+    if xref in seen:
+        return False
+    seen.add(xref)
+    budget.objects += 1
+    if budget.objects > _MAX_OBJECTS_PER_PAGE:
+        raise ScanTooLargeError(_TOO_MANY_OBJECTS_MESSAGE.format(page=page_index + 1))
+    return True
+
+
+def _count_stream(
+    doc: pymupdf.Document, xref: int, *, page_index: int, budget: _ContentBudget
+) -> None:
+    """Add ``xref``'s decoded size to ``budget.page_total``, or refuse."""
+    page_budget = MAX_PAGE_CONTENT_BYTES - budget.page_total
+    scan_budget = MAX_SCAN_CONTENT_BYTES - budget.scan_total - budget.page_total
+    try:
+        size = decoded_stream_size(
+            doc, xref, budget=min(page_budget, scan_budget), page_index=page_index
+        )
+    except ScanTooLargeError:
+        if scan_budget < page_budget:
+            # The scan cap bit, not the page cap: say so.
+            raise ScanTooLargeError(_WHOLE_SCAN_MESSAGE) from None
+        raise
+    budget.page_total += size
+
+
+def _walk_resources(
+    doc: pymupdf.Document,
+    container_xref: int,
+    *,
+    page_index: int,
+    seen: set[int],
+    budget: _ContentBudget,
+) -> None:
+    """Every Form XObject / tiling Pattern / Type3 font reachable from ``container_xref``.
+
+    Reads ``container_xref``'s ``/Resources`` and recurses into further
+    nested resources the same way. ``container_xref`` is a page, a Form
+    XObject, a Pattern or a Type3 font -- every PDF object that carries its
+    own ``/Resources`` dict.
+    """
+    kind, value = doc.xref_get_key(container_xref, "Resources")  # type: ignore[no-untyped-call]
+    for ref in _collection_refs(doc, kind, value):
+        _visit_resource(doc, ref, page_index=page_index, seen=seen, budget=budget)
+
+
+def _visit_resource(
+    doc: pymupdf.Document, ref: int, *, page_index: int, seen: set[int], budget: _ContentBudget
+) -> None:
+    """Classify one object found inside a ``/Resources`` dict and act on it.
+
+    A Form XObject or a tiling Pattern (``/PatternType`` present) is
+    content: count its stream, then recurse into its own ``/Resources``. An
+    image is not content -- its pixels are checked separately, from
+    ``page.get_images``, never its stream. A Type3 font is not content
+    itself, but its glyph procedures (``/CharProcs``) and its own
+    ``/Resources`` are. Anything else found this way (``/ColorSpace``,
+    ``/ExtGState``, ``/Shading``, ``/Properties`` entries) is out of this
+    round's scope and is left alone -- except a bare stream this service
+    cannot otherwise classify, counted defensively rather than silently
+    ignored.
+    """
+    if not _enter(ref, seen=seen, budget=budget, page_index=page_index):
+        return
+    if doc.xref_is_xobject(ref):  # type: ignore[no-untyped-call]
+        _count_stream(doc, ref, page_index=page_index, budget=budget)
+        _walk_resources(doc, ref, page_index=page_index, seen=seen, budget=budget)
+        return
+    if doc.xref_is_image(ref):  # type: ignore[no-untyped-call]
+        return
+    if doc.xref_is_font(ref):  # type: ignore[no-untyped-call]
+        if doc.xref_get_key(ref, "Subtype") == ("name", "/Type3"):  # type: ignore[no-untyped-call]
+            _walk_charprocs(doc, ref, page_index=page_index, seen=seen, budget=budget)
+            _walk_resources(doc, ref, page_index=page_index, seen=seen, budget=budget)
+        return
+    pattern_kind, _pattern_value = doc.xref_get_key(ref, "PatternType")  # type: ignore[no-untyped-call]
+    if pattern_kind != "null":
+        _count_stream(doc, ref, page_index=page_index, budget=budget)
+        _walk_resources(doc, ref, page_index=page_index, seen=seen, budget=budget)
+        return
+    if doc.xref_is_stream(ref):  # type: ignore[no-untyped-call]
+        _count_stream(doc, ref, page_index=page_index, budget=budget)
+
+
+def _walk_charprocs(
+    doc: pymupdf.Document,
+    font_xref: int,
+    *,
+    page_index: int,
+    seen: set[int],
+    budget: _ContentBudget,
+) -> None:
+    """Every glyph procedure stream in a Type3 font's ``/CharProcs``."""
+    kind, value = doc.xref_get_key(font_xref, "CharProcs")  # type: ignore[no-untyped-call]
+    for glyph_ref in _collection_refs(doc, kind, value):
+        if _enter(glyph_ref, seen=seen, budget=budget, page_index=page_index):
+            _count_stream(doc, glyph_ref, page_index=page_index, budget=budget)
+
+
+def _walk_annotations(
+    doc: pymupdf.Document,
+    page_xref: int,
+    *,
+    page_index: int,
+    seen: set[int],
+    budget: _ContentBudget,
+) -> None:
+    """Every annotation appearance stream reachable from the page.
+
+    ``/Annots`` -> ``/AP`` -> ``/N``, ``/R``, ``/D``, whichever are present,
+    each either a stream directly or a dict of appearance states each
+    pointing to one. An appearance stream is itself a Form XObject per
+    spec, so once found it is handed to :func:`_visit_resource`, which
+    counts it and recurses into its own ``/Resources`` exactly like any
+    other form.
+    """
+    kind, value = doc.xref_get_key(page_xref, "Annots")  # type: ignore[no-untyped-call]
+    for annot_ref in _collection_refs(doc, kind, value):
+        if not _enter(annot_ref, seen=seen, budget=budget, page_index=page_index):
+            continue
+        ap_kind, ap_value = doc.xref_get_key(annot_ref, "AP")  # type: ignore[no-untyped-call]
+        for ap_ref in _collection_refs(doc, ap_kind, ap_value):
+            _visit_resource(doc, ap_ref, page_index=page_index, seen=seen, budget=budget)
+
+
+def _check_mask_pixels(doc: pymupdf.Document, xref: int, *, page_index: int) -> None:
+    """:data:`MAX_DECODE_PX` against a mask stream's own declared size."""
+    width_kind, width_value = doc.xref_get_key(xref, "Width")  # type: ignore[no-untyped-call]
+    height_kind, height_value = doc.xref_get_key(xref, "Height")  # type: ignore[no-untyped-call]
+    if width_kind != "int" or height_kind != "int":
+        return
+    width, height = int(width_value), int(height_value)
+    if width * height > MAX_DECODE_PX:
+        raise ScanTooLargeError(
+            _IMAGE_TOO_LARGE_MESSAGE.format(page=page_index + 1, mpx=width * height // 1_000_000)
+        )
+
+
+def _tuple_int(value: object) -> int:
+    """``int()`` for one element of an untyped-library tuple.
+
+    pymupdf ships no type stubs, so ``page.get_images(full=True)``'s tuples
+    are ``object`` as far as mypy is concerned, even though every element is
+    really an ``int``.
+    """
+    return int(value)  # type: ignore[call-overload,no-any-return]
+
+
+def _check_image_and_masks(
+    doc: pymupdf.Document, image: tuple[object, ...], *, page_index: int
+) -> None:
+    """Reject an image or its mask whose declared pixels exceed :data:`MAX_DECODE_PX`.
+
+    Covers the image itself (rev 2) and its ``/SMask``/``/Mask`` (fix round
+    1). ``image`` is one entry of ``page.get_images(full=True)``:
+    ``(xref, smask_xref, width, height, ...)``. ``/SMask`` is always a
+    stream when present (``smask_xref`` is 0 for "none"); ``/Mask`` is
+    either a stream (a stencil mask, checked the same way) or an array
+    (colour-key masking -- not a decode-sized allocation, left alone).
+    """
+    xref, smask_xref, width, height = (
+        _tuple_int(image[0]),
+        _tuple_int(image[1]),
+        _tuple_int(image[2]),
+        _tuple_int(image[3]),
     )
+    if width * height > MAX_DECODE_PX:
+        raise ScanTooLargeError(
+            _IMAGE_TOO_LARGE_MESSAGE.format(page=page_index + 1, mpx=width * height // 1_000_000)
+        )
+    if smask_xref:
+        _check_mask_pixels(doc, smask_xref, page_index=page_index)
+    mask_kind, mask_value = doc.xref_get_key(xref, "Mask")  # type: ignore[no-untyped-call]
+    if mask_kind == "xref":
+        mask_xref = int(mask_value.split()[0])
+        if doc.xref_is_stream(mask_xref):  # type: ignore[no-untyped-call]
+            _check_mask_pixels(doc, mask_xref, page_index=page_index)
 
 
 def check_pdf_content(doc: pymupdf.Document) -> None:
     """Refuse a document whose page content would blow the render (Task 11b).
 
-    Per page: every content stream (``page.get_contents()`` flattens a
-    ``/Contents`` array) plus every Form XObject reachable from the page
-    (``page.get_xobjects()`` already walks nested XObjects and reports each
-    with its invoker; the same xref reachable under two names is counted
-    once). The per-page total is capped at :data:`MAX_PAGE_CONTENT_BYTES`,
-    the sum over pages at :data:`MAX_SCAN_CONTENT_BYTES`. Image XObjects are
-    not content and their streams are never read; instead (rev 2) each
-    image's DECLARED ``/Width x /Height`` -- ``page.get_images(full=True)``
-    reads the dictionary only and lists images referenced from Form XObjects
-    too -- is checked against :data:`MAX_DECODE_PX`, because pdfium decodes
-    an image at its declared size to render it. An encrypted document is
-    left alone: its streams cannot be read, and extraction fails on it later
-    as today.
+    Per page, counted into the same :data:`MAX_PAGE_CONTENT_BYTES` /
+    :data:`MAX_SCAN_CONTENT_BYTES` budgets, each xref counted once
+    (deduped by a per-page ``seen`` set, which also terminates a cycle --
+    two Form XObjects, or two annotations, referencing each other): the
+    page's own content stream(s) (``page.get_contents()``); every Form
+    XObject reachable from the page's ``/Resources``, recursively (a form
+    can itself use forms, patterns or Type3 fonts); every tiling Pattern
+    (fix round 1); every Type3 font's glyph procedures (fix round 1); and
+    every annotation's appearance stream(s) (fix round 1). A second,
+    independent cap (:data:`_MAX_OBJECTS_PER_PAGE`) bounds the number of
+    distinct objects one page's walk may visit, regardless of their size --
+    a document engineered with a huge count of small objects costs real
+    time to classify one by one even though no single stream is large.
+
+    Image XObjects are not content and their streams are never read;
+    instead each image's DECLARED ``/Width x /Height`` -- and (fix round 1)
+    its ``/SMask``'s and stream-valued ``/Mask``'s, each own image objects
+    with their own declared size -- is checked against
+    :data:`MAX_DECODE_PX`, because pdfium decodes an image at its declared
+    size to render it, regardless of what its stream actually holds.
+
+    Left alone: an encrypted document (its streams cannot be read, and
+    extraction fails on it later as today) and a non-PDF document (an
+    ``image/*`` upload opened by :mod:`pymupdf` for its own preview render
+    has no PDF page tree to walk at all -- ``page.get_contents()`` asserts
+    on one).
+
+    Inline images (``BI ... ID ... EI``) are not walked for a declared
+    size the way an Image XObject is: their raw bytes already count toward
+    the page's content-stream budget (they live inside the content stream
+    itself), but a maliciously large *declared* width/height on a small
+    inline-image byte run is a known gap this round does not close --
+    tracked for the render-sandbox follow-up the brief's decision 4
+    recommends, not solved by a bigger content-byte budget.
     """
+    if not doc.is_pdf:
+        return
     if doc.needs_pass:
         return
-    scan_total = 0
+    budget = _ContentBudget()
     for page_index in range(doc.page_count):
         page = doc.load_page(page_index)  # type: ignore[no-untyped-call]
         for image in page.get_images(full=True):
-            width, height = int(image[2]), int(image[3])
-            if width * height > MAX_DECODE_PX:
-                raise ScanTooLargeError(
-                    _IMAGE_TOO_LARGE_MESSAGE.format(
-                        page=page_index + 1, mpx=width * height // 1_000_000
-                    )
-                )
-        xrefs: list[int] = list(page.get_contents())
-        seen = set(xrefs)
-        for xobject in page.get_xobjects():
-            xref = int(xobject[0])
-            if xref in seen:
-                continue
+            _check_image_and_masks(doc, image, page_index=page_index)
+        page_xref = doc.page_xref(page_index)  # type: ignore[no-untyped-call]
+        budget.page_total = 0
+        budget.objects = 0
+        seen: set[int] = set()
+        for xref in page.get_contents():
+            xref = int(xref)
             seen.add(xref)
-            subtype = doc.xref_get_key(xref, "Subtype")  # type: ignore[no-untyped-call]
-            if subtype == ("name", "/Form"):
-                xrefs.append(xref)
-        page_total = 0
-        for xref in xrefs:
-            page_budget = MAX_PAGE_CONTENT_BYTES - page_total
-            scan_budget = MAX_SCAN_CONTENT_BYTES - scan_total - page_total
-            try:
-                page_total += decoded_stream_size(
-                    doc, xref, budget=min(page_budget, scan_budget), page_index=page_index
-                )
-            except ScanTooLargeError:
-                if scan_budget < page_budget:
-                    # The scan cap bit, not the page cap: say so.
-                    raise ScanTooLargeError(_WHOLE_SCAN_MESSAGE) from None
-                raise
-        scan_total += page_total
+            _count_stream(doc, xref, page_index=page_index, budget=budget)
+        _walk_resources(doc, page_xref, page_index=page_index, seen=seen, budget=budget)
+        _walk_annotations(doc, page_xref, page_index=page_index, seen=seen, budget=budget)
+        budget.scan_total += budget.page_total
 
 
 def check_pdf_content_bytes(data: bytes) -> None:
