@@ -2523,34 +2523,90 @@ class ConcurrentRereadTests(unittest.TestCase):
         in the same drain took precedence over an already-observed
         interrupt once the loop finished, and the Ctrl-C was lost.
 
-        Deterministic timing: the interrupt fires only after answer "0"'s
-        worker has actually STARTED (a `threading.Event` it sets itself,
-        rather than a fixed delay racing against however long rasterising
-        the fixture and the primary call take before `_run_rereads` is even
-        reached) -- so the main thread is guaranteed to already be past
-        submitting both futures, and answer "0"'s own long sleep keeps it
-        blocked in `future.result()` for that first-submitted future when
-        the interrupt lands."""
-        extractor = self._extractor(_boxed_answers(2), reread_concurrency=2)
+        Fix round 3: round 2's fixture used only 2 answers at
+        `reread_concurrency=2`, so BOTH dispatch immediately and nothing is
+        ever left queued -- `call_count <= 2` could never fail regardless
+        of whether `stop` actually gets set, so mutant M13 (deleting the
+        drain loop's own `stop.set()`) left this suite green while every
+        queued call still started after Ctrl-C.
+
+        Also discovered while fixing this: `_thread.interrupt_main()`
+        does NOT interrupt a blocking, no-timeout `future.result()`
+        mid-wait (confirmed with a standalone repro against bare
+        `ThreadPoolExecutor` -- the interrupt sits PENDING but is only
+        actually delivered once that `.result()` call returns on its own,
+        i.e. once the future it is blocked on resolves). So "0" -- the
+        future the main thread is blocked on -- must resolve QUICKLY, or
+        every other queued answer finishes long before the interrupt is
+        ever observed, exactly like round 2's now-fixed
+        `test_a_real_interrupt_...` first attempt at 0.05s: it looked
+        red/green correctly there only because "1" (2-answer fixture)
+        raised its OWN ceiling and set `stop` via `_one`'s own path
+        before the interrupt mattered at all.
+
+        Six answers give queued work for `stop` to actually gate, with
+        timing built around the above:
+
+        - "0" resolves quickly (0.05s) -- this is what governs WHEN the
+          pending interrupt is actually delivered.
+        - "1" deliberately runs much LONGER (0.4s) via a NORMAL return (not
+          a raise -- if it raised, ITS OWN `_one`-internal `stop.set()`
+          would mask whether the drain loop's SEPARATE one does anything
+          at all) so its worker slot stays occupied throughout the test;
+          only "0"'s worker ever frees up and cycles through the rest.
+        - "2" is the one allowed race: whether it starts depends on
+          whether "0"'s freed worker grabs it before the main thread's
+          `stop.set()` lands, both triggered by the same event ("0"
+          finishing) -- genuinely racy at the microsecond level, hence
+          "at most 1 extra" rather than a fixed count. If it does start,
+          it takes long enough (0.05s) that stop is unambiguously set well
+          before IT finishes and frees the worker again.
+        - "3"/"4" must never start (blocked by `stop` before either the
+          fix's or the race's window closes).
+        - "5" carries the ceiling (kept, per spec) -- reached only if the
+          fix is missing and "2"/"3"/"4" all ran too; not itself part of
+          the bound below, since with the fix nothing gets that far.
+
+        Synchronization: the interrupt is armed only after "0" has
+        actually STARTED (a `threading.Event` it sets itself, plus 20ms
+        slack for the main thread to reach `future.result()`), not a fixed
+        delay racing against however long rasterising the fixture and the
+        primary call take before `_run_rereads` is even reached."""
+        extractor = self._extractor(_boxed_answers(6), reread_concurrency=2)
         started = threading.Event()
 
         def _reread(answer, pages, *, extra_cache_key):  # type: ignore[no-untyped-def]
-            if answer.question_id == "0":
+            qid = answer.question_id
+            if qid == "0":
                 # Submission order == answer id order, so the main thread's
-                # future.result() for THIS future is the first (and, given
-                # the fix, only) one it ever waits on.
+                # future.result() for THIS future is the first one it ever
+                # waits on -- and, per the module docstring above, also
+                # the one whose resolution is what finally delivers the
+                # already-pending interrupt.
                 started.set()
-                time.sleep(0.5)
+                time.sleep(0.05)
                 return self._reread_ok(answer, pages, extra_cache_key=extra_cache_key)
-            raise CostCeilingError("USD ceiling exceeded")
+            if qid == "1":
+                # Occupies the other worker for the whole test -- long
+                # enough that it is still in flight when the interrupt
+                # lands and the pool later drains (an HTTPS call can't be
+                # aborted; this stands in for one).
+                time.sleep(0.4)
+                return self._reread_ok(answer, pages, extra_cache_key=extra_cache_key)
+            if qid in ("2", "3", "4"):
+                time.sleep(0.05)
+                return self._reread_ok(answer, pages, extra_cache_key=extra_cache_key)
+            raise CostCeilingError("USD ceiling exceeded")  # "5"
 
         extractor._rereader.reread = MagicMock(side_effect=_reread)  # type: ignore[method-assign]
 
         def _fire_once_started() -> None:
             # By the time "0"'s worker is running, the main thread has
-            # already submitted BOTH futures (submission happens before
+            # already submitted every future (submission happens before
             # the drain loop starts, in the same thread) -- the extra 20ms
-            # is slack for it to have reached future.result() for future[0].
+            # is slack for it to have reached future.result() for future[0]
+            # (still well inside "0"'s own 0.05s, so the interrupt is
+            # PENDING before "0" resolves and delivered exactly then).
             started.wait(5)
             time.sleep(0.02)
             _thread.interrupt_main()
@@ -2562,6 +2618,7 @@ class ConcurrentRereadTests(unittest.TestCase):
                 extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
         finally:
             interrupter.join(timeout=5)
-        # Bounded at exactly the 2 answers dispatched before the interrupt
-        # landed -- nothing extra snuck in during the pool's drain.
-        self.assertLessEqual(extractor._rereader.reread.call_count, 2)
+        # 2 in flight ("0", "1") plus at most 1 extra ("2") from the race
+        # where a worker picks up one more queued item before the main
+        # thread's stop.set() lands -- "3", "4", "5" must never start.
+        self.assertLessEqual(extractor._rereader.reread.call_count, 3)
