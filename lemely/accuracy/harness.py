@@ -1018,6 +1018,8 @@ def _build_run_manifest(
             fingerprint_raw += "|equivalence_gate=True"
         if marking.ecf_substitution:
             fingerprint_raw += "|ecf_substitution=True"
+        if marking.reread_substitution:
+            fingerprint_raw += "|reread_substitution=True"
         if arm is not None:
             fingerprint_raw += f"|arm={arm}"
     else:

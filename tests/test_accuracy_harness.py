@@ -1650,16 +1650,15 @@ class RunManifestTests(unittest.TestCase):
         from lemely.runtime.config import GradingSettings
 
         prints = set()
-        for grading in (
-            GradingSettings(),
-            GradingSettings(equivalence_gate=True),
-            GradingSettings(ecf_substitution=True),
-            GradingSettings(equivalence_gate=True, ecf_substitution=True),
-        ):
-            settings = self._settings_with_models()
-            settings.grading = grading
-            prints.add(self._manifest(settings).params_fingerprint)
-        self.assertEqual(len(prints), 4, "each flag combination must hash differently")
+        for gate in (False, True):
+            for ecf in (False, True):
+                for reread in (False, True):
+                    settings = self._settings_with_models()
+                    settings.grading = GradingSettings(
+                        equivalence_gate=gate, ecf_substitution=ecf, reread_substitution=reread
+                    )
+                    prints.add(self._manifest(settings).params_fingerprint)
+        self.assertEqual(len(prints), 8, "each flag combination must hash differently")
 
     def test_measure_accuracy_passes_marking_options_from_settings(self) -> None:
         """measure_accuracy must forward the settings' marking flags to
