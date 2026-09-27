@@ -54,6 +54,13 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.60
 # constructor-knob shape as ``reread_confidence_threshold``.
 DEFAULT_MAX_REREADS_PER_PAPER = 15
 
+#: Spec 2026-09-26 §4 (#9): a re-read whose ``reread_agreement`` is below this
+#: sends the question to teacher review (and, under ``reread_substitution``,
+#: is what gets marked). The plan's 0.8 (docs/plans/ai-improvements-plan.md
+#: :186), applied unrevalidated to the difflib stand-in ``_text_agreement``
+#: -- the same caveat lemely.io.second_read records for its own 0.8.
+REREAD_REVIEW_AGREEMENT_THRESHOLD = 0.8
+
 REREAD_SYSTEM_PROMPT = """
 You are re-reading a single cropped, upscaled image of one student's answer to
 one exam question, extracted from a larger scanned page. Read only what is

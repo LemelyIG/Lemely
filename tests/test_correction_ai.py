@@ -4043,8 +4043,8 @@ class DuplicateQuestionIdFlattenTests(unittest.TestCase):
             bus.unsubscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
 
         # Policy: last-wins. Pinned here, not incidental to dict construction.
-        self.assertEqual(flattened["1"], ("second", None, 0.8, None))
-        self.assertEqual(flattened["2"], ("only", None, 0.9, None))
+        self.assertEqual(flattened["1"], ("second", None, 0.8, None, None, None))
+        self.assertEqual(flattened["2"], ("only", None, 0.9, None, None, None))
 
         self.assertEqual(len(frames), 1)
         self.assertEqual(frames[0]["duplicate_counts"], {"1": 1})
@@ -4072,8 +4072,8 @@ class DuplicateQuestionIdFlattenTests(unittest.TestCase):
             bus.unsubscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
 
         self.assertEqual(frames, [])
-        self.assertEqual(flattened["1"], ("A", None, 0.5, None))
-        self.assertEqual(flattened["2"], ("B", None, 0.9, None))
+        self.assertEqual(flattened["1"], ("A", None, 0.5, None, None, None))
+        self.assertEqual(flattened["2"], ("B", None, 0.9, None, None, None))
 
     def test_duplicate_count_is_extra_occurrences_not_total(self) -> None:
         """Pin the payload semantics at 3+ occurrences, where "extra
@@ -4103,7 +4103,7 @@ class DuplicateQuestionIdFlattenTests(unittest.TestCase):
             bus.unsubscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
 
         # 3 occurrences -> 2 *extra* beyond the first, not 3 total.
-        self.assertEqual(flattened["1"], ("third", None, 0.7, None))
+        self.assertEqual(flattened["1"], ("third", None, 0.7, None, None, None))
         self.assertEqual(len(frames), 1)
         self.assertEqual(frames[0]["duplicate_counts"], {"1": 2})
         self.assertEqual(frames[0]["total_answers"], 3)
@@ -4123,8 +4123,8 @@ class DuplicateQuestionIdFlattenTests(unittest.TestCase):
             bus.unsubscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
 
         self.assertEqual(frames, [])
-        self.assertEqual(flattened["1"], ("A", None, 1.0, None))
-        self.assertEqual(flattened["2"], ("B", None, 1.0, None))
+        self.assertEqual(flattened["1"], ("A", None, 1.0, None, None, None))
+        self.assertEqual(flattened["2"], ("B", None, 1.0, None, None, None))
 
     def test_flatten_answers_carries_the_source_box(self) -> None:
         """The extractor's box must survive into marking, not be discarded.
@@ -5349,3 +5349,165 @@ class PointVerdictGoldenFixtureTests(unittest.TestCase):
             ]
 
         self._assert_row("0580_s23_qp_22_theory_partial", "12b", verdicts)
+
+
+class RereadDisagreementTests(unittest.TestCase):
+    """Spec 2026-09-26 §4 (#9). Written answers are not reviewed on
+    extraction confidence (only the MCQ builder reads it), so a crop
+    re-read that disagrees with the first read is the only signal that a
+    written answer was misread. With `reread_substitution` on, the re-read
+    text is what gets marked -- and the flag STILL fires."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.ms = _hybrid_paper_mark_scheme()  # q1 MCQ answer A (1 mark); q2 explanation p1/p2
+
+    def _mcq(self, answer: str, reread: str | None, agreement: float | None) -> ExtractedAnswers:
+        return ExtractedAnswers(
+            paper_id="t",
+            source_scan="s.pdf",
+            answers=[
+                ExtractedAnswer(
+                    question_id="1",
+                    answer=answer,
+                    confidence=0.9,
+                    answer_reread=reread,
+                    reread_agreement=agreement,
+                )
+            ],
+        )
+
+    def _mark_mcq(self, extracted: ExtractedAnswers, **options: bool):
+        result = correct_paper(
+            self.ms, extracted, gemini_client=None, mcq_only=True, options=MarkingOptions(**options)
+        )
+        return next(q for q in result.questions if q.question_id == "1")
+
+    def test_low_reread_agreement_flags_a_deterministic_mcq_answer(self) -> None:
+        q1 = self._mark_mcq(self._mcq("B", "D", 0.0))
+        self.assertTrue(q1.needs_teacher_review)
+        self.assertIn(
+            "re-read disagreed with the first read (agreement 0.00 < 0.80)", q1.review_reason or ""
+        )
+        self.assertIn("marked the first read 'B', the re-read gave 'D'", q1.review_reason or "")
+        self.assertEqual(q1.student_answer, "B")
+
+    def test_reread_agreement_none_or_high_leaves_the_flag_alone(self) -> None:
+        for reread, agreement in ((None, None), ("A", 0.95)):
+            q1 = self._mark_mcq(self._mcq("A", reread, agreement))
+            self.assertFalse(q1.needs_teacher_review, (reread, agreement))
+            self.assertIsNone(q1.review_reason)
+
+    def test_existing_review_reason_is_kept_and_joined(self) -> None:
+        # A marker claiming 2 marks for one matched 1-mark point trips the
+        # coherence check, so the row already carries a reason; the re-read
+        # reason is appended after " | ", never replacing it.
+        extracted = ExtractedAnswers(
+            paper_id="t",
+            source_scan="s.pdf",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(
+                    question_id="2",
+                    answer="gravity acts on it",
+                    confidence=0.9,
+                    answer_reread="gravity acts on lt",
+                    reread_agreement=0.3,
+                ),
+            ],
+        )
+        client = _client_with_seq(self.tmp, [_mock_marker_response(2, ["p1"])])
+        result = correct_paper(self.ms, extracted, gemini_client=client)
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertTrue(q2.needs_teacher_review)
+        reason = q2.review_reason or ""
+        self.assertIn("matched_point_ids", reason.split(" | ")[0])
+        self.assertIn(" | extraction re-read disagreed", reason)
+
+    def test_reread_substitution_marks_the_reread_text_and_keeps_the_flag(self) -> None:
+        q1 = self._mark_mcq(self._mcq("B", "A", 0.0), reread_substitution=True)
+        self.assertEqual(q1.awarded_marks, 1)
+        self.assertEqual(q1.student_answer, "A")
+        self.assertTrue(q1.needs_teacher_review)
+        self.assertIn("marked the re-read 'A', the first read was 'B'", q1.review_reason or "")
+
+    def test_reread_substitution_off_marks_the_first_read_and_flags(self) -> None:
+        q1 = self._mark_mcq(self._mcq("B", "A", 0.0))
+        self.assertEqual(q1.awarded_marks, 0)
+        self.assertEqual(q1.student_answer, "B")
+        self.assertTrue(q1.needs_teacher_review)
+
+    def test_reread_substitution_skips_an_empty_reread_and_still_flags(self) -> None:
+        q1 = self._mark_mcq(self._mcq("B", "", 0.0), reread_substitution=True)
+        self.assertEqual(q1.student_answer, "B")
+        self.assertTrue(q1.needs_teacher_review)
+        self.assertIn(
+            "the re-read returned nothing usable, marked the first read 'B'", q1.review_reason or ""
+        )
+
+    def test_reread_substitution_requires_disagreement(self) -> None:
+        q1 = self._mark_mcq(self._mcq("A", "A", 0.95), reread_substitution=True)
+        self.assertEqual(q1.student_answer, "A")
+        self.assertFalse(q1.needs_teacher_review)
+
+    def test_low_reread_agreement_flags_an_ai_marked_answer(self) -> None:
+        extracted = ExtractedAnswers(
+            paper_id="t",
+            source_scan="s.pdf",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(
+                    question_id="2",
+                    answer="gravity acts on it",
+                    confidence=0.9,
+                    answer_reread="gravity acts on lt",
+                    reread_agreement=0.3,
+                ),
+            ],
+        )
+        client = _client_with_seq(self.tmp, [_mock_marker_response(1, ["p1"])])
+        result = correct_paper(self.ms, extracted, gemini_client=client)
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.awarded_marks, 1)
+        self.assertTrue(q2.needs_teacher_review)
+        self.assertIn("agreement 0.30 < 0.80", q2.review_reason or "")
+
+    def test_reread_substitution_passes_the_reread_to_the_ai_marker(self) -> None:
+        extracted = ExtractedAnswers(
+            paper_id="t",
+            source_scan="s.pdf",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(
+                    question_id="2",
+                    answer="grabity",
+                    confidence=0.9,
+                    answer_reread="gravity acts on it",
+                    reread_agreement=0.2,
+                ),
+            ],
+        )
+        client = _client_with_seq(self.tmp, [_mock_marker_response(1, ["p1"])])
+        result = correct_paper(
+            self.ms,
+            extracted,
+            gemini_client=client,
+            options=MarkingOptions(reread_substitution=True),
+        )
+        prompt = client._client.models.generate_content.call_args.kwargs["contents"][0]
+        self.assertIn("gravity acts on it", prompt)
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.student_answer, "gravity acts on it")
+        self.assertTrue(q2.needs_teacher_review)
+
+    def test_dropped_rows_are_not_touched(self) -> None:
+        extracted = ExtractedAnswers(
+            paper_id="t",
+            source_scan="s.pdf",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.9)],
+            dropped_question_ids=["2"],
+        )
+        result = correct_paper(self.ms, extracted, gemini_client=None, mcq_only=True)
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.marker_source, "dropped")
+        self.assertNotIn("re-read", q2.review_reason or "")

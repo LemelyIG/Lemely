@@ -38,6 +38,7 @@ from lemely.io.prompts.correction_ai import (
     VERSION,
     build_marker_user_prompt,
 )
+from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD
 from lemely.io.validation import validate_mark_scheme
 from lemely.runtime.config import MarkingOptions
 from lemely.runtime.errors import ConfigError, CostCeilingError, LemelyError
@@ -49,10 +50,21 @@ def _is_leaf_marked(q: Question) -> bool:
     return q.marks > 0 and not q.parts
 
 
+class _FlatAnswer(NamedTuple):
+    """One extracted answer as ``correct_paper`` consumes it, keyed by leaf id."""
+
+    answer: str
+    working_out: str | None
+    confidence: float
+    source_box: SourceBox | None
+    answer_reread: str | None
+    reread_agreement: float | None
+
+
 def _flatten_answers(
     extracted: ExtractedAnswers | Mapping[str, str],
-) -> dict[str, tuple[str, str | None, float, SourceBox | None]]:
-    """Map question_id to (answer, working_out, confidence, source_box) per extracted answer.
+) -> dict[str, _FlatAnswer]:
+    """Map question_id to its :class:`_FlatAnswer` per extracted answer.
 
     NIT-B: two ``ExtractedAnswer``s can share one ``question_id`` -- each is
     individually well-formed, so nothing upstream (extraction validation,
@@ -74,12 +86,19 @@ def _flatten_answers(
     e.g. a question_id seen 3 times contributes 2 to its count, not 3.
     """
     if isinstance(extracted, ExtractedAnswers):
-        flattened: dict[str, tuple[str, str | None, float, SourceBox | None]] = {}
+        flattened: dict[str, _FlatAnswer] = {}
         duplicate_counts: dict[str, int] = {}
         for a in extracted.answers:
             if a.question_id in flattened:
                 duplicate_counts[a.question_id] = duplicate_counts.get(a.question_id, 0) + 1
-            flattened[a.question_id] = (a.answer, a.working_out, a.confidence, a.source_box)
+            flattened[a.question_id] = _FlatAnswer(
+                a.answer,
+                a.working_out,
+                a.confidence,
+                a.source_box,
+                a.answer_reread,
+                a.reread_agreement,
+            )
         if duplicate_counts:
             bus.publish(
                 EventType.DUPLICATE_QUESTION_ID,
@@ -87,11 +106,51 @@ def _flatten_answers(
                 total_answers=len(extracted.answers),
             )
         return flattened
-    # Plain mapping fallback (Mapping[str, str]): no working_out or confidence
-    # available. A plain mapping has no box either, for the same reason it
-    # has no working_out. A plain mapping cannot contain duplicate keys, so
-    # there is nothing to detect in this branch.
-    return {str(k): (str(v), None, 1.0, None) for k, v in extracted.items()}
+    # Plain mapping fallback (Mapping[str, str]): no working_out, confidence,
+    # box or re-read available, and no duplicate keys to detect.
+    return {str(k): _FlatAnswer(str(v), None, 1.0, None, None, None) for k, v in extracted.items()}
+
+
+def _disagrees(flat: _FlatAnswer) -> bool:
+    """The crop re-read disagreed with the first read (spec 2026-09-26 §4)."""
+    return (
+        flat.reread_agreement is not None
+        and flat.reread_agreement < REREAD_REVIEW_AGREEMENT_THRESHOLD
+    )
+
+
+def _substitutes(flat: _FlatAnswer) -> bool:
+    """Under ``reread_substitution``: disagreed AND the re-read text is usable."""
+    return _disagrees(flat) and bool((flat.answer_reread or "").strip())
+
+
+def _quote(text: str | None) -> str:
+    cleaned = (text or "").strip().replace("\n", " ")
+    return repr(cleaned if len(cleaned) <= 60 else cleaned[:60] + "…")
+
+
+def _reread_reason(
+    *, first_read: str | None, reread: str | None, agreement: float, substitution: bool
+) -> str:
+    """The three shapes of the review reason (spec 2026-09-26 §4)."""
+    head = (
+        "extraction re-read disagreed with the first read "
+        f"(agreement {agreement:.2f} < {REREAD_REVIEW_AGREEMENT_THRESHOLD:.2f})"
+    )
+    if substitution and (reread or "").strip():
+        return (
+            f"{head}; marked the re-read {_quote(reread)}, the first read was {_quote(first_read)}"
+        )
+    if substitution:
+        return (
+            f"{head}; the re-read returned nothing usable, "
+            f"marked the first read {_quote(first_read)}"
+        )
+    return f"{head}; marked the first read {_quote(first_read)}, the re-read gave {_quote(reread)}"
+
+
+def _join_reason(existing: str | None, added: str) -> str:
+    return f"{existing} | {added}" if existing else added
 
 
 def _dropped_question_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> frozenset[str]:
@@ -1692,7 +1751,7 @@ def _maybe_apply_ecf_substitution(
     equivalence_gate: bool,
     principles: list[str] | None,
     sibling_prior: dict[str, int] | None,
-    answers: dict[str, tuple[str, str | None, float, SourceBox | None]],
+    answers: dict[str, _FlatAnswer],
     top_level_leaves: list[Question],
     corrected_by_id: dict[str, CorrectedQuestion],
     log: structlog.BoundLogger,
@@ -1795,7 +1854,7 @@ def _maybe_apply_ecf_substitution(
         if _point_was_awarded(prereq_leaf_id, prereq_point_id, corrected_by_id):
             continue  # prerequisite was already correct -- nothing to carry forward
         prereq_answer = answers.get(prereq_leaf_id)
-        if not prereq_answer or _is_blank(prereq_answer[0]):
+        if not prereq_answer or _is_blank(prereq_answer.answer):
             continue
         eligible.append((point, prereq_leaf_id, prereq_point_id))
 
@@ -1814,9 +1873,8 @@ def _maybe_apply_ecf_substitution(
     # DECLINED (not merely undocumented): true per-POINT VALUE granularity
     # -- substituting only the specific number the prerequisite point
     # produced, rather than the prerequisite leaf's whole answer -- is not
-    # achievable with today's extraction. `answers` is
-    # `dict[str, tuple[str, str | None, float, SourceBox | None]]`, keyed by LEAF question
-    # id; extraction never resolves a value below one question's
+    # achievable with today's extraction. `answers` is `dict[str, _FlatAnswer]`,
+    # keyed by LEAF question id; extraction never resolves a value below one question's
     # answer/working as a whole, so there is no per-point value to look up
     # in the first place, regardless of how this function is written. That
     # is a limit of what extraction records, not a documentation choice.
@@ -1833,7 +1891,8 @@ def _maybe_apply_ecf_substitution(
         # unambiguous once indented. `answer` is typed ``str`` in
         # `answers` (never ``None``), so no `or ""` fallback is needed for
         # it.
-        answer, working, _, _ = answers[leaf_id]
+        flat = answers[leaf_id]
+        answer, working = flat.answer, flat.working_out
         lines = [f"answer: {answer}"]
         if working and working.strip():
             lines.append(f"working: {working.strip()}")
@@ -1947,6 +2006,43 @@ def _maybe_apply_ecf_substitution(
     )
 
 
+def _attach_extraction_context(
+    cq: CorrectedQuestion,
+    answers: dict[str, _FlatAnswer],
+    original: dict[str, _FlatAnswer],
+    options: MarkingOptions,
+) -> CorrectedQuestion:
+    """The ONE place the finished row learns what extraction knew about it.
+
+    E (2026-09-24): the extraction bounding box, deep-copied because pydantic
+    keeps an already-validated nested model by reference and a shared
+    instance would let one holder's mutation corrupt every other holder's
+    copy. Spec 2026-09-26 §4 (#9): a crop re-read that disagreed with the
+    first read sends an ``ai`` or ``deterministic`` row to teacher review,
+    joined onto any reason the builder already gave -- whether or not
+    ``reread_substitution`` marked the re-read text, because substitution
+    must never hide a disagreement from the teacher. Dropped, blank and
+    missing rows are left alone: no answer was read for them.
+    """
+    if cq.question_id not in answers:
+        return cq
+    flat = answers[cq.question_id]
+    update: dict[str, object] = {
+        "source_box": flat.source_box.model_copy(deep=True) if flat.source_box is not None else None
+    }
+    if cq.marker_source in ("ai", "deterministic") and _disagrees(flat):
+        first = original[cq.question_id]
+        reason = _reread_reason(
+            first_read=first.answer,
+            reread=first.answer_reread,
+            agreement=flat.reread_agreement or 0.0,
+            substitution=options.reread_substitution,
+        )
+        update["needs_teacher_review"] = True
+        update["review_reason"] = _join_reason(cq.review_reason, reason)
+    return cq.model_copy(update=update)
+
+
 def correct_paper(
     mark_scheme: MarkScheme | str | Mapping[str, object],
     extracted_answers: ExtractedAnswers | Mapping[str, str],
@@ -1978,7 +2074,21 @@ def correct_paper(
     equivalence_gate = options.equivalence_gate
     ecf_substitution = options.ecf_substitution
     scheme = _load_mark_scheme(mark_scheme)
-    answers = _flatten_answers(extracted_answers)
+    # Spec 2026-09-26 §4 (#9): under `reread_substitution`, a leaf whose crop
+    # re-read disagreed with the first read (and whose re-read text is not
+    # blank) is marked on the re-read text. Substituted ONCE, here, before the
+    # loop, so marking, the blank check, ECF prerequisite text and the
+    # dropped-id subtraction all see the text that is actually marked;
+    # `original` keeps the first read for the review reason below.
+    original = _flatten_answers(extracted_answers)
+    answers = (
+        {
+            qid: flat._replace(answer=str(flat.answer_reread)) if _substitutes(flat) else flat
+            for qid, flat in original.items()
+        }
+        if options.reread_substitution
+        else original
+    )
     # Spec 2026-09-26 §2 (#4): `dropped_question_ids` records that AN ENTRY
     # for the id was discarded, not that the question has no usable answer.
     # Only an id with no surviving answer short-circuits below; both sides are
@@ -2021,10 +2131,10 @@ def correct_paper(
     # the UI would show a question number that no longer matches reality.
     total_leaves = len(leaves)
     for index, q in enumerate(leaves, start=1):
-        answer_tuple = answers.get(q.id)
-        student_answer = answer_tuple[0] if answer_tuple else None
-        student_working = answer_tuple[1] if answer_tuple else None
-        extraction_confidence = answer_tuple[2] if answer_tuple else None
+        flat = answers.get(q.id)
+        student_answer = flat.answer if flat else None
+        student_working = flat.working_out if flat else None
+        extraction_confidence = flat.confidence if flat else None
 
         # US-031 review MUST-FIX 7 (stronger fix): a dropped answer must be
         # distinguishable from a genuine student blank BEFORE dispatching to
@@ -2206,32 +2316,5 @@ def correct_paper(
             total=total_leaves,
         )
 
-    # E (2026-09-24 production-readiness spec): attach each question's
-    # extraction bounding box here, at the ONE place the list is finished,
-    # rather than at the nine `CorrectedQuestion(` construction sites (six of
-    # which are reached through `corrected.append`). One write is one rule,
-    # and keying off `answers` means the box comes from whichever answer
-    # `_flatten_answers`' last-wins policy kept -- a second dedup rule cannot
-    # appear here, which is the failure `point_verdicts` already paid for.
-    # Deep-copy the box (review finding 1): `answers[...][3]` is the exact
-    # `SourceBox` instance the extractor produced, and pydantic keeps an
-    # already-validated nested model by reference rather than revalidating
-    # it, so without copying, every `CorrectedQuestion` for a given question
-    # would alias the SAME box. `validate_box_coords` only runs at
-    # construction time, so a shared instance would let one holder's
-    # in-place `box[0] = ...` mutation -- or a plain attribute reassignment,
-    # since `StrictModel` sets no `validate_assignment` -- silently corrupt
-    # every other holder's copy.
-    corrected = [
-        cq.model_copy(
-            update={
-                "source_box": box.model_copy(deep=True)
-                if (box := answers[cq.question_id][3]) is not None
-                else None
-            }
-        )
-        if cq.question_id in answers
-        else cq
-        for cq in corrected
-    ]
+    corrected = [_attach_extraction_context(cq, answers, original, options) for cq in corrected]
     return CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected)
