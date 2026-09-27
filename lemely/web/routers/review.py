@@ -41,7 +41,8 @@ from lemely.db.review_repo import (
 )
 from lemely.io.rasterise import RasterisedPage, looks_like_pdf
 from lemely.io.reread import REREAD_UPSCALE, crop_and_upscale, padded_crop_rect
-from lemely.io.scan_limits import MAX_DECODE_PX as _MAX_DECODE_PX, ScanRejectedError, check_pdf_content
+from lemely.io.scan_limits import MAX_DECODE_PX as _MAX_DECODE_PX
+from lemely.io.scan_limits import ScanRejectedError, check_pdf_content
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 
 # A runtime import, not a TYPE_CHECKING one: FastAPI resolves
@@ -508,7 +509,9 @@ def _crop_pdf_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
         try:
             check_pdf_content(doc)
         except ScanRejectedError as exc:
-            log.warning("review_crop_scan_rejected", item_id=item_id, page=box.page, reason=str(exc))
+            log.warning(
+                "review_crop_scan_rejected", item_id=item_id, page=box.page, reason=str(exc)
+            )
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         page = doc.load_page(box.page)
         # A fresh list, so nothing downstream can rescale this request's box.

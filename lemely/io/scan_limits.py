@@ -21,13 +21,16 @@ import io
 import math
 import zlib
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pymupdf
 import pypdfium2 as pdfium
 from PIL import Image
 
 from lemely.runtime.errors import LemelyError
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 #: The committed question paper has 16 pages; answer booklets with
 #: continuation sheets reach the low 30s. Also bounds the number of page
@@ -200,8 +203,10 @@ def decoded_stream_size(doc: pymupdf.Document, xref: int, *, budget: int, page_i
     Flate content streams, so this costs nothing real and closes the
     obvious evasion.
     """
-    raw = doc.xref_stream_raw(xref)
-    kind, value = doc.xref_get_key(xref, "Filter")
+    raw = doc.xref_stream_raw(xref)  # type: ignore[no-untyped-call]
+    if raw is None:
+        raw = b""
+    kind, value = doc.xref_get_key(xref, "Filter")  # type: ignore[no-untyped-call]
     if kind == "null":
         size = len(raw)
         if size > budget:
@@ -240,7 +245,7 @@ def check_pdf_content(doc: pymupdf.Document) -> None:
         return
     scan_total = 0
     for page_index in range(doc.page_count):
-        page = doc.load_page(page_index)
+        page = doc.load_page(page_index)  # type: ignore[no-untyped-call]
         for image in page.get_images(full=True):
             width, height = int(image[2]), int(image[3])
             if width * height > MAX_DECODE_PX:
@@ -256,7 +261,8 @@ def check_pdf_content(doc: pymupdf.Document) -> None:
             if xref in seen:
                 continue
             seen.add(xref)
-            if doc.xref_get_key(xref, "Subtype") == ("name", "/Form"):
+            subtype = doc.xref_get_key(xref, "Subtype")  # type: ignore[no-untyped-call]
+            if subtype == ("name", "/Form"):
                 xrefs.append(xref)
         page_total = 0
         for xref in xrefs:
@@ -278,32 +284,32 @@ def check_pdf_content_bytes(data: bytes) -> None:
     """:func:`check_pdf_content` on an in-memory PDF; bytes pymupdf cannot open pass."""
     try:
         doc = pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
-    except Exception:  # noqa: BLE001 -- unparseable is "not our call"; extraction decides later
+    except Exception:
         return
     try:
         check_pdf_content(doc)
     except ScanRejectedError:
         raise
-    except Exception:  # noqa: BLE001 -- a malformed page tree: same rule as the geometry check
+    except Exception:
         return
     finally:
-        doc.close()
+        doc.close()  # type: ignore[no-untyped-call]
 
 
 def check_pdf_content_path(path: Path) -> None:
     """:func:`check_pdf_content` on a file; the extraction and CLI entry point."""
     try:
         doc = pymupdf.open(str(path))  # type: ignore[no-untyped-call]
-    except Exception:  # noqa: BLE001 -- same rule as check_pdf_content_bytes
+    except Exception:
         return
     try:
         check_pdf_content(doc)
     except ScanRejectedError:
         raise
-    except Exception:  # noqa: BLE001
+    except Exception:
         return
     finally:
-        doc.close()
+        doc.close()  # type: ignore[no-untyped-call]
 
 
 def check_scan_bytes(data: bytes) -> None:
