@@ -1761,17 +1761,20 @@ class RereadCapTests(unittest.TestCase):
 
     def test_default_cap_is_the_shipped_constant(self) -> None:
         """I1 review round 2, should-fix 5: both cap tests previously passed
-        ``max_rereads_per_paper=`` explicitly, so the shipped
-        ``DEFAULT_MAX_REREADS_PER_PAPER`` itself was unpinned (mutating 15 to
-        999 broke zero tests). Construct the extractor with no override, on
-        a FIXED 16-answer fixture (not sized off the constant under test --
-        an earlier version of this test derived the fixture size from
-        ``DEFAULT_MAX_REREADS_PER_PAPER``, which broke for the wrong reason
-        under a 999 mutation: 1000 answers with confidence 0.01*i overflowed
-        the [0, 1] confidence range and failed schema validation instead of
-        exercising the cap), and pin the expected call count as a literal
-        15, not the constant, so a mutation is caught by a mismatch rather
-        than by the fixture blowing up."""
+        ``max_rereads_per_paper=`` explicitly, so the shipped default was
+        unpinned (mutating it broke zero tests). Construct the extractor
+        with no override, on a FIXED 16-answer fixture (not sized off the
+        constant under test -- an earlier version of this test derived the
+        fixture size from it, which broke for the wrong reason under a 999
+        mutation: 1000 answers with confidence 0.01*i overflowed the [0, 1]
+        confidence range and failed schema validation instead of exercising
+        the cap), and pin the expected call count as a literal 15, not the
+        constant, so a mutation is caught by a mismatch rather than by the
+        fixture blowing up. Spec 2026-09-26 §4: the default is no longer the
+        module constant ``DEFAULT_MAX_REREADS_PER_PAPER`` directly -- with
+        no override, the constructor now reads
+        ``GeminiSettings.max_rereads_per_paper``, whose own default (15) is
+        what this pins."""
         n_answers = 16
         body = {
             "answers": [
@@ -1866,7 +1869,17 @@ class RereadCapTests(unittest.TestCase):
 
         extractor._rereader.reread.assert_not_called()
         self.assertEqual((result.rereads_eligible, result.reread_attempts), (1, 0))
+        self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["cap"], 0)
+
+    def test_a_negative_cap_override_raises(self) -> None:
+        """0 legitimately disables the stage (the test above); a negative
+        cap has no such meaning and must be rejected at construction, not
+        silently behave like 0 (Python slicing ``[:-1]`` would otherwise
+        drop the LAST eligible answer instead of capping to none)."""
+        body = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
+        with self.assertRaises(ValueError):
+            GeminiAnswerExtractor(_client_with_response(self.tmp, body), max_rereads_per_paper=-1)
 
 
 class ScanQualityWarningPublishTests(unittest.TestCase):

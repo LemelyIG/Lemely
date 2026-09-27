@@ -772,6 +772,14 @@ class GeminiAnswerExtractor:
         # harness); `None` -- what every production construction site passes
         # -- reads `gemini.max_rereads_per_paper`, so the cap is configured,
         # not hard-coded. 0 disables the stage.
+        if max_rereads_per_paper is not None and max_rereads_per_paper < 0:
+            # Fix round 1: unlike 0 (a genuine "disable the stage"), a
+            # negative value has no such meaning and must not be accepted
+            # silently -- `sorted(...)[:max_rereads_per_paper]` (the cap
+            # slice in __call__) would otherwise treat a negative cap as
+            # Python's "drop the last N" slicing instead of "keep none",
+            # capping the WRONG end of the lowest-confidence-first list.
+            raise ValueError(f"max_rereads_per_paper must be >= 0, got {max_rereads_per_paper}")
         settings = gemini_client._settings.gemini
         self._max_rereads_per_paper = (
             max_rereads_per_paper
