@@ -2008,6 +2008,7 @@ class SecondReadWiringTests(unittest.TestCase):
         self.assertIsNone(result.answers[0].extraction_agreement)
         self.assertEqual(len(failures), 1)
         self.assertIn("503", failures[0]["error"])
+        self.assertEqual(failures[0]["error_type"], "ExternalServiceError")
 
     def test_a_cost_ceiling_breach_in_the_second_read_still_propagates(self) -> None:
         body = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
@@ -2021,6 +2022,57 @@ class SecondReadWiringTests(unittest.TestCase):
             GeminiAnswerExtractor(client)(
                 scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme()
             )
+
+    def test_a_lazy_upload_failure_in_the_second_read_of_a_cached_primary_surfaces(self) -> None:
+        """Spec 2026-09-26 §7+§8: the primary and second read share ONE
+        ``ImageUploads``, uploaded lazily on its first real cache miss. When
+        the primary is served from a pre-warmed cache, that miss is the
+        second read's OWN call -- a real ``FakeFiles`` upload failure there
+        (not a mocked ``SecondReader``) must still degrade to
+        ``SECOND_READ_FAILED``, not escape."""
+        body = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
+        # Warm the PRIMARY's cache entry with a plain run (second_reader=
+        # "none" -- only the primary's own cache key is written).
+        warm_client, _ = _client_with_responses(self.tmp, [body], second_reader="none")
+        GeminiAnswerExtractor(warm_client)(
+            scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme()
+        )
+
+        # A fresh client sharing the same cache_dir: the primary is now a
+        # cache hit. cross_model's own cache key has never been written, so
+        # ITS call is a genuine miss and must upload the shared pages
+        # lazily for the first time this run -- inject a real Files API
+        # failure there via FakeFiles.upload_hook.
+        second = {"answers": [{"question_id": "1", "answer": "A"}]}
+        client, mock_genai = _client_with_responses(
+            self.tmp, [second], second_reader="cross_model", max_retries=0
+        )
+
+        def _fail_upload(data: bytes) -> None:
+            raise RuntimeError("upload quota exceeded")
+
+        mock_genai.files.upload_hook = _fail_upload
+        failures: list[dict] = []
+
+        def _spy(**payload: object) -> None:
+            failures.append(payload)
+
+        bus.subscribe(EventType.SECOND_READ_FAILED, _spy)
+        try:
+            result = GeminiAnswerExtractor(client)(
+                scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme()
+            )
+        finally:
+            bus.unsubscribe(EventType.SECOND_READ_FAILED, _spy)
+
+        # Neither the primary (cache hit) nor the second read (failed
+        # before it could reach the model) ever called generate_content.
+        mock_genai.models.generate_content.assert_not_called()
+        self.assertEqual([a.answer for a in result.answers], ["A"])
+        self.assertIsNone(result.answers[0].extraction_agreement)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("upload quota exceeded", failures[0]["error"])
+        self.assertEqual(failures[0]["error_type"], "ExternalServiceError")
 
 
 class AgreementTriggeredRereadTests(unittest.TestCase):
@@ -2215,7 +2267,16 @@ class PageUploadLifecycleTests(unittest.TestCase):
         ]
         body = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
         client, mock_genai = _client_with_responses(self.tmp, [body])
-        with patch("lemely.io.answer_extraction.rasterise_scan_to_pages", return_value=pages):
+        # The T2.6 hygiene gate's real numpy pass over 40 pages of noise is
+        # unrelated to what this test proves (the upload path, not scan
+        # quality) and would only slow it down -- skip it.
+        with (
+            patch("lemely.io.answer_extraction.rasterise_scan_to_pages", return_value=pages),
+            patch(
+                "lemely.io.answer_extraction.check_scan_hygiene",
+                return_value=MagicMock(warnings=[]),
+            ),
+        ):
             GeminiAnswerExtractor(client)(
                 scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme()
             )
@@ -2231,9 +2292,42 @@ class PageUploadLifecycleTests(unittest.TestCase):
         extractor = GeminiAnswerExtractor(client)
         extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
         uploads_after_first = len(mock_genai.files.uploads)
+        self.assertEqual(uploads_after_first, 2)
         extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
         self.assertEqual(len(mock_genai.files.uploads), uploads_after_first)
         self.assertEqual(mock_genai.models.generate_content.call_count, 1)
+        # "deletes nothing" (on the second, cache-hit call) is asserted, not
+        # just implied: the first call's own 2 uploads were already deleted
+        # on ITS exit, so the total must still be exactly those 2 -- the
+        # second call's ImageUploads never even calls ensure().
+        self.assertEqual(len(mock_genai.files.deleted), 2)
+
+    def test_hygiene_check_uses_the_real_per_page_dpi_not_a_hard_coded_default(self) -> None:
+        """Carry-over fix (spec 2026-09-26 review): a page rasterised below
+        EXTRACTION_DPI (lemely.io.scan_limits' downscale-on-oversize path)
+        must have its hygiene warning name the REAL dpi it was rendered at,
+        not the EXTRACTION_DPI default."""
+        import dataclasses
+
+        import lemely.io.answer_extraction as ae
+        from lemely.io.rasterise import rasterise_scan_to_pages
+
+        real_pages = rasterise_scan_to_pages(self.scan)
+        pages = [
+            dataclasses.replace(real_pages[0], dpi=200.0),
+            dataclasses.replace(real_pages[1], dpi=143.0),
+        ]
+        body = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
+        client, _ = _client_with_responses(self.tmp, [body])
+        with (
+            patch("lemely.io.answer_extraction.rasterise_scan_to_pages", return_value=pages),
+            patch.object(ae, "check_scan_hygiene", wraps=ae.check_scan_hygiene) as spy,
+        ):
+            GeminiAnswerExtractor(client)(
+                scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme()
+            )
+        spy.assert_called_once()
+        self.assertEqual(spy.call_args.kwargs["dpi"], 143.0)
 
 
 def _boxed_answers(n: int) -> dict:

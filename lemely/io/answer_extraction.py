@@ -1107,7 +1107,11 @@ class GeminiAnswerExtractor:
                     # enhancement on a paid primary extraction and must never
                     # take it down. Keep the primary answers (agreement stays
                     # None) and surface the failure.
-                    bus.publish(EventType.SECOND_READ_FAILED, error=str(exc))
+                    bus.publish(
+                        EventType.SECOND_READ_FAILED,
+                        error=str(exc),
+                        error_type=type(exc).__name__,
+                    )
                     second_read_texts = None
                 if second_read_texts is not None:
                     agreements = compute_agreement(answers, second_read_texts)
