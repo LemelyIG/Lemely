@@ -5567,10 +5567,18 @@ class RereadFixRound1Tests(unittest.TestCase):
     MCQ answer 0 ("invalid MCQ answer") when the re-read carried harmless
     surrounding punctuation ("A.", "(B)") -- the raw re-read text was
     handed to ``_build_mcq_corrected`` verbatim. Also covers the
-    ``_text_agreement`` case/whitespace fix, extending the review flag to a
-    blank first read whose re-read found text, and the coverage gaps named
-    in the fix-round brief (60-char truncation, missing/failed rows staying
-    unflagged, ECF prerequisite text seeing the substituted answer)."""
+    ``_text_agreement`` case/whitespace fix and the coverage gaps named in
+    the fix-round-1 brief (60-char truncation, missing/failed rows staying
+    unflagged, ECF prerequisite text seeing the substituted answer).
+
+    Fix round 2 additions/reversions, kept in this same class: an MCQ
+    re-read that normalises to the SAME letter as the first read is now
+    agreement, not disagreement (so "A." vs "A" flags nothing); and fix
+    round 1's blank-row flag extension was REVERTED -- a reviewer
+    reproduced it reopening the US-039 self-review exploit -- so a blank
+    row with a disagreeing, non-blank re-read must stay unflagged again
+    (see ``test_blank_row_with_disagreeing_nonblank_reread_stays_unflagged_us039_guard``).
+    """
 
     def setUp(self) -> None:
         self.tmp = tempfile.mkdtemp()
@@ -5610,9 +5618,10 @@ class RereadFixRound1Tests(unittest.TestCase):
         )
 
     def test_reread_substitution_strips_mcq_trailing_punctuation(self) -> None:
-        """A re-read of "A." on a correctly-read "A" must not be marked
-        "invalid MCQ answer" -- surrounding punctuation is stripped before
-        the letter is checked, so the normalised substitution is still "A"."""
+        """Fix round 2: a re-read of "A." against a first read of "A"
+        normalises to the SAME letter, so it is agreement, not
+        disagreement -- no flag, no substitution, whatever the raw
+        (hand-set, here 0.0) agreement score says."""
         result = correct_paper(
             self.ms,
             self._mcq("A", "A.", 0.0),
@@ -5623,12 +5632,13 @@ class RereadFixRound1Tests(unittest.TestCase):
         q1 = next(q for q in result.questions if q.question_id == "1")
         self.assertEqual(q1.awarded_marks, 1)
         self.assertEqual(q1.student_answer, "A")
-        self.assertTrue(q1.needs_teacher_review)
-        self.assertNotIn("invalid MCQ answer", q1.review_reason or "")
+        self.assertFalse(q1.needs_teacher_review)
+        self.assertIsNone(q1.review_reason)
 
     def test_reread_substitution_strips_mcq_surrounding_brackets(self) -> None:
-        """A re-read of "(B)" on a B-answer question normalises to "B" and
-        is substituted, earning the mark."""
+        """A re-read of "(B)" on a B-answer question normalises to "B" --
+        a genuine disagreement against the first read "A" -- and is
+        substituted, earning the mark."""
         scheme = self._mcq_only_scheme("B")
         extracted = ExtractedAnswers(
             paper_id="t",
@@ -5655,6 +5665,23 @@ class RereadFixRound1Tests(unittest.TestCase):
         self.assertEqual(q1.student_answer, "B")
         self.assertTrue(q1.needs_teacher_review)
         self.assertIn("marked the re-read 'B', the first read was 'A'", q1.review_reason or "")
+
+    def test_reread_substitution_still_flags_a_genuine_mcq_disagreement(self) -> None:
+        """Fix round 2 regression guard: the normalised-agreement override
+        must not swallow a REAL disagreement -- "B" vs "(A)" normalises to
+        two different letters, so it still flags and substitutes."""
+        result = correct_paper(
+            self.ms,
+            self._mcq("B", "(A)", 0.0),
+            gemini_client=None,
+            mcq_only=True,
+            options=MarkingOptions(reread_substitution=True),
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.awarded_marks, 1)  # scheme answer is "A"
+        self.assertEqual(q1.student_answer, "A")
+        self.assertTrue(q1.needs_teacher_review)
+        self.assertIn("marked the re-read 'A', the first read was 'B'", q1.review_reason or "")
 
     def test_reread_substitution_rejects_mcq_reread_with_embedded_punctuation(self) -> None:
         """ "A/B" does not normalise to a single letter -- embedded
@@ -5684,11 +5711,19 @@ class RereadFixRound1Tests(unittest.TestCase):
 
         self.assertEqual(_text_agreement("A", " a"), 1.0)
 
-    def test_blank_first_read_with_disagreeing_nonblank_reread_gets_flagged(self) -> None:
-        """A blank first read whose re-read found non-blank, disagreeing
-        text means the re-read saw something extraction missed -- the
-        teacher must see it, even though a genuine blank is normally
-        unflagged."""
+    def test_blank_row_with_disagreeing_nonblank_reread_stays_unflagged_us039_guard(self) -> None:
+        """US-039 self-review guard (fix round 2, reverting fix round 1):
+        a blank first read whose re-read found non-blank, disagreeing text
+        must stay UNFLAGGED and untouched by the re-read reason, even
+        though the re-read saw something extraction missed.
+
+        Reviewer-reproduced exploit this guards against: flagging this row
+        makes ``low_confidence_review_needed`` (``review_queue_rules.py``)
+        return True -> ``is_marking_low_confidence`` True ->
+        ``self_review.decide_point`` GRANTS any challenged point on it with
+        NO evidence, i.e. a student self-marking an empty answer to full
+        marks by supplying a plausible re-read (first read "", re-read
+        "a" in the reviewer's repro; "gravity acts on it" here)."""
         extracted = ExtractedAnswers(
             paper_id="t",
             source_scan="s.pdf",
@@ -5707,15 +5742,9 @@ class RereadFixRound1Tests(unittest.TestCase):
         result = correct_paper(self.ms, extracted, gemini_client=client)
         q2 = next(q for q in result.questions if q.question_id == "2")
         self.assertEqual(q2.marker_source, "blank")
-        self.assertTrue(q2.needs_teacher_review)
-        self.assertIn(
-            "extraction re-read disagreed with the first read (agreement 0.00 < 0.80)",
-            q2.review_reason or "",
-        )
-        self.assertIn(
-            "marked the first read '', the re-read gave 'gravity acts on it'",
-            q2.review_reason or "",
-        )
+        self.assertFalse(q2.needs_teacher_review)
+        self.assertEqual(q2.review_reason, correction_ai._BLANK_ANSWER_REVIEW_REASON)
+        self.assertNotIn("re-read", q2.review_reason or "")
 
     def test_blank_first_read_with_blank_reread_stays_unflagged(self) -> None:
         """A blank first read whose re-read ALSO found nothing is a genuine

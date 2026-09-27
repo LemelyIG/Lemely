@@ -16,6 +16,7 @@ from lemely.core.loose_schemas import (
     CalculatedAnswer,
     MarkScheme,
     MathMarkType,
+    MCQAnswer,
     Question,
     QuestionType,
 )
@@ -111,32 +112,13 @@ def _flatten_answers(
     return {str(k): _FlatAnswer(str(v), None, 1.0, None, None, None) for k, v in extracted.items()}
 
 
-def _disagreeing_agreement(flat: _FlatAnswer) -> float | None:
-    """The re-read's agreement score when it disagrees, else ``None``.
-
-    Spec 2026-09-26 §4: "disagrees" means ``reread_agreement`` is not
-    ``None`` and is below :data:`REREAD_REVIEW_AGREEMENT_THRESHOLD`. Fix
-    round 1: gives callers the narrowed ``float`` in one step instead
-    of a boolean plus a defensive ``flat.reread_agreement or 0.0`` that was
-    both dead (this function's own check already guarantees non-``None``)
-    and wrong in spirit (``0.0`` is a legitimate agreement score, not a
-    fallback value).
-    """
-    agreement = flat.reread_agreement
-    if agreement is not None and agreement < REREAD_REVIEW_AGREEMENT_THRESHOLD:
-        return agreement
-    return None
-
-
-def _disagrees(flat: _FlatAnswer) -> bool:
-    """The crop re-read disagreed with the first read (spec 2026-09-26 §4)."""
-    return _disagreeing_agreement(flat) is not None
-
-
 #: Fix round 1 (spec 2026-09-26 §4): the letters ``_build_mcq_corrected``
-#: accepts. A re-read that normalises to anything else is not usable for
-#: substitution on an MCQ leaf, whatever the raw text says.
-_MCQ_LETTERS = frozenset({"A", "B", "C", "D"})
+#: accepts, defined once and shared with it rather than hardcoded twice.
+#: Fix round 2: derived from :class:`MCQAnswer` instead of a bare literal
+#: set. ``typing.get_args`` only resolves a ``Literal``/``Union`` alias, and
+#: ``MCQAnswer`` is a plain ``StrEnum``, so this iterates its members
+#: instead -- the goal (one definition, not two) is the same either way.
+_MCQ_LETTERS = frozenset(letter.value for letter in MCQAnswer)
 
 #: Surrounding characters a re-read may be wrapped in ("(A)", "A.", "[A]")
 #: that carry no signal about which letter was read. Straight quotes only
@@ -161,17 +143,55 @@ def _normalise_mcq_reread(text: str) -> str | None:
     return stripped if stripped in _MCQ_LETTERS else None
 
 
+def _mcq_agrees(first_read: str, reread: str | None) -> bool:
+    """Fix round 2: a re-read normalising to the same letter is agreement.
+
+    "A." or "(A)" against a first read of "A" must never be treated as a
+    disagreement -- both readings say the same thing once surrounding
+    punctuation is stripped, so there is nothing here for the flag or
+    substitution to act on.
+    """
+    if reread is None:
+        return False
+    first_letter = _normalise_mcq_reread(first_read)
+    return first_letter is not None and first_letter == _normalise_mcq_reread(reread)
+
+
+def _disagreeing_agreement(flat: _FlatAnswer, *, is_mcq: bool = False) -> float | None:
+    """The re-read's agreement score when it disagrees, else ``None``.
+
+    Spec 2026-09-26 §4: "disagrees" means ``reread_agreement`` is not
+    ``None`` and is below :data:`REREAD_REVIEW_AGREEMENT_THRESHOLD`. Fix
+    round 1: gives callers the narrowed ``float`` in one step instead
+    of a boolean plus a defensive ``flat.reread_agreement or 0.0`` that was
+    both dead (this function's own check already guarantees non-``None``)
+    and wrong in spirit (``0.0`` is a legitimate agreement score, not a
+    fallback value). Fix round 2: on an MCQ leaf (``is_mcq``), a re-read
+    that :func:`_mcq_agrees` with the first read overrides a low raw score
+    back to agreement -- ``flat.answer``/``flat.answer_reread`` must be the
+    PRE-substitution pair for this to mean anything (callers pass
+    ``original[qid]``, never the post-substitution ``answers[qid]``).
+    """
+    agreement = flat.reread_agreement
+    if agreement is None or agreement >= REREAD_REVIEW_AGREEMENT_THRESHOLD:
+        return None
+    if is_mcq and _mcq_agrees(flat.answer, flat.answer_reread):
+        return None
+    return agreement
+
+
 def _substituted_answer(flat: _FlatAnswer, *, is_mcq: bool) -> str | None:
     """The text substitution would mark instead of the first read.
 
     ``None`` when the re-read is not usable for substitution: it agrees
-    with the first read, it is blank, or -- on an MCQ leaf, fix round 1 --
-    it does not normalise to a single option letter. Non-MCQ leaves
-    substitute the stripped re-read text verbatim (fix round 1: previously
-    unstripped, so a re-read with incidental leading/trailing whitespace
-    would have been quoted and marked with it).
+    with the first read (including, on an MCQ leaf, agreeing once
+    normalised -- fix round 2), it is blank, or -- on an MCQ leaf, fix
+    round 1 -- it does not normalise to a single option letter. Non-MCQ
+    leaves substitute the stripped re-read text verbatim (fix round 1:
+    previously unstripped, so a re-read with incidental leading/trailing
+    whitespace would have been quoted and marked with it).
     """
-    if not _disagrees(flat):
+    if _disagreeing_agreement(flat, is_mcq=is_mcq) is None:
         return None
     reread = (flat.answer_reread or "").strip()
     if not reread:
@@ -441,7 +461,7 @@ def _build_mcq_corrected(
             marker_source="deterministic",
             extraction_confidence=extraction_confidence,
         )
-    if answer.upper() not in {"A", "B", "C", "D"}:
+    if answer.upper() not in _MCQ_LETTERS:
         return CorrectedQuestion(
             question_id=question.id,
             awarded_marks=0,
@@ -2080,31 +2100,38 @@ def _attach_extraction_context(
     must never hide a disagreement from the teacher. The reason quotes the
     text substitution actually used (fix round 1: :func:`_substituted_answer`
     re-run against ``original``, not the raw ``answer_reread``), so
-    ``student_answer`` and the reason always agree.
+    ``student_answer`` and the reason always agree. Fix round 2: on an MCQ
+    leaf, a re-read that :func:`_mcq_agrees` with the first read once
+    normalised is never a disagreement, so "A." vs "A" gives no flag and no
+    substitution -- see :func:`_disagreeing_agreement`.
 
-    Fix round 1: a ``blank`` row -- the first read was empty -- is ALSO
-    flagged when its re-read found non-blank text, using the
-    substitution-off reason shape (the first-read quote is empty). This
-    branch is only ever reached with ``reread_substitution`` off: a blank
-    first read whose non-blank re-read disagrees is exactly what the
-    pre-loop substitution step above would already have substituted away
-    were the flag on, so the leaf loop would not have taken the blank
-    short-circuit at all in that case. Dropped and missing rows are left
-    alone: no answer was read for them.
+    Fix round 1 ADDED, fix round 2 REVERTED: flagging a ``blank`` row
+    whose re-read found non-blank text. Reviewer-reproduced exploit: a
+    flagged ``blank`` row makes ``low_confidence_review_needed``
+    (``review_queue_rules.py``) return True, which makes
+    ``is_marking_low_confidence`` True, and ``self_review.decide_point``
+    then GRANTS any challenged point on that row with NO evidence -- a
+    student could self-mark an empty answer to full marks by supplying a
+    plausible re-read (first read "", re-read "a"). Known gap, deliberately
+    left open: there is no signal available here that distinguishes "the
+    re-read genuinely recovered a missed answer" from "the re-read text is
+    exactly what a challenge flow would need to say" without reopening that
+    exploit, so a blank row is left untouched, like every dropped/missing
+    row: no answer was read for it.
     """
     if cq.question_id not in answers:
         return cq
     flat = answers[cq.question_id]
     first = original[cq.question_id]
+    leaf = leaf_by_id.get(cq.question_id)
+    is_mcq = leaf is not None and leaf.type == QuestionType.MCQ
     update: dict[str, object] = {
         "source_box": flat.source_box.model_copy(deep=True) if flat.source_box is not None else None
     }
-    agreement = _disagreeing_agreement(flat)
+    agreement = _disagreeing_agreement(first, is_mcq=is_mcq)
     if cq.marker_source in ("ai", "deterministic") and agreement is not None:
         reread_for_reason: str | None
         if options.reread_substitution:
-            leaf = leaf_by_id.get(cq.question_id)
-            is_mcq = leaf is not None and leaf.type == QuestionType.MCQ
             substituted = _substituted_answer(first, is_mcq=is_mcq)
             reread_for_reason = substituted if substituted is not None else ""
         else:
@@ -2114,17 +2141,6 @@ def _attach_extraction_context(
             reread=reread_for_reason,
             agreement=agreement,
             substitution=options.reread_substitution,
-        )
-        update["needs_teacher_review"] = True
-        update["review_reason"] = _join_reason(cq.review_reason, reason)
-    elif (
-        cq.marker_source == "blank" and agreement is not None and not _is_blank(flat.answer_reread)
-    ):
-        reason = _reread_reason(
-            first_read=first.answer,
-            reread=first.answer_reread,
-            agreement=agreement,
-            substitution=False,
         )
         update["needs_teacher_review"] = True
         update["review_reason"] = _join_reason(cq.review_reason, reason)
