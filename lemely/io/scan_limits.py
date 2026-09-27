@@ -81,8 +81,8 @@ def plan_page_dpi(
     if px <= MAX_DECODE_PX:
         return float(math.floor(dpi * math.sqrt(MAX_PAGE_PX / px)))
     raise ScanTooLargeError(
-        f"page {index + 1} is {px / 1_000_000:.0f} Mpx at {dpi:.0f} DPI; "
-        f"the limit is {MAX_DECODE_PX // 1_000_000} Mpx"
+        f"Page {index + 1} of this scan is too large to process "
+        f"(limit {MAX_DECODE_PX // 1_000_000} megapixels). Rescan at a lower resolution."
     )
 
 
@@ -90,14 +90,18 @@ def plan_pdf_pages(pdf: pdfium.PdfDocument, *, dpi: float = EXTRACTION_DPI) -> l
     """One :class:`PagePlan` per page, computed from page sizes alone.
 
     The page cap is checked first, so an over-long document is refused before
-    a single page is looked at, let alone rendered.
+    a single page is looked at, let alone rendered. Reads each page's size via
+    :meth:`~pypdfium2.PdfDocument.get_page_size` rather than indexing into the
+    document (``pdf[index].get_size()``) -- the latter loads the full page
+    object, which :func:`~lemely.io.rasterise.rasterise_pdf_to_pages` then
+    loads a second time to render it; this way a page is loaded at most once.
     """
     count = len(pdf)
     if count > MAX_SCAN_PAGES:
-        raise ScanTooLargeError(f"scan has {count} pages; the limit is {MAX_SCAN_PAGES}")
+        raise ScanTooLargeError(f"The scan has {count} pages; the limit is {MAX_SCAN_PAGES}.")
     plans: list[PagePlan] = []
     for index in range(count):
-        width_pt, height_pt = pdf[index].get_size()
+        width_pt, height_pt = pdf.get_page_size(index)
         plans.append(
             PagePlan(index=index, dpi=plan_page_dpi(width_pt, height_pt, dpi=dpi, index=index))
         )
@@ -113,7 +117,8 @@ def plan_image(width: int, height: int) -> int:
     px = width * height
     if px > MAX_DECODE_PX:
         raise ScanTooLargeError(
-            f"image is {px / 1_000_000:.0f} Mpx; the limit is {MAX_DECODE_PX // 1_000_000} Mpx"
+            f"This scan is too large to process (limit {MAX_DECODE_PX // 1_000_000} "
+            "megapixels). Rescan at a lower resolution."
         )
     for factor in _REDUCE_FACTORS:
         if px / (factor * factor) <= MAX_PAGE_PX:
@@ -128,7 +133,11 @@ def check_scan_bytes(data: bytes) -> None:
     extraction fails on them later, exactly as it does today -- so the only
     422 this produces is a measured, over-limit geometry (or Pillow's
     decompression-bomb guard, which fires on the declared size before any
-    pixel is decoded).
+    pixel is decoded). A document that opens but has a page that does not
+    (a malformed ``/Kids`` entry, a ``/Count`` past the real page array) is
+    the same case: ``plan_pdf_pages`` can raise pypdfium2's own
+    ``PdfiumError`` reading such a page's size, and that is not our call to
+    make either -- extraction fails on it later exactly as it does today.
     """
     if looks_like_pdf(data):
         try:
@@ -137,6 +146,10 @@ def check_scan_bytes(data: bytes) -> None:
             return
         try:
             plan_pdf_pages(pdf)
+        except ScanTooLargeError:
+            raise
+        except Exception:
+            return
         finally:
             pdf.close()
         return
@@ -144,7 +157,9 @@ def check_scan_bytes(data: bytes) -> None:
         with Image.open(io.BytesIO(data)) as opened:
             plan_image(opened.width, opened.height)
     except Image.DecompressionBombError as exc:
-        raise ScanTooLargeError("image declares too many pixels to decode") from exc
+        raise ScanTooLargeError(
+            "This scan's image is too large to process safely. Rescan at a lower resolution."
+        ) from exc
     except ScanTooLargeError:
         raise
     except Exception:

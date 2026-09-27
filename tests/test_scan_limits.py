@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import io
+import re
 import unittest
 from unittest.mock import patch
 
+import pymupdf
 import pypdfium2 as pdfium
 from PIL import Image
 
@@ -43,6 +45,72 @@ def _png_bytes(width: int, height: int, mode: str = "1") -> bytes:
     return buf.getvalue()
 
 
+def _hand_rolled_pdf(kids: str, count: int, xref_size: int) -> bytes:
+    """A minimal, hand-written PDF whose page tree can be deliberately broken.
+
+    ``pypdfium2``/Pillow can only *write* well-formed documents, so a
+    malformed page tree -- one real ``/Type /Page`` object (object 3) plus a
+    ``/Pages`` node whose ``kids``/``count`` a caller controls -- has to be
+    built as raw bytes. The offsets in the ``xref`` table are computed from
+    the actual object positions, so the document opens cleanly; only the
+    page tree itself is broken.
+    """
+    body = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        + f"2 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {count} >>\nendobj\n".encode()
+        + b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        b"/Resources << >> >>\nendobj\n"
+    )
+    offsets = {int(m.group(1)): m.start() for m in re.finditer(rb"(\d+) 0 obj", body)}
+    xref_lines = [b"0000000000 65535 f \n"]
+    for n in range(1, xref_size):
+        xref_lines.append(f"{offsets.get(n, 0):010d} 00000 n \n".encode())
+    xref = f"xref\n0 {xref_size}\n".encode() + b"".join(xref_lines)
+    trailer = (
+        f"trailer\n<< /Size {xref_size} /Root 1 0 R >>\nstartxref\n".encode()
+        + str(len(body)).encode()
+        + b"\n%%EOF"
+    )
+    return body + xref + trailer
+
+
+def _pdf_with_missing_kid_object() -> bytes:
+    """A page tree whose second ``/Kids`` entry (object 4) is never defined.
+
+    Opens fine (``/Count`` says 2 pages); reading page index 1's size fails
+    inside pypdfium2 with a ``PdfiumError`` ("Failed to get page size by
+    index."), reproduced against the real library before writing this test.
+    """
+    return _hand_rolled_pdf(kids="3 0 R 4 0 R", count=2, xref_size=5)
+
+
+def _pdf_with_inflated_count() -> bytes:
+    """A page tree whose ``/Count`` (2) overstates its real ``/Kids`` array (1).
+
+    Same failure as :func:`_pdf_with_missing_kid_object`, reached a different
+    way: reading page index 1's size fails because there is no second kid at
+    all, not because a specific object is missing.
+    """
+    return _hand_rolled_pdf(kids="3 0 R", count=2, xref_size=4)
+
+
+def _encrypted_pdf_bytes() -> bytes:
+    """A genuinely password-protected PDF.
+
+    pypdfium2 has no API to *write* an encrypted PDF, but pymupdf (already a
+    dependency, used by ``lemely.web.routers.review``) does. Opening this
+    without the password fails at ``PdfDocument(data)`` itself (PDFium:
+    "Incorrect password"), before ``plan_pdf_pages`` is ever reached.
+    """
+    doc = pymupdf.open()
+    doc.new_page(width=595, height=842)
+    buf = io.BytesIO()
+    doc.save(buf, encryption=pymupdf.PDF_ENCRYPT_RC4_128, user_pw="secret")
+    doc.close()
+    return buf.getvalue()
+
+
 class PagePlanTests(unittest.TestCase):
     def test_a4_at_200_dpi_is_rendered_as_is(self) -> None:
         self.assertEqual(plan_page_dpi(595.0, 842.0), 200.0)
@@ -51,13 +119,6 @@ class PagePlanTests(unittest.TestCase):
         # A1: 1684x2384 pt is ~31 Mpx at 200 DPI -- over the 16 Mpx target,
         # under the 40 Mpx reject boundary -- so it renders at floor(200 *
         # sqrt(16e6 / 31e6)) = 143 DPI and lands under the target.
-        #
-        # NOTE (task-11-report.md): the brief's own worked example used the
-        # label "A2" with A2's point dimensions (1191x1684pt, ~15.5 Mpx at
-        # 200 DPI -- under the target, no downscale) but the "~31 Mpx / 143
-        # DPI" arithmetic that only A1's dimensions (1684x2384pt, 8x A4's
-        # area) produce. Corrected to A1's dimensions here so the assertion
-        # matches the documented formula; flagged to the team lead.
         dpi = plan_page_dpi(1684.0, 2384.0)
         self.assertEqual(dpi, 143.0)
         self.assertLessEqual(1684 * 2384 * (dpi / 72) ** 2, MAX_PAGE_PX)
@@ -65,7 +126,7 @@ class PagePlanTests(unittest.TestCase):
     def test_a_page_beyond_the_decode_bound_is_rejected(self) -> None:
         with self.assertRaises(ScanTooLargeError) as ctx:
             plan_page_dpi(14400.0, 14400.0)
-        self.assertIn("Mpx", str(ctx.exception))
+        self.assertIn("too large to process", str(ctx.exception))
 
     def test_more_than_max_pages_is_rejected_before_any_render(self) -> None:
         pdf = pdfium.PdfDocument(_pdf_bytes(*([(595.0, 842.0)] * (MAX_SCAN_PAGES + 1))))
@@ -130,6 +191,20 @@ class CheckScanBytesTests(unittest.TestCase):
         upload tests post such bodies)."""
         check_scan_bytes(b"%PDF-1.4 fake")
         check_scan_bytes(b"not an image at all")
+
+    def test_a_page_tree_with_a_missing_kids_object_is_not_rejected(self) -> None:
+        """Regression: a document that opens but has a page that will not
+        load used to crash 500 (`plan_pdf_pages` raised pypdfium2's own
+        `PdfiumError` and only the outer `PdfDocument(data)` open was
+        guarded). It must pass through like any other geometry this module
+        cannot fully make sense of -- extraction fails on it later."""
+        check_scan_bytes(_pdf_with_missing_kid_object())
+
+    def test_a_page_tree_with_an_inflated_count_is_not_rejected(self) -> None:
+        check_scan_bytes(_pdf_with_inflated_count())
+
+    def test_an_encrypted_pdf_is_not_rejected(self) -> None:
+        check_scan_bytes(_encrypted_pdf_bytes())
 
     def test_bounds_are_the_documented_values(self) -> None:
         self.assertEqual((MAX_SCAN_PAGES, MAX_PAGE_PX, MAX_DECODE_PX), (40, 16_000_000, 40_000_000))

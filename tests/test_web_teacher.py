@@ -591,7 +591,9 @@ def test_upload_over_size_cap_is_413(client: TestClient, monkeypatch: pytest.Mon
     assert resp.status_code == 413
 
 
-def test_upload_rejects_an_oversized_page_geometry_with_422(client: TestClient) -> None:
+def test_upload_rejects_an_oversized_page_geometry_with_422(
+    client: TestClient, storage_backend: FakeStorageBackend
+) -> None:
     """Spec 2026-09-26 §6: a PDF that declares a 14400 pt page is refused at
     upload with a clear 422, before it is stored; 413 stays for byte size."""
     import io
@@ -608,7 +610,24 @@ def test_upload_rejects_an_oversized_page_geometry_with_422(client: TestClient) 
         files={"scan": ("scan.pdf", buf.getvalue(), "application/pdf")},
     )
     assert resp.status_code == 422
-    assert "Mpx" in resp.json()["detail"]
+    assert "too large to process" in resp.json()["detail"]
+    assert storage_backend._objects == {}, "a rejected scan must never reach storage"
+
+
+def test_upload_with_a_malformed_page_tree_still_succeeds(client: TestClient) -> None:
+    """Regression: a PDF that opens but has a page that will not load (a
+    broken ``/Kids`` entry, an inflated ``/Count``) used to crash this route
+    with a 500 (``lemely.io.scan_limits.plan_pdf_pages`` raised pypdfium2's
+    own ``PdfiumError``, uncaught). It must upload exactly like any other
+    scan this module cannot fully make sense of -- extraction handles it
+    later, same as before this task existed."""
+    from tests.test_scan_limits import _pdf_with_missing_kid_object
+
+    resp = client.post(
+        "/api/papers/upload",
+        files={"scan": ("scan.pdf", _pdf_with_missing_kid_object(), "application/pdf")},
+    )
+    assert resp.status_code == 200
 
 
 def test_detection_failure_is_recorded_without_failing_the_upload(

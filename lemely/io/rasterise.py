@@ -141,6 +141,9 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
             pil_image = opened.convert("RGB")
     except Image.DecompressionBombError as exc:
         raise ScanTooLargeError("image declares too many pixels to decode") from exc
+    # Re-planned against the post-open dimensions: a JPEG's `.draft()` above picks
+    # the nearest supported DCT scale, not exactly `factor`, so the image may still
+    # need an extra integer `.reduce()` here to land under MAX_PAGE_PX.
     factor = plan_image(pil_image.width, pil_image.height)
     if factor > 1:
         pil_image = pil_image.reduce(factor)

@@ -761,7 +761,7 @@ def test_upload_rejects_an_oversized_page_geometry_with_422(
         files={"scan": ("scan.pdf", buf.getvalue(), "application/pdf")},
     )
     assert resp.status_code == 422
-    assert "Mpx" in resp.json()["detail"]
+    assert "too large to process" in resp.json()["detail"]
 
 
 def test_correct_marks_upload_complete(
