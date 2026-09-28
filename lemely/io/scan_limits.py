@@ -21,8 +21,8 @@ import io
 import math
 import re
 import zlib
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal
 
 import pymupdf
 import pypdfium2 as pdfium
@@ -280,11 +280,16 @@ def decoded_stream_size(doc: pymupdf.Document, xref: int, *, budget: int, page_i
 
 
 _REF_RE = re.compile(r"(\d+)\s+\d+\s+R")
+#: The resource categories a content stream can name (ISO 32000-1 Table 33),
+#: minus ``/Font`` (walked separately, see :func:`_resources_refs`) and
+#: ``/ProcSet`` (an array of names). A renderer looks resources up only under
+#: these keys, so nothing filed under any other ``/Resources`` key is drawn.
+_RESOURCE_CATEGORIES = ("XObject", "Pattern", "ExtGState", "Shading", "ColorSpace", "Properties")
 
 
 @dataclass
 class _ContentBudget:
-    """Running totals shared across one page's content walk.
+    """Running totals shared across the scan's page walks.
 
     ``scan_total`` is fixed for the duration of a page (everything counted
     on *earlier* pages); ``page_total`` and ``objects`` accumulate as the
@@ -296,24 +301,107 @@ class _ContentBudget:
     objects: int = 0
 
 
+@dataclass(frozen=True)
+class _PageTree:
+    """The document's page tree, by object number, read before any page is walked.
+
+    ``xrefs`` is the catalog, its ``/Pages`` root, every node reached from
+    the root through ``/Kids`` -- the path both renderers take to find a
+    page -- and every page. Membership is by object identity, found by
+    following the structure a renderer follows, never by a ``/Type`` or a
+    key name, so a resource entry cannot talk its way out of (or into) the
+    set. ``/Parent`` does not add to it: a page's ``/Parent`` can name any
+    object, and one it named would otherwise be hidden from the walk.
+
+    ``holders`` maps a page to the node(s) whose ``/Resources`` it uses.
+    ``/Resources`` is inheritable (ISO 32000-1 Table 30) and resolved up
+    ``/Parent``; the two renderers pick the ancestor differently -- MuPDF
+    the nearest node that has the key at all, pdfium the nearest whose
+    value resolves to an object -- so both are kept, and a page's walk
+    starts from each.
+    """
+
+    xrefs: frozenset[int]
+    holders: dict[int, tuple[int, ...]]
+
+
+#: How the walk met a reference, which decides how a renderer uses it.
+#: ``"xobject"``: filed under a ``/XObject`` resource map and drawn by its
+#: ``/Subtype`` -- an image is decoded, anything else is run as a form.
+#: ``"font"``: filed under ``/Font`` and loaded by the font engine.
+#: ``"any"``: everywhere else -- an annotation appearance, a glyph
+#: procedure, a soft mask's group, a pattern cell, an entry of a container
+#: -- where a renderer runs a stream as a form whatever its ``/Subtype``.
+_Role = Literal["xobject", "font", "any"]
+
+
+@dataclass
+class _PageWalk:
+    """One page's walk: its budget, the page tree, and what it has visited.
+
+    ``seen`` holds every object walked in full (as content or as a
+    container). ``font_seen`` and ``image_seen`` hold objects met only in a
+    narrower role -- a non-Type3 font under ``/Font``, an image under
+    ``/XObject`` -- and handled for that role alone; they are separate so
+    an object met first in a narrow role is still walked in full when the
+    walk meets it again in another.
+    """
+
+    page_index: int
+    tree: frozenset[int]
+    budget: _ContentBudget
+    seen: set[int] = field(default_factory=set)
+    font_seen: set[int] = field(default_factory=set)
+    image_seen: set[int] = field(default_factory=set)
+
+
+def _key(doc: pymupdf.Document, xref: int, key: str) -> tuple[str, str]:
+    """One ``xref_get_key`` result, typed."""
+    kind, value = doc.xref_get_key(xref, key)  # type: ignore[no-untyped-call]
+    return str(kind), str(value)
+
+
+def _ref_target(doc: pymupdf.Document, kind: str, value: str) -> int:
+    """The object number of an ``xref``-kind value, or 0 if it names no object.
+
+    An out-of-range reference resolves to ``null`` in every reader, so it
+    leads nowhere; 0 lets callers drop it without reading it.
+    """
+    if kind != "xref":
+        return 0
+    target = int(value.split()[0])
+    return target if 0 < target < doc.xref_length() else 0  # type: ignore[no-untyped-call]
+
+
+def _name(doc: pymupdf.Document, xref: int, key: str) -> str:
+    """``xref``'s ``key`` as a name (``"/Form"``), or ``""`` if it is not one.
+
+    Resolves one level of indirection: a renderer reads ``/Subtype 7 0 R``,
+    object 7 being ``/Form``, exactly as it reads ``/Subtype /Form``.
+    """
+    kind, value = _key(doc, xref, key)
+    if kind == "xref":
+        target = _ref_target(doc, kind, value)
+        value = doc.xref_object(target).strip() if target else ""  # type: ignore[no-untyped-call]
+        kind = "name" if value.startswith("/") else ""
+    return value if kind == "name" else ""
+
+
 def _collection_refs(doc: pymupdf.Document, kind: str, value: str) -> list[int]:
     """Every indirect reference named inside a dict/array-shaped value.
 
-    Covers both an inline sub-dictionary or array (``kind`` is ``"dict"``
-    or ``"array"``, ``value`` is pymupdf's literal source text for it) and
-    one stored as its own object (``kind == "xref"``: read *that* object's
-    own source instead, so a two-level structure -- a ``/Resources`` object
-    whose own ``/XObject``/``/Pattern``/``/Font`` sub-dictionaries are
-    themselves inline -- is flattened in the same pass). A reference's PDF
-    *name* (which resource-map key it sits under, an appearance state's
-    name, a glyph name) is never needed here -- only whether it is
-    reachable at all -- so one regex over the whole resolved text finds
-    every reference regardless of how many dictionary levels it is nested
-    inside, without a bespoke parser for each of the differently-shaped
-    dictionaries (``/Resources``, ``/AP``, ``/CharProcs``) this walk visits.
+    ``kind``/``value`` are one ``xref_get_key`` result. An inline dict or
+    array is scanned as written; an indirect one (``kind == "xref"``) is
+    read and its own text scanned instead, so a map stored as its own
+    object (``/XObject 6 0 R``) yields the references *inside* it. A
+    reference's name within the map (a resource name, an appearance-state
+    name, a glyph name) plays no part: every reference found is returned.
     """
     if kind == "xref":
-        text = doc.xref_object(int(value.split()[0]))  # type: ignore[no-untyped-call]
+        target = _ref_target(doc, kind, value)
+        if not target:
+            return []
+        text = doc.xref_object(target)  # type: ignore[no-untyped-call]
     elif kind in ("dict", "array"):
         text = value
     else:
@@ -321,31 +409,30 @@ def _collection_refs(doc: pymupdf.Document, kind: str, value: str) -> list[int]:
     return [int(m.group(1)) for m in _REF_RE.finditer(text)]
 
 
-def _enter(xref: int, *, seen: set[int], budget: _ContentBudget, page_index: int) -> bool:
-    """Register a visit to ``xref``; ``False`` if already visited (skip it).
+def _enter(xref: int, seen: set[int], walk: _PageWalk) -> bool:
+    """Register a visit to ``xref`` in ``seen``; ``False`` if already there (skip it).
 
-    The single choke point for both cycle prevention (``seen``) and the
-    per-page object cap (:data:`_MAX_OBJECTS_PER_PAGE`) -- every walker
-    below visits an object through this before doing anything else with it.
+    The single choke point for cycle prevention and the per-page object cap
+    (:data:`_MAX_OBJECTS_PER_PAGE`): every object the walk looks at is
+    registered here before it is expanded.
     """
     if xref in seen:
         return False
     seen.add(xref)
-    budget.objects += 1
-    if budget.objects > _MAX_OBJECTS_PER_PAGE:
-        raise ScanTooLargeError(_TOO_MANY_OBJECTS_MESSAGE.format(page=page_index + 1))
+    walk.budget.objects += 1
+    if walk.budget.objects > _MAX_OBJECTS_PER_PAGE:
+        raise ScanTooLargeError(_TOO_MANY_OBJECTS_MESSAGE.format(page=walk.page_index + 1))
     return True
 
 
-def _count_stream(
-    doc: pymupdf.Document, xref: int, *, page_index: int, budget: _ContentBudget
-) -> None:
-    """Add ``xref``'s decoded size to ``budget.page_total``, or refuse."""
+def _count_stream(doc: pymupdf.Document, xref: int, walk: _PageWalk) -> None:
+    """Add ``xref``'s decoded size to the page total, or refuse."""
+    budget = walk.budget
     page_budget = MAX_PAGE_CONTENT_BYTES - budget.page_total
     scan_budget = MAX_SCAN_CONTENT_BYTES - budget.scan_total - budget.page_total
     try:
         size = decoded_stream_size(
-            doc, xref, budget=min(page_budget, scan_budget), page_index=page_index
+            doc, xref, budget=min(page_budget, scan_budget), page_index=walk.page_index
         )
     except ScanTooLargeError:
         if scan_budget < page_budget:
@@ -355,196 +442,186 @@ def _count_stream(
     budget.page_total += size
 
 
-#: Fix round 3, Important 2. Keys under which a reference can lead back into
-#: the page tree or across to another page's own content -- the fallback
-#: below must never chase these, however it reaches an object that carries
-#: one (honestly, or because a malicious PDF planted it there).
-_FALLBACK_SKIP_KEYS = frozenset({"Parent", "P", "Kids", "Contents", "Annots", "B", "Dest"})
-#: Fix round 3, Important 2. An object of one of these types is never
-#: resource-graph content; entering one -- reached through a resources
-#: entry that happens to name it, deliberately or not -- risks pulling in
-#: the whole page tree. The page's own content and annotations are already
-#: reached from their named starting points, so nothing legitimate is lost
-#: by refusing to enter one of these another way.
-_SKIP_TYPES = frozenset({"/Page", "/Pages", "/Catalog"})
+def _parent(doc: pymupdf.Document, xref: int) -> int:
+    """``xref``'s ``/Parent`` object number, or 0 for none."""
+    return _ref_target(doc, *_key(doc, xref, "Parent"))
 
 
-def _resources_refs(doc: pymupdf.Document, container_xref: int) -> list[int]:
-    """Every ref named in ``container_xref``'s own ``/Resources`` dict."""
-    kind, value = doc.xref_get_key(container_xref, "Resources")  # type: ignore[no-untyped-call]
-    return _collection_refs(doc, kind, value)
+def _resources_state(doc: pymupdf.Document, xref: int) -> tuple[bool, bool]:
+    """Whether ``xref`` has a ``/Resources`` key, and whether it resolves to an object."""
+    kind, value = _key(doc, xref, "Resources")
+    if kind == "null":
+        return False, False
+    if kind != "xref":
+        return True, True
+    target = _ref_target(doc, kind, value)
+    resolves = bool(target) and doc.xref_object(target).strip() != "null"  # type: ignore[no-untyped-call]
+    return True, resolves
 
 
-def _charprocs_refs(doc: pymupdf.Document, font_xref: int) -> list[int]:
-    """Every glyph-procedure ref in a Type3 font's ``/CharProcs``."""
-    kind, value = doc.xref_get_key(font_xref, "CharProcs")  # type: ignore[no-untyped-call]
-    return _collection_refs(doc, kind, value)
+def _page_tree(doc: pymupdf.Document) -> _PageTree:
+    """The page tree's object numbers and each page's resource holders.
 
-
-def _scoped_fallback_refs(doc: pymupdf.Document, ref: int) -> list[int]:
-    """Refs found among ``ref``'s own keys, minus :data:`_FALLBACK_SKIP_KEYS`.
-
-    Fix round 3, Important 2. The round-2 fallback handed ``ref``'s FULL
-    object text to :func:`_collection_refs` in one call, so a plain dict
-    carrying a ``/Parent``, ``/Kids`` or other page-tree/back-reference key
-    was walked exactly like any other reference -- in the worst case
-    pulling in every other page's own content (up to :data:`MAX_SCAN_PAGES`
-    x :data:`_MAX_OBJECTS_PER_PAGE` visits). Reading ``ref``'s keys one at a
-    time instead lets the keys on that list be skipped by name, with no
-    bespoke parser needed for the arbitrarily-shaped dictionary this
-    fallback may have landed on.
-
-    A key whose own value is a direct reference (``kind == "xref"``, e.g.
-    ``/Fm1 5 0 R``) names object 5 itself as the next candidate -- unlike
-    :func:`_collection_refs`'s ``"xref"`` handling, which reads the
-    referenced object's own text for FURTHER embedded refs (the right
-    reading for a structural key already known to hold a dict-of-refs
-    container, such as an indirect ``/Resources``, but the wrong one here:
-    the value found under an arbitrary fallback key is the resource, not a
-    wrapper around more of them). An inline sub-dict or array value
-    (``kind`` ``"dict"``/``"array"``) is still flattened via
-    :func:`_collection_refs`, since that text may embed several refs at
-    once.
+    Descends ``/Kids`` from the catalog's ``/Pages`` root, reading each
+    node once (a node met again -- a ``/Kids`` cycle -- is not re-read).
+    Climbs ``/Parent`` from every page for the holders only; a node already
+    climbed from an earlier page ends the climb (its answer is reused), and
+    a node met twice on one climb (a ``/Parent`` cycle) ends it too. A page
+    whose number pymupdf cannot give stops the build there:
+    :func:`check_pdf_content` meets the same failure on the same page and
+    treats it as a malformed page tree.
     """
-    refs: list[int] = []
-    for key in doc.xref_get_keys(ref):  # type: ignore[no-untyped-call]
-        if key in _FALLBACK_SKIP_KEYS:
+    nodes: set[int] = set()
+    xref_length = doc.xref_length()  # type: ignore[no-untyped-call]
+    catalog = doc.pdf_catalog()  # type: ignore[no-untyped-call]
+    pending: list[int] = []
+    if 0 < catalog < xref_length:
+        nodes.add(catalog)
+        pending.append(_ref_target(doc, *_key(doc, catalog, "Pages")))
+    while pending:
+        node = pending.pop()
+        if not 0 < node < xref_length or node in nodes:
             continue
-        kind, value = doc.xref_get_key(ref, key)  # type: ignore[no-untyped-call]
-        if kind == "xref":
-            refs.append(int(value.split()[0]))
-        elif kind in ("dict", "array"):
-            refs.extend(_collection_refs(doc, kind, value))
+        nodes.add(node)
+        pending.extend(_collection_refs(doc, *_key(doc, node, "Kids")))
+    # node -> (nearest node at or above it with a /Resources key,
+    #          nearest node at or above it whose /Resources resolves)
+    nearest: dict[int, tuple[int | None, int | None]] = {}
+    for index in range(doc.page_count):
+        try:
+            page_xref = doc.page_xref(index)  # type: ignore[no-untyped-call]
+        except Exception:
+            break
+        nodes.add(page_xref)
+        chain: list[int] = []
+        node = page_xref
+        while node and node not in nearest and node not in chain:
+            chain.append(node)
+            node = _parent(doc, node)
+        above = nearest.get(node, (None, None))
+        for member in reversed(chain):
+            has_key, resolves = _resources_state(doc, member)
+            above = (member if has_key else above[0], member if resolves else above[1])
+            nearest[member] = above
+    holders = {
+        node: tuple(sorted({h for h in pair if h is not None})) for node, pair in nearest.items()
+    }
+    return _PageTree(xrefs=frozenset(nodes), holders=holders)
+
+
+def _resources_refs(doc: pymupdf.Document, container_xref: int) -> list[tuple[int, _Role]]:
+    """Every ref in ``container_xref``'s ``/Resources``, tagged with its :data:`_Role`.
+
+    Reads only the categories a content stream can name
+    (:data:`_RESOURCE_CATEGORIES`, plus ``/Font``), each directly or through
+    one indirect map. The role comes from the category the reference is
+    filed under, never from the object's own ``/Type``.
+    """
+    refs: list[tuple[int, _Role]] = []
+    for category in _RESOURCE_CATEGORIES:
+        role: _Role = "xobject" if category == "XObject" else "any"
+        kind, value = _key(doc, container_xref, f"Resources/{category}")
+        refs.extend((ref, role) for ref in _collection_refs(doc, kind, value))
+    kind, value = _key(doc, container_xref, "Resources/Font")
+    refs.extend((ref, "font") for ref in _collection_refs(doc, kind, value))
     return refs
 
 
 def _walk_resource_graph(
-    doc: pymupdf.Document,
-    start: list[int],
-    *,
-    page_index: int,
-    seen: set[int],
-    budget: _ContentBudget,
+    doc: pymupdf.Document, start: list[tuple[int, _Role]], walk: _PageWalk
 ) -> None:
-    """Iteratively visit every object reachable from ``start`` -- no recursion.
+    """Count every drawable object reachable from ``start``, iteratively.
 
-    Fix round 3, Important 1. Classifies one object at a time exactly as
-    the round-1/round-2 recursive ``_visit_resource`` did (a Form XObject
-    or tiling Pattern is content: count its stream, then queue its own
-    ``/Resources``; an image is not content, checked separately from
-    ``page.get_images``; a Type3 font's glyph procedures and its own
-    ``/Resources`` are content; anything left over is one level further
-    from a leaf -- an indirect ``/XObject``/``/Font``/``/Pattern``/
-    ``/ColorSpace``/``/ExtGState`` dict, an ``/AP`` appearance-state dict,
-    an ExtGState's ``/SMask`` -> ``/G`` form -- so it is treated as another
-    collection via :func:`_scoped_fallback_refs`), but with an explicit
-    ``stack`` in place of a Python call per level: a chain of nested Form
-    XObjects, or of round-2's fallback plain dicts, has no bound on how
-    many levels deep it goes, and a few thousand levels exceeds
-    ``sys.getrecursionlimit()`` (~1,000) well before
-    :data:`_MAX_OBJECTS_PER_PAGE` (10,000) would refuse it -- raising
-    ``RecursionError``, which used to be swallowed by
-    ``check_pdf_content``'s caller and let the file (and whatever bomb
-    followed the chain) through silently. An explicit stack has no such
-    limit.
+    Guarantees, for every object reached:
 
-    Fix round 3, Important 2: before classifying, an object identified as
-    ``/Page``, ``/Pages`` or ``/Catalog`` (:data:`_SKIP_TYPES`) is refused
-    outright, wherever it was reached from.
+    * It is classified by what a renderer does with it, from its role
+      (:data:`_Role`), whether it is a stream, and its ``/Subtype`` read
+      through one level of indirection -- never its ``/Type``, which
+      renderers ignore. An image met under ``/XObject`` has its declared
+      size and its masks' checked against :data:`MAX_DECODE_PX`, wherever
+      it sits (an annotation appearance or a pattern cell included). Any
+      other stream -- a form, a tiling pattern, an appearance stream with
+      or without a ``/Subtype``, a glyph procedure -- may be run as drawing
+      operators, so its decoded size is counted and its own ``/Resources``
+      walked; one that is also labelled an image is size-checked as well. A
+      Type3 font has its glyph procedures and ``/Resources`` walked. A
+      non-Type3 font met under ``/Font`` is not expanded: its program is
+      parsed by the font engine, not run as page content. Any other object
+      is a container -- a name map stored as its own object, an appearance
+      state dict, a graphics state, a soft mask -- and every reference in
+      it is walked, whatever key it sits under.
+    * An object is walked in full at most once per page; one met first in
+      a narrower role (a font, an ``/XObject`` image) is walked in full if
+      met again in another.
+    * A page-tree node (``walk.tree``, see :class:`_PageTree`) that is not
+      a stream is entered but never expanded, so the walk cannot climb
+      from a resource into the page tree and on to other pages. A stream
+      is classified as usual even if it is also a tree node, and streams
+      are never expanded as containers, so this cannot climb either. An
+      entry naming another page's content stream directly counts that
+      stream against this page too: an over-count, which can only reject.
+    * The walk uses an explicit stack, so nesting depth is bounded only by
+      :data:`_MAX_OBJECTS_PER_PAGE`, never by Python's recursion limit.
     """
-    stack: list[int] = list(start)
+    xref_length = doc.xref_length()  # type: ignore[no-untyped-call]
+    stack = list(start)
     while stack:
-        ref = stack.pop()
-        if not _enter(ref, seen=seen, budget=budget, page_index=page_index):
+        ref, role = stack.pop()
+        if not 0 < ref < xref_length or ref in walk.seen:
+            continue  # an out-of-range reference is null in every reader
+        is_stream = bool(doc.xref_is_stream(ref))  # type: ignore[no-untyped-call]
+        subtype = _name(doc, ref, "Subtype")
+        if role == "font" and subtype != "/Type3":
+            _enter(ref, walk.font_seen, walk)
             continue
-        type_kind, type_value = doc.xref_get_key(ref, "Type")  # type: ignore[no-untyped-call]
-        if type_kind == "name" and type_value in _SKIP_TYPES:
+        if role == "xobject" and is_stream and subtype == "/Image":
+            if _enter(ref, walk.image_seen, walk):
+                _check_image_xref(doc, ref, page_index=walk.page_index)
             continue
-        if doc.xref_is_xobject(ref):  # type: ignore[no-untyped-call]
-            _count_stream(doc, ref, page_index=page_index, budget=budget)
+        _enter(ref, walk.seen, walk)
+        if ref in walk.tree and not is_stream:
+            continue
+        if is_stream:
+            if subtype == "/Image":
+                _check_image_xref(doc, ref, page_index=walk.page_index)
+            _count_stream(doc, ref, walk)
             stack.extend(_resources_refs(doc, ref))
-            continue
-        if doc.xref_is_image(ref):  # type: ignore[no-untyped-call]
-            continue
-        if doc.xref_is_font(ref):  # type: ignore[no-untyped-call]
-            if doc.xref_get_key(ref, "Subtype") == ("name", "/Type3"):  # type: ignore[no-untyped-call]
-                stack.extend(_charprocs_refs(doc, ref))
-                stack.extend(_resources_refs(doc, ref))
-            continue
-        pattern_kind, _pattern_value = doc.xref_get_key(ref, "PatternType")  # type: ignore[no-untyped-call]
-        if pattern_kind != "null":
-            _count_stream(doc, ref, page_index=page_index, budget=budget)
+        elif subtype == "/Type3":
+            charprocs = _collection_refs(doc, *_key(doc, ref, "CharProcs"))
+            stack.extend((proc, "any") for proc in charprocs)
             stack.extend(_resources_refs(doc, ref))
-            continue
-        if doc.xref_is_stream(ref):  # type: ignore[no-untyped-call]
-            _count_stream(doc, ref, page_index=page_index, budget=budget)
-            continue
-        stack.extend(_scoped_fallback_refs(doc, ref))
+        else:
+            text = doc.xref_object(ref)  # type: ignore[no-untyped-call]
+            stack.extend((int(m.group(1)), "any") for m in _REF_RE.finditer(text))
 
 
-def _walk_resources(
-    doc: pymupdf.Document,
-    container_xref: int,
-    *,
-    page_index: int,
-    seen: set[int],
-    budget: _ContentBudget,
-) -> None:
-    """Every Form XObject / tiling Pattern / Type3 font reachable from ``container_xref``.
-
-    Reads ``container_xref``'s ``/Resources`` and hands the refs it names
-    to :func:`_walk_resource_graph`. ``container_xref`` is a page, a Form
-    XObject, a Pattern or a Type3 font -- every PDF object that carries its
-    own ``/Resources`` dict.
-    """
-    _walk_resource_graph(
-        doc,
-        _resources_refs(doc, container_xref),
-        page_index=page_index,
-        seen=seen,
-        budget=budget,
-    )
-
-
-def _walk_annotations(
-    doc: pymupdf.Document,
-    page_xref: int,
-    *,
-    page_index: int,
-    seen: set[int],
-    budget: _ContentBudget,
-) -> None:
+def _walk_annotations(doc: pymupdf.Document, page_xref: int, walk: _PageWalk) -> None:
     """Every annotation appearance stream reachable from the page.
 
-    ``/Annots`` -> ``/AP`` -> ``/N``, ``/R``, ``/D``, whichever are present,
-    each either a stream directly or a dict of appearance states each
-    pointing to one. An appearance stream is itself a Form XObject per
-    spec, so every one found is handed to :func:`_walk_resource_graph`,
-    which counts it and recurses into its own ``/Resources`` exactly like
-    any other form.
+    ``/Annots`` -> ``/AP`` -> ``/N``, ``/R``, ``/D``, each either a stream
+    or a dict of appearance states each naming one. Every reference found
+    under ``/AP`` is handed to :func:`_walk_resource_graph` in the
+    ``"any"`` role: a renderer runs an appearance stream as a form whatever
+    its ``/Subtype`` says, and a state dict is expanded as a container.
     """
-    kind, value = doc.xref_get_key(page_xref, "Annots")  # type: ignore[no-untyped-call]
-    ap_refs: list[int] = []
-    for annot_ref in _collection_refs(doc, kind, value):
-        if not _enter(annot_ref, seen=seen, budget=budget, page_index=page_index):
+    ap_refs: list[tuple[int, _Role]] = []
+    xref_length = doc.xref_length()  # type: ignore[no-untyped-call]
+    for annot_ref in _collection_refs(doc, *_key(doc, page_xref, "Annots")):
+        if not 0 < annot_ref < xref_length:
             continue
-        ap_kind, ap_value = doc.xref_get_key(annot_ref, "AP")  # type: ignore[no-untyped-call]
-        ap_refs.extend(_collection_refs(doc, ap_kind, ap_value))
-    _walk_resource_graph(doc, ap_refs, page_index=page_index, seen=seen, budget=budget)
+        if not _enter(annot_ref, walk.seen, walk):
+            continue
+        ap_refs.extend((ref, "any") for ref in _collection_refs(doc, *_key(doc, annot_ref, "AP")))
+    _walk_resource_graph(doc, ap_refs, walk)
 
 
 def _resolve_int(doc: pymupdf.Document, kind: str, value: str) -> int | None:
     r"""An integer-or-real dict value, resolving one level of indirection.
 
-    Mirrors :func:`_normalise_filter`'s handling of an indirect ``/Filter``:
-    ``kind == "xref"`` means the value itself is a bare number object
-    (``5 0 obj\n40000\nendobj``), read back via ``xref_object`` and parsed.
-    Fix round 3, minor: ``/Width``/``/Height`` written as a PDF *real*
-    (``40000.0``, direct or indirect) is legal and just as large a
-    declared size as the integer spelling -- ``pymupdf`` reports this
-    ``kind`` as ``"float"``, not ``"int"``, and used to fall through to
-    ``None`` (a silent pass) below. ``int(float(value))`` parses both
-    spellings uniformly.
+    ``kind == "xref"`` means the value is a bare number object
+    (``5 0 obj\n40000\nendobj``), read back and parsed. A real
+    (``40000.0``, pymupdf kind ``"float"``) is as large a declared size as
+    the integer spelling; ``int(float(value))`` reads both.
     """
     if kind == "xref":
         text = doc.xref_object(int(value.split()[0])).strip()  # type: ignore[no-untyped-call]
@@ -560,21 +637,49 @@ def _resolve_int(doc: pymupdf.Document, kind: str, value: str) -> int | None:
     return None
 
 
-def _check_mask_pixels(doc: pymupdf.Document, xref: int, *, page_index: int) -> None:
-    """:data:`MAX_DECODE_PX` against a mask stream's own declared size.
+def _check_declared_pixels(doc: pymupdf.Document, xref: int, *, page_index: int) -> None:
+    """:data:`MAX_DECODE_PX` against image object ``xref``'s own declared size.
 
-    Fix round 2, Important 2: an indirect ``/Width``/``/Height`` (unusual
-    but legal, the same spelling :func:`_normalise_filter` already resolves
-    for ``/Filter``) used to make this silently return without checking.
+    ``/Width`` and ``/Height`` may be integers or reals, direct or
+    indirect (:func:`_resolve_int`). Used for images the walk reaches and
+    for every image's ``/SMask`` and stream ``/Mask``.
     """
-    width = _resolve_int(doc, *doc.xref_get_key(xref, "Width"))  # type: ignore[no-untyped-call]
-    height = _resolve_int(doc, *doc.xref_get_key(xref, "Height"))  # type: ignore[no-untyped-call]
+    width = _resolve_int(doc, *_key(doc, xref, "Width"))
+    height = _resolve_int(doc, *_key(doc, xref, "Height"))
     if width is None or height is None:
         return
     if width * height > MAX_DECODE_PX:
         raise ScanTooLargeError(
             _IMAGE_TOO_LARGE_MESSAGE.format(page=page_index + 1, mpx=width * height // 1_000_000)
         )
+
+
+def _check_masks(doc: pymupdf.Document, xref: int, *, smask_xref: int, page_index: int) -> None:
+    """Check image ``xref``'s ``/SMask`` (``smask_xref``, 0 for none) and stream ``/Mask``.
+
+    Each is an image object with its own declared size, decoded at that
+    size to render the image. A ``/Mask`` array (colour-key masking) is not
+    a decode-sized allocation and is left alone.
+    """
+    if smask_xref:
+        _check_declared_pixels(doc, smask_xref, page_index=page_index)
+    mask_xref = _ref_target(doc, *_key(doc, xref, "Mask"))
+    if mask_xref and doc.xref_is_stream(mask_xref):  # type: ignore[no-untyped-call]
+        _check_declared_pixels(doc, mask_xref, page_index=page_index)
+
+
+def _check_image_xref(doc: pymupdf.Document, xref: int, *, page_index: int) -> None:
+    """An image the walk reached: its declared size, then its masks'.
+
+    ``page.get_images(full=True)`` does not list images inside annotation
+    appearance streams or tiling patterns, so the walk checks every image
+    it reaches itself. The per-image limit has no running total, so an
+    image checked both here and via ``get_images`` is judged the same way
+    twice.
+    """
+    _check_declared_pixels(doc, xref, page_index=page_index)
+    smask_xref = _ref_target(doc, *_key(doc, xref, "SMask"))
+    _check_masks(doc, xref, smask_xref=smask_xref, page_index=page_index)
 
 
 def _tuple_int(value: object) -> int:
@@ -592,12 +697,8 @@ def _check_image_and_masks(
 ) -> None:
     """Reject an image or its mask whose declared pixels exceed :data:`MAX_DECODE_PX`.
 
-    Covers the image itself (rev 2) and its ``/SMask``/``/Mask`` (fix round
-    1). ``image`` is one entry of ``page.get_images(full=True)``:
-    ``(xref, smask_xref, width, height, ...)``. ``/SMask`` is always a
-    stream when present (``smask_xref`` is 0 for "none"); ``/Mask`` is
-    either a stream (a stencil mask, checked the same way) or an array
-    (colour-key masking -- not a decode-sized allocation, left alone).
+    ``image`` is one entry of ``page.get_images(full=True)``:
+    ``(xref, smask_xref, width, height, ...)``, sizes as pymupdf read them.
     """
     xref, smask_xref, width, height = (
         _tuple_int(image[0]),
@@ -609,89 +710,84 @@ def _check_image_and_masks(
         raise ScanTooLargeError(
             _IMAGE_TOO_LARGE_MESSAGE.format(page=page_index + 1, mpx=width * height // 1_000_000)
         )
-    if smask_xref:
-        _check_mask_pixels(doc, smask_xref, page_index=page_index)
-    mask_kind, mask_value = doc.xref_get_key(xref, "Mask")  # type: ignore[no-untyped-call]
-    if mask_kind == "xref":
-        mask_xref = int(mask_value.split()[0])
-        if doc.xref_is_stream(mask_xref):  # type: ignore[no-untyped-call]
-            _check_mask_pixels(doc, mask_xref, page_index=page_index)
+    _check_masks(doc, xref, smask_xref=smask_xref, page_index=page_index)
 
 
 def check_pdf_content(doc: pymupdf.Document) -> None:
     """Refuse a document whose page content would blow the render (Task 11b).
 
-    Per page, counted into the same :data:`MAX_PAGE_CONTENT_BYTES` /
-    :data:`MAX_SCAN_CONTENT_BYTES` budgets, each xref counted once
-    (deduped by a per-page ``seen`` set, which also terminates a cycle --
-    two Form XObjects, or two annotations, referencing each other): the
-    page's own content stream(s) (``page.get_contents()``); every Form
-    XObject reachable from the page's ``/Resources``, recursively (a form
-    can itself use forms, patterns or Type3 fonts); every tiling Pattern
-    (fix round 1); every Type3 font's glyph procedures (fix round 1); and
-    every annotation's appearance stream(s) (fix round 1). A second,
-    independent cap (:data:`_MAX_OBJECTS_PER_PAGE`) bounds the number of
-    distinct objects one page's walk may visit, regardless of their size --
-    a document engineered with a huge count of small objects costs real
-    time to classify one by one even though no single stream is large.
+    Per page, into the shared :data:`MAX_PAGE_CONTENT_BYTES` /
+    :data:`MAX_SCAN_CONTENT_BYTES` budgets, each object counted at most
+    once per page: the page's own content stream(s), and everything
+    :func:`_walk_resource_graph` reaches from the page's ``/Resources``
+    (its own or inherited, see :class:`_PageTree`) and from its
+    annotations' appearance streams -- every stream a renderer may run as
+    drawing operators (forms, appearance streams, tiling patterns, Type3
+    glyph procedures, soft-mask groups), at any depth. A second, independent cap
+    (:data:`_MAX_OBJECTS_PER_PAGE`) bounds how many objects one page's walk
+    may look at, however small each is.
 
-    Image XObjects are not content and their streams are never read;
-    instead each image's DECLARED ``/Width x /Height`` -- and (fix round 1)
-    its ``/SMask``'s and stream-valued ``/Mask``'s, each own image objects
-    with their own declared size -- is checked against
-    :data:`MAX_DECODE_PX`, because pdfium decodes an image at its declared
-    size to render it, regardless of what its stream actually holds.
+    Images are not content and their streams are never read; instead each
+    image's DECLARED ``/Width x /Height`` -- and its ``/SMask``'s and
+    stream ``/Mask``'s -- is checked against :data:`MAX_DECODE_PX`,
+    because the renderer allocates for the declared size whatever the
+    stream holds. Images are found both by ``page.get_images(full=True)``
+    and by the walk, which reaches the ones ``get_images`` does not list.
 
-    Left alone: an encrypted document (its streams cannot be read, and
-    extraction fails on it later as today) and a non-PDF document (an
-    ``image/*`` upload opened by :mod:`pymupdf` for its own preview render
-    has no PDF page tree to walk at all -- ``page.get_contents()`` asserts
-    on one).
+    The page tree (:func:`_page_tree`) is read once, up front: the walk
+    uses it to refuse to climb out of one page's resources into the tree,
+    and each page's walk starts from the ``/Resources`` it inherits.
 
-    Inline images (``BI ... ID ... EI``) are not walked for a declared
-    size the way an Image XObject is: their raw bytes already count toward
-    the page's content-stream budget (they live inside the content stream
-    itself), but a maliciously large *declared* width/height on a small
-    inline-image byte run is a known gap this round does not close --
-    tracked for the render-sandbox follow-up the brief's decision 4
-    recommends, not solved by a bigger content-byte budget.
+    Left alone: an encrypted document (its streams cannot be read;
+    extraction fails on it later) and a non-PDF document (an ``image/*``
+    upload opened by :mod:`pymupdf` for its preview has no page tree).
+    Opening the document, ``load_page`` and ``page_xref`` are page-tree
+    lookups whose failure means a malformed page tree -- that propagates to
+    :func:`check_pdf_content_bytes`/:func:`check_pdf_content_path` and
+    passes, the same rule as :func:`check_scan_bytes`'s geometry check.
 
-    Fix round 3, Important 1: ``load_page`` and ``page_xref`` -- simple
-    page-tree lookups -- are left unguarded here, so their failure on a
-    document whose page tree does not fully parse is exactly the "not our
-    call to make" case :func:`check_scan_bytes`'s docstring already
-    describes, and still propagates to
-    :func:`check_pdf_content_bytes`/:func:`check_pdf_content_path`'s own
-    ``except Exception: return``, unchanged. Everything past that --
-    including ``get_images``/``get_contents`` themselves, since
-    ``get_images(full=True)`` was found to walk nested Form XObjects
-    looking for images the same way this module's own walk does, and can
-    raise the identical ``RecursionError`` on the identical deep chain --
-    is wrapped instead: any exception other than this module's own
-    :class:`ScanRejectedError` rejects the page rather than silently
-    passing it through, so a bug or an unforeseen ``pymupdf`` quirk inside
-    the walk fails closed.
+    Fails closed: any other exception while reading the page tree or
+    walking a page -- a pymupdf quirk, a ``RecursionError`` inside
+    ``get_images``, a bug here -- rejects the file with
+    :class:`ScanRejectedError`. The accepted cost is that some malformed
+    but harmless files (a page whose ``/Contents`` is a name, say) get a
+    422 asking for a re-export instead of passing.
+
+    Known gap: an inline image (``BI ... ID ... EI``) is not checked for
+    its declared size. Its bytes count toward the page's content budget
+    (they live in the content stream), but a large *declared* size on a
+    small inline image is left to the render-sandbox follow-up the brief's
+    decision 4 recommends.
     """
     if not doc.is_pdf:
         return
     if doc.needs_pass:
         return
+    try:
+        tree = _page_tree(doc)
+    except Exception as exc:
+        raise ScanRejectedError(_WALK_FAILED_MESSAGE.format(page=1)) from exc
     budget = _ContentBudget()
     for page_index in range(doc.page_count):
         page = doc.load_page(page_index)  # type: ignore[no-untyped-call]
         page_xref = doc.page_xref(page_index)  # type: ignore[no-untyped-call]
         budget.page_total = 0
         budget.objects = 0
-        seen: set[int] = set()
+        walk = _PageWalk(page_index=page_index, tree=tree.xrefs, budget=budget)
         try:
             for image in page.get_images(full=True):
                 _check_image_and_masks(doc, image, page_index=page_index)
             for xref in page.get_contents():
                 xref = int(xref)
-                seen.add(xref)
-                _count_stream(doc, xref, page_index=page_index, budget=budget)
-            _walk_resources(doc, page_xref, page_index=page_index, seen=seen, budget=budget)
-            _walk_annotations(doc, page_xref, page_index=page_index, seen=seen, budget=budget)
+                walk.seen.add(xref)
+                _count_stream(doc, xref, walk)
+            start = [
+                ref
+                for holder in tree.holders.get(page_xref, ())
+                for ref in _resources_refs(doc, holder)
+            ]
+            _walk_resource_graph(doc, start, walk)
+            _walk_annotations(doc, page_xref, walk)
         except ScanRejectedError:
             raise
         except Exception as exc:

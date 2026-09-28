@@ -33,9 +33,12 @@ from lemely.io.scan_limits import (
 )
 from tests.pdf_fakes import (
     annot_ap_bomb_pdf,
+    annot_ap_image_bomb_pdf,
+    annot_ap_nested_bomb_pdf,
     assemble_pdf,
     deep_plain_dict_chain_bomb_pdf,
     deep_xobject_chain_bomb_pdf,
+    embedded_font_pdf,
     encrypted_pdf_bytes,
     extgstate_smask_bomb_pdf,
     filtered_page_pdf,
@@ -45,9 +48,13 @@ from tests.pdf_fakes import (
     indirect_ap_state_bomb_pdf,
     indirect_filter_page_pdf,
     indirect_smask_dimension_bomb_pdf,
+    indirect_subtype_form_bomb_pdf,
     indirect_xobject_dict_bomb_pdf,
+    inherited_resources_bomb_pdf,
     many_form_xobjects_pdf,
     page_bomb_pdf,
+    page_tree_poison_pdf,
+    parent_poisoned_ap_state_bomb_pdf,
     pdf_stream,
     pdf_with_inflated_count,
     pdf_with_missing_kid_object,
@@ -56,7 +63,9 @@ from tests.pdf_fakes import (
     resources_entry_pointing_at_pages_node_pdf,
     smask_bomb_pdf,
     tiling_pattern_bomb_pdf,
+    tiling_pattern_image_bomb_pdf,
     type3_charproc_bomb_pdf,
+    typed_form_xobject_bomb_pdf,
     xobject_bomb_pdf,
 )
 
@@ -435,31 +444,30 @@ class AnnotationPatternType3BombTests(unittest.TestCase):
         # the file, not silently pass it through the way a genuine
         # page-tree/page-access failure still does.
         with (
-            patch.object(scan_limits, "_walk_resources", side_effect=RuntimeError("boom")),
+            patch.object(scan_limits, "_walk_resource_graph", side_effect=RuntimeError("boom")),
             self.assertRaises(ScanRejectedError) as ctx,
         ):
             check_pdf_content_bytes(filtered_page_pdf(b"", b"q Q"))
         self.assertNotIsInstance(ctx.exception, ScanTooLargeError)
 
-    def test_a_resources_entry_pointing_at_the_pages_node_does_not_leak(self) -> None:
-        # Fix round 3, Important 2: the round-2 fallback followed every
-        # N 0 R in a plain dict's own text regardless of which key named
-        # it, so a resources entry pointing straight at the shared /Pages
-        # node could pull in every other page's own resources and content
-        # -- up to MAX_SCAN_PAGES x _MAX_OBJECTS_PER_PAGE visits.
+    def test_a_non_resource_key_pointing_at_the_pages_node_is_never_walked(self) -> None:
+        # Fix round 3, Important 2 / fix round 4: `/Poison` is not a
+        # resource category (ISO 32000-1 Table 33), so no renderer can reach
+        # anything through it and the walk does not read it at all. The
+        # in-category version of this attack is page_tree_poison_pdf.
         data = resources_entry_pointing_at_pages_node_pdf()
         check_pdf_content_bytes(data)  # must not raise
         doc = pymupdf.open(stream=data, filetype="pdf")
         try:
-            page_xref = doc.page_xref(0)
-            budget = scan_limits._ContentBudget()
-            seen: set[int] = set()
-            scan_limits._walk_resources(doc, page_xref, page_index=0, seen=seen, budget=budget)
+            tree = scan_limits._page_tree(doc)
+            walk = scan_limits._PageWalk(
+                page_index=0, tree=tree.xrefs, budget=scan_limits._ContentBudget()
+            )
+            start = scan_limits._resources_refs(doc, doc.page_xref(0))
+            scan_limits._walk_resource_graph(doc, start, walk)
         finally:
             doc.close()
-        # The poisoned entry (the /Pages node itself) is entered once, then
-        # refused by its /Type -- nothing past it is ever visited.
-        self.assertEqual(budget.objects, 1)
+        self.assertEqual(walk.budget.objects, 0)
 
 
 class ImageMaskBombTests(unittest.TestCase):
@@ -491,6 +499,165 @@ class ImageMaskBombTests(unittest.TestCase):
         with self.assertRaises(ScanTooLargeError) as ctx:
             check_pdf_content_bytes(real_smask_dimension_bomb_pdf(40000.0, 40_000))
         self.assertIn("megapixel", str(ctx.exception))
+
+
+class PageTreeIdentityTests(unittest.TestCase):
+    """Fix round 4. The walk stops at the page tree by object identity --
+    the catalog, every page and every node reached through ``/Kids``, collected before
+    any page is walked -- not by resource names or ``/Type`` values, which
+    the PDF's author chooses and the renderer ignores."""
+
+    def test_a_form_filed_under_a_page_tree_key_name_is_rejected(self) -> None:
+        # Critical 1: round 3 skipped these keys by name in every generic
+        # dict, including an indirect /XObject name map, where they are
+        # author-chosen resource names the renderer draws by.
+        for name in ("P", "Contents", "Parent", "Kids", "Annots", "B", "Dest"):
+            with self.subTest(name=name), self.assertRaises(ScanTooLargeError):
+                check_pdf_content_bytes(indirect_xobject_dict_bomb_pdf(112_000_000, name=name))
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(indirect_xobject_dict_bomb_pdf(112_000_000, name="P"))
+
+    def test_an_appearance_state_named_contents_is_rejected(self) -> None:
+        # Critical 1: /AP << /N 6 0 R >>, object 6 = << /Off .. /Contents 8 0 R >>,
+        # /AS /Contents selects the bomb.
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(indirect_ap_state_bomb_pdf(112_000_000, state="Contents"))
+
+    def test_a_form_xobject_typed_as_a_page_tree_node_is_rejected(self) -> None:
+        # Critical 2: the renderer draws by /Subtype /Form and ignores /Type.
+        for type_name in ("Page", "Pages", "Catalog"):
+            with self.subTest(type_name=type_name), self.assertRaises(ScanTooLargeError):
+                check_pdf_content_bytes(
+                    typed_form_xobject_bomb_pdf(112_000_000, type_name=type_name)
+                )
+
+    def test_containers_typed_as_fonts_are_still_walked(self) -> None:
+        # The same /Type trust as Critical 2, via the font skip: a name map,
+        # a tiling pattern or a graphics state labelled /Type /Font is drawn
+        # exactly as if it were not.
+        cases = {
+            "xobject map": indirect_xobject_dict_bomb_pdf(
+                112_000_000, map_entries=b"/Type /Font /Subtype /TrueType"
+            ),
+            "tiling pattern": tiling_pattern_bomb_pdf(112_000_000, type_name="Font"),
+            "extgstate": extgstate_smask_bomb_pdf(112_000_000, gs_type="Font"),
+        }
+        for label, data in cases.items():
+            with self.subTest(label), self.assertRaises(ScanTooLargeError):
+                check_pdf_content_bytes(data)
+
+    def test_a_graphics_state_also_filed_as_a_font_is_still_walked(self) -> None:
+        # One object under both /Font and /ExtGState: meeting it first as a
+        # font must not stop it being walked as the graphics state it is.
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(extgstate_smask_bomb_pdf(112_000_000, also_as_font=True))
+
+    def test_inherited_resources_are_walked(self) -> None:
+        # /Resources on the /Pages parent, none on the page: both renderers
+        # inherit it (ISO 32000-1 Table 30).
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(inherited_resources_bomb_pdf(112_000_000))
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(inherited_resources_bomb_pdf(112_000_000))
+
+    def test_a_large_embedded_font_program_is_not_page_content(self) -> None:
+        # Guard: a font reached through /Font is not expanded, so its
+        # 9 MB program (over the 8 MB page cap) does not count.
+        check_pdf_content_bytes(embedded_font_pdf(9_000_000))
+
+    def test_a_poisoned_name_map_does_not_climb_the_page_tree(self) -> None:
+        # Minor 2: page 0's indirect /XObject map also names the catalog, a
+        # /Type-less /Pages root and a /Type-less sibling page. Each page
+        # draws its own 5 MB form; a climb into the sibling would add its
+        # form to page 0 and cross the 8 MB page cap.
+        data = page_tree_poison_pdf(form_bytes=5_000_000)
+        check_pdf_content_bytes(data)
+        check_scan_bytes(data)
+        doc = pymupdf.open(stream=data, filetype="pdf")
+        try:
+            tree = scan_limits._page_tree(doc)
+            walk = scan_limits._PageWalk(
+                page_index=0, tree=tree.xrefs, budget=scan_limits._ContentBudget()
+            )
+            start = scan_limits._resources_refs(doc, doc.page_xref(0))
+            scan_limits._walk_resource_graph(doc, start, walk)
+        finally:
+            doc.close()
+        self.assertEqual(tree.xrefs, frozenset({1, 2, 3, 5, 6}))
+        # Page 0's own form (12) and the three poison entries, entered once
+        # each and refused by identity: nothing behind them.
+        self.assertEqual(walk.seen, {12, 1, 2, 5})
+        self.assertEqual(walk.budget.objects, 4)
+        self.assertTrue({7, 8, 10, 11}.isdisjoint(walk.seen))
+
+    def test_a_deep_form_chain_bomb_is_rejected_by_the_walk_alone(self) -> None:
+        # Minor 1: with pymupdf's own (recursive) image enumeration taken
+        # out, the bomb at the end of the 2,000-deep chain is still found
+        # by this module's iterative walk and refused as too large.
+        with (
+            patch.object(pymupdf.Page, "get_images", return_value=[]),
+            self.assertRaises(ScanTooLargeError),
+        ):
+            check_pdf_content_bytes(
+                deep_xobject_chain_bomb_pdf(depth=2000, inflated_bytes=112_000_000)
+            )
+
+    def test_a_bogus_parent_does_not_hide_an_object_from_the_walk(self) -> None:
+        # The page's /Parent names its annotation's appearance-state dict.
+        # The tree set comes from /Kids, so that dict is still expanded.
+        data = parent_poisoned_ap_state_bomb_pdf(112_000_000)
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(data)
+        doc = pymupdf.open(stream=data, filetype="pdf")
+        try:
+            self.assertEqual(scan_limits._page_tree(doc).xrefs, frozenset({1, 2, 3}))
+        finally:
+            doc.close()
+
+
+class StreamRoleTests(unittest.TestCase):
+    """A stream is walked by what a renderer does with it: an appearance
+    stream is run as a form whatever its ``/Subtype`` says, and a
+    ``/Subtype`` written as an indirect name reads the same as a direct one."""
+
+    def test_an_appearance_stream_without_a_subtype_has_its_resources_walked(self) -> None:
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(annot_ap_nested_bomb_pdf(112_000_000, ap_dict=b""))
+
+    def test_an_appearance_stream_labelled_as_an_image_is_walked_as_a_form(self) -> None:
+        ap_dict = (
+            b"/Type /XObject /Subtype /Image /Width 1 /Height 1 "
+            b"/ColorSpace /DeviceGray /BitsPerComponent 8"
+        )
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(annot_ap_nested_bomb_pdf(112_000_000, ap_dict=ap_dict))
+
+    def test_a_form_with_an_indirect_subtype_has_its_resources_walked(self) -> None:
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(indirect_subtype_form_bomb_pdf(112_000_000))
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(indirect_subtype_form_bomb_pdf(112_000_000))
+
+
+class WalkedImageTests(unittest.TestCase):
+    """Fix round 4, Important 1: an image the walk reaches is pixel-checked
+    there too -- ``page.get_images(full=True)`` does not list images inside
+    annotation appearance streams or tiling patterns."""
+
+    def test_an_oversized_image_in_an_annotation_appearance_is_rejected(self) -> None:
+        with self.assertRaises(ScanTooLargeError) as ctx:
+            check_pdf_content_bytes(annot_ap_image_bomb_pdf(40_000, 40_000))
+        self.assertIn("megapixel", str(ctx.exception))
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(annot_ap_image_bomb_pdf(40_000, 40_000))
+
+    def test_an_oversized_image_in_a_tiling_pattern_is_rejected(self) -> None:
+        with self.assertRaises(ScanTooLargeError) as ctx:
+            check_pdf_content_bytes(tiling_pattern_image_bomb_pdf(40_000, 40_000))
+        self.assertIn("megapixel", str(ctx.exception))
+
+    def test_a_600_dpi_image_in_an_annotation_appearance_passes(self) -> None:
+        check_pdf_content_bytes(annot_ap_image_bomb_pdf(4_960, 7_016))
 
 
 class NonPdfDocumentTests(unittest.TestCase):
