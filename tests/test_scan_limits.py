@@ -34,6 +34,8 @@ from lemely.io.scan_limits import (
 from tests.pdf_fakes import (
     annot_ap_bomb_pdf,
     assemble_pdf,
+    deep_plain_dict_chain_bomb_pdf,
+    deep_xobject_chain_bomb_pdf,
     encrypted_pdf_bytes,
     extgstate_smask_bomb_pdf,
     filtered_page_pdf,
@@ -49,7 +51,9 @@ from tests.pdf_fakes import (
     pdf_stream,
     pdf_with_inflated_count,
     pdf_with_missing_kid_object,
+    real_smask_dimension_bomb_pdf,
     repeated_xobject_pdf,
+    resources_entry_pointing_at_pages_node_pdf,
     smask_bomb_pdf,
     tiling_pattern_bomb_pdf,
     type3_charproc_bomb_pdf,
@@ -399,6 +403,64 @@ class AnnotationPatternType3BombTests(unittest.TestCase):
         with self.assertRaises(ScanTooLargeError):
             check_scan_bytes(extgstate_smask_bomb_pdf(112_000_000))
 
+    def test_a_deep_plain_dict_chain_bomb_is_rejected(self) -> None:
+        # Fix round 3, Important 1: round 2's fallback recursed into each
+        # next-level plain dict via a direct Python call; 2,000 levels
+        # exceeded the recursion limit before the bomb at the end of the
+        # chain was ever reached, and the resulting RecursionError used to
+        # be swallowed silently.
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(
+                deep_plain_dict_chain_bomb_pdf(depth=2000, inflated_bytes=112_000_000)
+            )
+
+    def test_a_deep_form_xobject_chain_bomb_is_rejected(self) -> None:
+        # Fix round 3, Important 1: the same recursion-depth hole existed
+        # for an entirely ordinary chain of legitimate, nested Form
+        # XObjects, since round 1. `page.get_images(full=True)` itself
+        # independently walks nested Form XObjects looking for images and
+        # hits the identical RecursionError on this fixture -- caught by
+        # check_pdf_content's new fail-closed wrapper and turned into a
+        # plain ScanRejectedError (not specifically ScanTooLargeError,
+        # since it is pymupdf's own image-enumeration call that raises
+        # here, not this module's byte-budget check).
+        with self.assertRaises(ScanRejectedError):
+            check_pdf_content_bytes(
+                deep_xobject_chain_bomb_pdf(depth=2000, inflated_bytes=112_000_000)
+            )
+
+    def test_an_unexpected_error_during_the_walk_rejects_rather_than_passes(self) -> None:
+        # Fix round 3, Important 1 (fail-closed): a bug or unforeseen
+        # pymupdf quirk inside the resource-graph walk itself must reject
+        # the file, not silently pass it through the way a genuine
+        # page-tree/page-access failure still does.
+        with (
+            patch.object(scan_limits, "_walk_resources", side_effect=RuntimeError("boom")),
+            self.assertRaises(ScanRejectedError) as ctx,
+        ):
+            check_pdf_content_bytes(filtered_page_pdf(b"", b"q Q"))
+        self.assertNotIsInstance(ctx.exception, ScanTooLargeError)
+
+    def test_a_resources_entry_pointing_at_the_pages_node_does_not_leak(self) -> None:
+        # Fix round 3, Important 2: the round-2 fallback followed every
+        # N 0 R in a plain dict's own text regardless of which key named
+        # it, so a resources entry pointing straight at the shared /Pages
+        # node could pull in every other page's own resources and content
+        # -- up to MAX_SCAN_PAGES x _MAX_OBJECTS_PER_PAGE visits.
+        data = resources_entry_pointing_at_pages_node_pdf()
+        check_pdf_content_bytes(data)  # must not raise
+        doc = pymupdf.open(stream=data, filetype="pdf")
+        try:
+            page_xref = doc.page_xref(0)
+            budget = scan_limits._ContentBudget()
+            seen: set[int] = set()
+            scan_limits._walk_resources(doc, page_xref, page_index=0, seen=seen, budget=budget)
+        finally:
+            doc.close()
+        # The poisoned entry (the /Pages node itself) is entered once, then
+        # refused by its /Type -- nothing past it is ever visited.
+        self.assertEqual(budget.objects, 1)
+
 
 class ImageMaskBombTests(unittest.TestCase):
     """Fix round 1, Important 3: an image's /SMask and stream-valued /Mask
@@ -421,6 +483,13 @@ class ImageMaskBombTests(unittest.TestCase):
         # `40000` -- used to silently pass (kind != "int") without checking.
         with self.assertRaises(ScanTooLargeError) as ctx:
             check_pdf_content_bytes(indirect_smask_dimension_bomb_pdf(40_000, 40_000))
+        self.assertIn("megapixel", str(ctx.exception))
+
+    def test_an_smask_with_a_real_number_width_is_rejected(self) -> None:
+        # Fix round 3, minor: /Width 40000.0 (pymupdf's "float" kind, not
+        # "int") used to make _resolve_int return None without checking.
+        with self.assertRaises(ScanTooLargeError) as ctx:
+            check_pdf_content_bytes(real_smask_dimension_bomb_pdf(40000.0, 40_000))
         self.assertIn("megapixel", str(ctx.exception))
 
 

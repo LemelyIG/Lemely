@@ -458,6 +458,146 @@ def indirect_smask_dimension_bomb_pdf(width: int, height: int) -> bytes:
     )
 
 
+def deep_plain_dict_chain_bomb_pdf(*, depth: int, inflated_bytes: int) -> bytes:
+    """A page's ``/Resources /XObject`` starts a chain of ``depth`` indirect
+    plain dicts (``<< /Next N 0 R >>``), the last one naming the Form
+    XObject bomb.
+
+    Fix round 3, Important 1. Round 2's fallback in ``_visit_resource``
+    recursed into each next-level plain dict via a direct Python call;
+    above roughly 1,000 levels (well below ``depth=2000``) that exceeded
+    ``sys.getrecursionlimit()`` before the bomb was ever reached, and the
+    resulting ``RecursionError`` used to be swallowed by
+    ``check_pdf_content_bytes``'s ``except Exception: return``, letting the
+    file -- and its bomb -- through silently.
+    """
+    chain_start = 5  # 1 catalog, 2 pages, 3 page, 4 content stream
+    bomb_obj = chain_start + depth
+    objects = [
+        *_CATALOG_AND_PAGES,
+        _A4_PAGE + f" /Resources << /XObject {chain_start} 0 R >> >>".encode(),
+        pdf_stream(b"", b"q Q"),
+    ]
+    for i in range(depth):
+        objects.append(f"<< /Next {chain_start + i + 1} 0 R >>".encode())
+    objects.append(
+        pdf_stream(
+            b"/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Filter /FlateDecode",
+            flate_bomb_ops(inflated_bytes),
+        )
+    )
+    assert len(objects) == bomb_obj  # sanity: object numbering lines up
+    return assemble_pdf(objects)
+
+
+def deep_xobject_chain_bomb_pdf(*, depth: int, inflated_bytes: int) -> bytes:
+    """A chain of ``depth`` nested, otherwise-harmless Form XObjects, each
+    naming the next in its own ``/Resources``, the last one naming the bomb.
+
+    Fix round 3, Important 1. Distinct from
+    :func:`deep_plain_dict_chain_bomb_pdf`: every intermediate object here
+    IS a legitimate Form XObject (has been reachable this way since round
+    1), so this is ``_walk_resources``'s and the typed-XObject branch's own
+    mutual recursion, not round 2's fallback -- the same recursion-depth
+    hole existed for this, entirely ordinary, path too.
+    """
+    chain_start = 5
+    bomb_obj = chain_start + depth
+    objects = [
+        *_CATALOG_AND_PAGES,
+        _A4_PAGE + f" /Resources << /XObject << /Fm0 {chain_start} 0 R >> >> >>".encode(),
+        pdf_stream(b"", b"q /Fm0 Do Q"),
+    ]
+    for i in range(depth):
+        next_obj = chain_start + i + 1
+        objects.append(
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 10 10] "
+                + f"/Resources << /XObject << /Fm1 {next_obj} 0 R >> >>".encode(),
+                b"q /Fm1 Do Q",
+            )
+        )
+    objects.append(
+        pdf_stream(
+            b"/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Filter /FlateDecode",
+            flate_bomb_ops(inflated_bytes),
+        )
+    )
+    assert len(objects) == bomb_obj
+    return assemble_pdf(objects)
+
+
+def resources_entry_pointing_at_pages_node_pdf() -> bytes:
+    """A 3-page PDF whose page 0 ``/Resources`` has an entry pointing
+    directly at the shared ``/Pages`` node (object 2).
+
+    Fix round 3, Important 2. Not a legitimate resource -- exactly the
+    shape the round-2 fallback's blind, key-blind object-text scan would
+    have followed straight into the page tree, from there visiting every
+    other page's own dict and content along with it. A normal multi-page
+    file with this back-pointer must still pass, and the walk starting
+    from page 0 must not count page 1's or page 2's own objects.
+    """
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R 5 0 R 6 0 R] /Count 3 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            b"/Contents 4 0 R /Resources << /Poison 2 0 R >> >>",
+            pdf_stream(b"", b"q Q"),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 7 0 R >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 8 0 R >>",
+            pdf_stream(b"", b"q Q"),
+            pdf_stream(b"", b"q Q"),
+        ]
+    )
+
+
+def real_smask_dimension_bomb_pdf(width: float, height: int) -> bytes:
+    """A small image whose ``/SMask``'s ``/Width`` is written as a PDF
+    *real* number (``40000.0``), not an integer -- legal PDF syntax.
+
+    Fix round 3, minor: ``_resolve_int`` used to accept only ``kind ==
+    "int"``, so a real-number declared width/height silently passed.
+    """
+    smask = pdf_stream(
+        f"/Type /XObject /Subtype /Image /Width {width} /Height {height} "
+        "/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode".encode(),
+        zlib.compress(b"\x00"),
+    )
+    image = pdf_stream(
+        b"/Type /XObject /Subtype /Image /Width 1 /Height 1 "
+        b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /SMask 6 0 R",
+        zlib.compress(b"\x00"),
+    )
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /XObject << /Im0 5 0 R >> >> >>",
+            pdf_stream(b"", b"q 1 0 0 1 0 0 cm /Im0 Do Q"),
+            image,
+            smask,
+        ]
+    )
+
+
+def born_digital_text_pdf(*, pages: int) -> bytes:
+    """A ``pages``-page PDF with real text (``pymupdf``'s ``insert_text``,
+    one shared font across every page), for Task 11b's measurements: a page
+    whose content and resources are genuinely non-trivial, not a synthetic
+    bomb -- the corpus's counterpart of the scanned-image page the
+    committed fixture already measures.
+    """
+    doc = pymupdf.open()
+    for _ in range(pages):
+        page = doc.new_page(width=595, height=842)
+        page.insert_text((72, 72), "The quick brown fox jumps over the lazy dog.", fontname="helv")
+    buf = io.BytesIO()
+    doc.save(buf)
+    doc.close()
+    return buf.getvalue()
+
+
 def many_form_xobjects_pdf(count: int) -> bytes:
     """A page whose ``/Resources``/``/XObject`` dict lists ``count`` distinct,
     otherwise-harmless Form XObjects -- for the per-page object-visit cap."""
@@ -478,6 +618,9 @@ def many_form_xobjects_pdf(count: int) -> bytes:
 __all__ = [
     "annot_ap_bomb_pdf",
     "assemble_pdf",
+    "born_digital_text_pdf",
+    "deep_plain_dict_chain_bomb_pdf",
+    "deep_xobject_chain_bomb_pdf",
     "encrypted_pdf_bytes",
     "extgstate_smask_bomb_pdf",
     "filtered_page_pdf",
@@ -493,7 +636,9 @@ __all__ = [
     "pdf_stream",
     "pdf_with_inflated_count",
     "pdf_with_missing_kid_object",
+    "real_smask_dimension_bomb_pdf",
     "repeated_xobject_pdf",
+    "resources_entry_pointing_at_pages_node_pdf",
     "smask_bomb_pdf",
     "tiling_pattern_bomb_pdf",
     "type3_charproc_bomb_pdf",
