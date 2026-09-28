@@ -53,8 +53,8 @@ from tests.pdf_fakes import (
     inherited_resources_bomb_pdf,
     links_to_sibling_pages_pdf,
     many_form_xobjects_pdf,
+    non_stream_contents_pdf,
     page_bomb_pdf,
-    page_chain_smask_bomb_pdf,
     page_tree_poison_pdf,
     parent_poisoned_ap_state_bomb_pdf,
     pdf_stream,
@@ -63,12 +63,18 @@ from tests.pdf_fakes import (
     real_smask_dimension_bomb_pdf,
     repeated_xobject_pdf,
     resources_entry_pointing_at_pages_node_pdf,
+    seeded_page_tree_bomb_pdf,
+    sibling_page_as_soft_mask_bomb_pdf,
     smask_bomb_pdf,
+    stamp_with_jpeg_appearance_pdf,
+    stream_extgstate_smask_bomb_pdf,
     tiling_pattern_bomb_pdf,
     tiling_pattern_image_bomb_pdf,
     tree_node_ap_state_bomb_pdf,
     type3_charproc_bomb_pdf,
+    type3_stream_font_bomb_pdf,
     typed_form_xobject_bomb_pdf,
+    xobject_also_listed_as_annotation_bomb_pdf,
     xobject_bomb_pdf,
 )
 
@@ -454,7 +460,7 @@ class AnnotationPatternType3BombTests(unittest.TestCase):
         self.assertNotIsInstance(ctx.exception, ScanTooLargeError)
 
     def test_a_non_resource_key_pointing_at_the_pages_node_is_never_walked(self) -> None:
-        # Fix round 3, Important 2 / fix round 4: `/Poison` is not a
+        # `/Poison` is not a
         # resource category (ISO 32000-1 Table 33), so no renderer can reach
         # anything through it and the walk does not read it at all. The
         # in-category version of this attack is page_tree_poison_pdf.
@@ -505,15 +511,15 @@ class ImageMaskBombTests(unittest.TestCase):
 
 
 class PageTreeIdentityTests(unittest.TestCase):
-    """Fix round 4. The walk stops at the page tree by object identity --
-    the catalog, every page and every node reached through ``/Kids``, collected before
-    any page is walked -- not by resource names or ``/Type`` values, which
-    the PDF's author chooses and the renderer ignores."""
+    """The page tree is recognised by object identity -- the catalog, every
+    page and every node reached through ``/Kids``, collected before any page
+    is walked -- never by resource names or ``/Type`` values, which the
+    PDF's author chooses and the renderer ignores. Reaching it from a page's
+    drawing resources, ``/Contents`` or ``/Annots`` rejects the file."""
 
     def test_a_form_filed_under_a_page_tree_key_name_is_rejected(self) -> None:
-        # Critical 1: round 3 skipped these keys by name in every generic
-        # dict, including an indirect /XObject name map, where they are
-        # author-chosen resource names the renderer draws by.
+        # In an indirect /XObject name map these are author-chosen resource
+        # names the renderer draws by, like any other name.
         for name in ("P", "Contents", "Parent", "Kids", "Annots", "B", "Dest"):
             with self.subTest(name=name), self.assertRaises(ScanTooLargeError):
                 check_pdf_content_bytes(indirect_xobject_dict_bomb_pdf(112_000_000, name=name))
@@ -521,13 +527,13 @@ class PageTreeIdentityTests(unittest.TestCase):
             check_scan_bytes(indirect_xobject_dict_bomb_pdf(112_000_000, name="P"))
 
     def test_an_appearance_state_named_contents_is_rejected(self) -> None:
-        # Critical 1: /AP << /N 6 0 R >>, object 6 = << /Off .. /Contents 8 0 R >>,
+        # /AP << /N 6 0 R >>, object 6 = << /Off .. /Contents 8 0 R >>,
         # /AS /Contents selects the bomb.
         with self.assertRaises(ScanTooLargeError):
             check_pdf_content_bytes(indirect_ap_state_bomb_pdf(112_000_000, state="Contents"))
 
     def test_a_form_xobject_typed_as_a_page_tree_node_is_rejected(self) -> None:
-        # Critical 2: the renderer draws by /Subtype /Form and ignores /Type.
+        # The renderer draws by /Subtype /Form and ignores /Type.
         for type_name in ("Page", "Pages", "Catalog"):
             with self.subTest(type_name=type_name), self.assertRaises(ScanTooLargeError):
                 check_pdf_content_bytes(
@@ -535,9 +541,8 @@ class PageTreeIdentityTests(unittest.TestCase):
                 )
 
     def test_containers_typed_as_fonts_are_still_walked(self) -> None:
-        # The same /Type trust as Critical 2, via the font skip: a name map,
-        # a tiling pattern or a graphics state labelled /Type /Font is drawn
-        # exactly as if it were not.
+        # A name map, a tiling pattern or a graphics state labelled
+        # /Type /Font is drawn exactly as if it were not.
         cases = {
             "xobject map": indirect_xobject_dict_bomb_pdf(
                 112_000_000, map_entries=b"/Type /Font /Subtype /TrueType"
@@ -569,7 +574,7 @@ class PageTreeIdentityTests(unittest.TestCase):
         check_pdf_content_bytes(embedded_font_pdf(9_000_000))
 
     def test_a_poisoned_name_map_is_rejected_without_climbing(self) -> None:
-        # Minor 2: page 0's indirect /XObject map also names the catalog, a
+        # Page 0's indirect /XObject map also names the catalog, a
         # /Type-less /Pages root or a /Type-less sibling page. Reaching the
         # page tree from drawing resources rejects the file -- by identity,
         # before the node is expanded, so the siblings' 5 MB forms are never
@@ -599,8 +604,9 @@ class PageTreeIdentityTests(unittest.TestCase):
                 finally:
                     doc.close()
                 self.assertEqual(tree.xrefs, frozenset({1, 2, 3, 5, 6}))
-                # Nothing behind a tree node was visited.
-                self.assertTrue({1, 2, 5, 7, 8, 10, 11}.isdisjoint(walk.seen))
+                # Nothing behind a tree node was visited: the siblings'
+                # contents (7, 8) and forms (10, 11).
+                self.assertTrue({7, 8, 10, 11}.isdisjoint(walk.seen))
 
     def test_a_page_tree_node_used_as_an_appearance_state_dict_is_rejected(self) -> None:
         # The /Pages root or a sibling page doubles as page 0's /AP /N state
@@ -613,11 +619,30 @@ class PageTreeIdentityTests(unittest.TestCase):
                 with self.assertRaises(ScanRejectedError):
                     check_scan_bytes(data)
 
-    def test_two_pages_chained_as_graphics_state_and_soft_mask_are_rejected(self) -> None:
-        # Page 1 is page 0's ExtGState, its /SMask is page 2, whose /G is the
-        # bomb: expanding a tree node "one level only" would miss it.
-        with self.assertRaises(ScanRejectedError):
-            check_pdf_content_bytes(page_chain_smask_bomb_pdf(112_000_000))
+    def test_a_sibling_page_used_as_a_soft_mask_is_rejected(self) -> None:
+        # An ordinary ExtGState names the sibling page as its /SMask; the
+        # page's extra /G is the bomb. The tree is met inside a container.
+        data = sibling_page_as_soft_mask_bomb_pdf(112_000_000)
+        with self.assertRaises(ScanRejectedError) as ctx:
+            check_pdf_content_bytes(data)
+        self.assertNotIsInstance(ctx.exception, ScanTooLargeError)
+
+    def test_a_tree_node_already_listed_as_contents_or_annotation_is_rejected(self) -> None:
+        # The sibling page is listed in page 0's /Annots or /Contents before
+        # the annotation's /AP reaches it: handled once already, it must be
+        # rejected, not skipped.
+        for seed in ("annots", "contents"):
+            with self.subTest(seed=seed):
+                data = seeded_page_tree_bomb_pdf(112_000_000, seed=seed)
+                with self.assertRaises(ScanRejectedError):
+                    check_pdf_content_bytes(data)
+                with self.assertRaises(ScanRejectedError):
+                    check_scan_bytes(data)
+
+    def test_a_contents_entry_that_is_not_a_stream_is_rejected(self) -> None:
+        with self.assertRaises(ScanRejectedError) as ctx:
+            check_pdf_content_bytes(non_stream_contents_pdf())
+        self.assertNotIsInstance(ctx.exception, ScanTooLargeError)
 
     def test_links_to_a_sibling_page_pass(self) -> None:
         # /Dest, /A /GoTo, /P and /Popup all name pages or annotations the
@@ -627,7 +652,7 @@ class PageTreeIdentityTests(unittest.TestCase):
         check_scan_bytes(data)
 
     def test_a_deep_form_chain_bomb_is_rejected_by_the_walk_alone(self) -> None:
-        # Minor 1: with pymupdf's own (recursive) image enumeration taken
+        # With pymupdf's own (recursive) image enumeration taken
         # out, the bomb at the end of the 2,000-deep chain is still found
         # by this module's iterative walk and refused as too large.
         with (
@@ -674,9 +699,30 @@ class StreamRoleTests(unittest.TestCase):
         with self.assertRaises(ScanTooLargeError):
             check_scan_bytes(indirect_subtype_form_bomb_pdf(112_000_000))
 
+    def test_a_type3_font_that_is_a_stream_has_its_glyphs_walked(self) -> None:
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(type3_stream_font_bomb_pdf(112_000_000))
+
+    def test_a_graphics_state_that_is_a_stream_is_walked_as_a_container(self) -> None:
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(stream_extgstate_smask_bomb_pdf(112_000_000))
+
+    def test_an_xobject_also_listed_as_an_annotation_has_its_appearance_walked(self) -> None:
+        # Walked first as an XObject, the same object's /AP is still read
+        # when /Annots lists it.
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(xobject_also_listed_as_annotation_bomb_pdf(112_000_000))
+
+    def test_a_stamp_appearance_drawing_a_jpeg_passes(self) -> None:
+        # Guard for the walk above: its image is met under /XObject and
+        # size-checked, never counted as unmeasurable page content.
+        data = stamp_with_jpeg_appearance_pdf()
+        check_pdf_content_bytes(data)
+        check_scan_bytes(data)
+
 
 class WalkedImageTests(unittest.TestCase):
-    """Fix round 4, Important 1: an image the walk reaches is pixel-checked
+    """An image the walk reaches is pixel-checked
     there too -- ``page.get_images(full=True)`` does not list images inside
     annotation appearance streams or tiling patterns."""
 

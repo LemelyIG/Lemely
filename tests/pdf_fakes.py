@@ -238,8 +238,7 @@ def tiling_pattern_bomb_pdf(inflated_bytes: int, *, type_name: str = "Pattern") 
 
     Fix round 1, Important 2(b). ``type_name`` is the pattern's ``/Type``:
     a renderer finds a pattern by its ``/PatternType`` and ignores ``/Type``,
-    so a pattern that calls itself ``/Font`` is drawn all the same (fix
-    round 4).
+    so a pattern that calls itself ``/Font`` is drawn all the same.
     """
     return assemble_pdf(
         [
@@ -375,7 +374,7 @@ def indirect_xobject_dict_bomb_pdf(
     ``page.get_xobjects()`` resolved this level of indirection for us;
     ``_collection_refs`` alone, called once on ``/Resources``, does not.
 
-    Fix round 4: ``name`` is the author-chosen resource name the form is
+    ``name`` is the author-chosen resource name the form is
     filed (and drawn) under -- ``/P``, ``/Contents``, ``/Parent`` and the
     rest are all legal names, so a walk that skips keys by name misses the
     form. ``map_entries`` is written into the name map verbatim (e.g. a
@@ -401,7 +400,7 @@ def indirect_ap_state_bomb_pdf(inflated_bytes: int, *, state: str = "On") -> byt
     Fix round 2, Important 1: ``/AP << /N 6 0 R >>`` where object 6 is the
     ``/Off``/``/On`` appearance-state dict (``<< /Off 7 0 R /On 8 0 R >>``),
     not the appearance stream directly. Object 8 carries the bomb and is the
-    selected state (``/AS``). Fix round 4: ``state`` is that state's
+    selected state (``/AS``). ``state`` is that state's
     author-chosen name -- ``/Contents`` is as legal as ``/On``.
     """
     return assemble_pdf(
@@ -431,7 +430,7 @@ def extgstate_smask_bomb_pdf(
     ``/Type /Mask`` dict, not a stream -- only its ``/G`` (a Form XObject,
     object 7) is content.
 
-    Fix round 4: ``gs_type`` is the graphics state's ``/Type``, which a
+    ``gs_type`` is the graphics state's ``/Type``, which a
     renderer ignores (``/Font`` is drawn the same as ``/ExtGState``);
     ``also_as_font`` files the same object under ``/Font`` too, so a walk
     that visits an object once, in whichever role it meets first, can meet
@@ -606,7 +605,7 @@ def real_smask_dimension_bomb_pdf(width: float, height: int) -> bytes:
 def typed_form_xobject_bomb_pdf(inflated_bytes: int, *, type_name: str) -> bytes:
     """A page drawing one Form XObject bomb whose ``/Type`` is ``type_name``.
 
-    Fix round 4, Critical 2: a renderer draws an XObject by its ``/Subtype``
+    A renderer draws an XObject by its ``/Subtype``
     and ignores ``/Type``, so a ``/Subtype /Form`` stream calling itself
     ``/Page``, ``/Pages`` or ``/Catalog`` is drawn like any other form.
     """
@@ -636,7 +635,7 @@ def _declared_image(width: int, height: int) -> bytes:
 def annot_ap_image_bomb_pdf(width: int, height: int) -> bytes:
     """An annotation appearance form that draws an image DECLARING ``width x height``.
 
-    Fix round 4, Important 1: ``page.get_images(full=True)`` lists images
+    ``page.get_images(full=True)`` lists images
     in the page's resources and its Form XObjects', not those inside an
     annotation's appearance stream -- which the renderer draws all the same.
     """
@@ -659,7 +658,7 @@ def annot_ap_image_bomb_pdf(width: int, height: int) -> bytes:
 def tiling_pattern_image_bomb_pdf(width: int, height: int) -> bytes:
     """A tiling pattern whose cell draws an image DECLARING ``width x height``.
 
-    Fix round 4, Important 1: as :func:`annot_ap_image_bomb_pdf`, but the
+    As :func:`annot_ap_image_bomb_pdf`, but the
     image sits in a tiling pattern's own ``/Resources``, which
     ``page.get_images(full=True)`` does not list either.
     """
@@ -683,7 +682,7 @@ def inherited_resources_bomb_pdf(inflated_bytes: int) -> bytes:
     """A page with no ``/Resources`` of its own, drawing a Form XObject bomb
     filed in its ``/Pages`` parent's ``/Resources``.
 
-    Fix round 4: ``/Resources`` is inheritable (ISO 32000-1 Table 30) and
+    ``/Resources`` is inheritable (ISO 32000-1 Table 30) and
     both renderers resolve it from the nearest ancestor; common producers
     write shared resources on the ``/Pages`` node.
     """
@@ -763,23 +762,155 @@ def tree_node_ap_state_bomb_pdf(inflated_bytes: int, *, node: str) -> bytes:
     )
 
 
-def page_chain_smask_bomb_pdf(inflated_bytes: int) -> bytes:
-    """Two sibling pages chained as page 0's graphics state and soft mask.
+def sibling_page_as_soft_mask_bomb_pdf(inflated_bytes: int) -> bytes:
+    """Page 0's graphics state (an ordinary ExtGState dict, object 5) uses
+    the sibling page (object 6) as its soft mask.
 
-    Page 0's ``/ExtGState /GS1`` is page 1 (object 5), which also carries
-    ``/SMask 6 0 R``; page 2 (object 6) also carries ``/S /Luminosity
-    /G 7 0 R``, and object 7 is a Form XObject bomb. A walk that expands a
-    tree node one level but not the tree nodes it names misses the bomb.
+    The sibling page also carries ``/S /Luminosity /G 7 0 R``, and object
+    7 is a Form XObject bomb. The first hop is not a page-tree node, so the
+    walk only meets the tree while expanding an ordinary container.
     """
-    page = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R"
     return assemble_pdf(
         [
             b"<< /Type /Catalog /Pages 2 0 R >>",
-            b"<< /Type /Pages /Kids [3 0 R 5 0 R 6 0 R] /Count 3 >>",
-            page + b" /Resources << /ExtGState << /GS1 5 0 R >> >> >>",
+            b"<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+            _A4_PAGE + b" /Resources << /ExtGState << /GS1 5 0 R >> >> >>",
             pdf_stream(b"", b"/GS1 gs q Q"),
-            page + b" /SMask 6 0 R >>",
-            page + b" /S /Luminosity /G 7 0 R >>",
+            b"<< /Type /ExtGState /SMask 6 0 R >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
+            b"/S /Luminosity /G 7 0 R >>",
+            _bomb_form(inflated_bytes),
+        ]
+    )
+
+
+def seeded_page_tree_bomb_pdf(inflated_bytes: int, *, seed: str) -> bytes:
+    """Page 0's annotation uses the sibling page (object 6) as its ``/AP /N``
+    state dict, and page 0 also lists the sibling page elsewhere first.
+
+    ``seed`` is ``"annots"`` (``/Annots [6 0 R 5 0 R]``: the sibling page
+    listed as an annotation) or ``"contents"`` (``/Contents [4 0 R 6 0 R]``:
+    a non-stream listed as page content). Either one puts object 6 among
+    the objects the walk has already handled, so a walk that skips handled
+    objects before checking the page tree never rejects it.
+    """
+    annots = b"[6 0 R 5 0 R]" if seed == "annots" else b"[5 0 R]"
+    contents = b"[4 0 R 6 0 R]" if seed == "contents" else b"4 0 R"
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents "
+            + contents
+            + b" /Annots "
+            + annots
+            + b" >>",
+            pdf_stream(b"", b"q Q"),
+            b"<< /Type /Annot /Subtype /Stamp /Rect [0 0 200 200] /AP << /N 6 0 R >> /AS /On >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /On 7 0 R >>",
+            _bomb_form(inflated_bytes),
+        ]
+    )
+
+
+def non_stream_contents_pdf() -> bytes:
+    """A page whose ``/Contents`` array names a dictionary (object 5), not a stream."""
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents [4 0 R 5 0 R] >>",
+            pdf_stream(b"", b"q Q"),
+            b"<< /Foo 1 >>",
+        ]
+    )
+
+
+def type3_stream_font_bomb_pdf(inflated_bytes: int) -> bytes:
+    """A Type3 font that is itself a stream object; its one glyph procedure
+    (object 6) decodes to ``inflated_bytes`` of drawing operators.
+
+    MuPDF loads a font dictionary whether or not it carries a stream, so the
+    glyph is drawn all the same.
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /Font << /F1 5 0 R >> >> >>",
+            pdf_stream(b"", b"BT /F1 100 Tf 0 0 Td (a) Tj ET"),
+            pdf_stream(
+                b"/Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] "
+                b"/FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /a 6 0 R >> "
+                b"/Encoding << /Type /Encoding /Differences [97 /a] >> "
+                b"/FirstChar 97 /LastChar 97 /Widths [1000]",
+                b"",
+            ),
+            pdf_stream(b"/Filter /FlateDecode", flate_bomb_ops(inflated_bytes)),
+        ]
+    )
+
+
+def stream_extgstate_smask_bomb_pdf(inflated_bytes: int) -> bytes:
+    """A graphics state written as a stream object, whose inline ``/SMask``
+    dict's ``/G`` group (object 6) is a Form XObject bomb.
+
+    MuPDF reads a graphics state's keys whether or not it carries a stream.
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /ExtGState << /GS0 5 0 R >> >> >>",
+            pdf_stream(b"", b"/GS0 gs 0 g 0 0 200 200 re f"),
+            pdf_stream(b"/Type /ExtGState /SMask << /S /Luminosity /G 6 0 R >>", b""),
+            _bomb_form(inflated_bytes),
+        ]
+    )
+
+
+def stamp_with_jpeg_appearance_pdf() -> bytes:
+    """A stamp whose appearance form draws a JPEG image through an indirect
+    ``/Resources`` (object 8), as stamp tools write them.
+
+    The appearance form is walked in the ``"any"`` role, where every other
+    reference in its dictionary is walked too; its image must still be met
+    under ``/XObject`` and size-checked, not counted as page content (a
+    JPEG stream cannot be measured and would be refused).
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Annots [5 0 R] >>",
+            pdf_stream(b"", b"q Q"),
+            b"<< /Type /Annot /Subtype /Stamp /Rect [0 0 100 100] /AP << /N 6 0 R >> >>",
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 100 100] /Resources 8 0 R "
+                b"/Group << /S /Transparency >>",
+                b"q 100 0 0 100 0 0 cm /Im0 Do Q",
+            ),
+            pdf_stream(
+                b"/Type /XObject /Subtype /Image /Width 2000 /Height 2000 "
+                b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode",
+                b"\xff\xd8\xff\xd9",
+            ),
+            b"<< /XObject << /Im0 7 0 R >> >>",
+        ]
+    )
+
+
+def xobject_also_listed_as_annotation_bomb_pdf(inflated_bytes: int) -> bytes:
+    """One stream (object 5) filed under page 0's ``/XObject`` and also
+    listed in its ``/Annots``, whose ``/AP /N`` (object 6) is a Form bomb.
+
+    Walked first as an XObject (its own stream is harmless), the object
+    must still have its ``/AP`` read as an annotation.
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /XObject << /X0 5 0 R >> >> /Annots [5 0 R] >>",
+            pdf_stream(b"", b"q Q"),
+            pdf_stream(
+                b"/Subtype /Stamp /Rect [0 0 200 200] /BBox [0 0 1 1] /AP << /N 6 0 R >>", b""
+            ),
             _bomb_form(inflated_bytes),
         ]
     )
@@ -817,7 +948,7 @@ def embedded_font_pdf(font_program_bytes: int) -> bytes:
     """A page using one TrueType font whose embedded program (``/FontFile2``)
     decodes to ``font_program_bytes``.
 
-    Fix round 4: a font program is parsed by the font engine, not executed
+    A font program is parsed by the font engine, not executed
     as drawing operators, so it is not page content -- a large embedded
     font must not count against the content caps. Only the ``/Font`` map
     makes it a font; its own ``/Type`` is not trusted for that.
@@ -974,8 +1105,8 @@ __all__ = [
     "inherited_resources_bomb_pdf",
     "links_to_sibling_pages_pdf",
     "many_form_xobjects_pdf",
+    "non_stream_contents_pdf",
     "page_bomb_pdf",
-    "page_chain_smask_bomb_pdf",
     "page_tree_poison_pdf",
     "parent_poisoned_ap_state_bomb_pdf",
     "pdf_stream",
@@ -984,11 +1115,17 @@ __all__ = [
     "real_smask_dimension_bomb_pdf",
     "repeated_xobject_pdf",
     "resources_entry_pointing_at_pages_node_pdf",
+    "seeded_page_tree_bomb_pdf",
+    "sibling_page_as_soft_mask_bomb_pdf",
     "smask_bomb_pdf",
+    "stamp_with_jpeg_appearance_pdf",
+    "stream_extgstate_smask_bomb_pdf",
     "tiling_pattern_bomb_pdf",
     "tiling_pattern_image_bomb_pdf",
     "tree_node_ap_state_bomb_pdf",
     "type3_charproc_bomb_pdf",
+    "type3_stream_font_bomb_pdf",
     "typed_form_xobject_bomb_pdf",
+    "xobject_also_listed_as_annotation_bomb_pdf",
     "xobject_bomb_pdf",
 ]
