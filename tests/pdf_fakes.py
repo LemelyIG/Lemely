@@ -701,16 +701,16 @@ def inherited_resources_bomb_pdf(inflated_bytes: int) -> bytes:
     )
 
 
-def page_tree_poison_pdf(*, form_bytes: int) -> bytes:
+def page_tree_poison_pdf(
+    *, form_bytes: int, poison: bytes = b"/Cat 1 0 R /Root 2 0 R /Sib 5 0 R"
+) -> bytes:
     """A 3-page PDF whose page 0 ``/XObject`` map (an indirect object) also
-    names the catalog, a ``/Type``-less ``/Pages`` root and a ``/Type``-less
-    sibling page.
+    carries the ``poison`` entries -- by default the catalog (1), a
+    ``/Type``-less ``/Pages`` root (2) and a ``/Type``-less sibling page (5).
 
-    Fix round 4, minor 2. Every page draws its own ``form_bytes`` Form
-    XObject. A walk that climbs into the sibling page reaches its resources
-    and counts its form against page 0 too -- so with ``form_bytes`` over
-    half the page cap, a climb shows up as a false rejection. Neither the
-    root nor the sibling carries a ``/Type`` a walk could key on.
+    Every page draws its own ``form_bytes`` Form XObject (page 0's is 12,
+    the siblings' 10 and 11). Neither the root nor the sibling carries a
+    ``/Type`` a walk could key on: only object identity identifies them.
     """
     form = b"/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Filter /FlateDecode"
     return assemble_pdf(
@@ -726,10 +726,89 @@ def page_tree_poison_pdf(*, form_bytes: int) -> bytes:
             b"/Resources << /XObject << /Fm1 11 0 R >> >> >>",
             pdf_stream(b"", b"q /Fm1 Do Q"),
             pdf_stream(b"", b"q /Fm1 Do Q"),
-            b"<< /Fm1 12 0 R /Cat 1 0 R /Root 2 0 R /Sib 5 0 R >>",
+            b"<< /Fm1 12 0 R " + poison + b" >>",
             pdf_stream(form, flate_bomb_ops(form_bytes)),
             pdf_stream(form, flate_bomb_ops(form_bytes)),
             pdf_stream(form, flate_bomb_ops(form_bytes)),
+        ]
+    )
+
+
+def tree_node_ap_state_bomb_pdf(inflated_bytes: int, *, node: str) -> bytes:
+    """Page 0's annotation uses a page-tree node as its ``/AP /N`` state dict.
+
+    ``node`` is ``"root"`` (the ``/Pages`` root, object 2) or ``"sibling"``
+    (page 1, object 6). The node carries an extra ``/On 7 0 R`` entry; the
+    annotation's ``/AS /On`` selects it, and object 7 is a Form XObject
+    bomb. Both renderers draw it: an appearance state dict is looked up by
+    the state name, whatever else the dict is.
+    """
+    root_extra = b" /On 7 0 R" if node == "root" else b""
+    sibling_extra = b" /On 7 0 R" if node == "sibling" else b""
+    state_dict = b"2 0 R" if node == "root" else b"6 0 R"
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2" + root_extra + b" >>",
+            _A4_PAGE + b" /Annots [5 0 R] >>",
+            pdf_stream(b"", b"q Q"),
+            b"<< /Type /Annot /Subtype /Stamp /Rect [0 0 10 10] /AP << /N "
+            + state_dict
+            + b" >> /AS /On >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R"
+            + sibling_extra
+            + b" >>",
+            _bomb_form(inflated_bytes),
+        ]
+    )
+
+
+def page_chain_smask_bomb_pdf(inflated_bytes: int) -> bytes:
+    """Two sibling pages chained as page 0's graphics state and soft mask.
+
+    Page 0's ``/ExtGState /GS1`` is page 1 (object 5), which also carries
+    ``/SMask 6 0 R``; page 2 (object 6) also carries ``/S /Luminosity
+    /G 7 0 R``, and object 7 is a Form XObject bomb. A walk that expands a
+    tree node one level but not the tree nodes it names misses the bomb.
+    """
+    page = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R"
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R 5 0 R 6 0 R] /Count 3 >>",
+            page + b" /Resources << /ExtGState << /GS1 5 0 R >> >> >>",
+            pdf_stream(b"", b"/GS1 gs q Q"),
+            page + b" /SMask 6 0 R >>",
+            page + b" /S /Luminosity /G 7 0 R >>",
+            _bomb_form(inflated_bytes),
+        ]
+    )
+
+
+def links_to_sibling_pages_pdf() -> bytes:
+    """A 2-page PDF whose page 0 has two internal links to page 1 and a
+    stamp with an ordinary appearance stream.
+
+    One link uses ``/Dest [5 0 R /XYZ ...]``, the other ``/A << /S /GoTo /D
+    [5 0 R /Fit] >>``; every annotation also has ``/P 3 0 R``, and the
+    stamp a ``/Popup``. None of these names a page to draw, so the walk
+    must not follow them: this file must pass.
+    """
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>",
+            _A4_PAGE + b" /Annots [6 0 R 7 0 R 8 0 R] >>",
+            pdf_stream(b"", b"q Q"),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>",
+            b"<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /P 3 0 R "
+            b"/Dest [5 0 R /XYZ 0 842 0] >>",
+            b"<< /Type /Annot /Subtype /Link /Rect [0 20 10 30] /P 3 0 R "
+            b"/A << /S /GoTo /D [5 0 R /Fit] >> >>",
+            b"<< /Type /Annot /Subtype /Stamp /Rect [0 40 10 50] /P 3 0 R "
+            b"/AP << /N 9 0 R >> /Popup 10 0 R >>",
+            pdf_stream(b"/Type /XObject /Subtype /Form /BBox [0 0 10 10]", b"0 g 0 0 10 10 re f"),
+            b"<< /Type /Annot /Subtype /Popup /Rect [0 60 10 70] /Parent 8 0 R /P 5 0 R >>",
         ]
     )
 
@@ -893,8 +972,10 @@ __all__ = [
     "indirect_subtype_form_bomb_pdf",
     "indirect_xobject_dict_bomb_pdf",
     "inherited_resources_bomb_pdf",
+    "links_to_sibling_pages_pdf",
     "many_form_xobjects_pdf",
     "page_bomb_pdf",
+    "page_chain_smask_bomb_pdf",
     "page_tree_poison_pdf",
     "parent_poisoned_ap_state_bomb_pdf",
     "pdf_stream",
@@ -906,6 +987,7 @@ __all__ = [
     "smask_bomb_pdf",
     "tiling_pattern_bomb_pdf",
     "tiling_pattern_image_bomb_pdf",
+    "tree_node_ap_state_bomb_pdf",
     "type3_charproc_bomb_pdf",
     "typed_form_xobject_bomb_pdf",
     "xobject_bomb_pdf",

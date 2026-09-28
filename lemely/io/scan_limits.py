@@ -109,6 +109,12 @@ _TOO_MANY_OBJECTS_MESSAGE = (
 _WALK_FAILED_MESSAGE = (
     "Page {page} of this PDF could not be measured safely. Re-export it as a plain scan."
 )
+#: A page's drawing resources lead back into the document's page tree --
+#: see :func:`_walk_resource_graph`.
+_PAGE_TREE_REACHED_MESSAGE = (
+    "Page {page} of this PDF has a malformed structure that cannot be measured safely. "
+    "Re-export it as a plain scan."
+)
 
 
 class ScanRejectedError(LemelyError):
@@ -309,8 +315,8 @@ class _PageTree:
     the root through ``/Kids`` -- the path both renderers take to find a
     page -- and every page. Membership is by object identity, found by
     following the structure a renderer follows, never by a ``/Type`` or a
-    key name, so a resource entry cannot talk its way out of (or into) the
-    set. ``/Parent`` does not add to it: a page's ``/Parent`` can name any
+    key name, so an object cannot talk its way out of (or into) the set.
+    ``/Parent`` does not add to it: a page's ``/Parent`` can name any
     object, and one it named would otherwise be hidden from the walk.
 
     ``holders`` maps a page to the node(s) whose ``/Resources`` it uses.
@@ -553,13 +559,20 @@ def _walk_resource_graph(
     * An object is walked in full at most once per page; one met first in
       a narrower role (a font, an ``/XObject`` image) is walked in full if
       met again in another.
-    * A page-tree node (``walk.tree``, see :class:`_PageTree`) that is not
-      a stream is entered but never expanded, so the walk cannot climb
-      from a resource into the page tree and on to other pages. A stream
-      is classified as usual even if it is also a tree node, and streams
-      are never expanded as containers, so this cannot climb either. An
-      entry naming another page's content stream directly counts that
-      stream against this page too: an over-count, which can only reject.
+    * Reaching a page-tree node (``walk.tree``, see :class:`_PageTree`) in
+      any role rejects the file with :class:`ScanRejectedError`. A tree node
+      can double as any container a renderer draws through (an appearance
+      state dict, a graphics state, a soft mask), so it can be neither
+      skipped (a bomb behind it would pass) nor expanded (the walk would
+      climb into every other page). A well-formed file never draws from its
+      own page tree; like the rest of this module's fail-closed rules, the
+      accepted cost is a 422 for a malformed but harmless file that does.
+      Only the drawable roles above are followed -- an annotation's
+      ``/Dest``, ``/A``, ``/P``, ``/Parent`` or ``/Popup`` never is (see
+      :func:`_walk_annotations`), so a link to another page still passes.
+      An entry naming another page's content stream directly (a stream,
+      not a tree node) counts that stream against this page too: an
+      over-count, which can only reject.
     * The walk uses an explicit stack, so nesting depth is bounded only by
       :data:`_MAX_OBJECTS_PER_PAGE`, never by Python's recursion limit.
     """
@@ -569,6 +582,8 @@ def _walk_resource_graph(
         ref, role = stack.pop()
         if not 0 < ref < xref_length or ref in walk.seen:
             continue  # an out-of-range reference is null in every reader
+        if ref in walk.tree:
+            raise ScanRejectedError(_PAGE_TREE_REACHED_MESSAGE.format(page=walk.page_index + 1))
         is_stream = bool(doc.xref_is_stream(ref))  # type: ignore[no-untyped-call]
         subtype = _name(doc, ref, "Subtype")
         if role == "font" and subtype != "/Type3":
@@ -579,8 +594,6 @@ def _walk_resource_graph(
                 _check_image_xref(doc, ref, page_index=walk.page_index)
             continue
         _enter(ref, walk.seen, walk)
-        if ref in walk.tree and not is_stream:
-            continue
         if is_stream:
             if subtype == "/Image":
                 _check_image_xref(doc, ref, page_index=walk.page_index)
@@ -734,9 +747,10 @@ def check_pdf_content(doc: pymupdf.Document) -> None:
     stream holds. Images are found both by ``page.get_images(full=True)``
     and by the walk, which reaches the ones ``get_images`` does not list.
 
-    The page tree (:func:`_page_tree`) is read once, up front: the walk
-    uses it to refuse to climb out of one page's resources into the tree,
-    and each page's walk starts from the ``/Resources`` it inherits.
+    The page tree (:func:`_page_tree`) is read once, up front: a walk that
+    reaches it from a page's drawing resources rejects the file (see
+    :func:`_walk_resource_graph`), and each page's walk starts from the
+    ``/Resources`` it inherits.
 
     Left alone: an encrypted document (its streams cannot be read;
     extraction fails on it later) and a non-PDF document (an ``image/*``
@@ -750,8 +764,9 @@ def check_pdf_content(doc: pymupdf.Document) -> None:
     walking a page -- a pymupdf quirk, a ``RecursionError`` inside
     ``get_images``, a bug here -- rejects the file with
     :class:`ScanRejectedError`. The accepted cost is that some malformed
-    but harmless files (a page whose ``/Contents`` is a name, say) get a
-    422 asking for a re-export instead of passing.
+    but harmless files (a page whose ``/Contents`` is a name, or whose
+    resources name a page-tree node) get a 422 asking for a re-export
+    instead of passing.
 
     Known gap: an inline image (``BI ... ID ... EI``) is not checked for
     its declared size. Its bytes count toward the page's content budget

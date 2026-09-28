@@ -51,8 +51,10 @@ from tests.pdf_fakes import (
     indirect_subtype_form_bomb_pdf,
     indirect_xobject_dict_bomb_pdf,
     inherited_resources_bomb_pdf,
+    links_to_sibling_pages_pdf,
     many_form_xobjects_pdf,
     page_bomb_pdf,
+    page_chain_smask_bomb_pdf,
     page_tree_poison_pdf,
     parent_poisoned_ap_state_bomb_pdf,
     pdf_stream,
@@ -64,6 +66,7 @@ from tests.pdf_fakes import (
     smask_bomb_pdf,
     tiling_pattern_bomb_pdf,
     tiling_pattern_image_bomb_pdf,
+    tree_node_ap_state_bomb_pdf,
     type3_charproc_bomb_pdf,
     typed_form_xobject_bomb_pdf,
     xobject_bomb_pdf,
@@ -565,30 +568,63 @@ class PageTreeIdentityTests(unittest.TestCase):
         # 9 MB program (over the 8 MB page cap) does not count.
         check_pdf_content_bytes(embedded_font_pdf(9_000_000))
 
-    def test_a_poisoned_name_map_does_not_climb_the_page_tree(self) -> None:
+    def test_a_poisoned_name_map_is_rejected_without_climbing(self) -> None:
         # Minor 2: page 0's indirect /XObject map also names the catalog, a
-        # /Type-less /Pages root and a /Type-less sibling page. Each page
-        # draws its own 5 MB form; a climb into the sibling would add its
-        # form to page 0 and cross the 8 MB page cap.
-        data = page_tree_poison_pdf(form_bytes=5_000_000)
+        # /Type-less /Pages root or a /Type-less sibling page. Reaching the
+        # page tree from drawing resources rejects the file -- by identity,
+        # before the node is expanded, so the siblings' 5 MB forms are never
+        # counted (an over-count would raise ScanTooLargeError instead).
+        cases = {
+            "all three": b"/Cat 1 0 R /Root 2 0 R /Sib 5 0 R",
+            "catalog": b"/Cat 1 0 R",
+            "root": b"/Root 2 0 R",
+            "sibling": b"/Sib 5 0 R",
+        }
+        for label, poison in cases.items():
+            with self.subTest(label):
+                data = page_tree_poison_pdf(form_bytes=5_000_000, poison=poison)
+                for check in (check_pdf_content_bytes, check_scan_bytes):
+                    with self.assertRaises(ScanRejectedError) as ctx:
+                        check(data)
+                    self.assertNotIsInstance(ctx.exception, ScanTooLargeError)
+                doc = pymupdf.open(stream=data, filetype="pdf")
+                try:
+                    tree = scan_limits._page_tree(doc)
+                    walk = scan_limits._PageWalk(
+                        page_index=0, tree=tree.xrefs, budget=scan_limits._ContentBudget()
+                    )
+                    start = scan_limits._resources_refs(doc, doc.page_xref(0))
+                    with self.assertRaises(ScanRejectedError):
+                        scan_limits._walk_resource_graph(doc, start, walk)
+                finally:
+                    doc.close()
+                self.assertEqual(tree.xrefs, frozenset({1, 2, 3, 5, 6}))
+                # Nothing behind a tree node was visited.
+                self.assertTrue({1, 2, 5, 7, 8, 10, 11}.isdisjoint(walk.seen))
+
+    def test_a_page_tree_node_used_as_an_appearance_state_dict_is_rejected(self) -> None:
+        # The /Pages root or a sibling page doubles as page 0's /AP /N state
+        # dict, whose selected state is a Form XObject bomb.
+        for node in ("root", "sibling"):
+            with self.subTest(node=node):
+                data = tree_node_ap_state_bomb_pdf(112_000_000, node=node)
+                with self.assertRaises(ScanRejectedError):
+                    check_pdf_content_bytes(data)
+                with self.assertRaises(ScanRejectedError):
+                    check_scan_bytes(data)
+
+    def test_two_pages_chained_as_graphics_state_and_soft_mask_are_rejected(self) -> None:
+        # Page 1 is page 0's ExtGState, its /SMask is page 2, whose /G is the
+        # bomb: expanding a tree node "one level only" would miss it.
+        with self.assertRaises(ScanRejectedError):
+            check_pdf_content_bytes(page_chain_smask_bomb_pdf(112_000_000))
+
+    def test_links_to_a_sibling_page_pass(self) -> None:
+        # /Dest, /A /GoTo, /P and /Popup all name pages or annotations the
+        # renderer does not draw from; the walk follows only /AP.
+        data = links_to_sibling_pages_pdf()
         check_pdf_content_bytes(data)
         check_scan_bytes(data)
-        doc = pymupdf.open(stream=data, filetype="pdf")
-        try:
-            tree = scan_limits._page_tree(doc)
-            walk = scan_limits._PageWalk(
-                page_index=0, tree=tree.xrefs, budget=scan_limits._ContentBudget()
-            )
-            start = scan_limits._resources_refs(doc, doc.page_xref(0))
-            scan_limits._walk_resource_graph(doc, start, walk)
-        finally:
-            doc.close()
-        self.assertEqual(tree.xrefs, frozenset({1, 2, 3, 5, 6}))
-        # Page 0's own form (12) and the three poison entries, entered once
-        # each and refused by identity: nothing behind them.
-        self.assertEqual(walk.seen, {12, 1, 2, 5})
-        self.assertEqual(walk.budget.objects, 4)
-        self.assertTrue({7, 8, 10, 11}.isdisjoint(walk.seen))
 
     def test_a_deep_form_chain_bomb_is_rejected_by_the_walk_alone(self) -> None:
         # Minor 1: with pymupdf's own (recursive) image enumeration taken
