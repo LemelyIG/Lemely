@@ -1336,6 +1336,32 @@ def pages_carrying_kids_pdf(pages: int) -> bytes:
     )
 
 
+def empty_pages_nodes_pdf(pages: int, empties: int) -> bytes:
+    """``pages`` A4 pages plus ``empties`` empty ``/Type /Pages`` nodes
+    (``/Kids [] /Count 0``), all kids of the root, under ``/Count pages``.
+
+    Review round 3 on triage F8 (adapted from the reviewer's probe): MuPDF
+    and pdfium both count and render ``pages`` pages -- an empty ``/Pages``
+    node is not a page, although it names no ``/Kids``.
+    """
+    page_body = pdf_stream(b"", b"q 1 0 0 rg 60 500 120 250 re f Q")
+    objects: list[bytes] = [b"<< /Type /Catalog /Pages 2 0 R >>", b""]
+    kids: list[int] = []
+    for _ in range(pages):
+        objects.append(page_body)
+        objects.append(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            f"/Contents {len(objects)} 0 R >>".encode()
+        )
+        kids.append(len(objects))
+    for _ in range(empties):
+        objects.append(b"<< /Type /Pages /Parent 2 0 R /Kids [] /Count 0 >>")
+        kids.append(len(objects))
+    kid_refs = " ".join(f"{k} 0 R" for k in kids)
+    objects[1] = f"<< /Type /Pages /Kids [{kid_refs}] /Count {pages} >>".encode()
+    return assemble_pdf(objects)
+
+
 def deep_page_chain_pdf(depth: int) -> bytes:
     """One page under ``depth`` nested single-kid ``/Pages`` nodes.
 
@@ -1394,6 +1420,7 @@ __all__ = [
     "deep_plain_dict_chain_bomb_pdf",
     "deep_xobject_chain_bomb_pdf",
     "embedded_font_pdf",
+    "empty_pages_nodes_pdf",
     "encrypted_pdf_bytes",
     "extgstate_smask_bomb_pdf",
     "filtered_page_pdf",

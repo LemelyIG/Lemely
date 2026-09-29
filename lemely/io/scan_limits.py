@@ -45,9 +45,9 @@ MAX_SCAN_PAGES = 40
 #: page, so a stored scan over 40 pages keeps its crops, but its content
 #: check reads the page tree (:func:`_page_tree`), which costs about 33 us
 #: per page -- tens of seconds for the million-odd pages a 25 MB file can
-#: declare. Counted from the tree a reader descends, not from ``/Count``:
-#: every reference to a ``/Type /Page`` node, or to a node naming no
-#: ``/Kids``, is a page (see :func:`_page_tree`).
+#: declare. Counted from the tree a reader descends, not from ``/Count``,
+#: by MuPDF's rule: a ``/Type /Page`` is a page, a ``/Type /Pages`` is not,
+#: and an untyped node is one if it names no ``/Kids`` (see :func:`_page_tree`).
 MAX_CROP_PAGES = 200
 #: The target after any downscale. A4 at 400 DPI is 3307x4677 = 15.5 Mpx,
 #: the top of what a document scanner produces; the corpus at 200 DPI is
@@ -580,12 +580,19 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
     :data:`MAX_CROP_PAGES` for :func:`check_pdf_page_content`) holds the
     cap against the real tree, and bounds the work, with two counts:
 
-    * Pages. A node is a page (a leaf) if it is ``/Type /Page`` -- MuPDF
-      takes it as one whatever else it carries -- or names no ``/Kids``.
-      Every *reference* to a page counts, repeats included: a reader
-      counts a kid named twice as two pages. Past ``bound.pages`` the
-      descent stops with :class:`ScanTooLargeError` (``bound.message``),
-      which is then true.
+    * Pages. MuPDF's rule: ``/Type`` decides, and ``/Kids`` only when
+      ``/Type`` is neither. A ``/Type /Page`` is a page whatever else it
+      carries (its ``/Kids``, if any, are still descended, so the tree set
+      stays whole); a ``/Type /Pages`` is not, even with ``/Kids []`` --
+      MuPDF and pdfium both count an empty one as zero pages; a node with
+      neither type is a page if it names no ``/Kids``. Every reference to
+      a *page* counts, repeats included: a reader counts a page named
+      twice as two. A repeated inner node is descended once, so the pages
+      under it count once; that can only undercount, and undercounting is
+      safe here because both readers find and render pages by ``/Count``,
+      which ``doc.page_count`` already held to the cap before this read.
+      Past ``bound.pages`` the descent stops with
+      :class:`ScanTooLargeError` (``bound.message``), which is then true.
     * Work. Every ``/Kids`` reference the descent takes on counts, pages or
       not, repeats included, and no ``/Kids`` array is read further than
       the budget left. Past ``bound.work`` it stops with
@@ -623,7 +630,8 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
             taken += len(kids)
             if taken > budget:
                 raise ScanTooLargeError(_PAGE_TREE_TOO_COMPLEX_MESSAGE)
-            is_page[node] = not kids or _name(doc, node, "Type") == "/Page"
+            node_type = _name(doc, node, "Type")
+            is_page[node] = node_type == "/Page" or (not kids and node_type != "/Pages")
             pending.extend(kids)
         if is_page[node]:
             pages += 1

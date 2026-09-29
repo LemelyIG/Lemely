@@ -47,6 +47,7 @@ from tests.pdf_fakes import (
     deep_plain_dict_chain_bomb_pdf,
     deep_xobject_chain_bomb_pdf,
     embedded_font_pdf,
+    empty_pages_nodes_pdf,
     encrypted_pdf_bytes,
     extgstate_smask_bomb_pdf,
     filtered_page_pdf,
@@ -336,6 +337,26 @@ class ContentWalkPageCapTests(unittest.TestCase):
             check_pdf_content_bytes(pages_carrying_kids_pdf(MAX_SCAN_PAGES + 1))
         self.assertEqual(str(caught.exception), scan_limits._SCAN_PAGES_MESSAGE)
         check_pdf_content_bytes(pages_carrying_kids_pdf(MAX_SCAN_PAGES))
+
+    def test_an_empty_pages_node_is_not_a_page(self) -> None:
+        """Review round 3 on F8: an empty ``/Type /Pages`` node (``/Kids []``)
+        names no kids but is no page to MuPDF or pdfium -- ``/Type`` decides,
+        and ``/Kids`` only when ``/Type`` is absent. 40 pages beside one or
+        five of them, under ``/Count 40``, pass the upload, content and crop
+        checks; their references still count as work, so hundreds of them
+        are refused as too complex, never as too many pages."""
+        for empties in (1, 5):
+            data = empty_pages_nodes_pdf(MAX_SCAN_PAGES, empties)
+            with self.subTest(empties=empties):
+                check_scan_bytes(data)
+                check_pdf_content_bytes(data)
+                with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+                    check_pdf_page_content(doc, MAX_SCAN_PAGES - 1)
+        with self.assertRaises(ScanTooLargeError) as caught:
+            check_pdf_content_bytes(
+                empty_pages_nodes_pdf(MAX_SCAN_PAGES, scan_limits._SCAN_PAGE_BOUND.work)
+            )
+        self.assertEqual(str(caught.exception), scan_limits._PAGE_TREE_TOO_COMPLEX_MESSAGE)
 
     def test_a_deep_chain_past_the_work_bound_is_refused_as_too_complex(self) -> None:
         """One page under more nested single-kid nodes than the work bound
