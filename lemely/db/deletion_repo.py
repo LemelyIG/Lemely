@@ -62,6 +62,12 @@ if TYPE_CHECKING:
 #: student's own hold. Adding a member to this set is a security decision.
 _TEACHER_CLOSED = (ReviewStatus.resolved, ReviewStatus.dismissed)
 
+#: Only ``plagiarism_flag``: F4 removed ``ReviewReason.ai_detection_flag`` on
+#: purpose (the AI-generated-answer detector was retired for an unmeasured
+#: false-positive rate), and its migration rewrote every existing
+#: ``ai_detection_flag`` row to ``manual``. An attempt whose only integrity
+#: finding was that rewritten row is correctly no longer held under D8 —
+#: ``manual`` is not in this tuple, and it was never meant to be.
 _INTEGRITY_REASONS = (ReviewReason.plagiarism_flag,)
 
 #: The refusal copy for a held paper. Generic by design (D8): it must read the
@@ -485,14 +491,16 @@ class PaperDeletionService:
         return hold_until
 
     def _has_integrity_flag(self, session: Session, attempt_id: uuid.UUID) -> bool:
-        """Whether any question on this attempt carries an integrity finding (D8).
+        """Whether this attempt carries an integrity finding (D8), read attempt-wide.
 
-        ``0040_marker_source_blank`` dropped ``question_results.plagiarism_flagged``
-        (F4 had already dropped its ``ai_detection_flagged`` twin) — there is no
-        boolean column left on ``QuestionResult`` to read. The review-queue row
-        opened from the same ``CorrectedQuestion.plagiarism_flagged`` the column
-        was once copied from (``attempt_repo._integrity_flagged`` is the other
-        reader) IS the flag now, so this reads that row directly instead.
+        Reads the ``review_queue`` rows for this ``attempt_id`` directly — not
+        per question, and not via ``QuestionResult`` at all. ``0040_marker_source_blank``
+        dropped ``question_results.plagiarism_flagged`` (F4 had already dropped
+        its ``ai_detection_flagged`` twin) — there is no boolean column left on
+        ``QuestionResult`` to read. The review-queue row opened from the same
+        ``CorrectedQuestion.plagiarism_flagged`` the column was once copied from
+        (``attempt_repo._integrity_flagged`` is the other reader) IS the flag now,
+        so this reads that row directly instead.
         Deliberately unfiltered by :class:`~lemely.db.models.enums.ReviewStatus`,
         matching ``_integrity_flagged``: this asks what the marking side found,
         not whether a teacher has since acted on it —

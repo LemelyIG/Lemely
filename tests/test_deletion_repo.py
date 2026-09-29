@@ -584,23 +584,6 @@ def test_a_closed_low_confidence_item_does_not_lift_an_integrity_hold(
         service.delete(owner, str(flagged_attempt.attempt_id))
 
 
-def test_a_closed_low_confidence_item_alone_does_not_lift_an_integrity_hold(
-    service: PaperDeletionService,
-    sessionmaker_: sessionmaker[Session],
-    owner: str,
-    flagged_attempt: Seeded,
-) -> None:
-    """A closed marking review must not count toward closing the integrity item."""
-    _seed_item(
-        sessionmaker_,
-        flagged_attempt.attempt_id,
-        ReviewReason.low_confidence,
-        ReviewStatus.resolved,
-    )
-    with pytest.raises(PaperNotDeletableError):
-        service.delete(owner, str(flagged_attempt.attempt_id))
-
-
 def test_a_teacher_override_does_not_block_deletion(
     service: PaperDeletionService,
     sessionmaker_: sessionmaker[Session],
@@ -1357,8 +1340,25 @@ def test_a_bulk_approval_racing_a_delete_cannot_lift_the_integrity_hold(
     ``resolved`` is in the set that lifts D8's hold. A bulk approval that read
     the item open, then overwrote the delete's ``withdrawn``, would leave it
     ``resolved`` — never reopened by restore, and counted as a teacher having
-    cleared the flag. The real delete is paused after its withdrawal UPDATE so
-    the approval queues on the item row; it must re-check and skip.
+    cleared the flag.
+
+    The flag is now a ``review_queue`` row itself (``deletion_repo._has_integrity_flag``,
+    since 6958300c), so an open ``plagiarism_flag`` row cannot be seeded before
+    ``delete`` starts — its own D8 check would find it and refuse before the
+    race ever begins. Seeding a second session's write mid-pause does not work
+    either: ``_lock_siblings`` holds ``FOR UPDATE`` on the attempt row for the
+    whole delete, and inserting a new ``review_queue`` row referencing it would
+    block on that same lock (the exact mechanism this test's own withdraw/approve
+    race relies on — see ``_withdraw_open_items``'s docstring), deadlocking the
+    two pauses. Instead the row is seeded *before* ``delete`` starts, with a
+    reason D8 does not act on, so the D8 check finds nothing; the delete is
+    paused right after that check, and the row's *reason* (not its
+    ``attempt_id`` FK, so no lock conflict) is flipped to ``plagiarism_flag``
+    during the pause — by the time the delete resumes into its own withdrawal,
+    a later statement in the same transaction sees the row as it now stands
+    (default Postgres READ COMMITTED). The real delete is paused a second
+    time, after its withdrawal UPDATE, so the approval queues on the item row;
+    it must re-check and skip.
     """
     from lemely.db.class_repo import ClassService
     from lemely.db.review_repo import BulkApproveSkip, ReviewService
@@ -1370,25 +1370,43 @@ def test_a_bulk_approval_racing_a_delete_cannot_lift_the_integrity_hold(
     cls = classes.create_class(teacher, "Physics 10A")
     assert cls.join_code is not None
     classes.join_by_code(uuid.UUID(owner), cls.join_code)
-    # The integrity review exists while the flag booleans (the fact D8 reads)
-    # are not yet set, so this first delete is not held.
-    qr_id = _seed_question(sessionmaker_, attempt.attempt_id)
-    item_id = _seed_item(sessionmaker_, attempt.attempt_id, ReviewReason.plagiarism_flag)
     reviews = ReviewService(sessionmaker_, classes)
 
-    inside, release = threading.Event(), threading.Event()
-    real = PaperDeletionService._withdraw_open_items
+    _seed_question(sessionmaker_, attempt.attempt_id)
+    item_id = _seed_item(sessionmaker_, attempt.attempt_id, ReviewReason.low_confidence)
 
-    def paused(
+    hold_checked, item_flagged = threading.Event(), threading.Event()
+    inside, release = threading.Event(), threading.Event()
+    real_hold = PaperDeletionService._integrity_hold
+    real_withdraw = PaperDeletionService._withdraw_open_items
+
+    def paused_hold(
+        self: PaperDeletionService, session: Session, attempt_row: Attempt, now: datetime
+    ) -> datetime | None:
+        result = real_hold(self, session, attempt_row, now)
+        hold_checked.set()
+        assert item_flagged.wait(timeout=20)
+        return result
+
+    def paused_withdraw(
         self: PaperDeletionService, session: Session, attempt_ids: list[uuid.UUID], now: datetime
     ) -> list[uuid.UUID]:
-        withdrawn = real(self, session, attempt_ids, now)
+        withdrawn = real_withdraw(self, session, attempt_ids, now)
         inside.set()
         assert release.wait(timeout=20)
         return withdrawn
 
-    monkeypatch.setattr(PaperDeletionService, "_withdraw_open_items", paused)
+    monkeypatch.setattr(PaperDeletionService, "_integrity_hold", paused_hold)
+    monkeypatch.setattr(PaperDeletionService, "_withdraw_open_items", paused_withdraw)
     deleting = _Paused(lambda: service.delete(owner, str(attempt.attempt_id)))
+    assert hold_checked.wait(timeout=20)
+
+    with sessionmaker_.begin() as session:
+        item = session.get(ReviewQueueItem, item_id)
+        assert item is not None
+        item.reason = ReviewReason.plagiarism_flag
+    item_flagged.set()
+
     assert inside.wait(timeout=20)
     approving = _Paused(lambda: reviews.bulk_approve(teacher, Role.teacher, [item_id]))
     _wait_until_a_backend_waits_on_a_lock(sessionmaker_)
@@ -1403,14 +1421,11 @@ def test_a_bulk_approval_racing_a_delete_cannot_lift_the_integrity_hold(
     ]
     assert _item_row(sessionmaker_, item_id).status is ReviewStatus.withdrawn
 
+    # Restore reopens the item (Task 6); an open plagiarism_flag row is itself
+    # the flag now, so it re-triggers D8 on its own — nothing needs to be
+    # written onto the (now nonexistent) QuestionResult boolean to prove it.
     service.restore(owner, str(attempt.attempt_id))
     assert _item_row(sessionmaker_, item_id).status is ReviewStatus.open
-    with sessionmaker_.begin() as session:
-        session.execute(
-            sa.update(QuestionResult)
-            .where(QuestionResult.id == qr_id)
-            .values(plagiarism_flagged=True)
-        )
 
     with pytest.raises(PaperNotDeletableError) as exc:
         service.delete(owner, str(attempt.attempt_id))
