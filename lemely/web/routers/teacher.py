@@ -502,12 +502,15 @@ def _run_grading_job(
             # attributed to a student account (D1.12 — `TeacherPaper.student_id`
             # is always null today), so there is nobody to record a history
             # entry for. The marks live on this row and are served from it.
+            # integrity_settings: the operator's [integrity], as the student
+            # upload already passes (#259).
             report = grade_paper(
                 scheme,
                 extracted,
                 gemini_client=gemini_client,
                 student_id=None,
                 history_store=None,
+                integrity_settings=settings.integrity,
                 options=settings.grading.marking_options(),
             )
             repo.finish(paper_id, report)

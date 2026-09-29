@@ -581,6 +581,8 @@ def get_quiz_marking_service() -> QuizMarkingService:
         get_attempt_repo(),
         get_gemini_client(),
         marking_options=settings.grading.marking_options(),
+        # #259: the operator's [integrity], not QuizMarkingService's default.
+        integrity_settings=settings.integrity,
     )
 
 

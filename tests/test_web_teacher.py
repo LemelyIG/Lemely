@@ -1216,6 +1216,43 @@ def test_grading_job_passes_marking_options_from_settings(
     assert seen["options"] == MarkingOptions(equivalence_gate=True, ecf_substitution=True)
 
 
+def test_grading_job_passes_integrity_settings_from_settings(
+    client: TestClient,
+    settings: Settings,
+    paper_repo: TeacherPaperRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#259, second caller: ``_run_grading_job`` called ``grade_paper``
+    without ``integrity_settings``, so a console paper was checked under the
+    defaults whatever ``[integrity]`` said; the student upload passes it.
+    Same arrangement as the marking-options test above."""
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    report = _report(needs_review=False, grade="A")
+    seen: dict[str, object] = {}
+
+    def _grade(*_a: object, **kwargs: object) -> AccuracyReport:
+        seen["integrity_settings"] = kwargs.get("integrity_settings")
+        return report
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: {"5b": "42"})
+    monkeypatch.setattr(grading_service, "grade_paper", _grade)
+
+    integrity_settings = settings.model_copy(
+        update={"integrity": settings.integrity.model_copy(update={"plagiarism_enabled": False})}
+    )
+    client.app.dependency_overrides[get_settings] = lambda: integrity_settings  # type: ignore[union-attr]
+
+    paper_id = _upload(client)
+    row = _settle(paper_repo, paper_id)
+
+    assert teacher._row_kind(row) == "graded"
+    assert seen["integrity_settings"] is integrity_settings.integrity
+    assert seen["integrity_settings"].plagiarism_enabled is False  # type: ignore[attr-defined]
+
+
 def test_progress_tracker_survives_another_streams_end_of_stream(
     paper_repo: TeacherPaperRepository, teacher_user: uuid.UUID
 ) -> None:

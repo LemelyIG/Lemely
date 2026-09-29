@@ -43,3 +43,24 @@ def test_quiz_marking_service_wires_configured_marking_flags(
             )
     finally:
         deps.reset_singletons()
+
+
+def test_quiz_marking_service_wires_configured_integrity_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#259: ``QuizMarkingService`` fell back to ``IntegritySettings()``
+    because ``get_quiz_marking_service`` never passed the operator's
+    ``[integrity]`` -- the same shape as the missing marking options above,
+    and just as invisible to every test that builds the service directly."""
+    monkeypatch.setenv("LEMELY_INTEGRITY__PLAGIARISM_ENABLED", "false")
+    deps.reset_singletons()
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(deps, "get_sessionmaker", lambda _settings: MagicMock())
+            m.setattr(deps, "get_attempt_repo", lambda: MagicMock())
+            m.setattr(deps, "get_gemini_client", lambda: MagicMock())
+            service = deps.get_quiz_marking_service()
+            assert service._integrity_settings is not None
+            assert service._integrity_settings.plagiarism_enabled is False
+    finally:
+        deps.reset_singletons()
