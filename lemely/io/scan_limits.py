@@ -45,7 +45,9 @@ MAX_SCAN_PAGES = 40
 #: page, so a stored scan over 40 pages keeps its crops, but its content
 #: check reads the page tree (:func:`_page_tree`), which costs about 33 us
 #: per page -- tens of seconds for the million-odd pages a 25 MB file can
-#: declare. Counted from the tree a reader descends, not from ``/Count``.
+#: declare. Counted from the tree a reader descends, not from ``/Count``:
+#: every reference to a ``/Type /Page`` node, or to a node naming no
+#: ``/Kids``, is a page (see :func:`_page_tree`).
 MAX_CROP_PAGES = 200
 #: The target after any downscale. A4 at 400 DPI is 3307x4677 = 15.5 Mpx,
 #: the top of what a document scanner produces; the corpus at 200 DPI is
@@ -140,6 +142,12 @@ _SCAN_PAGES_MESSAGE = (
 _CROP_PAGES_MESSAGE = (
     f"The scan has more than {MAX_CROP_PAGES} pages; the limit for a review crop "
     f"is {MAX_CROP_PAGES}."
+)
+#: The page-tree descent (:func:`_page_tree`) ran past its work bound
+#: (:attr:`_PageBound.work`) before it could count the pages. Says nothing
+#: about how many pages there are: it could not tell.
+_PAGE_TREE_TOO_COMPLEX_MESSAGE = (
+    "This PDF's page tree is too complex to check safely. Re-export it as a plain scan."
 )
 #: A page's structure is malformed in a way that could hide drawn content:
 #: its drawing resources, ``/Contents`` or ``/Annots`` name a page-tree node,
@@ -530,6 +538,20 @@ class _PageBound:
     pages: int
     message: str
 
+    @property
+    def work(self) -> int:
+        """How many ``/Kids`` references the descent may take on, repeats included.
+
+        Generous against any real tree of ``pages`` pages: one reference per
+        page plus one per inner node, and the spec lets an inner node have a
+        single kid, so a page may sit under several one-kid wrappers. Eight
+        per page (plus slack for the root and a few grouping nodes) admits
+        up to about seven wrappers above every page, far past any writer
+        seen. It bounds work, not pages: past it the refusal says so
+        (:data:`_PAGE_TREE_TOO_COMPLEX_MESSAGE`), never "more than N pages".
+        """
+        return 8 * self.pages + 16
+
 
 #: :func:`check_pdf_content`'s bound: the page cap, held against the real tree.
 _SCAN_PAGE_BOUND = _PageBound(MAX_SCAN_PAGES, _SCAN_PAGES_MESSAGE)
@@ -556,40 +578,57 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
     cap checked against it alone is dodged by understating it. ``bound``
     (:data:`MAX_SCAN_PAGES` for :func:`check_pdf_content`,
     :data:`MAX_CROP_PAGES` for :func:`check_pdf_page_content`) holds the
-    cap against the real tree and so bounds the work: the descent stops
-    with :class:`ScanTooLargeError` (``bound.message``) once it has met
-    more than ``bound.pages`` leaves (a node whose ``/Kids`` names
-    nothing), a node whose ``/Kids`` names more than ``bound.pages``
-    entries (read no further than that; a reader counts a kid named twice
-    as two pages, so repeating one kid cannot hide pages either), or more
-    than ``2 * bound.pages + 1`` nodes -- as many as a tree of
-    ``bound.pages`` pages whose every inner node has two or more kids can
-    have, counting the catalog -- so nodes that each name one shared kid
-    cannot hide pages from the leaf count. The climb stops with
-    :class:`ScanRejectedError` once it has read more distinct objects than
-    that: every ancestor of a page in a well-formed tree is one of the
-    descended nodes.
+    cap against the real tree, and bounds the work, with two counts:
+
+    * Pages. A node is a page (a leaf) if it is ``/Type /Page`` -- MuPDF
+      takes it as one whatever else it carries -- or names no ``/Kids``.
+      Every *reference* to a page counts, repeats included: a reader
+      counts a kid named twice as two pages. Past ``bound.pages`` the
+      descent stops with :class:`ScanTooLargeError` (``bound.message``),
+      which is then true.
+    * Work. Every ``/Kids`` reference the descent takes on counts, pages or
+      not, repeats included, and no ``/Kids`` array is read further than
+      the budget left. Past ``bound.work`` it stops with
+      :class:`ScanTooLargeError` (:data:`_PAGE_TREE_TOO_COMPLEX_MESSAGE`),
+      which says the tree is too complex, not that it has too many pages.
+      The spec lets an inner node have a single kid, so node count says
+      nothing about page count; this is a generous cost bound only.
+
+    So the descent reads at most ``bound.work`` references and a node each,
+    whatever the file declares. The climb stops with
+    :class:`ScanRejectedError` once it has read more than ``bound.work``
+    distinct objects: every ancestor of a page in a well-formed tree is a
+    descended node, and the descent took on no more than that.
     """
-    max_nodes = 2 * bound.pages + 1
+    budget = bound.work
     nodes: set[int] = set()
-    leaves = 0
+    # node -> whether it is a page; a node is read once, however often named.
+    is_page: dict[int, bool] = {}
+    pages = 0
     xref_length = doc.xref_length()  # type: ignore[no-untyped-call]
     catalog = doc.pdf_catalog()  # type: ignore[no-untyped-call]
     pending: list[int] = []
     if 0 < catalog < xref_length:
         nodes.add(catalog)
+        is_page[catalog] = False  # named from /Kids, it leads nowhere new
         pending.append(_ref_target(doc, *_key(doc, catalog, "Pages")))
+    taken = len(pending)
     while pending:
         node = pending.pop()
-        if not 0 < node < xref_length or node in nodes:
+        if not 0 < node < xref_length:
             continue
-        nodes.add(node)
-        kids = _collection_refs(doc, *_key(doc, node, "Kids"), limit=bound.pages + 1)
-        if not kids:
-            leaves += 1
-        if leaves > bound.pages or len(kids) > bound.pages or len(nodes) > max_nodes:
-            raise ScanTooLargeError(bound.message)
-        pending.extend(kids)
+        if node not in is_page:
+            nodes.add(node)
+            kids = _collection_refs(doc, *_key(doc, node, "Kids"), limit=budget - taken + 1)
+            taken += len(kids)
+            if taken > budget:
+                raise ScanTooLargeError(_PAGE_TREE_TOO_COMPLEX_MESSAGE)
+            is_page[node] = not kids or _name(doc, node, "Type") == "/Page"
+            pending.extend(kids)
+        if is_page[node]:
+            pages += 1
+            if pages > bound.pages:
+                raise ScanTooLargeError(bound.message)
     # node -> (nearest node at or above it with a /Resources key,
     #          nearest node at or above it whose /Resources resolves)
     nearest: dict[int, tuple[int | None, int | None]] = {}
@@ -603,7 +642,7 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
         node = page_xref
         while node and node not in nearest and node not in chain:
             chain.append(node)
-            if len(nearest) + len(chain) > max_nodes:
+            if len(nearest) + len(chain) > budget:
                 raise ScanRejectedError(_MALFORMED_STRUCTURE_MESSAGE.format(page=index + 1))
             node = _parent(doc, node)
         above = nearest.get(node, (None, None))

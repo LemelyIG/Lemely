@@ -1228,9 +1228,10 @@ def bomb_on_second_page_pdf(inflated_bytes: int) -> bytes:
 def wide_page_tree_pdf(kids: int, *, count: int, shared_kid: bool = False) -> bytes:
     """A ``/Pages`` root with ``kids`` entries in its ``/Kids`` that declares ``/Count count``.
 
-    Each kid is a blank A4 ``/Page``. With ``shared_kid``, every kid instead
+    Each kid is a blank A4 ``/Page``. With ``shared_kid``, every kid also
     carries its own ``/Kids`` naming ONE shared page, so the tree has
-    ``kids + 1`` nodes but a single leaf.
+    ``kids + 1`` nodes and only one of them names no ``/Kids``; each kid is
+    still a ``/Type /Page``, which MuPDF counts as a page.
 
     Review round 1 on triage F8: the crop route's page bound must count the
     tree a reader descends, not the ``/Count`` it declares, and must stop
@@ -1251,6 +1252,98 @@ def wide_page_tree_pdf(kids: int, *, count: int, shared_kid: bool = False) -> by
     if shared_kid:
         objects.append(b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>")
     return assemble_pdf(objects)
+
+
+def wrapped_page_tree_pdf(pages: int, *, wrap: int = 0, fanout: int | None = None) -> bytes:
+    """A spec-valid page tree of ``pages`` pages, each drawing a red rectangle.
+
+    Every page sits under ``wrap`` single-kid ``/Pages`` nodes (the spec does
+    not require an inner node to have two or more kids), or, with
+    ``fanout``, pages are grouped under intermediate ``/Pages`` nodes of up to
+    ``fanout`` kids each. Every ``/Count`` is correct; MuPDF and pdfium both
+    count and render these files.
+
+    Review round 2 on triage F8 (adapted from the reviewer's probe): the
+    page-tree bounds must not refuse such a tree at the page cap.
+    """
+    objects: list[bytes] = [b"<< /Type /Catalog /Pages 2 0 R >>", b""]
+
+    def new(body: bytes = b"") -> int:
+        objects.append(body)
+        return len(objects)
+
+    def page(parent: int) -> int:
+        number = new()
+        content = new(pdf_stream(b"", b"q 1 0 0 rg 60 500 120 250 re f Q"))
+        objects[number - 1] = (
+            f"<< /Type /Page /Parent {parent} 0 R /MediaBox [0 0 595 842] "
+            f"/Contents {content} 0 R >>"
+        ).encode()
+        return number
+
+    def wrapped_page(parent: int) -> int:
+        """The object ``parent`` names for one page: the page or its outermost wrapper."""
+        wrappers: list[tuple[int, int]] = []
+        for _ in range(wrap):
+            wrapper = new()
+            wrappers.append((wrapper, parent))
+            parent = wrapper
+        kid = page(parent)
+        for wrapper, wrapper_parent in reversed(wrappers):
+            objects[wrapper - 1] = (
+                f"<< /Type /Pages /Parent {wrapper_parent} 0 R /Kids [{kid} 0 R] /Count 1 >>"
+            ).encode()
+            kid = wrapper
+        return kid
+
+    root_kids: list[int] = []
+    if fanout:
+        for start in range(0, pages, fanout):
+            chunk = min(fanout, pages - start)
+            node = new()
+            kids = [wrapped_page(node) for _ in range(chunk)]
+            kid_refs = " ".join(f"{k} 0 R" for k in kids)
+            objects[node - 1] = (
+                f"<< /Type /Pages /Parent 2 0 R /Kids [{kid_refs}] /Count {chunk} >>"
+            ).encode()
+            root_kids.append(node)
+    else:
+        root_kids = [wrapped_page(2) for _ in range(pages)]
+    root_refs = " ".join(f"{k} 0 R" for k in root_kids)
+    objects[1] = f"<< /Type /Pages /Kids [{root_refs}] /Count {pages} >>".encode()
+    return assemble_pdf(objects)
+
+
+def pages_carrying_kids_pdf(pages: int) -> bytes:
+    """``pages`` A4 ``/Type /Page`` kids under ``/Count 1``, each also
+    carrying a ``/Kids`` that names only an object past the file's end.
+
+    MuPDF takes a ``/Type /Page`` as a page whatever else it carries, so it
+    counts ``pages`` of them; a count that only knows "a node with no
+    ``/Kids`` is a page" sees none (review round 2 on triage F8, minor 1).
+    """
+    dangling = 3 + pages + 1_000
+    kid_refs = " ".join(f"{3 + i} 0 R" for i in range(pages))
+    page = (
+        f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Kids [{dangling} 0 R] >>"
+    ).encode()
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            f"<< /Type /Pages /Kids [{kid_refs}] /Count 1 >>".encode(),
+            *([page] * pages),
+        ]
+    )
+
+
+def deep_page_chain_pdf(depth: int) -> bytes:
+    """One page under ``depth`` nested single-kid ``/Pages`` nodes.
+
+    Spec-valid and harmless, but a page tree that costs ``depth`` reads to
+    find one page: past the work bound it is refused as too complex to
+    check, never as "more than N pages".
+    """
+    return wrapped_page_tree_pdf(1, wrap=depth)
 
 
 def repeated_kid_pdf(times: int) -> bytes:
@@ -1297,6 +1390,7 @@ __all__ = [
     "bomb_on_second_page_pdf",
     "born_digital_text_pdf",
     "contents_also_appearance_bomb_pdf",
+    "deep_page_chain_pdf",
     "deep_plain_dict_chain_bomb_pdf",
     "deep_xobject_chain_bomb_pdf",
     "embedded_font_pdf",
@@ -1319,6 +1413,7 @@ __all__ = [
     "non_stream_contents_pdf",
     "page_bomb_pdf",
     "page_tree_poison_pdf",
+    "pages_carrying_kids_pdf",
     "parent_poisoned_ap_state_bomb_pdf",
     "pdf_stream",
     "pdf_with_inflated_count",
@@ -1340,6 +1435,7 @@ __all__ = [
     "type3_stream_font_bomb_pdf",
     "typed_form_xobject_bomb_pdf",
     "wide_page_tree_pdf",
+    "wrapped_page_tree_pdf",
     "xobject_also_listed_as_annotation_bomb_pdf",
     "xobject_bomb_pdf",
 ]

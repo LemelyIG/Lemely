@@ -43,6 +43,7 @@ from tests.pdf_fakes import (
     bomb_on_second_page_pdf,
     born_digital_text_pdf,
     contents_also_appearance_bomb_pdf,
+    deep_page_chain_pdf,
     deep_plain_dict_chain_bomb_pdf,
     deep_xobject_chain_bomb_pdf,
     embedded_font_pdf,
@@ -66,6 +67,7 @@ from tests.pdf_fakes import (
     non_stream_contents_pdf,
     page_bomb_pdf,
     page_tree_poison_pdf,
+    pages_carrying_kids_pdf,
     parent_poisoned_ap_state_bomb_pdf,
     pdf_stream,
     pdf_with_inflated_count,
@@ -88,6 +90,7 @@ from tests.pdf_fakes import (
     type3_stream_font_bomb_pdf,
     typed_form_xobject_bomb_pdf,
     wide_page_tree_pdf,
+    wrapped_page_tree_pdf,
     xobject_also_listed_as_annotation_bomb_pdf,
     xobject_bomb_pdf,
 )
@@ -293,6 +296,58 @@ class ContentWalkPageCapTests(unittest.TestCase):
         check_pdf_content_bytes(_pdf_bytes(*([(595.0, 842.0)] * MAX_SCAN_PAGES)))
         check_pdf_content_bytes(wide_page_tree_pdf(MAX_SCAN_PAGES, count=MAX_SCAN_PAGES))
 
+    def test_spec_valid_trees_with_single_kid_inner_nodes_pass_at_the_cap(self) -> None:
+        """Review round 2 on F8: the spec does not require an inner ``/Pages``
+        node to have two or more kids, and MuPDF and pdfium count and render
+        such trees. 40 pages under one or two single-kid wrappers each, or
+        under intermediate nodes, pass both the upload and content checks."""
+        for label, data in (
+            ("1 wrapper each", wrapped_page_tree_pdf(MAX_SCAN_PAGES, wrap=1)),
+            ("2 wrappers each", wrapped_page_tree_pdf(MAX_SCAN_PAGES, wrap=2)),
+            ("fanout 2", wrapped_page_tree_pdf(MAX_SCAN_PAGES, fanout=2)),
+            ("fanout 10", wrapped_page_tree_pdf(MAX_SCAN_PAGES, fanout=10)),
+        ):
+            with self.subTest(label):
+                check_pdf_content_bytes(data)
+                check_scan_bytes(data)
+
+    def test_one_page_over_the_cap_under_single_kid_wrappers_gets_the_page_message(
+        self,
+    ) -> None:
+        """41 pages, one wrapper each. The ``doc.page_count`` check refuses
+        it first; the tree read, asked directly, refuses it with its own
+        page message too -- a true one: 41 leaf references."""
+        data = wrapped_page_tree_pdf(MAX_SCAN_PAGES + 1, wrap=1)
+        with self.assertRaises(ScanTooLargeError) as caught:
+            check_pdf_content_bytes(data)
+        self.assertIn(f"the limit is {MAX_SCAN_PAGES}.", str(caught.exception))
+        with (
+            pymupdf.open(stream=data, filetype="pdf") as doc,  # type: ignore[no-untyped-call]
+            self.assertRaises(ScanTooLargeError) as caught,
+        ):
+            scan_limits._page_tree(doc, bound=scan_limits._SCAN_PAGE_BOUND)
+        self.assertEqual(str(caught.exception), scan_limits._SCAN_PAGES_MESSAGE)
+
+    def test_a_page_typed_node_carrying_kids_still_counts_as_a_page(self) -> None:
+        """Review round 2, minor 1: a ``/Type /Page`` is a page to MuPDF
+        whatever it carries, so 41 of them, each with a ``/Kids`` leading
+        nowhere, are refused with the page message; 40 pass."""
+        with self.assertRaises(ScanTooLargeError) as caught:
+            check_pdf_content_bytes(pages_carrying_kids_pdf(MAX_SCAN_PAGES + 1))
+        self.assertEqual(str(caught.exception), scan_limits._SCAN_PAGES_MESSAGE)
+        check_pdf_content_bytes(pages_carrying_kids_pdf(MAX_SCAN_PAGES))
+
+    def test_a_deep_chain_past_the_work_bound_is_refused_as_too_complex(self) -> None:
+        """One page under more nested single-kid nodes than the work bound
+        allows: refused, but never as "more than 40 pages" -- it has one.
+        The same page under a chain inside the bound passes."""
+        work = scan_limits._SCAN_PAGE_BOUND.work
+        with self.assertRaises(ScanTooLargeError) as caught:
+            check_pdf_content_bytes(deep_page_chain_pdf(work))
+        self.assertIn("too complex", str(caught.exception))
+        self.assertNotIn("pages", str(caught.exception))
+        check_pdf_content_bytes(deep_page_chain_pdf(work - 2))
+
 
 class PageScopedContentCheckTests(unittest.TestCase):
     """Triage F8: ``check_pdf_page_content`` is ``check_pdf_content`` for the
@@ -382,13 +437,16 @@ class PageScopedContentCheckTests(unittest.TestCase):
                 check_pdf_page_content(doc, 0)
 
     def test_a_shared_kid_does_not_hide_pages_from_the_crop_bound(self) -> None:
-        """Every kid names the same one page under its own ``/Kids``: one leaf,
-        but as many nodes to descend as kids. The node bound refuses it."""
+        """Every kid is a ``/Type /Page`` that also names the same one page
+        under its own ``/Kids``. MuPDF counts a ``/Type /Page`` as a page
+        whatever it carries, so each is a leaf here too (review round 2,
+        minor 1): 201 of them are refused with the page message."""
         with (
-            self._doc(wide_page_tree_pdf(2 * MAX_CROP_PAGES + 2, count=1, shared_kid=True)) as doc,
-            self.assertRaises(ScanTooLargeError),
+            self._doc(wide_page_tree_pdf(MAX_CROP_PAGES + 1, count=1, shared_kid=True)) as doc,
+            self.assertRaises(ScanTooLargeError) as caught,
         ):
             check_pdf_page_content(doc, 0)
+        self.assertIn(f"more than {MAX_CROP_PAGES} pages", str(caught.exception))
 
     def test_the_crop_bound_stops_the_descent_early_on_a_huge_tree(self) -> None:
         """20,000 real kids under ``/Count 1``: the descent reads at most
@@ -407,9 +465,21 @@ class PageScopedContentCheckTests(unittest.TestCase):
         climbing.assert_not_called()
 
     def test_a_repeated_kid_does_not_hide_pages_from_the_crop_bound(self) -> None:
-        """One page named 200,000 times in the root's ``/Kids``: three tree
-        objects, 200,000 pages to a reader. Refused, reading no more of the
-        array than one entry past the bound."""
+        """One page named 201 times in the root's ``/Kids``: three tree
+        objects, 201 pages to MuPDF, which counts every reference. Refused
+        with the page message, which is true; 200 references pass."""
+        with self._doc(repeated_kid_pdf(MAX_CROP_PAGES)) as doc:
+            check_pdf_page_content(doc, 0)
+        with (
+            self._doc(repeated_kid_pdf(MAX_CROP_PAGES + 1)) as doc,
+            self.assertRaises(ScanTooLargeError) as caught,
+        ):
+            check_pdf_page_content(doc, 0)
+        self.assertIn(f"more than {MAX_CROP_PAGES} pages", str(caught.exception))
+
+    def test_a_huge_repeated_kid_array_is_read_no_further_than_the_work_bound(self) -> None:
+        """One page named 200,000 times: refused having read no more of the
+        array than the work bound allows, not all 200,000 entries."""
         lengths: list[int] = []
         real_collection_refs = scan_limits._collection_refs
 
@@ -424,7 +494,18 @@ class PageScopedContentCheckTests(unittest.TestCase):
             self.assertRaises(ScanTooLargeError),
         ):
             check_pdf_page_content(doc, 0)
-        self.assertEqual(max(lengths), MAX_CROP_PAGES + 1)
+        self.assertLessEqual(max(lengths), scan_limits._CROP_PAGE_BOUND.work)
+
+    def test_a_crop_at_the_bound_under_single_kid_inner_nodes_passes(self) -> None:
+        """Review round 2 on F8: the spec does not require an inner ``/Pages``
+        node to have two or more kids. 200 pages each under one single-kid
+        wrapper, and 134 each under two, are crops MuPDF renders."""
+        for pages, wrap in ((MAX_CROP_PAGES, 1), (134, 2), (MAX_CROP_PAGES, 0)):
+            with (
+                self.subTest(pages=pages, wrap=wrap),
+                self._doc(wrapped_page_tree_pdf(pages, wrap=wrap)) as doc,
+            ):
+                check_pdf_page_content(doc, pages - 1)
 
     def test_the_crop_bound_stops_a_long_parent_climb_early(self) -> None:
         """A one-page tree whose page's ``/Parent`` chain runs through 20,000
@@ -436,7 +517,7 @@ class PageScopedContentCheckTests(unittest.TestCase):
             self.assertRaises(ScanRejectedError),
         ):
             check_pdf_page_content(doc, 0)
-        self.assertLessEqual(climbing.call_count, 2 * MAX_CROP_PAGES + 1)
+        self.assertLessEqual(climbing.call_count, scan_limits._CROP_PAGE_BOUND.work)
 
     def test_a_short_parent_chain_outside_the_tree_still_passes(self) -> None:
         """The climb bound refuses only a chain longer than any real tree
