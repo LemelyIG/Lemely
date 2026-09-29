@@ -153,6 +153,18 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             rasterise_pdf_to_pages(path)
         render.assert_not_called()
 
+    def test_too_many_pages_are_rejected_before_the_content_walk(self) -> None:
+        """Final review M1: the content walk visits every page, so the page
+        cap must be applied before it -- a 20,000-page 5.8 MB PDF was walked
+        for 10.6 s at extraction before the cap refused it."""
+        path = self._pdf("many.pdf", *([(595.0, 842.0)] * 41))
+        with (
+            patch("lemely.io.rasterise.check_pdf_content_path") as walk,
+            self.assertRaises(ScanTooLargeError),
+        ):
+            rasterise_pdf_to_pages(path)
+        walk.assert_not_called()
+
     def test_a_within_band_image_is_reduced(self) -> None:
         image_path = Path(self.tmp) / "big.png"
         Image.new("1", (5000, 5000), color=1).save(image_path, "PNG")

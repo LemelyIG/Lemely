@@ -848,6 +848,12 @@ def check_pdf_content(doc: pymupdf.Document) -> None:
         return
     if doc.needs_pass:
         return
+    # Final review M1: the walk visits every page, so a document over the
+    # page cap is refused before any of it is read, whoever the caller is.
+    if doc.page_count > MAX_SCAN_PAGES:
+        raise ScanTooLargeError(
+            f"The scan has {doc.page_count} pages; the limit is {MAX_SCAN_PAGES}."
+        )
     try:
         tree = _page_tree(doc)
     except Exception as exc:

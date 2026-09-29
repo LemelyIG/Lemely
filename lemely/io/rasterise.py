@@ -90,13 +90,17 @@ def rasterise_pdf_to_pages(pdf_path: Path, *, dpi: float = EXTRACTION_DPI) -> li
     :class:`ValueError` if the PDF has no pages — an empty extraction call
     would silently carry no evidence at all rather than fail loudly.
     """
-    # Task 11b: an old stored upload can pre-date the upload-time check, and
-    # pypdfium2 parses a page's whole content stream on render -- measured at
-    # 2.2 GB for a 218 KB bomb. Refuse from the raw streams first.
-    check_pdf_content_path(pdf_path)
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
+        # Planning reads the page count and page sizes only (no page is
+        # loaded), so the page cap applies before the content walk below
+        # visits every page (final review M1).
         plans = plan_pdf_pages(pdf, dpi=dpi)
+        # Task 11b: an old stored upload can pre-date the upload-time check,
+        # and pypdfium2 parses a page's whole content stream on render --
+        # measured at 2.2 GB for a 218 KB bomb. Refuse from the raw streams
+        # before any render.
+        check_pdf_content_path(pdf_path)
         pages: list[RasterisedPage] = []
         for plan in plans:
             page = pdf[plan.index]

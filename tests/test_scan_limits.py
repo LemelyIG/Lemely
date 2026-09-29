@@ -237,6 +237,21 @@ class ScanTotalPixelTests(unittest.TestCase):
         check_scan_bytes(_pdf_bytes(*([(1439.0, 1439.0)] * MAX_SCAN_PAGES)))
 
 
+class ContentWalkPageCapTests(unittest.TestCase):
+    def test_the_content_check_refuses_too_many_pages_without_walking_them(self) -> None:
+        """Final review M1: the content check applies the page cap itself
+        before reading the page tree, whoever calls it."""
+        data = _pdf_bytes(*([(595.0, 842.0)] * (MAX_SCAN_PAGES + 1)))
+        with (
+            patch.object(scan_limits, "_page_tree") as page_tree,
+            patch.object(scan_limits, "_walk_resource_graph") as walk,
+            self.assertRaises(ScanTooLargeError),
+        ):
+            check_pdf_content_bytes(data)
+        page_tree.assert_not_called()
+        walk.assert_not_called()
+
+
 class CheckScanBytesTests(unittest.TestCase):
     def test_a4_pdf_passes(self) -> None:
         check_scan_bytes(_pdf_bytes((595.0, 842.0)))
