@@ -1410,6 +1410,29 @@ def page_kids_bomb_pdf(inflated_bytes: int) -> bytes:
     )
 
 
+def page_kids_equal_count_bomb_pdf(inflated_bytes: int) -> bytes:
+    """Root ``/Kids [P C] /Count 2``: P is a ``/Type /Page`` with clean content
+    that ALSO names ``/Kids [B]``, B a content-bomb page; C is clean.
+
+    Task 9b review round 1 (the reviewer's equal-count variant): both readers
+    count 2 pages, but MuPDF numbers them [P, C] and measures both, while
+    pdfium descends P's ``/Kids`` and renders B as its page 1.
+    """
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R 7 0 R] /Count 2 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
+            b"/Kids [5 0 R] /Count 1 >>",
+            pdf_stream(b"", b"q 1 0 0 rg 60 500 120 250 re f Q"),
+            b"<< /Type /Page /Parent 3 0 R /MediaBox [0 0 595 842] /Contents 6 0 R >>",
+            pdf_stream(b"/Filter /FlateDecode", flate_bomb_ops(inflated_bytes)),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 8 0 R >>",
+            pdf_stream(b"", b"q 0 0 1 rg 60 500 120 250 re f Q"),
+        ]
+    )
+
+
 def uncounted_bomb_pdf(inflated_bytes: int, *, count_entry: bytes) -> bytes:
     """Two pages, the second a content bomb, under a root whose ``/Count``
     entry is ``count_entry`` (``b"/Count 0"``, ``b"/Count -1"`` or ``b""``).
@@ -1526,6 +1549,7 @@ __all__ = [
     "overstated_count_pdf",
     "page_bomb_pdf",
     "page_kids_bomb_pdf",
+    "page_kids_equal_count_bomb_pdf",
     "page_tree_poison_pdf",
     "pages_carrying_kids_pdf",
     "parent_poisoned_ap_state_bomb_pdf",

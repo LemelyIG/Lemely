@@ -23,6 +23,7 @@ from tests.pdf_fakes import (
     image_bomb_pdf,
     page_bomb_pdf,
     page_kids_bomb_pdf,
+    page_kids_equal_count_bomb_pdf,
     uncounted_bomb_pdf,
 )
 
@@ -288,6 +289,24 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             rasterise_pdf_to_pages(path)
         get_page.assert_not_called()
         render.assert_not_called()
+
+    def test_the_equal_count_page_kids_bomb_is_rejected_before_any_page_is_loaded(self) -> None:
+        """T9b review round 1: both readers count 2 pages, but pdfium's page 1
+        is a bomb held in the ``/Kids`` of a ``/Type /Page`` MuPDF numbers as
+        page 1 (8.9 s to parse on load). Refused before pdfium loads a page."""
+        path = Path(self.tmp) / "page-kids-equal-count-bomb.pdf"
+        path.write_bytes(
+            page_kids_equal_count_bomb_pdf(scan_limits.MAX_PAGE_CONTENT_BYTES + 1_000_000)
+        )
+        with (
+            patch.object(pdfium.PdfDocument, "get_page") as get_page,
+            patch.object(pdfium.PdfPage, "render") as render,
+            self.assertRaises(ScanRejectedError) as caught,
+        ):
+            rasterise_pdf_to_pages(path)
+        get_page.assert_not_called()
+        render.assert_not_called()
+        self.assertEqual(str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE)
 
     def test_readers_that_disagree_on_the_page_count_are_rejected_before_any_page_is_loaded(
         self,

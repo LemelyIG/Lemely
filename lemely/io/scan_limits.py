@@ -163,6 +163,13 @@ _PAGE_COUNT_UNREADABLE_MESSAGE = (
     "This PDF's pages could not be counted reliably, so it could not be checked safely. "
     "Re-export it as a plain scan."
 )
+#: The page tree is not one both readers can agree on (T9b review round 1):
+#: a ``/Type /Page`` naming ``/Kids`` (MuPDF takes the node as a page,
+#: pdfium descends its kids), or the pages the tree holds are not the pages
+#: MuPDF numbers. Says nothing about how many pages there are.
+_PAGE_STRUCTURE_MALFORMED_MESSAGE = (
+    "This PDF's page structure is malformed. Re-export it as a plain scan."
+)
 #: Anything else going wrong once MuPDF has opened the file (Task 9b):
 #: fail closed, never pass it unmeasured.
 _UNCHECKABLE_MESSAGE = "This PDF could not be checked safely. Re-export it as a plain scan."
@@ -597,10 +604,13 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
     cap against the real tree, and bounds the work, with two counts:
 
     * Pages. MuPDF's rule: ``/Type`` decides, and ``/Kids`` only when
-      ``/Type`` is neither. A ``/Type /Page`` is a page whatever else it
-      carries (its ``/Kids``, if any, are still descended, so the tree set
-      stays whole); a ``/Type /Pages`` is not, even with ``/Kids []`` --
-      MuPDF and pdfium both count an empty one as zero pages; a node with
+      ``/Type`` is neither. A ``/Type /Page`` is a page -- and one that
+      names ``/Kids`` is refused outright as malformed
+      (:data:`_PAGE_STRUCTURE_MALFORMED_MESSAGE`, T9b review round 1):
+      MuPDF takes the node as a page while pdfium descends its kids, so the
+      readers disagree on which object a page index names even when their
+      counts match. A ``/Type /Pages`` is not a page, even with ``/Kids []``
+      -- MuPDF and pdfium both count an empty one as zero pages; a node with
       neither type is a page if it names no ``/Kids``. Every reference to
       a *page* counts, repeats included: a reader counts a page named
       twice as two. A repeated inner node is descended once, so the pages
@@ -622,6 +632,15 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
     :class:`ScanRejectedError` once it has read more than ``bound.work``
     distinct objects: every ancestor of a page in a well-formed tree is a
     descended node, and the descent took on no more than that.
+
+    Defence in depth (T9b review round 1): the set of pages the descent
+    found, by object number, must equal the set MuPDF numbers
+    (``page_xref`` over ``doc.page_count``, collected in the climb loop at
+    no extra read). A page the tree holds that MuPDF does not number -- a
+    ``/Count`` short of the real kids, or any other way the readers could
+    resolve the tree differently -- is refused with
+    :data:`_PAGE_STRUCTURE_MALFORMED_MESSAGE`. A page past a
+    ``page_xref`` failure is left to :func:`_check_page`, which refuses it.
     """
     budget = bound.work
     nodes: set[int] = set()
@@ -647,6 +666,11 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
             if taken > budget:
                 raise ScanTooLargeError(_PAGE_TREE_TOO_COMPLEX_MESSAGE)
             node_type = _name(doc, node, "Type")
+            if node_type == "/Page" and kids:
+                # MuPDF takes this node as one page, pdfium descends its kids:
+                # not valid PDF, and the readers disagree on which object a
+                # page index names, whatever their counts (T9b review round 1).
+                raise ScanRejectedError(_PAGE_STRUCTURE_MALFORMED_MESSAGE)
             is_page[node] = node_type == "/Page" or (not kids and node_type != "/Pages")
             pending.extend(kids)
         if is_page[node]:
@@ -656,12 +680,14 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
     # node -> (nearest node at or above it with a /Resources key,
     #          nearest node at or above it whose /Resources resolves)
     nearest: dict[int, tuple[int | None, int | None]] = {}
+    numbered: set[int] = set()
     for index in range(doc.page_count):
         try:
             page_xref = doc.page_xref(index)  # type: ignore[no-untyped-call]
         except Exception:
             break
         nodes.add(page_xref)
+        numbered.add(page_xref)
         chain: list[int] = []
         node = page_xref
         while node and node not in nearest and node not in chain:
@@ -674,6 +700,11 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
             has_key, resolves = _resources_state(doc, member)
             above = (member if has_key else above[0], member if resolves else above[1])
             nearest[member] = above
+    # Defence in depth (T9b review round 1): the pages the descent found must
+    # be the pages MuPDF numbers. A page it holds that MuPDF does not number
+    # is one a reader resolving the tree its own way may render unmeasured.
+    if numbered != {node for node, page in is_page.items() if page}:
+        raise ScanRejectedError(_PAGE_STRUCTURE_MALFORMED_MESSAGE)
     holders = {
         node: tuple(sorted({h for h in pair if h is not None})) for node, pair in nearest.items()
     }
@@ -1105,6 +1136,14 @@ def _check_opened(open_doc: Callable[[], pymupdf.Document], pdfium_pages: int | 
     ``%PDF-1.4 fake``). If pdfium counted pages MuPDF cannot open, the
     readers disagree and pdfium would render pages never measured: refused.
     Once MuPDF has opened the file, anything but a clean pass is a refusal.
+
+    ``pdfium_pages`` of ``None`` (pdfium could not open the file, or no
+    caller asked it) and ``0`` (pdfium opened it and found no pages) are
+    treated alike, and both pass when MuPDF cannot open the file either:
+    then neither renderer has a page to render. Extraction renders only the
+    pages pdfium plans, none here (``rasterise_pdf_to_pages`` then raises
+    for an empty result), and the preview and crop routes render with
+    MuPDF, which cannot open it.
     """
     try:
         doc = open_doc()

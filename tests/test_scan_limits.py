@@ -70,6 +70,7 @@ from tests.pdf_fakes import (
     overstated_count_pdf,
     page_bomb_pdf,
     page_kids_bomb_pdf,
+    page_kids_equal_count_bomb_pdf,
     page_tree_poison_pdf,
     pages_carrying_kids_pdf,
     parent_poisoned_ap_state_bomb_pdf,
@@ -333,14 +334,19 @@ class ContentWalkPageCapTests(unittest.TestCase):
             scan_limits._page_tree(doc, bound=scan_limits._SCAN_PAGE_BOUND)
         self.assertEqual(str(caught.exception), scan_limits._SCAN_PAGES_MESSAGE)
 
-    def test_a_page_typed_node_carrying_kids_still_counts_as_a_page(self) -> None:
-        """Review round 2, minor 1: a ``/Type /Page`` is a page to MuPDF
-        whatever it carries, so 41 of them, each with a ``/Kids`` leading
-        nowhere, are refused with the page message; 40 pass."""
-        with self.assertRaises(ScanTooLargeError) as caught:
-            check_pdf_content_bytes(pages_carrying_kids_pdf(MAX_SCAN_PAGES + 1))
-        self.assertEqual(str(caught.exception), scan_limits._SCAN_PAGES_MESSAGE)
-        check_pdf_content_bytes(pages_carrying_kids_pdf(MAX_SCAN_PAGES))
+    def test_a_page_typed_node_carrying_kids_is_refused_as_malformed(self) -> None:
+        """T9b review round 1 (replaces round 2's "counts as a page"): a
+        ``/Type /Page`` naming ``/Kids`` is not valid PDF, and MuPDF (which
+        takes the node as a page) and pdfium (which descends its ``/Kids``)
+        resolve it differently by construction. Refused as malformed, at any
+        page count -- never with a page count it may not have."""
+        for pages in (1, MAX_SCAN_PAGES, MAX_SCAN_PAGES + 1):
+            with self.subTest(pages=pages):
+                with self.assertRaises(ScanRejectedError) as caught:
+                    check_pdf_content_bytes(pages_carrying_kids_pdf(pages))
+                self.assertEqual(
+                    str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE
+                )
 
     def test_an_empty_pages_node_is_not_a_page(self) -> None:
         """Review round 3 on F8: an empty ``/Type /Pages`` node (``/Kids []``)
@@ -463,15 +469,14 @@ class PageScopedContentCheckTests(unittest.TestCase):
 
     def test_a_shared_kid_does_not_hide_pages_from_the_crop_bound(self) -> None:
         """Every kid is a ``/Type /Page`` that also names the same one page
-        under its own ``/Kids``. MuPDF counts a ``/Type /Page`` as a page
-        whatever it carries, so each is a leaf here too (review round 2,
-        minor 1): 201 of them are refused with the page message."""
+        under its own ``/Kids``: refused as malformed on the first one met
+        (T9b review round 1), never with a page count."""
         with (
             self._doc(wide_page_tree_pdf(MAX_CROP_PAGES + 1, count=1, shared_kid=True)) as doc,
-            self.assertRaises(ScanTooLargeError) as caught,
+            self.assertRaises(ScanRejectedError) as caught,
         ):
             check_pdf_page_content(doc, 0)
-        self.assertIn(f"more than {MAX_CROP_PAGES} pages", str(caught.exception))
+        self.assertEqual(str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE)
 
     def test_the_crop_bound_stops_the_descent_early_on_a_huge_tree(self) -> None:
         """20,000 real kids under ``/Count 1``: the descent reads at most
@@ -1239,13 +1244,45 @@ class ReaderCoverageTests(unittest.TestCase):
         self,
     ) -> None:
         """The reviewer's reproduction: MuPDF takes the ``/Type /Page`` node
-        as page 1 and cannot load page 2; pdfium renders the bomb as page 2."""
+        as page 1 and cannot load page 2; pdfium renders the bomb as page 2.
+        A ``/Type /Page`` naming ``/Kids`` is refused as malformed (T9b
+        review round 1) before any page is walked."""
         data = page_kids_bomb_pdf(self._BOMB)
         for check in (check_scan_bytes, check_pdf_content_bytes):
             with self.subTest(check.__name__):
                 with self.assertRaises(ScanRejectedError) as caught:
                     check(data)
-                self.assertIn("Page 2 of this PDF could not be read", str(caught.exception))
+                self.assertEqual(
+                    str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE
+                )
+
+    def test_the_equal_count_page_kids_bomb_is_refused(self) -> None:
+        """T9b review round 1: both readers count 2 pages, but MuPDF numbers
+        [P, C] while pdfium renders P's kid, a bomb, as page 1. Every page
+        MuPDF numbered loads, and the counts agree -- refused because P, a
+        ``/Type /Page``, names ``/Kids``."""
+        data = page_kids_equal_count_bomb_pdf(self._BOMB)
+        with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+            self.assertEqual(doc.page_count, 2)
+        for check in (check_scan_bytes, check_pdf_content_bytes):
+            with self.subTest(check.__name__):
+                with self.assertRaises(ScanRejectedError) as caught:
+                    check(data)
+                self.assertEqual(
+                    str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE
+                )
+
+    def test_pages_the_tree_holds_but_mupdf_does_not_number_are_refused(self) -> None:
+        """Defence in depth (T9b review round 1): the set of pages the tree
+        descent finds must be the set MuPDF numbers. ``/Count 1`` over two
+        real kids: both readers number one page and never render the other,
+        so the file is malformed, and refused whatever the ``/Kids`` rule
+        catches. Equal sets pass (a flat tree, a repeated kid)."""
+        with self.assertRaises(ScanRejectedError) as caught:
+            check_pdf_content_bytes(wide_page_tree_pdf(2, count=1))
+        self.assertEqual(str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE)
+        check_pdf_content_bytes(wide_page_tree_pdf(2, count=2))
+        check_pdf_content_bytes(repeated_kid_pdf(3))
 
     def test_readers_that_disagree_on_the_page_count_are_refused(self) -> None:
         """No ``/Count``, or ``/Count 0``: MuPDF sees no pages, so its walk
@@ -1274,8 +1311,10 @@ class ReaderCoverageTests(unittest.TestCase):
         route answers with its 422, and still passes a real one."""
         data = overstated_count_pdf(3, count=5)
         for check in (check_scan_bytes, check_pdf_content_bytes):
-            with self.subTest(check.__name__), self.assertRaises(ScanRejectedError):
-                check(data)
+            with self.subTest(check.__name__):
+                with self.assertRaises(ScanRejectedError) as caught:
+                    check(data)
+                self.assertIn("Page 4 of this PDF could not be read", str(caught.exception))
         with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
             check_pdf_page_content(doc, 2)
             with self.assertRaises(ScanRejectedError):
