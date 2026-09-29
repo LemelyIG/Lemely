@@ -3066,7 +3066,32 @@ def test_greek_subscripts_are_one_symbol_each() -> None:
     assert parse_expr_safe("q/(4πε0r^2)") == q / (4 * pi * e0 * r**2)
 
 
-def test_a_function_name_head_still_calls_its_subscripted_argument() -> None:
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("sinx2", sympy.sin(sympy.Symbol("x_2"))),
+        ("lnx2", sympy.log(sympy.Symbol("x_2"))),
+        ("expx2", sympy.exp(sympy.Symbol("x_2"))),
+        ("sqrtx2", sympy.sqrt(sympy.Symbol("x_2"))),
+        ("logx2", sympy.log(sympy.Symbol("x_2"))),
+        ("cosθ1", sympy.cos(sympy.Symbol("θ_1"))),
+        ("sinθ1", sympy.sin(sympy.Symbol("θ_1"))),
+        ("tanα2", sympy.tan(sympy.Symbol("α_2"))),
+    ],
+    ids=[
+        "sin-ascii-head",
+        "ln-ascii-head",
+        "exp-ascii-head",
+        "sqrt-ascii-head",
+        "log-ascii-head",
+        "cos-greek-head",
+        "sin-greek-head",
+        "tan-greek-head",
+    ],
+)
+def test_a_function_name_head_still_calls_its_subscripted_argument(
+    text: str, expected: sympy.Expr
+) -> None:
     """Task 4 review's carried-over Minor: ``_rewrite_digit_suffixes`` joined
     a function-name head to its subscripted last letter with an explicit
     ``*`` -- ``sinx2`` became ``sin*(x_2)``, a bare symbol ``sin`` multiplied
@@ -3077,9 +3102,47 @@ def test_a_function_name_head_still_calls_its_subscripted_argument() -> None:
     module and the parse is refused. ``lnx2``, ``expx2``, ``sqrtx2`` and
     ``logx2`` have the same shape (all :data:`_ALLOWED_FUNCTIONS` heads).
     When ``head`` is itself a known function name it must stay a call --
-    ``head(last_digits)`` -- not a product."""
-    x2 = sympy.Symbol("x_2")
-    assert parse_expr_safe("sinx2") == sympy.sin(x2)
+    ``head(last_digits)`` -- not a product.
+
+    Review round 1: the ``head in _ALLOWED_FUNCTIONS`` check is not ASCII-only
+    -- ``cos``/``sin``/``tan`` are the head regardless of what script the
+    *subscript* letter is in, so ``cosθ1``/``sinθ1``/the tan-alpha-2 row get
+    the same call treatment as ``sinx2``, going from UNPARSEABLE (Task 4 round 4) to
+    ``cos(θ_1)`` etc. here. Ruled correct on review: a function call is a
+    better reading than UNPARSEABLE, and the dispatch wording that asked to
+    "keep the Greek rows as they are" meant "don't break the existing
+    single-Greek-letter subscript rows" (``θ1+θ2``, ``ε0*E``, ...), not "no
+    Greek row may ever change" -- none of those rows has a function-name
+    head, so they are genuinely untouched (see
+    ``test_a_greek_head_call_is_not_read_as_one_flat_symbol_family`` and
+    ``test_a_function_call_head_never_reports_a_false_equal`` below for the
+    two properties this reach must not break)."""
+    assert parse_expr_safe(text) == expected
+
+
+def test_a_greek_head_call_is_not_read_as_one_flat_symbol_family() -> None:
+    """Review round 1: pin the two properties this fix's Greek reach must
+    not break, now that ``cosθ1``/``sinθ1``/the tan-alpha-2 row are calls too.
+
+    ``4πε0`` has no function-name head (``head`` is the plain symbol ``π``),
+    so it is unaffected and still reads as a bare product. ``θ1+θ2`` vs
+    ``3θ`` has no head at all (a single Greek letter plus digits), so it is
+    also unaffected -- already pinned in
+    ``test_a_letter_followed_by_digits_is_one_symbol``, reasserted here
+    directly so this fix's own test does not depend on trusting that one."""
+    pi, e0 = sympy.symbols("π ε_0")
+    assert parse_expr_safe("4πε0") == 4 * e0 * pi
+    assert equivalent("θ1+θ2", "3θ").kind is VerdictKind.NOT_EQUAL
+
+
+def test_a_function_call_head_never_reports_a_false_equal() -> None:
+    """False-EQUAL guard (review round 1): ``cosθ`` (no digit suffix) reads
+    as the letter-split product ``c*o*s*θ`` -- SymPy's ``split_symbols``
+    transformation on a multi-letter identifier that is not itself a known
+    function or unit. ``cosθ1`` must never be reported ``equal_proven``
+    against that product; a wrong match would be worse than the
+    UNPARSEABLE this fix's call reading replaces."""
+    assert equivalent("cosθ1", "cosθ").kind is not VerdictKind.EQUAL_PROVEN
 
 
 def test_a_family_letter_and_a_unit_power_in_the_same_text() -> None:
