@@ -99,8 +99,10 @@ def rasterise_pdf_to_pages(pdf_path: Path, *, dpi: float = EXTRACTION_DPI) -> li
         # Task 11b: an old stored upload can pre-date the upload-time check,
         # and pypdfium2 parses a page's whole content stream on render --
         # measured at 2.2 GB for a 218 KB bomb. Refuse from the raw streams
-        # before any render.
-        check_pdf_content_path(pdf_path)
+        # before any render. The walk reads with MuPDF but this renders with
+        # pdfium, so it is given pdfium's page count (Task 9b): a page only
+        # pdfium counts would otherwise be rendered unmeasured.
+        check_pdf_content_path(pdf_path, pdfium_pages=len(pdf))
         pages: list[RasterisedPage] = []
         for plan in plans:
             # Final review N1: a loaded page keeps its decoded images alive

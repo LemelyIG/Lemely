@@ -17,8 +17,14 @@ from lemely.io.rasterise import (
     rasterise_pdf_to_pages,
     rasterise_scan_to_pages,
 )
-from lemely.io.scan_limits import ScanTooLargeError
-from tests.pdf_fakes import annot_ap_bomb_pdf, image_bomb_pdf, page_bomb_pdf
+from lemely.io.scan_limits import ScanRejectedError, ScanTooLargeError
+from tests.pdf_fakes import (
+    annot_ap_bomb_pdf,
+    image_bomb_pdf,
+    page_bomb_pdf,
+    page_kids_bomb_pdf,
+    uncounted_bomb_pdf,
+)
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "handwritten-59" / "0625_w24_qp_42.pdf"
 
@@ -267,6 +273,43 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         with patch.object(pdfium.PdfPage, "render") as render, self.assertRaises(ScanTooLargeError):
             rasterise_pdf_to_pages(path)
         render.assert_not_called()
+
+    def test_a_bomb_only_pdfium_sees_is_rejected_before_any_page_is_loaded(self) -> None:
+        """Task 9b, the reviewer's reproduction: MuPDF cannot load page 2, which
+        pdfium renders as a content bomb (642,857 objects, 2.4 s to parse on
+        load). Refused before pdfium loads, let alone renders, a page."""
+        path = Path(self.tmp) / "page-kids-bomb.pdf"
+        path.write_bytes(page_kids_bomb_pdf(scan_limits.MAX_PAGE_CONTENT_BYTES + 1_000_000))
+        with (
+            patch.object(pdfium.PdfDocument, "get_page") as get_page,
+            patch.object(pdfium.PdfPage, "render") as render,
+            self.assertRaises(ScanRejectedError),
+        ):
+            rasterise_pdf_to_pages(path)
+        get_page.assert_not_called()
+        render.assert_not_called()
+
+    def test_readers_that_disagree_on_the_page_count_are_rejected_before_any_page_is_loaded(
+        self,
+    ) -> None:
+        """Task 9b: ``/Count 0`` over two real pages, the second a bomb. MuPDF
+        sees no pages, so its content walk measures nothing; pdfium, which
+        renders extraction, sees both. Refused on the disagreement."""
+        path = Path(self.tmp) / "uncounted-bomb.pdf"
+        path.write_bytes(
+            uncounted_bomb_pdf(
+                scan_limits.MAX_PAGE_CONTENT_BYTES + 1_000_000, count_entry=b"/Count 0"
+            )
+        )
+        with (
+            patch.object(pdfium.PdfDocument, "get_page") as get_page,
+            patch.object(pdfium.PdfPage, "render") as render,
+            self.assertRaises(ScanRejectedError) as caught,
+        ):
+            rasterise_pdf_to_pages(path)
+        get_page.assert_not_called()
+        render.assert_not_called()
+        self.assertEqual(str(caught.exception), scan_limits._PAGE_COUNT_UNREADABLE_MESSAGE)
 
 
 if __name__ == "__main__":

@@ -1387,6 +1387,66 @@ def repeated_subtree_pdf(inner: int, *, times: int, count: int) -> bytes:
     return assemble_pdf(objects)
 
 
+def page_kids_bomb_pdf(inflated_bytes: int) -> bytes:
+    """A root under ``/Count 2`` naming one ``/Type /Page`` node that has its
+    own clean content AND a ``/Kids`` naming a clean page and a content bomb.
+
+    Task 9b (the reviewer's round-4 reproduction): MuPDF resolves page 0 to
+    the typed node and cannot resolve page 1 at all; pdfium descends the
+    ``/Kids`` and renders the bomb as its page 1.
+    """
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 2 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
+            b"/Kids [5 0 R 7 0 R] /Count 2 >>",
+            pdf_stream(b"", b"q 1 0 0 rg 60 500 120 250 re f Q"),
+            b"<< /Type /Page /Parent 3 0 R /MediaBox [0 0 595 842] /Contents 6 0 R >>",
+            pdf_stream(b"", b"q 0 0 1 rg 60 500 120 250 re f Q"),
+            b"<< /Type /Page /Parent 3 0 R /MediaBox [0 0 595 842] /Contents 8 0 R >>",
+            pdf_stream(b"/Filter /FlateDecode", flate_bomb_ops(inflated_bytes)),
+        ]
+    )
+
+
+def uncounted_bomb_pdf(inflated_bytes: int, *, count_entry: bytes) -> bytes:
+    """Two pages, the second a content bomb, under a root whose ``/Count``
+    entry is ``count_entry`` (``b"/Count 0"``, ``b"/Count -1"`` or ``b""``).
+
+    Task 9b: MuPDF believes the missing or zero ``/Count`` and sees no
+    pages (or cannot count them), so its content walk measures nothing;
+    pdfium walks the ``/Kids`` and renders both pages, bomb included.
+    """
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R 5 0 R] " + count_entry + b" >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>",
+            pdf_stream(b"", b"q 1 0 0 rg 60 500 120 250 re f Q"),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 6 0 R >>",
+            pdf_stream(b"/Filter /FlateDecode", flate_bomb_ops(inflated_bytes)),
+        ]
+    )
+
+
+def overstated_count_pdf(pages: int, *, count: int) -> bytes:
+    """``pages`` blank A4 pages under a root declaring ``/Count count``.
+
+    Task 9b (the reviewer's guard probe, ``/Count 5`` over 3 real pages):
+    both readers believe the ``/Count`` and fail to find the pages past the
+    real ones.
+    """
+    kid_refs = " ".join(f"{3 + i} 0 R" for i in range(pages))
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            f"<< /Type /Pages /Kids [{kid_refs}] /Count {count} >>".encode(),
+            *([b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>"] * pages),
+        ]
+    )
+
+
 def deep_page_chain_pdf(depth: int) -> bytes:
     """One page under ``depth`` nested single-kid ``/Pages`` nodes.
 
@@ -1463,7 +1523,9 @@ __all__ = [
     "long_parent_chain_pdf",
     "many_form_xobjects_pdf",
     "non_stream_contents_pdf",
+    "overstated_count_pdf",
     "page_bomb_pdf",
+    "page_kids_bomb_pdf",
     "page_tree_poison_pdf",
     "pages_carrying_kids_pdf",
     "parent_poisoned_ap_state_bomb_pdf",
@@ -1487,6 +1549,7 @@ __all__ = [
     "type3_charproc_bomb_pdf",
     "type3_stream_font_bomb_pdf",
     "typed_form_xobject_bomb_pdf",
+    "uncounted_bomb_pdf",
     "wide_page_tree_pdf",
     "wrapped_page_tree_pdf",
     "xobject_also_listed_as_annotation_bomb_pdf",

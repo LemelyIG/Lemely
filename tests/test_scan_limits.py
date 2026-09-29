@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import time
 import tracemalloc
 import unittest
@@ -66,7 +67,9 @@ from tests.pdf_fakes import (
     long_parent_chain_pdf,
     many_form_xobjects_pdf,
     non_stream_contents_pdf,
+    overstated_count_pdf,
     page_bomb_pdf,
+    page_kids_bomb_pdf,
     page_tree_poison_pdf,
     pages_carrying_kids_pdf,
     parent_poisoned_ap_state_bomb_pdf,
@@ -90,6 +93,7 @@ from tests.pdf_fakes import (
     type3_dict_font_with_jpeg_pdf,
     type3_stream_font_bomb_pdf,
     typed_form_xobject_bomb_pdf,
+    uncounted_bomb_pdf,
     wide_page_tree_pdf,
     wrapped_page_tree_pdf,
     xobject_also_listed_as_annotation_bomb_pdf,
@@ -583,11 +587,20 @@ class CheckScanBytesTests(unittest.TestCase):
         load used to crash 500 (`plan_pdf_pages` raised pypdfium2's own
         `PdfiumError` and only the outer `PdfDocument(data)` open was
         guarded). It must pass through like any other geometry this module
-        cannot fully make sense of -- extraction fails on it later."""
+        cannot fully make sense of -- extraction fails on it later.
+
+        Task 9b keeps this: pdfium cannot size page 2, so extraction renders
+        nothing, and MuPDF (the crop route's renderer) resolves both pages
+        and its content check measures them."""
         check_scan_bytes(pdf_with_missing_kid_object())
 
-    def test_a_page_tree_with_an_inflated_count_is_not_rejected(self) -> None:
-        check_scan_bytes(pdf_with_inflated_count())
+    def test_a_page_tree_with_an_inflated_count_is_rejected(self) -> None:
+        """Task 9b, fail closed: ``/Count 2`` over one real page. Neither
+        reader can resolve page 2, so the content check cannot cover every
+        page a reader will try to render -- refused, where it used to pass
+        because pdfium's planning failure skipped the MuPDF check."""
+        with self.assertRaises(ScanRejectedError):
+            check_scan_bytes(pdf_with_inflated_count())
 
     def test_an_encrypted_pdf_is_not_rejected(self) -> None:
         check_scan_bytes(encrypted_pdf_bytes())
@@ -1212,6 +1225,101 @@ class WalkedImageTests(unittest.TestCase):
 
     def test_a_600_dpi_image_in_an_annotation_appearance_passes(self) -> None:
         check_pdf_content_bytes(annot_ap_image_bomb_pdf(4_960, 7_016))
+
+
+class ReaderCoverageTests(unittest.TestCase):
+    """Task 9b: the content check must cover every page a renderer will
+    render, and fail closed when it cannot. MuPDF walks; pdfium renders
+    extraction; where they disagree, or MuPDF cannot read a page it
+    counted, the file is refused rather than passed unmeasured."""
+
+    _BOMB = MAX_PAGE_CONTENT_BYTES + 1_000_000
+
+    def test_a_bomb_only_pdfium_sees_is_refused_at_upload_and_in_the_content_check(
+        self,
+    ) -> None:
+        """The reviewer's reproduction: MuPDF takes the ``/Type /Page`` node
+        as page 1 and cannot load page 2; pdfium renders the bomb as page 2."""
+        data = page_kids_bomb_pdf(self._BOMB)
+        for check in (check_scan_bytes, check_pdf_content_bytes):
+            with self.subTest(check.__name__):
+                with self.assertRaises(ScanRejectedError) as caught:
+                    check(data)
+                self.assertIn("Page 2 of this PDF could not be read", str(caught.exception))
+
+    def test_readers_that_disagree_on_the_page_count_are_refused(self) -> None:
+        """No ``/Count``, or ``/Count 0``: MuPDF sees no pages, so its walk
+        measures nothing, while pdfium renders both, bomb included."""
+        for count_entry in (b"", b"/Count 0"):
+            data = uncounted_bomb_pdf(self._BOMB, count_entry=count_entry)
+            with self.subTest(count_entry=count_entry):
+                with self.assertRaises(ScanRejectedError) as caught:
+                    check_scan_bytes(data)
+                self.assertEqual(str(caught.exception), scan_limits._PAGE_COUNT_UNREADABLE_MESSAGE)
+
+    def test_a_page_count_mupdf_cannot_read_is_refused(self) -> None:
+        """``/Count -1``: MuPDF's own ``page_count`` raises. Opened but not
+        countable is not "cannot open": refused, not swallowed."""
+        data = uncounted_bomb_pdf(self._BOMB, count_entry=b"/Count -1")
+        for check in (check_scan_bytes, check_pdf_content_bytes):
+            with self.subTest(check.__name__):
+                with self.assertRaises(ScanRejectedError) as caught:
+                    check(data)
+                self.assertEqual(str(caught.exception), scan_limits._PAGE_COUNT_UNREADABLE_MESSAGE)
+
+    def test_an_overstated_count_is_refused_not_swallowed(self) -> None:
+        """The guard probe's file: ``/Count 5`` over 3 real pages. Upload and
+        the whole-document check refuse it; the crop route's page-scoped
+        check refuses a missing page with a ``ScanRejectedError``, which that
+        route answers with its 422, and still passes a real one."""
+        data = overstated_count_pdf(3, count=5)
+        for check in (check_scan_bytes, check_pdf_content_bytes):
+            with self.subTest(check.__name__), self.assertRaises(ScanRejectedError):
+                check(data)
+        with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+            check_pdf_page_content(doc, 2)
+            with self.assertRaises(ScanRejectedError):
+                check_pdf_page_content(doc, 3)
+
+    def test_a_deep_chain_is_refused_at_upload(self) -> None:
+        """pdfium cannot plan a 2,000-deep chain, which used to end the upload
+        check before the MuPDF check ran. It runs now, and its work bound
+        refuses the chain."""
+        with self.assertRaises(ScanTooLargeError) as caught:
+            check_scan_bytes(deep_page_chain_pdf(2_000))
+        self.assertEqual(str(caught.exception), scan_limits._PAGE_TREE_TOO_COMPLEX_MESSAGE)
+
+    def test_a_file_mupdf_opened_but_could_not_walk_fails_closed(self) -> None:
+        """Only "MuPDF will not open it at all" is exempt; anything else going
+        wrong once it has is a refusal."""
+        data = _pdf_bytes((595.0, 842.0))
+        failing = patch.object(scan_limits, "check_pdf_content", side_effect=RuntimeError("x"))
+        with failing, self.assertRaises(ScanRejectedError):
+            check_pdf_content_bytes(data)
+        path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "scan.pdf"
+        path.write_bytes(data)
+        with failing, self.assertRaises(ScanRejectedError):
+            check_pdf_content_path(path)
+
+    def test_a_pdf_only_pdfium_can_open_is_refused(self) -> None:
+        """pdfium counted pages MuPDF could not open the file to measure: the
+        two readers disagree, so refused. With no pdfium count (pdfium could
+        not open it either) it passes, as garbage bytes always have."""
+        data = _pdf_bytes((595.0, 842.0))
+        with patch.object(scan_limits.pymupdf, "open", side_effect=RuntimeError("x")):
+            with self.assertRaises(ScanRejectedError):
+                check_pdf_content_bytes(data, pdfium_pages=1)
+            check_pdf_content_bytes(data)
+
+    def test_ordinary_pdfs_still_pass_upload(self) -> None:
+        check_scan_bytes(_pdf_bytes((595.0, 842.0), (595.0, 842.0)))
+        check_scan_bytes(born_digital_text_pdf(pages=MAX_SCAN_PAGES))
+        check_scan_bytes(wrapped_page_tree_pdf(MAX_SCAN_PAGES, wrap=2))
+        check_scan_bytes(b"%PDF-1.4 fake")
+
+    @unittest.skipUnless(_FIXTURE.is_file(), "handwritten-59 fixture not present")
+    def test_the_committed_fixture_still_passes_upload(self) -> None:
+        check_scan_bytes(_FIXTURE.read_bytes())
 
 
 class NonPdfDocumentTests(unittest.TestCase):

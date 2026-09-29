@@ -34,6 +34,7 @@ from PIL import Image
 from lemely.runtime.errors import LemelyError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 #: The committed question paper has 16 pages; answer booklets with
@@ -149,6 +150,22 @@ _CROP_PAGES_MESSAGE = (
 _PAGE_TREE_TOO_COMPLEX_MESSAGE = (
     "This PDF's page tree is too complex to check safely. Re-export it as a plain scan."
 )
+#: MuPDF counted a page it then could not load or number (Task 9b): what
+#: pdfium renders there went unmeasured, so the file is refused.
+_PAGE_UNREADABLE_MESSAGE = (
+    "Page {page} of this PDF could not be read, so it could not be checked safely. "
+    "Re-export it as a plain scan."
+)
+#: MuPDF could not count the pages, or counted a different number from
+#: pdfium, which renders extraction (Task 9b): the check cannot say it has
+#: measured every page a reader will render.
+_PAGE_COUNT_UNREADABLE_MESSAGE = (
+    "This PDF's pages could not be counted reliably, so it could not be checked safely. "
+    "Re-export it as a plain scan."
+)
+#: Anything else going wrong once MuPDF has opened the file (Task 9b):
+#: fail closed, never pass it unmeasured.
+_UNCHECKABLE_MESSAGE = "This PDF could not be checked safely. Re-export it as a plain scan."
 #: A page's structure is malformed in a way that could hide drawn content:
 #: its drawing resources, ``/Contents`` or ``/Annots`` name a page-tree node,
 #: or a ``/Contents`` entry is not a stream. See :func:`check_pdf_content`.
@@ -569,9 +586,8 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
     a node met twice on one climb (a ``/Parent`` cycle) ends it too. A page
     whose number pymupdf cannot give stops the build there:
     :func:`check_pdf_content` meets the same failure on the same page and
-    treats it as a malformed page tree; :func:`check_pdf_page_content`,
-    which can be asked for a later page, refuses that page instead (see
-    :func:`_check_page`).
+    refuses the file, and :func:`check_pdf_page_content`, which can be
+    asked for a later page, refuses that page (see :func:`_check_page`).
 
     Both halves cost time in proportion to the tree's size, whatever
     ``/Count`` declares -- and ``doc.page_count`` is that ``/Count``, so a
@@ -908,7 +924,7 @@ def _check_image_and_masks(
     _check_masks(doc, xref, smask_xref=smask_xref, page_index=page_index)
 
 
-def check_pdf_content(doc: pymupdf.Document) -> None:
+def check_pdf_content(doc: pymupdf.Document, *, pdfium_pages: int | None = None) -> None:
     """Refuse a document whose page content would blow the render (Task 11b).
 
     Per page, into the shared :data:`MAX_PAGE_CONTENT_BYTES` /
@@ -939,10 +955,14 @@ def check_pdf_content(doc: pymupdf.Document) -> None:
     Left alone: an encrypted document (its streams cannot be read;
     extraction fails on it later) and a non-PDF document (an ``image/*``
     upload opened by :mod:`pymupdf` for its preview has no page tree).
-    Opening the document, ``load_page`` and ``page_xref`` are page-tree
-    lookups whose failure means a malformed page tree -- that propagates to
-    :func:`check_pdf_content_bytes`/:func:`check_pdf_content_path` and
-    passes, the same rule as :func:`check_scan_bytes`'s geometry check.
+
+    Task 9b: the check must cover every page a renderer will render, so it
+    fails closed when it cannot. A ``page_count`` MuPDF cannot read, a
+    page it counted but cannot load or number (``load_page``/``page_xref``
+    raising -- pdfium may still render that page, as the page-kids bomb
+    showed), and, when the caller passes ``pdfium_pages`` (the count pdfium
+    renders extraction by), a different count from MuPDF's: each is a
+    :class:`ScanRejectedError`. They used to propagate and pass.
 
     Fails closed: any other exception while reading the page tree or
     walking a page -- a pymupdf quirk, a ``RecursionError`` inside
@@ -951,7 +971,7 @@ def check_pdf_content(doc: pymupdf.Document) -> None:
     but harmless files get a 422 asking for a re-export instead of
     passing: a page whose ``/Contents`` is a name or names an object that
     is not a stream, or whose ``/Contents``, ``/Annots`` or drawing
-    resources name a page-tree node.
+    resources name a page-tree node, or a ``/Count`` past the real pages.
 
     Known gap: an inline image (``BI ... ID ... EI``) is not checked for
     its declared size. Its bytes count toward the page's content budget
@@ -963,14 +983,23 @@ def check_pdf_content(doc: pymupdf.Document) -> None:
         return
     if doc.needs_pass:
         return
+    # Task 9b: read once. MuPDF can lower its own count mid-walk, after a
+    # page it counted fails to resolve; every page counted here is walked.
+    try:
+        page_count = int(doc.page_count)
+    except Exception as exc:
+        raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE) from exc
     # Final review M1: the walk visits every page, so a document over the
     # page cap is refused before any of it is read, whoever the caller is.
     # `page_count` is the declared `/Count`; `_page_tree` holds the same cap
     # against the real tree, so understating `/Count` does not dodge it.
-    if doc.page_count > MAX_SCAN_PAGES:
-        raise ScanTooLargeError(
-            f"The scan has {doc.page_count} pages; the limit is {MAX_SCAN_PAGES}."
-        )
+    if page_count > MAX_SCAN_PAGES:
+        raise ScanTooLargeError(f"The scan has {page_count} pages; the limit is {MAX_SCAN_PAGES}.")
+    # Task 9b: extraction renders with pdfium. A page it counts that MuPDF
+    # does not is a page this walk never measures (a `/Count 0` over real
+    # kids: MuPDF sees none, pdfium renders them all).
+    if pdfium_pages is not None and page_count != pdfium_pages:
+        raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE)
     try:
         tree = _page_tree(doc, bound=_SCAN_PAGE_BOUND)
     except ScanRejectedError:
@@ -978,7 +1007,7 @@ def check_pdf_content(doc: pymupdf.Document) -> None:
     except Exception as exc:
         raise ScanRejectedError(_WALK_FAILED_MESSAGE.format(page=1)) from exc
     budget = _ContentBudget()
-    for page_index in range(doc.page_count):
+    for page_index in range(page_count):
         _check_page(doc, tree, budget, page_index)
 
 
@@ -992,9 +1021,15 @@ def _check_page(
     the point where the tree build stopped -- which :func:`check_pdf_content`
     never reaches, and :func:`check_pdf_page_content` can be asked for.
     Walking it with no holders would skip its inherited ``/Resources``.
+
+    Fails closed on a page MuPDF counted but cannot load or number (Task
+    9b): another reader can still render it, unmeasured.
     """
-    page = doc.load_page(page_index)  # type: ignore[no-untyped-call]
-    page_xref = doc.page_xref(page_index)  # type: ignore[no-untyped-call]
+    try:
+        page = doc.load_page(page_index)  # type: ignore[no-untyped-call]
+        page_xref = doc.page_xref(page_index)  # type: ignore[no-untyped-call]
+    except Exception as exc:
+        raise ScanRejectedError(_PAGE_UNREADABLE_MESSAGE.format(page=page_index + 1)) from exc
     holders = tree.holders.get(page_xref)
     if holders is None:
         raise ScanRejectedError(_MALFORMED_STRUCTURE_MESSAGE.format(page=page_index + 1))
@@ -1061,36 +1096,79 @@ def check_pdf_page_content(doc: pymupdf.Document, page_index: int) -> None:
     _check_page(doc, tree, _ContentBudget(), page_index)
 
 
-def check_pdf_content_bytes(data: bytes) -> None:
-    """:func:`check_pdf_content` on an in-memory PDF; bytes pymupdf cannot open pass."""
+def _check_opened(open_doc: Callable[[], pymupdf.Document], pdfium_pages: int | None) -> None:
+    """:func:`check_pdf_content` on the document ``open_doc`` opens, failing closed.
+
+    The one exemption is narrow (Task 9b): MuPDF will not open the bytes at
+    all AND pdfium counted no pages either -- garbage with a ``%PDF``
+    header, which extraction fails on too (the upload routes' tests post
+    ``%PDF-1.4 fake``). If pdfium counted pages MuPDF cannot open, the
+    readers disagree and pdfium would render pages never measured: refused.
+    Once MuPDF has opened the file, anything but a clean pass is a refusal.
+    """
     try:
-        doc = pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
-    except Exception:
+        doc = open_doc()
+    except Exception as exc:
+        if pdfium_pages:
+            raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE) from exc
         return
     try:
-        check_pdf_content(doc)
+        check_pdf_content(doc, pdfium_pages=pdfium_pages)
     except ScanRejectedError:
         raise
-    except Exception:
-        return
+    except Exception as exc:
+        raise ScanRejectedError(_UNCHECKABLE_MESSAGE) from exc
     finally:
         doc.close()  # type: ignore[no-untyped-call]
 
 
-def check_pdf_content_path(path: Path) -> None:
-    """:func:`check_pdf_content` on a file; the extraction and CLI entry point."""
+def check_pdf_content_bytes(data: bytes, *, pdfium_pages: int | None = None) -> None:
+    """:func:`check_pdf_content` on an in-memory PDF (see :func:`_check_opened`).
+
+    ``pdfium_pages``: pdfium's page count for the same bytes, when the
+    caller has it, so the two readers' counts are compared.
+    """
+    _check_opened(
+        lambda: pymupdf.open(stream=data, filetype="pdf"),  # type: ignore[no-untyped-call]
+        pdfium_pages,
+    )
+
+
+def check_pdf_content_path(path: Path, *, pdfium_pages: int | None = None) -> None:
+    """:func:`check_pdf_content` on a file; the extraction and CLI entry point.
+
+    Extraction passes ``pdfium_pages`` -- it renders with pdfium, so a page
+    count MuPDF disagrees with is a page this check would not measure.
+    """
+    _check_opened(lambda: pymupdf.open(str(path)), pdfium_pages)  # type: ignore[no-untyped-call]
+
+
+def _pdfium_plan(data: bytes) -> int | None:
+    """Plan ``data``'s pages as extraction will; pdfium's page count, or ``None``.
+
+    Raises :class:`ScanTooLargeError` for a geometry extraction refuses.
+    ``None`` when pdfium cannot open the bytes or count their pages. A page
+    pdfium cannot size (``plan_pdf_pages`` raising pypdfium2's own
+    ``PdfiumError``) still returns the count: extraction's own planning
+    refuses that file before rendering any of it, but the crop route
+    renders with MuPDF, so :func:`check_scan_bytes` runs the MuPDF check
+    either way (Task 9b; it used to be skipped here).
+    """
     try:
-        doc = pymupdf.open(str(path))  # type: ignore[no-untyped-call]
+        pdf = pdfium.PdfDocument(data)
     except Exception:
-        return
+        return None
+    count: int | None = None
     try:
-        check_pdf_content(doc)
-    except ScanRejectedError:
+        count = len(pdf)
+        plan_pdf_pages(pdf)
+    except ScanTooLargeError:
         raise
     except Exception:
-        return
+        return count
     finally:
-        doc.close()  # type: ignore[no-untyped-call]
+        pdf.close()
+    return count
 
 
 def check_scan_bytes(data: bytes) -> None:
@@ -1100,28 +1178,24 @@ def check_scan_bytes(data: bytes) -> None:
     extraction fails on them later, exactly as it does today -- so the only
     422 this produces is a measured, over-limit geometry (or Pillow's
     decompression-bomb guard, which fires on the declared size before any
-    pixel is decoded). A document that opens but has a page that does not
-    (a malformed ``/Kids`` entry, a ``/Count`` past the real page array) is
-    the same case: ``plan_pdf_pages`` can raise pypdfium2's own
-    ``PdfiumError`` reading such a page's size, and that is not our call to
-    make either -- extraction fails on it later exactly as it does today.
+    pixel is decoded). A document pdfium opens but cannot size a page of
+    (``plan_pdf_pages`` raising pypdfium2's own ``PdfiumError``) is not
+    refused for that alone: extraction's planning refuses it before
+    rendering anything, as it does today.
+
     And, for a PDF, the decoded size of each page's content streams (Task
-    11b) -- read from the raw streams with a bounded inflate, never rendered.
+    11b) -- read from the raw streams with a bounded inflate, never rendered
+    -- which runs whenever MuPDF can open the file, whatever pdfium made of
+    it (Task 9b: skipping it on a pdfium planning failure let a page tree
+    too deep for pdfium through unmeasured, and the crop route renders with
+    MuPDF). It is given pdfium's page count, and refuses a file the two
+    readers count differently, or whose pages MuPDF counted but cannot
+    read (:func:`check_pdf_content`).
     """
     if looks_like_pdf(data):
-        try:
-            pdf = pdfium.PdfDocument(data)
-        except Exception:
-            return
-        try:
-            plan_pdf_pages(pdf)
-        except ScanTooLargeError:
-            raise
-        except Exception:
-            return
-        finally:
-            pdf.close()
-        check_pdf_content_bytes(data)  # Task 11b: geometry first, then content
+        # Task 11b: geometry first, then content -- with pdfium's count, so
+        # a page only pdfium would render is not left unmeasured (Task 9b).
+        check_pdf_content_bytes(data, pdfium_pages=_pdfium_plan(data))
         return
     try:
         with Image.open(io.BytesIO(data)) as opened:
