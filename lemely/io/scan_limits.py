@@ -346,13 +346,14 @@ _Role = Literal["xobject", "font", "any"]
 class _PageWalk:
     """One page's walk: its budget, the page tree, and what it has visited.
 
-    ``seen`` holds every object walked in full (as content or as a
-    container). ``font_seen`` and ``image_seen`` hold objects met only in a
-    narrower role -- a non-Type3 font under ``/Font``, an image under
-    ``/XObject`` -- and handled for that role alone; ``annot_seen`` holds
-    every ``/Annots`` entry whose ``/AP`` has been read. They are separate
-    so an object met first in one role is still handled in full when the
-    walk meets it again in another.
+    One set per kind of work, each done at most once per object:
+    ``seen`` -- expanded in full (decoded bytes counted if a stream, every
+    reference followed); ``image_seen`` -- declared size pixel-checked;
+    ``font_seen`` -- met as a non-Type3 ``/Font`` and deliberately not
+    expanded; ``annot_seen`` -- ``/AP`` read as an ``/Annots`` entry. Doing
+    one kind of work never marks another done, so what happens to an
+    object depends only on the set of roles it is reached in, never on the
+    order the walk meets them.
     """
 
     page_index: int
@@ -518,13 +519,14 @@ def _page_tree(doc: pymupdf.Document) -> _PageTree:
     return _PageTree(xrefs=frozenset(nodes), holders=holders)
 
 
-def _stream_dict_refs(doc: pymupdf.Document, xref: int) -> list[int]:
-    """Every reference in stream ``xref``'s dictionary outside ``/Resources``.
+def _dict_refs(doc: pymupdf.Document, xref: int) -> list[int]:
+    """Every reference in ``xref``'s dictionary outside ``/Resources``.
 
-    ``/Resources`` is read by :func:`_resources_refs` instead, which keeps
-    each reference's role. A reference's key plays no other part: a stream
-    used as a container (a graphics state, an annotation, a pattern that
-    is also listed in ``/Annots``) is read by whatever key the renderer
+    Works for a stream's dictionary and a plain dict alike. ``/Resources``
+    is read by :func:`_resources_refs` instead, which keeps each
+    reference's role. A reference's key plays no other part: an object
+    used as a container (a graphics state, an appearance state dict, a
+    stream that is also a soft mask) is read by whatever key the renderer
     looks up, and nothing here assumes which.
     """
     refs: list[int] = []
@@ -547,9 +549,12 @@ def _resources_refs(doc: pymupdf.Document, container_xref: int) -> list[tuple[in
     Reads only the categories a content stream can name
     (:data:`_RESOURCE_CATEGORIES`, plus ``/Font``), each directly or through
     one indirect map. The role comes from the category the reference is
-    filed under, never from the object's own ``/Type``.
+    filed under, never from the object's own ``/Type``. An object with no
+    ``/Resources`` key at all costs one read.
     """
     refs: list[tuple[int, _Role]] = []
+    if _key(doc, container_xref, "Resources")[0] == "null":
+        return refs
     for category in _RESOURCE_CATEGORIES:
         role: _Role = "xobject" if category == "XObject" else "any"
         kind, value = _key(doc, container_xref, f"Resources/{category}")
@@ -566,44 +571,35 @@ def _walk_resource_graph(
 
     Guarantees, for every object reached:
 
-    * It is classified by what a renderer does with it, from its role
-      (:data:`_Role`), whether it is a stream, and its ``/Subtype`` read
-      through one level of indirection -- never its ``/Type``, which
-      renderers ignore. An image met under ``/XObject`` has its declared
-      size and its masks' checked against :data:`MAX_DECODE_PX`, wherever
-      it sits (an annotation appearance or a pattern cell included). Any
-      other stream -- a form, a tiling pattern, an appearance stream with
-      or without a ``/Subtype``, a glyph procedure -- may be run as drawing
-      operators, so its decoded size is counted and its own ``/Resources``
-      walked; one that is also labelled an image is size-checked as well. A
-      stream met outside ``/XObject`` and ``/Font`` may also be used as a
-      container (a graphics state or a soft mask written as a stream), so
-      every other reference in its dictionary is walked too -- an
-      over-count at worst. A Type3 font, stream or not, has its glyph
-      procedures and ``/Resources`` walked. A non-Type3 font met under
-      ``/Font`` is not expanded: its program is parsed by the font engine,
-      not run as page content. Any other object is a container -- a name
-      map stored as its own object, an appearance state dict, a graphics
-      state, a soft mask -- and every reference in it is walked, whatever
-      key it sits under.
-    * An object is walked in full at most once per page; one met first in
-      a narrower role (a font, an ``/XObject`` image) is walked in full if
-      met again in another.
+    * Any object reachable from a page is expanded in full exactly once,
+      regardless of role or visit order: a stream has its decoded size
+      counted once, and every object has its ``/Resources`` (by category,
+      with roles) and every other reference in its dictionary -- or, for an
+      array, every reference in it -- walked. An object used as a
+      container (a graphics state, an appearance state dict, a soft mask)
+      is read by whatever key the renderer looks up, so no key is assumed.
+      Over-counting a stream that is never drawn is accepted: it can only
+      reject.
+    * Two roles narrow this, and only for that role: an image met under
+      ``/XObject`` is decoded as an image, so its declared size and its
+      masks' are checked against :data:`MAX_DECODE_PX` instead; a
+      non-Type3 font met under ``/Font`` is loaded by the font engine, so it
+      is not expanded. Reached in any other role too, the same object is
+      also expanded in full (an appearance stream labelled ``/Image`` is
+      run as a form). Every image-labelled stream is size-checked once,
+      whatever role it is reached in. Classification reads ``/Subtype``
+      through one level of indirection, never ``/Type``.
     * Reaching a page-tree node (``walk.tree``, see :class:`_PageTree`) in
-      any role -- even one already walked as page content -- rejects the
-      file with :class:`ScanRejectedError`. A tree node
-      can double as any container a renderer draws through (an appearance
-      state dict, a graphics state, a soft mask), so it can be neither
-      skipped (a bomb behind it would pass) nor expanded (the walk would
-      climb into every other page). A well-formed file never draws from its
-      own page tree; like the rest of this module's fail-closed rules, the
-      accepted cost is a 422 for a malformed but harmless file that does.
-      Only the drawable roles above are followed -- an annotation's
-      ``/Dest``, ``/A``, ``/P``, ``/Parent`` or ``/Popup`` never is (see
+      any role, even one already handled, rejects the file with
+      :class:`ScanRejectedError`; the check runs before any visited-set
+      test. A tree node can double as any container a renderer draws
+      through, so it can be neither skipped (a bomb behind it would pass)
+      nor expanded (the walk would climb into every other page). A
+      well-formed file never draws from its own page tree; like the rest of
+      this module's fail-closed rules, the accepted cost is a 422 for a
+      malformed but harmless file that does. An annotation's ``/Dest``,
+      ``/A``, ``/P``, ``/Parent`` or ``/Popup`` is never followed (see
       :func:`_walk_annotations`), so a link to another page still passes.
-      An entry naming another page's content stream directly (a stream,
-      not a tree node) counts that stream against this page too: an
-      over-count, which can only reject.
     * The walk uses an explicit stack, so nesting depth is bounded only by
       :data:`_MAX_OBJECTS_PER_PAGE`, never by Python's recursion limit.
     """
@@ -616,30 +612,24 @@ def _walk_resource_graph(
         if ref in walk.tree:
             raise ScanRejectedError(_MALFORMED_STRUCTURE_MESSAGE.format(page=walk.page_index + 1))
         if ref in walk.seen:
-            continue
+            continue  # expanded in full already: every role's work is done
         is_stream = bool(doc.xref_is_stream(ref))  # type: ignore[no-untyped-call]
         subtype = _name(doc, ref, "Subtype")
         if role == "font" and subtype != "/Type3":
             _enter(ref, walk.font_seen, walk)
             continue
-        if role == "xobject" and is_stream and subtype == "/Image":
+        if is_stream and subtype == "/Image":
             if _enter(ref, walk.image_seen, walk):
                 _check_image_xref(doc, ref, page_index=walk.page_index)
-            continue
+            if role == "xobject":
+                continue
         _enter(ref, walk.seen, walk)
-        if subtype == "/Type3":
-            charprocs = _collection_refs(doc, *_key(doc, ref, "CharProcs"))
-            stack.extend((proc, "any") for proc in charprocs)
-            stack.extend(_resources_refs(doc, ref))
         if is_stream:
-            if subtype == "/Image":
-                _check_image_xref(doc, ref, page_index=walk.page_index)
             _count_stream(doc, ref, walk)
-            if subtype != "/Type3":
-                stack.extend(_resources_refs(doc, ref))
-            if role == "any":
-                stack.extend((target, "any") for target in _stream_dict_refs(doc, ref))
-        elif subtype != "/Type3":
+        if is_stream or doc.xref_get_keys(ref):  # type: ignore[no-untyped-call]
+            stack.extend(_resources_refs(doc, ref))
+            stack.extend((target, "any") for target in _dict_refs(doc, ref))
+        else:
             text = doc.xref_object(ref)  # type: ignore[no-untyped-call]
             stack.extend((int(m.group(1)), "any") for m in _REF_RE.finditer(text))
 
@@ -840,19 +830,19 @@ def check_pdf_content(doc: pymupdf.Document) -> None:
         try:
             for image in page.get_images(full=True):
                 _check_image_and_masks(doc, image, page_index=page_index)
+            start: list[tuple[int, _Role]] = []
             for xref in page.get_contents():
                 xref = int(xref)
                 if xref in tree.xrefs or not doc.xref_is_stream(xref):  # type: ignore[no-untyped-call]
                     raise ScanRejectedError(
                         _MALFORMED_STRUCTURE_MESSAGE.format(page=page_index + 1)
                     )
-                walk.seen.add(xref)
-                _count_stream(doc, xref, walk)
-            start = [
+                start.append((xref, "any"))
+            start.extend(
                 ref
                 for holder in tree.holders.get(page_xref, ())
                 for ref in _resources_refs(doc, holder)
-            ]
+            )
             _walk_resource_graph(doc, start, walk)
             _walk_annotations(doc, page_xref, walk)
         except ScanRejectedError:

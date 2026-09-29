@@ -896,6 +896,79 @@ def stamp_with_jpeg_appearance_pdf() -> bytes:
     )
 
 
+def form_also_graphics_state_bomb_pdf(inflated_bytes: int, *, xobject_first: bool) -> bytes:
+    """One Form XObject (object 5) used both as an ``/XObject`` and as a
+    graphics state, whose ``/SMask`` group (object 7) is a Form bomb.
+
+    With ``xobject_first`` the page files 5 under ``/XObject`` and an
+    annotation's appearance form (object 6) files it under ``/ExtGState``;
+    otherwise the two uses swap places, so the walk meets the same object
+    in the opposite order. MuPDF applies the graphics state's soft mask
+    either way.
+    """
+    page_use, ap_use = (b"/XObject << /X0", b"/ExtGState << /GS0")
+    page_ops, ap_ops = (b"q /X0 Do Q", b"/GS0 gs 0 g 0 0 200 200 re f")
+    if not xobject_first:
+        page_use, ap_use = ap_use, page_use
+        page_ops, ap_ops = ap_ops.replace(b"0 0 200 200", b"0 0 10 10"), page_ops
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << " + page_use + b" 5 0 R >> >> /Annots [8 0 R] >>",
+            pdf_stream(b"", page_ops),
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 1 1] "
+                b"/SMask << /S /Luminosity /G 7 0 R >>",
+                b"",
+            ),
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Resources << "
+                + ap_use
+                + b" 5 0 R >> >>",
+                ap_ops,
+            ),
+            _bomb_form(inflated_bytes),
+            b"<< /Type /Annot /Subtype /Stamp /Rect [0 0 200 200] /AP << /N 6 0 R >> >>",
+        ]
+    )
+
+
+def contents_also_appearance_bomb_pdf(inflated_bytes: int) -> bytes:
+    """The page's own content stream (object 4) is also its annotation's
+    ``/AP /N`` form, and only as a form does it use its own ``/Resources``,
+    which name a Form bomb (object 6).
+
+    MuPDF draws the appearance with those resources; as page content the
+    same stream draws nothing, since the page has no ``/Resources``.
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Annots [5 0 R] >>",
+            pdf_stream(
+                b"/Subtype /Form /BBox [0 0 200 200] /Resources << /XObject << /B 6 0 R >> >>",
+                b"q /B Do Q",
+            ),
+            b"<< /Type /Annot /Subtype /Stamp /Rect [0 0 200 200] /AP << /N 4 0 R >> >>",
+            _bomb_form(inflated_bytes),
+        ]
+    )
+
+
+def sibling_page_listed_as_annotation_pdf() -> bytes:
+    """Page 0's ``/Annots`` lists the sibling page (object 5), and nothing
+    else of page 0 reaches the page tree. Otherwise harmless."""
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>",
+            _A4_PAGE + b" /Annots [5 0 R] >>",
+            pdf_stream(b"", b"q Q"),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>",
+        ]
+    )
+
+
 def xobject_also_listed_as_annotation_bomb_pdf(inflated_bytes: int) -> bytes:
     """One stream (object 5) filed under page 0's ``/XObject`` and also
     listed in its ``/Annots``, whose ``/AP /N`` (object 6) is a Form bomb.
@@ -1088,6 +1161,7 @@ __all__ = [
     "annot_ap_nested_bomb_pdf",
     "assemble_pdf",
     "born_digital_text_pdf",
+    "contents_also_appearance_bomb_pdf",
     "deep_plain_dict_chain_bomb_pdf",
     "deep_xobject_chain_bomb_pdf",
     "embedded_font_pdf",
@@ -1095,6 +1169,7 @@ __all__ = [
     "extgstate_smask_bomb_pdf",
     "filtered_page_pdf",
     "flate_bomb_ops",
+    "form_also_graphics_state_bomb_pdf",
     "form_xobject_cycle_pdf",
     "image_bomb_pdf",
     "indirect_ap_state_bomb_pdf",
@@ -1117,6 +1192,7 @@ __all__ = [
     "resources_entry_pointing_at_pages_node_pdf",
     "seeded_page_tree_bomb_pdf",
     "sibling_page_as_soft_mask_bomb_pdf",
+    "sibling_page_listed_as_annotation_pdf",
     "smask_bomb_pdf",
     "stamp_with_jpeg_appearance_pdf",
     "stream_extgstate_smask_bomb_pdf",

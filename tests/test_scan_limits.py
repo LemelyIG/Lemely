@@ -36,6 +36,7 @@ from tests.pdf_fakes import (
     annot_ap_image_bomb_pdf,
     annot_ap_nested_bomb_pdf,
     assemble_pdf,
+    contents_also_appearance_bomb_pdf,
     deep_plain_dict_chain_bomb_pdf,
     deep_xobject_chain_bomb_pdf,
     embedded_font_pdf,
@@ -43,6 +44,7 @@ from tests.pdf_fakes import (
     extgstate_smask_bomb_pdf,
     filtered_page_pdf,
     flate_bomb_ops,
+    form_also_graphics_state_bomb_pdf,
     form_xobject_cycle_pdf,
     image_bomb_pdf,
     indirect_ap_state_bomb_pdf,
@@ -65,6 +67,7 @@ from tests.pdf_fakes import (
     resources_entry_pointing_at_pages_node_pdf,
     seeded_page_tree_bomb_pdf,
     sibling_page_as_soft_mask_bomb_pdf,
+    sibling_page_listed_as_annotation_pdf,
     smask_bomb_pdf,
     stamp_with_jpeg_appearance_pdf,
     stream_extgstate_smask_bomb_pdf,
@@ -316,6 +319,10 @@ class ContentStreamBombTests(unittest.TestCase):
         finally:
             doc.close()
         self.assertLess(largest, 1_000)  # a scanned page is `q ... cm /Im0 Do Q`
+
+    @unittest.skipUnless(_FIXTURE.is_file(), "handwritten-59 fixture not present")
+    def test_the_committed_fixture_passes_the_upload_check(self) -> None:
+        check_scan_bytes(_FIXTURE.read_bytes())
 
     def test_check_scan_bytes_applies_the_content_cap_to_pdfs(self) -> None:
         with self.assertRaises(ScanTooLargeError):
@@ -639,6 +646,30 @@ class PageTreeIdentityTests(unittest.TestCase):
                 with self.assertRaises(ScanRejectedError):
                     check_scan_bytes(data)
 
+    def test_a_tree_node_is_rejected_even_when_already_seen(self) -> None:
+        # Pins the order of the walk's checks: the tree test runs before the
+        # visited-set test, so a tree node pre-seeded into `seen` (as
+        # /Contents or another role could) still rejects.
+        doc = pymupdf.open(stream=links_to_sibling_pages_pdf(), filetype="pdf")
+        try:
+            tree = scan_limits._page_tree(doc)
+            walk = scan_limits._PageWalk(
+                page_index=0, tree=tree.xrefs, budget=scan_limits._ContentBudget()
+            )
+            walk.seen.add(5)  # the sibling page
+            with self.assertRaises(ScanRejectedError):
+                scan_limits._walk_resource_graph(doc, [(5, "any")], walk)
+        finally:
+            doc.close()
+
+    def test_a_page_listed_in_annots_is_rejected(self) -> None:
+        # Only the /Annots check reaches this page-tree node: the listed
+        # page has no /AP and nothing else of page 0 names it.
+        data = sibling_page_listed_as_annotation_pdf()
+        with self.assertRaises(ScanRejectedError) as ctx:
+            check_pdf_content_bytes(data)
+        self.assertNotIsInstance(ctx.exception, ScanTooLargeError)
+
     def test_a_contents_entry_that_is_not_a_stream_is_rejected(self) -> None:
         with self.assertRaises(ScanRejectedError) as ctx:
             check_pdf_content_bytes(non_stream_contents_pdf())
@@ -712,6 +743,36 @@ class StreamRoleTests(unittest.TestCase):
         # when /Annots lists it.
         with self.assertRaises(ScanTooLargeError):
             check_pdf_content_bytes(xobject_also_listed_as_annotation_bomb_pdf(112_000_000))
+
+    def test_a_form_also_used_as_a_graphics_state_is_expanded_in_full(self) -> None:
+        # Met first as an /XObject, the same form is still expanded as the
+        # graphics state it also is: its /SMask group is the bomb.
+        data = form_also_graphics_state_bomb_pdf(112_000_000, xobject_first=True)
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(data)
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(data)
+
+    def test_the_outcome_does_not_depend_on_visit_order(self) -> None:
+        # The same shared object reached in two roles, in both orders.
+        outcomes = []
+        for xobject_first in (True, False):
+            with self.subTest(xobject_first=xobject_first):
+                with self.assertRaises(ScanTooLargeError) as ctx:
+                    check_pdf_content_bytes(
+                        form_also_graphics_state_bomb_pdf(112_000_000, xobject_first=xobject_first)
+                    )
+                outcomes.append(str(ctx.exception))
+        self.assertEqual(len(set(outcomes)), 1)
+
+    def test_a_content_stream_also_used_as_an_appearance_has_its_resources_walked(
+        self,
+    ) -> None:
+        data = contents_also_appearance_bomb_pdf(112_000_000)
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(data)
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(data)
 
     def test_a_stamp_appearance_drawing_a_jpeg_passes(self) -> None:
         # Guard for the walk above: its image is met under /XObject and
