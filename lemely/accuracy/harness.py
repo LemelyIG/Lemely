@@ -429,6 +429,13 @@ class AccuracyResult:
     manifest: RunManifest  # spec §3.3: the run this result's EvalRecords join to
     eval_records: list[EvalRecord]  # spec §3.3: the rows manifest.run_id joins to
     funnel: FunnelCounts  # spec §4 M0.5: leaves -> extracted -> matched -> marked (-> scored)
+    reread_skipped_by_budget: int = 0
+    """#263: re-reads the extractor skipped because ``GeminiSettings.
+    reread_budget_seconds`` ran out, summed over every case that ran
+    extraction (``ExtractedAnswers.reread_skipped_by_budget``). Non-zero
+    means this run's marks are timing-dependent and not comparable with
+    another run's; ``format_report`` warns and ``measure-accuracy
+    --fail-on-skipped-rereads`` fails on it."""
 
 
 # ---------------------------------------------------------------------------
@@ -1166,6 +1173,7 @@ def measure_accuracy(
     matched_extraction_ids = 0
     total_extraction_questions = 0
     funnel = FunnelCounts()
+    reread_skipped_by_budget = 0
 
     for case_position, case in enumerate(cases, start=1):
         # Terminology (spec §1): real vision extraction is "extract+mark"; the
@@ -1204,6 +1212,7 @@ def measure_accuracy(
                     exc, case.paper_id, "extraction", case_position, cases
                 ) from exc
             extracted_ids = {a.question_id for a in extracted.answers}
+            reread_skipped_by_budget += extracted.reread_skipped_by_budget
             total_extraction_questions += len(case.ground_truth)
             matched_extraction_ids += sum(1 for qid in case.ground_truth if qid in extracted_ids)
         else:
@@ -1370,6 +1379,7 @@ def measure_accuracy(
         ),
         eval_records=eval_records,
         funnel=funnel,
+        reread_skipped_by_budget=reread_skipped_by_budget,
     )
 
 
@@ -1481,6 +1491,15 @@ def format_report(result: AccuracyResult, targets: object) -> str:
     # sequence that could increase (e.g. extracted=2 -> matched=3), which
     # reads as a denominator growing mid-funnel. Reported separately instead.
     lines.append(f"  (extracted={f.extracted} — independent count, not a stage of the chain above)")
+
+    if result.reread_skipped_by_budget:
+        lines.append("")
+        lines.append(
+            f"WARNING: {result.reread_skipped_by_budget} re-read(s) were skipped by the "
+            "wall-clock budget (GeminiSettings.reread_budget_seconds) -- this run's marks "
+            "are timing-dependent and not comparable with another run's (#263)"
+        )
+
     return "\n".join(lines)
 
 
@@ -1522,6 +1541,7 @@ def save_result(result: AccuracyResult, output_dir: Path) -> Path:
             for b in result.calibration
         ],
         "prompt_versions": result.prompt_versions,
+        "reread_skipped_by_budget": result.reread_skipped_by_budget,
         "question_results": [
             {
                 "question_id": r.question_id,

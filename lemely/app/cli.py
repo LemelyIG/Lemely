@@ -1187,6 +1187,17 @@ def aggregate_subject_cmd(
         "scan_path and errors otherwise (no silent fallback)."
     ),
 )
+@click.option(
+    "--fail-on-skipped-rereads",
+    "fail_on_skipped_rereads",
+    is_flag=True,
+    default=False,
+    help=(
+        "Exit non-zero when any crop-and-re-read was skipped by the wall-clock "
+        "budget (#263): such a run's marks are timing-dependent, so a sweep meant "
+        "for comparison should refuse to publish them."
+    ),
+)
 @click.pass_context
 def measure_accuracy_cmd(
     ctx: click.Context,
@@ -1194,6 +1205,7 @@ def measure_accuracy_cmd(
     results_dir: str,
     cache_mode: str,
     arm: str | None,
+    fail_on_skipped_rereads: bool,
 ) -> None:
     """Measure correction accuracy against the golden dataset.
 
@@ -1285,6 +1297,11 @@ def measure_accuracy_cmd(
         )
     if m.flag_recall < t.flag_recall_target:
         failed.append(f"flag_recall {m.flag_recall:.3f} < {t.flag_recall_target}")
+    if fail_on_skipped_rereads and result.reread_skipped_by_budget:
+        failed.append(
+            f"reread_skipped_by_budget {result.reread_skipped_by_budget} > 0 "
+            "(--fail-on-skipped-rereads)"
+        )
 
     # M0.9 (#33): the review-rate two-part ratchet gate. review_rate() must be
     # fed only a dev-split run's records (spec §5). measure_accuracy() always

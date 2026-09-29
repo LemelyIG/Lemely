@@ -1135,6 +1135,67 @@ class MeasureAccuracyTests(unittest.TestCase):
         self.assertTrue(oracle_keys)
         self.assertEqual(oracle_keys, extract_keys)
 
+    def test_rereads_skipped_by_the_budget_are_summed_and_warned_about(self):
+        """#263: a run whose re-reads were cut short by
+        ``GeminiSettings.reread_budget_seconds`` produces timing-dependent
+        marks, and nothing in the harness or the report said so."""
+        from lemely.accuracy.harness import (
+            DEFAULT_RENDER,
+            GoldenAnswer,
+            GoldenCase,
+            format_report,
+            measure_accuracy,
+        )
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+        from lemely.runtime.config import Settings
+
+        scan_path = Path("/nonexistent/scan.pdf")
+        cases = [
+            GoldenCase(
+                paper_id=f"p-skip-{i}",
+                mark_scheme=self._mark_scheme(["1"]),
+                ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+                scan_path=scan_path,
+                renders={DEFAULT_RENDER: scan_path},
+            )
+            for i in range(2)
+        ]
+        skipped = iter([2, 3])
+
+        def _extract(*_a: object, **_k: object) -> ExtractedAnswers:
+            return ExtractedAnswers(
+                paper_id="p",
+                source_scan="fake",
+                answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.9)],
+                reread_skipped_by_budget=next(skipped),
+            )
+
+        with patch("lemely.web.services.grading.extract_answers", side_effect=_extract):
+            result = measure_accuracy(cases, gemini_client=None, settings=None, arm="extract+mark")
+
+        self.assertEqual(result.reread_skipped_by_budget, 5)
+        report = format_report(result, Settings().accuracy_eval)
+        self.assertIn("WARNING: 5 re-read(s) were skipped by the wall-clock budget", report)
+
+    def test_a_run_with_no_skipped_rereads_does_not_warn(self):
+        from lemely.accuracy.harness import (
+            GoldenAnswer,
+            GoldenCase,
+            format_report,
+            measure_accuracy,
+        )
+        from lemely.runtime.config import Settings
+
+        case = GoldenCase(
+            paper_id="p-clean",
+            mark_scheme=self._mark_scheme(["1"]),
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=None,
+        )
+        result = measure_accuracy([case], gemini_client=None, settings=None)
+        self.assertEqual(result.reread_skipped_by_budget, 0)
+        self.assertNotIn("WARNING", format_report(result, Settings().accuracy_eval))
+
 
 class EvalRecordDerivationBitIdenticalTests(unittest.TestCase):
     """M0.1 acceptance line (spec §4): AccuracyMetrics reproduced bit-identically
