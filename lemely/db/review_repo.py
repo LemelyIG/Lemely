@@ -636,11 +636,14 @@ class ReviewService:
         Raises:
             ReviewNotFoundError: no such item; or the item is console-sourced;
                 or the item has no upload; or the item has no persisted box.
-                All of these are "there is no image here" and are deliberately
-                indistinguishable to the caller — same type, same message: a
-                404 that varied by reason would let a caller probe which
-                students have scans, and confirm that a guessed id names a real
-                item. The distinguishable reason is logged server-side.
+                All of these are "there is no image here" for an item the
+                caller may see, and are deliberately indistinguishable to the
+                caller — same type, same message: a 404 that varied by reason
+                would let a caller learn which of their students have scans
+                on file. It does not hide that an id names a real item: an
+                existing item outside the caller's scope is the 403 below,
+                as on :meth:`get_item` (triage F9; see #248). The
+                distinguishable reason is logged server-side.
             ReviewOwnershipError: the item exists but its attempt's owner is not
                 one of the caller's visible students (403).
             ReviewValidationError: the five columns do not form a usable box

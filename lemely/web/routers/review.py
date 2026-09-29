@@ -641,10 +641,18 @@ def get_review_item_crop(
     ownership itself, and must not learn to: an image endpoint that resolves
     its own is where IDOR gets written, because it reads as "just serve bytes".
 
-    Every "there is no image here" — no such item, a console item, no upload, no
-    box, or a stored object that has expired — answers with the same 404 and the
-    same body, so the response cannot be used to probe which students have scans
-    on file. The distinguishable reason is logged server-side instead.
+    An item outside the caller's scope is a 403, exactly as on
+    :func:`get_review_item` (``ReviewOwnershipError`` through ``_raise_for``);
+    the two routes must never disagree about the same caller and item, and
+    ``test_crop_route_refuses_a_caller_who_cannot_see_the_student`` pins that
+    by comparison. For an item the caller MAY see, every "there is no image
+    here" — no such item, a console item, no upload, no box, or a stored
+    object that has expired — answers with the same 404 and the same body, so
+    the response cannot be used to learn which of the caller's students have
+    scans on file or why a crop is missing. The distinguishable reason is
+    logged server-side instead. Ownership is checked before any of those
+    absences is evaluated, so an out-of-scope caller learns nothing about
+    scans at all (triage F9; the broader 403-vs-404 question is #248).
     """
     try:
         object_path, box = service.get_item_crop_source(auth.user_id, auth.role, item_id)
