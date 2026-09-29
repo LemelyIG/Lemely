@@ -114,6 +114,9 @@ export interface PipelineHealth {
    * against the golden fixture set is produced by the harness into `reports/`,
    * not by anything a request can reach. */
   markingAccuracyNote: string
+  /** Attempts more than a day past their purge cutoff and still present — a
+   * purge sweep that keeps failing, made visible. */
+  purgeBacklog: number
 }
 
 // ── Schools (D7.8, spec §1.1: the account graph's missing first link) ──────

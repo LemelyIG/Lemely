@@ -104,6 +104,12 @@ _AVATAR_PIL_FORMATS: dict[str, str] = {
 # false) is rejected outright rather than silently ignored.
 _AT_RISK_ALERT_ROLES = frozenset({Role.teacher.value, Role.parent.value})
 
+# Task 17, R10: review_withdrawn fires only for a teacher (Task 9's
+# `_notify_withdrawn_reviewers` never targets any other role), so it gets the
+# same null-on-GET / 422-on-disallowed-PUT treatment as atRiskAlert above,
+# narrowed to the one role it actually applies to.
+_REVIEW_WITHDRAWN_ROLES = frozenset({Role.teacher.value})
+
 
 def _to_dto(row: NotificationPreferencesRow, *, role: str) -> NotificationPreferencesDTO:
     """Convert a preferences row to its DTO, nulling ``atRiskAlert`` by role."""
@@ -113,6 +119,7 @@ def _to_dto(row: NotificationPreferencesRow, *, role: str) -> NotificationPrefer
         streakWarning=row.streak_warning,
         studyPlanReminder=row.study_plan_reminder,
         atRiskAlert=row.at_risk_alert if role in _AT_RISK_ALERT_ROLES else None,
+        reviewWithdrawn=row.review_withdrawn if role in _REVIEW_WITHDRAWN_ROLES else None,
         quietHoursStart=row.quiet_hours_start,
         quietHoursEnd=row.quiet_hours_end,
     )
@@ -160,8 +167,9 @@ def put_notification_preferences(
     Only fields present in the request body are changed — an omitted field is
     left as-is; an explicit ``null`` on the quiet-hours pair clears that
     bound (``payload.model_fields_set`` is how "omitted" and "explicitly
-    sent" are told apart). ``atRiskAlert`` is teacher/parent only (G-12): any
-    other role supplying it at all — ``true`` or ``false`` — is a 422, never
+    sent" are told apart). ``atRiskAlert`` is teacher/parent only (G-12), and
+    ``reviewWithdrawn`` is teacher only (R10): either role supplying its
+    disallowed field at all — ``true`` or ``false`` — is a 422, never
     silently dropped. Setting exactly one of the quiet-hours pair is also a
     422 (enforced by the service).
     """
@@ -170,6 +178,11 @@ def put_notification_preferences(
         raise HTTPException(
             status_code=422,
             detail="atRiskAlert is only settable for the teacher and parent roles.",
+        )
+    if "reviewWithdrawn" in provided and auth.role not in _REVIEW_WITHDRAWN_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail="reviewWithdrawn is only settable for the teacher role.",
         )
 
     try:
@@ -198,6 +211,11 @@ def put_notification_preferences(
             at_risk_alert=(
                 _required_bool(payload.atRiskAlert, field="atRiskAlert")
                 if "atRiskAlert" in provided
+                else UNSET
+            ),
+            review_withdrawn=(
+                _required_bool(payload.reviewWithdrawn, field="reviewWithdrawn")
+                if "reviewWithdrawn" in provided
                 else UNSET
             ),
             quiet_hours_start=payload.quietHoursStart if "quietHoursStart" in provided else UNSET,

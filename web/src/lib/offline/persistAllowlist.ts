@@ -37,3 +37,34 @@ export function isPersistableQueryKey(key: readonly unknown[]): boolean {
     (prefix) => prefix.length <= key.length && prefix.every((segment, i) => key[i] === segment),
   )
 }
+
+/** The minimal shape `main.tsx`'s `PersistQueryClientProvider` reads off a
+ * react-query `Query` — narrowed so {@link shouldPersistQuery} is callable
+ * (and testable) without constructing a real `Query`. */
+export interface PersistableQuery {
+  queryKey: readonly unknown[]
+  state: { status: string }
+}
+
+/**
+ * `PersistQueryClientProvider`'s `dehydrateOptions.shouldDehydrateQuery`
+ * (Task 10 B6b; Task 18 e2e fix).
+ *
+ * tanstack's own default `shouldDehydrateQuery` is exactly
+ * `query.state.status === "success"`
+ * (https://tanstack.com/query/latest/docs/reference/hydration#dehydrate) —
+ * replacing it with the allowlist check alone (as this app's grades/review
+ * carve-out needs) silently dropped that guard, so a query still `"pending"`
+ * (or `"error"`) at the moment a persist fired got dehydrated mid-flight.
+ * Its in-progress retryer state isn't JSON-serialisable, so the very next
+ * `restoreClient` hydrate call threw (`TypeError: promise.then is not a
+ * function` inside `@tanstack/query-persist-client-core`'s `hydrate`),
+ * discarding the whole persisted cache — reproduced live via Playwright on
+ * an ordinary page load (`paper-deletion.spec.ts`, `student-journey.spec.ts`),
+ * unrelated to any query this app actually wants persisted mid-fetch.
+ * Restoring the status check fixes it: only a query that both finished
+ * successfully AND carries an allowlisted key is ever written to IndexedDB.
+ */
+export function shouldPersistQuery(query: PersistableQuery): boolean {
+  return query.state.status === "success" && isPersistableQueryKey(query.queryKey)
+}

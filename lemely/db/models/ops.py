@@ -113,6 +113,13 @@ class ReviewQueueItem(TimestampMixin, Base):
     is_audit: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, default=False, server_default=sa.false()
     )
+    withdrawn_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    """Set with ``status = withdrawn`` when the attempt was soft-deleted.
+
+    Holds **exactly** the attempt's ``deleted_at``, which is what lets restore
+    reopen precisely the items that deletion withdrew and no others
+    (design 2026-09-22 §6).
+    """
 
     question_result: Mapped[object] = relationship(
         "QuestionResult", back_populates="review_queue_items"
@@ -471,6 +478,9 @@ class NotificationPreference(TimestampMixin, Base):
         sa.Boolean, nullable=False, server_default=sa.true()
     )
     at_risk_alert: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.true()
+    )
+    review_withdrawn: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, server_default=sa.true()
     )
     quiet_hours_start: Mapped[time | None] = mapped_column(sa.Time(), nullable=True)

@@ -20,18 +20,22 @@
  * it. This is `./data.ts`'s rule, applied to a page where the cost of breaking
  * it is higher: **a claim with no source comment does not ship.**
  *
- * Three things are therefore deliberately absent, and their absence is the
+ * Two things are therefore deliberately absent, and their absence is the
  * design rather than an oversight:
  *
  *   - No legal basis, no jurisdiction, no data-controller identity, no rights
  *     statement, no contact address. There is no operator in this repository to
  *     name and no inbox to promise a reply from. Inventing "privacy@lemely" is
  *     the dead-navigation defect (a link to nothing) wearing a serious face.
- *   - No retention period, because there is no retention machinery. See
- *     `notYetBuilt` below: nothing in `lemely/` purges, expires or anonymises
- *     anything, which was verified rather than assumed.
  *   - No terms of service at all. Nothing in this codebase implies a contract
  *     between anybody and anybody.
+ *
+ * A retention period used to be on this list of absences: earlier versions of
+ * this file said there was no retention machinery to describe. That stopped
+ * being true once paper deletion shipped. `RETENTION_DAYS` in
+ * `lemely/core/deletion.py` is the one number behind the window described in
+ * `deletion` below, and it is the actual restore window and the actual
+ * integrity hold, not a figure chosen for this page.
  *
  * If a sentence here stops being true, that is a defect in this file, and the
  * fix is to change the sentence rather than to soften it.
@@ -98,7 +102,7 @@ export const dataHandlingSections: DataHandlingSection[] = [
      * records that a quiz attempt carries no grade at all rather than an
      * invented one.
      */
-    body: "A scan is kept as a file in Google Cloud Storage, along with its original filename, its type, its size and how many pages it has. What Lemely works out from it is stored separately: the marks for each question, a total, a grade where the grade boundaries for that paper are known, and how confident the marker was about each mark.",
+    body: "A scan is kept as a file in Google Cloud Storage, along with its original filename, its type, its size and how many pages it has. What Lemely works out from it is stored separately: the marks for each question, a total, a grade where the grade boundaries for that paper are known, and how confident the marker was about each mark. You can delete a paper you have uploaded; see below for what that removes and what it keeps.",
   },
   {
     heading: "Your scan is sent to Google",
@@ -179,9 +183,10 @@ export const dataHandlingSections: DataHandlingSection[] = [
      * from nowhere else in the client.
      *
      * "Lemely's backend" and "Google Cloud Logging" name where the report
-     * goes and stops, not a promise about retention: this page has no
-     * retention machinery to describe (see `notYetBuilt` below), and a crash
-     * report is no exception to that gap. The client IP is not something
+     * goes and stops, not a promise about how long Cloud Logging keeps it:
+     * that is Google's retention, not a rule this codebase sets, and it is a
+     * different thing from the 30-day paper retention `deletion` describes
+     * below, which this backend does control. The client IP is not something
      * this client sends; it is what every HTTP request carries and what
      * Cloud Logging records the request as having arrived from, the same as
      * it would for any other route this backend serves.
@@ -196,23 +201,81 @@ export const dataHandlingSections: DataHandlingSection[] = [
   },
 ]
 
+/** The public shape of the deletion feature, for `DataHandlingDeletion` below. */
+export interface DataHandlingDeletion {
+  tag: string
+  heading: string
+  removes: string
+  keeps: string
+  window: string
+  hold: string
+}
+
 /**
- * The gap, stated on the page rather than left out.
+ * What deleting a paper actually does, stated the same way as every other
+ * panel on this page: as a description of behaviour, checked against a named
+ * module.
  *
- * Established by search across `lemely/` while preparing this page, and
- * recorded in D6.8: nothing purges, expires or anonymises a scan, an attempt or
- * an account, and no route deletes an account. `DELETE` routes exist for a
- * flashcard deck, a class, an announcement, a friendship and a device, and for
- * nothing else.
+ * This replaces a panel that used to say the opposite: that nothing could be
+ * deleted, and nothing purged on a schedule. Once paper deletion shipped, that
+ * panel was no longer a gap being disclosed, it was a claim contradicted by
+ * the code beside it. Keeping it as a labelled panel rather than folding it
+ * into a paragraph is still §4's rule that a caveat, or here a load-bearing
+ * fact, gets a chip rather than a colour.
  *
- * Putting this in a labelled panel rather than a paragraph is §4's rule that a
- * caveat gets a chip rather than a colour: a reader skimming headings should
- * not be able to miss the one item here that is missing rather than present.
+ * There is still no account deletion (no route removes a `users` row), so
+ * that absence is not restated here; this panel is about a paper, which is
+ * the thing a reader who found this page is likeliest to be asking about.
  */
-export const notYetBuilt = {
-  tag: "Not built yet",
-  heading: "There is no way to delete any of this",
-  body: "Lemely has no account deletion and no way to remove a scan you have uploaded. Nothing is deleted on a schedule either, so a paper uploaded today stays until someone removes it by hand. This is a real gap, and it is written here rather than left out.",
+export const deletion: DataHandlingDeletion = {
+  tag: "Deletion",
+  heading: "Deleting a paper",
+  /*
+   * `PaperDeletionService.delete` (`lemely/db/deletion_repo.py`) is the whole
+   * of this: the unit is the upload (R7, §13), so deleting one attempt
+   * deletes every attempt marked from that scan, the upload row, and (per
+   * `lemely/web/purge.py`'s own comment) the scan and a student's own
+   * uploaded mark-scheme scan kept beside it. `WeaknessRecord.attempt_id`
+   * (`lemely/db/models/attempts.py`) cascades on the attempt, so a weakness
+   * worked out from a deleted paper goes with it.
+   */
+  removes:
+    "Deleting a paper removes the scan, and a mark-scheme scan you uploaded alongside it, the upload record, every marking run made from that scan, the marks and per-question history from each of those runs, and the weaknesses worked out from them.",
+  /*
+   * Mark-scheme reference data: `lemely/web/purge.py`'s module docstring
+   * names this exactly, "the `mark_schemes` table is shared reference data
+   * and is never touched". XP and streak history: a separate table
+   * (`lemely/db/xp_repo.py`), untouched by `PaperDeletionService` or the
+   * purge job. The review-queue notice: `NotificationType.review_withdrawn`,
+   * sent from `lemely/web/routers/student_deletion.py` when a deleted paper
+   * had an open review item, so a teacher who was reviewing it is told it
+   * was withdrawn rather than being left looking at a queue item for a paper
+   * that quietly vanished. A parent linked to the student keeps seeing that
+   * student's ongoing history; nothing on a parent's screen shows that a
+   * paper was deleted.
+   */
+  keeps:
+    "It keeps the mark scheme itself, since that is shared reference data other students use, and it keeps your XP and streak history. If the paper was in a teacher's review queue, the teacher keeps a notice that a review item was withdrawn, a record that a paper existed without the paper itself. A parent linked to the student still sees that student's ongoing history, with nothing shown about a deletion.",
+  /*
+   * `RETENTION_DAYS` in `lemely/core/deletion.py` is 30, and its own
+   * docstring says it is deliberately one number for both the restore window
+   * and D8's integrity hold, so this page never states a second one. The
+   * file staying in Google Cloud Storage during the window, rather than
+   * being removed immediately, is `purge.py`'s "GCS first, the row as the
+   * record of intent": nothing is destroyed until the window has passed.
+   * Teacher console uploads (R2) purge on the same cutoff, via
+   * `purge_expired_teacher_papers` in the same module.
+   */
+  window:
+    "A deleted paper can be restored for 30 days from a Recently Deleted list, and the file stays in Google Cloud Storage for that window so restoring it brings back the same scan. After 30 days it is removed for good. A teacher who deletes a paper they uploaded through the grading console works to the same 30-day terms. A teacher can also unshare a paper from one class, so it stops appearing in that class's view and analytics; the student's own copy is unchanged.",
+  /*
+   * The integrity hold (D8), worded without a reason: `PaperDeletionService`
+   * and `BUILD/QUALITY-BAR.md` both say the flags behind it are teacher-only
+   * and must never reach a student-facing surface, so this sentence names
+   * the wait and the date and stops there, on the owner's ruling (R5/R9)
+   * rather than by omission.
+   */
+  hold: "In some cases a paper can't be deleted for up to 30 days after it was marked; Lemely tells you the date when that applies.",
 }
 
 /**

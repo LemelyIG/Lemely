@@ -90,6 +90,15 @@ export const STUDENT_SAVE_REJECTED =
   "We couldn't save that. Nothing you typed has been lost, so you can try again."
 
 /**
+ * A 410 on a restore (Task 14 review, Minor 1): the paper's restore window
+ * has already closed, or the purge job already took it, before this
+ * request landed — `POST /student/attempts/{attemptId}/restore` per Task 8.
+ * Reason-free like every other student-facing deletion sentence: it says
+ * what happened, never why the window is what it is.
+ */
+export const STUDENT_RESTORE_WINDOW_CLOSED = "This paper can no longer be restored."
+
+/**
  * Turn a failed read into a sentence, for the body of an `ErrorState`.
  *
  * `request()` wraps a `fetch` rejection as `ApiError(0, String(err))`, so
@@ -119,6 +128,7 @@ export function studentSaveFailureMessage(err: unknown): string {
   if (err.status === 0) return STUDENT_NETWORK_FAILURE
   if (err.status === 401) return STUDENT_SIGNED_OUT
   if (err.status === 403) return STUDENT_NOT_YOURS
+  if (err.status === 410) return STUDENT_RESTORE_WINDOW_CLOSED
   if (err.status === 422) return STUDENT_SAVE_REJECTED
   return STUDENT_SERVICE_FAILURE
 }

@@ -1,10 +1,12 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 */
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { Camera } from "@phosphor-icons/react"
+import { Camera, Trash } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { CameraCapture } from "@/components/CameraCapture"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
+import { RETENTION_DAYS } from "@/lib/paperDeletion"
 import { ProgressRing } from "@/components/ui/progress-ring"
 import { readSharedScan } from "@/lib/sharedScan"
 import { setHasUnsubmittedScan } from "@/lib/activeScanGuard"
@@ -24,6 +26,7 @@ import {
 import { failActiveStage } from "@/lib/pipelineStages"
 import { useInViewOnce } from "@/lib/hooks/useInViewOnce"
 import {
+  useDeleteTeacherPaper,
   usePapers,
   usePaperDetail,
   useRegradePaper,
@@ -137,6 +140,74 @@ const UPLOAD_STAGES: ProcessingStage[] = [
   { id: "upload", label: "Uploading the scan", status: "pending" },
 ]
 
+/**
+ * The console grid's per-card delete control (Task 17, R2; restructured by
+ * the review that followed it — see `PaperCard`'s own comment on why).
+ *
+ * This component and its render output are **not nested inside** the
+ * open-paper `<button>` `PaperCard` renders — they are its sibling. That is
+ * the whole fix: a click or a keydown on this trigger, or on anything the
+ * portaled `ConfirmModal` renders, has no ancestor `onClick`/`onKeyDown` to
+ * bubble into, so nothing here needs `stopPropagation`, and nothing here
+ * needs `aria-hidden` on an interactive control to fence a boundary that no
+ * longer exists. `min-w-11 min-h-11` (44px, BUILD/REDESIGN-MISSION.md §"hit
+ * target floor") is the *tap* target; the visible circle stays smaller so a
+ * 64px-tall thumbnail is not dominated by a 44px badge.
+ *
+ * No pre-signalling beyond ownership: a card gets the trash icon exactly
+ * when `paper.canDelete` is true, matching `DELETE /papers/{id}`'s own
+ * uploader-only rule — a school/platform admin browsing another teacher's
+ * paper simply sees no icon, rather than a confirm dialog that 404s.
+ */
+function DeletePaperControl({ paper }: { paper: PaperSummary }) {
+  const deletePaper = useDeleteTeacherPaper()
+  const [open, setOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleConfirm() {
+    setError(null)
+    try {
+      await deletePaper.mutateAsync({ paperId: paper.id })
+      setOpen(false)
+    } catch (err) {
+      setError(teacherMutationFailureMessage(err))
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={`Delete ${paper.name}`}
+        title="Delete"
+        onClick={() => {
+          setError(null)
+          setOpen(true)
+        }}
+        className="group absolute top-2.5 start-2.5 min-w-11 min-h-11 flex items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      >
+        <span className="w-7 h-7 rounded-full bg-paper-raised/90 border border-rule flex items-center justify-center text-ink-faint transition-colors group-hover:text-err group-hover:border-err">
+          <Trash size={14} weight="bold" />
+        </span>
+      </button>
+      <ConfirmModal
+        open={open}
+        title="Delete this paper?"
+        consequence={`It moves to Recently deleted, where you can restore it for ${RETENTION_DAYS} days.`}
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        pending={deletePaper.isPending}
+        error={error}
+        onConfirm={() => void handleConfirm()}
+        onCancel={() => {
+          setOpen(false)
+          setError(null)
+        }}
+      />
+    </>
+  )
+}
+
 function PaperCard({
   paper,
   onOpen,
@@ -162,73 +233,103 @@ function PaperCard({
       : "-"
 
   return (
+    // Not itself interactive; `onOpen` and `DeletePaperControl` each live on
+    // their own sibling `<button>` below so neither control's keydown
+    // bubbles into the other.
     <div
       ref={setCardNode}
-      onClick={onOpen}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault()
-          onOpen()
-        }
-      }}
       className={cn(
-        "rounded-md overflow-hidden bg-paper-raised cursor-pointer transition-transform hover:-translate-y-0.5 border",
+        // Focus ring is a `box-shadow` on this container, scoped to
+        // `has-[[data-open-trigger]:focus-visible]` (the open button's own
+        // `data-` attribute, not the sibling delete button's), because
+        // `index.css`'s unlayered global `:focus-visible` rule overrides
+        // every Tailwind `focus-visible:outline-*` utility app-wide and the
+        // container's `overflow-hidden` clips anything the button itself
+        // draws outside its own box — a `box-shadow` on the container is
+        // affected by neither. `forced-colors:outline-*` adds a real
+        // outline for Windows High Contrast, where `box-shadow` does not
+        // render (WCAG 2.4.7); the container's own outline is never clipped
+        // by its own `overflow-hidden`, which only clips descendants.
+        // `[@media(hover:hover)]:has-[:hover]` guards the hover lift so a
+        // touch tap's phantom `:hover` doesn't leave the card stuck lifted.
+        "relative rounded-md overflow-hidden bg-paper-raised border transition-transform [@media(hover:hover)]:has-[:hover]:-translate-y-0.5 has-[[data-open-trigger]:focus-visible]:ring-2 has-[[data-open-trigger]:focus-visible]:ring-focus-ring forced-colors:has-[[data-open-trigger]:focus-visible]:outline forced-colors:has-[[data-open-trigger]:focus-visible]:outline-2 forced-colors:has-[[data-open-trigger]:focus-visible]:outline-[CanvasText] forced-colors:has-[[data-open-trigger]:focus-visible]:outline-offset-2",
         paper.kind === "review" ? "border-err" : "border-rule",
       )}
     >
-      <div className="relative h-[64px] bg-paper-sunk border-b border-rule overflow-hidden">
-        {previewUrl ? (
-          // Top-anchored: a scan's identifying marks (subject, paper number,
-          // candidate box) are at the head of page 1, so a 64px window onto the
-          // top of the page is the part worth showing. `alt` is empty because
-          // the card's own name/status text already names this paper — a
-          // screen-reader would otherwise hear the same paper announced twice.
-          <img
-            src={previewUrl}
-            alt=""
-            decoding="async"
-            className="w-full h-full object-cover object-top"
-          />
-        ) : null}
-        {paper.kind === "review" ? (
-          <div className="absolute top-2.5 end-2.5 w-5 h-5 rounded-full bg-err text-accent-on text-data-sm flex items-center justify-center">
-            !
-          </div>
-        ) : null}
-        {showSpinner ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-paper-sunk/70">
-            <div className="w-[26px] h-[26px] rounded-full border-[3px] border-rule border-t-accent animate-spin" />
-          </div>
-        ) : null}
-      </div>
-      <div className="px-[13px] py-3">
-        <div className="flex items-center gap-2">
-          {/* `min-w-0` + `truncate`: a flex child's default `min-width: auto`
-              refuses to shrink below its content, so a long name (the detected
-              label is longer still — "Paper 1 V2 May/June 2020 - 2026-08-12")
-              pushed the status chip off the card's right edge and clipped it. */}
-          <div className="text-body-lg font-medium flex-1 min-w-0 truncate" title={paper.name}>
-            {paper.name}
-          </div>
-          <div
-            className={cn(
-              "text-eyebrow rounded-full px-[9px] py-1 whitespace-nowrap flex-none",
-              CHIP_TONE[paper.kind],
-            )}
-          >
-            {paper.status}
-          </div>
-        </div>
-        <div className="flex items-baseline gap-2 mt-[9px]">
-          {confText ? (
-            <div className={cn("text-data-sm", confTone)}>{confText}</div>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Open ${paper.name}`}
+        // Named for the container's `has-[[data-open-trigger]:focus-visible]`
+        // selector above — see that comment for why a bare `has-[]` was not
+        // specific enough (the delete button is this element's sibling, not
+        // its descendant, but is still a direct child of the same
+        // container).
+        data-open-trigger=""
+        // No `focus-visible:outline-*` here — the visible indicator lives on
+        // the container above instead, via `has-[:focus-visible]` (see its
+        // comment). This button still receives the app-wide global outline
+        // on focus, but it is permanently clipped by the container.
+        className="block w-full rounded-md text-start cursor-pointer"
+      >
+        <div className="relative h-[64px] bg-paper-sunk border-b border-rule overflow-hidden">
+          {previewUrl ? (
+            // Top-anchored: a scan's identifying marks (subject, paper number,
+            // candidate box) are at the head of page 1, so a 64px window onto the
+            // top of the page is the part worth showing. `alt` is empty because
+            // the card's own name/status text already names this paper — a
+            // screen-reader would otherwise hear the same paper announced twice.
+            <img
+              src={previewUrl}
+              alt=""
+              decoding="async"
+              className="w-full h-full object-cover object-top"
+            />
           ) : null}
-          <div className="flex-1" />
-          <div className="text-data-md text-ink">{scoreText}</div>
+          {paper.kind === "review" ? (
+            <div className="absolute top-2.5 end-2.5 w-5 h-5 rounded-full bg-err text-accent-on text-data-sm flex items-center justify-center">
+              !
+            </div>
+          ) : null}
+          {showSpinner ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-paper-sunk/70">
+              <div className="w-[26px] h-[26px] rounded-full border-[3px] border-rule border-t-accent animate-spin" />
+            </div>
+          ) : null}
         </div>
-      </div>
+        <div className="px-[13px] py-3">
+          <div className="flex items-center gap-2">
+            {/* `min-w-0` + `truncate`: a flex child's default `min-width: auto`
+                refuses to shrink below its content, so a long name (the detected
+                label is longer still — "Paper 1 V2 May/June 2020 - 2026-08-12")
+                pushed the status chip off the card's right edge and clipped it. */}
+            <div className="text-body-lg font-medium flex-1 min-w-0 truncate" title={paper.name}>
+              {paper.name}
+            </div>
+            <div
+              className={cn(
+                "text-eyebrow rounded-full px-[9px] py-1 whitespace-nowrap flex-none",
+                CHIP_TONE[paper.kind],
+              )}
+            >
+              {paper.status}
+            </div>
+          </div>
+          <div className="flex items-baseline gap-2 mt-[9px]">
+            {confText ? (
+              <div className={cn("text-data-sm", confTone)}>{confText}</div>
+            ) : null}
+            <div className="flex-1" />
+            <div className="text-data-md text-ink">{scoreText}</div>
+          </div>
+        </div>
+      </button>
+      {/* Sibling of the open-button above, not a descendant of it — see the
+          container comment. Positioned to sit over the same top-start
+          corner of the thumbnail it always has, since this container (not
+          the button) is what carries `relative` now. Rendered only for the
+          uploader — see `DeletePaperControl`'s own comment. */}
+      {paper.canDelete ? <DeletePaperControl paper={paper} /> : null}
     </div>
   )
 }

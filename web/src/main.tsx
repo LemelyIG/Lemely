@@ -4,7 +4,7 @@ import { RouterProvider } from "react-router-dom"
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client"
 import { queryClient } from "./lib/queryClient"
 import { persister } from "./lib/offline/queryPersister"
-import { isPersistableQueryKey } from "./lib/offline/persistAllowlist"
+import { shouldPersistQuery } from "./lib/offline/persistAllowlist"
 import { AuthProvider } from "./lib/auth/AuthContext"
 import { router } from "./App"
 import { registerPushClientBridge } from "./lib/push/pushClientBridge"
@@ -101,11 +101,13 @@ createRoot(document.getElementById("root")!).render(
      * up. `buster: currentBuildId()` means a deploy invalidates the whole
      * persisted cache rather than rehydrating a shape an older build wrote —
      * the same build-id guard `lib/staleChunk.ts` already uses for chunk
-     * URLs. `shouldDehydrateQuery` is the one line that matters most:
-     * `isPersistableQueryKey` is an allowlist (`lib/offline/
-     * persistAllowlist.ts`'s own header explains why), so grades, an active
-     * marking run and the review queue are never written to IndexedDB at
-     * all, not merely excluded on read.
+     * URLs. `shouldDehydrateQuery` (`shouldPersistQuery`, `lib/offline/
+     * persistAllowlist.ts` — its own header has the full reasoning,
+     * including the status-check fix this needed) is the one line that
+     * matters most: an allowlist AND a "finished successfully" check, so
+     * grades, an active marking run and the review queue are never written
+     * to IndexedDB at all, not merely excluded on read, and a query still
+     * mid-fetch when a persist fires never corrupts the next restore.
      */}
     <PersistQueryClientProvider
       client={queryClient}
@@ -113,7 +115,9 @@ createRoot(document.getElementById("root")!).render(
         persister,
         maxAge: 24 * 60 * 60 * 1000,
         buster: currentBuildId(),
-        dehydrateOptions: { shouldDehydrateQuery: (query) => isPersistableQueryKey(query.queryKey) },
+        dehydrateOptions: {
+          shouldDehydrateQuery: shouldPersistQuery,
+        },
       }}
     >
       <AuthProvider>

@@ -68,6 +68,10 @@ export function staffTypeLabel(type: string): string {
     grade_ready: "Marked",
     streak_warning: "Streak",
     study_plan_reminder: "Study plan",
+    // Task 9 (D10): a student's own deletion withdrew a review item a
+    // teacher had open. Non-navigable, same as every other row here — the
+    // withdrawn item 403s if opened, so there is nowhere for a click to go.
+    review_withdrawn: "Review withdrawn",
   }
   return labels[type] ?? type
 }

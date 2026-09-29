@@ -26,19 +26,27 @@ import {
  */
 
 describe("NOTIFICATION_TOGGLES", () => {
-  it("ships exactly the five real notification types and no weekly summary", () => {
-    // UI spec §G-12 lists a sixth, "weekly summary". `NotificationType` has five
-    // members, no column, no sender and no row — a switch for it would gate
-    // nothing, which is what UI spec §1.4 forbids. If this ever reads six,
-    // check the backend enum first: the spec is not the source of truth here.
+  it("ships exactly the six real notification types and no weekly summary", () => {
+    // UI spec §G-12 lists a seventh, "weekly summary". `NotificationType` has
+    // six members (Task 17 added `review_withdrawn`, R2), no column, no
+    // sender and no row for a seventh — a switch for it would gate nothing,
+    // which is what UI spec §1.4 forbids. If this ever reads seven, check
+    // the backend enum first: the spec is not the source of truth here.
     expect(NOTIFICATION_TOGGLES.map((toggle) => toggle.key)).toEqual([
       "gradeReady",
       "announcement",
       "streakWarning",
       "studyPlanReminder",
       "atRiskAlert",
+      "reviewWithdrawn",
     ])
     expect(JSON.stringify(NOTIFICATION_TOGGLES).toLowerCase()).not.toContain("weekly")
+  })
+
+  it("gates reviewWithdrawn to the teacher role, the only role it ever fires for", () => {
+    const toggle = NOTIFICATION_TOGGLES.find((t) => t.key === "reviewWithdrawn")
+    expect(toggle?.role).toBe("teacher")
+    expect(NOTIFICATION_TOGGLES.filter((t) => t.role === "teacher")).toHaveLength(1)
   })
 
   it("gives every toggle a description, so none ships as a bare unexplained switch", () => {
