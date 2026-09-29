@@ -390,6 +390,8 @@ def test_the_paper_card_confidence_ignores_every_unscored_question() -> None:
     ``confidence_score == 0.0`` as a placeholder. One of them on a ten-question
     paper used to set the whole card's confidence.
     """
+    import uuid
+
     from lemely.web.routers.teacher import _paper_summary
 
     report = _report_of(
@@ -401,7 +403,9 @@ def test_the_paper_card_confidence_ignores_every_unscored_question() -> None:
         ]
     )
 
-    summary = _paper_summary(_row_of(report))
+    # viewer_id (develop's canDelete addition) is irrelevant to this test's
+    # confidence-only assertion; an unrelated uuid keeps the meaning unchanged.
+    summary = _paper_summary(_row_of(report), uuid.uuid4())
 
     assert summary.confidence == 0.93
 
