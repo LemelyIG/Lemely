@@ -468,11 +468,15 @@ def test_a_report_stored_before_the_ai_detection_removal_still_lists(
 ) -> None:
     """Triage F1: one pre-PR row must not 500 the whole teacher paper list.
 
-    ``repo.finish`` writes the CURRENT shape, so the legacy key is injected
-    with a raw UPDATE, exactly where develop's ``model_dump(mode="json")`` put
-    it: on every question of ``correction.questions``.
+    The injected ``report_json`` is ``_LEGACY_REPORT`` itself -- the
+    develop-exact shape asserted against directly in
+    ``test_schemas_corrected_question.py`` -- not ``repo.finish``'s current
+    shape with the key bolted on, so this proves the fix against the row
+    shape develop's code actually wrote, not an approximation of it.
     """
     import copy
+
+    from tests.test_schemas_corrected_question import _LEGACY_REPORT
 
     repo = _repo(pg_sessionmaker)
     owner = _user(pg_sessionmaker, Role.teacher)
@@ -481,16 +485,15 @@ def test_a_report_stored_before_the_ai_detection_removal_still_lists(
     repo.finish(pid, _report())
 
     with pg_sessionmaker.begin() as s:
-        stored = s.get(TeacherPaper, pid)
-        assert stored is not None and stored.report_json is not None
-        legacy = copy.deepcopy(stored.report_json)
-        for question in legacy["correction"]["questions"]:
-            question["ai_detection_flagged"] = False
-        s.execute(sa.update(TeacherPaper).where(TeacherPaper.id == pid).values(report_json=legacy))
+        s.execute(
+            sa.update(TeacherPaper)
+            .where(TeacherPaper.id == pid)
+            .values(report_json=copy.deepcopy(_LEGACY_REPORT))
+        )
 
     rows = repo.list_visible(viewer_id=owner, viewer_role=Role.teacher)
     assert [r.id for r in rows] == [pid]
-    assert rows[0].report is not None and rows[0].report.correction.awarded_marks == 7
+    assert rows[0].report is not None and rows[0].report.correction.awarded_marks == 1
     row = repo.get_visible(pid, viewer_id=owner, viewer_role=Role.teacher)
     assert row is not None and row.report is not None
     assert "ai_detection_flagged" not in row.report.correction.questions[0].model_dump()

@@ -82,7 +82,7 @@ two parallel work-streams never collide on a second Alembic head:
    inside a free-form JSONB blob via a schema migration risks corrupting
    sibling data for a lower-stakes surface. Revisit with a dedicated
    migration if this is ever judged to need cleaning up.
-   Stored reports that still carry the key load anyway:
+   Stored reports that still carry ``ai_detection_flagged`` load anyway:
    ``CorrectedQuestion._drop_removed_ai_detection_flag`` (``lemely/core/
    schemas.py``) discards exactly that key on the way in (triage F1).
 6. **Add** ``ReviewReason.random_audit`` — consumed by a later story (N2,

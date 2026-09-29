@@ -109,11 +109,20 @@ def test_a_report_stored_before_the_ai_detection_removal_still_loads() -> None:
 
 
 def test_the_legacy_key_is_the_only_unknown_key_tolerated() -> None:
+    """Both keys present: the validator must drop ``ai_detection_flagged`` and
+    ``ai_detection_flagged`` alone -- a second, unrelated unknown key must
+    still be rejected by ``extra="forbid"``. Passing only ``ai_detection_score``
+    (with no legacy key) would never exercise the validator's drop branch at
+    all, so this must send both."""
     import pytest
     from pydantic import ValidationError
 
-    with pytest.raises(ValidationError, match="ai_detection_score"):
-        _question(ai_detection_score=0.9)
+    with pytest.raises(ValidationError) as exc_info:
+        _question(ai_detection_flagged=False, ai_detection_score=0.9)
+
+    errors = exc_info.value.errors()
+    assert [e["loc"] for e in errors] == [("ai_detection_score",)]
+    assert errors[0]["type"] == "extra_forbidden"
 
 
 def test_the_before_validator_does_not_mutate_the_caller_dict() -> None:
