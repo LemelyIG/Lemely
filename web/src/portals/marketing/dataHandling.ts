@@ -131,7 +131,12 @@ export const dataHandlingSections: DataHandlingSection[] = [
      * `lemely/web/routers/parent.py:114` guards every parent route, and the
      * link itself is `ParentChildLink` (`lemely/db/models/users.py:72`).
      * Teacher access is class-scoped (`lemely/web/routers/teacher.py`,
-     * `lemely/db/models/…` class membership), and the review queue is
+     * `lemely/db/models/…` class membership). Two roles see more (#243):
+     * `teacher_paper_visible` in `lemely/db/teacher_paper_repo.py` grants a
+     * `school_admin` every paper their schools' teachers upload and a
+     * `platform_admin` every console paper, and `ClassService`
+     * (`lemely/db/class_repo.py`) gives a `school_admin` every class in their
+     * schools. The review queue is
      * `lemely/web/routers/review.py`, fed by the `needs_teacher_review` flag on
      * `Attempt` (`attempts.py:103`).
      *
@@ -139,7 +144,7 @@ export const dataHandlingSections: DataHandlingSection[] = [
      * first sentence: a parent screen that lists children is not the same claim
      * as a parent who can look up any student.
      */
-    body: "A parent who is linked to a student account can see that student's marks, weak topics and at-risk flags, and only for a student they are linked to. A teacher can see the work of students in their own classes. When Lemely is unsure about a paper it marked, that paper is put in a queue for a teacher to look at.",
+    body: "A parent who is linked to a student account can see that student's marks, weak topics and at-risk flags, and only for a student they are linked to. A teacher can see the work of students in their own classes. A school administrator can see the work of students in classes at their school, and the papers their school's teachers upload. Lemely's own platform administrators can open papers uploaded to the grading console, for support. When Lemely is unsure about a paper it marked, that paper is put in a queue for a teacher to look at.",
   },
   {
     heading: "What this site does not do",
