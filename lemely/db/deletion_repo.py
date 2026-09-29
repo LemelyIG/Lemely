@@ -38,7 +38,7 @@ from lemely.core.deletion import (
     restore_deadline,
     restore_floor,
 )
-from lemely.db.models.attempts import Attempt, QuestionResult, Upload
+from lemely.db.models.attempts import Attempt, Upload
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
     AttemptOrigin,
@@ -62,7 +62,7 @@ if TYPE_CHECKING:
 #: student's own hold. Adding a member to this set is a security decision.
 _TEACHER_CLOSED = (ReviewStatus.resolved, ReviewStatus.dismissed)
 
-_INTEGRITY_REASONS = (ReviewReason.plagiarism_flag, ReviewReason.ai_detection_flag)
+_INTEGRITY_REASONS = (ReviewReason.plagiarism_flag,)
 
 #: The refusal copy for a held paper. Generic by design (D8): it must read the
 #: same whatever the reason, so it names neither integrity nor review.
@@ -487,20 +487,25 @@ class PaperDeletionService:
     def _has_integrity_flag(self, session: Session, attempt_id: uuid.UUID) -> bool:
         """Whether any question on this attempt carries an integrity finding (D8).
 
-        Reads the two booleans, never ``review_reason`` text and never the review
-        queue: those are echoes of this fact, and an echo can be resolved away
-        while the fact stands.
+        ``0040_marker_source_blank`` dropped ``question_results.plagiarism_flagged``
+        (F4 had already dropped its ``ai_detection_flagged`` twin) — there is no
+        boolean column left on ``QuestionResult`` to read. The review-queue row
+        opened from the same ``CorrectedQuestion.plagiarism_flagged`` the column
+        was once copied from (``attempt_repo._integrity_flagged`` is the other
+        reader) IS the flag now, so this reads that row directly instead.
+        Deliberately unfiltered by :class:`~lemely.db.models.enums.ReviewStatus`,
+        matching ``_integrity_flagged``: this asks what the marking side found,
+        not whether a teacher has since acted on it —
+        :meth:`_integrity_items_closed_by_teacher` answers that question
+        separately.
         """
         return bool(
             session.scalar(
                 select(
-                    select(QuestionResult.id)
+                    select(ReviewQueueItem.id)
                     .where(
-                        QuestionResult.attempt_id == attempt_id,
-                        sa.or_(
-                            QuestionResult.plagiarism_flagged.is_(True),
-                            QuestionResult.ai_detection_flagged.is_(True),
-                        ),
+                        ReviewQueueItem.attempt_id == attempt_id,
+                        ReviewQueueItem.reason.in_(_INTEGRITY_REASONS),
                     )
                     .exists()
                 )
@@ -512,8 +517,7 @@ class PaperDeletionService:
 
         True only when at least one integrity item exists and none is outside
         :data:`_TEACHER_CLOSED` — so an open or ``withdrawn`` item keeps the
-        hold, and closing the plagiarism item does not clear an open
-        AI-detection one. Filters on **reason as well as status**: a resolved
+        hold. Filters on **reason as well as status**: a resolved
         low-confidence item says nothing about an integrity finding.
         """
         integrity_items = select(ReviewQueueItem.id).where(
