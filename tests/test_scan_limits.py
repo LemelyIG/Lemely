@@ -49,6 +49,7 @@ from tests.pdf_fakes import (
     form_also_graphics_state_bomb_pdf,
     form_xobject_cycle_pdf,
     image_bomb_pdf,
+    image_labelled_appearance_pdf,
     indirect_ap_state_bomb_pdf,
     indirect_filter_page_pdf,
     indirect_smask_dimension_bomb_pdf,
@@ -77,6 +78,7 @@ from tests.pdf_fakes import (
     tiling_pattern_image_bomb_pdf,
     tree_node_ap_state_bomb_pdf,
     type3_charproc_bomb_pdf,
+    type3_dict_font_with_jpeg_pdf,
     type3_stream_font_bomb_pdf,
     typed_form_xobject_bomb_pdf,
     xobject_also_listed_as_annotation_bomb_pdf,
@@ -859,6 +861,23 @@ class StreamRoleTests(unittest.TestCase):
         data = stamp_with_jpeg_appearance_pdf()
         check_pdf_content_bytes(data)
         check_scan_bytes(data)
+
+    def test_a_type3_dict_font_drawing_a_jpeg_from_its_resources_passes(self) -> None:
+        # Pins that a plain dict container keeps its /Resources roles: read
+        # as bare text instead, the JPEG would be met in the "any" role,
+        # counted as content, and refused as an unmeasurable encoding.
+        data = type3_dict_font_with_jpeg_pdf()
+        check_pdf_content_bytes(data)
+        check_scan_bytes(data)
+
+    def test_an_image_labelled_appearance_declaring_40000_squared_is_rejected(self) -> None:
+        # Pins that an image-labelled stream is pixel-checked in every role,
+        # not only under /XObject: this one is reached only as an /AP /N.
+        with self.assertRaises(ScanTooLargeError) as ctx:
+            check_pdf_content_bytes(image_labelled_appearance_pdf(40_000, 40_000))
+        self.assertIn("1600 megapixels", str(ctx.exception))
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(image_labelled_appearance_pdf(40_000, 40_000))
 
 
 class WalkedImageTests(unittest.TestCase):

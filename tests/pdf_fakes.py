@@ -896,6 +896,57 @@ def stamp_with_jpeg_appearance_pdf() -> bytes:
     )
 
 
+def type3_dict_font_with_jpeg_pdf() -> bytes:
+    """A legitimate (non-stream) Type3 font whose glyph draws a JPEG from the
+    font's own ``/Resources``.
+
+    The font is a plain dict container reached in the ``"font"`` role; its
+    ``/Resources`` must be read by category, so the JPEG is met under
+    ``/XObject`` and size-checked -- not counted as content, where a JPEG
+    stream cannot be measured and would be refused.
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Resources << /Font << /F1 5 0 R >> >> >>",
+            pdf_stream(b"", b"BT /F1 50 Tf 100 100 Td (a) Tj ET"),
+            b"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] "
+            b"/FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /a 6 0 R >> "
+            b"/Encoding << /Type /Encoding /Differences [97 /a] >> /FirstChar 97 /LastChar 97 "
+            b"/Widths [1000] /Resources << /XObject << /Im0 7 0 R >> >> >>",
+            pdf_stream(b"", b"1000 0 0 0 1000 1000 d1 q 1000 0 0 1000 0 0 cm /Im0 Do Q"),
+            pdf_stream(
+                b"/Type /XObject /Subtype /Image /Width 64 /Height 64 /ColorSpace /DeviceGray "
+                b"/BitsPerComponent 8 /Filter /DCTDecode",
+                b"\xff\xd8\xff\xd9",
+            ),
+        ]
+    )
+
+
+def image_labelled_appearance_pdf(width: int, height: int) -> bytes:
+    """An annotation whose ``/AP /N`` is itself an image-labelled stream
+    DECLARING ``width x height``.
+
+    Reached only in the ``"any"`` role (never under ``/XObject``), so only
+    an image check that runs in every role sees its declared size.
+    """
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" /Annots [5 0 R] >>",
+            pdf_stream(b"", b"q Q"),
+            b"<< /Type /Annot /Subtype /Stamp /Rect [0 0 200 200] /AP << /N 6 0 R >> >>",
+            pdf_stream(
+                f"/Type /XObject /Subtype /Image /Width {width} /Height {height} "
+                "/ColorSpace /DeviceGray /BitsPerComponent 8 /BBox [0 0 200 200] "
+                "/Filter /FlateDecode".encode(),
+                zlib.compress(b"\x00"),
+            ),
+        ]
+    )
+
+
 def form_also_graphics_state_bomb_pdf(inflated_bytes: int, *, xobject_first: bool) -> bytes:
     """One Form XObject (object 5) used both as an ``/XObject`` and as a
     graphics state, whose ``/SMask`` group (object 7) is a Form bomb.
