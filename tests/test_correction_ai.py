@@ -2856,6 +2856,50 @@ class LegacyBackstopOnGroupCappedTotalTests(unittest.TestCase):
         self.assertEqual(cq.awarded_marks, 3)
         self.assertEqual(cq.matched_point_ids, ["i1", "a0", "i2"])
 
+    def _independent(self, *calculated):
+        """3 independent 1-mark points; the ids in ``calculated`` carry a
+        value absent from the answer, so the backstop rejects them."""
+        from lemely.core.loose_schemas import AnswerPoint, CalculatedAnswer, Question, QuestionType
+
+        return Question(
+            id="E",
+            marks=3,
+            type=QuestionType.RECALL,
+            answer_points=[
+                AnswerPoint(
+                    id=pid,
+                    point=pid,
+                    marks=1,
+                    calculated_answer=(CalculatedAnswer(value=2.5) if pid in calculated else None),
+                )
+                for pid in ("p1", "p2", "p3")
+            ],
+        )
+
+    def test_a_zero_claim_stays_zero_when_a_point_is_rejected(self):
+        cq = self._cq(self._independent("p1"), 0, ["p1", "p2"])
+        self.assertEqual(cq.awarded_marks, 0)
+        self.assertEqual(cq.matched_point_ids, ["p2"])
+        self.assertTrue(cq.needs_teacher_review)
+
+    def test_every_point_rejected_leaves_nothing(self):
+        cq = self._cq(self._independent("p1", "p2"), 2, ["p1", "p2"])
+        self.assertEqual(cq.awarded_marks, 0)
+        self.assertEqual(cq.matched_point_ids, [])
+        self.assertIn("p1:", cq.review_reason or "")
+        self.assertIn("p2:", cq.review_reason or "")
+
+    def test_a_dangling_id_backs_no_mark_after_a_rejection(self):
+        """The marker claims 2 for p1 plus an id the scheme does not have.
+        The dangling id survives the backstop (it has no value to check)
+        but is worth nothing, so once p1 is rejected no id backs any mark:
+        0, where the old subtraction left 1. Coherence flags the id too."""
+        cq = self._cq(self._independent("p1"), 2, ["p1", "zz"])
+        self.assertEqual(cq.awarded_marks, 0)
+        self.assertEqual(cq.matched_point_ids, ["zz"])
+        self.assertIn("unknown mark point id(s): zz", cq.review_reason or "")
+        self.assertIn("unverified accuracy mark(s): p1", cq.review_reason or "")
+
     def test_no_rejection_leaves_the_markers_claim_untouched(self):
         """The recomputation runs only when the backstop rejects something:
         the legacy path otherwise trusts the marker's clamped total, even
