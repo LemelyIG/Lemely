@@ -154,6 +154,8 @@ Pixels are counted at 200 DPI for a PDF page, and at native size for an image.
   - Other image formats decode, then `reduce(k)` by the smallest integer that fits. That is at most a 120 MB transient, once.
 - **Beyond the boundary, or more than 40 pages:** `ScanTooLargeError`, a `LemelyError` whose message says which limit was exceeded. PIL's `DecompressionBombError` maps to the same error.
 
+**Whole-scan pixel budget (final review I1, user decision: hybrid, 160 Mpx).** The per-page rule alone does not bound a scan: 40 pages at the 16 Mpx cap is 640 Mpx, and a 1.13 MB PDF of 40 such pages sharing one JPEG rendered to ~1.5 GB of pages held at once, past the 1 GiB worker. So after the per-page rule, `plan_pdf_pages` sums the planned pixels over every page. Up to `MAX_SCAN_TOTAL_PX = 160_000_000` nothing changes (an honest 40-page A4 scan at 200 DPI is 155 Mpx). Over it, every page's DPI is multiplied by one factor `s = sqrt(160 Mpx / sum)` and floored, and that DPI reaches `RasterisedPage.dpi`. If any page would drop below `MIN_EXTRACTION_DPI = 100`, the scan is refused with `ScanTooLargeError`: a 422 at upload, the same error at extraction. An image upload is one page capped at 16 Mpx, so the budget never binds there.
+
 `rasterise.py` plans every page before rendering any, so the page cap applies first. `RasterisedPage` gains a `dpi` field. The existing fixtures fall below the target, so their bytes do not change.
 
 **Where the 422 happens.** Both grading flows run outside a plain request/response, so an error at extraction time becomes a failed status, not an HTTP code. The clear error therefore happens at **upload**:

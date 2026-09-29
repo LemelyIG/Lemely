@@ -614,6 +614,30 @@ def test_upload_rejects_an_oversized_page_geometry_with_422(
     assert storage_backend._objects == {}, "a rejected scan must never reach storage"
 
 
+def test_upload_rejects_a_scan_over_the_total_pixel_cap_with_422(
+    client: TestClient, storage_backend: FakeStorageBackend
+) -> None:
+    """Final review I1: 40 pages that each pass the per-page cap but together
+    cannot fit 160 Mpx at the 100 DPI floor are refused at upload."""
+    import io
+
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument.new()
+    for _ in range(40):
+        pdf.new_page(1700, 1700)
+    buf = io.BytesIO()
+    pdf.save(buf)
+    pdf.close()
+    resp = client.post(
+        "/api/papers/upload",
+        files={"scan": ("scan.pdf", buf.getvalue(), "application/pdf")},
+    )
+    assert resp.status_code == 422
+    assert "160 megapixels" in resp.json()["detail"]
+    assert storage_backend._objects == {}, "a rejected scan must never reach storage"
+
+
 def test_upload_rejects_a_content_stream_bomb_with_422(client: TestClient) -> None:
     """Task 11b: normal A4 geometry, 218 KB on the wire, 112 MB of path
     operators once inflated -- refused at upload from the raw stream."""

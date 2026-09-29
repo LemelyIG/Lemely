@@ -20,6 +20,8 @@ from lemely.io.scan_limits import (
     MAX_PAGE_PX,
     MAX_SCAN_CONTENT_BYTES,
     MAX_SCAN_PAGES,
+    MAX_SCAN_TOTAL_PX,
+    MIN_EXTRACTION_DPI,
     ScanRejectedError,
     ScanTooLargeError,
     ScanUnsupportedEncodingError,
@@ -154,6 +156,83 @@ class ImagePlanTests(unittest.TestCase):
     def test_image_beyond_the_decode_bound_is_rejected(self) -> None:
         with self.assertRaises(ScanTooLargeError):
             plan_image(7000, 7000)  # 49 Mpx
+
+
+def _planned_total_px(pdf: pdfium.PdfDocument, plans: list[scan_limits.PagePlan]) -> float:
+    total = 0.0
+    for plan in plans:
+        width_pt, height_pt = pdf.get_page_size(plan.index)
+        total += width_pt * height_pt * (plan.dpi / 72.0) ** 2
+    return total
+
+
+class ScanTotalPixelTests(unittest.TestCase):
+    """Final review I1: the per-page cap alone let 40 pages of ~16 Mpx each
+    (the reviewer's 1.13 MB PDF of 1439 pt squares sharing one JPEG) plan to
+    ~640 Mpx, ~1.5 GB of rendered pages in a 1 GiB worker. The scan's summed
+    planned pixels are capped at MAX_SCAN_TOTAL_PX by one uniform DPI factor,
+    floored at MIN_EXTRACTION_DPI. Planning only -- nothing here renders."""
+
+    def _plans(self, *sizes_pt: tuple[float, float]) -> tuple[list[float], float]:
+        pdf = pdfium.PdfDocument(_pdf_bytes(*sizes_pt))
+        try:
+            with patch.object(pdfium.PdfPage, "render") as render:
+                plans = plan_pdf_pages(pdf)
+            render.assert_not_called()
+            return [p.dpi for p in plans], _planned_total_px(pdf, plans)
+        finally:
+            pdf.close()
+
+    def test_the_bounds_are_the_decided_values(self) -> None:
+        self.assertEqual((MAX_SCAN_TOTAL_PX, MIN_EXTRACTION_DPI), (160_000_000, 100))
+
+    def test_the_reviewer_aggregate_shape_is_downscaled_uniformly_to_fit(self) -> None:
+        dpis, total = self._plans(*([(1439.0, 1439.0)] * MAX_SCAN_PAGES))
+        self.assertEqual(len(set(dpis)), 1, dpis)
+        self.assertEqual(dpis[0], 100.0)  # floor(200 * sqrt(160 / 639.1)) = floor(100.06)
+        self.assertLessEqual(total, MAX_SCAN_TOTAL_PX)
+
+    def test_mixed_page_sizes_share_one_scale_factor(self) -> None:
+        # 10 A1 pages (per-page band, planned at 143 DPI, 15.8 Mpx each) plus
+        # 30 A4 pages at 200 DPI (3.87 Mpx each): 274 Mpx, so every page's
+        # planned DPI is multiplied by the same s = sqrt(160 / 274) = 0.764,
+        # then floored: 143 -> 109, 200 -> 152.
+        sizes = [(1684.0, 2384.0)] * 10 + [(595.0, 842.0)] * 30
+        dpis, total = self._plans(*sizes)
+        self.assertEqual(dpis, [109.0] * 10 + [152.0] * 30)
+        self.assertLessEqual(total, MAX_SCAN_TOTAL_PX)
+
+    def test_an_honest_40_page_a4_scan_is_unchanged(self) -> None:
+        dpis, total = self._plans(*([(595.0, 842.0)] * MAX_SCAN_PAGES))
+        self.assertEqual(dpis, [200.0] * MAX_SCAN_PAGES)
+        self.assertGreater(total, 150_000_000)  # ~155 Mpx: close to, but under, the cap
+
+    def test_the_committed_fixture_is_unchanged(self) -> None:
+        pdf = pdfium.PdfDocument(str(_FIXTURE))
+        try:
+            dpis = [p.dpi for p in plan_pdf_pages(pdf)]
+        finally:
+            pdf.close()
+        self.assertEqual(dpis, [200.0] * 16)
+
+    def test_a_scan_that_cannot_fit_at_the_minimum_dpi_is_rejected(self) -> None:
+        # 1700 pt squares plan at 169 DPI each (per-page band); 40 of them
+        # need s = 0.50, i.e. 84 DPI -- under the 100 DPI floor.
+        pdf = pdfium.PdfDocument(_pdf_bytes(*([(1700.0, 1700.0)] * MAX_SCAN_PAGES)))
+        try:
+            with self.assertRaises(ScanTooLargeError) as ctx:
+                plan_pdf_pages(pdf)
+        finally:
+            pdf.close()
+        self.assertIn("160 megapixels", str(ctx.exception))
+
+    def test_a_scan_that_cannot_fit_is_rejected_at_upload(self) -> None:
+        with self.assertRaises(ScanTooLargeError):
+            check_scan_bytes(_pdf_bytes(*([(1700.0, 1700.0)] * MAX_SCAN_PAGES)))
+
+    def test_the_reviewer_aggregate_shape_passes_the_upload_check(self) -> None:
+        """It fits once downscaled, so the upload must not refuse it."""
+        check_scan_bytes(_pdf_bytes(*([(1439.0, 1439.0)] * MAX_SCAN_PAGES)))
 
 
 class CheckScanBytesTests(unittest.TestCase):

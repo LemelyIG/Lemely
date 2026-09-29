@@ -7,7 +7,9 @@ module, `rasterise.py` rendered whatever the file declared, inside a 1 GiB
 worker. The rule is a hybrid: up to :data:`MAX_PAGE_PX` a page is used as is;
 between the target and :data:`MAX_DECODE_PX` it is downscaled to fit; beyond
 that, or past :data:`MAX_SCAN_PAGES`, it is rejected with a
-:class:`ScanTooLargeError` whose message names the limit.
+:class:`ScanTooLargeError` whose message names the limit. The same hybrid
+applies to the whole scan: pages summing past :data:`MAX_SCAN_TOTAL_PX` all
+render at one uniformly lower DPI, rejected below :data:`MIN_EXTRACTION_DPI`.
 
 Pure: pypdfium2 and Pillow only, no I/O of its own. The web upload routes
 call :func:`check_scan_bytes` on the uploaded body (headers and page sizes
@@ -46,6 +48,17 @@ MAX_PAGE_PX = 16_000_000
 #: high-resolution mode), moved here so the app has ONE such number. It is
 #: 2.5x the target, which is the downscale band.
 MAX_DECODE_PX = 40_000_000
+#: The sum of every page's pixels at its planned DPI, over the whole scan
+#: (final review I1, user decision: hybrid). The per-page target alone does
+#: not bound a scan: 40 pages at 16 Mpx is 640 Mpx, ~1.5 GB of rendered
+#: pages held at once in a 1 GiB worker. An honest 40-page A4 scan at 200
+#: DPI is 40 x 3.87 = 155 Mpx and fits unchanged. Over it, every page's DPI
+#: is lowered by one uniform factor (:func:`plan_pdf_pages`).
+MAX_SCAN_TOTAL_PX = 160_000_000
+#: The floor of that uniform downscale: a scan that would need a page below
+#: 100 DPI to fit :data:`MAX_SCAN_TOTAL_PX` is rejected instead, since
+#: handwriting at that resolution is too coarse to read reliably.
+MIN_EXTRACTION_DPI = 100
 #: Google's documented recommendation for image/PDF inputs; keeps a rendered
 #: page's image-tokenisation cost at the "medium" tier (560 tokens/page).
 EXTRACTION_DPI: float = 200.0
@@ -171,17 +184,36 @@ def plan_pdf_pages(pdf: pdfium.PdfDocument, *, dpi: float = EXTRACTION_DPI) -> l
     document (``pdf[index].get_size()``) -- the latter loads the full page
     object, which :func:`~lemely.io.rasterise.rasterise_pdf_to_pages` then
     loads a second time to render it; this way a page is loaded at most once.
+
+    After the per-page rule, the scan-wide one: when the pages' summed
+    pixels exceed :data:`MAX_SCAN_TOTAL_PX`, every page's DPI is multiplied
+    by the same ``s = sqrt(MAX_SCAN_TOTAL_PX / total)`` and floored, so the
+    sum fits; if that takes any page below :data:`MIN_EXTRACTION_DPI`, the
+    scan is refused with :class:`ScanTooLargeError`.
     """
     count = len(pdf)
     if count > MAX_SCAN_PAGES:
         raise ScanTooLargeError(f"The scan has {count} pages; the limit is {MAX_SCAN_PAGES}.")
-    plans: list[PagePlan] = []
-    for index in range(count):
-        width_pt, height_pt = pdf.get_page_size(index)
-        plans.append(
-            PagePlan(index=index, dpi=plan_page_dpi(width_pt, height_pt, dpi=dpi, index=index))
+    sizes = [pdf.get_page_size(index) for index in range(count)]
+    plans = [
+        PagePlan(index=index, dpi=plan_page_dpi(width_pt, height_pt, dpi=dpi, index=index))
+        for index, (width_pt, height_pt) in enumerate(sizes)
+    ]
+    total = sum(
+        width_pt * height_pt * (plan.dpi / 72.0) ** 2
+        for plan, (width_pt, height_pt) in zip(plans, sizes, strict=True)
+    )
+    if total <= MAX_SCAN_TOTAL_PX:
+        return plans
+    scale = math.sqrt(MAX_SCAN_TOTAL_PX / total)
+    scaled = [PagePlan(index=plan.index, dpi=float(math.floor(plan.dpi * scale))) for plan in plans]
+    if any(plan.dpi < MIN_EXTRACTION_DPI for plan in scaled):
+        raise ScanTooLargeError(
+            f"This scan's {count} pages are too large to process together (limit "
+            f"{MAX_SCAN_TOTAL_PX // 1_000_000} megapixels per scan). Split it into smaller "
+            "scans or rescan at a lower resolution."
         )
-    return plans
+    return scaled
 
 
 def plan_image(width: int, height: int) -> int:

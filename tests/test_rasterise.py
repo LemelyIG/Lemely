@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pypdfium2 as pdfium
 from PIL import Image
 
+import lemely.io.scan_limits as scan_limits
 from lemely.io.rasterise import (
     EXTRACTION_DPI,
     RasterisedPage,
@@ -174,6 +175,27 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
     def test_the_committed_fixture_is_unaffected(self) -> None:
         pages = rasterise_pdf_to_pages(_FIXTURE)
         self.assertEqual((pages[0].width, pages[0].height, pages[0].dpi), (1655, 2339, 200.0))
+
+    def test_a_scan_over_the_total_pixel_cap_renders_at_the_uniform_lower_dpi(self) -> None:
+        """Final review I1: the DPI the scan-wide downscale chose is the one
+        rendered and recorded on ``RasterisedPage.dpi``. The cap is lowered
+        so two 1-inch pages exceed it -- a real over-cap scan is never
+        rendered in a test: 2 x 200^2 px against a 40,000 px cap gives
+        s = sqrt(1/2), i.e. floor(141.4) = 141 DPI."""
+        path = self._pdf("one-inch-squares.pdf", (72.0, 72.0), (72.0, 72.0))
+        with patch.object(scan_limits, "MAX_SCAN_TOTAL_PX", 40_000):
+            pages = rasterise_pdf_to_pages(path)
+        self.assertEqual([p.dpi for p in pages], [141.0, 141.0])
+        self.assertEqual([(p.width, p.height) for p in pages], [(141, 141), (141, 141)])
+
+    def test_a_scan_that_cannot_fit_the_total_pixel_cap_is_rejected_before_any_render(
+        self,
+    ) -> None:
+        # 40 pages of 1700 pt squares need 84 DPI to fit 160 Mpx: under the floor.
+        path = self._pdf("aggregate.pdf", *([(1700.0, 1700.0)] * 40))
+        with patch.object(pdfium.PdfPage, "render") as render, self.assertRaises(ScanTooLargeError):
+            rasterise_pdf_to_pages(path)
+        render.assert_not_called()
 
     def test_a_content_bomb_is_rejected_before_any_render(self) -> None:
         path = Path(self.tmp) / "bomb.pdf"

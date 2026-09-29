@@ -18,7 +18,9 @@ PDF — I1's extraction call sends one image part per page directly.
 
 Spec 2026-09-26 §6: every page is planned by `lemely.io.scan_limits` before
 any page is rendered — over-long documents and over-size pages are refused,
-pages within the band render at a lower DPI, recorded on `RasterisedPage.dpi`.
+pages within the band render at a lower DPI, recorded on `RasterisedPage.dpi`,
+and a scan whose pages sum past `MAX_SCAN_TOTAL_PX` renders every page at one
+uniformly lower DPI (or is refused below `MIN_EXTRACTION_DPI`).
 """
 
 from __future__ import annotations
@@ -79,7 +81,10 @@ def rasterise_pdf_to_pages(pdf_path: Path, *, dpi: float = EXTRACTION_DPI) -> li
 
     Raises :class:`ScanTooLargeError` before any render when the document
     has more than ``MAX_SCAN_PAGES`` pages or a page beyond
-    ``MAX_DECODE_PX``, or a page whose content streams decode past
+    ``MAX_DECODE_PX``, or pages that fit ``MAX_SCAN_TOTAL_PX`` only below
+    ``MIN_EXTRACTION_DPI`` (a scan over that total but above the floor is
+    rendered at one uniformly lower DPI instead, recorded on each page's
+    ``dpi``), or a page whose content streams decode past
     ``MAX_PAGE_CONTENT_BYTES`` (``ScanTooLargeError``), or a content encoding
     that cannot be bounded (``ScanUnsupportedEncodingError``), and
     :class:`ValueError` if the PDF has no pages — an empty extraction call
