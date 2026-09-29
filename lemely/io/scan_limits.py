@@ -35,7 +35,6 @@ from lemely.runtime.errors import LemelyError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
 #: The committed question paper has 16 pages; answer booklets with
 #: continuation sheets reach the low 30s. Also bounds the number of page
@@ -50,6 +49,13 @@ MAX_SCAN_PAGES = 40
 #: by MuPDF's rule: a ``/Type /Page`` is a page, a ``/Type /Pages`` is not,
 #: and an untyped node is one if it names no ``/Kids`` (see :func:`_page_tree`).
 MAX_CROP_PAGES = 200
+#: Task 9c: extraction renders MuPDF's rewrite of a stored PDF
+#: (:func:`canonical_pdf_bytes`), and the rewrite costs time per object in
+#: the file (about 50-65 us each: 13.7 s for a 21 MB file of 200,000 small
+#: objects). The largest committed PDF, a 20-page born-digital mark scheme,
+#: has 1,334; a 40-page scan has a few hundred. Over this, the file is
+#: refused before it is rewritten.
+MAX_PDF_OBJECTS = 50_000
 #: The target after any downscale. A4 at 400 DPI is 3307x4677 = 15.5 Mpx,
 #: the top of what a document scanner produces; the corpus at 200 DPI is
 #: 1655x2339 = 3.87 Mpx.
@@ -169,6 +175,11 @@ _PAGE_COUNT_UNREADABLE_MESSAGE = (
 #: MuPDF numbers. Says nothing about how many pages there are.
 _PAGE_STRUCTURE_MALFORMED_MESSAGE = (
     "This PDF's page structure is malformed. Re-export it as a plain scan."
+)
+#: The file holds more objects than :data:`MAX_PDF_OBJECTS` (Task 9c).
+_TOO_MANY_PDF_OBJECTS_MESSAGE = (
+    "This PDF holds far more internal objects than a scanned paper does "
+    f"(over {MAX_PDF_OBJECTS:,}). Re-export it as a plain scan."
 )
 #: Anything else going wrong once MuPDF has opened the file (Task 9b):
 #: fail closed, never pass it unmeasured.
@@ -1173,13 +1184,81 @@ def check_pdf_content_bytes(data: bytes, *, pdfium_pages: int | None = None) -> 
     )
 
 
-def check_pdf_content_path(path: Path, *, pdfium_pages: int | None = None) -> None:
-    """:func:`check_pdf_content` on a file; the extraction and CLI entry point.
+def canonical_pdf_bytes(data: bytes) -> bytes:
+    """MuPDF's rewrite of ``data``: one clean xref, one definition per object.
 
-    Extraction passes ``pdfium_pages`` -- it renders with pdfium, so a page
-    count MuPDF disagrees with is a page this check would not measure.
+    Task 9c (user decision): extraction renders with pdfium but this module
+    measures with MuPDF, and the two repair a damaged file differently -- an
+    object defined twice under an xref with 19-byte entries is the clean
+    first definition to MuPDF (it reads the xref) and a content bomb to
+    pdfium (it rebuilds the xref by scanning). Extraction therefore checks
+    and renders these bytes, never the stored file, so pdfium can only see
+    the objects MuPDF resolved.
+
+    ``tobytes(garbage=1)``: every object MuPDF resolves from the trailer,
+    written once under a fresh xref. Safe for a page's content because a
+    renderer reaches nothing but by reference from the trailer (the page
+    tree, each page's ``/Contents``, ``/Resources`` and ``/Annots``), which
+    is exactly what ``garbage=1`` keeps; it drops only unreferenced objects,
+    renumbers nothing, and merges nothing (``garbage=3`` and up compare and
+    merge objects, which is not wanted). Streams are copied as stored:
+    nothing is decompressed, re-encoded (``deflate``/``expand`` off) or
+    rewritten (``clean`` off -- it parses content streams, the very work
+    a bomb exploits). Annotation appearances are not regenerated, since no
+    page is loaded.
+
+    The rewrite costs time per object, so a file with more than
+    :data:`MAX_PDF_OBJECTS` is refused (:class:`ScanTooLargeError`) before
+    it is written; counting them is one read.
+
+    Raises :class:`ScanRejectedError` when MuPDF cannot open or rewrite the
+    bytes (garbage, or a password-protected file: extraction failed on both
+    before, in pdfium, and nothing here can check what it cannot open).
+    When MuPDF finds no pages, pdfium is asked for its count of the same
+    bytes -- a count only, nothing is rendered: pages pdfium would find
+    are pages MuPDF never measured, so that is refused too
+    (:data:`_PAGE_COUNT_UNREADABLE_MESSAGE`); a PDF neither reader finds a
+    page in is a :class:`ValueError`, extraction's contract for an empty
+    PDF (MuPDF will not write one).
     """
-    _check_opened(lambda: pymupdf.open(str(path)), pdfium_pages)  # type: ignore[no-untyped-call]
+    try:
+        doc = pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
+    except Exception as exc:
+        raise ScanRejectedError(_UNCHECKABLE_MESSAGE) from exc
+    try:
+        if doc.needs_pass:
+            raise ScanRejectedError(_UNCHECKABLE_MESSAGE)
+        try:
+            page_count = int(doc.page_count)
+        except Exception as exc:
+            raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE) from exc
+        if page_count == 0:
+            if _pdfium_page_count(data):
+                raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE)
+            raise ValueError("the PDF has no pages")
+        if doc.xref_length() > MAX_PDF_OBJECTS:  # type: ignore[no-untyped-call]
+            raise ScanTooLargeError(_TOO_MANY_PDF_OBJECTS_MESSAGE)
+        try:
+            canonical: bytes = doc.tobytes(garbage=1)  # type: ignore[no-untyped-call]
+        except Exception as exc:
+            raise ScanRejectedError(_UNCHECKABLE_MESSAGE) from exc
+        return canonical
+    finally:
+        doc.close()  # type: ignore[no-untyped-call]
+
+
+def _pdfium_page_count(data: bytes) -> int:
+    """The page count pdfium gives ``data``, or 0 if it cannot open it. Renders nothing."""
+    try:
+        pdf = pdfium.PdfDocument(data)
+    except Exception:
+        return 0
+    try:
+        return len(pdf)
+    except Exception:
+        return 0
+    finally:
+        pdf.close()
 
 
 def _pdfium_plan(data: bytes) -> int | None:

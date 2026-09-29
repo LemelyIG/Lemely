@@ -1433,6 +1433,56 @@ def page_kids_equal_count_bomb_pdf(inflated_bytes: int) -> bytes:
     )
 
 
+def xref_repair_bomb_pdf(inflated_bytes: int, *, entry_eol: bytes = b"\n") -> bytes:
+    """One page whose content, object 4, is defined twice: a clean red
+    rectangle first (the xref points at it), then a content bomb. Each xref
+    entry ends in ``entry_eol``; the spec's is two bytes (``b" \\n"``), so
+    ``b"\\n"`` or ``b"\\r"`` leaves every entry 19 bytes long.
+
+    Task 9c (the reviewer's xref-repair probe): with 19-byte entries MuPDF
+    still reads the xref and measures the clean object, while pdfium
+    rebuilds the xref by scanning, takes the later definition and renders
+    the bomb. Page counts and page sets agree.
+    """
+    out = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
+    offsets: dict[int, int] = {}
+
+    def obj(number: int, body: bytes) -> None:
+        offsets.setdefault(number, len(out))
+        out.extend(f"{number} 0 obj\n".encode() + body + b"\nendobj\n")
+
+    obj(1, b"<< /Type /Catalog /Pages 2 0 R >>")
+    obj(2, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    obj(3, b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>")
+    obj(4, pdf_stream(b"", b"q 1 0 0 rg 60 500 120 250 re f Q"))
+    obj(4, pdf_stream(b"/Filter /FlateDecode", flate_bomb_ops(inflated_bytes)))
+    xref_at = len(out)
+    out.extend(b"xref\n0 5\n0000000000 65535 f" + entry_eol)
+    for number in (1, 2, 3, 4):
+        out.extend(f"{offsets[number]:010d} 00000 n".encode() + entry_eol)
+    out.extend(f"trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n".encode())
+    return bytes(out)
+
+
+def empty_page_tree_pdf() -> bytes:
+    """A catalog and a ``/Pages`` root with no kids: neither reader finds a page.
+
+    Task 9c: extraction's contract for an empty PDF is a ``ValueError``.
+    """
+    return assemble_pdf(
+        [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [] /Count 0 >>"]
+    )
+
+
+def many_objects_pdf(objects: int) -> bytes:
+    """One blank A4 page plus ``objects`` small dicts nothing references.
+
+    Task 9c: MuPDF's rewrite costs time per object in the file, referenced
+    or not, so the object count is bounded before the rewrite.
+    """
+    return assemble_pdf([*_CATALOG_AND_PAGES, _A4_PAGE + b" >>", *([b"<< /A 1 >>"] * objects)])
+
+
 def uncounted_bomb_pdf(inflated_bytes: int, *, count_entry: bytes) -> bytes:
     """Two pages, the second a content bomb, under a root whose ``/Count``
     entry is ``count_entry`` (``b"/Count 0"``, ``b"/Count -1"`` or ``b""``).
@@ -1528,6 +1578,7 @@ __all__ = [
     "deep_plain_dict_chain_bomb_pdf",
     "deep_xobject_chain_bomb_pdf",
     "embedded_font_pdf",
+    "empty_page_tree_pdf",
     "empty_pages_nodes_pdf",
     "encrypted_pdf_bytes",
     "extgstate_smask_bomb_pdf",
@@ -1545,6 +1596,7 @@ __all__ = [
     "links_to_sibling_pages_pdf",
     "long_parent_chain_pdf",
     "many_form_xobjects_pdf",
+    "many_objects_pdf",
     "non_stream_contents_pdf",
     "overstated_count_pdf",
     "page_bomb_pdf",
@@ -1578,4 +1630,5 @@ __all__ = [
     "wrapped_page_tree_pdf",
     "xobject_also_listed_as_annotation_bomb_pdf",
     "xobject_bomb_pdf",
+    "xref_repair_bomb_pdf",
 ]

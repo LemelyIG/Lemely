@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import tempfile
 import time
 import tracemalloc
 import unittest
@@ -27,8 +26,8 @@ from lemely.io.scan_limits import (
     ScanRejectedError,
     ScanTooLargeError,
     ScanUnsupportedEncodingError,
+    canonical_pdf_bytes,
     check_pdf_content_bytes,
-    check_pdf_content_path,
     check_pdf_page_content,
     check_scan_bytes,
     decoded_stream_size,
@@ -48,6 +47,7 @@ from tests.pdf_fakes import (
     deep_plain_dict_chain_bomb_pdf,
     deep_xobject_chain_bomb_pdf,
     embedded_font_pdf,
+    empty_page_tree_pdf,
     empty_pages_nodes_pdf,
     encrypted_pdf_bytes,
     extgstate_smask_bomb_pdf,
@@ -66,6 +66,7 @@ from tests.pdf_fakes import (
     links_to_sibling_pages_pdf,
     long_parent_chain_pdf,
     many_form_xobjects_pdf,
+    many_objects_pdf,
     non_stream_contents_pdf,
     overstated_count_pdf,
     page_bomb_pdf,
@@ -99,6 +100,7 @@ from tests.pdf_fakes import (
     wrapped_page_tree_pdf,
     xobject_also_listed_as_annotation_bomb_pdf,
     xobject_bomb_pdf,
+    xref_repair_bomb_pdf,
 )
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "handwritten-59" / "0625_w24_qp_42.pdf"
@@ -715,7 +717,7 @@ class ContentStreamBombTests(unittest.TestCase):
 
     @unittest.skipUnless(_FIXTURE.is_file(), "handwritten-59 fixture not present")
     def test_the_committed_fixture_passes_with_room_to_spare(self) -> None:
-        check_pdf_content_path(_FIXTURE)
+        check_pdf_content_bytes(_FIXTURE.read_bytes())
         doc = pymupdf.open(str(_FIXTURE))
         try:
             largest = max(
@@ -1335,10 +1337,6 @@ class ReaderCoverageTests(unittest.TestCase):
         failing = patch.object(scan_limits, "check_pdf_content", side_effect=RuntimeError("x"))
         with failing, self.assertRaises(ScanRejectedError):
             check_pdf_content_bytes(data)
-        path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "scan.pdf"
-        path.write_bytes(data)
-        with failing, self.assertRaises(ScanRejectedError):
-            check_pdf_content_path(path)
 
     def test_a_pdf_only_pdfium_can_open_is_refused(self) -> None:
         """pdfium counted pages MuPDF could not open the file to measure: the
@@ -1359,6 +1357,68 @@ class ReaderCoverageTests(unittest.TestCase):
     @unittest.skipUnless(_FIXTURE.is_file(), "handwritten-59 fixture not present")
     def test_the_committed_fixture_still_passes_upload(self) -> None:
         check_scan_bytes(_FIXTURE.read_bytes())
+
+
+class CanonicalPdfBytesTests(unittest.TestCase):
+    """Task 9c: MuPDF's rewrite of a PDF, so pdfium renders exactly the
+    objects MuPDF measured, whatever either reader's xref repair would do."""
+
+    def _pdfium_objects(self, data: bytes) -> int:
+        pdf = pdfium.PdfDocument(data)
+        try:
+            page = pdf[0]
+            try:
+                return sum(1 for _ in page.get_objects())
+            finally:
+                page.close()
+        finally:
+            pdf.close()
+
+    def test_the_rewrite_holds_the_object_mupdf_measured(self) -> None:
+        """19-byte xref entries: MuPDF reads the xref (object 4 is the clean
+        rectangle); the rewrite has one clean xref and that one object 4, so
+        pdfium draws one rectangle. A small bomb stands in: the object count
+        is what differs."""
+        for eol in (b"\n", b"\r"):
+            data = xref_repair_bomb_pdf(200_000, entry_eol=eol)
+            with self.subTest(entry_eol=eol):
+                self.assertGreater(self._pdfium_objects(data), 1)  # the premise
+                self.assertEqual(self._pdfium_objects(canonical_pdf_bytes(data)), 1)
+
+    def test_an_ordinary_pdf_keeps_its_pages(self) -> None:
+        data = born_digital_text_pdf(pages=3)
+        canonical = canonical_pdf_bytes(data)
+        with pymupdf.open(stream=canonical, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+            self.assertEqual(doc.page_count, 3)
+            self.assertIn("quick brown fox", doc[2].get_text())
+
+    def test_bytes_mupdf_cannot_open_or_rewrite_are_refused(self) -> None:
+        for label, data in (("garbage", b"%PDF-1.4 fake"), ("encrypted", encrypted_pdf_bytes())):
+            with self.subTest(label), self.assertRaises(ScanRejectedError):
+                canonical_pdf_bytes(data)
+
+    def test_a_pdf_with_no_pages_is_a_value_error(self) -> None:
+        """Extraction's contract: a PDF neither reader finds a page in is a
+        ``ValueError``. Pages pdfium finds but MuPDF does not are pages MuPDF
+        never measured: refused, not called empty."""
+        with self.assertRaises(ValueError) as caught:
+            canonical_pdf_bytes(empty_page_tree_pdf())
+        self.assertNotIsInstance(caught.exception, ScanRejectedError)
+        uncounted = uncounted_bomb_pdf(200_000, count_entry=b"/Count 0")
+        with self.assertRaises(ScanRejectedError) as refused:
+            canonical_pdf_bytes(uncounted)
+        self.assertEqual(str(refused.exception), scan_limits._PAGE_COUNT_UNREADABLE_MESSAGE)
+
+    def test_a_pdf_with_too_many_objects_is_refused_before_it_is_rewritten(self) -> None:
+        """The rewrite costs time per object in the file (13.7 s for 200,000
+        small ones), so past ``MAX_PDF_OBJECTS`` the file is refused first."""
+        with (
+            patch.object(pymupdf.Document, "tobytes") as tobytes,
+            self.assertRaises(ScanTooLargeError),
+        ):
+            canonical_pdf_bytes(many_objects_pdf(scan_limits.MAX_PDF_OBJECTS))
+        tobytes.assert_not_called()
+        canonical_pdf_bytes(many_objects_pdf(1_000))
 
 
 class NonPdfDocumentTests(unittest.TestCase):

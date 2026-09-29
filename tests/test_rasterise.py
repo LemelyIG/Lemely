@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import itertools
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +12,7 @@ from unittest.mock import patch
 import pypdfium2 as pdfium
 from PIL import Image
 
+import lemely.io.rasterise as rasterise_module
 import lemely.io.scan_limits as scan_limits
 from lemely.io.rasterise import (
     EXTRACTION_DPI,
@@ -25,6 +28,7 @@ from tests.pdf_fakes import (
     page_kids_bomb_pdf,
     page_kids_equal_count_bomb_pdf,
     uncounted_bomb_pdf,
+    xref_repair_bomb_pdf,
 )
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "handwritten-59" / "0625_w24_qp_42.pdf"
@@ -74,9 +78,17 @@ class RasterisePdfToPagesTests(unittest.TestCase):
         # an unopenable file.
         from unittest.mock import MagicMock, patch
 
-        with patch("lemely.io.rasterise.pdfium.PdfDocument") as mock_doc:
+        # Task 9c: pdfium now renders MuPDF's rewrite of the file, so the
+        # file read and the rewrite are stubbed too; pdfium still reports no
+        # pages, which is what this test is about.
+        with (
+            patch("lemely.io.rasterise.pdfium.PdfDocument") as mock_doc,
+            patch.object(Path, "read_bytes", return_value=b"%PDF-1.4 stub"),
+            patch("lemely.io.rasterise.canonical_pdf_bytes", return_value=b"%PDF-1.4 stub"),
+        ):
             mock_pdf = MagicMock()
             mock_pdf.__iter__.return_value = iter([])
+            mock_pdf.__len__.return_value = 0
             mock_doc.return_value = mock_pdf
             with self.assertRaises(ValueError):
                 rasterise_pdf_to_pages(Path("unused.pdf"))
@@ -200,7 +212,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         for 10.6 s at extraction before the cap refused it."""
         path = self._pdf("many.pdf", *([(595.0, 842.0)] * 41))
         with (
-            patch("lemely.io.rasterise.check_pdf_content_path") as walk,
+            patch("lemely.io.rasterise.check_pdf_content_bytes") as walk,
             self.assertRaises(ScanTooLargeError),
         ):
             rasterise_pdf_to_pages(path)
@@ -266,7 +278,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
 
     def test_an_annotation_appearance_stream_bomb_is_rejected_before_any_render(self) -> None:
         # Fix round 1: the new content-walk paths (annotations, patterns,
-        # Type3 CharProcs) all go through the same check_pdf_content_path
+        # Type3 CharProcs) all go through the same check_pdf_content_bytes
         # call as the page-content/Form-XObject bomb above; this pins that
         # the mechanism reaches rasterise for one of them, representatively.
         path = Path(self.tmp) / "annot-bomb.pdf"
@@ -289,6 +301,73 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             rasterise_pdf_to_pages(path)
         get_page.assert_not_called()
         render.assert_not_called()
+
+    def test_a_bomb_behind_an_xref_repair_is_never_rendered(self) -> None:
+        """Task 9c, the reviewer's xref-repair probe: object 4, the page's
+        content, is defined twice -- a clean rectangle the xref names, then
+        a bomb -- and each xref entry is 19 bytes. MuPDF measures the clean
+        one; pdfium, repairing by scanning, used to take the bomb. pdfium now
+        renders MuPDF's rewrite, so the page it loads is the clean one: one
+        object, drawn red."""
+        path = Path(self.tmp) / "xref-repair-bomb.pdf"
+        path.write_bytes(xref_repair_bomb_pdf(scan_limits.MAX_PAGE_CONTENT_BYTES + 1_000_000))
+        real_get_page = pdfium.PdfDocument.get_page
+        counts: list[int] = []
+
+        def counting_get_page(doc: pdfium.PdfDocument, index: int) -> pdfium.PdfPage:
+            page = real_get_page(doc, index)
+            counts.append(sum(1 for _ in itertools.islice(page.get_objects(), 1_000)))
+            if counts[-1] > 1:
+                page.close()
+                raise AssertionError(f"pdfium loaded a page of {counts[-1]}+ objects: the bomb")
+            return page
+
+        with patch.object(pdfium.PdfDocument, "get_page", counting_get_page):
+            pages = rasterise_pdf_to_pages(path)
+        self.assertEqual(counts, [1])
+        image = Image.open(io.BytesIO(pages[0].png_bytes)).convert("RGB")
+        red = sum(
+            n for n, (r, g, b) in image.getcolors(image.width * image.height) or [] if r > 200 > g
+        )
+        self.assertGreater(red, 0)
+
+    def test_pdfium_renders_the_bytes_the_content_check_measured_not_the_file(self) -> None:
+        """Task 9c: pdfium is handed MuPDF's rewrite -- the very object the
+        content check was given -- never the stored file's path or bytes."""
+        path = Path(self.tmp) / "plain.pdf"
+        _write_pdf(path, pages=2)
+        rewritten: list[bytes] = []
+        checked: list[bytes] = []
+        opened: list[object] = []
+        real_canonical = rasterise_module.canonical_pdf_bytes
+        real_check = rasterise_module.check_pdf_content_bytes
+        real_document = pdfium.PdfDocument
+
+        def canonical(data: bytes) -> bytes:
+            rewritten.append(real_canonical(data))
+            return rewritten[-1]
+
+        def check(data: bytes, **kwargs: int | None) -> None:
+            checked.append(data)
+            real_check(data, **kwargs)
+
+        def document(source: object, *args: object, **kwargs: object) -> pdfium.PdfDocument:
+            opened.append(source)
+            return real_document(source, *args, **kwargs)  # type: ignore[arg-type]
+
+        with (
+            patch.object(rasterise_module, "canonical_pdf_bytes", canonical),
+            patch.object(rasterise_module, "check_pdf_content_bytes", check),
+            patch.object(rasterise_module.pdfium, "PdfDocument", document),
+        ):
+            pages = rasterise_pdf_to_pages(path)
+        self.assertEqual(len(pages), 2)
+        self.assertEqual(len(rewritten), 1)
+        self.assertEqual(len(opened), 1)
+        self.assertTrue(opened[0] is rewritten[0], f"pdfium opened {type(opened[0]).__name__}")
+        self.assertEqual(len(checked), 1)
+        self.assertTrue(checked[0] is rewritten[0], "the content check measured other bytes")
+        self.assertTrue(opened[0] != path.read_bytes(), "pdfium was given the stored bytes")
 
     def test_the_equal_count_page_kids_bomb_is_rejected_before_any_page_is_loaded(self) -> None:
         """T9b review round 1: both readers count 2 pages, but pdfium's page 1

@@ -36,7 +36,8 @@ from lemely.io.scan_limits import (
     PDF_MAGIC,
     ScanRejectedError,
     ScanTooLargeError,
-    check_pdf_content_path,
+    canonical_pdf_bytes,
+    check_pdf_content_bytes,
     looks_like_pdf,
     plan_image,
     plan_pdf_pages,
@@ -89,8 +90,19 @@ def rasterise_pdf_to_pages(pdf_path: Path, *, dpi: float = EXTRACTION_DPI) -> li
     that cannot be bounded (``ScanUnsupportedEncodingError``), and
     :class:`ValueError` if the PDF has no pages — an empty extraction call
     would silently carry no evidence at all rather than fail loudly.
+
+    Task 9c: pdfium never opens the stored file. It renders MuPDF's rewrite
+    of it (:func:`~lemely.io.scan_limits.canonical_pdf_bytes`), and those
+    same bytes are what the content check measures, so a file the two
+    readers would repair differently cannot show pdfium an object MuPDF did
+    not check. A file MuPDF cannot open or rewrite raises
+    :class:`ScanRejectedError`.
     """
-    pdf = pdfium.PdfDocument(str(pdf_path))
+    # The stored file's bytes are released as soon as the rewrite exists
+    # (the call holds the only reference), so at most the file and its
+    # rewrite are held at once; pdfium then keeps only the rewrite.
+    canonical = canonical_pdf_bytes(pdf_path.read_bytes())
+    pdf = pdfium.PdfDocument(canonical)
     try:
         # Planning reads the page count and page sizes only (no page is
         # loaded), so the page cap applies before the content walk below
@@ -100,9 +112,10 @@ def rasterise_pdf_to_pages(pdf_path: Path, *, dpi: float = EXTRACTION_DPI) -> li
         # and pypdfium2 parses a page's whole content stream on render --
         # measured at 2.2 GB for a 218 KB bomb. Refuse from the raw streams
         # before any render. The walk reads with MuPDF but this renders with
-        # pdfium, so it is given pdfium's page count (Task 9b): a page only
-        # pdfium counts would otherwise be rendered unmeasured.
-        check_pdf_content_path(pdf_path, pdfium_pages=len(pdf))
+        # pdfium, so it is given pdfium's page count (Task 9b). Over the same
+        # canonical bytes the counts should always agree (Task 9c); the
+        # comparison stays as a guard.
+        check_pdf_content_bytes(canonical, pdfium_pages=len(pdf))
         pages: list[RasterisedPage] = []
         for plan in plans:
             # Final review N1: a loaded page keeps its decoded images alive
