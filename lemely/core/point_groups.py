@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from lemely.core.loose_schemas import AnswerPoint
 
@@ -134,3 +134,37 @@ def group_points(
         for index in members:
             result[index] = (key, group_max)
     return result
+
+
+def group_capped_points_total(
+    awarded: Iterable[tuple[int, str | None, int | None]], *, total: int | None
+) -> int:
+    """The group rule over ``(tariff, group_key, group_max_marks)`` triples.
+
+    ``awarded`` holds only the points that count as earned. Independent
+    points (``group_key is None``) add their tariff, each group adds
+    ``min(cap, its awarded tariffs)``, and the whole is capped at ``total``
+    -- group caps can sum past the question (unstated pools are each bounded
+    by the full leftover, triage F5), so only that clamp bounds the total.
+    ``total=None`` skips the clamp, for a caller that needs the per-group
+    figure alone.
+
+    The one implementation of this arithmetic, over the pairs
+    :func:`group_points` produces. :func:`lemely.io.correction_ai._group_capped_total`
+    feeds it from a ``Question``; :mod:`lemely.db.self_review_repo` feeds it
+    from the persisted ledger's ``group_key``/``group_max_marks`` columns,
+    which :func:`group_points` wrote, so the marker's total and a self-review
+    settlement cannot disagree. A named group with no cap counts 0: no
+    producer writes one, and ``points_are_settleable`` refuses such rows.
+    """
+    independent = 0
+    by_group: dict[str, tuple[int, int]] = {}  # key -> (cap, awarded tariff sum)
+    for tariff, key, cap in awarded:
+        if key is None:
+            independent += tariff
+        else:
+            prev_cap, prev_sum = by_group.get(key, (cap or 0, 0))
+            by_group[key] = (prev_cap, prev_sum + tariff)
+    grouped = sum(min(cap, tariff_sum) for cap, tariff_sum in by_group.values())
+    capped = independent + grouped
+    return capped if total is None else min(capped, total)

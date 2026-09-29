@@ -43,21 +43,25 @@ student must be able to read it again, so it lives in the revision's
 **Marks move by delta, settled per scheme group**, not by re-summing ticked
 tariffs: for each group (an independent point is its own group with cap
 ``tariff``), the credit is ``min(group_max_marks, sum of tariffs counted as
-earned)`` before and after the granted verdicts are applied, and the question
-moves from ``awarded_marks`` by the change in the sum of those credits, each
-sum clamped at ``maximum_marks`` as the marker's own total was (group caps can
-sum past the question), and the result clamped to ``[0, maximum_marks]``. So
-a grant can never lift an either/or or "any N
-from" group above what the scheme says it is worth (D6's grade-inflation
-guard), a downward grant that another member still covers removes nothing,
-and the marker's own total is never contradicted. ``awarded_marks`` itself is
-never written — ``lemely/eval`` reads it.
+earned)`` before and after the granted verdicts are applied. The question
+moves from ``awarded_marks``: a downward grant removes at most what the
+points' group-capped total, clamped at ``maximum_marks`` as the marker's own
+total was, actually loses (group caps can sum past the question), and an
+upward grant adds its group's gain but never beyond what the points then
+justify (:func:`_settle_marks`); the result is clamped to ``[0,
+maximum_marks]``. So a grant can never lift an either/or or "any N from"
+group above what the scheme says it is worth (D6's grade-inflation guard), a
+downward grant that another member still covers removes nothing, and the
+marker's own total is never contradicted. ``awarded_marks`` itself is never
+written — ``lemely/eval`` reads it.
 
 **A grant the cap absorbs is recorded, not hidden and not escalated.** The
 claim was accepted (``evidence_verdict`` says so); the mark did not follow
 (``mark_changed`` is false, ``absorbed_by_group`` is true, both in the
-revision's snapshot and on :class:`RevealedPoint`). Nothing is uncertain, so
-no teacher row is opened.
+revision's snapshot and on :class:`RevealedPoint`). That holds for a group's
+cap and for the question's clamp alike, and a pass whose mark did not move
+records a "no change" revision. Nothing is uncertain, so no teacher row is
+opened.
 """
 
 from __future__ import annotations
@@ -71,6 +75,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 import structlog
 from sqlalchemy import func, select
 
+from lemely.core.point_groups import group_capped_points_total
 from lemely.core.self_review import (
     JudgeRequest,
     JudgeVerdict,
@@ -91,7 +96,6 @@ from lemely.db.review_repo import (
     recompute_attempt_totals,
     recompute_weakness_records,
 )
-from lemely.io.correction_ai import group_capped_points_total
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.prompts.self_review_judge import evidence_was_tampered
 
@@ -483,7 +487,25 @@ class SelfReviewService:
                 )
 
             delta = _settle_groups(passes)
-            changed = any(item.mark_changed for item in passes)
+            settled = _settle_marks(passes, qr.awarded_marks, qr.maximum_marks)
+            unclamped = qr.awarded_marks + delta
+            if settled != unclamped:
+                # Something absorbed part of the per-group delta: the
+                # question clamp, the ids no longer justifying a downward
+                # grant's removal, or the ids not justifying an upward one's
+                # addition (see `_settle_marks`). Load-bearing but otherwise
+                # invisible -- on a 1-mark either/or question the clamp
+                # silently turns a double-credit bug into the right answer --
+                # so surface every time it binds, and record a grant the
+                # question did not follow as absorbed, not `mark_changed`.
+                _record_absorbed_grants(passes, net=settled - qr.awarded_marks)
+                log.warning(
+                    "self_review_delta_clamped",
+                    question_result_id=str(qr.id),
+                    unclamped_marks=unclamped,
+                    clamped_marks=settled,
+                )
+            changed = settled != qr.awarded_marks
             snapshot: list[dict[str, object]] = [
                 {
                     "mark_point_id": item.point.mark_point_id,
@@ -501,34 +523,6 @@ class SelfReviewService:
 
             qr.student_selfmarked_at = now
             if changed:
-                # The settled mark moves by the change in the question's
-                # total under the group rule AND the question clamp. The
-                # per-group `delta` alone ignores that clamp: with group caps
-                # summing past `maximum_marks` (unstated pools, triage F5) the
-                # marker's `awarded_marks` is already clamped, and a downward
-                # grant subtracted from it removed a mark the remaining points
-                # still earn. Upward the two agree (the clamp below binds
-                # either way), so `delta` still drives the warning.
-                settled = max(
-                    0,
-                    min(
-                        qr.maximum_marks,
-                        qr.awarded_marks + _capped_question_delta(passes, qr.maximum_marks),
-                    ),
-                )
-                unclamped = qr.awarded_marks + delta
-                if max(0, min(qr.maximum_marks, unclamped)) != unclamped:
-                    # The clamp is load-bearing but otherwise invisible: on a
-                    # 1-mark either/or question it silently turns a
-                    # double-credit bug into the right answer, and on a
-                    # larger question the same bug would leak through
-                    # unnoticed. Surface every time it actually binds.
-                    log.warning(
-                        "self_review_delta_clamped",
-                        question_result_id=str(qr.id),
-                        unclamped_marks=unclamped,
-                        clamped_marks=settled,
-                    )
                 qr.student_selfmark_marks = settled
             session.flush()
             _append_revision(session, qr, actor=student_uuid, snapshot=snapshot, changed=changed)
@@ -831,32 +825,68 @@ def _settle_groups(passes: list[_PointPass]) -> int:
     return delta
 
 
-def _capped_question_delta(passes: list[_PointPass], maximum_marks: int) -> int:
-    """How far the granted verdicts move the question's capped, clamped total.
+def _settle_marks(passes: list[_PointPass], awarded_marks: int, maximum_marks: int) -> int:
+    """The question's mark once the granted verdicts are applied.
 
-    The total before (the marker's ``awarded`` flags) and after (the same
-    flags with every granted verdict applied), each by
-    :func:`lemely.io.correction_ai.group_capped_points_total` -- the rule the
-    marker's own total was computed with, question clamp included. Where the
-    clamp does not bind this is exactly :func:`_settle_groups`'s delta; where
-    it does (group caps summing past ``maximum_marks``) it is the move the
-    student's grant actually makes, so a downward grant the other earned
-    points still cover removes nothing.
+    ``G`` is :func:`lemely.core.point_groups.group_capped_points_total` over
+    a set of points: the group rule plus the ``maximum_marks`` clamp, the
+    rule the marker's own total was computed with. ``kept`` is the marker's
+    points minus every granted downward verdict; ``after`` is ``kept`` plus
+    every granted upward one. Downward grants settle first, then upward:
+
+    * **Down.** Removes at most what the points actually lose:
+      ``awarded - (G(awarded) - G(kept))``. Group caps can sum past the
+      question (unstated pools, triage F5), so ``awarded_marks`` may already
+      be clamped; a grant on a point the others still cover removes nothing.
+    * **Up.** Adds the per-group gain (``kept`` -> ``after``, no question
+      clamp), as the per-point rule always did, but never beyond what the
+      points then justify, ``G(after)``; and never below the downward
+      figure. That last bound is not in the review's stated rule: on a
+      marker that claimed MORE than its points back, ``min(G(after), ...)``
+      alone would let an accepted upward grant lower the mark, which
+      contradicts the marker's total in the student's disfavour.
+
+    A marker whose total matches its points gets ``G(after)``. The result is
+    clamped to ``[0, maximum_marks]``. When it differs from ``awarded_marks
+    + ``:func:`_settle_groups`'s delta, the caller logs the absorption.
     """
 
-    def total(counts: Callable[[_PointPass], bool]) -> int:
+    def total(counts: Callable[[_PointPass], bool], *, clamp: bool) -> int:
         return group_capped_points_total(
             (
                 (item.point.tariff, item.point.group_key, item.point.group_max_marks)
                 for item in passes
                 if counts(item)
             ),
-            total=maximum_marks,
+            total=maximum_marks if clamp else None,
         )
 
-    before = total(lambda item: item.point.awarded)
-    after = total(lambda item: item.earned if item.granted else item.point.awarded)
-    return after - before
+    def kept(item: _PointPass) -> bool:
+        return item.point.awarded and not (item.granted and not item.earned)
+
+    def after(item: _PointPass) -> bool:
+        return kept(item) or (item.granted and item.earned)
+
+    lost = total(lambda item: item.point.awarded, clamp=True) - total(kept, clamp=True)
+    settled = max(0, awarded_marks - lost)
+    gained = total(after, clamp=False) - total(kept, clamp=False)
+    settled = max(settled, min(total(after, clamp=True), settled + gained))
+    return max(0, min(maximum_marks, settled))
+
+
+def _record_absorbed_grants(passes: list[_PointPass], *, net: int) -> None:
+    """Re-flag a granted point the question's net move did not follow.
+
+    Called only when something absorbed part of the per-group delta. A
+    grant :func:`_settle_groups` flagged ``mark_changed`` whose direction the
+    question did not move in (``net`` is ``settled - awarded_marks``; 0
+    means nothing moved) becomes ``absorbed_by_group``: the claim was
+    accepted, the mark did not follow (module docstring).
+    """
+    for item in passes:
+        if item.granted and item.mark_changed and (net == 0 or (net > 0) != item.earned):
+            item.mark_changed = False
+            item.absorbed_by_group = True
 
 
 class _HasGroupFlags(Protocol):

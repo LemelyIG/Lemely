@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Literal, NamedTuple
 
 import structlog
@@ -20,7 +20,7 @@ from lemely.core.loose_schemas import (
     Question,
     QuestionType,
 )
-from lemely.core.point_groups import group_points
+from lemely.core.point_groups import group_capped_points_total, group_points
 from lemely.core.schemas import (
     REVIEW_CONFIDENCE_THRESHOLD,
     AIMarkResponse,
@@ -1065,10 +1065,12 @@ def _group_capped_total(question: Question, awarded_ids: set[str]) -> tuple[int,
 
     ``capped``: independent points add their tariff, each scheme group adds
     ``min(group cap, awarded tariffs in the group)``, and the whole is capped
-    at ``question.marks``. ``additive``: the plain sum, likewise capped. One
-    function so that :func:`_awarded_from_verdicts` (the marker's claim) and
-    the post-backstop recomputation in
-    :func:`_build_ai_corrected_from_verdicts` (triage F4) cannot disagree.
+    at ``question.marks`` (:func:`lemely.core.point_groups.group_capped_points_total`).
+    ``additive``: the plain sum, likewise capped. One function so that
+    :func:`_awarded_from_verdicts` (the marker's claim), the post-backstop
+    recomputation in :func:`_build_ai_corrected_from_verdicts` and the
+    legacy path's :func:`_awarded_after_backstop` (both triage F4) cannot
+    disagree.
     """
     points, groups = _scheme_groups(question)
     awarded = [
@@ -1079,37 +1081,6 @@ def _group_capped_total(question: Question, awarded_ids: set[str]) -> tuple[int,
     additive = sum(tariff for tariff, _key, _cap in awarded)
     capped = group_capped_points_total(awarded, total=question.marks)
     return capped, min(additive, question.marks)
-
-
-def group_capped_points_total(
-    awarded: Iterable[tuple[int, str | None, int | None]], *, total: int
-) -> int:
-    """The group rule and question clamp over ``(tariff, group_key, cap)`` triples.
-
-    ``awarded`` holds only the points that count as earned. Independent
-    points (``group_key is None``) add their tariff, each group adds
-    ``min(cap, its awarded tariffs)``, and the whole is capped at ``total``:
-    group caps can sum past the question (unstated pools are each bounded by
-    the full leftover, triage F5), so only that clamp bounds the total.
-
-    The one implementation of this arithmetic. :func:`_group_capped_total`
-    feeds it from a ``Question`` via :func:`group_points`;
-    :mod:`lemely.db.self_review_repo` feeds it from the persisted ledger's
-    ``group_key``/``group_max_marks`` columns, which the same
-    :func:`group_points` wrote, so the marker's total and a self-review
-    settlement cannot disagree. A named group with no cap counts 0 -- no
-    producer writes one, and ``points_are_settleable`` refuses such rows.
-    """
-    independent = 0
-    by_group: dict[str, tuple[int, int]] = {}  # key -> (cap, awarded tariff sum)
-    for tariff, key, cap in awarded:
-        if key is None:
-            independent += tariff
-        else:
-            prev_cap, prev_sum = by_group.get(key, (cap or 0, 0))
-            by_group[key] = (prev_cap, prev_sum + tariff)
-    grouped = sum(min(cap, tariff_sum) for cap, tariff_sum in by_group.values())
-    return min(independent + grouped, total)
 
 
 def _awarded_after_backstop(

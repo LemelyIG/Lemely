@@ -1656,26 +1656,35 @@ def test_a_downward_grant_under_the_question_clamp_keeps_the_marks_the_rest_stil
         1,
     ]
 
-    view = _service(pg_sessionmaker).submit(
-        student,
-        attempt_id,
-        qr_id,
-        _verdicts(i1=True, a0=True, a1=False, i2=True, b0=False, b1=False),
-    )
+    with capture_logs() as logs:
+        view = _service(pg_sessionmaker).submit(
+            student,
+            attempt_id,
+            qr_id,
+            _verdicts(i1=True, a0=True, a1=False, i2=True, b0=False, b1=False),
+        )
 
-    assert view.points[4].evidence_verdict == "not_required"  # b0's claim was granted
-    assert (view.ai_marks, view.effective_marks) == (3, 3)
-    assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 3
+    b0 = view.points[4]
+    assert b0.evidence_verdict == "not_required"  # b0's claim was granted…
+    assert (b0.mark_changed, b0.absorbed_by_group) == (False, True)  # …and absorbed
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (3, None, 3)
+    clamped = [entry for entry in logs if entry["event"] == "self_review_delta_clamped"]
+    assert [(e["unclamped_marks"], e["clamped_marks"]) for e in clamped] == [(2, 3)]
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.awarded_marks == 3
+    assert qr.revisions[1].reason == "Student self-mark: no change"
     assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 3
 
 
-def test_an_upward_grant_under_the_question_clamp_is_unchanged_and_still_logged(
+def test_an_upward_grant_the_question_clamp_absorbs_moves_nothing_and_is_logged(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    """The upward direction was already right and stays so. The marker
-    awarded i1, i2 and a0 (3 of 3); the student's b0 claim is granted. Pool
-    B's +1 lands on a full question: the clamp holds it at 3, and the clamp
-    binding is still surfaced as ``self_review_delta_clamped`` (4 -> 3)."""
+    """The marker awarded i1, i2 and a0 (3 of 3, coherent); the student's b0
+    claim is granted. Pool B's +1 lands on a full question: the clamp holds
+    it at 3, the binding clamp is surfaced as ``self_review_delta_clamped``
+    (4 -> 3), and since no mark moved, b0 is recorded as absorbed rather
+    than ``mark_changed`` and the revision says "no change" (the module's
+    contract for a grant the cap absorbs)."""
     student = _seed_user(pg_sessionmaker)
     attempt_id = _seed_overfull_attempt(
         pg_sessionmaker, student, matched=["i1", "a0", "i2"], awarded=3
@@ -1690,11 +1699,66 @@ def test_an_upward_grant_under_the_question_clamp_is_unchanged_and_still_logged(
             _verdicts(i1=True, a0=True, a1=False, i2=True, b0=True, b1=False),
         )
 
-    assert (view.ai_marks, view.student_marks, view.effective_marks) == (3, 3, 3)
-    assert [p.mark_changed for p in view.points] == [False, False, False, False, True, False]
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (3, None, 3)
+    assert [p.mark_changed for p in view.points] == [False] * 6
+    assert [p.absorbed_by_group for p in view.points] == [False, False, False, False, True, False]
     clamped = [entry for entry in logs if entry["event"] == "self_review_delta_clamped"]
     assert [(e["unclamped_marks"], e["clamped_marks"]) for e in clamped] == [(4, 3)]
+    assert _load_qr(pg_sessionmaker, qr_id).revisions[1].reason == "Student self-mark: no change"
     assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 3
+
+
+def test_an_upward_grant_on_an_under_claimed_row_still_adds_its_mark(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Review round 1 probe. The marker's ids i1, a0 and b0 justify 3 but it
+    awarded 2; the student's i2 claim is granted. The grant adds its +1 as
+    it always did, bounded by what the ids now justify (3): 3, not the 2 a
+    capped-total delta (3 -> 3) gave."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_overfull_attempt(
+        pg_sessionmaker, student, matched=["i1", "a0", "b0"], awarded=2
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "7")
+
+    with capture_logs() as logs:
+        view = _service(pg_sessionmaker).submit(
+            student,
+            attempt_id,
+            qr_id,
+            _verdicts(i1=True, a0=True, a1=False, i2=True, b0=True, b1=False),
+        )
+
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (2, 3, 3)
+    i2 = view.points[3]
+    assert (i2.mark_changed, i2.absorbed_by_group) == (True, False)
+    assert [e for e in logs if e["event"] == "self_review_delta_clamped"] == []
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 3
+
+
+def test_an_upward_grant_never_lowers_an_over_claimed_mark(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The marker awarded 3 but its ids (i1 alone) justify only 1; the
+    student's i2 claim is granted. ``min(G(after), awarded + delta)`` would
+    be min(2, 4) = 2, an accepted UPWARD grant lowering the mark. The mark
+    stays 3 and the absorption is logged (4 -> 3)."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_overfull_attempt(pg_sessionmaker, student, matched=["i1"], awarded=3)
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "7")
+
+    with capture_logs() as logs:
+        view = _service(pg_sessionmaker).submit(
+            student,
+            attempt_id,
+            qr_id,
+            _verdicts(i1=True, a0=False, a1=False, i2=True, b0=False, b1=False),
+        )
+
+    assert (view.ai_marks, view.effective_marks) == (3, 3)
+    assert (view.points[3].mark_changed, view.points[3].absorbed_by_group) == (False, True)
+    clamped = [entry for entry in logs if entry["event"] == "self_review_delta_clamped"]
+    assert [(e["unclamped_marks"], e["clamped_marks"]) for e in clamped] == [(4, 3)]
 
 
 def _mixed_direction_group_scheme() -> MarkScheme:
