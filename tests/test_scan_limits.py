@@ -68,6 +68,7 @@ from tests.pdf_fakes import (
     many_form_xobjects_pdf,
     many_objects_pdf,
     non_stream_contents_pdf,
+    off_page_object_pdf,
     overstated_count_pdf,
     page_bomb_pdf,
     page_kids_bomb_pdf,
@@ -1404,10 +1405,10 @@ class CanonicalPdfBytesTests(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             canonical_pdf_bytes(empty_page_tree_pdf())
         self.assertNotIsInstance(caught.exception, ScanRejectedError)
-        uncounted = uncounted_bomb_pdf(200_000, count_entry=b"/Count 0")
-        with self.assertRaises(ScanRejectedError) as refused:
-            canonical_pdf_bytes(uncounted)
-        self.assertEqual(str(refused.exception), scan_limits._PAGE_COUNT_UNREADABLE_MESSAGE)
+        # Refused by the whole-document check that runs first (review round 1):
+        # the tree holds two pages MuPDF does not number.
+        with self.assertRaises(ScanRejectedError):
+            canonical_pdf_bytes(uncounted_bomb_pdf(200_000, count_entry=b"/Count 0"))
 
     def test_a_pdf_with_too_many_objects_is_refused_before_it_is_rewritten(self) -> None:
         """The rewrite costs time per object in the file (13.7 s for 200,000
@@ -1419,6 +1420,68 @@ class CanonicalPdfBytesTests(unittest.TestCase):
             canonical_pdf_bytes(many_objects_pdf(scan_limits.MAX_PDF_OBJECTS))
         tobytes.assert_not_called()
         canonical_pdf_bytes(many_objects_pdf(1_000))
+
+
+class OffPageObjectTests(unittest.TestCase):
+    """Task 9c review round 1: extraction's rewrite may parse only what the
+    content check has bounded -- the pages and what they draw from -- and
+    compressed object data is bounded before anything parses it."""
+
+    def test_objects_no_page_reaches_are_not_carried_into_the_rewrite(self) -> None:
+        """A big object hung off the catalog, or off a page-dict key no
+        renderer reads, in any shape, compressed or not: the rewrite copies
+        pages, so it never resolves it, and its output stays small."""
+        for holder in ("catalog", "page"):
+            for compressed in (True, False):
+                for shape, elements in (
+                    ("array", 2_000_000),
+                    ("string", 2_000_000),
+                    ("dict", 100_000),
+                ):
+                    data = off_page_object_pdf(
+                        elements, shape=shape, compressed=compressed, holder=holder
+                    )
+                    with self.subTest(holder=holder, compressed=compressed, shape=shape):
+                        canonical = canonical_pdf_bytes(data)
+                        self.assertLess(len(canonical), 20_000)
+                        with pymupdf.open(stream=canonical, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+                            self.assertEqual(doc.page_count, 1)
+
+    def test_an_object_stream_bomb_is_refused_before_anything_parses_it(self) -> None:
+        """An object stream that inflates past ``MAX_OBJECT_STREAM_BYTES``
+        is measured with the bounded inflate and refused -- at upload, in
+        the whole-document and page-scoped checks, and at extraction --
+        before the page tree is read or the file rewritten."""
+        elements = scan_limits.MAX_OBJECT_STREAM_BYTES // 2 + 1_000
+        data = off_page_object_pdf(elements, compressed=True)
+        self.assertLess(len(data), 100_000)
+        with (
+            patch.object(scan_limits, "_page_tree") as page_tree,
+            patch.object(pymupdf.Document, "tobytes") as tobytes,
+        ):
+            for check in (check_scan_bytes, check_pdf_content_bytes, canonical_pdf_bytes):
+                with self.subTest(check.__name__):
+                    with self.assertRaises(ScanTooLargeError) as caught:
+                        check(data)
+                    self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
+            with (
+                pymupdf.open(stream=data, filetype="pdf") as doc,  # type: ignore[no-untyped-call]
+                self.assertRaises(ScanTooLargeError),
+            ):
+                check_pdf_page_content(doc, 0)
+        page_tree.assert_not_called()
+        tobytes.assert_not_called()
+
+    def test_ordinary_object_streams_pass(self) -> None:
+        """A born-digital 40-page PDF written with object streams and an xref
+        stream passes upload and rewrites to its 40 pages."""
+        with pymupdf.open(
+            stream=born_digital_text_pdf(pages=MAX_SCAN_PAGES), filetype="pdf"
+        ) as doc:  # type: ignore[no-untyped-call]
+            data: bytes = doc.tobytes(garbage=1, use_objstms=1)  # type: ignore[no-untyped-call]
+        check_scan_bytes(data)
+        with pymupdf.open(stream=canonical_pdf_bytes(data), filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+            self.assertEqual(doc.page_count, MAX_SCAN_PAGES)
 
 
 class NonPdfDocumentTests(unittest.TestCase):

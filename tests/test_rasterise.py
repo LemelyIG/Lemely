@@ -24,6 +24,7 @@ from lemely.io.scan_limits import ScanRejectedError, ScanTooLargeError
 from tests.pdf_fakes import (
     annot_ap_bomb_pdf,
     image_bomb_pdf,
+    off_page_object_pdf,
     page_bomb_pdf,
     page_kids_bomb_pdf,
     page_kids_equal_count_bomb_pdf,
@@ -331,6 +332,45 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         )
         self.assertGreater(red, 0)
 
+    def test_objects_no_page_reaches_never_reach_pdfium(self) -> None:
+        """Task 9c review round 1: a big object hung off the catalog, compressed
+        (a few KB on disk) or not, is left out of the rewrite pdfium renders,
+        so neither the rewrite nor pdfium ever parses it."""
+        sizes: list[int] = []
+        real_document = pdfium.PdfDocument
+
+        def document(source: bytes, *args: object, **kwargs: object) -> pdfium.PdfDocument:
+            sizes.append(len(source))
+            return real_document(source, *args, **kwargs)  # type: ignore[arg-type]
+
+        for compressed in (True, False):
+            path = Path(self.tmp) / f"off-page-{compressed}.pdf"
+            path.write_bytes(off_page_object_pdf(2_000_000, compressed=compressed))
+            sizes.clear()
+            with (
+                self.subTest(compressed=compressed),
+                patch.object(rasterise_module.pdfium, "PdfDocument", document),
+            ):
+                pages = rasterise_pdf_to_pages(path)
+                self.assertEqual(len(pages), 1)
+                self.assertEqual(len(sizes), 1)
+                self.assertLess(sizes[0], 20_000)
+
+    def test_an_object_stream_bomb_is_refused_before_pdfium_opens_anything(self) -> None:
+        """Task 9c review round 1: a stored file that pre-dates the upload
+        bound on object streams is refused at extraction too."""
+        path = Path(self.tmp) / "objstm-bomb.pdf"
+        path.write_bytes(
+            off_page_object_pdf(scan_limits.MAX_OBJECT_STREAM_BYTES // 2 + 1_000, compressed=True)
+        )
+        with (
+            patch.object(rasterise_module.pdfium, "PdfDocument") as document,
+            self.assertRaises(ScanTooLargeError) as caught,
+        ):
+            rasterise_pdf_to_pages(path)
+        document.assert_not_called()
+        self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
+
     def test_pdfium_renders_the_bytes_the_content_check_measured_not_the_file(self) -> None:
         """Task 9c: pdfium is handed MuPDF's rewrite -- the very object the
         content check was given -- never the stored file's path or bytes."""
@@ -407,7 +447,9 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             rasterise_pdf_to_pages(path)
         get_page.assert_not_called()
         render.assert_not_called()
-        self.assertEqual(str(caught.exception), scan_limits._PAGE_COUNT_UNREADABLE_MESSAGE)
+        # Task 9c: refused while the original is checked, before the rewrite
+        # -- the tree holds pages MuPDF does not number.
+        self.assertEqual(str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE)
 
 
 if __name__ == "__main__":

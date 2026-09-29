@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 import pymupdf
+import pymupdf.mupdf as _mupdf
 import pypdfium2 as pdfium
 from PIL import Image
 
@@ -56,6 +57,16 @@ MAX_CROP_PAGES = 200
 #: has 1,334; a 40-page scan has a few hundred. Over this, the file is
 #: refused before it is rewritten.
 MAX_PDF_OBJECTS = 50_000
+#: Task 9c review round 1: the decoded size of all of a PDF's object streams
+#: together. An object stream packs many objects into one Flate stream, and
+#: MuPDF parses every object in one as soon as any is needed, so a few KB on
+#: disk can parse into hundreds of MB (an array of zeros costs ~43 bytes of
+#: memory per element, ~21x its decoded text). Measured with the bounded
+#: inflate before any object is loaded. Real producers' object streams hold
+#: small dictionaries -- a 40-page born-digital file's total well under 1 MB --
+#: and 16 MB keeps a compressed object no worse than an uncompressed one the
+#: 25 MB upload cap already admits.
+MAX_OBJECT_STREAM_BYTES = 16_000_000
 #: The target after any downscale. A4 at 400 DPI is 3307x4677 = 15.5 Mpx,
 #: the top of what a document scanner produces; the corpus at 200 DPI is
 #: 1655x2339 = 3.87 Mpx.
@@ -180,6 +191,17 @@ _PAGE_STRUCTURE_MALFORMED_MESSAGE = (
 _TOO_MANY_PDF_OBJECTS_MESSAGE = (
     "This PDF holds far more internal objects than a scanned paper does "
     f"(over {MAX_PDF_OBJECTS:,}). Re-export it as a plain scan."
+)
+#: The object streams together inflate past :data:`MAX_OBJECT_STREAM_BYTES`.
+_OBJECT_STREAMS_MESSAGE = (
+    "This PDF's compressed internal data is far larger than a scanned paper's "
+    f"(over {MAX_OBJECT_STREAM_BYTES // 1_000_000} MB once decompressed). "
+    "Re-export it as a plain scan."
+)
+#: An object stream uses an encoding the bounded inflate cannot measure.
+_OBJECT_STREAM_ENCODING_MESSAGE = (
+    "This PDF's compressed internal data uses an encoding this service cannot measure "
+    "safely; re-export the PDF with standard (Flate) compression."
 )
 #: Anything else going wrong once MuPDF has opened the file (Task 9b):
 #: fail closed, never pass it unmeasured.
@@ -966,6 +988,49 @@ def _check_image_and_masks(
     _check_masks(doc, xref, smask_xref=smask_xref, page_index=page_index)
 
 
+def _check_object_streams(doc: pymupdf.Document) -> None:
+    """Bound the file's object count and its object streams, before any object loads.
+
+    Task 9c review round 1. MuPDF parses every object in an object stream as
+    soon as any one of them is needed, so this runs first, straight after
+    the open, on the xref table alone: each entry of type ``"o"`` names its
+    container, and no object is loaded to find them. Each container's
+    decoded size then goes through the bounded inflate
+    (:func:`decoded_stream_size`), which reads only the raw stream and its
+    dictionary. Over :data:`MAX_OBJECT_STREAM_BYTES` in total, or more
+    objects than :data:`MAX_PDF_OBJECTS`, the file is refused.
+
+    Residual, not closable here: MuPDF's open has already loaded the catalog
+    (and pymupdf the trailer ``/Info``), so a container holding one of those
+    was parsed before this ran -- as it is by every MuPDF open, upload's
+    included.
+    """
+    xref_length = int(doc.xref_length())  # type: ignore[no-untyped-call]
+    if xref_length > MAX_PDF_OBJECTS:
+        raise ScanTooLargeError(_TOO_MANY_PDF_OBJECTS_MESSAGE)
+    try:
+        pdf = _mupdf.pdf_document_from_fz_document(doc.this)  # type: ignore[no-untyped-call]
+        containers: set[int] = set()
+        for number in range(1, xref_length):
+            entry = _mupdf.ll_pdf_get_xref_entry_no_null(pdf.m_internal, number)  # type: ignore[no-untyped-call]
+            if entry.type == "o" and 0 < entry.ofs < xref_length:
+                containers.add(int(entry.ofs))
+    except Exception as exc:
+        raise ScanRejectedError(_UNCHECKABLE_MESSAGE) from exc
+    total = 0
+    for container in sorted(containers):
+        if not doc.xref_is_stream(container):  # type: ignore[no-untyped-call]
+            continue  # names no stream: MuPDF resolves its objects to null
+        try:
+            total += decoded_stream_size(
+                doc, container, budget=MAX_OBJECT_STREAM_BYTES - total, page_index=0
+            )
+        except ScanUnsupportedEncodingError as exc:
+            raise ScanRejectedError(_OBJECT_STREAM_ENCODING_MESSAGE) from exc
+        except ScanTooLargeError as exc:
+            raise ScanTooLargeError(_OBJECT_STREAMS_MESSAGE) from exc
+
+
 def check_pdf_content(doc: pymupdf.Document, *, pdfium_pages: int | None = None) -> None:
     """Refuse a document whose page content would blow the render (Task 11b).
 
@@ -1025,6 +1090,7 @@ def check_pdf_content(doc: pymupdf.Document, *, pdfium_pages: int | None = None)
         return
     if doc.needs_pass:
         return
+    _check_object_streams(doc)
     # Task 9b: read once. MuPDF can lower its own count mid-walk, after a
     # page it counted fails to resolve; every page counted here is walked.
     try:
@@ -1127,6 +1193,7 @@ def check_pdf_page_content(doc: pymupdf.Document, page_index: int) -> None:
         return
     if doc.needs_pass:
         return
+    _check_object_streams(doc)
     if doc.page_count > MAX_CROP_PAGES:
         raise ScanTooLargeError(_CROP_PAGES_MESSAGE)
     try:
@@ -1185,7 +1252,10 @@ def check_pdf_content_bytes(data: bytes, *, pdfium_pages: int | None = None) -> 
 
 
 def canonical_pdf_bytes(data: bytes) -> bytes:
-    """MuPDF's rewrite of ``data``: one clean xref, one definition per object.
+    """MuPDF's pages-only rewrite of ``data``: the one sanctioned source of pdfium input.
+
+    Nothing may hand pdfium a PDF for rendering except through this function
+    (Task 9c): the rewrite holds exactly what the content check measured.
 
     Task 9c (user decision): extraction renders with pdfium but this module
     measures with MuPDF, and the two repair a damaged file differently -- an
@@ -1195,23 +1265,37 @@ def canonical_pdf_bytes(data: bytes) -> bytes:
     and renders these bytes, never the stored file, so pdfium can only see
     the objects MuPDF resolved.
 
-    ``tobytes(garbage=1)``: every object MuPDF resolves from the trailer,
-    written once under a fresh xref. Safe for a page's content because a
-    renderer reaches nothing but by reference from the trailer (the page
-    tree, each page's ``/Contents``, ``/Resources`` and ``/Annots``), which
-    is exactly what ``garbage=1`` keeps; it drops only unreferenced objects,
-    renumbers nothing, and merges nothing (``garbage=3`` and up compare and
-    merge objects, which is not wanted). Streams are copied as stored:
-    nothing is decompressed, re-encoded (``deflate``/``expand`` off) or
-    rewritten (``clean`` off -- it parses content streams, the very work
-    a bomb exploits). Annotation appearances are not regenerated, since no
-    page is loaded.
+    It resolves only what the content check has bounded (review round 1):
 
-    The rewrite costs time per object, so a file with more than
-    :data:`MAX_PDF_OBJECTS` is refused (:class:`ScanTooLargeError`) before
-    it is written; counting them is one read.
+    1. The whole-document check (:func:`check_pdf_content`) runs on the
+       original first: the object-stream and object-count bounds, the page
+       cap, the page-tree bounds and the walk of every page's content,
+       resources and annotation appearances. Anything it refuses is refused.
+    2. Then the pages alone are copied into a new document --
+       ``insert_pdf(links=False, annots=True, widgets=True)`` plus each
+       page's ``/Group`` -- and that is written with ``tobytes(garbage=1)``.
+       The copy resolves each page's ``/Contents``, ``/Resources``, page
+       boxes, ``/Rotate``, ``/UserUnit``, ``/Group`` and annotations (form
+       fields through pymupdf's widget copy), and nothing else: an object
+       hung off the catalog, the trailer or a page-dict key no renderer
+       reads is never parsed, whatever its size. ``links=False`` because
+       rebuilding links loads every page and resolves link destinations
+       through the catalog; a ``/Link`` annotation draws nothing in pdfium
+       without an appearance stream, which link annotations do not carry in
+       practice. ``/Group`` is added back because ``insert_pdf`` omits it
+       and a page's transparency group changes how it composites.
+       Streams are copied as stored: nothing is decompressed, re-encoded
+       or rewritten (no ``deflate``, ``expand`` or ``clean`` -- ``clean``
+       parses content streams, the very work a bomb exploits), and no page
+       is loaded, so no annotation appearance is regenerated. All 26
+       committed PDFs (171 pages) render pixel-identical from the rewrite.
 
-    Raises :class:`ScanRejectedError` when MuPDF cannot open or rewrite the
+    What an annotation's own keys or the form-field tree reference is
+    copied without being walked; a compressed object there is bounded by
+    the object-stream bound, an uncompressed one by the upload size cap.
+
+    Raises :class:`ScanRejectedError` (or :class:`ScanTooLargeError`) for
+    anything the check refuses, and when MuPDF cannot open or rewrite the
     bytes (garbage, or a password-protected file: extraction failed on both
     before, in pdfium, and nothing here can check what it cannot open).
     When MuPDF finds no pages, pdfium is asked for its count of the same
@@ -1229,22 +1313,47 @@ def canonical_pdf_bytes(data: bytes) -> bytes:
         if doc.needs_pass:
             raise ScanRejectedError(_UNCHECKABLE_MESSAGE)
         try:
+            check_pdf_content(doc)
             page_count = int(doc.page_count)
+        except ScanRejectedError:
+            raise
         except Exception as exc:
-            raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE) from exc
+            raise ScanRejectedError(_UNCHECKABLE_MESSAGE) from exc
         if page_count == 0:
             if _pdfium_page_count(data):
                 raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE)
             raise ValueError("the PDF has no pages")
-        if doc.xref_length() > MAX_PDF_OBJECTS:  # type: ignore[no-untyped-call]
-            raise ScanTooLargeError(_TOO_MANY_PDF_OBJECTS_MESSAGE)
         try:
-            canonical: bytes = doc.tobytes(garbage=1)  # type: ignore[no-untyped-call]
+            return _copy_pages(doc)
         except Exception as exc:
             raise ScanRejectedError(_UNCHECKABLE_MESSAGE) from exc
-        return canonical
     finally:
         doc.close()  # type: ignore[no-untyped-call]
+
+
+def _copy_pages(doc: pymupdf.Document) -> bytes:
+    """``doc``'s pages -- and only what they reference -- written as a new PDF.
+
+    See :func:`canonical_pdf_bytes` for what is copied and why.
+    """
+    mupdf = _mupdf
+    out = pymupdf.open()  # type: ignore[no-untyped-call]
+    try:
+        graft_map = pymupdf.Graftmap(out)  # type: ignore[no-untyped-call]
+        out.insert_pdf(doc, links=False, annots=True, widgets=True, _gmap=graft_map)  # type: ignore[no-untyped-call]
+        source = mupdf.pdf_document_from_fz_document(doc.this)  # type: ignore[no-untyped-call]
+        target = mupdf.pdf_document_from_fz_document(out.this)  # type: ignore[no-untyped-call]
+        for index in range(int(doc.page_count)):
+            source_page = mupdf.pdf_lookup_page_obj(source, index)  # type: ignore[no-untyped-call]
+            group = mupdf.pdf_dict_gets(source_page, "Group")  # type: ignore[no-untyped-call]
+            if group.m_internal:
+                target_page = mupdf.pdf_lookup_page_obj(target, index)  # type: ignore[no-untyped-call]
+                grafted = mupdf.pdf_graft_mapped_object(graft_map.this, group)  # type: ignore[no-untyped-call]
+                mupdf.pdf_dict_puts(target_page, "Group", grafted)  # type: ignore[no-untyped-call]
+        rewrite: bytes = out.tobytes(garbage=1)  # type: ignore[no-untyped-call]
+        return rewrite
+    finally:
+        out.close()  # type: ignore[no-untyped-call]
 
 
 def _pdfium_page_count(data: bytes) -> int:

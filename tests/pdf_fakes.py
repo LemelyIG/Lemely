@@ -1433,6 +1433,76 @@ def page_kids_equal_count_bomb_pdf(inflated_bytes: int) -> bytes:
     )
 
 
+def off_page_object_pdf(
+    elements: int, *, shape: str = "array", compressed: bool = True, holder: str = "catalog"
+) -> bytes:
+    """One A4 page, plus one big object (object 6) no page draws from.
+
+    ``shape``: ``"array"`` (``elements`` zeros), ``"dict"`` (``elements``
+    keys) or ``"string"`` (``elements`` hex bytes). ``holder``: the catalog
+    (``/Junk``) or the page dict (``/Junk``, a key no renderer reads). With
+    ``compressed`` object 6 sits in a Flate object stream (object 5), so a
+    few KB on disk parse into hundreds of MB; without, it is a plain object.
+    Written with an xref stream (object 10), which object streams need.
+
+    Task 9c review round 1 (the reviewer's amplification probe): the
+    content check never walks object 6, so nothing that renders extraction
+    input may parse it either.
+    """
+    if shape == "array":
+        body = b"[" + b"0 " * elements + b"]"
+    elif shape == "dict":
+        body = b"<<" + b"".join(b"/K%d 0 " % i for i in range(elements)) + b">>"
+    else:
+        body = b"<" + b"00" * elements + b">"
+    catalog_junk = b" /Junk 6 0 R" if holder == "catalog" else b""
+    page_junk = b" /Junk 6 0 R" if holder == "page" else b""
+    objects = {
+        1: b"<< /Type /Catalog /Pages 2 0 R" + catalog_junk + b" >>",
+        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R"
+        + page_junk
+        + b" >>",
+        4: pdf_stream(b"", b"q 1 0 0 rg 60 500 120 250 re f Q"),
+    }
+    out = bytearray(b"%PDF-1.7\n")
+    offsets: dict[int, int] = {}
+    for number, obj in objects.items():
+        offsets[number] = len(out)
+        out += f"{number} 0 obj\n".encode() + obj + b"\nendobj\n"
+    if compressed:
+        header = b"6 0 "
+        offsets[5] = len(out)
+        packed = zlib.compress(header + body, 9)
+        out += (
+            b"5 0 obj\n"
+            + pdf_stream(b"/Type /ObjStm /N 1 /First %d /Filter /FlateDecode" % len(header), packed)
+            + b"\nendobj\n"
+        )
+    else:
+        offsets[6] = len(out)
+        out += b"6 0 obj\n" + body + b"\nendobj\n"
+    xref_at = len(out)
+    rows = [bytes([0, 0, 0, 0, 0, 0xFF])]
+    for number in range(1, 11):
+        if number == 6 and compressed:
+            rows.append(bytes([2]) + (5).to_bytes(4, "big") + b"\x00")
+        elif number == 10:
+            rows.append(bytes([1]) + xref_at.to_bytes(4, "big") + b"\x00")
+        elif number in offsets:
+            rows.append(bytes([1]) + offsets[number].to_bytes(4, "big") + b"\x00")
+        else:
+            rows.append(bytes(6))
+    table = zlib.compress(b"".join(rows))
+    out += (
+        b"10 0 obj\n"
+        + pdf_stream(b"/Type /XRef /Size 11 /W [1 4 1] /Root 1 0 R /Filter /FlateDecode", table)
+        + b"\nendobj\n"
+    )
+    out += f"startxref\n{xref_at}\n%%EOF\n".encode()
+    return bytes(out)
+
+
 def xref_repair_bomb_pdf(inflated_bytes: int, *, entry_eol: bytes = b"\n") -> bytes:
     """One page whose content, object 4, is defined twice: a clean red
     rectangle first (the xref points at it), then a content bomb. Each xref
@@ -1480,7 +1550,14 @@ def many_objects_pdf(objects: int) -> bytes:
     Task 9c: MuPDF's rewrite costs time per object in the file, referenced
     or not, so the object count is bounded before the rewrite.
     """
-    return assemble_pdf([*_CATALOG_AND_PAGES, _A4_PAGE + b" >>", *([b"<< /A 1 >>"] * objects)])
+    return assemble_pdf(
+        [
+            *_CATALOG_AND_PAGES,
+            _A4_PAGE + b" >>",
+            pdf_stream(b"", b"q Q"),
+            *([b"<< /A 1 >>"] * objects),
+        ]
+    )
 
 
 def uncounted_bomb_pdf(inflated_bytes: int, *, count_entry: bytes) -> bytes:
@@ -1598,6 +1675,7 @@ __all__ = [
     "many_form_xobjects_pdf",
     "many_objects_pdf",
     "non_stream_contents_pdf",
+    "off_page_object_pdf",
     "overstated_count_pdf",
     "page_bomb_pdf",
     "page_kids_bomb_pdf",

@@ -102,6 +102,7 @@ def rasterise_pdf_to_pages(pdf_path: Path, *, dpi: float = EXTRACTION_DPI) -> li
     # (the call holds the only reference), so at most the file and its
     # rewrite are held at once; pdfium then keeps only the rewrite.
     canonical = canonical_pdf_bytes(pdf_path.read_bytes())
+    # `canonical_pdf_bytes` is the only sanctioned source of pdfium input.
     pdf = pdfium.PdfDocument(canonical)
     try:
         # Planning reads the page count and page sizes only (no page is
