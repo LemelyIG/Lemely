@@ -2048,29 +2048,28 @@ def _slow_cosine_sum_identity(n: int) -> tuple[sympy.Expr, sympy.Expr]:
 
 
 def test_slow_simplify_falls_back_to_numeric_within_budget() -> None:
-    """Isolated in a subprocess so the timing assertion is a real gate
-    (I8 re-review round 5 SHOULD-FIX 1, corrected).
+    """Isolated in a subprocess so the production defaults are exercised
+    end-to-end through a real process boundary, not just in-process
+    (I8 re-review round 5 SHOULD-FIX 1).
 
-    A wall-clock margin wide enough to absorb THIS SUITE's GIL contention
-    from other abandoned CPU-bound daemon threads (observed up to ~6.9s for
-    this exact expression) is no longer tight enough to fail if the
-    timeout were silently not honoured at all (`simplify` unbounded takes
-    ~7s on this expression too — the two numbers sit inside each other's
-    margin, which is precisely why the previous version of this test
-    dropped the timing assertion entirely). Running in a fresh subprocess
-    removes the contention: no other test's abandoned threads exist there.
-    A legitimate run measures ~2.48s (production `simplify_timeout` 2.0s +
-    `numeric_timeout` 0.5s + interpreter/import overhead); the regression
-    this test exists to catch (the timeout silently not honoured, falling
-    through to the unbounded `simplify`) measures ~5.04-5.39s on this same
-    expression. `timeout=4` sits strictly between the two with real margin
-    on both sides — it is the `method`/`kind`/`auto_awardable` asserts
-    below that prove correctness; this bound only proves the timeout was
-    actually honoured, not merely that SOME answer eventually came back
-    (I8 re-review round 6: an earlier, looser bound sat inside both
-    numbers' margins and could not tell a working timeout from a broken
-    one). Same pattern as
-    `test_interpreter_shutdown_is_not_blocked_by_an_abandoned_computation`.
+    Asserted on the outcome, not the clock (#257): this used to also bound
+    `subprocess.run`'s own `timeout=4`, on the theory that a fresh
+    interpreter has no abandoned CPU-bound threads to contend with, so a
+    legitimate run (~2.48s: production `simplify_timeout` 2.0s +
+    `numeric_timeout` 0.5s + interpreter/import overhead) sits with real
+    margin below a broken one (~5.04-5.39s, `simplify` running unbounded --
+    I8 re-review round 6). That margin assumed the only contention was
+    in-process GIL contention; under 2x CPU oversubscription on the host
+    machine, the whole subprocess gets less wall-clock time regardless of
+    whether the in-process timeout logic is honoured, and a legitimate run
+    measured past 4s there. The `method`/`kind`/`auto_awardable` asserts
+    below are what prove correctness: the production defaults must still
+    route to the numeric fallback through a real subprocess. The bound that
+    a tight budget actually caps `simplify`'s worst-case wall time is
+    already proven, with a generous margin, by
+    `test_simplify_timeout_is_configurable_and_bounds_worst_case`; this test
+    does not need to re-prove that property under a tight one too, so
+    `timeout=30` below is only a hang guard.
     """
     script = (
         "import sys; sys.path.insert(0, '.'); import sympy\n"
@@ -2084,12 +2083,34 @@ def test_slow_simplify_falls_back_to_numeric_within_budget() -> None:
         "print(f'{v.method.value if v.method else None}|{v.kind.value}|{v.auto_awardable}')\n"
     )
     result = subprocess.run(
-        [sys.executable, "-c", script], check=True, timeout=4, capture_output=True, text=True
+        [sys.executable, "-c", script], check=True, timeout=30, capture_output=True, text=True
     )
     method, kind, auto_awardable = result.stdout.strip().split("|")
     assert method == EquivalenceMethod.NUMERIC.value
     assert kind == VerdictKind.EQUAL_SAMPLED.value
     assert auto_awardable == "False"
+
+
+@pytest.fixture
+def declined_simplify(monkeypatch: pytest.MonkeyPatch):
+    """Force `equivalent` onto the numeric path by construction (#257).
+
+    `_run_bounded` returns ``None`` for the simplify step -- exactly what a
+    timeout returns -- without starting a thread, and gives every other
+    bounded step a 30 s budget. The tests that use this are about the
+    SAMPLER, not the budgets; racing a real `simplify` against 0.05 s turned
+    runner load into a red build (CI run 36155845596, 3.13 only).
+    """
+    from lemely.core import equivalence as eq
+
+    real = eq._run_bounded
+
+    def bounded(func, timeout):
+        if func.__name__ == "_simplify_diff":
+            return None
+        return real(func, 30.0)
+
+    monkeypatch.setattr(eq, "_run_bounded", bounded)
 
 
 def test_simplify_timeout_is_configurable_and_bounds_worst_case() -> None:
@@ -2098,11 +2119,17 @@ def test_simplify_timeout_is_configurable_and_bounds_worst_case() -> None:
     Proves the timeout parameter — not just its 2.0s production default —
     actually bounds `simplify`'s runtime, using the same real slow
     expression rather than a mocked sleep.
+
+    The numeric budget is generous (#257): this test is about the SIMPLIFY
+    budget bounding wall time, and a 0.5 s numeric budget could also expire
+    on a loaded runner and turn a passing simplify bound into UNPARSEABLE.
+    The `elapsed < 5.0` bound still proves `simplify_timeout` was honoured:
+    the numeric comparison on this pair takes milliseconds.
     """
     lhs, rhs = _slow_cosine_sum_identity(25)
 
     started = time.monotonic()
-    verdict = equivalent(lhs, rhs, simplify_timeout=0.05, numeric_timeout=0.5)
+    verdict = equivalent(lhs, rhs, simplify_timeout=0.05, numeric_timeout=30.0)
     elapsed = time.monotonic() - started
 
     # Generous (see the note on this pattern in
@@ -2134,32 +2161,21 @@ def test_sampler_seed_is_deterministic_for_the_same_pair() -> None:
     assert _sampler_seed(a, b) == _sampler_seed(a, b)
 
 
-def test_numeric_fallback_is_deterministic_across_repeated_calls() -> None:
-    """The sampler must not flip its verdict run to run on the SAME pair —
-    now proven by forcing every call through the ACTUAL numeric path, not
-    by racing a timeout that mostly avoids it.
-
-    Uses `_slow_cosine_sum_identity`, which reliably exhausts a small
-    `simplify_timeout` (confirmed elsewhere in this suite:
-    `test_slow_simplify_falls_back_to_numeric_within_budget` and
-    `test_simplify_timeout_is_configurable_and_bounds_worst_case` both
-    assert `method is NUMERIC` on it) — `method` is asserted on every
-    iteration here too, so this test cannot silently degrade into
-    re-testing `simplify` instead of the sampler the way its predecessor
-    did.
+def test_numeric_fallback_is_deterministic_across_repeated_calls(declined_simplify: None) -> None:
+    """The sampler must not flip its verdict run to run on the SAME pair,
+    proven by forcing every call through the ACTUAL numeric path (#257: the
+    `declined_simplify` fixture, not a 0.05 s race that a loaded runner can
+    lose on BOTH budgets and report UNPARSEABLE). `method` is asserted on
+    every iteration, so this cannot silently degrade into re-testing
+    `simplify`; and `simplify_timeout=100.0` proves the path is forced by
+    the fixture, not by the clock -- with the real `_run_bounded`, a 100 s
+    budget would let `simplify` finish and the first assertion would fail.
     """
     lhs, rhs = _slow_cosine_sum_identity(25)
 
     kinds = set()
     for _ in range(10):
-        # numeric_timeout generous (not the production 0.5s default): this
-        # suite deliberately abandons many CPU-bound daemon threads
-        # elsewhere, and their GIL contention can otherwise starve this
-        # comparison's own numeric evaluation past a tight budget when the
-        # whole file runs together — a slow but successful evaluation is
-        # fine here, since the point is the SAMPLER's determinism, not the
-        # timeout's tightness (covered elsewhere).
-        verdict = equivalent(lhs, rhs, simplify_timeout=0.05, numeric_timeout=3.0)
+        verdict = equivalent(lhs, rhs, simplify_timeout=100.0, numeric_timeout=3.0)
         assert verdict.method is EquivalenceMethod.NUMERIC, (
             "did not reach the numeric path — this run tests nothing about the sampler"
         )
@@ -3048,6 +3064,22 @@ def test_greek_subscripts_are_one_symbol_each() -> None:
     assert parse_expr_safe("λ1*λ2") == l1 * l2
     q, pi, e0, r = sympy.symbols("q π ε_0 r")
     assert parse_expr_safe("q/(4πε0r^2)") == q / (4 * pi * e0 * r**2)
+
+
+def test_a_function_name_head_still_calls_its_subscripted_argument() -> None:
+    """Task 4 review's carried-over Minor: ``_rewrite_digit_suffixes`` joined
+    a function-name head to its subscripted last letter with an explicit
+    ``*`` -- ``sinx2`` became ``sin*(x_2)``, a bare symbol ``sin`` multiplied
+    by ``(x_2)``, not a call to SymPy's ``sin``. At ec1ba45f this still read
+    as ``sin(x_2)`` (the head/last split existed but the join used ``*``
+    unconditionally); it now gives ``None`` -- ``sin`` as a plain symbol
+    conflicts with SymPy's own recognition of ``sin`` elsewhere in this
+    module and the parse is refused. ``lnx2``, ``expx2``, ``sqrtx2`` and
+    ``logx2`` have the same shape (all :data:`_ALLOWED_FUNCTIONS` heads).
+    When ``head`` is itself a known function name it must stay a call --
+    ``head(last_digits)`` -- not a product."""
+    x2 = sympy.Symbol("x_2")
+    assert parse_expr_safe("sinx2") == sympy.sin(x2)
 
 
 def test_a_family_letter_and_a_unit_power_in_the_same_text() -> None:
