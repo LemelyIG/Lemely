@@ -823,7 +823,9 @@ def _check_coherence(
        an unstated pool's room is the whole leftover after the fixed points,
        never shared; a ``select_count`` pool's room is what earlier
        ``select_count`` pools left of it -- only stated-N pools consume a
-       shared room) narrows rather than inverts the interval. The legacy
+       shared room) narrows rather than inverts the interval. Both ends are
+       then clamped at ``question.marks`` (triage F6), because the awarded
+       figure compared against them already is. The legacy
        path passes no groups and keeps the global rule (spec 2026-09-26 §1,
        out of scope):
 
@@ -892,6 +894,16 @@ def _check_coherence(
         for cap, tariffs in by_group.values():
             implied_min += min(cap, max(tariffs))
             implied_max += min(cap, sum(tariffs))
+        # Triage F6: `awarded_marks` reaches here already clamped at
+        # `question.marks` (`_group_capped_total`), so the interval must be
+        # too, or a fully-correct answer is routed to review. Three shapes
+        # overfill the question: a det-parsed scheme whose independent
+        # tariffs exceed it (reconcile.py bypasses validate_mark_point_sum; 4
+        # of 479 corpus schemes), a valid scheme whose alternative outweighs
+        # its sibling, and unstated pools, each bounded by the full leftover
+        # (triage F5) so their caps can sum past the question.
+        implied_min = min(implied_min, question.marks)
+        implied_max = min(implied_max, question.marks)
     else:
         primary = [p for p in matched_points if not p.is_alternative and not p.is_optional]
         non_additive = [p for p in matched_points if p.is_alternative or p.is_optional]

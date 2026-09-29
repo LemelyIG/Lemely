@@ -2695,6 +2695,134 @@ class BackstopOnGroupCappedTotalTests(unittest.TestCase):
         )
 
 
+class ClampedCoherenceIntervalTests(unittest.TestCase):
+    """Triage F6 (``probe_marking.py`` cases F6): the awarded figure the
+    coherence check receives is already clamped at ``question.marks``, but
+    the interval it was compared with was not, so a fully-correct answer was
+    routed to review with "implies between 5 and 5" on a 4-mark question."""
+
+    def _cq(self, question, awarded_ids, claimed):
+        from lemely.core.schemas import AIMarkResponse
+        from lemely.io.correction_ai import _build_ai_corrected_from_verdicts
+
+        verdicts = [
+            PointVerdict(
+                point_id=p.id,
+                verdict="awarded" if p.id in awarded_ids else "withheld",
+                evidence_span="ev" if p.id in awarded_ids else "",
+            )
+            for p in question.answer_points
+        ]
+        mark = AIMarkResponse(
+            awarded_marks=claimed,
+            confidence=0.95,
+            matched_point_ids=sorted(awarded_ids),
+            feedback="fb",
+            point_verdicts=verdicts,
+        )
+        return _build_ai_corrected_from_verdicts(question, "x ev", mark, None, None)
+
+    def test_det_shaped_breach_of_the_primary_sum_does_not_flag_a_full_answer(self):
+        """``io/det/reconcile.py`` assigns ``answer_points`` after construction
+        and bypasses ``validate_mark_point_sum`` (4 of 479 corpus schemes are
+        in breach); model it the same way."""
+        from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+
+        q = Question(
+            id="6",
+            marks=4,
+            type=QuestionType.RECALL,
+            answer_points=[AnswerPoint(id="p1", point="p1", marks=1)],
+        )
+        q.answer_points = [AnswerPoint(id=f"p{i}", point=f"p{i}", marks=1) for i in range(1, 6)]
+        cq = self._cq(q, {f"p{i}" for i in range(1, 6)}, claimed=4)
+        self.assertEqual(cq.awarded_marks, 4)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
+
+    def test_an_alternative_worth_more_than_its_sibling_does_not_flag_on_a_valid_scheme(self):
+        from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+
+        q = Question(
+            id="6b",
+            marks=2,
+            type=QuestionType.RECALL,
+            answer_points=[
+                AnswerPoint(id="p1", point="p1", marks=1),
+                AnswerPoint(id="p2", point="p2", marks=1),
+                AnswerPoint(id="p3", point="p3", marks=2, is_alternative=True),
+            ],
+        )
+        cq = self._cq(q, {"p1", "p3"}, claimed=2)
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
+
+    def test_a_genuine_under_award_inside_the_clamp_still_flags(self):
+        """The clamp must not blind the check: 2 independent 1-mark points
+        matched on a 4-mark question with awarded 1 is still incoherent."""
+        from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+        from lemely.io.correction_ai import _check_coherence, _scheme_groups
+
+        q = Question(
+            id="6c",
+            marks=4,
+            type=QuestionType.RECALL,
+            answer_points=[AnswerPoint(id=f"p{i}", point=f"p{i}", marks=1) for i in range(1, 5)],
+        )
+        _, groups = _scheme_groups(q)
+        reason = _check_coherence(q, ["p1", "p2"], 1, groups=groups)
+        self.assertIsNotNone(reason)
+        self.assertIn("between 2 and 2", reason or "")
+
+    def test_two_unstated_pools_whose_caps_overfill_the_question_do_not_flag(self):
+        """Task 5 carry-over. 3 marks: i1, pool A (a0, a1), i2, pool B (b0,
+        b1), no select_count. The leftover after i1 and i2 is 1 and each
+        unstated pool is bounded by the whole of it, so the caps sum to 4.
+        i1, i2, a0 and b0 are 4 raw, 3 after the question clamp: a full
+        answer, previously flagged "implies between 4 and 4"."""
+        q = self._two_pools(marks=3, pool_tariff=1)
+        cq = self._cq(q, {"i1", "i2", "a0", "b0"}, claimed=3)
+        self.assertEqual(cq.awarded_marks, 3)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
+
+    def test_two_mark_pools_overfilling_a_four_mark_question_do_not_flag(self):
+        """The same shape with 2-mark pool tariffs on a 4-mark question: the
+        leftover is 2, each pool caps at 2, and i1, i2, a0, b0 are 6 raw and
+        4 clamped. Previously "implies between 6 and 6"."""
+        q = self._two_pools(marks=4, pool_tariff=2)
+        cq = self._cq(q, {"i1", "i2", "a0", "b0"}, claimed=4)
+        self.assertEqual(cq.awarded_marks, 4)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
+
+    def _two_pools(self, *, marks, pool_tariff):
+        from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+
+        def pool(point_id):
+            return AnswerPoint(id=point_id, point=point_id, marks=pool_tariff, is_optional=True)
+
+        return Question.model_construct(
+            id="6d",
+            marks=marks,
+            type=QuestionType.RECALL,
+            answer_points=[
+                AnswerPoint(id="i1", point="i1", marks=1),
+                pool("a0"),
+                pool("a1"),
+                AnswerPoint(id="i2", point="i2", marks=1),
+                pool("b0"),
+                pool("b1"),
+            ],
+            select_count=None,
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+
+
 class DuplicatePointVerdictTests(unittest.TestCase):
     """Task #30 review MUST-FIX 1: a repeated ``point_id`` in
     ``point_verdicts`` used to inflate marks (``_awarded_from_verdicts``
