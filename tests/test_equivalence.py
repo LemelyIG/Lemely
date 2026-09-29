@@ -29,6 +29,7 @@ from __future__ import annotations
 import glob
 import json
 import math
+import os
 import subprocess
 import sys
 import time
@@ -2312,6 +2313,15 @@ def test_parse_expr_safe_accepts_already_valid_arithmetic() -> None:
         "2**100000000",
         "9^9^9",
         "2**3**4",
+        "2^(999*999*999)",
+        "2^(10*10*10*10*10*10*10*10*10)",
+        "(2+x-x)^(999*999*999)",
+        "(10^300*10^300*10^300*10^300)^999",
+        "(10^300*10^300*10^300*10^300+1)^999",
+        "2^(999!)",
+        "(999!)!",
+        "9999999!",
+        "9 999 999!",
     ],
     ids=[
         "disallowed-function",
@@ -2319,10 +2329,298 @@ def test_parse_expr_safe_accepts_already_valid_arithmetic() -> None:
         "huge-exponent",
         "exponent-tower-caret",
         "exponent-tower-double-star",
+        "computed-exponent",
+        "computed-exponent-products",
+        "computed-exponent-symbolic-base",
+        "result-too-many-bits",
+        # The row above is already caught by `_EXPONENT_TOWER_RE` (`^300)^999`
+        # matches through its optional `\)?`); this one has no tower shape, so
+        # only the structural result-bits bound in `_pow_would_explode` stops it.
+        "result-too-many-bits-no-tower",
+        "factorial-exponent",
+        "factorial-of-parenthesised",
+        "factorial-too-large",
+        "factorial-too-large-thousands-spaced",
     ],
 )
 def test_parse_expr_safe_rejects_dangerous_constructs(text: str) -> None:
     assert parse_expr_safe(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["2^(999*999*999)", "2^(10*10*10*10*10*10*10*10*10)", "(2+x-x)^(999*999*999)"],
+    ids=["computed-exponent", "computed-exponent-products", "computed-exponent-symbolic-base"],
+)
+def test_computed_exponents_are_refused_before_any_big_int_work(text: str) -> None:
+    """Triage F2 (2026-09-29): ``2^(999*999*999)`` used to pass both regexes
+    and return a 997,003,000-bit Integer after 3.79 s, during which a
+    heartbeat thread stalled 3.83 s -- the GIL was held, so ``_run_bounded``'s
+    timeout could not have helped. The refusal must come from the structural
+    bound on the unevaluated parse, i.e. in milliseconds and before any
+    big-int work -- NOT from the worker's timeout, which would have taken
+    the full second and killed the worker (so its pid must survive)."""
+    from lemely.core import equivalence as eq
+
+    assert parse_expr_safe("2+2") == sympy.Integer(4)  # warm worker: time the refusal, not a start
+    worker_pid = eq._PARSE_WORKER.pid()
+    started = time.monotonic()
+    assert parse_expr_safe(text, timeout=1.0) is None
+    assert time.monotonic() - started < 0.5
+    assert eq._PARSE_WORKER.pid() == worker_pid, "refused by a kill, not by the walk"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("2^(1/2)", sympy.sqrt(2)),
+        ("10^(-3)", sympy.Rational(1, 1000)),
+        ("2^(3*4)", sympy.Integer(4096)),
+        ("5!", sympy.Integer(120)),
+        ("2^999", sympy.Integer(2) ** 999),
+    ],
+    ids=[
+        "fractional-exponent",
+        "negative-exponent",
+        "small-computed-exponent",
+        "small-factorial",
+        "largest-literal",
+    ],
+)
+def test_bounded_exponents_still_parse(text: str, expected: sympy.Expr) -> None:
+    assert parse_expr_safe(text) == expected
+
+
+def test_symbolic_exponents_still_parse() -> None:
+    x, n = sympy.symbols("x n")
+    assert parse_expr_safe("x^(n+1)") == x ** (n + 1)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "(1/(1-v^2/c^2))^(1/2)",
+        "(x/(x-1))^2",
+        "(m/(M-m))^2",
+        "2^(1/(n-1))",
+        "((a+b)/(a-b))^2",
+    ],
+    ids=[
+        "lorentz-factor",
+        "ratio-squared",
+        "mass-ratio-squared",
+        "singular-exponent",
+        "sum-over-difference",
+    ],
+)
+def test_answers_singular_when_every_symbol_is_one_still_parse(text: str) -> None:
+    """The structural bound substitutes 1 for EVERY symbol, so any difference
+    of symbols (``M - m``, ``1 - v²/c²``) is 0 there and the power's base or
+    exponent is ``zoo``/``nan`` -- a property of the substitution point, not
+    of the answer. Refusing those turned the Lorentz factor and every
+    ``(a/(a-b))^2`` into UNPARSEABLE; they must parse exactly as before."""
+    from lemely.core import equivalence as eq
+
+    expected = eq._parse_normalized(eq._normalize_text(text), evaluate=True)
+    assert parse_expr_safe(text) == expected
+
+
+def _alive(pid: int | None) -> bool:
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+#: Prelude for the parse-worker timing tests below, each run in a FRESH
+#: interpreter for the same reason as
+#: `test_slow_simplify_falls_back_to_numeric_within_budget`: this file
+#: abandons CPU-bound daemon threads elsewhere, and their GIL contention
+#: inflates in-process wall-clock and heartbeat measurements (observed: a
+#: correct 1.0 s kill measured 2.06 s in-process, after the pool-saturation
+#: test). `timed` runs a call while a 50 ms heartbeat thread ticks and
+#: reports the call's wall time and the heartbeat's longest gap -- a gap far
+#: above 50 ms means something held the GIL in THIS process.
+_WORKER_TIMING_PRELUDE = """
+import itertools, json, multiprocessing, os, sys, threading, time
+sys.path.insert(0, '.')
+from lemely.core import equivalence as eq
+from lemely.core.equivalence import parse_expr_safe
+
+def timed(call):
+    beats, stop = [], threading.Event()
+    def beat():
+        while not stop.is_set():
+            beats.append(time.monotonic())
+            time.sleep(0.05)
+    thread = threading.Thread(target=beat, daemon=True)
+    thread.start()
+    started = time.monotonic()
+    result = call()
+    elapsed = time.monotonic() - started
+    stop.set()
+    thread.join()
+    return result, elapsed, max((b - a for a, b in itertools.pairwise(beats)), default=0.0)
+
+def alive(pid):
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+warm = parse_expr_safe("2+2")  # start the worker: time the call below, not a start
+pid_before = eq._PARSE_WORKER.pid()
+"""
+
+
+def _run_worker_timing_script(body: str) -> dict[str, object]:
+    script = _WORKER_TIMING_PRELUDE + body
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        timeout=60,
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).resolve().parents[1],
+    )
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def test_the_parse_worker_kills_a_runaway_parse_and_keeps_the_parent_responsive() -> None:
+    """Triage F2, user decision 3: the guards can be bypassed by something
+    nobody has thought of yet, so the parse runs in a child that can be
+    KILLED. In-process, ``2**(999*999*999)`` held the GIL for 3.8 s and a
+    50 ms heartbeat stalled 3.83 s; through the worker the parent gets
+    ``None`` at the timeout and its heartbeat never misses a beat. ``vet=False``
+    skips the structural bound, which would refuse this text first."""
+    out = _run_worker_timing_script(
+        """
+result, elapsed, gap = timed(lambda: eq._PARSE_WORKER.parse("2**(999*999*999)", 1.0, vet=False))
+print(json.dumps({
+    "warm": str(warm),
+    "pid_before": pid_before,
+    "result": repr(result),
+    "elapsed": elapsed,
+    "gap": gap,
+    "killed": not alive(pid_before),
+    "pid_after_kill": eq._PARSE_WORKER.pid(),
+    "still_a_child": pid_before in [c.pid for c in multiprocessing.active_children()],
+    "respawned": str(parse_expr_safe("2+2")),
+    "pid_after_respawn": eq._PARSE_WORKER.pid(),
+}))
+"""
+    )
+    assert out["warm"] == "4" and out["pid_before"] is not None
+    assert out["result"] == "None"
+    assert 0.9 < out["elapsed"] < 1.6, f"the timeout was not honoured: {out['elapsed']:.2f}s"  # type: ignore[operator]
+    assert out["gap"] < 0.25, f"the parent stalled for {out['gap']:.2f}s -- the GIL was held"  # type: ignore[operator]
+    # Killed AND joined: no zombie, not tracked as a child any more.
+    assert out["killed"] is True
+    assert out["pid_after_kill"] is None
+    assert out["still_a_child"] is False
+    # The next call respawns the worker transparently.
+    assert out["respawned"] == "4"
+    assert out["pid_after_respawn"] not in (None, out["pid_before"])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2^(999*999*999 + 0/(n-1))",
+        "(" + "*".join(["(10^300+1)^1000"] * 10) + "*1)^2",
+    ],
+    ids=["exponent-singular-at-ones", "product-of-bounded-powers"],
+)
+def test_what_the_walk_cannot_bound_never_stalls_the_caller(text: str) -> None:
+    """Every guard ON, through ``parse_expr_safe``. Two inputs the structural
+    walk cannot refuse cheaply:
+
+    - ``0/(n-1)`` is ``nan`` when n is 1, so the walk cannot bound this
+      exponent and leaves it to the evaluated parse -- which folds
+      ``0/(n-1)`` to 0 and would build ``2**997002999``;
+    - each ``(10^300+1)^1000`` is within bounds, but the walk must EVALUATE
+      their product to bound the outer power: 25 million bits for 25 terms,
+      measured at 33.5 s with a 2.5 s heartbeat gap when the walk ran in the
+      caller's process (10 terms here: 5.2 s, 0.98 s gap).
+
+    Both must come back ``None`` at the timeout without the caller's
+    heartbeat noticing: the walk and the parse run in the killable worker.
+    (A walk that simply refused them would pass the first and last asserts,
+    which is why the kill is asserted too: this test is about the backstop.)"""
+    out = _run_worker_timing_script(
+        f"""
+result, elapsed, gap = timed(lambda: parse_expr_safe({text!r}, timeout=1.0))
+print(json.dumps({{
+    "result": repr(result), "elapsed": elapsed, "gap": gap, "killed": not alive(pid_before),
+}}))
+"""
+    )
+    assert out["result"] == "None"
+    assert out["killed"] is True, "never reached the worker's timeout"
+    assert 0.9 < out["elapsed"] < 1.6, f"the timeout was not honoured: {out['elapsed']:.2f}s"  # type: ignore[operator]
+    assert out["gap"] < 0.25, f"the caller stalled for {out['gap']:.2f}s -- the GIL was held"  # type: ignore[operator]
+
+
+def test_parse_expr_safe_never_raises_on_a_base_whose_magnitude_overflows_a_float() -> None:
+    """``float(exp(exp(exp(exp(10)))))`` is ``inf`` -- not an OverflowError --
+    and ``int(math.log2(inf))`` raised OverflowError straight out of
+    ``parse_expr_safe``, which promises never to raise. A base too large for
+    a float is too large to raise to a power: refused."""
+    assert parse_expr_safe("exp(exp(exp(exp(10))))^2") is None
+
+
+def test_the_parse_worker_survives_a_memory_error() -> None:
+    """A parse that breaches the child's address-space limit comes back as
+    ``None`` -- not a crash, not a respawn: the child catches MemoryError.
+    ``vet=False`` skips the structural bound, which would refuse this text
+    first; without the limit the child would return a 125 MB Integer."""
+    from lemely.core import equivalence as eq
+
+    assert parse_expr_safe("2+2") == sympy.Integer(4)
+    pid_before = eq._PARSE_WORKER.pid()
+    started = time.monotonic()
+    assert eq._PARSE_WORKER.parse("2**999999999", 10.0, vet=False) is None
+    assert time.monotonic() - started < 10.0
+    assert eq._PARSE_WORKER.pid() == pid_before
+
+
+def test_the_parse_worker_leaves_no_child_behind() -> None:
+    import multiprocessing
+
+    from lemely.core import equivalence as eq
+
+    assert parse_expr_safe("3*10^8") == sympy.Integer(300000000)
+    pid = eq._PARSE_WORKER.pid()
+    assert pid is not None and _alive(pid)
+    eq._PARSE_WORKER.shutdown()
+    assert not _alive(pid)
+    assert eq._PARSE_WORKER.pid() is None
+    assert not [c for c in multiprocessing.active_children() if c.name == "lemely-parse-worker"]
+
+
+@pytest.mark.parametrize(
+    "text", ["0.5mv²", "3.0×10^8", "(x+1)^2 - x^2", "g cm^-3", "sqrt(2)/2", "5!"]
+)
+def test_ordinary_inputs_are_unchanged_through_the_parse_worker(text: str) -> None:
+    """The worker's result is the same expression the in-process parse of
+    the same normalised text gives -- the process boundary (a pickle round
+    trip) changes nothing a caller can compare."""
+    from lemely.core import equivalence as eq
+
+    in_process = eq._parse_normalized(eq._normalize_text(text), evaluate=True)
+    through_worker = parse_expr_safe(text)
+    assert through_worker == in_process
+    assert sympy.srepr(through_worker) == sympy.srepr(in_process)
+
+
+def test_prose_is_still_refused_through_the_parse_worker() -> None:
+    assert parse_expr_safe("not an answer at all, really") is None
 
 
 @pytest.mark.parametrize(

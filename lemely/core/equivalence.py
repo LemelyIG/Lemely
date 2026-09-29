@@ -41,27 +41,36 @@ does not claim otherwise.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import logging
 import math
+import multiprocessing
+import os
 import queue
 import random
 import re
+import signal
 import threading
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import sympy
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from multiprocessing.connection import Connection
+    from multiprocessing.process import BaseProcess
 from sympy.parsing.sympy_parser import (
     convert_xor,
     implicit_multiplication_application,
     parse_expr,
     standard_transformations,
 )
+
+_logger = logging.getLogger(__name__)
 
 #: Longer inputs are rejected before ever reaching the parser. Mark-scheme
 #: and student-answer text is at most a few dozen characters in every
@@ -120,6 +129,43 @@ _ABS_TOLERANCE_SANITY_FRACTION = 0.5
 #: (`2**100000000`) has no realistic CAIE reading and can otherwise hang
 #: parsing or produce a multi-million-digit integer (I8 review MUST-FIX #9).
 _MAX_EXPONENT_VALUE = 1000
+
+#: Triage F2 (2026-09-29): the exponent regexes read literals, so a COMPUTED
+#: exponent (`2^(999*999*999)`, `2^(999!)`) slipped past them and SymPy then
+#: built the integer -- 997,003,000 bits in 3.8 s with the GIL held, so the
+#: whole process froze and `_run_bounded`'s timeout was moot. The structural
+#: bound in `_pow_would_explode` refuses any power whose RESULT would exceed
+#: this many bits (~300,000 decimal digits: no CAIE answer is near it), on top
+#: of the per-exponent literal cap above.
+_MAX_POW_RESULT_BITS = 1_000_000
+
+#: `factorial_notation` is one of SymPy's `standard_transformations`, and a
+#: factorial is computed at PARSE time even under `evaluate=False`, so it must
+#: be bounded textually, before parsing: `9999999!` hangs the parser. `1000!`
+#: is a 2,568-digit integer, cheap; anything larger, or a factorial of a
+#: parenthesised expression (`(999!)!`), is refused.
+_MAX_FACTORIAL_OPERAND = 1000
+_FACTORIAL_RE = re.compile(r"(\)|\d+)\s*!")
+
+#: Address-space limit for the parse worker (see `_ParseWorker`). Measured:
+#: the child's VmSize after importing SymPy is ~75 MB; under this limit
+#: `2**999999999` (a 125 MB integer) raises MemoryError in 1.8 s and the
+#: child survives. Small enough that the worst case fits a 1 GiB worker.
+_PARSE_WORKER_MEMORY_BYTES = 512 * 1024 * 1024
+
+#: How long a (re)started parse worker may take to report ready -- interpreter
+#: start, SymPy import and one warm-up parse; measured 0.17-0.23 s plus up to
+#: ~0.19 s for the first parse. Kept SEPARATE from the caller's parse
+#: `timeout` so a cold start on a slow or CPU-throttled host (a fresh Cloud
+#: Run instance, a coverage-instrumented CI run) is never mistaken for a
+#: runaway parse: without it, the first answer after every (re)start could
+#: come back unparseable. Generous because it is paid at most once per start.
+_PARSE_WORKER_START_TIMEOUT = 30.0
+
+#: The worker's pipe protocol: ``(normalised text, vet)`` or ``None`` to stop;
+#: ``(kind, payload)`` back -- see `_parse_worker_main`.
+type _ParseRequest = tuple[str, bool] | None
+type _ParseReply = tuple[str, object]
 
 _TRANSFORMATIONS = (
     *standard_transformations,
@@ -426,6 +472,8 @@ def _looks_like_prose_or_unsafe(text: str) -> bool:
         return True
     if _MIXED_FRACTION_RE.search(text):
         return True
+    if _has_unsafe_factorial(text):
+        return True
     calls = _FUNCTION_CALL_RE.findall(text)
     return any(_is_disallowed_sympy_call(name) for name in calls)
 
@@ -440,6 +488,123 @@ def _has_unsafe_exponent(text: str) -> bool:
         except ValueError:
             continue
     return False
+
+
+def _has_unsafe_factorial(text: str) -> bool:
+    """``(...)!`` or ``N!`` with ``N > _MAX_FACTORIAL_OPERAND``: see the constant.
+
+    Checked on the raw text (in :func:`_looks_like_prose_or_unsafe`) AND on
+    the normalised text (in :func:`parse_expr_safe`): the thousands-separator
+    collapse turns ``9 999 999!`` -- whose raw operand reads as ``999`` --
+    into ``9999999!``, which hangs the parser.
+    """
+    for match in _FACTORIAL_RE.finditer(text):
+        operand = match.group(1)
+        if operand == ")" or int(operand) > _MAX_FACTORIAL_OPERAND:
+            return True
+    return False
+
+
+def _magnitude_bits(value: sympy.Expr) -> int | None:
+    """Bit length of a finite number's magnitude, or ``None`` when it has none."""
+    if not value.is_number or not value.is_finite:
+        return None
+    if value.is_Integer:
+        return int(abs(value)).bit_length()
+    if value.is_Rational:
+        return max(int(abs(value.p)).bit_length(), int(value.q).bit_length())
+    try:
+        magnitude = abs(float(value))
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if not math.isfinite(magnitude):  # `float(exp(exp(exp(10))))` is inf, not an OverflowError
+        return None
+    return int(math.log2(magnitude)) + 1 if magnitude >= 1 else 1
+
+
+def _pow_would_explode(node: sympy.Pow) -> bool:
+    """Would evaluating this (still unevaluated) power build an oversized integer?
+
+    Called by :func:`_vetted_parse` -- IN THE PARSE WORKER, never in the
+    caller's process -- on every ``Pow`` of an ``evaluate=False`` parse in
+    POST-order, so the node's own children have already passed this check
+    and evaluating them here (``subs`` rebuilds and evaluates) costs at most
+    what they were bounded to per power. Their PRODUCT is not bounded: the
+    base ``((10^300+1)^1000*...*1)`` of a 405-character input evaluates to a
+    25-million-bit integer, measured at 33.5 s with a 2.5 s GIL stall when
+    this walk ran in the caller's process. That, and ``float()`` of a nested
+    ``exp`` coming back ``inf``, is why the walk runs where the timeout and
+    the memory cap apply. Free symbols are substituted with 1: ``x^(n+1)`` bounds as
+    ``x^2`` and stays parseable, while ``(2+x-x)^(999*999*999)`` -- which SymPy
+    would collapse to ``2**997002999`` -- bounds as the number it is. Refused
+    when the exponent's magnitude exceeds :data:`_MAX_EXPONENT_VALUE`, when
+    ``bits(base) * exponent`` exceeds :data:`_MAX_POW_RESULT_BITS`, or when
+    either side does not bound to a finite number (fail closed) -- with one
+    exception. A side that is SINGULAR at the all-ones point (``zoo``,
+    ``oo``, ``nan``) is not refused on that basis: every symbol gets the
+    same value, so any difference of symbols (``M - m``, ``1 - v²/c²``) is 0
+    there, and refusing turned the Lorentz factor ``(1/(1-v²/c²))^(1/2)`` and
+    every ``(x/(x-1))^2`` into UNPARSEABLE -- a property of the substitution
+    point, not of the answer. Such a power is left to the evaluated parse,
+    which runs in the killable, memory-capped :class:`_ParseWorker`
+    (``2^(999*999*999 + 0/(n-1))`` is killed there at the timeout). A
+    second substitution point was rejected: it would re-evaluate inner
+    powers that were bounded only at 1 (``((x^999)^999)^999`` is 1 there,
+    but ``3**(999**3)`` at ``x = 3``), so a legitimate answer could time out
+    in its own vetting.
+    """
+    ones: dict[sympy.Basic | complex, sympy.Basic | complex] = {
+        symbol: sympy.Integer(1) for symbol in node.free_symbols
+    }
+    try:
+        exponent = sympy.sympify(node.exp).subs(ones).doit()
+        base = sympy.sympify(node.base).subs(ones).doit()
+    except Exception:
+        return True
+    exponent_bits = _magnitude_bits(exponent)
+    if exponent_bits is None:
+        return not _is_singular(exponent)
+    if abs(exponent) > _MAX_EXPONENT_VALUE:
+        return True
+    base_bits = _magnitude_bits(base)
+    if base_bits is None:
+        return not _is_singular(base)
+    return base_bits * math.ceil(float(abs(exponent))) > _MAX_POW_RESULT_BITS
+
+
+def _is_singular(value: sympy.Expr) -> bool:
+    """``zoo``/``oo``/``-oo``/``nan`` anywhere in ``value``: see :func:`_pow_would_explode`."""
+    return bool(value.has(sympy.zoo, sympy.oo, sympy.S.NegativeInfinity, sympy.nan))
+
+
+def _parse_normalized(normalized: str, *, evaluate: bool) -> sympy.Expr:
+    """The one ``parse_expr`` call, for both the vetting parse and the evaluated one."""
+    return parse_expr(
+        normalized,
+        transformations=_TRANSFORMATIONS,
+        local_dict=dict(_UNIT_LOCAL_DICT),
+        evaluate=evaluate,
+    )
+
+
+def _vetted_parse(normalized: str, *, vet: bool = True) -> sympy.Expr | None:
+    """Bound every power of an UNEVALUATED parse, then parse for real; ``None`` if refused.
+
+    Runs in the parse worker (see :class:`_ParseWorker`). The ``evaluate=False``
+    parse builds a tree and evaluates nothing but whitelisted function calls
+    and textually-bounded factorials; the regexes in :func:`parse_expr_safe`
+    read literals, and a computed exponent (triage F2: ``2^(999*999*999)``)
+    needs the tree. ``vet=False`` skips the walk -- only for tests that must
+    reach the evaluated parse with a known-dangerous text, to exercise the
+    worker's own kill and memory bounds. Parse errors propagate to the
+    worker loop, which reports them.
+    """
+    if vet:
+        unevaluated = _parse_normalized(normalized, evaluate=False)
+        for node in sympy.postorder_traversal(unevaluated):
+            if isinstance(node, sympy.Pow) and _pow_would_explode(node):
+                return None
+    return _parse_normalized(normalized, evaluate=True)
 
 
 def _collapse_thousands_separators(text: str) -> str:
@@ -506,6 +671,16 @@ def _run_bounded[T](func: Callable[[], T], timeout: float) -> T | None:
     across calls). A daemon thread is never joined at exit — it is simply
     not there to wait for — so interpreter shutdown is bounded regardless
     of what this module has abandoned.
+
+    What this cannot do (triage F2, 2026-09-29): interrupt C-level big-int
+    work. CPython holds the GIL for the whole of a large ``int.__pow__``, so
+    an abandoned worker computing ``2**997002999`` froze EVERY thread in the
+    process for 3.83 s (measured with a heartbeat thread) -- the caller's
+    ``queue.get(timeout=...)`` cannot even wake up to give up. This is kept
+    for ``simplify`` and the numeric fallback, pure-Python SymPy loops that
+    release the GIL between bytecodes and demonstrably return on time; the
+    parse, the one step that can build a huge integer, runs in a killable
+    child process instead (:class:`_ParseWorker`).
     """
     result_queue: queue.Queue[tuple[bool, object]] = queue.Queue(maxsize=1)
 
@@ -523,6 +698,207 @@ def _run_bounded[T](func: Callable[[], T], timeout: float) -> T | None:
     if not ok:
         raise value  # type: ignore[misc]
     return value  # type: ignore[return-value]
+
+
+def _parse_worker_main(  # pragma: no cover
+    conn: Connection[_ParseReply, _ParseRequest], memory_limit: int
+) -> None:
+    """The parse worker's loop, run in the child (hence no coverage).
+
+    ``(text, vet) -> ("ok", expr) | ("refused", None) | ("memory", None) |
+    ("error", repr)``; ``None`` ends the loop. See :func:`_vetted_parse`.
+
+    Runs in a ``spawn``ed child, so this module is imported afresh there.
+    The address-space limit is set first; where ``resource`` is unavailable
+    or refuses, the parent's timeout is the only bound (documented on
+    :class:`_ParseWorker`). One warm-up parse runs before ``("ready", None)``
+    is sent, so SymPy's first-parse cost (~0.15-0.19 s) is paid inside the
+    parent's start budget, not inside a caller's parse ``timeout``.
+
+    SIGINT is ignored: a Ctrl-C in the terminal reaches the whole process
+    group, and the child's lifetime belongs to the parent (``daemon=True``
+    plus the parent's kill/shutdown), not to the keyboard. A closed pipe
+    (the parent exited or was killed) ends the loop quietly.
+    """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        import resource
+
+        _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+        resource.setrlimit(resource.RLIMIT_AS, (memory_limit, hard))
+    except (ImportError, ValueError, OSError):
+        pass
+    _vetted_parse("2*x**2 + 1")
+    try:
+        conn.send(("ready", None))
+        while True:
+            message = conn.recv()
+            if message is None:
+                return
+            text, vet = message
+            try:
+                expr = _vetted_parse(text, vet=vet)
+                conn.send(("refused", None) if expr is None else ("ok", expr))
+            except MemoryError:
+                conn.send(("memory", None))
+            except Exception as exc:
+                conn.send(("error", repr(exc)))
+    except (EOFError, OSError):
+        return
+
+
+class _ParseWorker:
+    """One reusable, killable child process for ALL of the parse's SymPy work.
+
+    Triage F2 (user decision 3, 2026-09-29). The parse is the one step of
+    this module where SymPy can do C-level big-integer work that holds the
+    GIL -- a thread timeout cannot interrupt it (see :func:`_run_bounded`),
+    but a process can be killed. That covers the vetting walk too
+    (:func:`_vetted_parse`): it evaluates bases and exponents, and a
+    product of individually-bounded powers froze the caller's process for
+    2.5 s at a time when the walk ran there. So the caller's process does
+    only the regex guards and the pipe round-trip; the unevaluated parse,
+    the walk and the evaluated parse all run here, under the timeout and
+    the memory cap. Measured in this venv: a spawn start costs
+    0.17-0.23 s, a warm call 0.3-0.6 ms, so ONE lazily-started worker is
+    kept and reused rather than one process per call (300-700x the parse).
+
+    Guarantees, in every failure mode, that :meth:`parse` returns ``None``
+    and never raises: a timeout kills and joins the child; a MemoryError in
+    the child (address space capped at :data:`_PARSE_WORKER_MEMORY_BYTES`)
+    is reported and the child lives on; a crash or broken pipe is joined and
+    the next call respawns; a child that cannot be started, or does not
+    report ready within :data:`_PARSE_WORKER_START_TIMEOUT`, is killed and
+    the call returns ``None``. The caller's ``timeout`` covers the parse
+    only, never the start. ``spawn``, never ``fork``: the web server runs
+    sync routes on threads. Calls are serialised by a lock (one worker per
+    parent), so a caller waits at most one timeout plus one respawn behind a
+    runaway sibling. The owner pid is recorded, and an ``os.register_at_fork``
+    hook resets the lock and forgets the child in a forked process, so a
+    pre-forked server worker or a forking test harness starts its own child
+    instead of sharing a pipe or inheriting a held lock. The child is a
+    daemon, so ``multiprocessing``'s atexit hook terminates it with the
+    parent; :meth:`shutdown` does so explicitly.
+
+    ``spawn`` re-runs a path-based ``__main__`` (a script, not ``-m``) in the
+    child, so a script that calls :func:`parse_expr_safe` at import time
+    needs the usual ``if __name__ == "__main__":`` guard; without it the
+    child's own nested start fails (logged) and the child's copy of the
+    script sees ``None`` -- the caller's results are unaffected. The server
+    (``python -m lemely.web``), pytest and the ``lemely`` CLI are unaffected.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._process: BaseProcess | None = None
+        self._conn: Connection[_ParseRequest, _ParseReply] | None = None
+        self._owner_pid: int | None = None
+
+    def _forget_after_fork(self) -> None:
+        """In a forked child: the parent's worker, pipe and lock are not ours."""
+        self._lock = threading.Lock()
+        self._process = self._conn = self._owner_pid = None
+
+    def _start(self) -> bool:
+        context = multiprocessing.get_context("spawn")
+        try:
+            parent_conn, child_conn = context.Pipe()
+        except OSError:  # out of file descriptors
+            _logger.warning("parse worker not started: no pipe", exc_info=True)
+            return False
+        process = context.Process(
+            target=_parse_worker_main,
+            args=(child_conn, _PARSE_WORKER_MEMORY_BYTES),
+            name="lemely-parse-worker",
+            daemon=True,
+        )
+        try:
+            process.start()
+        except Exception:  # e.g. started from a daemonic process, or out of fds
+            parent_conn.close()
+            child_conn.close()
+            _logger.warning("parse worker not started; parse_expr_safe returns None", exc_info=True)
+            return False
+        child_conn.close()
+        self._process, self._conn, self._owner_pid = process, parent_conn, os.getpid()
+        try:
+            ready = parent_conn.poll(_PARSE_WORKER_START_TIMEOUT)
+            ready = ready and parent_conn.recv() == ("ready", None)
+        except (EOFError, OSError):
+            ready = False
+        if not ready:
+            _logger.warning("parse worker did not report ready; parse_expr_safe returns None")
+            self._discard(kill=True)
+        return ready
+
+    def _discard(self, *, kill: bool) -> None:
+        process, conn = self._process, self._conn
+        self._process = self._conn = self._owner_pid = None
+        if conn is not None:
+            conn.close()
+        if process is None:
+            return
+        if kill:
+            process.kill()
+        process.join()
+        process.close()
+
+    def _ready(self) -> bool:
+        if self._process is None or self._owner_pid != os.getpid():
+            # A foreign or never-started worker: never joined here.
+            self._process = self._conn = None
+            return self._start()
+        if not self._process.is_alive():
+            self._discard(kill=False)
+            return self._start()
+        return True
+
+    def parse(self, text: str, timeout: float, *, vet: bool = True) -> sympy.Expr | None:
+        """``text`` vetted and parsed in the child (:func:`_vetted_parse`).
+
+        ``None`` when the vetting walk refuses it, and on timeout, memory,
+        crash or parse error. ``vet=False`` is for tests only (see there).
+        """
+        with self._lock:
+            if not self._ready() or self._conn is None:
+                return None
+            conn = self._conn
+            try:
+                conn.send((text, vet))
+                if not conn.poll(timeout):
+                    self._discard(kill=True)
+                    return None
+                kind, value = conn.recv()
+            except Exception:  # EOFError/OSError on a crash, or an unpicklable reply
+                self._discard(kill=True)
+                return None
+            if kind != "ok" or not isinstance(value, sympy.Basic):
+                return None
+            # Any Basic, exactly as the in-process parse returned before (a
+            # relational is not an Expr); parse_expr_safe applies the same test.
+            return cast("sympy.Expr", value)
+
+    def pid(self) -> int | None:
+        process = self._process
+        return None if process is None else process.pid
+
+    def shutdown(self) -> None:
+        with self._lock:
+            if self._owner_pid is not None and self._owner_pid != os.getpid():
+                # Another process's child (no fork hook on this platform):
+                # not ours to signal or join. The lock is NOT replaced here --
+                # a thread may be waiting on it.
+                self._process = self._conn = self._owner_pid = None
+                return
+            if self._conn is not None:
+                with contextlib.suppress(OSError):
+                    self._conn.send(None)
+            self._discard(kill=True)
+
+
+_PARSE_WORKER = _ParseWorker()
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_PARSE_WORKER._forget_after_fork)
 
 
 def parse_expr_safe(
@@ -548,8 +924,12 @@ def parse_expr_safe(
     below by hanging *parsing* itself. Bounded by ``timeout`` for the same
     reason (I8 review MUST-FIX #9): a handful of characters (``9^9^9``) can
     otherwise run unbounded, or return a valid but multi-million-digit
-    integer (``2**100000000``) — both caught by the exponent check above in
-    the common case, this is the backstop for whatever it misses.
+    integer (``2**100000000``) — caught by the exponent and factorial checks
+    and by the structural bound on every Pow of an unevaluated parse; and
+    the evaluated parse itself runs in a killable child process with an
+    address-space limit (_ParseWorker), which is the backstop for whatever
+    those miss -- a thread timeout is not, see _run_bounded. The structural
+    bound runs in that child too (see _pow_would_explode for why).
     """
     if text is None:
         return None
@@ -559,28 +939,15 @@ def parse_expr_safe(
     if _looks_like_prose_or_unsafe(stripped):
         return None
     normalized = _normalize_text(stripped)
-    if not normalized or _has_unsafe_exponent(normalized):
+    if not normalized or _has_unsafe_exponent(normalized) or _has_unsafe_factorial(normalized):
         return None
-
-    def _parse() -> sympy.Expr:
-        return parse_expr(
-            normalized,
-            transformations=_TRANSFORMATIONS,
-            local_dict=dict(_UNIT_LOCAL_DICT),
-            evaluate=True,
-        )
-
-    try:
-        expr = _run_bounded(_parse, timeout)
-    except (
-        SyntaxError,
-        TypeError,
-        ValueError,
-        AttributeError,
-        RecursionError,
-        sympy.SympifyError,
-    ):
-        return None
+    # Triage F2: every power of an UNEVALUATED parse is bounded first (the
+    # regexes above read literals; a computed exponent needs the tree), then
+    # the evaluated parse runs. Both evaluate SymPy expressions built from
+    # untrusted text, which can hold the GIL for seconds, so both run in a
+    # killable, memory-capped child (`_ParseWorker`, `_vetted_parse`): None
+    # on refusal, timeout, memory-limit breach, crash or parse error alike.
+    expr = _PARSE_WORKER.parse(normalized, timeout)
     if not isinstance(expr, sympy.Basic):
         return None
     return expr
