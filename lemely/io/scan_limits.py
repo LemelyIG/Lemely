@@ -1334,13 +1334,20 @@ def canonical_pdf_bytes(data: bytes) -> bytes:
 def _copy_pages(doc: pymupdf.Document) -> bytes:
     """``doc``'s pages -- and only what they reference -- written as a new PDF.
 
-    See :func:`canonical_pdf_bytes` for what is copied and why.
+    See :func:`canonical_pdf_bytes` for what is copied and why. Everything
+    here goes through ONE graft map, so an object reached twice -- a layer
+    named by a page's ``/OC`` and by ``/OCProperties``, a colour space shared
+    by a page's resources and its ``/Group`` -- is one object in the copy.
+    ``insert_pdf`` ignores its ``_gmap`` argument and uses the map
+    registered for the source in ``out.Graftmaps`` (pymupdf 1.28), so the
+    map is registered there first.
     """
     mupdf = _mupdf
     out = pymupdf.open()  # type: ignore[no-untyped-call]
     try:
         graft_map = pymupdf.Graftmap(out)  # type: ignore[no-untyped-call]
-        out.insert_pdf(doc, links=False, annots=True, widgets=True, _gmap=graft_map)  # type: ignore[no-untyped-call]
+        out.Graftmaps[doc._graft_id] = graft_map
+        out.insert_pdf(doc, links=False, annots=True, widgets=True)  # type: ignore[no-untyped-call]
         source = mupdf.pdf_document_from_fz_document(doc.this)  # type: ignore[no-untyped-call]
         target = mupdf.pdf_document_from_fz_document(out.this)  # type: ignore[no-untyped-call]
         for index in range(int(doc.page_count)):
@@ -1350,6 +1357,25 @@ def _copy_pages(doc: pymupdf.Document) -> bytes:
                 target_page = mupdf.pdf_lookup_page_obj(target, index)  # type: ignore[no-untyped-call]
                 grafted = mupdf.pdf_graft_mapped_object(graft_map.this, group)  # type: ignore[no-untyped-call]
                 mupdf.pdf_dict_puts(target_page, "Group", grafted)  # type: ignore[no-untyped-call]
+        # Task 9c review round 2: a page's optional content is drawn or
+        # hidden by the catalog's /OCProperties, not by the page; without it
+        # every layer renders, so content a file hides by default would reach
+        # the marker while the teacher's preview (MuPDF, on the stored file)
+        # hides it. Only /OCGs and /D, the default configuration a renderer
+        # applies, are carried; the alternative /Configs a viewer can switch
+        # to are not.
+        source_catalog = mupdf.pdf_dict_gets(mupdf.pdf_trailer(source), "Root")  # type: ignore[no-untyped-call]
+        properties = mupdf.pdf_dict_gets(source_catalog, "OCProperties")  # type: ignore[no-untyped-call]
+        if properties.m_internal and mupdf.pdf_is_dict(properties):  # type: ignore[no-untyped-call]
+            copied = mupdf.pdf_new_dict(target, 2)  # type: ignore[no-untyped-call]
+            for key in ("OCGs", "D"):
+                value = mupdf.pdf_dict_gets(properties, key)  # type: ignore[no-untyped-call]
+                if value.m_internal:
+                    grafted = mupdf.pdf_graft_mapped_object(graft_map.this, value)  # type: ignore[no-untyped-call]
+                    mupdf.pdf_dict_puts(copied, key, grafted)  # type: ignore[no-untyped-call]
+            target_catalog = mupdf.pdf_dict_gets(mupdf.pdf_trailer(target), "Root")  # type: ignore[no-untyped-call]
+            added = mupdf.pdf_add_object(target, copied)  # type: ignore[no-untyped-call]
+            mupdf.pdf_dict_puts(target_catalog, "OCProperties", added)  # type: ignore[no-untyped-call]
         rewrite: bytes = out.tobytes(garbage=1)  # type: ignore[no-untyped-call]
         return rewrite
     finally:

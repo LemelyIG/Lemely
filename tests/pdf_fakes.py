@@ -1433,6 +1433,42 @@ def page_kids_equal_count_bomb_pdf(inflated_bytes: int) -> bytes:
     )
 
 
+def hidden_layer_pdf(*, variant: str = "text") -> bytes:
+    """One A4 page with content on an optional-content layer that is OFF by
+    default, beside content on a layer that is ON.
+
+    ``variant``: ``"text"`` -- hidden text and a filled rectangle; or
+    ``"image"`` -- a hidden image XObject and a hidden square annotation.
+    Built with pymupdf's own layer API (the reviewer's fidelity probe).
+
+    Task 9c review round 2: a renderer shows the hidden content only if the
+    catalog's ``/OCProperties`` is lost, so the rewrite must keep it.
+    """
+    doc = pymupdf.open()
+    try:
+        page = doc.new_page(width=595, height=842)
+        hidden = doc.add_ocg("hidden-by-default", on=False)
+        shown = doc.add_ocg("visible", on=True)
+        page.insert_text((50, 100), "VISIBLE LAYER TEXT", fontsize=30, oc=shown)
+        if variant == "text":
+            page.insert_text((50, 300), "HIDDEN LAYER TEXT", fontsize=30, oc=hidden)
+            page.draw_rect(
+                pymupdf.Rect(50, 400, 400, 600), color=(0, 0, 0), fill=(0, 0, 0), oc=hidden
+            )
+        else:
+            pixmap = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 50, 50), 0)
+            pixmap.clear_with(0)
+            page.insert_image(pymupdf.Rect(50, 150, 300, 400), pixmap=pixmap, oc=hidden)
+            annot = page.add_rect_annot(pymupdf.Rect(300, 450, 550, 750))
+            annot.set_colors(stroke=(0, 0, 0), fill=(0, 0, 0))
+            annot.set_oc(hidden)
+            annot.update()
+        data: bytes = doc.tobytes()
+    finally:
+        doc.close()
+    return data
+
+
 def off_page_object_pdf(
     elements: int, *, shape: str = "array", compressed: bool = True, holder: str = "catalog"
 ) -> bytes:
@@ -1663,6 +1699,7 @@ __all__ = [
     "flate_bomb_ops",
     "form_also_graphics_state_bomb_pdf",
     "form_xobject_cycle_pdf",
+    "hidden_layer_pdf",
     "image_bomb_pdf",
     "indirect_ap_state_bomb_pdf",
     "indirect_filter_page_pdf",

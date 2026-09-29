@@ -55,6 +55,7 @@ from tests.pdf_fakes import (
     flate_bomb_ops,
     form_also_graphics_state_bomb_pdf,
     form_xobject_cycle_pdf,
+    hidden_layer_pdf,
     image_bomb_pdf,
     image_labelled_appearance_pdf,
     indirect_ap_state_bomb_pdf,
@@ -1420,6 +1421,47 @@ class CanonicalPdfBytesTests(unittest.TestCase):
             canonical_pdf_bytes(many_objects_pdf(scan_limits.MAX_PDF_OBJECTS))
         tobytes.assert_not_called()
         canonical_pdf_bytes(many_objects_pdf(1_000))
+
+
+class RewriteFidelityTests(unittest.TestCase):
+    """Task 9c review round 2: pdfium must render the rewrite exactly as it
+    renders the stored file -- including what the file says to hide."""
+
+    def _pdfium_grey(self, data: bytes) -> list[bytes]:
+        pdf = pdfium.PdfDocument(data)
+        try:
+            pages = []
+            for index in range(len(pdf)):
+                page = pdf[index]
+                try:
+                    bitmap = page.render(scale=0.5)
+                    try:
+                        pages.append(bitmap.to_pil().convert("L").tobytes())
+                    finally:
+                        bitmap.close()
+                finally:
+                    page.close()
+            return pages
+        finally:
+            pdf.close()
+
+    def test_layers_hidden_by_default_stay_hidden(self) -> None:
+        """Content on an optional-content layer that is OFF by default --
+        text and a filled rectangle, or an image XObject and an annotation --
+        renders from the rewrite exactly as from the stored file: hidden.
+        Losing the catalog's ``/OCProperties`` would show it to the marker
+        while the teacher's preview does not."""
+        for variant in ("text", "image"):
+            data = hidden_layer_pdf(variant=variant)
+            with self.subTest(variant=variant):
+                stored = self._pdfium_grey(data)
+                rewritten = self._pdfium_grey(canonical_pdf_bytes(data))
+                self.assertEqual(len(rewritten), len(stored))
+                differing = [
+                    sum(a != b for a, b in zip(x, y, strict=True))
+                    for x, y in zip(stored, rewritten, strict=True)
+                ]
+                self.assertEqual(differing, [0] * len(stored), "grey bytes differing per page")
 
 
 class OffPageObjectTests(unittest.TestCase):
