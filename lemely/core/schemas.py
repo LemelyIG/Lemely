@@ -440,6 +440,25 @@ class CorrectedQuestion(StrictModel):
     for points that do not exist.
     """
 
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_removed_ai_detection_flag(cls, data: object) -> object:
+        """Accept a ``report_json`` written before ``ai_detection_flagged`` was removed (F1).
+
+        ``1094cfde`` deleted ``CorrectedQuestion.ai_detection_flagged`` (triage F1,
+        2026-09-29). ``model_dump(mode="json")`` emitted the field's default on every
+        stored report, and ``0037_remove_ai_detection`` deliberately did not
+        rewrite ``teacher_papers.report_json``; with ``extra="forbid"`` every
+        pre-PR row then failed to load. The one legacy key is discarded here
+        -- its value is not evidence anybody should act on, per F4's own
+        ruling -- and every OTHER unknown key stays forbidden. The caller's
+        dict is copied, not mutated: ``review_repo`` parses a paper's report
+        once and threads the same dict through several rows.
+        """
+        if isinstance(data, dict) and "ai_detection_flagged" in data:
+            return {key: value for key, value in data.items() if key != "ai_detection_flagged"}
+        return data
+
     @model_validator(mode="after")
     def validate_awarded_marks(self) -> CorrectedQuestion:
         if self.awarded_marks > self.maximum_marks:

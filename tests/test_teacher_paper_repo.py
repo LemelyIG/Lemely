@@ -461,3 +461,36 @@ def test_no_orm_relationship_between_teacher_paper_and_user(
         assert paper.uploaded_by == owner
         assert not hasattr(TeacherPaper, "uploader")
         assert not hasattr(TeacherPaper, "student")
+
+
+def test_a_report_stored_before_the_ai_detection_removal_still_lists(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Triage F1: one pre-PR row must not 500 the whole teacher paper list.
+
+    ``repo.finish`` writes the CURRENT shape, so the legacy key is injected
+    with a raw UPDATE, exactly where develop's ``model_dump(mode="json")`` put
+    it: on every question of ``correction.questions``.
+    """
+    import copy
+
+    repo = _repo(pg_sessionmaker)
+    owner = _user(pg_sessionmaker, Role.teacher)
+    pid = _paper(repo, owner)
+    repo.claim_run(pid)
+    repo.finish(pid, _report())
+
+    with pg_sessionmaker.begin() as s:
+        stored = s.get(TeacherPaper, pid)
+        assert stored is not None and stored.report_json is not None
+        legacy = copy.deepcopy(stored.report_json)
+        for question in legacy["correction"]["questions"]:
+            question["ai_detection_flagged"] = False
+        s.execute(sa.update(TeacherPaper).where(TeacherPaper.id == pid).values(report_json=legacy))
+
+    rows = repo.list_visible(viewer_id=owner, viewer_role=Role.teacher)
+    assert [r.id for r in rows] == [pid]
+    assert rows[0].report is not None and rows[0].report.correction.awarded_marks == 7
+    row = repo.get_visible(pid, viewer_id=owner, viewer_role=Role.teacher)
+    assert row is not None and row.report is not None
+    assert "ai_detection_flagged" not in row.report.correction.questions[0].model_dump()
