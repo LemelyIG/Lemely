@@ -245,6 +245,7 @@ def pipeline_health(
         uploadsByStatus=health.uploads_by_status,
         recentFailedUploadIds=[str(upload_id) for upload_id in health.recent_failed_uploads],
         markingAccuracyNote=_MARKING_ACCURACY_NOTE,
+        purgeBacklog=health.purge_backlog,
     )
 
 

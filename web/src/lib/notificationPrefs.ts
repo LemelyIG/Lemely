@@ -16,13 +16,18 @@
  * any role other than teacher/parent and 422-ing if such a role sends it at all.
  */
 
-/** The five preference toggles. There is no sixth — see `NOTIFICATION_TOGGLES`. */
+/**
+ * The six preference toggles, matching `NotificationType`'s six members
+ * (Task 17, R10 adds `reviewWithdrawn` — teacher-only, mirroring
+ * `atRiskAlert`'s own role gate). See `NOTIFICATION_TOGGLES`.
+ */
 export type NotificationPrefKey =
   | "gradeReady"
   | "announcement"
   | "streakWarning"
   | "studyPlanReminder"
   | "atRiskAlert"
+  | "reviewWithdrawn"
 
 /**
  * `GET` response and the `PUT` echo.
@@ -42,6 +47,16 @@ export interface NotificationPreferences {
   streakWarning: boolean
   studyPlanReminder: boolean
   atRiskAlert: boolean | null
+  /**
+   * `null` for every role but teacher (R10, `routers/me.py`'s
+   * `_REVIEW_WITHDRAWN_ROLES`) — the same role gate `atRiskAlert` gets,
+   * narrowed to the one role `review_withdrawn` ever fires for (Task 9's
+   * `_notify_withdrawn_reviewers`). `NOTIFICATION_TOGGLES`'s own `role`
+   * field hides the switch from a non-teacher mount as a second, belt-and-
+   * braces gate — this `null` is what makes that redundant rather than
+   * load-bearing on its own.
+   */
+  reviewWithdrawn: boolean | null
   quietHoursStart: string | null
   quietHoursEnd: string | null
 }
@@ -59,6 +74,7 @@ export type NotificationPreferencesUpdate = Partial<{
   streakWarning: boolean
   studyPlanReminder: boolean
   atRiskAlert: boolean
+  reviewWithdrawn: boolean
   quietHoursStart: string | null
   quietHoursEnd: string | null
 }>
@@ -68,16 +84,25 @@ export interface ToggleSpec {
   label: string
   /** What this actually gates, in the reader's terms — never invented scope. */
   description: string
+  /**
+   * Absent for every toggle but `reviewWithdrawn` (R10): that one fires only
+   * for a teacher (Task 9's `_notify_withdrawn_reviewers` — a student's own
+   * deletion withdrew a review item), so it is hidden from every other role
+   * at the screen level (`NotificationSettingsSection`'s `showTeacherOnly`
+   * prop), the same gate `atRiskAlert` gets from the server's own `null`.
+   */
+  role?: "teacher"
 }
 
 /**
  * The toggles this screen ships, in display order.
  *
- * **Exactly five, matching `NotificationType`'s five members.** UI spec §G-12
- * also lists a "weekly summary" toggle: there is no such enum value, no column,
- * no sender and no row, so a sixth switch here would be a control that gates
- * nothing — precisely what UI spec §1.4 forbids. It is reported as an honest
- * gap rather than mocked.
+ * **Exactly six, matching `NotificationType`'s six members** (Task 17 added
+ * `reviewWithdrawn` alongside R2's console deletion; the other five predate
+ * it). UI spec §G-12 also lists a "weekly summary" toggle: there is no such
+ * enum value, no column, no sender and no row, so a seventh switch here would
+ * be a control that gates nothing — precisely what UI spec §1.4 forbids. It
+ * is reported as an honest gap rather than mocked.
  *
  * The descriptions say what the toggle *does* and no more. D5.9 §2 makes a type
  * toggle a **content** preference: switching one off suppresses the inbox row
@@ -113,6 +138,12 @@ export const NOTIFICATION_TOGGLES: readonly ToggleSpec[] = [
     key: "atRiskAlert",
     label: "At-risk alerts",
     description: "When a student you are responsible for needs attention.",
+  },
+  {
+    key: "reviewWithdrawn",
+    label: "Review items withdrawn",
+    description: "When a student deletes a paper that had a question waiting on your review.",
+    role: "teacher",
   },
 ]
 

@@ -113,7 +113,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/admin/schools"): PLATFORM_ADMIN,
     ("PATCH", "/api/admin/schools/{school_id}"): PLATFORM_ADMIN,
     ("POST", "/api/admin/schools/{school_id}/admins"): PLATFORM_ADMIN,
-    # ── TEACHER_OR_SCHOOL_ADMIN (4) ────────────────────
+    # ── TEACHER_OR_SCHOOL_ADMIN (7) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("DELETE", "/api/teacher/announcements/{announcement_id}"): TEACHER_OR_SCHOOL_ADMIN,
@@ -122,6 +122,17 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # the two roles that may manage a class's roster (D3.1) - platform_admin
     # cannot reach this route, mirroring every other class-mutating route.
     ("POST", "/api/school/classes/{class_id}/invite-code"): TEACHER_OR_SCHOOL_ADMIN,
+    # D9 (design §5): unshare/reshare one paper from one class. Router-level
+    # guard is the STAFF triple; narrowed per-route to the two roles that
+    # manage a class, like the invite code above - platform_admin has no class
+    # scope to act in. Row-level: the class scope check, then the attempt must
+    # belong to a student on that class's roster (else 404).
+    ("POST", "/api/classes/{class_id}/papers/{attempt_id}/unshare"): TEACHER_OR_SCHOOL_ADMIN,
+    ("DELETE", "/api/classes/{class_id}/papers/{attempt_id}/unshare"): TEACHER_OR_SCHOOL_ADMIN,
+    # Controller addition (Task 13's review): the minimal read that makes
+    # unshared state visible again. Same guard, same reasoning — the two
+    # roles that manage a class, never platform_admin.
+    ("GET", "/api/classes/{class_id}/papers"): TEACHER_OR_SCHOOL_ADMIN,
     # ── PARENT (4) ────────────────────
     ("GET", "/api/parent/children"): PARENT,
     ("GET", "/api/parent/children/{child_id}"): PARENT,
@@ -207,9 +218,17 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # bearer credential than the link's opaque token, so it is scoped to the
     # caller's own session rather than redeemable by anyone who has it.
     ("POST", "/api/auth/verify-email/code"): AUTH_ANY,
-    # ── STAFF (40) ────────────────────
+    # ── STAFF (43) ────────────────────
     ("GET", "/api/classes/{class_id}"): STAFF,
     ("GET", "/api/classes/{class_id}/analytics"): STAFF,
+    # Console paper deletion (Task 17, R2). Row-level: only the uploader may
+    # delete/restore their own paper — another teacher's, or a school_admin
+    # looking at it, gets the same fixed 404
+    # (``TeacherPaperDeletionService``'s own docstring). No integrity hold, so
+    # there is no 409 branch to gate further than the router's own STAFF.
+    ("DELETE", "/api/papers/{paper_id}"): STAFF,
+    ("POST", "/api/papers/{paper_id}/restore"): STAFF,
+    ("GET", "/api/papers/deleted"): STAFF,
     ("POST", "/api/classes/{class_id}/enroll"): STAFF,
     ("GET", "/api/classes/{class_id}/roster"): STAFF,
     ("DELETE", "/api/classes/{class_id}/students/{student_id}"): STAFF,
@@ -255,7 +274,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,
-    # ── STUDENT (60) ────────────────────
+    # ── STUDENT (63) ────────────────────
     ("GET", "/api/me/student-profile"): STUDENT,
     ("PATCH", "/api/me/student-profile"): STUDENT,
     ("POST", "/api/me/student-profile/complete-onboarding"): STUDENT,
@@ -293,6 +312,10 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
         "/api/student/attempts/{attempt_id}/questions/{question_result_id}/self-review",
     ): STUDENT,
     ("GET", "/api/student/attempts/{attempt_id}/questions"): STUDENT,
+    # Student paper deletion (design 2026-09-22-paper-deletion-design.md, §8).
+    ("DELETE", "/api/student/attempts/{attempt_id}"): STUDENT,
+    ("POST", "/api/student/attempts/{attempt_id}/restore"): STUDENT,
+    ("GET", "/api/student/attempts/deleted"): STUDENT,
     ("GET", "/api/student/overview"): STUDENT,
     ("GET", "/api/student/parent-links"): STUDENT,
     ("DELETE", "/api/student/parent-links/{parent_id}"): STUDENT,

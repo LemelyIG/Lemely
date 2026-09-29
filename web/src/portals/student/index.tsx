@@ -125,6 +125,9 @@ const FlashcardReview = lazy(() =>
 // lazy import went with it: a chunk nothing in this subtree renders is a
 // chunk the build still emits and the router still resolves.
 const Parents = lazy(() => import("./screens/Parents").then((m) => ({ default: m.Parents })))
+const RecentlyDeleted = lazy(() =>
+  import("./screens/RecentlyDeleted").then((m) => ({ default: m.RecentlyDeleted })),
+)
 // Settings' three screens mount here too, alongside every other lazy screen
 // in this portal — see `data.ts`'s `navGroups` and the route registration
 // below. Same shared components the teacher portal's Settings mounts, so the
@@ -996,6 +999,11 @@ export const studentRoute: RouteObject = {
       path: "parents",
       element: <Parents />,
       handle: { title: "Parent access", skeleton: "page-header" },
+    },
+    {
+      path: "recently-deleted",
+      element: <RecentlyDeleted />,
+      handle: { title: "Recently deleted", skeleton: "list" },
     },
     {
       path: "settings",

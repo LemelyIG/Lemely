@@ -69,6 +69,7 @@ from lemely.db.models.attempts import (
     QuestionResult,
     QuestionResultPoint,
     QuestionResultRevision,
+    Upload,
     WeaknessRecord,
 )
 from lemely.db.models.enums import (
@@ -81,6 +82,7 @@ from lemely.db.models.enums import (
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.question_points import derive_point_rows
+from lemely.db.session import INCLUDE_DELETED
 from lemely.io.syllabus_topics import get_taxonomy
 
 if TYPE_CHECKING:
@@ -120,6 +122,15 @@ _CONFIDENCE_BAND_WEAKNESS_ORDER: dict[DBConfidenceBand, int] = {
     DBConfidenceBand.medium: 1,
     DBConfidenceBand.high: 2,
 }
+
+
+class UploadDeletedError(Exception):
+    """The upload was soft-deleted before this marking run could be persisted.
+
+    Raised by :meth:`AttemptRepository.persist_correction` in place of writing
+    an attempt: no live attempt may reference a deleted upload (paper deletion
+    design, §13).
+    """
 
 
 class AttemptRepository:
@@ -349,6 +360,8 @@ class AttemptRepository:
         ]
 
         with self._sm.begin() as session:
+            if upload_id is not None:
+                _lock_live_upload(session, upload_id)
             session.add(attempt)
             # Flush so ``attempt.id`` and every ``question_result.id`` are
             # populated before we build the review-queue rows that reference them.
@@ -420,6 +433,40 @@ class AttemptRepository:
                         )
                     )
         return attempt_id
+
+
+def _lock_live_upload(session: Session, upload_id: uuid.UUID) -> None:
+    """Lock the upload row ``FOR UPDATE`` and refuse if it is soft-deleted.
+
+    Holds the invariant that no live attempt references a deleted upload. A
+    marking run checks ownership, spends a minute in Gemini, then persists; a
+    student can delete the paper in between. The row lock serializes this
+    insert with :meth:`~lemely.db.deletion_repo.PaperDeletionService.delete`,
+    which locks the same row **before** it reads the upload's attempts:
+
+    * the insert locks first — the delete waits, then reads the siblings in a
+      fresh statement, sees the committed attempt and stamps it with the rest;
+    * the delete locks first — this lock waits, then reads the row as the
+      delete committed it (Postgres re-reads a locked row's latest version),
+      finds ``deleted_at`` set, and nothing is inserted.
+
+    No deadlock: this transaction locks the upload and then only inserts, so
+    it never waits on an existing attempt row, and the delete takes the upload
+    before any attempt. ``INCLUDE_DELETED`` is required — the loader criterion
+    would otherwise hide exactly the row this must see — and
+    ``populate_existing`` keeps a warm identity-map copy from answering.
+
+    Raises:
+        UploadDeletedError: the upload is soft-deleted (or gone).
+    """
+    upload = session.scalars(
+        select(Upload)
+        .where(Upload.id == upload_id)
+        .with_for_update()
+        .execution_options(**{INCLUDE_DELETED: True}, populate_existing=True)
+    ).one_or_none()
+    if upload is None or upload.deleted_at is not None:
+        raise UploadDeletedError("This paper was deleted while it was being marked.")
 
 
 def _weakest_confidence_band(questions: Sequence[CorrectedQuestion]) -> DBConfidenceBand:
@@ -704,6 +751,7 @@ def _classification_text(question: Question) -> str:
 __all__ = [
     "REVIEW_CONFIDENCE_THRESHOLD",
     "AttemptRepository",
+    "UploadDeletedError",
     "fill_correction_topics",
     "is_marking_low_confidence",
 ]

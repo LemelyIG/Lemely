@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+import structlog
 
 import lemely.runtime.config as config_module
 from lemely.core.loose_schemas import (
@@ -36,7 +37,7 @@ from lemely.core.loose_schemas import SessionMonth as LooseSessionMonth
 from lemely.runtime.config import Settings
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -85,6 +86,31 @@ def _disable_dotenv_file() -> Iterator[None]:
         yield
     finally:
         Settings.model_config["env_file"] = original
+
+
+@pytest.fixture(autouse=True)
+def _reset_structlog_config() -> Iterator[None]:
+    """Undo any real ``configure_logging()`` call so ``capture_logs()`` stays reliable.
+
+    ``lemely.runtime.logging.configure_logging`` — invoked for real by every
+    CLI test via ``CliRunner().invoke(cli, ...)`` — sets
+    ``cache_logger_on_first_use=True`` and hands structlog a brand-new
+    ``processors`` list on each call. The codebase's convention is a
+    module-level ``log = structlog.get_logger(__name__)``; the first time such
+    a logger is used, it freezes onto whichever processors list is current at
+    that moment. If a *later* real ``configure_logging()`` call swaps in a new
+    list before some other test enters ``structlog.testing.capture_logs()``,
+    that already-frozen logger keeps writing through the stale list —
+    ``capture_logs()`` relies on mutating the *current* list in place, so it
+    captures nothing. This is what made
+    ``tests/test_teacher_paper_deletion.py``'s purge log assertions fail only
+    in full-suite runs, never alone: resetting after every test keeps
+    ``cache_logger_on_first_use`` false for everyone except the one test that
+    turned it on, so no other test's module logger ever freezes onto a
+    soon-to-be-stale list.
+    """
+    yield
+    structlog.reset_defaults()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -514,6 +540,74 @@ def migrated_sessionmaker() -> Iterator[sessionmaker[Session]]:
         yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
     finally:
         engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+        admin.dispose()
+
+
+@pytest.fixture
+def migrated_sessionmaker_with_downgrade() -> Iterator[
+    tuple[sessionmaker[Session], Callable[[str], None]]
+]:
+    """Like `migrated_sessionmaker`, but also yields a callable to downgrade.
+
+    For proving what a migration's `downgrade()` does to *data*, not just
+    schema — `migrated_sessionmaker` alone has no way to seed rows before a
+    downgrade runs. The callable takes a target revision (e.g. the previous
+    migration's id) and runs `alembic downgrade` against the same throwaway
+    database `migrated_sessionmaker` already migrated to head.
+    """
+    import os as _os
+    import uuid as _uuid
+
+    import sqlalchemy as sa
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.orm import sessionmaker
+
+    from lemely.runtime.config import DatabaseSettings
+
+    base_url = DatabaseSettings().url
+    server_url = make_url(base_url).set(database="postgres")
+    try:
+        probe = create_engine(server_url)
+        with probe.connect():
+            pass
+        probe.dispose()
+    except OperationalError:
+        pytest.skip("local Postgres not reachable")
+
+    admin = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    dbname = f"lemely_mig_{_uuid.uuid4().hex[:12]}"
+    with admin.connect() as conn:
+        conn.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+    url = make_url(base_url).set(database=dbname)
+
+    cfg = Config("alembic.ini")
+    rendered_url = url.render_as_string(hide_password=False)
+    cfg.set_main_option("sqlalchemy.url", rendered_url)
+
+    previous_db_url = _os.environ.get("LEMELY_DATABASE__URL")
+    _os.environ["LEMELY_DATABASE__URL"] = rendered_url
+    try:
+        command.upgrade(cfg, "head")
+
+        def downgrade_to(revision: str) -> None:
+            command.downgrade(cfg, revision)
+
+        engine = create_engine(url)
+        try:
+            yield sessionmaker(bind=engine, expire_on_commit=False, future=True), downgrade_to
+        finally:
+            engine.dispose()
+    finally:
+        if previous_db_url is None:
+            _os.environ.pop("LEMELY_DATABASE__URL", None)
+        else:
+            _os.environ["LEMELY_DATABASE__URL"] = previous_db_url
         with admin.connect() as conn:
             conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
         admin.dispose()

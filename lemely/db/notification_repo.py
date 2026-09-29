@@ -90,6 +90,7 @@ PREFERENCE_FIELD_FOR_TYPE: Final[dict[NotificationType, str]] = {
     NotificationType.streak_warning: "streak_warning",
     NotificationType.study_plan_reminder: "study_plan_reminder",
     NotificationType.at_risk_alert: "at_risk_alert",
+    NotificationType.review_withdrawn: "review_withdrawn",
 }
 
 

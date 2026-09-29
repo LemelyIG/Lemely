@@ -240,6 +240,36 @@ def test_at_risk_alert_is_present_on_a_teacher_or_parent_get(
     assert resp.json()["atRiskAlert"] is True
 
 
+@pytest.mark.parametrize(
+    "role", [Role.student, Role.parent, Role.school_admin, Role.platform_admin]
+)
+def test_review_withdrawn_is_null_on_a_non_teacher_get(
+    client: TestClient, prefs_service: NotificationPreferencesService, role: Role
+) -> None:
+    """R10: mirrors atRiskAlert's own role gate, narrowed to teacher alone —
+    review_withdrawn fires only for a teacher (Task 9's
+    ``_notify_withdrawn_reviewers``)."""
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, uuid.uuid4(), role)
+
+    resp = client.get("/api/me/notification-preferences")
+
+    assert resp.status_code == 200
+    assert resp.json()["reviewWithdrawn"] is None
+
+
+def test_review_withdrawn_is_present_on_a_teacher_get(
+    client: TestClient, prefs_service: NotificationPreferencesService
+) -> None:
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, uuid.uuid4(), Role.teacher)
+
+    resp = client.get("/api/me/notification-preferences")
+
+    assert resp.status_code == 200
+    assert resp.json()["reviewWithdrawn"] is True
+
+
 # ---------------------------------------------------------------------------
 # PUT then GET: round trip, partial update.
 # ---------------------------------------------------------------------------
@@ -401,6 +431,57 @@ def test_put_at_risk_alert_disallowed_role_does_not_change_other_fields(
     assert rejected.status_code == 422
 
     # The whole request must have been rejected, not applied partially.
+    get_resp = client.get("/api/me/notification-preferences")
+    assert get_resp.json()["gradeReady"] is True
+
+
+# ---------------------------------------------------------------------------
+# reviewWithdrawn: role gating on PUT (R10, mirrors atRiskAlert above).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "role", [Role.student, Role.parent, Role.school_admin, Role.platform_admin]
+)
+def test_put_review_withdrawn_from_a_disallowed_role_is_422(
+    client: TestClient, prefs_service: NotificationPreferencesService, role: Role
+) -> None:
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, uuid.uuid4(), role)
+
+    resp = client.put("/api/me/notification-preferences", json={"reviewWithdrawn": True})
+
+    assert resp.status_code == 422
+
+
+def test_put_review_withdrawn_from_a_teacher_succeeds(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    prefs_service: NotificationPreferencesService,
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, user, Role.teacher)
+
+    resp = client.put("/api/me/notification-preferences", json={"reviewWithdrawn": False})
+
+    assert resp.status_code == 200
+    assert resp.json()["reviewWithdrawn"] is False
+
+
+def test_put_review_withdrawn_disallowed_role_does_not_change_other_fields(
+    client: TestClient, prefs_service: NotificationPreferencesService
+) -> None:
+    user = uuid.uuid4()
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, user, Role.student)
+
+    rejected = client.put(
+        "/api/me/notification-preferences",
+        json={"gradeReady": False, "reviewWithdrawn": True},
+    )
+    assert rejected.status_code == 422
+
     get_resp = client.get("/api/me/notification-preferences")
     assert get_resp.json()["gradeReady"] is True
 

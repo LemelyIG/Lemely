@@ -51,7 +51,7 @@ from lemely.core.history import (
 )
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExamMetadata, WeaknessReport
-from lemely.db.attempt_repo import AttemptRepository
+from lemely.db.attempt_repo import AttemptRepository, UploadDeletedError
 from lemely.db.class_repo import ClassService, JoinCodeError
 from lemely.db.invite_repo import (
     MAX_LIVE_PARENT_LINKS,
@@ -977,7 +977,9 @@ def student_correct(
     The stream emits ``marking_progress`` frames and ends with a ``complete``
     summary frame plus the ``[DONE]`` sentinel; on any failure the upload is
     marked failed and a ``warning``/``error`` frame is emitted (never a
-    traceback).
+    traceback). The one exception is a paper the student deleted mid-run:
+    persist refuses it (:class:`UploadDeletedError`), the error frame says so
+    generically, and the deleted upload's status is left alone.
     """
     from lemely.runtime.events import EventType, bus
     from lemely.web.sse import bus_event_stream
@@ -1218,6 +1220,13 @@ def student_correct(
                     rail_foot=header["railFoot"],
                     pct=round(report.grade_prediction.percentage),
                 )
+        except UploadDeletedError as exc:
+            # The student deleted this paper while it was being marked, and
+            # persist refused to write onto the deleted upload. The same error
+            # frame as any other failure, but no `failed` status: the upload is
+            # gone, and nothing may be written to it. The copy is the repo's
+            # generic sentence, never a reason.
+            bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))
         except Exception as exc:
             bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))
             upload_repo.set_status(owned.id, UploadStatus.failed)

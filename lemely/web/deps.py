@@ -32,8 +32,10 @@ from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.auth_token_repo import AuthTokenService
 from lemely.db.catalogue_repo import CatalogueService
+from lemely.db.class_exclusion_repo import ClassExclusionRepository
 from lemely.db.class_repo import ClassService
 from lemely.db.cooldown_repo import DbCooldownStore
+from lemely.db.deletion_repo import PaperDeletionService, TeacherPaperDeletionService
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.exam_calendar_repo import ExamCalendarService
 from lemely.db.flashcard_repo import FlashcardService
@@ -432,6 +434,18 @@ def get_class_service() -> ClassService:
 
 
 @lru_cache(maxsize=1)
+def get_class_exclusion_repository() -> ClassExclusionRepository:
+    """Return the process-wide :class:`ClassExclusionRepository` singleton.
+
+    Read-only in Task 12 (:class:`~lemely.db.class_history.ClassScopedHistoryStore`'s
+    one caller); Task 13 adds the unshare/reshare writes onto the same table.
+    Tests override this dependency with a repo bound to a throwaway Postgres
+    database, never the ambient dev sessionmaker.
+    """
+    return ClassExclusionRepository(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
 def get_review_service() -> ReviewService:
     """Return the process-wide :class:`ReviewService` singleton (P3.4).
 
@@ -474,6 +488,18 @@ def get_self_review_service() -> SelfReviewService:
         get_sessionmaker(settings),
         judge=build_self_review_judge(settings, get_gemini_client()),
     )
+
+
+@lru_cache(maxsize=1)
+def get_paper_deletion_service() -> PaperDeletionService:
+    """Return the process-wide :class:`PaperDeletionService` singleton."""
+    return PaperDeletionService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_teacher_paper_deletion_service() -> TeacherPaperDeletionService:
+    """Return the process-wide :class:`TeacherPaperDeletionService` singleton (R2)."""
+    return TeacherPaperDeletionService(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)
@@ -764,7 +790,8 @@ def get_sweeper() -> Sweeper:
     announcement is delivered through exactly the code an immediate one is.
     Built even when ``settings.notifications.sweeper_enabled`` is false;
     ``create_app``'s lifespan decides whether to *run* it. Constructing it
-    opens no connection (the engine is lazy).
+    opens no connection (the engine is lazy), and neither does the storage
+    backend it carries for the purge job.
     """
     settings = get_settings()
     return Sweeper(
@@ -773,6 +800,8 @@ def get_sweeper() -> Sweeper:
         notifications=get_notification_service(),
         transport=get_push_transport(),
         settings=settings.notifications,
+        storage=get_storage_backend(),
+        bucket=settings.storage.bucket,
     )
 
 

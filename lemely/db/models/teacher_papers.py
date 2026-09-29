@@ -60,6 +60,14 @@ class TeacherPaper(TimestampMixin, Base):
     run_started_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    """When a teacher deleted this row; NULL means live (design 2026-09-22 §3, R I4).
+
+    Added alongside :attr:`~lemely.db.models.attempts.Attempt.deleted_at` and
+    :attr:`~lemely.db.models.attempts.Upload.deleted_at` so a later task never
+    has to edit an already-applied migration. Nothing reads or writes this
+    column yet — the teacher-console deletion backend does that.
+    """
 
 
 __all__ = ["TeacherPaper"]

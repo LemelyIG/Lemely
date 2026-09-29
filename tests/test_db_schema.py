@@ -92,6 +92,7 @@ EXPECTED_TABLES = {
     "subject_topics",
     "component_thresholds",
     "option_thresholds",
+    "class_paper_exclusions",
 }
 
 # Tables deliberately excluded from `test_every_model_has_timestamps` below.
