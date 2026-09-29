@@ -2792,6 +2792,70 @@ def test_an_image_scan_too_large_to_decode_is_refused_before_decoding(
     ]
 
 
+def test_crop_route_checks_only_the_page_it_renders(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """Triage F8: a box on a clean page must not be refused because ANOTHER
+    page of the same scan is a content bomb -- MuPDF never parses that page
+    for this crop. The bomb page itself is still refused, which is what makes
+    the first half a proof that the check moved rather than disappeared."""
+    from lemely.io.scan_limits import MAX_PAGE_CONTENT_BYTES
+    from tests.pdf_fakes import bomb_on_second_page_pdf
+
+    scan = bomb_on_second_page_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)
+    # Each call seeds its own teacher, student and class; keep both teachers.
+    clean_owner, clean_item = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=scan, page=0
+    )
+    bomb_owner, bomb_item = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=scan, page=1
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+
+    _auth_as(client, clean_owner, Role.teacher)
+    clean = client.get(f"/api/teacher/review/{clean_item}/crop")
+    assert clean.status_code == 200, clean.text
+    assert clean.headers["content-type"] == "image/png"
+
+    _auth_as(client, bomb_owner, Role.teacher)
+    bomb = client.get(f"/api/teacher/review/{bomb_item}/crop")
+    assert bomb.status_code == 422, bomb.text
+
+
+def test_crop_route_serves_a_stored_scan_over_the_page_cap(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """User decision 2 (2026-09-29): a scan stored before the upload-time
+    page cap, with more than MAX_SCAN_PAGES pages, keeps its review crops --
+    the crop renders one page and never walks the rest. (The preview route
+    still refuses the same scan: ``tests/test_web_teacher.py::
+    test_preview_still_refuses_a_stored_scan_over_the_page_cap``.)"""
+    from lemely.io.scan_limits import MAX_SCAN_PAGES
+
+    scan = _synthetic_scan(pages=MAX_SCAN_PAGES + 1, marked_page=0)
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=scan, page=0
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == 200, resp.text
+    got = Image.open(io.BytesIO(resp.content)).convert("RGB")
+    reddish, bluish, total = _colour_counts(got)
+    assert bluish == 0 and reddish / total > 0.5, "wrong region on the over-cap scan"
+
+
 @pytest.mark.parametrize("image_format", ["JPEG", "MPO"])
 def test_a_high_resolution_photo_is_decoded_smaller_and_still_cropped_right(
     image_format: str,

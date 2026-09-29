@@ -860,34 +860,77 @@ def check_pdf_content(doc: pymupdf.Document) -> None:
         raise ScanRejectedError(_WALK_FAILED_MESSAGE.format(page=1)) from exc
     budget = _ContentBudget()
     for page_index in range(doc.page_count):
-        page = doc.load_page(page_index)  # type: ignore[no-untyped-call]
-        page_xref = doc.page_xref(page_index)  # type: ignore[no-untyped-call]
-        budget.page_total = 0
-        budget.objects = 0
-        walk = _PageWalk(page_index=page_index, tree=tree.xrefs, budget=budget)
-        try:
-            for image in page.get_images(full=True):
-                _check_image_and_masks(doc, image, page_index=page_index)
-            start: list[tuple[int, _Role]] = []
-            for xref in page.get_contents():
-                xref = int(xref)
-                if xref in tree.xrefs or not doc.xref_is_stream(xref):  # type: ignore[no-untyped-call]
-                    raise ScanRejectedError(
-                        _MALFORMED_STRUCTURE_MESSAGE.format(page=page_index + 1)
-                    )
-                start.append((xref, "any"))
-            start.extend(
-                ref
-                for holder in tree.holders.get(page_xref, ())
-                for ref in _resources_refs(doc, holder)
-            )
-            _walk_resource_graph(doc, start, walk)
-            _walk_annotations(doc, page_xref, walk)
-        except ScanRejectedError:
-            raise
-        except Exception as exc:
-            raise ScanRejectedError(_WALK_FAILED_MESSAGE.format(page=page_index + 1)) from exc
-        budget.scan_total += budget.page_total
+        _check_page(doc, tree, budget, page_index)
+
+
+def _check_page(
+    doc: pymupdf.Document, tree: _PageTree, budget: _ContentBudget, page_index: int
+) -> None:
+    """One page's share of :func:`check_pdf_content`: images, contents, resources, annotations."""
+    page = doc.load_page(page_index)  # type: ignore[no-untyped-call]
+    page_xref = doc.page_xref(page_index)  # type: ignore[no-untyped-call]
+    budget.page_total = 0
+    budget.objects = 0
+    walk = _PageWalk(page_index=page_index, tree=tree.xrefs, budget=budget)
+    try:
+        for image in page.get_images(full=True):
+            _check_image_and_masks(doc, image, page_index=page_index)
+        start: list[tuple[int, _Role]] = []
+        for xref in page.get_contents():
+            xref = int(xref)
+            if xref in tree.xrefs or not doc.xref_is_stream(xref):  # type: ignore[no-untyped-call]
+                raise ScanRejectedError(_MALFORMED_STRUCTURE_MESSAGE.format(page=page_index + 1))
+            start.append((xref, "any"))
+        start.extend(
+            ref
+            for holder in tree.holders.get(page_xref, ())
+            for ref in _resources_refs(doc, holder)
+        )
+        _walk_resource_graph(doc, start, walk)
+        _walk_annotations(doc, page_xref, walk)
+    except ScanRejectedError:
+        raise
+    except Exception as exc:
+        raise ScanRejectedError(_WALK_FAILED_MESSAGE.format(page=page_index + 1)) from exc
+    budget.scan_total += budget.page_total
+
+
+def check_pdf_page_content(doc: pymupdf.Document, page_index: int) -> None:
+    """:func:`check_pdf_content` for the ONE page a caller is about to render.
+
+    Triage F8: the crop route renders one page but used to pay for the
+    whole-document walk on every request (35-48 ms against a 60-78 ms crop
+    render on a normal paper), and a bomb on some OTHER page refused a crop
+    that never touched it. A renderer parses only the page it renders, so only
+    that page's content, resources and annotations need bounding. The same
+    rules apply as in :func:`check_pdf_content` -- encrypted and non-PDF
+    documents left alone, fail-closed on any walk failure -- with a fresh
+    budget, since no other page contributes to it.
+
+    No page cap (user decision 2, 2026-09-29): ``MAX_SCAN_PAGES`` bounds
+    whole-document work, and a one-page render is not that, so a stored scan
+    over the cap keeps its review crops. Extraction and the preview route
+    still go through :func:`check_pdf_content` and keep the cap (issue #269
+    is about the preview route alone from here on). The caller has already
+    bounds-checked ``page_index`` (``review._require_page_in_range``).
+
+    :func:`_page_tree` stops at the first page whose number pymupdf cannot
+    give; :func:`check_pdf_content` never walks past that page, but this
+    check can be asked for a later one, whose inherited ``/Resources`` the
+    tree then never recorded. Such a page is refused rather than walked
+    without them.
+    """
+    if not doc.is_pdf:
+        return
+    if doc.needs_pass:
+        return
+    try:
+        tree = _page_tree(doc)
+    except Exception as exc:
+        raise ScanRejectedError(_WALK_FAILED_MESSAGE.format(page=1)) from exc
+    if doc.page_xref(page_index) not in tree.holders:  # type: ignore[no-untyped-call]
+        raise ScanRejectedError(_MALFORMED_STRUCTURE_MESSAGE.format(page=page_index + 1))
+    _check_page(doc, tree, _ContentBudget(), page_index)
 
 
 def check_pdf_content_bytes(data: bytes) -> None:

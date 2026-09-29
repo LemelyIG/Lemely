@@ -1206,11 +1206,31 @@ def many_form_xobjects_pdf(count: int) -> bytes:
     )
 
 
+def bomb_on_second_page_pdf(inflated_bytes: int) -> bytes:
+    """Two A4 pages: page 1 draws one small red rectangle; page 2's only
+    content stream inflates to ``inflated_bytes`` (a content bomb).
+
+    Triage F8: the crop route used to walk EVERY page before rendering one,
+    so a request for page 1 paid for, and was refused by, page 2.
+    """
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>",
+            pdf_stream(b"", b"q 1 0 0 rg 60 500 120 250 re f Q"),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 6 0 R >>",
+            pdf_stream(b"/Filter /FlateDecode", flate_bomb_ops(inflated_bytes)),
+        ]
+    )
+
+
 __all__ = [
     "annot_ap_bomb_pdf",
     "annot_ap_image_bomb_pdf",
     "annot_ap_nested_bomb_pdf",
     "assemble_pdf",
+    "bomb_on_second_page_pdf",
     "born_digital_text_pdf",
     "contents_also_appearance_bomb_pdf",
     "deep_plain_dict_chain_bomb_pdf",

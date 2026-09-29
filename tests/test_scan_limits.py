@@ -27,6 +27,7 @@ from lemely.io.scan_limits import (
     ScanUnsupportedEncodingError,
     check_pdf_content_bytes,
     check_pdf_content_path,
+    check_pdf_page_content,
     check_scan_bytes,
     decoded_stream_size,
     plan_image,
@@ -38,6 +39,7 @@ from tests.pdf_fakes import (
     annot_ap_image_bomb_pdf,
     annot_ap_nested_bomb_pdf,
     assemble_pdf,
+    bomb_on_second_page_pdf,
     contents_also_appearance_bomb_pdf,
     deep_plain_dict_chain_bomb_pdf,
     deep_xobject_chain_bomb_pdf,
@@ -250,6 +252,68 @@ class ContentWalkPageCapTests(unittest.TestCase):
             check_pdf_content_bytes(data)
         page_tree.assert_not_called()
         walk.assert_not_called()
+
+
+class PageScopedContentCheckTests(unittest.TestCase):
+    """Triage F8: ``check_pdf_page_content`` is ``check_pdf_content`` for the
+    one page a caller is about to render -- and only that page."""
+
+    def _doc(self, data: bytes) -> pymupdf.Document:
+        return pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
+
+    def test_a_clean_page_passes_when_another_page_is_a_bomb(self) -> None:
+        with self._doc(bomb_on_second_page_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)) as doc:
+            check_pdf_page_content(doc, 0)
+
+    def test_the_bomb_page_itself_is_still_refused(self) -> None:
+        with (
+            self._doc(bomb_on_second_page_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)) as doc,
+            self.assertRaises(ScanTooLargeError),
+        ):
+            check_pdf_page_content(doc, 1)
+
+    def test_the_whole_document_check_still_refuses_it(self) -> None:
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(bomb_on_second_page_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000))
+
+    def test_only_the_named_page_is_walked(self) -> None:
+        with (
+            self._doc(bomb_on_second_page_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)) as doc,
+            patch.object(scan_limits, "_walk_resource_graph") as walk,
+        ):
+            check_pdf_page_content(doc, 0)
+        pages_walked = {call.args[2].page_index for call in walk.call_args_list}
+        self.assertEqual(pages_walked, {0})
+
+    def test_the_page_cap_does_not_apply_to_a_page_scoped_check(self) -> None:
+        """User decision 2 (2026-09-29): a stored scan over MAX_SCAN_PAGES
+        keeps its review crops; the cap bounds whole-document work
+        (extraction, preview) and a one-page render is not that."""
+        with self._doc(_pdf_bytes(*([(595.0, 842.0)] * (MAX_SCAN_PAGES + 1)))) as doc:
+            check_pdf_page_content(doc, 0)
+            check_pdf_page_content(doc, MAX_SCAN_PAGES)
+
+    def test_the_whole_document_check_keeps_the_page_cap(self) -> None:
+        with self.assertRaises(ScanTooLargeError):
+            check_pdf_content_bytes(_pdf_bytes(*([(595.0, 842.0)] * (MAX_SCAN_PAGES + 1))))
+
+    def test_a_page_the_page_tree_read_never_reached_is_refused(self) -> None:
+        """Fail closed: ``_page_tree`` stops at the first page whose number
+        pymupdf cannot give. The whole-document walk never goes past that
+        page, but a page-scoped check can name a later one, whose inherited
+        ``/Resources`` the tree then never recorded -- walking it with no
+        holders would skip them. Simulated by dropping every holder."""
+        real_page_tree = scan_limits._page_tree
+
+        def truncated(doc: pymupdf.Document) -> object:
+            return scan_limits._PageTree(xrefs=real_page_tree(doc).xrefs, holders={})
+
+        with (
+            self._doc(xobject_bomb_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)) as doc,
+            patch.object(scan_limits, "_page_tree", truncated),
+            self.assertRaises(ScanRejectedError),
+        ):
+            check_pdf_page_content(doc, 0)
 
 
 class CheckScanBytesTests(unittest.TestCase):

@@ -696,6 +696,47 @@ def test_preview_refuses_a_stored_content_stream_bomb(
     assert "drawing" in preview.json()["detail"]
 
 
+def test_preview_still_refuses_a_stored_scan_over_the_page_cap(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """User decision 2 (2026-09-29): the crop route dropped the page cap; the
+    preview route keeps it (#269 is about this route alone now). Seeded
+    directly into storage, as the upload route rejects the file."""
+    from unittest.mock import patch
+
+    import pymupdf
+
+    from lemely.io.scan_limits import MAX_SCAN_PAGES
+
+    doc = pymupdf.open()
+    for _ in range(MAX_SCAN_PAGES + 1):
+        doc.new_page(width=595.0, height=842.0)
+    scan: bytes = doc.tobytes()
+    doc.close()
+    paper_id = uuid.uuid4()
+    key = f"teacher/{teacher_user}/{paper_id.hex}/scan.pdf"
+    storage_backend.upload(settings.storage.bucket, key, scan, "application/pdf")
+    paper_repo.create(
+        paper_id=paper_id,
+        uploaded_by=teacher_user,
+        storage_path=key,
+        scheme_storage_path=None,
+        original_filename="scan.pdf",
+        content_type="application/pdf",
+        byte_size=len(scan),
+    )
+
+    with patch.object(pymupdf.Page, "get_pixmap") as get_pixmap:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+    get_pixmap.assert_not_called()
+    assert preview.status_code == 422
+    assert f"limit is {MAX_SCAN_PAGES}" in preview.json()["detail"]
+
+
 def test_upload_with_a_malformed_page_tree_still_succeeds(
     client: TestClient, paper_repo: TeacherPaperRepository
 ) -> None:

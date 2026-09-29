@@ -42,7 +42,7 @@ from lemely.db.review_repo import (
 from lemely.io.rasterise import RasterisedPage, looks_like_pdf
 from lemely.io.reread import REREAD_UPSCALE, crop_and_upscale, padded_crop_rect
 from lemely.io.scan_limits import MAX_DECODE_PX as _MAX_DECODE_PX
-from lemely.io.scan_limits import ScanRejectedError, check_pdf_content
+from lemely.io.scan_limits import ScanRejectedError, check_pdf_page_content
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 
 # A runtime import, not a TYPE_CHECKING one: FastAPI resolves
@@ -500,14 +500,18 @@ def _crop_pdf_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
     with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
         # `_require_page_in_range` first: it reads only `doc.page_count`, no
         # `load_page` -- an out-of-range box must still cost a bounds check,
-        # not a page load, exactly as `_require_page_in_range`'s own docstring
-        # promises (test_crop_route_422s_for_a_page_out_of_range_without_rendering
-        # booby-traps `load_page` to prove it). `check_pdf_content` itself calls
-        # `load_page` per page, so it runs after, but still before this
-        # function's own `load_page(box.page)` a few lines down.
+        # not a page load (test_crop_route_422s_for_a_page_out_of_range_without_rendering
+        # booby-traps `load_page` to prove it). Then the content check for the
+        # ONE page MuPDF will parse (triage F8): the whole-document walk cost
+        # 35-48 ms per request against a 60-78 ms render, a bomb on some OTHER
+        # page refused a crop that never touched it, and the document page cap
+        # refused every crop of a scan stored before that cap existed. Uploads
+        # that pre-date the upload-time check still get the render-bomb
+        # protection for the page actually rendered; the page cap stays with
+        # the whole-document callers (extraction, the preview route).
         _require_page_in_range(box, doc.page_count, item_id=item_id)
         try:
-            check_pdf_content(doc)
+            check_pdf_page_content(doc, box.page)
         except ScanRejectedError as exc:
             log.warning(
                 "review_crop_scan_rejected", item_id=item_id, page=box.page, reason=str(exc)
