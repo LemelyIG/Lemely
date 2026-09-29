@@ -692,9 +692,20 @@ def _evaluated_would_explode(expr: sympy.Basic) -> bool:
 
 
 def _vetted_parse(normalized: str, *, vet: bool = True) -> sympy.Expr | None:
+    """:func:`_vet_and_parse`'s expression: ``None`` if refused at either stage."""
+    return _vet_and_parse(normalized, vet=vet)[1]
+
+
+def _vet_and_parse(normalized: str, *, vet: bool = True) -> tuple[str, sympy.Expr | None]:
     """Bound every power of an UNEVALUATED parse, parse for real, bound the result.
 
-    ``None`` if refused. Runs in the parse worker (see :class:`_ParseWorker`).
+    Returns ``("ok", expr)``, or ``("refused-unevaluated", None)`` when the
+    walk refused it BEFORE the evaluated parse ran (so no big-int work was
+    ever done), or ``("refused-evaluated", None)`` when the result bound
+    refused it after. The stage is reported to the parent
+    (:attr:`_ParseWorker.last_outcome`) so a test can assert WHICH step
+    refused an input rather than how long it took. Runs in the parse worker
+    (see :class:`_ParseWorker`).
     The ``evaluate=False`` parse builds a tree and evaluates nothing but
     whitelisted function calls and textually-bounded factorials; the regexes
     in :func:`parse_expr_safe` read literals, and a computed exponent (triage
@@ -709,11 +720,11 @@ def _vetted_parse(normalized: str, *, vet: bool = True) -> sympy.Expr | None:
         unevaluated = _parse_normalized(normalized, evaluate=False)
         for node in sympy.postorder_traversal(unevaluated):
             if isinstance(node, sympy.Pow) and _pow_would_explode(node):
-                return None
+                return ("refused-unevaluated", None)
     expr = _parse_normalized(normalized, evaluate=True)
     if vet and _evaluated_would_explode(expr):
-        return None
-    return expr
+        return ("refused-evaluated", None)
+    return ("ok", expr)
 
 
 def _collapse_thousands_separators(text: str) -> str:
@@ -814,8 +825,9 @@ def _parse_worker_main(  # pragma: no cover
 ) -> None:
     """The parse worker's loop, run in the child (hence no coverage).
 
-    ``(text, vet) -> ("ok", expr) | ("refused", None) | ("memory", None) |
-    ("error", repr)``; ``None`` ends the loop. See :func:`_vetted_parse`.
+    ``(text, vet) -> ("ok", expr) | ("refused-unevaluated", None) |
+    ("refused-evaluated", None) | ("memory", None) | ("error", repr)``;
+    ``None`` ends the loop. See :func:`_vet_and_parse`.
 
     Runs in a ``spawn``ed child, so this module is imported afresh there.
     The address-space limit is set first; where ``resource`` is unavailable
@@ -846,8 +858,7 @@ def _parse_worker_main(  # pragma: no cover
                 return
             text, vet = message
             try:
-                expr = _vetted_parse(text, vet=vet)
-                conn.send(("refused", None) if expr is None else ("ok", expr))
+                conn.send(_vet_and_parse(text, vet=vet))
             except MemoryError:
                 conn.send(("memory", None))
             except Exception as exc:
@@ -904,6 +915,12 @@ class _ParseWorker:
         self._owner_pid: int | None = None
         #: `time.monotonic()` of the last failed start, for the cool-down.
         self._start_failed_at: float | None = None
+        #: How the most recent :meth:`parse` ended, on any thread -- a
+        #: diagnostic for tests, which assert on the STEP that refused an
+        #: input instead of on elapsed time: "ok", "refused-unevaluated",
+        #: "refused-evaluated", "memory", "error", "timeout", "crash",
+        #: "interrupted" or "unavailable" (no worker could be started).
+        self.last_outcome: str | None = None
 
     def _forget_after_fork(self) -> None:
         """In a forked child: the parent's worker, pipe and lock are not ours."""
@@ -994,23 +1011,28 @@ class _ParseWorker:
         """
         with self._lock:
             if not self._ready() or self._conn is None:
+                self.last_outcome = "unavailable"
                 return None
             conn = self._conn
             try:
                 conn.send((text, vet))
                 if not conn.poll(timeout):
                     self._discard(kill=True)
+                    self.last_outcome = "timeout"
                     return None
                 kind, value = conn.recv()
             except Exception:  # EOFError/OSError on a crash, or an unpicklable reply
                 self._discard(kill=True)
+                self.last_outcome = "crash"
                 return None
             except BaseException:
                 # KeyboardInterrupt/SystemExit while the reply is outstanding:
                 # a live worker would hand THIS text's reply to the next
                 # caller (review round 1), so it is killed before propagating.
                 self._discard(kill=True)
+                self.last_outcome = "interrupted"
                 raise
+            self.last_outcome = kind
             if kind != "ok" or not isinstance(value, sympy.Basic):
                 return None
             # Any Basic, exactly as the in-process parse returned before (a

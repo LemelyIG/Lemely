@@ -2378,22 +2378,24 @@ def test_computed_exponents_are_refused_before_any_big_int_work(text: str) -> No
     and return a 997,003,000-bit Integer after 3.79 s, during which a
     heartbeat thread stalled 3.83 s -- the GIL was held, so ``_run_bounded``'s
     timeout could not have helped. The refusal must come from the structural
-    bound on the unevaluated parse, i.e. in milliseconds and before any
-    big-int work -- NOT from the worker's timeout, which would have taken
-    the full second and killed the worker (so its pid must survive). Fresh
-    interpreter: in-process, this file's abandoned CPU-bound threads pushed
-    a correct refusal to 0.64 s (review round 2)."""
-    out = _run_worker_timing_script(
-        f"""
-result, elapsed, gap = timed(lambda: parse_expr_safe({text!r}, timeout=1.0))
-print(json.dumps({{
-    "result": repr(result), "elapsed": elapsed, "same_worker": eq._PARSE_WORKER.pid() == pid_before,
-}}))
-"""
-    )
-    assert out["result"] == "None"
-    assert out["elapsed"] < 0.5, f"refusal took {out['elapsed']:.2f}s"  # type: ignore[operator]
-    assert out["same_worker"] is True, "refused by a kill, not by the walk"
+    walk on the UNEVALUATED parse -- before the evaluated parse, the only
+    step that does big-int work, ever runs -- and not from the worker's
+    timeout (which would kill the worker, so its pid must survive).
+
+    Asserted on the step, not the clock (review round 2): this test used to
+    bound the elapsed time (< 0.5 s) and failed once under load from other
+    test runs while passing alone. ``last_outcome`` says which stage ended
+    the parse; the generous timeout only keeps a loaded machine from turning
+    a millisecond walk into a kill. Remove the walk's guard and the outcome
+    becomes ``refused-evaluated`` -- after the big-int work -- and this goes
+    red."""
+    from lemely.core import equivalence as eq
+
+    assert parse_expr_safe("2+2") == sympy.Integer(4)  # a live worker whose pid must survive
+    worker_pid = eq._PARSE_WORKER.pid()
+    assert parse_expr_safe(text, timeout=30.0) is None
+    assert eq._PARSE_WORKER.last_outcome == "refused-unevaluated"
+    assert eq._PARSE_WORKER.pid() == worker_pid, "refused by a kill, not by the walk"
 
 
 @pytest.mark.parametrize(
@@ -2601,14 +2603,19 @@ def test_the_parse_worker_survives_a_memory_error() -> None:
     """A parse that breaches the child's address-space limit comes back as
     ``None`` -- not a crash, not a respawn: the child catches MemoryError.
     ``vet=False`` skips the structural bound, which would refuse this text
-    first; without the limit the child would return a 125 MB Integer."""
+    first; without the limit the child would return a 125 MB Integer.
+
+    Asserted on the outcome, not the clock (review round 2): the MemoryError
+    arrives after ~2.6 s of big-int work normally, but after more than 10 s
+    with the CPUs 2x oversubscribed, where the old 10 s timeout killed the
+    worker first and failed this test for a reason unrelated to memory. The
+    timeout is generous so only a hang could reach it."""
     from lemely.core import equivalence as eq
 
     assert parse_expr_safe("2+2") == sympy.Integer(4)
     pid_before = eq._PARSE_WORKER.pid()
-    started = time.monotonic()
-    assert eq._PARSE_WORKER.parse("2**999999999", 10.0, vet=False) is None
-    assert time.monotonic() - started < 10.0
+    assert eq._PARSE_WORKER.parse("2**999999999", 120.0, vet=False) is None
+    assert eq._PARSE_WORKER.last_outcome == "memory"
     assert eq._PARSE_WORKER.pid() == pid_before
 
 
