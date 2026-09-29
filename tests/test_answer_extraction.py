@@ -1771,10 +1771,9 @@ class RereadCapTests(unittest.TestCase):
         confidence range and failed schema validation instead of exercising
         the cap), and pin the expected call count as a literal 15, not the
         constant, so a mutation is caught by a mismatch rather than by the
-        fixture blowing up. Spec 2026-09-26 §4: the default is no longer the
-        module constant ``DEFAULT_MAX_REREADS_PER_PAPER`` directly -- with
-        no override, the constructor now reads
-        ``GeminiSettings.max_rereads_per_paper``, whose own default (15) is
+        fixture blowing up. Spec 2026-09-26 §4: with no override, the
+        constructor reads ``GeminiSettings.max_rereads_per_paper``, whose
+        default (15) is the one place the shipped cap is defined -- that is
         what this pins."""
         n_answers = 16
         body = {

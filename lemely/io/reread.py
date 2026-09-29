@@ -58,10 +58,11 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.60
 # the setting whenever its own ``max_rereads_per_paper`` constructor
 # keyword is ``None`` (every production construction site); an explicit
 # kwarg -- including ``0`` -- still overrides the setting per-instance,
-# the same way it always has. This constant is now kept only as the value
-# that setting's own default was taken from -- change the setting's
-# default in ``config.py``, not this constant, to change deployed behaviour.
-DEFAULT_MAX_REREADS_PER_PAPER = 15
+# the same way it always has. The default lives only there: the
+# ``DEFAULT_MAX_REREADS_PER_PAPER`` constant this comment once sat above was
+# removed (final review M7) -- ``lemely.runtime`` may not import
+# ``lemely.io``, so the setting could never reference it, and a second 15
+# here could only drift.
 
 #: Spec 2026-09-26 §4 (#9): a re-read whose ``reread_agreement`` is below this
 #: sends the question to teacher review (and, under ``reread_substitution``,
