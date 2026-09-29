@@ -5792,6 +5792,61 @@ class RereadFixRound1Tests(unittest.TestCase):
         self.assertEqual(q2.review_reason, correction_ai._BLANK_ANSWER_REVIEW_REASON)
         self.assertNotIn("re-read", q2.review_reason or "")
 
+    def test_blank_row_with_nonblank_reread_is_not_substituted_us039_guard(self) -> None:
+        """Final review I2: the flag-ON variant of the guard above. With
+        ``reread_substitution`` on, a blank first read whose re-read found
+        text used to be marked on the re-read (a paid call, full marks) AND
+        flagged -- the same self-mark authority the flag-off guard closes,
+        plus the marks. The re-read of a blank crop is the model's text,
+        never the student's, so a blank first read is never substituted:
+        the row stays exactly as ``_build_blank_corrected`` left it."""
+        extracted = ExtractedAnswers(
+            paper_id="t",
+            source_scan="s.pdf",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(
+                    question_id="2",
+                    answer="",
+                    confidence=0.9,
+                    answer_reread="gravity acts on it",
+                    reread_agreement=0.0,
+                ),
+            ],
+        )
+        client = _client_with_seq(self.tmp, [])
+        result = correct_paper(
+            self.ms,
+            extracted,
+            gemini_client=client,
+            options=MarkingOptions(reread_substitution=True),
+        )
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.marker_source, "blank")
+        self.assertEqual(q2.awarded_marks, 0)
+        self.assertIsNone(q2.student_answer)
+        self.assertFalse(q2.needs_teacher_review)
+        self.assertEqual(q2.review_reason, correction_ai._BLANK_ANSWER_REVIEW_REASON)
+
+    def test_blank_mcq_first_read_is_not_substituted_and_its_reason_says_so(self) -> None:
+        """Final review I2, MCQ side: a blank MCQ first read is already
+        flagged "missing answer" by ``_build_mcq_corrected``. Substitution
+        must not mark the re-read letter on it either, and the joined reason
+        must not claim the re-read "returned nothing usable" -- it quotes
+        both readings, the flag-off shape."""
+        result = correct_paper(
+            self.ms,
+            self._mcq("", "A", 0.0),
+            gemini_client=None,
+            mcq_only=True,
+            options=MarkingOptions(reread_substitution=True),
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.awarded_marks, 0)
+        self.assertIsNone(q1.student_answer)
+        self.assertIn("marked the first read '', the re-read gave 'A'", q1.review_reason or "")
+        self.assertNotIn("nothing usable", q1.review_reason or "")
+
     def test_blank_first_read_with_blank_reread_stays_unflagged(self) -> None:
         """A blank first read whose re-read ALSO found nothing is a genuine
         blank -- the unflagged-zero ruling still applies."""

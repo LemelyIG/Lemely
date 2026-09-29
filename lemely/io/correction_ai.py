@@ -203,7 +203,16 @@ def _substituted_answer(flat: _FlatAnswer, *, is_mcq: bool) -> str | None:
     leaves substitute the stripped re-read text verbatim (fix round 1:
     previously unstripped, so a re-read with incidental leading/trailing
     whitespace would have been quoted and marked with it).
+
+    Final review I2: ``None`` too when the FIRST read is blank. The re-read
+    of a blank crop is the model's text, never the student's, and marking
+    it would pay a call, may award marks, and flag the row -- the US-039
+    self-review exploit the flag-off path closes (see
+    :func:`_attach_extraction_context`). A blank row stays exactly as
+    ``_build_blank_corrected`` leaves it.
     """
+    if _is_blank(flat.answer):
+        return None
     if _disagreeing_agreement(flat, is_mcq=is_mcq) is None:
         return None
     reread = (flat.answer_reread or "").strip()
@@ -2149,7 +2158,11 @@ def _attach_extraction_context(
     agreement = _disagreeing_agreement(first, is_mcq=is_mcq)
     if cq.marker_source in ("ai", "deterministic") and agreement is not None:
         reread_for_reason: str | None
-        if options.reread_substitution:
+        # Final review I2: a blank first read is never substituted (see
+        # :func:`_substituted_answer`), so its reason is the flag-off shape
+        # quoting both readings, not "the re-read returned nothing usable".
+        substitution = options.reread_substitution and not _is_blank(first.answer)
+        if substitution:
             substituted = _substituted_answer(first, is_mcq=is_mcq)
             reread_for_reason = substituted if substituted is not None else ""
         else:
@@ -2158,7 +2171,7 @@ def _attach_extraction_context(
             first_read=first.answer,
             reread=reread_for_reason,
             agreement=agreement,
-            substitution=options.reread_substitution,
+            substitution=substitution,
         )
         update["needs_teacher_review"] = True
         update["review_reason"] = _join_reason(cq.review_reason, reason)
