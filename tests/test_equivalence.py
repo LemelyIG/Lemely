@@ -28,10 +28,12 @@ from __future__ import annotations
 
 import glob
 import json
+import logging
 import math
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -2322,6 +2324,13 @@ def test_parse_expr_safe_accepts_already_valid_arithmetic() -> None:
         "(999!)!",
         "9999999!",
         "9 999 999!",
+        "2^(999*999*999*(x-1))",
+        "2^(999*999*999*(x-y))",
+        "(10^300+1)^1000*(10^300+3)^1000",
+        "(10^300+1)^14*(10^300+3)^14",
+        "(" + "*".join(["(10^300+1)^1000"] * 10) + "*1)^2",
+        "2^((999x-999)(999y-999)(999z-999))",
+        "exp(999*999*999*ln(2)*(x-1))",
     ],
     ids=[
         "disallowed-function",
@@ -2341,6 +2350,18 @@ def test_parse_expr_safe_accepts_already_valid_arithmetic() -> None:
         "factorial-of-parenthesised",
         "factorial-too-large",
         "factorial-too-large-thousands-spaced",
+        # Review round 1: 0 at the all-ones point, so the walk passes them; the
+        # evaluated `2**(997002999*x - 997002999)` then froze `equivalent`.
+        "computed-exponent-times-difference",
+        "computed-exponent-times-two-symbol-difference",
+        # Review round 1: each power within bounds, their product (a 1,993,157-bit
+        # Integer) is not; `str()` of it raised in the caller. The second row is
+        # small enough per power for the walk and caught by the result-size bound.
+        "product-result-too-large",
+        "product-result-too-large-within-pow-bound",
+        "product-of-bounded-powers",
+        "product-of-differences-in-exponent",
+        "exp-of-log",
     ],
 )
 def test_parse_expr_safe_rejects_dangerous_constructs(text: str) -> None:
@@ -2378,6 +2399,7 @@ def test_computed_exponents_are_refused_before_any_big_int_work(text: str) -> No
         ("2^(3*4)", sympy.Integer(4096)),
         ("5!", sympy.Integer(120)),
         ("2^999", sympy.Integer(2) ** 999),
+        ("1000!", sympy.factorial(1000)),
     ],
     ids=[
         "fractional-exponent",
@@ -2385,6 +2407,7 @@ def test_computed_exponents_are_refused_before_any_big_int_work(text: str) -> No
         "small-computed-exponent",
         "small-factorial",
         "largest-literal",
+        "largest-factorial-2568-digits",
     ],
 )
 def test_bounded_exponents_still_parse(text: str, expected: sympy.Expr) -> None:
@@ -2479,12 +2502,12 @@ pid_before = eq._PARSE_WORKER.pid()
 """
 
 
-def _run_worker_timing_script(body: str) -> dict[str, object]:
+def _run_worker_timing_script(body: str, *, timeout: float = 60) -> dict[str, object]:
     script = _WORKER_TIMING_PRELUDE + body
     result = subprocess.run(
         [sys.executable, "-c", script],
         check=True,
-        timeout=60,
+        timeout=timeout,
         capture_output=True,
         text=True,
         cwd=Path(__file__).resolve().parents[1],
@@ -2531,28 +2554,22 @@ print(json.dumps({
 
 @pytest.mark.parametrize(
     "text",
-    [
-        "2^(999*999*999 + 0/(n-1))",
-        "(" + "*".join(["(10^300+1)^1000"] * 10) + "*1)^2",
-    ],
-    ids=["exponent-singular-at-ones", "product-of-bounded-powers"],
+    ["2^(999*999*999 + 0/(n-1))"],
+    ids=["exponent-singular-at-ones"],
 )
 def test_what_the_walk_cannot_bound_never_stalls_the_caller(text: str) -> None:
-    """Every guard ON, through ``parse_expr_safe``. Two inputs the structural
-    walk cannot refuse cheaply:
-
-    - ``0/(n-1)`` is ``nan`` when n is 1, so the walk cannot bound this
-      exponent and leaves it to the evaluated parse -- which folds
-      ``0/(n-1)`` to 0 and would build ``2**997002999``;
-    - each ``(10^300+1)^1000`` is within bounds, but the walk must EVALUATE
-      their product to bound the outer power: 25 million bits for 25 terms,
-      measured at 33.5 s with a 2.5 s heartbeat gap when the walk ran in the
-      caller's process (10 terms here: 5.2 s, 0.98 s gap).
-
-    Both must come back ``None`` at the timeout without the caller's
-    heartbeat noticing: the walk and the parse run in the killable worker.
-    (A walk that simply refused them would pass the first and last asserts,
-    which is why the kill is asserted too: this test is about the backstop.)"""
+    """Every guard ON, through ``parse_expr_safe``: ``0/(n-1)`` is ``nan``
+    when n is 1, so the walk cannot bound this exponent and leaves it to the
+    evaluated parse -- which folds ``0/(n-1)`` to 0 and would build
+    ``2**997002999``. It must come back ``None`` at the timeout without the
+    caller's heartbeat noticing: the walk and the parse run in the killable
+    worker. (A walk that simply refused it would pass the first and last
+    asserts, which is why the kill is asserted too: this test is about the
+    backstop.) The product-of-powers input that used to share this test --
+    each ``(10^300+1)^1000`` within the old 1M-bit bound, 33.5 s and a 2.5 s
+    heartbeat gap for 25 terms when the walk ran in the caller -- is now
+    refused per power by the lowered bound (see
+    ``test_parse_expr_safe_rejects_dangerous_constructs``)."""
     out = _run_worker_timing_script(
         f"""
 result, elapsed, gap = timed(lambda: parse_expr_safe({text!r}, timeout=1.0))
@@ -2588,6 +2605,206 @@ def test_the_parse_worker_survives_a_memory_error() -> None:
     assert eq._PARSE_WORKER.parse("2**999999999", 10.0, vet=False) is None
     assert time.monotonic() - started < 10.0
     assert eq._PARSE_WORKER.pid() == pid_before
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("2^(999*999*999*(x-1))", "2^x"),
+        ("2^(999*999*999*(x-1))", "0"),
+        ("2^(999*999*999*(x-y))", "1"),
+        # Every atom is 999; the expanded exponent holds -997002999.
+        ("2^((999x-999)(999y-999)(999z-999))", "1"),
+        # `exp` is not a Pow; simplify turns exp(N*log(2)*(x-1)) into 2**-N.
+        ("exp(999*999*999*ln(2)*(x-1))", "1"),
+    ],
+    ids=[
+        "difference-vs-power",
+        "difference-vs-zero",
+        "two-symbol-difference-vs-one",
+        "product-of-differences-vs-one",
+        "exp-of-log-vs-one",
+    ],
+)
+def test_a_computed_exponent_never_freezes_the_caller_through_equivalent(a: str, b: str) -> None:
+    """Review round 1 (Important 1). ``999*999*999*(x-1)`` is 0 at the
+    all-ones point, so the unevaluated walk passes it, and the worker used to
+    return ``2**(997002999*x - 997002999)`` in 0.02 s -- after which
+    ``equivalent`` froze the caller for 4.2-4.7 s (``simplify`` splitting off
+    ``2**-997002999`` with the GIL held, in its ``_run_bounded`` thread) or
+    never returned (``sympy.expand`` of the difference, unbounded, on the
+    caller's own thread). The bound must hold for the form ``simplify`` and
+    ``expand`` actually see -- the EVALUATED tree -- so the answer comes back
+    unparseable in milliseconds, through ``equivalent``, not only through
+    ``parse_expr_safe``. Fresh interpreter, for the heartbeat."""
+    out = _run_worker_timing_script(
+        f"""
+verdict, elapsed, gap = timed(lambda: eq.equivalent({a!r}, {b!r}))
+print(json.dumps({{"kind": verdict.kind.value, "elapsed": elapsed, "gap": gap}}))
+""",
+        timeout=30,
+    )
+    assert out["kind"] == VerdictKind.UNPARSEABLE.value
+    assert out["elapsed"] < 1.0, f"equivalent took {out['elapsed']:.2f}s"  # type: ignore[operator]
+    assert out["gap"] < 0.25, f"the caller stalled for {out['gap']:.2f}s -- the GIL was held"  # type: ignore[operator]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "e^(-t/(R*C))",
+        "2^(t/5730)",
+        "N0*(1/2)^(t/5730)",
+        "A*e^(-0.693*t/5730)",
+        "(1+r/100)^n",
+        "e^(-x/(1000+y))",
+        "(x+1)^1000",
+        "10^(3/2)",
+        "3.0×10^8",
+        "x^(n+1)",
+    ],
+    ids=[
+        "rc-decay",
+        "half-life-power",
+        "half-life-fraction",
+        "decay-float-coefficient",
+        "compound-interest",
+        "large-number-in-denominator",
+        "largest-literal-exponent",
+        "fractional-numeric-power",
+        "standard-form",
+        "symbolic-exponent",
+    ],
+)
+def test_ordinary_exponents_pass_the_evaluated_bound(text: str) -> None:
+    """The review-round-1 bound on the EVALUATED tree must not refuse the
+    exponent shapes real answers use: decay and half-life forms, Float
+    coefficients (inexact: never an exact big integer), a large number in a
+    denominator (a negative power is an atom), and the largest literal
+    exponent the regex allows."""
+    from lemely.core import equivalence as eq
+
+    expected = eq._parse_normalized(eq._normalize_text(text), evaluate=True)
+    assert not eq._evaluated_would_explode(expected)
+    assert parse_expr_safe(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["(10^300+1)^1000*(10^300+3)^1000", "(10^300+1)^14*(10^300+3)^14"],
+    ids=["reviewer-input", "each-power-within-the-pow-bound"],
+)
+def test_an_oversized_result_is_never_returned_so_equivalent_never_raises(text: str) -> None:
+    """Review round 1 (Important 2). Each power passed the walk and the
+    product did not have to: the worker returned a 1,993,157-bit Integer,
+    and ``equivalent(parsed, "1")`` then raised ``ValueError('Exceeds the
+    limit (4300 digits) for integer string conversion')`` from ``str``/
+    ``srepr`` -- which ``correction_ai`` does not catch. The worker now
+    refuses any result holding a number too long to print, so the caller
+    sees ``None``/UNPARSEABLE and never an exception."""
+    assert parse_expr_safe(text) is None
+    assert equivalent(text, "1").kind is VerdictKind.UNPARSEABLE
+
+
+def test_an_interrupted_parse_never_hands_its_reply_to_the_next_caller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 1 (Minor 1). A ``KeyboardInterrupt`` while waiting for the
+    reply used to escape ``except Exception`` and leave that reply pending in
+    the pipe, so the NEXT caller received the previous text's expression. The
+    interrupted worker must be discarded before the interrupt propagates."""
+    from lemely.core import equivalence as eq
+
+    assert parse_expr_safe("2+2") == sympy.Integer(4)
+    conn = eq._PARSE_WORKER._conn
+    assert conn is not None
+    real_poll = conn.poll
+    interrupts = [KeyboardInterrupt()]
+
+    def poll_once_interrupted(timeout: float = 0.0) -> bool:
+        if interrupts:
+            raise interrupts.pop()
+        return real_poll(timeout)
+
+    monkeypatch.setattr(conn, "poll", poll_once_interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        eq._PARSE_WORKER.parse("2+3", 1.0)
+    assert parse_expr_safe("4*4") == sympy.Integer(16)
+
+
+def test_a_worker_that_cannot_start_returns_none_and_backs_off(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Review round 1 (Minor 2). Where no child can be started (e.g. from a
+    daemonic process), every call returns ``None`` -- never raises -- and a
+    failed start is not retried for ``_PARSE_WORKER_START_COOLDOWN`` seconds,
+    with one warning per failed start rather than one per call."""
+    from lemely.core import equivalence as eq
+
+    attempts: list[int] = []
+    real_context = eq.multiprocessing.get_context("spawn")
+
+    class _Unstartable:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def start(self) -> None:
+            attempts.append(1)
+            raise AssertionError("daemonic processes are not allowed to have children")
+
+    class _Context:
+        Process = _Unstartable
+
+        @staticmethod
+        def Pipe() -> object:  # mirrors multiprocessing's API
+            return real_context.Pipe()
+
+    monkeypatch.setattr(eq.multiprocessing, "get_context", lambda _method: _Context())
+    worker = eq._ParseWorker()
+    monkeypatch.setattr(eq, "_PARSE_WORKER", worker)
+    with caplog.at_level(logging.WARNING, logger=eq.__name__):
+        assert parse_expr_safe("2+2") is None
+        assert parse_expr_safe("3+3") is None
+    assert len(attempts) == 1, "a failed start was retried inside the cool-down"
+    assert len([r for r in caplog.records if "parse worker" in r.getMessage()]) == 1
+    # Once the cool-down has passed, it tries again (and still returns None).
+    assert worker._start_failed_at is not None
+    worker._start_failed_at -= eq._PARSE_WORKER_START_COOLDOWN + 1
+    assert parse_expr_safe("4+4") is None
+    assert len(attempts) == 2
+
+
+def test_a_caller_queued_behind_a_timeout_gets_its_own_result() -> None:
+    """Review round 1 (Minor 3). Calls are serialised on one worker: a caller
+    that queues behind a runaway parse must get ITS OWN expression after the
+    runaway is killed and the worker respawned -- not ``None``, and not the
+    runaway's late reply."""
+    from lemely.core import equivalence as eq
+
+    assert parse_expr_safe("2+2") == sympy.Integer(4)
+    results: dict[str, object] = {}
+    finished: dict[str, float] = {}
+
+    def runaway() -> None:
+        results["runaway"] = eq._PARSE_WORKER.parse("2**(999*999*999)", 1.0, vet=False)
+        finished["runaway"] = time.monotonic()
+
+    def ordinary() -> None:
+        results["ordinary"] = parse_expr_safe("3*7", timeout=5.0)
+        finished["ordinary"] = time.monotonic()
+
+    first = threading.Thread(target=runaway)
+    first.start()
+    deadline = time.monotonic() + 5.0
+    while not eq._PARSE_WORKER._lock.locked() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert eq._PARSE_WORKER._lock.locked(), "the runaway never took the worker"
+    second = threading.Thread(target=ordinary)
+    second.start()
+    first.join(30)
+    second.join(30)
+    assert results == {"runaway": None, "ordinary": sympy.Integer(21)}
+    assert finished["ordinary"] >= finished["runaway"], "the second caller did not queue"
 
 
 def test_the_parse_worker_leaves_no_child_behind() -> None:

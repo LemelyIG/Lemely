@@ -51,7 +51,9 @@ import queue
 import random
 import re
 import signal
+import sys
 import threading
+import time
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
@@ -130,14 +132,27 @@ _ABS_TOLERANCE_SANITY_FRACTION = 0.5
 #: parsing or produce a multi-million-digit integer (I8 review MUST-FIX #9).
 _MAX_EXPONENT_VALUE = 1000
 
+#: The longest exact number a parse may RETURN (review round 1 of triage F2).
+#: `str()`/`srepr()` of a longer int raises ValueError under CPython's
+#: int-to-string limit (`sys.get_int_max_str_digits()`, default 4300 digits),
+#: and `equivalent` prints both sides -- so `(10^300+1)^1000*(10^300+3)^1000`,
+#: each power within bounds, returned a 1,993,157-bit Integer and then raised
+#: straight through `correction_ai`. Never above the default (the caller may
+#: not share this process's setting); lower if this process lowered it.
+_MAX_RESULT_DIGITS = min(sys.get_int_max_str_digits() or 4300, 4300)
+#: ...in bits: any int of at most this many bits has at most that many digits.
+_MAX_RESULT_INT_BITS = int((_MAX_RESULT_DIGITS - 1) / math.log10(2))
+
 #: Triage F2 (2026-09-29): the exponent regexes read literals, so a COMPUTED
 #: exponent (`2^(999*999*999)`, `2^(999!)`) slipped past them and SymPy then
 #: built the integer -- 997,003,000 bits in 3.8 s with the GIL held, so the
 #: whole process froze and `_run_bounded`'s timeout was moot. The structural
 #: bound in `_pow_would_explode` refuses any power whose RESULT would exceed
-#: this many bits (~300,000 decimal digits: no CAIE answer is near it), on top
-#: of the per-exponent literal cap above.
-_MAX_POW_RESULT_BITS = 1_000_000
+#: this many bits, on top of the per-exponent literal cap above. It was
+#: 1,000,000 until review round 1: a power the result bound above would
+#: refuse anyway is not worth computing first, so the two now agree
+#: (14,280 bits, ~4,300 digits: no CAIE answer is near it).
+_MAX_POW_RESULT_BITS = _MAX_RESULT_INT_BITS
 
 #: `factorial_notation` is one of SymPy's `standard_transformations`, and a
 #: factorial is computed at PARSE time even under `evaluate=False`, so it must
@@ -161,6 +176,12 @@ _PARSE_WORKER_MEMORY_BYTES = 512 * 1024 * 1024
 #: runaway parse: without it, the first answer after every (re)start could
 #: come back unparseable. Generous because it is paid at most once per start.
 _PARSE_WORKER_START_TIMEOUT = 30.0
+
+#: After a failed start, no new start is attempted for this long (review
+#: round 1): where a child can never start -- from a daemonic process, say --
+#: each call would otherwise pay a spawn attempt and log a warning. Calls in
+#: the cool-down return None at once; one warning per failed start.
+_PARSE_WORKER_START_COOLDOWN = 30.0
 
 #: The worker's pipe protocol: ``(normalised text, vet)`` or ``None`` to stop;
 #: ``(kind, payload)`` back -- see `_parse_worker_main`.
@@ -587,24 +608,109 @@ def _parse_normalized(normalized: str, *, evaluate: bool) -> sympy.Expr:
     )
 
 
-def _vetted_parse(normalized: str, *, vet: bool = True) -> sympy.Expr | None:
-    """Bound every power of an UNEVALUATED parse, then parse for real; ``None`` if refused.
+def _coefficient_height(expr: sympy.Basic) -> float:
+    """An upper bound on every EXACT coefficient any rewriting of ``expr`` can produce.
 
-    Runs in the parse worker (see :class:`_ParseWorker`). The ``evaluate=False``
-    parse builds a tree and evaluates nothing but whitelisted function calls
-    and textually-bounded factorials; the regexes in :func:`parse_expr_safe`
-    read literals, and a computed exponent (triage F2: ``2^(999*999*999)``)
-    needs the tree. ``vet=False`` skips the walk -- only for tests that must
-    reach the evaluated parse with a known-dangerous text, to exercise the
-    worker's own kill and memory bounds. Parse errors propagate to the
-    worker loop, which reports them.
+    The L1 norm of ``expr`` read as a polynomial: ``|r|`` for a Rational;
+    the sum over an ``Add``; the product over a ``Mul``; ``height(base)**k``
+    for a power with a positive numeric exponent ``k``. Because
+    ``|p + q| <= |p| + |q|``, ``|p * q| <= |p| * |q|`` and ``|p**k| <= |p|**k``
+    hold for these norms, no ``expand``, split, ``powsimp`` or ``simplify`` of
+    ``expr`` can produce an exact number larger than this -- including the
+    constant term of ``(999x-999)(999y-999)(999z-999)``, whose atoms are all
+    999 but whose expansion holds ``-997002999``. Everything else counts as
+    1: a symbol, a Float (inexact, so SymPy never builds an exact integer
+    from it), a power with a negative or symbolic exponent (an atom here;
+    every power is bounded where it stands, see :func:`_evaluated_would_explode`).
+    A function application counts as the largest of 1 and its arguments'
+    heights, so ``log(10^300)`` -- which ``exp(k*log(n)) -> n**k`` can turn
+    back into an integer -- is not a height of 1. ``inf`` on float overflow.
+    """
+    try:
+        if expr.is_Rational:
+            return float(abs(expr))
+        if expr.is_Add:
+            return math.fsum(_coefficient_height(arg) for arg in expr.args)
+        if expr.is_Mul:
+            return math.prod(_coefficient_height(arg) for arg in expr.args)
+        if isinstance(expr, sympy.Pow):
+            if expr.exp.is_Rational and expr.exp > 0:
+                height: float = _coefficient_height(expr.base) ** float(expr.exp)
+                return height
+            return 1.0
+        if isinstance(expr, sympy.Function):
+            return max([1.0, *(_coefficient_height(arg) for arg in expr.args)])
+    except OverflowError:
+        return math.inf
+    return 1.0
+
+
+def _evaluated_would_explode(expr: sympy.Basic) -> bool:
+    """Would ``expr`` -- the EVALUATED parse -- hurt the caller that receives it?
+
+    Review round 1 of triage F2. The unevaluated walk bounds each power at
+    the all-ones point, where ``999*999*999*(x-1)`` is 0; the worker then
+    returned ``2**(997002999*x - 997002999)`` in 0.02 s, and the CALLER froze
+    for 3.7-3.9 s in ``equivalent`` (``simplify`` splitting off
+    ``2**-997002999`` with the GIL held) or never returned from
+    ``sympy.expand``. Those run on the caller's side of the pipe, on exactly
+    this tree, so this tree is what is bounded:
+
+    - every exact number must print (:data:`_MAX_RESULT_INT_BITS`), which
+      also bounds the reply's pickle;
+    - every power and every ``exp`` must have an exponent of coefficient
+      height (:func:`_coefficient_height`) at most :data:`_MAX_EXPONENT_VALUE`
+      -- for ANY base: ``expand`` turns ``(x+1)**(N*y - N)`` into a
+      multinomial of degree N without a number in sight, and ``simplify``
+      turns ``exp(N*log(2)*(x-1))`` into ``2**-N``;
+    - and a power's result must fit: ``bits(height(base)) * height(exponent)``
+      at most :data:`_MAX_RESULT_INT_BITS` (``(10^300+1)**(1000*(x-1))``
+      splits off a 997,000-bit integer).
+    """
+    for atom in expr.atoms(sympy.Rational):
+        if max(abs(atom.p).bit_length(), atom.q.bit_length()) > _MAX_RESULT_INT_BITS:
+            return True
+    for node in sympy.preorder_traversal(expr):
+        if isinstance(node, sympy.Pow):
+            base_height = _coefficient_height(node.base)
+            exponent_height = _coefficient_height(node.exp)
+        elif isinstance(node, sympy.exp):
+            base_height, exponent_height = 1.0, _coefficient_height(node.args[0])
+        else:
+            continue
+        # `not (x <= limit)`, not `x > limit`: a height that overflowed to
+        # inf and met a 0 is nan, and nan must fail closed.
+        if not exponent_height <= _MAX_EXPONENT_VALUE:
+            return True
+        base_bits = math.log2(base_height) + 1 if base_height >= 1 else 1.0
+        if not base_bits * exponent_height <= _MAX_RESULT_INT_BITS:
+            return True
+    return False
+
+
+def _vetted_parse(normalized: str, *, vet: bool = True) -> sympy.Expr | None:
+    """Bound every power of an UNEVALUATED parse, parse for real, bound the result.
+
+    ``None`` if refused. Runs in the parse worker (see :class:`_ParseWorker`).
+    The ``evaluate=False`` parse builds a tree and evaluates nothing but
+    whitelisted function calls and textually-bounded factorials; the regexes
+    in :func:`parse_expr_safe` read literals, and a computed exponent (triage
+    F2: ``2^(999*999*999)``) needs the tree. The evaluated result is then
+    bounded too (:func:`_evaluated_would_explode`), because that is the form
+    the caller's ``simplify`` and ``expand`` operate on. ``vet=False`` skips
+    both -- only for tests that must reach the evaluated parse with a
+    known-dangerous text, to exercise the worker's own kill and memory
+    bounds. Parse errors propagate to the worker loop, which reports them.
     """
     if vet:
         unevaluated = _parse_normalized(normalized, evaluate=False)
         for node in sympy.postorder_traversal(unevaluated):
             if isinstance(node, sympy.Pow) and _pow_would_explode(node):
                 return None
-    return _parse_normalized(normalized, evaluate=True)
+    expr = _parse_normalized(normalized, evaluate=True)
+    if vet and _evaluated_would_explode(expr):
+        return None
+    return expr
 
 
 def _collapse_thousands_separators(text: str) -> str:
@@ -793,13 +899,29 @@ class _ParseWorker:
         self._process: BaseProcess | None = None
         self._conn: Connection[_ParseRequest, _ParseReply] | None = None
         self._owner_pid: int | None = None
+        #: `time.monotonic()` of the last failed start, for the cool-down.
+        self._start_failed_at: float | None = None
 
     def _forget_after_fork(self) -> None:
         """In a forked child: the parent's worker, pipe and lock are not ours."""
         self._lock = threading.Lock()
         self._process = self._conn = self._owner_pid = None
+        self._start_failed_at = None
 
     def _start(self) -> bool:
+        """Start a child, or ``False`` after ONE warning if it cannot.
+
+        After a failure, ``False`` without trying for
+        :data:`_PARSE_WORKER_START_COOLDOWN` seconds.
+        """
+        failed_at = self._start_failed_at
+        if failed_at is not None and time.monotonic() - failed_at < _PARSE_WORKER_START_COOLDOWN:
+            return False
+        started = self._spawn()
+        self._start_failed_at = None if started else time.monotonic()
+        return started
+
+    def _spawn(self) -> bool:
         context = multiprocessing.get_context("spawn")
         try:
             parent_conn, child_conn = context.Pipe()
@@ -826,6 +948,9 @@ class _ParseWorker:
             ready = ready and parent_conn.recv() == ("ready", None)
         except (EOFError, OSError):
             ready = False
+        except BaseException:  # interrupted mid-handshake: an unread "ready" would desync
+            self._discard(kill=True)
+            raise
         if not ready:
             _logger.warning("parse worker did not report ready; parse_expr_safe returns None")
             self._discard(kill=True)
@@ -872,6 +997,12 @@ class _ParseWorker:
             except Exception:  # EOFError/OSError on a crash, or an unpicklable reply
                 self._discard(kill=True)
                 return None
+            except BaseException:
+                # KeyboardInterrupt/SystemExit while the reply is outstanding:
+                # a live worker would hand THIS text's reply to the next
+                # caller (review round 1), so it is killed before propagating.
+                self._discard(kill=True)
+                raise
             if kind != "ok" or not isinstance(value, sympy.Basic):
                 return None
             # Any Basic, exactly as the in-process parse returned before (a
