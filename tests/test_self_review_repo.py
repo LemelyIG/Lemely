@@ -1575,6 +1575,128 @@ def test_pool_grants_stop_at_select_count(
     assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 2
 
 
+def _overfull_pools_scheme() -> MarkScheme:
+    """Question "7" (3 marks): i1, pool A (a0, a1), i2, pool B (b0, b1), no
+    select_count. The leftover after i1 and i2 is 1 and each unstated pool is
+    bounded by the whole of it (triage F5), so the group caps sum to 4 and
+    only the question clamp holds the total at 3."""
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code="0625",
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2020,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=3,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="7",
+                marks=3,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="i1", point="Names the force", marks=1),
+                    AnswerPoint(id="a0", point="Any: first cause", marks=1, is_optional=True),
+                    AnswerPoint(id="a1", point="Any: second cause", marks=1, is_optional=True),
+                    AnswerPoint(id="i2", point="Gives the unit", marks=1),
+                    AnswerPoint(id="b0", point="Any: first effect", marks=1, is_optional=True),
+                    AnswerPoint(id="b1", point="Any: second effect", marks=1, is_optional=True),
+                ],
+            ),
+        ],
+    )
+
+
+def _seed_overfull_attempt(
+    sm: sessionmaker[Session], student: uuid.UUID, *, matched: list[str], awarded: int
+) -> uuid.UUID:
+    """One low-confidence question "7" from `_overfull_pools_scheme`, so every
+    disagreement is GRANTED without a judge."""
+    question = CorrectedQuestion(
+        question_id="7",
+        awarded_marks=awarded,
+        maximum_marks=3,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.2,
+        needs_teacher_review=True,
+        student_answer="answer-7",
+        expected_answer="expected-7",
+        topic="Forces",
+        marker_source="ai",
+        feedback="Unsure.",
+        matched_point_ids=matched,
+    )
+    return AttemptRepository(sm).persist_correction(
+        user_id=str(student), report=_report([question]), mark_scheme=_overfull_pools_scheme()
+    )
+
+
+def test_a_downward_grant_under_the_question_clamp_keeps_the_marks_the_rest_still_earn(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Task 5 carry-over. The marker awarded i1, i2, a0 and b0: 4 raw, 3 after
+    the question clamp. The student says b0 was not earned and the grant
+    stands. i1, i2 and a0 still earn 3, so the mark stays 3. The per-group
+    delta (-1 from pool B) used to be applied to the already-CLAMPED 3,
+    giving 2."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_overfull_attempt(
+        pg_sessionmaker, student, matched=["i1", "a0", "i2", "b0"], awarded=3
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "7")
+    assert [p.group_max_marks for p in _load_qr(pg_sessionmaker, qr_id).points] == [
+        None,
+        1,
+        1,
+        None,
+        1,
+        1,
+    ]
+
+    view = _service(pg_sessionmaker).submit(
+        student,
+        attempt_id,
+        qr_id,
+        _verdicts(i1=True, a0=True, a1=False, i2=True, b0=False, b1=False),
+    )
+
+    assert view.points[4].evidence_verdict == "not_required"  # b0's claim was granted
+    assert (view.ai_marks, view.effective_marks) == (3, 3)
+    assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 3
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 3
+
+
+def test_an_upward_grant_under_the_question_clamp_is_unchanged_and_still_logged(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The upward direction was already right and stays so. The marker
+    awarded i1, i2 and a0 (3 of 3); the student's b0 claim is granted. Pool
+    B's +1 lands on a full question: the clamp holds it at 3, and the clamp
+    binding is still surfaced as ``self_review_delta_clamped`` (4 -> 3)."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_overfull_attempt(
+        pg_sessionmaker, student, matched=["i1", "a0", "i2"], awarded=3
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "7")
+
+    with capture_logs() as logs:
+        view = _service(pg_sessionmaker).submit(
+            student,
+            attempt_id,
+            qr_id,
+            _verdicts(i1=True, a0=True, a1=False, i2=True, b0=True, b1=False),
+        )
+
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (3, 3, 3)
+    assert [p.mark_changed for p in view.points] == [False, False, False, False, True, False]
+    clamped = [entry for entry in logs if entry["event"] == "self_review_delta_clamped"]
+    assert [(e["unclamped_marks"], e["clamped_marks"]) for e in clamped] == [(4, 3)]
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 3
+
+
 def _mixed_direction_group_scheme() -> MarkScheme:
     """One question, one pool group spanning the whole question: three
     members, `select_count=3` so the group's cap equals the sum of every

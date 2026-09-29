@@ -44,8 +44,10 @@ student must be able to read it again, so it lives in the revision's
 tariffs: for each group (an independent point is its own group with cap
 ``tariff``), the credit is ``min(group_max_marks, sum of tariffs counted as
 earned)`` before and after the granted verdicts are applied, and the question
-moves by the sum of those differences from ``awarded_marks``, clamped to
-``[0, maximum_marks]``. So a grant can never lift an either/or or "any N
+moves from ``awarded_marks`` by the change in the sum of those credits, each
+sum clamped at ``maximum_marks`` as the marker's own total was (group caps can
+sum past the question), and the result clamped to ``[0, maximum_marks]``. So
+a grant can never lift an either/or or "any N
 from" group above what the scheme says it is worth (D6's grade-inflation
 guard), a downward grant that another member still covers removes nothing,
 and the marker's own total is never contradicted. ``awarded_marks`` itself is
@@ -89,11 +91,12 @@ from lemely.db.review_repo import (
     recompute_attempt_totals,
     recompute_weakness_records,
 )
+from lemely.io.correction_ai import group_capped_points_total
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.prompts.self_review_judge import evidence_was_tampered
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -498,9 +501,23 @@ class SelfReviewService:
 
             qr.student_selfmarked_at = now
             if changed:
+                # The settled mark moves by the change in the question's
+                # total under the group rule AND the question clamp. The
+                # per-group `delta` alone ignores that clamp: with group caps
+                # summing past `maximum_marks` (unstated pools, triage F5) the
+                # marker's `awarded_marks` is already clamped, and a downward
+                # grant subtracted from it removed a mark the remaining points
+                # still earn. Upward the two agree (the clamp below binds
+                # either way), so `delta` still drives the warning.
+                settled = max(
+                    0,
+                    min(
+                        qr.maximum_marks,
+                        qr.awarded_marks + _capped_question_delta(passes, qr.maximum_marks),
+                    ),
+                )
                 unclamped = qr.awarded_marks + delta
-                clamped = max(0, min(qr.maximum_marks, unclamped))
-                if clamped != unclamped:
+                if max(0, min(qr.maximum_marks, unclamped)) != unclamped:
                     # The clamp is load-bearing but otherwise invisible: on a
                     # 1-mark either/or question it silently turns a
                     # double-credit bug into the right answer, and on a
@@ -510,9 +527,9 @@ class SelfReviewService:
                         "self_review_delta_clamped",
                         question_result_id=str(qr.id),
                         unclamped_marks=unclamped,
-                        clamped_marks=clamped,
+                        clamped_marks=settled,
                     )
-                qr.student_selfmark_marks = clamped
+                qr.student_selfmark_marks = settled
             session.flush()
             _append_revision(session, qr, actor=student_uuid, snapshot=snapshot, changed=changed)
 
@@ -812,6 +829,34 @@ def _settle_groups(passes: list[_PointPass]) -> int:
                 capped_before_prev = capped_before
                 capped_after_prev = capped_after
     return delta
+
+
+def _capped_question_delta(passes: list[_PointPass], maximum_marks: int) -> int:
+    """How far the granted verdicts move the question's capped, clamped total.
+
+    The total before (the marker's ``awarded`` flags) and after (the same
+    flags with every granted verdict applied), each by
+    :func:`lemely.io.correction_ai.group_capped_points_total` -- the rule the
+    marker's own total was computed with, question clamp included. Where the
+    clamp does not bind this is exactly :func:`_settle_groups`'s delta; where
+    it does (group caps summing past ``maximum_marks``) it is the move the
+    student's grant actually makes, so a downward grant the other earned
+    points still cover removes nothing.
+    """
+
+    def total(counts: Callable[[_PointPass], bool]) -> int:
+        return group_capped_points_total(
+            (
+                (item.point.tariff, item.point.group_key, item.point.group_max_marks)
+                for item in passes
+                if counts(item)
+            ),
+            total=maximum_marks,
+        )
+
+    before = total(lambda item: item.point.awarded)
+    after = total(lambda item: item.earned if item.granted else item.point.awarded)
+    return after - before
 
 
 class _HasGroupFlags(Protocol):

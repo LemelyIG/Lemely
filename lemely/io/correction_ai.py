@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Literal, NamedTuple
 
 import structlog
@@ -1071,20 +1071,45 @@ def _group_capped_total(question: Question, awarded_ids: set[str]) -> tuple[int,
     :func:`_build_ai_corrected_from_verdicts` (triage F4) cannot disagree.
     """
     points, groups = _scheme_groups(question)
-    additive = 0
+    awarded = [
+        (point.marks, key, cap)
+        for point, (key, cap) in zip(points, groups, strict=True)
+        if point.id in awarded_ids
+    ]
+    additive = sum(tariff for tariff, _key, _cap in awarded)
+    capped = group_capped_points_total(awarded, total=question.marks)
+    return capped, min(additive, question.marks)
+
+
+def group_capped_points_total(
+    awarded: Iterable[tuple[int, str | None, int | None]], *, total: int
+) -> int:
+    """The group rule and question clamp over ``(tariff, group_key, cap)`` triples.
+
+    ``awarded`` holds only the points that count as earned. Independent
+    points (``group_key is None``) add their tariff, each group adds
+    ``min(cap, its awarded tariffs)``, and the whole is capped at ``total``:
+    group caps can sum past the question (unstated pools are each bounded by
+    the full leftover, triage F5), so only that clamp bounds the total.
+
+    The one implementation of this arithmetic. :func:`_group_capped_total`
+    feeds it from a ``Question`` via :func:`group_points`;
+    :mod:`lemely.db.self_review_repo` feeds it from the persisted ledger's
+    ``group_key``/``group_max_marks`` columns, which the same
+    :func:`group_points` wrote, so the marker's total and a self-review
+    settlement cannot disagree. A named group with no cap counts 0 -- no
+    producer writes one, and ``points_are_settleable`` refuses such rows.
+    """
     independent = 0
     by_group: dict[str, tuple[int, int]] = {}  # key -> (cap, awarded tariff sum)
-    for point, (key, cap) in zip(points, groups, strict=True):
-        if point.id not in awarded_ids:
-            continue
-        additive += point.marks
+    for tariff, key, cap in awarded:
         if key is None:
-            independent += point.marks
+            independent += tariff
         else:
             prev_cap, prev_sum = by_group.get(key, (cap or 0, 0))
-            by_group[key] = (prev_cap, prev_sum + point.marks)
+            by_group[key] = (prev_cap, prev_sum + tariff)
     grouped = sum(min(cap, tariff_sum) for cap, tariff_sum in by_group.values())
-    return min(independent + grouped, question.marks), min(additive, question.marks)
+    return min(independent + grouped, total)
 
 
 def _awarded_after_backstop(
