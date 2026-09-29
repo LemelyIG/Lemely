@@ -2959,6 +2959,19 @@ def test_a_subscripted_amplitude_is_never_read_as_a_zeroth_power() -> None:
         ("x2-2x-15", "-15", VerdictKind.NOT_EQUAL),
         ("F1-F2", "-F", VerdictKind.NOT_EQUAL),
         ("x0", "0", VerdictKind.NOT_EQUAL),
+        # Review round 3: Greek letters take subscripts too (ε₀ transcribed as ε0).
+        ("θ1+θ2", "3θ", VerdictKind.NOT_EQUAL),
+        ("θ1+θ2", "θ2+θ1", VerdictKind.EQUAL_PROVEN),
+        ("ω1+ω2", "3ω", VerdictKind.NOT_EQUAL),
+        ("ε0*E", "0", VerdictKind.NOT_EQUAL),
+        ("μ0*I", "0", VerdictKind.NOT_EQUAL),
+        ("ϵ0*E", "0", VerdictKind.NOT_EQUAL),
+        ("φ1-φ2", "-φ", VerdictKind.NOT_EQUAL),
+        ("q/(4πε0r^2)", "q/(4πε0r^2)", VerdictKind.EQUAL_PROVEN),
+        # π2 is ambiguous (π², π/2 -- the corpus's "π 3" is a broken stacked
+        # fraction -- or 2π): one symbol, so it can only match itself.
+        ("π2", "2π", VerdictKind.NOT_EQUAL),
+        ("2π", "π*2", VerdictKind.EQUAL_PROVEN),
     ],
     ids=[
         "two-velocities-commute",
@@ -2969,6 +2982,16 @@ def test_a_subscripted_amplitude_is_never_read_as_a_zeroth_power() -> None:
         "caretless-square-is-not-a-coefficient",
         "forces-with-a-unit-letter",
         "initial-position-is-not-zero",
+        "greek-angles-are-not-3-theta",
+        "greek-angles-commute",
+        "greek-angular-velocities-are-not-3-omega",
+        "permittivity-is-not-zero",
+        "greek-mu-permeability-is-not-zero",
+        "lunate-epsilon-is-not-zero",
+        "greek-phases-are-not-minus-phi",
+        "coulomb-constant-denominator-equals-itself",
+        "pi2-is-not-2pi",
+        "2pi-unchanged",
     ],
 )
 def test_a_letter_followed_by_digits_is_one_symbol(a: str, b: str, kind: VerdictKind) -> None:
@@ -2993,6 +3016,7 @@ def test_a_letter_followed_by_digits_is_one_symbol(a: str, b: str, kind: Verdict
         ("30 cm3", "30 cm^3"),
         ("m2", "m^2"),
         ("0.75 N/cm2", "0.75 N/cm^2"),
+        ("T2", "T^2"),
     ],
     ids=[
         "density-g-cm3",
@@ -3002,6 +3026,9 @@ def test_a_letter_followed_by_digits_is_one_symbol(a: str, b: str, kind: Verdict
         "volume-cm3",
         "area-m2",
         "pressure-N-cm2",
+        # A lone single-letter unit with exponent >= 2 stays a power: the
+        # corpus's pendulum answers write T² as T2.
+        "pendulum-period-squared",
     ],
 )
 def test_caretless_unit_powers_from_mark_schemes_still_parse_as_powers(
@@ -3012,6 +3039,23 @@ def test_caretless_unit_powers_from_mark_schemes_still_parse_as_powers(
     ``0.75 (N / cm2)``): a unit written with its power's superscript lost.
     The subscript rule must not break them."""
     assert parse_expr_safe(caretless) == parse_expr_safe(caret)
+
+
+def test_greek_subscripts_are_one_symbol_each() -> None:
+    """Review round 3: the letter class held µ (the micro sign) but no Greek
+    letter, so SymPy split ``λ1*λ2`` into ``2*λ**2`` and ``ε0`` into 0."""
+    l1, l2 = sympy.symbols("λ_1 λ_2")
+    assert parse_expr_safe("λ1*λ2") == l1 * l2
+    q, pi, e0, r = sympy.symbols("q π ε_0 r")
+    assert parse_expr_safe("q/(4πε0r^2)") == q / (4 * pi * e0 * r**2)
+
+
+def test_a_family_letter_and_a_unit_power_in_the_same_text() -> None:
+    """Review round 3 (pin the context rule): the family decision is per
+    letter. ``m1`` makes ``m`` a family -- a subscript -- while ``s2`` in the
+    same text, whose letter carries no other suffix, stays a unit power."""
+    m1, m, s = sympy.symbols("m_1 m s")
+    assert parse_expr_safe("m1*9.81 m/s2") == m1 * sympy.Float("9.81") * m / s**2
 
 
 @pytest.mark.parametrize("text", ["3e8", "3E8", "3.0e8"])

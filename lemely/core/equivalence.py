@@ -273,11 +273,25 @@ _UNIT_SYMBOLS: tuple[str, ...] = _BASE_UNIT_SYMBOLS + tuple(
 )
 _SINGLE_LETTER_UNITS = frozenset(unit for unit in _UNIT_SYMBOLS if len(unit) == 1)
 
+#: The letters a subscript can follow: Latin, the micro sign and degree
+#: sign the unit tables use, and Greek -- capitals U+0391-U+03A9 (Ω, U+03A9,
+#: is also the ohm), lower case U+03B1-U+03C9 (final sigma ς included), and
+#: the variant forms a transcriber or keyboard produces for the same letters
+#: (ϑ U+03D1, ϕ U+03D5, ϖ U+03D6, ϰ U+03F0, ϱ U+03F1, ϵ U+03F5). Review
+#: round 3: without Greek, SymPy still split `ε0` into `ε*0` = 0, `θ1+θ2`
+#: into `3θ` and `μ0*I` into 0 -- each a false EQUAL_PROVEN. This module
+#: does not normalise the Unicode subscript digits of a handwritten `ε₀`
+#: (it is unparseable, so it routes to review); a transcriber's `ε0` is the
+#: form that reaches this rule.
+_SUBSCRIPTABLE_LETTERS = "A-Za-zµΩ°\u0391-\u03a9\u03b1-\u03c9\u03d1\u03d5\u03d6\u03f0\u03f1\u03f5"
+
 #: A run of letters directly followed by digits (`cm3`, `m2`, `N0`, `x2`,
-#: `v1`, `mv2`), not itself preceded by a letter or `_`. A digit MAY precede
-#: it (`4x2`, `30cm3`); scientific notation (`3e8`) is excluded in
+#: `v1`, `mv2`, `ε0`), not itself preceded by a letter or `_`. A digit MAY
+#: precede it (`4x2`, `30cm3`); scientific notation (`3e8`) is excluded in
 #: `_rewrite_digit_suffixes`.
-_LETTER_DIGITS_RE = re.compile(r"(?<![A-Za-z_µΩ°])([A-Za-zµΩ°]+)(\d+)(?![\d.])")
+_LETTER_DIGITS_RE = re.compile(
+    rf"(?<![{_SUBSCRIPTABLE_LETTERS}_])([{_SUBSCRIPTABLE_LETTERS}]+)(\d+)(?![\d.])"
+)
 
 #: Unit spellings that are textually different but dimensionally identical,
 #: normalised to a single canonical spelling before parsing so e.g. "g/cm3"
@@ -759,9 +773,16 @@ def _rewrite_digit_suffixes(text: str) -> str:
       ``V1/V2``, ``F1 - F2``) is a family of quantities, not a unit.
 
     Otherwise the LAST letter takes the digits as its subscript (``mv2`` ->
-    ``m(v_2)``), except that a run naming a function (``log10``) is left
-    alone. Subscripts are parenthesised so ``N0(1-x)`` stays a product
-    rather than a call. ``3e8``/``3E8``/``3.0e8`` (an exponent marker after a
+    ``m*(v_2)``, ``4πε0`` -> ``4π*(ε_0)``), except that a run naming a
+    function (``log10``) is left alone. Subscripts are parenthesised, and
+    joined to the letters before them with an explicit ``*``, so neither
+    ``N0(1-x)`` nor ``π(ε_0)`` can become a function call. Greek letters
+    follow the same rule (see :data:`_SUBSCRIPTABLE_LETTERS`), ``π``
+    included: this module parses ``π`` as a plain symbol, not the constant,
+    and ``π2`` is ambiguous -- π², π/2 (the corpus's ``π 3`` is a stacked
+    fraction broken by extraction) or 2π, which is how it used to parse --
+    so it is the one symbol ``π_2``, which can only match itself. ``2π`` is
+    untouched. ``3e8``/``3E8``/``3.0e8`` (an exponent marker after a
     digit) are untouched.
     """
 
@@ -793,7 +814,7 @@ def _rewrite_digit_suffixes(text: str) -> str:
         head, last = letters[:-1], letters[-1]
         if last in _SINGLE_LETTER_UNITS and int(digits) >= 2 and last not in families:
             return f"{head}{last}**{digits}"
-        return f"{head}({last}_{digits})"
+        return f"{head}*({last}_{digits})" if head else f"({last}_{digits})"
 
     wanted = {match.span() for match in matches}
     return _LETTER_DIGITS_RE.sub(
