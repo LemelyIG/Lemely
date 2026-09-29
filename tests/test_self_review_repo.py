@@ -1736,6 +1736,56 @@ def test_an_upward_grant_on_an_under_claimed_row_still_adds_its_mark(
     assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 3
 
 
+def test_a_swap_inside_a_pool_does_not_raise_an_under_claimed_mark(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Review round 2. The marker's ids i1, a0, i2 and b0 justify 3 but it
+    awarded 2. The student disowns a0 and claims a1 instead, both granted:
+    a net-zero swap inside pool A. Downward alone leaves 2, upward alone
+    leaves 2, so the pair must too. Paying the upward gain back on top of a
+    loss the clamp had swallowed gave 3, a free mark from a swap (D6)."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_overfull_attempt(
+        pg_sessionmaker, student, matched=["i1", "a0", "i2", "b0"], awarded=2
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "7")
+
+    view = _service(pg_sessionmaker).submit(
+        student,
+        attempt_id,
+        qr_id,
+        _verdicts(i1=True, a0=False, a1=True, i2=True, b0=True, b1=False),
+    )
+
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (2, None, 2)
+    assert [p.mark_changed for p in view.points] == [False] * 6
+    assert _load_qr(pg_sessionmaker, qr_id).revisions[1].reason == "Student self-mark: no change"
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 2
+
+
+def test_a_swap_inside_an_either_or_group_is_not_a_free_mark_without_any_clamp(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Review round 2, no question clamp involved. Q4 (2 marks): the marker
+    matched p2 of the p2|p3 either/or (cap 1) but awarded 0. The student
+    disowns p2 and claims p3, both granted on a low-confidence row with no
+    judge. The swap changes nothing about the group, so the mark stays 0
+    (it was 1: the loss floored at 0, then the gain was paid in full)."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_group_attempt(
+        pg_sessionmaker, student, question_id="4", matched=["p2"], awarded=0, maximum=2
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "4")
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _verdicts(p1=False, p2=False, p3=True)
+    )
+
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (0, None, 0)
+    assert [p.mark_changed for p in view.points] == [False, False, False]
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 0
+
+
 def test_an_upward_grant_never_lowers_an_over_claimed_mark(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:

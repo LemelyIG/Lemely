@@ -60,8 +60,12 @@ claim was accepted (``evidence_verdict`` says so); the mark did not follow
 (``mark_changed`` is false, ``absorbed_by_group`` is true, both in the
 revision's snapshot and on :class:`RevealedPoint`). That holds for a group's
 cap and for the question's clamp alike, and a pass whose mark did not move
-records a "no change" revision. Nothing is uncertain, so no teacher row is
-opened.
+records a "no change" revision with no point ``mark_changed``. Nothing is
+uncertain, so no teacher row is opened. One ambiguity is left as it is: when
+the question moves in a grant's direction but by less than the grants' raw
+per-group change (partly absorbed), every grant in that direction stays
+``mark_changed`` -- which of them the absorption fell on is not knowable, so
+none is singled out.
 """
 
 from __future__ import annotations
@@ -489,6 +493,12 @@ class SelfReviewService:
             delta = _settle_groups(passes)
             settled = _settle_marks(passes, qr.awarded_marks, qr.maximum_marks)
             unclamped = qr.awarded_marks + delta
+            if settled != unclamped or settled == qr.awarded_marks:
+                # A grant the question did not follow is recorded as
+                # absorbed, not `mark_changed` -- including a net-zero swap
+                # the per-group walk flagged, so a "no change" revision never
+                # lists a point as having changed a mark.
+                _record_absorbed_grants(passes, net=settled - qr.awarded_marks)
             if settled != unclamped:
                 # Something absorbed part of the per-group delta: the
                 # question clamp, the ids no longer justifying a downward
@@ -496,9 +506,7 @@ class SelfReviewService:
                 # addition (see `_settle_marks`). Load-bearing but otherwise
                 # invisible -- on a 1-mark either/or question the clamp
                 # silently turns a double-credit bug into the right answer --
-                # so surface every time it binds, and record a grant the
-                # question did not follow as absorbed, not `mark_changed`.
-                _record_absorbed_grants(passes, net=settled - qr.awarded_marks)
+                # so surface every time it binds.
                 log.warning(
                     "self_review_delta_clamped",
                     question_result_id=str(qr.id),
@@ -840,8 +848,10 @@ def _settle_marks(passes: list[_PointPass], awarded_marks: int, maximum_marks: i
       be clamped; a grant on a point the others still cover removes nothing.
     * **Up.** Adds the per-group gain (``kept`` -> ``after``, no question
       clamp), as the per-point rule always did, but never beyond what the
-      points then justify, ``G(after)``; and never below the downward
-      figure. That last bound is not in the review's stated rule: on a
+      points then justify, ``G(after)``, nor beyond ``awarded`` plus the
+      whole pass's net raw gain over the marker's points -- so a swap cannot
+      buy back a loss the clamp or the 0 floor swallowed -- and never below
+      the downward figure. That last bound is not in the review's stated rule: on a
       marker that claimed MORE than its points back, ``min(G(after), ...)``
       alone would let an accepted upward grant lower the mark, which
       contradicts the marker's total in the student's disfavour.
@@ -867,10 +877,23 @@ def _settle_marks(passes: list[_PointPass], awarded_marks: int, maximum_marks: i
     def after(item: _PointPass) -> bool:
         return kept(item) or (item.granted and item.earned)
 
-    lost = total(lambda item: item.point.awarded, clamp=True) - total(kept, clamp=True)
+    def awarded(item: _PointPass) -> bool:
+        return item.point.awarded
+
+    lost = total(awarded, clamp=True) - total(kept, clamp=True)
     settled = max(0, awarded_marks - lost)
     gained = total(after, clamp=False) - total(kept, clamp=False)
-    settled = max(settled, min(total(after, clamp=True), settled + gained))
+    # The upward step's gain is measured on the raw per-group total but the
+    # downward step's loss on the clamped one, floored at 0; on a swap the
+    # gain would pay back a loss the clamp or the floor had swallowed (a
+    # net-zero swap inside an either/or group became a free mark on an
+    # under-claimed row -- review round 2). So the upward step is also
+    # bounded by the net raw gain of the whole pass over the marker's points.
+    net_gain = max(0, total(after, clamp=False) - total(awarded, clamp=False))
+    settled = max(
+        settled,
+        min(total(after, clamp=True), settled + gained, awarded_marks + net_gain),
+    )
     return max(0, min(maximum_marks, settled))
 
 

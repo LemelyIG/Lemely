@@ -666,3 +666,27 @@ def test_evidence_span_and_ecf_applied_are_carried_from_the_verdict() -> None:
     # p2/p3 carry no verdict: defaults, not the first point's values.
     assert rows[1]["evidence_span"] == ""
     assert rows[1]["ecf_applied"] is False
+
+
+def test_group_capped_points_total_caps_each_group_then_clamps_only_when_asked() -> None:
+    """``lemely.core.point_groups.group_capped_points_total`` directly: an
+    independent point adds its tariff, a group adds ``min(cap, its tariffs)``
+    (either/or cap 1 holding two awarded 1-mark members to 1, a pool cap 2
+    holding three to 2), and ``total`` clamps the sum -- or, as ``None``,
+    leaves the raw per-group figure the self-review upward step needs."""
+    from lemely.core.point_groups import group_capped_points_total
+
+    awarded = [
+        (2, None, None),
+        (1, "alt:1", 1),
+        (1, "alt:1", 1),
+        (1, "pool:1", 2),
+        (1, "pool:1", 2),
+        (1, "pool:1", 2),
+    ]
+    assert group_capped_points_total(awarded, total=None) == 2 + 1 + 2
+    assert group_capped_points_total(awarded, total=4) == 4
+    assert group_capped_points_total(awarded, total=10) == 5
+    assert group_capped_points_total([], total=None) == 0
+    # No producer writes a named group without a cap; it counts 0.
+    assert group_capped_points_total([(3, "alt:9", None)], total=None) == 0
