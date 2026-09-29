@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import os
 import tempfile
 import threading
@@ -1810,6 +1811,39 @@ class ImageUploadsTests(unittest.TestCase):
             files = uploads.ensure()
         self.assertEqual(len(files), 6)
         self.assertGreaterEqual(max_in_flight, 2)
+
+    def test_a_cold_sdk_client_is_created_once_by_ensure_before_the_upload_pool(self) -> None:
+        """Final review M2: ``GeminiClient._client`` is created lazily and
+        unlocked, and a cold client was first touched by the upload
+        workers, so up to ``upload_concurrency`` threads could each build a
+        ``genai.Client``. ``ensure()`` creates it on the calling thread
+        before starting the pool; the Barrier proves all four uploads were
+        in flight at once, so the workers really did overlap."""
+        fake = fake_genai_client()
+        barrier = threading.Barrier(4, timeout=5)
+        fake.files.upload_hook = lambda _data: barrier.wait()
+        constructed_on: list[threading.Thread] = []
+        lock = threading.Lock()
+
+        def _construct(**_kwargs: object) -> MagicMock:
+            with lock:
+                constructed_on.append(threading.current_thread())
+            return fake
+
+        # The suite-wide conftest guard replaces the `_client` property so no
+        # test can build a real SDK client; this test needs the production
+        # lazy-creation path, with `genai.Client` itself patched instead.
+        guarded = GeminiClient.__dict__["_client"].fget
+        production_fget = inspect.getclosurevars(guarded).nonlocals.get("original", guarded)
+        client = GeminiClient(_make_settings(self.tmp))
+        with (
+            patch.object(GeminiClient, "_client", property(production_fget)),
+            patch("google.genai.Client", side_effect=_construct),
+            client.image_uploads([b"a", b"b", b"c", b"d"], concurrency=4) as uploads,
+        ):
+            files = uploads.ensure()
+        self.assertEqual(len(files), 4)
+        self.assertEqual(constructed_on, [threading.current_thread()])
 
     def test_ensure_and_delete_build_their_pool_with_max_workers_equal_to_concurrency(
         self,

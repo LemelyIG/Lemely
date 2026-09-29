@@ -563,6 +563,11 @@ class ImageUploads:
             if not self._images:
                 self.files = []
                 return self.files
+            # Final review M2: `GeminiClient._client` creates the SDK client
+            # lazily and without a lock. Touch it here, on the calling
+            # thread, so the workers below share one client instead of up
+            # to `workers` of them racing to build their own.
+            _ = self._client._client
             workers = min(self._concurrency, len(self._images))
             results: dict[int, Any] = {}
             cancelled = False
