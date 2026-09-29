@@ -2053,6 +2053,11 @@ def _rounds_agree_at_stated_precision(
         return True
     if a_val is None or b_val is None:
         return True
+    if not (math.isfinite(a_val) and math.isfinite(b_val)):
+        # Review round 2 (item 5): a value beyond float range has no figure
+        # to round to (`math.log10(inf)` raised OverflowError) -- never "the
+        # same to N figures" as anything.
+        return False
     if dp is not None and _round_half_up(a_val, dp) != _round_half_up(b_val, dp):
         return False
     if sig_figs is not None:
@@ -2119,7 +2124,11 @@ def _diff_within_tolerance(
         ref = max(_magnitude(a_term) or 0.0, _magnitude(b_term) or 0.0)
         eligible = _key_present_on_both_sides(key, a_terms, b_terms)
         effective_spec = spec if eligible else spec.restricted_to_default()
-        if magnitude > effective_spec.for_magnitude(ref):
+        # Review round 2: `magnitude > window` is False for a nan magnitude
+        # (`zoo - zoo`) and was False for inf against an inf window, so both
+        # were certified EQUAL_PROVEN. Only a finite difference within a
+        # finite window is "the same"; everything else fails closed.
+        if not _within_window(magnitude, effective_spec.for_magnitude(ref)):
             return False
         sig_figs_bound, dp_bound = effective_spec.stated_precision_bound(ref)
         if not _rounds_agree_at_stated_precision(
@@ -2153,7 +2162,19 @@ def _values_within_tolerance(av: complex, bv: complex, spec: _ToleranceSpec) -> 
     sampling position rather than anything about the answer.
     """
     ref = max(abs(av), abs(bv))
-    return abs(av - bv) <= spec.for_magnitude(ref)
+    return _within_window(abs(av - bv), spec.for_magnitude(ref))
+
+
+def _within_window(difference: float, window: float) -> bool:
+    """Is ``difference`` within ``window``? Never, when either is not finite.
+
+    Review round 2 (item 5): a comparison against ``inf`` or ``nan`` is the
+    one place a tolerance check can say "equal" by accident -- ``inf > inf``
+    and ``nan > w`` are both False -- so it is spelled out once, here. A
+    window of ``-inf`` (see :meth:`_ToleranceSpec.for_magnitude`) and any
+    non-finite difference both fail closed.
+    """
+    return math.isfinite(difference) and math.isfinite(window) and difference <= window
 
 
 def _sample_point(rng: random.Random) -> float:

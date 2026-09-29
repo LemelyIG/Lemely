@@ -2869,6 +2869,65 @@ def test_an_answer_beyond_float_range_with_stated_precision_never_raises(
     assert verdict.kind is VerdictKind.NOT_EQUAL
 
 
+@pytest.mark.parametrize(
+    ("a", "b", "kwargs"),
+    [
+        ("2×10^400", "5", {}),
+        ("2×10^400", "5.0", {}),
+        ("2×10^400", "9.81", {"tolerance": "2%"}),
+        ("2×10^400*x", "5*x", {}),
+        ("2×10^300", "5", {}),
+        ("1/0", "1/0", {}),
+        ("0/0", "0/0", {}),
+    ],
+    ids=[
+        "beyond-float-vs-integer",
+        "beyond-float-vs-float",
+        "beyond-float-vs-float-at-2-percent",
+        "beyond-float-coefficient",
+        "within-float-range-stays-not-equal",
+        "infinity-vs-itself",
+        "undefined-vs-itself",
+    ],
+)
+def test_a_non_finite_magnitude_is_never_equal(a: str, b: str, kwargs: dict[str, str]) -> None:
+    """Review round 2 (item 5), serious before the gate is enabled.
+    ``_magnitude`` gave ``inf`` for ``2 * 10^400``, ``for_magnitude(inf)`` was
+    ``inf``, and ``inf > inf`` is False -- so any answer beyond float range
+    was certified EQUAL_PROVEN against anything. A ``nan`` coefficient
+    (``zoo - zoo``) passed the same way, since ``nan > window`` is False
+    too. Every comparison that can see ``inf``/``nan`` must fail closed:
+    not equal (or unparseable), never equal."""
+    verdict = equivalent(a, b, **kwargs)  # type: ignore[arg-type]
+    assert verdict.kind not in (VerdictKind.EQUAL_PROVEN, VerdictKind.EQUAL_SAMPLED)
+
+
+def test_an_exact_identity_beyond_float_range_is_still_equal() -> None:
+    """The fail-closed rule is about magnitudes and windows, not exact
+    arithmetic: two identical exact numbers beyond float range still differ
+    by exactly 0, which needs no window at all."""
+    assert equivalent("2×10^400", "2×10^400").kind is VerdictKind.EQUAL_PROVEN
+
+
+def test_the_tolerance_helpers_fail_closed_on_non_finite_values() -> None:
+    """Review round 2 (item 5), at the helpers themselves, so a caller that
+    reaches them some other way gets the same answer: nothing non-finite is
+    ever within a window, and rounding agreement between a non-finite value
+    and anything is False rather than an OverflowError."""
+    from lemely.core import equivalence as eq
+
+    spec = eq._ToleranceSpec(
+        sig_figs=3, dp=None, tolerance_abs=None, tolerance_rel=None, abs_tol=1e-9, rel_tol=1e-9
+    )
+    inf, nan = math.inf, math.nan
+    assert not eq._values_within_tolerance(complex(inf), complex(5), spec)
+    assert not eq._values_within_tolerance(complex(inf), complex(inf), spec)
+    assert not eq._values_within_tolerance(complex(nan), complex(nan), spec)
+    assert not eq._rounds_agree_at_stated_precision(inf, 5.0, 3, None)
+    assert not eq._rounds_agree_at_stated_precision(5.0, nan, None, 2)
+    assert eq._values_within_tolerance(complex(5), complex(5), spec)
+
+
 def test_an_interrupted_start_kills_the_child_and_leaves_the_worker_clean(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
