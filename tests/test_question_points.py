@@ -313,18 +313,17 @@ def test_pool_cap_never_exceeds_the_question_total() -> None:
     assert _groups(rows) == [("pool:1", 2)] * 4
 
 
-def test_pool_without_select_count_is_worth_its_own_tariffs_not_the_leftover() -> None:
+def test_pool_without_select_count_gets_the_marks_the_question_has_left() -> None:
     """One independent point (1) plus a pool of three on a 3-mark question:
-    per-pool cap (triage F5, 2026-09-29), the pool is worth min(3, 1+1+1) = 3,
-    not the old leftover 3 - 1 = 2 and not its best member (1). The
-    question-level clamp in the consumers bounds independent + pool at 3."""
+    the pool can be worth at most 3 - 1 = 2. Distinguishes the leftover rule
+    from 'sum of members' (3) and from 'best member' (1)."""
     scheme = _scheme_with(
         _points(("p1", 1, ""), ("p2", 1, "opt"), ("p3", 1, "opt"), ("p4", 1, "opt")), marks=3
     )
 
     rows = derive_point_rows(_corrected(), scheme)
 
-    assert _groups(rows) == [(None, None), ("pool:1", 3), ("pool:1", 3), ("pool:1", 3)]
+    assert _groups(rows) == [(None, None), ("pool:1", 2), ("pool:1", 2), ("pool:1", 2)]
 
 
 def test_pool_select_count_cap_still_subtracts_independent_and_alt_marks() -> None:
@@ -347,13 +346,14 @@ def test_pool_select_count_cap_still_subtracts_independent_and_alt_marks() -> No
     assert _groups(rows) == [(None, None), ("pool:1", 1), ("pool:1", 1), ("pool:1", 1)]
 
 
-def test_two_pools_without_a_select_count_are_each_capped_at_their_own_tariffs() -> None:
-    """Triage F5 (user decision, 2026-09-29: per-pool cap). A pool whose N is
-    unstated used to take the whole leftover and leave a later pool capped at
-    0, so a student earning two marks in each of two pools got 4/6 with no
-    review flag (``probe_marking.py``, case F5). Each such pool is now worth
-    its own tariffs, capped at the question, and the question-level clamp in
-    the consumers bounds the total.
+def test_two_pools_without_a_select_count_do_not_share_the_leftover() -> None:
+    """Triage F5 (user decision, 2026-09-29). A pool whose N is unstated used
+    to take the whole leftover and leave a later pool capped at 0, so a
+    student earning two marks in each of two pools got 4/6 with no review
+    flag (``probe_marking.py``, case F5). Each such pool is now worth
+    min(leftover, its own tariffs) = min(4 - 1, 2) = 2, the leftover NOT
+    consumed by the earlier pool; the question-level clamp in the consumers
+    bounds the total.
     """
     scheme = _scheme_with(
         _points(
@@ -417,9 +417,10 @@ def test_an_alternative_after_a_pool_member_joins_the_pool() -> None:
     assert _groups(rows) == [("pool:1", 2)] * 3
 
 
-def test_two_groups_get_distinct_keys_and_an_unstated_pool_is_worth_its_own_tariffs() -> None:
+def test_two_groups_get_distinct_keys_and_the_leftover_subtracts_the_either_or_cap() -> None:
     """p1|p2 (either/or, worth 1) then a pool p3,p4 with no select_count on a
-    3-mark question: the pool is worth its own tariffs, min(3, 2) = 2."""
+    3-mark question: the pool's leftover is 3 - 0 (no independents) - 1 (the
+    either/or cap) = 2."""
     scheme = _scheme_with(
         _points(("p1", 1, ""), ("p2", 1, "alt"), ("p3", 1, "opt"), ("p4", 1, "opt")), marks=3
     )
@@ -456,16 +457,44 @@ def test_stated_n_pool_leftover_is_zero_when_independents_consume_the_whole_tota
     assert _groups(rows) == [(None, None), ("pool:1", 0), ("pool:1", 0)]
 
 
-def test_unstated_pool_keeps_its_own_tariffs_when_independents_consume_the_total() -> None:
-    """Per-pool cap (triage F5, 2026-09-29): a pool WITHOUT a ``select_count``
-    does not draw on the leftover, so it stays worth min(2, 1+1) = 2 even
-    though the independent point alone fills the 2-mark question; the
-    question-level clamp in the consumers bounds the total at 2."""
+def test_pool_leftover_is_zero_when_independents_consume_the_whole_total() -> None:
+    """Finding 5: when independent points already claim every mark, a pool
+    without a ``select_count`` is worth 0 — no grant in it can ever be
+    correct, since the question has nothing left to give. Conservative and
+    correct, not previously asserted. Still true under the non-shared
+    leftover cap (triage F5, 2026-09-29): min(leftover 0, tariffs 2) = 0."""
     scheme = _scheme_with(_points(("p1", 2, ""), ("p2", 1, "opt"), ("p3", 1, "opt")), marks=2)
 
     rows = derive_point_rows(_corrected(), scheme)
 
-    assert _groups(rows) == [(None, None), ("pool:1", 2), ("pool:1", 2)]
+    assert _groups(rows) == [(None, None), ("pool:1", 0), ("pool:1", 0)]
+
+
+def test_two_unstated_pools_are_each_bounded_by_the_leftover_independently() -> None:
+    """Triage F5 (user decision, 2026-09-29): 6 marks, two independent 1-mark
+    points, two unstated pools of five 1-mark points. Leftover 6 - 2 = 4.
+    Each pool is worth min(4, 5) = 4 on its own: not 4 then 0 (the old
+    shared leftover) and not 5 and 5 (own tariffs capped only at the
+    question). The pools together may promise 8 > 4; the consumers'
+    question-level clamp bounds the grant at 6."""
+    scheme = _scheme_with(
+        _points(
+            ("i1", 1, ""),
+            *((f"a{n}", 1, "opt") for n in range(5)),
+            ("i2", 1, ""),
+            *((f"b{n}", 1, "opt") for n in range(5)),
+        ),
+        marks=6,
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [
+        (None, None),
+        *[("pool:1", 4)] * 5,
+        (None, None),
+        *[("pool:2", 4)] * 5,
+    ]
 
 
 def test_a_container_question_total_falls_back_to_the_marked_maximum() -> None:

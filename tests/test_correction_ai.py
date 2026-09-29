@@ -2344,7 +2344,9 @@ class GroupCappedVerdictTotalTests(unittest.TestCase):
         """Triage F5 (``probe_marking.py`` case F5): 6 marks, i1, pool a1..a3,
         i2, pool b1..b3, no select_count. Two in each pool plus both
         independents used to award 4 with no flag (pool:2 capped at 0 by the
-        shared leftover). Per-pool cap: 1 + 2 + 1 + 2 = 6."""
+        shared leftover). Now each unstated pool is bounded by the leftover
+        (6 - 2 = 4) on its own, min(4, 3) = 3 each, so 1 + 2 + 1 + 2 = 6,
+        within the question's 6 (user decision, 2026-09-29)."""
         from lemely.core.loose_schemas import AnswerPoint
         from lemely.io.correction_ai import _build_ai_corrected
 
@@ -2403,6 +2405,32 @@ class GroupCappedVerdictTotalTests(unittest.TestCase):
         )
         self.assertEqual(cq.awarded_marks, 6)
         self.assertFalse(cq.needs_teacher_review)
+
+    def test_an_unstated_pool_earns_nothing_when_the_fixed_points_fill_the_question(self):
+        """User decision, 2026-09-29: an unstated pool is capped at
+        min(leftover, its own tariffs), not at the question. 2 marks, a fixed
+        2-mark point f, and a pool p1, p2 worth 1 each: the leftover is
+        2 - 2 = 0, so a student who misses f but hits both pool points earns
+        0, as before triage F5. Capping the pool at its own tariffs alone
+        would have awarded 2."""
+        from lemely.core.loose_schemas import AnswerPoint
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question(
+            [
+                AnswerPoint(id="f", point="f", marks=2),
+                AnswerPoint(id="p1", point="p1", marks=1, is_optional=True),
+                AnswerPoint(id="p2", point="p2", marks=1, is_optional=True),
+            ],
+            marks=2,
+        )
+        verdicts = [
+            PointVerdict(point_id="f", verdict="withheld", evidence_span=""),
+            PointVerdict(point_id="p1", verdict="awarded", evidence_span="p1"),
+            PointVerdict(point_id="p2", verdict="awarded", evidence_span="p2"),
+        ]
+        cq = _build_ai_corrected(q, "p1 p2", self._mark(verdicts, claimed=2), equivalence_gate=True)
+        self.assertEqual(cq.awarded_marks, 0)
 
     def test_a_pool_cap_below_a_members_own_tariff_does_not_flag(self):
         """Fix round 1 (reviewer): a pool whose ``select_count`` room is

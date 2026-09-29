@@ -48,13 +48,26 @@ def group_points(
     ``select_count`` is worth its N largest tariffs, further capped by
     whatever ``total`` has left after every independent point and every
     either/or group — a pool can never claim more room than the question
-    actually has once its siblings are paid for; a pool without a
-    ``select_count`` is worth its own tariffs, capped at ``total`` -- the
-    tightest cap the scheme supports when N is unstated is the pool itself
-    (triage F5, per-pool cap; 2026-09-29). Only pools WITH a ``select_count``
-    share the leftover, consuming it in scheme order, so only such a pool can
-    end capped at 0 when an earlier one has taken the room. Either way the
-    consumer clamps the question's total at ``total``.
+    actually has once its siblings are paid for.
+
+    That leftover is ``max(0, total - independent tariffs - either/or
+    caps)``. How pools draw on it depends on whether N is stated:
+
+    * a pool WITH a ``select_count`` is worth ``min(room, N largest
+      tariffs)``, where ``room`` starts at the leftover and each such pool
+      consumes what it takes, in scheme order -- so a later stated-N pool can
+      end capped at 0 once an earlier one has taken the room;
+    * a pool WITHOUT a ``select_count`` is worth ``min(leftover, sum of its
+      own tariffs)``. The leftover is NOT shared: every unstated pool is
+      bounded by the same full leftover independently and consumes none of
+      it (triage F5, user decision 2026-09-29). Sharing it capped a later
+      unstated pool at 0 and under-credited a fully correct answer. Such a
+      pool is 0 only when the leftover itself is 0 -- the fixed points
+      already fill the question.
+
+    Unstated pools can therefore promise more together than the leftover;
+    the consumers clamp the question's total at ``total``, which bounds the
+    sum.
     """
     groups: list[tuple[str, list[int]]] = []
     member_of: dict[int, int] = {}
@@ -103,8 +116,9 @@ def group_points(
     # never fired because 3 sits under maximum_marks. A pool WITHOUT a stated N
     # does not draw on the room (triage F5): sharing it silently capped a later
     # unstated pool at 0 and under-credited a fully-correct answer 4/6 with no
-    # review flag; such a pool is worth its own tariffs and the question clamp
-    # bounds the total.
+    # review flag. Each such pool is bounded by the full leftover on its own
+    # (never by ``total`` alone, so the fixed points' marks are still
+    # deducted), and the question clamp bounds the total.
     pool_room = leftover
     for kind, members in real:
         counters[kind] += 1
@@ -115,7 +129,7 @@ def group_points(
             group_max = max(0, min(pool_room, sum(tariffs[:select_count])))
             pool_room -= group_max
         else:
-            group_max = min(total, sum(points[index].marks for index in members))
+            group_max = min(leftover, sum(points[index].marks for index in members))
         key = f"{kind}:{counters[kind]}"
         for index in members:
             result[index] = (key, group_max)
