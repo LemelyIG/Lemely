@@ -1225,6 +1225,70 @@ def bomb_on_second_page_pdf(inflated_bytes: int) -> bytes:
     )
 
 
+def wide_page_tree_pdf(kids: int, *, count: int, shared_kid: bool = False) -> bytes:
+    """A ``/Pages`` root with ``kids`` entries in its ``/Kids`` that declares ``/Count count``.
+
+    Each kid is a blank A4 ``/Page``. With ``shared_kid``, every kid instead
+    carries its own ``/Kids`` naming ONE shared page, so the tree has
+    ``kids + 1`` nodes but a single leaf.
+
+    Review round 1 on triage F8: the crop route's page bound must count the
+    tree a reader descends, not the ``/Count`` it declares, and must stop
+    descending once it is over the bound.
+    """
+    shared = 3 + kids
+    kid_body = (
+        f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Kids [{shared} 0 R] >>".encode()
+        if shared_kid
+        else b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>"
+    )
+    kid_refs = " ".join(f"{3 + i} 0 R" for i in range(kids))
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        f"<< /Type /Pages /Kids [{kid_refs}] /Count {count} >>".encode(),
+        *([kid_body] * kids),
+    ]
+    if shared_kid:
+        objects.append(b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>")
+    return assemble_pdf(objects)
+
+
+def repeated_kid_pdf(times: int) -> bytes:
+    """A ``/Pages`` root under ``/Count 1`` whose ``/Kids`` names ONE page
+    ``times`` times: three objects in the tree, ``times`` pages to a reader.
+
+    Review round 1 on triage F8: the crop bound must not be dodged by
+    repeating a kid, nor pay to read every repetition.
+    """
+    refs = " ".join(["3 0 R"] * times)
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            f"<< /Type /Pages /Kids [{refs}] /Count 1 >>".encode(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>",
+        ]
+    )
+
+
+def long_parent_chain_pdf(length: int) -> bytes:
+    """One A4 page whose ``/Parent`` starts a chain of ``length`` plain dicts,
+    each naming the next as its ``/Parent``; none of them is in the page tree.
+
+    Review round 1 on triage F8: the ``/Parent`` climb for resource holders
+    must stay bounded too, not only the ``/Kids`` descent.
+    """
+    chain = [f"<< /Parent {5 + i} 0 R >>".encode() for i in range(length - 1)]
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 4 0 R /MediaBox [0 0 595 842] >>",
+            *chain,
+            b"<< >>",
+        ]
+    )
+
+
 __all__ = [
     "annot_ap_bomb_pdf",
     "annot_ap_image_bomb_pdf",
@@ -1250,6 +1314,7 @@ __all__ = [
     "indirect_xobject_dict_bomb_pdf",
     "inherited_resources_bomb_pdf",
     "links_to_sibling_pages_pdf",
+    "long_parent_chain_pdf",
     "many_form_xobjects_pdf",
     "non_stream_contents_pdf",
     "page_bomb_pdf",
@@ -1259,6 +1324,7 @@ __all__ = [
     "pdf_with_inflated_count",
     "pdf_with_missing_kid_object",
     "real_smask_dimension_bomb_pdf",
+    "repeated_kid_pdf",
     "repeated_xobject_pdf",
     "resources_entry_pointing_at_pages_node_pdf",
     "seeded_page_tree_bomb_pdf",
@@ -1273,6 +1339,7 @@ __all__ = [
     "type3_charproc_bomb_pdf",
     "type3_stream_font_bomb_pdf",
     "typed_form_xobject_bomb_pdf",
+    "wide_page_tree_pdf",
     "xobject_also_listed_as_annotation_bomb_pdf",
     "xobject_bomb_pdf",
 ]

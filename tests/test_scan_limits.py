@@ -7,7 +7,7 @@ import time
 import tracemalloc
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pymupdf
 import pypdfium2 as pdfium
@@ -15,6 +15,7 @@ from PIL import Image
 
 import lemely.io.scan_limits as scan_limits
 from lemely.io.scan_limits import (
+    MAX_CROP_PAGES,
     MAX_DECODE_PX,
     MAX_PAGE_CONTENT_BYTES,
     MAX_PAGE_PX,
@@ -59,6 +60,7 @@ from tests.pdf_fakes import (
     indirect_xobject_dict_bomb_pdf,
     inherited_resources_bomb_pdf,
     links_to_sibling_pages_pdf,
+    long_parent_chain_pdf,
     many_form_xobjects_pdf,
     non_stream_contents_pdf,
     page_bomb_pdf,
@@ -68,6 +70,7 @@ from tests.pdf_fakes import (
     pdf_with_inflated_count,
     pdf_with_missing_kid_object,
     real_smask_dimension_bomb_pdf,
+    repeated_kid_pdf,
     repeated_xobject_pdf,
     resources_entry_pointing_at_pages_node_pdf,
     seeded_page_tree_bomb_pdf,
@@ -83,6 +86,7 @@ from tests.pdf_fakes import (
     type3_dict_font_with_jpeg_pdf,
     type3_stream_font_bomb_pdf,
     typed_form_xobject_bomb_pdf,
+    wide_page_tree_pdf,
     xobject_also_listed_as_annotation_bomb_pdf,
     xobject_bomb_pdf,
 )
@@ -293,26 +297,115 @@ class PageScopedContentCheckTests(unittest.TestCase):
             check_pdf_page_content(doc, 0)
             check_pdf_page_content(doc, MAX_SCAN_PAGES)
 
-    def test_the_whole_document_check_keeps_the_page_cap(self) -> None:
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(_pdf_bytes(*([(595.0, 842.0)] * (MAX_SCAN_PAGES + 1))))
-
     def test_a_page_the_page_tree_read_never_reached_is_refused(self) -> None:
         """Fail closed: ``_page_tree`` stops at the first page whose number
         pymupdf cannot give. The whole-document walk never goes past that
         page, but a page-scoped check can name a later one, whose inherited
         ``/Resources`` the tree then never recorded -- walking it with no
-        holders would skip them. Simulated by dropping every holder."""
+        holders would skip them. Simulated by dropping every holder; both
+        callers share ``_check_page``, so both refuse."""
         real_page_tree = scan_limits._page_tree
 
-        def truncated(doc: pymupdf.Document) -> object:
-            return scan_limits._PageTree(xrefs=real_page_tree(doc).xrefs, holders={})
+        def truncated(doc: pymupdf.Document, **kwargs: int) -> object:
+            return scan_limits._PageTree(xrefs=real_page_tree(doc, **kwargs).xrefs, holders={})
+
+        data = xobject_bomb_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)
+        with patch.object(scan_limits, "_page_tree", truncated):
+            with (
+                self.subTest("page-scoped"),
+                self._doc(data) as doc,
+                self.assertRaises(ScanRejectedError),
+            ):
+                check_pdf_page_content(doc, 0)
+            with self.subTest("whole-document"), self.assertRaises(ScanRejectedError):
+                check_pdf_content_bytes(data)
+
+    def test_a_scan_at_the_crop_page_bound_passes(self) -> None:
+        with self._doc(_pdf_bytes(*([(595.0, 842.0)] * MAX_CROP_PAGES))) as doc:
+            check_pdf_page_content(doc, MAX_CROP_PAGES - 1)
+
+    def test_a_scan_over_the_crop_page_bound_is_refused_before_the_tree_is_read(self) -> None:
+        """Review round 1 on F8: ``_page_tree`` costs time in proportion to
+        the page count, so the page-scoped check has its own bound
+        (``MAX_CROP_PAGES``), applied before anything is read."""
+        with (
+            self._doc(_pdf_bytes(*([(595.0, 842.0)] * (MAX_CROP_PAGES + 1)))) as doc,
+            patch.object(scan_limits, "_page_tree") as page_tree,
+            self.assertRaises(ScanTooLargeError) as caught,
+        ):
+            check_pdf_page_content(doc, 0)
+        page_tree.assert_not_called()
+        self.assertIn(f"limit for a review crop is {MAX_CROP_PAGES}", str(caught.exception))
+
+    def test_an_understated_count_does_not_hide_pages_from_the_crop_bound(self) -> None:
+        """``/Count 1`` over more real kids than the bound: pymupdf believes
+        the ``/Count``, the descent counts the kids."""
+        with self._doc(wide_page_tree_pdf(MAX_CROP_PAGES + 1, count=1)) as doc:
+            self.assertEqual(doc.page_count, 1)
+            with self.assertRaises(ScanTooLargeError):
+                check_pdf_page_content(doc, 0)
+
+    def test_a_shared_kid_does_not_hide_pages_from_the_crop_bound(self) -> None:
+        """Every kid names the same one page under its own ``/Kids``: one leaf,
+        but as many nodes to descend as kids. The node bound refuses it."""
+        with (
+            self._doc(wide_page_tree_pdf(2 * MAX_CROP_PAGES + 2, count=1, shared_kid=True)) as doc,
+            self.assertRaises(ScanTooLargeError),
+        ):
+            check_pdf_page_content(doc, 0)
+
+    def test_the_crop_bound_stops_the_descent_early_on_a_huge_tree(self) -> None:
+        """20,000 real kids under ``/Count 1``: the descent reads at most
+        a bound's worth of nodes, and the ``/Parent`` climb never starts."""
+        counting = MagicMock(wraps=scan_limits._collection_refs)
+        climbing = MagicMock(wraps=scan_limits._parent)
+        with (
+            self._doc(wide_page_tree_pdf(20_000, count=1)) as doc,
+            patch.object(scan_limits, "_collection_refs", counting),
+            patch.object(scan_limits, "_parent", climbing),
+            self.assertRaises(ScanTooLargeError),
+        ):
+            check_pdf_page_content(doc, 0)
+        # The root's /Kids, then one read per kid up to the first past the bound.
+        self.assertLessEqual(counting.call_count, MAX_CROP_PAGES + 2)
+        climbing.assert_not_called()
+
+    def test_a_repeated_kid_does_not_hide_pages_from_the_crop_bound(self) -> None:
+        """One page named 200,000 times in the root's ``/Kids``: three tree
+        objects, 200,000 pages to a reader. Refused, reading no more of the
+        array than one entry past the bound."""
+        lengths: list[int] = []
+        real_collection_refs = scan_limits._collection_refs
+
+        def recording(*args: object, **kwargs: object) -> list[int]:
+            refs = real_collection_refs(*args, **kwargs)  # type: ignore[arg-type]
+            lengths.append(len(refs))
+            return refs
 
         with (
-            self._doc(xobject_bomb_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)) as doc,
-            patch.object(scan_limits, "_page_tree", truncated),
+            self._doc(repeated_kid_pdf(200_000)) as doc,
+            patch.object(scan_limits, "_collection_refs", recording),
+            self.assertRaises(ScanTooLargeError),
+        ):
+            check_pdf_page_content(doc, 0)
+        self.assertEqual(max(lengths), MAX_CROP_PAGES + 1)
+
+    def test_the_crop_bound_stops_a_long_parent_climb_early(self) -> None:
+        """A one-page tree whose page's ``/Parent`` chain runs through 20,000
+        objects outside the tree: the climb reads at most a bound's worth."""
+        climbing = MagicMock(wraps=scan_limits._parent)
+        with (
+            self._doc(long_parent_chain_pdf(20_000)) as doc,
+            patch.object(scan_limits, "_parent", climbing),
             self.assertRaises(ScanRejectedError),
         ):
+            check_pdf_page_content(doc, 0)
+        self.assertLessEqual(climbing.call_count, 2 * MAX_CROP_PAGES + 1)
+
+    def test_a_short_parent_chain_outside_the_tree_still_passes(self) -> None:
+        """The climb bound refuses only a chain longer than any real tree
+        under the page bound could have; a short odd one is walked as before."""
+        with self._doc(long_parent_chain_pdf(3)) as doc:
             check_pdf_page_content(doc, 0)
 
 

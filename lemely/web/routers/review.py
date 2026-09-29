@@ -507,8 +507,10 @@ def _crop_pdf_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
         # page refused a crop that never touched it, and the document page cap
         # refused every crop of a scan stored before that cap existed. Uploads
         # that pre-date the upload-time check still get the render-bomb
-        # protection for the page actually rendered; the page cap stays with
-        # the whole-document callers (extraction, the preview route).
+        # protection for the page actually rendered; MAX_SCAN_PAGES (40) stays
+        # with the whole-document callers (extraction, the preview route). The
+        # check reads the page tree, which costs time per page, so crops have
+        # their own bound, MAX_CROP_PAGES (200), counted from the real tree.
         _require_page_in_range(box, doc.page_count, item_id=item_id)
         try:
             check_pdf_page_content(doc, box.page)

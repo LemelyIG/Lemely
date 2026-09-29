@@ -2856,6 +2856,47 @@ def test_crop_route_serves_a_stored_scan_over_the_page_cap(
     assert bluish == 0 and reddish / total > 0.5, "wrong region on the over-cap scan"
 
 
+@pytest.mark.parametrize(("extra_pages", "status"), [(0, 200), (1, 422)])
+def test_crop_route_bounds_the_page_count_at_max_crop_pages(
+    extra_pages: int,
+    status: int,
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """Review round 1 on F8: the page-scoped check reads the page tree, which
+    costs time in proportion to the page count, so the crop route has its
+    own bound, MAX_CROP_PAGES (200), separate from MAX_SCAN_PAGES (40). A
+    scan exactly at it is cropped; one page over it is refused, unrendered."""
+    from unittest.mock import patch
+
+    import pymupdf
+
+    from lemely.io.scan_limits import MAX_CROP_PAGES
+
+    scan = _synthetic_scan(pages=MAX_CROP_PAGES + extra_pages, marked_page=0)
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=scan, page=0
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    real_get_pixmap = pymupdf.Page.get_pixmap
+    with patch.object(
+        pymupdf.Page, "get_pixmap", autospec=True, side_effect=real_get_pixmap
+    ) as get_pixmap:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == status, resp.text
+    if status == 422:
+        get_pixmap.assert_not_called()
+        assert f"limit for a review crop is {MAX_CROP_PAGES}" in resp.json()["detail"]
+    else:
+        assert resp.headers["content-type"] == "image/png"
+
+
 @pytest.mark.parametrize("image_format", ["JPEG", "MPO"])
 def test_a_high_resolution_photo_is_decoded_smaller_and_still_cropped_right(
     image_format: str,
