@@ -674,7 +674,10 @@ def _evaluated_would_explode(expr: sympy.Basic) -> bool:
         if isinstance(node, sympy.Pow):
             base_height = _coefficient_height(node.base)
             exponent_height = _coefficient_height(node.exp)
-        elif isinstance(node, sympy.exp):
+        elif isinstance(node, sympy.exp) and node.args[0].has(sympy.log):
+            # Only `exp(k*log(n))` is `n**k` in disguise (review round 2):
+            # without a log, `exp(-5000/T)`, `A*exp(-2000*t)` are ordinary
+            # answers that no rewrite turns into an exact power.
             base_height, exponent_height = 1.0, _coefficient_height(node.args[0])
         else:
             continue
@@ -936,9 +939,14 @@ class _ParseWorker:
         )
         try:
             process.start()
-        except Exception:  # e.g. started from a daemonic process, or out of fds
+        except BaseException as exc:  # e.g. a daemonic parent, out of fds -- or an interrupt
             parent_conn.close()
             child_conn.close()
+            if process.pid is not None:  # spawned before the failure: never leave it running
+                process.kill()
+                process.join()
+            if not isinstance(exc, Exception):
+                raise
             _logger.warning("parse worker not started; parse_expr_safe returns None", exc_info=True)
             return False
         child_conn.close()
@@ -1635,6 +1643,13 @@ class _ToleranceSpec:
         """
         if ref == 0:
             return self.abs_tol
+        if not math.isfinite(ref):
+            # Review round 2: an answer beyond float range (`2×10^400`) has
+            # no magnitude to scale a window to -- `math.log10(inf)` raised
+            # OverflowError out of `equivalent`, and `rel_tol * inf` was an
+            # infinite window that admitted anything. No window: nothing is
+            # within -inf, so every comparison against it fails closed.
+            return -math.inf
         candidates = [self._explicit_window(ref)]
         if self.sig_figs is not None and self.sig_figs >= 1:
             coherent = _precision_candidate_or_discard(self._sig_figs_candidate(ref), ref)
@@ -1799,7 +1814,7 @@ class _ToleranceSpec:
         coinciding: `sig_figs` can hold the window while a discarded `dp`
         holds a stricter claim over it.
         """
-        if ref == 0:
+        if ref == 0 or not math.isfinite(ref):
             return (None, None)
         # `window` (the true max, matching `for_magnitude`) picks out which
         # field actually SET the window when sig_figs and dp are both
@@ -2179,8 +2194,52 @@ def _sampler_seed(a: sympy.Expr, b: sympy.Expr) -> int:
     the verdict — is the same regardless of which operand is passed as `a`
     and which as `b` (equivalence is symmetric; the seed should be too).
     """
-    payload = "|".join(sorted((sympy.srepr(a), sympy.srepr(b)))).encode()
+    payload = "|".join(sorted((_printable_srepr(a), _printable_srepr(b)))).encode()
     return int.from_bytes(hashlib.blake2b(payload, digest_size=8).digest(), "big")
+
+
+def _long_numbers_as_digests(expr: sympy.Basic) -> sympy.Basic:
+    """``expr`` with each exact number too long to print replaced by a symbol.
+
+    The symbol is named after a digest of the number's value: printable,
+    deterministic, and still distinct for distinct numbers.
+    """
+    replacements: dict[sympy.Basic, sympy.Basic] = {}
+    for atom in expr.atoms(sympy.Rational):
+        p, q = int(atom.p), int(atom.q)
+        if max(abs(p).bit_length(), q.bit_length()) > _MAX_RESULT_INT_BITS:
+            digest = hashlib.blake2b(
+                b"%d:%d:" % (p < 0, q.bit_length())
+                + abs(p).to_bytes((abs(p).bit_length() + 7) // 8, "big")
+                + b"/"
+                + q.to_bytes((q.bit_length() + 7) // 8, "big"),
+                digest_size=8,
+            ).hexdigest()
+            replacements[atom] = sympy.Symbol(f"long_number_{digest}")
+    return expr.xreplace(replacements)
+
+
+def _printable_srepr(expr: sympy.Basic) -> str:
+    """``sympy.srepr(expr)``, even when a number in it is too long to print.
+
+    Review round 2: CPython refuses ``str(int)`` past
+    ``sys.get_int_max_str_digits()`` digits, and ``equivalent`` accepts
+    already-parsed expressions that no parse bound limits -- so ``srepr``
+    can raise ValueError here. Such numbers become digest-named symbols.
+    """
+    try:
+        text: str = sympy.srepr(expr)
+    except ValueError:
+        text = sympy.srepr(_long_numbers_as_digests(expr))
+    return text
+
+
+def _printable(expr: sympy.Basic) -> str:
+    """``str(expr)`` for a verdict's ``detail`` -- never raises (see :func:`_printable_srepr`)."""
+    try:
+        return str(expr)
+    except ValueError:
+        return f"{_long_numbers_as_digests(expr)} (a number in it is too long to print)"
 
 
 def _numeric_fallback(
@@ -2308,7 +2367,9 @@ def equivalent(
     if diff is not None:
         is_equal = _diff_within_tolerance(diff, expr_a, expr_b, spec)
         kind = VerdictKind.EQUAL_PROVEN if is_equal else VerdictKind.NOT_EQUAL
-        return Verdict(kind, method=EquivalenceMethod.SIMPLIFY, detail=f"simplify(a - b) = {diff}")
+        return Verdict(
+            kind, method=EquivalenceMethod.SIMPLIFY, detail=f"simplify(a - b) = {_printable(diff)}"
+        )
 
     fallback = _numeric_fallback(expr_a, expr_b, numeric_timeout, spec)
     if fallback is None:

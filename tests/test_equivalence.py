@@ -2380,15 +2380,20 @@ def test_computed_exponents_are_refused_before_any_big_int_work(text: str) -> No
     timeout could not have helped. The refusal must come from the structural
     bound on the unevaluated parse, i.e. in milliseconds and before any
     big-int work -- NOT from the worker's timeout, which would have taken
-    the full second and killed the worker (so its pid must survive)."""
-    from lemely.core import equivalence as eq
-
-    assert parse_expr_safe("2+2") == sympy.Integer(4)  # warm worker: time the refusal, not a start
-    worker_pid = eq._PARSE_WORKER.pid()
-    started = time.monotonic()
-    assert parse_expr_safe(text, timeout=1.0) is None
-    assert time.monotonic() - started < 0.5
-    assert eq._PARSE_WORKER.pid() == worker_pid, "refused by a kill, not by the walk"
+    the full second and killed the worker (so its pid must survive). Fresh
+    interpreter: in-process, this file's abandoned CPU-bound threads pushed
+    a correct refusal to 0.64 s (review round 2)."""
+    out = _run_worker_timing_script(
+        f"""
+result, elapsed, gap = timed(lambda: parse_expr_safe({text!r}, timeout=1.0))
+print(json.dumps({{
+    "result": repr(result), "elapsed": elapsed, "same_worker": eq._PARSE_WORKER.pid() == pid_before,
+}}))
+"""
+    )
+    assert out["result"] == "None"
+    assert out["elapsed"] < 0.5, f"refusal took {out['elapsed']:.2f}s"  # type: ignore[operator]
+    assert out["same_worker"] is True, "refused by a kill, not by the walk"
 
 
 @pytest.mark.parametrize(
@@ -2662,6 +2667,13 @@ print(json.dumps({{"kind": verdict.kind.value, "elapsed": elapsed, "gap": gap}})
         "10^(3/2)",
         "3.0×10^8",
         "x^(n+1)",
+        # Review round 2: exp(...) without a log is never n**k in disguise.
+        "exp(-5000/T)",
+        "A*exp(-2000*t)",
+        "N0*exp(-1500*t)",
+        "exp(-(x-5000)^2/2)",
+        "exp(-(E-2000)/(k*T))",
+        "exp(2000/T)",
     ],
     ids=[
         "rc-decay",
@@ -2674,6 +2686,12 @@ print(json.dumps({{"kind": verdict.kind.value, "elapsed": elapsed, "gap": gap}})
         "fractional-numeric-power",
         "standard-form",
         "symbolic-exponent",
+        "exp-boltzmann-large-constant",
+        "exp-decay-large-rate",
+        "exp-decay-subscripted-amplitude",
+        "exp-gaussian-large-offset",
+        "exp-activation-energy-offset",
+        "exp-growth-large-constant",
     ],
 )
 def test_ordinary_exponents_pass_the_evaluated_bound(text: str) -> None:
@@ -2746,7 +2764,7 @@ def test_a_worker_that_cannot_start_returns_none_and_backs_off(
 
     class _Unstartable:
         def __init__(self, **_kwargs: object) -> None:
-            pass
+            self.pid: int | None = None  # never spawned
 
         def start(self) -> None:
             attempts.append(1)
@@ -2805,6 +2823,100 @@ def test_a_caller_queued_behind_a_timeout_gets_its_own_result() -> None:
     second.join(30)
     assert results == {"runaway": None, "ordinary": sympy.Integer(21)}
     assert finished["ordinary"] >= finished["runaway"], "the second caller did not queue"
+
+
+def test_equivalent_never_raises_when_its_difference_is_too_long_to_print() -> None:
+    """Review round 2 (item 2). Each operand fits the result bound, but
+    ``a - b`` does not: ``1/(10^4298+1) - 997`` has a 4,301-digit numerator,
+    and formatting it into ``Verdict.detail`` raised ``ValueError('Exceeds
+    the limit (4300 digits) for integer string conversion')`` out of
+    ``equivalent`` -- which ``correction_ai`` does not catch. The verdict
+    must stand and the detail must say why it cannot show the number."""
+    verdict = equivalent("1/(10^999*10^999*10^999*10^999*10^302+1)", "997")
+    assert verdict.kind is VerdictKind.NOT_EQUAL
+    assert verdict.detail is not None and "too long to print" in verdict.detail
+
+
+def test_the_sampler_seed_never_raises_on_a_number_too_long_to_print() -> None:
+    """Review round 2 (item 2): ``srepr`` in the sampler seed prints every
+    number too, and ``equivalent`` also accepts already-parsed expressions,
+    which no parse bound limits. The seed must still come back, stay
+    deterministic, and still tell two different long numbers apart."""
+    from lemely.core import equivalence as eq
+
+    x = sympy.Symbol("x")
+    long_a = sympy.Integer(10) ** 5000 + 1
+    long_b = sympy.Integer(10) ** 5000 + 3
+    seed = eq._sampler_seed(long_a * x, x)
+    assert seed == eq._sampler_seed(long_a * x, x)
+    assert seed != eq._sampler_seed(long_b * x, x)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"sig_figs": 3}, {"dp": 2}, {"sig_figs": 1}],
+    ids=["sig-figs-3", "dp-2", "sig-figs-1"],
+)
+def test_an_answer_beyond_float_range_with_stated_precision_never_raises(
+    kwargs: dict[str, int],
+) -> None:
+    """Review round 2 (item 3). ``2 * 10^400`` has no float magnitude, and the
+    sig-figs window took ``math.floor(math.log10(inf))`` -- an OverflowError
+    straight out of ``equivalent``, which ``correction_ai`` does not catch.
+    It must come back as a verdict, and never an equal one: a number beyond
+    float range has no window to be "close enough" inside."""
+    verdict = equivalent("2×10^400", "5", **kwargs)
+    assert verdict.kind is VerdictKind.NOT_EQUAL
+
+
+def test_an_interrupted_start_kills_the_child_and_leaves_the_worker_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 2 (item 4). ``_spawn`` caught only ``Exception`` around
+    ``process.start()``: a KeyboardInterrupt there left both pipe ends open
+    and a child that had already been spawned running, unjoined. It must be
+    killed and joined, the pipes closed, and the interrupt re-raised; the
+    next call must start cleanly."""
+    from lemely.core import equivalence as eq
+
+    events: list[str] = []
+    real_context = eq.multiprocessing.get_context("spawn")
+    pipes: list[object] = []
+
+    class _InterruptedAfterSpawn:
+        def __init__(self, **_kwargs: object) -> None:
+            self.pid: int | None = None
+
+        def start(self) -> None:
+            self.pid = 424242  # the child exists; the interrupt lands after
+            raise KeyboardInterrupt
+
+        def kill(self) -> None:
+            events.append("kill")
+
+        def join(self, timeout: float | None = None) -> None:
+            events.append("join")
+
+    class _Context:
+        Process = _InterruptedAfterSpawn
+
+        @staticmethod
+        def Pipe() -> object:  # mirrors multiprocessing's API
+            ends = real_context.Pipe()
+            pipes.extend(ends)
+            return ends
+
+    worker = eq._ParseWorker()
+    monkeypatch.setattr(eq, "_PARSE_WORKER", worker)
+    monkeypatch.setattr(eq.multiprocessing, "get_context", lambda _method: _Context())
+    with pytest.raises(KeyboardInterrupt):
+        worker.parse("2+2", 1.0)
+    assert events == ["kill", "join"]
+    assert pipes and all(end.closed for end in pipes)  # type: ignore[attr-defined]
+    assert worker.pid() is None
+    monkeypatch.setattr(eq.multiprocessing, "get_context", lambda method: real_context)
+    assert parse_expr_safe("2+2") == sympy.Integer(4)
+    worker.shutdown()
 
 
 def test_the_parse_worker_leaves_no_child_behind() -> None:
