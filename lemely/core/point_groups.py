@@ -49,10 +49,12 @@ def group_points(
     whatever ``total`` has left after every independent point and every
     either/or group — a pool can never claim more room than the question
     actually has once its siblings are paid for; a pool without a
-    ``select_count`` is worth that leftover, the tightest cap the scheme
-    supports when N is unstated. Several pools in one question **share** that
-    leftover, consuming it in scheme order: it is the room the question has
-    for all of them together, so a later pool can end capped at 0.
+    ``select_count`` is worth its own tariffs, capped at ``total`` -- the
+    tightest cap the scheme supports when N is unstated is the pool itself
+    (triage F5, per-pool cap; 2026-09-29). Only pools WITH a ``select_count``
+    share the leftover, consuming it in scheme order, so only such a pool can
+    end capped at 0 when an earlier one has taken the room. Either way the
+    consumer clamps the question's total at ``total``.
     """
     groups: list[tuple[str, list[int]]] = []
     member_of: dict[int, int] = {}
@@ -93,16 +95,16 @@ def group_points(
 
     result: list[tuple[str | None, int | None]] = [(None, None)] * len(points)
     counters = {"alt": 0, "pool": 0}
-    # The leftover is the room *the question has* for all its pools together,
-    # so pools consume it in scheme order rather than each receiving the whole
-    # figure. Two "any N from" pools used to be capped at the full leftover
-    # each: measured on a 4-mark question (one independent point plus an
-    # "any 1 from" pool of three), a student claiming all three pool points
-    # gained 3 where the scheme allows 1, and the question-level clamp never
-    # fired because 3 sits under maximum_marks. A later pool can end capped at
-    # 0 when an earlier one takes the room; that under-credits rather than
-    # over-credits, which is the only safe direction for a cap whose whole
-    # purpose is to bound a grant.
+    # The leftover is the room *the question has* for its stated-N pools
+    # together, so those consume it in scheme order rather than each receiving
+    # the whole figure. Measured on a 4-mark question (one independent point
+    # plus an "any 1 from" pool of three), a student claiming all three pool
+    # points gained 3 where the scheme allows 1, and the question-level clamp
+    # never fired because 3 sits under maximum_marks. A pool WITHOUT a stated N
+    # does not draw on the room (triage F5): sharing it silently capped a later
+    # unstated pool at 0 and under-credited a fully-correct answer 4/6 with no
+    # review flag; such a pool is worth its own tariffs and the question clamp
+    # bounds the total.
     pool_room = leftover
     for kind, members in real:
         counters[kind] += 1
@@ -113,8 +115,7 @@ def group_points(
             group_max = max(0, min(pool_room, sum(tariffs[:select_count])))
             pool_room -= group_max
         else:
-            group_max = pool_room
-            pool_room -= group_max
+            group_max = min(total, sum(points[index].marks for index in members))
         key = f"{kind}:{counters[kind]}"
         for index in members:
             result[index] = (key, group_max)

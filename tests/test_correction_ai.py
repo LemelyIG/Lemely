@@ -2340,41 +2340,69 @@ class GroupCappedVerdictTotalTests(unittest.TestCase):
         self.assertTrue(cq.needs_teacher_review)
         self.assertIn("may not fully describe", cq.review_reason or "")
 
-    def test_a_later_pool_capped_to_zero_by_a_shared_leftover_does_not_flag(self):
-        """Fix round 1 (reviewer): when ``group_points`` gives a pool a cap
-        BELOW its largest matched tariff -- here because an earlier pool
-        already spent the leftover the two pools share -- the coherence
-        floor must not exceed the ceiling. Before the fix, ``implied_min``
-        used the group's largest matched tariff unconditionally, so a
-        matched point in the zero-capped second pool inflated the floor
-        past the ceiling and produced an inverted-interval review flag
-        ("implies between 2 and 1") even though the cap -- not a real
-        under-award -- explains the gap. User decision: cap only, no flag."""
+    def test_two_unstated_pools_each_pay_their_own_marks(self):
+        """Triage F5 (``probe_marking.py`` case F5): 6 marks, i1, pool a1..a3,
+        i2, pool b1..b3, no select_count. Two in each pool plus both
+        independents used to award 4 with no flag (pool:2 capped at 0 by the
+        shared leftover). Per-pool cap: 1 + 2 + 1 + 2 = 6."""
         from lemely.core.loose_schemas import AnswerPoint
         from lemely.io.correction_ai import _build_ai_corrected
 
         q = self._question(
             [
+                AnswerPoint(id="i1", point="i1", marks=1),
                 *(
                     AnswerPoint(id=f"a{i}", point=f"a{i}", marks=1, is_optional=True)
                     for i in range(3)
                 ),
-                AnswerPoint(id="x", point="x", marks=1),
+                AnswerPoint(id="i2", point="i2", marks=1),
                 *(
                     AnswerPoint(id=f"b{i}", point=f"b{i}", marks=1, is_optional=True)
                     for i in range(3)
                 ),
             ],
-            marks=3,
+            marks=6,
         )
         verdicts = [
-            PointVerdict(point_id="a0", verdict="awarded", evidence_span="a0"),
-            PointVerdict(point_id="b0", verdict="awarded", evidence_span="b0"),
+            PointVerdict(point_id=pid, verdict="awarded", evidence_span=pid)
+            for pid in ("i1", "i2", "a0", "a1", "b0", "b1")
+        ] + [
+            PointVerdict(point_id=pid, verdict="withheld", evidence_span="") for pid in ("a2", "b2")
         ]
-        cq = _build_ai_corrected(q, "a0 b0", self._mark(verdicts, claimed=1), equivalence_gate=True)
-        self.assertEqual(cq.awarded_marks, 1)
+        cq = _build_ai_corrected(
+            q, "i1 i2 a0 a1 b0 b1", self._mark(verdicts, claimed=6), equivalence_gate=True
+        )
+        self.assertEqual(cq.awarded_marks, 6)
         self.assertFalse(cq.needs_teacher_review)
         self.assertIsNone(cq.review_reason)
+
+    def test_unstated_pools_are_clamped_at_the_question_not_at_a_shared_leftover(self):
+        """Every point awarded: 1 + 3 + 1 + 3 = 8 caps at the question's 6."""
+        from lemely.core.loose_schemas import AnswerPoint
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question(
+            [
+                AnswerPoint(id="i1", point="i1", marks=1),
+                *(
+                    AnswerPoint(id=f"a{i}", point=f"a{i}", marks=1, is_optional=True)
+                    for i in range(3)
+                ),
+                AnswerPoint(id="i2", point="i2", marks=1),
+                *(
+                    AnswerPoint(id=f"b{i}", point=f"b{i}", marks=1, is_optional=True)
+                    for i in range(3)
+                ),
+            ],
+            marks=6,
+        )
+        ids = ["i1", "i2", "a0", "a1", "a2", "b0", "b1", "b2"]
+        verdicts = [PointVerdict(point_id=pid, verdict="awarded", evidence_span=pid) for pid in ids]
+        cq = _build_ai_corrected(
+            q, " ".join(ids), self._mark(verdicts, claimed=6), equivalence_gate=True
+        )
+        self.assertEqual(cq.awarded_marks, 6)
+        self.assertFalse(cq.needs_teacher_review)
 
     def test_a_pool_cap_below_a_members_own_tariff_does_not_flag(self):
         """Fix round 1 (reviewer): a pool whose ``select_count`` room is
