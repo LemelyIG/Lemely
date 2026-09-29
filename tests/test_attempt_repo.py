@@ -48,6 +48,7 @@ from lemely.db.attempt_repo import (
     AttemptRepository,
     UploadDeletedError,
     _integrity_flagged,
+    _weakest_confidence_band,
     fill_correction_topics,
     is_marking_low_confidence,
 )
@@ -2107,3 +2108,43 @@ def test_a_persist_arriving_mid_delete_waits_and_is_refused(
     assert delete.error is None
     assert isinstance(persist.error, UploadDeletedError)
     assert set(_attempts_on(pg_sessionmaker, upload_id)) == {first}
+
+
+def _band_question(index: int, band: ConfidenceBand, source: str) -> CorrectedQuestion:
+    return CorrectedQuestion(
+        question_id=f"q{index}",
+        awarded_marks=0,
+        maximum_marks=1,
+        confidence=band,
+        confidence_score=0.0 if band is ConfidenceBand.LOW else 0.95,
+        needs_teacher_review=band is ConfidenceBand.LOW,
+        marker_source=source,
+        review_reason="AI marking failed: 503" if source == "missing" else None,
+    )
+
+
+@pytest.mark.parametrize("source", ["missing", "dropped"])
+def test_a_failed_marking_call_still_pulls_the_attempt_band_to_low(source: str) -> None:
+    """Triage F7 (``probe7.py``): one ``marker_source="missing"`` question
+    ("AI marking failed: 503") plus nine HIGH gave the attempt ``high`` on
+    this branch and ``low`` on develop. ``marker_scored`` was the wrong
+    predicate here: its rationale is ``_build_blank_corrected``'s LOW on a
+    genuine blank, which has been ``"blank"`` since task #36, so excluding
+    ``"missing"`` and ``"dropped"`` no longer has a reason and hides a
+    failure the teacher should see in the label."""
+    questions = [_band_question(0, ConfidenceBand.LOW, source)] + [
+        _band_question(i, ConfidenceBand.HIGH, "ai") for i in range(1, 10)
+    ]
+    assert _weakest_confidence_band(questions) is DBConfidenceBand.low
+
+
+def test_a_genuine_blank_still_does_not_pull_the_attempt_band_down() -> None:
+    questions = [_band_question(0, ConfidenceBand.LOW, "blank")] + [
+        _band_question(i, ConfidenceBand.HIGH, "ai") for i in range(1, 10)
+    ]
+    assert _weakest_confidence_band(questions) is DBConfidenceBand.high
+
+
+def test_an_all_blank_attempt_still_gets_a_band() -> None:
+    questions = [_band_question(i, ConfidenceBand.LOW, "blank") for i in range(3)]
+    assert _weakest_confidence_band(questions) is DBConfidenceBand.low

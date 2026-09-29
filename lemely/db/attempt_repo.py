@@ -61,7 +61,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD, dedupe_point_verdicts, marker_scored
+from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD, dedupe_point_verdicts
 from lemely.core.topics import classify, is_writable
 from lemely.db.history_repo import month_to_enum, parse_user_id
 from lemely.db.models.attempts import (
@@ -474,15 +474,15 @@ def _weakest_confidence_band(questions: Sequence[CorrectedQuestion]) -> DBConfid
     confidence is only as strong as its weakest question. Ordering is
     :data:`_CONFIDENCE_BAND_WEAKNESS_ORDER`, not enum declaration order.
 
-    Finding I (US-039 consumer-fixes brief): a question no marker scored
-    (:func:`~lemely.core.schemas.marker_scored`) does not enter the minimum.
-    ``_build_blank_corrected`` sets ``confidence=ConfidenceBand.LOW`` on a
-    genuine blank explicitly, so one unattempted part out of ten used to force
-    the whole attempt's ``confidence_band`` to LOW alongside
-    ``needs_teacher_review=False`` — the same changed-meaning-of-0.0 bug as
-    Finding E, on the band rather than the score. A question that was
-    genuinely scored LOW still pulls the minimum down; only the unscored ones
-    are excluded.
+    Finding I (US-039 consumer-fixes brief), narrowed by triage F7: a genuine
+    student blank (``marker_source == "blank"``) does not enter the minimum.
+    ``_build_blank_corrected`` sets ``confidence=ConfidenceBand.LOW`` on it
+    explicitly, so one unattempted part out of ten used to force the whole
+    attempt's ``confidence_band`` to LOW alongside
+    ``needs_teacher_review=False`` -- the same changed-meaning-of-0.0 bug as
+    Finding E, on the band rather than the score. A ``"missing"`` or
+    ``"dropped"`` question is NOT exempt: its LOW is a marking failure, and
+    hiding it behind nine HIGH siblings mislabels the attempt.
 
     Raises:
         ValueError: ``questions`` is empty — an attempt must always carry at
@@ -492,7 +492,13 @@ def _weakest_confidence_band(questions: Sequence[CorrectedQuestion]) -> DBConfid
     """
     if not questions:
         raise ValueError("Cannot derive a confidence band from zero question results")
-    scored = [q for q in questions if marker_scored(q.marker_source)]
+    # Triage F7: only a genuine student blank (`"blank"`, task #36) is exempt.
+    # `marker_scored` also drops "missing" (nothing was attempted: an AI call
+    # that raised, or --mcq-only) and "dropped" (extraction discarded the
+    # answer), but those are failures a teacher should see in the label, and
+    # excluding them made a ten-question attempt with one "AI marking failed:
+    # 503" read HIGH.
+    scored = [q for q in questions if q.marker_source != "blank"]
     # Every question was unscored (e.g. a fully-blank quiz attempt) — fall
     # back to the full set rather than raising, so a real attempt still gets
     # a band instead of a 500.
