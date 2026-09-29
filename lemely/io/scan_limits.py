@@ -11,7 +11,7 @@ that, or past :data:`MAX_SCAN_PAGES`, it is rejected with a
 applies to the whole scan: pages summing past :data:`MAX_SCAN_TOTAL_PX` all
 render at one uniformly lower DPI, rejected below :data:`MIN_EXTRACTION_DPI`.
 
-Pure: pypdfium2 and Pillow only, no I/O of its own. The web upload routes
+Pure: pypdfium2, pymupdf and Pillow only, no I/O of its own. The web upload routes
 call :func:`check_scan_bytes` on the uploaded body (headers and page sizes
 only -- nothing is rendered) so the user gets a clear 422; `rasterise.py`
 applies the same plans at extraction time as a second line of defence.

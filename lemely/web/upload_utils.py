@@ -57,16 +57,16 @@ def check_upload_cap(data: bytes, *, max_bytes: int = MAX_UPLOAD_BYTES) -> None:
 
 
 def check_scan_geometry(data: bytes) -> None:
-    """Raise 422 when ``data`` declares a page geometry extraction will refuse.
+    """Raise 422 when ``data`` declares a page geometry or content extraction will refuse.
 
     Spec 2026-09-26 §6: both grading flows run outside a plain
     request/response (the student run is an SSE stream, the teacher run a
     daemon thread), so a geometry error at extraction time becomes a failed
     status, not an HTTP code. The clear error therefore happens here, at
-    upload, from page sizes and image headers alone. Bytes that are not a
-    readable PDF or image pass: extraction fails on them later, as today.
-    413 (:func:`check_upload_cap`) stays the answer for byte size. Or whose
-    page content decodes past the content cap (Task 11b).
+    upload, from page sizes, image headers and (Task 11b) the decoded size
+    of each page's content streams alone -- nothing is rendered. Bytes that
+    are not a readable PDF or image pass: extraction fails on them later, as
+    today. 413 (:func:`check_upload_cap`) stays the answer for byte size.
     """
     try:
         check_scan_bytes(data)

@@ -498,7 +498,7 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # AI-generated-answer detector they gated (see
     # lemely.runtime.config._REMOVED_CONFIG_KEYS for the exact names).
     # `load_settings` below silently drops either one if still set — via
-    # lemely.toml OR an env var, the same outcome either way — so a stale
+    # lemely.toml, .env or an env var, the same outcome each way — so a stale
     # config keeps working. This check is what actually tells a developer
     # their config still names a removed key, since nothing else would.
     removed_keys = find_removed_config_keys(toml_path=config_path)

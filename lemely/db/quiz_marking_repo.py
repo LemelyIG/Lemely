@@ -160,8 +160,8 @@ class QuizMarkingService:
 
         ``integrity_settings`` defaults to a fresh
         :class:`~lemely.runtime.config.IntegritySettings` (plagiarism on,
-        AI-detection off) when omitted. ``marking_options`` defaults to both
-        flags off when omitted.
+        AI-detection off) when omitted. ``marking_options`` defaults to every
+        :class:`~lemely.runtime.config.MarkingOptions` flag off when omitted.
         """
         self._sessionmaker = sessionmaker
         self._attempt_repo = attempt_repo

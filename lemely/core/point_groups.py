@@ -9,8 +9,10 @@ into ``(group_key, group_max_marks)`` per point, at the one moment a
 Two consumers read it: :func:`lemely.db.question_points.derive_point_rows`
 (persisting ``group_key``/``group_max_marks`` on every ledger row) and
 :func:`lemely.io.correction_ai._awarded_from_verdicts` (capping a marker's
-verdict total at what each group is worth), so the two can never disagree
-about what an either/or pair or a pool may contribute.
+verdict total at what each group is worth), so the two group points the same
+way and agree on each group's cap whenever they pass the same ``total``. They
+can differ on a ``marks == 0`` container leaf: the ledger falls back to the
+marker's maximum there, where correction passes the 0.
 """
 
 from __future__ import annotations
