@@ -271,9 +271,13 @@ _SI_PREFIXES = ("p", "n", "µ", "u", "m", "c", "d", "k", "M", "G")
 _UNIT_SYMBOLS: tuple[str, ...] = _BASE_UNIT_SYMBOLS + tuple(
     prefix + base for prefix in _SI_PREFIXES for base in _BASE_UNIT_SYMBOLS
 )
-_UNIT_DIGIT_RE = re.compile(
-    r"\b(" + "|".join(sorted(_UNIT_SYMBOLS, key=len, reverse=True)) + r")(\d+)(?![\d.])"
-)
+_SINGLE_LETTER_UNITS = frozenset(unit for unit in _UNIT_SYMBOLS if len(unit) == 1)
+
+#: A run of letters directly followed by digits (`cm3`, `m2`, `N0`, `x2`,
+#: `v1`, `mv2`), not itself preceded by a letter or `_`. A digit MAY precede
+#: it (`4x2`, `30cm3`); scientific notation (`3e8`) is excluded in
+#: `_rewrite_digit_suffixes`.
+_LETTER_DIGITS_RE = re.compile(r"(?<![A-Za-z_µΩ°])([A-Za-zµΩ°]+)(\d+)(?![\d.])")
 
 #: Unit spellings that are textually different but dimensionally identical,
 #: normalised to a single canonical spelling before parsing so e.g. "g/cm3"
@@ -727,6 +731,76 @@ def _vet_and_parse(normalized: str, *, vet: bool = True) -> tuple[str, sympy.Exp
     return ("ok", expr)
 
 
+def _rewrite_digit_suffixes(text: str) -> str:
+    """Read a letter followed by digits as a unit power or as ONE subscripted symbol.
+
+    Mark schemes write unit powers without a caret -- the superscript is
+    lost in extraction: ``g / cm3``, ``kg / m3``, ``5.7 m / s2``, ``9200 (N
+    / m2)``, ``30 cm3`` are all in the corpus -- so those stay powers
+    (``cm**3``). Everything else is a subscript, one symbol (``N0`` ->
+    ``N_0``), never a coefficient or a power. Review round 2 (item 6):
+    ``N`` and ``A`` are units, so the old rule read ``N0`` as ``N**0`` = 1
+    and ``equivalent("N0*x", "x")`` was EQUAL_PROVEN; and SymPy's
+    ``split_symbols`` read any other letter+digits as a product --
+    ``v1+v2`` as ``3*v``, ``m1*m2`` as ``m**3``, ``R1+R2`` as ``3*R``,
+    ``x0`` as 0, and the maths ``x2-2x-15`` (a lost superscript) as
+    ``-15``: each a false EQUAL_PROVEN against the matching wrong answer.
+    A subscript symbol can only ever equal itself, so where the reading is
+    genuinely ambiguous (``x2``) it fails toward review, never toward a
+    wrong match.
+
+    A power, only when the letters are a unit written as one:
+
+    - a multi-letter unit (``cm3``, ``mm2``), as before; or
+    - a single-letter unit (``m``, ``s``, ``N``, ...) with an exponent of at
+      least 2, when that letter carries no OTHER digit suffix in the text:
+      ``m / s2``, ``N / m2``, a lone ``m2``. A unit to the power 0 or 1 is
+      never written, and a letter seen with two suffixes (``m1 + m2``,
+      ``V1/V2``, ``F1 - F2``) is a family of quantities, not a unit.
+
+    Otherwise the LAST letter takes the digits as its subscript (``mv2`` ->
+    ``m(v_2)``), except that a run naming a function (``log10``) is left
+    alone. Subscripts are parenthesised so ``N0(1-x)`` stays a product
+    rather than a call. ``3e8``/``3E8``/``3.0e8`` (an exponent marker after a
+    digit) are untouched.
+    """
+
+    def scientific(match: re.Match[str]) -> bool:
+        start = match.start()
+        return match.group(1) in ("e", "E") and start > 0 and text[start - 1] in "0123456789."
+
+    def multi_letter_unit(letters: str) -> bool:
+        return len(letters) > 1 and letters in _UNIT_SYMBOLS
+
+    matches = [m for m in _LETTER_DIGITS_RE.finditer(text) if not scientific(m)]
+    suffixes: dict[str, set[str]] = {}
+    for match in matches:
+        letters, digits = match.groups()
+        if not multi_letter_unit(letters):
+            suffixes.setdefault(letters[-1], set()).add(digits)
+    families = {
+        letter
+        for letter, seen in suffixes.items()
+        if len(seen) > 1 or any(int(digits) <= 1 for digits in seen)
+    }
+
+    def rewrite(match: re.Match[str]) -> str:
+        letters, digits = match.groups()
+        if multi_letter_unit(letters):
+            return f"{letters}**{digits}"
+        if len(letters) > 1 and (letters in _ALLOWED_FUNCTIONS or hasattr(sympy, letters)):
+            return match.group(0)
+        head, last = letters[:-1], letters[-1]
+        if last in _SINGLE_LETTER_UNITS and int(digits) >= 2 and last not in families:
+            return f"{head}{last}**{digits}"
+        return f"{head}({last}_{digits})"
+
+    wanted = {match.span() for match in matches}
+    return _LETTER_DIGITS_RE.sub(
+        lambda match: rewrite(match) if match.span() in wanted else match.group(0), text
+    )
+
+
 def _collapse_thousands_separators(text: str) -> str:
     """Collapse "1 500 000" to "1500000", one triple at a time.
 
@@ -759,7 +833,7 @@ def _normalize_text(text: str) -> str:
     normalized = normalized.replace("÷", "/")
     for alias, canonical in _UNIT_ALIASES.items():
         normalized = normalized.replace(alias, canonical)
-    normalized = _UNIT_DIGIT_RE.sub(r"\1**\2", normalized)
+    normalized = _rewrite_digit_suffixes(normalized)
     normalized = _collapse_thousands_separators(normalized)
     return normalized.strip()
 

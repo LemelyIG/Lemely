@@ -2935,6 +2935,93 @@ def test_the_tolerance_helpers_fail_closed_on_non_finite_values() -> None:
     assert eq._values_within_tolerance(complex(5), complex(5), spec)
 
 
+def test_a_subscripted_amplitude_is_never_read_as_a_zeroth_power() -> None:
+    """Review round 2 (item 6), serious before the gate is enabled. ``N`` and
+    ``A`` are units (newton, ampere), and the unit-digit rewrite turned
+    ``N0`` into ``N**0`` = 1: ``parse_expr_safe("N0*x")`` was ``x`` and
+    ``equivalent("N0*x", "x")`` was EQUAL_PROVEN -- a coefficient silently
+    deleted. A letter followed by 0 or 1 is always a subscript."""
+    assert equivalent("N0*x", "x").kind is VerdictKind.NOT_EQUAL
+    parsed = parse_expr_safe("N0*exp(-k*t)")
+    n0, k, t = sympy.symbols("N_0 k t")
+    assert parsed == n0 * sympy.exp(-k * t)
+    assert parse_expr_safe("A0") == sympy.Symbol("A_0")
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "kind"),
+    [
+        ("v1+v2", "v2+v1", VerdictKind.EQUAL_PROVEN),
+        ("m1+m2", "m2+m1", VerdictKind.EQUAL_PROVEN),
+        ("v1+v2", "3v", VerdictKind.NOT_EQUAL),
+        ("m1*m2", "m^3", VerdictKind.NOT_EQUAL),
+        ("R1+R2", "3R", VerdictKind.NOT_EQUAL),
+        ("x2-2x-15", "-15", VerdictKind.NOT_EQUAL),
+        ("F1-F2", "-F", VerdictKind.NOT_EQUAL),
+        ("x0", "0", VerdictKind.NOT_EQUAL),
+    ],
+    ids=[
+        "two-velocities-commute",
+        "two-masses-commute",
+        "velocities-are-not-3v",
+        "masses-are-not-m-cubed",
+        "resistors-are-not-3R",
+        "caretless-square-is-not-a-coefficient",
+        "forces-with-a-unit-letter",
+        "initial-position-is-not-zero",
+    ],
+)
+def test_a_letter_followed_by_digits_is_one_symbol(a: str, b: str, kind: VerdictKind) -> None:
+    """Review round 2 (item 6). Outside the unit powers mark schemes write
+    without a caret, a letter followed by digits is a subscripted symbol,
+    never a coefficient or a power: ``v1+v2`` used to parse as ``3*v``,
+    ``m1*m2`` as ``m**3``, ``R1+R2`` as ``3*R``, ``x0`` as ``0``, and the
+    mark-scheme maths ``x2-2x-15`` (a lost superscript) as ``-15`` -- each a
+    false EQUAL_PROVEN waiting for the matching wrong answer. A subscript
+    symbol can only ever equal itself, so the unreadable ``x2`` now routes
+    to review instead of matching ``-15``."""
+    assert equivalent(a, b).kind is kind
+
+
+@pytest.mark.parametrize(
+    ("caretless", "caret"),
+    [
+        ("g/cm3", "g/cm^3"),
+        ("kg/m3", "kg/m^3"),
+        ("5.7 m/s2", "5.7 m/s^2"),
+        ("9200 N/m2", "9200 N/m^2"),
+        ("30 cm3", "30 cm^3"),
+        ("m2", "m^2"),
+        ("0.75 N/cm2", "0.75 N/cm^2"),
+    ],
+    ids=[
+        "density-g-cm3",
+        "density-kg-m3",
+        "acceleration-m-s2",
+        "pressure-N-m2",
+        "volume-cm3",
+        "area-m2",
+        "pressure-N-cm2",
+    ],
+)
+def test_caretless_unit_powers_from_mark_schemes_still_parse_as_powers(
+    caretless: str, caret: str
+) -> None:
+    """Every form here is copied from the mark-scheme corpus (``g / cm3``,
+    ``kg / m3``, ``5.7 m / s2``, ``9200 (N / m2)``, ``30 cm3``, ``m2``,
+    ``0.75 (N / cm2)``): a unit written with its power's superscript lost.
+    The subscript rule must not break them."""
+    assert parse_expr_safe(caretless) == parse_expr_safe(caret)
+
+
+@pytest.mark.parametrize("text", ["3e8", "3E8", "3.0e8"])
+def test_scientific_notation_is_not_a_subscript(text: str) -> None:
+    """``e``/``E`` after a digit is an exponent marker, not a letter with a
+    digit suffix: the subscript rule must leave it to Python's float
+    literal, exactly as before."""
+    assert parse_expr_safe(text) == sympy.Float("3e8")
+
+
 def test_an_interrupted_start_kills_the_child_and_leaves_the_worker_clean(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
