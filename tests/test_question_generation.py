@@ -443,6 +443,57 @@ class TestVerifyQuestionSympyGate:
 
         assert _strip_trailing_unit(stated) == stated
 
+    @pytest.mark.parametrize(
+        ("stated", "value"),
+        [
+            ("2.5 h", "2.5"),
+            ("30 min", "30"),
+            ("1.57 rad", "1.57"),
+            ("0.3 T", "0.3"),
+            ("4.7 F", "4.7"),
+            ("2 H", "2"),
+            ("45 deg", "45"),
+        ],
+    )
+    def test_the_seven_missing_unprefixed_units_are_stripped(self, stated: str, value: str) -> None:
+        """#266: hours, minutes, radians, tesla, farad, henry and degrees were
+        not in the whitelist, so "2.5 h" fell through to a paid sandbox call."""
+        from lemely.io.question_gates import _strip_trailing_unit
+
+        assert _strip_trailing_unit(stated) == value
+
+    @pytest.mark.parametrize(
+        ("solution_expr", "answer"),
+        [("5/2", "2.5 h"), ("0.3", "0.3 T"), ("pi/2", "1.57 rad"), ("45", "45 deg")],
+    )
+    def test_the_new_units_verify_at_the_sympy_step_with_no_sandbox_call(
+        self, solution_expr: str, answer: str
+    ) -> None:
+        question = _generated_question(
+            "Fields",
+            question_type=QuestionType.CALCULATION,
+            solution_expr=solution_expr,
+            answer=answer,
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by == "sympy", result.rejection_reason
+        client.generate_with_code_execution.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "stated", ["24 d", "24 x", "24 Q", "24 hh", "24 mT", "24 nF", "24 kH", "24 mm"]
+    )
+    def test_a_bare_non_unit_letter_or_a_prefixed_new_unit_is_still_not_stripped(
+        self, stated: str
+    ) -> None:
+        """The dangling-letter and prefix guards must hold for the new single
+        capitals too: "mT" is a prefixed tesla, not metre-then-tesla."""
+        from lemely.io.question_gates import _strip_trailing_unit
+
+        assert _strip_trailing_unit(stated) == stated
+
     def test_prefixed_stated_answers_never_report_equal_proven_via_the_stripper(self) -> None:
         """Fix round 4, Important, at the helper level: neither direction
         of the SI-prefix policy -- a wrong answer matching only because

@@ -114,7 +114,11 @@ _SCI_X_NOTATION_RE = re.compile(
 #: either, which is what makes "24 pi"/"6x" fall through to a real
 #: (numeric or structural) disproof instead of being silently stripped
 #: away.
-_UNIT_BASE_RE = r"(?:kg|ohm|mol|eV|Pa|Hz|°C|m|s|g|J|N|W|V|A|K|C|L|Ω)"
+#: #266 added h, min, rad, deg, T, F and H. Multi-letter atoms come before the
+#: single letters they start with (``min`` before ``m``); with the tail
+#: anchored at ``$`` and the prefix guard in ``_UNIT_TAIL_RE`` this is only
+#: about backtracking, and "24 mT" is still a PREFIXED tesla, left alone.
+_UNIT_BASE_RE = r"(?:kg|ohm|mol|min|rad|deg|eV|Pa|Hz|°C|m|s|g|h|J|N|W|V|A|K|C|L|T|F|H|Ω)"
 
 _UNIT_ATOM_RE = rf"(?:{_UNIT_BASE_RE})(?:\^-?\d+)?"
 
