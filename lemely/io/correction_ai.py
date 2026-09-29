@@ -1087,6 +1087,41 @@ def _group_capped_total(question: Question, awarded_ids: set[str]) -> tuple[int,
     return min(independent + grouped, question.marks), min(additive, question.marks)
 
 
+def _awarded_after_backstop(
+    question: Question, claimed: int, claimed_ids: set[str], surviving_ids: set[str]
+) -> int:
+    """The legacy path's total after the backstop rejected points (triage F4).
+
+    Called once :func:`_verify_calculated_answers` has rejected something.
+    ``lost`` is what the rejected points were worth to the marker's ids under
+    the group rule and the ``question.marks`` clamp
+    (:func:`_group_capped_total` before minus after), so a rejected either/or
+    member that its surviving sibling still covers costs nothing. The result
+    is ``min(surviving total, claimed - lost)``, floored at 0:
+
+    * a marker whose claim matches its ids (the well-behaved case) gets the
+      surviving ids' capped total, exactly what the verdict path computes;
+    * it never exceeds ``claimed``, so the backstop can never raise a mark;
+    * a marker that claimed MORE than its ids back keeps only what the
+      survivors earn -- a mark no id backs is not kept after the backstop
+      has already caught one claim out;
+    * a marker that claimed LESS than its ids back still loses ``lost`` off
+      its claim, as the old subtraction did: its own withholding is not
+      assumed to have been on the rejected point. The safe direction, since
+      which point the marker withheld is unknowable and a rejection always
+      routes the question to review.
+
+    With independent points only, the clamp not binding and a claim no
+    higher than its ids back, this is the old arithmetic: ``claimed`` minus
+    each rejected tariff. Runs only when something was rejected; otherwise
+    the legacy path keeps the marker's clamped claim as it always has.
+    """
+    claimed_total, _ = _group_capped_total(question, claimed_ids)
+    surviving_total, _ = _group_capped_total(question, surviving_ids)
+    lost = claimed_total - surviving_total
+    return max(0, min(surviving_total, claimed - lost))
+
+
 def _awarded_from_verdicts(
     question: Question, point_verdicts: list[PointVerdict]
 ) -> _VerdictTotals:
@@ -1457,6 +1492,14 @@ def _build_ai_corrected(
         equivalence_gate=equivalence_gate,
     )
     value_mismatch = bool(rejections)
+    if value_mismatch:
+        # Triage F4, legacy path: the backstop subtracted each rejected
+        # point's FULL tariff from `clamped`, which a well-behaved marker has
+        # already group-capped -- rejecting one member of an either/or pair
+        # took the pair's mark (probe: 0 where the surviving member earns 1).
+        awarded = _awarded_after_backstop(
+            question, clamped, set(mark.matched_point_ids), set(matched_point_ids)
+        )
     low_confidence = mark.confidence < REVIEW_CONFIDENCE_THRESHOLD
 
     reasons: list[str] = []

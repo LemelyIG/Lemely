@@ -2695,6 +2695,186 @@ class BackstopOnGroupCappedTotalTests(unittest.TestCase):
         )
 
 
+class LegacyBackstopOnGroupCappedTotalTests(unittest.TestCase):
+    """Triage F4 on the LEGACY path (the default, ``equivalence_gate`` off).
+    ``_verify_calculated_answers`` subtracts a rejected point's full tariff
+    from ``clamped``, the marker's own total, which a well-behaved marker has
+    already group-capped: rejecting one member of an either/or pair took the
+    pair's mark away, and rejecting one of three members of an "any 2" pool
+    took a mark the other two still earn."""
+
+    def _cq(self, question, claimed, matched, *, gate=False):
+        from lemely.core.schemas import AIMarkResponse
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        mark = AIMarkResponse(
+            awarded_marks=claimed, confidence=0.95, matched_point_ids=matched, feedback="fb"
+        )
+        return _build_ai_corrected(
+            question, "speed is 3.1 m/s", mark, None, None, equivalence_gate=gate
+        )
+
+    def test_a_rejected_either_or_member_leaves_the_surviving_member_its_mark(self):
+        from lemely.core.loose_schemas import AnswerPoint, CalculatedAnswer, Question, QuestionType
+
+        q = Question(
+            id="L",
+            marks=1,
+            type=QuestionType.RECALL,
+            answer_points=[
+                AnswerPoint(
+                    id="p1", point="p1", marks=1, calculated_answer=CalculatedAnswer(value=2.5)
+                ),
+                AnswerPoint(id="p2", point="p2", marks=1, is_alternative=True),
+            ],
+        )
+        # With the gate on but no point_verdicts the legacy body still runs.
+        for gate in (False, True):
+            with self.subTest(equivalence_gate=gate):
+                cq = self._cq(q, 1, ["p1", "p2"], gate=gate)
+                self.assertEqual(cq.awarded_marks, 1)
+                self.assertEqual(cq.matched_point_ids, ["p2"])
+                self.assertTrue(cq.needs_teacher_review)
+                self.assertIn("unverified accuracy mark(s): p1", cq.review_reason or "")
+
+    def test_a_rejected_pool_member_leaves_the_other_members_the_pool_cap(self):
+        from lemely.core.loose_schemas import AnswerPoint, CalculatedAnswer, Question, QuestionType
+
+        q = Question(
+            id="P",
+            marks=2,
+            type=QuestionType.RECALL,
+            select_count=2,
+            answer_points=[
+                AnswerPoint(
+                    id="p1",
+                    point="p1",
+                    marks=1,
+                    is_optional=True,
+                    calculated_answer=CalculatedAnswer(value=9.81),
+                ),
+                AnswerPoint(id="p2", point="p2", marks=1, is_optional=True),
+                AnswerPoint(id="p3", point="p3", marks=1, is_optional=True),
+            ],
+        )
+        cq = self._cq(q, 2, ["p1", "p2", "p3"])
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertEqual(cq.matched_point_ids, ["p2", "p3"])
+        self.assertTrue(cq.needs_teacher_review)
+
+    def test_a_rejected_independent_point_still_costs_exactly_its_tariff(self):
+        """No group, no clamp: the recomputation and the old subtraction
+        agree, a 2-mark rejected point costs 2 of the marker's 3."""
+        from lemely.core.loose_schemas import AnswerPoint, CalculatedAnswer, Question, QuestionType
+
+        q = Question(
+            id="I",
+            marks=3,
+            type=QuestionType.RECALL,
+            answer_points=[
+                AnswerPoint(
+                    id="p1", point="p1", marks=2, calculated_answer=CalculatedAnswer(value=2.5)
+                ),
+                AnswerPoint(id="p2", point="p2", marks=1),
+            ],
+        )
+        cq = self._cq(q, 3, ["p1", "p2"])
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertEqual(cq.matched_point_ids, ["p2"])
+
+    def test_an_under_claiming_marker_still_loses_the_rejected_points_value(self):
+        """The marker claims less than its ids justify (1 of 2 independent
+        points' worth). The rejection still costs p1's tariff off the claim,
+        as the old subtraction did: the marker's own withholding is not
+        assumed to have been on the rejected point."""
+        from lemely.core.loose_schemas import AnswerPoint, CalculatedAnswer, Question, QuestionType
+
+        q = Question(
+            id="U",
+            marks=2,
+            type=QuestionType.RECALL,
+            answer_points=[
+                AnswerPoint(
+                    id="p1", point="p1", marks=1, calculated_answer=CalculatedAnswer(value=2.5)
+                ),
+                AnswerPoint(id="p2", point="p2", marks=1),
+            ],
+        )
+        cq = self._cq(q, 1, ["p1", "p2"])
+        self.assertEqual(cq.awarded_marks, 0)
+
+    def test_an_over_claiming_marker_keeps_only_what_the_survivors_earn(self):
+        """The marker claims 3 but its ids justify 2; one is rejected. Only
+        the surviving p2 backs a mark, so the result is 1 (the old
+        subtraction left 2, one mark no id backs)."""
+        from lemely.core.loose_schemas import AnswerPoint, CalculatedAnswer, Question, QuestionType
+
+        q = Question(
+            id="O",
+            marks=3,
+            type=QuestionType.RECALL,
+            answer_points=[
+                AnswerPoint(
+                    id="p1", point="p1", marks=1, calculated_answer=CalculatedAnswer(value=2.5)
+                ),
+                AnswerPoint(id="p2", point="p2", marks=1),
+                AnswerPoint(id="p3", point="p3", marks=1),
+            ],
+        )
+        cq = self._cq(q, 3, ["p1", "p2"])
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertTrue(cq.needs_teacher_review)
+
+    def test_a_rejection_inside_the_question_clamp_recomputes_under_it(self):
+        """Task 5 carry-over, legacy shape: 3 marks, i1, pool A (a0, a1),
+        i2, pool B (b0, b1). The marker claims 3 for i1, i2, a0, b0 (4
+        raw); rejecting b0 leaves i1, i2, a0, still 3. The subtraction gave 2."""
+        from lemely.core.loose_schemas import AnswerPoint, CalculatedAnswer, Question, QuestionType
+
+        def pool(point_id, **extra):
+            return AnswerPoint(id=point_id, point=point_id, marks=1, is_optional=True, **extra)
+
+        q = Question.model_construct(
+            id="C",
+            marks=3,
+            type=QuestionType.RECALL,
+            answer_points=[
+                AnswerPoint(id="i1", point="i1", marks=1),
+                pool("a0"),
+                pool("a1"),
+                AnswerPoint(id="i2", point="i2", marks=1),
+                pool("b0", calculated_answer=CalculatedAnswer(value=7.5)),
+                pool("b1"),
+            ],
+            select_count=None,
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+        cq = self._cq(q, 3, ["i1", "a0", "i2", "b0"])
+        self.assertEqual(cq.awarded_marks, 3)
+        self.assertEqual(cq.matched_point_ids, ["i1", "a0", "i2"])
+
+    def test_no_rejection_leaves_the_markers_claim_untouched(self):
+        """The recomputation runs only when the backstop rejects something:
+        the legacy path otherwise trusts the marker's clamped total, even
+        one its ids do not fully back (coherence flags that separately)."""
+        from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+
+        q = Question(
+            id="N",
+            marks=2,
+            type=QuestionType.RECALL,
+            answer_points=[
+                AnswerPoint(id="p1", point="p1", marks=1),
+                AnswerPoint(id="p2", point="p2", marks=1),
+            ],
+        )
+        cq = self._cq(q, 2, ["p1"])
+        self.assertEqual(cq.awarded_marks, 2)
+
+
 class ClampedCoherenceIntervalTests(unittest.TestCase):
     """Triage F6 (``probe_marking.py`` cases F6): the awarded figure the
     coherence check receives is already clamped at ``question.marks``, but
