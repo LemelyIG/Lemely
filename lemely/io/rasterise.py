@@ -103,9 +103,22 @@ def rasterise_pdf_to_pages(pdf_path: Path, *, dpi: float = EXTRACTION_DPI) -> li
         check_pdf_content_path(pdf_path)
         pages: list[RasterisedPage] = []
         for plan in plans:
+            # Final review N1: a loaded page keeps its decoded images alive
+            # until it is closed, and `pdf.close()` alone would hold every
+            # page's at once (1037 MB peak RSS on a 1.13 MB 40-page scan,
+            # 553 MB closing per page). Close the page and its bitmap as soon
+            # as the RGB copy exists; `.convert` copies, so nothing the PNG
+            # encode below reads still points into pdfium's buffer.
             page = pdf[plan.index]
-            # pypdfium2's scale is in units of 72dpi-points.
-            pil_image = page.render(scale=plan.dpi / 72.0).to_pil().convert("RGB")
+            try:
+                # pypdfium2's scale is in units of 72dpi-points.
+                bitmap = page.render(scale=plan.dpi / 72.0)
+                try:
+                    pil_image = bitmap.to_pil().convert("RGB")
+                finally:
+                    bitmap.close()
+            finally:
+                page.close()
             buf = io.BytesIO()
             pil_image.save(buf, format="PNG")
             pages.append(

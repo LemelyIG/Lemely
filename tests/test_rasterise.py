@@ -153,6 +153,40 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             rasterise_pdf_to_pages(path)
         render.assert_not_called()
 
+    def test_each_page_is_closed_before_the_next_page_is_loaded(self) -> None:
+        """Final review N1: a loaded pdfium page keeps its decoded images
+        alive until it is closed; left open until ``pdf.close()``, a 40-page
+        scan held every page's images at once (1037 MB peak RSS on the
+        reviewer's 1.13 MB shape, 553 MB with a close per page). Pages must
+        be closed one at a time, each before the next is loaded."""
+        path = self._pdf("three.pdf", (72.0, 72.0), (72.0, 72.0), (72.0, 72.0))
+        events: list[tuple[str, int]] = []
+        real_get_page = pdfium.PdfDocument.get_page
+        real_close = pdfium.PdfPage.close
+        index_of: dict[int, int] = {}
+
+        def _get_page(doc: pdfium.PdfDocument, index: int) -> pdfium.PdfPage:
+            page = real_get_page(doc, index)
+            index_of[id(page)] = index
+            events.append(("load", index))
+            return page
+
+        def _close(page: pdfium.PdfPage, *args: object, **kwargs: object) -> object:
+            if id(page) in index_of:
+                events.append(("close", index_of.pop(id(page))))
+            return real_close(page, *args, **kwargs)
+
+        with (
+            patch.object(pdfium.PdfDocument, "get_page", _get_page),
+            patch.object(pdfium.PdfPage, "close", _close),
+        ):
+            pages = rasterise_pdf_to_pages(path)
+        self.assertEqual(len(pages), 3)
+        self.assertEqual(
+            events,
+            [("load", 0), ("close", 0), ("load", 1), ("close", 1), ("load", 2), ("close", 2)],
+        )
+
     def test_too_many_pages_are_rejected_before_the_content_walk(self) -> None:
         """Final review M1: the content walk visits every page, so the page
         cap must be applied before it -- a 20,000-page 5.8 MB PDF was walked
