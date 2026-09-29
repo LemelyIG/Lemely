@@ -2548,6 +2548,153 @@ class GroupCappedVerdictTotalTests(unittest.TestCase):
         )
 
 
+class BackstopOnGroupCappedTotalTests(unittest.TestCase):
+    """Triage F4 (``probe_marking.py`` cases F4): ``_verify_calculated_answers``
+    did ``awarded = max(0, awarded - point.marks)`` against a total that
+    ``_awarded_from_verdicts`` had ALREADY group-capped, so rejecting one
+    member of an either/or pair took the whole group's mark away."""
+
+    def _cq(self, question, awarded_ids):
+        from lemely.core.schemas import AIMarkResponse
+        from lemely.io.correction_ai import _build_ai_corrected_from_verdicts
+
+        verdicts = [
+            PointVerdict(
+                point_id=p.id,
+                verdict="awarded" if p.id in awarded_ids else "withheld",
+                evidence_span="ev" if p.id in awarded_ids else "",
+            )
+            for p in question.answer_points
+        ]
+        mark = AIMarkResponse(
+            awarded_marks=len(awarded_ids),
+            confidence=0.95,
+            matched_point_ids=sorted(awarded_ids),
+            feedback="fb",
+            point_verdicts=verdicts,
+        )
+        return _build_ai_corrected_from_verdicts(question, "speed is 3.1 m/s ev", mark, None, None)
+
+    def test_a_rejected_either_or_member_leaves_the_surviving_member_its_mark(self):
+        from lemely.core.loose_schemas import AnswerPoint, CalculatedAnswer, Question, QuestionType
+
+        q = Question(
+            id="4a",
+            marks=1,
+            type=QuestionType.RECALL,
+            answer_points=[
+                AnswerPoint(
+                    id="p1", point="p1", marks=1, calculated_answer=CalculatedAnswer(value=2.5)
+                ),
+                AnswerPoint(id="p2", point="p2", marks=1, is_alternative=True),
+            ],
+        )
+        cq = self._cq(q, {"p1", "p2"})
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertEqual(cq.matched_point_ids, ["p2"])
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("unverified accuracy mark(s): p1", cq.review_reason or "")
+        self.assertEqual(
+            {pv.point_id: pv.verdict for pv in cq.point_verdicts},
+            {"p1": "unverifiable", "p2": "awarded"},
+        )
+
+    def test_a_rejected_pool_member_leaves_the_other_members_the_pool_cap(self):
+        from lemely.core.loose_schemas import AnswerPoint, CalculatedAnswer, Question, QuestionType
+
+        q = Question(
+            id="4b",
+            marks=2,
+            type=QuestionType.RECALL,
+            select_count=2,
+            answer_points=[
+                AnswerPoint(
+                    id="p1",
+                    point="p1",
+                    marks=1,
+                    is_optional=True,
+                    calculated_answer=CalculatedAnswer(value=9.81),
+                ),
+                AnswerPoint(id="p2", point="p2", marks=1, is_optional=True),
+                AnswerPoint(id="p3", point="p3", marks=1, is_optional=True),
+            ],
+        )
+        cq = self._cq(q, {"p1", "p2", "p3"})
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertEqual(cq.matched_point_ids, ["p2", "p3"])
+        self.assertTrue(cq.needs_teacher_review)
+
+    def test_a_rejected_independent_point_still_costs_its_tariff(self):
+        """The legacy subtraction and the recomputation agree when no group is
+        involved: this pins that F4 changes nothing there."""
+        from lemely.core.loose_schemas import AnswerPoint, CalculatedAnswer, Question, QuestionType
+
+        q = Question(
+            id="4c",
+            marks=2,
+            type=QuestionType.RECALL,
+            answer_points=[
+                AnswerPoint(
+                    id="p1", point="p1", marks=1, calculated_answer=CalculatedAnswer(value=2.5)
+                ),
+                AnswerPoint(id="p2", point="p2", marks=1),
+            ],
+        )
+        cq = self._cq(q, {"p1", "p2"})
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertEqual(cq.matched_point_ids, ["p2"])
+
+    def test_a_rejection_inside_a_clamped_total_recomputes_under_the_question_clamp(self):
+        """Task 5 carry-over: unstated pools are each bounded by the full
+        leftover, so group caps can sum past ``question.marks`` and only the
+        final clamp bounds the total. 3 marks, i1, pool A (a0, a1), i2, pool
+        B (b0, b1), no select_count: the leftover is 3 - 2 = 1, so each pool
+        caps at 1. Awarding i1, i2, a0 and b0 is 1 + 1 + 1 + 1 = 4, clamped
+        to 3. The backstop rejects b0; i1, i2 and a0 still earn 3. The old
+        subtraction took b0's tariff off the CLAMPED 3 and gave 2."""
+        cq = self._cq(self._two_pools(), {"i1", "i2", "a0", "b0"})
+        self.assertEqual(cq.awarded_marks, 3)
+        self.assertEqual(sorted(cq.matched_point_ids), ["a0", "i1", "i2"])
+        self.assertIn("unverified accuracy mark(s): b0", cq.review_reason or "")
+
+    def test_the_recomputed_total_keeps_the_question_clamp(self):
+        """Same scheme, b1 awarded too: after b0 is rejected the survivors
+        i1, i2, a0 and b1 are 1 + 1 + 1 + min(1, 1) = 4, which only the
+        ``question.marks`` clamp brings back to 3. A recomputation without
+        that clamp would award 4 on a 3-mark question."""
+        cq = self._cq(self._two_pools(), {"i1", "i2", "a0", "b0", "b1"})
+        self.assertEqual(cq.awarded_marks, 3)
+        self.assertEqual(sorted(cq.matched_point_ids), ["a0", "b1", "i1", "i2"])
+
+    def _two_pools(self):
+        from lemely.core.loose_schemas import AnswerPoint, CalculatedAnswer, Question, QuestionType
+
+        return Question.model_construct(
+            id="4d",
+            marks=3,
+            type=QuestionType.RECALL,
+            answer_points=[
+                AnswerPoint(id="i1", point="i1", marks=1),
+                AnswerPoint(id="a0", point="a0", marks=1, is_optional=True),
+                AnswerPoint(id="a1", point="a1", marks=1, is_optional=True),
+                AnswerPoint(id="i2", point="i2", marks=1),
+                AnswerPoint(
+                    id="b0",
+                    point="b0",
+                    marks=1,
+                    is_optional=True,
+                    calculated_answer=CalculatedAnswer(value=7.5),
+                ),
+                AnswerPoint(id="b1", point="b1", marks=1, is_optional=True),
+            ],
+            select_count=None,
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+
+
 class DuplicatePointVerdictTests(unittest.TestCase):
     """Task #30 review MUST-FIX 1: a repeated ``point_id`` in
     ``point_verdicts`` used to inflate marks (``_awarded_from_verdicts``

@@ -819,10 +819,13 @@ def _check_coherence(
        group contributes at least ``min(cap, its largest matched tariff)``
        and at most ``min(cap, sum of matched tariffs)`` -- the floor is
        capped too, so a group whose cap binds below its largest matched
-       tariff (a pool that shares its leftover with an earlier pool, or a
-       ``select_count`` room smaller than one member's own tariff) narrows
-       rather than inverts the interval. The legacy path passes no groups
-       and keeps the global rule (spec 2026-09-26 §1, out of scope):
+       tariff (a pool whose room is smaller than one member's own tariff:
+       an unstated pool's room is the whole leftover after the fixed points,
+       never shared; a ``select_count`` pool's room is what earlier
+       ``select_count`` pools left of it -- only stated-N pools consume a
+       shared room) narrows rather than inverts the interval. The legacy
+       path passes no groups and keeps the global rule (spec 2026-09-26 §1,
+       out of scope):
 
        ``implied_min = sum(primary marks) + max(non-additive marks, default 0)``
        ``implied_max = sum(primary marks) + sum(non-additive marks)``
@@ -1045,6 +1048,33 @@ def _scheme_groups(
     return points, groups
 
 
+def _group_capped_total(question: Question, awarded_ids: set[str]) -> tuple[int, int]:
+    """``(capped, additive)`` for the scheme points in ``awarded_ids``.
+
+    ``capped``: independent points add their tariff, each scheme group adds
+    ``min(group cap, awarded tariffs in the group)``, and the whole is capped
+    at ``question.marks``. ``additive``: the plain sum, likewise capped. One
+    function so that :func:`_awarded_from_verdicts` (the marker's claim) and
+    the post-backstop recomputation in
+    :func:`_build_ai_corrected_from_verdicts` (triage F4) cannot disagree.
+    """
+    points, groups = _scheme_groups(question)
+    additive = 0
+    independent = 0
+    by_group: dict[str, tuple[int, int]] = {}  # key -> (cap, awarded tariff sum)
+    for point, (key, cap) in zip(points, groups, strict=True):
+        if point.id not in awarded_ids:
+            continue
+        additive += point.marks
+        if key is None:
+            independent += point.marks
+        else:
+            prev_cap, prev_sum = by_group.get(key, (cap or 0, 0))
+            by_group[key] = (prev_cap, prev_sum + point.marks)
+    grouped = sum(min(cap, tariff_sum) for cap, tariff_sum in by_group.values())
+    return min(independent + grouped, question.marks), min(additive, question.marks)
+
+
 def _awarded_from_verdicts(
     question: Question, point_verdicts: list[PointVerdict]
 ) -> _VerdictTotals:
@@ -1085,26 +1115,8 @@ def _awarded_from_verdicts(
                 verdict=pv.verdict,
             )
     matched_point_ids = [pv.point_id for pv in kept if pv.verdict == "awarded"]
-    awarded_ids = set(matched_point_ids)
-    points, groups = _scheme_groups(question)
-    additive = 0
-    independent = 0
-    by_group: dict[str, tuple[int, int]] = {}  # key -> (cap, awarded tariff sum)
-    for point, (key, cap) in zip(points, groups, strict=True):
-        if point.id not in awarded_ids:
-            continue
-        additive += point.marks
-        if key is None:
-            independent += point.marks
-        else:
-            prev_cap, prev_sum = by_group.get(key, (cap or 0, 0))
-            by_group[key] = (prev_cap, prev_sum + point.marks)
-    grouped = sum(min(cap, tariff_sum) for cap, tariff_sum in by_group.values())
-    return _VerdictTotals(
-        capped=min(independent + grouped, question.marks),
-        additive=min(additive, question.marks),
-        matched_point_ids=matched_point_ids,
-    )
+    capped, additive = _group_capped_total(question, set(matched_point_ids))
+    return _VerdictTotals(capped=capped, additive=additive, matched_point_ids=matched_point_ids)
 
 
 #: I6 (US-013, D11): auto-added to feedback when a question earned full
@@ -1195,7 +1207,9 @@ def _build_ai_corrected_from_verdicts(
        (:func:`_verify_calculated_answers`), unconditionally run with
        ``equivalence_gate=True`` here -- I8's equivalence fallback is
        already gated by the SAME flag this whole branch requires, so there
-       is no independent "I8 without I6" state to preserve.
+       is no independent "I8 without I6" state to preserve. Its subtracted
+       total is discarded on this path; the mark is recomputed from the
+       surviving ids by :func:`_group_capped_total` (triage F4).
     4. `no_span` / M-point-outside-``working_out`` (:func:`_check_point_evidence`),
        queued under the `low_confidence` bucket per that function's
        docstring -- no new enum member, no new trigger.
@@ -1224,7 +1238,7 @@ def _build_ai_corrected_from_verdicts(
     coverage_mismatch = coverage_reason is not None
 
     pre_verify_point_ids = set(matched_point_ids)
-    awarded, matched_point_ids, rejections = _verify_calculated_answers(
+    _, matched_point_ids, rejections = _verify_calculated_answers(
         question,
         student_answer,
         student_working,
@@ -1233,6 +1247,17 @@ def _build_ai_corrected_from_verdicts(
         equivalence_gate=True,
     )
     value_mismatch = bool(rejections)
+    # Triage F4: the backstop's own arithmetic subtracts a rejected point's
+    # FULL tariff, which is right for the legacy path's additive total and
+    # wrong here, where `capped` is already group-capped -- rejecting one
+    # member of an either/or pair took the whole pair's mark away (probe:
+    # awarded 0 where the surviving alternative alone earns 1). The total is
+    # therefore recomputed from the SURVIVING ids with the same group rule
+    # the marker's claim was capped with, never adjusted by subtraction. The
+    # recomputation keeps the final `question.marks` clamp too: unstated pools
+    # are each bounded by the full leftover (triage F5), so their caps can
+    # sum past the question and only that clamp bounds the total.
+    awarded, _ = _group_capped_total(question, set(matched_point_ids))
 
     # Post-I6-review: a point ``_verify_calculated_answers`` rejects above is
     # dropped from ``matched_point_ids`` (so it contributes no marks), but its
