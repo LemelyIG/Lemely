@@ -2856,6 +2856,40 @@ def test_crop_route_serves_a_stored_scan_over_the_page_cap(
     assert bluish == 0 and reddish / total > 0.5, "wrong region on the over-cap scan"
 
 
+def test_crop_route_422s_for_a_scan_whose_page_count_pymupdf_cannot_read(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """One 40-page ``/Pages`` subtree named eight times under ``/Count 320``:
+    pymupdf's own ``page_count`` raises before any scan check runs. That is
+    a stored file no renderer here will take, not a server fault: the
+    route's fixed unreadable-scan 422, and nothing rendered."""
+    from unittest.mock import patch
+
+    import pymupdf
+
+    from tests.pdf_fakes import repeated_subtree_pdf
+
+    scan = repeated_subtree_pdf(40, times=8, count=320)
+    with pymupdf.open(stream=scan, filetype="pdf") as doc, pytest.raises(RuntimeError):
+        _ = doc.page_count
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=scan, page=0
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    with patch.object(pymupdf.Page, "get_pixmap") as get_pixmap:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    get_pixmap.assert_not_called()
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "Could not render this scan"
+
+
 @pytest.mark.parametrize(("extra_pages", "status"), [(0, 200), (1, 422)])
 def test_crop_route_bounds_the_page_count_at_max_crop_pages(
     extra_pages: int,

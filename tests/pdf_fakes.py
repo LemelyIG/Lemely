@@ -1362,6 +1362,31 @@ def empty_pages_nodes_pdf(pages: int, empties: int) -> bytes:
     return assemble_pdf(objects)
 
 
+def repeated_subtree_pdf(inner: int, *, times: int, count: int) -> bytes:
+    """A root whose ``/Kids`` names one ``/Pages`` subtree of ``inner`` pages
+    ``times`` times, declaring ``/Count count``.
+
+    Adapted from the reviewer's round-3 probe on triage F8: at
+    ``inner=40, times=8, count=320`` pymupdf's own ``page_count`` raises
+    (``Invalid number of pages``) while pdfium counts 320.
+    """
+    page_body = pdf_stream(b"", b"q 1 0 0 rg 60 500 120 250 re f Q")
+    objects: list[bytes] = [b"<< /Type /Catalog /Pages 2 0 R >>", b"", b""]
+    pages: list[int] = []
+    for _ in range(inner):
+        objects.append(page_body)
+        objects.append(
+            f"<< /Type /Page /Parent 3 0 R /MediaBox [0 0 595 842] "
+            f"/Contents {len(objects)} 0 R >>".encode()
+        )
+        pages.append(len(objects))
+    page_refs = " ".join(f"{p} 0 R" for p in pages)
+    objects[2] = f"<< /Type /Pages /Parent 2 0 R /Kids [{page_refs}] /Count {inner} >>".encode()
+    subtree_refs = " ".join(["3 0 R"] * times)
+    objects[1] = f"<< /Type /Pages /Kids [{subtree_refs}] /Count {count} >>".encode()
+    return assemble_pdf(objects)
+
+
 def deep_page_chain_pdf(depth: int) -> bytes:
     """One page under ``depth`` nested single-kid ``/Pages`` nodes.
 
@@ -1447,6 +1472,7 @@ __all__ = [
     "pdf_with_missing_kid_object",
     "real_smask_dimension_bomb_pdf",
     "repeated_kid_pdf",
+    "repeated_subtree_pdf",
     "repeated_xobject_pdf",
     "resources_entry_pointing_at_pages_node_pdf",
     "seeded_page_tree_bomb_pdf",
