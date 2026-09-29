@@ -69,6 +69,61 @@ class TestFlattening:
 
         assert entry["pages"] == 3
 
+    def test_each_page_is_closed_before_the_next_is_loaded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#267: the script held every rendered page until ``pdf.close()``,
+        the pattern ``298f30c7`` fixed in production (1037 MB vs 553 MB peak
+        on a 40-page scan). Same spy as ``tests/test_rasterise.py``.
+
+        ``_text_char_count`` is stubbed out: it opens two more
+        ``PdfDocument`` instances of its own (on ``source`` and ``out_pdf``)
+        to count characters, and each one calls ``get_page``/``close`` on the
+        same patched classes, which would otherwise mix unrelated load/close
+        events from those documents into the assertion below. Verified this
+        interference is real: without the stub, ``events`` has 18 entries
+        (6 from the render loop, 6 each from the two character counts) rather
+        than the 6 asserted here.
+        """
+        from unittest.mock import patch
+
+        import pypdfium2 as pdfium
+
+        module = _load_module()
+        monkeypatch.setattr(module, "_text_char_count", lambda _path: 0)
+        source = _pdf_with_text_layer(tmp_path / "source.pdf", pages=3)
+        events: list[tuple[str, int]] = []
+        real_get_page = pdfium.PdfDocument.get_page
+        real_close = pdfium.PdfPage.close
+        index_of: dict[int, int] = {}
+
+        def _get_page(doc: pdfium.PdfDocument, index: int) -> pdfium.PdfPage:
+            page = real_get_page(doc, index)
+            index_of[id(page)] = index
+            events.append(("load", index))
+            return page
+
+        def _close(page: pdfium.PdfPage, _by_parent: bool = False) -> None:
+            if id(page) in index_of:
+                events.append(("close", index_of.pop(id(page))))
+            real_close(page, _by_parent)
+
+        with (
+            patch.object(pdfium.PdfDocument, "get_page", _get_page),
+            patch.object(pdfium.PdfPage, "close", _close),
+        ):
+            entry = module.rasterise(source, tmp_path / "out" / "source.pdf")
+
+        assert entry["pages"] == 3
+        assert events == [
+            ("load", 0),
+            ("close", 0),
+            ("load", 1),
+            ("close", 1),
+            ("load", 2),
+            ("close", 2),
+        ]
+
 
 class TestDeterminism:
     def test_the_timestamps_that_break_determinism_are_actually_pinned(

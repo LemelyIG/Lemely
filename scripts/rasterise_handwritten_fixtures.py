@@ -96,7 +96,20 @@ def rasterise(source: Path, out_pdf: Path) -> dict[str, object]:
         # pypdfium2's scale is in units of 72dpi-points, so 150/72 renders at
         # 150 DPI for a page declared in points.
         scale = TARGET_DPI / 72.0
-        images = [page.render(scale=scale).to_pil().convert("RGB") for page in pdf]
+        # #267: close each page and its bitmap as soon as the RGB copy exists,
+        # as lemely/io/rasterise.py does -- a loaded page keeps its decoded
+        # images alive until it is closed, and pdf.close() alone held every
+        # page's at once (1037 MB vs 553 MB peak on a 40-page scan).
+        images = []
+        for page in pdf:
+            try:
+                bitmap = page.render(scale=scale)
+                try:
+                    images.append(bitmap.to_pil().convert("RGB"))
+                finally:
+                    bitmap.close()
+            finally:
+                page.close()
         page_count = len(images)
     finally:
         pdf.close()
