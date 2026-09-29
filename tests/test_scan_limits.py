@@ -41,6 +41,7 @@ from tests.pdf_fakes import (
     annot_ap_nested_bomb_pdf,
     assemble_pdf,
     bomb_on_second_page_pdf,
+    born_digital_text_pdf,
     contents_also_appearance_bomb_pdf,
     deep_plain_dict_chain_bomb_pdf,
     deep_xobject_chain_bomb_pdf,
@@ -257,6 +258,41 @@ class ContentWalkPageCapTests(unittest.TestCase):
         page_tree.assert_not_called()
         walk.assert_not_called()
 
+    def test_an_understated_count_does_not_dodge_the_page_cap(self) -> None:
+        """``/Count 1`` over 41 real kids: pymupdf believes the ``/Count``, so
+        the ``doc.page_count`` check above passes it; the page-tree descent
+        counts the kids and refuses it with the same page-cap message shape."""
+        data = wide_page_tree_pdf(MAX_SCAN_PAGES + 1, count=1)
+        with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+            self.assertEqual(doc.page_count, 1)
+        with self.assertRaises(ScanTooLargeError) as caught:
+            check_pdf_content_bytes(data)
+        self.assertIn(f"the limit is {MAX_SCAN_PAGES}.", str(caught.exception))
+
+    def test_a_huge_tree_under_an_understated_count_is_refused_early(self) -> None:
+        """20,000 real kids under ``/Count 1``: the descent reads at most a
+        cap's worth of nodes, and the ``/Parent`` climb never starts."""
+        counting = MagicMock(wraps=scan_limits._collection_refs)
+        climbing = MagicMock(wraps=scan_limits._parent)
+        with (
+            patch.object(scan_limits, "_collection_refs", counting),
+            patch.object(scan_limits, "_parent", climbing),
+            self.assertRaises(ScanTooLargeError),
+        ):
+            check_pdf_content_bytes(wide_page_tree_pdf(20_000, count=1))
+        # The root's /Kids (cut off one past the cap) is the one read made.
+        self.assertLessEqual(counting.call_count, MAX_SCAN_PAGES + 2)
+        climbing.assert_not_called()
+
+    def test_scans_at_the_page_cap_still_pass_the_bounded_tree_read(self) -> None:
+        """The bounded descent and climb refuse only what the cap refuses: a
+        born-digital 40-page PDF (text, one shared font) and a flat 40-page
+        tree both pass. The committed scan fixture is covered by
+        ``test_the_committed_fixture_passes_with_room_to_spare``."""
+        check_pdf_content_bytes(born_digital_text_pdf(pages=MAX_SCAN_PAGES))
+        check_pdf_content_bytes(_pdf_bytes(*([(595.0, 842.0)] * MAX_SCAN_PAGES)))
+        check_pdf_content_bytes(wide_page_tree_pdf(MAX_SCAN_PAGES, count=MAX_SCAN_PAGES))
+
 
 class PageScopedContentCheckTests(unittest.TestCase):
     """Triage F8: ``check_pdf_page_content`` is ``check_pdf_content`` for the
@@ -306,8 +342,8 @@ class PageScopedContentCheckTests(unittest.TestCase):
         callers share ``_check_page``, so both refuse."""
         real_page_tree = scan_limits._page_tree
 
-        def truncated(doc: pymupdf.Document, **kwargs: int) -> object:
-            return scan_limits._PageTree(xrefs=real_page_tree(doc, **kwargs).xrefs, holders={})
+        def truncated(doc: pymupdf.Document, *, bound: scan_limits._PageBound) -> object:
+            return scan_limits._PageTree(xrefs=real_page_tree(doc, bound=bound).xrefs, holders={})
 
         data = xobject_bomb_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)
         with patch.object(scan_limits, "_page_tree", truncated):
@@ -728,7 +764,7 @@ class AnnotationPatternType3BombTests(unittest.TestCase):
         check_pdf_content_bytes(data)  # must not raise
         doc = pymupdf.open(stream=data, filetype="pdf")
         try:
-            tree = scan_limits._page_tree(doc)
+            tree = scan_limits._page_tree(doc, bound=scan_limits._SCAN_PAGE_BOUND)
             walk = scan_limits._PageWalk(
                 page_index=0, tree=tree.xrefs, budget=scan_limits._ContentBudget()
             )
@@ -854,7 +890,7 @@ class PageTreeIdentityTests(unittest.TestCase):
                     self.assertNotIsInstance(ctx.exception, ScanTooLargeError)
                 doc = pymupdf.open(stream=data, filetype="pdf")
                 try:
-                    tree = scan_limits._page_tree(doc)
+                    tree = scan_limits._page_tree(doc, bound=scan_limits._SCAN_PAGE_BOUND)
                     walk = scan_limits._PageWalk(
                         page_index=0, tree=tree.xrefs, budget=scan_limits._ContentBudget()
                     )
@@ -905,7 +941,7 @@ class PageTreeIdentityTests(unittest.TestCase):
         # /Contents or another role could) still rejects.
         doc = pymupdf.open(stream=links_to_sibling_pages_pdf(), filetype="pdf")
         try:
-            tree = scan_limits._page_tree(doc)
+            tree = scan_limits._page_tree(doc, bound=scan_limits._SCAN_PAGE_BOUND)
             walk = scan_limits._PageWalk(
                 page_index=0, tree=tree.xrefs, budget=scan_limits._ContentBudget()
             )
@@ -955,7 +991,10 @@ class PageTreeIdentityTests(unittest.TestCase):
             check_pdf_content_bytes(data)
         doc = pymupdf.open(stream=data, filetype="pdf")
         try:
-            self.assertEqual(scan_limits._page_tree(doc).xrefs, frozenset({1, 2, 3}))
+            self.assertEqual(
+                scan_limits._page_tree(doc, bound=scan_limits._SCAN_PAGE_BOUND).xrefs,
+                frozenset({1, 2, 3}),
+            )
         finally:
             doc.close()
 
