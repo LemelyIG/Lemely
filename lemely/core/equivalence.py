@@ -814,6 +814,12 @@ def _rewrite_digit_suffixes(text: str) -> str:
         head, last = letters[:-1], letters[-1]
         if last in _SINGLE_LETTER_UNITS and int(digits) >= 2 and last not in families:
             return f"{head}{last}**{digits}"
+        if head and head in _ALLOWED_FUNCTIONS:
+            # `head` is a known function name (`sinx2` -> `sin`, `x`): a
+            # literal `*` join makes `sin` a bare symbol multiplied by the
+            # subscript, which no longer parses as a call to SymPy's `sin`
+            # (carried over from task 4 review's Minor). Keep it a call.
+            return f"{head}({last}_{digits})"
         return f"{head}*({last}_{digits})" if head else f"({last}_{digits})"
 
     wanted = {match.span() for match in matches}
