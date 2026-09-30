@@ -714,7 +714,7 @@ export function Grading() {
                       {!schemeFile ? (
                         <div className="text-data-sm text-ink-faint mt-1.5">
                           Attach a mark scheme unless you've already uploaded one for this
-                          paper — without either, there is nothing to mark against.
+                          paper. Without either, there is nothing to mark against.
                         </div>
                       ) : null}
                     </div>
