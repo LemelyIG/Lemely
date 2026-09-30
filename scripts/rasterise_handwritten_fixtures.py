@@ -84,7 +84,20 @@ def _text_char_count(path: Path) -> int:
     """
     pdf = pdfium.PdfDocument(str(path))
     try:
-        return sum(len(page.get_textpage().get_text_range()) for page in pdf)
+        total = 0
+        # Each text page and page is closed before the next page is loaded, as
+        # the render loop below closes its pages (#267): left open, every page
+        # stays loaded until pdf.close().
+        for page in pdf:
+            try:
+                textpage = page.get_textpage()
+                try:
+                    total += len(textpage.get_text_range())
+                finally:
+                    textpage.close()
+            finally:
+                page.close()
+        return total
     finally:
         pdf.close()
 

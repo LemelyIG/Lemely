@@ -124,6 +124,62 @@ class TestFlattening:
             ("close", 2),
         ]
 
+    def test_the_character_count_closes_each_page_before_loading_the_next(
+        self, tmp_path: Path
+    ) -> None:
+        """Final review, item 7: ``_text_char_count`` left every page and its
+        text page open until ``pdf.close()``, the pattern #267 removed from
+        the render loop. Each text page and page is closed before the next
+        page is loaded, and the count is unchanged."""
+        from unittest.mock import patch
+
+        import pypdfium2 as pdfium
+
+        module = _load_module()
+        source = _pdf_with_text_layer(tmp_path / "source.pdf", pages=3)
+        expected_chars = module._text_char_count(source)
+        events: list[tuple[str, int]] = []
+        real_get_page = pdfium.PdfDocument.get_page
+        real_page_close = pdfium.PdfPage.close
+        real_textpage_close = pdfium.PdfTextPage.close
+        index_of: dict[int, int] = {}
+
+        def _get_page(doc: pdfium.PdfDocument, index: int) -> pdfium.PdfPage:
+            page = real_get_page(doc, index)
+            index_of[id(page)] = index
+            events.append(("load", index))
+            return page
+
+        def _page_close(page: pdfium.PdfPage, _by_parent: bool = False) -> bool | None:
+            if id(page) in index_of:
+                events.append(("close", index_of.pop(id(page))))
+            return real_page_close(page, _by_parent)
+
+        def _textpage_close(textpage: pdfium.PdfTextPage, _by_parent: bool = False) -> bool | None:
+            if textpage.raw and id(textpage.page) in index_of:
+                events.append(("close text", index_of[id(textpage.page)]))
+            return real_textpage_close(textpage, _by_parent)
+
+        with (
+            patch.object(pdfium.PdfDocument, "get_page", _get_page),
+            patch.object(pdfium.PdfPage, "close", _page_close),
+            patch.object(pdfium.PdfTextPage, "close", _textpage_close),
+        ):
+            chars = module._text_char_count(source)
+
+        assert chars == expected_chars > 0
+        assert events == [
+            ("load", 0),
+            ("close text", 0),
+            ("close", 0),
+            ("load", 1),
+            ("close text", 1),
+            ("close", 1),
+            ("load", 2),
+            ("close text", 2),
+            ("close", 2),
+        ]
+
 
 class TestDeterminism:
     def test_the_timestamps_that_break_determinism_are_actually_pinned(
