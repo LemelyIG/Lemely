@@ -457,16 +457,20 @@ _EXIF_ORIENTATION_TAG = 0x0112
 def _upright_transpose(orientation: object) -> Transpose | None:
     """The transpose that turns a stored frame upright for an EXIF orientation.
 
-    The same table as Pillow's ``ImageOps.exif_transpose``; ``None`` for 1,
-    for a missing flag and for any value outside 2-8, which is what
-    ``exif_transpose`` leaves alone too. Not derived from Pillow because the
-    route applies it to a crop, and ``exif_transpose`` only takes a whole image.
+    The same table, and the same bare ``dict.get``, as Pillow's
+    ``ImageOps.exif_transpose``, which extraction uses. There is deliberately
+    no type check: a tag written as RATIONAL, FLOAT or DOUBLE parses to
+    ``IFDRational(6, 1)`` or ``6.0``, which hash equal to ``6`` and so turn
+    the page upright at extraction, and the crop must land in that same frame.
+    Anything that is not a key (1, a missing flag, 0, 9, a BYTE-typed tag)
+    gives ``None``, as ``exif_transpose`` leaves it alone. Not delegated to
+    Pillow because the route turns a crop, and ``exif_transpose`` only takes a
+    whole image.
     """
     from PIL import Image
 
-    if not isinstance(orientation, int) or isinstance(orientation, bool):
-        return None
-    return {
+    # Keyed by `object`, not `int`: the lookup takes whatever Pillow parsed.
+    table: dict[object, Transpose] = {
         2: Image.Transpose.FLIP_LEFT_RIGHT,
         3: Image.Transpose.ROTATE_180,
         4: Image.Transpose.FLIP_TOP_BOTTOM,
@@ -474,7 +478,8 @@ def _upright_transpose(orientation: object) -> Transpose | None:
         6: Image.Transpose.ROTATE_270,
         7: Image.Transpose.TRANSVERSE,
         8: Image.Transpose.ROTATE_90,
-    }.get(orientation)
+    }
+    return table.get(orientation)
 
 
 def _stored_frame_rect(

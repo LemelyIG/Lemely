@@ -1923,12 +1923,119 @@ def test_stored_frame_rect_matches_exif_transpose_for_every_orientation(orientat
         assert crop.tobytes() == oracle.crop(rect).tobytes(), (orientation, rect)
 
 
-def test_stored_frame_rect_ignores_an_unknown_orientation() -> None:
+def test_upright_transpose_looks_the_flag_up_the_way_exif_transpose_does() -> None:
+    """A dict lookup with no type guard: ``6.0`` and ``IFDRational(6, 1)`` hash
+    equal to ``6``, so both are the quarter turn, exactly as in Pillow."""
+    from PIL import Image
+    from PIL.TiffImagePlugin import IFDRational
+
     from lemely.web.routers.review import _stored_frame_rect, _upright_transpose
 
-    for junk in (0, 9, None, "6", 6.0):
-        assert _stored_frame_rect((1, 2, 3, 4), (10, 10), junk) == (1, 2, 3, 4)
-        assert _upright_transpose(junk) is None
+    for six in (6, 6.0, IFDRational(6, 1)):
+        assert _upright_transpose(six) == Image.Transpose.ROTATE_270, six
+        assert _stored_frame_rect((1, 2, 3, 4), (10, 20), six) != (1, 2, 3, 4), six
+    for junk in (None, 0, 1, 9, "6", b"\x06", 6.5):
+        assert _upright_transpose(junk) is None, junk
+        assert _stored_frame_rect((1, 2, 3, 4), (10, 10), junk) == (1, 2, 3, 4), junk
+
+
+def _jpeg_with_typed_orientation(stored: Image.Image, tag_type: int, value: bytes) -> bytes:
+    """A JPEG whose Orientation tag (0x0112) is written with a chosen TIFF type.
+
+    Pillow writes it as SHORT; other cameras and tools write BYTE, RATIONAL,
+    SRATIONAL, FLOAT or DOUBLE, and Pillow parses those to ``int``-unlike
+    values (``6.0``, ``IFDRational``) or to something ``exif_transpose``
+    ignores. One little-endian TIFF IFD entry, value inline or at offset 26.
+    """
+    import struct
+
+    inline = value if len(value) <= 4 else struct.pack("<I", 26)
+    ifd = (
+        struct.pack("<H", 1)
+        + struct.pack("<HHI", _EXIF_ORIENTATION_TAG, tag_type, 1)
+        + inline.ljust(4, b"\x00")
+        + struct.pack("<I", 0)
+    )
+    app1 = b"Exif\x00\x00II*\x00" + struct.pack("<I", 8) + ifd
+    if len(value) > 4:
+        app1 += value
+    buf = io.BytesIO()
+    stored.save(buf, format="JPEG", quality=95)
+    raw = buf.getvalue()
+    return raw[:2] + b"\xff\xe1" + struct.pack(">H", len(app1) + 2) + app1 + raw[2:]
+
+
+@pytest.mark.parametrize(
+    ("name", "tag_type", "value", "turned"),
+    [
+        ("SHORT", 3, b"\x06\x00", True),
+        ("RATIONAL", 5, b"\x06\x00\x00\x00\x01\x00\x00\x00", True),
+        ("SRATIONAL", 10, b"\x06\x00\x00\x00\x01\x00\x00\x00", True),
+        ("FLOAT", 11, b"\x00\x00\xc0\x40", True),
+        ("DOUBLE", 12, b"\x00\x00\x00\x00\x00\x00\x18\x40", True),
+        ("BYTE", 1, b"\x06", False),
+    ],
+)
+def test_crop_route_agrees_with_extraction_for_any_orientation_tag_type(
+    name: str, tag_type: int, value: bytes, turned: bool
+) -> None:
+    """Extraction's ``exif_transpose`` is a bare ``dict.get`` on whatever value
+    Pillow parsed, so an Orientation tag written as RATIONAL, FLOAT and so on
+    (``6.0``, ``IFDRational(6, 1)``) turns the page upright too. The crop route
+    must turn the same photos and ignore the same ones (BYTE parses to
+    something that is not a key), or its crop lands in the wrong frame.
+    ``turned`` pins which side of that line each type falls, so a case cannot
+    pass by both sides ignoring it."""
+    from PIL import ImageOps
+
+    from lemely.web.routers.review import _crop_image_scan
+
+    stored = Image.open(io.BytesIO(_synthetic_phone_photo(6)))
+    stored.load()
+    scan = _jpeg_with_typed_orientation(stored, tag_type, value)
+
+    frame = ImageOps.exif_transpose(Image.open(io.BytesIO(scan)))
+    assert (frame.size == _PHOTO_UPRIGHT_SIZE) is turned, (name, frame.size)
+
+    got = _crop_image_scan(scan, SourceBox(page=0, box=list(_MARK_BOX)), item_id="typed")
+    got_image = Image.open(io.BytesIO(got)).convert("RGB")
+    want = _expected_upright_crop(scan)
+    assert got_image.size == want.size, (name, got_image.size, want.size)
+    assert got_image.tobytes() == want.tobytes(), name
+
+
+@pytest.mark.parametrize("orientation", [6, 8])
+def test_a_flagged_photo_over_the_crop_ceiling_is_fitted_and_upright(orientation: int) -> None:
+    """A region over ``_MAX_CROP_PX`` is resampled down before it is turned.
+    The size and the way up are checked (not bytes: the resample runs on the
+    stored frame here). The whole 2600x2000 upright page is 5.2 Mpx, over the
+    4 Mpx ceiling; the green square is its top-left corner."""
+    from PIL import ImageDraw
+
+    from lemely.web.routers.review import _MAX_CROP_PX, _crop_image_scan
+
+    width, height = 2600, 2000
+    assert width * height > _MAX_CROP_PX
+    upright = Image.new("RGB", (width, height), (255, 255, 255))
+    ImageDraw.Draw(upright).rectangle((0, 0, 299, 299), fill=_CORNER_RGB)
+    stored = upright.transpose(_STORED_FRAME_FOR[orientation])
+    exif = Image.Exif()
+    exif[_EXIF_ORIENTATION_TAG] = orientation
+    buf = io.BytesIO()
+    stored.save(buf, format="JPEG", exif=exif.tobytes(), quality=95)
+
+    out = _crop_image_scan(buf.getvalue(), SourceBox(page=0, box=[0, 0, 1000, 1000]), item_id="big")
+
+    got = Image.open(io.BytesIO(out)).convert("RGB")
+    assert got.width > got.height, got.size
+    assert abs(got.width / got.height - width / height) < 0.02, got.size
+
+    def is_green(x: float, y: float) -> bool:
+        r, g, b = got.getpixel((int(x * got.width), int(y * got.height)))
+        return g > 200 and r < 80 and b < 80
+
+    assert is_green(0.03, 0.03), "green corner is not at the top-left"
+    assert not is_green(0.97, 0.03) and not is_green(0.03, 0.97) and not is_green(0.97, 0.97)
 
 
 _PEAK_RSS_CHILD = """
@@ -1950,8 +2057,11 @@ data = open(sys.argv[1], "rb").read()
 box = SourceBox(page=0, box=[100, 100, 300, 400])
 # A forked child inherits its parent's peak, so reset the high-water mark
 # (5 = CLEAR_REFS_MM_HIWATER_RSS) before measuring.
-with open("/proc/self/clear_refs", "w") as clear:
-    clear.write("5")
+try:
+    with open("/proc/self/clear_refs", "w") as clear:
+        clear.write("5")
+except OSError:
+    raise SystemExit(77)  # cannot reset the high-water mark here: the parent skips
 before = peak_bytes()
 png = _crop_image_scan(data, box, item_id="mem")
 print(peak_bytes() - before, len(png))
@@ -1985,8 +2095,11 @@ def test_crop_of_a_large_flagged_photo_makes_no_second_full_size_copy(tmp_path: 
         cwd=root,
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
+    if proc.returncode == 77:
+        pytest.skip("this environment does not let a process reset its own peak RSS")
+    assert proc.returncode == 0, proc.stderr
     growth, png_len = (int(v) for v in proc.stdout.split())
     full_copy = width * height * 4
     assert png_len > 0
