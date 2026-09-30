@@ -67,6 +67,13 @@ MAX_PDF_OBJECTS = 50_000
 #: and 16 MB keeps a compressed object no worse than an uncompressed one the
 #: 25 MB upload cap already admits.
 MAX_OBJECT_STREAM_BYTES = 16_000_000
+#: Task 9c review round 2: how many tokens (object headers included) the raw
+#: object-stream scan (:func:`check_object_stream_bytes`) may read. The
+#: committed PDFs need at most 8,429; a dense 40-page born-digital file with
+#: 800 annotations, 95,357. Crafted dictionaries can hold millions (25 MB of
+#: names took the tokenizer 17 s), so past this the file is refused as too
+#: complex to check -- at ~1.6 us a token, a second or two at most.
+MAX_PRESCAN_TOKENS = 1_000_000
 #: The target after any downscale. A4 at 400 DPI is 3307x4677 = 15.5 Mpx,
 #: the top of what a document scanner produces; the corpus at 200 DPI is
 #: 1655x2339 = 3.87 Mpx.
@@ -197,6 +204,10 @@ _OBJECT_STREAMS_MESSAGE = (
     "This PDF's compressed internal data is far larger than a scanned paper's "
     f"(over {MAX_OBJECT_STREAM_BYTES // 1_000_000} MB once decompressed). "
     "Re-export it as a plain scan."
+)
+#: The raw scan ran past :data:`MAX_PRESCAN_TOKENS`.
+_STRUCTURE_TOO_COMPLEX_MESSAGE = (
+    "This PDF's internal structure is too complex to check safely. Re-export it as a plain scan."
 )
 #: An object stream uses an encoding the bounded inflate cannot measure.
 _OBJECT_STREAM_ENCODING_MESSAGE = (
@@ -988,6 +999,220 @@ def _check_image_and_masks(
     _check_masks(doc, xref, smask_xref=smask_xref, page_index=page_index)
 
 
+#: PDF whitespace (ISO 32000-1 Table 1) and the delimiters that end a token.
+_WS = rb"\x00\t\n\x0c\r "
+_REGULAR = rb"[^\x00\t\n\x0c\r ()<>\[\]{}/%]"
+#: An indirect-object header: ``12 0 obj``, "obj" a whole keyword.
+_OBJ_HEADER_RE = re.compile(
+    rb"(?<![0-9])[0-9]+[" + _WS + rb"]+[0-9]+[" + _WS + rb"]+obj(?!" + _REGULAR + rb")"
+)
+#: One PDF token; a literal string's ``(`` is followed by hand (nesting, escapes).
+_TOKEN_RE = re.compile(
+    rb"(?P<skip>(?:[" + _WS + rb"]+|%[^\r\n]*)+)"
+    rb"|(?P<open><<)|(?P<close>>>)"
+    rb"|(?P<hex><[0-9A-Fa-f" + _WS + rb"]*>)"
+    rb"|(?P<string>\()"
+    rb"|(?P<name>/" + _REGULAR + rb"*)"
+    rb"|(?P<bracket>[\[\]])"
+    rb"|(?P<word>" + _REGULAR + rb"+)"
+    rb"|(?P<other>.)",
+    re.DOTALL,
+)
+_STRING_SPECIAL_RE = re.compile(rb"[()\\]")
+_NAME_ESCAPE_RE = re.compile(rb"#([0-9A-Fa-f]{2})")
+_ENDSTREAM_AT_RE = re.compile(rb"[" + _WS + rb"]*endstream")
+
+
+@dataclass
+class _ScanBudget:
+    """Tokens the raw object-stream scan may still read (:data:`MAX_PRESCAN_TOKENS`)."""
+
+    left: int = MAX_PRESCAN_TOKENS
+
+    def spend(self) -> None:
+        self.left -= 1
+        if self.left < 0:
+            raise ScanTooLargeError(_STRUCTURE_TOO_COMPLEX_MESSAGE)
+
+
+def _pdf_name(token: bytes) -> bytes:
+    """A name token's value, ``#xx`` escapes decoded as MuPDF's lexer does."""
+    return _NAME_ESCAPE_RE.sub(lambda m: bytes([int(m.group(1), 16)]), token[1:])
+
+
+def _next_token(data: bytes, pos: int, budget: _ScanBudget) -> tuple[str, bytes, int]:
+    """The token at ``pos`` after whitespace and comments: ``(kind, text, end)``.
+
+    ``kind`` is ``"open"``, ``"close"``, ``"hex"``, ``"string"``, ``"name"``,
+    ``"bracket"``, ``"word"`` (numbers, ``R``, keywords), ``"other"`` or
+    ``"eof"``. A literal string is skipped whole, nested parentheses and
+    backslash escapes included, jumping between its special characters.
+    """
+    while True:
+        match = _TOKEN_RE.match(data, pos)
+        if match is None:
+            return "eof", b"", len(data)
+        kind = match.lastgroup or "other"
+        if kind == "skip":
+            pos = match.end()
+            continue
+        budget.spend()
+        if kind != "string":
+            return kind, match.group(), match.end()
+        depth, cursor = 1, match.end()
+        while depth:
+            special = _STRING_SPECIAL_RE.search(data, cursor)
+            if special is None:
+                return "string", b"", len(data)
+            budget.spend()  # each parenthesis or escape in a string counts
+            char = data[special.start()]
+            cursor = special.end() + (1 if char == 0x5C else 0)  # a backslash escapes one byte
+            depth += 1 if char == 0x28 else -1 if char == 0x29 else 0
+        return "string", b"", cursor
+
+
+def _stream_dict(
+    data: bytes, pos: int, budget: _ScanBudget
+) -> tuple[dict[bytes, tuple[str, object]], int] | None:
+    """Parse the dictionary at ``pos``; its top-level entries and where it ends.
+
+    Only what the object-stream scan needs is kept, per top-level key: a
+    name value, a number, a reference (``N G R``), or a list of names for an
+    array. ``None`` when ``pos`` does not start a dictionary.
+    """
+    kind, _, pos = _next_token(data, pos, budget)
+    if kind != "open":
+        return None
+    entries: dict[bytes, tuple[str, object]] = {}
+    depth, key = 1, None
+    while depth:
+        kind, text, pos = _next_token(data, pos, budget)
+        if kind == "eof":
+            return entries, pos
+        if kind == "open":
+            depth += 1
+            key = None
+        elif kind == "close":
+            depth -= 1
+        elif depth == 1 and key is None:
+            key = _pdf_name(text) if kind == "name" else None
+        elif depth == 1 and key is not None:
+            if kind == "name":
+                entries[key] = ("name", _pdf_name(text))
+            elif kind == "word" and text.isdigit():
+                after_kind, after, after_end = _next_token(data, pos, budget)
+                last_kind, last, last_end = _next_token(data, after_end, budget)
+                if after_kind == "word" and after.isdigit() and (last_kind, last) == ("word", b"R"):
+                    entries[key] = ("ref", None)
+                    pos = last_end
+                else:
+                    entries[key] = ("number", int(text))
+            elif kind == "bracket" and text == b"[":
+                names: list[bytes] = []
+                simple = True
+                while True:
+                    kind, text, pos = _next_token(data, pos, budget)
+                    if kind in ("eof", "close") or (kind, text) == ("bracket", b"]"):
+                        break
+                    if kind == "name":
+                        names.append(_pdf_name(text))
+                    else:
+                        simple = False
+                entries[key] = ("array", names if simple else None)
+            else:
+                entries[key] = ("other", None)
+            key = None
+    return entries, pos
+
+
+def check_object_stream_bytes(data: bytes) -> None:
+    """Bound a PDF's object streams from its raw bytes, before any reader opens it.
+
+    Task 9c review round 2. With a damaged xref, MuPDF repairs it while the
+    file is being OPENED, and repair loads every object stream it finds --
+    parsing each whole, container-mates and all -- so a 20 KB file took a
+    bare ``pymupdf.open`` to 459 MB, before :func:`_check_object_streams`
+    (which reads the opened xref) can run. So the streams are found here, in
+    the raw bytes, the way repair finds them: an indirect object whose
+    dictionary names ``/Type /ObjStm`` directly (the name may be spelled
+    ``/Type/ObjStm``, split by whitespace or a comment, or ``#xx``-escaped;
+    this parses it as MuPDF's lexer does). Each one's data is taken by a
+    direct ``/Length`` when ``endstream`` follows it, else up to the next
+    ``endstream``, and measured with the bounded inflate: unfiltered it is
+    its length, a single ``/FlateDecode`` or ``/Fl`` (bare or in a
+    one-element array) is inflated in bounded chunks, anything else
+    (another filter, a chain, a ``/Filter`` given by reference) cannot be
+    measured and is refused (:data:`_OBJECT_STREAM_ENCODING_MESSAGE`). Past
+    :data:`MAX_OBJECT_STREAM_BYTES` in total the file is refused
+    (:data:`_OBJECT_STREAMS_MESSAGE`).
+
+    Past :data:`MAX_PRESCAN_TOKENS` tokens the file is refused as too
+    complex to check (:data:`_STRUCTURE_TOO_COMPLEX_MESSAGE`).
+
+    O(file bytes): each byte is tokenized at most once -- a header found
+    inside a span already parsed (a dictionary, or a stream's data) is
+    skipped, since its dictionary is part of that span -- and a stream's
+    data is inflated in bounded chunks, never held decoded. Anything that
+    only looks like a header inside a string or a comment can only add to
+    the total, never hide a container from it.
+
+    Upload, extraction and the whole-document check run this first; a
+    caller that opens a stored PDF with MuPDF itself must run it before
+    ``pymupdf.open``.
+    """
+    total = 0
+    scanned_to = 0
+    budget = _ScanBudget()
+    for header in _OBJ_HEADER_RE.finditer(data):
+        budget.spend()
+        if header.start() < scanned_to:
+            continue
+        parsed = _stream_dict(data, header.end(), budget)
+        if parsed is None:
+            scanned_to = header.end()
+            continue
+        entries, dict_end = parsed
+        scanned_to = dict_end
+        kind, keyword, start = _next_token(data, dict_end, budget)
+        if (kind, keyword) != ("word", b"stream"):
+            continue
+        if data[start : start + 2] == b"\r\n":
+            start += 2
+        elif data[start : start + 1] in (b"\n", b"\r"):
+            start += 1
+        length = entries.get(b"Length")
+        end = -1
+        if length and length[0] == "number":
+            candidate = start + int(length[1])  # type: ignore[call-overload]
+            if candidate <= len(data) and _ENDSTREAM_AT_RE.match(data, candidate):
+                end = candidate
+        if end < 0:
+            found = data.find(b"endstream", start)
+            end = found if found >= 0 else len(data)
+        scanned_to = max(scanned_to, end)
+        if entries.get(b"Type") != ("name", b"ObjStm"):
+            continue
+        filters = entries.get(b"Filter")
+        raw = data[start:end]
+        if filters is None or filters == ("array", []):
+            size = len(raw)
+        elif filters in (("name", b"FlateDecode"), ("name", b"Fl")) or filters in (
+            ("array", [b"FlateDecode"]),
+            ("array", [b"Fl"]),
+        ):
+            try:
+                size = _bounded_inflate_size(
+                    raw, budget=MAX_OBJECT_STREAM_BYTES - total, page_index=0
+                )
+            except ScanTooLargeError as exc:
+                raise ScanTooLargeError(_OBJECT_STREAMS_MESSAGE) from exc
+        else:
+            raise ScanRejectedError(_OBJECT_STREAM_ENCODING_MESSAGE)
+        total += size
+        if total > MAX_OBJECT_STREAM_BYTES:
+            raise ScanTooLargeError(_OBJECT_STREAMS_MESSAGE)
+
+
 def _check_object_streams(doc: pymupdf.Document) -> None:
     """Bound the file's object count and its object streams, before any object loads.
 
@@ -1245,6 +1470,7 @@ def check_pdf_content_bytes(data: bytes, *, pdfium_pages: int | None = None) -> 
     ``pdfium_pages``: pdfium's page count for the same bytes, when the
     caller has it, so the two readers' counts are compared.
     """
+    check_object_stream_bytes(data)  # before any open: repair parses containers at open
     _check_opened(
         lambda: pymupdf.open(stream=data, filetype="pdf"),  # type: ignore[no-untyped-call]
         pdfium_pages,
@@ -1305,6 +1531,7 @@ def canonical_pdf_bytes(data: bytes) -> bytes:
     page in is a :class:`ValueError`, extraction's contract for an empty
     PDF (MuPDF will not write one).
     """
+    check_object_stream_bytes(data)  # before any open: repair parses containers at open
     try:
         doc = pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
     except Exception as exc:
@@ -1446,6 +1673,9 @@ def check_scan_bytes(data: bytes) -> None:
     read (:func:`check_pdf_content`).
     """
     if looks_like_pdf(data):
+        # Task 9c review round 2: object streams first, from the raw bytes --
+        # MuPDF's xref repair parses them while opening, before any check.
+        check_object_stream_bytes(data)
         # Task 11b: geometry first, then content -- with pdfium's count, so
         # a page only pdfium would render is not left unmeasured (Task 9b).
         check_pdf_content_bytes(data, pdfium_pages=_pdfium_plan(data))

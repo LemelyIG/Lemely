@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import time
 import tracemalloc
@@ -27,6 +28,7 @@ from lemely.io.scan_limits import (
     ScanTooLargeError,
     ScanUnsupportedEncodingError,
     canonical_pdf_bytes,
+    check_object_stream_bytes,
     check_pdf_content_bytes,
     check_pdf_page_content,
     check_scan_bytes,
@@ -85,6 +87,7 @@ from tests.pdf_fakes import (
     repeated_xobject_pdf,
     resources_entry_pointing_at_pages_node_pdf,
     seeded_page_tree_bomb_pdf,
+    shared_container_broken_xref_pdf,
     sibling_page_as_soft_mask_bomb_pdf,
     sibling_page_listed_as_annotation_pdf,
     smask_bomb_pdf,
@@ -1421,6 +1424,102 @@ class CanonicalPdfBytesTests(unittest.TestCase):
             canonical_pdf_bytes(many_objects_pdf(scan_limits.MAX_PDF_OBJECTS))
         tobytes.assert_not_called()
         canonical_pdf_bytes(many_objects_pdf(1_000))
+
+
+class RawObjectStreamTests(unittest.TestCase):
+    """Task 9c review round 2: with a broken xref, MuPDF's repair loads every
+    object stream it finds while the file is being OPENED, container-mates
+    and all -- before any check can run. So object streams are found and
+    bounded in the raw bytes, before any reader opens the file."""
+
+    _BOMB = scan_limits.MAX_OBJECT_STREAM_BYTES // 2 + 1_000
+
+    def _trapped(self) -> contextlib.ExitStack:
+        """Fail the test if any reader opens the file."""
+        stack = contextlib.ExitStack()
+        for target, name in ((scan_limits.pymupdf, "open"), (scan_limits.pdfium, "PdfDocument")):
+            stack.enter_context(
+                patch.object(target, name, side_effect=AssertionError(f"{name} was called"))
+            )
+        return stack
+
+    def test_a_container_bomb_is_refused_before_any_reader_opens_the_file(self) -> None:
+        """A 16 KB file whose page dict shares a Flate object stream with an
+        array that inflates past the bound; startxref is off, so MuPDF's
+        repair would parse the whole container at open (459 MB for the
+        reviewer's 10M-element case). Refused from the raw bytes, however
+        the container's dictionary is spelled."""
+        variants = {
+            "plain": {},
+            "no space": {"type_entry": b"/Type/ObjStm"},
+            "whitespace and a comment": {"type_entry": b"/Type \r\n  % note\n  /ObjStm"},
+            "escaped name": {"type_entry": b"/Type /Obj#53tm"},
+            "keywords inside a string first": {
+                "type_entry": b"/Note (stream endobj 1 0 obj \\) x) /Type /ObjStm"
+            },
+            "filter array": {"filter_entry": b"/Filter [ /FlateDecode ]"},
+            "abbreviated filter in an array": {"filter_entry": b"/Filter[/Fl]"},
+            "length too long": {"length_delta": 40},
+            "length too short": {"length_delta": -40},
+        }
+        for label, kwargs in variants.items():
+            data = shared_container_broken_xref_pdf(self._BOMB, **kwargs)  # type: ignore[arg-type]
+            self.assertLess(len(data), 100_000)
+            for check in (
+                check_scan_bytes,
+                check_pdf_content_bytes,
+                canonical_pdf_bytes,
+                check_object_stream_bytes,
+            ):
+                with self.subTest(label, check=check.__name__), self._trapped():
+                    with self.assertRaises(ScanTooLargeError) as caught:
+                        check(data)
+                    self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
+
+    def test_a_scan_past_the_token_budget_is_refused_as_too_complex(self) -> None:
+        """The raw scan reads every dictionary token by token; one crafted
+        dictionary of 600,000 names (1.2M tokens) is refused once past
+        ``MAX_PRESCAN_TOKENS``, rather than costing seconds per upload."""
+        data = b"%PDF-1.7\n1 0 obj\n<<" + b"/K 0 " * 600_000 + b">>\nendobj\n"
+        self.assertGreater(1_200_000, scan_limits.MAX_PRESCAN_TOKENS)
+        with self._trapped(), self.assertRaises(ScanTooLargeError) as caught:
+            check_object_stream_bytes(data)
+        self.assertEqual(str(caught.exception), scan_limits._STRUCTURE_TOO_COMPLEX_MESSAGE)
+
+    def test_a_container_the_bounded_inflate_cannot_measure_is_refused(self) -> None:
+        data = shared_container_broken_xref_pdf(1_000, filter_entry=b"/Filter /LZWDecode")
+        with self._trapped(), self.assertRaises(ScanRejectedError) as caught:
+            check_object_stream_bytes(data)
+        self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAM_ENCODING_MESSAGE)
+
+    def test_ordinary_object_streams_pass(self) -> None:
+        """Object streams as producers write them -- pymupdf's use_objstms
+        save of a 40-page born-digital file, a merge of image scans with an
+        xref stream and object streams, and the same small shared container
+        under a broken xref -- pass the raw scan and upload."""
+        with pymupdf.open(
+            stream=born_digital_text_pdf(pages=MAX_SCAN_PAGES), filetype="pdf"
+        ) as doc:  # type: ignore[no-untyped-call]
+            born_digital: bytes = doc.tobytes(garbage=1, use_objstms=1)  # type: ignore[no-untyped-call]
+        merged = pymupdf.open()  # type: ignore[no-untyped-call]
+        for _ in range(12):
+            scan = pymupdf.open()  # type: ignore[no-untyped-call]
+            page = scan.new_page(width=595, height=842)
+            pixmap = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 200, 280), 0)
+            page.insert_image(page.rect, stream=pixmap.tobytes("png"))
+            merged.insert_pdf(scan)
+            scan.close()
+        merged_objstm: bytes = merged.tobytes(garbage=1, deflate=True, use_objstms=1)
+        merged.close()
+        for label, data in (
+            ("born-digital", born_digital),
+            ("merged scans", merged_objstm),
+            ("small shared container, broken xref", shared_container_broken_xref_pdf(1_000)),
+        ):
+            with self.subTest(label):
+                self.assertIn(b"/ObjStm", data)
+                check_object_stream_bytes(data)
+                check_scan_bytes(data)
 
 
 class RewriteFidelityTests(unittest.TestCase):

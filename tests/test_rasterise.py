@@ -28,6 +28,7 @@ from tests.pdf_fakes import (
     page_bomb_pdf,
     page_kids_bomb_pdf,
     page_kids_equal_count_bomb_pdf,
+    shared_container_broken_xref_pdf,
     uncounted_bomb_pdf,
     xref_repair_bomb_pdf,
 )
@@ -364,6 +365,25 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             off_page_object_pdf(scan_limits.MAX_OBJECT_STREAM_BYTES // 2 + 1_000, compressed=True)
         )
         with (
+            patch.object(rasterise_module.pdfium, "PdfDocument") as document,
+            self.assertRaises(ScanTooLargeError) as caught,
+        ):
+            rasterise_pdf_to_pages(path)
+        document.assert_not_called()
+        self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
+
+    def test_a_container_bomb_under_a_broken_xref_is_refused_before_any_reader_opens_it(
+        self,
+    ) -> None:
+        """Task 9c review round 2: MuPDF's xref repair would parse the whole
+        object stream while opening the file, so extraction bounds object
+        streams in the raw bytes before either reader opens it."""
+        path = Path(self.tmp) / "broken-xref-container.pdf"
+        path.write_bytes(
+            shared_container_broken_xref_pdf(scan_limits.MAX_OBJECT_STREAM_BYTES // 2 + 1_000)
+        )
+        with (
+            patch.object(scan_limits.pymupdf, "open", side_effect=AssertionError("MuPDF opened")),
             patch.object(rasterise_module.pdfium, "PdfDocument") as document,
             self.assertRaises(ScanTooLargeError) as caught,
         ):
