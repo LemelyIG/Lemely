@@ -989,7 +989,7 @@ def test_grade_paper_forwards_marking_options(monkeypatch: pytest.MonkeyPatch) -
     A test of the default alone cannot detect an unreachable flag; US-005b's
     original criteria passed while nothing could turn the gate on.
     """
-    from lemely.runtime.config import MarkingOptions
+    from lemely.runtime.config import IntegritySettings, MarkingOptions
     from lemely.web.services import grading as grading_service
 
     seen: dict[str, object] = {}
@@ -1001,12 +1001,14 @@ def test_grade_paper_forwards_marking_options(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(grading_service, "correct_paper", _spy)
     opts = MarkingOptions(equivalence_gate=True, ecf_substitution=True)
     with pytest.raises(_StopForTest):
-        grading_service.grade_paper(_scheme(), {}, options=opts)
+        grading_service.grade_paper(
+            _scheme(), {}, integrity_settings=IntegritySettings(), options=opts
+        )
     assert seen["options"] == opts
 
 
 def test_grade_paper_defaults_marking_options_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    from lemely.runtime.config import MarkingOptions
+    from lemely.runtime.config import IntegritySettings, MarkingOptions
     from lemely.web.services import grading as grading_service
 
     seen: dict[str, object] = {}
@@ -1017,7 +1019,7 @@ def test_grade_paper_defaults_marking_options_off(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(grading_service, "correct_paper", _spy)
     with pytest.raises(_StopForTest):
-        grading_service.grade_paper(_scheme(), {})
+        grading_service.grade_paper(_scheme(), {}, integrity_settings=IntegritySettings())
     assert seen["options"] == MarkingOptions()
 
 

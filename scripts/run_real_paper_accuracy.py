@@ -217,6 +217,7 @@ def run_or_replay_fixture(
         mark_scheme,
         extracted,
         gemini_client=gemini_client,
+        integrity_settings=settings.integrity,
         options=settings.grading.marking_options(),
     )
 

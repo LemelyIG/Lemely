@@ -149,6 +149,58 @@ def test_every_marking_call_passes_options() -> None:
     )
 
 
+def find_grade_paper_calls_without_integrity_settings(
+    source: str, filename: str = "<string>"
+) -> list[str]:
+    """``grade_paper`` calls in *source* that do not pass the operator's ``[integrity]``.
+
+    #259: a caller that omits ``integrity_settings=`` -- or passes a literal
+    ``IntegritySettings(...)`` -- checks every paper under the defaults
+    (plagiarism on), whatever the operator configured.
+    """
+    offending: list[str] = []
+    for node in ast.walk(ast.parse(source, filename=filename)):
+        if not isinstance(node, ast.Call) or _called_name(node) != "grade_paper":
+            continue
+        keyword = next((kw for kw in node.keywords if kw.arg == "integrity_settings"), None)
+        if keyword is None or (
+            isinstance(keyword.value, ast.Call)
+            and _called_name(keyword.value) == "IntegritySettings"
+        ):
+            offending.append(f"{filename}:{node.lineno} grade_paper(...)")
+    return offending
+
+
+def test_every_grade_paper_call_passes_the_operators_integrity_settings() -> None:
+    """Final review, item 6: #259 fixed the two web callers of ``grade_paper``,
+    but the offline accuracy script still graded under the defaults. Every
+    caller in ``lemely/`` and ``scripts/`` passes ``integrity_settings=``,
+    read from settings -- the script included, which no behavioural test
+    drives."""
+    offending: list[str] = []
+    for root_name in _SCAN_ROOTS:
+        for path in sorted((_ROOT / root_name).rglob("*.py")):
+            rel = path.relative_to(_ROOT)
+            offending.extend(
+                find_grade_paper_calls_without_integrity_settings(
+                    path.read_text(encoding="utf-8"), filename=str(rel)
+                )
+            )
+    assert not offending, "grade_paper calls without the operator's integrity_settings:\n" + (
+        "\n".join(offending)
+    )
+
+
+def test_integrity_matcher_flags_a_missing_or_literal_integrity_settings() -> None:
+    offending = find_grade_paper_calls_without_integrity_settings(
+        "grade_paper(ms, ans, options=o)\n"
+        "grade_paper(ms, ans, options=o, integrity_settings=IntegritySettings())\n"
+        "grade_paper(ms, ans, options=o, integrity_settings=settings.integrity)\n",
+        filename="probe.py",
+    )
+    assert offending == ["probe.py:1 grade_paper(...)", "probe.py:2 grade_paper(...)"]
+
+
 def test_the_guard_sees_every_known_call_site() -> None:
     """The guard is not vacuous: it finds exactly the known call sites.
 

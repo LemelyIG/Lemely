@@ -62,7 +62,7 @@ def grade_paper(
     student_id: str | None = None,
     history_store: HistoryStoreProtocol | None = None,
     boundary_store: GradeBoundaryStore | None = None,
-    integrity_settings: IntegritySettings | None = None,
+    integrity_settings: IntegritySettings,
     options: MarkingOptions = MarkingOptions(),  # noqa: B008 -- frozen, immutable dataclass
 ) -> AccuracyReport:
     """Grade a paper and optionally record it to a student's history.
@@ -83,8 +83,9 @@ def grade_paper(
         history_store: Store used to persist the record; required for recording.
         boundary_store: Grade-boundary source; a default store is used if omitted.
         integrity_settings: Plagiarism advisory-flag settings (F4 removed the
-            AI-detection half); the defensive default (plagiarism on) applies
-            if omitted.
+            AI-detection half). Required (#259): callers pass
+            ``settings.integrity``, so no caller can silently grade under the
+            defaults instead of the operator's ``[integrity]``.
         options: The marking flags, forwarded to `correct_paper`. Defaults to
             both off, so behaviour is unchanged unless a caller opts in.
             Callers pass `settings.grading.marking_options()`.
@@ -103,7 +104,7 @@ def grade_paper(
         correction,
         mark_scheme,
         gemini_client=gemini_client,
-        settings=integrity_settings or IntegritySettings(),
+        settings=integrity_settings,
     )
     # P4.4: fill CorrectedQuestion.topic before summarize_weaknesses groups on
     # it — see lemely.db.attempt_repo's module docstring for why this must
