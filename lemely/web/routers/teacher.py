@@ -721,6 +721,46 @@ def _pymupdf_filetype(content_type: str | None) -> str:
     return content_type.split("/", 1)[-1]
 
 
+#: The longest edge of a paper preview, in pixels: an A4 page's long edge at 72 dpi.
+_PREVIEW_LONG_EDGE_PX = 842.0
+
+
+def _render_preview_png(data: bytes, content_type: str | None) -> bytes:
+    """Page 1 of a stored scan, ``data``, as a PNG thumbnail (see :func:`get_paper_preview`).
+
+    Raises :class:`HTTPException` 422 for a document with no pages, and lets
+    every other failure propagate for the route to turn into a 422.
+    """
+    import pymupdf
+
+    filetype = _pymupdf_filetype(content_type)
+    if filetype == "pdf":
+        # Task 9c review round 2: with a broken xref, MuPDF repairs the
+        # file while opening it and parses every object stream it finds,
+        # so object streams are bounded from the raw bytes first.
+        check_object_stream_bytes(data)
+    # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
+    # call needs the ignore. Narrowed to this one code, not the module.
+    with pymupdf.open(stream=data, filetype=filetype) as doc:  # type: ignore[no-untyped-call]
+        check_pdf_content(doc)
+        if doc.page_count == 0:
+            raise HTTPException(status_code=422, detail="Stored scan has no pages")
+        page = doc.load_page(0)
+        # At most an A4 page at 72 dpi: 842px on the long edge. Sized against
+        # the consumer: the card thumbnail is a ~300px-wide strip, so this is
+        # still sharp on a 2x display, and every step up costs a bigger
+        # payload on every card in the grid at once (96 dpi produced a 320KB
+        # PNG per paper). A zoom, not `dpi=72`: MuPDF sizes an image's page
+        # from the image's own DPI metadata, so a 72 dpi image drew at full
+        # size -- 805 MB for a 160 Mpx bilevel scan the upload admits (final
+        # review, Critical 1). Bounded, MuPDF decodes it subsampled (~65 MB).
+        zoom = min(1.0, _PREVIEW_LONG_EDGE_PX / max(page.rect.width, page.rect.height, 1.0))
+        matrix = pymupdf.Matrix(zoom, zoom)  # type: ignore[no-untyped-call]
+        pixmap = page.get_pixmap(matrix=matrix)
+        png: bytes = pixmap.tobytes("png")
+    return png
+
+
 def _latest_records(history_store: HistoryStoreProtocol) -> list[PaperRecord]:
     """Return the most-recent :class:`PaperRecord` per student across all history."""
     latest: list[PaperRecord] = []
@@ -1093,29 +1133,8 @@ def get_paper_preview(
             status_code=404, detail=f"No stored scan for paper {paper_id}"
         ) from None
 
-    import pymupdf
-
-    filetype = _pymupdf_filetype(row.content_type)
     try:
-        if filetype == "pdf":
-            # Task 9c review round 2: with a broken xref, MuPDF repairs the
-            # file while opening it and parses every object stream it finds,
-            # so object streams are bounded from the raw bytes first.
-            check_object_stream_bytes(data)
-        # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
-        # call needs the ignore. Narrowed to this one code, not the module.
-        with pymupdf.open(  # type: ignore[no-untyped-call]
-            stream=data, filetype=filetype
-        ) as doc:
-            check_pdf_content(doc)
-            if doc.page_count == 0:
-                raise HTTPException(status_code=422, detail="Stored scan has no pages")
-            # ~600px on the long edge of an A4 page. Sized against the consumer:
-            # the card thumbnail is a ~300px-wide strip, so this is still sharp
-            # on a 2x display, and every step up costs a bigger payload on every
-            # card in the grid at once (96 dpi produced a 320KB PNG per paper).
-            pixmap = doc.load_page(0).get_pixmap(dpi=72)
-            png: bytes = pixmap.tobytes("png")
+        png = _render_preview_png(data, row.content_type)
     except HTTPException:
         raise
     except ScanRejectedError as exc:

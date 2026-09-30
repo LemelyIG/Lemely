@@ -1836,13 +1836,20 @@ def declared_image(mode: str, width: int, height: int) -> bytes:
     )
 
 
-def bilevel_png(width: int, height: int, *, mark: tuple[int, int, int, int] | None = None) -> bytes:
+def bilevel_png(
+    width: int,
+    height: int,
+    *,
+    mark: tuple[int, int, int, int] | None = None,
+    dpi: int | None = None,
+) -> bytes:
     """A real 1-bit PNG, white with an optional black ``mark`` (left, top, right, bottom).
 
     #256: built row by row, so the test never holds the image -- a 1200 dpi
     A4 office scan (9921 x 14031, 139 Mpx) is ~40 KB of file and well under
     1 MB to build, where ``Image.new("1", ...)`` would allocate 139 MB
-    (Pillow keeps mode ``"1"`` at one byte per pixel).
+    (Pillow keeps mode ``"1"`` at one byte per pixel). ``dpi``, when given,
+    is written as a ``pHYs`` chunk: MuPDF sizes an image's page from it.
     """
     stride = -(-width // 8)
     white = b"\x00" + b"\xff" * stride  # filter byte 0, then set bits = white
@@ -1859,9 +1866,13 @@ def bilevel_png(width: int, height: int, *, mark: tuple[int, int, int, int] | No
         idat += compressor.compress(marked if in_mark else white)
     idat += compressor.flush()
     header = struct.pack(">IIBBBBB", width, height, 1, 0, 0, 0, 0)
+    # pHYs is in pixels per metre (unit 1).
+    per_metre = round(dpi / 0.0254) if dpi is not None else 0
+    physical = _png_chunk(b"pHYs", struct.pack(">IIB", per_metre, per_metre, 1)) if dpi else b""
     return (
         b"\x89PNG\r\n\x1a\n"
         + _png_chunk(b"IHDR", header)
+        + physical
         + _png_chunk(b"IDAT", bytes(idat))
         + _png_chunk(b"IEND", b"")
     )

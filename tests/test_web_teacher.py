@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import sys
 import threading
 import time
 import uuid
@@ -1811,6 +1812,148 @@ def test_preview_of_a_jpeg_upload_still_succeeds(client: TestClient) -> None:
     assert preview.status_code == 200
     assert preview.headers["content-type"] == "image/png"
     assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def _seed_stored_scan(
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+    scan: bytes,
+    *,
+    content_type: str,
+    name: str,
+) -> uuid.UUID:
+    """Store ``scan`` as a paper's upload directly, as a scan stored earlier would be."""
+    paper_id = uuid.uuid4()
+    key = f"teacher/{teacher_user}/{paper_id.hex}/{name}"
+    storage_backend.upload(settings.storage.bucket, key, scan, content_type)
+    paper_repo.create(
+        paper_id=paper_id,
+        uploaded_by=teacher_user,
+        storage_path=key,
+        scheme_storage_path=None,
+        original_filename=name,
+        content_type=content_type,
+        byte_size=len(scan),
+    )
+    return paper_id
+
+
+#: The longest edge a preview may have, in pixels: an A4 page's long edge at 72 dpi.
+_PREVIEW_LONG_EDGE = 842
+
+
+def test_preview_of_a_large_bilevel_image_is_thumbnail_sized(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """Final review, Critical 1: MuPDF sizes an image's page from its DPI
+    metadata, so ``get_pixmap(dpi=72)`` drew a 72 dpi image at full size. The
+    preview is drawn at a zoom that fits the long edge of an A4 page, whatever
+    the image declares."""
+    import io
+
+    from PIL import Image
+
+    from tests.pdf_fakes import bilevel_png
+
+    scan = bilevel_png(5000, 7950, mark=(400, 400, 1200, 900), dpi=72)
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        scan,
+        content_type="image/png",
+        name="scan.png",
+    )
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 200, preview.text
+    size = Image.open(io.BytesIO(preview.content)).size
+    assert max(size) <= _PREVIEW_LONG_EDGE, size
+    assert abs(size[0] / size[1] - 5000 / 7950) < 0.01, size
+
+
+def test_preview_of_an_a4_pdf_keeps_its_72_dpi_size(client: TestClient) -> None:
+    """The bound changes nothing for an ordinary A4 PDF: it was drawn at 72 dpi
+    (595 x 842), and still is."""
+    import io
+
+    import pymupdf
+    from PIL import Image
+
+    doc = pymupdf.open()
+    doc.new_page(width=595, height=842).insert_text((72, 72), "Question 1")
+    pdf_bytes: bytes = doc.tobytes()
+    doc.close()
+    paper_id = client.post(
+        "/api/papers/upload", files={"scan": ("scan.pdf", pdf_bytes, "application/pdf")}
+    ).json()["paperId"]
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 200, preview.text
+    assert Image.open(io.BytesIO(preview.content)).size == (595, 842)
+
+
+_PREVIEW_PEAK_RSS_CHILD = """
+from lemely.web.routers.teacher import _render_preview_png
+from tests.pdf_fakes import bilevel_png
+
+
+def peak_bytes() -> int:
+    with open("/proc/self/status") as status:
+        for line in status:
+            if line.startswith("VmHWM:"):
+                return int(line.split()[1]) * 1024
+    raise SystemExit("no VmHWM")
+
+
+scan = bilevel_png(10_000, 15_900, mark=(400, 400, 1200, 900), dpi=72)
+# A forked child inherits its parent's peak, so reset the high-water mark
+# (5 = CLEAR_REFS_MM_HIWATER_RSS) before measuring.
+try:
+    with open("/proc/self/clear_refs", "w") as clear:
+        clear.write("5")
+except OSError:
+    raise SystemExit(77)  # cannot reset the high-water mark here: the parent skips
+before = peak_bytes()
+png = _render_preview_png(scan, "image/png")
+print(peak_bytes() - before, len(png))
+"""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="reads /proc/self/status")
+def test_preview_of_a_160_mpx_bilevel_scan_has_a_bounded_peak() -> None:
+    """Final review, Critical 1: a ~50 KB bilevel PNG of 10000 x 15900 at
+    72 dpi -- under T12's 160 Mpx bilevel ceiling, so the upload admits it --
+    was previewed at full size, against a 1 GiB instance. Measured in a child
+    process (``VmHWM`` growth over the peak after imports and after building
+    the file): 958 MB drawn at ``dpi=72``, 183 MB at the bounded zoom -- most
+    of it MuPDF's decode of the whole image at one byte a pixel (159 MB),
+    which no zoom avoids. The bound, 400 MB, sits between the two."""
+    import subprocess
+
+    root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(  # noqa: S603 -- our own interpreter, our own script
+        [sys.executable, "-c", _PREVIEW_PEAK_RSS_CHILD],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 77:
+        pytest.skip("this environment does not let a process reset its own peak RSS")
+    assert proc.returncode == 0, proc.stderr
+    growth, png_len = (int(v) for v in proc.stdout.split())
+    assert png_len > 0
+    assert growth < 400_000_000, f"preview peak grew by {growth / 1e6:.0f} MB"
 
 
 def test_preview_for_unknown_paper_is_404(client: TestClient) -> None:
