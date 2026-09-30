@@ -131,7 +131,7 @@ export const dataHandlingSections: DataHandlingSection[] = [
      * `lemely/web/routers/parent.py:114` guards every parent route, and the
      * link itself is `ParentChildLink` (`lemely/db/models/users.py:72`).
      * Teacher access is class-scoped (`lemely/web/routers/teacher.py`,
-     * `lemely/db/models/…` class membership). Two roles see more (#243):
+     * `lemely/db/models/…` class membership). Two roles see more (issue 243):
      * `teacher_paper_visible` in `lemely/db/teacher_paper_repo.py` grants a
      * `school_admin` every paper their schools' teachers upload and a
      * `platform_admin` every console paper, and `ClassService`
