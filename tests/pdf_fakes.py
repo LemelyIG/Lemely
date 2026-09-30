@@ -1867,6 +1867,18 @@ def bilevel_png(width: int, height: int, *, mark: tuple[int, int, int, int] | No
     )
 
 
+def ico_wrapping(payload: bytes) -> bytes:
+    """An ICO whose one entry declares 16x16 and holds ``payload`` (e.g. a big PNG).
+
+    #256 review: Pillow's ICO plugin decodes the embedded image inside
+    ``Image.open``, before any pixel cap can run -- the file is as small as
+    its payload, and the decode as large as the payload declares.
+    """
+    directory = struct.pack("<HHH", 0, 1, 1)  # reserved, type 1 (icon), one entry
+    entry = struct.pack("<BBBBHHII", 16, 16, 0, 0, 1, 32, len(payload), 6 + 16)
+    return directory + entry + payload
+
+
 __all__ = [
     "annot_ap_bomb_pdf",
     "annot_ap_image_bomb_pdf",
@@ -1891,6 +1903,7 @@ __all__ = [
     "form_also_graphics_state_bomb_pdf",
     "form_xobject_cycle_pdf",
     "hidden_layer_pdf",
+    "ico_wrapping",
     "image_bomb_pdf",
     "indirect_ap_state_bomb_pdf",
     "indirect_filter_page_pdf",

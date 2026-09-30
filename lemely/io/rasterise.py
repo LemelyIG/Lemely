@@ -33,12 +33,14 @@ import pypdfium2 as pdfium
 
 from lemely.io.scan_limits import (
     EXTRACTION_DPI,
+    GREY_CEILING_MODES,
     PDF_MAGIC,
     ScanRejectedError,
     ScanTooLargeError,
     canonical_pdf_bytes,
     check_pdf_content_bytes,
     looks_like_pdf,
+    open_scan_image,
     plan_image,
     plan_pdf_pages,
 )
@@ -172,9 +174,12 @@ def _looks_like_pdf(path: Path) -> bool:
 
 #: Single-channel modes that go to "L" (one byte per pixel) rather than to a
 #: full-size RGB: Pillow cannot ``reduce`` "1" or "I;16*", and resamples "1"
-#: by nearest neighbour. "I" and "F" are here too; their conversion clips to
-#: 0-255 exactly as the RGB one does, one channel instead of three.
-_ONE_CHANNEL_MODES = frozenset({"1", "I", "F", "I;16", "I;16B", "I;16L", "I;16N"})
+#: by nearest neighbour. Derived from ``scan_limits.GREY_CEILING_MODES``, so
+#: every mode given the grey ceiling lands on "L" and the re-plan after the
+#: conversion can never refuse what the header check admitted. "I" and "F"
+#: are added: their conversion clips to 0-255 exactly as the RGB one does,
+#: one channel instead of three.
+_ONE_CHANNEL_MODES = GREY_CEILING_MODES | {"I", "F"}
 
 
 def single_channel_or_rgb(image: PILImage) -> PILImage:
@@ -212,7 +217,8 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
     from PIL import Image, ImageOps, JpegImagePlugin
 
     try:
-        with Image.open(image_path) as opened:
+        # #256 review: allowlisted formats only (no plugin decodes in the open).
+        with open_scan_image(image_path) as opened:
             factor = plan_image(opened.width, opened.height, opened.mode)
             if factor > 1 and isinstance(opened, JpegImagePlugin.JpegImageFile):
                 opened.draft(None, (opened.width // factor, opened.height // factor))

@@ -20,11 +20,18 @@ from lemely.io.rasterise import (
     rasterise_pdf_to_pages,
     rasterise_scan_to_pages,
 )
-from lemely.io.scan_limits import ScanRejectedError, ScanTooLargeError
+from lemely.io.scan_limits import (
+    MAX_DECODE_PX,
+    ScanRejectedError,
+    ScanTooLargeError,
+    ScanUnsupportedFormatError,
+    decode_pixel_cap,
+)
 from tests.pdf_fakes import (
     annot_ap_bomb_pdf,
     bilevel_png,
     declared_image,
+    ico_wrapping,
     image_bomb_pdf,
     off_page_object_pdf,
     page_bomb_pdf,
@@ -407,7 +414,8 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
     def test_the_reduce_happens_before_the_rgb_conversion(self) -> None:
         """#256: a bilevel or greyscale page is reduced BEFORE any RGB
         conversion, so the three-channel copy is never made at full size
-        (49 Mpx of "1" would be a 147 MB RGB copy of a 49 MB decode)."""
+        (49 Mpx of "1" would be a 196 MB RGB copy -- Pillow stores RGB padded to
+        four bytes -- of a 49 MB decode)."""
         real_convert = Image.Image.convert
         for mode, color in (("L", 200), ("1", 1)):
             with self.subTest(mode=mode):
@@ -429,6 +437,37 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
                 with patch.object(Image.Image, "convert", _convert):
                     rasterise_scan_to_pages(image_path)
                 self.assertEqual(sizes_converted_to_rgb, [(2500, 2500)])
+
+    def test_an_ico_wrapping_a_big_png_is_refused_without_being_opened(self) -> None:
+        """#256 review: the ICO opener decodes the image it wraps inside
+        ``Image.open``. Extraction must refuse it from its first bytes; the
+        opener is booby-trapped, so running it fails the test."""
+        from PIL import IcoImagePlugin
+
+        path = Path(self.tmp) / "scan.ico"
+        path.write_bytes(ico_wrapping(bilevel_png(9921, 14031)))
+        with (
+            patch.object(IcoImagePlugin.IcoImageFile, "_open", side_effect=AssertionError),
+            self.assertRaises(ScanUnsupportedFormatError),
+        ):
+            rasterise_scan_to_pages(path)
+
+    def test_every_mode_given_the_grey_ceiling_is_reduced_as_grey(self) -> None:
+        """#256 review: extraction re-plans after ``single_channel_or_rgb``
+        against the CONVERTED mode, which is only safe if no conversion
+        lowers the ceiling -- every mode ``decode_pixel_cap`` lets past
+        ``MAX_DECODE_PX`` must land on "L", never on RGB. Over every mode
+        Pillow has, except "La" (premultiplied: no decoder yields it, and
+        Pillow cannot convert it to RGB at all)."""
+        for mode in Image.MODES:
+            if mode == "La":
+                continue
+            with self.subTest(mode=mode):
+                converted = rasterise_module.single_channel_or_rgb(Image.new(mode, (2, 2)))
+                self.assertIn(converted.mode, ("L", "RGB"))
+                self.assertGreaterEqual(decode_pixel_cap(converted.mode), decode_pixel_cap(mode))
+                if decode_pixel_cap(mode) > MAX_DECODE_PX:
+                    self.assertEqual(converted.mode, "L")
 
     def test_a_bilevel_scan_over_forty_megapixels_is_still_turned_upright(self) -> None:
         """#255 and #256 together: the EXIF flag is applied to a large

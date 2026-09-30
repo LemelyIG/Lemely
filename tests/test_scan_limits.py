@@ -8,6 +8,7 @@ import math
 import time
 import tracemalloc
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -26,9 +27,11 @@ from lemely.io.scan_limits import (
     MAX_SCAN_PAGES,
     MAX_SCAN_TOTAL_PX,
     MIN_EXTRACTION_DPI,
+    SCAN_IMAGE_FORMATS,
     ScanRejectedError,
     ScanTooLargeError,
     ScanUnsupportedEncodingError,
+    ScanUnsupportedFormatError,
     canonical_pdf_bytes,
     check_object_stream_bytes,
     check_pdf_content_bytes,
@@ -64,6 +67,7 @@ from tests.pdf_fakes import (
     form_also_graphics_state_bomb_pdf,
     form_xobject_cycle_pdf,
     hidden_layer_pdf,
+    ico_wrapping,
     image_bomb_pdf,
     image_labelled_appearance_pdf,
     indirect_ap_state_bomb_pdf,
@@ -221,6 +225,20 @@ class ImagePlanTests(unittest.TestCase):
             with self.subTest(mode=mode), self.assertRaises(ScanTooLargeError) as caught:
                 plan_image(*_GREY_OVER_CAP, mode)  # 161.3 Mpx
             self.assertIn("limit 160 megapixels", str(caught.exception))
+
+    def test_the_refusal_names_a_limit_that_is_true_for_the_mode(self) -> None:
+        """#256 review: "LA", "I" and "F" get the 40 Mpx ceiling without being
+        colour, so the message states the limit and how to reach the larger
+        one instead of calling every such image "colour"."""
+        for mode in ("RGB", "LA", "I", "F", "P"):
+            with self.subTest(mode=mode), self.assertRaises(ScanTooLargeError) as caught:
+                plan_image(*_COLOUR_OVER_CAP, mode)
+            message = str(caught.exception)
+            self.assertIn("limit 40 megapixels; a black-and-white or 8-bit greyscale", message)
+            self.assertNotIn("colour", message)
+        with self.assertRaises(ScanTooLargeError) as caught:
+            plan_image(9000, 9000, "I;16")
+        self.assertIn("limit 80 megapixels for a 16-bit greyscale image", str(caught.exception))
 
     def test_sixteen_bit_grey_gets_half_the_grey_ceiling(self) -> None:
         self.assertEqual(plan_image(8900, 8900, "I;16"), 4)  # 79.2 Mpx: admitted
@@ -667,6 +685,57 @@ class CheckScanBytesTests(unittest.TestCase):
         scan = bilevel_png(*_A4_AT_1200_DPI)
         self.assertLess(len(scan), 100_000)
         check_scan_bytes(scan)
+
+    def test_an_admitted_grey_scan_opens_without_pillows_bomb_warning(self) -> None:
+        """#256 review: Pillow warns from 89.5 Mpx, below the grey ceiling, so
+        every admitted 90-160 Mpx grey scan warned. The cap bounds the decode,
+        so the opener silences that one warning (never ``MAX_IMAGE_PIXELS``
+        itself: its error, above the cap, still stands)."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            check_scan_bytes(bilevel_png(*_A4_AT_1200_DPI))
+        self.assertEqual(
+            [w for w in caught if issubclass(w.category, Image.DecompressionBombWarning)], []
+        )
+        self.assertEqual(Image.MAX_IMAGE_PIXELS, 89_478_485)  # left as Pillow ships it
+
+    def test_an_ico_wrapping_a_big_png_is_refused_without_being_opened(self) -> None:
+        """#256 review: Pillow's ICO opener decodes the image it wraps inside
+        ``Image.open`` -- a 16x16 ICO around a 158.8 Mpx PNG cost 154 MB in
+        this check. It must be named from its first bytes and never opened:
+        the opener is booby-trapped, and this check swallows unexpected
+        errors, so a refusal that ran it would pass instead of raising."""
+        from PIL import IcoImagePlugin
+
+        scan = ico_wrapping(bilevel_png(*_A4_AT_1200_DPI))
+        with (
+            patch.object(IcoImagePlugin.IcoImageFile, "_open", side_effect=AssertionError),
+            self.assertRaises(ScanUnsupportedFormatError) as caught,
+        ):
+            check_scan_bytes(scan)
+        self.assertIn("image format (ICO) cannot be processed safely", str(caught.exception))
+
+    def test_formats_outside_the_allowlist_are_refused_at_upload(self) -> None:
+        for image_format in ("ICNS", "GIF", "PCX"):
+            with self.subTest(format=image_format):
+                buf = io.BytesIO()
+                Image.new("RGB", (16, 16)).save(buf, image_format)
+                with self.assertRaises(ScanUnsupportedFormatError):
+                    check_scan_bytes(buf.getvalue())
+
+    def test_scan_formats_still_pass_at_upload(self) -> None:
+        """JPEG, MPO, PNG, TIFF, WebP and BMP -- what scanners and phones write."""
+        second = Image.new("RGB", (8, 8))
+        for image_format in (*SCAN_IMAGE_FORMATS, "MPO"):
+            with self.subTest(format=image_format):
+                buf = io.BytesIO()
+                extra = (
+                    {"save_all": True, "append_images": [second]} if image_format == "MPO" else {}
+                )
+                Image.new("RGB", (64, 64), "white").save(buf, image_format, **extra)
+                with Image.open(io.BytesIO(buf.getvalue())) as reopened:
+                    self.assertEqual(reopened.format, image_format)
+                check_scan_bytes(buf.getvalue())
 
     def test_greyscale_is_judged_against_the_grey_ceiling_at_upload(self) -> None:
         check_scan_bytes(declared_image("L", *_GREY_UNDER_CAP))  # 158.8 Mpx

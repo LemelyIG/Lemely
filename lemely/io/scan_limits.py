@@ -26,9 +26,11 @@ import io
 import itertools
 import math
 import re
+import warnings
 import zlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from pathlib import Path
+from typing import IO, TYPE_CHECKING, Literal
 
 import pymupdf
 import pymupdf.mupdf as _mupdf
@@ -39,6 +41,8 @@ from lemely.runtime.errors import LemelyError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from PIL import ImageFile
 
 #: The committed question paper has 16 pages; answer booklets with
 #: continuation sheets reach the low 30s. Also bounds the number of page
@@ -88,9 +92,10 @@ MAX_PAGE_PX = 16_000_000
 MAX_DECODE_PX = 40_000_000
 #: #256 (user decision 1, 2026-09-29): the image ceiling is PER MODE. Pillow
 #: holds every mode at whole bytes per pixel -- "1" and "L" at one (measured:
-#: 100 Mpx of either costs 96 MB), 16-bit grey at two, "RGB" at three -- so a
-#: 1200 dpi bilevel A4 office scan (9921 x 14031 = 139 Mpx, 0.04 MB on disk)
-#: is a 139 MB decode where the same pixels in colour would be 417 MB. Bilevel
+#: 100 Mpx of either costs 96 MB), 16-bit grey at two, "RGB" at four (stored
+#: padded, as RGBX) -- so a 1200 dpi bilevel A4 office scan (9921 x 14031 =
+#: 139 Mpx, 0.04 MB on disk) is a 139 MB decode where the same pixels in colour
+#: would be 556 MB. Bilevel
 #: and 8-bit greyscale therefore get this ceiling, 16-bit grey half of it, and
 #: colour (and "P", converted to RGB before it can be reduced, and "LA") keeps
 #: MAX_DECODE_PX. Equal to MAX_SCAN_TOTAL_PX on purpose: one grey page may
@@ -333,6 +338,11 @@ def plan_pdf_pages(pdf: pdfium.PdfDocument, *, dpi: float = EXTRACTION_DPI) -> l
 
 _ONE_BYTE_GREY_MODES = frozenset({"1", "L"})
 _TWO_BYTE_GREY_MODES = frozenset({"I;16", "I;16L", "I;16B", "I;16N"})
+#: Every mode :func:`decode_pixel_cap` lets past :data:`MAX_DECODE_PX`.
+#: ``rasterise.single_channel_or_rgb`` takes each of them to "L" (derived
+#: from this set, not a copy of it), so no mode given the grey ceiling is
+#: ever expanded to three channels before its reduce.
+GREY_CEILING_MODES = _ONE_BYTE_GREY_MODES | _TWO_BYTE_GREY_MODES
 
 
 def decode_pixel_cap(mode: str) -> int:
@@ -359,15 +369,93 @@ def plan_image(width: int, height: int, mode: str = "RGB") -> int:
     px = width * height
     cap = decode_pixel_cap(mode)
     if px > cap:
-        kind = "colour" if cap == MAX_DECODE_PX else "greyscale"
+        mpx = cap // 1_000_000
+        if mode in _ONE_BYTE_GREY_MODES:
+            limit = f"{mpx} megapixels for a black-and-white or greyscale image"
+        elif mode in _TWO_BYTE_GREY_MODES:
+            limit = f"{mpx} megapixels for a 16-bit greyscale image"
+        else:
+            # Colour, but also "LA", "I" and "F": say what the limit is and
+            # how to get the larger one, rather than name the image's kind.
+            limit = (
+                f"{mpx} megapixels; a black-and-white or 8-bit greyscale scan may be up "
+                f"to {MAX_DECODE_PX_GREY // 1_000_000}"
+            )
         raise ScanTooLargeError(
-            f"This scan is too large to process (limit {cap // 1_000_000} megapixels "
-            f"for a {kind} image). Rescan at a lower resolution."
+            f"This scan is too large to process (limit {limit}). Rescan at a lower resolution."
         )
     for factor in _REDUCE_FACTORS:
         if px / (factor * factor) <= MAX_PAGE_PX:
             return factor
     return _REDUCE_FACTORS[-1]  # pragma: no cover -- 160 Mpx / 16 is already under the target
+
+
+#: #256 review: the raster formats a scan image may be, by Pillow format name.
+#: An allowlist, not a denylist: some formats decode inside ``Image.open``
+#: itself, before any pixel cap can run -- ICO decodes the image it wraps
+#: (measured: a 76 KB ICO wrapping a 64 Mpx PNG grew RSS by 68 MB in the open
+#: alone), ICNS embeds PNG and JPEG 2000 -- and six of Pillow's plugins (IM,
+#: IMT, IPTC, PCD, SPIDER, TGA) have no prefix sniffer to recognise them by.
+#: These open from their headers (measured: under 7 MB for 64 Mpx) and are
+#: what scanners and phones write. "JPEG" covers MPO too (a phone JPEG with a
+#: second picture): Pillow's JPEG opener returns it, and "MPO" has no opener
+#: of its own to list.
+SCAN_IMAGE_FORMATS = ("JPEG", "PNG", "TIFF", "WEBP", "BMP")
+_UNSUPPORTED_IMAGE_MESSAGE = (
+    "This scan's image format ({format}) cannot be processed safely. "
+    "Save it as a PDF, JPEG, PNG or TIFF and upload it again."
+)
+
+
+class ScanUnsupportedFormatError(ScanRejectedError):
+    """A scan image in a format outside :data:`SCAN_IMAGE_FORMATS`."""
+
+
+def _pillow_claims(image_format: str, prefix: bytes) -> bool:
+    """Whether Pillow's ``image_format`` plugin would try to open bytes starting ``prefix``."""
+    accept = Image.OPEN[image_format][1]
+    if accept is None:
+        return False
+    try:
+        return bool(accept(prefix))
+    except Exception:
+        return False
+
+
+def open_scan_image(source: Path | IO[bytes]) -> ImageFile.ImageFile:
+    """``Image.open`` for a scan image: allowlisted formats only, and no bomb warning.
+
+    The one opener for upload (:func:`check_scan_bytes`), extraction and the
+    review crop route. Bytes that one of Pillow's other plugins would claim
+    by their prefix (an ICO, an ICNS, a GIF, ...) raise
+    :class:`ScanUnsupportedFormatError` naming the format, found from those
+    16 bytes without running that plugin's opener -- the step that decodes.
+    Everything else is opened with ``formats=SCAN_IMAGE_FORMATS``, so no
+    other plugin ever runs; bytes none of them recognise raise
+    ``PIL.UnidentifiedImageError`` exactly as ``Image.open`` does.
+
+    Pillow's ``DecompressionBombWarning`` is silenced for this open only.
+    Every caller applies :func:`decode_pixel_cap` to the header's size
+    before a pixel is decoded, and the warning's threshold
+    (``MAX_IMAGE_PIXELS``, 89.5 Mpx) is below :data:`MAX_DECODE_PX_GREY`, so
+    it would fire on every grey scan the cap admits on purpose; its error
+    (twice that, above the cap) is left alone. ``catch_warnings`` is
+    process-wide: a concurrent race can at worst let one such warning print.
+    """
+    Image.init()
+    if isinstance(source, Path):
+        with source.open("rb") as handle:
+            prefix = handle.read(16)
+    else:
+        position = source.tell()
+        prefix = source.read(16)
+        source.seek(position)
+    claimed = [image_format for image_format in Image.ID if _pillow_claims(image_format, prefix)]
+    if claimed and not any(image_format in SCAN_IMAGE_FORMATS for image_format in claimed):
+        raise ScanUnsupportedFormatError(_UNSUPPORTED_IMAGE_MESSAGE.format(format=claimed[0]))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+        return Image.open(source, formats=SCAN_IMAGE_FORMATS)
 
 
 def _bounded_inflate_size(raw: bytes, *, budget: int, page_index: int) -> int:
@@ -1806,7 +1894,10 @@ def check_scan_bytes(data: bytes) -> None:
     extraction fails on them later, exactly as it does today -- so the only
     422 this produces is a measured, over-limit geometry (or Pillow's
     decompression-bomb guard, which fires on the declared size before any
-    pixel is decoded). A document pdfium opens but cannot size a page of
+    pixel is decoded), or an image in a format outside
+    :data:`SCAN_IMAGE_FORMATS` (#256 review: some decode while opening, so
+    they are named from their first bytes, never opened; see
+    :func:`open_scan_image`). A document pdfium opens but cannot size a page of
     (``plan_pdf_pages`` raising pypdfium2's own ``PdfiumError``) is not
     refused for that alone: extraction's planning refuses it before
     rendering anything, as it does today.
@@ -1829,14 +1920,15 @@ def check_scan_bytes(data: bytes) -> None:
         check_pdf_content_bytes(data, pdfium_pages=_pdfium_plan(data))
         return
     try:
-        with Image.open(io.BytesIO(data)) as opened:
+        # #256 review: allowlisted formats only, so no plugin decodes inside the open.
+        with open_scan_image(io.BytesIO(data)) as opened:
             # #256: judged against its own mode's ceiling, from the header.
             plan_image(opened.width, opened.height, opened.mode)
     except Image.DecompressionBombError as exc:
         raise ScanTooLargeError(
             "This scan's image is too large to process safely. Rescan at a lower resolution."
         ) from exc
-    except ScanTooLargeError:
+    except ScanRejectedError:
         raise
     except Exception:
         return

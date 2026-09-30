@@ -3219,10 +3219,11 @@ def test_a_high_resolution_photo_is_decoded_smaller_and_still_cropped_right(
     """
     from PIL import ImageDraw
 
-    from lemely.web.routers.review import _MAX_CROP_PX, _MAX_DECODE_PX
+    from lemely.io.scan_limits import MAX_DECODE_PX
+    from lemely.web.routers.review import _MAX_CROP_PX
 
     width, height = 8000, 5400
-    assert width * height > _MAX_DECODE_PX
+    assert width * height > MAX_DECODE_PX
     image = Image.new("RGB", (width, height), (255, 255, 255))
     draw = ImageDraw.Draw(image)
     draw.rectangle((0.70 * width, 0.70 * height, 0.95 * width, 0.95 * height), fill=_OUTSIDE_RGB)
@@ -3338,8 +3339,9 @@ def test_a_bilevel_scan_over_forty_megapixels_is_cropped_not_refused(
     """#256: a bilevel page decodes at one byte per pixel (139 MB for the A4
     scan). It used to be refused for its pixel count. The crop must be cut
     from the "L" copy, never from a full-size RGB expansion of the page
-    (417 MB for the A4): every RGB conversion the route makes is of a region
-    already fitted to ``_MAX_CROP_PX``. Built row by row (``bilevel_png``),
+    (556 MB for the A4: Pillow stores RGB at four bytes a pixel): every RGB
+    conversion the route makes is of a region already fitted to
+    ``_MAX_CROP_PX``. Built row by row (``bilevel_png``),
     so the test never holds the page itself."""
     from lemely.web.routers.review import _MAX_CROP_PX
     from tests.pdf_fakes import bilevel_png
@@ -3427,4 +3429,46 @@ def test_an_image_over_its_modes_ceiling_is_still_refused_at_the_crop(
     assert resp.status_code == 422, (resp.status_code, len(resp.content))
     assert [e["event"] for e in logs if e["event"].startswith("review_crop_")] == [
         "review_crop_page_too_large"
+    ]
+
+
+def test_an_ico_wrapping_a_big_png_is_refused_at_the_crop_without_being_opened(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """#256 review: Pillow's ICO opener decodes the image it wraps inside
+    ``Image.open``, before the route's per-mode ceiling can run. A stored ICO
+    around a 139 Mpx PNG is refused from its first bytes with the house
+    message; the opener is booby-trapped, and the route turns unexpected
+    errors into ``review_crop_render_failed``, so running it fails the test."""
+    from unittest.mock import patch
+
+    from PIL import IcoImagePlugin
+
+    from tests.pdf_fakes import bilevel_png, ico_wrapping
+
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=ico_wrapping(bilevel_png(9921, 14031)),
+        page=0,
+        content_type="image/x-icon",
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    with (
+        patch.object(IcoImagePlugin.IcoImageFile, "_open", side_effect=AssertionError),
+        structlog.testing.capture_logs() as logs,
+    ):
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == 422, (resp.status_code, len(resp.content))
+    assert "image format (ICO) cannot be processed safely" in resp.json()["detail"]
+    assert [e["event"] for e in logs if e["event"].startswith("review_crop_")] == [
+        "review_crop_scan_rejected"
     ]

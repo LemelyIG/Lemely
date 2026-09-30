@@ -41,12 +41,12 @@ from lemely.db.review_repo import (
 )
 from lemely.io.rasterise import RasterisedPage, looks_like_pdf, single_channel_or_rgb
 from lemely.io.reread import REREAD_UPSCALE, crop_and_upscale, padded_crop_rect
-from lemely.io.scan_limits import MAX_DECODE_PX as _MAX_DECODE_PX  # noqa: F401 -- tests import it
 from lemely.io.scan_limits import (
     ScanRejectedError,
     check_object_stream_bytes,
     check_pdf_page_content,
     decode_pixel_cap,
+    open_scan_image,
 )
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 
@@ -343,9 +343,9 @@ _MAX_CROP_PX = 4_000_000
 # The image decode bound is `lemely.io.scan_limits.decode_pixel_cap` for the
 # image's mode (#256): 40 Mpx for colour, 160 Mpx for a bilevel or greyscale
 # scan -- one "too big to open" rule for the app, shared with upload and
-# extraction (spec 2026-09-26 §6). `_MAX_DECODE_PX` is the colour ceiling,
-# `scan_limits.MAX_DECODE_PX`; the local name is kept because the route's
-# tests import it.
+# extraction (spec 2026-09-26 §6). The image is opened through
+# `scan_limits.open_scan_image`, so only allowlisted formats are opened at all
+# (#256 review: an ICO decodes the image it wraps inside `Image.open`).
 
 
 class _PdfCropPlan(NamedTuple):
@@ -674,9 +674,14 @@ def _crop_image_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
     image (``in_place`` does not avoid it), doubling the peak for a phone
     photo. A single image has one page, as it does for extraction.
     """
-    from PIL import Image
-
-    with Image.open(io.BytesIO(data)) as opened:
+    try:
+        opened = open_scan_image(io.BytesIO(data))
+    except ScanRejectedError as exc:
+        # #256 review: a format outside the allowlist, named from its first
+        # bytes and never opened -- a refusal, logged as the PDF path does.
+        log.warning("review_crop_scan_rejected", item_id=item_id, page=box.page, reason=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    with opened:
         _require_page_in_range(box, 1, item_id=item_id)
         _decode_within_ceiling(opened, box, item_id=item_id)
         orientation = opened.getexif().get(_EXIF_ORIENTATION_TAG)
