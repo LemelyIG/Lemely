@@ -1690,6 +1690,34 @@ class RawObjectStreamTests(unittest.TestCase):
                         check(data)
                     self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
 
+    def test_the_upload_check_prescans_a_pdf_exactly_once(self) -> None:
+        """Final review, item 5: ``check_scan_bytes`` ran the raw pre-scan
+        itself and then again inside ``check_pdf_content_bytes`` -- the same
+        bytes, twice (up to ~1.5 s each on a crafted 25 MB file). Once, and
+        still before either reader opens the file (the bomb test above)."""
+        real = scan_limits.check_object_stream_bytes
+        with patch.object(scan_limits, "check_object_stream_bytes", wraps=real) as prescan:
+            check_scan_bytes(_pdf_bytes((595.0, 842.0), (595.0, 842.0)))
+        self.assertEqual(prescan.call_count, 1)
+
+    def test_every_pdf_entry_point_still_prescans(self) -> None:
+        """Item 5 must not drop the pre-scan from any path: each entry point
+        that opens user PDF bytes runs it at least once."""
+        from lemely.io.scan_limits import open_checked_pdf
+
+        data = _pdf_bytes((595.0, 842.0))
+        for entry in (check_scan_bytes, check_pdf_content_bytes, canonical_pdf_bytes):
+            real = scan_limits.check_object_stream_bytes
+            with (
+                self.subTest(entry=entry.__name__),
+                patch.object(scan_limits, "check_object_stream_bytes", wraps=real) as prescan,
+            ):
+                entry(data)
+                self.assertGreaterEqual(prescan.call_count, 1)
+        with patch.object(scan_limits, "check_object_stream_bytes", wraps=real) as prescan:
+            open_checked_pdf(data).close()
+        self.assertEqual(prescan.call_count, 1)
+
     def test_open_checked_pdf_refuses_a_container_bomb_before_mupdf_opens_it(self) -> None:
         """Final review, item 4: the one way to open user PDF bytes with MuPDF
         runs the raw pre-scan first, so the bomb is refused and
@@ -1776,6 +1804,40 @@ class RawObjectStreamTests(unittest.TestCase):
             _Opens(relative).visit(ast.parse(path.read_text(encoding="utf-8")))
         self.assertEqual(found - allowed, set(), "a MuPDF open outside the sanctioned openers")
         self.assertEqual(found, allowed)
+
+    def test_only_prescan_pdf_makes_a_prescanned_pdf(self) -> None:
+        """Final review, item 5: a :class:`PrescannedPdf` is how a caller skips
+        the pre-scan in ``open_checked_pdf``, so nothing in ``lemely/`` makes
+        one except :func:`prescan_pdf`, which has just run it."""
+        import ast
+
+        root = Path(__file__).resolve().parents[1]
+        found: set[tuple[str, str]] = set()
+
+        class _Makes(ast.NodeVisitor):
+            def __init__(self, relative: str) -> None:
+                self.relative = relative
+                self.functions: list[str] = []
+
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+                self.functions.append(node.name)
+                self.generic_visit(node)
+                self.functions.pop()
+
+            visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]  # noqa: N815
+
+            def visit_Call(self, node: ast.Call) -> None:
+                func = node.func
+                name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+                if name == "PrescannedPdf":
+                    where = self.functions[-1] if self.functions else "<module>"
+                    found.add((self.relative, where))
+                self.generic_visit(node)
+
+        for path in sorted((root / "lemely").rglob("*.py")):
+            relative = path.relative_to(root).as_posix()
+            _Makes(relative).visit(ast.parse(path.read_text(encoding="utf-8")))
+        self.assertEqual(found, {("lemely/io/scan_limits.py", "prescan_pdf")})
 
     def test_a_scan_past_the_token_budget_is_refused_as_too_complex(self) -> None:
         """The raw scan reads every dictionary token by token; one crafted

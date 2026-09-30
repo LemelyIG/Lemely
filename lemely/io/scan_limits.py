@@ -1726,23 +1726,45 @@ def check_pdf_page_content(doc: pymupdf.Document, page_index: int) -> None:
     _check_page(doc, tree, _ContentBudget(), page_index)
 
 
-def open_checked_pdf(data: bytes) -> pymupdf.Document:
-    """MuPDF's document for the PDF ``data``: the one way user PDF bytes are opened.
+@dataclass(frozen=True, eq=False)
+class PrescannedPdf:
+    """PDF bytes :func:`check_object_stream_bytes` has passed. Made only by :func:`prescan_pdf`.
 
-    Runs :func:`check_object_stream_bytes` first, from the raw bytes: with a
-    damaged xref MuPDF repairs the file while OPENING it, parsing every
-    object stream it finds, before any check on the opened document can
-    run. Every MuPDF open of an upload -- the whole-document check, the
-    canonical rewrite, the paper preview and the review crop -- comes
-    through here, so none can skip the pre-scan (final review, item 4).
-    Raises :class:`ScanRejectedError` from the pre-scan; whatever
-    ``pymupdf.open`` raises for bytes it cannot open propagates. The caller
-    closes the document.
+    Final review, item 5: the upload check must pre-scan before pdfium plans
+    the bytes, and used to pre-scan them a second time when it went on to
+    open them with MuPDF. Holding this instead of the bytes is how a caller
+    says the scan has run: :func:`open_checked_pdf` and
+    :func:`check_pdf_content_bytes` take it without scanning again.
     """
-    check_object_stream_bytes(data)  # before the open: repair parses containers at open
+
+    data: bytes
+
+
+def prescan_pdf(data: bytes) -> PrescannedPdf:
+    """``data`` once :func:`check_object_stream_bytes` has passed it (which raises otherwise)."""
+    check_object_stream_bytes(data)
+    return PrescannedPdf(data)
+
+
+def open_checked_pdf(pdf: bytes | PrescannedPdf) -> pymupdf.Document:
+    """MuPDF's document for the PDF ``pdf``: the one way user PDF bytes are opened.
+
+    Runs :func:`check_object_stream_bytes` first, from the raw bytes, unless
+    ``pdf`` is a :class:`PrescannedPdf` (it has run): with a damaged xref
+    MuPDF repairs the file while OPENING it, parsing every object stream it
+    finds, before any check on the opened document can run. Every MuPDF
+    open of an upload -- the whole-document check, the canonical rewrite,
+    the paper preview and the review crop -- comes through here, so none
+    can skip the pre-scan (final review, item 4). Raises
+    :class:`ScanRejectedError` from the pre-scan; whatever ``pymupdf.open``
+    raises for bytes it cannot open propagates. The caller closes the
+    document.
+    """
+    # Before the open: repair parses containers at open.
+    scanned = pdf if isinstance(pdf, PrescannedPdf) else prescan_pdf(pdf)
     # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
     # call needs the ignore. Narrowed to this one code, not the module.
-    return pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
+    return pymupdf.open(stream=scanned.data, filetype="pdf")  # type: ignore[no-untyped-call]
 
 
 #: MuPDF's ``filetype`` for each format :func:`open_scan_image` admits. An MPO
@@ -1821,11 +1843,15 @@ def _check_opened(open_doc: Callable[[], pymupdf.Document], pdfium_pages: int | 
         doc.close()  # type: ignore[no-untyped-call]
 
 
-def check_pdf_content_bytes(data: bytes, *, pdfium_pages: int | None = None) -> None:
+def check_pdf_content_bytes(
+    data: bytes | PrescannedPdf, *, pdfium_pages: int | None = None
+) -> None:
     """:func:`check_pdf_content` on an in-memory PDF (see :func:`_check_opened`).
 
     ``pdfium_pages``: pdfium's page count for the same bytes, when the
-    caller has it, so the two readers' counts are compared.
+    caller has it, so the two readers' counts are compared. The raw
+    pre-scan runs first, through :func:`open_checked_pdf`, unless ``data``
+    is a :class:`PrescannedPdf`.
     """
     _check_opened(lambda: open_checked_pdf(data), pdfium_pages)
 
@@ -2030,12 +2056,14 @@ def check_scan_bytes(data: bytes) -> None:
     read (:func:`check_pdf_content`).
     """
     if looks_like_pdf(data):
-        # Task 9c review round 2: object streams first, from the raw bytes --
-        # MuPDF's xref repair parses them while opening, before any check.
-        check_object_stream_bytes(data)
+        # Task 9c review round 2: object streams first, from the raw bytes,
+        # before either reader opens the file -- MuPDF's xref repair parses
+        # them while opening, before any check. Once (final review, item 5):
+        # the content check below is handed the scanned bytes.
+        scanned = prescan_pdf(data)
         # Task 11b: geometry first, then content -- with pdfium's count, so
         # a page only pdfium would render is not left unmeasured (Task 9b).
-        check_pdf_content_bytes(data, pdfium_pages=_pdfium_plan(data))
+        check_pdf_content_bytes(scanned, pdfium_pages=_pdfium_plan(data))
         return
     try:
         # #256 review: allowlisted formats only, so no plugin decodes inside the open.
