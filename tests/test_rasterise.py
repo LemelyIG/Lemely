@@ -290,18 +290,51 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
                     self.assertGreater(min(decoded.getpixel((ox, oy))), 200)
 
     def test_a_reduced_decode_jpeg_is_still_turned_upright(self) -> None:
-        """A JPEG big enough to take the native reduced-scale ``draft`` decode
-        (``factor > 1``) is transposed after that decode, not before it."""
-        image = Image.new("RGB", (5000, 3000), (255, 255, 255))
-        exif = Image.Exif()
-        exif[0x0112] = 6
-        path = Path(self.tmp) / "big_phone.jpg"
-        image.save(path, "JPEG", exif=exif.tobytes())
+        """A JPEG over ``MAX_PAGE_PX`` takes the native reduced-scale ``draft``
+        decode, and the flag is applied to that reduced frame. 6000x4000 is
+        24 Mpx, so ``draft`` halves it to 3000x2000. The green corner marks
+        the stored top-left, so flag 6 (top-right) and flag 8 (bottom-left)
+        cannot be mistaken for each other."""
+        from PIL import ImageDraw, JpegImagePlugin
 
-        (page,) = rasterise_scan_to_pages(path)
+        expected_corner = {6: (True, False), 8: (False, True)}  # (right?, bottom?)
+        for orientation, (right, bottom) in expected_corner.items():
+            with self.subTest(orientation=orientation):
+                image = Image.new("RGB", (6000, 4000), (255, 255, 255))
+                ImageDraw.Draw(image).rectangle((0, 0, 79, 79), fill=(0, 255, 0))
+                exif = Image.Exif()
+                exif[0x0112] = orientation
+                path = Path(self.tmp) / f"big_phone_{orientation}.jpg"
+                image.save(path, "JPEG", exif=exif.tobytes(), quality=95)
 
-        self.assertGreater(page.height, page.width)
-        self.assertLessEqual(page.width * page.height, 16_000_000)
+                drafts: list[tuple[object, ...]] = []
+                real_draft = JpegImagePlugin.JpegImageFile.draft
+
+                def spy(
+                    file: JpegImagePlugin.JpegImageFile,
+                    *args: object,
+                    _real: object = real_draft,
+                    _calls: list[tuple[object, ...]] = drafts,
+                ) -> object:
+                    _calls.append(args)
+                    return _real(file, *args)  # type: ignore[operator]
+
+                with patch.object(JpegImagePlugin.JpegImageFile, "draft", spy):
+                    (page,) = rasterise_scan_to_pages(path)
+
+                self.assertEqual(drafts, [(None, (3000, 2000))])
+                self.assertEqual((page.width, page.height), (2000, 3000))
+                decoded = Image.open(io.BytesIO(page.png_bytes)).convert("RGB")
+                x = page.width - 3 if right else 2
+                y = page.height - 3 if bottom else 2
+                r, g, b = decoded.getpixel((x, y))
+                self.assertTrue(
+                    g > 200 and r < 80 and b < 80,
+                    f"green corner is not at (right={right}, bottom={bottom})",
+                )
+                ox = 2 if right else page.width - 3
+                oy = 2 if bottom else page.height - 3
+                self.assertGreater(min(decoded.getpixel((ox, oy))), 200)
 
     def test_an_image_without_an_exif_flag_is_unchanged(self) -> None:
         image_path = Path(self.tmp) / "plain.png"

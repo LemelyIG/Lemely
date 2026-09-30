@@ -10,6 +10,7 @@ or bulk-approve another teacher's review item.
 from __future__ import annotations
 
 import io
+import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -1777,9 +1778,15 @@ def _corner_position(image: Image.Image) -> tuple[float, float]:
 
 
 def _expected_upright_crop(scan: bytes) -> Image.Image:
-    """The route's crop, computed independently: turn the WHOLE photo upright
-    with Pillow's own ``exif_transpose``, cut the box's padded rectangle in
-    that frame, upscale as the re-read does."""
+    """The route's crop, computed with Pillow's own whole-photo transpose.
+
+    NOT an independent check of which region is right: it takes the same
+    ``padded_crop_rect`` the route does, on the same upright frame, so it
+    only proves resampling and encoding parity (same pixels, same upscale)
+    for a given rectangle. Frame correctness is carried by the colour census
+    and the green-corner position in the test below, and by
+    ``test_stored_frame_rect_matches_exif_transpose_for_every_orientation``.
+    """
     from PIL import ImageOps
 
     from lemely.io.reread import REREAD_UPSCALE, padded_crop_rect
@@ -1855,6 +1862,137 @@ def test_crop_route_crops_an_exif_rotated_photo_where_extraction_boxed_it(
         orientation,
         "the route's crop is not byte-identical to the independently-computed "
         "upright crop -- the region or its rotation is wrong",
+    )
+
+
+def _random_photo(size: tuple[int, int]) -> Image.Image:
+    """Every pixel distinguishable, so a wrongly mapped rectangle cannot match."""
+    import random
+
+    rng = random.Random(255)
+    image = Image.new("RGB", size)
+    image.putdata(
+        [
+            (rng.randrange(256), rng.randrange(256), rng.randrange(256))
+            for _ in range(size[0] * size[1])
+        ]
+    )
+    return image
+
+
+@pytest.mark.parametrize("orientation", [1, 2, 3, 4, 5, 6, 7, 8])
+def test_stored_frame_rect_matches_exif_transpose_for_every_orientation(orientation: int) -> None:
+    """Cutting a rectangle from the UPRIGHT photo equals mapping it into the
+    stored frame, cutting there, and turning only that small crop. Compared
+    pixel for pixel against ``ImageOps.exif_transpose`` of the whole stored
+    photo, on an asymmetric photo with all-distinct pixels, for rectangles in
+    every corner and the middle (including ones flush with the edges)."""
+    from PIL import ImageOps
+
+    from lemely.web.routers.review import _stored_frame_rect, _upright_transpose
+
+    upright = _random_photo((60, 40))
+    stored = (
+        upright.transpose(_STORED_FRAME_FOR[orientation])
+        if orientation in _STORED_FRAME_FOR
+        else upright
+    )
+    exif = Image.Exif()
+    exif[_EXIF_ORIENTATION_TAG] = orientation
+    buf = io.BytesIO()
+    stored.save(buf, format="PNG", exif=exif.tobytes())
+    reopened = Image.open(io.BytesIO(buf.getvalue()))
+    reopened.load()
+    oracle = ImageOps.exif_transpose(reopened)
+    assert oracle.size == upright.size
+
+    for rect in [
+        (0, 0, 60, 40),
+        (0, 0, 7, 5),
+        (53, 0, 60, 9),
+        (0, 31, 11, 40),
+        (49, 33, 60, 40),
+        (13, 6, 41, 29),
+    ]:
+        stored_rect = _stored_frame_rect(rect, reopened.size, orientation)
+        crop = reopened.crop(stored_rect)
+        method = _upright_transpose(orientation)
+        if method is not None:
+            crop = crop.transpose(method)
+        assert crop.size == (rect[2] - rect[0], rect[3] - rect[1]), (orientation, rect)
+        assert crop.tobytes() == oracle.crop(rect).tobytes(), (orientation, rect)
+
+
+def test_stored_frame_rect_ignores_an_unknown_orientation() -> None:
+    from lemely.web.routers.review import _stored_frame_rect, _upright_transpose
+
+    for junk in (0, 9, None, "6", 6.0):
+        assert _stored_frame_rect((1, 2, 3, 4), (10, 10), junk) == (1, 2, 3, 4)
+        assert _upright_transpose(junk) is None
+
+
+_PEAK_RSS_CHILD = """
+import sys
+
+from lemely.core.schemas import SourceBox
+from lemely.web.routers.review import _crop_image_scan
+
+
+def peak_bytes() -> int:
+    with open("/proc/self/status") as status:
+        for line in status:
+            if line.startswith("VmHWM:"):
+                return int(line.split()[1]) * 1024
+    raise SystemExit("no VmHWM")
+
+
+data = open(sys.argv[1], "rb").read()
+box = SourceBox(page=0, box=[100, 100, 300, 400])
+# A forked child inherits its parent's peak, so reset the high-water mark
+# (5 = CLEAR_REFS_MM_HIWATER_RSS) before measuring.
+with open("/proc/self/clear_refs", "w") as clear:
+    clear.write("5")
+before = peak_bytes()
+png = _crop_image_scan(data, box, item_id="mem")
+print(peak_bytes() - before, len(png))
+"""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="reads /proc/self/status")
+def test_crop_of_a_large_flagged_photo_makes_no_second_full_size_copy(tmp_path: Path) -> None:
+    """#255 review round 1: the crop must be cut from the stored decode and
+    only the small crop turned. Turning the whole decode first makes Pillow
+    allocate a second full-size image, doubling the peak. Measured in a
+    child process (``VmHWM`` growth over the peak after imports), for a
+    36 Mpx JPEG (RGB is 4 bytes a pixel in Pillow, so 144 MB per full copy)
+    with orientation 6. Cropping from the stored decode grows the peak by
+    about 1.3x (the decode plus codec scratch); turning the whole decode
+    first, by about 2x. The bound, 1.7x, sits between the two."""
+    import subprocess
+    from pathlib import Path
+
+    width, height = 7200, 5000
+    image = Image.new("RGB", (width, height), (255, 255, 255))
+    exif = Image.Exif()
+    exif[_EXIF_ORIENTATION_TAG] = 6
+    photo = tmp_path / "big.jpg"
+    image.save(photo, format="JPEG", exif=exif.tobytes(), quality=50)
+    del image
+
+    root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(  # noqa: S603 -- our own interpreter and a temp file
+        [sys.executable, "-c", _PEAK_RSS_CHILD, str(photo)],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    growth, png_len = (int(v) for v in proc.stdout.split())
+    full_copy = width * height * 4
+    assert png_len > 0
+    assert growth < 1.7 * full_copy, (
+        f"peak grew by {growth / 1e6:.0f} MB for a {full_copy / 1e6:.0f} MB decode: "
+        "a second full-size copy was made"
     )
 
 

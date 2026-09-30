@@ -80,6 +80,7 @@ from lemely.web.schemas_review import (
 if TYPE_CHECKING:
     import pymupdf
     from PIL.Image import Image as PILImage
+    from PIL.Image import Transpose
 
     from lemely.core.schemas import SourceBox
 
@@ -450,6 +451,79 @@ def _require_page_in_range(box: SourceBox, page_count: int, *, item_id: str) -> 
 _WHOLE_REGION = [0, 0, 1000, 1000]
 
 
+_EXIF_ORIENTATION_TAG = 0x0112
+
+
+def _upright_transpose(orientation: object) -> Transpose | None:
+    """The transpose that turns a stored frame upright for an EXIF orientation.
+
+    The same table as Pillow's ``ImageOps.exif_transpose``; ``None`` for 1,
+    for a missing flag and for any value outside 2-8, which is what
+    ``exif_transpose`` leaves alone too. Not derived from Pillow because the
+    route applies it to a crop, and ``exif_transpose`` only takes a whole image.
+    """
+    from PIL import Image
+
+    if not isinstance(orientation, int) or isinstance(orientation, bool):
+        return None
+    return {
+        2: Image.Transpose.FLIP_LEFT_RIGHT,
+        3: Image.Transpose.ROTATE_180,
+        4: Image.Transpose.FLIP_TOP_BOTTOM,
+        5: Image.Transpose.TRANSPOSE,
+        6: Image.Transpose.ROTATE_270,
+        7: Image.Transpose.TRANSVERSE,
+        8: Image.Transpose.ROTATE_90,
+    }.get(orientation)
+
+
+def _stored_frame_rect(
+    rect: tuple[int, int, int, int], stored_size: tuple[int, int], orientation: object
+) -> tuple[int, int, int, int]:
+    """Where ``rect``, given in the UPRIGHT frame, lies in the STORED frame.
+
+    ``stored_size`` is the stored frame's (width, height). Cutting this
+    rectangle from the stored image and turning that crop with
+    :func:`_upright_transpose` gives exactly the pixels ``rect`` selects from
+    ``ImageOps.exif_transpose`` of the whole image, without ever holding a
+    second full-size copy. Rectangles are half-open edge coordinates, as
+    ``Image.crop`` takes them.
+    """
+    from PIL import Image
+
+    left, upper, right, lower = rect
+    width, height = stored_size
+    match _upright_transpose(orientation):
+        case None:
+            return rect
+        case Image.Transpose.FLIP_LEFT_RIGHT:
+            return (width - right, upper, width - left, lower)
+        case Image.Transpose.ROTATE_180:
+            return (width - right, height - lower, width - left, height - upper)
+        case Image.Transpose.FLIP_TOP_BOTTOM:
+            return (left, height - lower, right, height - upper)
+        case Image.Transpose.TRANSPOSE:
+            return (upper, left, lower, right)
+        case Image.Transpose.ROTATE_270:
+            return (upper, height - right, lower, height - left)
+        case Image.Transpose.TRANSVERSE:
+            return (width - lower, height - right, width - upper, height - left)
+        case _:  # ROTATE_90
+            return (width - lower, left, width - upper, right)
+
+
+def _swaps_axes(transpose: Transpose | None) -> bool:
+    """Whether turning by ``transpose`` exchanges width and height (the quarter turns)."""
+    from PIL import Image
+
+    return transpose in (
+        Image.Transpose.TRANSPOSE,
+        Image.Transpose.ROTATE_270,
+        Image.Transpose.TRANSVERSE,
+        Image.Transpose.ROTATE_90,
+    )
+
+
 def _refuse_too_large(box: SourceBox, *, item_id: str, **size: float) -> NoReturn:
     """422 for a scan no ceiling-respecting render can serve, with its size logged."""
     log.warning("review_crop_page_too_large", item_id=item_id, page=box.page, **size)
@@ -580,21 +654,26 @@ def _crop_image_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
 
     Extraction decodes an image upload with PIL and applies its EXIF
     orientation (``rasterise._rasterise_single_image``, #255), so ``box`` is
-    in the UPRIGHT frame. This decodes with PIL too, transposes the whole
-    photo the same way, and crops there. A single image has one page, as it
-    does for extraction.
+    in the UPRIGHT frame. The padded rectangle is computed in that frame,
+    mapped back into the stored frame (:func:`_stored_frame_rect`), cut from
+    the decode there, and only that small crop is turned upright. Turning
+    the whole decode first would make Pillow allocate a second full-size
+    image (``in_place`` does not avoid it), doubling the peak for a phone
+    photo. A single image has one page, as it does for extraction.
     """
-    from PIL import Image, ImageOps
+    from PIL import Image
 
     with Image.open(io.BytesIO(data)) as opened:
         _require_page_in_range(box, 1, item_id=item_id)
         _decode_within_ceiling(opened, box, item_id=item_id)
-        # `in_place`: no second full-size copy when there is no flag; with
-        # one, the transposed frame replaces the decode, bounded by
-        # `_decode_within_ceiling` above.
-        ImageOps.exif_transpose(opened, in_place=True)
-        rect = padded_crop_rect(opened.width, opened.height, list(box.box))
-        region = _fitted_region(opened, rect)
+        orientation = opened.getexif().get(_EXIF_ORIENTATION_TAG)
+        transpose = _upright_transpose(orientation)
+        stored_size = opened.size
+        upright_size = stored_size[::-1] if _swaps_axes(transpose) else stored_size
+        rect = padded_crop_rect(upright_size[0], upright_size[1], list(box.box))
+        region = _fitted_region(opened, _stored_frame_rect(rect, stored_size, orientation))
+    if transpose is not None:
+        region = region.transpose(transpose)
     buf = io.BytesIO()
     region.save(buf, format="PNG")
     return _upscaled_png(buf.getvalue(), region.width, region.height, page=box.page)
