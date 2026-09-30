@@ -652,6 +652,58 @@ def test_upload_rejects_a_content_stream_bomb_with_422(client: TestClient) -> No
     assert "drawing" in resp.json()["detail"]
 
 
+def test_an_upload_refused_for_its_content_is_logged_without_its_bytes(
+    client: TestClient,
+) -> None:
+    """Final review, Important 3: an upload the scan check refuses left no
+    trace in the logs, so an operator could not see why teachers' uploads
+    were failing. One structured line: the refusal class, the file's size
+    and its declared content type -- never the file itself."""
+    import structlog.testing
+
+    from tests.pdf_fakes import page_bomb_pdf
+
+    bomb = page_bomb_pdf(112_000_000)
+    with structlog.testing.capture_logs() as logs:
+        resp = client.post(
+            "/api/papers/upload",
+            files={"scan": ("scan.pdf", bomb, "application/pdf")},
+        )
+    assert resp.status_code == 422
+    refused = [entry for entry in logs if entry["event"] == "upload_refused"]
+    assert refused == [
+        {
+            "event": "upload_refused",
+            "log_level": "warning",
+            "refusal": "ScanTooLargeError",
+            "byte_size": len(bomb),
+            "content_type": "application/pdf",
+        }
+    ]
+
+
+def test_an_upload_over_the_byte_cap_is_logged_without_its_bytes() -> None:
+    """Final review, Important 3: the 413 for an upload over the byte cap
+    is logged the same way, with ``too_large`` as its refusal class."""
+    import structlog.testing
+    from fastapi import HTTPException
+
+    from lemely.web.upload_utils import check_upload_cap
+
+    with structlog.testing.capture_logs() as logs, pytest.raises(HTTPException) as caught:
+        check_upload_cap(b"x" * 9, max_bytes=8, content_type="image/png")
+    assert caught.value.status_code == 413
+    assert logs == [
+        {
+            "event": "upload_refused",
+            "log_level": "warning",
+            "refusal": "too_large",
+            "byte_size": 9,
+            "content_type": "image/png",
+        }
+    ]
+
+
 def test_preview_refuses_a_stored_content_stream_bomb(
     client: TestClient,
     paper_repo: TeacherPaperRepository,

@@ -676,8 +676,8 @@ async def student_upload(
     object_prefix = f"uploads/{auth.user_id}/{paper_id.hex}"
 
     scan_bytes = await scan.read()
-    check_upload_cap(scan_bytes)
-    await anyio.to_thread.run_sync(check_scan_geometry, scan_bytes)
+    check_upload_cap(scan_bytes, content_type=scan.content_type)
+    await anyio.to_thread.run_sync(check_scan_geometry, scan_bytes, scan.content_type)
     object_path = f"{object_prefix}/{safe_upload_name(scan.filename, 'scan.pdf')}"
     # Off the event loop: this is ``async def``, and a blocking network call
     # made inline here would freeze every other request in the process for as
@@ -690,7 +690,7 @@ async def student_upload(
     if mark_scheme is not None:
         # Fixed name so ``resolve_mark_scheme`` can find the sibling scheme object.
         scheme_bytes = await mark_scheme.read()
-        check_upload_cap(scheme_bytes)
+        check_upload_cap(scheme_bytes, content_type=mark_scheme.content_type)
         await anyio.to_thread.run_sync(
             storage_backend.upload,
             settings.storage.bucket,

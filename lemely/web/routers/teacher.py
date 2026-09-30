@@ -827,8 +827,8 @@ async def upload_paper(
     prefix = f"teacher/{uploaded_by}/{paper_id.hex}"
 
     scan_bytes = await scan.read()
-    check_upload_cap(scan_bytes, max_bytes=_MAX_UPLOAD_BYTES)
-    await anyio.to_thread.run_sync(check_scan_geometry, scan_bytes)
+    check_upload_cap(scan_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=scan.content_type)
+    await anyio.to_thread.run_sync(check_scan_geometry, scan_bytes, scan.content_type)
     scan_key = f"{prefix}/{_safe_upload_name(scan.filename, 'scan.pdf')}"
     await anyio.to_thread.run_sync(
         storage.upload, settings.storage.bucket, scan_key, scan_bytes, scan.content_type
@@ -841,7 +841,9 @@ async def upload_paper(
         # by looking for a sibling called exactly `mark_scheme.pdf` next to
         # the scan — the same contract `routers/student.py` writes to.
         scheme_bytes = await mark_scheme.read()
-        check_upload_cap(scheme_bytes, max_bytes=_MAX_UPLOAD_BYTES)
+        check_upload_cap(
+            scheme_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=mark_scheme.content_type
+        )
         scheme_key = f"{prefix}/mark_scheme.pdf"
         await anyio.to_thread.run_sync(
             storage.upload,
@@ -1264,7 +1266,7 @@ async def upload_scheme(
     from lemely.io.det import DeterministicMarkSchemeParser
 
     pdf_bytes = await scheme_pdf.read()
-    check_upload_cap(pdf_bytes, max_bytes=_MAX_UPLOAD_BYTES)
+    check_upload_cap(pdf_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=scheme_pdf.content_type)
     # Sanitise the client filename to a basename before joining — the raw value
     # must never be trusted as a path (traversal into ``../`` etc.).
     filename = _safe_upload_name(scheme_pdf.filename, "scheme.pdf")

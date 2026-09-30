@@ -15,9 +15,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import structlog
 from fastapi import HTTPException
 
 from lemely.io.scan_limits import ScanRejectedError, check_scan_bytes
+
+log = structlog.get_logger(__name__)
 
 # Hard cap on a single uploaded file (scan or mark scheme), enforced once the
 # whole body has been read into memory, before it is written anywhere —
@@ -42,21 +45,35 @@ def safe_upload_name(filename: str | None, fallback: str) -> str:
     return base
 
 
-def check_upload_cap(data: bytes, *, max_bytes: int = MAX_UPLOAD_BYTES) -> None:
+def _log_refusal(refusal: str, data: bytes, content_type: str | None) -> None:
+    """One structured line for a refused upload: why, how big, and what it claimed to be.
+
+    Final review, Important 3: refusals were invisible to operators. The
+    file's bytes are never logged -- only their count and the client's
+    declared content type.
+    """
+    log.warning("upload_refused", refusal=refusal, byte_size=len(data), content_type=content_type)
+
+
+def check_upload_cap(
+    data: bytes, *, max_bytes: int = MAX_UPLOAD_BYTES, content_type: str | None = None
+) -> None:
     """Raise 413 when ``data`` exceeds ``max_bytes``.
 
     Every upload path in the app ships bytes to the object-storage seam
     (never the container filesystem, spec §4.1), so this is the one cap-check
-    every one of them shares.
+    every one of them shares. A refusal is logged (``too_large``), with the
+    client's declared ``content_type``.
     """
     if len(data) > max_bytes:
+        _log_refusal("too_large", data, content_type)
         raise HTTPException(
             status_code=413,
             detail=f"Upload exceeds {max_bytes} byte limit.",
         )
 
 
-def check_scan_geometry(data: bytes) -> None:
+def check_scan_geometry(data: bytes, content_type: str | None = None) -> None:
     """Raise 422 when ``data`` declares a page geometry or content extraction will refuse.
 
     Spec 2026-09-26 §6: both grading flows run outside a plain
@@ -67,10 +84,15 @@ def check_scan_geometry(data: bytes) -> None:
     of each page's content streams alone -- nothing is rendered. Bytes that
     are not a readable PDF or image pass: extraction fails on them later, as
     today. 413 (:func:`check_upload_cap`) stays the answer for byte size.
+
+    A refusal is logged with the exception's class as its refusal class,
+    and the client's declared ``content_type`` (positional, so
+    ``anyio.to_thread.run_sync`` can pass it).
     """
     try:
         check_scan_bytes(data)
     except ScanRejectedError as exc:
+        _log_refusal(type(exc).__name__, data, content_type)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
