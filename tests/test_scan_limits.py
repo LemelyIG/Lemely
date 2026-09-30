@@ -1824,7 +1824,7 @@ class RawObjectStreamTests(unittest.TestCase):
                 self.generic_visit(node)
                 self.functions.pop()
 
-            visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]  # noqa: N815
+            visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
 
             def visit_Call(self, node: ast.Call) -> None:
                 func = node.func
