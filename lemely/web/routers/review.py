@@ -43,9 +43,9 @@ from lemely.io.rasterise import RasterisedPage, looks_like_pdf, single_channel_o
 from lemely.io.reread import REREAD_UPSCALE, crop_and_upscale, padded_crop_rect
 from lemely.io.scan_limits import (
     ScanRejectedError,
-    check_object_stream_bytes,
     check_pdf_page_content,
     decode_pixel_cap,
+    open_checked_pdf,
     open_scan_image,
 )
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
@@ -558,16 +558,14 @@ def _crop_pdf_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
     import pymupdf
 
     # Task 9c review round 2: with a broken xref, MuPDF repairs the file while
-    # opening it and parses every object stream it finds, so object streams are
-    # bounded from the raw bytes before the open.
+    # opening it and parses every object stream it finds, so `open_checked_pdf`
+    # bounds object streams from the raw bytes before the open.
     try:
-        check_object_stream_bytes(data)
+        doc = open_checked_pdf(data)
     except ScanRejectedError as exc:
         log.warning("review_crop_scan_rejected", item_id=item_id, page=box.page, reason=str(exc))
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
-    # call needs the ignore. Narrowed to this one code, not the module.
-    with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+    with doc:
         # `_require_page_in_range` first: it reads only `doc.page_count`, no
         # `load_page` -- an out-of-range box must still cost a bounds check,
         # not a page load (test_crop_route_422s_for_a_page_out_of_range_without_rendering
@@ -589,7 +587,7 @@ def _crop_pdf_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
                 "review_crop_scan_rejected", item_id=item_id, page=box.page, reason=str(exc)
             )
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        page = doc.load_page(box.page)
+        page = doc.load_page(box.page)  # type: ignore[no-untyped-call]
         # A fresh list, so nothing downstream can rescale this request's box.
         plan = _pdf_crop_plan(page.rect, list(box.box))
         if plan is None:

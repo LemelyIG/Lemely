@@ -101,8 +101,10 @@ from lemely.io.gemini import GeminiClient
 from lemely.io.question_generation import QuestionGenerator
 from lemely.io.scan_limits import (
     ScanRejectedError,
-    check_object_stream_bytes,
     check_pdf_content,
+    looks_like_pdf,
+    open_checked_pdf,
+    open_scan_image_document,
 )
 from lemely.io.scan_metadata import ScanMetadataExtractor
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
@@ -708,52 +710,41 @@ def _live_pipeline_steps(row: TeacherPaperRow) -> list[PipelineStepDTO]:
     return steps
 
 
-def _pymupdf_filetype(content_type: str | None) -> str:
-    """Map a stored scan's content type to the ``filetype`` PyMuPDF's stream opener wants.
-
-    ``None``/``application/pdf`` (the common case — most scans are PDFs, and
-    some clients omit the header) opens as ``"pdf"``; an ``image/*`` upload
-    opens as its subtype (``"png"``, ``"jpeg"``), matching what the console's
-    upload input accepts.
-    """
-    if content_type is None or content_type == "application/pdf":
-        return "pdf"
-    return content_type.split("/", 1)[-1]
-
-
 #: The longest edge of a paper preview, in pixels: an A4 page's long edge at 72 dpi.
 _PREVIEW_LONG_EDGE_PX = 842.0
 
 
-def _render_preview_png(data: bytes, content_type: str | None) -> bytes:
+def _render_preview_png(data: bytes) -> bytes:
     """Page 1 of a stored scan, ``data``, as a PNG thumbnail (see :func:`get_paper_preview`).
 
-    Raises :class:`HTTPException` 422 for a document with no pages, and lets
-    every other failure propagate for the route to turn into a 422.
+    PDF or image is decided from the bytes (``looks_like_pdf``), as the crop
+    route and extraction decide it, never from the client-supplied content
+    type: MuPDF sniffs the bytes, so PDF bytes stored as ``image/png`` used
+    to skip the pre-scan and were repaired while opening (final review,
+    item 4). A PDF opens through ``open_checked_pdf`` (the raw pre-scan
+    first), an image through ``open_scan_image_document`` (allowlisted, and
+    never opened as a PDF).
+
+    Raises :class:`HTTPException` 422 for a document with no pages,
+    :class:`ScanRejectedError` for a refused scan, and lets every other
+    failure propagate for the route to turn into a 422.
     """
     import pymupdf
 
-    filetype = _pymupdf_filetype(content_type)
-    if filetype == "pdf":
-        # Task 9c review round 2: with a broken xref, MuPDF repairs the
-        # file while opening it and parses every object stream it finds,
-        # so object streams are bounded from the raw bytes first.
-        check_object_stream_bytes(data)
-    # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
-    # call needs the ignore. Narrowed to this one code, not the module.
-    with pymupdf.open(stream=data, filetype=filetype) as doc:  # type: ignore[no-untyped-call]
+    doc = open_checked_pdf(data) if looks_like_pdf(data) else open_scan_image_document(data)
+    with doc:
         check_pdf_content(doc)
         if doc.page_count == 0:
             raise HTTPException(status_code=422, detail="Stored scan has no pages")
-        page = doc.load_page(0)
+        page = doc.load_page(0)  # type: ignore[no-untyped-call]
         # At most an A4 page at 72 dpi: 842px on the long edge. Sized against
         # the consumer: the card thumbnail is a ~300px-wide strip, so this is
         # still sharp on a 2x display, and every step up costs a bigger
         # payload on every card in the grid at once (96 dpi produced a 320KB
         # PNG per paper). A zoom, not `dpi=72`: MuPDF sizes an image's page
         # from the image's own DPI metadata, so a 72 dpi image drew at full
-        # size -- 805 MB for a 160 Mpx bilevel scan the upload admits (final
-        # review, Critical 1). Bounded, MuPDF decodes it subsampled (~65 MB).
+        # size -- 958 MB for a 160 Mpx bilevel scan the upload admits (final
+        # review, Critical 1); bounded, 183 MB, mostly the image's decode.
         zoom = min(1.0, _PREVIEW_LONG_EDGE_PX / max(page.rect.width, page.rect.height, 1.0))
         matrix = pymupdf.Matrix(zoom, zoom)  # type: ignore[no-untyped-call]
         pixmap = page.get_pixmap(matrix=matrix)
@@ -1124,8 +1115,9 @@ def get_paper_preview(
 
     404 when the object has expired or was never written (DS9) — a stored
     scan is not forever, and a caller sees that as "no scan", not a crash.
-    Image uploads (the console accepts ``image/*`` as well as PDFs) are passed
-    through PyMuPDF the same way, so one code path covers both.
+    Image uploads (the console accepts images as well as PDFs) are drawn by
+    PyMuPDF too, so one code path covers both; the bytes decide which
+    opener runs (``_render_preview_png``).
     """
     row = _require_paper(repo, auth, paper_id)
     try:
@@ -1136,7 +1128,7 @@ def get_paper_preview(
         ) from None
 
     try:
-        png = _render_preview_png(data, row.content_type)
+        png = _render_preview_png(data)
     except HTTPException:
         raise
     except ScanRejectedError as exc:

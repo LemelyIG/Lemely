@@ -788,6 +788,75 @@ def test_preview_refuses_an_object_stream_bomb_before_opening_the_scan(
     assert "compressed internal data" in preview.json()["detail"]
 
 
+def test_preview_prescans_pdf_bytes_stored_under_an_image_content_type(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """Final review, item 4: the preview chose whether to pre-scan from the
+    client-supplied content type, but MuPDF sniffs the bytes -- PDF bytes
+    stored as ``image/png`` skipped the pre-scan and were repaired at open.
+    The preview decides from the bytes (``looks_like_pdf``), as the crop
+    route and extraction do: 422, and MuPDF never opens the file."""
+    from unittest.mock import patch
+
+    import pymupdf
+
+    from lemely.io.scan_limits import MAX_OBJECT_STREAM_BYTES
+    from tests.pdf_fakes import shared_container_broken_xref_pdf
+
+    scan = shared_container_broken_xref_pdf(MAX_OBJECT_STREAM_BYTES // 2 + 1_000)
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        scan,
+        content_type="image/png",
+        name="scan.png",
+    )
+
+    with patch.object(pymupdf, "open", side_effect=AssertionError("MuPDF opened")) as opened:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+    opened.assert_not_called()
+    assert preview.status_code == 422, preview.text
+    assert "compressed internal data" in preview.json()["detail"]
+
+
+def test_preview_of_image_bytes_stored_as_a_pdf_renders_the_image(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """The other way round: a PNG stored as ``application/pdf`` is drawn as the
+    image it is -- the bytes decide which opener runs, not the stored
+    content type."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 140), "white").save(buf, "PNG")
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        buf.getvalue(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 200, preview.text
+    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
 def test_preview_still_refuses_a_stored_scan_over_the_page_cap(
     client: TestClient,
     paper_repo: TeacherPaperRepository,
@@ -1976,7 +2045,7 @@ try:
 except OSError:
     raise SystemExit(77)  # cannot reset the high-water mark here: the parent skips
 before = peak_bytes()
-png = _render_preview_png(scan, "image/png")
+png = _render_preview_png(scan)
 print(peak_bytes() - before, len(png))
 """
 

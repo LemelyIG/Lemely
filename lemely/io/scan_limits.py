@@ -1452,9 +1452,10 @@ def check_object_stream_bytes(data: bytes) -> None:
     only looks like a header inside a string or a comment can only add to
     the total, never hide a container from it.
 
-    Upload, extraction and the whole-document check run this first; a
-    caller that opens a stored PDF with MuPDF itself must run it before
-    ``pymupdf.open``.
+    Nothing opens user PDF bytes with MuPDF except through
+    :func:`open_checked_pdf`, which runs this first (final review, item 4;
+    ``tests/test_scan_limits.py`` fails on any other ``pymupdf.open`` of
+    bytes in ``lemely/``).
     """
     budget = _ScanBudget()
     containers: list[tuple[tuple[str, object] | None, list[tuple[int, int]]]] = []
@@ -1725,6 +1726,65 @@ def check_pdf_page_content(doc: pymupdf.Document, page_index: int) -> None:
     _check_page(doc, tree, _ContentBudget(), page_index)
 
 
+def open_checked_pdf(data: bytes) -> pymupdf.Document:
+    """MuPDF's document for the PDF ``data``: the one way user PDF bytes are opened.
+
+    Runs :func:`check_object_stream_bytes` first, from the raw bytes: with a
+    damaged xref MuPDF repairs the file while OPENING it, parsing every
+    object stream it finds, before any check on the opened document can
+    run. Every MuPDF open of an upload -- the whole-document check, the
+    canonical rewrite, the paper preview and the review crop -- comes
+    through here, so none can skip the pre-scan (final review, item 4).
+    Raises :class:`ScanRejectedError` from the pre-scan; whatever
+    ``pymupdf.open`` raises for bytes it cannot open propagates. The caller
+    closes the document.
+    """
+    check_object_stream_bytes(data)  # before the open: repair parses containers at open
+    # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
+    # call needs the ignore. Narrowed to this one code, not the module.
+    return pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
+
+
+#: MuPDF's ``filetype`` for each format :func:`open_scan_image` admits. An MPO
+#: (a phone JPEG with a second image) is a JPEG to MuPDF.
+_MUPDF_IMAGE_FILETYPES = {
+    "JPEG": "jpeg",
+    "MPO": "jpeg",
+    "PNG": "png",
+    "TIFF": "tiff",
+    "WEBP": "webp",
+    "BMP": "bmp",
+}
+
+
+def open_scan_image_document(data: bytes) -> pymupdf.Document:
+    """MuPDF's one-page document for the scan image ``data``; never a PDF.
+
+    For a caller that draws an image upload with MuPDF (the paper preview).
+    The format is named from the header by :func:`open_scan_image` --
+    allowlisted formats only, nothing decoded -- and the image's size is
+    held to :func:`decode_pixel_cap` for its mode and format, as upload,
+    extraction and the crop route hold it. MuPDF is then told that format,
+    so the image's own magic bytes, at offset 0, decide how it is read:
+    bytes Pillow does not recognise as an allowlisted image (a PDF among
+    them) never reach MuPDF, which would otherwise sniff and repair a PDF
+    while opening it, before any pre-scan. Raises
+    :class:`ScanRejectedError` (a format outside the allowlist, a size over
+    the cap, or a document MuPDF opened as a PDF anyway), or what Pillow
+    and MuPDF raise for bytes they cannot read. The caller closes the
+    document.
+    """
+    with open_scan_image(io.BytesIO(data)) as opened:
+        image_format = opened.format
+        plan_image(opened.width, opened.height, opened.mode, image_format)
+    filetype = _MUPDF_IMAGE_FILETYPES[image_format or ""]
+    doc = pymupdf.open(stream=data, filetype=filetype)  # type: ignore[no-untyped-call]
+    if doc.is_pdf:
+        doc.close()  # type: ignore[no-untyped-call]
+        raise ScanRejectedError(_UNCHECKABLE_MESSAGE)
+    return doc
+
+
 def _check_opened(open_doc: Callable[[], pymupdf.Document], pdfium_pages: int | None) -> None:
     """:func:`check_pdf_content` on the document ``open_doc`` opens, failing closed.
 
@@ -1745,6 +1805,8 @@ def _check_opened(open_doc: Callable[[], pymupdf.Document], pdfium_pages: int | 
     """
     try:
         doc = open_doc()
+    except ScanRejectedError:
+        raise  # the pre-scan's refusal (open_checked_pdf), never "cannot open"
     except Exception as exc:
         if pdfium_pages:
             raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE) from exc
@@ -1765,11 +1827,7 @@ def check_pdf_content_bytes(data: bytes, *, pdfium_pages: int | None = None) -> 
     ``pdfium_pages``: pdfium's page count for the same bytes, when the
     caller has it, so the two readers' counts are compared.
     """
-    check_object_stream_bytes(data)  # before any open: repair parses containers at open
-    _check_opened(
-        lambda: pymupdf.open(stream=data, filetype="pdf"),  # type: ignore[no-untyped-call]
-        pdfium_pages,
-    )
+    _check_opened(lambda: open_checked_pdf(data), pdfium_pages)
 
 
 def canonical_pdf_bytes(data: bytes) -> bytes:
@@ -1826,9 +1884,10 @@ def canonical_pdf_bytes(data: bytes) -> bytes:
     page in is a :class:`ValueError`, extraction's contract for an empty
     PDF (MuPDF will not write one).
     """
-    check_object_stream_bytes(data)  # before any open: repair parses containers at open
     try:
-        doc = pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
+        doc = open_checked_pdf(data)  # the raw pre-scan first
+    except ScanRejectedError:
+        raise
     except Exception as exc:
         raise ScanRejectedError(_UNCHECKABLE_MESSAGE) from exc
     try:

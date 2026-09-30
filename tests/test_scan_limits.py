@@ -1690,6 +1690,93 @@ class RawObjectStreamTests(unittest.TestCase):
                         check(data)
                     self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
 
+    def test_open_checked_pdf_refuses_a_container_bomb_before_mupdf_opens_it(self) -> None:
+        """Final review, item 4: the one way to open user PDF bytes with MuPDF
+        runs the raw pre-scan first, so the bomb is refused and
+        ``pymupdf.open`` is never reached."""
+        from lemely.io.scan_limits import open_checked_pdf
+
+        data = shared_container_broken_xref_pdf(self._BOMB)
+        with self._trapped(), self.assertRaises(ScanTooLargeError) as caught:
+            open_checked_pdf(data)
+        self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
+
+    def test_open_checked_pdf_opens_a_clean_pdf(self) -> None:
+        from lemely.io.scan_limits import open_checked_pdf
+
+        with open_checked_pdf(_pdf_bytes((595.0, 842.0), (595.0, 842.0))) as doc:
+            self.assertTrue(doc.is_pdf)
+            self.assertEqual(doc.page_count, 2)
+
+    def test_open_scan_image_document_never_opens_a_pdf(self) -> None:
+        """The preview's image path: an allowlisted image opens as a one-page
+        image document; PDF bytes -- which MuPDF would repair while opening,
+        before any pre-scan -- are refused before MuPDF sees them, as is a
+        format outside the allowlist."""
+        from lemely.io.scan_limits import open_scan_image_document
+
+        buf = io.BytesIO()
+        Image.new("L", (40, 30), 200).save(buf, "PNG")
+        with open_scan_image_document(buf.getvalue()) as doc:
+            self.assertFalse(doc.is_pdf)
+            self.assertEqual(doc.page_count, 1)
+        from PIL import UnidentifiedImageError
+
+        refused: tuple[tuple[bytes, type[Exception]], ...] = (
+            (shared_container_broken_xref_pdf(self._BOMB), UnidentifiedImageError),
+            (ico_wrapping(buf.getvalue()), ScanUnsupportedFormatError),
+        )
+        for data, error in refused:
+            with self.subTest(error=error.__name__), self._trapped(), self.assertRaises(error):
+                open_scan_image_document(data)
+
+    def test_every_mupdf_open_of_user_bytes_goes_through_the_sanctioned_openers(self) -> None:
+        """Final review, item 4: "pre-scan before any MuPDF open" is enforced
+        by code, not by each caller remembering. Every ``pymupdf.open`` (or
+        ``fitz.open``/``Document``) given anything to open, anywhere in
+        ``lemely/``, is inside :func:`open_checked_pdf` or
+        :func:`open_scan_image_document`. A bare ``pymupdf.open()`` makes a new,
+        empty document and opens no bytes."""
+        import ast
+
+        allowed = {
+            ("lemely/io/scan_limits.py", "open_checked_pdf"),
+            ("lemely/io/scan_limits.py", "open_scan_image_document"),
+        }
+        root = Path(__file__).resolve().parents[1]
+        found: set[tuple[str, str]] = set()
+
+        class _Opens(ast.NodeVisitor):
+            def __init__(self, relative: str) -> None:
+                self.relative = relative
+                self.functions: list[str] = []
+
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+                self.functions.append(node.name)
+                self.generic_visit(node)
+                self.functions.pop()
+
+            visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
+            def visit_Call(self, node: ast.Call) -> None:
+                func = node.func
+                if (
+                    isinstance(func, ast.Attribute)
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id in ("pymupdf", "fitz")
+                    and func.attr in ("open", "Document")
+                    and (node.args or node.keywords)
+                ):
+                    where = self.functions[-1] if self.functions else "<module>"
+                    found.add((self.relative, where))
+                self.generic_visit(node)
+
+        for path in sorted((root / "lemely").rglob("*.py")):
+            relative = path.relative_to(root).as_posix()
+            _Opens(relative).visit(ast.parse(path.read_text(encoding="utf-8")))
+        self.assertEqual(found - allowed, set(), "a MuPDF open outside the sanctioned openers")
+        self.assertEqual(found, allowed)
+
     def test_a_scan_past_the_token_budget_is_refused_as_too_complex(self) -> None:
         """The raw scan reads every dictionary token by token; one crafted
         dictionary of 600,000 names (1.2M tokens) is refused once past
