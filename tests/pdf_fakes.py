@@ -16,6 +16,7 @@ for the per-mode image ceiling, used by the rasterise and crop-route tests.
 from __future__ import annotations
 
 import io
+import random
 import re
 import struct
 import zlib
@@ -1513,6 +1514,38 @@ def shared_container_broken_xref_pdf(
     return bytes(out)
 
 
+def bare_encrypt_dict_pdf(*, prefix: bytes = b"", encrypt_key: bytes = b"/Encrypt") -> bytes:
+    """One page plus a harmless ~20 KB Flate object stream (seeded random
+    bytes, so it barely compresses), then -- with no xref -- a bare
+    trailer-like dictionary carrying ``encrypt_key`` (``b""`` for none),
+    introduced by ``prefix`` rather than the ``trailer`` keyword.
+
+    Encrypt parity (verifier's ``gap.py``): MuPDF's xref repair reads
+    ``/Encrypt`` from any top-level dictionary like this one, so the
+    object-stream pre-scan must count the file as encrypted too. Counted
+    as encrypted, the stream's ~20 KB counts at Flate's ceiling (~20 MB) and
+    is refused; counted as plain, it inflates to ~20 KB and passes.
+    """
+    payload = random.Random(9).randbytes(20_000)
+    packed = zlib.compress(payload, 1)
+    objects = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>",
+        4: pdf_stream(b"/Type /ObjStm /N 0 /First 0 /Filter /FlateDecode", packed),
+    }
+    out = bytearray(b"%PDF-1.7\n")
+    for number, body in objects.items():
+        out += f"{number} 0 obj\n".encode() + body + b"\nendobj\n"
+    encrypt = (
+        encrypt_key + b" <</Filter /Standard /V 1 /R 2 /O <00> /U <00> /P -4>>"
+        if encrypt_key
+        else b""
+    )
+    out += prefix + b"<</Root 1 0 R /Size 5 " + encrypt + b">>\nstartxref\n0\n%%EOF\n"
+    return bytes(out)
+
+
 def hidden_layer_pdf(*, variant: str = "text") -> bytes:
     """One A4 page with content on an optional-content layer that is OFF by
     default, beside content on a layer that is ON.
@@ -1839,6 +1872,7 @@ __all__ = [
     "annot_ap_image_bomb_pdf",
     "annot_ap_nested_bomb_pdf",
     "assemble_pdf",
+    "bare_encrypt_dict_pdf",
     "bilevel_png",
     "bomb_on_second_page_pdf",
     "born_digital_text_pdf",

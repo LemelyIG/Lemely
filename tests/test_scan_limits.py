@@ -45,6 +45,7 @@ from tests.pdf_fakes import (
     annot_ap_image_bomb_pdf,
     annot_ap_nested_bomb_pdf,
     assemble_pdf,
+    bare_encrypt_dict_pdf,
     bilevel_png,
     bomb_on_second_page_pdf,
     born_digital_text_pdf,
@@ -1637,6 +1638,26 @@ class RawObjectStreamTests(unittest.TestCase):
             with self.subTest(entry=entry), self._trapped():
                 with self.assertRaises(ScanTooLargeError) as caught:
                     check_object_stream_bytes(data)
+                self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
+
+    def test_encrypt_in_a_bare_dictionary_counts_as_encrypted(self) -> None:
+        """Encrypt parity: MuPDF's xref repair reads /Encrypt from any top-level
+        dictionary -- with the ``trailer`` keyword, with another word before it,
+        or with nothing at all -- so the scan treats any /Encrypt name in the
+        file (escapes decoded) as declaring encryption. Each case's ~20 KB
+        object stream then counts at Flate's ceiling and is refused; the same
+        file with no /Encrypt passes."""
+        check_object_stream_bytes(bare_encrypt_dict_pdf(encrypt_key=b""))
+        for label, kwargs in (
+            ("trailer keyword", {"prefix": b"trailer\n"}),
+            ("no keyword", {}),
+            ("another keyword", {"prefix": b"foobar\n"}),
+            ("escaped name, no keyword", {"encrypt_key": b"/Encr#79pt"}),
+            ("fully escaped name", {"encrypt_key": b"/#45#6e#63#72#79#70#74"}),
+        ):
+            with self.subTest(label), self._trapped():
+                with self.assertRaises(ScanTooLargeError) as caught:
+                    check_object_stream_bytes(bare_encrypt_dict_pdf(**kwargs))  # type: ignore[arg-type]
                 self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
 
     @unittest.skipUnless(

@@ -1063,8 +1063,33 @@ _STRING_SPECIAL_RE = re.compile(rb"[()\\]")
 _NAME_ESCAPE_RE = re.compile(rb"#([0-9A-Fa-f]{2})")
 _ENDSTREAM_AT_RE = re.compile(rb"[" + _WS + rb"]*endstream")
 _EOL_RE = re.compile(rb"[\r\n]")
-#: The ``trailer`` keyword of a classic xref section, a whole word.
-_TRAILER_RE = re.compile(rb"(?<!" + _REGULAR + rb")trailer(?!" + _REGULAR + rb")")
+#: The name ``/Encrypt``, whole, spelled plainly -- and any name holding a
+#: ``#xx`` escape, which is decoded and compared (encrypt parity).
+_ENCRYPT_NAME_RE = re.compile(rb"/Encrypt(?!" + _REGULAR + rb")")
+_ESCAPED_NAME_RE = re.compile(rb"/" + _REGULAR + rb"*?#[0-9A-Fa-f]{2}" + _REGULAR + rb"*")
+
+
+def _declares_encryption(data: bytes, budget: _ScanBudget) -> bool:
+    """Whether ``/Encrypt`` appears anywhere in ``data`` as a name, escapes decoded.
+
+    Encrypt parity: MuPDF takes ``/Encrypt`` from a ``trailer`` dictionary,
+    an xref stream's dictionary, and -- when it repairs a broken xref -- any
+    top-level dictionary at all, keyword or none. None of those is ever
+    compressed, so the name is always in the raw bytes. Looking for it
+    anywhere over-detects (a string or comment that spells it counts), which
+    is safe: an encrypted file's object streams only count at their Flate
+    ceiling. The plain spelling is found by one C-speed search; each name
+    holding an escape is decoded and costs a token of ``budget``.
+    """
+    if _ENCRYPT_NAME_RE.search(data):
+        return True
+    for escaped in _ESCAPED_NAME_RE.finditer(data):
+        budget.spend()
+        if _pdf_name(escaped.group()) == b"Encrypt":
+            return True
+    return False
+
+
 #: The most a Flate stream can expand: deflate's longest match (258 bytes)
 #: costs at least two bits, so 1032 decoded bytes per compressed byte, and
 #: ``1032 x length`` bounds any Flate object stream without decoding it.
@@ -1286,7 +1311,6 @@ def check_object_stream_bytes(data: bytes) -> None:
     """
     budget = _ScanBudget()
     containers: list[tuple[tuple[str, object] | None, list[tuple[int, int]]]] = []
-    encrypted = False
     scanned_to = 0
     for header in _OBJ_HEADER_RE.finditer(data):
         budget.spend()
@@ -1298,7 +1322,6 @@ def check_object_stream_bytes(data: bytes) -> None:
             continue
         entries, dict_end = parsed
         scanned_to = dict_end
-        encrypted = encrypted or b"Encrypt" in entries  # an xref stream is a trailer
         kind, keyword, start = _next_token(data, dict_end, budget)
         if (kind, keyword) != ("word", b"stream"):
             continue
@@ -1307,10 +1330,7 @@ def check_object_stream_bytes(data: bytes) -> None:
         scanned_to = max(scanned_to, *(end for _, end in spans))
         if entries.get(b"Type") == ("name", b"ObjStm"):
             containers.append((entries.get(b"Filter"), spans))
-    for trailer in _TRAILER_RE.finditer(data):
-        budget.spend()
-        parsed = _stream_dict(data, trailer.end(), budget)
-        encrypted = encrypted or (parsed is not None and b"Encrypt" in parsed[0])
+    encrypted = _declares_encryption(data, budget)
     total = 0
     for filters, spans in containers:
         longest = max(end - begin for begin, end in spans)
