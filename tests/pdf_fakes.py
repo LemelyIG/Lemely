@@ -1440,6 +1440,9 @@ def shared_container_broken_xref_pdf(
     filter_entry: bytes = b"/Filter /FlateDecode",
     length_delta: int = 0,
     break_xref: bool = True,
+    stream_separator: bytes = b"\n",
+    corrupt_header: bool = False,
+    encrypt_entry: bytes = b"",
 ) -> bytes:
     """One page whose page dict sits in a Flate object stream beside an
     array of ``elements`` zeros no page draws from; ``startxref`` is off by
@@ -1449,7 +1452,12 @@ def shared_container_broken_xref_pdf(
     ``type_entry``, ``filter_entry`` and ``length_delta`` vary how the
     container's dictionary is spelled (``/Type/ObjStm``, a name escape, a
     one-element ``/Filter`` array, a ``/Length`` that is wrong by
-    ``length_delta``). Adapted from the reviewer's ``c2_amp.py`` case
+    ``length_delta``). ``stream_separator`` is what sits between the
+    ``stream`` keyword and the data (the spec's is an EOL; MuPDF also skips
+    spaces before it), and ``corrupt_header`` replaces the zlib header so
+    nothing inflates. ``encrypt_entry`` (e.g. ``b"/Encrypt 99 0 R"``) is added
+    to the xref stream's dictionary, which is the file's trailer, declaring
+    the file encrypted. Adapted from the reviewer's ``c2_amp.py`` case
     ``junk_shares_page_container_broken_xref`` (Task 9c review round 2).
     """
     junk = b"[" + b"0 " * elements + b"]"
@@ -1457,6 +1465,8 @@ def shared_container_broken_xref_pdf(
     page = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>"
     header = b"3 0 9 %d " % (len(page) + 1)
     packed = zlib.compress(header + page + b" " + junk, 9)
+    if corrupt_header:
+        packed = b"\x00\x00" + packed[2:]
     objects = {
         1: b"<< /Type /Catalog /Pages 2 0 R >>",
         2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -1465,7 +1475,8 @@ def shared_container_broken_xref_pdf(
         + type_entry
         + b" /N 2 /First %d " % len(header)
         + filter_entry
-        + b" /Length %d >>\nstream\n" % (len(packed) + length_delta)
+        + b" /Length %d >>\nstream" % (len(packed) + length_delta)
+        + stream_separator
         + packed
         + b"\nendstream",
     }
@@ -1488,7 +1499,10 @@ def shared_container_broken_xref_pdf(
     table = zlib.compress(b"".join(rows))
     out += (
         b"10 0 obj\n"
-        + pdf_stream(b"/Type /XRef /Size 11 /W [1 4 1] /Root 1 0 R /Filter /FlateDecode", table)
+        + pdf_stream(
+            b"/Type /XRef /Size 11 /W [1 4 1] /Root 1 0 R /Filter /FlateDecode " + encrypt_entry,
+            table,
+        )
         + b"\nendobj\n"
     )
     out += f"startxref\n{xref_at + (7 if break_xref else 0)}\n%%EOF\n".encode()

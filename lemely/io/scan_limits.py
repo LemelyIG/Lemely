@@ -209,6 +209,12 @@ _OBJECT_STREAMS_MESSAGE = (
 _STRUCTURE_TOO_COMPLEX_MESSAGE = (
     "This PDF's internal structure is too complex to check safely. Re-export it as a plain scan."
 )
+#: A Flate object stream no reader could inflate from any start it might use
+#: (scanner review): refused rather than scored as 0 bytes.
+_OBJECT_STREAM_UNREADABLE_MESSAGE = (
+    "This PDF's compressed internal data could not be read, so it could not be checked "
+    "safely. Re-export it as a plain scan."
+)
 #: An object stream uses an encoding the bounded inflate cannot measure.
 _OBJECT_STREAM_ENCODING_MESSAGE = (
     "This PDF's compressed internal data uses an encoding this service cannot measure "
@@ -1021,6 +1027,87 @@ _TOKEN_RE = re.compile(
 _STRING_SPECIAL_RE = re.compile(rb"[()\\]")
 _NAME_ESCAPE_RE = re.compile(rb"#([0-9A-Fa-f]{2})")
 _ENDSTREAM_AT_RE = re.compile(rb"[" + _WS + rb"]*endstream")
+_EOL_RE = re.compile(rb"[\r\n]")
+#: The ``trailer`` keyword of a classic xref section, a whole word.
+_TRAILER_RE = re.compile(rb"(?<!" + _REGULAR + rb")trailer(?!" + _REGULAR + rb")")
+#: The most a Flate stream can expand: deflate's longest match (258 bytes)
+#: costs at least two bits, so 1032 decoded bytes per compressed byte, and
+#: ``1032 x length`` bounds any Flate object stream without decoding it.
+_FLATE_MAX_RATIO = 1032
+
+
+def _stream_data_starts(data: bytes, pos: int) -> list[int]:
+    """Every offset a reader may take a stream's data to start at; ``pos`` follows ``stream``.
+
+    Scanner review: the spec's end-of-line after ``stream`` is not what
+    readers do. MuPDF (``pdf_parse_ind_obj``) skips any run of spaces, then
+    takes a carriage return and an optional line feed -- or else consumes
+    exactly one byte, whatever it is. pdfium skips to the end of the line.
+    The strict reading takes one CR LF, LF or CR. For every standard
+    separator the three agree; where they do not, each is measured and the
+    largest counts.
+    """
+    starts = set()
+    strict = pos
+    if data[pos : pos + 2] == b"\r\n":
+        strict += 2
+    elif data[pos : pos + 1] in (b"\n", b"\r"):
+        strict += 1
+    starts.add(strict)
+    mupdf = pos
+    while data[mupdf : mupdf + 1] == b" ":
+        mupdf += 1
+    if data[mupdf : mupdf + 1] == b"\r":
+        mupdf += 2 if data[mupdf + 1 : mupdf + 2] == b"\n" else 1
+    elif mupdf < len(data):
+        mupdf += 1
+    starts.add(mupdf)
+    eol = _EOL_RE.search(data, pos)
+    if eol is not None:
+        line = eol.end()
+        if eol.group() == b"\r" and data[line : line + 1] == b"\n":
+            line += 1
+        starts.add(line)
+    return sorted(starts)
+
+
+def _stream_data_end(data: bytes, start: int, length: tuple[str, object] | None) -> int:
+    """Where stream data from ``start`` ends, never short of what a reader inflates.
+
+    By ``/Length`` if ``endstream`` follows it, and at least up to the next
+    ``endstream`` -- whichever is later.
+    """
+    found = data.find(b"endstream", start)
+    end = found if found >= 0 else len(data)
+    if length and length[0] == "number":
+        candidate = start + int(length[1])  # type: ignore[call-overload]
+        if candidate <= len(data) and _ENDSTREAM_AT_RE.match(data, candidate):
+            end = max(end, candidate)
+    return end
+
+
+def _strict_inflate_size(raw: bytes, *, budget: int) -> int | None:
+    """:func:`_bounded_inflate_size` for the raw object-stream scan, failing closed.
+
+    ``None`` when the data yields nothing -- a ``zlib.error`` before any
+    output, or a stream that decodes to 0 bytes -- where the lenient helper
+    would count 0 and pass. A stream that decodes some bytes and then fails
+    counts what it yielded, as a reader inflates it.
+    """
+    decompressor = zlib.decompressobj()
+    size = 0
+    pending = raw
+    try:
+        while pending:
+            size += len(decompressor.decompress(pending, _INFLATE_CHUNK))
+            if size > budget:
+                raise ScanTooLargeError(_OBJECT_STREAMS_MESSAGE)
+            pending = decompressor.unconsumed_tail
+            if decompressor.eof:
+                break
+    except zlib.error:
+        return size or None
+    return size or None
 
 
 @dataclass
@@ -1090,6 +1177,8 @@ def _stream_dict(
         if kind == "eof":
             return entries, pos
         if kind == "open":
+            if depth == 1 and key is not None:
+                entries[key] = ("dict", None)  # a top-level key whose value is a dictionary
             depth += 1
             key = None
         elif kind == "close":
@@ -1160,9 +1249,10 @@ def check_object_stream_bytes(data: bytes) -> None:
     caller that opens a stored PDF with MuPDF itself must run it before
     ``pymupdf.open``.
     """
-    total = 0
-    scanned_to = 0
     budget = _ScanBudget()
+    containers: list[tuple[tuple[str, object] | None, list[tuple[int, int]]]] = []
+    encrypted = False
+    scanned_to = 0
     for header in _OBJ_HEADER_RE.finditer(data):
         budget.spend()
         if header.start() < scanned_to:
@@ -1173,39 +1263,42 @@ def check_object_stream_bytes(data: bytes) -> None:
             continue
         entries, dict_end = parsed
         scanned_to = dict_end
+        encrypted = encrypted or b"Encrypt" in entries  # an xref stream is a trailer
         kind, keyword, start = _next_token(data, dict_end, budget)
         if (kind, keyword) != ("word", b"stream"):
             continue
-        if data[start : start + 2] == b"\r\n":
-            start += 2
-        elif data[start : start + 1] in (b"\n", b"\r"):
-            start += 1
-        length = entries.get(b"Length")
-        end = -1
-        if length and length[0] == "number":
-            candidate = start + int(length[1])  # type: ignore[call-overload]
-            if candidate <= len(data) and _ENDSTREAM_AT_RE.match(data, candidate):
-                end = candidate
-        if end < 0:
-            found = data.find(b"endstream", start)
-            end = found if found >= 0 else len(data)
-        scanned_to = max(scanned_to, end)
-        if entries.get(b"Type") != ("name", b"ObjStm"):
-            continue
-        filters = entries.get(b"Filter")
-        raw = data[start:end]
+        starts = _stream_data_starts(data, start)
+        spans = [(begin, _stream_data_end(data, begin, entries.get(b"Length"))) for begin in starts]
+        scanned_to = max(scanned_to, *(end for _, end in spans))
+        if entries.get(b"Type") == ("name", b"ObjStm"):
+            containers.append((entries.get(b"Filter"), spans))
+    for trailer in _TRAILER_RE.finditer(data):
+        budget.spend()
+        parsed = _stream_dict(data, trailer.end(), budget)
+        encrypted = encrypted or (parsed is not None and b"Encrypt" in parsed[0])
+    total = 0
+    for filters, spans in containers:
+        longest = max(end - begin for begin, end in spans)
         if filters is None or filters == ("array", []):
-            size = len(raw)
+            size = longest
         elif filters in (("name", b"FlateDecode"), ("name", b"Fl")) or filters in (
             ("array", [b"FlateDecode"]),
             ("array", [b"Fl"]),
         ):
-            try:
-                size = _bounded_inflate_size(
-                    raw, budget=MAX_OBJECT_STREAM_BYTES - total, page_index=0
-                )
-            except ScanTooLargeError as exc:
-                raise ScanTooLargeError(_OBJECT_STREAMS_MESSAGE) from exc
+            if encrypted:
+                # Ciphertext: inflating it proves nothing, and with an empty user
+                # password its plaintext is the attacker's to choose. Count the
+                # most Flate can expand this many bytes to.
+                size = longest * _FLATE_MAX_RATIO
+            else:
+                sizes = [
+                    _strict_inflate_size(data[begin:end], budget=MAX_OBJECT_STREAM_BYTES - total)
+                    for begin, end in spans
+                ]
+                decoded = [found for found in sizes if found]
+                if not decoded and longest > 0:
+                    raise ScanRejectedError(_OBJECT_STREAM_UNREADABLE_MESSAGE)
+                size = max(decoded, default=0)
         else:
             raise ScanRejectedError(_OBJECT_STREAM_ENCODING_MESSAGE)
         total += size
