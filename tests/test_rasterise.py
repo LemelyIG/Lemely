@@ -49,6 +49,16 @@ from tests.pdf_fakes import (
 _FIXTURE = Path(__file__).parent / "fixtures" / "handwritten-59" / "0625_w24_qp_42.pdf"
 
 
+def _require_committed_fixture(path: Path) -> None:
+    """Fail -- never skip -- when a fixture committed to the repo is missing.
+
+    Final review, item 9: ``skipUnless(fixture.is_file())`` turned a deleted
+    or renamed fixture into a silent skip, so the tests that pin real scans
+    stopped running without anyone seeing a failure.
+    """
+    assert path.is_file(), f"committed fixture missing: {path}"
+
+
 def _write_pdf(path: Path, *, pages: int, size: tuple[int, int] = (100, 140)) -> None:
     images = [Image.new("RGB", size, color="white") for _ in range(pages)]
     images[0].save(path, "PDF", save_all=True, append_images=images[1:])
@@ -108,9 +118,9 @@ class RasterisePdfToPagesTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 rasterise_pdf_to_pages(Path("unused.pdf"))
 
-    @unittest.skipUnless(_FIXTURE.is_file(), "handwritten-59 fixture not present")
     def test_real_fixture_rasterises_to_its_known_page_count(self) -> None:
         """0625_w24_qp_42.pdf is documented (fixtures README) as 16 pages."""
+        _require_committed_fixture(_FIXTURE)
         pages = rasterise_pdf_to_pages(_FIXTURE)
         self.assertEqual(len(pages), 16)
         self.assertEqual([p.index for p in pages], list(range(16)))
@@ -551,8 +561,8 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         self.assertEqual(decoded.getpixel((page.width - 3, 2)), (0, 0, 0))
         self.assertEqual(decoded.getpixel((2, 2)), (255, 255, 255))
 
-    @unittest.skipUnless(_FIXTURE.is_file(), "handwritten-59 fixture not present")
     def test_the_committed_fixture_is_unaffected(self) -> None:
+        _require_committed_fixture(_FIXTURE)
         pages = rasterise_pdf_to_pages(_FIXTURE)
         self.assertEqual((pages[0].width, pages[0].height, pages[0].dpi), (1655, 2339, 200.0))
 

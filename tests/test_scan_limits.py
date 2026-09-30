@@ -123,6 +123,16 @@ from tests.pdf_fakes import (
 _FIXTURE = Path(__file__).parent / "fixtures" / "handwritten-59" / "0625_w24_qp_42.pdf"
 
 
+def _require_committed_fixture(path: Path) -> None:
+    """Fail -- never skip -- when a fixture committed to the repo is missing.
+
+    Final review, item 9: ``skipUnless(fixture.is_file())`` turned a deleted
+    or renamed fixture into a silent skip, so the tests that pin real scans
+    stopped running without anyone seeing a failure.
+    """
+    assert path.is_file(), f"committed fixture missing: {path}"
+
+
 def _pdf_bytes(*sizes_pt: tuple[float, float]) -> bytes:
     """A PDF declaring the given page sizes (points), as bytes.
 
@@ -934,8 +944,8 @@ class ContentStreamBombTests(unittest.TestCase):
         check_pdf_content_bytes(b"%PDF-1.4 fake")
         check_pdf_content_bytes(b"not a pdf")
 
-    @unittest.skipUnless(_FIXTURE.is_file(), "handwritten-59 fixture not present")
     def test_the_committed_fixture_passes_with_room_to_spare(self) -> None:
+        _require_committed_fixture(_FIXTURE)
         check_pdf_content_bytes(_FIXTURE.read_bytes())
         doc = pymupdf.open(str(_FIXTURE))
         try:
@@ -950,8 +960,8 @@ class ContentStreamBombTests(unittest.TestCase):
             doc.close()
         self.assertLess(largest, 1_000)  # a scanned page is `q ... cm /Im0 Do Q`
 
-    @unittest.skipUnless(_FIXTURE.is_file(), "handwritten-59 fixture not present")
     def test_the_committed_fixture_passes_the_upload_check(self) -> None:
+        _require_committed_fixture(_FIXTURE)
         check_scan_bytes(_FIXTURE.read_bytes())
 
     def test_check_scan_bytes_applies_the_content_cap_to_pdfs(self) -> None:
@@ -1573,8 +1583,8 @@ class ReaderCoverageTests(unittest.TestCase):
         check_scan_bytes(wrapped_page_tree_pdf(MAX_SCAN_PAGES, wrap=2))
         check_scan_bytes(b"%PDF-1.4 fake")
 
-    @unittest.skipUnless(_FIXTURE.is_file(), "handwritten-59 fixture not present")
     def test_the_committed_fixture_still_passes_upload(self) -> None:
+        _require_committed_fixture(_FIXTURE)
         check_scan_bytes(_FIXTURE.read_bytes())
 
 
@@ -1925,13 +1935,12 @@ class RawObjectStreamTests(unittest.TestCase):
                     check_object_stream_bytes(bare_encrypt_dict_pdf(**kwargs))  # type: ignore[arg-type]
                 self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
 
-    @unittest.skipUnless(
-        (Path(__file__).parent / "fixtures" / "0580_s11_gt.pdf").is_file(), "fixture not present"
-    )
     def test_the_committed_encrypted_fixture_passes(self) -> None:
         """``0580_s11_gt.pdf`` is RC4-encrypted (empty user password) and keeps
         its objects in object streams: it passes the raw scan and upload."""
-        data = (Path(__file__).parent / "fixtures" / "0580_s11_gt.pdf").read_bytes()
+        fixture = Path(__file__).parent / "fixtures" / "0580_s11_gt.pdf"
+        _require_committed_fixture(fixture)
+        data = fixture.read_bytes()
         check_object_stream_bytes(data)
         check_scan_bytes(data)
 
