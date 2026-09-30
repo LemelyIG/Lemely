@@ -220,6 +220,95 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             rasterise_pdf_to_pages(path)
         walk.assert_not_called()
 
+    def test_a_phone_photo_is_turned_upright_by_its_exif_flag(self) -> None:
+        """#255 (probe ``be_probe_img.py``): a 400x200 JPEG with EXIF
+        orientation 6 reached the model as a 400x200 page. Phones store a
+        portrait photo as a landscape sensor frame plus that flag; the page
+        the model reads, and the frame every ``source_box`` is in, must be
+        the upright one. The green corner marks the raw top-left; after a
+        quarter turn it must sit at the top-right of the upright page."""
+        from PIL import ImageDraw
+
+        image = Image.new("RGB", (400, 200), (255, 255, 255))
+        ImageDraw.Draw(image).rectangle((0, 0, 39, 39), fill=(0, 255, 0))
+        exif = Image.Exif()
+        exif[0x0112] = 6
+        image_path = Path(self.tmp) / "phone.jpg"
+        image.save(image_path, "JPEG", exif=exif.tobytes(), quality=95)
+
+        (page,) = rasterise_scan_to_pages(image_path)
+
+        self.assertEqual((page.width, page.height), (200, 400))
+        decoded = Image.open(io.BytesIO(page.png_bytes)).convert("RGB")
+        r, g, b = decoded.getpixel((199, 0))
+        self.assertTrue(g > 200 and r < 80 and b < 80, "green corner is not at the top-right")
+        self.assertIsNone(decoded.getexif().get(0x0112))
+
+    def test_every_exif_orientation_lands_the_raw_top_left_where_the_flag_says(self) -> None:
+        """All eight flags, JPEG and PNG. ``upright_corner`` is the EXIF
+        table written out by hand (where the stored frame's top-left corner
+        ends up once the photo is upright), not derived from Pillow's own
+        ``exif_transpose``, so it is an independent oracle."""
+        from PIL import ImageDraw
+
+        # orientation -> (upright size after the flag, corner: (right?, bottom?))
+        wide, tall = (400, 200), (200, 400)
+        upright_corner = {
+            1: (wide, (False, False)),
+            2: (wide, (True, False)),
+            3: (wide, (True, True)),
+            4: (wide, (False, True)),
+            5: (tall, (False, False)),
+            6: (tall, (True, False)),
+            7: (tall, (True, True)),
+            8: (tall, (False, True)),
+        }
+        for fmt, suffix in (("JPEG", "jpg"), ("PNG", "png")):
+            for orientation, (size, (right, bottom)) in upright_corner.items():
+                with self.subTest(format=fmt, orientation=orientation):
+                    image = Image.new("RGB", (400, 200), (255, 255, 255))
+                    ImageDraw.Draw(image).rectangle((0, 0, 39, 39), fill=(0, 255, 0))
+                    exif = Image.Exif()
+                    exif[0x0112] = orientation
+                    path = Path(self.tmp) / f"o{orientation}.{suffix}"
+                    image.save(path, fmt, exif=exif.tobytes())
+
+                    (page,) = rasterise_scan_to_pages(path)
+
+                    self.assertEqual((page.width, page.height), size)
+                    decoded = Image.open(io.BytesIO(page.png_bytes)).convert("RGB")
+                    x = page.width - 3 if right else 2
+                    y = page.height - 3 if bottom else 2
+                    r, g, b = decoded.getpixel((x, y))
+                    self.assertTrue(
+                        g > 200 and r < 80 and b < 80,
+                        f"green corner is not at (right={right}, bottom={bottom})",
+                    )
+                    # ...and nowhere else: the opposite corner stays white.
+                    ox = 2 if right else page.width - 3
+                    oy = 2 if bottom else page.height - 3
+                    self.assertGreater(min(decoded.getpixel((ox, oy))), 200)
+
+    def test_a_reduced_decode_jpeg_is_still_turned_upright(self) -> None:
+        """A JPEG big enough to take the native reduced-scale ``draft`` decode
+        (``factor > 1``) is transposed after that decode, not before it."""
+        image = Image.new("RGB", (5000, 3000), (255, 255, 255))
+        exif = Image.Exif()
+        exif[0x0112] = 6
+        path = Path(self.tmp) / "big_phone.jpg"
+        image.save(path, "JPEG", exif=exif.tobytes())
+
+        (page,) = rasterise_scan_to_pages(path)
+
+        self.assertGreater(page.height, page.width)
+        self.assertLessEqual(page.width * page.height, 16_000_000)
+
+    def test_an_image_without_an_exif_flag_is_unchanged(self) -> None:
+        image_path = Path(self.tmp) / "plain.png"
+        Image.new("RGB", (400, 200), (255, 255, 255)).save(image_path, "PNG")
+        (page,) = rasterise_scan_to_pages(image_path)
+        self.assertEqual((page.width, page.height), (400, 200))
+
     def test_a_within_band_image_is_reduced(self) -> None:
         image_path = Path(self.tmp) / "big.png"
         Image.new("1", (5000, 5000), color=1).save(image_path, "PNG")

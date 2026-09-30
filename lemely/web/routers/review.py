@@ -449,31 +449,6 @@ def _require_page_in_range(box: SourceBox, page_count: int, *, item_id: str) -> 
 # ``crop_and_upscale`` with no padding, it only upscales and encodes.
 _WHOLE_REGION = [0, 0, 1000, 1000]
 
-_EXIF_ORIENTATION_TAG = 0x0112
-
-
-def _upright(region: PILImage, orientation: object) -> PILImage:
-    """Turn a region cut from a photo's stored frame the way its EXIF flag says.
-
-    The EXIF table, as Pillow's ``ImageOps.exif_transpose`` applies it. That
-    function works on a whole image carrying its EXIF block; this region is a
-    crop that carries none, so the table is applied directly. Rotating the crop
-    after cutting it from the stored frame shows the same pixels as cutting the
-    matching rectangle from the upright photo.
-    """
-    from PIL import Image
-
-    method = {
-        2: Image.Transpose.FLIP_LEFT_RIGHT,
-        3: Image.Transpose.ROTATE_180,
-        4: Image.Transpose.FLIP_TOP_BOTTOM,
-        5: Image.Transpose.TRANSPOSE,
-        6: Image.Transpose.ROTATE_270,
-        7: Image.Transpose.TRANSVERSE,
-        8: Image.Transpose.ROTATE_90,
-    }.get(orientation if isinstance(orientation, int) else 0)
-    return region if method is None else region.transpose(method)
-
 
 def _refuse_too_large(box: SourceBox, *, item_id: str, **size: float) -> NoReturn:
     """422 for a scan no ceiling-respecting render can serve, with its size logged."""
@@ -603,24 +578,23 @@ def _fitted_region(image: PILImage, rect: tuple[int, int, int, int]) -> PILImage
 def _crop_image_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
     """Crop ``box`` out of a non-PDF scan, in the pixel grid extraction boxed.
 
-    Extraction decodes an image upload with PIL and does not apply EXIF
-    orientation (``rasterise._rasterise_single_image``), so ``box`` is in the
-    photo's stored frame. This decodes with PIL too, and crops there. MuPDF,
-    which rendered images here before, applies the orientation first, so a
-    phone photo stored sideways was cropped in the wrong place.
-
-    The crop is then turned upright by the EXIF flag, so the teacher reads it
-    the right way up. A single image has one page, as it does for extraction.
+    Extraction decodes an image upload with PIL and applies its EXIF
+    orientation (``rasterise._rasterise_single_image``, #255), so ``box`` is
+    in the UPRIGHT frame. This decodes with PIL too, transposes the whole
+    photo the same way, and crops there. A single image has one page, as it
+    does for extraction.
     """
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     with Image.open(io.BytesIO(data)) as opened:
         _require_page_in_range(box, 1, item_id=item_id)
         _decode_within_ceiling(opened, box, item_id=item_id)
+        # `in_place`: no second full-size copy when there is no flag; with
+        # one, the transposed frame replaces the decode, bounded by
+        # `_decode_within_ceiling` above.
+        ImageOps.exif_transpose(opened, in_place=True)
         rect = padded_crop_rect(opened.width, opened.height, list(box.box))
-        orientation = opened.getexif().get(_EXIF_ORIENTATION_TAG)
         region = _fitted_region(opened, rect)
-    region = _upright(region, orientation)
     buf = io.BytesIO()
     region.save(buf, format="PNG")
     return _upscaled_png(buf.getvalue(), region.width, region.height, page=box.page)

@@ -176,15 +176,26 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
     band is reduced to fit ``MAX_PAGE_PX`` — a JPEG (which includes MPO)
     through Pillow's native reduced-scale decode first, anything else by an
     integer ``reduce`` after decoding — and one beyond ``MAX_DECODE_PX`` is
-    refused from its header, before any pixel is decoded.
+    refused from its header, before any pixel is decoded. The EXIF orientation
+    flag is applied (#255), so the page, and every source_box read from it, is
+    upright.
     """
-    from PIL import Image, JpegImagePlugin
+    from PIL import Image, ImageOps, JpegImagePlugin
 
     try:
         with Image.open(image_path) as opened:
             factor = plan_image(opened.width, opened.height)
             if factor > 1 and isinstance(opened, JpegImagePlugin.JpegImageFile):
                 opened.draft(None, (opened.width // factor, opened.height // factor))
+            # #255: a phone stores a portrait photo as a landscape sensor frame
+            # plus an EXIF orientation flag. Apply it, so the model reads the
+            # page upright and every `source_box` from here on is in the
+            # upright frame -- the crop route (`review._crop_image_scan`)
+            # transposes the same way before cutting. `draft()` above has
+            # already picked the reduced decode, so this transposes at most
+            # the reduced size; `in_place` avoids a second full-size copy when
+            # there is no flag.
+            ImageOps.exif_transpose(opened, in_place=True)
             pil_image = opened.convert("RGB")
     except Image.DecompressionBombError as exc:
         raise ScanTooLargeError("image declares too many pixels to decode") from exc

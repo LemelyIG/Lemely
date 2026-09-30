@@ -1692,22 +1692,39 @@ def test_crop_route_serves_the_boxed_region_of_an_image_scan(
 
 _EXIF_ORIENTATION_TAG = 0x0112
 _CORNER_RGB = (0, 255, 0)
-# A landscape sensor frame, so a crop taken in the wrong orientation lands on a
-# different part of the photo rather than on a symmetric copy of the right one.
-_PHOTO_RAW_SIZE = (600, 300)
+# The size of the UPRIGHT photo, the frame extraction now sees (#255). Landscape,
+# so a crop taken in the wrong frame lands on a different part of the photo
+# rather than on a symmetric copy of the right one.
+_PHOTO_UPRIGHT_SIZE = (600, 300)
+
+#: The transpose that turns an UPRIGHT image into the frame a camera STORES
+#: under each EXIF orientation: the inverse of the table ``ImageOps.exif_transpose``
+#: applies. Flips, 180 and the two diagonals are self-inverse; the two
+#: quarter turns swap.
+_STORED_FRAME_FOR = {
+    2: Image.Transpose.FLIP_LEFT_RIGHT,
+    3: Image.Transpose.ROTATE_180,
+    4: Image.Transpose.FLIP_TOP_BOTTOM,
+    5: Image.Transpose.TRANSPOSE,
+    6: Image.Transpose.ROTATE_90,
+    7: Image.Transpose.TRANSVERSE,
+    8: Image.Transpose.ROTATE_270,
+}
 
 
 def _synthetic_phone_photo(orientation: int) -> bytes:
     """A JPEG whose pixels are stored sideways, with an EXIF flag saying so.
 
     Phones store a portrait photo as a landscape sensor frame plus EXIF
-    orientation (6 is the usual one). The red mark covers ``_MARK_BOX`` in the
-    RAW pixel grid, which is the grid extraction boxes against. A green corner
-    inside the mark, at its raw top-left, shows which way up a crop was turned.
+    orientation (6 is the usual one). The red mark covers ``_MARK_BOX`` in
+    the UPRIGHT grid (#255: extraction applies the flag, so that is the grid
+    it boxes against); the image is then turned into the stored frame and
+    saved with the flag. A green corner at the mark's upright top-left shows
+    which way up a crop came out.
     """
     from PIL import ImageDraw
 
-    width, height = _PHOTO_RAW_SIZE
+    width, height = _PHOTO_UPRIGHT_SIZE
     image = Image.new("RGB", (width, height), (255, 255, 255))
     draw = ImageDraw.Draw(image)
     draw.rectangle((0.70 * width, 0.70 * height, 0.95 * width, 0.95 * height), fill=_OUTSIDE_RGB)
@@ -1719,10 +1736,15 @@ def _synthetic_phone_photo(orientation: int) -> bytes:
         (left, upper, left + 0.25 * (right - left) - 1, upper + 0.4 * (lower - upper) - 1),
         fill=_CORNER_RGB,
     )
+    stored = (
+        image.transpose(_STORED_FRAME_FOR[orientation])
+        if orientation in _STORED_FRAME_FOR
+        else image
+    )
     exif = Image.Exif()
     exif[_EXIF_ORIENTATION_TAG] = orientation
     buf = io.BytesIO()
-    image.save(buf, format="JPEG", exif=exif.tobytes(), quality=95)
+    stored.save(buf, format="JPEG", exif=exif.tobytes(), quality=95)
     return buf.getvalue()
 
 
@@ -1755,38 +1777,16 @@ def _corner_position(image: Image.Image) -> tuple[float, float]:
 
 
 def _expected_upright_crop(scan: bytes) -> Image.Image:
-    """The route's crop, computed a second, independent way.
-
-    The route crops the box out of the RAW frame and rotates the small crop
-    upright (``_upright``). This instead rotates the WHOLE photo upright
-    first (``ImageOps.exif_transpose``) and then crops the box's rectangle
-    mapped into that upright frame -- found by transposing a same-sized mask
-    painted with the raw rectangle and reading back its bounding box, so the
-    mapping does not rely on any of the route's own arithmetic. If the two
-    orders of operations (crop-then-rotate vs. rotate-then-crop) disagree for
-    any orientation, this comparison catches it byte for byte; the census and
-    corner checks below only catch it for most of them (see orientation 5).
-    """
+    """The route's crop, computed independently: turn the WHOLE photo upright
+    with Pillow's own ``exif_transpose``, cut the box's padded rectangle in
+    that frame, upscale as the re-read does."""
     from PIL import ImageOps
 
     from lemely.io.reread import REREAD_UPSCALE, padded_crop_rect
 
-    raw = Image.open(io.BytesIO(scan))
-    raw.load()
-    rect = padded_crop_rect(raw.width, raw.height, list(_MARK_BOX))
-
-    mask = Image.new("L", raw.size, 0)
-    mask.paste(255, rect)
-    orientation_tag = raw.getexif().get(_EXIF_ORIENTATION_TAG, 1)
-    mask_exif = Image.Exif()
-    mask_exif[_EXIF_ORIENTATION_TAG] = orientation_tag
-    mask.info["exif"] = mask_exif.tobytes()
-    transposed_mask = ImageOps.exif_transpose(mask)
-    bbox = transposed_mask.getbbox()
-    assert bbox is not None
-
-    upright_whole = ImageOps.exif_transpose(raw).convert("RGB")
-    region = upright_whole.crop(bbox)
+    upright = ImageOps.exif_transpose(Image.open(io.BytesIO(scan))).convert("RGB")
+    rect = padded_crop_rect(upright.width, upright.height, list(_MARK_BOX))
+    region = upright.crop(rect)
     return region.resize(
         (region.width * REREAD_UPSCALE, region.height * REREAD_UPSCALE),
         Image.Resampling.LANCZOS,
@@ -1803,42 +1803,26 @@ def test_crop_route_crops_an_exif_rotated_photo_where_extraction_boxed_it(
     storage_backend: FakeStorageBackend,
     tmp_path: Path,
 ) -> None:
-    """The box is in the raw pixel grid, so the crop must be taken there too.
-
-    Extraction decodes an image upload with PIL, which does not apply EXIF
-    orientation, so the model boxed the raw sensor frame. A renderer that
-    applies the flag first (MuPDF does) crops the same numbers out of a turned
-    image, which is a different part of the photo. The colour census shows the
-    region is right. The green corner's position, measured against PIL's own
-    ``exif_transpose`` of the whole photo, shows the crop is upright.
-
-    Orientation 1 (no rotation) is a control: it proves the census/corner/
-    pixel-exact checks agree when there is nothing to rotate, so a pass on
-    the rotated orientations is not an artefact of the checks themselves.
-
-    ``_expected_upright_crop`` is a pixel-exact, independently-computed
-    comparison (see its own docstring for why it is independent of the
-    route's own crop-then-rotate order). It is the hard check: the census
-    passes at 0.45 red against a 0.5 floor for orientation 5 even when the
-    route rotates before cropping (a real regression), which is too close to
-    trust on its own, and the corner check does not catch orientation 5
-    either -- 5 (TRANSPOSE) mirrors across the exact diagonal the corner
-    mark sits on, so a wrongly-ordered crop still lands the corner in
-    roughly the right relative place.
+    """#255: extraction applies the EXIF flag, so the box is in the UPRIGHT
+    pixel grid and the route must crop there too -- decode, transpose the
+    whole photo the way ``exif_transpose`` does, then cut. The colour census
+    shows the region is right; the green corner, at the mark's upright
+    top-left, shows the crop is the right way up; and the pixel-exact
+    comparison with ``_expected_upright_crop`` (Pillow's own transpose, then
+    crop) shows the two agree byte for byte for all eight orientations.
+    Orientation 1 is the control.
     """
-    from PIL import ImageOps
-
     from lemely.io.rasterise import rasterise_scan_to_pages
 
     scan = _synthetic_phone_photo(orientation)
 
-    # The premise, pinned: extraction sees the raw frame. If extraction ever
-    # starts applying EXIF orientation, this fails, and the crop route has to
+    # The premise, pinned: extraction sees the UPRIGHT frame (#255). If it
+    # ever stops applying the flag, this fails, and the crop route has to
     # change with it.
     photo_path = tmp_path / "photo.jpg"
     photo_path.write_bytes(scan)
     (extracted,) = rasterise_scan_to_pages(photo_path)
-    assert (extracted.width, extracted.height) == _PHOTO_RAW_SIZE
+    assert (extracted.width, extracted.height) == _PHOTO_UPRIGHT_SIZE
 
     teacher, item_id = _seed_boxed_review_item(
         pg_sessionmaker,
@@ -1860,15 +1844,10 @@ def test_crop_route_crops_an_exif_rotated_photo_where_extraction_boxed_it(
     assert bluish == 0, "the crop reaches outside the box -- this is the page, not the region"
     assert reddish / total > 0.5, "the mark inside the box is missing -- wrong region"
 
-    # Upright: the mark is wide in the raw frame, so it is tall once turned by
-    # a quarter (5-8) and still wide after a half turn or a mirror (2-4), and
-    # unchanged for the orientation-1 control.
-    assert (got.height > got.width) == (orientation in (5, 6, 7, 8)), got.size
-    upright = ImageOps.exif_transpose(Image.open(io.BytesIO(scan))).convert("RGB")
-    want_x, want_y = _corner_position(upright)
+    # Upright: the mark is wide in the upright frame, whatever the flag.
+    assert got.width > got.height, (orientation, got.size)
     got_x, got_y = _corner_position(got)
-    assert abs(got_x - want_x) < 0.15, (orientation, (got_x, got_y), (want_x, want_y))
-    assert abs(got_y - want_y) < 0.15, (orientation, (got_x, got_y), (want_x, want_y))
+    assert got_x < 0.2 and got_y < 0.3, (orientation, (got_x, got_y))
 
     want = _expected_upright_crop(scan)
     assert got.size == want.size, (orientation, got.size, want.size)
