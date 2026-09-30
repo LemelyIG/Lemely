@@ -205,11 +205,11 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             events.append(("load", index))
             return page
 
-        def _close(page: pdfium.PdfPage, _by_parent: bool = False) -> None:
+        def _close(page: pdfium.PdfPage, _by_parent: bool = False) -> bool:
             # #268: the real signature, so pyright checks the forward.
             if id(page) in index_of:
                 events.append(("close", index_of.pop(id(page))))
-            real_close(page, _by_parent)
+            return real_close(page, _by_parent)
 
         with (
             patch.object(pdfium.PdfDocument, "get_page", _get_page),
