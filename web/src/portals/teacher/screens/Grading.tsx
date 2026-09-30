@@ -8,6 +8,7 @@ import { CameraCapture } from "@/components/CameraCapture"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { RETENTION_DAYS } from "@/lib/paperDeletion"
 import { ProgressRing } from "@/components/ui/progress-ring"
+import { SCAN_ACCEPT } from "@/lib/scanAccept"
 import { readSharedScan } from "@/lib/sharedScan"
 import { setHasUnsubmittedScan } from "@/lib/activeScanGuard"
 import {
@@ -686,7 +687,7 @@ export function Grading() {
                         <input
                           id="grading-scan-file"
                           type="file"
-                          accept="application/pdf,image/*"
+                          accept={SCAN_ACCEPT}
                           disabled={uploading}
                           onChange={handleScanChange}
                           className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
@@ -704,7 +705,7 @@ export function Grading() {
                       <input
                         id="grading-scheme-file"
                         type="file"
-                        accept="application/pdf,image/*"
+                        accept={SCAN_ACCEPT}
                         disabled={uploading}
                         onChange={handleSchemeChange}
                         className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
