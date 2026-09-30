@@ -37,6 +37,7 @@ from tests.pdf_fakes import (
     page_bomb_pdf,
     page_kids_bomb_pdf,
     page_kids_equal_count_bomb_pdf,
+    plain_webp,
     shared_container_broken_xref_pdf,
     uncounted_bomb_pdf,
     xref_repair_bomb_pdf,
@@ -437,6 +438,20 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
                 with patch.object(Image.Image, "convert", _convert):
                     rasterise_scan_to_pages(image_path)
                 self.assertEqual(sizes_converted_to_rgb, [(2500, 2500)])
+
+    def test_a_webp_is_judged_against_the_webp_ceiling(self) -> None:
+        """#256 review round 2: a WebP decodes at about three times a PNG's
+        cost, so extraction caps it at a third of the colour ceiling: 13.32
+        Mpx is extracted, 13.69 Mpx refused from its header."""
+        under = Path(self.tmp) / "under.webp"
+        under.write_bytes(plain_webp(3650, 3650))
+        (page,) = rasterise_scan_to_pages(under)
+        self.assertEqual((page.width, page.height), (3650, 3650))
+        over = Path(self.tmp) / "over.webp"
+        over.write_bytes(plain_webp(3700, 3700))
+        with self.assertRaises(ScanTooLargeError) as caught:
+            rasterise_scan_to_pages(over)
+        self.assertIn("This WebP image is too large", str(caught.exception))
 
     def test_an_ico_wrapping_a_big_png_is_refused_without_being_opened(self) -> None:
         """#256 review: the ICO opener decodes the image it wraps inside

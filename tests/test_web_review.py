@@ -3472,3 +3472,44 @@ def test_an_ico_wrapping_a_big_png_is_refused_at_the_crop_without_being_opened(
     assert [e["event"] for e in logs if e["event"].startswith("review_crop_")] == [
         "review_crop_scan_rejected"
     ]
+
+
+@pytest.mark.parametrize(
+    ("size", "status", "event"),
+    [
+        pytest.param((3650, 3650), 200, None, id="13.32Mpx-under"),
+        pytest.param((3700, 3700), 422, "review_crop_page_too_large", id="13.69Mpx-over"),
+    ],
+)
+def test_a_webp_is_judged_against_the_webp_ceiling_at_the_crop(
+    size: tuple[int, int],
+    status: int,
+    event: str | None,
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """#256 review round 2: a WebP decodes at about three times a PNG's cost
+    (Pillow 12's ``WebPAnimDecoder``), so the crop route caps it at a third
+    of the colour ceiling, by the same rule as upload and extraction."""
+    from tests.pdf_fakes import plain_webp
+
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=plain_webp(*size),
+        page=0,
+        content_type="image/webp",
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == status, (resp.status_code, resp.text[:200])
+    events = [e["event"] for e in logs if e["event"].startswith("review_crop_")]
+    assert events == ([event] if event else []), events

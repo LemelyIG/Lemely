@@ -219,7 +219,9 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
     try:
         # #256 review: allowlisted formats only (no plugin decodes in the open).
         with open_scan_image(image_path) as opened:
-            factor = plan_image(opened.width, opened.height, opened.mode)
+            # The format too: a WebP has its own, lower cap (#256 review round 2).
+            image_format = opened.format
+            factor = plan_image(opened.width, opened.height, opened.mode, image_format)
             if factor > 1 and isinstance(opened, JpegImagePlugin.JpegImageFile):
                 opened.draft(None, (opened.width // factor, opened.height // factor))
             # #255: a phone stores a portrait photo as a landscape sensor frame
@@ -247,8 +249,9 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
     # Re-planned against the post-open dimensions: a JPEG's `.draft()` above picks
     # the nearest supported DCT scale, not exactly `factor`, so the image may still
     # need an extra integer `.reduce()` here to land under MAX_PAGE_PX. Against the
-    # converted mode, whose ceiling is never lower than the header's.
-    factor = plan_image(pil_image.width, pil_image.height, pil_image.mode)
+    # converted mode, whose ceiling is never lower than the header's, and the
+    # header's format (a converted copy has none of its own).
+    factor = plan_image(pil_image.width, pil_image.height, pil_image.mode, image_format)
     if factor > 1:
         pil_image = pil_image.reduce(factor)
     pil_image = pil_image.convert("RGB") if pil_image.mode != "RGB" else pil_image

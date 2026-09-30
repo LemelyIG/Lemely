@@ -21,6 +21,7 @@ from lemely.io.scan_limits import (
     MAX_CROP_PAGES,
     MAX_DECODE_PX,
     MAX_DECODE_PX_GREY,
+    MAX_DECODE_PX_WEBP,
     MAX_PAGE_CONTENT_BYTES,
     MAX_PAGE_PX,
     MAX_SCAN_CONTENT_BYTES,
@@ -92,6 +93,7 @@ from tests.pdf_fakes import (
     pdf_stream,
     pdf_with_inflated_count,
     pdf_with_missing_kid_object,
+    plain_webp,
     real_smask_dimension_bomb_pdf,
     repeated_kid_pdf,
     repeated_xobject_pdf,
@@ -192,6 +194,9 @@ _A4_AT_1200_DPI = (9921, 14031)
 #: #256: 12600^2 = 158.8 Mpx is under the grey ceiling, 12700^2 = 161.3 Mpx over it.
 _GREY_UNDER_CAP = (12600, 12600)
 _GREY_OVER_CAP = (12700, 12700)
+#: #256 review round 2: 3650^2 = 13.32 Mpx is under the WebP ceiling, 3700^2 = 13.69 Mpx over.
+_WEBP_UNDER_CAP = (3650, 3650)
+_WEBP_OVER_CAP = (3700, 3700)
 
 
 class ImagePlanTests(unittest.TestCase):
@@ -244,6 +249,24 @@ class ImagePlanTests(unittest.TestCase):
         self.assertEqual(plan_image(8900, 8900, "I;16"), 4)  # 79.2 Mpx: admitted
         with self.assertRaises(ScanTooLargeError):
             plan_image(9000, 9000, "I;16B")  # 81 Mpx
+
+    def test_a_webp_gets_a_third_of_the_colour_ceiling_whatever_its_mode(self) -> None:
+        """#256 review round 2: Pillow 12 decodes every WebP through
+        ``WebPAnimDecoder`` (extra full-canvas RGBA buffers; grey decodes as
+        RGB) -- measured 609 MB to extract 39.7 Mpx against 192 MB for the
+        same PNG -- so WebP is capped at a third of the colour budget."""
+        self.assertEqual(MAX_DECODE_PX_WEBP, MAX_DECODE_PX // 3)
+        for mode in ("RGB", "RGBA", "L", "1"):
+            with self.subTest(mode=mode):
+                self.assertEqual(decode_pixel_cap(mode, "WEBP"), MAX_DECODE_PX_WEBP)
+        self.assertEqual(decode_pixel_cap("RGB", "PNG"), MAX_DECODE_PX)
+        self.assertEqual(decode_pixel_cap("L", "PNG"), MAX_DECODE_PX_GREY)
+        self.assertEqual(plan_image(*_WEBP_UNDER_CAP, "RGB", "WEBP"), 1)  # 13.32 Mpx
+        with self.assertRaises(ScanTooLargeError) as caught:
+            plan_image(*_WEBP_OVER_CAP, "RGB", "WEBP")  # 13.69 Mpx
+        message = str(caught.exception)
+        self.assertIn("This WebP image is too large to process (limit 13 megapixels", message)
+        self.assertIn("Save it as a PNG or JPEG", message)
 
     def test_decode_pixel_cap_charges_what_pillow_holds(self) -> None:
         """Pillow keeps mode "1" at one byte per pixel (measured: 100 Mpx of
@@ -691,13 +714,24 @@ class CheckScanBytesTests(unittest.TestCase):
         every admitted 90-160 Mpx grey scan warned. The cap bounds the decode,
         so the opener silences that one warning (never ``MAX_IMAGE_PIXELS``
         itself: its error, above the cap, still stands)."""
+        # Why the filter exists: Pillow's warning threshold is under the grey cap.
+        assert Image.MAX_IMAGE_PIXELS is not None, "the app never disables Pillow's bomb guard"
+        self.assertLess(Image.MAX_IMAGE_PIXELS, MAX_DECODE_PX_GREY)
+        # "always" is put in FRONT of the module's filter, as pytest's -W or a
+        # caller's own filter would be; the opener must still win for the
+        # scans it caps, and report nothing.
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             check_scan_bytes(bilevel_png(*_A4_AT_1200_DPI))
+            decides = next(
+                entry
+                for entry in warnings.filters
+                if issubclass(Image.DecompressionBombWarning, entry[2])
+            )
         self.assertEqual(
             [w for w in caught if issubclass(w.category, Image.DecompressionBombWarning)], []
         )
-        self.assertEqual(Image.MAX_IMAGE_PIXELS, 89_478_485)  # left as Pillow ships it
+        self.assertEqual(decides, ("ignore", None, Image.DecompressionBombWarning, None, 0))
 
     def test_an_ico_wrapping_a_big_png_is_refused_without_being_opened(self) -> None:
         """#256 review: Pillow's ICO opener decodes the image it wraps inside
@@ -736,6 +770,12 @@ class CheckScanBytesTests(unittest.TestCase):
                 with Image.open(io.BytesIO(buf.getvalue())) as reopened:
                     self.assertEqual(reopened.format, image_format)
                 check_scan_bytes(buf.getvalue())
+
+    def test_a_webp_is_judged_against_the_webp_ceiling_at_upload(self) -> None:
+        check_scan_bytes(plain_webp(*_WEBP_UNDER_CAP))
+        with self.assertRaises(ScanTooLargeError) as caught:
+            check_scan_bytes(plain_webp(*_WEBP_OVER_CAP))
+        self.assertIn("This WebP image is too large", str(caught.exception))
 
     def test_greyscale_is_judged_against_the_grey_ceiling_at_upload(self) -> None:
         check_scan_bytes(declared_image("L", *_GREY_UNDER_CAP))  # 158.8 Mpx
@@ -783,8 +823,15 @@ class CheckScanBytesTests(unittest.TestCase):
 
     def test_bounds_are_the_documented_values(self) -> None:
         self.assertEqual(
-            (MAX_SCAN_PAGES, MAX_PAGE_PX, MAX_DECODE_PX, MAX_DECODE_PX_GREY, MAX_SCAN_TOTAL_PX),
-            (40, 16_000_000, 40_000_000, 160_000_000, 160_000_000),
+            (
+                MAX_SCAN_PAGES,
+                MAX_PAGE_PX,
+                MAX_DECODE_PX,
+                MAX_DECODE_PX_GREY,
+                MAX_DECODE_PX_WEBP,
+                MAX_SCAN_TOTAL_PX,
+            ),
+            (40, 16_000_000, 40_000_000, 160_000_000, 13_333_333, 160_000_000),
         )
 
 

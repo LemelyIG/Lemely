@@ -345,12 +345,26 @@ _TWO_BYTE_GREY_MODES = frozenset({"I;16", "I;16L", "I;16B", "I;16N"})
 GREY_CEILING_MODES = _ONE_BYTE_GREY_MODES | _TWO_BYTE_GREY_MODES
 
 
-def decode_pixel_cap(mode: str) -> int:
-    """The most pixels an image in Pillow ``mode`` may decode to (see :data:`MAX_DECODE_PX_GREY`).
+#: #256 review round 2: Pillow 12 decodes every WebP, still or animated,
+#: through ``WebPAnimDecoder``, which keeps extra full-canvas RGBA buffers,
+#: and a grey WebP decodes as RGB. Measured: extracting a 39.7 Mpx WebP cost
+#: 609 MB over baseline against 192 MB for the same PNG -- about three times
+#: the colour budget -- so WebP gets a third of it, whatever its mode.
+MAX_DECODE_PX_WEBP = MAX_DECODE_PX // 3
+
+
+def decode_pixel_cap(mode: str, image_format: str | None = None) -> int:
+    """The most pixels an image may decode to, by Pillow ``mode`` and ``image_format``.
 
     The one rule for every image path: upload (:func:`check_scan_bytes`),
-    extraction (via :func:`plan_image`) and the review crop route.
+    extraction (via :func:`plan_image`) and the review crop route, each
+    passing the opened image's ``mode`` and ``format``. A WebP gets
+    :data:`MAX_DECODE_PX_WEBP` whatever its mode; otherwise the mode decides
+    (see :data:`MAX_DECODE_PX_GREY`). ``image_format`` is ``None`` for an
+    image that is not straight from a file (a converted copy).
     """
+    if image_format == "WEBP":
+        return MAX_DECODE_PX_WEBP
     if mode in _ONE_BYTE_GREY_MODES:
         return MAX_DECODE_PX_GREY
     if mode in _TWO_BYTE_GREY_MODES:
@@ -358,18 +372,25 @@ def decode_pixel_cap(mode: str) -> int:
     return MAX_DECODE_PX
 
 
-def plan_image(width: int, height: int, mode: str = "RGB") -> int:
+def plan_image(width: int, height: int, mode: str = "RGB", image_format: str | None = None) -> int:
     """The integer reduce factor that brings ``width`` x ``height`` under the target.
 
     ``1`` when the image already fits; :class:`ScanTooLargeError` beyond
-    :func:`decode_pixel_cap` for ``mode`` (#256: per mode, so a cheap bilevel
-    or greyscale scan is not refused for a pixel count only a colour decode
-    would make expensive, while colour keeps :data:`MAX_DECODE_PX`).
+    :func:`decode_pixel_cap` for ``mode`` and ``image_format`` (#256: per
+    mode, so a cheap bilevel or greyscale scan is not refused for a pixel
+    count only a colour decode would make expensive, while colour keeps
+    :data:`MAX_DECODE_PX`; and WebP, dearer to decode, its own lower cap).
     """
     px = width * height
-    cap = decode_pixel_cap(mode)
+    cap = decode_pixel_cap(mode, image_format)
     if px > cap:
         mpx = cap // 1_000_000
+        if image_format == "WEBP":
+            raise ScanTooLargeError(
+                f"This WebP image is too large to process (limit {mpx} megapixels for WebP, "
+                "which costs far more to decode than other formats). Save it as a PNG or "
+                "JPEG, or at a lower resolution."
+            )
         if mode in _ONE_BYTE_GREY_MODES:
             limit = f"{mpx} megapixels for a black-and-white or greyscale image"
         elif mode in _TWO_BYTE_GREY_MODES:
@@ -397,9 +418,11 @@ def plan_image(width: int, height: int, mode: str = "RGB") -> int:
 #: alone), ICNS embeds PNG and JPEG 2000 -- and six of Pillow's plugins (IM,
 #: IMT, IPTC, PCD, SPIDER, TGA) have no prefix sniffer to recognise them by.
 #: These open from their headers (measured: under 7 MB for 64 Mpx) and are
-#: what scanners and phones write. "JPEG" covers MPO too (a phone JPEG with a
-#: second picture): Pillow's JPEG opener returns it, and "MPO" has no opener
-#: of its own to list.
+#: what scanners and phones write. Opening is not decoding, though: a WebP
+#: DECODES at about three times a PNG's cost, so it has its own lower pixel
+#: cap (:data:`MAX_DECODE_PX_WEBP`). "JPEG" covers MPO too (a phone JPEG with
+#: a second picture): Pillow's JPEG opener returns it, and "MPO" has no
+#: opener of its own to list.
 SCAN_IMAGE_FORMATS = ("JPEG", "PNG", "TIFF", "WEBP", "BMP")
 _UNSUPPORTED_IMAGE_MESSAGE = (
     "This scan's image format ({format}) cannot be processed safely. "
@@ -409,6 +432,45 @@ _UNSUPPORTED_IMAGE_MESSAGE = (
 
 class ScanUnsupportedFormatError(ScanRejectedError):
     """A scan image in a format outside :data:`SCAN_IMAGE_FORMATS`."""
+
+
+#: #256 review: Pillow's ``DecompressionBombWarning`` fires from 89.5 Mpx
+#: (``MAX_IMAGE_PIXELS``), below :data:`MAX_DECODE_PX_GREY`, so it would warn
+#: on every grey scan the cap admits on purpose. Every image this module
+#: opens is capped by :func:`decode_pixel_cap` from its header before a pixel
+#: is decoded, which makes the warning redundant, so it is ignored
+#: process-wide, by design. The app's other ``Image.open`` calls read its own
+#: rendered pages and crops (at most :data:`MAX_PAGE_PX`, under the
+#: threshold) or, in the avatar route, open and ``verify()`` without
+#: decoding. Pillow's bomb ERROR, at twice ``MAX_IMAGE_PIXELS`` and above
+#: every cap, is left alone, as is ``MAX_IMAGE_PIXELS`` itself; it is what
+#: guards the avatar route.
+_IGNORE_CAPPED_BOMB_WARNING = ("ignore", None, Image.DecompressionBombWarning, None, 0)
+
+
+def _ignore_capped_bomb_warning() -> None:
+    """Make :data:`_IGNORE_CAPPED_BOMB_WARNING` the filter that decides this warning.
+
+    Called at import and again before every open: a ``catch_warnings``
+    block elsewhere (pytest wraps collection, where this module is
+    imported, in one) restores the filter list it saved and drops a filter
+    added inside it, and a broader filter added later (``simplefilter``,
+    ``-W``) sits in front of it. So unless the first filter that can apply
+    to this category is already this one, it is (re-)inserted at the
+    front. Only ever this one entry is removed and inserted, never the list
+    replaced, so two threads racing here can at worst add it twice --
+    unlike ``catch_warnings``, which swaps the whole list and can clobber
+    another thread's filters.
+    """
+    for entry in warnings.filters:
+        if issubclass(Image.DecompressionBombWarning, entry[2]):
+            if entry == _IGNORE_CAPPED_BOMB_WARNING:
+                return
+            break
+    warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
+
+
+_ignore_capped_bomb_warning()
 
 
 def _pillow_claims(image_format: str, prefix: bytes) -> bool:
@@ -434,13 +496,11 @@ def open_scan_image(source: Path | IO[bytes]) -> ImageFile.ImageFile:
     other plugin ever runs; bytes none of them recognise raise
     ``PIL.UnidentifiedImageError`` exactly as ``Image.open`` does.
 
-    Pillow's ``DecompressionBombWarning`` is silenced for this open only.
-    Every caller applies :func:`decode_pixel_cap` to the header's size
-    before a pixel is decoded, and the warning's threshold
-    (``MAX_IMAGE_PIXELS``, 89.5 Mpx) is below :data:`MAX_DECODE_PX_GREY`, so
-    it would fire on every grey scan the cap admits on purpose; its error
-    (twice that, above the cap) is left alone. ``catch_warnings`` is
-    process-wide: a concurrent race can at worst let one such warning print.
+    Pillow's ``DecompressionBombWarning`` is ignored process-wide (see
+    :data:`_IGNORE_CAPPED_BOMB_WARNING`; re-asserted here before the open):
+    every caller applies :func:`decode_pixel_cap` to the header's size
+    before a pixel is decoded, and the warning's threshold (89.5 Mpx) is
+    below :data:`MAX_DECODE_PX_GREY`. Its error, above every cap, stands.
     """
     Image.init()
     if isinstance(source, Path):
@@ -453,9 +513,8 @@ def open_scan_image(source: Path | IO[bytes]) -> ImageFile.ImageFile:
     claimed = [image_format for image_format in Image.ID if _pillow_claims(image_format, prefix)]
     if claimed and not any(image_format in SCAN_IMAGE_FORMATS for image_format in claimed):
         raise ScanUnsupportedFormatError(_UNSUPPORTED_IMAGE_MESSAGE.format(format=claimed[0]))
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", Image.DecompressionBombWarning)
-        return Image.open(source, formats=SCAN_IMAGE_FORMATS)
+    _ignore_capped_bomb_warning()
+    return Image.open(source, formats=SCAN_IMAGE_FORMATS)
 
 
 def _bounded_inflate_size(raw: bytes, *, budget: int, page_index: int) -> int:
@@ -1923,7 +1982,7 @@ def check_scan_bytes(data: bytes) -> None:
         # #256 review: allowlisted formats only, so no plugin decodes inside the open.
         with open_scan_image(io.BytesIO(data)) as opened:
             # #256: judged against its own mode's ceiling, from the header.
-            plan_image(opened.width, opened.height, opened.mode)
+            plan_image(opened.width, opened.height, opened.mode, opened.format)
     except Image.DecompressionBombError as exc:
         raise ScanTooLargeError(
             "This scan's image is too large to process safely. Rescan at a lower resolution."

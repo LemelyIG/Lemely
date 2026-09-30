@@ -609,9 +609,11 @@ def _decode_within_ceiling(opened: PILImage, box: SourceBox, *, item_id: str) ->
     ``Image.open`` has read only the header, so the size and mode are known
     and nothing is decoded yet. The ceiling is per mode (#256:
     ``scan_limits.decode_pixel_cap`` -- 40 Mpx for colour, 160 Mpx for a
-    bilevel or greyscale scan that decodes to one byte per pixel), the same
-    rule upload and extraction apply. A JPEG can be decoded at 1/2, 1/4 or
-    1/8 scale natively (``draft``); anything else over the ceiling is refused.
+    bilevel or greyscale scan that decodes to one byte per pixel, a third of
+    the colour ceiling for a WebP, whose decoder costs about three times as
+    much), the same rule upload and extraction apply. A JPEG can be decoded
+    at 1/2, 1/4 or 1/8 scale natively (``draft``); anything else over the
+    ceiling is refused.
 
     Checked by ``isinstance``, not ``opened.format == "JPEG"``: a phone JPEG
     carrying a second embedded image (Android Ultra HDR's gain map, some
@@ -624,7 +626,7 @@ def _decode_within_ceiling(opened: PILImage, box: SourceBox, *, item_id: str) ->
     from PIL import JpegImagePlugin
 
     width, height = opened.size
-    cap = decode_pixel_cap(opened.mode)
+    cap = decode_pixel_cap(opened.mode, opened.format)
     if width * height <= cap:
         return
     if isinstance(opened, JpegImagePlugin.JpegImageFile):

@@ -1867,6 +1867,17 @@ def bilevel_png(width: int, height: int, *, mark: tuple[int, int, int, int] | No
     )
 
 
+def plain_webp(width: int, height: int) -> bytes:
+    """A real, white, lossless WebP -- a few dozen bytes at any size.
+
+    #256 review round 2: WebP decodes at about three times a PNG's cost, so
+    it has its own lower pixel cap; this builds files either side of it.
+    """
+    buf = io.BytesIO()
+    Image.new("L", (width, height), 255).save(buf, "WEBP", lossless=True, method=0)
+    return buf.getvalue()
+
+
 def ico_wrapping(payload: bytes) -> bytes:
     """An ICO whose one entry declares 16x16 and holds ``payload`` (e.g. a big PNG).
 
@@ -1927,6 +1938,7 @@ __all__ = [
     "pdf_stream",
     "pdf_with_inflated_count",
     "pdf_with_missing_kid_object",
+    "plain_webp",
     "real_smask_dimension_bomb_pdf",
     "repeated_kid_pdf",
     "repeated_subtree_pdf",
