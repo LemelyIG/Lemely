@@ -2038,6 +2038,35 @@ def test_a_flagged_photo_over_the_crop_ceiling_is_fitted_and_upright(orientation
     assert not is_green(0.97, 0.03) and not is_green(0.03, 0.97) and not is_green(0.97, 0.97)
 
 
+@pytest.mark.parametrize(
+    ("image_format", "size"),
+    [("PNG", (400, 300)), ("TIFF", (400, 300)), ("PNG", (2500, 2000))],
+    ids=["png", "tiff", "png-over-the-crop-ceiling"],
+)
+def test_a_sixteen_bit_greyscale_crop_keeps_its_ink(
+    image_format: str, size: tuple[int, int]
+) -> None:
+    """Final review, Important 2: the crop converted a 16-bit greyscale region
+    by clipping each sample to 0-255, so ink at 5000 on paper at 60000 came
+    back as a white crop. It is scaled from the 16-bit range, as extraction
+    does. Both crop paths: a region cut as it is, and one over
+    ``_MAX_CROP_PX`` (5 Mpx) resampled down."""
+    from lemely.web.routers.review import _MAX_CROP_PX, _crop_image_scan
+    from tests.pdf_fakes import sixteen_bit_grey_scan
+
+    width, height = size
+    ink = (width // 8, height // 5, width * 5 // 8, height * 2 // 5)
+    scan = sixteen_bit_grey_scan(width, height, ink, image_format=image_format)
+    assert (width * height > _MAX_CROP_PX) == (width == 2500)
+
+    out = _crop_image_scan(scan, SourceBox(page=0, box=[0, 0, 1000, 1000]), item_id="grey16")
+
+    got = Image.open(io.BytesIO(out)).convert("L")
+    ink_centre = ((ink[0] + ink[2]) / 2 / width, (ink[1] + ink[3]) / 2 / height)
+    assert got.getpixel((int(ink_centre[0] * got.width), int(ink_centre[1] * got.height))) < 64
+    assert got.getpixel((int(0.9 * got.width), int(0.9 * got.height))) > 192
+
+
 _PEAK_RSS_CHILD = """
 import sys
 

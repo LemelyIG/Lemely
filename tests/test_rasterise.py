@@ -28,6 +28,8 @@ from lemely.io.scan_limits import (
     decode_pixel_cap,
 )
 from tests.pdf_fakes import (
+    SIXTEEN_BIT_INK,
+    SIXTEEN_BIT_PAPER,
     annot_ap_bomb_pdf,
     bilevel_png,
     declared_image,
@@ -39,6 +41,7 @@ from tests.pdf_fakes import (
     page_kids_equal_count_bomb_pdf,
     plain_webp,
     shared_container_broken_xref_pdf,
+    sixteen_bit_grey_scan,
     uncounted_bomb_pdf,
     xref_repair_bomb_pdf,
 )
@@ -484,6 +487,49 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
                 self.assertGreaterEqual(decode_pixel_cap(converted.mode), decode_pixel_cap(mode))
                 if decode_pixel_cap(mode) > MAX_DECODE_PX:
                     self.assertEqual(converted.mode, "L")
+
+    def test_a_sixteen_bit_greyscale_scan_keeps_its_ink(self) -> None:
+        """Final review, Important 2: Pillow CLIPS a 16-bit sample to 0-255 when
+        it converts to "L" -- it does not scale -- so ink at 5000 on paper at
+        60000 became an all-white page, and the model was sent a blank scan.
+        The samples are scaled from the 16-bit range instead: the ink stays
+        dark and the paper light. PNG and TIFF, the two allowlisted formats
+        that carry 16-bit greyscale."""
+        for image_format in ("PNG", "TIFF"):
+            with self.subTest(image_format=image_format):
+                path = Path(self.tmp) / f"grey16.{image_format.lower()}"
+                path.write_bytes(
+                    sixteen_bit_grey_scan(400, 300, (50, 60, 250, 120), image_format=image_format)
+                )
+
+                (page,) = rasterise_scan_to_pages(path)
+
+                decoded = Image.open(io.BytesIO(page.png_bytes)).convert("L")
+                self.assertEqual(decoded.getpixel((150, 90)), SIXTEEN_BIT_INK * 255 // 65535)
+                self.assertEqual(decoded.getpixel((350, 250)), SIXTEEN_BIT_PAPER * 255 // 65535)
+
+    def test_wide_single_channel_modes_are_scaled_from_the_sixteen_bit_range(self) -> None:
+        """Final review, Important 2: every mode wider than a byte -- "I;16" in
+        either byte order, and the 32-bit "I" and "F" -- is taken to "L" by
+        scaling its samples from 0-65535 to 0-255, never by clipping. Pinned
+        for all four, from the same two sample values."""
+        import struct
+
+        samples = (SIXTEEN_BIT_INK, SIXTEEN_BIT_PAPER)
+        images = {
+            "I;16": Image.frombytes("I;16", (2, 1), struct.pack("<2H", *samples)),
+            "I;16B": Image.frombytes("I;16B", (2, 1), struct.pack(">2H", *samples)),
+            "I": Image.frombytes("I", (2, 1), struct.pack("<2i", *samples)),
+            "F": Image.frombytes("F", (2, 1), struct.pack("<2f", *samples)),
+        }
+        for mode, image in images.items():
+            with self.subTest(mode=mode):
+                converted = rasterise_module.single_channel_or_rgb(image)
+                self.assertEqual(converted.mode, "L")
+                self.assertEqual(
+                    [converted.getpixel((x, 0)) for x in range(2)],
+                    [value * 255 // 65535 for value in samples],
+                )
 
     def test_a_bilevel_scan_over_forty_megapixels_is_still_turned_upright(self) -> None:
         """#255 and #256 together: the EXIF flag is applied to a large

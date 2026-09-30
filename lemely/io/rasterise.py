@@ -177,9 +177,46 @@ def _looks_like_pdf(path: Path) -> bool:
 #: by nearest neighbour. Derived from ``scan_limits.GREY_CEILING_MODES``, so
 #: every mode given the grey ceiling lands on "L" and the re-plan after the
 #: conversion can never refuse what the header check admitted. "I" and "F"
-#: are added: their conversion clips to 0-255 exactly as the RGB one does,
-#: one channel instead of three.
+#: are added, one channel instead of three.
 _ONE_CHANNEL_MODES = GREY_CEILING_MODES | {"I", "F"}
+
+#: Single-channel modes whose samples are wider than a byte. Pillow's own
+#: conversion to "L" CLIPS these to 0-255 rather than scaling them (final
+#: review, Important 2: ink at 5000 on paper at 60000 became an all-white
+#: page), so :func:`_wide_grey_to_l` scales them instead. Pillow opens a
+#: 16-bit PNG or TIFF as "I;16"; a 32-bit TIFF opens as "I" or "F", whose
+#: range the mode does not say -- they are read as 16-bit samples too, the
+#: range Pillow itself uses "I" for, and anything past 65535 is white.
+_WIDE_GREY_MODES = frozenset({"I;16", "I;16L", "I;16B", "I;16N", "I", "F"})
+
+#: 65535 -> 255: the 16-bit range onto the 8-bit one.
+_SIXTEEN_TO_EIGHT_BITS = 255 / 65535
+
+#: Pixels converted per strip by :func:`_wide_grey_to_l`: its working copies
+#: ("I" is four bytes a pixel) stay at a few MB whatever the page's size.
+_WIDE_STRIP_PX = 1 << 20
+
+
+def _wide_grey_to_l(image: PILImage) -> PILImage:
+    """``image`` (a :data:`_WIDE_GREY_MODES` mode) as "L", scaled from 0-65535.
+
+    In strips, so the only full-size allocation is the "L" result: the peak
+    is what Pillow's own clipping conversion costs. Each strip goes to "I"
+    (the one wide mode besides "F" that ``point`` scales), is scaled, and
+    only then converted to "L", which clips nothing left in range.
+    """
+    from PIL import Image
+
+    width, height = image.size
+    result = Image.new("L", image.size)
+    rows = max(1, _WIDE_STRIP_PX // max(1, width))
+    for top in range(0, height, rows):
+        strip = image.crop((0, top, width, min(height, top + rows)))
+        if strip.mode not in ("I", "F"):
+            strip = strip.convert("I")
+        scaled = strip.point(lambda value: value * _SIXTEEN_TO_EIGHT_BITS)
+        result.paste(scaled.convert("L"), (0, top))
+    return result
 
 
 def single_channel_or_rgb(image: PILImage) -> PILImage:
@@ -189,10 +226,15 @@ def single_channel_or_rgb(image: PILImage) -> PILImage:
     same size as "1": Pillow holds both at one byte per pixel), never
     straight to RGB at full size; a palette or other multi-channel mode goes
     to RGB, which is why :func:`~lemely.io.scan_limits.decode_pixel_cap`
-    gives it the colour ceiling. "L" and "RGB" are returned as they are.
+    gives it the colour ceiling. "L" and "RGB" are returned as they are. A
+    16- or 32-bit single-channel image is scaled to 8 bits, not clipped
+    (:func:`_wide_grey_to_l`). Extraction and the review crop route both
+    convert through here, so the model and the teacher see the same tones.
     """
     if image.mode in ("L", "RGB"):
         return image
+    if image.mode in _WIDE_GREY_MODES:
+        return _wide_grey_to_l(image)
     if image.mode in _ONE_CHANNEL_MODES:
         return image.convert("L")
     return image.convert("RGB")

@@ -1878,6 +1878,33 @@ def bilevel_png(
     )
 
 
+#: Sample values of :func:`sixteen_bit_grey_scan`: dark ink on light paper,
+#: both far above 255, where a clipping conversion turns each to white.
+SIXTEEN_BIT_INK = 5_000
+SIXTEEN_BIT_PAPER = 60_000
+
+
+def sixteen_bit_grey_scan(
+    width: int, height: int, ink: tuple[int, int, int, int], *, image_format: str = "PNG"
+) -> bytes:
+    """A real 16-bit greyscale image: :data:`SIXTEEN_BIT_PAPER` with an ``ink`` box.
+
+    ``ink`` is (left, top, right, bottom) in pixels, filled with
+    :data:`SIXTEEN_BIT_INK`. Built from raw little-endian samples, since
+    Pillow's ``paste`` of an integer into an ``"I;16"`` image does not store
+    the value given. Pillow opens the result as ``"I;16"``.
+    """
+    paper = struct.pack("<H", SIXTEEN_BIT_PAPER)
+    inked = struct.pack("<H", SIXTEEN_BIT_INK)
+    left, top, right, bottom = ink
+    plain_row = paper * width
+    ink_row = paper * left + inked * (right - left) + paper * (width - right)
+    rows = b"".join(ink_row if top <= y < bottom else plain_row for y in range(height))
+    buf = io.BytesIO()
+    Image.frombytes("I;16", (width, height), rows).save(buf, image_format)
+    return buf.getvalue()
+
+
 def plain_webp(width: int, height: int) -> bytes:
     """A real, white, lossless WebP -- a few dozen bytes at any size.
 
@@ -1902,6 +1929,8 @@ def ico_wrapping(payload: bytes) -> bytes:
 
 
 __all__ = [
+    "SIXTEEN_BIT_INK",
+    "SIXTEEN_BIT_PAPER",
     "annot_ap_bomb_pdf",
     "annot_ap_image_bomb_pdf",
     "annot_ap_nested_bomb_pdf",
@@ -1959,6 +1988,7 @@ __all__ = [
     "shared_container_broken_xref_pdf",
     "sibling_page_as_soft_mask_bomb_pdf",
     "sibling_page_listed_as_annotation_pdf",
+    "sixteen_bit_grey_scan",
     "smask_bomb_pdf",
     "stamp_with_jpeg_appearance_pdf",
     "stream_extgstate_smask_bomb_pdf",

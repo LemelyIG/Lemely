@@ -646,6 +646,10 @@ def _fitted_region(image: PILImage, rect: tuple[int, int, int, int]) -> PILImage
 
     A region over the ceiling is resampled straight out of ``image`` rather
     than cropped first, which would copy up to the whole decode once more.
+    Either way the region reaches RGB through ``single_channel_or_rgb``, so
+    a 16-bit greyscale region is scaled to 8 bits, as extraction scales it,
+    never clipped to white by a bare ``convert("RGB")`` (final review,
+    Important 2).
     """
     from PIL import Image
 
@@ -661,6 +665,7 @@ def _fitted_region(image: PILImage, rect: tuple[int, int, int, int]) -> PILImage
         # bilevel page goes to "L" (same size), not to a full-size RGB (#256).
         image = single_channel_or_rgb(image)
         region = image.resize(fitted, Image.Resampling.LANCZOS, box=rect, reducing_gap=3.0)
+    region = single_channel_or_rgb(region)
     return region if region.mode == "RGB" else region.convert("RGB")
 
 
