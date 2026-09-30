@@ -696,6 +696,45 @@ def test_preview_refuses_a_stored_content_stream_bomb(
     assert "drawing" in preview.json()["detail"]
 
 
+def test_preview_refuses_an_object_stream_bomb_before_opening_the_scan(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """Task 9c review round 2: with a broken xref, MuPDF repairs the file while
+    opening it and parses every object stream it finds -- a 20 KB file took a
+    bare ``pymupdf.open`` to 459 MB. The preview bounds object streams from
+    the raw bytes first: 422, and MuPDF never opens the file."""
+    from unittest.mock import patch
+
+    import pymupdf
+
+    from lemely.io.scan_limits import MAX_OBJECT_STREAM_BYTES
+    from tests.pdf_fakes import shared_container_broken_xref_pdf
+
+    scan = shared_container_broken_xref_pdf(MAX_OBJECT_STREAM_BYTES // 2 + 1_000)
+    paper_id = uuid.uuid4()
+    key = f"teacher/{teacher_user}/{paper_id.hex}/scan.pdf"
+    storage_backend.upload(settings.storage.bucket, key, scan, "application/pdf")
+    paper_repo.create(
+        paper_id=paper_id,
+        uploaded_by=teacher_user,
+        storage_path=key,
+        scheme_storage_path=None,
+        original_filename="scan.pdf",
+        content_type="application/pdf",
+        byte_size=len(scan),
+    )
+
+    with patch.object(pymupdf, "open", side_effect=AssertionError("MuPDF opened")) as opened:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+    opened.assert_not_called()
+    assert preview.status_code == 422, preview.text
+    assert "compressed internal data" in preview.json()["detail"]
+
+
 def test_preview_still_refuses_a_stored_scan_over_the_page_cap(
     client: TestClient,
     paper_repo: TeacherPaperRepository,

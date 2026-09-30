@@ -2931,6 +2931,39 @@ def test_crop_route_bounds_the_page_count_at_max_crop_pages(
         assert resp.headers["content-type"] == "image/png"
 
 
+def test_crop_route_refuses_an_object_stream_bomb_before_opening_the_scan(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """Task 9c review round 2: with a broken xref, MuPDF repairs the file while
+    opening it and parses every object stream it finds -- a 20 KB file took a
+    bare ``pymupdf.open`` to 459 MB. The crop bounds object streams from the
+    raw bytes first: 422 with the reason, and MuPDF never opens the file."""
+    from unittest.mock import patch
+
+    import pymupdf
+
+    from lemely.io.scan_limits import MAX_OBJECT_STREAM_BYTES
+    from tests.pdf_fakes import shared_container_broken_xref_pdf
+
+    scan = shared_container_broken_xref_pdf(MAX_OBJECT_STREAM_BYTES // 2 + 1_000)
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=scan, page=0
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    with patch.object(pymupdf, "open", side_effect=AssertionError("MuPDF opened")) as opened:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    opened.assert_not_called()
+    assert resp.status_code == 422, resp.text
+    assert "compressed internal data" in resp.json()["detail"]
+
+
 @pytest.mark.parametrize("image_format", ["JPEG", "MPO"])
 def test_a_high_resolution_photo_is_decoded_smaller_and_still_cropped_right(
     image_format: str,

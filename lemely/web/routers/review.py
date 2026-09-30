@@ -42,7 +42,11 @@ from lemely.db.review_repo import (
 from lemely.io.rasterise import RasterisedPage, looks_like_pdf
 from lemely.io.reread import REREAD_UPSCALE, crop_and_upscale, padded_crop_rect
 from lemely.io.scan_limits import MAX_DECODE_PX as _MAX_DECODE_PX
-from lemely.io.scan_limits import ScanRejectedError, check_pdf_page_content
+from lemely.io.scan_limits import (
+    ScanRejectedError,
+    check_object_stream_bytes,
+    check_pdf_page_content,
+)
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 
 # A runtime import, not a TYPE_CHECKING one: FastAPI resolves
@@ -495,6 +499,14 @@ def _crop_pdf_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
     """Render only the padded ``box`` of the page it names (see ``_pdf_crop_plan``)."""
     import pymupdf
 
+    # Task 9c review round 2: with a broken xref, MuPDF repairs the file while
+    # opening it and parses every object stream it finds, so object streams are
+    # bounded from the raw bytes before the open.
+    try:
+        check_object_stream_bytes(data)
+    except ScanRejectedError as exc:
+        log.warning("review_crop_scan_rejected", item_id=item_id, page=box.page, reason=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
     # call needs the ignore. Narrowed to this one code, not the module.
     with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]

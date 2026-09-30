@@ -99,7 +99,11 @@ from lemely.db.review_repo import ReviewService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.gemini import GeminiClient
 from lemely.io.question_generation import QuestionGenerator
-from lemely.io.scan_limits import ScanRejectedError, check_pdf_content
+from lemely.io.scan_limits import (
+    ScanRejectedError,
+    check_object_stream_bytes,
+    check_pdf_content,
+)
 from lemely.io.scan_metadata import ScanMetadataExtractor
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.io.teacher_quiz import TeacherQuizBuilder
@@ -1091,11 +1095,17 @@ def get_paper_preview(
 
     import pymupdf
 
+    filetype = _pymupdf_filetype(row.content_type)
     try:
+        if filetype == "pdf":
+            # Task 9c review round 2: with a broken xref, MuPDF repairs the
+            # file while opening it and parses every object stream it finds,
+            # so object streams are bounded from the raw bytes first.
+            check_object_stream_bytes(data)
         # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
         # call needs the ignore. Narrowed to this one code, not the module.
         with pymupdf.open(  # type: ignore[no-untyped-call]
-            stream=data, filetype=_pymupdf_filetype(row.content_type)
+            stream=data, filetype=filetype
         ) as doc:
             check_pdf_content(doc)
             if doc.page_count == 0:
