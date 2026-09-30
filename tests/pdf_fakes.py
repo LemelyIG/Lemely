@@ -8,16 +8,20 @@ parse must pass ``lemely.io.scan_limits.check_scan_bytes`` and both upload
 routes exactly like a document that fails to open at all -- see spec
 2026-09-26 §6 and task-11-report.md's "Fix round 1". Also the Task 11b bomb
 builders: small files whose page content or declared image size is far
-larger than any scan's -- generated in-test, nothing committed.
+larger than any scan's -- generated in-test, nothing committed. And (#256)
+two raster-image builders, :func:`declared_image` and :func:`bilevel_png`,
+for the per-mode image ceiling, used by the rasterise and crop-route tests.
 """
 
 from __future__ import annotations
 
 import io
 import re
+import struct
 import zlib
 
 import pymupdf
+from PIL import Image
 
 
 def _hand_rolled_pdf(kids: str, count: int, xref_size: int) -> bytes:
@@ -1755,14 +1759,91 @@ def long_parent_chain_pdf(length: int) -> bytes:
     )
 
 
+def _png_chunk(tag: bytes, data: bytes) -> bytes:
+    crc = struct.pack(">I", zlib.crc32(tag + data))
+    return struct.pack(">I", len(data)) + tag + data + crc
+
+
+#: PNG (bit depth, colour type) for each Pillow mode :func:`declared_image` writes as PNG.
+_PNG_MODES = {"1": (1, 0), "L": (8, 0), "P": (8, 3), "LA": (8, 4), "RGB": (8, 2), "RGBA": (8, 6)}
+
+
+def declared_image(mode: str, width: int, height: int) -> bytes:
+    """An image file that DECLARES ``width`` x ``height`` in ``mode`` and holds no pixels.
+
+    #256: every image check refuses from the header, before a pixel is
+    decoded, so a refusal test needs only a header -- a few dozen bytes
+    rather than the hundreds of MB a real 41.6 Mpx colour or 161 Mpx grey
+    image costs to build. PNG for every mode but ``"CMYK"``, which PNG
+    cannot carry: that one is a 1x1 CMYK TIFF from Pillow with its
+    ``ImageWidth``/``ImageLength`` tags rewritten. Decoding either fails;
+    use it only where the code under test must refuse before decoding.
+    """
+    if mode == "CMYK":
+        buf = io.BytesIO()
+        Image.new("CMYK", (1, 1)).save(buf, "TIFF")
+        data = bytearray(buf.getvalue())
+        (ifd,) = struct.unpack_from("<I", data, 4)
+        (entries,) = struct.unpack_from("<H", data, ifd)
+        for index in range(entries):
+            at = ifd + 2 + 12 * index
+            (tag,) = struct.unpack_from("<H", data, at)
+            if tag in (256, 257):  # ImageWidth, ImageLength: rewritten as one LONG
+                struct.pack_into("<HHII", data, at, tag, 4, 1, width if tag == 256 else height)
+        return bytes(data)
+    depth, colour_type = _PNG_MODES[mode]
+    header = struct.pack(">IIBBBBB", width, height, depth, colour_type, 0, 0, 0)
+    palette = _png_chunk(b"PLTE", b"\xff\xff\xff") if mode == "P" else b""
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", header)
+        + palette
+        + _png_chunk(b"IDAT", zlib.compress(b""))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+def bilevel_png(width: int, height: int, *, mark: tuple[int, int, int, int] | None = None) -> bytes:
+    """A real 1-bit PNG, white with an optional black ``mark`` (left, top, right, bottom).
+
+    #256: built row by row, so the test never holds the image -- a 1200 dpi
+    A4 office scan (9921 x 14031, 139 Mpx) is ~40 KB of file and well under
+    1 MB to build, where ``Image.new("1", ...)`` would allocate 139 MB
+    (Pillow keeps mode ``"1"`` at one byte per pixel).
+    """
+    stride = -(-width // 8)
+    white = b"\x00" + b"\xff" * stride  # filter byte 0, then set bits = white
+    marked = white
+    if mark is not None:
+        bits = bytearray(b"\xff" * stride)
+        for x in range(mark[0], mark[2]):
+            bits[x >> 3] &= ~(0x80 >> (x & 7)) & 0xFF
+        marked = b"\x00" + bytes(bits)
+    compressor = zlib.compressobj(9)
+    idat = bytearray()
+    for y in range(height):
+        in_mark = mark is not None and mark[1] <= y < mark[3]
+        idat += compressor.compress(marked if in_mark else white)
+    idat += compressor.flush()
+    header = struct.pack(">IIBBBBB", width, height, 1, 0, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", header)
+        + _png_chunk(b"IDAT", bytes(idat))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
 __all__ = [
     "annot_ap_bomb_pdf",
     "annot_ap_image_bomb_pdf",
     "annot_ap_nested_bomb_pdf",
     "assemble_pdf",
+    "bilevel_png",
     "bomb_on_second_page_pdf",
     "born_digital_text_pdf",
     "contents_also_appearance_bomb_pdf",
+    "declared_image",
     "deep_page_chain_pdf",
     "deep_plain_dict_chain_bomb_pdf",
     "deep_xobject_chain_bomb_pdf",

@@ -46,6 +46,8 @@ from lemely.io.scan_limits import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from PIL.Image import Image as PILImage
+
 __all__ = [
     "EXTRACTION_DPI",
     "PDF_MAGIC",
@@ -55,6 +57,7 @@ __all__ = [
     "looks_like_pdf",
     "rasterise_pdf_to_pages",
     "rasterise_scan_to_pages",
+    "single_channel_or_rgb",
 ]
 
 
@@ -167,6 +170,29 @@ def _looks_like_pdf(path: Path) -> bool:
     return looks_like_pdf(header)
 
 
+#: Single-channel modes that go to "L" (one byte per pixel) rather than to a
+#: full-size RGB: Pillow cannot ``reduce`` "1" or "I;16*", and resamples "1"
+#: by nearest neighbour. "I" and "F" are here too; their conversion clips to
+#: 0-255 exactly as the RGB one does, one channel instead of three.
+_ONE_CHANNEL_MODES = frozenset({"1", "I", "F", "I;16", "I;16B", "I;16L", "I;16N"})
+
+
+def single_channel_or_rgb(image: PILImage) -> PILImage:
+    """``image`` in a mode Pillow can ``reduce`` and resample well: "L" or "RGB".
+
+    #256: a bilevel ("1") or other single-channel scan is taken to "L" (the
+    same size as "1": Pillow holds both at one byte per pixel), never
+    straight to RGB at full size; a palette or other multi-channel mode goes
+    to RGB, which is why :func:`~lemely.io.scan_limits.decode_pixel_cap`
+    gives it the colour ceiling. "L" and "RGB" are returned as they are.
+    """
+    if image.mode in ("L", "RGB"):
+        return image
+    if image.mode in _ONE_CHANNEL_MODES:
+        return image.convert("L")
+    return image.convert("RGB")
+
+
 def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
     """Wrap a plain (non-PDF) scan upload as a single-page result.
 
@@ -175,16 +201,19 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
     format regardless of scan type. Spec 2026-09-26 §6: an image within the
     band is reduced to fit ``MAX_PAGE_PX`` — a JPEG (which includes MPO)
     through Pillow's native reduced-scale decode first, anything else by an
-    integer ``reduce`` after decoding — and one beyond ``MAX_DECODE_PX`` is
-    refused from its header, before any pixel is decoded. The EXIF orientation
-    flag is applied (#255), so the page, and every source_box read from it, is
-    upright.
+    integer ``reduce`` after decoding — and one beyond ``decode_pixel_cap`` for
+    its mode (40 Mpx colour, 160 Mpx bilevel/greyscale, #256) is refused from
+    its header, before any pixel is decoded. The EXIF orientation flag is
+    applied (#255), so the page, and every source_box read from it, is
+    upright. The reduce happens before the RGB conversion (#256), so a large
+    bilevel or greyscale scan is never expanded to three channels at full
+    size.
     """
     from PIL import Image, ImageOps, JpegImagePlugin
 
     try:
         with Image.open(image_path) as opened:
-            factor = plan_image(opened.width, opened.height)
+            factor = plan_image(opened.width, opened.height, opened.mode)
             if factor > 1 and isinstance(opened, JpegImagePlugin.JpegImageFile):
                 opened.draft(None, (opened.width // factor, opened.height // factor))
             # #255: a phone stores a portrait photo as a landscape sensor frame
@@ -196,15 +225,27 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
             # the reduced size; `in_place` avoids a second full-size copy when
             # there is no flag.
             ImageOps.exif_transpose(opened, in_place=True)
-            pil_image = opened.convert("RGB")
+            # #256: into a mode `reduce` takes ("L" or "RGB") WITHOUT expanding
+            # a one-channel scan to RGB at full size; the RGB conversion waits
+            # until after the reduce below. The transpose above is untouched:
+            # pixel caps are areas, which a transpose does not change.
+            pil_image = single_channel_or_rgb(opened)
+            # Decoded here, while the file is open: an "L" or "RGB" image
+            # comes back as `opened` itself, and the reduce below runs after
+            # the `with` has closed the file. `exif_transpose` happens to load
+            # it already (measured, Pillow 12.2, with or without a flag); this
+            # keeps that from being load-bearing.
+            pil_image.load()
     except Image.DecompressionBombError as exc:
         raise ScanTooLargeError("image declares too many pixels to decode") from exc
     # Re-planned against the post-open dimensions: a JPEG's `.draft()` above picks
     # the nearest supported DCT scale, not exactly `factor`, so the image may still
-    # need an extra integer `.reduce()` here to land under MAX_PAGE_PX.
-    factor = plan_image(pil_image.width, pil_image.height)
+    # need an extra integer `.reduce()` here to land under MAX_PAGE_PX. Against the
+    # converted mode, whose ceiling is never lower than the header's.
+    factor = plan_image(pil_image.width, pil_image.height, pil_image.mode)
     if factor > 1:
         pil_image = pil_image.reduce(factor)
+    pil_image = pil_image.convert("RGB") if pil_image.mode != "RGB" else pil_image
     buf = io.BytesIO()
     pil_image.save(buf, format="PNG")
     return [

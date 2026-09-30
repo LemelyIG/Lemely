@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import math
 import time
 import tracemalloc
 import unittest
@@ -18,6 +19,7 @@ import lemely.io.scan_limits as scan_limits
 from lemely.io.scan_limits import (
     MAX_CROP_PAGES,
     MAX_DECODE_PX,
+    MAX_DECODE_PX_GREY,
     MAX_PAGE_CONTENT_BYTES,
     MAX_PAGE_PX,
     MAX_SCAN_CONTENT_BYTES,
@@ -32,6 +34,7 @@ from lemely.io.scan_limits import (
     check_pdf_content_bytes,
     check_pdf_page_content,
     check_scan_bytes,
+    decode_pixel_cap,
     decoded_stream_size,
     plan_image,
     plan_page_dpi,
@@ -42,9 +45,11 @@ from tests.pdf_fakes import (
     annot_ap_image_bomb_pdf,
     annot_ap_nested_bomb_pdf,
     assemble_pdf,
+    bilevel_png,
     bomb_on_second_page_pdf,
     born_digital_text_pdf,
     contents_also_appearance_bomb_pdf,
+    declared_image,
     deep_page_chain_pdf,
     deep_plain_dict_chain_bomb_pdf,
     deep_xobject_chain_bomb_pdf,
@@ -171,6 +176,19 @@ class PagePlanTests(unittest.TestCase):
         self.assertEqual([(p.index, p.dpi) for p in plans], [(0, 200.0), (1, 143.0)])
 
 
+#: #256: the modes that keep the 40 Mpx colour ceiling, one per kind -- three
+#: and four channels, CMYK, palette (converted to RGB before it can be
+#: reduced) and grey with alpha (two channels).
+_COLOUR_MODES = ("RGB", "RGBA", "CMYK", "P", "LA")
+#: #256: 6500 x 6400 = 41.6 Mpx, just over the colour ceiling.
+_COLOUR_OVER_CAP = (6500, 6400)
+#: #256 (probe ``be_probe_img.py``): a 1-bit A4 office scan at 1200 dpi, 139 Mpx.
+_A4_AT_1200_DPI = (9921, 14031)
+#: #256: 12600^2 = 158.8 Mpx is under the grey ceiling, 12700^2 = 161.3 Mpx over it.
+_GREY_UNDER_CAP = (12600, 12600)
+_GREY_OVER_CAP = (12700, 12700)
+
+
 class ImagePlanTests(unittest.TestCase):
     def test_image_under_the_target_is_not_reduced(self) -> None:
         self.assertEqual(plan_image(1655, 2339), 1)
@@ -178,9 +196,65 @@ class ImagePlanTests(unittest.TestCase):
     def test_image_within_the_band_is_reduced_by_the_smallest_factor_that_fits(self) -> None:
         self.assertEqual(plan_image(5000, 5000), 2)  # 25 Mpx -> 6.25 Mpx
 
-    def test_image_beyond_the_decode_bound_is_rejected(self) -> None:
+    def test_a_colour_image_just_over_forty_megapixels_is_still_refused(self) -> None:
+        """User decision 1 (2026-09-29): colour keeps its ceiling."""
+        for mode in _COLOUR_MODES:
+            with self.subTest(mode=mode), self.assertRaises(ScanTooLargeError):
+                plan_image(*_COLOUR_OVER_CAP, mode)
+        # The default mode is colour: a caller that names none gets 40 Mpx.
         with self.assertRaises(ScanTooLargeError):
-            plan_image(7000, 7000)  # 49 Mpx
+            plan_image(*_COLOUR_OVER_CAP)
+
+    def test_a_bilevel_office_scan_at_1200_dpi_is_admitted_and_reduced(self) -> None:
+        """#256 (probe ``be_probe_img.py``): a 1-bit A4 at 1200 dpi is 139 Mpx
+        in a 0.04 MB file and was refused at upload with "limit 40
+        megapixels". Bilevel and 8-bit greyscale go to 160 Mpx; it is reduced
+        by 4 to 8.7 Mpx for the model."""
+        self.assertEqual(plan_image(*_A4_AT_1200_DPI, "1"), 4)
+        self.assertEqual(plan_image(*_A4_AT_1200_DPI, "L"), 4)
+
+    def test_greyscale_just_over_the_grey_ceiling_is_refused(self) -> None:
+        self.assertEqual(plan_image(*_GREY_UNDER_CAP, "L"), 4)  # 158.8 Mpx: admitted
+        self.assertEqual(plan_image(*_GREY_UNDER_CAP, "1"), 4)
+        for mode in ("1", "L"):
+            with self.subTest(mode=mode), self.assertRaises(ScanTooLargeError) as caught:
+                plan_image(*_GREY_OVER_CAP, mode)  # 161.3 Mpx
+            self.assertIn("limit 160 megapixels", str(caught.exception))
+
+    def test_sixteen_bit_grey_gets_half_the_grey_ceiling(self) -> None:
+        self.assertEqual(plan_image(8900, 8900, "I;16"), 4)  # 79.2 Mpx: admitted
+        with self.assertRaises(ScanTooLargeError):
+            plan_image(9000, 9000, "I;16B")  # 81 Mpx
+
+    def test_decode_pixel_cap_charges_what_pillow_holds(self) -> None:
+        """Pillow keeps mode "1" at one byte per pixel (measured: 100 Mpx of
+        "1" and of "L" both cost 96 MB), so both get the grey ceiling; 16-bit
+        grey is two bytes, so half; "P" is converted to RGB before it can be
+        reduced and "LA" is two channels, so both keep the colour ceiling."""
+        self.assertEqual(decode_pixel_cap("1"), MAX_DECODE_PX_GREY)
+        self.assertEqual(decode_pixel_cap("L"), MAX_DECODE_PX_GREY)
+        for mode in ("I;16", "I;16L", "I;16B", "I;16N"):
+            with self.subTest(mode=mode):
+                self.assertEqual(decode_pixel_cap(mode), MAX_DECODE_PX_GREY // 2)
+        for mode in ("I", "F", "LA", "P", "RGB", "RGBA", "CMYK", "no-such-mode"):
+            with self.subTest(mode=mode):
+                self.assertEqual(decode_pixel_cap(mode), MAX_DECODE_PX)
+
+    def test_the_grey_ceiling_fits_the_scan_budget_and_the_page_target(self) -> None:
+        """#256 consistency: one grey image may cost what a whole PDF scan
+        may (``MAX_SCAN_TOTAL_PX``), never more; at the ceiling it still
+        reduces under ``MAX_PAGE_PX`` with a factor short of the last one,
+        so the ``pragma: no cover`` fallthrough stays unreachable; and
+        Pillow's own bomb error (twice ``MAX_IMAGE_PIXELS``) sits above it,
+        so ``Image.open`` never refuses an image this module admits."""
+        self.assertLessEqual(MAX_DECODE_PX_GREY, MAX_SCAN_TOTAL_PX)
+        side = math.isqrt(MAX_DECODE_PX_GREY)
+        factor = plan_image(side, side, "L")
+        self.assertLess(factor, 8)
+        self.assertLessEqual((side / factor) ** 2, MAX_PAGE_PX)
+        bomb_warning_px = Image.MAX_IMAGE_PIXELS
+        assert bomb_warning_px is not None, "the app never disables Pillow's bomb guard"
+        self.assertLess(MAX_DECODE_PX_GREY, 2 * bomb_warning_px)
 
 
 def _planned_total_px(pdf: pdfium.PdfDocument, plans: list[scan_limits.PagePlan]) -> float:
@@ -576,8 +650,28 @@ class CheckScanBytesTests(unittest.TestCase):
             check_scan_bytes(_pdf_bytes(*([(595.0, 842.0)] * (MAX_SCAN_PAGES + 1))))
 
     def test_oversized_image_is_rejected_from_its_header(self) -> None:
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(_png_bytes(7000, 7000))
+        """A header only: the check must refuse before a pixel is decoded
+        (the file holds none), in every colour mode (#256: colour keeps 40 Mpx)."""
+        for mode in _COLOUR_MODES:
+            with self.subTest(mode=mode), self.assertRaises(ScanTooLargeError):
+                check_scan_bytes(declared_image(mode, *_COLOUR_OVER_CAP))
+
+    def test_a_bilevel_scan_over_forty_megapixels_is_accepted_at_upload(self) -> None:
+        """#256: the regression against develop, which accepted this file."""
+        check_scan_bytes(_png_bytes(7000, 7000))  # 49 Mpx of mode "1"
+
+    def test_a_bilevel_a4_office_scan_at_1200_dpi_is_accepted_at_upload(self) -> None:
+        """#256 (probe ``be_probe_img.py``): the issue's own file shape, a real
+        1-bit PNG of ~40 KB declaring 139 Mpx."""
+        scan = bilevel_png(*_A4_AT_1200_DPI)
+        self.assertLess(len(scan), 100_000)
+        check_scan_bytes(scan)
+
+    def test_greyscale_is_judged_against_the_grey_ceiling_at_upload(self) -> None:
+        check_scan_bytes(declared_image("L", *_GREY_UNDER_CAP))  # 158.8 Mpx
+        for mode in ("1", "L"):
+            with self.subTest(mode=mode), self.assertRaises(ScanTooLargeError):
+                check_scan_bytes(declared_image(mode, *_GREY_OVER_CAP))  # 161.3 Mpx
 
     def test_image_within_the_band_passes(self) -> None:
         check_scan_bytes(_png_bytes(5000, 5000))
@@ -618,7 +712,10 @@ class CheckScanBytesTests(unittest.TestCase):
         check_scan_bytes(encrypted_pdf_bytes())
 
     def test_bounds_are_the_documented_values(self) -> None:
-        self.assertEqual((MAX_SCAN_PAGES, MAX_PAGE_PX, MAX_DECODE_PX), (40, 16_000_000, 40_000_000))
+        self.assertEqual(
+            (MAX_SCAN_PAGES, MAX_PAGE_PX, MAX_DECODE_PX, MAX_DECODE_PX_GREY, MAX_SCAN_TOTAL_PX),
+            (40, 16_000_000, 40_000_000, 160_000_000, 160_000_000),
+        )
 
 
 class ContentStreamBombTests(unittest.TestCase):

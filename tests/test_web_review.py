@@ -2995,13 +2995,14 @@ def test_an_image_scan_too_large_to_decode_is_refused_before_decoding(
 
     A few hundred kilobytes of PNG can declare tens of megapixels. PIL lets it
     through (its own bomb ceiling is higher), so extraction can box it. The
-    route reads the size from the header and refuses first.
+    route reads the size and mode from the header and refuses first: this one
+    is greyscale, so it is judged against the grey ceiling (#256).
     """
-    from lemely.web.routers.review import _MAX_DECODE_PX
+    from lemely.io.scan_limits import MAX_DECODE_PX_GREY
 
-    side = int(_MAX_DECODE_PX**0.5) + 100
+    side = int(MAX_DECODE_PX_GREY**0.5) + 100  # 12749 px, 162.5 Mpx
     scan = _streamed_png(side, side)
-    assert len(scan) < 200_000
+    assert len(scan) < 400_000
     teacher, item_id = _seed_boxed_review_item(
         pg_sessionmaker,
         class_service,
@@ -3263,7 +3264,7 @@ def test_a_high_resolution_photo_is_decoded_smaller_and_still_cropped_right(
     assert reddish / total > 0.6, "the mark inside the box is missing -- this is a failed crop"
 
 
-@pytest.mark.parametrize("mode", ["RGB", "L", "P"])
+@pytest.mark.parametrize("mode", ["RGB", "L", "P", "1"])
 def test_an_image_region_over_the_ceiling_is_scaled_down_not_refused(
     mode: str,
     client: TestClient,
@@ -3315,3 +3316,115 @@ def test_an_image_region_over_the_ceiling_is_scaled_down_not_refused(
     histogram = grey.histogram()
     mid_tones = sum(histogram[32:224]) / (grey.width * grey.height)
     assert mid_tones > 0.5, f"{mid_tones:.2f} mid-tone: the stripes were point-sampled"
+
+
+@pytest.mark.parametrize(
+    "size",
+    [
+        pytest.param((7000, 7000), id="49Mpx"),
+        # #256 (probe ``be_probe_img.py``): a 1-bit A4 office scan at 1200 dpi.
+        pytest.param((9921, 14031), id="A4-1200dpi-139Mpx"),
+    ],
+)
+def test_a_bilevel_scan_over_forty_megapixels_is_cropped_not_refused(
+    size: tuple[int, int],
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#256: a bilevel page decodes at one byte per pixel (139 MB for the A4
+    scan). It used to be refused for its pixel count. The crop must be cut
+    from the "L" copy, never from a full-size RGB expansion of the page
+    (417 MB for the A4): every RGB conversion the route makes is of a region
+    already fitted to ``_MAX_CROP_PX``. Built row by row (``bilevel_png``),
+    so the test never holds the page itself."""
+    from lemely.web.routers.review import _MAX_CROP_PX
+    from tests.pdf_fakes import bilevel_png
+
+    width, height = size
+    ymin, xmin, ymax, xmax = _MARK_BOX
+    left, right = xmin * width // 1000, xmax * width // 1000
+    top, bottom = ymin * height // 1000, ymax * height // 1000
+    scan = bilevel_png(width, height, mark=(left, top, right, bottom))
+    assert len(scan) < 200_000
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=scan,
+        page=0,
+        content_type="image/png",
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    real_convert = Image.Image.convert
+    converted_to_rgb: list[tuple[int, int]] = []
+
+    def _convert(
+        image: Image.Image, mode: str | None = None, *args: object, **kwargs: object
+    ) -> Image.Image:
+        if mode == "RGB":
+            converted_to_rgb.append(image.size)
+        return real_convert(image, mode, *args, **kwargs)  # type: ignore[arg-type]
+
+    with monkeypatch.context() as patched:
+        patched.setattr(Image.Image, "convert", _convert)
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == 200, resp.text
+    assert converted_to_rgb, "the route never converted the region to RGB"
+    assert max(w * h for w, h in converted_to_rgb) <= _MAX_CROP_PX, converted_to_rgb
+    got = Image.open(io.BytesIO(resp.content)).convert("L")
+    dark = sum(got.histogram()[:64]) / (got.width * got.height)
+    assert dark > 0.5, f"{dark:.2f} dark: the black mark inside the box is missing"
+
+
+@pytest.mark.parametrize(
+    ("mode", "size"),
+    [
+        # User decision 1 (2026-09-29): colour keeps its ceiling -- 41.6 Mpx.
+        *[
+            pytest.param(mode, (6500, 6400), id=f"{mode}-41.6Mpx")
+            for mode in ("RGB", "RGBA", "CMYK", "P", "LA")
+        ],
+        # #256: bilevel and greyscale are refused only past 160 Mpx -- 161.3 Mpx.
+        *[pytest.param(mode, (12700, 12700), id=f"{mode}-161.3Mpx") for mode in ("1", "L")],
+    ],
+)
+def test_an_image_over_its_modes_ceiling_is_still_refused_at_the_crop(
+    mode: str,
+    size: tuple[int, int],
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """The per-mode ceiling, from the header alone: the stored file declares
+    the size and holds no pixels (``declared_image``; CMYK is a TIFF, since
+    PNG cannot carry it), so a refusal that came from decoding it would log
+    ``review_crop_render_failed``, not ``review_crop_page_too_large``."""
+    from tests.pdf_fakes import declared_image
+
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=declared_image(mode, *size),
+        page=0,
+        content_type="image/tiff" if mode == "CMYK" else "image/png",
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == 422, (resp.status_code, len(resp.content))
+    assert [e["event"] for e in logs if e["event"].startswith("review_crop_")] == [
+        "review_crop_page_too_large"
+    ]

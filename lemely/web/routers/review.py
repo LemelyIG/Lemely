@@ -39,13 +39,14 @@ from lemely.db.review_repo import (
     ReviewService,
     ReviewValidationError,
 )
-from lemely.io.rasterise import RasterisedPage, looks_like_pdf
+from lemely.io.rasterise import RasterisedPage, looks_like_pdf, single_channel_or_rgb
 from lemely.io.reread import REREAD_UPSCALE, crop_and_upscale, padded_crop_rect
-from lemely.io.scan_limits import MAX_DECODE_PX as _MAX_DECODE_PX
+from lemely.io.scan_limits import MAX_DECODE_PX as _MAX_DECODE_PX  # noqa: F401 -- tests import it
 from lemely.io.scan_limits import (
     ScanRejectedError,
     check_object_stream_bytes,
     check_pdf_page_content,
+    decode_pixel_cap,
 )
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 
@@ -339,9 +340,12 @@ _CROP_RENDER_DPI = 150
 # upscale until its padded area passes ~45% of the page.
 _MAX_CROP_PX = 4_000_000
 
-# The image decode bound is `lemely.io.scan_limits.MAX_DECODE_PX` -- one
-# "too big to open" number for the app (spec 2026-09-26 §6); the local name is
-# kept because the route's tests import it.
+# The image decode bound is `lemely.io.scan_limits.decode_pixel_cap` for the
+# image's mode (#256): 40 Mpx for colour, 160 Mpx for a bilevel or greyscale
+# scan -- one "too big to open" rule for the app, shared with upload and
+# extraction (spec 2026-09-26 §6). `_MAX_DECODE_PX` is the colour ceiling,
+# `scan_limits.MAX_DECODE_PX`; the local name is kept because the route's
+# tests import it.
 
 
 class _PdfCropPlan(NamedTuple):
@@ -600,11 +604,14 @@ def _crop_pdf_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
 
 
 def _decode_within_ceiling(opened: PILImage, box: SourceBox, *, item_id: str) -> None:
-    """Keep ``opened``'s decode under :data:`_MAX_DECODE_PX`, before it happens.
+    """Keep ``opened``'s decode under its mode's ceiling, before it happens.
 
-    ``Image.open`` has read only the header, so the size is known and nothing
-    is decoded yet. A JPEG can be decoded at 1/2, 1/4 or 1/8 scale natively
-    (``draft``); anything else over the ceiling is refused.
+    ``Image.open`` has read only the header, so the size and mode are known
+    and nothing is decoded yet. The ceiling is per mode (#256:
+    ``scan_limits.decode_pixel_cap`` -- 40 Mpx for colour, 160 Mpx for a
+    bilevel or greyscale scan that decodes to one byte per pixel), the same
+    rule upload and extraction apply. A JPEG can be decoded at 1/2, 1/4 or
+    1/8 scale natively (``draft``); anything else over the ceiling is refused.
 
     Checked by ``isinstance``, not ``opened.format == "JPEG"``: a phone JPEG
     carrying a second embedded image (Android Ultra HDR's gain map, some
@@ -617,16 +624,17 @@ def _decode_within_ceiling(opened: PILImage, box: SourceBox, *, item_id: str) ->
     from PIL import JpegImagePlugin
 
     width, height = opened.size
-    if width * height <= _MAX_DECODE_PX:
+    cap = decode_pixel_cap(opened.mode)
+    if width * height <= cap:
         return
     if isinstance(opened, JpegImagePlugin.JpegImageFile):
         for scale in (2, 4, 8):
-            if -(-width // scale) * -(-height // scale) <= _MAX_DECODE_PX:
+            if -(-width // scale) * -(-height // scale) <= cap:
                 # Floor division here: ``draft`` picks the largest scale whose
                 # result is no smaller than the size asked for.
                 opened.draft(None, (width // scale, height // scale))
                 break
-        if opened.width * opened.height <= _MAX_DECODE_PX:
+        if opened.width * opened.height <= cap:
             return
     _refuse_too_large(box, item_id=item_id, width_px=width, height_px=height)
 
@@ -647,9 +655,9 @@ def _fitted_region(image: PILImage, rect: tuple[int, int, int, int]) -> PILImage
         # Floored, so the product cannot round back over the ceiling.
         scale = math.sqrt(_MAX_CROP_PX / (width * height))
         fitted = (max(1, int(width * scale)), max(1, int(height * scale)))
-        if image.mode not in ("RGB", "L"):
-            # PIL resamples palette and bilevel images by nearest neighbour.
-            image = image.convert("RGB")
+        # PIL resamples palette and bilevel images by nearest neighbour; a
+        # bilevel page goes to "L" (same size), not to a full-size RGB (#256).
+        image = single_channel_or_rgb(image)
         region = image.resize(fitted, Image.Resampling.LANCZOS, box=rect, reducing_gap=3.0)
     return region if region.mode == "RGB" else region.convert("RGB")
 

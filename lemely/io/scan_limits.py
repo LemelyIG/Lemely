@@ -7,9 +7,12 @@ module, `rasterise.py` rendered whatever the file declared, inside a 1 GiB
 worker. The rule is a hybrid: up to :data:`MAX_PAGE_PX` a page is used as is;
 between the target and :data:`MAX_DECODE_PX` it is downscaled to fit; beyond
 that, or past :data:`MAX_SCAN_PAGES`, it is rejected with a
-:class:`ScanTooLargeError` whose message names the limit. The same hybrid
-applies to the whole scan: pages summing past :data:`MAX_SCAN_TOTAL_PX` all
-render at one uniformly lower DPI, rejected below :data:`MIN_EXTRACTION_DPI`.
+:class:`ScanTooLargeError` whose message names the limit. For a raster image
+the reject boundary is per mode (#256, :func:`decode_pixel_cap`): colour keeps
+:data:`MAX_DECODE_PX`, a bilevel or greyscale scan gets
+:data:`MAX_DECODE_PX_GREY`. The same hybrid applies to the whole scan: pages
+summing past :data:`MAX_SCAN_TOTAL_PX` all render at one uniformly lower DPI,
+rejected below :data:`MIN_EXTRACTION_DPI`.
 
 Pure: pypdfium2, pymupdf and Pillow only, no I/O of its own. The web upload routes
 call :func:`check_scan_bytes` on the uploaded body (headers and page sizes
@@ -83,6 +86,17 @@ MAX_PAGE_PX = 16_000_000
 #: high-resolution mode), moved here so the app has ONE such number. It is
 #: 2.5x the target, which is the downscale band.
 MAX_DECODE_PX = 40_000_000
+#: #256 (user decision 1, 2026-09-29): the image ceiling is PER MODE. Pillow
+#: holds every mode at whole bytes per pixel -- "1" and "L" at one (measured:
+#: 100 Mpx of either costs 96 MB), 16-bit grey at two, "RGB" at three -- so a
+#: 1200 dpi bilevel A4 office scan (9921 x 14031 = 139 Mpx, 0.04 MB on disk)
+#: is a 139 MB decode where the same pixels in colour would be 417 MB. Bilevel
+#: and 8-bit greyscale therefore get this ceiling, 16-bit grey half of it, and
+#: colour (and "P", converted to RGB before it can be reduced, and "LA") keeps
+#: MAX_DECODE_PX. Equal to MAX_SCAN_TOTAL_PX on purpose: one grey page may
+#: cost what a whole scan may, never more. A PDF page is always rendered as
+#: RGB, so :func:`plan_page_dpi` keeps MAX_DECODE_PX.
+MAX_DECODE_PX_GREY = 160_000_000
 #: The sum of every page's pixels at its planned DPI, over the whole scan
 #: (final review I1, user decision: hybrid). The per-page target alone does
 #: not bound a scan: 40 pages at 16 Mpx is 640 Mpx, ~1.5 GB of rendered
@@ -317,22 +331,43 @@ def plan_pdf_pages(pdf: pdfium.PdfDocument, *, dpi: float = EXTRACTION_DPI) -> l
     return scaled
 
 
-def plan_image(width: int, height: int) -> int:
+_ONE_BYTE_GREY_MODES = frozenset({"1", "L"})
+_TWO_BYTE_GREY_MODES = frozenset({"I;16", "I;16L", "I;16B", "I;16N"})
+
+
+def decode_pixel_cap(mode: str) -> int:
+    """The most pixels an image in Pillow ``mode`` may decode to (see :data:`MAX_DECODE_PX_GREY`).
+
+    The one rule for every image path: upload (:func:`check_scan_bytes`),
+    extraction (via :func:`plan_image`) and the review crop route.
+    """
+    if mode in _ONE_BYTE_GREY_MODES:
+        return MAX_DECODE_PX_GREY
+    if mode in _TWO_BYTE_GREY_MODES:
+        return MAX_DECODE_PX_GREY // 2
+    return MAX_DECODE_PX
+
+
+def plan_image(width: int, height: int, mode: str = "RGB") -> int:
     """The integer reduce factor that brings ``width`` x ``height`` under the target.
 
     ``1`` when the image already fits; :class:`ScanTooLargeError` beyond
-    :data:`MAX_DECODE_PX`.
+    :func:`decode_pixel_cap` for ``mode`` (#256: per mode, so a cheap bilevel
+    or greyscale scan is not refused for a pixel count only a colour decode
+    would make expensive, while colour keeps :data:`MAX_DECODE_PX`).
     """
     px = width * height
-    if px > MAX_DECODE_PX:
+    cap = decode_pixel_cap(mode)
+    if px > cap:
+        kind = "colour" if cap == MAX_DECODE_PX else "greyscale"
         raise ScanTooLargeError(
-            f"This scan is too large to process (limit {MAX_DECODE_PX // 1_000_000} "
-            "megapixels). Rescan at a lower resolution."
+            f"This scan is too large to process (limit {cap // 1_000_000} megapixels "
+            f"for a {kind} image). Rescan at a lower resolution."
         )
     for factor in _REDUCE_FACTORS:
         if px / (factor * factor) <= MAX_PAGE_PX:
             return factor
-    return _REDUCE_FACTORS[-1]  # pragma: no cover -- 40 Mpx / 64 is always under the target
+    return _REDUCE_FACTORS[-1]  # pragma: no cover -- 160 Mpx / 16 is already under the target
 
 
 def _bounded_inflate_size(raw: bytes, *, budget: int, page_index: int) -> int:
@@ -1775,7 +1810,8 @@ def check_scan_bytes(data: bytes) -> None:
         return
     try:
         with Image.open(io.BytesIO(data)) as opened:
-            plan_image(opened.width, opened.height)
+            # #256: judged against its own mode's ceiling, from the header.
+            plan_image(opened.width, opened.height, opened.mode)
     except Image.DecompressionBombError as exc:
         raise ScanTooLargeError(
             "This scan's image is too large to process safely. Rescan at a lower resolution."

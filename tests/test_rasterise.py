@@ -23,6 +23,8 @@ from lemely.io.rasterise import (
 from lemely.io.scan_limits import ScanRejectedError, ScanTooLargeError
 from tests.pdf_fakes import (
     annot_ap_bomb_pdf,
+    bilevel_png,
+    declared_image,
     image_bomb_pdf,
     off_page_object_pdf,
     page_bomb_pdf,
@@ -354,11 +356,99 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         pages = rasterise_scan_to_pages(image_path)
         self.assertLessEqual(pages[0].width * pages[0].height, 16_000_000)
 
+    def _declared(self, name: str, mode: str, size: tuple[int, int]) -> Path:
+        path = Path(self.tmp) / name
+        path.write_bytes(declared_image(mode, *size))
+        return path
+
     def test_an_oversized_image_is_rejected(self) -> None:
-        image_path = Path(self.tmp) / "huge.png"
+        """Header only (169 Mpx bilevel, 161.3 Mpx grey): refused before a
+        pixel is decoded -- the file holds none."""
+        for mode, size in (("1", (13000, 13000)), ("1", (12700, 12700)), ("L", (12700, 12700))):
+            with self.subTest(mode=mode, size=size), self.assertRaises(ScanTooLargeError):
+                rasterise_scan_to_pages(self._declared(f"huge-{mode}.png", mode, size))
+
+    def test_an_oversized_colour_image_is_still_rejected_at_forty_megapixels(self) -> None:
+        """User decision 1 (2026-09-29): 41.6 Mpx of colour is refused in
+        every colour mode, whatever the grey ceiling now admits."""
+        for mode in ("RGB", "RGBA", "CMYK", "P", "LA"):
+            suffix = "tif" if mode == "CMYK" else "png"
+            with self.subTest(mode=mode), self.assertRaises(ScanTooLargeError):
+                rasterise_scan_to_pages(self._declared(f"colour.{suffix}", mode, (6500, 6400)))
+
+    def test_a_bilevel_scan_over_forty_megapixels_is_reduced_not_refused(self) -> None:
+        """#256: 49 Mpx of mode "1" is a 49 MB decode; it used to be refused
+        for its pixel count. Reduced by 2 (to 12.25 Mpx)."""
+        image_path = Path(self.tmp) / "office.png"
         Image.new("1", (7000, 7000), color=1).save(image_path, "PNG")
-        with self.assertRaises(ScanTooLargeError):
-            rasterise_scan_to_pages(image_path)
+        pages = rasterise_scan_to_pages(image_path)
+        self.assertEqual((pages[0].width, pages[0].height), (3500, 3500))
+
+    def test_a_bilevel_a4_office_scan_at_1200_dpi_is_extracted(self) -> None:
+        """#256 (probe ``be_probe_img.py``): 9921 x 14031 = 139 Mpx of 1-bit
+        A4 in a ~40 KB file. Admitted, reduced by 4 (8.7 Mpx) for the model,
+        and the ink survives: the black mark covers 30-40% x 10-30% of the
+        page and must still be black there, the rest white."""
+        width, height = 9921, 14031
+        mark = (width * 3 // 10, height // 10, width * 4 // 10, height * 3 // 10)
+        image_path = Path(self.tmp) / "a4-1200dpi.png"
+        image_path.write_bytes(bilevel_png(width, height, mark=mark))
+
+        (page,) = rasterise_scan_to_pages(image_path)
+
+        self.assertEqual((page.width, page.height), (2481, 3508))
+        self.assertLessEqual(page.width * page.height, scan_limits.MAX_PAGE_PX)
+        decoded = Image.open(io.BytesIO(page.png_bytes))
+        self.assertEqual(decoded.mode, "RGB")
+        inside_mark = (page.width * 35 // 100, page.height * 2 // 10)
+        self.assertEqual(decoded.getpixel(inside_mark), (0, 0, 0))
+        self.assertEqual(decoded.getpixel((page.width // 10, page.height // 2)), (255, 255, 255))
+
+    def test_the_reduce_happens_before_the_rgb_conversion(self) -> None:
+        """#256: a bilevel or greyscale page is reduced BEFORE any RGB
+        conversion, so the three-channel copy is never made at full size
+        (49 Mpx of "1" would be a 147 MB RGB copy of a 49 MB decode)."""
+        real_convert = Image.Image.convert
+        for mode, color in (("L", 200), ("1", 1)):
+            with self.subTest(mode=mode):
+                image_path = Path(self.tmp) / f"grey-{mode}.png"
+                Image.new(mode, (5000, 5000), color=color).save(image_path, "PNG")
+                sizes_converted_to_rgb: list[tuple[int, int]] = []
+
+                def _convert(
+                    image: Image.Image,
+                    mode: str | None = None,
+                    *args: object,
+                    _sizes: list[tuple[int, int]] = sizes_converted_to_rgb,
+                    **kwargs: object,
+                ) -> Image.Image:
+                    if mode == "RGB":
+                        _sizes.append(image.size)
+                    return real_convert(image, mode, *args, **kwargs)  # type: ignore[arg-type]
+
+                with patch.object(Image.Image, "convert", _convert):
+                    rasterise_scan_to_pages(image_path)
+                self.assertEqual(sizes_converted_to_rgb, [(2500, 2500)])
+
+    def test_a_bilevel_scan_over_forty_megapixels_is_still_turned_upright(self) -> None:
+        """#255 and #256 together: the EXIF flag is applied to a large
+        bilevel scan that is now admitted, before the reduce. 8000 x 6000
+        stored with flag 6 is a 6000 x 8000 upright page, reduced by 2 to
+        3000 x 4000; the stored top-left black corner lands top-right."""
+        image = Image.new("1", (8000, 6000), color=1)
+        image.paste(0, (0, 0, 400, 400))
+        exif = Image.Exif()
+        exif[0x0112] = 6
+        image_path = Path(self.tmp) / "turned.png"
+        image.save(image_path, "PNG", exif=exif.tobytes())
+        del image
+
+        (page,) = rasterise_scan_to_pages(image_path)
+
+        self.assertEqual((page.width, page.height), (3000, 4000))
+        decoded = Image.open(io.BytesIO(page.png_bytes))
+        self.assertEqual(decoded.getpixel((page.width - 3, 2)), (0, 0, 0))
+        self.assertEqual(decoded.getpixel((2, 2)), (255, 255, 255))
 
     @unittest.skipUnless(_FIXTURE.is_file(), "handwritten-59 fixture not present")
     def test_the_committed_fixture_is_unaffected(self) -> None:
