@@ -99,14 +99,9 @@ from lemely.db.review_repo import ReviewService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.gemini import GeminiClient
 from lemely.io.question_generation import QuestionGenerator
-from lemely.io.scan_limits import (
-    ScanRejectedError,
-    check_pdf_content,
-    looks_like_pdf,
-    open_checked_pdf,
-    open_scan_image_document,
-)
+from lemely.io.scan_limits import ScanRejectedError
 from lemely.io.scan_metadata import ScanMetadataExtractor
+from lemely.io.scan_render import RenderRefused, render_preview_png
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.io.teacher_quiz import TeacherQuizBuilder
 from lemely.runtime.config import Settings
@@ -710,48 +705,6 @@ def _live_pipeline_steps(row: TeacherPaperRow) -> list[PipelineStepDTO]:
     return steps
 
 
-#: The longest edge of a paper preview, in pixels: an A4 page's long edge at 72 dpi.
-_PREVIEW_LONG_EDGE_PX = 842.0
-
-
-def _render_preview_png(data: bytes) -> bytes:
-    """Page 1 of a stored scan, ``data``, as a PNG thumbnail (see :func:`get_paper_preview`).
-
-    PDF or image is decided from the bytes (``looks_like_pdf``), as the crop
-    route and extraction decide it, never from the client-supplied content
-    type: MuPDF sniffs the bytes, so PDF bytes stored as ``image/png`` used
-    to skip the pre-scan and were repaired while opening (final review,
-    item 4). A PDF opens through ``open_checked_pdf`` (the raw pre-scan
-    first), an image through ``open_scan_image_document`` (allowlisted, and
-    never opened as a PDF).
-
-    Raises :class:`HTTPException` 422 for a document with no pages,
-    :class:`ScanRejectedError` for a refused scan, and lets every other
-    failure propagate for the route to turn into a 422.
-    """
-    import pymupdf
-
-    doc = open_checked_pdf(data) if looks_like_pdf(data) else open_scan_image_document(data)
-    with doc:
-        check_pdf_content(doc)
-        if doc.page_count == 0:
-            raise HTTPException(status_code=422, detail="Stored scan has no pages")
-        page = doc.load_page(0)  # type: ignore[no-untyped-call]
-        # At most an A4 page at 72 dpi: 842px on the long edge. Sized against
-        # the consumer: the card thumbnail is a ~300px-wide strip, so this is
-        # still sharp on a 2x display, and every step up costs a bigger
-        # payload on every card in the grid at once (96 dpi produced a 320KB
-        # PNG per paper). A zoom, not `dpi=72`: MuPDF sizes an image's page
-        # from the image's own DPI metadata, so a 72 dpi image drew at full
-        # size -- 958 MB for a 160 Mpx bilevel scan the upload admits (final
-        # review, Critical 1); bounded, 183 MB, mostly the image's decode.
-        zoom = min(1.0, _PREVIEW_LONG_EDGE_PX / max(page.rect.width, page.rect.height, 1.0))
-        matrix = pymupdf.Matrix(zoom, zoom)  # type: ignore[no-untyped-call]
-        pixmap = page.get_pixmap(matrix=matrix)
-        png: bytes = pixmap.tobytes("png")
-    return png
-
-
 def _latest_records(history_store: HistoryStoreProtocol) -> list[PaperRecord]:
     """Return the most-recent :class:`PaperRecord` per student across all history."""
     latest: list[PaperRecord] = []
@@ -1117,7 +1070,7 @@ def get_paper_preview(
     scan is not forever, and a caller sees that as "no scan", not a crash.
     Image uploads (the console accepts images as well as PDFs) are drawn by
     PyMuPDF too, so one code path covers both; the bytes decide which
-    opener runs (``_render_preview_png``).
+    opener runs (:func:`~lemely.io.scan_render.render_preview_png`).
     """
     row = _require_paper(repo, auth, paper_id)
     try:
@@ -1128,9 +1081,9 @@ def get_paper_preview(
         ) from None
 
     try:
-        png = _render_preview_png(data)
-    except HTTPException:
-        raise
+        png = render_preview_png(data)
+    except RenderRefused as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ScanRejectedError as exc:
         log.warning("paper_preview_rejected", paper_id=paper_id, reason=str(exc))
         raise HTTPException(status_code=422, detail=str(exc)) from exc

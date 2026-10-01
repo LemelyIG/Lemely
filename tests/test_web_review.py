@@ -1513,7 +1513,7 @@ def test_crop_route_returns_a_png_of_the_boxed_region(
 
     from lemely.io.rasterise import RasterisedPage
     from lemely.io.reread import crop_and_upscale
-    from lemely.web.routers.review import _CROP_RENDER_DPI
+    from lemely.io.scan_render import CROP_RENDER_DPI
 
     scan = _synthetic_scan()
     teacher, item_id = _seed_boxed_review_item(
@@ -1530,7 +1530,7 @@ def test_crop_route_returns_a_png_of_the_boxed_region(
     got = Image.open(io.BytesIO(resp.content)).convert("RGB")
 
     with pymupdf.open(stream=scan, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
-        pixmap = doc.load_page(_MARKED_PAGE).get_pixmap(dpi=_CROP_RENDER_DPI)
+        pixmap = doc.load_page(_MARKED_PAGE).get_pixmap(dpi=CROP_RENDER_DPI)
     expected_png = crop_and_upscale(
         RasterisedPage(
             index=_MARKED_PAGE,
@@ -1889,7 +1889,7 @@ def test_stored_frame_rect_matches_exif_transpose_for_every_orientation(orientat
     every corner and the middle (including ones flush with the edges)."""
     from PIL import ImageOps
 
-    from lemely.web.routers.review import _stored_frame_rect, _upright_transpose
+    from lemely.io.scan_render import stored_frame_rect, upright_transpose
 
     upright = _random_photo((60, 40))
     stored = (
@@ -1914,9 +1914,9 @@ def test_stored_frame_rect_matches_exif_transpose_for_every_orientation(orientat
         (49, 33, 60, 40),
         (13, 6, 41, 29),
     ]:
-        stored_rect = _stored_frame_rect(rect, reopened.size, orientation)
+        stored_rect = stored_frame_rect(rect, reopened.size, orientation)
         crop = reopened.crop(stored_rect)
-        method = _upright_transpose(orientation)
+        method = upright_transpose(orientation)
         if method is not None:
             crop = crop.transpose(method)
         assert crop.size == (rect[2] - rect[0], rect[3] - rect[1]), (orientation, rect)
@@ -1929,14 +1929,14 @@ def test_upright_transpose_looks_the_flag_up_the_way_exif_transpose_does() -> No
     from PIL import Image
     from PIL.TiffImagePlugin import IFDRational
 
-    from lemely.web.routers.review import _stored_frame_rect, _upright_transpose
+    from lemely.io.scan_render import stored_frame_rect, upright_transpose
 
     for six in (6, 6.0, IFDRational(6, 1)):
-        assert _upright_transpose(six) == Image.Transpose.ROTATE_270, six
-        assert _stored_frame_rect((1, 2, 3, 4), (10, 20), six) != (1, 2, 3, 4), six
+        assert upright_transpose(six) == Image.Transpose.ROTATE_270, six
+        assert stored_frame_rect((1, 2, 3, 4), (10, 20), six) != (1, 2, 3, 4), six
     for junk in (None, 0, 1, 9, "6", b"\x06", 6.5):
-        assert _upright_transpose(junk) is None, junk
-        assert _stored_frame_rect((1, 2, 3, 4), (10, 10), junk) == (1, 2, 3, 4), junk
+        assert upright_transpose(junk) is None, junk
+        assert stored_frame_rect((1, 2, 3, 4), (10, 10), junk) == (1, 2, 3, 4), junk
 
 
 def _jpeg_with_typed_orientation(stored: Image.Image, tag_type: int, value: bytes) -> bytes:
@@ -1988,7 +1988,7 @@ def test_crop_route_agrees_with_extraction_for_any_orientation_tag_type(
     pass by both sides ignoring it."""
     from PIL import ImageOps
 
-    from lemely.web.routers.review import _crop_image_scan
+    from lemely.io.scan_render import crop_image_scan
 
     stored = Image.open(io.BytesIO(_synthetic_phone_photo(6)))
     stored.load()
@@ -1997,7 +1997,7 @@ def test_crop_route_agrees_with_extraction_for_any_orientation_tag_type(
     frame = ImageOps.exif_transpose(Image.open(io.BytesIO(scan)))
     assert (frame.size == _PHOTO_UPRIGHT_SIZE) is turned, (name, frame.size)
 
-    got = _crop_image_scan(scan, SourceBox(page=0, box=list(_MARK_BOX)), item_id="typed")
+    got = crop_image_scan(scan, list(_MARK_BOX))
     got_image = Image.open(io.BytesIO(got)).convert("RGB")
     want = _expected_upright_crop(scan)
     assert got_image.size == want.size, (name, got_image.size, want.size)
@@ -2006,16 +2006,16 @@ def test_crop_route_agrees_with_extraction_for_any_orientation_tag_type(
 
 @pytest.mark.parametrize("orientation", [6, 8])
 def test_a_flagged_photo_over_the_crop_ceiling_is_fitted_and_upright(orientation: int) -> None:
-    """A region over ``_MAX_CROP_PX`` is resampled down before it is turned.
+    """A region over ``MAX_CROP_PX`` is resampled down before it is turned.
     The size and the way up are checked (not bytes: the resample runs on the
     stored frame here). The whole 2600x2000 upright page is 5.2 Mpx, over the
     4 Mpx ceiling; the green square is its top-left corner."""
     from PIL import ImageDraw
 
-    from lemely.web.routers.review import _MAX_CROP_PX, _crop_image_scan
+    from lemely.io.scan_render import MAX_CROP_PX, crop_image_scan
 
     width, height = 2600, 2000
-    assert width * height > _MAX_CROP_PX
+    assert width * height > MAX_CROP_PX
     upright = Image.new("RGB", (width, height), (255, 255, 255))
     ImageDraw.Draw(upright).rectangle((0, 0, 299, 299), fill=_CORNER_RGB)
     stored = upright.transpose(_STORED_FRAME_FOR[orientation])
@@ -2024,7 +2024,7 @@ def test_a_flagged_photo_over_the_crop_ceiling_is_fitted_and_upright(orientation
     buf = io.BytesIO()
     stored.save(buf, format="JPEG", exif=exif.tobytes(), quality=95)
 
-    out = _crop_image_scan(buf.getvalue(), SourceBox(page=0, box=[0, 0, 1000, 1000]), item_id="big")
+    out = crop_image_scan(buf.getvalue(), [0, 0, 1000, 1000])
 
     got = Image.open(io.BytesIO(out)).convert("RGB")
     assert got.width > got.height, got.size
@@ -2050,16 +2050,16 @@ def test_a_sixteen_bit_greyscale_crop_keeps_its_ink(
     by clipping each sample to 0-255, so ink at 5000 on paper at 60000 came
     back as a white crop. It is scaled from the 16-bit range, as extraction
     does. Both crop paths: a region cut as it is, and one over
-    ``_MAX_CROP_PX`` (5 Mpx) resampled down."""
-    from lemely.web.routers.review import _MAX_CROP_PX, _crop_image_scan
+    ``MAX_CROP_PX`` (5 Mpx) resampled down."""
+    from lemely.io.scan_render import MAX_CROP_PX, crop_image_scan
     from tests.pdf_fakes import sixteen_bit_grey_scan
 
     width, height = size
     ink = (width // 8, height // 5, width * 5 // 8, height * 2 // 5)
     scan = sixteen_bit_grey_scan(width, height, ink, image_format=image_format)
-    assert (width * height > _MAX_CROP_PX) == (width == 2500)
+    assert (width * height > MAX_CROP_PX) == (width == 2500)
 
-    out = _crop_image_scan(scan, SourceBox(page=0, box=[0, 0, 1000, 1000]), item_id="grey16")
+    out = crop_image_scan(scan, [0, 0, 1000, 1000])
 
     got = Image.open(io.BytesIO(out)).convert("L")
     ink_centre = ((ink[0] + ink[2]) / 2 / width, (ink[1] + ink[3]) / 2 / height)
@@ -2070,8 +2070,7 @@ def test_a_sixteen_bit_greyscale_crop_keeps_its_ink(
 _PEAK_RSS_CHILD = """
 import sys
 
-from lemely.core.schemas import SourceBox
-from lemely.web.routers.review import _crop_image_scan
+from lemely.io.scan_render import crop_image_scan
 
 
 def peak_bytes() -> int:
@@ -2083,7 +2082,7 @@ def peak_bytes() -> int:
 
 
 data = open(sys.argv[1], "rb").read()
-box = SourceBox(page=0, box=[100, 100, 300, 400])
+box = [100, 100, 300, 400]
 # A forked child inherits its parent's peak, so reset the high-water mark
 # (5 = CLEAR_REFS_MM_HIWATER_RSS) before measuring.
 try:
@@ -2092,7 +2091,7 @@ try:
 except OSError:
     raise SystemExit(77)  # cannot reset the high-water mark here: the parent skips
 before = peak_bytes()
-png = _crop_image_scan(data, box, item_id="mem")
+png = crop_image_scan(data, box)
 print(peak_bytes() - before, len(png))
 """
 
@@ -2579,7 +2578,7 @@ def test_page_indices_agree_between_the_extractor_and_the_crop_renderer(
     import pymupdf
 
     from lemely.io.rasterise import rasterise_pdf_to_pages
-    from lemely.web.routers.review import _CROP_RENDER_DPI
+    from lemely.io.scan_render import CROP_RENDER_DPI
 
     # One distinctive mark per page: a renderer that reordered pages, or
     # counted from one, would show a different colour at the same index.
@@ -2617,9 +2616,7 @@ def test_page_indices_agree_between_the_extractor_and_the_crop_renderer(
         for index, expected_rgb in enumerate(marks):
             via_extractor = Image.open(io.BytesIO(extractor_pages[index].png_bytes)).convert("RGB")
             via_renderer = Image.open(
-                io.BytesIO(
-                    renderer.load_page(index).get_pixmap(dpi=_CROP_RENDER_DPI).tobytes("png")
-                )
+                io.BytesIO(renderer.load_page(index).get_pixmap(dpi=CROP_RENDER_DPI).tobytes("png"))
             ).convert("RGB")
             assert _dominant_colour(via_extractor) == expected_rgb
             assert _dominant_colour(via_renderer) == expected_rgb
@@ -2757,7 +2754,7 @@ def test_a_pil_failure_inside_the_crop_is_a_422_not_a_500(
 ) -> None:
     """The area ceiling and the error handler are two defences, and this is the second.
 
-    With ``_MAX_CROP_PX`` in place an ordinary scan never reaches PIL's own
+    With ``MAX_CROP_PX`` in place an ordinary scan never reaches PIL's own
     ceiling, which would leave the handler's coverage of ``crop_and_upscale``
     asserted by nothing. So PIL's ceiling is lowered instead of the page being
     enlarged: ``Image.MAX_IMAGE_PIXELS`` is dropped far below an A4 render, which
@@ -2895,7 +2892,7 @@ def test_crop_of_an_oversized_pdf_page_stays_under_the_pixel_ceiling(
     The census on the mark case shows the smaller output is still the right
     region; the ceiling is paid for in resolution, never in place.
     """
-    from lemely.web.routers.review import _MAX_CROP_PX
+    from lemely.io.scan_render import MAX_CROP_PX
 
     scan = _synthetic_scan(width=_OVERSIZED_PAGE_PT, height=_OVERSIZED_PAGE_PT)
     teacher, item_id = _seed_boxed_review_item(
@@ -2908,7 +2905,7 @@ def test_crop_of_an_oversized_pdf_page_stays_under_the_pixel_ceiling(
     resp = client.get(f"/api/teacher/review/{item_id}/crop")
     assert resp.status_code == 200, resp.text
     got = Image.open(io.BytesIO(resp.content)).convert("RGB")
-    assert got.width * got.height <= _MAX_CROP_PX, got.size
+    assert got.width * got.height <= MAX_CROP_PX, got.size
 
     if box == _MARK_BOX:
         reddish, bluish, total = _colour_counts(got)
@@ -2926,32 +2923,32 @@ def test_pdf_crop_plan_keeps_every_output_under_the_ceiling() -> None:
     import pymupdf
 
     from lemely.io.reread import REREAD_UPSCALE
-    from lemely.web.routers.review import _CROP_RENDER_DPI, _MAX_CROP_PX, _pdf_crop_plan
+    from lemely.io.scan_render import CROP_RENDER_DPI, MAX_CROP_PX, pdf_crop_plan
 
-    a4 = _pdf_crop_plan(pymupdf.Rect(0, 0, _PAGE_WIDTH_PT, _PAGE_HEIGHT_PT), list(_MARK_BOX))
+    a4 = pdf_crop_plan(pymupdf.Rect(0, 0, _PAGE_WIDTH_PT, _PAGE_HEIGHT_PT), list(_MARK_BOX))
     assert a4 is not None
-    assert (a4.dpi, a4.upscale) == (_CROP_RENDER_DPI, REREAD_UPSCALE)
+    assert (a4.dpi, a4.upscale) == (CROP_RENDER_DPI, REREAD_UPSCALE)
 
     sizes = ((_PAGE_WIDTH_PT, _PAGE_HEIGHT_PT), (_OVERSIZED_PAGE_PT, _OVERSIZED_PAGE_PT))
     sizes += ((8000.0, 8000.0), (20_000.0, 3_000.0), (14_400.0, 14_400.0))
     boxes = (_WHOLE_PAGE_BOX, list(_MARK_BOX), [0, 0, 1, 1000], [499, 0, 501, 1000])
     for width, height in sizes:
         for box in boxes:
-            plan = _pdf_crop_plan(pymupdf.Rect(0, 0, width, height), box)
+            plan = pdf_crop_plan(pymupdf.Rect(0, 0, width, height), box)
             assert plan is not None, (width, height, box)
             region_w, region_h = plan.size
-            assert region_w * region_h * plan.upscale**2 <= _MAX_CROP_PX, (width, height, box)
-            assert 1 <= plan.dpi <= _CROP_RENDER_DPI
+            assert region_w * region_h * plan.upscale**2 <= MAX_CROP_PX, (width, height, box)
+            assert 1 <= plan.dpi <= CROP_RENDER_DPI
 
     # Clamped, not merely capped: a whole 8000pt page cannot fit at 150 dpi, so
     # a plan that kept the preferred DPI would only pass the bound above by
     # accident of the arithmetic.
-    big = _pdf_crop_plan(pymupdf.Rect(0, 0, 8000, 8000), _WHOLE_PAGE_BOX)
+    big = pdf_crop_plan(pymupdf.Rect(0, 0, 8000, 8000), _WHOLE_PAGE_BOX)
     assert big is not None
-    assert big.dpi < _CROP_RENDER_DPI
+    assert big.dpi < CROP_RENDER_DPI
 
     # A page no DPI can fit is refused; the route answers 422.
-    assert _pdf_crop_plan(pymupdf.Rect(0, 0, 500_000, 500_000), _WHOLE_PAGE_BOX) is None
+    assert pdf_crop_plan(pymupdf.Rect(0, 0, 500_000, 500_000), _WHOLE_PAGE_BOX) is None
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
@@ -2966,7 +2963,7 @@ def test_a_clipped_render_is_the_same_pixels_as_cropping_the_whole_page(
     import pymupdf
 
     from lemely.io.reread import padded_crop_rect
-    from lemely.web.routers.review import _pdf_crop_plan
+    from lemely.io.scan_render import pdf_crop_plan
 
     doc = pymupdf.open()
     try:
@@ -2979,7 +2976,7 @@ def test_a_clipped_render_is_the_same_pixels_as_cropping_the_whole_page(
         page.set_rotation(rotation)
 
         for box in (list(_MARK_BOX), _WHOLE_PAGE_BOX, [37, 911, 38, 912]):
-            plan = _pdf_crop_plan(page.rect, box)
+            plan = pdf_crop_plan(page.rect, box)
             assert plan is not None
             clipped = page.get_pixmap(matrix=pymupdf.Matrix(plan.zoom, plan.zoom), clip=plan.clip)
             assert (clipped.width, clipped.height) == plan.size, box
@@ -3249,7 +3246,7 @@ def test_a_high_resolution_photo_is_decoded_smaller_and_still_cropped_right(
     from PIL import ImageDraw
 
     from lemely.io.scan_limits import MAX_DECODE_PX
-    from lemely.web.routers.review import _MAX_CROP_PX
+    from lemely.io.scan_render import MAX_CROP_PX
 
     width, height = 8000, 5400
     assert width * height > MAX_DECODE_PX
@@ -3287,7 +3284,7 @@ def test_a_high_resolution_photo_is_decoded_smaller_and_still_cropped_right(
     # reported as its size below rather than as PIL's own bomb error.
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", None)
     got = Image.open(io.BytesIO(resp.content)).convert("RGB")
-    assert got.width * got.height <= _MAX_CROP_PX, got.size
+    assert got.width * got.height <= MAX_CROP_PX, got.size
 
     reddish, bluish, total = _colour_counts(got)
     assert bluish == 0, "the crop reaches outside the box -- this is the page, not the region"
@@ -3313,7 +3310,7 @@ def test_an_image_region_over_the_ceiling_is_scaled_down_not_refused(
     """
     from PIL import ImageDraw
 
-    from lemely.web.routers.review import _MAX_CROP_PX
+    from lemely.io.scan_render import MAX_CROP_PX
 
     width, height = 3000, 2000
     image = Image.new("RGB", (width, height), (255, 255, 255))
@@ -3339,8 +3336,8 @@ def test_an_image_region_over_the_ceiling_is_scaled_down_not_refused(
     resp = client.get(f"/api/teacher/review/{item_id}/crop")
     assert resp.status_code == 200, resp.text
     got = Image.open(io.BytesIO(resp.content)).convert("RGB")
-    assert width * height > _MAX_CROP_PX
-    assert got.width * got.height <= _MAX_CROP_PX, got.size
+    assert width * height > MAX_CROP_PX
+    assert got.width * got.height <= MAX_CROP_PX, got.size
     assert abs(got.width / got.height - width / height) < 0.01
     grey = got.convert("L")
     histogram = grey.histogram()
@@ -3370,9 +3367,9 @@ def test_a_bilevel_scan_over_forty_megapixels_is_cropped_not_refused(
     from the "L" copy, never from a full-size RGB expansion of the page
     (556 MB for the A4: Pillow stores RGB at four bytes a pixel): every RGB
     conversion the route makes is of a region already fitted to
-    ``_MAX_CROP_PX``. Built row by row (``bilevel_png``),
+    ``MAX_CROP_PX``. Built row by row (``bilevel_png``),
     so the test never holds the page itself."""
-    from lemely.web.routers.review import _MAX_CROP_PX
+    from lemely.io.scan_render import MAX_CROP_PX
     from tests.pdf_fakes import bilevel_png
 
     width, height = size
@@ -3408,7 +3405,7 @@ def test_a_bilevel_scan_over_forty_megapixels_is_cropped_not_refused(
         resp = client.get(f"/api/teacher/review/{item_id}/crop")
     assert resp.status_code == 200, resp.text
     assert converted_to_rgb, "the route never converted the region to RGB"
-    assert max(w * h for w, h in converted_to_rgb) <= _MAX_CROP_PX, converted_to_rgb
+    assert max(w * h for w, h in converted_to_rgb) <= MAX_CROP_PX, converted_to_rgb
     got = Image.open(io.BytesIO(resp.content)).convert("L")
     dark = sum(got.histogram()[:64]) / (got.width * got.height)
     assert dark > 0.5, f"{dark:.2f} dark: the black mark inside the box is missing"

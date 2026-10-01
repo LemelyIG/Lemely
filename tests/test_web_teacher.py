@@ -2027,7 +2027,7 @@ def test_preview_of_an_a4_pdf_keeps_its_72_dpi_size(client: TestClient) -> None:
 
 
 _PREVIEW_PEAK_RSS_CHILD = """
-from lemely.web.routers.teacher import _render_preview_png
+from lemely.io.scan_render import render_preview_png
 from tests.pdf_fakes import bilevel_png
 
 
@@ -2048,7 +2048,7 @@ try:
 except OSError:
     raise SystemExit(77)  # cannot reset the high-water mark here: the parent skips
 before = peak_bytes()
-png = _render_preview_png(scan)
+png = render_preview_png(scan)
 print(peak_bytes() - before, len(png))
 """
 
