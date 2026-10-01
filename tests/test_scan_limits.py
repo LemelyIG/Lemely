@@ -505,83 +505,28 @@ class SanctionedOpenerSweepTests(unittest.TestCase):
     def test_every_mupdf_open_of_user_bytes_goes_through_the_sanctioned_openers(self) -> None:
         """Final review, item 4: "pre-scan before any MuPDF open" is enforced
         by code, not by each caller remembering. Every ``pymupdf.open`` (or
-        ``fitz.open``/``Document``) given anything to open, anywhere in
-        ``lemely/``, is inside :func:`open_checked_pdf` or
-        :func:`open_scan_image_document`. A bare ``pymupdf.open()`` makes a new,
-        empty document and opens no bytes."""
-        import ast
+        ``fitz.open``/``Document``, through any import, ``from`` import or
+        one-level alias) given anything to open, and every ``insert_pdf`` /
+        ``insert_file``, anywhere in ``lemely/``, is inside
+        :func:`open_checked_pdf`, :func:`open_scan_image_document` or
+        ``_copy_pages``. A bare ``pymupdf.open()`` makes a new, empty document.
+        The sweep, and the forms it cannot see, are in ``tests/mupdf_sweep.py``."""
+        from tests.mupdf_sweep import ALLOWED_OPENS, find_mupdf_opens, sweep
 
-        allowed = {
-            ("lemely/io/pdf_canonical.py", "open_checked_pdf"),
-            ("lemely/io/pdf_canonical.py", "open_scan_image_document"),
-        }
-        root = Path(__file__).resolve().parents[1]
-        found: set[tuple[str, str]] = set()
-
-        class _Opens(ast.NodeVisitor):
-            def __init__(self, relative: str) -> None:
-                self.relative = relative
-                self.functions: list[str] = []
-
-            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-                self.functions.append(node.name)
-                self.generic_visit(node)
-                self.functions.pop()
-
-            visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
-
-            def visit_Call(self, node: ast.Call) -> None:
-                func = node.func
-                if (
-                    isinstance(func, ast.Attribute)
-                    and isinstance(func.value, ast.Name)
-                    and func.value.id in ("pymupdf", "fitz")
-                    and func.attr in ("open", "Document")
-                    and (node.args or node.keywords)
-                ):
-                    where = self.functions[-1] if self.functions else "<module>"
-                    found.add((self.relative, where))
-                self.generic_visit(node)
-
-        for path in sorted((root / "lemely").rglob("*.py")):
-            relative = path.relative_to(root).as_posix()
-            _Opens(relative).visit(ast.parse(path.read_text(encoding="utf-8")))
-        self.assertEqual(found - allowed, set(), "a MuPDF open outside the sanctioned openers")
-        self.assertEqual(found, allowed)
+        found = sweep(Path(__file__).resolve().parents[1], find_mupdf_opens)
+        self.assertEqual(
+            found - ALLOWED_OPENS, set(), "a MuPDF open outside the sanctioned openers"
+        )
+        self.assertEqual(found, ALLOWED_OPENS)
 
     def test_only_prescan_pdf_makes_a_prescanned_pdf(self) -> None:
         """Final review, item 5: a :class:`PrescannedPdf` is how a caller skips
         the pre-scan in ``open_checked_pdf``, so nothing in ``lemely/`` makes
         one except :func:`prescan_pdf`, which has just run it."""
-        import ast
+        from tests.mupdf_sweep import ALLOWED_PRESCANNED, find_prescanned_constructions, sweep
 
-        root = Path(__file__).resolve().parents[1]
-        found: set[tuple[str, str]] = set()
-
-        class _Makes(ast.NodeVisitor):
-            def __init__(self, relative: str) -> None:
-                self.relative = relative
-                self.functions: list[str] = []
-
-            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-                self.functions.append(node.name)
-                self.generic_visit(node)
-                self.functions.pop()
-
-            visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
-
-            def visit_Call(self, node: ast.Call) -> None:
-                func = node.func
-                name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
-                if name == "PrescannedPdf":
-                    where = self.functions[-1] if self.functions else "<module>"
-                    found.add((self.relative, where))
-                self.generic_visit(node)
-
-        for path in sorted((root / "lemely").rglob("*.py")):
-            relative = path.relative_to(root).as_posix()
-            _Makes(relative).visit(ast.parse(path.read_text(encoding="utf-8")))
-        self.assertEqual(found, {("lemely/io/pdf_prescan.py", "prescan_pdf")})
+        found = sweep(Path(__file__).resolve().parents[1], find_prescanned_constructions)
+        self.assertEqual(found, ALLOWED_PRESCANNED)
 
 
 #: The split modules by import path. A name any of them re-exports is one object
