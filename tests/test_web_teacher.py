@@ -676,6 +676,7 @@ def test_an_upload_refused_for_its_content_is_logged_without_its_bytes(
             "event": "upload_refused",
             "log_level": "warning",
             "refusal": "ScanTooLargeError",
+            "reason": "page_content",
             "byte_size": len(bomb),
             "content_type": "application/pdf",
         }

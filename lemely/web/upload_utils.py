@@ -45,14 +45,25 @@ def safe_upload_name(filename: str | None, fallback: str) -> str:
     return base
 
 
-def _log_refusal(refusal: str, data: bytes, content_type: str | None) -> None:
+def _log_refusal(
+    refusal: str, data: bytes, content_type: str | None, *, reason: str | None = None
+) -> None:
     """One structured line for a refused upload: why, how big, and what it claimed to be.
 
     Final review, Important 3: refusals were invisible to operators. The
     file's bytes are never logged -- only their count and the client's
-    declared content type.
+    declared content type. ``reason`` (#276) is the scan check's reason code,
+    which says which rule refused the file within a class; the 413 path has
+    none, so it logs its three fields as before.
     """
-    log.warning("upload_refused", refusal=refusal, byte_size=len(data), content_type=content_type)
+    fields: dict[str, object] = {
+        "refusal": refusal,
+        "byte_size": len(data),
+        "content_type": content_type,
+    }
+    if reason is not None:
+        fields["reason"] = reason
+    log.warning("upload_refused", **fields)
 
 
 def check_upload_cap(
@@ -86,13 +97,13 @@ def check_scan_geometry(data: bytes, content_type: str | None = None) -> None:
     today. 413 (:func:`check_upload_cap`) stays the answer for byte size.
 
     A refusal is logged with the exception's class as its refusal class,
-    and the client's declared ``content_type`` (positional, so
+    its ``reason`` code, and the client's declared ``content_type`` (positional, so
     ``anyio.to_thread.run_sync`` can pass it).
     """
     try:
         check_scan_bytes(data)
     except ScanRejectedError as exc:
-        _log_refusal(type(exc).__name__, data, content_type)
+        _log_refusal(type(exc).__name__, data, content_type, reason=exc.reason)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
