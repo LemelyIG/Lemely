@@ -9,6 +9,7 @@ from pathlib import Path
 
 from lemely.io import scan_limits
 from lemely.io._scan_common import (
+    _OBJECT_STREAM_SEPARATOR_MESSAGE,
     ScanRejectedError,
     ScanTooLargeError,
 )
@@ -86,6 +87,36 @@ class ReasonCodeTests(unittest.TestCase):
             check_object_stream_bytes(data)
         self.assertEqual(caught.exception.reason, "encrypted_objstm")
         self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
+
+
+class SeparatorRefusalTests(unittest.TestCase):
+    """#273 item 2: a container refused for what follows ``stream`` says so."""
+
+    def test_a_tab_nul_or_form_feed_separator_is_refused_with_the_named_message(self) -> None:
+        for sep in (b"\t\t", b"\x00\x00", b"\x0c\x0c", b"\t "):
+            with self.subTest(sep=sep), self.assertRaises(ScanRejectedError) as caught:
+                check_object_stream_bytes(
+                    shared_container_broken_xref_pdf(10, stream_separator=sep)
+                )
+            self.assertEqual(str(caught.exception), _OBJECT_STREAM_SEPARATOR_MESSAGE)
+            self.assertEqual(caught.exception.reason, "objstm_separator")
+
+    def test_separators_that_a_reader_start_accepts_still_pass(self) -> None:
+        for sep in (b"\t", b"\t\n", b"\x00", b"\x0c", b"\t\r\n", b" \n"):
+            with self.subTest(sep=sep):
+                self.assertIsNone(
+                    check_object_stream_bytes(
+                        shared_container_broken_xref_pdf(10, stream_separator=sep)
+                    )
+                )
+
+    def test_a_corrupt_container_behind_a_plain_separator_keeps_the_unreadable_message(
+        self,
+    ) -> None:
+        with self.assertRaises(ScanRejectedError) as caught:
+            check_object_stream_bytes(shared_container_broken_xref_pdf(10, corrupt_header=True))
+        self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAM_UNREADABLE_MESSAGE)
+        self.assertEqual(caught.exception.reason, "objstm_unreadable")
 
 
 if __name__ == "__main__":

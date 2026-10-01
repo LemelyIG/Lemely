@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from lemely.io._scan_common import (
     _INFLATE_CHUNK,
     _OBJECT_STREAM_ENCODING_MESSAGE,
+    _OBJECT_STREAM_SEPARATOR_MESSAGE,
     _OBJECT_STREAM_UNREADABLE_MESSAGE,
     _OBJECT_STREAMS_MESSAGE,
     _STRUCTURE_TOO_COMPLEX_MESSAGE,
@@ -114,6 +115,19 @@ def _stream_data_starts(data: bytes, pos: int) -> list[int]:
             line += 1
         starts.add(line)
     return sorted(starts)
+
+
+#: Tab, NUL and form feed: whitespace to a PDF lexer, which MuPDF and pdfium
+#: take as the separator after ``stream`` in ways the starts above do not
+#: all cover (#273 item 2).
+_SEPARATOR_BYTES = frozenset({0x09, 0x00, 0x0C})
+
+
+def _separator_after_stream(data: bytes, pos: int) -> bool:
+    """Whether the first non-space byte after ``stream`` (``pos`` follows it) is HT, NUL or FF."""
+    while data[pos : pos + 1] == b" ":
+        pos += 1
+    return pos < len(data) and data[pos] in _SEPARATOR_BYTES
 
 
 def _stream_data_end(data: bytes, start: int, length: tuple[str, object] | None) -> int:
@@ -280,6 +294,15 @@ def check_object_stream_bytes(data: bytes) -> None:
     :data:`MAX_OBJECT_STREAM_BYTES` in total the file is refused
     (:data:`_OBJECT_STREAMS_MESSAGE`).
 
+    A container no span of which inflates is refused as unreadable
+    (:data:`_OBJECT_STREAM_UNREADABLE_MESSAGE`, reason ``objstm_unreadable``),
+    or, when the first non-space byte after its ``stream`` is a tab, NUL or
+    form feed (:func:`_separator_after_stream`), with
+    :data:`_OBJECT_STREAM_SEPARATOR_MESSAGE` (``objstm_separator``): MuPDF and
+    pdfium open such a file, so the message names the cause. Accepting it is
+    deferred until the ``objstm_separator`` log shows real uploads; a container
+    that inflates from some start still passes, so this adds no refusal.
+
     Past :data:`MAX_PRESCAN_TOKENS` tokens the file is refused as too
     complex to check (:data:`_STRUCTURE_TOO_COMPLEX_MESSAGE`).
 
@@ -296,7 +319,7 @@ def check_object_stream_bytes(data: bytes) -> None:
     bytes in ``lemely/``).
     """
     budget = _ScanBudget()
-    containers: list[tuple[tuple[str, object] | None, list[tuple[int, int]]]] = []
+    containers: list[tuple[tuple[str, object] | None, list[tuple[int, int]], bool]] = []
     scanned_to = 0
     for header in _OBJ_HEADER_RE.finditer(data):
         budget.spend()
@@ -315,10 +338,10 @@ def check_object_stream_bytes(data: bytes) -> None:
         spans = [(begin, _stream_data_end(data, begin, entries.get(b"Length"))) for begin in starts]
         scanned_to = max(scanned_to, *(end for _, end in spans))
         if entries.get(b"Type") == ("name", b"ObjStm"):
-            containers.append((entries.get(b"Filter"), spans))
+            containers.append((entries.get(b"Filter"), spans, _separator_after_stream(data, start)))
     encrypted = _declares_encryption(data, budget)
     total = 0
-    for filters, spans in containers:
+    for filters, spans, separated in containers:
         longest = max(end - begin for begin, end in spans)
         if filters is None or filters == ("array", []):
             size = longest
@@ -338,6 +361,10 @@ def check_object_stream_bytes(data: bytes) -> None:
                 ]
                 decoded = [found for found in sizes if found]
                 if not decoded and longest > 0:
+                    if separated:
+                        raise ScanRejectedError(
+                            _OBJECT_STREAM_SEPARATOR_MESSAGE, reason="objstm_separator"
+                        )
                     raise ScanRejectedError(
                         _OBJECT_STREAM_UNREADABLE_MESSAGE, reason="objstm_unreadable"
                     )

@@ -28,6 +28,8 @@ upload check logs beside the error class (#276, #273):
 * ``malformed``: a page's structure could hide drawn content from the walk.
 * ``prescan_tokens``: the raw object-stream scan hit its token budget.
 * ``objstm_unreadable``: an object stream holds no readable data.
+* ``objstm_separator``: as ``objstm_unreadable``, but a tab, NUL or form feed
+  follows ``stream``.
 * ``objstm_encoding``: an object stream's filter cannot be size-bounded.
 * ``objstm_bomb``: the object streams decode to more than the total cap.
 * ``encrypted_objstm``: an encrypted file's object streams, counted at
@@ -244,6 +246,14 @@ _OBJECT_STREAM_UNREADABLE_MESSAGE = (
     "This PDF's compressed internal data could not be read, so it could not be checked "
     "safely. Re-export it as a plain scan."
 )
+#: The same refusal when the byte after ``stream`` is a tab, NUL or form feed
+#: (#273 item 2): the reader starts the checker tries do not agree with the
+#: ones MuPDF and pdfium use there, so the message names the cause. Acceptance
+#: is deferred until the ``objstm_separator`` log shows real uploads.
+_OBJECT_STREAM_SEPARATOR_MESSAGE = (
+    "This PDF separates its data with characters the checker does not accept. "
+    "Re-export it as a plain scan."
+)
 #: An object stream uses an encoding the bounded inflate cannot measure.
 _OBJECT_STREAM_ENCODING_MESSAGE = (
     "This PDF's compressed internal data uses an encoding this service cannot measure "
@@ -292,6 +302,7 @@ REFUSAL_REASONS = frozenset(
         "malformed",
         "objstm_bomb",
         "objstm_encoding",
+        "objstm_separator",
         "objstm_unreadable",
         "page_cap",
         "page_content",
