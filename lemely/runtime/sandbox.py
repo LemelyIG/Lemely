@@ -31,7 +31,28 @@ process through :func:`sandbox_settings`.
 ``lemely.app`` (import-linter), so a target is named by dotted path
 (``"lemely.io.rasterise.rasterise_pdf_to_pages"``) and imported in the child
 when first called, and the child sorts exceptions by ``LemelyError`` alone.
-Target names are fixed strings in the calling code, never user input.
+Target names are fixed strings in the calling code, never user input; even
+so, only ``lemely`` code (and ``tests.sandbox_targets``) can be named, so a
+stray name can never run, say, ``os.system``.
+
+This is a RESOURCE boundary (memory and time), not a privilege boundary. The
+child runs as the same user, inherits the parent's environment (secrets
+included) and file system access, and the parent unpickles whatever the
+child sends back. It contains a decoder that runs away; it does not contain
+one that has been taken over.
+
+For the routes that use it (Task 10):
+
+* :meth:`ChildWorker.stream` is a generator, so it takes the lock at the
+  first ``next()``, not when it is called. A route that must answer 503 when
+  the worker is busy has to prime the stream with one ``next()`` before it
+  returns a ``StreamingResponse``. Close every stream (``contextlib.closing``
+  or ``try/finally``): an abandoned one holds the worker until it is
+  garbage-collected.
+* The time to (re)start a child is outside the caller's budget: a call's
+  ``timeout`` covers the lock wait and the work, and a start has its own
+  bound, ``start_timeout_seconds``. A cold call can take up to that much
+  longer than its ``timeout``.
 
 Measured in this venv (Linux, CPython 3.13, 2026-10-01): a cold start, from
 ``spawn`` to ``("ready", None)``, takes 0.16-0.18 s; a warm round trip to a
@@ -72,6 +93,22 @@ _logger = logging.getLogger(__name__)
 #: (from a daemonic process, say) each call would otherwise pay a spawn
 #: attempt and log a warning. :meth:`ChildWorker.shutdown` clears it.
 _START_COOLDOWN_SECONDS = 30.0
+
+#: How long :meth:`ChildWorker.shutdown` waits for a call in flight before it
+#: kills the child under it. A stream kept alive and suspended (by a
+#: traceback that holds its frame, say) holds the lock indefinitely.
+_SHUTDOWN_LOCK_WAIT_SECONDS = 5.0
+
+#: The only modules a target may come from. Target names are code constants,
+#: but the child imports and calls whatever it is told; this keeps a mistaken
+#: or injected name from reaching the standard library or a dependency.
+_TARGET_PACKAGE = "lemely"
+_TEST_TARGET_MODULE = "tests.sandbox_targets"
+
+#: The limits a child sets, in the order its ready message reports them:
+#: ``RLIMIT_DATA``, ``RLIMIT_AS`` and ``RLIMIT_CORE`` (0: a crashing decoder
+#: must not write a core file full of a user's scan).
+_LIMIT_NAMES = ("RLIMIT_DATA", "RLIMIT_AS", "RLIMIT_CORE")
 
 #: The pipe protocol. Parent to child: ``("call" | "stream", target, args)``,
 #: or ``None`` to stop. Child to parent: ``(kind, value)``, see `_child_main`.
@@ -126,44 +163,76 @@ def sandbox_settings() -> SandboxSettings:
     ``load_settings`` reads TOML and the environment, so it must not run per
     request. Call this through the module (``sandbox.sandbox_settings()``),
     never through a ``from`` import, so a test that patches the module
-    attribute changes what every caller sees.
+    attribute changes what every caller sees. Logs ``sandbox_disabled`` once,
+    when the settings load with the sandbox off: every scan then decodes in
+    the web process, unbounded.
     """
-    return load_settings().sandbox
+    settings = load_settings().sandbox
+    if not settings.enabled:
+        _logger.warning(
+            "sandbox_disabled: scan rendering runs in the web process, "
+            "with no memory limit and no timeout (LEMELY_SANDBOX__ENABLED=false)"
+        )
+    return settings
 
 
 class _Target(Protocol):
     def __call__(self, *args: object) -> object: ...
 
 
+def _is_allowed_module(name: str) -> bool:
+    return name in (_TARGET_PACKAGE, _TEST_TARGET_MODULE) or name.startswith(f"{_TARGET_PACKAGE}.")
+
+
 def _resolve(target: str) -> _Target:
-    """The function named by the dotted path ``target``, imported now."""
+    """The function named by the dotted path ``target``, imported now.
+
+    ``ValueError`` unless both the path and the function it names belong to
+    ``lemely`` (or ``tests.sandbox_targets``): the second check stops a
+    ``lemely`` module's import of someone else's function (``os.system``,
+    say) from being reached through that module.
+    """
     module_name, _, attribute = target.rpartition(".")
+    if not _is_allowed_module(module_name):
+        raise ValueError(f"sandbox target {target!r} is not lemely code")
     function = getattr(importlib.import_module(module_name), attribute)
     if not callable(function):
         raise TypeError(f"{target} is not callable")
+    defined_in = getattr(function, "__module__", None)
+    if not (isinstance(defined_in, str) and _is_allowed_module(defined_in)):
+        raise ValueError(f"sandbox target {target!r} is not lemely code (from {defined_in!r})")
     return cast("_Target", function)
 
 
 def _apply_limits(  # pragma: no cover - runs in the child
     data_limit: int, address_limit: int
-) -> None:
-    """Lower ``RLIMIT_DATA`` and ``RLIMIT_AS``; each one independently.
+) -> tuple[int, ...] | None:
+    """Set ``RLIMIT_DATA``, ``RLIMIT_AS`` and ``RLIMIT_CORE`` (to 0), each alone.
 
-    A limit that cannot be set (no ``resource`` module, or a refusal) is left
-    as it was, and the caller's timeout remains the only bound on it. A hard
-    limit already below the request is kept, never raised.
+    Returns the soft limits now in force, in :data:`_LIMIT_NAMES` order, for
+    the ready message; ``None`` without a ``resource`` module. A limit that
+    cannot be set is left as it was (the parent sees the difference and
+    warns), and a hard limit already below the request is kept, never raised.
     """
     try:
         import resource
     except ImportError:  # not Unix
-        return
-    for which, limit in ((resource.RLIMIT_DATA, data_limit), (resource.RLIMIT_AS, address_limit)):
+        return None
+    requests = (
+        (resource.RLIMIT_DATA, data_limit),
+        (resource.RLIMIT_AS, address_limit),
+        (resource.RLIMIT_CORE, 0),
+    )
+    applied: list[int] = []
+    for which, limit in requests:
         try:
             _soft, hard = resource.getrlimit(which)
             soft = limit if hard == resource.RLIM_INFINITY else min(limit, hard)
             resource.setrlimit(which, (soft, hard))
-        except (ValueError, OSError):  # a refused limit
-            continue
+        except (ValueError, OSError):  # a refused limit: reported as it stands
+            pass
+        applied.append(resource.getrlimit(which)[0])
+    return tuple(applied)
 
 
 class _PipeClosedError(Exception):
@@ -222,7 +291,8 @@ def _child_main(  # pragma: no cover - runs in the child
 ) -> None:
     """The worker's loop, run in the ``spawn``ed child (hence no coverage).
 
-    Sets both limits, sends ``("ready", None)``, then per request replies
+    Sets the limits, sends ``("ready", applied)`` (the soft limits now in
+    force, see :func:`_apply_limits`), then per request replies
     ``("ok", value)``; for a stream, ``("item", value)`` per element first
     and then ``("ok", None)``; ``("rejected", exc)`` for a ``LemelyError``
     (the instance itself), ``("memory", None)`` for a ``MemoryError`` and
@@ -233,9 +303,9 @@ def _child_main(  # pragma: no cover - runs in the child
     group, and the child's lifetime belongs to the parent.
     """
     signal.signal(signal.SIGINT, signal.SIG_IGN)
-    _apply_limits(data_limit, address_limit)
+    applied = _apply_limits(data_limit, address_limit)
     try:
-        conn.send(("ready", None))
+        conn.send(("ready", applied))
         while True:
             request = conn.recv()
             if request is None:
@@ -283,6 +353,10 @@ class ChildWorker:
         #: `time.monotonic()` of the last failed start, for the cool-down.
         self._start_failed_at: float | None = None
         self.last_outcome: str | None = None
+        #: The soft ``(RLIMIT_DATA, RLIMIT_AS, RLIMIT_CORE)`` the current child
+        #: reported at start (``None`` before a start, or where it could not
+        #: read them). Differs from what was asked for only after a warning.
+        self.applied_limits: tuple[int, ...] | None = None
 
     def _forget_after_fork(self) -> None:
         """In a forked child: the parent's worker, pipe and lock are not ours."""
@@ -330,22 +404,44 @@ class ChildWorker:
             return False
         child_conn.close()
         self._process, self._conn, self._owner_pid = process, parent_conn, os.getpid()
+        reply: object = None
         try:
-            ready = parent_conn.poll(settings.start_timeout_seconds)
-            ready = ready and parent_conn.recv() == ("ready", None)
+            if parent_conn.poll(settings.start_timeout_seconds):
+                reply = parent_conn.recv()
         except (EOFError, OSError):
-            ready = False
+            reply = None
         except BaseException:  # interrupted mid-handshake: an unread "ready" would desync
             self._discard(kill=True)
             raise
-        if not ready:
+        if not (isinstance(reply, tuple) and len(reply) == 2 and reply[0] == "ready"):
             _logger.warning("%s did not report ready", self.name)
             self._discard(kill=True)
-        return ready
+            return False
+        self._check_limits((data_limit, address_limit, 0), reply[1])
+        return True
+
+    def _check_limits(self, requested: tuple[int, int, int], applied: object) -> None:
+        """Record the limits the child reported, and warn where they fall short."""
+        if not (isinstance(applied, tuple) and len(applied) == len(requested)):
+            self.applied_limits = None
+            _logger.warning("%s started without memory limits (no resource module)", self.name)
+            return
+        self.applied_limits = tuple(int(value) for value in applied)
+        for name, asked, got in zip(_LIMIT_NAMES, requested, self.applied_limits, strict=True):
+            if got != asked:
+                _logger.warning(
+                    "%s runs with %s=%d, not the %d asked for (setrlimit refused or "
+                    "a lower hard limit)",
+                    self.name,
+                    name,
+                    got,
+                    asked,
+                )
 
     def _discard(self, *, kill: bool) -> None:
         process, conn = self._process, self._conn
         self._process = self._conn = self._owner_pid = None
+        self.applied_limits = None
         if conn is not None:
             conn.close()
         if process is None:
@@ -522,12 +618,37 @@ class ChildWorker:
     # -- inspection and shutdown ----------------------------------------------
 
     def pid(self) -> int | None:
+        """The live child's pid; ``None`` when there is none, or it has died."""
         process = self._process
-        return None if process is None else process.pid
+        if process is None or self._owner_pid != os.getpid():
+            return None
+        try:
+            return process.pid if process.is_alive() else None
+        except ValueError:  # closed by another thread in the meantime
+            return None
 
     def shutdown(self) -> None:
-        """Stop and join the child, and clear the start cool-down."""
-        with self._lock:
+        """Stop and join the child, and clear the start cool-down.
+
+        Waits at most :data:`_SHUTDOWN_LOCK_WAIT_SECONDS` for a call in
+        flight. Past that (a suspended stream kept alive holds the lock for
+        as long as it lives) the child is killed without touching the state
+        the holder owns; the holder's next pipe operation then fails as a
+        :class:`SandboxCrash` and discards it. Not an ``RLock``: a stream may
+        be resumed, and so release the lock, on another thread.
+        """
+        if not self._lock.acquire(timeout=_SHUTDOWN_LOCK_WAIT_SECONDS):
+            process = self._process
+            if process is not None and self._owner_pid == os.getpid():
+                with contextlib.suppress(ValueError, OSError):  # closed or gone meanwhile
+                    process.kill()
+            _logger.warning(
+                "%s was busy for %g s at shutdown; its child was killed",
+                self.name,
+                _SHUTDOWN_LOCK_WAIT_SECONDS,
+            )
+            return
+        try:
             self._start_failed_at = None
             if self._owner_pid is not None and self._owner_pid != os.getpid():
                 # Another process's child (no fork hook on this platform): not
@@ -539,6 +660,8 @@ class ChildWorker:
                 with contextlib.suppress(OSError):
                     self._conn.send(None)
             self._discard(kill=True)
+        finally:
+            self._lock.release()
 
 
 #: Extraction and the upload check.

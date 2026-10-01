@@ -11,7 +11,15 @@ from urllib.parse import urlsplit
 
 import structlog
 from dotenv import dotenv_values
-from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    SecretStr,
+    model_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     DotEnvSettingsSource,
@@ -747,6 +755,19 @@ class SandboxSettings(BaseModel):
     upload_check_timeout_seconds: float = Field(default=20.0, gt=0)
     preview_timeout_seconds: float = Field(default=15.0, gt=0)
     crop_timeout_seconds: float = Field(default=10.0, gt=0)
+
+    @model_validator(mode="after")
+    def _data_limits_fit_their_address_limits(self) -> SandboxSettings:
+        """``RLIMIT_DATA`` above ``RLIMIT_AS`` would make the backstop the real bound."""
+        for worker in ("extraction", "interactive"):
+            data = getattr(self, f"{worker}_data_limit_bytes")
+            address = getattr(self, f"{worker}_address_limit_bytes")
+            if data > address:
+                raise ValueError(
+                    f"sandbox.{worker}_data_limit_bytes ({data}) must not exceed "
+                    f"sandbox.{worker}_address_limit_bytes ({address})"
+                )
+        return self
 
 
 class StorageSettings(BaseModel):

@@ -70,10 +70,11 @@ def slow_count(n: int, pause: float) -> Iterator[int]:
         yield i
 
 
-def rlimits() -> tuple[int, int]:
+def rlimits() -> tuple[int, int, int]:
     return (
         resource.getrlimit(resource.RLIMIT_DATA)[0],
         resource.getrlimit(resource.RLIMIT_AS)[0],
+        resource.getrlimit(resource.RLIMIT_CORE)[0],
     )
 
 

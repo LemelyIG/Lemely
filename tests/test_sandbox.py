@@ -9,14 +9,20 @@ test, so no child outlives the test that started it.
 
 from __future__ import annotations
 
+import gc
+import logging
 import os
+import signal
+import subprocess
 import sys
+import textwrap
 import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from lemely.io.scan_limits import ScanRejectedError
 from lemely.runtime import sandbox
@@ -229,10 +235,58 @@ def test_disabled_sandbox_runs_the_target_in_process(
     assert worker.pid() is None
 
 
-def test_the_child_runs_under_both_rlimits(worker: ChildWorker) -> None:
+def test_the_child_runs_under_both_rlimits_and_dumps_no_core(worker: ChildWorker) -> None:
     limits = worker.call(f"{_T}.rlimits", timeout=10, result_type=tuple)
 
-    assert limits == (256 * MiB, 512 * MiB)
+    assert limits == (256 * MiB, 512 * MiB, 0)
+    # The child's ready message reports what it actually applied.
+    assert worker.applied_limits == (256 * MiB, 512 * MiB, 0)
+
+
+_CLAMPED_LIMIT_SCRIPT = textwrap.dedent(
+    """
+    import logging, resource
+    resource.setrlimit(resource.RLIMIT_DATA, (300 * 2**20, 300 * 2**20))
+    from lemely.runtime import sandbox
+    from lemely.runtime.config import SandboxSettings
+    sandbox.sandbox_settings = lambda: SandboxSettings()
+    messages = []
+    class Keep(logging.Handler):
+        def emit(self, record):
+            messages.append(record.getMessage())
+    logger = logging.getLogger("lemely.runtime.sandbox")
+    logger.addHandler(Keep())
+    logger.setLevel(logging.WARNING)
+    worker = sandbox.ChildWorker("clamped", limits=lambda s: (512 * 2**20, 1024 * 2**20))
+    if __name__ == "__main__":
+        try:
+            worker.call("tests.sandbox_targets.pid", timeout=30, result_type=int)
+            print(worker.applied_limits)
+            print(messages)
+        finally:
+            worker.shutdown()
+    """
+)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="lowers a hard rlimit in a subprocess")
+def test_a_limit_the_child_could_not_apply_is_warned_about_in_the_parent() -> None:
+    """The parent's hard RLIMIT_DATA (300 MiB) caps the child's: asking for
+    512 MiB leaves the child at 300 MiB, and the parent says so."""
+    proc = subprocess.run(  # noqa: S603 -- our own interpreter and a fixed script
+        [sys.executable, "-c", _CLAMPED_LIMIT_SCRIPT],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        env={**os.environ, "PYTHONPATH": str(Path.cwd())},
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    applied, messages = proc.stdout.strip().splitlines()[-2:]
+    assert applied == str((300 * MiB, 1024 * MiB, 0))
+    assert "RLIMIT_DATA" in messages
+    assert str(300 * MiB) in messages
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="reads /proc/self/status")
@@ -297,6 +351,33 @@ def test_the_settings_block_round_trips_through_env(monkeypatch: pytest.MonkeyPa
     assert settings.sandbox.interactive_data_limit_bytes == 192 * MiB
 
 
+def test_a_data_limit_above_its_address_limit_is_refused() -> None:
+    with pytest.raises(ValidationError, match="extraction_data_limit_bytes"):
+        SandboxSettings(extraction_data_limit_bytes=700 * MiB)
+    with pytest.raises(ValidationError, match="interactive_data_limit_bytes"):
+        SandboxSettings(interactive_data_limit_bytes=500 * MiB)
+    equal = SandboxSettings(interactive_data_limit_bytes=448 * MiB)
+    assert equal.interactive_data_limit_bytes == 448 * MiB
+
+
+def test_a_disabled_sandbox_is_warned_about_when_the_settings_load(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("LEMELY_SANDBOX__ENABLED", "false")
+    monkeypatch.setattr(sandbox, "load_settings", lambda: Settings(_env_file=None))  # type: ignore[call-arg]
+    sandbox.sandbox_settings.cache_clear()
+    try:
+        with caplog.at_level(logging.WARNING, logger="lemely.runtime.sandbox"):
+            assert sandbox.sandbox_settings().enabled is False
+            sandbox.sandbox_settings()
+    finally:
+        sandbox.sandbox_settings.cache_clear()
+
+    warnings = [r for r in caplog.records if r.name == "lemely.runtime.sandbox"]
+    assert len(warnings) == 1
+    assert "sandbox_disabled" in warnings[0].getMessage()
+
+
 def test_sandbox_settings_is_read_once_per_process(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[None] = []
 
@@ -313,3 +394,139 @@ def test_sandbox_settings_is_read_once_per_process(monkeypatch: pytest.MonkeyPat
         sandbox.sandbox_settings.cache_clear()
 
     assert len(calls) == 1
+
+
+def _process_gone(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def test_one_deadline_covers_the_whole_stream(worker: ChildWorker) -> None:
+    worker.call(f"{_T}.pid", timeout=10, result_type=int)  # a warm child
+    received: list[int] = []
+
+    started = time.monotonic()
+    with pytest.raises(SandboxTimeout):
+        for item in worker.stream(f"{_T}.slow_count", 5, 1.0, timeout=2.5, item_type=int):
+            received.append(item)
+    elapsed = time.monotonic() - started
+
+    assert received == [0, 1, 2]
+    assert elapsed < 3.0
+    assert worker.last_outcome == "timeout"
+    assert worker.pid() is None
+
+
+def test_the_lock_wait_shrinks_the_call_budget(worker: ChildWorker) -> None:
+    worker.call(f"{_T}.pid", timeout=10, result_type=int)  # a warm child
+    errors: list[BaseException] = []
+
+    def hold() -> None:
+        try:
+            worker.call(f"{_T}.sleep_for", 0.4, timeout=5, result_type=type(None))
+        except BaseException as exc:  # reported below, never swallowed
+            errors.append(exc)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        time.sleep(0.05)
+        started = time.monotonic()
+        # ~0.35 s waiting for the lock leaves ~0.25 s of the 0.6 s budget,
+        # too little for a 0.3 s target.
+        with pytest.raises(SandboxTimeout):
+            worker.call(f"{_T}.sleep_for", 0.3, timeout=0.6, result_type=type(None))
+        elapsed = time.monotonic() - started
+    finally:
+        holder.join(timeout=10)
+
+    assert errors == []
+    assert 0.5 <= elapsed < 0.8
+
+
+def test_a_dropped_stream_is_finalised_and_frees_the_worker(worker: ChildWorker) -> None:
+    items = worker.stream(f"{_T}.slow_count", 3, 5.0, timeout=30, item_type=int)
+    assert next(items) == 0
+    old_pid = worker.pid()
+    assert old_pid is not None
+
+    del items
+    gc.collect()
+
+    assert worker._lock.acquire(blocking=False)
+    worker._lock.release()
+    assert _process_gone(old_pid)
+    assert worker.last_outcome == "interrupted"
+
+
+def test_shutdown_returns_within_its_bound_behind_a_suspended_stream(
+    worker: ChildWorker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stream kept alive (by a traceback, say) holds the lock; shutdown must
+    not wait for it forever. It kills the child; the holder's next pipe
+    operation then sees the crash and cleans up."""
+    monkeypatch.setattr(sandbox, "_SHUTDOWN_LOCK_WAIT_SECONDS", 0.5, raising=False)
+    items = worker.stream(f"{_T}.slow_count", 3, 5.0, timeout=30, item_type=int)
+    try:
+        assert next(items) == 0
+        old_pid = worker.pid()
+        assert old_pid is not None
+        stopped = threading.Event()
+
+        def stop() -> None:
+            worker.shutdown()
+            stopped.set()
+
+        started = time.monotonic()
+        threading.Thread(target=stop, daemon=True).start()
+        assert stopped.wait(timeout=5)
+        assert time.monotonic() - started < 2.0
+
+        with pytest.raises(SandboxCrash):
+            next(items)
+        assert worker.last_outcome == "crash"
+        assert _process_gone(old_pid)
+    finally:
+        items.close()  # releases the lock if shutdown is still waiting on it
+
+
+def test_pid_is_none_once_the_child_has_died(worker: ChildWorker) -> None:
+    old_pid = worker.call(f"{_T}.pid", timeout=10, result_type=int)
+
+    os.kill(old_pid, signal.SIGKILL)
+    deadline = time.monotonic() + 5
+    while worker.pid() is not None and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert worker.pid() is None
+    assert worker.call(f"{_T}.pid", timeout=10, result_type=int) != old_pid
+
+
+def test_a_target_outside_lemely_is_refused_in_the_child_and_in_process(
+    worker: ChildWorker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A shell command that would succeed (and return 0) if it ran.
+    with pytest.raises(SandboxError, match=r"os\.system"):
+        worker.call("os.system", "true", timeout=10, result_type=int)
+    # An attribute of a lemely module that is not lemely code (python-dotenv).
+    with pytest.raises(SandboxError, match="dotenv_values"):
+        worker.call("lemely.runtime.config.dotenv_values", timeout=10, result_type=dict)
+    # lemely code reached through a module that is not: the module is never
+    # imported (an import alone can run code).
+    with pytest.raises(SandboxError, match="sandbox_fixtures"):
+        worker.call(
+            "tests.sandbox_fixtures.SandboxSettings", timeout=10, result_type=SandboxSettings
+        )
+
+    monkeypatch.setattr(sandbox, "sandbox_settings", lambda: SandboxSettings(enabled=False))
+    with pytest.raises(ValueError, match=r"os\.system"):
+        worker.call("os.system", "true", timeout=10, result_type=int)
+    with pytest.raises(ValueError, match="dotenv_values"):
+        worker.call("lemely.runtime.config.dotenv_values", timeout=10, result_type=dict)
+    with pytest.raises(ValueError, match="sandbox_fixtures"):
+        worker.call(
+            "tests.sandbox_fixtures.SandboxSettings", timeout=10, result_type=SandboxSettings
+        )
