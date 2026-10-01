@@ -17,6 +17,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import pymupdf
+import pypdfium2 as pdfium
 
 import lemely.io.pdf_canonical as pdf_canonical
 import lemely.io.pdf_content_walk as pdf_content_walk
@@ -26,7 +27,7 @@ from lemely.io._scan_common import (
     ScanTooLargeError,
     ScanUnsupportedEncodingError,
 )
-from lemely.io.pdf_canonical import check_pdf_content_bytes
+from lemely.io.pdf_canonical import canonical_pdf_bytes, check_pdf_content_bytes
 from lemely.io.pdf_content_walk import check_pdf_page_content, decoded_stream_size
 from lemely.io.scan_limits import (
     MAX_CROP_PAGES,
@@ -35,6 +36,7 @@ from lemely.io.scan_limits import (
     MAX_SCAN_PAGES,
     check_scan_bytes,
 )
+from tests.fakes_pdftex import pdftex_included_figure_pdf
 from tests.pdf_fakes import (
     annot_ap_bomb_pdf,
     annot_ap_image_bomb_pdf,
@@ -1189,6 +1191,72 @@ class ReaderCoverageTests(unittest.TestCase):
     def test_the_committed_fixture_still_passes_upload(self) -> None:
         _require_committed_fixture(_FIXTURE)
         check_scan_bytes(_FIXTURE.read_bytes())
+
+
+class PieceInfoTests(unittest.TestCase):
+    """#261: a form's ``/PieceInfo`` and ``/Metadata`` are not drawing data
+    (ISO 32000-1 sections 14.5 and 14.3.2). pdfTeX copies Illustrator's
+    private streams into every page's form; the walk must not count them,
+    but an object also reachable through a drawn key still is."""
+
+    def test_a_pdftex_figure_with_private_data_on_every_page_passes(self) -> None:
+        """2 x 1 MB on each of 40 pages is 80 MB counted, over the whole-scan cap."""
+        self.assertIsNone(check_scan_bytes(pdftex_included_figure_pdf(1_000_000, 40)))
+
+    def test_a_single_page_figure_with_nine_megabytes_of_private_data_passes(self) -> None:
+        self.assertIsNone(check_scan_bytes(pdftex_included_figure_pdf(4_500_000, 1)))
+
+    def test_private_data_also_drawn_is_still_counted(self) -> None:
+        """The skip is on the edge: the same stream under a drawn key counts."""
+        with self.assertRaises(ScanTooLargeError) as caught:
+            check_scan_bytes(pdftex_included_figure_pdf(9_000_000, 1, draw_private=True))
+        self.assertIn("Page 1", str(caught.exception))
+
+    def test_private_data_naming_the_page_tree_is_accepted_and_renders_alike(self) -> None:
+        data = pdftex_included_figure_pdf(1000, 1, private_names_page_tree=True)
+        self.assertIsNone(check_scan_bytes(data))
+        rewritten = canonical_pdf_bytes(data)
+        self.assertEqual(self._pdfium_grey(rewritten), self._pdfium_grey(data))
+
+    def test_metadata_streams_are_not_counted(self) -> None:
+        xmp = pdf_stream(
+            b"/Type /Metadata /Subtype /XML /Filter /FlateDecode", flate_bomb_ops(9_000_000)
+        )
+        form = pdf_stream(
+            b"/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Metadata 6 0 R",
+            b"q 0 0 1 rg 10 10 100 100 re f Q",
+        )
+        data = assemble_pdf(
+            [
+                b"<< /Type /Catalog /Pages 2 0 R >>",
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
+                b"/Resources << /XObject << /Fig 5 0 R >> >> >>",
+                pdf_stream(b"", b"q /Fig Do Q"),
+                form,
+                xmp,
+            ]
+        )
+        self.assertIsNone(check_scan_bytes(data))
+
+    @staticmethod
+    def _pdfium_grey(data: bytes) -> list[bytes]:
+        pdf = pdfium.PdfDocument(data)
+        try:
+            grey = []
+            for index in range(len(pdf)):
+                page = pdf[index]
+                try:
+                    bitmap = page.render(scale=0.5)
+                    try:
+                        grey.append(bitmap.to_pil().convert("L").tobytes())
+                    finally:
+                        bitmap.close()
+                finally:
+                    page.close()
+            return grey
+        finally:
+            pdf.close()
 
 
 if __name__ == "__main__":

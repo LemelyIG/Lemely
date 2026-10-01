@@ -487,19 +487,28 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
     return _PageTree(xrefs=frozenset(nodes), holders=holders)
 
 
-def _dict_refs(doc: pymupdf.Document, xref: int) -> list[int]:
-    """Every reference in ``xref``'s dictionary outside ``/Resources``.
+#: Dictionary keys :func:`_dict_refs` does not follow. ``/Resources`` is read
+#: by :func:`_resources_refs` instead, which keeps each reference's role.
+#: ``/PieceInfo`` (page-piece dictionaries, ISO 32000-1 section 14.5) and
+#: ``/Metadata`` (metadata streams, section 14.3.2) are private data and XMP
+#: that no renderer draws; pdfTeX copies Illustrator's ``/PieceInfo`` into
+#: every form it includes. The skip is on the edge, not the object: a stream
+#: also reachable through a drawn key is still counted there.
+_SKIPPED_DICT_KEYS = frozenset({"Resources", "PieceInfo", "Metadata"})
 
-    Works for a stream's dictionary and a plain dict alike. ``/Resources``
-    is read by :func:`_resources_refs` instead, which keeps each
-    reference's role. A reference's key plays no other part: an object
-    used as a container (a graphics state, an appearance state dict, a
-    stream that is also a soft mask) is read by whatever key the renderer
-    looks up, and nothing here assumes which.
+
+def _dict_refs(doc: pymupdf.Document, xref: int) -> list[int]:
+    """Every reference in ``xref``'s dictionary outside :data:`_SKIPPED_DICT_KEYS`.
+
+    Works for a stream's dictionary and a plain dict alike. Otherwise a
+    reference's key plays no part: an object used as a container (a
+    graphics state, an appearance state dict, a stream that is also a soft
+    mask) is read by whatever key the renderer looks up, and nothing here
+    assumes which.
     """
     refs: list[int] = []
     for key in doc.xref_get_keys(xref):  # type: ignore[no-untyped-call]
-        if key == "Resources":
+        if key in _SKIPPED_DICT_KEYS:
             continue
         kind, value = _key(doc, xref, key)
         if kind == "xref":
