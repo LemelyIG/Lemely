@@ -584,14 +584,14 @@ class SanctionedOpenerSweepTests(unittest.TestCase):
         self.assertEqual(found, {("lemely/io/pdf_prescan.py", "prescan_pdf")})
 
 
-#: The modules a test might patch a re-exported name on, by import path.
-_FACADES = {"lemely.io.scan_limits": scan_limits, "lemely.io._scan_common": _scan_common}
 #: The split modules by import path. A name any of them re-exports is one object
-#: in all of them.
+#: in all of them, and a patch on any of them is checked by the sweep below.
 _SCAN_MODULES = {
     module.__name__: module
     for module in (_scan_common, pdf_prescan, pdf_content_walk, pdf_canonical, scan_limits)
 }
+#: ``patch.multiple``'s own keywords, which name no attribute.
+_MULTIPLE_OPTIONS = frozenset({"target", "spec", "create", "spec_set", "autospec", "new_callable"})
 
 
 def _dotted(expr: ast.expr) -> str | None:
@@ -606,63 +606,80 @@ def _dotted(expr: ast.expr) -> str | None:
     return ".".join(reversed(parts))
 
 
-def _facade_patches(source: str) -> list[tuple[int, str, str]]:
-    """``(line, facade, name)`` for every patch in ``source`` of ``name`` on a facade.
+def _argument(call: ast.Call, position: int, *keywords: str) -> ast.expr | None:
+    """``call``'s argument at ``position``, or the one passed by any of ``keywords``."""
+    if len(call.args) > position:
+        return call.args[position]
+    return next((kw.value for kw in call.keywords if kw.arg in keywords), None)
+
+
+def _scan_module_patches(source: str) -> list[tuple[int, str, str | None]]:
+    """``(line, module, name)`` for every patch in ``source`` of ``name`` on a split module.
 
     Finds ``patch.object(m, "name")``, ``patch.multiple(m, name=...)``,
-    ``monkeypatch.setattr(m, "name", ...)``, ``setattr(m, "name", ...)`` and
-    the string forms ``patch("lemely.io.scan_limits.name")`` and
-    ``monkeypatch.setattr("lemely.io.scan_limits.name", ...)``, where ``m``
-    is ``scan_limits`` or ``_scan_common`` under any alias the file imports
-    it as, or spelled out in full.
+    ``monkeypatch.setattr(m, "name", ...)``, ``setattr(m, "name", ...)`` --
+    with the module and the attribute passed by position or by keyword
+    (``target=``, ``attribute=``, ``name=``) -- and the string forms
+    ``patch("lemely.io.<module>.name")`` and
+    ``monkeypatch.setattr("lemely.io.<module>.name", ...)``. ``m`` is any of
+    the five split modules, under any alias the file imports it as, or
+    spelled out in full. ``name`` is ``None`` when the attribute is not a
+    string literal (a variable, ``**kwargs``): the sweep cannot tell what
+    such a patch replaces, so it counts as a miss.
     """
     tree = ast.parse(source)
-    aliases = {path: path for path in _FACADES}
+    aliases = {path: path for path in _SCAN_MODULES}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name in _FACADES and alias.asname:
+                if alias.name in _SCAN_MODULES and alias.asname:
                     aliases[alias.asname] = alias.name
         elif isinstance(node, ast.ImportFrom) and node.module == "lemely.io":
             for alias in node.names:
-                if f"lemely.io.{alias.name}" in _FACADES:
+                if f"lemely.io.{alias.name}" in _SCAN_MODULES:
                     aliases[alias.asname or alias.name] = f"lemely.io.{alias.name}"
-    found: list[tuple[int, str, str]] = []
+    found: list[tuple[int, str, str | None]] = []
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and node.args):
+        if not isinstance(node, ast.Call):
             continue
         verb = (_dotted(node.func) or "").rpartition(".")[2]
-        first = node.args[0]
-        if isinstance(first, ast.Constant) and isinstance(first.value, str):
-            facade, _, name = first.value.rpartition(".")
-            if verb in ("patch", "setattr") and facade in _FACADES:
-                found.append((node.lineno, facade, name))
+        target = _argument(node, 0, "target")
+        if verb not in ("patch", "object", "multiple", "setattr") or target is None:
             continue
-        facade = aliases.get(_dotted(first) or "")
-        if facade is None:
+        if isinstance(target, ast.Constant) and isinstance(target.value, str):
+            module, _, name = target.value.rpartition(".")
+            if verb in ("patch", "setattr") and module in _SCAN_MODULES:
+                found.append((node.lineno, module, name))
+            continue
+        module = aliases.get(_dotted(target) or "")
+        if module is None:
             continue
         if verb == "multiple":
-            found.extend((node.lineno, facade, kw.arg) for kw in node.keywords if kw.arg)
-        elif (
-            verb in ("object", "setattr")
-            and len(node.args) > 1
-            and isinstance(node.args[1], ast.Constant)
-            and isinstance(node.args[1].value, str)
-        ):
-            found.append((node.lineno, facade, node.args[1].value))
-    return sorted(found)
+            found.extend(
+                (node.lineno, module, kw.arg)
+                for kw in node.keywords
+                if kw.arg not in _MULTIPLE_OPTIONS
+            )
+        elif verb in ("object", "setattr"):
+            attribute = _argument(node, 1, "attribute", "name")
+            literal = isinstance(attribute, ast.Constant) and isinstance(attribute.value, str)
+            found.append((node.lineno, module, attribute.value if literal else None))  # type: ignore[union-attr]
+    return sorted(found, key=lambda patch: (patch[0], patch[1], patch[2] or ""))
 
 
-def _unreached_readers(facade: str, name: str) -> list[str]:
-    """Every module but ``facade`` that binds ``facade.name``'s object to ``name``
-    and reads it -- the readers a patch of ``name`` on ``facade`` never reaches.
+def _unreached_readers(patched: str, name: str) -> list[str]:
+    """The modules that read ``name`` when ``patched`` itself never does: every
+    module but ``patched`` that binds ``patched.name``'s object to ``name``
+    and reads it. A patch of ``name`` on ``patched`` then reaches no reader.
 
     A split module binds it if its own ``name`` is the same object (defined
     there, or imported); any other module under ``lemely/`` or ``scripts/``
-    binds it by importing ``name`` from a split module.
+    binds it by importing ``name`` from a split module. When ``patched``
+    reads ``name`` itself, the patch reaches that reader, and the list is
+    empty: which of several readers a test drives is not visible here.
     """
     sentinel = object()
-    target = getattr(_FACADES[facade], name, sentinel)
+    target = getattr(_SCAN_MODULES[patched], name, sentinel)
     if target is sentinel:
         return []
     root = Path(scan_limits.__file__).resolve().parents[2]
@@ -670,13 +687,17 @@ def _unreached_readers(facade: str, name: str) -> list[str]:
     for path in sorted([*(root / "lemely").rglob("*.py"), *(root / "scripts").rglob("*.py")]):
         module = path.relative_to(root).with_suffix("").as_posix().replace("/", ".")
         source = path.read_text(encoding="utf-8")
-        if module == facade or name not in source:
+        if name not in source:
             continue
         tree = ast.parse(source)
         reads = any(
             isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load)
             for node in ast.walk(tree)
         )
+        if module == patched:
+            if reads:
+                return []
+            continue
         if module in _SCAN_MODULES:
             binds = getattr(_SCAN_MODULES[module], name, sentinel) is target
         else:
@@ -752,10 +773,10 @@ class SplitModuleTests(unittest.TestCase):
         }
         self.assertEqual(expected - set(scan_limits.__all__), set())
 
-    #: Each module, imported first, and every ``lemely.io`` module that import
-    #: loads: the import direction (``_scan_common`` is the leaf, ``pdf_prescan``
-    #: and ``pdf_content_walk`` sit on it alone, ``pdf_canonical`` on those
-    #: three, ``scan_limits`` on all four).
+    #: Each module, imported first, and the scan modules that import loads: the
+    #: import direction (``_scan_common`` is the leaf, ``pdf_prescan`` and
+    #: ``pdf_content_walk`` sit on it alone, ``pdf_canonical`` on those three,
+    #: ``scan_limits`` on all four).
     _LOADS: ClassVar[dict[str, set[str]]] = {
         "lemely.io._scan_common": {"lemely.io._scan_common"},
         "lemely.io.pdf_prescan": {"lemely.io._scan_common", "lemely.io.pdf_prescan"},
@@ -770,16 +791,19 @@ class SplitModuleTests(unittest.TestCase):
     }
 
     #: Run in a fresh interpreter: argv is the repo root, the module to import
-    #: first, and the ``lemely.io`` modules that import must load, comma-joined.
+    #: first, the scan modules that import must load, and the five scan modules
+    #: (comma-joined). Only the scan modules are compared, so another
+    #: ``lemely.io`` module a scan module comes to import does not trip it.
     _CHILD = textwrap.dedent(
         """
         import importlib, sys
         from pathlib import Path
 
-        root, first, expected = Path(sys.argv[1]), sys.argv[2], set(sys.argv[3].split(","))
+        root, first = Path(sys.argv[1]), sys.argv[2]
+        expected, scan = set(sys.argv[3].split(",")), set(sys.argv[4].split(","))
         module = importlib.import_module(first)
         assert Path(module.__file__).resolve().is_relative_to(root), module.__file__
-        loaded = {name for name in sys.modules if name.startswith("lemely.io.")}
+        loaded = scan.intersection(sys.modules)
         assert loaded == expected, f"{first} loaded {sorted(loaded)}"
         import lemely.io.scan_limits as s
         s.open_checked_pdf; s.check_pdf_content; s.MAX_SCAN_PAGES
@@ -797,7 +821,15 @@ class SplitModuleTests(unittest.TestCase):
         for module, loads in self._LOADS.items():
             with self.subTest(module=module):
                 result = subprocess.run(  # noqa: S603 -- our own interpreter, a fixed script
-                    [sys.executable, "-c", self._CHILD, str(root), module, ",".join(loads)],
+                    [
+                        sys.executable,
+                        "-c",
+                        self._CHILD,
+                        str(root),
+                        module,
+                        ",".join(loads),
+                        ",".join(self._MODULES),
+                    ],
                     cwd=root,
                     env={**os.environ, "PYTHONPATH": str(root)},
                     capture_output=True,
@@ -814,35 +846,60 @@ class SplitModuleTests(unittest.TestCase):
         self.assertIs(scan_limits.ScanRejectedError, _scan_common.ScanRejectedError)
 
     def test_the_patch_finder_sees_a_patch_that_misses_its_reader(self) -> None:
-        """The sweep below, held to a known-bad case: ``_page_tree`` patched on
-        ``scan_limits`` is found, and ``pdf_content_walk`` (which defines and
-        calls it) is named as the reader the patch never reaches. A patch on
-        the owning module, and one on a name only its own module reads
-        (``MAX_SCAN_TOTAL_PX``, read by ``plan_pdf_pages`` in
-        ``_scan_common``), are not flagged."""
+        """The sweep below, held to known cases. Flagged, each with the
+        reader the patch never reaches: ``_page_tree`` patched on
+        ``scan_limits`` (``pdf_content_walk`` defines and calls it), by
+        position or by keyword; ``_MAX_OBJECTS_PER_PAGE`` patched on
+        ``_scan_common`` (``pdf_content_walk`` binds and reads its own);
+        and ``check_pdf_content`` patched on ``pdf_content_walk``, which is
+        not a facade but never calls it, while ``pdf_canonical`` calls its
+        own binding. Found with no name, so counted as misses: an attribute
+        that is not a string literal, and ``patch.multiple`` given
+        ``**kwargs``. Not flagged: a patch on the owning module; one on a
+        name only its own module reads (``MAX_SCAN_TOTAL_PX``, read by
+        ``plan_pdf_pages`` in ``_scan_common``); and one on a module that
+        reads the name itself (``pdf_prescan.MAX_OBJECT_STREAM_BYTES``,
+        which ``check_object_stream_bytes`` reads)."""
         source = textwrap.dedent(
             """
             import lemely.io.scan_limits as limits
-            from lemely.io import _scan_common, pdf_content_walk
+            from lemely.io import _scan_common, pdf_content_walk, pdf_prescan
             patch.object(limits, "_page_tree")
             patch("lemely.io._scan_common._MAX_OBJECTS_PER_PAGE", 5)
             patch.object(pdf_content_walk, "_page_tree")
             patch.object(_scan_common, "MAX_SCAN_TOTAL_PX", 40_000)
+            patch.object(target=limits, attribute="_parent")
+            monkeypatch.setattr(limits, name="_collection_refs", value=None)
+            patch.object(pdf_content_walk, "check_pdf_content")
+            patch.object(pdf_prescan, "MAX_OBJECT_STREAM_BYTES", 1)
+            patch.object(pdf_content_walk, attribute)
+            patch.multiple(limits, **overrides)
             """
         )
-        patched = _facade_patches(source)
+        common, walk = "lemely.io._scan_common", "lemely.io.pdf_content_walk"
+        limits, prescan = "lemely.io.scan_limits", "lemely.io.pdf_prescan"
+        patched = _scan_module_patches(source)
         self.assertEqual(
             patched,
             [
-                (4, "lemely.io.scan_limits", "_page_tree"),
-                (5, "lemely.io._scan_common", "_MAX_OBJECTS_PER_PAGE"),
-                (7, "lemely.io._scan_common", "MAX_SCAN_TOTAL_PX"),
+                (4, limits, "_page_tree"),
+                (5, common, "_MAX_OBJECTS_PER_PAGE"),
+                (6, walk, "_page_tree"),
+                (7, common, "MAX_SCAN_TOTAL_PX"),
+                (8, limits, "_parent"),
+                (9, limits, "_collection_refs"),
+                (10, walk, "check_pdf_content"),
+                (11, prescan, "MAX_OBJECT_STREAM_BYTES"),
+                (12, walk, None),
+                (13, limits, None),
             ],
         )
+        readers = {line: _unreached_readers(module, name) for line, module, name in patched if name}
         self.assertEqual(
-            [_unreached_readers(module, name) for _, module, name in patched],
-            [["lemely.io.pdf_content_walk"], ["lemely.io.pdf_content_walk"], []],
+            {line: found for line, found in readers.items() if line != 10},
+            {4: [walk], 5: [walk], 6: [], 7: [], 8: [walk], 9: [walk], 11: []},
         )
+        self.assertIn("lemely.io.pdf_canonical", readers[10])
 
     def test_no_test_patches_a_name_where_its_reader_cannot_see_it(self) -> None:
         """#262: ``patch.object(scan_limits, name)`` replaces ``scan_limits``'s
@@ -850,16 +907,18 @@ class SplitModuleTests(unittest.TestCase):
         itself -- the module that defines it, or one that imported it from a
         scan module. Such a patch would leave the code it targets running
         unpatched, and an ``assert_not_called`` on it would pass vacuously.
-        No test anywhere patches a name on ``scan_limits`` or
-        ``_scan_common`` that another module binds and reads."""
+        No test anywhere patches a name on any of the five split modules
+        that another module binds and reads, and every such patch spells its
+        attribute out, so the sweep can check it."""
         tests = Path(__file__).resolve().parent
-        misses = [
-            f"{path.relative_to(tests)}:{line} patches {module}.{name}, "
-            f"read by {', '.join(readers)}"
-            for path in sorted(tests.rglob("*.py"))
-            for line, module, name in _facade_patches(path.read_text(encoding="utf-8"))
-            if (readers := _unreached_readers(module, name))
-        ]
+        misses = []
+        for path in sorted(tests.rglob("*.py")):
+            for line, module, name in _scan_module_patches(path.read_text(encoding="utf-8")):
+                where = f"{path.relative_to(tests)}:{line} patches {module}"
+                if name is None:
+                    misses.append(f"{where} with an attribute that is not a string literal")
+                elif readers := _unreached_readers(module, name):
+                    misses.append(f"{where}.{name}, read by {', '.join(readers)}")
         self.assertEqual(misses, [])
 
 

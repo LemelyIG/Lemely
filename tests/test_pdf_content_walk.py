@@ -559,9 +559,10 @@ class ContentStreamBombTests(unittest.TestCase):
 
 
 class ImageXObjectBombTests(unittest.TestCase):
-    """Task 11b rev 2: an image XObject declaring more pixels than
-    MAX_DECODE_PX is refused from its dictionary, on the page or inside a
-    Form XObject, without reading the image stream."""
+    """A declared image size the renderer would allocate: an image XObject
+    declaring more pixels than MAX_DECODE_PX is refused from its
+    dictionary, on the page or inside a Form XObject, without reading the
+    image stream."""
 
     def test_a_declared_1_6_gigapixel_image_is_rejected(self) -> None:
         data = image_bomb_pdf(40_000, 40_000)

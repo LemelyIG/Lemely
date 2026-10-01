@@ -1,13 +1,14 @@
 """Deliberately-malformed and encrypted PDF builders, for scan-geometry tests.
 
-Shared by ``tests/test_scan_limits.py``, ``tests/test_web_teacher.py`` and
-``tests/test_student_correct.py`` (mirroring the role ``tests/storage_fakes.py``
-plays for :class:`~lemely.io.storage.StorageBackend`): the regression these
-back is that a scan whose bytes open but whose page tree does not fully
-parse must pass ``lemely.io.scan_limits.check_scan_bytes`` and both upload
-routes exactly like a document that fails to open at all -- see spec
-2026-09-26 §6. Also the Task 11b bomb
-builders: small files whose page content or declared image size is far
+Shared by ``tests/test_scan_limits.py``, ``tests/test_pdf_prescan.py``,
+``tests/test_pdf_content_walk.py``, ``tests/test_pdf_canonical.py``,
+``tests/test_web_teacher.py`` and ``tests/test_student_correct.py``
+(mirroring the role ``tests/storage_fakes.py`` plays for
+:class:`~lemely.io.storage.StorageBackend`): the regression these back is
+that a scan whose bytes open but whose page tree does not fully parse must
+pass ``lemely.io.scan_limits.check_scan_bytes`` and both upload routes
+exactly like a document that fails to open at all -- see spec 2026-09-26
+§6. Also the Task 11b bomb builders: small files whose page content or declared image size is far
 larger than any scan's -- generated in-test, nothing committed. And (#256)
 two raster-image builders, :func:`declared_image` and :func:`bilevel_png`,
 for the per-mode image ceiling, used by the rasterise and crop-route tests.
@@ -312,7 +313,7 @@ def form_xobject_cycle_pdf() -> bytes:
     An annotation-appearance cycle would
     terminate the same way, through the same ``seen``-by-xref guard, once
     the AP stream is found -- it is handed to the identical Form-XObject
-    walker (see :func:`~lemely.io.scan_limits._visit_resource`).
+    walker (see :func:`~lemely.io.pdf_content_walk._walk_resource_graph`).
     """
     return assemble_pdf(
         [
