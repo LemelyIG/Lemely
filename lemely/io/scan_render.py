@@ -20,6 +20,7 @@ import io
 import math
 from typing import TYPE_CHECKING, NamedTuple, NoReturn
 
+from lemely.io._scan_common import _PAGE_COUNT_UNREADABLE_MESSAGE, ScanRejectedError
 from lemely.io.rasterise import RasterisedPage, looks_like_pdf, single_channel_or_rgb
 from lemely.io.reread import REREAD_UPSCALE, crop_and_upscale, padded_crop_rect
 from lemely.io.scan_limits import (
@@ -142,7 +143,9 @@ def render_preview_png(data: bytes) -> bytes:
     :data:`~lemely.io.scan_limits.MAX_SCAN_PAGES` (40) that extraction
     keeps. A scan of 41-200 pages stored before the upload cap keeps its
     thumbnail. The empty-document check comes first: it reads only
-    ``doc.page_count``, and names no page.
+    ``doc.page_count``, and names no page. A count MuPDF cannot read is the
+    refusal :func:`~lemely.io.scan_limits.check_pdf_content` gives it
+    (``uncheckable``), not a render failure.
 
     Raises :class:`RenderRefused` (``no_pages``) for a document with no pages,
     :class:`~lemely.io.scan_limits.ScanRejectedError` for a refused scan, and
@@ -152,7 +155,11 @@ def render_preview_png(data: bytes) -> bytes:
 
     doc = open_checked_pdf(data) if looks_like_pdf(data) else open_scan_image_document(data)
     with doc:
-        if doc.page_count == 0:
+        try:
+            page_count = int(doc.page_count)
+        except Exception as exc:
+            raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE, reason="uncheckable") from exc
+        if page_count == 0:
             raise RenderRefused("Stored scan has no pages", "no_pages")
         check_pdf_page_content(doc, 0)
         page = doc.load_page(0)  # type: ignore[no-untyped-call]
@@ -360,7 +367,7 @@ def crop_pdf_scan(data: bytes, page: int, box: list[int]) -> bytes:
         # refused every crop of a scan stored before that cap existed. Uploads
         # that pre-date the upload-time check still get the render-bomb
         # protection for the page actually rendered; MAX_SCAN_PAGES (40) stays
-        # with the whole-document callers (extraction, the preview). The
+        # with the whole-document caller (extraction). The
         # check reads the page tree, which costs time per page, so crops have
         # their own bound, MAX_CROP_PAGES (200), counted from the real tree.
         require_page_in_range(page, doc.page_count)

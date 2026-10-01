@@ -1172,7 +1172,10 @@ def get_paper_preview(
     row = _require_paper(repo, auth, paper_id)
     etag = preview_etag(row)
     caching = {"ETag": etag, "Cache-Control": _PREVIEW_CACHE_CONTROL}
-    if etag_matches(request.headers.get("if-none-match"), etag):
+    # Every line of the header: a list header sent as several lines is one
+    # list (RFC 9110 section 5.3), and the matching tag may be on any of them.
+    if_none_match = ", ".join(request.headers.getlist("if-none-match")) or None
+    if etag_matches(if_none_match, etag):
         return Response(status_code=304, headers=caching)
 
     try:

@@ -1934,7 +1934,7 @@ def test_preview_renders_page_one_as_png(client: TestClient) -> None:
 
 def test_preview_of_an_image_upload_still_succeeds(client: TestClient) -> None:
     """Fix round 1, Important 1: `get_paper_preview` now runs
-    `check_pdf_content` on every stored scan, image uploads included --
+    `check_pdf_page_content` on every stored scan, image uploads included --
     `page.get_contents()` asserts on a document pymupdf opened as an image,
     not a PDF, so a PNG/JPEG paper's preview must not turn into a 422."""
     import io
@@ -2460,6 +2460,115 @@ def test_preview_if_none_match_is_parsed_per_rfc_9110(
     other = client.get(url, headers={"If-None-Match": '"other"'})
     assert other.status_code == 200, other.text
     assert other.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_joins_every_if_none_match_line(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """RFC 9110 5.3: a list header sent as two lines is one list. The tag on
+    the second line revalidates as if both were on one line."""
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+    url = f"/api/papers/{paper_id}/preview"
+    etag = client.get(url).headers["etag"]
+
+    two_lines = [("If-None-Match", '"other"'), ("If-None-Match", etag)]
+    assert client.get(url, headers=two_lines).status_code == 304
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_star_never_bypasses_authorisation_or_deletion(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``If-None-Match: *`` matches any tag, so it is the widest probe there
+    is: from another teacher it is still the 404 for a paper they cannot see,
+    and from the owner after a (soft) delete it is the 404 for a paper that is
+    gone. The row check comes first either way."""
+    from lemely.db.deletion_repo import TeacherPaperDeletionService
+
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+    url = f"/api/papers/{paper_id}/preview"
+    star = {"If-None-Match": "*"}
+    assert client.get(url, headers=star).status_code == 304
+    unknown = {"detail": f"Unknown paper: {paper_id}"}
+
+    _auth_as(client, _seed_user(pg_sessionmaker, Role.teacher), Role.teacher)
+    stranger = client.get(url, headers=star)
+    assert stranger.status_code == 404, stranger.text
+    assert stranger.json() == unknown
+
+    _auth_as(client, teacher_user, Role.teacher)
+    TeacherPaperDeletionService(pg_sessionmaker).delete(str(teacher_user), str(paper_id))
+    deleted = client.get(url, headers=star)
+    assert deleted.status_code == 404, deleted.text
+    assert deleted.json() == unknown
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_refuses_a_scan_whose_page_count_cannot_be_read(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """A page count MuPDF cannot read is a scan that cannot be checked: the
+    refusal ``check_pdf_content`` gives it (``uncheckable``, its own message),
+    not the generic render failure, and nothing is drawn."""
+    from unittest.mock import PropertyMock, patch
+
+    import pymupdf
+
+    from lemely.io.scan_limits import _PAGE_COUNT_UNREADABLE_MESSAGE
+
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    unreadable = PropertyMock(side_effect=RuntimeError("cannot count"))
+    with (
+        patch.object(pymupdf.Document, "page_count", new_callable=lambda: unreadable),
+        patch.object(pymupdf.Page, "get_pixmap") as get_pixmap,
+        structlog.testing.capture_logs() as logs,
+    ):
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    get_pixmap.assert_not_called()
+    assert preview.status_code == 422, preview.text
+    assert preview.json()["detail"] == _PAGE_COUNT_UNREADABLE_MESSAGE
+    (rejected,) = [e for e in logs if e["event"] == "paper_preview_rejected"]
+    assert rejected["reason"] == "uncheckable"
 
 
 @pytest.mark.usefixtures("in_process_sandbox")
