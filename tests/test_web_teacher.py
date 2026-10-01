@@ -864,46 +864,81 @@ def test_preview_of_image_bytes_stored_as_a_pdf_renders_the_image(
     assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def _blank_pages_pdf(pages: int) -> bytes:
+    """A PDF of ``pages`` blank A4 pages."""
+    import pymupdf
+
+    doc = pymupdf.open()
+    for _ in range(pages):
+        doc.new_page(width=595.0, height=842.0)
+    scan: bytes = doc.tobytes()
+    doc.close()
+    return scan
+
+
 @pytest.mark.usefixtures("in_process_sandbox")
-def test_preview_still_refuses_a_stored_scan_over_the_page_cap(
+def test_preview_serves_page_one_of_a_stored_scan_over_the_page_cap(
     client: TestClient,
     paper_repo: TeacherPaperRepository,
     storage_backend: FakeStorageBackend,
     settings: Settings,
     teacher_user: uuid.UUID,
 ) -> None:
-    """User decision 2 (2026-09-29): the crop route dropped the page cap; the
-    preview route keeps it (#269 is about this route alone now). Seeded
-    directly into storage, as the upload route rejects the file."""
+    """Owner decision S3 (#269): the preview renders one page, so it takes the
+    crop's page rule, not the whole-document cap. A stored scan of 41-200
+    pages (stored before the upload cap, which the upload route now refuses)
+    keeps its thumbnail. Seeded directly into storage for that reason."""
+    from lemely.io.scan_limits import MAX_SCAN_PAGES
+
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _blank_pages_pdf(MAX_SCAN_PAGES + 1),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 200, preview.text
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_refuses_a_stored_scan_over_max_crop_pages(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """The crop's page rule bounds the preview too: past ``MAX_CROP_PAGES`` the
+    page tree costs too much to read, so the scan is refused with the crop's
+    message and nothing is drawn."""
     from unittest.mock import patch
 
     import pymupdf
 
-    from lemely.io.scan_limits import MAX_SCAN_PAGES
+    from lemely.io.scan_limits import _CROP_PAGES_MESSAGE, MAX_CROP_PAGES
 
-    doc = pymupdf.open()
-    for _ in range(MAX_SCAN_PAGES + 1):
-        doc.new_page(width=595.0, height=842.0)
-    scan: bytes = doc.tobytes()
-    doc.close()
-    paper_id = uuid.uuid4()
-    key = f"teacher/{teacher_user}/{paper_id.hex}/scan.pdf"
-    storage_backend.upload(settings.storage.bucket, key, scan, "application/pdf")
-    paper_repo.create(
-        paper_id=paper_id,
-        uploaded_by=teacher_user,
-        storage_path=key,
-        scheme_storage_path=None,
-        original_filename="scan.pdf",
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _blank_pages_pdf(MAX_CROP_PAGES + 1),
         content_type="application/pdf",
-        byte_size=len(scan),
+        name="scan.pdf",
     )
 
     with patch.object(pymupdf.Page, "get_pixmap") as get_pixmap:
         preview = client.get(f"/api/papers/{paper_id}/preview")
     get_pixmap.assert_not_called()
-    assert preview.status_code == 422
-    assert f"limit is {MAX_SCAN_PAGES}" in preview.json()["detail"]
+    assert preview.status_code == 422, preview.text
+    assert preview.json()["detail"] == _CROP_PAGES_MESSAGE
 
 
 def test_upload_with_a_malformed_page_tree_still_succeeds(
@@ -2207,6 +2242,286 @@ def test_preview_answers_503_when_no_worker_can_start(
     (failed,) = [e for e in logs if e["event"] == "paper_preview_failed"]
     assert failed["reason"] == "unavailable"
     assert sandbox.INTERACTIVE_WORKER.last_outcome == "unavailable"
+
+
+# ---------------------------------------------------------------------------
+# The preview's failure text, caching and revalidation (#249).
+# ---------------------------------------------------------------------------
+
+
+class _CountingStorage(FakeStorageBackend):
+    """A :class:`FakeStorageBackend` that counts its downloads."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.downloads = 0
+
+    def download(self, bucket: str, object_path: str) -> bytes:
+        self.downloads += 1
+        return super().download(bucket, object_path)
+
+
+def _counting_client(client: TestClient) -> _CountingStorage:
+    """Point ``client``'s storage at a fresh :class:`_CountingStorage` and return it."""
+    counting = _CountingStorage()
+    client.app.dependency_overrides[get_storage_backend] = lambda: counting  # type: ignore[union-attr]
+    return counting
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_never_echoes_renderer_text(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#249: a renderer's own exception text (a library message, a path, a
+    pointer) is not the client's business. The route answers the fixed
+    message, and the text goes to the ``paper_preview_failed`` log line only.
+    In process, so the exception reaches the route's generic branch as raised."""
+    monkeypatch.setattr(teacher, "PREVIEW_TARGET", "tests.sandbox_targets.boom")
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 422, preview.text
+    assert "DISTINCTIVE" not in preview.text
+    assert preview.json()["detail"] == "Could not render this scan"
+    (failed,) = [e for e in logs if e["event"] == "paper_preview_failed"]
+    assert "DISTINCTIVE-RENDERER-TEXT" in failed["error"]
+    assert failed["paper_id"] == str(paper_id)
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_is_revalidated_not_cached(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """Owner decision S2: the browser keeps the thumbnail but asks again on
+    every view (``no-cache``), so every view runs the authorisation check; a
+    thumbnail cached for an hour outlived a revoked view by that hour."""
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 200, preview.text
+    assert preview.headers["cache-control"] == "private, no-cache"
+    assert re.fullmatch(r'"[0-9a-f]{32}"', preview.headers["etag"]), preview.headers
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_etag_round_trip_skips_download_and_render(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """A revalidation whose ``If-None-Match`` names the current tag is a 304
+    answered from the row: the stored object is not downloaded again and
+    nothing is drawn."""
+    from unittest.mock import patch
+
+    import pymupdf
+
+    counting = _counting_client(client)
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        counting,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+    url = f"/api/papers/{paper_id}/preview"
+
+    first = client.get(url)
+    assert first.status_code == 200, first.text
+    etag = first.headers["etag"]
+    assert counting.downloads == 1
+
+    with patch.object(pymupdf.Page, "get_pixmap") as get_pixmap:
+        second = client.get(url, headers={"If-None-Match": etag})
+    get_pixmap.assert_not_called()
+    assert second.status_code == 304, second.text
+    assert second.content == b""
+    assert second.headers["etag"] == etag
+    assert second.headers["cache-control"] == "private, no-cache"
+    assert counting.downloads == 1
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_etag_does_not_bypass_authorisation(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The ETag names the paper, not the viewer, so a matching tag must never
+    stand in for the visibility check: another teacher who sends the owner's
+    tag gets the same 404 as without it, and nothing is downloaded."""
+    from unittest.mock import patch
+
+    import pymupdf
+
+    counting = _counting_client(client)
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        counting,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+    url = f"/api/papers/{paper_id}/preview"
+    etag = client.get(url).headers["etag"]
+    assert counting.downloads == 1
+
+    _auth_as(client, _seed_user(pg_sessionmaker, Role.teacher), Role.teacher)
+    without_tag = client.get(url)
+    with patch.object(pymupdf.Page, "get_pixmap") as get_pixmap:
+        with_tag = client.get(url, headers={"If-None-Match": etag})
+    get_pixmap.assert_not_called()
+
+    assert with_tag.status_code == 404, with_tag.text
+    assert with_tag.json() == without_tag.json() == {"detail": f"Unknown paper: {paper_id}"}
+    assert "etag" not in with_tag.headers
+    assert counting.downloads == 1
+
+
+def test_preview_if_none_match_is_parsed_per_rfc_9110_unit() -> None:
+    """``etag_matches`` is RFC 9110 13.1.2's weak comparison over a list."""
+    ours = '"abc"'
+    assert teacher.etag_matches(None, ours) is False
+    assert teacher.etag_matches('"abc"', ours) is True
+    assert teacher.etag_matches('W/"abc"', ours) is True
+    assert teacher.etag_matches('"abc"', 'W/"abc"') is True
+    assert teacher.etag_matches('"x", "abc"', ours) is True
+    assert teacher.etag_matches('"x","abc"', ours) is True
+    assert teacher.etag_matches("*", ours) is True
+    assert teacher.etag_matches(" * ", ours) is True
+    assert teacher.etag_matches('"ab"', ours) is False
+    assert teacher.etag_matches('"abcd"', ours) is False
+    assert teacher.etag_matches("abc", ours) is False
+    assert teacher.etag_matches('w/"abc"', ours) is False
+    assert teacher.etag_matches('"abc', ours) is False
+    assert teacher.etag_matches("", ours) is False
+    assert teacher.etag_matches('"x", *', ours) is False
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_if_none_match_is_parsed_per_rfc_9110(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """At the route: a weak tag and a list containing the tag revalidate; a
+    list without it gets the image again."""
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+    url = f"/api/papers/{paper_id}/preview"
+    etag = client.get(url).headers["etag"]
+
+    assert client.get(url, headers={"If-None-Match": f"W/{etag}"}).status_code == 304
+    assert client.get(url, headers={"If-None-Match": f'"other", {etag}'}).status_code == 304
+    other = client.get(url, headers={"If-None-Match": '"other"'})
+    assert other.status_code == 200, other.text
+    assert other.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_304_is_answered_from_the_row_after_the_object_expires(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """The documented order: the row authorises the view and is the existence
+    check a 304 relies on, so a revalidation is a 304 even once the stored
+    object has expired; the first request without the tag gets the 404."""
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+    url = f"/api/papers/{paper_id}/preview"
+    first = client.get(url)
+    assert first.status_code == 200, first.text
+    etag = first.headers["etag"]
+
+    storage_backend.delete(
+        settings.storage.bucket, f"teacher/{teacher_user}/{paper_id.hex}/scan.pdf"
+    )
+
+    assert client.get(url, headers={"If-None-Match": etag}).status_code == 304
+    gone = client.get(url)
+    assert gone.status_code == 404, gone.text
+    assert gone.json()["detail"] == f"No stored scan for paper {paper_id}"
+
+
+def test_preview_etag_names_the_paper_its_object_and_the_render_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tag changes with the paper, with its stored object, and with
+    ``PREVIEW_RENDER_VERSION`` (a change to how the thumbnail is drawn), so
+    a browser never keeps a thumbnail drawn the old way."""
+    row = MagicMock(spec=TeacherPaperRow)
+    row.id = uuid.UUID(int=1)
+    row.storage_path = "teacher/t/1/scan.pdf"
+    base = teacher.preview_etag(row)
+    assert re.fullmatch(r'"[0-9a-f]{32}"', base)
+    assert teacher.preview_etag(row) == base
+
+    other_paper = MagicMock(spec=TeacherPaperRow)
+    other_paper.id = uuid.UUID(int=2)
+    other_paper.storage_path = row.storage_path
+    assert teacher.preview_etag(other_paper) != base
+
+    other_object = MagicMock(spec=TeacherPaperRow)
+    other_object.id = row.id
+    other_object.storage_path = "teacher/t/1/other.pdf"
+    assert teacher.preview_etag(other_object) != base
+
+    monkeypatch.setattr(teacher, "PREVIEW_RENDER_VERSION", teacher.PREVIEW_RENDER_VERSION + 1)
+    assert teacher.preview_etag(row) != base
 
 
 def _streamed_rgb_png(width: int, height: int) -> bytes:

@@ -20,6 +20,7 @@ route and a restart loses nothing mid-run.
 # dependency injection. (The per-file-ignore in pyproject.toml handles this.)
 from __future__ import annotations
 
+import hashlib
 import queue
 import tempfile
 import threading
@@ -31,7 +32,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 
 import anyio
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 
 from lemely.core.analytics import (
     aggregate_weaknesses_from_history,
@@ -197,6 +198,63 @@ _UPLOAD_CHUNK_BYTES = 1024 * 1024
 #: The preview's render, run in :data:`~lemely.runtime.sandbox.INTERACTIVE_WORKER`
 #: (#260). Named by dotted path: the worker imports it in its child.
 PREVIEW_TARGET = "lemely.io.scan_render.render_preview_png"
+
+#: How the preview is drawn, as far as a cached thumbnail is concerned. Part
+#: of :func:`preview_etag`: bump it whenever a change to
+#: :func:`~lemely.io.scan_render.render_preview_png` changes the pixels it
+#: draws (size, DPI, colour), so every browser's cached thumbnail stops
+#: matching and is drawn again.
+PREVIEW_RENDER_VERSION = 1
+
+#: The preview's caching (owner decision S2, #249): the browser may keep the
+#: thumbnail but must revalidate on every view, and the revalidation runs the
+#: route's full authorisation check before any ``304``.
+_PREVIEW_CACHE_CONTROL = "private, no-cache"
+
+
+def preview_etag(row: TeacherPaperRow) -> str:
+    """The ETag of a paper's preview: its id, its stored object and the render version.
+
+    ``storage_path`` names the stored object, and it is immutable per paper:
+    :meth:`TeacherPaperRepository.create` is the only writer of the column,
+    the upload key carries the paper's own server-generated uuid, and storage
+    is create-only, so the bytes under it never change while the row exists.
+    The digest is truncated to 128 bits, plenty to tell one thumbnail from
+    another; it is not a secret and grants nothing (the route checks
+    visibility before it compares one).
+    """
+    material = f"{row.id}:{row.storage_path}:{PREVIEW_RENDER_VERSION}".encode()
+    return '"' + hashlib.sha256(material).hexdigest()[:32] + '"'
+
+
+def _opaque_tag(entity_tag: str) -> str | None:
+    """The quoted opaque tag of one RFC 9110 entity-tag, ``W/`` dropped; ``None`` if malformed."""
+    tag = entity_tag.removeprefix("W/")
+    if len(tag) < 2 or not tag.startswith('"') or not tag.endswith('"') or '"' in tag[1:-1]:
+        return None
+    return tag
+
+
+def etag_matches(if_none_match: str | None, etag: str) -> bool:
+    """Whether an ``If-None-Match`` value matches ``etag`` (RFC 9110 section 13.1.2).
+
+    ``*`` matches any current representation; otherwise the value is a
+    comma-separated list of entity-tags, compared with the weak comparison
+    the header calls for: a ``W/`` prefix on either side is ignored and the
+    quoted opaque tags must be equal byte for byte. A malformed member (an
+    unquoted tag, a lower-case ``w/``) matches nothing, and no header
+    matches nothing. A comma inside a quoted tag is not supported: the tags
+    this route issues are hex digits.
+    """
+    if if_none_match is None:
+        return False
+    if if_none_match.strip() == "*":
+        return True
+    ours = _opaque_tag(etag)
+    if ours is None:
+        return False
+    return any(_opaque_tag(member.strip()) == ours for member in if_none_match.split(","))
+
 
 # Confidence at/above which a marked question is treated as auto-graded; below it
 # the question is surfaced in the teacher review queue. Aliases the single domain
@@ -1058,6 +1116,7 @@ def get_paper(
 )
 def get_paper_preview(
     paper_id: str,
+    request: Request,
     auth: Annotated[AuthContext, Depends(get_auth_context)],
     settings: Annotated[Settings, Depends(get_settings)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
@@ -1076,8 +1135,28 @@ def get_paper_preview(
     below does not need an explicit ``anyio.to_thread`` wrap the way the
     upload routes' calls do from inside ``async def``.
 
-    404 when the object has expired or was never written (DS9) — a stored
-    scan is not forever, and a caller sees that as "no scan", not a crash.
+    Caching (owner decision S2, #249): ``Cache-Control: private, no-cache``
+    with an ``ETag`` (:func:`preview_etag`), so the browser keeps the
+    thumbnail but asks again on every view. The checks run in this order:
+
+    1. ``_require_paper``: the DB row and the visibility rule. A paper the
+       caller may not see is the same 404 whatever ``If-None-Match`` says, so
+       a tag never stands in for authorisation. The row is also the
+       existence check a ``304`` relies on: a paper with no row never reaches
+       the tag.
+    2. The tag, from the row alone.
+    3. ``If-None-Match`` naming it (:func:`etag_matches`): a ``304``, with no
+       download and no render.
+    4. Otherwise the download (404 when the object has expired or was never
+       written, DS9: a stored scan is not forever, and a caller sees that as
+       "no scan", not a crash), the render, and a ``200``.
+
+    A consequence of answering a ``304`` from the row: a browser that cached
+    the thumbnail of a paper whose stored object has since expired keeps
+    seeing it until the row goes. The row is what authorises the view, and
+    the object's expiry does not change who may see the paper; the first
+    request without the tag after expiry gets the 404.
+
     Image uploads (the console accepts images as well as PDFs) are drawn by
     PyMuPDF too, so one code path covers both; the bytes decide which
     opener runs (:func:`~lemely.io.scan_render.render_preview_png`).
@@ -1086,9 +1165,16 @@ def get_paper_preview(
     memory-limited child that is killed past ``preview_timeout_seconds``
     (#260): a scan's refusal crosses back with its own message (422); a
     render that fails there is a 422 with a fixed message, and no worker to
-    render in is a 503 (``sandbox_failure_to_http``).
+    render in is a 503 (``sandbox_failure_to_http``). A render that fails in
+    process (the sandbox disabled) gets the same fixed message: the
+    exception's text goes to the ``paper_preview_failed`` log line only.
     """
     row = _require_paper(repo, auth, paper_id)
+    etag = preview_etag(row)
+    caching = {"ETag": etag, "Cache-Control": _PREVIEW_CACHE_CONTROL}
+    if etag_matches(request.headers.get("if-none-match"), etag):
+        return Response(status_code=304, headers=caching)
+
     try:
         data = storage.download(settings.storage.bucket, row.storage_path)
     except StorageObjectNotFoundError:
@@ -1116,16 +1202,12 @@ def get_paper_preview(
         # worker, only a ``LemelyError`` other than the two above could). A
         # scan that cannot be rendered is not a server fault — it is a file
         # the teacher uploaded that is not the document type it claimed to be.
+        # Its text (a library's message, a path) stays in the log; the client
+        # gets the fixed message (#249).
         log.warning("paper_preview_failed", paper_id=paper_id, error=str(exc))
-        raise HTTPException(status_code=422, detail=f"Could not render this scan: {exc}") from exc
+        raise HTTPException(status_code=422, detail="Could not render this scan") from exc
 
-    # Immutable for the lifetime of the paper id: the stored scan never changes
-    # once uploaded, so the grid can cache every thumbnail it has already drawn.
-    return Response(
-        content=png,
-        media_type="image/png",
-        headers={"Cache-Control": "private, max-age=3600"},
-    )
+    return Response(content=png, media_type="image/png", headers=caching)
 
 
 @router.get("/grading/queue", response_model=GradingQueueDTO)

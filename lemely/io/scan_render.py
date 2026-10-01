@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, NamedTuple, NoReturn
 from lemely.io.rasterise import RasterisedPage, looks_like_pdf, single_channel_or_rgb
 from lemely.io.reread import REREAD_UPSCALE, crop_and_upscale, padded_crop_rect
 from lemely.io.scan_limits import (
-    check_pdf_content,
     check_pdf_page_content,
     decode_pixel_cap,
     open_checked_pdf,
@@ -136,6 +135,15 @@ def render_preview_png(data: bytes) -> bytes:
     through ``open_scan_image_document`` (allowlisted, and never opened as a
     PDF).
 
+    One page is drawn, so the content check is the crop's one-page rule
+    (``check_pdf_page_content``, owner decision S3, #269): page 1's content
+    is bounded, and the document's pages by
+    :data:`~lemely.io.scan_limits.MAX_CROP_PAGES` (200), not the whole-document
+    :data:`~lemely.io.scan_limits.MAX_SCAN_PAGES` (40) that extraction
+    keeps. A scan of 41-200 pages stored before the upload cap keeps its
+    thumbnail. The empty-document check comes first: it reads only
+    ``doc.page_count``, and names no page.
+
     Raises :class:`RenderRefused` (``no_pages``) for a document with no pages,
     :class:`~lemely.io.scan_limits.ScanRejectedError` for a refused scan, and
     lets every other failure propagate for the caller to deal with.
@@ -144,9 +152,9 @@ def render_preview_png(data: bytes) -> bytes:
 
     doc = open_checked_pdf(data) if looks_like_pdf(data) else open_scan_image_document(data)
     with doc:
-        check_pdf_content(doc)
         if doc.page_count == 0:
             raise RenderRefused("Stored scan has no pages", "no_pages")
+        check_pdf_page_content(doc, 0)
         page = doc.load_page(0)  # type: ignore[no-untyped-call]
         # At most an A4 page at 72 dpi: 842px on the long edge. Sized against
         # the consumer: the card thumbnail is a ~300px-wide strip, so this is

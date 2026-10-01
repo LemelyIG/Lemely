@@ -180,3 +180,13 @@ def record_window_from_env(*ignored: object) -> bytes:
     before the worker's first call.
     """
     return record_window(os.environ[WINDOW_FILE_ENV], 0.4)
+
+
+def boom(*ignored: object) -> bytes:
+    """Fail with a message that must never reach a client.
+
+    Stands in for a render target (it takes and ignores the route's
+    arguments), so a route test can see that the renderer's own text stays
+    in the logs and out of the response.
+    """
+    raise RuntimeError("DISTINCTIVE-RENDERER-TEXT")
