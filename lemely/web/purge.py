@@ -82,6 +82,7 @@ from typing import TYPE_CHECKING
 import sqlalchemy as sa
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from lemely.core.deletion import purge_cutoff
 from lemely.db.models.attempts import Attempt, Upload
@@ -145,7 +146,7 @@ def purge_expired_papers(
                 purged += _purge_attempts_without_upload(session_factory, attempt_ids, cutoff)
             else:
                 purged += _purge_upload(session_factory, storage, bucket, upload_id, cutoff)
-        except sa.exc.SQLAlchemyError:
+        except SQLAlchemyError:
             log.warning(
                 "purge_paper_failed",
                 upload_id=str(upload_id) if upload_id else None,
@@ -341,7 +342,7 @@ def purge_expired_teacher_papers(
     for paper_id in candidates:
         try:
             purged += _purge_teacher_paper(session_factory, storage, bucket, paper_id, cutoff)
-        except sa.exc.SQLAlchemyError:
+        except SQLAlchemyError:
             log.warning("purge_teacher_paper_failed", paper_id=str(paper_id), exc_info=True)
     if purged:
         log.info("purge_expired_teacher_papers", count=purged)
