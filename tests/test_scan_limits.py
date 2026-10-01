@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import functools
 import io
 import math
 import os
 import subprocess
+import symtable
 import sys
 import textwrap
 import unittest
@@ -612,16 +614,101 @@ def _scan_module_patches(source: str) -> list[tuple[int, str, str | None]]:
     return sorted(found, key=lambda patch: (patch[0], patch[1], patch[2] or ""))
 
 
+#: The re-exporting modules. A patch on one reaches only code that looks the
+#: name up there, so every other reader of the name counts against it.
+_FACADES = frozenset({"lemely.io.scan_limits", "lemely.io._scan_common"})
+
+
+class _ModuleScopeReads(ast.NodeVisitor):
+    """Names read at module scope: outside any function, lambda or class body
+    (those are their own scopes, read by :func:`_global_reads` from the
+    symbol table), and not a comprehension's own loop variable."""
+
+    def __init__(self) -> None:
+        self.reads: set[str] = set()
+        self._comprehension_names: list[set[str]] = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        # Decorators and defaults run at module scope; the body does not.
+        for expr in (*node.decorator_list, *node.args.defaults, *node.args.kw_defaults):
+            if expr is not None:
+                self.visit(expr)
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        for expr in (*node.args.defaults, *node.args.kw_defaults):
+            if expr is not None:
+                self.visit(expr)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for expr in (*node.decorator_list, *node.bases, *(kw.value for kw in node.keywords)):
+            self.visit(expr)
+
+    def _comprehension(
+        self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
+    ) -> None:
+        self._comprehension_names.append(
+            {
+                name.id
+                for generator in node.generators
+                for name in ast.walk(generator.target)
+                if isinstance(name, ast.Name)
+            }
+        )
+        self.generic_visit(node)
+        self._comprehension_names.pop()
+
+    visit_ListComp = visit_SetComp = visit_DictComp = visit_GeneratorExp = _comprehension
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load) and not any(
+            node.id in names for names in self._comprehension_names
+        ):
+            self.reads.add(node.id)
+
+
+@functools.cache
+def _global_reads(source: str) -> frozenset[str]:
+    """Every name ``source`` reads as a module global.
+
+    At module scope, any read of the name (:class:`_ModuleScopeReads`). In a
+    function, lambda, comprehension or class body, only a read the symbol
+    table resolves to the module global: a parameter or local variable of
+    the same name, or a closure's free variable, is not one.
+    """
+    reads: set[str] = set()
+
+    def scope(table: symtable.SymbolTable) -> None:
+        reads.update(
+            symbol.get_name()
+            for symbol in table.get_symbols()
+            if symbol.is_referenced() and symbol.is_global()
+        )
+        for child in table.get_children():
+            scope(child)
+
+    for child in symtable.symtable(source, "<module>", "exec").get_children():
+        scope(child)
+    module_scope = _ModuleScopeReads()
+    module_scope.visit(ast.parse(source))
+    return frozenset(reads | module_scope.reads)
+
+
 def _unreached_readers(patched: str, name: str) -> list[str]:
-    """The modules that read ``name`` when ``patched`` itself never does: every
-    module but ``patched`` that binds ``patched.name``'s object to ``name``
-    and reads it. A patch of ``name`` on ``patched`` then reaches no reader.
+    """The modules whose reads of ``name`` a patch of ``name`` on ``patched``
+    never reaches: every module but ``patched`` that binds ``patched.name``'s
+    object to ``name`` and reads it as a global (:func:`_global_reads`).
 
     A split module binds it if its own ``name`` is the same object (defined
     there, or imported); any other module under ``lemely/`` or ``scripts/``
-    binds it by importing ``name`` from a split module. When ``patched``
-    reads ``name`` itself, the patch reaches that reader, and the list is
-    empty: which of several readers a test drives is not visible here.
+    binds it by importing ``name`` from a split module.
+
+    On a facade (``scan_limits``, ``_scan_common``) that is the whole rule:
+    every such reader is a miss, even when the facade reads ``name`` too.
+    On one of the three owning modules, patching the owner's own binding is
+    the idiom for driving the owner's code, so the list is empty when the
+    owner reads ``name`` as a global itself.
     """
     sentinel = object()
     target = getattr(_SCAN_MODULES[patched], name, sentinel)
@@ -634,13 +721,9 @@ def _unreached_readers(patched: str, name: str) -> list[str]:
         source = path.read_text(encoding="utf-8")
         if name not in source:
             continue
-        tree = ast.parse(source)
-        reads = any(
-            isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load)
-            for node in ast.walk(tree)
-        )
+        reads = name in _global_reads(source)
         if module == patched:
-            if reads:
+            if reads and patched not in _FACADES:
                 return []
             continue
         if module in _SCAN_MODULES:
@@ -651,7 +734,7 @@ def _unreached_readers(patched: str, name: str) -> list[str]:
                 and node.module in _SCAN_MODULES
                 and getattr(_SCAN_MODULES[node.module], name, sentinel) is target
                 and any(alias.name == name and alias.asname in (None, name) for alias in node.names)
-                for node in ast.walk(tree)
+                for node in ast.walk(ast.parse(source))
             )
         if reads and binds:
             readers.append(module)
@@ -796,15 +879,18 @@ class SplitModuleTests(unittest.TestCase):
         ``scan_limits`` (``pdf_content_walk`` defines and calls it), by
         position or by keyword; ``_MAX_OBJECTS_PER_PAGE`` patched on
         ``_scan_common`` (``pdf_content_walk`` binds and reads its own);
-        and ``check_pdf_content`` patched on ``pdf_content_walk``, which is
-        not a facade but never calls it, while ``pdf_canonical`` calls its
-        own binding. Found with no name, so counted as misses: an attribute
-        that is not a string literal, and ``patch.multiple`` given
-        ``**kwargs``. Not flagged: a patch on the owning module; one on a
-        name only its own module reads (``MAX_SCAN_TOTAL_PX``, read by
-        ``plan_pdf_pages`` in ``_scan_common``); and one on a module that
-        reads the name itself (``pdf_prescan.MAX_OBJECT_STREAM_BYTES``,
-        which ``check_object_stream_bytes`` reads)."""
+        ``MAX_SCAN_PAGES`` patched on ``_scan_common``, which reads it too
+        but is a facade, so ``pdf_content_walk``'s own binding still counts;
+        and ``check_pdf_content`` patched on ``pdf_content_walk``, an owner
+        that never calls it, while ``pdf_canonical`` calls its own binding.
+        Found with no name, so counted as misses: an attribute that is not a
+        string literal, and ``patch.multiple`` given ``**kwargs``. Not
+        flagged: a patch on the owning module (``pdf_content_walk._page_tree``);
+        one on a name only its own module reads (``MAX_SCAN_TOTAL_PX``, read
+        by ``plan_pdf_pages`` in ``_scan_common``); and one on an owning
+        module's own binding that the owner reads as a global
+        (``pdf_prescan.MAX_OBJECT_STREAM_BYTES``, read by
+        ``check_object_stream_bytes``), the idiom for driving the owner."""
         source = textwrap.dedent(
             """
             import lemely.io.scan_limits as limits
@@ -817,6 +903,7 @@ class SplitModuleTests(unittest.TestCase):
             monkeypatch.setattr(limits, name="_collection_refs", value=None)
             patch.object(pdf_content_walk, "check_pdf_content")
             patch.object(pdf_prescan, "MAX_OBJECT_STREAM_BYTES", 1)
+            patch.object(_scan_common, "MAX_SCAN_PAGES", 1)
             patch.object(pdf_content_walk, attribute)
             patch.multiple(limits, **overrides)
             """
@@ -835,16 +922,62 @@ class SplitModuleTests(unittest.TestCase):
                 (9, limits, "_collection_refs"),
                 (10, walk, "check_pdf_content"),
                 (11, prescan, "MAX_OBJECT_STREAM_BYTES"),
-                (12, walk, None),
-                (13, limits, None),
+                (12, common, "MAX_SCAN_PAGES"),
+                (13, walk, None),
+                (14, limits, None),
             ],
         )
         readers = {line: _unreached_readers(module, name) for line, module, name in patched if name}
         self.assertEqual(
-            {line: found for line, found in readers.items() if line != 10},
+            {line: found for line, found in readers.items() if line not in (10, 12)},
             {4: [walk], 5: [walk], 6: [], 7: [], 8: [walk], 9: [walk], 11: []},
         )
         self.assertIn("lemely.io.pdf_canonical", readers[10])
+        self.assertIn(walk, readers[12])
+        self.assertIn("MAX_SCAN_PAGES", _global_reads(Path(_scan_common.__file__).read_text()))
+
+    def test_a_local_of_the_same_name_is_not_a_global_read(self) -> None:
+        """What counts as reading a name, for the sweep: a read the symbol
+        table resolves to the module global, in any function, lambda or
+        class body, or any read at module scope. A parameter, a local
+        variable, a closure's free variable or a comprehension's loop
+        variable of the same name is not one, so an owner that only shadows
+        the name never excuses a patch of its global."""
+        source = textwrap.dedent(
+            """
+            def parameter(SHADOWED_ARG):
+                return SHADOWED_ARG
+
+            def local():
+                SHADOWED_LOCAL = 1
+                return SHADOWED_LOCAL
+
+            def outer():
+                FREE = 1
+                def inner():
+                    return FREE + GLOBAL_IN_CLOSURE
+                return inner
+
+            def function():
+                return GLOBAL_IN_FUNCTION
+
+            class Holder:
+                value = GLOBAL_IN_CLASS
+
+            squares = [LOOP for LOOP in GLOBAL_ITERABLE]
+            GLOBAL_AT_MODULE
+            """
+        )
+        self.assertEqual(
+            _global_reads(source),
+            {
+                "GLOBAL_IN_CLOSURE",
+                "GLOBAL_IN_FUNCTION",
+                "GLOBAL_IN_CLASS",
+                "GLOBAL_ITERABLE",
+                "GLOBAL_AT_MODULE",
+            },
+        )
 
     def test_no_test_patches_a_name_where_its_reader_cannot_see_it(self) -> None:
         """#262: ``patch.object(scan_limits, name)`` replaces ``scan_limits``'s
