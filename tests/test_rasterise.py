@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pypdfium2 as pdfium
 from PIL import Image
 
+import lemely.io._scan_common as _scan_common
 import lemely.io.rasterise as rasterise_module
 import lemely.io.scan_limits as scan_limits
 from lemely.io.rasterise import (
@@ -573,7 +574,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         rendered in a test: 2 x 200^2 px against a 40,000 px cap gives
         s = sqrt(1/2), i.e. floor(141.4) = 141 DPI."""
         path = self._pdf("one-inch-squares.pdf", (72.0, 72.0), (72.0, 72.0))
-        with patch.object(scan_limits, "MAX_SCAN_TOTAL_PX", 40_000):
+        with patch.object(_scan_common, "MAX_SCAN_TOTAL_PX", 40_000):
             pages = rasterise_pdf_to_pages(path)
         self.assertEqual([p.dpi for p in pages], [141.0, 141.0])
         self.assertEqual([(p.width, p.height) for p in pages], [(141, 141), (141, 141)])

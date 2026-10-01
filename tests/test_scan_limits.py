@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import importlib
 import io
 import math
+import os
+import subprocess
+import sys
 import time
 import tracemalloc
 import unittest
@@ -16,6 +20,9 @@ import pymupdf
 import pypdfium2 as pdfium
 from PIL import Image
 
+import lemely.io.pdf_canonical as pdf_canonical
+import lemely.io.pdf_content_walk as pdf_content_walk
+import lemely.io.pdf_prescan as pdf_prescan
 import lemely.io.scan_limits as scan_limits
 from lemely.io.scan_limits import (
     MAX_CROP_PAGES,
@@ -392,8 +399,8 @@ class ContentWalkPageCapTests(unittest.TestCase):
         before reading the page tree, whoever calls it."""
         data = _pdf_bytes(*([(595.0, 842.0)] * (MAX_SCAN_PAGES + 1)))
         with (
-            patch.object(scan_limits, "_page_tree") as page_tree,
-            patch.object(scan_limits, "_walk_resource_graph") as walk,
+            patch.object(pdf_content_walk, "_page_tree") as page_tree,
+            patch.object(pdf_content_walk, "_walk_resource_graph") as walk,
             self.assertRaises(ScanTooLargeError),
         ):
             check_pdf_content_bytes(data)
@@ -417,8 +424,8 @@ class ContentWalkPageCapTests(unittest.TestCase):
         counting = MagicMock(wraps=scan_limits._collection_refs)
         climbing = MagicMock(wraps=scan_limits._parent)
         with (
-            patch.object(scan_limits, "_collection_refs", counting),
-            patch.object(scan_limits, "_parent", climbing),
+            patch.object(pdf_content_walk, "_collection_refs", counting),
+            patch.object(pdf_content_walk, "_parent", climbing),
             self.assertRaises(ScanTooLargeError),
         ):
             check_pdf_content_bytes(wide_page_tree_pdf(20_000, count=1))
@@ -538,7 +545,7 @@ class PageScopedContentCheckTests(unittest.TestCase):
     def test_only_the_named_page_is_walked(self) -> None:
         with (
             self._doc(bomb_on_second_page_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)) as doc,
-            patch.object(scan_limits, "_walk_resource_graph") as walk,
+            patch.object(pdf_content_walk, "_walk_resource_graph") as walk,
         ):
             check_pdf_page_content(doc, 0)
         pages_walked = {call.args[2].page_index for call in walk.call_args_list}
@@ -565,7 +572,7 @@ class PageScopedContentCheckTests(unittest.TestCase):
             return scan_limits._PageTree(xrefs=real_page_tree(doc, bound=bound).xrefs, holders={})
 
         data = xobject_bomb_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)
-        with patch.object(scan_limits, "_page_tree", truncated):
+        with patch.object(pdf_content_walk, "_page_tree", truncated):
             with (
                 self.subTest("page-scoped"),
                 self._doc(data) as doc,
@@ -585,7 +592,7 @@ class PageScopedContentCheckTests(unittest.TestCase):
         (``MAX_CROP_PAGES``), applied before anything is read."""
         with (
             self._doc(_pdf_bytes(*([(595.0, 842.0)] * (MAX_CROP_PAGES + 1)))) as doc,
-            patch.object(scan_limits, "_page_tree") as page_tree,
+            patch.object(pdf_content_walk, "_page_tree") as page_tree,
             self.assertRaises(ScanTooLargeError) as caught,
         ):
             check_pdf_page_content(doc, 0)
@@ -618,8 +625,8 @@ class PageScopedContentCheckTests(unittest.TestCase):
         climbing = MagicMock(wraps=scan_limits._parent)
         with (
             self._doc(wide_page_tree_pdf(20_000, count=1)) as doc,
-            patch.object(scan_limits, "_collection_refs", counting),
-            patch.object(scan_limits, "_parent", climbing),
+            patch.object(pdf_content_walk, "_collection_refs", counting),
+            patch.object(pdf_content_walk, "_parent", climbing),
             self.assertRaises(ScanTooLargeError),
         ):
             check_pdf_page_content(doc, 0)
@@ -653,7 +660,7 @@ class PageScopedContentCheckTests(unittest.TestCase):
 
         with (
             self._doc(repeated_kid_pdf(200_000)) as doc,
-            patch.object(scan_limits, "_collection_refs", recording),
+            patch.object(pdf_content_walk, "_collection_refs", recording),
             self.assertRaises(ScanTooLargeError),
         ):
             check_pdf_page_content(doc, 0)
@@ -676,7 +683,7 @@ class PageScopedContentCheckTests(unittest.TestCase):
         climbing = MagicMock(wraps=scan_limits._parent)
         with (
             self._doc(long_parent_chain_pdf(20_000)) as doc,
-            patch.object(scan_limits, "_parent", climbing),
+            patch.object(pdf_content_walk, "_parent", climbing),
             self.assertRaises(ScanRejectedError),
         ):
             check_pdf_page_content(doc, 0)
@@ -1034,14 +1041,14 @@ class AnnotationPatternType3BombTests(unittest.TestCase):
 
     def test_hitting_the_object_cap_is_rejected(self) -> None:
         with (
-            patch.object(scan_limits, "_MAX_OBJECTS_PER_PAGE", 5),
+            patch.object(pdf_content_walk, "_MAX_OBJECTS_PER_PAGE", 5),
             self.assertRaises(ScanTooLargeError) as ctx,
         ):
             check_pdf_content_bytes(many_form_xobjects_pdf(10))
         self.assertIn("drawing objects", str(ctx.exception))
 
     def test_well_under_the_object_cap_passes(self) -> None:
-        with patch.object(scan_limits, "_MAX_OBJECTS_PER_PAGE", 5):
+        with patch.object(pdf_content_walk, "_MAX_OBJECTS_PER_PAGE", 5):
             check_pdf_content_bytes(many_form_xobjects_pdf(3))
 
     def test_an_indirect_xobject_dict_bomb_is_rejected(self) -> None:
@@ -1100,7 +1107,9 @@ class AnnotationPatternType3BombTests(unittest.TestCase):
         # the file, not silently pass it through the way a genuine
         # page-tree/page-access failure still does.
         with (
-            patch.object(scan_limits, "_walk_resource_graph", side_effect=RuntimeError("boom")),
+            patch.object(
+                pdf_content_walk, "_walk_resource_graph", side_effect=RuntimeError("boom")
+            ),
             self.assertRaises(ScanRejectedError) as ctx,
         ):
             check_pdf_content_bytes(filtered_page_pdf(b"", b"q Q"))
@@ -1563,7 +1572,7 @@ class ReaderCoverageTests(unittest.TestCase):
         """Only "MuPDF will not open it at all" is exempt; anything else going
         wrong once it has is a refusal."""
         data = _pdf_bytes((595.0, 842.0))
-        failing = patch.object(scan_limits, "check_pdf_content", side_effect=RuntimeError("x"))
+        failing = patch.object(pdf_canonical, "check_pdf_content", side_effect=RuntimeError("x"))
         with failing, self.assertRaises(ScanRejectedError):
             check_pdf_content_bytes(data)
 
@@ -1572,7 +1581,7 @@ class ReaderCoverageTests(unittest.TestCase):
         two readers disagree, so refused. With no pdfium count (pdfium could
         not open it either) it passes, as garbage bytes always have."""
         data = _pdf_bytes((595.0, 842.0))
-        with patch.object(scan_limits.pymupdf, "open", side_effect=RuntimeError("x")):
+        with patch.object(pdf_canonical.pymupdf, "open", side_effect=RuntimeError("x")):
             with self.assertRaises(ScanRejectedError):
                 check_pdf_content_bytes(data, pdfium_pages=1)
             check_pdf_content_bytes(data)
@@ -1706,7 +1715,7 @@ class RawObjectStreamTests(unittest.TestCase):
         bytes, twice (up to ~1.5 s each on a crafted 25 MB file). Once, and
         still before either reader opens the file (the bomb test above)."""
         real = scan_limits.check_object_stream_bytes
-        with patch.object(scan_limits, "check_object_stream_bytes", wraps=real) as prescan:
+        with patch.object(pdf_prescan, "check_object_stream_bytes", wraps=real) as prescan:
             check_scan_bytes(_pdf_bytes((595.0, 842.0), (595.0, 842.0)))
         self.assertEqual(prescan.call_count, 1)
 
@@ -1720,11 +1729,11 @@ class RawObjectStreamTests(unittest.TestCase):
             real = scan_limits.check_object_stream_bytes
             with (
                 self.subTest(entry=entry.__name__),
-                patch.object(scan_limits, "check_object_stream_bytes", wraps=real) as prescan,
+                patch.object(pdf_prescan, "check_object_stream_bytes", wraps=real) as prescan,
             ):
                 entry(data)
                 self.assertGreaterEqual(prescan.call_count, 1)
-        with patch.object(scan_limits, "check_object_stream_bytes", wraps=real) as prescan:
+        with patch.object(pdf_prescan, "check_object_stream_bytes", wraps=real) as prescan:
             open_checked_pdf(data).close()
         self.assertEqual(prescan.call_count, 1)
 
@@ -1778,8 +1787,8 @@ class RawObjectStreamTests(unittest.TestCase):
         import ast
 
         allowed = {
-            ("lemely/io/scan_limits.py", "open_checked_pdf"),
-            ("lemely/io/scan_limits.py", "open_scan_image_document"),
+            ("lemely/io/pdf_canonical.py", "open_checked_pdf"),
+            ("lemely/io/pdf_canonical.py", "open_scan_image_document"),
         }
         root = Path(__file__).resolve().parents[1]
         found: set[tuple[str, str]] = set()
@@ -1847,7 +1856,7 @@ class RawObjectStreamTests(unittest.TestCase):
         for path in sorted((root / "lemely").rglob("*.py")):
             relative = path.relative_to(root).as_posix()
             _Makes(relative).visit(ast.parse(path.read_text(encoding="utf-8")))
-        self.assertEqual(found, {("lemely/io/scan_limits.py", "prescan_pdf")})
+        self.assertEqual(found, {("lemely/io/pdf_prescan.py", "prescan_pdf")})
 
     def test_a_scan_past_the_token_budget_is_refused_as_too_complex(self) -> None:
         """The raw scan reads every dictionary token by token; one crafted
@@ -2055,7 +2064,7 @@ class OffPageObjectTests(unittest.TestCase):
         data = off_page_object_pdf(elements, compressed=True)
         self.assertLess(len(data), 100_000)
         with (
-            patch.object(scan_limits, "_page_tree") as page_tree,
+            patch.object(pdf_content_walk, "_page_tree") as page_tree,
             patch.object(pymupdf.Document, "tobytes") as tobytes,
         ):
             for check in (check_scan_bytes, check_pdf_content_bytes, canonical_pdf_bytes):
@@ -2100,6 +2109,97 @@ class NonPdfDocumentTests(unittest.TestCase):
             scan_limits.check_pdf_content(doc)
         finally:
             doc.close()  # type: ignore[no-untyped-call]
+
+
+class SplitModuleTests(unittest.TestCase):
+    """#262: ``scan_limits`` was split into ``_scan_common``, ``pdf_prescan``,
+    ``pdf_content_walk`` and ``pdf_canonical`` as a pure move, and still
+    re-exports every name its callers import from it."""
+
+    _MODULES = (
+        "lemely.io._scan_common",
+        "lemely.io.pdf_prescan",
+        "lemely.io.pdf_content_walk",
+        "lemely.io.pdf_canonical",
+        "lemely.io.scan_limits",
+    )
+
+    def test_every_name_in_all_imports_from_scan_limits(self) -> None:
+        for name in scan_limits.__all__:
+            with self.subTest(name=name):
+                getattr(scan_limits, name)
+        expected = {
+            "check_pdf_content",
+            "check_pdf_page_content",
+            "check_pdf_content_bytes",
+            "check_scan_bytes",
+            "prescan_pdf",
+            "PrescannedPdf",
+            "check_object_stream_bytes",
+            "open_checked_pdf",
+            "open_scan_image_document",
+            "canonical_pdf_bytes",
+            "plan_pdf_pages",
+            "plan_page_dpi",
+            "plan_image",
+            "decode_pixel_cap",
+            "open_scan_image",
+            "decoded_stream_size",
+            "looks_like_pdf",
+            "PagePlan",
+            "MAX_SCAN_PAGES",
+            "MAX_CROP_PAGES",
+            "MAX_DECODE_PX",
+            "MAX_DECODE_PX_GREY",
+            "MAX_DECODE_PX_WEBP",
+            "MAX_PAGE_PX",
+            "MAX_SCAN_TOTAL_PX",
+            "MAX_PAGE_CONTENT_BYTES",
+            "MAX_SCAN_CONTENT_BYTES",
+            "MAX_OBJECT_STREAM_BYTES",
+            "MAX_PDF_OBJECTS",
+            "MAX_PRESCAN_TOKENS",
+            "MIN_EXTRACTION_DPI",
+            "EXTRACTION_DPI",
+            "PDF_MAGIC",
+            "SCAN_IMAGE_FORMATS",
+            "GREY_CEILING_MODES",
+            "ScanRejectedError",
+            "ScanTooLargeError",
+            "ScanUnsupportedEncodingError",
+            "ScanUnsupportedFormatError",
+        }
+        self.assertEqual(expected - set(scan_limits.__all__), set())
+
+    def test_the_split_modules_import_in_any_order(self) -> None:
+        """Each module imported first, in a fresh interpreter: no import cycle."""
+        root = str(Path(__file__).resolve().parents[1])
+        for module in self._MODULES:
+            with self.subTest(module=module):
+                result = subprocess.run(  # noqa: S603 -- our own interpreter, a fixed import
+                    [
+                        sys.executable,
+                        "-c",
+                        f"import {module}; import lemely.io.scan_limits as s; "
+                        "s.open_checked_pdf; s.check_pdf_content; s.MAX_SCAN_PAGES",
+                    ],
+                    env={**os.environ, "PYTHONPATH": root},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_moved_names_are_the_same_objects(self) -> None:
+        common = importlib.import_module("lemely.io._scan_common")
+        prescan = importlib.import_module("lemely.io.pdf_prescan")
+        walk = importlib.import_module("lemely.io.pdf_content_walk")
+        canonical = importlib.import_module("lemely.io.pdf_canonical")
+        self.assertIs(scan_limits.check_pdf_content, walk.check_pdf_content)
+        self.assertIs(scan_limits.open_checked_pdf, canonical.open_checked_pdf)
+        self.assertIs(scan_limits.prescan_pdf, prescan.prescan_pdf)
+        self.assertIs(scan_limits.canonical_pdf_bytes, canonical.canonical_pdf_bytes)
+        self.assertIs(scan_limits.ScanRejectedError, common.ScanRejectedError)
 
 
 if __name__ == "__main__":
