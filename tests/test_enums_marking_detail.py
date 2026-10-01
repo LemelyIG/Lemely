@@ -33,4 +33,16 @@ def test_review_reason_gains_student_evidence_unjudged() -> None:
 
 def test_existing_review_reasons_are_untouched() -> None:
     values = {member.value for member in ReviewReason}
-    assert {"low_confidence", "plagiarism_flag", "ai_detection_flag"} <= values
+    assert {"low_confidence", "plagiarism_flag", "manual"} <= values
+
+
+def test_ai_detection_flag_is_gone() -> None:
+    """F4 removed it; ``0037_remove_ai_detection`` rebuilt the Postgres enum.
+
+    This assertion used to be the opposite one — ``ai_detection_flag`` in the
+    surviving set — written when the detector still existed. Inverted rather
+    than deleted, because the member is unrecoverable by design (existing rows
+    were rewritten to ``manual``, one way), so a re-add would be a decision
+    somebody has to make deliberately.
+    """
+    assert "ai_detection_flag" not in {member.value for member in ReviewReason}

@@ -84,6 +84,14 @@ const SHAPE: Record<string, "string" | "number"> = {
   "reviewItem.itemId": "string",
   "reviewItem.attemptId": "string",
   "reviewItem.studentKey": "string",
+  // Task #67: the second, verdict-free review-queue row. Not tied to a
+  // `students` entry, so no `account(...)` spread accompanies these two.
+  "reviewItem.legacyItemId": "string",
+  "reviewItem.legacyAttemptId": "string",
+  // Final-review coverage gap: a THIRD review-queue row carrying a marker's
+  // rationale but no verdict. Not tied to a `students` entry either.
+  "reviewItem.rationaleOnlyItemId": "string",
+  "reviewItem.rationaleOnlyAttemptId": "string",
 
   "quiz.quizId": "string",
   "quiz.assignmentId": "string",

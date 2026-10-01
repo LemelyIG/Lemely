@@ -18,6 +18,7 @@ import { lockScroll } from "@/lib/scrollLock"
 import { useDialogHistory } from "@/lib/nav/useDialogHistory"
 import { useOverlayPhase } from "@/lib/overlayPhase"
 import { useDragGesture } from "@/lib/gestures/useDragGesture"
+import { GESTURE_INTERACTIVE_SELECTOR } from "@/lib/gestures/interactiveSelector"
 
 /*
  * P3.1 · Mobile navigation drawer.
@@ -145,6 +146,18 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
   // `--lm-dir` at commit time (not cached), matching P3.4's RTL rule: the
   // drawer is anchored to the reading-start edge in both directions, so
   // "closing" is a drag *away* from that edge, whichever edge that is.
+  //
+  // Also excludes every `GESTURE_INTERACTIVE_SELECTOR` match, not just
+  // `.lm-scroll` — issue #246/#247's exact mechanism, found here by the
+  // opus review of that fix: this hook's own header chrome (outside
+  // `.lm-scroll`) holds the "Close navigation" button, so a tap on it used
+  // to arm this gesture, `useDragGesture` captured the pointer on
+  // `panelRef`, and the click retargeted away from the button — `onClose`
+  // never fired. Silent, because Escape, the scrim and every nav link (all
+  // inside `.lm-scroll`) still closed the drawer. `e2e/native-feel.spec.ts`'s
+  // Assertion 8 clicks this exact button and asserts the dialog closes —
+  // that is the real behavioural proof; `gestureWiring.test.ts` only pins
+  // that this exemption is still wired at the source level.
   useDragGesture(panelRef, {
     axis: "x",
     enabled: mounted,
@@ -154,7 +167,8 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
     commitThreshold: (panelRef.current?.getBoundingClientRect().width ?? 320) * 0.4,
     startFilter: (event) => {
       const target = event.target
-      return !(target instanceof Element && target.closest(".lm-scroll"))
+      if (!(target instanceof Element)) return true
+      return target.closest(`.lm-scroll, ${GESTURE_INTERACTIVE_SELECTOR}`) === null
     },
     onCommit: (dx) => {
       const dir = Number(getComputedStyle(document.documentElement).getPropertyValue("--lm-dir")) || 1

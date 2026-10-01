@@ -31,8 +31,11 @@ from lemely.db.models.enums import (
     AttemptOrigin,
     ConfidenceBand,
     MarkerSource,
+    ReviewReason,
+    ReviewStatus,
     Role,
 )
+from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.session import INCLUDE_DELETED
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.web import create_app
@@ -106,7 +109,12 @@ def _seed_attempt(
 
 
 def _seed_flagged_attempt(sm: sessionmaker[Session], owner: str) -> str:
-    """A past-paper attempt with a plagiarism-flagged question: inside the D8 hold."""
+    """A past-paper attempt with an open plagiarism review-queue row: inside the D8 hold.
+
+    ``question_results.plagiarism_flagged`` is gone (``0040_marker_source_blank``);
+    the hold is read from attempt-level ``ReviewQueueItem`` rows with
+    :attr:`ReviewReason.plagiarism_flag` (``deletion_repo._INTEGRITY_REASONS``).
+    """
     upload_id = _seed_upload(sm, owner)
     attempt_id = _seed_attempt(sm, owner, upload_id)
     with sm.begin() as session:
@@ -120,7 +128,14 @@ def _seed_flagged_attempt(sm: sessionmaker[Session], owner: str) -> str:
                 confidence_band=ConfidenceBand.low,
                 confidence_score=0.4,
                 marker_source=MarkerSource.ai,
-                plagiarism_flagged=True,
+            )
+        )
+        session.add(
+            ReviewQueueItem(
+                id=uuid.uuid4(),
+                attempt_id=uuid.UUID(attempt_id),
+                reason=ReviewReason.plagiarism_flag,
+                status=ReviewStatus.open,
             )
         )
     return attempt_id

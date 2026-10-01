@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Literal
 
 from lemely.core.schemas import ExamMetadata
 
@@ -15,7 +16,12 @@ _CAIE_QUESTION_PAPER_RE = re.compile(
     re.IGNORECASE,
 )
 
-_SESSION_MONTHS = {
+# Typed onto `ExamMetadata.session_month`'s own `Literal` rather than the
+# `dict[str, str]` mypy would otherwise infer: an untyped-`str` value here
+# reaching a pydantic constructor's `Literal` field is exactly the class of
+# defect pyright catches and mypy's pydantic plugin does not (it checks a
+# `BaseModel(...)` call's keyword arity, not each field's declared type).
+_SESSION_MONTHS: dict[str, Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]] = {
     "m": "Feb/Mar",
     "s": "May/June",
     "w": "Oct/Nov",

@@ -14449,3 +14449,30 @@ marks live inside `report_json` with no `QuestionResult` for `0005_review_overri
 correction on, so `resolve` refuses `override_marks` with a 422 rather than accepting a re-mark it
 would have to drop. Changing a console paper's marks means re-running it from the console. Stated
 as a limit rather than papered over with a control that silently does nothing.
+
+## D-2026-09-21 — Accuracy-programme AUROC reports must name their similarity metric
+
+### D8.1 — `extraction_agreement`'s similarity metric is not fixed yet, so anything measuring it must say which one it used
+
+**What.** US-010 (`lemely/io/second_read.py`) computes `extraction_agreement` with
+`difflib.SequenceMatcher` (Ratcliff/Obershelp) instead of the plan's specified `rapidfuzz`
+normalised-Levenshtein, because `rapidfuzz` is not yet a project dependency (`pyproject.toml`
+ownership sits with another lane; tracked as US-041). `REREAD_AGREEMENT_THRESHOLD = 0.8` was
+copied verbatim from the plan's I3 spec, which calibrated that number against the rapidfuzz
+metric, not the difflib one now producing the values it gates.
+
+**Why this matters for US-008.** Ratcliff/Obershelp and normalised Levenshtein are different
+algorithms that score the same string pair differently -- Ratcliff/Obershelp weights the longest
+common contiguous run more heavily, Levenshtein counts raw edit operations. Any future AUROC
+report under US-008 that selects a `second_reader` variant (or re-derives the 0.8 threshold)
+against Phase-A labels is implicitly a report about *one specific similarity metric's* separating
+power. A report that says "cross_model beat structural, AUROC 0.91" without saying which metric
+produced the `extraction_agreement` values it measured is not reproducible, and a later metric
+swap (difflib -> rapidfuzz, when US-041 lands) silently invalidates that selection without the
+report showing any sign of it.
+
+**The rule.** Any AUROC or threshold-selection report produced under US-008 must name the
+similarity metric (and its normalisation, per I2) that produced the `extraction_agreement` values
+it measured. This is what makes a metric swap detectable rather than a silent invalidation of a
+prior decision. `REREAD_AGREEMENT_THRESHOLD` stays at the plan's `0.8` until then -- see the
+comment on it in `lemely/io/second_read.py` -- it is not re-derived on a guess.

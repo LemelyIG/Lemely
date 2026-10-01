@@ -19,7 +19,7 @@ def run_correction_demo(mark_scheme_path: str, answers: str) -> dict[str, object
 def _render_questions_md(report_dict: dict[str, Any], ms: Any = None) -> str:
     """Return a Markdown string summarising per-question correction results."""
     lines = ["### Per-question results\n"]
-    source_badge = {"deterministic": "🔢", "ai": "🤖", "missing": "❓"}
+    source_badge = {"deterministic": "🔢", "ai": "🤖", "missing": "❓", "dropped": "🗑️"}
     for q in report_dict.get("correction", {}).get("questions", []):
         qid = q.get("question_id", "?")
         awarded = q.get("awarded_marks", 0)
@@ -275,6 +275,7 @@ def build_app(settings: Any = None) -> Any:
                     extracted_answers=reviewed,
                     gemini_client=client,
                     mcq_only=mcq_only,
+                    options=settings.grading.marking_options(),
                 )
                 store = GradeBoundaryStore()
                 boundaries, boundary_source = store.resolve(correction.metadata)

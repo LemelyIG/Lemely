@@ -65,3 +65,41 @@ export function pullStartAllowed(
 ): boolean {
   return clientX > edgeZonePx && clientX < viewportWidth - edgeZonePx
 }
+
+/**
+ * Whether a `pointerdown` may arm the pull gesture at all — the full
+ * `startFilter` decision, as a pure function over facts `usePullToRefresh`
+ * has already read off the DOM/event.
+ *
+ * Issue #246/#247: before `interactive` existed here, a tap on a button or
+ * `<Link>` at the scroll top passed every other check and armed the gesture
+ * exactly like a real drag, and `useDragGesture` captured the pointer before
+ * the pointer had moved at all — killing the tap's `click`. Same reasoning
+ * as `quizSwipeAllowed` (`lib/quizSwipe.ts`): "an interactive descendant
+ * owns its own tap already and must never race a gesture against it",
+ * checked first and unconditionally, same as there.
+ *
+ * Composed out of `usePullToRefresh.ts` (not just documented there) so this
+ * exact rule — not merely the code that happens to implement it — is what a
+ * Node-only unit test pins; `gestureWiring.test.ts`/`gestureSafety.test.ts`'s
+ * source-text pins are a backstop for the wiring, this is the rule itself.
+ */
+export function pullStartDecision({
+  interactive,
+  atTop,
+  clientX,
+  viewportWidth,
+  edgeZonePx,
+}: {
+  /** Whether the `pointerdown` target is, or is inside, an element that
+   * already owns its own tap (`GESTURE_INTERACTIVE_SELECTOR`). */
+  interactive: boolean
+  atTop: boolean
+  clientX: number
+  viewportWidth: number
+  edgeZonePx: number
+}): boolean {
+  if (interactive) return false
+  if (!atTop) return false
+  return pullStartAllowed(clientX, viewportWidth, edgeZonePx)
+}

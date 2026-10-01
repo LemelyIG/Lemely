@@ -100,6 +100,8 @@ from lemely.web.xp_awards import award_xp_safely
 if TYPE_CHECKING:
     import uuid
 
+    from lemely.core.difficulty import Band
+
 log = structlog.get_logger(__name__)
 
 # Mirrors teacher.py's/classes.py's/review.py's staff triple.
@@ -242,10 +244,30 @@ def _detail_to_dto(detail: QuizDetail) -> QuizDetailDTO:
     )
 
 
+def _band_keyed_dto(bands: dict[Band, int]) -> dict[str, int]:
+    """Narrow a ``Band``-keyed dict onto the wire's plain ``dict[str, int]``.
+
+    ``Band`` (``lemely.core.difficulty``) is ``Literal["foundation",
+    "standard", "challenge"]`` -- its members are already plain strings at
+    runtime, so this never fails, but ``dict`` is invariant in its key type:
+    ``dict[Band, int]`` is not a ``dict[str, int]`` to a type checker even
+    though every ``Band`` value *is* a ``str``. ``dict(bands)`` (the previous
+    code here) keeps the narrower key type, which is exactly what let this
+    reach ``GenerateQuizQuestionsResponseDTO.shortfall``/
+    ``QuizPoolCountDTO.byBand``/``QuizPoolCountDTO.shortfall`` (all declared
+    ``dict[str, int]``) unnoticed by mypy's pydantic plugin, which does not
+    check field value types on construction. A dict comprehension that
+    explicitly re-keys with ``str(band)`` produces a genuine ``dict[str,
+    int]``, which both mypy and pyright can verify without a
+    ``cast``/``# type: ignore``.
+    """
+    return {str(band): count for band, count in bands.items()}
+
+
 def _generation_to_dto(result: QuestionGenerationResult) -> GenerateQuizQuestionsResponseDTO:
     return GenerateQuizQuestionsResponseDTO(
         created=[_question_to_dto(q) for q in result.created],
-        shortfall=dict(result.shortfall) if result.shortfall else None,
+        shortfall=_band_keyed_dto(result.shortfall) if result.shortfall else None,
     )
 
 
@@ -269,8 +291,8 @@ def _pool_count_to_dto(
     return QuizPoolCountDTO(
         matching=result.matching,
         requested=result.requested,
-        byBand=dict(result.by_band),
-        shortfall=dict(result.shortfall) if result.shortfall else None,
+        byBand=_band_keyed_dto(result.by_band),
+        shortfall=_band_keyed_dto(result.shortfall) if result.shortfall else None,
         difficultyEstimated=result.difficulty_estimated,
         message=_pool_count_message(source, subject_code, result.matching),
     )

@@ -135,7 +135,7 @@ from lemely.web.schemas_student import (
     WeakThreadDTO,
 )
 from lemely.web.services.grading import extract_answers, grade_paper
-from lemely.web.upload_utils import check_upload_cap, safe_upload_name
+from lemely.web.upload_utils import check_scan_geometry, check_upload_cap, safe_upload_name
 from lemely.web.xp_awards import award_xp_safely
 
 router = APIRouter(prefix="/api")
@@ -559,8 +559,8 @@ def student_result(
     boundary rail (rail position from percentage; ``railFoot`` from the resolved
     A-boundary). **Structurally empty:** ``theory`` and ``integrity`` — history
     records persist totals, weak-areas and metadata only, not the per-question
-    answers/mark-scheme points that theory marking and plagiarism/AI-content
-    checks require. Those lists are populated by the ``/correct`` SSE flow which
+    answers/mark-scheme points that theory marking and the plagiarism check
+    require. Those lists are populated by the ``/correct`` SSE flow which
     holds a live :class:`CorrectionResult`; they are empty here by construction.
 
     ``attemptId`` is data-backed but nullable by store: the Postgres-backed
@@ -606,10 +606,10 @@ def student_result(
 def _integrity_summary(record: PaperRecord) -> list[IntegrityRowDTO]:
     """Integrity rows derivable from a history record (data-backed subset).
 
-    A history record has no per-question answers, so plagiarism / AI-content
-    detection cannot run here — those run in the live ``/correct`` flow. The one
-    row we *can* assert from the record is grade-boundary provenance, so the
-    student sees a real, non-fabricated integrity line rather than mock copy.
+    A history record has no per-question answers, so the plagiarism check
+    cannot run here — it runs in the live ``/correct`` flow. The one row we
+    *can* assert from the record is grade-boundary provenance, so the student
+    sees a real, non-fabricated integrity line rather than mock copy.
     """
     _, source = GradeBoundaryStore().resolve(record.metadata)
     detail = {
@@ -676,7 +676,8 @@ async def student_upload(
     object_prefix = f"uploads/{auth.user_id}/{paper_id.hex}"
 
     scan_bytes = await scan.read()
-    check_upload_cap(scan_bytes)
+    check_upload_cap(scan_bytes, content_type=scan.content_type)
+    await anyio.to_thread.run_sync(check_scan_geometry, scan_bytes, scan.content_type)
     object_path = f"{object_prefix}/{safe_upload_name(scan.filename, 'scan.pdf')}"
     # Off the event loop: this is ``async def``, and a blocking network call
     # made inline here would freeze every other request in the process for as
@@ -689,7 +690,7 @@ async def student_upload(
     if mark_scheme is not None:
         # Fixed name so ``resolve_mark_scheme`` can find the sibling scheme object.
         scheme_bytes = await mark_scheme.read()
-        check_upload_cap(scheme_bytes)
+        check_upload_cap(scheme_bytes, content_type=mark_scheme.content_type)
         await anyio.to_thread.run_sync(
             storage_backend.upload,
             settings.storage.bucket,
@@ -1064,6 +1065,7 @@ def student_correct(
                     gemini_client=gemini_client,
                     student_id=None,
                     integrity_settings=settings.integrity,
+                    options=settings.grading.marking_options(),
                 )
                 attempt_id = attempt_repo.persist_correction(
                     user_id=auth.user_id,

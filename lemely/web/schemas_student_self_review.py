@@ -21,6 +21,11 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
+#: Re-exported from :data:`lemely.core.schemas.PointVerdictWire`, the same
+#: pattern ``lemely/web/schemas_review.py`` uses for the teacher wire.
+#: pydantic needs the real type at class-creation time, not just for
+#: annotations, so this stays out of ``TYPE_CHECKING`` (``noqa: TC001``).
+from lemely.core.schemas import PointVerdictWire as PointVerdictWire  # noqa: TC001
 from lemely.db.self_review_repo import MAX_EVIDENCE_CHARS
 from lemely.web.schemas import ApiModel
 
@@ -47,7 +52,14 @@ class SelfReviewPendingPointDTO(ApiModel):
 
 
 class SelfReviewRevealedPointDTO(SelfReviewPendingPointDTO):
-    """A mark point after the reveal: the marker's verdict beside the student's."""
+    """A mark point after the reveal: the marker's verdict beside the student's.
+
+    ``verdict``/``evidenceSpan``/``ecfApplied`` are I6/I7's marker verdict, on
+    the REVEALED shape only. They cannot join
+    :class:`SelfReviewPendingPointDTO`: a verdict is strictly more informative
+    than ``awarded``, which that shape deliberately omits until the student has
+    committed their self-mark.
+    """
 
     awarded: bool
     studentSelfmark: bool
@@ -56,6 +68,9 @@ class SelfReviewRevealedPointDTO(SelfReviewPendingPointDTO):
     markChanged: bool
     absorbedByGroup: bool
     judgeReason: str | None
+    verdict: PointVerdictWire | None
+    evidenceSpan: str
+    ecfApplied: bool
 
 
 class SelfReviewPendingDTO(ApiModel):

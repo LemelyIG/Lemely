@@ -22,16 +22,19 @@ when no local Postgres is reachable (mirrors ``test_class_repo.py``):
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
+import structlog.testing
 from sqlalchemy import create_engine, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.core.analytics import summarize_weaknesses
+from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import (
     AccuracyReport,
     ConfidenceBand,
@@ -39,13 +42,16 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExamMetadata,
     GradePrediction,
+    MarkerSourceValue,
+    PointVerdict,
+    SourceBox,
 )
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models import User
-from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
+from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
 from lemely.db.models.enums import Role
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.review_repo import (
@@ -55,6 +61,7 @@ from lemely.db.review_repo import (
     ReviewService,
     ReviewValidationError,
 )
+from lemely.db.teacher_paper_repo import TeacherPaperRepository
 from lemely.runtime.config import DatabaseSettings
 
 if TYPE_CHECKING:
@@ -133,8 +140,8 @@ def _question(
     needs_review: bool = False,
     review_reason: str | None = None,
     plagiarism_flagged: bool = False,
-    ai_detection_flagged: bool = False,
     topic: str = "Waves",
+    marker_source: MarkerSourceValue = "ai",
 ) -> CorrectedQuestion:
     return CorrectedQuestion(
         question_id=question_id,
@@ -146,10 +153,9 @@ def _question(
         student_answer=f"answer-{question_id}",
         expected_answer=f"expected-{question_id}",
         topic=topic,
-        marker_source="ai",
+        marker_source=marker_source,
         review_reason=review_reason,
         plagiarism_flagged=plagiarism_flagged,
-        ai_detection_flagged=ai_detection_flagged,
         matched_point_ids=["p1"] if awarded else [],
     )
 
@@ -213,6 +219,29 @@ def _review_items_for_attempt(
                 .order_by(ReviewQueueItem.created_at)
             ).all()
         )
+
+
+def _seed_console_paper(
+    pg_sessionmaker: sessionmaker[Session],
+    *,
+    uploader: uuid.UUID,
+    questions: list[CorrectedQuestion],
+) -> uuid.UUID:
+    """Grade a paper through the console repository, as a finished run would."""
+    repo = TeacherPaperRepository(pg_sessionmaker, stale_after=timedelta(minutes=10))
+    paper_id = uuid.uuid4()
+    repo.create(
+        paper_id=paper_id,
+        uploaded_by=uploader,
+        storage_path=f"teacher/{uploader}/{paper_id.hex}/scan.pdf",
+        scheme_storage_path=None,
+        original_filename="scan.pdf",
+        content_type="application/pdf",
+        byte_size=15,
+    )
+    repo.claim_run(paper_id)
+    repo.finish(paper_id, _report(questions))
+    return paper_id
 
 
 @pytest.fixture
@@ -476,6 +505,346 @@ def test_get_item_happy_path(
     assert detail.teacher_awarded_marks is None
 
 
+def test_get_item_marker_source_agrees_between_attempt_and_console_paths(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """US-038: the divergence this story exists to remove.
+
+    Before migration ``0038_marker_source_dropped``, a dropped question
+    reached ``ReviewItemDetail.marker_source`` via two siblings that
+    disagreed: the student-attempt path (``review_repo.py:440``) read the
+    DB's ``MarkerSource`` enum, which had no ``"dropped"`` member and so
+    could only ever report ``"missing"``; the console path
+    (``_console_item_detail``, ``review_repo.py:1042``) read the
+    in-memory ``CorrectedQuestion`` straight out of ``report_json``, which
+    was never narrowed and so reported ``"dropped"`` faithfully. A teacher
+    working ONE review queue could see two different labels for the
+    identical situation. With the enum member added and the write-side
+    mapping in ``attempt_repo.py`` removed, both readers must now agree.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    dropped_question = _question(
+        "1",
+        awarded=0,
+        maximum=1,
+        confidence_score=0.0,
+        needs_review=True,
+        review_reason="answer discarded as malformed",
+        marker_source="dropped",
+    )
+
+    attempt_id = _seed_attempt_with_review_items(pg_sessionmaker, student, [dropped_question])
+    attempt_item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+    attempt_detail = review_service.get_item(teacher, Role.teacher, attempt_item.id)
+
+    paper_id = _seed_console_paper(pg_sessionmaker, uploader=teacher, questions=[dropped_question])
+    with pg_sessionmaker() as session:
+        console_item = session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.teacher_paper_id == paper_id)
+        ).one()
+    console_detail = review_service.get_item(teacher, Role.teacher, console_item.id)
+
+    assert attempt_detail.marker_source == "dropped"
+    assert console_detail.marker_source == "dropped"
+    assert attempt_detail.marker_source == console_detail.marker_source
+
+
+def test_review_queue_exempts_the_us039_unflagged_blank_console_path(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Console twin of ``test_review_queue_exempts_the_us039_unflagged_blank``
+    (``tests/test_attempt_repo.py``) — MUST-FIX A, second independent review
+    of ``4166e535``.
+
+    ``4166e535`` added the US-039 unflagged-blank exemption to
+    ``AttemptRepository.persist_correction`` only. ``_review_items_for``
+    (``lemely/db/teacher_paper_repo.py``) — the console/teacher-paper twin
+    producer whose own docstring claims it applies "the same three-reason
+    rule" — kept queuing every blank via its own ``low_confidence`` arm
+    regardless: exactly the "8 unattempted parts, 8 queue items a teacher
+    bulk-dismisses" scenario the product owner rejected, just reached via
+    ``lemely.web.services.grading.grade_paper`` (which calls
+    ``TeacherPaperRepository.finish``) instead of a student submission. Both
+    producers now share ``lemely.db.review_queue_rules.review_reasons_for``,
+    so a genuine blank graded through the console must be exempted exactly
+    like one graded through a student attempt.
+    """
+    from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
+
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    genuinely_low_confidence = _question(
+        "2", awarded=0, maximum=1, confidence_score=0.2, needs_review=True
+    )
+    blank = _question(
+        "3",
+        awarded=0,
+        maximum=1,
+        confidence_score=0.0,
+        needs_review=False,
+        review_reason=_BLANK_ANSWER_REVIEW_REASON,
+        marker_source="blank",
+    )
+    paper_id = _seed_console_paper(
+        pg_sessionmaker, uploader=teacher, questions=[genuinely_low_confidence, blank]
+    )
+
+    with pg_sessionmaker() as session:
+        items = session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.teacher_paper_id == paper_id)
+        ).all()
+        # Question "2" (genuinely low-confidence) still queues; the unflagged
+        # blank ("3") must NOT.
+        assert {item.question_id for item in items} == {"2"}
+
+
+def _real_plagiarism_review_reason() -> str:
+    """The exact ``review_reason`` segment ``apply_integrity_checks`` appends for a flagged answer.
+
+    Derived by running the REAL integrity-check pipeline
+    (``lemely.io.integrity.apply_integrity_checks``) against a
+    verbatim-copied answer -- not retyped or invented -- so a fixture built
+    from this cannot silently drift from what the real producer actually
+    appends (``lemely/io/integrity.py:102``,
+    ``f"plagiarism (score {finding.score:.2f})"``).
+
+    (Independent review, third pass: an earlier version of this test's
+    fixture hand-typed ``"copied from another candidate"`` as the appended
+    reason -- a string no builder in this codebase produces. This function
+    exists so that mistake cannot recur here.)
+    """
+    from lemely.core.loose_schemas import MarkScheme
+    from lemely.io.integrity import apply_integrity_checks
+    from lemely.runtime.config import IntegritySettings
+
+    verbatim = "gravity acts on the object"
+    scheme = MarkScheme.model_validate(
+        {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "theory_extended",
+                "maximum_mark": 1,
+                "scheme_format": "mixed",
+            },
+            "questions": [
+                {
+                    "id": "1",
+                    "marks": 1,
+                    "type": "explanation",
+                    "answer_points": [{"id": "p1", "point": verbatim, "marks": 1}],
+                },
+            ],
+        }
+    )
+    near_verbatim = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=1,
+        maximum_marks=1,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.95,
+        needs_teacher_review=False,
+        student_answer=verbatim,
+        expected_answer=verbatim,
+        marker_source="ai",
+    )
+    correction = CorrectionResult(
+        metadata=ExamMetadata(
+            subject_code="0625",
+            paper_number=1,
+            paper_variant=2,
+            session_month="May/June",
+            session_year=2020,
+        ),
+        questions=[near_verbatim],
+    )
+    result = apply_integrity_checks(
+        correction, scheme, gemini_client=None, settings=IntegritySettings()
+    )
+    flagged = result.questions[0]
+    assert flagged.plagiarism_flagged is True
+    assert flagged.review_reason is not None
+    return flagged.review_reason
+
+
+def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only_console_path(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Console twin of ``test_review_queue_blank_with_integrity_flag_queues_plagiarism_only``
+    (``tests/test_attempt_repo.py``) — third round of independent review.
+
+    ``apply_integrity_checks`` APPENDS to ``review_reason`` rather than
+    replacing it and forces ``needs_teacher_review`` True, either of which used
+    to be able to defeat the blank exemption — first through a whole-field
+    equality test on ``review_reason``, then through a ``" | "``-split
+    membership test that needed its own ``plagiarism_flagged`` gate. Task #36
+    put the exemption on ``marker_source == "blank"``, which no appended text
+    can reach. The invariant is unchanged: this must be exempted from
+    ``low_confidence`` on the console path exactly as on the attempt path,
+    leaving only the real ``plagiarism_flag`` reason.
+    """
+    from lemely.db.models.enums import ReviewReason
+    from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
+
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    flagged_blank = _question(
+        "3",
+        awarded=0,
+        maximum=1,
+        confidence_score=0.0,
+        needs_review=True,
+        review_reason=f"{_BLANK_ANSWER_REVIEW_REASON} | {_real_plagiarism_review_reason()}",
+        marker_source="blank",
+        plagiarism_flagged=True,
+    )
+    paper_id = _seed_console_paper(pg_sessionmaker, uploader=teacher, questions=[flagged_blank])
+
+    with pg_sessionmaker() as session:
+        items = session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.teacher_paper_id == paper_id)
+        ).all()
+        reasons = {item.reason for item in items}
+        # ONLY plagiarism_flag -- no fabricated low_confidence row.
+        assert reasons == {ReviewReason.plagiarism_flag}
+
+
+def test_review_reasons_for_structural_flag_survives_plagiarism_flag() -> None:
+    """Finding A (US-039 consumer-fixes brief) -- Important, MUST-FIX.
+
+    ``marking_flagged = needs_teacher_review and not plagiarism_flagged``
+    used to drop the marking side's ``low_confidence`` row for *every*
+    plagiarism-flagged question, including one the marker flagged for a
+    structural reason (here, an out-of-range mark) at a confidence
+    **above** ``REVIEW_CONFIDENCE_THRESHOLD``. The four structural reasons
+    (``out_of_range``, ``value_mismatch``, ``coherence_mismatch``,
+    ``no_span``) are documented as independent of the stated confidence
+    (``correction_ai.py:1043-1055``), so losing the row loses the sole
+    signal that the marker misread the mark scheme -- not a spurious
+    duplicate.
+
+    No unit test at this producer x flag tuple existed before this fix.
+    Runs the REAL ``apply_integrity_checks`` pipeline to append the
+    plagiarism segment (mirrors ``_real_plagiarism_review_reason`` above),
+    rather than hand-typing it, so this cannot silently drift from what the
+    real producer appends.
+    """
+    from lemely.core.loose_schemas import MarkScheme
+    from lemely.db.models.enums import ReviewReason
+    from lemely.db.review_queue_rules import review_reasons_for
+    from lemely.io.integrity import apply_integrity_checks
+    from lemely.runtime.config import IntegritySettings
+
+    verbatim = "gravity acts on the object"
+    scheme = MarkScheme.model_validate(
+        {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "theory_extended",
+                "maximum_mark": 3,
+                "scheme_format": "mixed",
+            },
+            "questions": [
+                {
+                    "id": "1",
+                    "marks": 3,
+                    "type": "explanation",
+                    "answer_points": [{"id": "p1", "point": verbatim, "marks": 3}],
+                },
+            ],
+        }
+    )
+    out_of_range_reason = "marker returned 4 marks for a 3-mark question (clamped to 3)"
+    structural = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=3,
+        maximum_marks=3,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.97,
+        needs_teacher_review=True,
+        review_reason=out_of_range_reason,
+        student_answer=verbatim,
+        expected_answer=verbatim,
+        marker_source="ai",
+    )
+    # Sanity: before any integrity flag, the structural reason alone queues.
+    assert list(review_reasons_for(structural)) == [ReviewReason.low_confidence]
+
+    correction = CorrectionResult(
+        metadata=ExamMetadata(
+            subject_code="0625",
+            paper_number=1,
+            paper_variant=2,
+            session_month="May/June",
+            session_year=2020,
+        ),
+        questions=[structural],
+    )
+    flagged = apply_integrity_checks(
+        correction, scheme, gemini_client=None, settings=IntegritySettings()
+    ).questions[0]
+    assert flagged.plagiarism_flagged is True
+    assert flagged.review_reason == f"{out_of_range_reason} | plagiarism (score 1.00)"
+
+    # The bug this guards: with the old ``not plagiarism_flagged`` check,
+    # both disjuncts of ``low_confidence`` were silenced by the plagiarism
+    # flag, leaving only ``plagiarism_flag``. With the fix, the structural
+    # reason survives alongside it.
+    assert set(review_reasons_for(flagged)) == {
+        ReviewReason.low_confidence,
+        ReviewReason.plagiarism_flag,
+    }
+
+
+def test_review_reasons_for_blank_carveout_does_not_fire_without_plagiarism_flag() -> None:
+    """The prose collision, kept as the pin on task #36's removal of the prose test.
+
+    This test was written for a real bug. Fixing Finding A by adding an
+    ``_is_unflagged_blank(question)`` disjunct to ``marking_flagged``'s
+    suppression fired for a NON-blank question whose ``review_reason`` merely
+    COLLIDED with ``_BLANK_ANSWER_REVIEW_REASON``, silencing a real
+    marking-side ``low_confidence`` row with no plagiarism flag in sight -- so
+    the exemption had to be gated on ``plagiarism_flagged`` as well, to stand in
+    for "``needs_teacher_review`` was forced True by integrity, not set by the
+    builder".
+
+    Task #36 made the collision unreachable rather than gated: the exemption
+    reads ``marker_source == "blank"`` and the row below is ``"missing"``, so no
+    text it carries can silence it. The assertions are unchanged and are now the
+    pin -- this goes red if the prose test is ever reintroduced, which is the
+    only way this row could be exempted again.
+    """
+    from lemely.db.models.enums import ReviewReason
+    from lemely.db.review_queue_rules import review_reasons_for
+    from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
+
+    colliding_missing_question = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=0,
+        maximum_marks=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.0,
+        needs_teacher_review=True,
+        review_reason=_BLANK_ANSWER_REVIEW_REASON,
+        marker_source="missing",
+        plagiarism_flagged=False,
+    )
+    # The bug this guards: gating the blank carve-out on
+    # ``_is_unflagged_blank`` alone -- without also requiring
+    # ``plagiarism_flagged`` -- silences this row entirely (``[]``) even
+    # though no integrity check ever ran to force ``needs_teacher_review``.
+    assert list(review_reasons_for(colliding_missing_question)) == [ReviewReason.low_confidence]
+
+
 def test_get_item_unknown_id_is_not_found(
     pg_sessionmaker: sessionmaker[Session],
     class_service: ClassService,
@@ -512,6 +881,346 @@ def test_get_item_malformed_id_is_value_error(
     teacher = _seed_user(pg_sessionmaker, Role.teacher)
     with pytest.raises(ValueError, match="must be a UUID"):
         review_service.get_item(teacher, Role.teacher, "not-a-uuid")
+
+
+# ── I6/I7 (US-013) marker verdicts on ReviewItemPoint (US-046) ──────────────
+
+
+def _two_point_scheme() -> MarkScheme:
+    """A one-question, two-point scheme, just enough for the point ledger
+
+    (``derive_point_rows``) to actually run: without a mark scheme,
+    ``AttemptRepository.persist_correction`` never writes
+    ``question_result_points`` rows at all (``_safe_derive_point_rows``).
+    """
+    return MarkScheme.model_validate(
+        {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "9999",
+                "paper_number": 1,
+                "paper_variant": 1,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "theory_core",
+                "maximum_mark": 2,
+                "scheme_format": "point_based",
+            },
+            "questions": [
+                {
+                    "id": "1",
+                    "marks": 2,
+                    "type": "explanation",
+                    "answer_points": [
+                        {"id": "p1", "point": "States the law", "marks": 1},
+                        {"id": "p2", "point": "Gives the unit", "marks": 1},
+                    ],
+                },
+            ],
+        }
+    )
+
+
+def _question_with_verdicts(
+    point_verdicts: list[PointVerdict], *, needs_review: bool = True
+) -> CorrectedQuestion:
+    # `derive_point_rows` derives `awarded` from `matched_point_ids`, not from
+    # `verdict` (`lemely/db/question_points.py`) -- the two are meant to
+    # agree (`ReviewItemPoint`'s own invariant: `awarded == (verdict ==
+    # "awarded")`), so a verdict-carrying fixture must set both consistently
+    # itself, the same way the real marker's `_build_ai_corrected` does.
+    awarded_ids = [v.point_id for v in point_verdicts if v.verdict == "awarded"]
+    return CorrectedQuestion(
+        question_id="1",
+        awarded_marks=len(awarded_ids),
+        maximum_marks=2,
+        confidence=ConfidenceBand.LOW if needs_review else ConfidenceBand.HIGH,
+        confidence_score=0.3 if needs_review else 0.95,
+        needs_teacher_review=needs_review,
+        student_answer="answer-1",
+        expected_answer="expected-1",
+        topic="Waves",
+        marker_source="ai",
+        matched_point_ids=awarded_ids,
+        point_verdicts=point_verdicts,
+    )
+
+
+def test_get_item_marker_verdicts_render_for_every_point_including_never_self_marked(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """The actual defect US-046 exists to fix, at the data-plumbing layer:
+
+    a point the marker verdicted, that the student never self-marked, must
+    still reach ``ReviewItemDetail.points`` (``student_selfmark`` stays
+    ``None`` throughout this test -- no self-review ever runs). ``withheld``
+    and ``unverifiable`` both read ``awarded=False``; ``verdict`` is what
+    still tells them apart.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = _question_with_verdicts(
+        [
+            PointVerdict(point_id="p1", verdict="unverifiable", evidence_span="tried it"),
+            PointVerdict(point_id="p2", verdict="withheld", evidence_span="", ecf_applied=True),
+        ]
+    )
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student),
+        report=_report([question]),
+        mark_scheme=_two_point_scheme(),
+    )
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    detail = review_service.get_item(teacher, Role.teacher, item.id)
+    assert len(detail.points) == 2
+    by_id = {p.mark_point_id: p for p in detail.points}
+
+    p1 = by_id["p1"]
+    assert p1.verdict == "unverifiable"
+    assert p1.awarded is False
+    assert p1.evidence_span == "tried it"
+    assert p1.ecf_applied is False
+    assert p1.student_selfmark is None  # never self-marked -- the defect this fixes
+
+    p2 = by_id["p2"]
+    assert p2.verdict == "withheld"
+    assert p2.awarded is False
+    assert p2.evidence_span == ""
+    assert p2.ecf_applied is True
+    assert p2.student_selfmark is None
+
+    # The distinction I6 exists to carry: both collapse to awarded=False,
+    # but verdict still tells them apart.
+    assert p1.verdict != p2.verdict
+
+
+def test_get_item_awarded_verdict_with_ecf_applied(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """The third verdict, ``awarded``, combined with I7's ``ecf_applied``:
+
+    a point can be awarded only after re-marking against a substituted
+    prior value, and that provenance must survive to the teacher screen.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = _question_with_verdicts(
+        [
+            PointVerdict(point_id="p1", verdict="awarded", evidence_span="42", ecf_applied=True),
+            PointVerdict(point_id="p2", verdict="awarded", evidence_span="m/s"),
+        ],
+        needs_review=True,
+    )
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student),
+        report=_report([question]),
+        mark_scheme=_two_point_scheme(),
+    )
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    detail = review_service.get_item(teacher, Role.teacher, item.id)
+    by_id = {p.mark_point_id: p for p in detail.points}
+    assert by_id["p1"].verdict == "awarded"
+    assert by_id["p1"].awarded is True
+    assert by_id["p1"].ecf_applied is True
+    assert by_id["p2"].verdict == "awarded"
+    assert by_id["p2"].ecf_applied is False
+
+
+def test_get_item_unknown_verdict_value_is_dropped_and_logged(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """A DB ``verdict`` value outside the three known members is a data
+
+    defect (only ``derive_point_rows`` writes this column, and it writes
+    only the three ``PointVerdict.verdict`` members) -- never manual SQL or
+    a future migration this reader was not taught about. It must never
+    crash the teacher's screen and must never be silently rendered as one
+    of the three real verdicts: it is logged and carried as ``None``, the
+    same value a legacy (non-verdict) point already carries.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = _question_with_verdicts(
+        [PointVerdict(point_id="p1", verdict="awarded", evidence_span="did it")]
+    )
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student),
+        report=_report([question]),
+        mark_scheme=_two_point_scheme(),
+    )
+    with pg_sessionmaker() as session:
+        session.execute(
+            sa.text(
+                "UPDATE question_result_points SET verdict = :bogus WHERE mark_point_id = 'p1'"
+            ),
+            {"bogus": "definitely_not_a_real_verdict"},
+        )
+        session.commit()
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    with structlog.testing.capture_logs() as captured:
+        detail = review_service.get_item(teacher, Role.teacher, item.id)
+
+    p1 = next(p for p in detail.points if p.mark_point_id == "p1")
+    assert p1.verdict is None  # never the corrupted raw value, never a guessed real one
+
+    events = [e for e in captured if e.get("event") == "review_point_verdict_unknown"]
+    assert len(events) == 1, captured
+    assert events[0]["log_level"] == "warning"
+    assert events[0]["mark_point_id"] == "p1"
+    assert events[0]["verdict"] == "definitely_not_a_real_verdict"
+
+
+def test_get_item_point_carries_the_markers_rationale_on_the_legacy_path(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """``rationale`` is populated by ``derive_point_rows`` on the legacy path
+
+    too (from ``point_notes``, no ``point_verdicts`` at all), so it reaches
+    the teacher screen today, with ``equivalence_gate`` off -- unlike
+    ``verdict``, which is I6-only.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=1,
+        maximum_marks=2,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.3,
+        needs_teacher_review=True,
+        student_answer="answer-1",
+        expected_answer="expected-1",
+        topic="Waves",
+        marker_source="ai",
+        matched_point_ids=["p1"],
+        point_notes={"p1": "method mark: 2x not shown"},
+    )
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student),
+        report=_report([question]),
+        mark_scheme=_two_point_scheme(),
+    )
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    detail = review_service.get_item(teacher, Role.teacher, item.id)
+    p1 = next(p for p in detail.points if p.mark_point_id == "p1")
+    assert p1.rationale == "method mark: 2x not shown"
+    assert p1.verdict is None  # legacy path: no PointVerdict ever written
+
+
+def test_get_item_reports_a_source_box_when_one_was_persisted(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """The teacher screen must know whether a crop exists before asking for it.
+
+    The attempt carries an ``upload_id`` because the flag reports on both halves
+    of "a crop may be available", not just the box: an attempt with a box and no
+    scan behind it is one the crop route is certain to refuse, and this fixture
+    used to be exactly that — it asserted ``True`` for an item that could never
+    produce an image. See ``ReviewItemDetail.has_source_box``.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = _question("1", awarded=1, maximum=2, confidence_score=0.3, needs_review=True)
+    question.source_box = SourceBox(page=1, box=[10, 20, 30, 40])
+    upload_id = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Upload(
+                id=upload_id,
+                user_id=student,
+                storage_path=f"students/{student}/{upload_id.hex}/scan.pdf",
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=11,
+            )
+        )
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student), report=_report([question]), upload_id=upload_id
+    )
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    detail = review_service.get_item(teacher, Role.teacher, item.id)
+
+    assert detail.has_source_box is True
+
+
+def test_get_item_reports_no_source_box_when_the_attempt_has_no_upload(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """A box with no scan behind it must not be reported as a crop.
+
+    The flag's published contract is that a crop *may* be available and that a
+    404 is absence rather than an error. "May" covers storage expiry, which is a
+    timing condition nothing here can rule out — it does not cover a case the
+    route is certain to refuse on data this very read already holds.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = _question("1", awarded=1, maximum=2, confidence_score=0.3, needs_review=True)
+    question.source_box = SourceBox(page=1, box=[10, 20, 30, 40])
+    attempt_id = _seed_attempt_with_review_items(pg_sessionmaker, student, [question])
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    detail = review_service.get_item(teacher, Role.teacher, item.id)
+
+    assert detail.has_source_box is False
+
+
+def test_get_item_reports_no_source_box_when_the_columns_are_null(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """The common case. `source_box=NULL` is normal, not an error: the extractor
+
+    may return no box, and a box it returned may have been dropped as unusable.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = _question("1", awarded=1, maximum=2, confidence_score=0.3, needs_review=True)
+    attempt_id = _seed_attempt_with_review_items(pg_sessionmaker, student, [question])
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    detail = review_service.get_item(teacher, Role.teacher, item.id)
+
+    assert detail.has_source_box is False
+
+
+def test_get_item_reports_no_source_box_for_a_console_item_even_when_one_exists(
+    pg_sessionmaker: sessionmaker[Session],
+    review_service: ReviewService,
+) -> None:
+    """Pins the deliberate `False` for a console item, box or not (Plan 2 Task 3).
+
+    A console-graded question's `CorrectedQuestion` frequently *does* carry a
+    real `source_box` in `report_json` -- `correct_paper` attaches one
+    whenever the extractor found one, console papers included, exactly like
+    an attempt. But `_console_item_detail` reports `False` regardless,
+    because the crop route (Task 4) serves only attempt-backed items: a
+    console item's `upload_id` is NULL, so the route 404s there. Reporting
+    `True` would promise a crop affordance that 404s.
+    """
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    question = _question("1", awarded=1, maximum=2, confidence_score=0.3, needs_review=True)
+    question.source_box = SourceBox(page=1, box=[10, 20, 30, 40])
+    paper_id = _seed_console_paper(pg_sessionmaker, uploader=teacher, questions=[question])
+    with pg_sessionmaker() as session:
+        console_item = session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.teacher_paper_id == paper_id)
+        ).one()
+
+    detail = review_service.get_item(teacher, Role.teacher, console_item.id)
+
+    assert detail.has_source_box is False
 
 
 # ── resolve (accept / override) ─────────────────────────────────────────────
@@ -1056,3 +1765,232 @@ def test_module_level_recompute_is_what_the_service_uses(
             ).all()
             == []
         )
+
+
+# ── The crop lookup (`get_item_crop_source`) ────────────────────────────────
+#
+# The route that consumes this serves an image of a real student's handwriting,
+# so every scan below is a path string only: nothing here reads or writes bytes,
+# and no fixture in this file is, or derives from, a real scan.
+
+_CROP_BOX = [100, 100, 300, 400]  # [ymin, xmin, ymax, xmax], 0-1000 scale
+
+
+def _seed_boxed_item(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    *,
+    page: int | None = 1,
+    with_upload: bool = True,
+    student_name: str = "Amelia",
+) -> tuple[uuid.UUID, uuid.UUID, str | None]:
+    """Seed one attempt-backed review item. Returns ``(teacher, item_id, path)``.
+
+    ``page=None`` leaves the five ``source_box_*`` columns NULL (the common
+    case); ``with_upload=False`` leaves ``attempts.upload_id`` NULL (a quiz or
+    a seeded attempt, which never had a scan).
+    """
+    teacher, student = _seed_teacher_with_student(
+        pg_sessionmaker, class_service, student_name=student_name
+    )
+
+    upload_id: uuid.UUID | None = None
+    object_path: str | None = None
+    if with_upload:
+        upload_id = uuid.uuid4()
+        object_path = f"students/{student}/{upload_id.hex}/scan.pdf"
+        with pg_sessionmaker.begin() as session:
+            session.add(
+                Upload(
+                    id=upload_id,
+                    user_id=student,
+                    storage_path=object_path,
+                    original_filename="scan.pdf",
+                    content_type="application/pdf",
+                    byte_size=11,
+                )
+            )
+
+    question = _question("1", awarded=0, maximum=2, confidence_score=0.3, needs_review=True)
+    if page is not None:
+        question.source_box = SourceBox(page=page, box=list(_CROP_BOX))
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student), report=_report([question]), upload_id=upload_id
+    )
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+    return teacher, item.id, object_path
+
+
+def test_get_item_crop_source_returns_the_stored_path_and_the_box(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """The two things the crop route needs, and nothing else."""
+    teacher, item_id, object_path = _seed_boxed_item(pg_sessionmaker, class_service)
+
+    path, box = review_service.get_item_crop_source(teacher, Role.teacher, item_id)
+
+    assert path == object_path
+    assert isinstance(box, SourceBox)
+    assert (box.page, box.box) == (1, _CROP_BOX)
+
+
+def test_get_item_crop_source_out_of_scope_is_ownership_error(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """The same visibility rule ``get_item`` applies, not a second one.
+
+    A teacher from another school must not be able to reach a student's scan
+    through the crop lookup when the detail lookup refuses them — which is
+    asserted here by requiring both to raise the same error for the same
+    caller and item.
+    """
+    intruder = _seed_user(pg_sessionmaker, Role.teacher)
+    owner, item_id, _ = _seed_boxed_item(pg_sessionmaker, class_service, student_name="B")
+
+    with pytest.raises(ReviewOwnershipError):
+        review_service.get_item(intruder, Role.teacher, item_id)
+    with pytest.raises(ReviewOwnershipError):
+        review_service.get_item_crop_source(intruder, Role.teacher, item_id)
+
+    # The owner gets the crop inputs from the same row, so the refusal above is
+    # a refusal and not a lookup that fails for everybody.
+    assert review_service.get_item_crop_source(owner, Role.teacher, item_id)[1].page == 1
+
+
+def test_get_item_crop_source_unknown_id_is_not_found(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    with pytest.raises(ReviewNotFoundError):
+        review_service.get_item_crop_source(teacher, Role.teacher, uuid.uuid4())
+
+
+def test_get_item_crop_source_malformed_id_is_value_error(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    with pytest.raises(ValueError, match="must be a UUID"):
+        review_service.get_item_crop_source(teacher, Role.teacher, "not-a-uuid")
+
+
+def test_get_item_crop_source_collapses_all_three_absences_to_one_message(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """No item, no upload and no box are deliberately indistinguishable.
+
+    A 404 that varied by reason would let a caller probe which of their
+    students have scans on file, and would confirm that a guessed id names a
+    real item. Only the id the caller itself supplied may differ between the
+    three messages.
+    """
+    teacher, no_box, _ = _seed_boxed_item(pg_sessionmaker, class_service, page=None)
+    teacher_b, no_upload, _ = _seed_boxed_item(
+        pg_sessionmaker, class_service, with_upload=False, student_name="B"
+    )
+    unknown = uuid.uuid4()
+
+    messages = []
+    for caller, item_id in ((teacher, no_box), (teacher_b, no_upload), (teacher, unknown)):
+        with pytest.raises(ReviewNotFoundError) as caught:
+            review_service.get_item_crop_source(caller, Role.teacher, item_id)
+        messages.append(str(caught.value).replace(str(item_id), "<id>"))
+
+    assert len(set(messages)) == 1, messages
+
+
+def test_get_item_crop_source_console_item_is_not_found(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """Console papers are out of scope for the crop route (issue #245).
+
+    Not for want of a scan: a console paper's scan is a ``TeacherPaper``
+    upload and its box is often inside ``report_json``. Reaching it would need
+    a second lookup against ``teacher_paper_visible``, whose ``platform_admin``
+    grant this queue refuses on purpose — so this lookup declines to reach a
+    console paper at all rather than inherit that grant one layer out.
+    """
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    paper_id = _seed_console_paper(
+        pg_sessionmaker,
+        uploader=teacher,
+        questions=[_question("1", awarded=0, maximum=2, confidence_score=0.3, needs_review=True)],
+    )
+    with pg_sessionmaker() as session:
+        item = session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.teacher_paper_id == paper_id)
+        ).first()
+    assert item is not None
+
+    with pytest.raises(ReviewNotFoundError):
+        review_service.get_item_crop_source(teacher, Role.teacher, item.id)
+
+
+def test_get_item_crop_source_hands_back_an_independent_box_each_call(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """Mutating a returned box must not reach the next caller's copy.
+
+    The natural way to render a crop is to rescale the 0-1000 coordinates to
+    pixels in place. Task 1 shipped a deep copy on the way *in* specifically to
+    stop that aliasing the extractor's own box; a shared box on the way *out*
+    would reopen the same hole one layer further on.
+    """
+    teacher, item_id, _ = _seed_boxed_item(pg_sessionmaker, class_service)
+
+    _, first = review_service.get_item_crop_source(teacher, Role.teacher, item_id)
+    first.box[0] = 999
+    first.box[2] = 1000
+    _, second = review_service.get_item_crop_source(teacher, Role.teacher, item_id)
+
+    assert second.box == _CROP_BOX
+    assert second.box is not first.box
+
+
+def test_get_item_crop_source_refuses_a_box_the_constraints_would_now_reject(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """Reconstructing a real ``SourceBox`` re-runs the validator, and fails closed.
+
+    The positive-area CHECK is dropped here to produce the row, because
+    Postgres will not otherwise let one exist — which is the point: this guard
+    is for the row the constraint was added to prevent (a box written before
+    it, or by a future migration that relaxed it), not for one the constraint
+    lets through. Without it the inverted rectangle reaches ``PIL.Image.crop``,
+    which does not raise on one: it returns an empty image, and a blank crop
+    beside a real student's answer is the one outcome
+    ``CorrectedQuestion.source_box`` forbids.
+    """
+    teacher, item_id, _ = _seed_boxed_item(pg_sessionmaker, class_service)
+
+    with pg_sessionmaker.begin() as session:
+        name = session.execute(
+            sa.text(
+                "SELECT conname FROM pg_constraint WHERE conrelid = 'question_results'::regclass "
+                "AND conname LIKE '%positive_area%'"
+            )
+        ).scalar_one()
+        session.execute(sa.text(f'ALTER TABLE question_results DROP CONSTRAINT "{name}"'))
+        session.execute(
+            sa.update(QuestionResult)
+            .where(QuestionResult.source_box_page.is_not(None))
+            .values(source_box_ymax=sa.literal(100), source_box_ymin=sa.literal(300))
+        )
+
+    with pytest.raises(ReviewValidationError):
+        review_service.get_item_crop_source(teacher, Role.teacher, item_id)

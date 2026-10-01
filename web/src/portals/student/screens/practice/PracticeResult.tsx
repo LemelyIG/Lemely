@@ -132,13 +132,14 @@ export function PracticeResult() {
           const { awardedMarks, maximumMarks, questions } = view
           const summary = questions.reduce(
             (acc, q) => {
-              const tier = confidenceBandTier(q.confidenceBand)
+              const tier = confidenceBandTier(q.confidenceBand, q.markerSource, q.needsTeacherReview)
               if (tier === "confident") acc.confident += 1
               else if (tier === "uncertain") acc.uncertain += 1
+              else if (tier === "not-marked") acc.notMarked += 1
               else acc.needsReview += 1
               return acc
             },
-            { confident: 0, uncertain: 0, needsReview: 0 },
+            { confident: 0, uncertain: 0, needsReview: 0, notMarked: 0 },
           )
 
           return (
@@ -170,6 +171,7 @@ export function PracticeResult() {
                 confident={summary.confident}
                 uncertain={summary.uncertain}
                 needsReview={summary.needsReview}
+                notMarked={summary.notMarked}
               />
 
               <Card>
@@ -185,7 +187,11 @@ export function PracticeResult() {
                           awarded={q.awardedMarks}
                           available={q.totalMarks}
                           state={practiceMarkState(q.awardedMarks, q.totalMarks)}
-                          confidence={confidenceBandTier(q.confidenceBand)}
+                          confidence={confidenceBandTier(
+                            q.confidenceBand,
+                            q.markerSource,
+                            q.needsTeacherReview,
+                          )}
                           topic={formatQuestionTopic(q.topic)}
                         />
                       ))}

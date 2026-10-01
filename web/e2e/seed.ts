@@ -100,6 +100,29 @@ export interface SeedContract {
     attemptId: string
     /** A key into `students` — the seed currently sends `"inactive"`. */
     studentKey: keyof SeedContract["students"]
+    /**
+     * Task #67: a SECOND review-queue row (its own dedicated student, in its
+     * own third class of the same teacher's) whose one question carries a
+     * mark scheme but neither a verdict nor a rationale on any point — the
+     * legacy shape `MarkerVerdicts`' section-suppression guard exists to
+     * hide (`web/src/portals/teacher/screens/ReviewItem.tsx`), and the only
+     * shape production sees today (`equivalence_gate` defaults off). Not
+     * tied to a `students` entry — the account behind it exists only to own
+     * this attempt; no spec needs to log in as it.
+     */
+    legacyItemId: string
+    legacyAttemptId: string
+    /**
+     * A THIRD review-queue row (final-review coverage gap), whose one
+     * question carries a marker's `rationale` (Python's `point_notes`) but
+     * no `verdict` on any point -- the shape production ships whenever a
+     * marker writes a note without `equivalence_gate` on, and exactly the
+     * shape `MarkerVerdicts`' guard was widened
+     * (`p.verdict !== null || p.rationale`) to keep rendering. Not tied to a
+     * `students` entry, same as `legacyItemId` above.
+     */
+    rationaleOnlyItemId: string
+    rationaleOnlyAttemptId: string
   }
   quiz: {
     quizId: string

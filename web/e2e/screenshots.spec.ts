@@ -56,11 +56,67 @@ function uniqueEmail(tag: string): string {
   return `e2e-shots-${tag}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`
 }
 
-async function apiSignUp(request: APIRequestContext, email: string): Promise<void> {
+interface SignedUpAccount {
+  accessToken: string
+  /** `/verify-email/<token>` — see `apiVerifyEmail` for why this suite redeems
+   * it directly rather than through the dev-link UI. */
+  devLink: string | null
+}
+
+/** Returns the fresh account's access token (and dev verification link), so
+ * the caller can also drive `apiCompleteOnboarding` / `apiVerifyEmail` below
+ * without a second sign-in round trip. */
+async function apiSignUp(request: APIRequestContext, email: string): Promise<SignedUpAccount> {
   const res = await request.post(`${BACKEND_URL}/api/auth/signup`, {
-    data: { email, password: PASSWORD, role: "student" },
+    data: { email, password: PASSWORD, role: "student", acceptedTerms: true },
   })
   expect(res.ok(), `signup failed: ${res.status()} ${await res.text()}`).toBeTruthy()
+  const { accessToken, devLink } = (await res.json()) as {
+    accessToken: string
+    devLink: string | null
+  }
+  return { accessToken, devLink }
+}
+
+/*
+ * D7.5's gate (`canStartRun`, `web/src/lib/uploadRun.ts`) refuses to start a
+ * marking run for an unverified email — and a freshly signed-up account is
+ * unverified by construction, so this corpus's own "Mark this paper" click
+ * would otherwise never leave a disabled button. Verifying through the real
+ * `/verify-email/:token` UI (as `signup.spec.ts` does, because that IS what
+ * it tests) would capture a screen this corpus doesn't own, so this redeems
+ * `devLink` — the exact token the UI's link carries, minted by
+ * `AuthService.signup` for local/test environments (spec §4.4, D7.4/D7.6/
+ * D7.7) — straight against the same public endpoint the link's page calls
+ * (`POST /api/auth/verify-email`, `lemely/web/routers/auth.py`).
+ */
+async function apiVerifyEmail(request: APIRequestContext, devLink: string | null): Promise<void> {
+  expect(devLink, "signup did not mint a dev verification link").not.toBeNull()
+  const token = devLink!.split("/").pop()
+  const res = await request.post(`${BACKEND_URL}/api/auth/verify-email`, {
+    data: { token },
+  })
+  expect(res.ok(), `verify-email failed: ${res.status()} ${await res.text()}`).toBeTruthy()
+}
+
+/*
+ * D7.9's onboarding gate (`studentOnboardingRedirect`,
+ * `web/src/portals/student/index.tsx`) sends any student whose profile has
+ * no `onboardingCompletedAt` to `/student/onboard` on every navigation,
+ * including the very first one after signup — this corpus's freshly minted
+ * accounts are no exception. Driving the wizard through the real UI would
+ * capture screens this corpus doesn't own (S-01/S-02, `phase4-journey.spec.ts`'s
+ * job), so this calls the same completion endpoint the wizard itself calls
+ * (`POST /api/me/student-profile/complete-onboarding`,
+ * `lemely/web/routers/me.py`) directly, which needs no prior subject
+ * enrolment — matching this suite's own scope of "reach /student/correct",
+ * not "onboard a student".
+ */
+async function apiCompleteOnboarding(request: APIRequestContext, accessToken: string): Promise<void> {
+  const res = await request.post(`${BACKEND_URL}/api/me/student-profile/complete-onboarding`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  expect(res.ok(), `complete-onboarding failed: ${res.status()} ${await res.text()}`).toBeTruthy()
 }
 
 async function loginUI(page: Page, email: string): Promise<void> {
@@ -87,7 +143,12 @@ for (const bp of BREAKPOINTS) {
 
       const request = await playwright.request.newContext()
       const email = uniqueEmail(`main-${bp.width}`)
-      await apiSignUp(request, email)
+      const account = await apiSignUp(request, email)
+      await apiCompleteOnboarding(request, account.accessToken)
+      // Unlike the empty-state flow below, this one submits a real marking
+      // run — D7.5's gate needs a verified email for that (see
+      // `apiVerifyEmail`).
+      await apiVerifyEmail(request, account.devLink)
       await request.dispose()
       await loginUI(page, email)
 
@@ -201,7 +262,8 @@ for (const bp of BREAKPOINTS) {
 
       const request = await playwright.request.newContext()
       const email = uniqueEmail(`empty-${bp.width}`)
-      await apiSignUp(request, email)
+      const account = await apiSignUp(request, email)
+      await apiCompleteOnboarding(request, account.accessToken)
       await request.dispose()
       await loginUI(page, email)
 

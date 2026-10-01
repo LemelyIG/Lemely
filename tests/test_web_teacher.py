@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import sys
 import threading
 import time
 import uuid
@@ -80,6 +81,16 @@ if TYPE_CHECKING:
 # fixture (see e.g. tests/test_cli.py's REAL_MARK_SCHEME, the pre-parsed JSON
 # sibling of this same PDF).
 _REAL_SCHEME_PDF = Path("Sources/Physics/MarkingSchemes/0625_m20_ms_12.pdf")
+
+
+class _StopForTest(Exception):
+    """Raised by a ``correct_paper`` spy to short-circuit ``grade_paper``.
+
+    Lets the ``equivalence_gate`` forwarding tests below assert on the
+    kwargs ``grade_paper`` passed along, without needing a Gemini client or
+    letting the (unmocked) rest of the pipeline run.
+    """
+
 
 # ---------------------------------------------------------------------------
 # Fixtures.
@@ -581,6 +592,337 @@ def test_upload_over_size_cap_is_413(client: TestClient, monkeypatch: pytest.Mon
     assert resp.status_code == 413
 
 
+def test_upload_rejects_an_oversized_page_geometry_with_422(
+    client: TestClient, storage_backend: FakeStorageBackend
+) -> None:
+    """Spec 2026-09-26 §6: a PDF that declares a 14400 pt page is refused at
+    upload with a clear 422, before it is stored; 413 stays for byte size."""
+    import io
+
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument.new()
+    pdf.new_page(14400, 14400)
+    buf = io.BytesIO()
+    pdf.save(buf)
+    pdf.close()
+    resp = client.post(
+        "/api/papers/upload",
+        files={"scan": ("scan.pdf", buf.getvalue(), "application/pdf")},
+    )
+    assert resp.status_code == 422
+    assert "too large to process" in resp.json()["detail"]
+    assert storage_backend._objects == {}, "a rejected scan must never reach storage"
+
+
+def test_upload_rejects_a_scan_over_the_total_pixel_cap_with_422(
+    client: TestClient, storage_backend: FakeStorageBackend
+) -> None:
+    """Final review I1: 40 pages that each pass the per-page cap but together
+    cannot fit 160 Mpx at the 100 DPI floor are refused at upload."""
+    import io
+
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument.new()
+    for _ in range(40):
+        pdf.new_page(1700, 1700)
+    buf = io.BytesIO()
+    pdf.save(buf)
+    pdf.close()
+    resp = client.post(
+        "/api/papers/upload",
+        files={"scan": ("scan.pdf", buf.getvalue(), "application/pdf")},
+    )
+    assert resp.status_code == 422
+    assert "160 megapixels" in resp.json()["detail"]
+    assert storage_backend._objects == {}, "a rejected scan must never reach storage"
+
+
+def test_upload_rejects_a_content_stream_bomb_with_422(client: TestClient) -> None:
+    """Task 11b: normal A4 geometry, 218 KB on the wire, 112 MB of path
+    operators once inflated -- refused at upload from the raw stream."""
+    from tests.pdf_fakes import page_bomb_pdf
+
+    resp = client.post(
+        "/api/papers/upload",
+        files={"scan": ("scan.pdf", page_bomb_pdf(112_000_000), "application/pdf")},
+    )
+    assert resp.status_code == 422
+    assert "drawing" in resp.json()["detail"]
+
+
+def test_an_upload_refused_for_its_content_is_logged_without_its_bytes(
+    client: TestClient,
+) -> None:
+    """Final review, Important 3: an upload the scan check refuses left no
+    trace in the logs, so an operator could not see why teachers' uploads
+    were failing. One structured line: the refusal class, the file's size
+    and its declared content type -- never the file itself."""
+    import structlog.testing
+
+    from tests.pdf_fakes import page_bomb_pdf
+
+    bomb = page_bomb_pdf(112_000_000)
+    with structlog.testing.capture_logs() as logs:
+        resp = client.post(
+            "/api/papers/upload",
+            files={"scan": ("scan.pdf", bomb, "application/pdf")},
+        )
+    assert resp.status_code == 422
+    refused = [entry for entry in logs if entry["event"] == "upload_refused"]
+    assert refused == [
+        {
+            "event": "upload_refused",
+            "log_level": "warning",
+            "refusal": "ScanTooLargeError",
+            "byte_size": len(bomb),
+            "content_type": "application/pdf",
+        }
+    ]
+
+
+def test_an_upload_over_the_byte_cap_is_logged_without_its_bytes() -> None:
+    """Final review, Important 3: the 413 for an upload over the byte cap
+    is logged the same way, with ``too_large`` as its refusal class."""
+    import structlog.testing
+    from fastapi import HTTPException
+
+    from lemely.web.upload_utils import check_upload_cap
+
+    with structlog.testing.capture_logs() as logs, pytest.raises(HTTPException) as caught:
+        check_upload_cap(b"x" * 9, max_bytes=8, content_type="image/png")
+    assert caught.value.status_code == 413
+    assert logs == [
+        {
+            "event": "upload_refused",
+            "log_level": "warning",
+            "refusal": "too_large",
+            "byte_size": 9,
+            "content_type": "image/png",
+        }
+    ]
+
+
+def test_preview_refuses_a_stored_content_stream_bomb(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """A stored upload that pre-dates the upload check is refused at render,
+    not rendered into an OOM. Seeded directly into storage: the upload route
+    now rejects the bomb, which is the point.
+
+    Fix round 2, minor 3: this route does not mock its renderer, so a
+    regression in `check_pdf_content` would render the real 112 MB bomb here
+    -- unlike the rasterise-level tests, which already patch pdfium's
+    `render`. Patches pymupdf's `Page.get_pixmap` the same way and asserts it
+    is never called, so a future regression fails this test cleanly instead
+    of rendering the bomb for real and risking the CI runner.
+    """
+    from unittest.mock import patch
+
+    import pymupdf
+
+    from tests.pdf_fakes import page_bomb_pdf
+
+    bomb = page_bomb_pdf(112_000_000)
+    paper_id = uuid.uuid4()
+    key = f"teacher/{teacher_user}/{paper_id.hex}/scan.pdf"
+    storage_backend.upload(settings.storage.bucket, key, bomb, "application/pdf")
+    paper_repo.create(
+        paper_id=paper_id,
+        uploaded_by=teacher_user,
+        storage_path=key,
+        scheme_storage_path=None,
+        original_filename="scan.pdf",
+        content_type="application/pdf",
+        byte_size=len(bomb),
+    )
+
+    with patch.object(pymupdf.Page, "get_pixmap") as get_pixmap:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+    get_pixmap.assert_not_called()
+    assert preview.status_code == 422
+    assert "drawing" in preview.json()["detail"]
+
+
+def test_preview_refuses_an_object_stream_bomb_before_opening_the_scan(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """Task 9c review round 2: with a broken xref, MuPDF repairs the file while
+    opening it and parses every object stream it finds -- a 20 KB file took a
+    bare ``pymupdf.open`` to 459 MB. The preview bounds object streams from
+    the raw bytes first: 422, and MuPDF never opens the file."""
+    from unittest.mock import patch
+
+    import pymupdf
+
+    from lemely.io.scan_limits import MAX_OBJECT_STREAM_BYTES
+    from tests.pdf_fakes import shared_container_broken_xref_pdf
+
+    scan = shared_container_broken_xref_pdf(MAX_OBJECT_STREAM_BYTES // 2 + 1_000)
+    paper_id = uuid.uuid4()
+    key = f"teacher/{teacher_user}/{paper_id.hex}/scan.pdf"
+    storage_backend.upload(settings.storage.bucket, key, scan, "application/pdf")
+    paper_repo.create(
+        paper_id=paper_id,
+        uploaded_by=teacher_user,
+        storage_path=key,
+        scheme_storage_path=None,
+        original_filename="scan.pdf",
+        content_type="application/pdf",
+        byte_size=len(scan),
+    )
+
+    with patch.object(pymupdf, "open", side_effect=AssertionError("MuPDF opened")) as opened:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+    opened.assert_not_called()
+    assert preview.status_code == 422, preview.text
+    assert "compressed internal data" in preview.json()["detail"]
+
+
+def test_preview_prescans_pdf_bytes_stored_under_an_image_content_type(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """Final review, item 4: the preview chose whether to pre-scan from the
+    client-supplied content type, but MuPDF sniffs the bytes -- PDF bytes
+    stored as ``image/png`` skipped the pre-scan and were repaired at open.
+    The preview decides from the bytes (``looks_like_pdf``), as the crop
+    route and extraction do: 422, and MuPDF never opens the file."""
+    from unittest.mock import patch
+
+    import pymupdf
+
+    from lemely.io.scan_limits import MAX_OBJECT_STREAM_BYTES
+    from tests.pdf_fakes import shared_container_broken_xref_pdf
+
+    scan = shared_container_broken_xref_pdf(MAX_OBJECT_STREAM_BYTES // 2 + 1_000)
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        scan,
+        content_type="image/png",
+        name="scan.png",
+    )
+
+    with patch.object(pymupdf, "open", side_effect=AssertionError("MuPDF opened")) as opened:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+    opened.assert_not_called()
+    assert preview.status_code == 422, preview.text
+    assert "compressed internal data" in preview.json()["detail"]
+
+
+def test_preview_of_image_bytes_stored_as_a_pdf_renders_the_image(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """The other way round: a PNG stored as ``application/pdf`` is drawn as the
+    image it is -- the bytes decide which opener runs, not the stored
+    content type."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 140), "white").save(buf, "PNG")
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        buf.getvalue(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 200, preview.text
+    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_preview_still_refuses_a_stored_scan_over_the_page_cap(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """User decision 2 (2026-09-29): the crop route dropped the page cap; the
+    preview route keeps it (#269 is about this route alone now). Seeded
+    directly into storage, as the upload route rejects the file."""
+    from unittest.mock import patch
+
+    import pymupdf
+
+    from lemely.io.scan_limits import MAX_SCAN_PAGES
+
+    doc = pymupdf.open()
+    for _ in range(MAX_SCAN_PAGES + 1):
+        doc.new_page(width=595.0, height=842.0)
+    scan: bytes = doc.tobytes()
+    doc.close()
+    paper_id = uuid.uuid4()
+    key = f"teacher/{teacher_user}/{paper_id.hex}/scan.pdf"
+    storage_backend.upload(settings.storage.bucket, key, scan, "application/pdf")
+    paper_repo.create(
+        paper_id=paper_id,
+        uploaded_by=teacher_user,
+        storage_path=key,
+        scheme_storage_path=None,
+        original_filename="scan.pdf",
+        content_type="application/pdf",
+        byte_size=len(scan),
+    )
+
+    with patch.object(pymupdf.Page, "get_pixmap") as get_pixmap:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+    get_pixmap.assert_not_called()
+    assert preview.status_code == 422
+    assert f"limit is {MAX_SCAN_PAGES}" in preview.json()["detail"]
+
+
+def test_upload_with_a_malformed_page_tree_still_succeeds(
+    client: TestClient, paper_repo: TeacherPaperRepository
+) -> None:
+    """Regression: a PDF that opens but has a page that will not load (a
+    broken ``/Kids`` entry, an inflated ``/Count``) used to crash this route
+    with a 500 (``lemely.io.scan_limits.plan_pdf_pages`` raised pypdfium2's
+    own ``PdfiumError``, uncaught). It must upload exactly like any other
+    scan this module cannot fully make sense of -- extraction handles it
+    later, same as before this task existed.
+
+    ``_settle`` drains the background grading job before the test (and its
+    DB fixtures) tear down -- without it, that job can still be rasterising
+    the malformed PDF (and legitimately failing on it) when the throwaway
+    Postgres connection it holds is closed underneath it.
+    """
+    from tests.pdf_fakes import pdf_with_missing_kid_object
+
+    resp = client.post(
+        "/api/papers/upload",
+        files={"scan": ("scan.pdf", pdf_with_missing_kid_object(), "application/pdf")},
+    )
+    assert resp.status_code == 200
+    _settle(paper_repo, resp.json()["paperId"])
+
+
 def test_detection_failure_is_recorded_without_failing_the_upload(
     settings: Settings,
     history_store: HistoryStore,
@@ -639,6 +981,46 @@ def test_detection_failure_is_recorded_without_failing_the_upload(
 # ---------------------------------------------------------------------------
 # Grading console.
 # ---------------------------------------------------------------------------
+
+
+def test_grade_paper_forwards_marking_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both flags must reach ``correct_paper``, not merely exist in settings.
+
+    A test of the default alone cannot detect an unreachable flag; US-005b's
+    original criteria passed while nothing could turn the gate on.
+    """
+    from lemely.runtime.config import IntegritySettings, MarkingOptions
+    from lemely.web.services import grading as grading_service
+
+    seen: dict[str, object] = {}
+
+    def _spy(**kwargs: object) -> None:
+        seen.update(kwargs)
+        raise _StopForTest
+
+    monkeypatch.setattr(grading_service, "correct_paper", _spy)
+    opts = MarkingOptions(equivalence_gate=True, ecf_substitution=True)
+    with pytest.raises(_StopForTest):
+        grading_service.grade_paper(
+            _scheme(), {}, integrity_settings=IntegritySettings(), options=opts
+        )
+    assert seen["options"] == opts
+
+
+def test_grade_paper_defaults_marking_options_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lemely.runtime.config import IntegritySettings, MarkingOptions
+    from lemely.web.services import grading as grading_service
+
+    seen: dict[str, object] = {}
+
+    def _spy(**kwargs: object) -> None:
+        seen.update(kwargs)
+        raise _StopForTest
+
+    monkeypatch.setattr(grading_service, "correct_paper", _spy)
+    with pytest.raises(_StopForTest):
+        grading_service.grade_paper(_scheme(), {}, integrity_settings=IntegritySettings())
+    assert seen["options"] == MarkingOptions()
 
 
 def test_upload_with_mark_scheme_grades_instead_of_stalling_at_queued(
@@ -942,6 +1324,96 @@ def test_console_upload_writes_no_history_record(
     assert history_store.list_students() == []
     # The marks are still reachable — they just live on the paper, not a student.
     assert client.get(f"/api/papers/{paper_id}").json()["awardedMarks"] == 2
+
+
+def test_grading_job_passes_marking_options_from_settings(
+    client: TestClient,
+    settings: Settings,
+    paper_repo: TeacherPaperRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The teacher grading job forwards ``settings.grading.marking_options()``.
+
+    Copies ``test_console_upload_writes_no_history_record``'s arrangement
+    (patch ``resolve_mark_scheme``/``extract_answers``/``grade_paper``, upload,
+    settle) but turns both flags on and asserts the ``options`` kwarg
+    ``grade_paper`` received.
+
+    Deliberately does NOT follow the env-var + ``deps.reset_singletons()``
+    recipe: this file's ``client`` fixture overrides FastAPI's
+    ``get_settings`` dependency directly with the ``settings`` fixture object
+    (see the ``client`` fixture above), which never calls the real,
+    ``lru_cache``d ``lemely.web.deps.get_settings()`` at all -- so an env var
+    change and a singleton-cache reset would have no path to this route's
+    ``settings``. The override is swapped for one carrying the flags instead,
+    the same way ``_key_settings``/``_key_client`` swap in a dummy API key.
+    """
+    from lemely.runtime.config import MarkingOptions
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    report = _report(needs_review=False, grade="A")
+    seen: dict[str, object] = {}
+
+    def _grade(*_a: object, **kwargs: object) -> AccuracyReport:
+        seen["options"] = kwargs.get("options")
+        return report
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: {"5b": "42"})
+    monkeypatch.setattr(grading_service, "grade_paper", _grade)
+
+    marking_settings = settings.model_copy(
+        update={
+            "grading": settings.grading.model_copy(
+                update={"equivalence_gate": True, "ecf_substitution": True}
+            )
+        }
+    )
+    client.app.dependency_overrides[get_settings] = lambda: marking_settings  # type: ignore[union-attr]
+
+    paper_id = _upload(client)
+    row = _settle(paper_repo, paper_id)
+
+    assert teacher._row_kind(row) == "graded"
+    assert seen["options"] == MarkingOptions(equivalence_gate=True, ecf_substitution=True)
+
+
+def test_grading_job_passes_integrity_settings_from_settings(
+    client: TestClient,
+    settings: Settings,
+    paper_repo: TeacherPaperRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#259, second caller: ``_run_grading_job`` called ``grade_paper``
+    without ``integrity_settings``, so a console paper was checked under the
+    defaults whatever ``[integrity]`` said; the student upload passes it.
+    Same arrangement as the marking-options test above."""
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    report = _report(needs_review=False, grade="A")
+    seen: dict[str, object] = {}
+
+    def _grade(*_a: object, **kwargs: object) -> AccuracyReport:
+        seen["integrity_settings"] = kwargs.get("integrity_settings")
+        return report
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: {"5b": "42"})
+    monkeypatch.setattr(grading_service, "grade_paper", _grade)
+
+    integrity_settings = settings.model_copy(
+        update={"integrity": settings.integrity.model_copy(update={"plagiarism_enabled": False})}
+    )
+    client.app.dependency_overrides[get_settings] = lambda: integrity_settings  # type: ignore[union-attr]
+
+    paper_id = _upload(client)
+    row = _settle(paper_repo, paper_id)
+
+    assert teacher._row_kind(row) == "graded"
+    assert seen["integrity_settings"] is integrity_settings.integrity
+    assert seen["integrity_settings"].plagiarism_enabled is False  # type: ignore[attr-defined]
 
 
 def test_progress_tracker_survives_another_streams_end_of_stream(
@@ -1415,6 +1887,196 @@ def test_preview_renders_page_one_as_png(client: TestClient) -> None:
     assert preview.status_code == 200
     assert preview.headers["content-type"] == "image/png"
     assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_preview_of_an_image_upload_still_succeeds(client: TestClient) -> None:
+    """Fix round 1, Important 1: `get_paper_preview` now runs
+    `check_pdf_content` on every stored scan, image uploads included --
+    `page.get_contents()` asserts on a document pymupdf opened as an image,
+    not a PDF, so a PNG/JPEG paper's preview must not turn into a 422."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 100), "white").save(buf, "PNG")
+
+    resp = client.post(
+        "/api/papers/upload",
+        files={"scan": ("scan.png", buf.getvalue(), "image/png")},
+    )
+    assert resp.status_code == 200
+    paper_id = resp.json()["paperId"]
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_preview_of_a_jpeg_upload_still_succeeds(client: TestClient) -> None:
+    """Fix round 2, minor 2: the same guard covers every non-PDF format the
+    console accepts, not just PNG."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 100), "white").save(buf, "JPEG")
+
+    resp = client.post(
+        "/api/papers/upload",
+        files={"scan": ("scan.jpg", buf.getvalue(), "image/jpeg")},
+    )
+    assert resp.status_code == 200
+    paper_id = resp.json()["paperId"]
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def _seed_stored_scan(
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+    scan: bytes,
+    *,
+    content_type: str,
+    name: str,
+) -> uuid.UUID:
+    """Store ``scan`` as a paper's upload directly, as a scan stored earlier would be."""
+    paper_id = uuid.uuid4()
+    key = f"teacher/{teacher_user}/{paper_id.hex}/{name}"
+    storage_backend.upload(settings.storage.bucket, key, scan, content_type)
+    paper_repo.create(
+        paper_id=paper_id,
+        uploaded_by=teacher_user,
+        storage_path=key,
+        scheme_storage_path=None,
+        original_filename=name,
+        content_type=content_type,
+        byte_size=len(scan),
+    )
+    return paper_id
+
+
+#: The longest edge a preview may have, in pixels: an A4 page's long edge at 72 dpi.
+_PREVIEW_LONG_EDGE = 842
+
+
+def test_preview_of_a_large_bilevel_image_is_thumbnail_sized(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """Final review, Critical 1: MuPDF sizes an image's page from its DPI
+    metadata, so ``get_pixmap(dpi=72)`` drew a 72 dpi image at full size. The
+    preview is drawn at a zoom that fits the long edge of an A4 page, whatever
+    the image declares."""
+    import io
+
+    from PIL import Image
+
+    from tests.pdf_fakes import bilevel_png
+
+    scan = bilevel_png(5000, 7950, mark=(400, 400, 1200, 900), dpi=72)
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        scan,
+        content_type="image/png",
+        name="scan.png",
+    )
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 200, preview.text
+    size = Image.open(io.BytesIO(preview.content)).size
+    assert max(size) <= _PREVIEW_LONG_EDGE, size
+    assert abs(size[0] / size[1] - 5000 / 7950) < 0.01, size
+
+
+def test_preview_of_an_a4_pdf_keeps_its_72_dpi_size(client: TestClient) -> None:
+    """The bound changes nothing for an ordinary A4 PDF: it was drawn at 72 dpi
+    (595 x 842), and still is."""
+    import io
+
+    import pymupdf
+    from PIL import Image
+
+    doc = pymupdf.open()
+    doc.new_page(width=595, height=842).insert_text((72, 72), "Question 1")
+    pdf_bytes: bytes = doc.tobytes()
+    doc.close()
+    paper_id = client.post(
+        "/api/papers/upload", files={"scan": ("scan.pdf", pdf_bytes, "application/pdf")}
+    ).json()["paperId"]
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 200, preview.text
+    assert Image.open(io.BytesIO(preview.content)).size == (595, 842)
+
+
+_PREVIEW_PEAK_RSS_CHILD = """
+from lemely.web.routers.teacher import _render_preview_png
+from tests.pdf_fakes import bilevel_png
+
+
+def peak_bytes() -> int:
+    with open("/proc/self/status") as status:
+        for line in status:
+            if line.startswith("VmHWM:"):
+                return int(line.split()[1]) * 1024
+    raise SystemExit("no VmHWM")
+
+
+scan = bilevel_png(10_000, 15_900, mark=(400, 400, 1200, 900), dpi=72)
+# A forked child inherits its parent's peak, so reset the high-water mark
+# (5 = CLEAR_REFS_MM_HIWATER_RSS) before measuring.
+try:
+    with open("/proc/self/clear_refs", "w") as clear:
+        clear.write("5")
+except OSError:
+    raise SystemExit(77)  # cannot reset the high-water mark here: the parent skips
+before = peak_bytes()
+png = _render_preview_png(scan)
+print(peak_bytes() - before, len(png))
+"""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="reads /proc/self/status")
+def test_preview_of_a_160_mpx_bilevel_scan_has_a_bounded_peak() -> None:
+    """Final review, Critical 1: a ~50 KB bilevel PNG of 10000 x 15900 at
+    72 dpi -- under T12's 160 Mpx bilevel ceiling, so the upload admits it --
+    was previewed at full size, against a 1 GiB instance. Measured in a child
+    process (``VmHWM`` growth over the peak after imports and after building
+    the file): 958 MB drawn at ``dpi=72``, 183 MB at the bounded zoom -- most
+    of it MuPDF's decode of the whole image at one byte a pixel (159 MB),
+    which no zoom avoids. The bound, 400 MB, sits between the two."""
+    import subprocess
+
+    root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(  # noqa: S603 -- our own interpreter, our own script
+        [sys.executable, "-c", _PREVIEW_PEAK_RSS_CHILD],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 77:
+        pytest.skip("this environment does not let a process reset its own peak RSS")
+    assert proc.returncode == 0, proc.stderr
+    growth, png_len = (int(v) for v in proc.stdout.split())
+    assert png_len > 0
+    assert growth < 400_000_000, f"preview peak grew by {growth / 1e6:.0f} MB"
 
 
 def test_preview_for_unknown_paper_is_404(client: TestClient) -> None:

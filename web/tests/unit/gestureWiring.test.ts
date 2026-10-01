@@ -54,6 +54,56 @@ describe("nav-drawer.tsx — drag-dismiss is additive to the existing close cont
     expect(src).toContain("Escape")
     expect(src).toContain("Close navigation")
   })
+
+  // Issue #246/#247, opus-review finding: the assertion above only pins that
+  // the string "Close navigation" still exists somewhere in the file — it
+  // passed even while the button itself was unreachable, because
+  // `startFilter` armed the drag-dismiss gesture on a tap anywhere outside
+  // `.lm-scroll`, including the header button, and `useDragGesture` captured
+  // the pointer and swallowed the click before `onClick` ever ran. A
+  // Node-only source-text test cannot execute a pointer gesture (no jsdom,
+  // `vitest.config.ts`, D3.20) or observe a real `click` event, so it cannot
+  // prove the button *works* — that proof is `e2e/native-feel.spec.ts`'s
+  // Assertion 8, which clicks this exact button and asserts the dialog
+  // closes. What this test CAN and now does prove is the specific thing that
+  // was missing: that `startFilter` actually excludes every interactive
+  // control, not just the scroll list, by pinning the shared exemption list
+  // inside `startFilter`'s own source window rather than anywhere in the
+  // file. A regression that silently drops this check (as the original code
+  // did, having only `.lm-scroll`) fails here without needing a browser.
+  it("startFilter excludes every GESTURE_INTERACTIVE_SELECTOR match, not just .lm-scroll", () => {
+    expect(src).toContain("GESTURE_INTERACTIVE_SELECTOR")
+    const startFilterAt = src.indexOf("startFilter")
+    expect(startFilterAt, "no startFilter found in nav-drawer.tsx").toBeGreaterThan(-1)
+    const window = src.slice(startFilterAt, startFilterAt + 300)
+    expect(window).toContain(".lm-scroll")
+    expect(window).toContain("GESTURE_INTERACTIVE_SELECTOR")
+  })
+})
+
+describe("edge-swipe-back.tsx — the edge-swipe gesture excludes interactive controls", () => {
+  const src = sourceOf("src/components/edge-swipe-back.tsx")
+
+  // Same issue, same mechanism, found in the same review pass:
+  // `startFilter` here gated purely on `clientX` against the edge zone, with
+  // no interactive-element exemption at all, and `rootRef` is
+  // `document.documentElement` — so in a standalone PWA, any control
+  // rendered inside the leading (or trailing, under RTL) 24px strip anywhere
+  // in the app (the first `BottomNav` item, a full-bleed row's own link) had
+  // its tap swallowed the same way. Same limitation as the nav-drawer test
+  // above applies: this pins the wiring, not the click; there is no e2e
+  // coverage of this gesture at all (standalone-PWA-only, `native-feel.spec.ts`'s
+  // own describe blocks do not emulate `display-mode: standalone`), which is
+  // a real gap this fix does not close — flagged rather than silently
+  // left, since `e2e/*` is read-only here.
+  it("startFilter excludes every GESTURE_INTERACTIVE_SELECTOR match before the edge-zone check", () => {
+    expect(src).toContain("GESTURE_INTERACTIVE_SELECTOR")
+    const startFilterAt = src.indexOf("startFilter")
+    expect(startFilterAt, "no startFilter found in edge-swipe-back.tsx").toBeGreaterThan(-1)
+    const window = src.slice(startFilterAt, startFilterAt + 1400)
+    expect(window).toContain("GESTURE_INTERACTIVE_SELECTOR")
+    expect(window).toContain("EDGE_ZONE_PX")
+  })
 })
 
 describe("QuizTaker.tsx — page-turn swipe flushes autosave before navigating, and locks in the last 60s", () => {

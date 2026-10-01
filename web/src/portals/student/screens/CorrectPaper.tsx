@@ -35,6 +35,7 @@ import { useProfile } from "@/lib/hooks/useMeApi"
 import { canStartRun, runPhase } from "@/lib/uploadRun"
 import { cn } from "@/lib/utils"
 import { uploadStageProgress } from "@/lib/uploadProgress"
+import { SCAN_ACCEPT } from "@/lib/scanAccept"
 import { defaultScanSource } from "@/lib/scanSource"
 import { shouldAutoStartCamera } from "@/lib/cameraAutoStart"
 import { readSharedScan } from "@/lib/sharedScan"
@@ -796,7 +797,7 @@ export function CorrectPaper() {
                 id="scan-file"
                 label="Scanned paper"
                 labelNote="required"
-                accept="application/pdf,image/*"
+                accept={SCAN_ACCEPT}
                 file={scanFile}
                 onFileChange={chooseScan}
                 multiple
@@ -848,7 +849,7 @@ export function CorrectPaper() {
             id="scheme-file"
             label="Mark scheme"
             labelNote="optional"
-            accept="application/pdf,image/*"
+            accept={SCAN_ACCEPT}
             file={schemeFile}
             onFileChange={setSchemeFile}
             busy={busy}

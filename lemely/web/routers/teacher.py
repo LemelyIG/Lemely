@@ -63,6 +63,7 @@ from lemely.core.schemas import (
     AccuracyReport,
     ExamMetadata,
     WeaknessReport,
+    marker_scored,
 )
 from lemely.db.at_risk_repo import (
     AtRiskAcknowledgementRow,
@@ -93,10 +94,18 @@ from lemely.db.teacher_paper_repo import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+from lemely.db.review_queue_rules import review_reasons_for
 from lemely.db.review_repo import ReviewService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.gemini import GeminiClient
 from lemely.io.question_generation import QuestionGenerator
+from lemely.io.scan_limits import (
+    ScanRejectedError,
+    check_pdf_content,
+    looks_like_pdf,
+    open_checked_pdf,
+    open_scan_image_document,
+)
 from lemely.io.scan_metadata import ScanMetadataExtractor
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.io.teacher_quiz import TeacherQuizBuilder
@@ -163,7 +172,7 @@ from lemely.web.schemas_teacher import (
     StudentRowDTO,
     UploadResponseDTO,
 )
-from lemely.web.upload_utils import check_upload_cap, safe_upload_name
+from lemely.web.upload_utils import check_scan_geometry, check_upload_cap, safe_upload_name
 
 log = structlog.get_logger(__name__)
 
@@ -499,8 +508,16 @@ def _run_grading_job(
             # attributed to a student account (D1.12 — `TeacherPaper.student_id`
             # is always null today), so there is nobody to record a history
             # entry for. The marks live on this row and are served from it.
+            # integrity_settings: the operator's [integrity], as the student
+            # upload already passes (#259).
             report = grade_paper(
-                scheme, extracted, gemini_client=gemini_client, student_id=None, history_store=None
+                scheme,
+                extracted,
+                gemini_client=gemini_client,
+                student_id=None,
+                history_store=None,
+                integrity_settings=settings.integrity,
+                options=settings.grading.marking_options(),
             )
             repo.finish(paper_id, report)
     except TeacherPaperDeletedError:
@@ -617,13 +634,40 @@ def _graded_pipeline_steps(report: AccuracyReport) -> list[PipelineStepDTO]:
     """
     questions = report.correction.questions
     total = len(questions)
-    marked = sum(1 for q in questions if q.marker_source != "missing")
-    confident = sum(1 for q in questions if q.confidence_score >= _REVIEW_CONFIDENCE)
+    # Task #36: `marker_scored`, not `!= "missing"`. This was the third
+    # genuinely-different formulation of the same question and the only one that
+    # counted an unscored question as marked -- `"dropped"` (US-038) and
+    # `"blank"` (US-039) both mean no marker formed an opinion, and
+    # `0038_marker_source_dropped`'s own docstring predicted this call site would
+    # need widening once the enum could express them.
+    marked = sum(1 for q in questions if marker_scored(q.marker_source))
+    # Finding F (US-039 consumer-fixes brief): count over the same population
+    # `/grading/queue` uses (`review_reasons_for`), not a second copy of the
+    # `>= _REVIEW_CONFIDENCE` threshold rule. A genuine blank has
+    # `confidence_score == 0.0`, which used to count it as a confidence-check
+    # failure here while the queue -- correctly, per the US-039 exemption --
+    # reports zero rows for it. This label means "needs no human check", so
+    # it must agree with the one place that actually decides that.
+    #
+    # Minor F (final-branch-review): that fix left the denominator at `total`,
+    # so a paper with 8 unattempted parts and 2 clean marks read
+    # "Confidence check 10 / 10" -- every one of the 8 blanks/dropped/missing
+    # questions is exempt from review, which the count then reported as
+    # having *passed* a check that never ran on it. `_paper_summary`'s
+    # confidence minimum (below) already narrows to `marker_scored` for the
+    # same reason; narrow this count the same way so the two card-facing
+    # confidence figures rest on the same population and neither implies more
+    # was checked than was.
+    confident = sum(
+        1
+        for q in questions
+        if marker_scored(q.marker_source) and next(review_reasons_for(q), None) is None
+    )
     return [
         PipelineStepDTO(label="Scan ingested", count=f"{total} / {total}", state="done"),
         PipelineStepDTO(label="Handwriting read", count=f"{total} / {total}", state="done"),
         PipelineStepDTO(label="Mark scheme aligned", count=f"{marked} / {total}", state="done"),
-        PipelineStepDTO(label="Confidence check", count=f"{confident} / {total}", state="done"),
+        PipelineStepDTO(label="Confidence check", count=f"{confident} / {marked}", state="done"),
         PipelineStepDTO(label="Grade boundaries", count=f"{total} / {total}", state="done"),
     ]
 
@@ -666,17 +710,46 @@ def _live_pipeline_steps(row: TeacherPaperRow) -> list[PipelineStepDTO]:
     return steps
 
 
-def _pymupdf_filetype(content_type: str | None) -> str:
-    """Map a stored scan's content type to the ``filetype`` PyMuPDF's stream opener wants.
+#: The longest edge of a paper preview, in pixels: an A4 page's long edge at 72 dpi.
+_PREVIEW_LONG_EDGE_PX = 842.0
 
-    ``None``/``application/pdf`` (the common case — most scans are PDFs, and
-    some clients omit the header) opens as ``"pdf"``; an ``image/*`` upload
-    opens as its subtype (``"png"``, ``"jpeg"``), matching what the console's
-    upload input accepts.
+
+def _render_preview_png(data: bytes) -> bytes:
+    """Page 1 of a stored scan, ``data``, as a PNG thumbnail (see :func:`get_paper_preview`).
+
+    PDF or image is decided from the bytes (``looks_like_pdf``), as the crop
+    route and extraction decide it, never from the client-supplied content
+    type: MuPDF sniffs the bytes, so PDF bytes stored as ``image/png`` used
+    to skip the pre-scan and were repaired while opening (final review,
+    item 4). A PDF opens through ``open_checked_pdf`` (the raw pre-scan
+    first), an image through ``open_scan_image_document`` (allowlisted, and
+    never opened as a PDF).
+
+    Raises :class:`HTTPException` 422 for a document with no pages,
+    :class:`ScanRejectedError` for a refused scan, and lets every other
+    failure propagate for the route to turn into a 422.
     """
-    if content_type is None or content_type == "application/pdf":
-        return "pdf"
-    return content_type.split("/", 1)[-1]
+    import pymupdf
+
+    doc = open_checked_pdf(data) if looks_like_pdf(data) else open_scan_image_document(data)
+    with doc:
+        check_pdf_content(doc)
+        if doc.page_count == 0:
+            raise HTTPException(status_code=422, detail="Stored scan has no pages")
+        page = doc.load_page(0)  # type: ignore[no-untyped-call]
+        # At most an A4 page at 72 dpi: 842px on the long edge. Sized against
+        # the consumer: the card thumbnail is a ~300px-wide strip, so this is
+        # still sharp on a 2x display, and every step up costs a bigger
+        # payload on every card in the grid at once (96 dpi produced a 320KB
+        # PNG per paper). A zoom, not `dpi=72`: MuPDF sizes an image's page
+        # from the image's own DPI metadata, so a 72 dpi image drew at full
+        # size -- 958 MB for a 160 Mpx bilevel scan the upload admits (final
+        # review, Critical 1); bounded, 183 MB, mostly the image's decode.
+        zoom = min(1.0, _PREVIEW_LONG_EDGE_PX / max(page.rect.width, page.rect.height, 1.0))
+        matrix = pymupdf.Matrix(zoom, zoom)  # type: ignore[no-untyped-call]
+        pixmap = page.get_pixmap(matrix=matrix)
+        png: bytes = pixmap.tobytes("png")
+    return png
 
 
 def _latest_records(history_store: HistoryStoreProtocol) -> list[PaperRecord]:
@@ -745,7 +818,8 @@ async def upload_paper(
     prefix = f"teacher/{uploaded_by}/{paper_id.hex}"
 
     scan_bytes = await scan.read()
-    check_upload_cap(scan_bytes, max_bytes=_MAX_UPLOAD_BYTES)
+    check_upload_cap(scan_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=scan.content_type)
+    await anyio.to_thread.run_sync(check_scan_geometry, scan_bytes, scan.content_type)
     scan_key = f"{prefix}/{_safe_upload_name(scan.filename, 'scan.pdf')}"
     await anyio.to_thread.run_sync(
         storage.upload, settings.storage.bucket, scan_key, scan_bytes, scan.content_type
@@ -758,7 +832,9 @@ async def upload_paper(
         # by looking for a sibling called exactly `mark_scheme.pdf` next to
         # the scan — the same contract `routers/student.py` writes to.
         scheme_bytes = await mark_scheme.read()
-        check_upload_cap(scheme_bytes, max_bytes=_MAX_UPLOAD_BYTES)
+        check_upload_cap(
+            scheme_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=mark_scheme.content_type
+        )
         scheme_key = f"{prefix}/mark_scheme.pdf"
         await anyio.to_thread.run_sync(
             storage.upload,
@@ -802,8 +878,19 @@ def _paper_summary(row: TeacherPaperRow, viewer_id: uuid.UUID) -> PaperSummaryDT
             canDelete=can_delete,
         )
     correction = report.correction
+    # Finding E (US-039 consumer-fixes brief): the minimum must be over
+    # questions a marker actually scored, not every question. A genuine
+    # US-039 blank carries `confidence_score == 0.0` with
+    # `needs_teacher_review == False`, so an unfiltered `min` renders a
+    # ten-question "Graded" paper with one blank as "Graded · 0.00". Using
+    # `marker_scored` here rather than `review_reasons_for` (as
+    # `_graded_pipeline_steps` does for Finding F) because this population is
+    # "was this question scored at all", not "does it need review" -- a
+    # genuinely low-confidence *scored* question must still pull the minimum
+    # down.
+    scored = [q for q in correction.questions if marker_scored(q.marker_source)]
     min_conf = min(
-        (q.confidence_score for q in correction.questions),
+        (q.confidence_score for q in scored),
         default=1.0,
     )
     return PaperSummaryDTO(
@@ -1028,8 +1115,9 @@ def get_paper_preview(
 
     404 when the object has expired or was never written (DS9) — a stored
     scan is not forever, and a caller sees that as "no scan", not a crash.
-    Image uploads (the console accepts ``image/*`` as well as PDFs) are passed
-    through PyMuPDF the same way, so one code path covers both.
+    Image uploads (the console accepts images as well as PDFs) are drawn by
+    PyMuPDF too, so one code path covers both; the bytes decide which
+    opener runs (``_render_preview_png``).
     """
     row = _require_paper(repo, auth, paper_id)
     try:
@@ -1039,24 +1127,13 @@ def get_paper_preview(
             status_code=404, detail=f"No stored scan for paper {paper_id}"
         ) from None
 
-    import pymupdf
-
     try:
-        # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
-        # call needs the ignore. Narrowed to this one code, not the module.
-        with pymupdf.open(  # type: ignore[no-untyped-call]
-            stream=data, filetype=_pymupdf_filetype(row.content_type)
-        ) as doc:
-            if doc.page_count == 0:
-                raise HTTPException(status_code=422, detail="Stored scan has no pages")
-            # ~600px on the long edge of an A4 page. Sized against the consumer:
-            # the card thumbnail is a ~300px-wide strip, so this is still sharp
-            # on a 2x display, and every step up costs a bigger payload on every
-            # card in the grid at once (96 dpi produced a 320KB PNG per paper).
-            pixmap = doc.load_page(0).get_pixmap(dpi=72)
-            png: bytes = pixmap.tobytes("png")
+        png = _render_preview_png(data)
     except HTTPException:
         raise
+    except ScanRejectedError as exc:
+        log.warning("paper_preview_rejected", paper_id=paper_id, reason=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         # A scan that cannot be rendered is not a server fault — it is a file the
         # teacher uploaded that is not the document type it claimed to be.
@@ -1077,7 +1154,22 @@ def grading_queue(
     auth: Annotated[AuthContext, Depends(get_auth_context)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
 ) -> GradingQueueDTO:
-    """Return low-confidence questions flagged for teacher review across visible papers."""
+    """Return low-confidence questions flagged for teacher review across visible papers.
+
+    Membership uses :func:`~lemely.db.review_queue_rules.review_reasons_for` --
+    the *same* predicate that decides whether a ``ReviewQueueItem`` row gets
+    written for this question (``AttemptRepository.persist_correction``,
+    ``TeacherPaperRepository._review_items_for``) -- rather than
+    re-deriving ``needs_teacher_review or confidence_score < _REVIEW_CONFIDENCE``
+    inline. This route does not read ``ReviewQueueItem`` at all (it
+    recomputes straight from ``report_json``), which is exactly how it
+    diverged from both repos: before this fix, a genuine US-039 blank
+    (``confidence_score == 0.0``) sorted to the very top of this
+    ascending-by-confidence list, so a paper with several unattempted parts
+    put every one of them as the first rows a teacher sees here -- the
+    product-owner-rejected outcome, on the most visible surface, with no
+    ``ReviewQueueItem`` row involved.
+    """
     viewer_id, viewer_role = _viewer(auth)
     rows: list[QueueRowDTO] = []
     for row in repo.list_visible(viewer_id=viewer_id, viewer_role=viewer_role):
@@ -1085,20 +1177,21 @@ def grading_queue(
         if report is None:
             continue
         for question in report.correction.questions:
-            if question.needs_teacher_review or question.confidence_score < _REVIEW_CONFIDENCE:
-                rows.append(
-                    QueueRowDTO(
-                        paperId=str(row.id),
-                        # `student_id` is always null today (D1.12), so a
-                        # queue row is named for its paper, same as the grid.
-                        name=_paper_label(row),
-                        questionId=question.question_id,
-                        topic=question.topic,
-                        confidence=round(question.confidence_score, 2),
-                        awardedMarks=question.awarded_marks,
-                        maxMarks=question.maximum_marks,
-                    )
+            if next(review_reasons_for(question), None) is None:
+                continue
+            rows.append(
+                QueueRowDTO(
+                    paperId=str(row.id),
+                    # `student_id` is always null today (D1.12), so a
+                    # queue row is named for its paper, same as the grid.
+                    name=_paper_label(row),
+                    questionId=question.question_id,
+                    topic=question.topic,
+                    confidence=round(question.confidence_score, 2),
+                    awardedMarks=question.awarded_marks,
+                    maxMarks=question.maximum_marks,
                 )
+            )
     rows.sort(key=lambda r: r.confidence if r.confidence is not None else 1.0)
     return GradingQueueDTO(rows=rows)
 
@@ -1165,7 +1258,7 @@ async def upload_scheme(
     from lemely.io.det import DeterministicMarkSchemeParser
 
     pdf_bytes = await scheme_pdf.read()
-    check_upload_cap(pdf_bytes, max_bytes=_MAX_UPLOAD_BYTES)
+    check_upload_cap(pdf_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=scheme_pdf.content_type)
     # Sanitise the client filename to a basename before joining — the raw value
     # must never be trusted as a path (traversal into ``../`` etc.).
     filename = _safe_upload_name(scheme_pdf.filename, "scheme.pdf")

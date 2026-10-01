@@ -385,7 +385,7 @@ async def upload_avatar(
         )
 
     data = await image.read()
-    check_upload_cap(data, max_bytes=settings.storage.avatar_max_bytes)
+    check_upload_cap(data, max_bytes=settings.storage.avatar_max_bytes, content_type=content_type)
 
     try:
         with Image.open(BytesIO(data)) as img:

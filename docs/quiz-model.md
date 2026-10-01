@@ -610,10 +610,11 @@ default; it needs an explicit assertion and a test.
 origin: AttemptOrigin, upload_id, recorded_at)`. Both `persist_correction`
 (prediction present, `origin=past_paper`) and `persist_quiz_correction`
 (prediction `None`, `origin=quiz`) call it. The review-queue fan-out — the
-low-confidence / plagiarism / AI-detection `ReviewQueueItem` construction — is
-inside `_persist` and is therefore identical for both. Copying that fan-out into
-a second method is how one of the three reasons for flagging quietly stops
-firing for quizzes.
+low-confidence / plagiarism `ReviewQueueItem` construction (F4 removed the
+third, AI-detection, reason this used to also name) — is inside `_persist`
+and is therefore identical for both. Copying that fan-out into a second
+method is how one of the two reasons for flagging quietly stops firing for
+quizzes.
 
 When `prediction is None`: `percentage = 100 * awarded / max` (guard max = 0),
 `grade`/`predicted_grade`/`boundary_source` NULL, and
