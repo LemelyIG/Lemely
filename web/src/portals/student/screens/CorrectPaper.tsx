@@ -35,7 +35,7 @@ import { useProfile } from "@/lib/hooks/useMeApi"
 import { canStartRun, runPhase } from "@/lib/uploadRun"
 import { cn } from "@/lib/utils"
 import { uploadStageProgress } from "@/lib/uploadProgress"
-import { SCAN_ACCEPT } from "@/lib/scanAccept"
+import { SCAN_ACCEPT, SCHEME_ACCEPT } from "@/lib/scanAccept"
 import { defaultScanSource } from "@/lib/scanSource"
 import { shouldAutoStartCamera } from "@/lib/cameraAutoStart"
 import { readSharedScan } from "@/lib/sharedScan"
@@ -849,7 +849,7 @@ export function CorrectPaper() {
             id="scheme-file"
             label="Mark scheme"
             labelNote="optional"
-            accept={SCAN_ACCEPT}
+            accept={SCHEME_ACCEPT}
             file={schemeFile}
             onFileChange={setSchemeFile}
             busy={busy}
