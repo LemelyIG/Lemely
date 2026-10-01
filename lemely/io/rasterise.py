@@ -287,7 +287,9 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
             # keeps that from being load-bearing.
             pil_image.load()
     except Image.DecompressionBombError as exc:
-        raise ScanTooLargeError("image declares too many pixels to decode") from exc
+        raise ScanTooLargeError(
+            "image declares too many pixels to decode", reason="image_px"
+        ) from exc
     # Re-planned against the post-open dimensions: a JPEG's `.draft()` above picks
     # the nearest supported DCT scale, not exactly `factor`, so the image may still
     # need an extra integer `.reduce()` here to land under MAX_PAGE_PX. Against the

@@ -146,7 +146,7 @@ def _strict_inflate_size(raw: bytes, *, budget: int) -> int | None:
         while pending:
             size += len(decompressor.decompress(pending, _INFLATE_CHUNK))
             if size > budget:
-                raise ScanTooLargeError(_OBJECT_STREAMS_MESSAGE)
+                raise ScanTooLargeError(_OBJECT_STREAMS_MESSAGE, reason="objstm_bomb")
             pending = decompressor.unconsumed_tail
             if decompressor.eof:
                 break
@@ -164,7 +164,7 @@ class _ScanBudget:
     def spend(self) -> None:
         self.left -= 1
         if self.left < 0:
-            raise ScanTooLargeError(_STRUCTURE_TOO_COMPLEX_MESSAGE)
+            raise ScanTooLargeError(_STRUCTURE_TOO_COMPLEX_MESSAGE, reason="prescan_tokens")
 
 
 def _pdf_name(token: bytes) -> bytes:
@@ -338,13 +338,18 @@ def check_object_stream_bytes(data: bytes) -> None:
                 ]
                 decoded = [found for found in sizes if found]
                 if not decoded and longest > 0:
-                    raise ScanRejectedError(_OBJECT_STREAM_UNREADABLE_MESSAGE)
+                    raise ScanRejectedError(
+                        _OBJECT_STREAM_UNREADABLE_MESSAGE, reason="objstm_unreadable"
+                    )
                 size = max(decoded, default=0)
         else:
-            raise ScanRejectedError(_OBJECT_STREAM_ENCODING_MESSAGE)
+            raise ScanRejectedError(_OBJECT_STREAM_ENCODING_MESSAGE, reason="objstm_encoding")
         total += size
         if total > MAX_OBJECT_STREAM_BYTES:
-            raise ScanTooLargeError(_OBJECT_STREAMS_MESSAGE)
+            raise ScanTooLargeError(
+                _OBJECT_STREAMS_MESSAGE,
+                reason="encrypted_objstm" if encrypted else "objstm_bomb",
+            )
 
 
 @dataclass(frozen=True, eq=False)

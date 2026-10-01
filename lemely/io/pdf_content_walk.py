@@ -70,7 +70,8 @@ def _bounded_inflate_size(raw: bytes, *, budget: int, page_index: int) -> int:
                 raise ScanTooLargeError(
                     f"Page {page_index + 1} of this PDF contains far more drawing data than a "
                     f"scanned page can (over {MAX_PAGE_CONTENT_BYTES // 1_000_000} MB once "
-                    "decompressed). Re-export it as a plain scan."
+                    "decompressed). Re-export it as a plain scan.",
+                    reason="page_content",
                 )
             data = decompressor.unconsumed_tail
             if decompressor.eof:
@@ -128,12 +129,15 @@ def decoded_stream_size(doc: pymupdf.Document, xref: int, *, budget: int, page_i
             raise ScanTooLargeError(
                 f"Page {page_index + 1} of this PDF contains far more drawing data than a "
                 f"scanned page can (over {MAX_PAGE_CONTENT_BYTES // 1_000_000} MB). "
-                "Re-export it as a plain scan."
+                "Re-export it as a plain scan.",
+                reason="page_content",
             )
         return size
     if len(filters) == 1 and filters[0] in _FLATE_FILTER_NAMES:
         return _bounded_inflate_size(raw, budget=budget, page_index=page_index)
-    raise ScanUnsupportedEncodingError(_UNSUPPORTED_FILTER_MESSAGE.format(page=page_index + 1))
+    raise ScanUnsupportedEncodingError(
+        _UNSUPPORTED_FILTER_MESSAGE.format(page=page_index + 1), reason="content_encoding"
+    )
 
 
 _REF_RE = re.compile(r"(\d+)\s+\d+\s+R")
@@ -284,7 +288,9 @@ def _enter(xref: int, seen: set[int], walk: _PageWalk) -> bool:
     seen.add(xref)
     walk.budget.objects += 1
     if walk.budget.objects > _MAX_OBJECTS_PER_PAGE:
-        raise ScanTooLargeError(_TOO_MANY_OBJECTS_MESSAGE.format(page=walk.page_index + 1))
+        raise ScanTooLargeError(
+            _TOO_MANY_OBJECTS_MESSAGE.format(page=walk.page_index + 1), reason="page_objects"
+        )
     return True
 
 
@@ -300,7 +306,7 @@ def _count_stream(doc: pymupdf.Document, xref: int, walk: _PageWalk) -> None:
     except ScanTooLargeError:
         if scan_budget < page_budget:
             # The scan cap bit, not the page cap: say so.
-            raise ScanTooLargeError(_WHOLE_SCAN_MESSAGE) from None
+            raise ScanTooLargeError(_WHOLE_SCAN_MESSAGE, reason="scan_content") from None
         raise
     budget.page_total += size
 
@@ -328,6 +334,7 @@ class _PageBound:
 
     pages: int
     message: str
+    reason: str
 
     @property
     def work(self) -> int:
@@ -345,9 +352,9 @@ class _PageBound:
 
 
 #: :func:`check_pdf_content`'s bound: the page cap, held against the real tree.
-_SCAN_PAGE_BOUND = _PageBound(MAX_SCAN_PAGES, _SCAN_PAGES_MESSAGE)
+_SCAN_PAGE_BOUND = _PageBound(MAX_SCAN_PAGES, _SCAN_PAGES_MESSAGE, "page_cap")
 #: :func:`check_pdf_page_content`'s bound, the crop route's.
-_CROP_PAGE_BOUND = _PageBound(MAX_CROP_PAGES, _CROP_PAGES_MESSAGE)
+_CROP_PAGE_BOUND = _PageBound(MAX_CROP_PAGES, _CROP_PAGES_MESSAGE, "crop_page_cap")
 
 
 def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
@@ -431,19 +438,19 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
             kids = _collection_refs(doc, *_key(doc, node, "Kids"), limit=budget - taken + 1)
             taken += len(kids)
             if taken > budget:
-                raise ScanTooLargeError(_PAGE_TREE_TOO_COMPLEX_MESSAGE)
+                raise ScanTooLargeError(_PAGE_TREE_TOO_COMPLEX_MESSAGE, reason="page_tree")
             node_type = _name(doc, node, "Type")
             if node_type == "/Page" and kids:
                 # MuPDF takes this node as one page, pdfium descends its kids:
                 # not valid PDF, and the readers disagree on which object a
                 # page index names, whatever their counts (T9b review round 1).
-                raise ScanRejectedError(_PAGE_STRUCTURE_MALFORMED_MESSAGE)
+                raise ScanRejectedError(_PAGE_STRUCTURE_MALFORMED_MESSAGE, reason="malformed")
             is_page[node] = node_type == "/Page" or (not kids and node_type != "/Pages")
             pending.extend(kids)
         if is_page[node]:
             pages += 1
             if pages > bound.pages:
-                raise ScanTooLargeError(bound.message)
+                raise ScanTooLargeError(bound.message, reason=bound.reason)
     # node -> (nearest node at or above it with a /Resources key,
     #          nearest node at or above it whose /Resources resolves)
     nearest: dict[int, tuple[int | None, int | None]] = {}
@@ -460,7 +467,9 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
         while node and node not in nearest and node not in chain:
             chain.append(node)
             if len(nearest) + len(chain) > budget:
-                raise ScanRejectedError(_MALFORMED_STRUCTURE_MESSAGE.format(page=index + 1))
+                raise ScanRejectedError(
+                    _MALFORMED_STRUCTURE_MESSAGE.format(page=index + 1), reason="malformed"
+                )
             node = _parent(doc, node)
         above = nearest.get(node, (None, None))
         for member in reversed(chain):
@@ -471,7 +480,7 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
     # be the pages MuPDF numbers. A page it holds that MuPDF does not number
     # is one a reader resolving the tree its own way may render unmeasured.
     if numbered != {node for node, page in is_page.items() if page}:
-        raise ScanRejectedError(_PAGE_STRUCTURE_MALFORMED_MESSAGE)
+        raise ScanRejectedError(_PAGE_STRUCTURE_MALFORMED_MESSAGE, reason="malformed")
     holders = {
         node: tuple(sorted({h for h in pair if h is not None})) for node, pair in nearest.items()
     }
@@ -569,7 +578,9 @@ def _walk_resource_graph(
         if not 0 < ref < xref_length:
             continue  # an out-of-range reference is null in every reader
         if ref in walk.tree:
-            raise ScanRejectedError(_MALFORMED_STRUCTURE_MESSAGE.format(page=walk.page_index + 1))
+            raise ScanRejectedError(
+                _MALFORMED_STRUCTURE_MESSAGE.format(page=walk.page_index + 1), reason="malformed"
+            )
         if ref in walk.seen:
             continue  # expanded in full already: every role's work is done
         is_stream = bool(doc.xref_is_stream(ref))  # type: ignore[no-untyped-call]
@@ -614,7 +625,9 @@ def _walk_annotations(doc: pymupdf.Document, page_xref: int, walk: _PageWalk) ->
         if not 0 < annot_ref < xref_length:
             continue
         if annot_ref in walk.tree:
-            raise ScanRejectedError(_MALFORMED_STRUCTURE_MESSAGE.format(page=walk.page_index + 1))
+            raise ScanRejectedError(
+                _MALFORMED_STRUCTURE_MESSAGE.format(page=walk.page_index + 1), reason="malformed"
+            )
         if not _enter(annot_ref, walk.annot_seen, walk):
             continue
         ap_refs.extend((ref, "any") for ref in _collection_refs(doc, *_key(doc, annot_ref, "AP")))
@@ -659,7 +672,8 @@ def _check_declared_pixels(doc: pymupdf.Document, xref: int, *, page_index: int)
         return
     if width * height > MAX_DECODE_PX:
         raise ScanTooLargeError(
-            _IMAGE_TOO_LARGE_MESSAGE.format(page=page_index + 1, mpx=width * height // 1_000_000)
+            _IMAGE_TOO_LARGE_MESSAGE.format(page=page_index + 1, mpx=width * height // 1_000_000),
+            reason="image_px",
         )
 
 
@@ -717,7 +731,8 @@ def _check_image_and_masks(
     )
     if width * height > MAX_DECODE_PX:
         raise ScanTooLargeError(
-            _IMAGE_TOO_LARGE_MESSAGE.format(page=page_index + 1, mpx=width * height // 1_000_000)
+            _IMAGE_TOO_LARGE_MESSAGE.format(page=page_index + 1, mpx=width * height // 1_000_000),
+            reason="image_px",
         )
     _check_masks(doc, xref, smask_xref=smask_xref, page_index=page_index)
 
@@ -741,7 +756,7 @@ def _check_object_streams(doc: pymupdf.Document) -> None:
     """
     xref_length = int(doc.xref_length())  # type: ignore[no-untyped-call]
     if xref_length > MAX_PDF_OBJECTS:
-        raise ScanTooLargeError(_TOO_MANY_PDF_OBJECTS_MESSAGE)
+        raise ScanTooLargeError(_TOO_MANY_PDF_OBJECTS_MESSAGE, reason="too_many_objects")
     try:
         pdf = _mupdf.pdf_document_from_fz_document(doc.this)  # type: ignore[no-untyped-call]
         containers: set[int] = set()
@@ -750,7 +765,7 @@ def _check_object_streams(doc: pymupdf.Document) -> None:
             if entry.type == "o" and 0 < entry.ofs < xref_length:
                 containers.add(int(entry.ofs))
     except Exception as exc:
-        raise ScanRejectedError(_UNCHECKABLE_MESSAGE) from exc
+        raise ScanRejectedError(_UNCHECKABLE_MESSAGE, reason="uncheckable") from exc
     total = 0
     for container in sorted(containers):
         if not doc.xref_is_stream(container):  # type: ignore[no-untyped-call]
@@ -760,9 +775,11 @@ def _check_object_streams(doc: pymupdf.Document) -> None:
                 doc, container, budget=MAX_OBJECT_STREAM_BYTES - total, page_index=0
             )
         except ScanUnsupportedEncodingError as exc:
-            raise ScanRejectedError(_OBJECT_STREAM_ENCODING_MESSAGE) from exc
+            raise ScanRejectedError(
+                _OBJECT_STREAM_ENCODING_MESSAGE, reason="objstm_encoding"
+            ) from exc
         except ScanTooLargeError as exc:
-            raise ScanTooLargeError(_OBJECT_STREAMS_MESSAGE) from exc
+            raise ScanTooLargeError(_OBJECT_STREAMS_MESSAGE, reason="objstm_bomb") from exc
 
 
 def check_pdf_content(doc: pymupdf.Document, *, pdfium_pages: int | None = None) -> None:
@@ -830,24 +847,26 @@ def check_pdf_content(doc: pymupdf.Document, *, pdfium_pages: int | None = None)
     try:
         page_count = int(doc.page_count)
     except Exception as exc:
-        raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE) from exc
+        raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE, reason="uncheckable") from exc
     # Final review M1: the walk visits every page, so a document over the
     # page cap is refused before any of it is read, whoever the caller is.
     # `page_count` is the declared `/Count`; `_page_tree` holds the same cap
     # against the real tree, so understating `/Count` does not dodge it.
     if page_count > MAX_SCAN_PAGES:
-        raise ScanTooLargeError(f"The scan has {page_count} pages; the limit is {MAX_SCAN_PAGES}.")
+        raise ScanTooLargeError(
+            f"The scan has {page_count} pages; the limit is {MAX_SCAN_PAGES}.", reason="page_cap"
+        )
     # Task 9b: extraction renders with pdfium. A page it counts that MuPDF
     # does not is a page this walk never measures (a `/Count 0` over real
     # kids: MuPDF sees none, pdfium renders them all).
     if pdfium_pages is not None and page_count != pdfium_pages:
-        raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE)
+        raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE, reason="reader_disagreement")
     try:
         tree = _page_tree(doc, bound=_SCAN_PAGE_BOUND)
     except ScanRejectedError:
         raise
     except Exception as exc:
-        raise ScanRejectedError(_WALK_FAILED_MESSAGE.format(page=1)) from exc
+        raise ScanRejectedError(_WALK_FAILED_MESSAGE.format(page=1), reason="uncheckable") from exc
     budget = _ContentBudget()
     for page_index in range(page_count):
         _check_page(doc, tree, budget, page_index)
@@ -871,10 +890,14 @@ def _check_page(
         page = doc.load_page(page_index)  # type: ignore[no-untyped-call]
         page_xref = doc.page_xref(page_index)  # type: ignore[no-untyped-call]
     except Exception as exc:
-        raise ScanRejectedError(_PAGE_UNREADABLE_MESSAGE.format(page=page_index + 1)) from exc
+        raise ScanRejectedError(
+            _PAGE_UNREADABLE_MESSAGE.format(page=page_index + 1), reason="uncheckable"
+        ) from exc
     holders = tree.holders.get(page_xref)
     if holders is None:
-        raise ScanRejectedError(_MALFORMED_STRUCTURE_MESSAGE.format(page=page_index + 1))
+        raise ScanRejectedError(
+            _MALFORMED_STRUCTURE_MESSAGE.format(page=page_index + 1), reason="malformed"
+        )
     budget.page_total = 0
     budget.objects = 0
     walk = _PageWalk(page_index=page_index, tree=tree.xrefs, budget=budget)
@@ -885,7 +908,9 @@ def _check_page(
         for xref in page.get_contents():
             xref = int(xref)
             if xref in tree.xrefs or not doc.xref_is_stream(xref):  # type: ignore[no-untyped-call]
-                raise ScanRejectedError(_MALFORMED_STRUCTURE_MESSAGE.format(page=page_index + 1))
+                raise ScanRejectedError(
+                    _MALFORMED_STRUCTURE_MESSAGE.format(page=page_index + 1), reason="malformed"
+                )
             start.append((xref, "any"))
         start.extend(ref for holder in holders for ref in _resources_refs(doc, holder))
         _walk_resource_graph(doc, start, walk)
@@ -893,7 +918,9 @@ def _check_page(
     except ScanRejectedError:
         raise
     except Exception as exc:
-        raise ScanRejectedError(_WALK_FAILED_MESSAGE.format(page=page_index + 1)) from exc
+        raise ScanRejectedError(
+            _WALK_FAILED_MESSAGE.format(page=page_index + 1), reason="uncheckable"
+        ) from exc
     budget.scan_total += budget.page_total
 
 
@@ -929,11 +956,11 @@ def check_pdf_page_content(doc: pymupdf.Document, page_index: int) -> None:
         return
     _check_object_streams(doc)
     if doc.page_count > MAX_CROP_PAGES:
-        raise ScanTooLargeError(_CROP_PAGES_MESSAGE)
+        raise ScanTooLargeError(_CROP_PAGES_MESSAGE, reason="crop_page_cap")
     try:
         tree = _page_tree(doc, bound=_CROP_PAGE_BOUND)
     except ScanRejectedError:
         raise
     except Exception as exc:
-        raise ScanRejectedError(_WALK_FAILED_MESSAGE.format(page=1)) from exc
+        raise ScanRejectedError(_WALK_FAILED_MESSAGE.format(page=1), reason="uncheckable") from exc
     _check_page(doc, tree, _ContentBudget(), page_index)

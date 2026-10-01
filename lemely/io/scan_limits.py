@@ -81,6 +81,7 @@ from lemely.io._scan_common import (
     MAX_SCAN_TOTAL_PX,
     MIN_EXTRACTION_DPI,
     PDF_MAGIC,
+    REFUSAL_REASONS,
     SCAN_IMAGE_FORMATS,
     PagePlan,
     ScanRejectedError,
@@ -142,6 +143,7 @@ __all__ = [
     "MAX_SCAN_TOTAL_PX",
     "MIN_EXTRACTION_DPI",
     "PDF_MAGIC",
+    "REFUSAL_REASONS",
     "SCAN_IMAGE_FORMATS",
     "PagePlan",
     "PrescannedPdf",
@@ -209,7 +211,8 @@ def check_scan_bytes(data: bytes) -> None:
             plan_image(opened.width, opened.height, opened.mode, opened.format)
     except Image.DecompressionBombError as exc:
         raise ScanTooLargeError(
-            "This scan's image is too large to process safely. Rescan at a lower resolution."
+            "This scan's image is too large to process safely. Rescan at a lower resolution.",
+            reason="image_px",
         ) from exc
     except ScanRejectedError:
         raise

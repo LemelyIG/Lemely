@@ -8,6 +8,33 @@ user-facing refusal message, the error types, the page and image planners
 its format allowlist). It imports none of the other scan modules; they and
 :mod:`lemely.io.scan_limits`, which re-exports every name here, import it.
 See :mod:`lemely.io.scan_limits` for the rules these numbers enforce.
+
+Every refusal carries a ``reason`` code (:data:`REFUSAL_REASONS`), which the
+upload check logs beside the error class (#276, #273):
+
+* ``page_px``: one PDF page's pixels are past the decode ceiling.
+* ``scan_px``: the pages' summed pixels are past the whole-scan budget.
+* ``page_cap``: more pages than :data:`MAX_SCAN_PAGES`.
+* ``crop_page_cap``: more pages than :data:`MAX_CROP_PAGES` (the crop route).
+* ``image_px``: an image's pixels are past its mode's ceiling, as declared by
+  the file, a PDF's image object, or Pillow's own bomb guard.
+* ``webp_px``: a WebP past its lower ceiling.
+* ``format_not_allowed``: an image format outside :data:`SCAN_IMAGE_FORMATS`.
+* ``page_content``: one page's drawing data is over its decoded-size budget.
+* ``scan_content``: the whole scan's drawing data is over its budget.
+* ``content_encoding``: a content stream's filter cannot be size-bounded.
+* ``page_objects``: one page reaches more objects than the per-page cap.
+* ``page_tree``: the page tree is too big to read within the work bound.
+* ``malformed``: a page's structure could hide drawn content from the walk.
+* ``prescan_tokens``: the raw object-stream scan hit its token budget.
+* ``objstm_unreadable``: an object stream holds no readable data.
+* ``objstm_encoding``: an object stream's filter cannot be size-bounded.
+* ``objstm_bomb``: the object streams decode to more than the total cap.
+* ``encrypted_objstm``: an encrypted file's object streams, counted at
+  Flate's worst case, are over the total cap (S4).
+* ``too_many_objects``: more objects in the file than :data:`MAX_PDF_OBJECTS`.
+* ``uncheckable``: a reader failed on the file, so it cannot be measured.
+* ``reader_disagreement``: pdfium and MuPDF disagree about the pages.
 """
 
 from __future__ import annotations
@@ -235,7 +262,51 @@ _MALFORMED_STRUCTURE_MESSAGE = (
 
 
 class ScanRejectedError(LemelyError):
-    """A scan this service will not render; the message says why and what to do."""
+    """A scan this service will not render; the message says why and what to do.
+
+    ``reason`` is a short code from :data:`REFUSAL_REASONS` naming which rule
+    refused it, for the logs (#276, #273). It never reaches a user: ``str()``
+    is the message alone, so every ``detail=str(exc)`` is unchanged. Both go
+    to ``args``, so a pickle round trip (a render worker's refusal crossing
+    its process boundary) rebuilds the error with its reason.
+    """
+
+    def __init__(self, message: str, reason: str = "unspecified") -> None:
+        super().__init__(message, reason)
+        self.reason = reason
+
+    def __str__(self) -> str:
+        return str(self.args[0])
+
+
+#: The reason codes a refusal may carry; see the module docstring. A refusal
+#: left on the default ``"unspecified"`` is a bug the AST sweep in
+#: ``tests/test_refusal_reasons.py`` fails on.
+REFUSAL_REASONS = frozenset(
+    {
+        "crop_page_cap",
+        "content_encoding",
+        "encrypted_objstm",
+        "format_not_allowed",
+        "image_px",
+        "malformed",
+        "objstm_bomb",
+        "objstm_encoding",
+        "objstm_unreadable",
+        "page_cap",
+        "page_content",
+        "page_objects",
+        "page_px",
+        "page_tree",
+        "prescan_tokens",
+        "reader_disagreement",
+        "scan_content",
+        "scan_px",
+        "too_many_objects",
+        "uncheckable",
+        "webp_px",
+    }
+)
 
 
 class ScanTooLargeError(ScanRejectedError):
@@ -274,7 +345,8 @@ def plan_page_dpi(
         return float(math.floor(dpi * math.sqrt(MAX_PAGE_PX / px)))
     raise ScanTooLargeError(
         f"Page {index + 1} of this scan is too large to process "
-        f"(limit {MAX_DECODE_PX // 1_000_000} megapixels). Rescan at a lower resolution."
+        f"(limit {MAX_DECODE_PX // 1_000_000} megapixels). Rescan at a lower resolution.",
+        reason="page_px",
     )
 
 
@@ -296,7 +368,9 @@ def plan_pdf_pages(pdf: pdfium.PdfDocument, *, dpi: float = EXTRACTION_DPI) -> l
     """
     count = len(pdf)
     if count > MAX_SCAN_PAGES:
-        raise ScanTooLargeError(f"The scan has {count} pages; the limit is {MAX_SCAN_PAGES}.")
+        raise ScanTooLargeError(
+            f"The scan has {count} pages; the limit is {MAX_SCAN_PAGES}.", reason="page_cap"
+        )
     sizes = [pdf.get_page_size(index) for index in range(count)]
     plans = [
         PagePlan(index=index, dpi=plan_page_dpi(width_pt, height_pt, dpi=dpi, index=index))
@@ -314,7 +388,8 @@ def plan_pdf_pages(pdf: pdfium.PdfDocument, *, dpi: float = EXTRACTION_DPI) -> l
         raise ScanTooLargeError(
             f"This scan's {count} pages are too large to process together (limit "
             f"{MAX_SCAN_TOTAL_PX // 1_000_000} megapixels per scan). Split it into smaller "
-            "scans or rescan at a lower resolution."
+            "scans or rescan at a lower resolution.",
+            reason="scan_px",
         )
     return scaled
 
@@ -372,7 +447,8 @@ def plan_image(width: int, height: int, mode: str = "RGB", image_format: str | N
             raise ScanTooLargeError(
                 f"This WebP image is too large to process (limit {mpx} megapixels for WebP, "
                 "which costs far more to decode than other formats). Save it as a PNG or "
-                "JPEG, or at a lower resolution."
+                "JPEG, or at a lower resolution.",
+                reason="webp_px",
             )
         if mode in _ONE_BYTE_GREY_MODES:
             limit = f"{mpx} megapixels for a black-and-white or greyscale image"
@@ -386,7 +462,8 @@ def plan_image(width: int, height: int, mode: str = "RGB", image_format: str | N
                 f"to {MAX_DECODE_PX_GREY // 1_000_000}"
             )
         raise ScanTooLargeError(
-            f"This scan is too large to process (limit {limit}). Rescan at a lower resolution."
+            f"This scan is too large to process (limit {limit}). Rescan at a lower resolution.",
+            reason="image_px",
         )
     for factor in _REDUCE_FACTORS:
         if px / (factor * factor) <= MAX_PAGE_PX:
@@ -495,6 +572,8 @@ def open_scan_image(source: Path | IO[bytes]) -> ImageFile.ImageFile:
         source.seek(position)
     claimed = [image_format for image_format in Image.ID if _pillow_claims(image_format, prefix)]
     if claimed and not any(image_format in SCAN_IMAGE_FORMATS for image_format in claimed):
-        raise ScanUnsupportedFormatError(_UNSUPPORTED_IMAGE_MESSAGE.format(format=claimed[0]))
+        raise ScanUnsupportedFormatError(
+            _UNSUPPORTED_IMAGE_MESSAGE.format(format=claimed[0]), reason="format_not_allowed"
+        )
     _ignore_capped_bomb_warning()
     return Image.open(source, formats=SCAN_IMAGE_FORMATS)

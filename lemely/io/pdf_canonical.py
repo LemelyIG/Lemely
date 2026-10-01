@@ -96,7 +96,7 @@ def open_scan_image_document(data: bytes) -> pymupdf.Document:
     doc = pymupdf.open(stream=data, filetype=filetype)  # type: ignore[no-untyped-call]
     if doc.is_pdf:
         doc.close()  # type: ignore[no-untyped-call]
-        raise ScanRejectedError(_UNCHECKABLE_MESSAGE)
+        raise ScanRejectedError(_UNCHECKABLE_MESSAGE, reason="uncheckable")
     return doc
 
 
@@ -124,14 +124,16 @@ def _check_opened(open_doc: Callable[[], pymupdf.Document], pdfium_pages: int | 
         raise  # the pre-scan's refusal (open_checked_pdf), never "cannot open"
     except Exception as exc:
         if pdfium_pages:
-            raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE) from exc
+            raise ScanRejectedError(
+                _PAGE_COUNT_UNREADABLE_MESSAGE, reason="reader_disagreement"
+            ) from exc
         return
     try:
         check_pdf_content(doc, pdfium_pages=pdfium_pages)
     except ScanRejectedError:
         raise
     except Exception as exc:
-        raise ScanRejectedError(_UNCHECKABLE_MESSAGE) from exc
+        raise ScanRejectedError(_UNCHECKABLE_MESSAGE, reason="uncheckable") from exc
     finally:
         doc.close()  # type: ignore[no-untyped-call]
 
@@ -208,25 +210,27 @@ def canonical_pdf_bytes(data: bytes) -> bytes:
     except ScanRejectedError:
         raise
     except Exception as exc:
-        raise ScanRejectedError(_UNCHECKABLE_MESSAGE) from exc
+        raise ScanRejectedError(_UNCHECKABLE_MESSAGE, reason="uncheckable") from exc
     try:
         if doc.needs_pass:
-            raise ScanRejectedError(_UNCHECKABLE_MESSAGE)
+            raise ScanRejectedError(_UNCHECKABLE_MESSAGE, reason="uncheckable")
         try:
             check_pdf_content(doc)
             page_count = int(doc.page_count)
         except ScanRejectedError:
             raise
         except Exception as exc:
-            raise ScanRejectedError(_UNCHECKABLE_MESSAGE) from exc
+            raise ScanRejectedError(_UNCHECKABLE_MESSAGE, reason="uncheckable") from exc
         if page_count == 0:
             if _pdfium_page_count(data):
-                raise ScanRejectedError(_PAGE_COUNT_UNREADABLE_MESSAGE)
+                raise ScanRejectedError(
+                    _PAGE_COUNT_UNREADABLE_MESSAGE, reason="reader_disagreement"
+                )
             raise ValueError("the PDF has no pages")
         try:
             return _copy_pages(doc)
         except Exception as exc:
-            raise ScanRejectedError(_UNCHECKABLE_MESSAGE) from exc
+            raise ScanRejectedError(_UNCHECKABLE_MESSAGE, reason="uncheckable") from exc
     finally:
         doc.close()  # type: ignore[no-untyped-call]
 
