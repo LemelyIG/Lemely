@@ -2026,6 +2026,34 @@ def test_preview_of_an_a4_pdf_keeps_its_72_dpi_size(client: TestClient) -> None:
     assert Image.open(io.BytesIO(preview.content)).size == (595, 842)
 
 
+def test_preview_of_a_stored_scan_with_no_pages_is_a_422(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """A stored PDF whose page tree is empty has nothing to draw: the render
+    refuses it (``RenderRefused``, ``no_pages``) and the route answers 422 with
+    the render's own message, as it did when the route raised the 422 itself."""
+    from tests.pdf_fakes import empty_page_tree_pdf
+
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        empty_page_tree_pdf(),
+        content_type="application/pdf",
+        name="empty.pdf",
+    )
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 422, preview.text
+    assert preview.json()["detail"] == "Stored scan has no pages"
+
+
 _PREVIEW_PEAK_RSS_CHILD = """
 from lemely.io.scan_render import render_preview_png
 from tests.pdf_fakes import bilevel_png

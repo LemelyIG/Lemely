@@ -269,7 +269,7 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
             # #255: a phone stores a portrait photo as a landscape sensor frame
             # plus an EXIF orientation flag. Apply it, so the model reads the
             # page upright and every `source_box` from here on is in the
-            # upright frame -- the crop route (`review._crop_image_scan`)
+            # upright frame -- the crop route (`scan_render.crop_image_scan`)
             # transposes the same way before cutting. `draft()` above has
             # already picked the reduced decode, so this transposes at most
             # the reduced size; `in_place` avoids a second full-size copy when
