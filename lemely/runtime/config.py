@@ -721,6 +721,34 @@ def log_marking_flags(options: MarkingOptions) -> None:
     getattr(log, level)("marking_flags", **fields)
 
 
+class SandboxSettings(BaseModel):
+    """The two scan-render child processes (#260; see `lemely.runtime.sandbox`).
+
+    Each worker's child runs under ``RLIMIT_DATA`` (the real bound: heap and
+    private mappings) plus a looser ``RLIMIT_AS`` backstop (address space,
+    which also counts shared libraries and reserved-but-untouched memory).
+    The extraction worker serves extraction and the upload check; the
+    interactive worker serves preview and crop. The limits are the starting
+    points from the 2 GiB memory budget (owner decision S1), to be replaced by
+    measured values. The timeouts bound one call, including any wait for a
+    busy worker. ``enabled=False`` runs every target in the calling process,
+    for tests that patch a library in that process; it is not a deploy knob.
+    Set in the environment as ``LEMELY_SANDBOX__<FIELD>``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    start_timeout_seconds: float = Field(default=30.0, gt=0)
+    extraction_data_limit_bytes: int = Field(default=384 * 1024 * 1024, ge=64 * 1024 * 1024)
+    extraction_address_limit_bytes: int = Field(default=640 * 1024 * 1024, ge=128 * 1024 * 1024)
+    interactive_data_limit_bytes: int = Field(default=192 * 1024 * 1024, ge=64 * 1024 * 1024)
+    interactive_address_limit_bytes: int = Field(default=448 * 1024 * 1024, ge=128 * 1024 * 1024)
+    extraction_timeout_seconds: float = Field(default=180.0, gt=0)  # replaced by Task 11
+    upload_check_timeout_seconds: float = Field(default=20.0, gt=0)
+    preview_timeout_seconds: float = Field(default=15.0, gt=0)
+    crop_timeout_seconds: float = Field(default=10.0, gt=0)
+
+
 class StorageSettings(BaseModel):
     """Object storage for uploads (P2.5) and profile pictures (spec 2026-09-03, DS7/DS12).
 
@@ -939,6 +967,7 @@ class Settings(BaseSettings):
     det_parser: DetParserSettings = DetParserSettings()
     integrity: IntegritySettings = IntegritySettings()
     grading: GradingSettings = GradingSettings()
+    sandbox: SandboxSettings = SandboxSettings()
     storage: StorageSettings = StorageSettings()
     push: PushSettings = PushSettings()
     notifications: NotificationsSettings = NotificationsSettings()
