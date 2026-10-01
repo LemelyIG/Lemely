@@ -25,9 +25,10 @@ uniformly lower DPI (or is refused below `MIN_EXTRACTION_DPI`).
 
 from __future__ import annotations
 
+import contextlib
 import io
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pypdfium2 as pdfium
 
@@ -44,8 +45,10 @@ from lemely.io.scan_limits import (
     plan_image,
     plan_pdf_pages,
 )
+from lemely.runtime import sandbox
 
 if TYPE_CHECKING:
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
     from PIL.Image import Image as PILImage
@@ -53,9 +56,11 @@ if TYPE_CHECKING:
 __all__ = [
     "EXTRACTION_DPI",
     "PDF_MAGIC",
+    "SCAN_PAGES_TARGET",
     "RasterisedPage",
     "ScanRejectedError",
     "ScanTooLargeError",
+    "iter_scan_pages",
     "looks_like_pdf",
     "rasterise_pdf_to_pages",
     "rasterise_scan_to_pages",
@@ -82,8 +87,80 @@ class RasterisedPage:
     dpi: float = EXTRACTION_DPI
 
 
+def _iter_pdf_pages(pdf_path: Path, *, dpi: float) -> Iterator[RasterisedPage]:
+    """Render the pages of *pdf_path* one at a time, each yielded as it is made.
+
+    The body of :func:`rasterise_pdf_to_pages`, as a generator: in the
+    extraction worker (#260) each page is sent to the parent before the next
+    is rendered, so the child never holds every page's PNG at once. Closing
+    the generator early closes pdfium's document. Refuses as
+    :func:`rasterise_pdf_to_pages` does; a PDF with no pages raises
+    ``ValueError`` from :func:`~lemely.io.scan_limits.canonical_pdf_bytes`
+    and otherwise yields nothing.
+    """
+    # The stored file's bytes are released as soon as the rewrite exists
+    # (the call holds the only reference), so at most the file and its
+    # rewrite are held at once; pdfium then keeps only the rewrite.
+    yield from _iter_canonical_pages(canonical_pdf_bytes(pdf_path.read_bytes()), dpi=dpi)
+
+
+def _iter_canonical_pages(canonical: bytes, *, dpi: float) -> Iterator[RasterisedPage]:
+    """:func:`_iter_pdf_pages` once the rewrite exists: plan, check, render."""
+    # `canonical_pdf_bytes` is the only sanctioned source of pdfium input.
+    pdf = pdfium.PdfDocument(canonical)
+    try:
+        # Planning reads the page count and page sizes only (no page is
+        # loaded), so the page cap applies before the content walk below
+        # visits every page (final review M1).
+        plans = plan_pdf_pages(pdf, dpi=dpi)
+        # Task 11b: an old stored upload can pre-date the upload-time check,
+        # and pypdfium2 parses a page's whole content stream on render --
+        # measured at 2.2 GB for a 218 KB bomb. Refuse from the raw streams
+        # before any render. The walk reads with MuPDF but this renders with
+        # pdfium, so it is given pdfium's page count (Task 9b). Over the same
+        # canonical bytes the counts should always agree (Task 9c); the
+        # comparison stays as a guard.
+        check_pdf_content_bytes(canonical, pdfium_pages=len(pdf))
+        for plan in plans:
+            # Final review N1: a loaded page keeps its decoded images alive
+            # until it is closed, and `pdf.close()` alone would hold every
+            # page's at once (1037 MB peak RSS on a 1.13 MB 40-page scan,
+            # 553 MB closing per page). Close the page and its bitmap as soon
+            # as the RGB copy exists; `.convert` copies, so nothing the PNG
+            # encode below reads still points into pdfium's buffer.
+            page = pdf[plan.index]
+            try:
+                # pypdfium2's scale is in units of 72dpi-points.
+                bitmap = page.render(scale=plan.dpi / 72.0)
+                try:
+                    pil_image = bitmap.to_pil().convert("RGB")
+                finally:
+                    bitmap.close()
+            finally:
+                page.close()
+            rasterised = _png_page(pil_image, index=plan.index, dpi=plan.dpi)
+            # Dropped before the yield: a suspended generator would otherwise
+            # keep this page's full-size RGB copy alive through the next render.
+            del pil_image
+            yield rasterised
+    finally:
+        pdf.close()
+
+
+def _png_page(image: PILImage, *, index: int, dpi: float = EXTRACTION_DPI) -> RasterisedPage:
+    """``image`` encoded as PNG, as the :class:`RasterisedPage` at ``index``."""
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return RasterisedPage(
+        index=index, width=image.width, height=image.height, png_bytes=buf.getvalue(), dpi=dpi
+    )
+
+
 def rasterise_pdf_to_pages(pdf_path: Path, *, dpi: float = EXTRACTION_DPI) -> list[RasterisedPage]:
     """Render every page of *pdf_path* to a PNG image at *dpi* (or the planned lower DPI).
+
+    Runs in the calling process; extraction calls
+    :func:`rasterise_scan_to_pages`, which renders in the extraction worker.
 
     Raises :class:`ScanTooLargeError` before any render when the document
     has more than ``MAX_SCAN_PAGES`` pages or a page beyond
@@ -103,57 +180,7 @@ def rasterise_pdf_to_pages(pdf_path: Path, *, dpi: float = EXTRACTION_DPI) -> li
     not check. A file MuPDF cannot open or rewrite raises
     :class:`ScanRejectedError`.
     """
-    # The stored file's bytes are released as soon as the rewrite exists
-    # (the call holds the only reference), so at most the file and its
-    # rewrite are held at once; pdfium then keeps only the rewrite.
-    canonical = canonical_pdf_bytes(pdf_path.read_bytes())
-    # `canonical_pdf_bytes` is the only sanctioned source of pdfium input.
-    pdf = pdfium.PdfDocument(canonical)
-    try:
-        # Planning reads the page count and page sizes only (no page is
-        # loaded), so the page cap applies before the content walk below
-        # visits every page (final review M1).
-        plans = plan_pdf_pages(pdf, dpi=dpi)
-        # Task 11b: an old stored upload can pre-date the upload-time check,
-        # and pypdfium2 parses a page's whole content stream on render --
-        # measured at 2.2 GB for a 218 KB bomb. Refuse from the raw streams
-        # before any render. The walk reads with MuPDF but this renders with
-        # pdfium, so it is given pdfium's page count (Task 9b). Over the same
-        # canonical bytes the counts should always agree (Task 9c); the
-        # comparison stays as a guard.
-        check_pdf_content_bytes(canonical, pdfium_pages=len(pdf))
-        pages: list[RasterisedPage] = []
-        for plan in plans:
-            # Final review N1: a loaded page keeps its decoded images alive
-            # until it is closed, and `pdf.close()` alone would hold every
-            # page's at once (1037 MB peak RSS on a 1.13 MB 40-page scan,
-            # 553 MB closing per page). Close the page and its bitmap as soon
-            # as the RGB copy exists; `.convert` copies, so nothing the PNG
-            # encode below reads still points into pdfium's buffer.
-            page = pdf[plan.index]
-            try:
-                # pypdfium2's scale is in units of 72dpi-points.
-                bitmap = page.render(scale=plan.dpi / 72.0)
-                try:
-                    pil_image = bitmap.to_pil().convert("RGB")
-                finally:
-                    bitmap.close()
-            finally:
-                page.close()
-            buf = io.BytesIO()
-            pil_image.save(buf, format="PNG")
-            pages.append(
-                RasterisedPage(
-                    index=plan.index,
-                    width=pil_image.width,
-                    height=pil_image.height,
-                    png_bytes=buf.getvalue(),
-                    dpi=plan.dpi,
-                )
-            )
-    finally:
-        pdf.close()
-
+    pages = list(_iter_pdf_pages(pdf_path, dpi=dpi))
     if not pages:
         raise ValueError(f"{pdf_path} produced no pages")
     return pages
@@ -299,30 +326,71 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
     if factor > 1:
         pil_image = pil_image.reduce(factor)
     pil_image = pil_image.convert("RGB") if pil_image.mode != "RGB" else pil_image
-    buf = io.BytesIO()
-    pil_image.save(buf, format="PNG")
-    return [
-        RasterisedPage(
-            index=0,
-            width=pil_image.width,
-            height=pil_image.height,
-            png_bytes=buf.getvalue(),
-        )
-    ]
+    return [_png_page(pil_image, index=0)]
+
+
+#: The child-side function :func:`rasterise_scan_to_pages` streams from the
+#: extraction worker; a module attribute, read per call, so a test can name
+#: another target.
+SCAN_PAGES_TARGET = "lemely.io.rasterise.iter_scan_pages"
+
+
+def iter_scan_pages(scan_path: Path, dpi: float) -> Iterator[RasterisedPage]:
+    """The pages of a scan, one at a time: what the extraction worker's child runs.
+
+    Dispatches on the file's actual content, as :func:`rasterise_scan_to_pages`
+    documents. ``dpi`` is positional because the worker passes arguments so.
+    A PDF neither reader finds a page in yields nothing (the caller raises
+    the ``ValueError``): only that ``ValueError``, from the rewrite, before
+    any page is rendered, is caught, so a failure part-way through can never
+    pass for a shorter scan.
+    """
+    if not _looks_like_pdf(scan_path):
+        yield from _rasterise_single_image(scan_path)
+        return
+    try:
+        canonical = canonical_pdf_bytes(scan_path.read_bytes())
+    except ValueError:  # "the PDF has no pages"
+        return
+    yield from _iter_canonical_pages(canonical, dpi=dpi)
 
 
 def rasterise_scan_to_pages(
     scan_path: Path, *, dpi: float = EXTRACTION_DPI
 ) -> list[RasterisedPage]:
-    """Rasterise a scanned exam paper to per-page PNG images.
+    """Rasterise a scanned exam paper to per-page PNG images, in the extraction worker.
 
     Dispatches on the file's actual content (not its extension or a caller's
-    claimed content type): a PDF is rendered page-by-page via
-    :func:`rasterise_pdf_to_pages`; anything else is treated as a single
-    already-rasterised image (``image/*`` uploads are accepted alongside PDFs
-    — see ``lemely.web.routers.teacher``) and wrapped as one
+    claimed content type): a PDF is rendered page-by-page as
+    :func:`rasterise_pdf_to_pages` renders it; anything else is treated as a
+    single already-rasterised image (``image/*`` uploads are accepted
+    alongside PDFs — see ``lemely.web.routers.teacher``) and wrapped as one
     :class:`RasterisedPage`.
+
+    #260: the decoding runs in :data:`~lemely.runtime.sandbox.EXTRACTION_WORKER`,
+    a child bounded in memory and killed past
+    ``sandbox_settings().extraction_timeout_seconds``. The child streams the
+    pages (:func:`iter_scan_pages`), so it holds one at a time; this process
+    collects them all. A scan refusal arrives as itself; any other failure is
+    a :class:`~lemely.runtime.sandbox.SandboxFailure`, which the grading
+    pipeline records as a failed run like any other exception. Raises
+    :class:`ValueError` when the scan produced no pages.
     """
-    if _looks_like_pdf(scan_path):
-        return rasterise_pdf_to_pages(scan_path, dpi=dpi)
-    return _rasterise_single_image(scan_path)
+    # `stream` is a generator function, so its result has `close()`.
+    stream = cast(
+        "Generator[RasterisedPage]",
+        sandbox.EXTRACTION_WORKER.stream(
+            SCAN_PAGES_TARGET,
+            scan_path,
+            dpi,
+            timeout=sandbox.sandbox_settings().extraction_timeout_seconds,
+            item_type=RasterisedPage,
+        ),
+    )
+    # Closed on every exit: an abandoned stream holds the worker until it is
+    # garbage-collected.
+    with contextlib.closing(stream):
+        pages = list(stream)
+    if not pages:
+        raise ValueError(f"{scan_path} produced no pages")
+    return pages

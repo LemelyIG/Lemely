@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import io
 import itertools
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 import pypdfium2 as pdfium
+import pytest
 from PIL import Image
 
 import lemely.io._scan_common as _scan_common
@@ -28,10 +31,14 @@ from lemely.io.scan_limits import (
     ScanUnsupportedFormatError,
     decode_pixel_cap,
 )
+from lemely.runtime import sandbox
+from lemely.runtime.config import SandboxSettings
+from tests.fakes_worker_bombs import peak_rss_bytes, reset_peak_rss
 from tests.pdf_fakes import (
     SIXTEEN_BIT_INK,
     SIXTEEN_BIT_PAPER,
     annot_ap_bomb_pdf,
+    assemble_pdf,
     bilevel_png,
     declared_image,
     ico_wrapping,
@@ -46,6 +53,7 @@ from tests.pdf_fakes import (
     uncounted_bomb_pdf,
     xref_repair_bomb_pdf,
 )
+from tests.sandbox_fixtures import in_process_sandbox, sandboxed  # noqa: F401
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "handwritten-59" / "0625_w24_qp_42.pdf"
 
@@ -96,6 +104,7 @@ class RasterisePdfToPagesTests(unittest.TestCase):
         self.assertEqual(pages[0].width, round(EXTRACTION_DPI))
         self.assertEqual(pages[0].height, round(EXTRACTION_DPI))
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_empty_pdf_raises_value_error(self) -> None:
         # pypdfium2 cannot represent a zero-page PDF via the normal save path,
         # so this exercises the guard with a document whose only page we then
@@ -127,6 +136,7 @@ class RasterisePdfToPagesTests(unittest.TestCase):
         self.assertEqual([p.index for p in pages], list(range(16)))
 
 
+@pytest.mark.usefixtures("sandboxed")
 class RasteriseScanToPagesTests(unittest.TestCase):
     """The teacher/student portals accept image/* uploads as well as PDFs
     (lemely/web/routers/teacher.py) and ``scan_path`` is documented as
@@ -192,12 +202,14 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         with self.assertRaises(ScanTooLargeError):
             rasterise_pdf_to_pages(self._pdf("huge.pdf", (14400.0, 14400.0)))
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_too_many_pages_are_rejected_before_any_render(self) -> None:
         path = self._pdf("many.pdf", *([(595.0, 842.0)] * 41))
         with patch.object(pdfium.PdfPage, "render") as render, self.assertRaises(ScanTooLargeError):
             rasterise_pdf_to_pages(path)
         render.assert_not_called()
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_each_page_is_closed_before_the_next_page_is_loaded(self) -> None:
         """Final review N1: a loaded pdfium page keeps its decoded images
         alive until it is closed; left open until ``pdf.close()``, a 40-page
@@ -233,6 +245,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             [("load", 0), ("close", 0), ("load", 1), ("close", 1), ("load", 2), ("close", 2)],
         )
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_too_many_pages_are_rejected_before_the_content_walk(self) -> None:
         """Final review M1: the content walk visits every page, so the page
         cap must be applied before it -- a 20,000-page 5.8 MB PDF was walked
@@ -245,6 +258,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             rasterise_pdf_to_pages(path)
         walk.assert_not_called()
 
+    @pytest.mark.usefixtures("sandboxed")
     def test_a_phone_photo_is_turned_upright_by_its_exif_flag(self) -> None:
         """#255 (probe ``be_probe_img.py``): a 400x200 JPEG with EXIF
         orientation 6 reached the model as a 400x200 page. Phones store a
@@ -269,6 +283,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         self.assertTrue(g > 200 and r < 80 and b < 80, "green corner is not at the top-right")
         self.assertIsNone(decoded.getexif().get(0x0112))
 
+    @pytest.mark.usefixtures("sandboxed")
     def test_every_exif_orientation_lands_the_raw_top_left_where_the_flag_says(self) -> None:
         """All eight flags, JPEG and PNG. ``upright_corner`` is the EXIF
         table written out by hand (where the stored frame's top-left corner
@@ -314,6 +329,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
                     oy = 2 if bottom else page.height - 3
                     self.assertGreater(min(decoded.getpixel((ox, oy))), 200)
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_a_reduced_decode_jpeg_is_still_turned_upright(self) -> None:
         """A JPEG over ``MAX_PAGE_PX`` takes the native reduced-scale ``draft``
         decode, and the flag is applied to that reduced frame. 6000x4000 is
@@ -361,18 +377,21 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
                 oy = 2 if bottom else page.height - 3
                 self.assertGreater(min(decoded.getpixel((ox, oy))), 200)
 
+    @pytest.mark.usefixtures("sandboxed")
     def test_an_image_without_an_exif_flag_is_unchanged(self) -> None:
         image_path = Path(self.tmp) / "plain.png"
         Image.new("RGB", (400, 200), (255, 255, 255)).save(image_path, "PNG")
         (page,) = rasterise_scan_to_pages(image_path)
         self.assertEqual((page.width, page.height), (400, 200))
 
+    @pytest.mark.usefixtures("sandboxed")
     def test_a_within_band_image_is_reduced(self) -> None:
         image_path = Path(self.tmp) / "big.png"
         Image.new("1", (5000, 5000), color=1).save(image_path, "PNG")
         pages = rasterise_scan_to_pages(image_path)
         self.assertEqual((pages[0].width, pages[0].height), (2500, 2500))
 
+    @pytest.mark.usefixtures("sandboxed")
     def test_a_within_band_jpeg_uses_the_native_reduced_decode(self) -> None:
         image_path = Path(self.tmp) / "big.jpg"
         Image.new("L", (5000, 5000), color=255).save(image_path, "JPEG")
@@ -384,6 +403,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         path.write_bytes(declared_image(mode, *size))
         return path
 
+    @pytest.mark.usefixtures("sandboxed")
     def test_an_oversized_image_is_rejected(self) -> None:
         """Header only (169 Mpx bilevel, 161.3 Mpx grey): refused before a
         pixel is decoded -- the file holds none."""
@@ -391,6 +411,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             with self.subTest(mode=mode, size=size), self.assertRaises(ScanTooLargeError):
                 rasterise_scan_to_pages(self._declared(f"huge-{mode}.png", mode, size))
 
+    @pytest.mark.usefixtures("sandboxed")
     def test_an_oversized_colour_image_is_still_rejected_at_forty_megapixels(self) -> None:
         """User decision 1 (2026-09-29): 41.6 Mpx of colour is refused in
         every colour mode, whatever the grey ceiling now admits."""
@@ -399,6 +420,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             with self.subTest(mode=mode), self.assertRaises(ScanTooLargeError):
                 rasterise_scan_to_pages(self._declared(f"colour.{suffix}", mode, (6500, 6400)))
 
+    @pytest.mark.usefixtures("sandboxed")
     def test_a_bilevel_scan_over_forty_megapixels_is_reduced_not_refused(self) -> None:
         """#256: 49 Mpx of mode "1" is a 49 MB decode; it used to be refused
         for its pixel count. Reduced by 2 (to 12.25 Mpx)."""
@@ -407,6 +429,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         pages = rasterise_scan_to_pages(image_path)
         self.assertEqual((pages[0].width, pages[0].height), (3500, 3500))
 
+    @pytest.mark.usefixtures("sandboxed")
     def test_a_bilevel_a4_office_scan_at_1200_dpi_is_extracted(self) -> None:
         """#256 (probe ``be_probe_img.py``): 9921 x 14031 = 139 Mpx of 1-bit
         A4 in a ~40 KB file. Admitted, reduced by 4 (8.7 Mpx) for the model,
@@ -427,6 +450,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         self.assertEqual(decoded.getpixel(inside_mark), (0, 0, 0))
         self.assertEqual(decoded.getpixel((page.width // 10, page.height // 2)), (255, 255, 255))
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_the_reduce_happens_before_the_rgb_conversion(self) -> None:
         """#256: a bilevel or greyscale page is reduced BEFORE any RGB
         conversion, so the three-channel copy is never made at full size
@@ -454,6 +478,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
                     rasterise_scan_to_pages(image_path)
                 self.assertEqual(sizes_converted_to_rgb, [(2500, 2500)])
 
+    @pytest.mark.usefixtures("sandboxed")
     def test_a_webp_is_judged_against_the_webp_ceiling(self) -> None:
         """#256 review round 2: a WebP decodes at about three times a PNG's
         cost, so extraction caps it at a third of the colour ceiling: 13.32
@@ -468,6 +493,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             rasterise_scan_to_pages(over)
         self.assertIn("This WebP image is too large", str(caught.exception))
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_an_ico_wrapping_a_big_png_is_refused_without_being_opened(self) -> None:
         """#256 review: the ICO opener decodes the image it wraps inside
         ``Image.open``. Extraction must refuse it from its first bytes; the
@@ -499,6 +525,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
                 if decode_pixel_cap(mode) > MAX_DECODE_PX:
                     self.assertEqual(converted.mode, "L")
 
+    @pytest.mark.usefixtures("sandboxed")
     def test_a_sixteen_bit_greyscale_scan_keeps_its_ink(self) -> None:
         """Final review, Important 2: Pillow CLIPS a 16-bit sample to 0-255 when
         it converts to "L" -- it does not scale -- so ink at 5000 on paper at
@@ -542,6 +569,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
                     [value * 255 // 65535 for value in samples],
                 )
 
+    @pytest.mark.usefixtures("sandboxed")
     def test_a_bilevel_scan_over_forty_megapixels_is_still_turned_upright(self) -> None:
         """#255 and #256 together: the EXIF flag is applied to a large
         bilevel scan that is now admitted, before the reduce. 8000 x 6000
@@ -567,6 +595,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         pages = rasterise_pdf_to_pages(_FIXTURE)
         self.assertEqual((pages[0].width, pages[0].height, pages[0].dpi), (1655, 2339, 200.0))
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_a_scan_over_the_total_pixel_cap_renders_at_the_uniform_lower_dpi(self) -> None:
         """Final review I1: the DPI the scan-wide downscale chose is the one
         rendered and recorded on ``RasterisedPage.dpi``. The cap is lowered
@@ -579,6 +608,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         self.assertEqual([p.dpi for p in pages], [141.0, 141.0])
         self.assertEqual([(p.width, p.height) for p in pages], [(141, 141), (141, 141)])
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_a_scan_that_cannot_fit_the_total_pixel_cap_is_rejected_before_any_render(
         self,
     ) -> None:
@@ -588,6 +618,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             rasterise_pdf_to_pages(path)
         render.assert_not_called()
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_a_content_bomb_is_rejected_before_any_render(self) -> None:
         path = Path(self.tmp) / "bomb.pdf"
         path.write_bytes(page_bomb_pdf(112_000_000))
@@ -595,6 +626,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             rasterise_pdf_to_pages(path)
         render.assert_not_called()
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_an_image_xobject_bomb_is_rejected_before_any_render(self) -> None:
         path = Path(self.tmp) / "image-bomb.pdf"
         path.write_bytes(image_bomb_pdf(40_000, 40_000))
@@ -602,6 +634,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             rasterise_pdf_to_pages(path)
         render.assert_not_called()
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_an_annotation_appearance_stream_bomb_is_rejected_before_any_render(self) -> None:
         # Fix round 1: the new content-walk paths (annotations, patterns,
         # Type3 CharProcs) all go through the same check_pdf_content_bytes
@@ -613,6 +646,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
             rasterise_pdf_to_pages(path)
         render.assert_not_called()
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_a_bomb_only_pdfium_sees_is_rejected_before_any_page_is_loaded(self) -> None:
         """Task 9b, the reviewer's reproduction: MuPDF cannot load page 2, which
         pdfium renders as a content bomb (642,857 objects, 2.4 s to parse on
@@ -628,6 +662,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         get_page.assert_not_called()
         render.assert_not_called()
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_a_bomb_behind_an_xref_repair_is_never_rendered(self) -> None:
         """Task 9c, the reviewer's xref-repair probe: object 4, the page's
         content, is defined twice -- a clean rectangle the xref names, then
@@ -657,6 +692,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         )
         self.assertGreater(red, 0)
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_objects_no_page_reaches_never_reach_pdfium(self) -> None:
         """Task 9c review round 1: a big object hung off the catalog, compressed
         (a few KB on disk) or not, is left out of the rewrite pdfium renders,
@@ -681,6 +717,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
                 self.assertEqual(len(sizes), 1)
                 self.assertLess(sizes[0], 20_000)
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_an_object_stream_bomb_is_refused_before_pdfium_opens_anything(self) -> None:
         """Task 9c review round 1: a stored file that pre-dates the upload
         bound on object streams is refused at extraction too."""
@@ -696,6 +733,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         document.assert_not_called()
         self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_a_container_bomb_under_a_broken_xref_is_refused_before_any_reader_opens_it(
         self,
     ) -> None:
@@ -715,6 +753,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         document.assert_not_called()
         self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_pdfium_renders_the_bytes_the_content_check_measured_not_the_file(self) -> None:
         """Task 9c: pdfium is handed MuPDF's rewrite -- the very object the
         content check was given -- never the stored file's path or bytes."""
@@ -753,6 +792,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         self.assertTrue(checked[0] is rewritten[0], "the content check measured other bytes")
         self.assertTrue(opened[0] != path.read_bytes(), "pdfium was given the stored bytes")
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_the_equal_count_page_kids_bomb_is_rejected_before_any_page_is_loaded(self) -> None:
         """T9b review round 1: both readers count 2 pages, but pdfium's page 1
         is a bomb held in the ``/Kids`` of a ``/Type /Page`` MuPDF numbers as
@@ -771,6 +811,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         render.assert_not_called()
         self.assertEqual(str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE)
 
+    @pytest.mark.usefixtures("in_process_sandbox")
     def test_readers_that_disagree_on_the_page_count_are_rejected_before_any_page_is_loaded(
         self,
     ) -> None:
@@ -794,6 +835,131 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         # Task 9c: refused while the original is checked, before the rewrite
         # -- the tree holds pages MuPDF does not number.
         self.assertEqual(str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE)
+
+
+# -- #260: extraction runs in the extraction worker ----------------------------
+
+_MB = 1_000_000
+_MIB = 1024 * 1024
+
+#: ``RLIMIT_DATA`` for the forced-past-the-limit test: room for the child's
+#: imports and a one-page render, never for the committed scan at 400 DPI.
+#: Measured (2026-10-02, this venv): the one-page extraction passes from
+#: 96 MiB up, and the 400 DPI render fails up to 160 MiB and passes from
+#: 192 MiB, so 112 MiB sits inside that window with room on both sides.
+_STARVED_DATA_LIMIT = 112 * _MIB
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_extraction_of_the_committed_fixture_runs_in_the_worker() -> None:
+    """#260: pdfium, MuPDF and Pillow decode the scan in the extraction
+    worker's bounded child; the pages come back to this process."""
+    _require_committed_fixture(_FIXTURE)
+    pages = rasterise_scan_to_pages(_FIXTURE)
+    assert len(pages) == 16
+    assert [page.index for page in pages] == list(range(16))
+    assert (pages[0].width, pages[0].height, pages[0].dpi) == (1655, 2339, 200.0)
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "ok"
+    child = sandbox.EXTRACTION_WORKER.pid()
+    assert child is not None
+    assert child != os.getpid()
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_a_refusal_in_the_worker_reaches_extraction_intact(tmp_path: Path) -> None:
+    """A scan refusal crosses the pipe as itself, reason and all, so the
+    grading pipeline's failed status reads as it did in-process."""
+    path = tmp_path / "bomb.pdf"
+    path.write_bytes(page_bomb_pdf(112_000_000))
+    with pytest.raises(ScanTooLargeError) as caught:
+        rasterise_scan_to_pages(path)
+    assert caught.value.reason == "page_content"
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "rejected"
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_an_empty_pdf_still_raises_value_error_through_the_worker(tmp_path: Path) -> None:
+    """A PDF neither reader finds a page in is extraction's ``ValueError``,
+    as in-process: the child streams no pages and the caller raises."""
+    path = tmp_path / "empty.pdf"
+    path.write_bytes(
+        assemble_pdf(
+            [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [] /Count 0 >>"]
+        )
+    )
+    with pytest.raises(ValueError, match="produced no pages"):
+        rasterise_scan_to_pages(path)
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "ok"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="VmHWM is Linux-only")
+@pytest.mark.usefixtures("sandboxed")
+def test_a_render_forced_past_the_limit_fails_without_growing_this_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#260: a render that outgrows the child's ``RLIMIT_DATA`` fails as a
+    ``SandboxFailure`` in the child, the test process's peak barely moves,
+    and the worker serves the next call. The same child first extracts a
+    one-page scan, so its imports provably fit the limit and the failure is
+    the render's."""
+    _require_committed_fixture(_FIXTURE)
+    monkeypatch.setattr(
+        sandbox,
+        "sandbox_settings",
+        lambda: SandboxSettings(
+            enabled=True,
+            extraction_data_limit_bytes=_STARVED_DATA_LIMIT,
+            extraction_address_limit_bytes=1024 * _MIB,
+        ),
+    )
+    small = tmp_path / "small.pdf"
+    _write_pdf(small, pages=1)
+    assert len(rasterise_scan_to_pages(small)) == 1
+    before = reset_peak_rss()
+    with pytest.raises(sandbox.SandboxFailure) as caught:
+        rasterise_scan_to_pages(_FIXTURE, dpi=400.0)
+    grown = peak_rss_bytes() - before
+    # The limit, not a timeout or a busy worker, stopped it. Measured: a
+    # Python MemoryError in the child (SandboxMemory), which it survives; a
+    # C library may instead raise its own error or abort.
+    assert isinstance(
+        caught.value, (sandbox.SandboxMemory, sandbox.SandboxError, sandbox.SandboxCrash)
+    ), repr(caught.value)
+    assert grown < 32 * _MB, f"the test process grew by {grown / _MB:.0f} MB"
+    assert sandbox.EXTRACTION_WORKER.call("tests.sandbox_targets.pid", timeout=60, result_type=int)
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "ok"
+
+
+def test_the_child_yields_each_page_before_it_renders_the_next(tmp_path: Path) -> None:
+    """#260 (c): the child streams one page at a time, so it never holds
+    every page's PNG at once, and closing the stream early closes pdfium's
+    document. In this process: the child runs the same function."""
+    path = tmp_path / "three.pdf"
+    _write_pdf(path, pages=3)
+    rendered: list[int] = []
+    closed: list[int] = []
+    real_render = pdfium.PdfPage.render
+    real_close = pdfium.PdfDocument.close
+
+    def render(page: pdfium.PdfPage, *args: object, **kwargs: object) -> pdfium.PdfBitmap:
+        rendered.append(1)
+        return real_render(page, *args, **kwargs)  # type: ignore[arg-type]
+
+    def close(document: pdfium.PdfDocument, *args: object, **kwargs: object) -> object:
+        closed.append(1)
+        return real_close(document, *args, **kwargs)  # type: ignore[arg-type]
+
+    with (
+        patch.object(pdfium.PdfPage, "render", render),
+        patch.object(pdfium.PdfDocument, "close", close),
+    ):
+        pages = rasterise_module.iter_scan_pages(path, EXTRACTION_DPI)
+        first = next(pages)
+        assert (first.index, len(rendered)) == (0, 1)
+        open_documents = len(closed)
+        pages.close()
+        assert len(closed) == open_documents + 1
+    assert len(rendered) == 1
 
 
 if __name__ == "__main__":

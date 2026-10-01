@@ -20,7 +20,8 @@ from pathlib import Path
 import structlog
 from fastapi import HTTPException
 
-from lemely.io.scan_limits import ScanRejectedError, check_scan_bytes
+from lemely.io.scan_limits import ScanRejectedError
+from lemely.runtime import sandbox
 from lemely.runtime.sandbox import SandboxFailure, SandboxUnavailable
 
 log = structlog.get_logger(__name__)
@@ -29,6 +30,9 @@ log = structlog.get_logger(__name__)
 # whole body has been read into memory, before it is written anywhere —
 # object storage included.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+#: The upload check :func:`check_scan_geometry` runs in the extraction worker.
+SCAN_CHECK_TARGET = "lemely.io.scan_limits.check_scan_bytes"
 
 
 def safe_upload_name(filename: str | None, fallback: str) -> str:
@@ -99,15 +103,34 @@ def check_scan_geometry(data: bytes, content_type: str | None = None) -> None:
     are not a readable PDF or image pass: extraction fails on them later, as
     today. 413 (:func:`check_upload_cap`) stays the answer for byte size.
 
+    #260: the check opens the bytes with pdfium, MuPDF and Pillow, so it runs
+    in :data:`~lemely.runtime.sandbox.EXTRACTION_WORKER` under its memory
+    limit, within ``sandbox_settings().upload_check_timeout_seconds``
+    (counting any wait for an extraction already running there). A bomb
+    that blows a reader up while it opens the file (a catalog ``/Metadata``
+    pdfium inflates on open, say) takes down the child, not the web process.
+
     A refusal is logged with the exception's class as its refusal class,
     its ``reason`` code, and the client's declared ``content_type`` (positional, so
-    ``anyio.to_thread.run_sync`` can pass it).
+    ``anyio.to_thread.run_sync`` can pass it). A worker failure is mapped by
+    :func:`sandbox_failure_to_http` and logged as ``upload_check_failed``:
+    503 when the worker is busy past the timeout or cannot start, otherwise
+    422 with a fixed message.
     """
     try:
-        check_scan_bytes(data)
+        sandbox.EXTRACTION_WORKER.call(
+            SCAN_CHECK_TARGET,
+            data,
+            timeout=sandbox.sandbox_settings().upload_check_timeout_seconds,
+            result_type=type(None),
+        )
     except ScanRejectedError as exc:
         _log_refusal(type(exc).__name__, data, content_type, reason=exc.reason)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SandboxFailure as exc:
+        raise sandbox_failure_to_http(
+            exc, event="upload_check_failed", content_type=content_type, byte_size=len(data)
+        ) from exc
 
 
 #: The client's answer when no render worker could take the request.
@@ -138,6 +161,7 @@ __all__ = [
     "MAX_UPLOAD_BYTES",
     "SANDBOX_FAILED_DETAIL",
     "SANDBOX_UNAVAILABLE_DETAIL",
+    "SCAN_CHECK_TARGET",
     "check_scan_geometry",
     "check_upload_cap",
     "safe_upload_name",
