@@ -10,13 +10,16 @@ from __future__ import annotations
 
 import contextlib
 import io
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import pymupdf
 import pypdfium2 as pdfium
 from PIL import Image, UnidentifiedImageError
 
+import lemely.io.pdf_canonical as pdf_canonical
 import lemely.io.pdf_content_walk as pdf_content_walk
 from lemely.io import scan_limits
 from lemely.io._scan_common import (
@@ -31,7 +34,19 @@ from lemely.io.pdf_canonical import (
     open_scan_image_document,
 )
 from lemely.io.pdf_content_walk import check_pdf_content, check_pdf_page_content
+from lemely.io.rasterise import rasterise_pdf_to_pages
 from lemely.io.scan_limits import MAX_SCAN_PAGES, check_scan_bytes
+from tests.fakes_reader_agreement import (
+    dark_pixels,
+    differing_bytes,
+    mupdf_grey,
+    mupdf_size,
+    oc_hidden_bomb_pdf,
+    ocmd_image_pdf,
+    pdfium_grey,
+    pdfium_size,
+    visible_layer_text_pdf,
+)
 from tests.pdf_fakes import (
     born_digital_text_pdf,
     empty_page_tree_pdf,
@@ -177,12 +192,17 @@ class RewriteFidelityTests(unittest.TestCase):
             pdf.close()
 
     def test_layers_hidden_by_default_stay_hidden(self) -> None:
-        """Content on an optional-content layer that is OFF by default --
-        text and a filled rectangle, or an image XObject and an annotation --
-        renders from the rewrite exactly as from the stored file: hidden.
-        Losing the catalog's ``/OCProperties`` would show it to the marker
-        while the teacher's preview does not."""
-        for variant in ("text", "image"):
+        """Pins the ``/OCProperties`` graft: text and a filled rectangle on a
+        layer that is OFF by default, drawn inside marked content
+        (``/OC /name BDC``), render from the rewrite exactly as from the
+        stored file under pdfium -- hidden -- because the rewrite carries the
+        catalog's default configuration. Without it every layer renders.
+
+        The ``image`` variant is not compared pdfium with pdfium any more:
+        pdfium draws its hidden annotation from the stored file, and the
+        rewrite drops it (#274), so the two now differ by design --
+        ``ReaderAgreementTests`` holds the rewrite to MuPDF's view instead."""
+        for variant in ("text",):
             data = hidden_layer_pdf(variant=variant)
             with self.subTest(variant=variant):
                 stored = self._pdfium_grey(data)
@@ -193,6 +213,187 @@ class RewriteFidelityTests(unittest.TestCase):
                     for x, y in zip(stored, rewritten, strict=True)
                 ]
                 self.assertEqual(differing, [0] * len(stored), "grey bytes differing per page")
+
+
+def _pdfium_page_count(data: bytes) -> int:
+    pdf = pdfium.PdfDocument(data)
+    try:
+        return len(pdf)
+    finally:
+        pdf.close()
+
+
+#: Differing grey bytes allowed between pdfium's render of the rewrite and
+#: MuPDF's of the stored file beyond what anti-aliasing alone costs: the two
+#: readers round an image's edge to different pixel rows (100 bytes on the
+#: OCMD fixture's square at scale 0.5).
+_AGREEMENT_SLACK = 200
+
+#: The OCMD cases where MuPDF 1.29 departs from the policy the PDF spec
+#: defines (and pdfium follows): it shows an ``/AllOn`` member whatever its
+#: groups' states and hides an ``/AnyOff`` member likewise. The rewrite keeps
+#: the spec's rule, so on these two the marker and the teacher still differ;
+#: the test pins that, so an upstream fix shows up here.
+_MUPDF_OCMD_DEVIATIONS = {("AllOn", (True, False)), ("AnyOff", (True, False))}
+
+
+class ReaderAgreementTests(unittest.TestCase):
+    """#274 hidden content: the marker reads pdfium's render of the rewrite,
+    the teacher MuPDF's render of the stored file, and they must see the
+    same picture. pdfium hides an image or form XObject whose ``/OC`` is
+    off, but draws an annotation whatever its ``/OC`` says; MuPDF hides
+    both. So the rewrite drops what the default configuration hides."""
+
+    def _rasterised_vs_mupdf(self, data: bytes) -> int:
+        """Differing grey bytes: extraction's page 0 against MuPDF's render
+        of the stored file at the same pixel size."""
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "scan.pdf"
+            path.write_bytes(data)
+            page = rasterise_pdf_to_pages(path)[0]
+        with Image.open(io.BytesIO(page.png_bytes)) as image:
+            marker = image.convert("L").tobytes()
+        # pdfium's own scale: width / 595 is 1653 / 595, a hair over it, and
+        # makes MuPDF round the A4 height up to one row more than pdfium.
+        zoom = page.dpi / 72
+        self.assertEqual(mupdf_size(data, 0, zoom=zoom), (page.width, page.height))
+        return differing_bytes(marker, mupdf_grey(data, 0, zoom=zoom))
+
+    def test_the_marker_sees_what_the_teacher_sees_for_a_hidden_image_layer(self) -> None:
+        """Extraction's render of the ``image`` variant differs from MuPDF's
+        by no more than the ``text`` variant's does (anti-aliasing of the
+        visible text, which both share) plus the slack. Before the prune
+        pdfium drew the hidden square annotation: tens of thousands of
+        bytes apart."""
+        text = self._rasterised_vs_mupdf(hidden_layer_pdf(variant="text"))
+        image = self._rasterised_vs_mupdf(hidden_layer_pdf(variant="image"))
+        self.assertLessEqual(image, text + _AGREEMENT_SLACK, f"text variant: {text}")
+
+    def test_the_hidden_image_is_absent_from_the_rewrite_under_pdfium(self) -> None:
+        """The inverse of ``test_layers_hidden_by_default_stay_hidden``:
+        pdfium draws the stored ``image`` variant's hidden annotation, and
+        draws nothing hidden from the rewrite -- no more ink than the file
+        with only its visible layer."""
+        data = hidden_layer_pdf(variant="image")
+        size = pdfium_size(data, 0, scale=0.5)
+        rewrite = dark_pixels(pdfium_grey(canonical_pdf_bytes(data), 0, scale=0.5), size)
+        visible = dark_pixels(pdfium_grey(visible_layer_text_pdf(), 0, scale=0.5), size)
+        stored = dark_pixels(pdfium_grey(data, 0, scale=0.5), size)
+        self.assertLessEqual(rewrite, visible)
+        self.assertLess(rewrite, stored)
+
+    def test_an_oc_hidden_content_bomb_is_still_refused_by_the_walk(self) -> None:
+        """Hidden is not harmless: a renderer may parse what it does not
+        draw, so the walk measures a hidden form as any other, before the
+        rewrite prunes anything."""
+        with self.assertRaises(ScanTooLargeError):
+            canonical_pdf_bytes(oc_hidden_bomb_pdf(112_000_000))
+
+    def test_ocmd_policies_decide_what_the_rewrite_drops(self) -> None:
+        """Each ``/OCMD`` policy over two groups (and ``/BaseState /OFF``
+        over one): pdfium's render of the rewrite has ink exactly when the
+        policy shows the square, and matches MuPDF's render of the stored
+        file -- except where MuPDF departs from the spec
+        (:data:`_MUPDF_OCMD_DEVIATIONS`). Both holders: an image XObject,
+        which pdfium hides itself, and an annotation, which only the prune
+        hides."""
+        cases: tuple[tuple[str, tuple[bool, ...], bool, bool], ...] = (
+            ("AnyOn", (False, False), False, False),
+            ("AnyOn", (True, False), False, True),
+            ("AllOn", (True, False), False, False),
+            ("AllOn", (True, True), False, True),
+            ("AnyOff", (True, True), False, False),
+            ("AnyOff", (True, False), False, True),
+            ("AllOff", (True, False), False, False),
+            ("AllOff", (False, False), False, True),
+            ("AnyOn", (False,), True, False),
+        )
+        for policy, states, base_state_off, shown in cases:
+            for annotation in (False, True):
+                data = ocmd_image_pdf(
+                    policy, states, base_state_off=base_state_off, annotation=annotation
+                )
+                with self.subTest(
+                    policy=policy,
+                    states=states,
+                    base_state_off=base_state_off,
+                    annotation=annotation,
+                ):
+                    size = pdfium_size(data, 0, scale=0.5)
+                    marker = pdfium_grey(canonical_pdf_bytes(data), 0, scale=0.5)
+                    teacher = mupdf_grey(data, 0, zoom=0.5)
+                    self.assertEqual(dark_pixels(marker, size) > 0, shown)
+                    if (policy, states) in _MUPDF_OCMD_DEVIATIONS:
+                        self.assertNotEqual(dark_pixels(teacher, size) > 0, shown)
+                    else:
+                        self.assertLessEqual(differing_bytes(marker, teacher), _AGREEMENT_SLACK)
+
+    def test_the_prune_runs_on_the_copy_after_the_walk_and_loads_no_page(self) -> None:
+        """The prune reads dictionaries only: no page is loaded (loading
+        parses content and may regenerate an appearance), it runs after the
+        whole-document check has bounded the original, and it edits the
+        copy -- the source document still holds what the copy lost."""
+        events: list[str] = []
+        sources: list[pymupdf.Document] = []
+        real_walk = pdf_canonical.check_pdf_content
+        real_copy = pdf_canonical._copy_pages
+        real_prune = pdf_canonical._prune_hidden_optional_content
+
+        def walk(doc: pymupdf.Document, **kwargs: object) -> None:
+            events.append("walk")
+            real_walk(doc, **kwargs)  # type: ignore[arg-type]
+
+        def copy(doc: pymupdf.Document) -> bytes:
+            events.append("copy")
+            sources.append(doc)
+            return real_copy(doc)
+
+        def annots(document: object) -> int:
+            page = pymupdf.mupdf.pdf_lookup_page_obj(document, 0)  # type: ignore[no-untyped-call]
+            return int(pymupdf.mupdf.pdf_array_len(pymupdf.mupdf.pdf_dict_gets(page, "Annots")))  # type: ignore[no-untyped-call]
+
+        def prune(target: object, hidden: set[int]) -> None:
+            events.append("prune")
+            no_load = AssertionError("the prune loaded a page")
+            with (
+                patch.object(pymupdf.Document, "load_page", side_effect=no_load),
+                patch.object(pymupdf.mupdf, "pdf_load_page", side_effect=no_load),
+                patch.object(pymupdf.mupdf, "fz_load_page", side_effect=no_load),
+            ):
+                real_prune(target, hidden)  # type: ignore[arg-type]
+            source = pymupdf.mupdf.pdf_document_from_fz_document(sources[0].this)  # type: ignore[no-untyped-call]
+            self.assertEqual(annots(source), 1)
+            self.assertEqual(annots(target), 0)
+
+        with (
+            patch.object(pdf_canonical, "check_pdf_content", side_effect=walk),
+            patch.object(pdf_canonical, "_copy_pages", side_effect=copy),
+            patch.object(pdf_canonical, "_prune_hidden_optional_content", side_effect=prune),
+        ):
+            canonical_pdf_bytes(hidden_layer_pdf(variant="image"))
+        self.assertEqual(events, ["walk", "copy", "prune"])
+
+    def test_every_committed_pdf_renders_identically_through_the_rewrite(self) -> None:
+        """Regression guard for the prune: every PDF committed under
+        ``tests/`` renders byte-identical under pdfium from the rewrite and
+        from the stored file, page by page."""
+        paths = sorted(Path(__file__).parent.rglob("*.pdf"))
+        self.assertTrue(paths)
+        pages = 0
+        for path in paths:
+            data = path.read_bytes()
+            with self.subTest(path=str(path)):
+                rewrite = canonical_pdf_bytes(data)
+                count = _pdfium_page_count(data)
+                self.assertEqual(_pdfium_page_count(rewrite), count)
+                for index in range(count):
+                    self.assertEqual(
+                        pdfium_grey(rewrite, index, scale=0.5),
+                        pdfium_grey(data, index, scale=0.5),
+                        f"page {index}",
+                    )
+                pages += count
+        self.assertGreater(pages, 0)
 
 
 class OffPageObjectTests(unittest.TestCase):

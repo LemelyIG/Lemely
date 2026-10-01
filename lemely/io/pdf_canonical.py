@@ -187,8 +187,17 @@ def canonical_pdf_bytes(data: bytes) -> bytes:
        Streams are copied as stored: nothing is decompressed, re-encoded
        or rewritten (no ``deflate``, ``expand`` or ``clean`` -- ``clean``
        parses content streams, the very work a bomb exploits), and no page
-       is loaded, so no annotation appearance is regenerated. All 26
-       committed PDFs (171 pages) render pixel-identical from the rewrite.
+       is loaded, so no annotation appearance is regenerated. Every PDF
+       committed under ``tests/`` renders pixel-identical from the rewrite
+       (18 files, 72 pages when #274 was fixed).
+    3. Then, when the file has optional content, what its default
+       configuration hides is dropped from the copy (#274): each page's
+       ``/XObject`` resources and annotations whose ``/OC`` is off
+       (:func:`_prune_hidden_optional_content`). pdfium hides such an
+       XObject itself but draws such an annotation, which MuPDF -- the
+       teacher's preview of the stored file -- hides. Dictionaries only;
+       an ``/OC /name BDC`` in a content stream is left to pdfium, which
+       honours it.
 
     What an annotation's own keys or the form-field tree reference is
     copied without being walked; a compressed object there is bounded by
@@ -280,10 +289,124 @@ def _copy_pages(doc: pymupdf.Document) -> bytes:
             target_catalog = mupdf.pdf_dict_gets(mupdf.pdf_trailer(target), "Root")  # type: ignore[no-untyped-call]
             added = mupdf.pdf_add_object(target, copied)  # type: ignore[no-untyped-call]
             mupdf.pdf_dict_puts(target_catalog, "OCProperties", added)  # type: ignore[no-untyped-call]
+            # #274: pdfium draws an annotation whose /OC hides it, which
+            # MuPDF -- the teacher's preview -- hides, so hidden XObjects and
+            # annotations are dropped from the copy. The groups are read from
+            # the copy's own /OCProperties, just grafted, so the numbers are
+            # the copy's. Pruned even when no group is off: an /AnyOff (or
+            # /AllOff) membership hides content while every group is on.
+            _prune_hidden_optional_content(target, _hidden_ocg_xrefs(target))
         rewrite: bytes = out.tobytes(garbage=1)  # type: ignore[no-untyped-call]
         return rewrite
     finally:
         out.close()  # type: ignore[no-untyped-call]
+
+
+def _indirect_numbers(array: _mupdf.PdfObj) -> list[int]:
+    """The object numbers of ``array``'s indirect elements; none if it is no array."""
+    mupdf = _mupdf
+    if not mupdf.pdf_is_array(array):  # type: ignore[no-untyped-call]
+        return []
+    numbers: list[int] = []
+    for index in range(int(mupdf.pdf_array_len(array))):  # type: ignore[no-untyped-call]
+        element = mupdf.pdf_array_get(array, index)  # type: ignore[no-untyped-call]
+        if mupdf.pdf_is_indirect(element):  # type: ignore[no-untyped-call]
+            numbers.append(int(mupdf.pdf_to_num(element)))  # type: ignore[no-untyped-call]
+    return numbers
+
+
+def _hidden_ocg_xrefs(doc: _mupdf.PdfDocument) -> set[int]:
+    """The optional-content groups ``doc``'s default configuration turns off.
+
+    The groups listed in the catalog's ``/OCProperties /D /OFF``; when
+    ``/D /BaseState`` is ``/OFF``, also every group in ``/OCProperties
+    /OCGs`` that ``/D /ON`` does not list. Object numbers in ``doc``, which
+    :func:`_copy_pages` passes the copy, after grafting ``/OCProperties``
+    into it. Reads the catalog's dictionaries only.
+    """
+    mupdf = _mupdf
+    catalog = mupdf.pdf_dict_gets(mupdf.pdf_trailer(doc), "Root")  # type: ignore[no-untyped-call]
+    hidden = set(_indirect_numbers(mupdf.pdf_dict_getp(catalog, "OCProperties/D/OFF")))  # type: ignore[no-untyped-call]
+    base_state = mupdf.pdf_dict_getp(catalog, "OCProperties/D/BaseState")  # type: ignore[no-untyped-call]
+    if mupdf.pdf_is_name(base_state) and mupdf.pdf_to_name(base_state) == "OFF":  # type: ignore[no-untyped-call]
+        groups = _indirect_numbers(mupdf.pdf_dict_getp(catalog, "OCProperties/OCGs"))  # type: ignore[no-untyped-call]
+        shown = set(_indirect_numbers(mupdf.pdf_dict_getp(catalog, "OCProperties/D/ON")))  # type: ignore[no-untyped-call]
+        hidden.update(number for number in groups if number not in shown)
+    return hidden
+
+
+def _is_hidden(obj: _mupdf.PdfObj, hidden: set[int]) -> bool:
+    """Whether ``obj``'s ``/OC`` hides it when the groups ``hidden`` are off.
+
+    ``/OC`` either names an optional-content group (hidden when its number
+    is in ``hidden``) or is a membership dictionary (``/Type /OCMD``) judged
+    by its ``/P`` policy over the groups ``/OCGs`` names, a single
+    reference or an array: ``/AnyOn`` (the default) hides only when every
+    named group is off, ``/AllOn`` when any is off, ``/AnyOff`` when none
+    is off, and ``/AllOff`` when any is on. A missing or empty ``/OCGs``
+    is visible. ``/VE`` is not evaluated: ``/P`` and ``/OCGs`` decide, as
+    in MuPDF when it cannot evaluate the expression.
+    """
+    mupdf = _mupdf
+    oc = mupdf.pdf_dict_gets(obj, "OC")  # type: ignore[no-untyped-call]
+    if not oc.m_internal:
+        return False
+    if mupdf.pdf_is_indirect(oc) and int(mupdf.pdf_to_num(oc)) in hidden:  # type: ignore[no-untyped-call]
+        return True
+    if not mupdf.pdf_is_dict(oc):  # type: ignore[no-untyped-call]
+        return False
+    if mupdf.pdf_to_name(mupdf.pdf_dict_gets(oc, "Type")) != "OCMD":  # type: ignore[no-untyped-call]
+        return False
+    groups = mupdf.pdf_dict_gets(oc, "OCGs")  # type: ignore[no-untyped-call]
+    if mupdf.pdf_is_array(groups):  # type: ignore[no-untyped-call]
+        named = int(mupdf.pdf_array_len(groups))  # type: ignore[no-untyped-call]
+        off = sum(number in hidden for number in _indirect_numbers(groups))
+    elif mupdf.pdf_is_indirect(groups):  # type: ignore[no-untyped-call]
+        named = 1
+        off = int(int(mupdf.pdf_to_num(groups)) in hidden)  # type: ignore[no-untyped-call]
+    else:
+        named = 0
+        off = 0
+    if named == 0:
+        return False
+    policy = mupdf.pdf_to_name(mupdf.pdf_dict_gets(oc, "P"))  # type: ignore[no-untyped-call]
+    if policy == "AllOn":
+        return off > 0
+    if policy == "AnyOff":
+        return off == 0
+    if policy == "AllOff":
+        return off < named
+    return off == named  # /AnyOn, the default
+
+
+def _prune_hidden_optional_content(target: _mupdf.PdfDocument, hidden: set[int]) -> None:
+    """Drop the XObjects and annotations hidden by default from ``target``'s pages.
+
+    For each page of the copy (looked up in the page tree, never loaded), each
+    ``/Resources /XObject`` entry whose value :func:`_is_hidden` judges hidden
+    is deleted, and so is each such element of ``/Annots``. Only
+    dictionaries are read: no content stream is parsed, so an operator that
+    draws marked content (``/OC /name BDC``) is left as it is -- pdfium
+    honours that itself.
+    """
+    mupdf = _mupdf
+    for index in range(int(mupdf.pdf_count_pages(target))):  # type: ignore[no-untyped-call]
+        page = mupdf.pdf_lookup_page_obj(target, index)  # type: ignore[no-untyped-call]
+        resources = mupdf.pdf_dict_gets(page, "Resources")  # type: ignore[no-untyped-call]
+        xobjects = mupdf.pdf_dict_gets(resources, "XObject")  # type: ignore[no-untyped-call]
+        if mupdf.pdf_is_dict(xobjects):  # type: ignore[no-untyped-call]
+            names = [
+                mupdf.pdf_dict_get_key(xobjects, entry)  # type: ignore[no-untyped-call]
+                for entry in range(int(mupdf.pdf_dict_len(xobjects)))  # type: ignore[no-untyped-call]
+                if _is_hidden(mupdf.pdf_dict_get_val(xobjects, entry), hidden)  # type: ignore[no-untyped-call]
+            ]
+            for name in names:
+                mupdf.pdf_dict_del(xobjects, name)  # type: ignore[no-untyped-call]
+        annots = mupdf.pdf_dict_gets(page, "Annots")  # type: ignore[no-untyped-call]
+        if mupdf.pdf_is_array(annots):  # type: ignore[no-untyped-call]
+            for entry in reversed(range(int(mupdf.pdf_array_len(annots)))):  # type: ignore[no-untyped-call]
+                if _is_hidden(mupdf.pdf_array_get(annots, entry), hidden):  # type: ignore[no-untyped-call]
+                    mupdf.pdf_array_delete(annots, entry)  # type: ignore[no-untyped-call]
 
 
 def _pdfium_page_count(data: bytes) -> int:

@@ -1,0 +1,264 @@
+"""Builders for the marker/teacher agreement tests; lane 3b appends TIFF builders.
+
+The marker reads pdfium's render of the canonical rewrite
+(:func:`lemely.io.pdf_canonical.canonical_pdf_bytes`); the teacher's preview
+is MuPDF's render of the stored file. These builders make small synthetic
+files on which the two could disagree -- optional content hidden by default
+(#274), a filled form field -- and the helpers render a page with either
+reader to one byte per pixel ("L"), so a test can count dark pixels or
+compare two renders byte for byte. Generated in-test; nothing is committed.
+"""
+
+from __future__ import annotations
+
+import io
+
+import pymupdf
+import pypdfium2 as pdfium
+from PIL import Image
+
+from tests.pdf_fakes import assemble_pdf, flate_bomb_ops, pdf_stream
+
+#: A grey value below this counts as dark (ink) in :func:`dark_pixels`.
+DARK_BELOW = 128
+
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+def dark_pixels(png_or_grey: bytes, size: tuple[int, int]) -> int:
+    """How many pixels of a ``size`` (width, height) image are dark.
+
+    ``png_or_grey``: PNG bytes (converted to "L"; its size must be ``size``)
+    or raw "L" bytes, one per pixel, as :func:`mupdf_grey` and
+    :func:`pdfium_grey` return.
+    """
+    if png_or_grey.startswith(_PNG_MAGIC):
+        with Image.open(io.BytesIO(png_or_grey)) as image:
+            if image.size != size:
+                raise ValueError(f"PNG is {image.size}, expected {size}")
+            grey = image.convert("L").tobytes()
+    else:
+        grey = png_or_grey
+    if len(grey) != size[0] * size[1]:
+        raise ValueError(f"{len(grey)} grey bytes for a {size} image")
+    return sum(1 for value in grey if value < DARK_BELOW)
+
+
+def mupdf_grey(data: bytes, page: int, *, zoom: float) -> bytes:
+    """MuPDF's render of page ``page`` of ``data`` at ``zoom``, as "L" bytes.
+
+    The teacher's view: MuPDF draws the stored file. The size is
+    :func:`mupdf_size` of the same arguments.
+    """
+    with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+        pixmap = doc[page].get_pixmap(
+            matrix=pymupdf.Matrix(zoom, zoom), colorspace=pymupdf.csGRAY, alpha=False
+        )
+        return bytes(pixmap.samples)
+
+
+def mupdf_size(data: bytes, page: int, *, zoom: float) -> tuple[int, int]:
+    """The (width, height) of :func:`mupdf_grey`'s render of the same page."""
+    with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+        pixmap = doc[page].get_pixmap(
+            matrix=pymupdf.Matrix(zoom, zoom), colorspace=pymupdf.csGRAY, alpha=False
+        )
+        return (pixmap.width, pixmap.height)
+
+
+def pdfium_grey(data: bytes, page: int, *, scale: float) -> bytes:
+    """pdfium's render of page ``page`` of ``data`` at ``scale``, as "L" bytes.
+
+    The marker's view when ``data`` is the canonical rewrite. The size is
+    :func:`pdfium_size` of the same arguments.
+    """
+    pdf = pdfium.PdfDocument(data)
+    try:
+        loaded = pdf[page]
+        try:
+            bitmap = loaded.render(scale=scale)
+            try:
+                return bitmap.to_pil().convert("L").tobytes()
+            finally:
+                bitmap.close()
+        finally:
+            loaded.close()
+    finally:
+        pdf.close()
+
+
+def pdfium_size(data: bytes, page: int, *, scale: float) -> tuple[int, int]:
+    """The (width, height) of :func:`pdfium_grey`'s render of the same page."""
+    pdf = pdfium.PdfDocument(data)
+    try:
+        loaded = pdf[page]
+        try:
+            bitmap = loaded.render(scale=scale)
+            try:
+                return (bitmap.width, bitmap.height)
+            finally:
+                bitmap.close()
+        finally:
+            loaded.close()
+    finally:
+        pdf.close()
+
+
+def differing_bytes(first: bytes, second: bytes) -> int:
+    """How many positions two equal-length grey renders differ at."""
+    if len(first) != len(second):
+        raise ValueError(f"renders differ in size: {len(first)} vs {len(second)} bytes")
+    return sum(a != b for a, b in zip(first, second, strict=True))
+
+
+def visible_layer_text_pdf() -> bytes:
+    """:func:`tests.pdf_fakes.hidden_layer_pdf` with only its visible layer.
+
+    The same A4 page and the same ``VISIBLE LAYER TEXT`` on an ON layer, and
+    nothing hidden: what the marker should see of either variant.
+    """
+    doc = pymupdf.open()
+    try:
+        page = doc.new_page(width=595, height=842)
+        shown = doc.add_ocg("visible", on=True)
+        page.insert_text((50, 100), "VISIBLE LAYER TEXT", fontsize=30, oc=shown)
+        data: bytes = doc.tobytes()
+    finally:
+        doc.close()
+    return data
+
+
+def filled_text_field_pdf(value: str = "42") -> bytes:
+    """One A4 page with a text form field whose value is ``value``.
+
+    The widget's appearance draws the value (MuPDF: 1,578 dark pixels in the
+    probe), so a student's typed answer is ink both readers must show.
+    """
+    doc = pymupdf.open()
+    try:
+        page = doc.new_page(width=595, height=842)
+        widget = pymupdf.Widget()  # type: ignore[no-untyped-call]
+        widget.field_type = pymupdf.PDF_WIDGET_TYPE_TEXT
+        widget.field_name = "answer"
+        widget.field_value = value
+        widget.rect = pymupdf.Rect(100, 100, 300, 140)
+        widget.text_fontsize = 24
+        page.add_widget(widget)
+        widget.update()
+        data: bytes = doc.tobytes()
+    finally:
+        doc.close()
+    return data
+
+
+def oc_hidden_bomb_pdf(inflated_bytes: int) -> bytes:
+    """:func:`tests.pdf_fakes.xobject_bomb_pdf`, with the bomb on a hidden layer.
+
+    The page draws ``/Fm1``, a Form XObject whose content inflates to
+    ``inflated_bytes`` and whose ``/OC`` (object 6) is an optional-content
+    group listed in the catalog's ``/OCProperties /D /OFF``. Hidden is not
+    harmless: pdfium parses what it may not draw, so the content walk must
+    still refuse it, before the rewrite prunes anything.
+    """
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R"
+            b" /OCProperties << /OCGs [6 0 R] /D << /OFF [6 0 R] >> >> >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R"
+            b" /Resources << /XObject << /Fm1 5 0 R >> >> >>",
+            pdf_stream(b"", b"q /Fm1 Do Q"),
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 595 842] /Filter /FlateDecode "
+                b"/OC 6 0 R /Resources << /XObject << /Fm2 5 0 R >> >>",
+                flate_bomb_ops(inflated_bytes),
+            ),
+            b"<< /Type /OCG /Name (hidden) >>",
+        ]
+    )
+
+
+#: Where :func:`ocmd_image_pdf` draws its black square, in points: a whole
+#: number of pixels at scale 0.5, so both readers fill the same pixels.
+OCMD_IMAGE_RECT = (100, 400, 300, 600)
+
+
+def ocmd_image_pdf(
+    policy: str,
+    states: tuple[bool, ...],
+    *,
+    base_state_off: bool = False,
+    annotation: bool = False,
+) -> bytes:
+    """One A4 page drawing one black image XObject governed by an ``/OCMD``.
+
+    The image's ``/OC`` is an optional-content membership dictionary with
+    ``/P /<policy>`` over ``len(states)`` groups; group ``i`` is ON by default
+    when ``states[i]`` is true. The catalog lists the groups in
+    ``/OCProperties /D /ON`` and ``/OFF``; with ``base_state_off`` it writes
+    ``/BaseState /OFF`` and lists only the ON groups (in ``/ON``), so the OFF
+    ones are off by the base state alone. Nothing else is drawn: the page has
+    dark pixels exactly when the policy shows the image.
+
+    With ``annotation`` the same black square is a Square annotation's
+    appearance instead, and the ``/OC`` is the annotation's: pdfium honours
+    an image's ``/OC`` itself but draws an annotation whatever its ``/OC``
+    says, so this is the case only the rewrite's prune can hide.
+    """
+    first_group = 7
+    groups = [first_group + i for i in range(len(states))]
+
+    def refs(numbers: list[int]) -> bytes:
+        return b"[" + b" ".join(b"%d 0 R" % n for n in numbers) + b"]"
+
+    on = [g for g, state in zip(groups, states, strict=True) if state]
+    off = [g for g, state in zip(groups, states, strict=True) if not state]
+    if base_state_off:
+        default = b"<< /BaseState /OFF /ON " + refs(on) + b" >>"
+    else:
+        default = b"<< /ON " + refs(on) + b" /OFF " + refs(off) + b" >>"
+    left, top, right, bottom = OCMD_IMAGE_RECT
+    # PDF y runs up from the bottom of the 842-point page.
+    x0, y0, x1, y1 = left, 842 - bottom, right, 842 - top
+    if annotation:
+        page = (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R"
+            b" /Annots [5 0 R] >>"
+        )
+        contents = pdf_stream(b"", b"")
+        square = (
+            b"<< /Type /Annot /Subtype /Square /Rect [%d %d %d %d] /F 4 /OC 6 0 R"
+            b" /AP << /N %d 0 R >> >>" % (x0, y0, x1, y1, first_group + len(states))
+        )
+    else:
+        page = (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R"
+            b" /Resources << /XObject << /Im1 5 0 R >> >> >>"
+        )
+        contents = pdf_stream(b"", b"q %d 0 0 %d %d %d cm /Im1 Do Q" % (x1 - x0, y1 - y0, x0, y0))
+        square = pdf_stream(
+            b"/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray"
+            b" /BitsPerComponent 8 /OC 6 0 R",
+            b"\x00\x00\x00\x00",
+        )
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs "
+        + refs(groups)
+        + b" /D "
+        + default
+        + b" >> >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        page,
+        contents,
+        square,
+        b"<< /Type /OCMD /OCGs " + refs(groups) + b" /P /" + policy.encode() + b" >>",
+    ]
+    objects += [b"<< /Type /OCG /Name (group %d) >>" % i for i in range(len(states))]
+    if annotation:
+        objects.append(
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [%d %d %d %d]" % (x0, y0, x1, y1),
+                b"0 g %d %d %d %d re f" % (x0, y0, x1 - x0, y1 - y0),
+            )
+        )
+    return assemble_pdf(objects)
