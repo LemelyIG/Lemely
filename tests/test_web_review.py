@@ -3016,6 +3016,26 @@ def _streamed_png(width: int, height: int) -> bytes:
     return signature + chunk(b"IHDR", header) + chunk(b"IDAT", bytes(idat)) + chunk(b"IEND", b"")
 
 
+def _streamed_rgb_png(width: int, height: int) -> bytes:
+    """A white RGB PNG built row by row, so the test never holds the decoded image."""
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        crc = struct.pack(">I", zlib.crc32(tag + data))
+        return struct.pack(">I", len(data)) + tag + data + crc
+
+    compressor = zlib.compressobj(6)
+    row = b"\x00" + b"\xff\xff\xff" * width
+    idat = bytearray()
+    for _ in range(height):
+        idat += compressor.compress(row)
+    idat += compressor.flush()
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    signature = b"\x89PNG\r\n\x1a\n"
+    return signature + chunk(b"IHDR", header) + chunk(b"IDAT", bytes(idat)) + chunk(b"IEND", b"")
+
+
 def test_an_image_scan_too_large_to_decode_is_refused_before_decoding(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -3526,7 +3546,10 @@ def test_an_ico_wrapping_a_big_png_is_refused_at_the_crop_without_being_opened(
             marks=pytest.mark.xfail(
                 strict=True,
                 raises=AssertionError,
-                reason="#260: the WebP at its ceiling outgrows the starting interactive limit",
+                reason=(
+                    "#260: the WebP at its ceiling outgrows the starting interactive "
+                    "limit; Task 11 owns removing this marker"
+                ),
             ),
         ),
         pytest.param((3700, 3700), 422, "review_crop_page_too_large", id="13.69Mpx-over"),
@@ -3564,6 +3587,56 @@ def test_a_webp_is_judged_against_the_webp_ceiling_at_the_crop(
     assert resp.status_code == status, (resp.status_code, resp.text[:200])
     events = [e["event"] for e in logs if e["event"].startswith("review_crop_")]
     assert events == ([event] if event else []), events
+
+
+@pytest.mark.parametrize(
+    "size",
+    [
+        pytest.param((4960, 7016), id="A4-600dpi-34.8Mpx"),
+        pytest.param((6300, 6300), id="39.7Mpx"),
+    ],
+)
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason=(
+        "#260: a colour image under the 40 Mpx colour ceiling outgrows the starting "
+        "interactive limit (SandboxMemory); Task 11 owns removing this marker"
+    ),
+)
+def test_a_colour_scan_under_the_colour_ceiling_is_cropped_in_the_worker(
+    size: tuple[int, int],
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """An admitted colour scan must crop in the interactive worker, as it did in
+    process: an A4 page scanned at 600 dpi in colour is an ordinary upload.
+    Rendered in the worker since #260, it runs out of memory under the starting
+    interactive limit (``RLIMIT_DATA`` 192 MiB); Task 11 sets the limits from
+    the measured paths and removes this strict ``xfail``."""
+    from lemely.io.scan_limits import MAX_DECODE_PX
+
+    width, height = size
+    assert width * height <= MAX_DECODE_PX
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=_streamed_rgb_png(width, height),
+        page=0,
+        content_type="image/png",
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+
+    assert resp.status_code == 200, (resp.status_code, resp.text[:200])
+    assert resp.headers["content-type"] == "image/png"
 
 
 # ---------------------------------------------------------------------------
@@ -3796,23 +3869,23 @@ def test_two_concurrent_crops_are_served_one_after_the_other(
     _use_storage(client, storage_backend)
     _auth_as(client, teacher, Role.teacher)
 
-    # One request first, on another route. When a fresh app's first two
-    # requests race each other, one was sometimes answered with a bare
-    # routing 404 (``{"detail":"Not Found"}``, 4 runs in 15); with this
-    # request first, 0 in 20.
-    assert client.get(f"/api/teacher/review/{item_id}").status_code == 200
-
     answers: list[tuple[int, str]] = []
 
-    def _get() -> None:
-        resp = client.get(f"/api/teacher/review/{item_id}/crop")
-        answers.append((resp.status_code, resp.text[:200] if resp.status_code != 200 else ""))
+    # One event loop for both requests, as under uvicorn. A bare TestClient
+    # runs each request on its own event-loop thread, and two of them racing
+    # FastAPI's lazily built route cache (``_IncludedRouter.effective_candidates``)
+    # sometimes routed one request to a bare 404 -- a harness race, not the app's.
+    with TestClient(client.app) as concurrent:
 
-    threads = [threading.Thread(target=_get) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=30)
+        def _get() -> None:
+            resp = concurrent.get(f"/api/teacher/review/{item_id}/crop")
+            answers.append((resp.status_code, resp.text[:200] if resp.status_code != 200 else ""))
+
+        threads = [threading.Thread(target=_get) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
 
     assert answers == [(200, ""), (200, "")]
     windows = sorted(

@@ -2209,6 +2209,66 @@ def test_preview_answers_503_when_no_worker_can_start(
     assert sandbox.INTERACTIVE_WORKER.last_outcome == "unavailable"
 
 
+def _streamed_rgb_png(width: int, height: int) -> bytes:
+    """A white RGB PNG built row by row, so the test never holds the decoded image."""
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        crc = struct.pack(">I", zlib.crc32(tag + data))
+        return struct.pack(">I", len(data)) + tag + data + crc
+
+    compressor = zlib.compressobj(6)
+    row = b"\x00" + b"\xff\xff\xff" * width
+    idat = bytearray()
+    for _ in range(height):
+        idat += compressor.compress(row)
+    idat += compressor.flush()
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    signature = b"\x89PNG\r\n\x1a\n"
+    return signature + chunk(b"IHDR", header) + chunk(b"IDAT", bytes(idat)) + chunk(b"IEND", b"")
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason=(
+        "#260: a colour image under the 40 Mpx colour ceiling outgrows the starting "
+        "interactive limit (SandboxError, FzErrorSystem); Task 11 owns removing this marker"
+    ),
+)
+def test_preview_of_an_a4_600_dpi_colour_scan_renders_in_the_worker(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """An admitted colour scan must preview in the interactive worker, as it did
+    in process: an A4 page scanned at 600 dpi in colour (4960 x 7016, 34.8 Mpx,
+    under the 40 Mpx colour ceiling) is an ordinary upload. Rendered in the
+    worker since #260, MuPDF's decode fails under the starting interactive
+    limit (``RLIMIT_DATA`` 192 MiB); Task 11 sets the limits from the measured
+    paths and removes this strict ``xfail``."""
+    from lemely.io.scan_limits import MAX_DECODE_PX
+
+    assert MAX_DECODE_PX >= 4960 * 7016
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _streamed_rgb_png(4960, 7016),
+        content_type="image/png",
+        name="scan.png",
+    )
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 200, preview.text
+    assert preview.headers["content-type"] == "image/png"
+
+
 _PREVIEW_PEAK_RSS_CHILD = """
 from lemely.io.scan_render import render_preview_png
 from tests.pdf_fakes import bilevel_png
