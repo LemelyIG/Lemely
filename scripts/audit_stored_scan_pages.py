@@ -9,8 +9,18 @@ live uploads and teacher papers sit over each cap.
 It downloads each object, counts its pages with ``pdfium.PdfDocument`` and
 buckets the result. Nothing is rendered and MuPDF never opens a byte, so a
 hostile stored file cannot reach the parser this audit is guarding against.
-Soft-deleted rows are excluded by the session's own rule
-(``lemely.db.session._exclude_soft_deleted``).
+
+Not audited, by design:
+  - Soft-deleted rows (``lemely.db.session._exclude_soft_deleted`` hides them),
+    although a student can still restore one within the retention window, so a
+    restored scan over a cap is not seen here.
+  - ``teacher_papers.scheme_storage_path`` (the mark-scheme sibling object).
+    Only the scan at ``storage_path`` is counted.
+
+A download that fails for any reason other than "no such object" is counted in
+its own ``download_error`` bucket, never as unreadable or missing, and its path
+goes to stderr. Five failures in a row abort the audit (a systemic fault such
+as missing credentials), and any download error makes the exit status non-zero.
 
     python scripts/audit_stored_scan_pages.py --sample 500 --seed 1
 
@@ -24,6 +34,7 @@ from __future__ import annotations
 import argparse
 import io
 import random
+import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
@@ -33,23 +44,23 @@ from PIL import Image
 from sqlalchemy import select
 
 from lemely.db.models import TeacherPaper, Upload
+from lemely.io.scan_limits import MAX_CROP_PAGES, MAX_SCAN_PAGES, looks_like_pdf
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
+from lemely.runtime.errors import ExternalServiceError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
     from sqlalchemy.orm import Session, sessionmaker
 
-# Kept in step with ``lemely.io.scan_limits.PDF_MAGIC``. Re-stated here rather
-# than imported: the audit must not depend on the module the page caps live in.
-_PDF_MAGIC = b"%PDF-"
-
 TableName = Literal["uploads", "teacher_papers"]
 TABLES: tuple[TableName, ...] = ("uploads", "teacher_papers")
 
-BUCKETS = ("1-40", "41-200", "over_200", "unreadable", "missing")
-_MAX_SCAN_PAGES = 40
-_MAX_CROP_PAGES = 200
+# The labels are the brief's; their edges are the caps themselves.
+BUCKETS = ("1-40", "41-200", "over_200", "unreadable", "missing", "download_error")
+
+# Consecutive download errors that mean the storage backend itself is unusable.
+MAX_CONSECUTIVE_DOWNLOAD_ERRORS = 5
 
 
 @dataclass(frozen=True)
@@ -99,7 +110,7 @@ def count_pages(data: bytes) -> int | None:
     ``None`` when the bytes are neither a PDF pdfium can open nor an image.
     Nothing is rendered and MuPDF is never involved.
     """
-    if data.startswith(_PDF_MAGIC):
+    if looks_like_pdf(data):
         try:
             pdf = pdfium.PdfDocument(data)
         except pdfium.PdfiumError:
@@ -121,11 +132,36 @@ def count_pages(data: bytes) -> int | None:
 def _bucket_for(pages: int | None) -> str:
     if pages is None or pages < 1:
         return "unreadable"
-    if pages <= _MAX_SCAN_PAGES:
+    if pages <= MAX_SCAN_PAGES:
         return "1-40"
-    if pages <= _MAX_CROP_PAGES:
+    if pages <= MAX_CROP_PAGES:
         return "41-200"
     return "over_200"
+
+
+class AuditAbortedError(RuntimeError):
+    """Raised after ``MAX_CONSECUTIVE_DOWNLOAD_ERRORS`` downloads fail in a row."""
+
+    def __init__(self, histogram: Histogram) -> None:
+        super().__init__(
+            f"aborted after {MAX_CONSECUTIVE_DOWNLOAD_ERRORS} consecutive download errors"
+        )
+        self.histogram = histogram
+
+
+def _bucket_of_object(
+    storage: StorageBackend, bucket: str, stored: StoredObject
+) -> tuple[str, int]:
+    """Download one object and bucket it: ``(bucket, bytes downloaded)``.
+
+    Its own function so the object's bytes are released before the next
+    download: at most one object is held in memory at a time.
+    """
+    try:
+        data = storage.download(bucket, stored.storage_path)
+    except StorageObjectNotFoundError:
+        return "missing", 0
+    return _bucket_for(count_pages(data)), len(data)
 
 
 def audit(
@@ -136,22 +172,32 @@ def audit(
     sample: int | None,
     rng: random.Random,
 ) -> Histogram:
-    """Download and bucket ``objects`` (or an ``rng.sample`` of ``sample`` of them)."""
+    """Download and bucket ``objects`` (or an ``rng.sample`` of ``sample`` of them).
+
+    A failed download is counted as ``download_error`` and its path is written
+    to stderr; ``AuditAbortedError`` is raised after five in a row.
+    """
     population = list(objects)
     chosen = population
     if sample is not None and sample < len(population):
         chosen = rng.sample(population, sample)
 
     histogram = Histogram(total=len(population), sampled=len(chosen))
+    consecutive_errors = 0
     for stored in chosen:
         counter = histogram.by_table[stored.table]
         try:
-            data = storage.download(bucket, stored.storage_path)
-        except StorageObjectNotFoundError:
-            counter["missing"] += 1
+            result, size = _bucket_of_object(storage, bucket, stored)
+        except ExternalServiceError as exc:
+            counter["download_error"] += 1
+            consecutive_errors += 1
+            print(f"download error: {stored.table} {stored.storage_path}: {exc}", file=sys.stderr)
+            if consecutive_errors >= MAX_CONSECUTIVE_DOWNLOAD_ERRORS:
+                raise AuditAbortedError(histogram) from exc
             continue
-        histogram.bytes_downloaded += len(data)
-        counter[_bucket_for(count_pages(data))] += 1
+        consecutive_errors = 0
+        histogram.bytes_downloaded += size
+        counter[result] += 1
     return histogram
 
 
@@ -168,12 +214,16 @@ def render(histogram: Histogram) -> str:
         lines.append("  ".join([f"{table:<{name_width}}", *cells]))
     lines += [
         "",
-        f"over 40: {histogram.count('41-200') + histogram.count('over_200')}",
-        f"over 200: {histogram.count('over_200')}",
+        f"over {MAX_SCAN_PAGES}: {histogram.count('41-200') + histogram.count('over_200')}",
+        f"over {MAX_CROP_PAGES}: {histogram.count('over_200')}",
         f"unreadable: {histogram.count('unreadable')}",
         f"missing: {histogram.count('missing')}",
+        f"download_error: {histogram.count('download_error')}",
         f"bytes downloaded: {histogram.bytes_downloaded}",
         f"sampled: {histogram.sampled} of {histogram.total}",
+        "",
+        "Not audited: soft-deleted rows (still restorable within the retention window)",
+        "and teacher_papers.scheme_storage_path.",
     ]
     return "\n".join(lines)
 
@@ -205,15 +255,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     session_factory, storage, default_bucket = _runtime()
-    histogram = audit(
-        stored_objects(session_factory),
-        storage,
-        args.bucket or default_bucket,
-        sample=args.sample,
-        rng=random.Random(args.seed),  # noqa: S311 - sampling, not security
-    )
+    try:
+        histogram = audit(
+            stored_objects(session_factory),
+            storage,
+            args.bucket or default_bucket,
+            sample=args.sample,
+            rng=random.Random(args.seed),  # noqa: S311 - sampling, not security
+        )
+    except AuditAbortedError as aborted:
+        print(render(aborted.histogram))
+        print(f"audit {aborted}", file=sys.stderr)
+        return 1
     print(render(histogram))
-    return 0
+    return 1 if histogram.count("download_error") else 0
 
 
 if __name__ == "__main__":

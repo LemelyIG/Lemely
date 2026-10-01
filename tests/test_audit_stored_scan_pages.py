@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.models import TeacherPaper, Upload, User
 from lemely.db.models.enums import Role
+from lemely.runtime.errors import ExternalServiceError
 from scripts import audit_stored_scan_pages as audit_script
 from scripts.audit_stored_scan_pages import StoredObject
 from tests.storage_fakes import FakeStorageBackend
@@ -71,6 +72,32 @@ def _seeded_storage() -> FakeStorageBackend:
     _store(storage, "teacher/two-oh-one.pdf", _pdf(201))
     _store(storage, "teacher/garbage.pdf", b"%PDF-1.4 this is not a document")
     return storage
+
+
+class _FlakyStorage(FakeStorageBackend):
+    """Raises ``ExternalServiceError`` for the named paths, serves the rest."""
+
+    def __init__(self, failing: set[str]) -> None:
+        super().__init__()
+        self._failing = failing
+
+    def download(self, bucket: str, object_path: str) -> bytes:
+        if object_path in self._failing:
+            raise ExternalServiceError(f"backend unavailable for {object_path}")
+        return super().download(bucket, object_path)
+
+
+class _ReadOnlyStorage(FakeStorageBackend):
+    """A fake whose every write raises: the audit must never write."""
+
+    def upload(self, bucket: str, object_path: str, data: bytes, content_type: str | None) -> None:
+        raise AssertionError("the audit must not upload")
+
+    def delete(self, bucket: str, object_path: str) -> None:
+        raise AssertionError("the audit must not delete")
+
+    def seed(self, path: str, data: bytes) -> None:
+        super().upload(BUCKET, path, data, None)
 
 
 class _CountingStorage(FakeStorageBackend):
@@ -320,3 +347,151 @@ class TestMain:
 
         assert exit_info.value.code == 0
         assert "--sample" in capsys.readouterr().out
+
+
+class TestDownloadErrors:
+    def test_one_error_is_counted_on_its_own_and_the_run_continues(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        storage = _FlakyStorage({"uploads/bad.pdf"})
+        _store(storage, "uploads/before.pdf", _pdf(2))
+        _store(storage, "uploads/after.pdf", _pdf(3))
+        objects = [
+            StoredObject("uploads", "u1", "uploads/before.pdf"),
+            StoredObject("uploads", "u2", "uploads/bad.pdf"),
+            StoredObject("uploads", "u3", "uploads/after.pdf"),
+        ]
+
+        histogram = audit_script.audit(objects, storage, BUCKET, sample=None, rng=random.Random(0))
+
+        assert dict(histogram.by_table["uploads"]) == {"1-40": 2, "download_error": 1}
+        assert "uploads/bad.pdf" in capsys.readouterr().err
+
+    def test_an_error_is_never_counted_as_unreadable_or_missing(self) -> None:
+        storage = _FlakyStorage({"uploads/bad.pdf"})
+
+        histogram = audit_script.audit(
+            [StoredObject("uploads", "u1", "uploads/bad.pdf")],
+            storage,
+            BUCKET,
+            sample=None,
+            rng=random.Random(0),
+        )
+
+        assert histogram.count("unreadable") == 0
+        assert histogram.count("missing") == 0
+        assert histogram.count("download_error") == 1
+
+    def test_five_consecutive_errors_abort_the_audit(self) -> None:
+        paths = [f"uploads/{n}.pdf" for n in range(8)]
+        storage = _FlakyStorage(set(paths))
+        objects = [StoredObject("uploads", f"u{n}", path) for n, path in enumerate(paths)]
+
+        with pytest.raises(audit_script.AuditAbortedError) as aborted:
+            audit_script.audit(objects, storage, BUCKET, sample=None, rng=random.Random(0))
+
+        assert aborted.value.histogram.count("download_error") == 5
+
+    def test_a_good_download_resets_the_consecutive_count(self) -> None:
+        bad = {f"uploads/bad{n}.pdf" for n in range(8)}
+        storage = _FlakyStorage(bad)
+        _store(storage, "uploads/good.pdf", _pdf(1))
+        order = [f"uploads/bad{n}.pdf" for n in range(4)] + ["uploads/good.pdf"]
+        order += [f"uploads/bad{n}.pdf" for n in range(4, 8)]
+        objects = [StoredObject("uploads", f"u{n}", path) for n, path in enumerate(order)]
+
+        histogram = audit_script.audit(objects, storage, BUCKET, sample=None, rng=random.Random(0))
+
+        assert histogram.count("download_error") == 8
+
+    def test_render_shows_the_download_error_count(self) -> None:
+        storage = _FlakyStorage({"uploads/bad.pdf"})
+        histogram = audit_script.audit(
+            [StoredObject("uploads", "u1", "uploads/bad.pdf")],
+            storage,
+            BUCKET,
+            sample=None,
+            rng=random.Random(0),
+        )
+
+        text = audit_script.render(histogram)
+
+        assert "download_error: 1" in text
+
+    def test_main_exits_non_zero_when_any_download_failed(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        factory = _fake_session_factory(
+            {
+                "uploads": [(uuid.uuid4(), "uploads/ok.pdf"), (uuid.uuid4(), "uploads/bad.pdf")],
+                "teacher_papers": [],
+            },
+            [],
+        )
+        storage = _FlakyStorage({"uploads/bad.pdf"})
+        _store(storage, "uploads/ok.pdf", _pdf(1))
+
+        with patch.object(audit_script, "_runtime", return_value=(factory, storage, BUCKET)):
+            code = audit_script.main([])
+
+        assert code != 0
+        assert "download_error: 1" in capsys.readouterr().out
+
+    def test_main_exits_non_zero_and_still_reports_after_an_abort(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rows = [(uuid.uuid4(), f"uploads/{n}.pdf") for n in range(6)]
+        factory = _fake_session_factory({"uploads": rows, "teacher_papers": []}, [])
+        storage = _FlakyStorage({path for _, path in rows})
+
+        with patch.object(audit_script, "_runtime", return_value=(factory, storage, BUCKET)):
+            code = audit_script.main([])
+
+        captured = capsys.readouterr()
+        assert code != 0
+        assert "download_error: 5" in captured.out
+        assert "aborted" in captured.err
+
+
+class TestReadOnly:
+    def test_audit_never_writes_or_deletes(self) -> None:
+        storage = _ReadOnlyStorage()
+        storage.seed("uploads/a.pdf", _pdf(2))
+
+        histogram = audit_script.audit(
+            [
+                StoredObject("uploads", "u1", "uploads/a.pdf"),
+                StoredObject("uploads", "u2", "uploads/gone.pdf"),
+            ],
+            storage,
+            BUCKET,
+            sample=None,
+            rng=random.Random(0),
+        )
+
+        assert histogram.sampled == 2
+
+    def test_main_never_writes_or_deletes(self) -> None:
+        factory = _fake_session_factory(
+            {"uploads": [(uuid.uuid4(), "uploads/a.pdf")], "teacher_papers": []}, []
+        )
+        storage = _ReadOnlyStorage()
+        storage.seed("uploads/a.pdf", _pdf(2))
+
+        with patch.object(audit_script, "_runtime", return_value=(factory, storage, BUCKET)):
+            assert audit_script.main([]) == 0
+
+
+def test_render_says_what_the_audit_leaves_out() -> None:
+    text = audit_script.render(audit_script.Histogram())
+
+    assert "soft-deleted" in text
+    assert "restorable" in text
+    assert "scheme_storage_path" in text
+
+
+def test_the_caps_are_the_ones_scan_limits_defines() -> None:
+    from lemely.io.scan_limits import MAX_CROP_PAGES, MAX_SCAN_PAGES
+
+    assert audit_script.MAX_SCAN_PAGES is MAX_SCAN_PAGES
+    assert audit_script.MAX_CROP_PAGES is MAX_CROP_PAGES
