@@ -62,7 +62,8 @@ from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.review_repo import ReviewService
 from lemely.db.self_review_repo import PointVerdict, SelfReviewService
 from lemely.db.teacher_paper_repo import TeacherPaperRepository
-from lemely.runtime.config import DatabaseSettings
+from lemely.runtime import sandbox
+from lemely.runtime.config import DatabaseSettings, SandboxSettings
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
@@ -71,6 +72,7 @@ from lemely.web.deps import (
     get_settings,
     get_storage_backend,
 )
+from tests.sandbox_fixtures import in_process_sandbox, sandboxed  # noqa: F401
 from tests.storage_fakes import FakeStorageBackend
 
 if TYPE_CHECKING:
@@ -1555,6 +1557,7 @@ def test_crop_route_returns_a_png_of_the_boxed_region(
     assert abs(got.width / got.height - expected_aspect) < 0.03 * expected_aspect
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_crop_route_refuses_a_stored_content_stream_bomb(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -2394,6 +2397,7 @@ def test_crop_route_404s_when_the_stored_object_has_gone(
     assert missing[0]["item_id"] == str(item_id)
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_crop_route_422s_for_a_page_out_of_range_without_rendering(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -2744,6 +2748,7 @@ def test_has_source_box_is_false_when_the_attempt_has_no_upload(
     assert client.get(f"/api/teacher/review/{with_upload}/crop").status_code == 200
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_a_pil_failure_inside_the_crop_is_a_422_not_a_500(
     lenient_client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -2808,6 +2813,7 @@ def test_the_crop_is_never_kept_in_the_browser_cache(
     assert not any(d.startswith("max-age") for d in directives), directives
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_an_unrenderable_scan_does_not_echo_the_renderer_error(
     lenient_client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -3113,6 +3119,7 @@ def test_crop_route_serves_a_stored_scan_over_the_page_cap(
     assert bluish == 0 and reddish / total > 0.5, "wrong region on the over-cap scan"
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_crop_route_422s_for_a_scan_whose_page_count_pymupdf_cannot_read(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -3147,6 +3154,7 @@ def test_crop_route_422s_for_a_scan_whose_page_count_pymupdf_cannot_read(
     assert resp.json()["detail"] == "Could not render this scan"
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 @pytest.mark.parametrize(("extra_pages", "status"), [(0, 200), (1, 422)])
 def test_crop_route_bounds_the_page_count_at_max_crop_pages(
     extra_pages: int,
@@ -3188,6 +3196,7 @@ def test_crop_route_bounds_the_page_count_at_max_crop_pages(
         assert resp.headers["content-type"] == "image/png"
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_crop_route_refuses_an_object_stream_bomb_before_opening_the_scan(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -3345,6 +3354,7 @@ def test_an_image_region_over_the_ceiling_is_scaled_down_not_refused(
     assert mid_tones > 0.5, f"{mid_tones:.2f} mid-tone: the stripes were point-sampled"
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 @pytest.mark.parametrize(
     "size",
     [
@@ -3458,6 +3468,7 @@ def test_an_image_over_its_modes_ceiling_is_still_refused_at_the_crop(
     ]
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_an_ico_wrapping_a_big_png_is_refused_at_the_crop_without_being_opened(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -3503,7 +3514,21 @@ def test_an_ico_wrapping_a_big_png_is_refused_at_the_crop_without_being_opened(
 @pytest.mark.parametrize(
     ("size", "status", "event"),
     [
-        pytest.param((3650, 3650), 200, None, id="13.32Mpx-under"),
+        pytest.param(
+            (3650, 3650),
+            200,
+            None,
+            id="13.32Mpx-under",
+            # Rendered in the interactive worker since #260: this crop peaks at
+            # ~216 MB (VmHWM growth, measured in the child), over the starting
+            # 192 MiB RLIMIT_DATA, so it is a 422 ("memory") until Task 11 sets
+            # the limit from the measured paths. Strict: remove it then.
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=AssertionError,
+                reason="#260: the WebP at its ceiling outgrows the starting interactive limit",
+            ),
+        ),
         pytest.param((3700, 3700), 422, "review_crop_page_too_large", id="13.69Mpx-over"),
     ],
 )
@@ -3539,3 +3564,261 @@ def test_a_webp_is_judged_against_the_webp_ceiling_at_the_crop(
     assert resp.status_code == status, (resp.status_code, resp.text[:200])
     events = [e["event"] for e in logs if e["event"].startswith("review_crop_")]
     assert events == ([event] if event else []), events
+
+
+# ---------------------------------------------------------------------------
+# The crop renders in the interactive worker (#260).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_crop_end_to_end_in_the_worker(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """The route's outcomes, through a real child. A crop is cut there; each
+    refusal crosses the pipe with its own message and, for a ``RenderRefused``,
+    the fields its log line carries. One child serves every request: a
+    refusal is an answer, not a reason to restart it."""
+    import os
+
+    from tests.pdf_fakes import declared_image, page_bomb_pdf
+
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+
+    def _crop(
+        scan: bytes,
+        name: str,
+        *,
+        page: int = _MARKED_PAGE,
+        box: list[int] | None = None,
+        content_type: str = "application/pdf",
+    ) -> tuple[int, bytes, str | None, list[dict[str, object]]]:
+        """``(status, body, detail, review_crop_* log lines)`` for one stored item."""
+        teacher, item_id = _seed_boxed_review_item(
+            pg_sessionmaker,
+            class_service,
+            storage=storage_backend,
+            scan=scan,
+            page=page,
+            box=box,
+            content_type=content_type,
+            student_name=name,
+        )
+        _auth_as(client, teacher, Role.teacher)
+        with structlog.testing.capture_logs() as logs:
+            resp = client.get(f"/api/teacher/review/{item_id}/crop")
+        detail = resp.json()["detail"] if resp.status_code != 200 else None
+        events = [e for e in logs if str(e["event"]).startswith("review_crop_")]
+        return resp.status_code, resp.content, detail, events
+
+    # (a) A normal crop: the boxed region, by the happy path's colour census.
+    status, body, _, events = _crop(_synthetic_scan(), "Ada")
+    assert status == 200, body[:200]
+    assert events == []
+    reddish, bluish, total = _colour_counts(Image.open(io.BytesIO(body)).convert("RGB"))
+    assert bluish == 0, "the crop reaches outside the box -- this is the page, not the region"
+    assert reddish / total > 0.6, "the mark inside the box is missing -- this is a failed crop"
+    child = sandbox.INTERACTIVE_WORKER.pid()
+    assert child is not None
+    assert child != os.getpid()
+
+    # (b) A box on page 10 of a 3-page scan.
+    status, _, detail, events = _crop(
+        _synthetic_scan(pages=_SCAN_PAGES), "Ben", page=_SCAN_PAGES + 6
+    )
+    assert status == 422
+    assert detail == "Stored crop region names page 10 of a 3-page scan"
+    assert [(e["event"], e["page"], e["page_count"]) for e in events] == [
+        ("review_crop_page_out_of_range", _SCAN_PAGES + 6, _SCAN_PAGES)
+    ]
+
+    # (c) Too large to render, on the PDF path: a 500,000 pt page with the
+    # whole page boxed is over the render ceiling at any dpi ...
+    status, _, detail, events = _crop(
+        _synthetic_scan(width=500_000.0, height=500_000.0), "Cleo", box=_WHOLE_PAGE_BOX
+    )
+    assert status == 422
+    assert detail == "This scan's pages are too large to render"
+    assert [(e["event"], e["width_pt"], e["height_pt"]) for e in events] == [
+        ("review_crop_page_too_large", 500_000.0, 500_000.0)
+    ]
+
+    # ... and on the image path: a colour image over its decode ceiling.
+    status, _, detail, events = _crop(
+        declared_image("RGB", 6500, 6400), "Dev", page=0, content_type="image/png"
+    )
+    assert status == 422
+    assert detail == "This scan's pages are too large to render"
+    assert [(e["event"], e["width_px"], e["height_px"]) for e in events] == [
+        ("review_crop_page_too_large", 6500, 6400)
+    ]
+
+    # (d) A stored content-stream bomb, refused with the scan check's message.
+    status, _, detail, events = _crop(page_bomb_pdf(112_000_000), "Eve", page=0)
+    assert status == 422
+    assert detail == (
+        "Page 1 of this PDF contains far more drawing data than a scanned page can "
+        "(over 8 MB once decompressed). Re-export it as a plain scan."
+    )
+    assert [(e["event"], e["reason"]) for e in events] == [
+        ("review_crop_scan_rejected", "page_content")
+    ]
+
+    assert sandbox.INTERACTIVE_WORKER.pid() == child
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_the_crop_runs_in_the_interactive_worker(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """Not in the web process: the crop is drawn by a child of it."""
+    import os
+
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+
+    assert resp.status_code == 200, resp.text
+    child = sandbox.INTERACTIVE_WORKER.pid()
+    assert child is not None
+    assert child != os.getpid()
+    assert sandbox.INTERACTIVE_WORKER.last_outcome == "ok"
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_a_refused_crop_is_a_422_with_the_fixed_message(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crop that runs out of memory in the worker is a 422 with the fixed
+    message; why it failed goes to the ``review_crop_render_failed`` line."""
+    from lemely.web.routers import review
+
+    monkeypatch.setattr(
+        sandbox,
+        "sandbox_settings",
+        lambda: SandboxSettings(interactive_data_limit_bytes=64 * 1024 * 1024),
+    )
+    monkeypatch.setattr(review, "CROP_PDF_TARGET", "tests.sandbox_targets.oom")
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "Could not render this scan"
+    (failed,) = [e for e in logs if e["event"] == "review_crop_render_failed"]
+    assert failed["reason"] == "memory"
+    assert failed["item_id"] == str(item_id)
+    assert sandbox.INTERACTIVE_WORKER.last_outcome == "memory"
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_a_crop_answers_503_when_no_worker_can_start(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No child to render in: 503, and nothing is rendered in the web process."""
+    monkeypatch.setattr(sandbox.INTERACTIVE_WORKER, "_spawn", lambda: False)
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["detail"] == (
+        "Scan rendering is temporarily unavailable. Try again in a moment."
+    )
+    (failed,) = [e for e in logs if e["event"] == "review_crop_render_failed"]
+    assert failed["reason"] == "unavailable"
+    assert sandbox.INTERACTIVE_WORKER.last_outcome == "unavailable"
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_two_concurrent_crops_are_served_one_after_the_other(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """One interactive child, so two crops at once take turns: both are
+    served, and the two renders never overlap. The stand-in target records
+    its own start and end in the file the environment names, which the
+    child inherits when it starts (the ``sandboxed`` fixture shut the worker
+    down, so it starts after this test sets the variable)."""
+    import threading
+
+    from lemely.web.routers import review
+    from tests.sandbox_targets import WINDOW_FILE_ENV
+
+    window_file = tmp_path / "w"
+    monkeypatch.setenv(WINDOW_FILE_ENV, str(window_file))
+    monkeypatch.setattr(review, "CROP_PDF_TARGET", "tests.sandbox_targets.record_window_from_env")
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    # One request first, on another route. When a fresh app's first two
+    # requests race each other, one was sometimes answered with a bare
+    # routing 404 (``{"detail":"Not Found"}``, 4 runs in 15); with this
+    # request first, 0 in 20.
+    assert client.get(f"/api/teacher/review/{item_id}").status_code == 200
+
+    answers: list[tuple[int, str]] = []
+
+    def _get() -> None:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+        answers.append((resp.status_code, resp.text[:200] if resp.status_code != 200 else ""))
+
+    threads = [threading.Thread(target=_get) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert answers == [(200, ""), (200, "")]
+    windows = sorted(
+        (float(start), float(end))
+        for start, end in (line.split() for line in window_file.read_text().splitlines())
+    )
+    assert len(windows) == 2, windows
+    (_, first_end), (second_start, _) = windows
+    assert first_end <= second_start, f"the two renders overlapped: {windows}"

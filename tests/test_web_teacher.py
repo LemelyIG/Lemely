@@ -26,6 +26,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import sqlalchemy as sa
+import structlog.testing
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.engine import make_url
@@ -55,7 +56,8 @@ from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.teacher_paper_repo import TeacherPaperRepository, TeacherPaperRow
 from lemely.io.gemini import GeminiClient
 from lemely.io.history_store import HistoryStore
-from lemely.runtime.config import DatabaseSettings, Settings, load_settings
+from lemely.runtime import sandbox
+from lemely.runtime.config import DatabaseSettings, SandboxSettings, Settings, load_settings
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
@@ -71,6 +73,7 @@ from lemely.web.deps import (
     get_teacher_paper_repo,
 )
 from lemely.web.routers import teacher
+from tests.sandbox_fixtures import in_process_sandbox, sandboxed  # noqa: F401
 from tests.storage_fakes import FakeStorageBackend
 
 if TYPE_CHECKING:
@@ -705,6 +708,7 @@ def test_an_upload_over_the_byte_cap_is_logged_without_its_bytes() -> None:
     ]
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_preview_refuses_a_stored_content_stream_bomb(
     client: TestClient,
     paper_repo: TeacherPaperRepository,
@@ -750,6 +754,7 @@ def test_preview_refuses_a_stored_content_stream_bomb(
     assert "drawing" in preview.json()["detail"]
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_preview_refuses_an_object_stream_bomb_before_opening_the_scan(
     client: TestClient,
     paper_repo: TeacherPaperRepository,
@@ -789,6 +794,7 @@ def test_preview_refuses_an_object_stream_bomb_before_opening_the_scan(
     assert "compressed internal data" in preview.json()["detail"]
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_preview_prescans_pdf_bytes_stored_under_an_image_content_type(
     client: TestClient,
     paper_repo: TeacherPaperRepository,
@@ -858,6 +864,7 @@ def test_preview_of_image_bytes_stored_as_a_pdf_renders_the_image(
     assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_preview_still_refuses_a_stored_scan_over_the_page_cap(
     client: TestClient,
     paper_repo: TeacherPaperRepository,
@@ -2052,6 +2059,154 @@ def test_preview_of_a_stored_scan_with_no_pages_is_a_422(
 
     assert preview.status_code == 422, preview.text
     assert preview.json()["detail"] == "Stored scan has no pages"
+
+
+# ---------------------------------------------------------------------------
+# The preview renders in the interactive worker (#260).
+# ---------------------------------------------------------------------------
+
+
+def _a4_pdf() -> bytes:
+    import pymupdf
+
+    doc = pymupdf.open()
+    doc.new_page(width=595, height=842).insert_text((72, 72), "Question 1")
+    pdf_bytes: bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_preview_end_to_end_in_the_worker(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """The route's three outcomes, through a real child: a PDF and an image
+    are drawn there, and a stored bomb is refused there with its own message
+    (the ``ScanRejectedError`` crossed the pipe intact). One child serves all
+    three: a refusal is an answer, not a reason to restart it."""
+    import io
+    import os
+
+    from PIL import Image
+
+    from tests.pdf_fakes import page_bomb_pdf
+
+    def _seed(scan: bytes, content_type: str, name: str) -> uuid.UUID:
+        return _seed_stored_scan(
+            paper_repo,
+            storage_backend,
+            settings,
+            teacher_user,
+            scan,
+            content_type=content_type,
+            name=name,
+        )
+
+    pdf = client.get(f"/api/papers/{_seed(_a4_pdf(), 'application/pdf', 'scan.pdf')}/preview")
+    assert pdf.status_code == 200, pdf.text
+    assert pdf.headers["content-type"] == "image/png"
+    assert Image.open(io.BytesIO(pdf.content)).size == (595, 842)
+    child = sandbox.INTERACTIVE_WORKER.pid()
+    assert child is not None
+    assert child != os.getpid()
+
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 140), "white").save(buf, "PNG")
+    image = client.get(f"/api/papers/{_seed(buf.getvalue(), 'image/png', 'scan.png')}/preview")
+    assert image.status_code == 200, image.text
+    assert image.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert sandbox.INTERACTIVE_WORKER.pid() == child
+
+    bomb = page_bomb_pdf(112_000_000)
+    with structlog.testing.capture_logs() as logs:
+        refused = client.get(f"/api/papers/{_seed(bomb, 'application/pdf', 'bomb.pdf')}/preview")
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"] == (
+        "Page 1 of this PDF contains far more drawing data than a scanned page can "
+        "(over 8 MB once decompressed). Re-export it as a plain scan."
+    )
+    (rejected,) = [e for e in logs if e["event"] == "paper_preview_rejected"]
+    assert rejected["reason"] == "page_content"
+    assert rejected["detail"] == refused.json()["detail"]
+    assert sandbox.INTERACTIVE_WORKER.last_outcome == "rejected"
+    assert sandbox.INTERACTIVE_WORKER.pid() == child
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_preview_answers_422_with_the_fixed_message_when_the_worker_refuses(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A render that runs out of memory in the worker is a 422 with the fixed
+    message; why it failed goes to the ``paper_preview_failed`` log line."""
+    monkeypatch.setattr(
+        sandbox,
+        "sandbox_settings",
+        lambda: SandboxSettings(interactive_data_limit_bytes=64 * 1024 * 1024),
+    )
+    monkeypatch.setattr(teacher, "PREVIEW_TARGET", "tests.sandbox_targets.oom")
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 422, preview.text
+    assert preview.json()["detail"] == "Could not render this scan"
+    (failed,) = [e for e in logs if e["event"] == "paper_preview_failed"]
+    assert failed["reason"] == "memory"
+    assert failed["paper_id"] == str(paper_id)
+    assert sandbox.INTERACTIVE_WORKER.last_outcome == "memory"
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_preview_answers_503_when_no_worker_can_start(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No child to render in is the server's problem, not the scan's: 503,
+    so the client knows to try again, and nothing is rendered in the web
+    process instead."""
+    monkeypatch.setattr(sandbox.INTERACTIVE_WORKER, "_spawn", lambda: False)
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 503, preview.text
+    assert preview.json()["detail"] == (
+        "Scan rendering is temporarily unavailable. Try again in a moment."
+    )
+    (failed,) = [e for e in logs if e["event"] == "paper_preview_failed"]
+    assert failed["reason"] == "unavailable"
+    assert sandbox.INTERACTIVE_WORKER.last_outcome == "unavailable"
 
 
 _PREVIEW_PEAK_RSS_CHILD = """

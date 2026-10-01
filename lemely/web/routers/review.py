@@ -39,7 +39,7 @@ from lemely.db.review_repo import (
 )
 from lemely.io.rasterise import looks_like_pdf
 from lemely.io.scan_limits import ScanRejectedError
-from lemely.io.scan_render import RenderRefused, crop_image_scan, crop_pdf_scan
+from lemely.io.scan_render import RenderRefused, require_page_in_range
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 
 # A runtime import, not a TYPE_CHECKING one: FastAPI resolves
@@ -49,6 +49,7 @@ from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 # rather than file-wide (the blanket `TC001`/`TC002`/`TC003` ignore the sibling
 # routers carry in `pyproject.toml`) so a future type-only import in this file
 # still gets flagged.
+from lemely.runtime import sandbox
 from lemely.runtime.config import Settings  # noqa: TC001
 from lemely.web.deps import (
     AuthContext,
@@ -69,6 +70,7 @@ from lemely.web.schemas_review import (
     ReviewQueueItemDTO,
     ReviewQueueListDTO,
 )
+from lemely.web.upload_utils import sandbox_failure_to_http
 
 if TYPE_CHECKING:
     from lemely.core.schemas import SourceBox
@@ -329,6 +331,11 @@ def _require_renderable_box(box: SourceBox, *, item_id: str) -> None:
         raise HTTPException(status_code=422, detail="Stored crop region is not renderable")
 
 
+#: The crop's renders, run in :data:`~lemely.runtime.sandbox.INTERACTIVE_WORKER`
+#: (#260). Named by dotted path: the worker imports them in its child.
+CROP_PDF_TARGET = "lemely.io.scan_render.crop_pdf_scan"
+CROP_IMAGE_TARGET = "lemely.io.scan_render.crop_image_scan"
+
 #: The log event for each :class:`RenderRefused` reason the crop can meet.
 _RENDER_REFUSED_EVENTS = {
     "page_out_of_range": "review_crop_page_out_of_range",
@@ -418,10 +425,20 @@ def get_review_item_crop(
         # ``Image.open`` enforces its own ``MAX_IMAGE_PIXELS`` ceiling. Left
         # outside, a page large enough to trip it escaped as a 500 instead of
         # the 422 every other unrenderable scan gets.
+        #
+        # Rendered in the interactive worker (#260), which passes arguments by
+        # position only. ``crop_image_scan`` takes ``page`` by keyword, and an
+        # image has one page, so its page bound is checked here, from the box
+        # alone, and the worker crops page 0 (its default).
+        timeout = sandbox.sandbox_settings().crop_timeout_seconds
+        target: str
+        args: tuple[object, ...]
         if looks_like_pdf(data):
-            crop = crop_pdf_scan(data, box.page, list(box.box))
+            target, args = CROP_PDF_TARGET, (data, box.page, list(box.box))
         else:
-            crop = crop_image_scan(data, list(box.box), page=box.page)
+            require_page_in_range(box.page, 1)
+            target, args = CROP_IMAGE_TARGET, (data, list(box.box))
+        crop = sandbox.INTERACTIVE_WORKER.call(target, *args, timeout=timeout, result_type=bytes)
     except RenderRefused as exc:
         # The refusal's message is the user's; its reason picks the log event.
         # ``page`` is the stored box's, which the render does not echo back.
@@ -441,11 +458,18 @@ def get_review_item_crop(
             detail=str(exc),
         )
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except sandbox.SandboxFailure as exc:
+        # Timeout, memory, a crashed child or an unexpected error in it: a fixed
+        # 422. No worker to render in: 503. The failure itself goes to the log.
+        raise sandbox_failure_to_http(
+            exc, event="review_crop_render_failed", item_id=logged_id
+        ) from exc
     except Exception as exc:
-        # A scan that cannot be rendered is not a server fault — it is a stored
-        # file that is not the document type it claimed to be, or one whose page
-        # geometry no renderer will accept. The renderer's own message is for
-        # the log; the client gets a fixed one.
+        # The in-process path (sandbox disabled), where the renderer's own
+        # exceptions arrive unchanged. A scan that cannot be rendered is not a
+        # server fault — it is a stored file that is not the document type it
+        # claimed to be, or one whose page geometry no renderer will accept.
+        # The renderer's own message is for the log; the client gets a fixed one.
         log.warning("review_crop_render_failed", item_id=logged_id, error=str(exc))
         raise HTTPException(status_code=422, detail="Could not render this scan") from exc
 

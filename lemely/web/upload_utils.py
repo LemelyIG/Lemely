@@ -8,7 +8,9 @@ size — live here so a single hardened implementation backs them all.
 Neither helper trusts the client filename as a path: only its basename survives
 :func:`safe_upload_name`, and :func:`check_upload_cap` rejects a body once the
 byte cap is exceeded rather than letting a hostile client exhaust disk or
-memory.
+memory. :func:`sandbox_failure_to_http` is the one mapping from a render
+worker's failure to an HTTP answer, shared by every route that renders a
+stored scan in a worker.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import structlog
 from fastapi import HTTPException
 
 from lemely.io.scan_limits import ScanRejectedError, check_scan_bytes
+from lemely.runtime.sandbox import SandboxFailure, SandboxUnavailable
 
 log = structlog.get_logger(__name__)
 
@@ -107,9 +110,36 @@ def check_scan_geometry(data: bytes, content_type: str | None = None) -> None:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+#: The client's answer when no render worker could take the request.
+SANDBOX_UNAVAILABLE_DETAIL = "Scan rendering is temporarily unavailable. Try again in a moment."
+
+#: The client's answer for any other render worker failure.
+SANDBOX_FAILED_DETAIL = "Could not render this scan"
+
+
+def sandbox_failure_to_http(exc: SandboxFailure, *, event: str, **fields: object) -> HTTPException:
+    """The HTTP answer for a render worker failure (#260), logged as ``event``.
+
+    :class:`~lemely.runtime.sandbox.SandboxUnavailable` (the worker is busy
+    past the call's timeout, or no child could start) is the server's
+    problem, not the scan's: 503, so the client tries again. Every other
+    failure (timeout, memory, crash, an unexpected error in the target) is a
+    422 with a fixed message. The failure's ``reason`` and text go to the
+    log line, with the caller's ``fields``; they never reach the client.
+    The caller raises the result (``raise sandbox_failure_to_http(...) from exc``).
+    """
+    log.warning(event, reason=exc.reason, error=str(exc), **fields)
+    if isinstance(exc, SandboxUnavailable):
+        return HTTPException(status_code=503, detail=SANDBOX_UNAVAILABLE_DETAIL)
+    return HTTPException(status_code=422, detail=SANDBOX_FAILED_DETAIL)
+
+
 __all__ = [
     "MAX_UPLOAD_BYTES",
+    "SANDBOX_FAILED_DETAIL",
+    "SANDBOX_UNAVAILABLE_DETAIL",
     "check_scan_geometry",
     "check_upload_cap",
     "safe_upload_name",
+    "sandbox_failure_to_http",
 ]

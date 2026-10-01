@@ -156,3 +156,27 @@ def lower_data_limit_then(data_limit: int, target: str, *args: object) -> object
         return function(*args)
     finally:
         resource.setrlimit(resource.RLIMIT_DATA, (soft, hard))
+
+
+def oom(*ignored: object) -> bytes:
+    """Touch a 1 GiB ``bytearray``: past any worker's ``RLIMIT_DATA``.
+
+    Stands in for a render target (it takes and ignores the route's
+    arguments), so a route test can see a ``SandboxMemory`` arrive.
+    """
+    allocate(1024 * 1024 * 1024)
+    return ONE_PIXEL_PNG
+
+
+#: The file :func:`record_window_from_env` appends to, named in the environment
+#: because a render target's arguments are the route's, not the test's.
+WINDOW_FILE_ENV = "LEMELY_TEST_WINDOW_FILE"
+
+
+def record_window_from_env(*ignored: object) -> bytes:
+    """:func:`record_window` with a 0.4 s hold, into the file ``$LEMELY_TEST_WINDOW_FILE`` names.
+
+    The child inherits the variable when it is started, so a test sets it
+    before the worker's first call.
+    """
+    return record_window(os.environ[WINDOW_FILE_ENV], 0.4)

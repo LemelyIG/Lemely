@@ -101,9 +101,10 @@ from lemely.io.gemini import GeminiClient
 from lemely.io.question_generation import QuestionGenerator
 from lemely.io.scan_limits import ScanRejectedError
 from lemely.io.scan_metadata import ScanMetadataExtractor
-from lemely.io.scan_render import RenderRefused, render_preview_png
+from lemely.io.scan_render import RenderRefused
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.io.teacher_quiz import TeacherQuizBuilder
+from lemely.runtime import sandbox
 from lemely.runtime.config import Settings
 from lemely.runtime.events import Event, EventType, bus, current_run_id
 from lemely.web.deps import (
@@ -167,7 +168,12 @@ from lemely.web.schemas_teacher import (
     StudentRowDTO,
     UploadResponseDTO,
 )
-from lemely.web.upload_utils import check_scan_geometry, check_upload_cap, safe_upload_name
+from lemely.web.upload_utils import (
+    check_scan_geometry,
+    check_upload_cap,
+    safe_upload_name,
+    sandbox_failure_to_http,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -187,6 +193,10 @@ router = APIRouter(
 # hostile client cannot exhaust disk by streaming an unbounded body.
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+#: The preview's render, run in :data:`~lemely.runtime.sandbox.INTERACTIVE_WORKER`
+#: (#260). Named by dotted path: the worker imports it in its child.
+PREVIEW_TARGET = "lemely.io.scan_render.render_preview_png"
 
 # Confidence at/above which a marked question is treated as auto-graded; below it
 # the question is surfaced in the teacher review queue. Aliases the single domain
@@ -1071,6 +1081,12 @@ def get_paper_preview(
     Image uploads (the console accepts images as well as PDFs) are drawn by
     PyMuPDF too, so one code path covers both; the bytes decide which
     opener runs (:func:`~lemely.io.scan_render.render_preview_png`).
+
+    The render runs in :data:`~lemely.runtime.sandbox.INTERACTIVE_WORKER`, a
+    memory-limited child that is killed past ``preview_timeout_seconds``
+    (#260): a scan's refusal crosses back with its own message (422); a
+    render that fails there is a 422 with a fixed message, and no worker to
+    render in is a 503 (``sandbox_failure_to_http``).
     """
     row = _require_paper(repo, auth, paper_id)
     try:
@@ -1081,15 +1097,25 @@ def get_paper_preview(
         ) from None
 
     try:
-        png = render_preview_png(data)
+        png = sandbox.INTERACTIVE_WORKER.call(
+            PREVIEW_TARGET,
+            data,
+            timeout=sandbox.sandbox_settings().preview_timeout_seconds,
+            result_type=bytes,
+        )
     except RenderRefused as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ScanRejectedError as exc:
-        log.warning("paper_preview_rejected", paper_id=paper_id, reason=str(exc))
+        log.warning("paper_preview_rejected", paper_id=paper_id, reason=exc.reason, detail=str(exc))
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except sandbox.SandboxFailure as exc:
+        raise sandbox_failure_to_http(exc, event="paper_preview_failed", paper_id=paper_id) from exc
     except Exception as exc:
-        # A scan that cannot be rendered is not a server fault — it is a file the
-        # teacher uploaded that is not the document type it claimed to be.
+        # The in-process path: with the sandbox disabled the render runs in
+        # this process and its own exceptions arrive here unchanged (from the
+        # worker, only a ``LemelyError`` other than the two above could). A
+        # scan that cannot be rendered is not a server fault — it is a file
+        # the teacher uploaded that is not the document type it claimed to be.
         log.warning("paper_preview_failed", paper_id=paper_id, error=str(exc))
         raise HTTPException(status_code=422, detail=f"Could not render this scan: {exc}") from exc
 
