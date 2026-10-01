@@ -29,7 +29,7 @@ Close five open issues on the marking path without moving marks:
 ## Global constraints
 
 - No mark moves. Only #272 changes outputs, and it changes `needs_teacher_review` and `review_reason`, never `awarded_marks`.
-- The harness fingerprint pin `af7fa9cd0e2a` (`tests/test_accuracy_harness.py::test_flag_off_fingerprint_is_unchanged`) reads unchanged after every commit. No change to `_params_fingerprint`, prompt `VERSION`s or wire schemas.
+- The harness fingerprint pin `af7fa9cd0e2a` (`tests/test_accuracy_harness.py::test_params_fingerprint_for_no_arm_override_is_unchanged`, alongside `test_flag_off_fingerprint_is_unchanged`) reads unchanged after every commit. No change to `_params_fingerprint`, prompt `VERSION`s or wire schemas.
 - `equivalence_gate` stays off. The review-rate ratchet stays unarmed, and its targets in `lemely/runtime/config.py` are not touched.
 - TDD: each behaviour change lands with a test that is red before it and green after. Pure refactors carry a behaviour-preservation test that is green before and after.
 - Signed conventional commits, each naming only its own paths (`git commit -S -- <paths>`). Synthetic fixtures only. Never the full test suite locally: run the touched test files. `tests/test_equivalence.py` runs on its own, not alongside another lane's suite, because its computed-exponent test is load-sensitive.
@@ -116,7 +116,9 @@ If the net rate goes up, the PR still ships and reports the numbers as measured.
 
 ### Tests (`tests/test_equivalence.py`, one parametrised block)
 
-Every "not equal" and "unparseable" row is red today. The equal twins are guards.
+A probe on 2026-10-01 measured every row today. Apart from `(x+1)^2` and `2x`, which are guards (green today), every row is red today, the equal twins included: `ln6`/`ln(6)`, `sin2x`/`sin(2x)` and the rest currently return not equal, `(x+1)2` parses to `2*x + 2`, and both micro spellings are unparseable. The plan's Task 6 holds the measured verdict for each row.
+
+Function application follows the CAIE convention (D1). A number followed by one letter is the argument for the trig functions (sin, cos, tan and their inverse and hyperbolic forms), `ln` and `log`: `sin2x` is sin(2x), `ln2x` is ln(2x). For `sqrt` that form is ambiguous and returns `None`, while `sqrt2` is sqrt(2). A letter run made of a function name plus one trailing letter applies the function to that letter (`cost` is cos(t)), and concatenated applications split (`sinxcosx` is sin(x)*cos(x)).
 
 | Left | Right | Expected |
 |---|---|---|
