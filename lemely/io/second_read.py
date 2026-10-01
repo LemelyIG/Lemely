@@ -31,30 +31,30 @@ and the SD21 cache-key guarantee. It does not run either variant over the
 Phase-A gold set, publish an AUROC, or choose a variant -- see this story's
 report (US-010) for what remains open.
 
-Agreement itself is `1 - normalised edit distance` per answer, computed via
-`difflib.SequenceMatcher` -- the SAME stand-in `lemely.io.reread._text_agreement`
-already uses for `reread_agreement`, because `rapidfuzz` (the plan's specified
-implementation) is not a project dependency, and adding one is outside this
-story's file ownership (`pyproject.toml`/`uv.lock` belong to other lanes
-running concurrently in this session). Swapping to rapidfuzz later needs no
-protocol or field change -- only `text_agreement`'s body.
+Agreement itself is `1 - normalised edit distance` per answer, computed by
+`lemely.core.text_agreement.text_agreement` -- the ONE implementation, shared
+with `lemely.io.reread` for `reread_agreement` (this module re-exports it
+under the same name). It is a `difflib.SequenceMatcher` stand-in, because
+`rapidfuzz` (the plan's specified implementation) is not a project
+dependency. Swapping to rapidfuzz later needs no protocol or field change --
+only that one function's body.
 
 The plan also asks for agreement to be computed "after the I2 normaliser"
 (I2's CER normalisation: whitespace collapse, unicode NFKC, "x" vs. the
 multiplication sign, superscript unfold). I2 has not landed either -- there
 is no `jiwer` dependency and no `cer()`/normalisation function anywhere
-under `lemely/eval`. `text_agreement`
-below normalises only by `.strip()` + `.casefold()`, which is NOT the I2
-normaliser -- it is a much weaker placeholder, named honestly as one rather
-than silently passed off as raw string comparison.
+under `lemely/eval`. `text_agreement` normalises only by `.strip()` +
+`.casefold()`, which is NOT the I2 normaliser -- it is a much weaker
+placeholder, named honestly as one rather than silently passed off as raw
+string comparison. I2 will plug in there.
 """
 
 from __future__ import annotations
 
-import difflib
 from typing import TYPE_CHECKING, Protocol
 
 from lemely.core.schemas import SecondReadOutput
+from lemely.core.text_agreement import text_agreement
 from lemely.io.prompts.answer_extraction import (
     EXTRACTOR_SYSTEM_PROMPT,
     FIELD_GUIDED_SYSTEM_PROMPT,
@@ -88,17 +88,6 @@ REREAD_AGREEMENT_THRESHOLD = 0.8
 # second read is a whole-paper call shaped like the primary's, not a
 # zoomed-in single-answer crop like lemely.io.reread's "high" resolution.
 SECOND_READ_MEDIA_RESOLUTION = "medium"
-
-
-def text_agreement(a: str, b: str) -> float:
-    """Similarity in [0, 1] between two answer strings, after normalisation.
-
-    See the module docstring: this is a difflib-based stand-in for the
-    plan's rapidfuzz normalised-Levenshtein metric, computed after only
-    `.strip()` + `.casefold()` -- NOT the I2 normaliser, which does not
-    exist yet.
-    """
-    return difflib.SequenceMatcher(None, a.strip().casefold(), b.strip().casefold()).ratio()
 
 
 class SecondReader(Protocol):
