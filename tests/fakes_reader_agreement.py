@@ -178,45 +178,38 @@ def oc_hidden_bomb_pdf(inflated_bytes: int) -> bytes:
     )
 
 
-#: Where :func:`ocmd_image_pdf` draws its black square, in points: a whole
-#: number of pixels at scale 0.5, so both readers fill the same pixels.
+#: Where :func:`optional_content_square_pdf` draws its black square, in
+#: points from the top-left: a whole number of pixels at scale 0.5, so both
+#: readers fill the same pixels.
 OCMD_IMAGE_RECT = (100, 400, 300, 600)
 
+#: The object number :func:`optional_content_square_pdf` gives the first of
+#: the caller's ``objects``.
+FIRST_EXTRA_OBJECT = 7
 
-def ocmd_image_pdf(
-    policy: str,
-    states: tuple[bool, ...],
-    *,
-    base_state_off: bool = False,
-    annotation: bool = False,
+
+def refs(numbers: list[int]) -> bytes:
+    """A PDF array of indirect references to ``numbers``."""
+    return b"[" + b" ".join(b"%d 0 R" % n for n in numbers) + b"]"
+
+
+def optional_content_square_pdf(
+    oc: bytes, objects: list[bytes], *, properties: bytes, annotation: bool = False
 ) -> bytes:
-    """One A4 page drawing one black image XObject governed by an ``/OCMD``.
+    """One A4 page drawing one black square whose ``/OC`` value is ``oc``.
 
-    The image's ``/OC`` is an optional-content membership dictionary with
-    ``/P /<policy>`` over ``len(states)`` groups; group ``i`` is ON by default
-    when ``states[i]`` is true. The catalog lists the groups in
-    ``/OCProperties /D /ON`` and ``/OFF``; with ``base_state_off`` it writes
-    ``/BaseState /OFF`` and lists only the ON groups (in ``/ON``), so the OFF
-    ones are off by the base state alone. Nothing else is drawn: the page has
-    dark pixels exactly when the policy shows the image.
+    The square is an image XObject (``/Im1``), or with ``annotation`` a
+    Square annotation's appearance, and ``oc`` is that object's ``/OC``.
+    ``properties`` is the catalog's ``/OCProperties`` value (empty bytes for
+    none). ``objects`` are numbered from :data:`FIRST_EXTRA_OBJECT` up: the
+    groups and membership dictionaries ``oc`` and ``properties`` refer to.
+    Nothing else is drawn, so the page has dark pixels exactly when the
+    reader shows the square.
 
-    With ``annotation`` the same black square is a Square annotation's
-    appearance instead, and the ``/OC`` is the annotation's: pdfium honours
-    an image's ``/OC`` itself but draws an annotation whatever its ``/OC``
-    says, so this is the case only the rewrite's prune can hide.
+    pdfium honours an image's ``/OC`` itself but draws an annotation
+    whatever its ``/OC`` says, so the annotation is the case only the
+    rewrite's prune can hide.
     """
-    first_group = 7
-    groups = [first_group + i for i in range(len(states))]
-
-    def refs(numbers: list[int]) -> bytes:
-        return b"[" + b" ".join(b"%d 0 R" % n for n in numbers) + b"]"
-
-    on = [g for g, state in zip(groups, states, strict=True) if state]
-    off = [g for g, state in zip(groups, states, strict=True) if not state]
-    if base_state_off:
-        default = b"<< /BaseState /OFF /ON " + refs(on) + b" >>"
-    else:
-        default = b"<< /ON " + refs(on) + b" /OFF " + refs(off) + b" >>"
     left, top, right, bottom = OCMD_IMAGE_RECT
     # PDF y runs up from the bottom of the 842-point page.
     x0, y0, x1, y1 = left, 842 - bottom, right, 842 - top
@@ -227,8 +220,9 @@ def ocmd_image_pdf(
         )
         contents = pdf_stream(b"", b"")
         square = (
-            b"<< /Type /Annot /Subtype /Square /Rect [%d %d %d %d] /F 4 /OC 6 0 R"
-            b" /AP << /N %d 0 R >> >>" % (x0, y0, x1, y1, first_group + len(states))
+            b"<< /Type /Annot /Subtype /Square /Rect [%d %d %d %d] /F 4 /OC " % (x0, y0, x1, y1)
+            + oc
+            + b" /AP << /N 6 0 R >> >>"
         )
     else:
         page = (
@@ -238,27 +232,114 @@ def ocmd_image_pdf(
         contents = pdf_stream(b"", b"q %d 0 0 %d %d %d cm /Im1 Do Q" % (x1 - x0, y1 - y0, x0, y0))
         square = pdf_stream(
             b"/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray"
-            b" /BitsPerComponent 8 /OC 6 0 R",
+            b" /BitsPerComponent 8 /OC " + oc,
             b"\x00\x00\x00\x00",
         )
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs "
-        + refs(groups)
-        + b" /D "
-        + default
-        + b" >> >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        page,
-        contents,
-        square,
-        b"<< /Type /OCMD /OCGs " + refs(groups) + b" /P /" + policy.encode() + b" >>",
-    ]
-    objects += [b"<< /Type /OCG /Name (group %d) >>" % i for i in range(len(states))]
-    if annotation:
-        objects.append(
+    catalog = b"<< /Type /Catalog /Pages 2 0 R"
+    if properties:
+        catalog += b" /OCProperties " + properties
+    return assemble_pdf(
+        [
+            catalog + b" >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            page,
+            contents,
+            square,
             pdf_stream(
                 b"/Type /XObject /Subtype /Form /BBox [%d %d %d %d]" % (x0, y0, x1, y1),
                 b"0 g %d %d %d %d re f" % (x0, y0, x1 - x0, y1 - y0),
-            )
-        )
-    return assemble_pdf(objects)
+            ),
+            *objects,
+        ]
+    )
+
+
+def ocmd_image_pdf(
+    policy: str,
+    states: tuple[bool, ...],
+    *,
+    base_state_off: bool = False,
+    annotation: bool = False,
+    single: bool = False,
+    visibility_expression: bool = False,
+) -> bytes:
+    """One A4 page drawing one black square governed by an ``/OCMD``.
+
+    The square's ``/OC`` is an optional-content membership dictionary
+    (object 7) with ``/P /<policy>`` (no ``/P`` when ``policy`` is empty)
+    over ``len(states)`` groups; group ``i`` is ON by default when
+    ``states[i]`` is true. The catalog lists the groups in ``/OCProperties
+    /D /ON`` and ``/OFF``; with ``base_state_off`` it writes ``/BaseState
+    /OFF`` and lists only the ON groups (in ``/ON``), so the OFF ones are off
+    by the base state alone. With ``single`` the dictionary's ``/OCGs`` is a
+    single reference to the one group rather than an array; with
+    ``visibility_expression`` it also carries ``/VE [/Not <group 0>]``.
+    ``annotation``: see :func:`optional_content_square_pdf`.
+    """
+    if single and len(states) != 1:
+        raise ValueError("a single /OCGs reference names one group")
+    groups = [FIRST_EXTRA_OBJECT + 1 + i for i in range(len(states))]
+    on = [g for g, state in zip(groups, states, strict=True) if state]
+    off = [g for g, state in zip(groups, states, strict=True) if not state]
+    if base_state_off:
+        default = b"<< /BaseState /OFF /ON " + refs(on) + b" >>"
+    else:
+        default = b"<< /ON " + refs(on) + b" /OFF " + refs(off) + b" >>"
+    members = b"%d 0 R" % groups[0] if single else refs(groups)
+    ocmd = b"<< /Type /OCMD /OCGs " + members
+    if policy:
+        ocmd += b" /P /" + policy.encode()
+    if visibility_expression:
+        ocmd += b" /VE [/Not %d 0 R]" % groups[0]
+    return optional_content_square_pdf(
+        b"%d 0 R" % FIRST_EXTRA_OBJECT,
+        [ocmd + b" >>", *(b"<< /Type /OCG /Name (group %d) >>" % i for i in range(len(states)))],
+        properties=b"<< /OCGs " + refs(groups) + b" /D " + default + b" >>",
+        annotation=annotation,
+    )
+
+
+def oc_annotation_flood_pdf(annotations: int, groups: int) -> bytes:
+    """One page whose ``/Annots`` names one annotation ``annotations`` times,
+    governed by an ``/OCMD`` naming one ON group ``groups`` times.
+
+    The reviewer's amplification probe (#274): 49 KB at 4,000 by 4,000, and
+    judging each annotation by walking the whole membership array cost
+    16 million steps.
+    """
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R"
+            b" /OCProperties << /OCGs [7 0 R] /D << /ON [7 0 R] >> >> >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Annots "
+            + b"["
+            + b"5 0 R " * annotations
+            + b"] >>",
+            pdf_stream(b"", b""),
+            b"<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /OC 6 0 R >>",
+            b"<< /Type /OCMD /OCGs [" + b"7 0 R " * groups + b"] /P /AnyOn >>",
+            b"<< /Type /OCG /Name (g) >>",
+        ]
+    )
+
+
+def with_all_on_optional_content(data: bytes) -> bytes:
+    """``data`` with one ON optional-content group governing everything.
+
+    Adds ``/OCProperties`` naming one group that is ON by default, and sets
+    that group as the ``/OC`` of every XObject in each page's resources and
+    of every annotation, so the rewrite's prune judges each of them -- and
+    must keep them all.
+    """
+    with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+        group = doc.add_ocg("everything", on=True)
+        for page in doc:
+            xobjects = {item[0] for item in page.get_images()}
+            xobjects |= {item[0] for item in page.get_xobjects()}
+            annotations = {annot.xref for annot in page.annots()}
+            annotations |= {widget.xref for widget in page.widgets()}
+            for xref in xobjects | annotations:
+                doc.xref_set_key(xref, "OC", f"{group} 0 R")
+        out: bytes = doc.tobytes()
+    return out

@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import io
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -41,11 +42,14 @@ from tests.fakes_reader_agreement import (
     differing_bytes,
     mupdf_grey,
     mupdf_size,
+    oc_annotation_flood_pdf,
     oc_hidden_bomb_pdf,
     ocmd_image_pdf,
+    optional_content_square_pdf,
     pdfium_grey,
     pdfium_size,
     visible_layer_text_pdf,
+    with_all_on_optional_content,
 )
 from tests.pdf_fakes import (
     born_digital_text_pdf,
@@ -229,12 +233,24 @@ def _pdfium_page_count(data: bytes) -> int:
 #: OCMD fixture's square at scale 0.5).
 _AGREEMENT_SLACK = 200
 
-#: The OCMD cases where MuPDF 1.29 departs from the policy the PDF spec
-#: defines (and pdfium follows): it shows an ``/AllOn`` member whatever its
-#: groups' states and hides an ``/AnyOff`` member likewise. The rewrite keeps
-#: the spec's rule, so on these two the marker and the teacher still differ;
-#: the test pins that, so an upstream fix shows up here.
-_MUPDF_OCMD_DEVIATIONS = {("AllOn", (True, False)), ("AnyOff", (True, False))}
+#: Where the marker still sees less than the teacher (#274 controller
+#: decision): an image MuPDF 1.29 shows but pdfium hides by itself, which
+#: the prune cannot undo -- it can only hide. MuPDF shows an ``/AllOn``
+#: member over an array whatever its groups' states, and over a single
+#: reference it shows an ``/AllOn`` or ``/AllOff`` member exactly when the
+#: group is OFF; pdfium hides all three. Annotations never deviate: pdfium
+#: draws them whatever their ``/OC`` says, so the prune decides alone.
+#: Measured, and pinned so a change in either reader shows up here.
+_MARKER_SEES_LESS = {
+    ("AllOn", (True, False), "array", "image"),
+    ("AllOn", (False,), "single", "image"),
+    ("AllOff", (False,), "single", "image"),
+}
+
+#: The same for :meth:`ReaderAgreementTests.test_group_states_decide_what_the_rewrite_drops`:
+#: MuPDF shows what an ``/OC`` lacking ``/Type /OCG`` governs, even when
+#: ``/D /OFF`` names it; pdfium hides such an image.
+_GROUP_MARKER_SEES_LESS = {("off, untyped", "image")}
 
 
 class ReaderAgreementTests(unittest.TestCase):
@@ -289,44 +305,125 @@ class ReaderAgreementTests(unittest.TestCase):
         with self.assertRaises(ScanTooLargeError):
             canonical_pdf_bytes(oc_hidden_bomb_pdf(112_000_000))
 
+    def _assert_marker_matches_teacher(
+        self, data: bytes, *, teacher_shows: bool, marker_sees_less: bool = False
+    ) -> None:
+        """pdfium's render of the rewrite against MuPDF's of the stored file.
+
+        ``teacher_shows`` pins what MuPDF draws. Unless ``marker_sees_less``
+        the two renders agree within the slack; with it, the marker has no
+        ink where the teacher has some (the one direction the prune cannot
+        close). Never may the marker see what the teacher does not.
+        """
+        size = pdfium_size(data, 0, scale=0.5)
+        marker = pdfium_grey(canonical_pdf_bytes(data), 0, scale=0.5)
+        teacher = mupdf_grey(data, 0, zoom=0.5)
+        self.assertEqual(dark_pixels(teacher, size) > 0, teacher_shows, "MuPDF's view moved")
+        if marker_sees_less:
+            self.assertEqual(dark_pixels(marker, size), 0)
+        else:
+            self.assertLessEqual(differing_bytes(marker, teacher), _AGREEMENT_SLACK)
+
     def test_ocmd_policies_decide_what_the_rewrite_drops(self) -> None:
-        """Each ``/OCMD`` policy over two groups (and ``/BaseState /OFF``
-        over one): pdfium's render of the rewrite has ink exactly when the
-        policy shows the square, and matches MuPDF's render of the stored
-        file -- except where MuPDF departs from the spec
-        (:data:`_MUPDF_OCMD_DEVIATIONS`). Both holders: an image XObject,
-        which pdfium hides itself, and an annotation, which only the prune
-        hides."""
-        cases: tuple[tuple[str, tuple[bool, ...], bool, bool], ...] = (
-            ("AnyOn", (False, False), False, False),
-            ("AnyOn", (True, False), False, True),
-            ("AllOn", (True, False), False, False),
-            ("AllOn", (True, True), False, True),
-            ("AnyOff", (True, True), False, False),
-            ("AnyOff", (True, False), False, True),
-            ("AllOff", (True, False), False, False),
-            ("AllOff", (False, False), False, True),
-            ("AnyOn", (False,), True, False),
+        """Each ``/OCMD`` policy -- and no ``/P`` at all, which is
+        ``/AnyOn`` -- over an array of groups and over a single reference,
+        with ``/BaseState /OFF`` and with a ``/VE`` array: the rewrite drops
+        what MuPDF hides, so the marker matches the teacher, except where
+        MuPDF shows an image pdfium hides by itself
+        (:data:`_MARKER_SEES_LESS`). Both holders: an image XObject, which
+        pdfium hides itself, and an annotation, which only the prune hides.
+        The last column is MuPDF's verdict, measured, where it departs from
+        the spec: ``/AllOn`` over an array always shows, ``/AnyOff`` over an
+        array always hides, a single reference inverts ``/AllOn``, and a
+        ``/VE`` array always shows."""
+        cases: tuple[tuple[str, tuple[bool, ...], dict[str, bool], bool], ...] = (
+            ("AnyOn", (False, False), {}, False),
+            ("AnyOn", (True, False), {}, True),
+            ("AllOn", (True, False), {}, True),
+            ("AllOn", (True, True), {}, True),
+            ("AnyOff", (True, True), {}, False),
+            ("AnyOff", (True, False), {}, False),
+            ("AllOff", (True, False), {}, False),
+            ("AllOff", (False, False), {}, True),
+            ("AnyOn", (False,), {"base_state_off": True}, False),
+            ("", (False, False), {}, False),
+            ("", (True, False), {}, True),
+            ("AnyOn", (True,), {"single": True}, True),
+            ("AnyOn", (False,), {"single": True}, False),
+            ("AllOn", (True,), {"single": True}, False),
+            ("AllOn", (False,), {"single": True}, True),
+            ("AnyOff", (True,), {"single": True}, True),
+            ("AnyOff", (False,), {"single": True}, False),
+            ("AllOff", (True,), {"single": True}, False),
+            ("AllOff", (False,), {"single": True}, True),
+            ("AnyOn", (False,), {"visibility_expression": True}, True),
         )
-        for policy, states, base_state_off, shown in cases:
-            for annotation in (False, True):
-                data = ocmd_image_pdf(
-                    policy, states, base_state_off=base_state_off, annotation=annotation
+        for policy, states, options, teacher_shows in cases:
+            shape = "single" if options.get("single") else "array"
+            for holder in ("image", "annotation"):
+                data = ocmd_image_pdf(policy, states, annotation=holder == "annotation", **options)
+                with self.subTest(policy=policy, states=states, holder=holder, **options):
+                    self._assert_marker_matches_teacher(
+                        data,
+                        teacher_shows=teacher_shows,
+                        marker_sees_less=(policy, states, shape, holder) in _MARKER_SEES_LESS,
+                    )
+
+    def test_group_states_decide_what_the_rewrite_drops(self) -> None:
+        """The group itself, as MuPDF judges it: a ``/Usage /View
+        /ViewState /OFF`` hides a group ``/D`` turns ON (with or without a
+        ``/D /AS`` View event naming it); a group ``/D`` turns OFF but
+        ``/OCProperties /OCGs`` does not list, or an ``/OC`` object that is
+        not ``/Type /OCG``, is shown. Both holders."""
+        usage_off = b"<< /Type /OCG /Name (g) /Usage << /View << /ViewState /OFF >> >> >>"
+        view_event = b" /AS [<< /Event /View /Category [/View] /OCGs [7 0 R] >>]"
+        group = b"<< /Type /OCG /Name (g) >>"
+        cases: tuple[tuple[str, list[bytes], bytes, bool], ...] = (
+            ("usage off", [usage_off], b"<< /OCGs [7 0 R] /D << /ON [7 0 R] >> >>", False),
+            (
+                "usage off, view event",
+                [usage_off],
+                b"<< /OCGs [7 0 R] /D << /ON [7 0 R]" + view_event + b" >> >>",
+                False,
+            ),
+            ("off, not listed", [group, group], b"<< /OCGs [8 0 R] /D << /OFF [7 0 R] >> >>", True),
+            (
+                "off, untyped",
+                [b"<< /Name (g) >>"],
+                b"<< /OCGs [7 0 R] /D << /OFF [7 0 R] >> >>",
+                True,
+            ),
+        )
+        for label, objects, properties, teacher_shows in cases:
+            for holder in ("image", "annotation"):
+                data = optional_content_square_pdf(
+                    b"7 0 R", objects, properties=properties, annotation=holder == "annotation"
                 )
-                with self.subTest(
-                    policy=policy,
-                    states=states,
-                    base_state_off=base_state_off,
-                    annotation=annotation,
-                ):
-                    size = pdfium_size(data, 0, scale=0.5)
-                    marker = pdfium_grey(canonical_pdf_bytes(data), 0, scale=0.5)
-                    teacher = mupdf_grey(data, 0, zoom=0.5)
-                    self.assertEqual(dark_pixels(marker, size) > 0, shown)
-                    if (policy, states) in _MUPDF_OCMD_DEVIATIONS:
-                        self.assertNotEqual(dark_pixels(teacher, size) > 0, shown)
-                    else:
-                        self.assertLessEqual(differing_bytes(marker, teacher), _AGREEMENT_SLACK)
+                with self.subTest(label, holder=holder):
+                    self._assert_marker_matches_teacher(
+                        data,
+                        teacher_shows=teacher_shows,
+                        marker_sees_less=(label, holder) in _GROUP_MARKER_SEES_LESS,
+                    )
+
+    def test_a_reference_flood_is_refused_quickly_and_a_page_at_the_cap_is_judged_quickly(
+        self,
+    ) -> None:
+        """The reviewer's 49 KB probe -- 4,000 references to one annotation,
+        governed by an ``/OCMD`` naming one group 4,000 times -- cost 29 s
+        when every annotation re-walked the whole array. An ``/Annots`` or
+        ``/OCGs`` array past 1,000 entries is refused as malformed, and a
+        page at the cap is judged once per object, well inside a second."""
+        for annots, groups in ((4_000, 4_000), (4_000, 1), (1, 4_000)):
+            with self.subTest(annotations=annots, groups=groups):
+                start = time.perf_counter()
+                with self.assertRaises(ScanRejectedError) as caught:
+                    canonical_pdf_bytes(oc_annotation_flood_pdf(annots, groups))
+                self.assertLess(time.perf_counter() - start, 1.0)
+                self.assertEqual(caught.exception.reason, "malformed")
+        start = time.perf_counter()
+        canonical_pdf_bytes(oc_annotation_flood_pdf(1_000, 1_000))
+        self.assertLess(time.perf_counter() - start, 1.0)
 
     def test_the_prune_runs_on_the_copy_after_the_walk_and_loads_no_page(self) -> None:
         """The prune reads dictionaries only: no page is loaded (loading
@@ -376,22 +473,30 @@ class ReaderAgreementTests(unittest.TestCase):
     def test_every_committed_pdf_renders_identically_through_the_rewrite(self) -> None:
         """Regression guard for the prune: every PDF committed under
         ``tests/`` renders byte-identical under pdfium from the rewrite and
-        from the stored file, page by page."""
+        from the stored file, page by page -- and so does the file with an
+        all-ON ``/OCProperties`` grafted in and every XObject and annotation
+        governed by it, which no committed PDF has on its own, so the prune
+        judges every object and must keep them all."""
         paths = sorted(Path(__file__).parent.rglob("*.pdf"))
         self.assertTrue(paths)
         pages = 0
         for path in paths:
             data = path.read_bytes()
             with self.subTest(path=str(path)):
-                rewrite = canonical_pdf_bytes(data)
                 count = _pdfium_page_count(data)
-                self.assertEqual(_pdfium_page_count(rewrite), count)
-                for index in range(count):
-                    self.assertEqual(
-                        pdfium_grey(rewrite, index, scale=0.5),
-                        pdfium_grey(data, index, scale=0.5),
-                        f"page {index}",
-                    )
+                stored = [pdfium_grey(data, index, scale=0.5) for index in range(count)]
+                for variant, source in (
+                    ("as stored", data),
+                    ("all layers on", with_all_on_optional_content(data)),
+                ):
+                    rewrite = canonical_pdf_bytes(source)
+                    self.assertEqual(_pdfium_page_count(rewrite), count, variant)
+                    for index in range(count):
+                        self.assertEqual(
+                            pdfium_grey(rewrite, index, scale=0.5),
+                            stored[index],
+                            f"{variant}, page {index}",
+                        )
                 pages += count
         self.assertGreater(pages, 0)
 
