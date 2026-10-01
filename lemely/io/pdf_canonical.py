@@ -12,6 +12,7 @@ upload check. Imports :mod:`lemely.io._scan_common`,
 from __future__ import annotations
 
 import io
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import pymupdf
@@ -101,7 +102,12 @@ def open_scan_image_document(data: bytes) -> pymupdf.Document:
     return doc
 
 
-def _check_opened(open_doc: Callable[[], pymupdf.Document], pdfium_pages: int | None) -> None:
+def _check_opened(
+    open_doc: Callable[[], pymupdf.Document],
+    pdfium_pages: int | None,
+    *,
+    optional_content: bool = False,
+) -> None:
     """:func:`check_pdf_content` on the document ``open_doc`` opens, failing closed.
 
     The one exemption is narrow (Task 9b): MuPDF will not open the bytes at
@@ -110,6 +116,8 @@ def _check_opened(open_doc: Callable[[], pymupdf.Document], pdfium_pages: int | 
     ``%PDF-1.4 fake``). If pdfium counted pages MuPDF cannot open, the
     readers disagree and pdfium would render pages never measured: refused.
     Once MuPDF has opened the file, anything but a clean pass is a refusal.
+    With ``optional_content``, :func:`check_optional_content_bounds` runs
+    after the content check (the upload check, #274 review round 2).
 
     ``pdfium_pages`` of ``None`` (pdfium could not open the file, or no
     caller asked it) and ``0`` (pdfium opened it and found no pages) are
@@ -131,6 +139,8 @@ def _check_opened(open_doc: Callable[[], pymupdf.Document], pdfium_pages: int | 
         return
     try:
         check_pdf_content(doc, pdfium_pages=pdfium_pages)
+        if optional_content:
+            check_optional_content_bounds(doc)
     except ScanRejectedError:
         raise
     except Exception as exc:
@@ -140,16 +150,20 @@ def _check_opened(open_doc: Callable[[], pymupdf.Document], pdfium_pages: int | 
 
 
 def check_pdf_content_bytes(
-    data: bytes | PrescannedPdf, *, pdfium_pages: int | None = None
+    data: bytes | PrescannedPdf,
+    *,
+    pdfium_pages: int | None = None,
+    optional_content: bool = False,
 ) -> None:
     """:func:`check_pdf_content` on an in-memory PDF (see :func:`_check_opened`).
 
     ``pdfium_pages``: pdfium's page count for the same bytes, when the
     caller has it, so the two readers' counts are compared. The raw
     pre-scan runs first, through :func:`open_checked_pdf`, unless ``data``
-    is a :class:`PrescannedPdf`.
+    is a :class:`PrescannedPdf`. ``optional_content``: also
+    :func:`check_optional_content_bounds`, as the upload check asks.
     """
-    _check_opened(lambda: open_checked_pdf(data), pdfium_pages)
+    _check_opened(lambda: open_checked_pdf(data), pdfium_pages, optional_content=optional_content)
 
 
 def canonical_pdf_bytes(data: bytes) -> bytes:
@@ -201,8 +215,12 @@ def canonical_pdf_bytes(data: bytes) -> bytes:
        where MuPDF shows an image pdfium hides (an ``/AllOn`` membership
        with a group off, for one) the marker still sees less than the
        teacher. Dictionaries only; an ``/OC /name BDC`` in a content stream
-       is left to pdfium, which honours it. An ``/Annots`` or ``/OCGs``
-       array past :data:`_MAX_OC_ARRAY` entries is refused as malformed.
+       is left to pdfium, which honours it. Its bounds
+       (:func:`check_optional_content_bounds`) are checked on the
+       original first, as at upload: an ``/Annots``, ``/XObject`` or
+       ``/OCGs`` past :data:`_MAX_OC_ARRAY` entries, a membership
+       dictionary that reaches itself, or a judgement past
+       :data:`_MAX_OC_STEPS` visits is refused as malformed.
 
     What an annotation's own keys or the form-field tree reference is
     copied without being walked; a compressed object there is bounded by
@@ -230,6 +248,9 @@ def canonical_pdf_bytes(data: bytes) -> bytes:
             raise ScanRejectedError(_UNCHECKABLE_MESSAGE, reason="uncheckable")
         try:
             check_pdf_content(doc)
+            # #274 review round 2: the prune's bounds, on the original first,
+            # as at upload, before anything is copied.
+            check_optional_content_bounds(doc)
             page_count = int(doc.page_count)
         except ScanRejectedError:
             raise
@@ -310,20 +331,54 @@ def _copy_pages(doc: pymupdf.Document) -> bytes:
         out.close()  # type: ignore[no-untyped-call]
 
 
-#: The longest ``/Annots`` array on a page, and the longest ``/OCGs`` (or
-#: ``/D /ON``, ``/D /OFF``) array, the prune will judge; past it the file is
-#: refused as malformed (#274 review). A scanned paper has a handful.
+#: The longest ``/Annots`` array on a page, ``/XObject`` dictionary in a
+#: page's resources, and ``/OCGs`` (or ``/D /ON``, ``/D /OFF``) array the
+#: judgement will read; past it the file is refused as malformed (#274
+#: review). A scanned paper has a handful.
 _MAX_OC_ARRAY = 1_000
 
 #: How deeply an ``/OCMD`` may name further membership dictionaries in its
 #: ``/OCGs`` before the file is refused as malformed. The spec allows none.
 _MAX_OC_DEPTH = 32
 
+#: Visits -- annotations, XObject entries, ``/OC`` values and membership-array
+#: members -- one judgement of a whole document may make before the file is
+#: refused as malformed (#274 review round 2). Holders need not be indirect
+#: objects (a direct ``/OC`` has no number to judge it once by), so the caps
+#: on each array alone do not bound the total; this does. 300,000 member
+#: visits measured 0.77 s.
+_MAX_OC_STEPS = 200_000
+
+
+def _too_complex() -> ScanRejectedError:
+    """The refusal for optional content past a bound: a structure, not a size."""
+    return ScanRejectedError(_STRUCTURE_TOO_COMPLEX_MESSAGE, reason="malformed")
+
+
+@dataclass
+class _OcJudgement:
+    """One judgement of a document's optional content: the state it shares.
+
+    ``hidden``: :func:`_hidden_ocg_xrefs`. ``cache``: verdicts by object
+    number. ``active``: the membership dictionaries being judged, for the
+    cycle refusal. ``steps``: visits so far, against :data:`_MAX_OC_STEPS`.
+    """
+
+    hidden: set[int]
+    cache: dict[int, bool] = field(default_factory=dict)
+    active: set[int] = field(default_factory=set)
+    steps: int = 0
+
+    def step(self, visits: int = 1) -> None:
+        self.steps += visits
+        if self.steps > _MAX_OC_STEPS:
+            raise _too_complex()
+
 
 def _bounded_length(array: _mupdf.PdfObj) -> int:
     """``array``'s length, refused past :data:`_MAX_OC_ARRAY`; 0 if it is no array.
 
-    The prune judges each element, so a long array is the one way a small
+    The judgement reads each element, so a long array is one way a small
     file could make it slow (the reviewer's 49 KB probe took 29 s).
     """
     mupdf = _mupdf
@@ -331,7 +386,7 @@ def _bounded_length(array: _mupdf.PdfObj) -> int:
         return 0
     length = int(mupdf.pdf_array_len(array))  # type: ignore[no-untyped-call]
     if length > _MAX_OC_ARRAY:
-        raise ScanRejectedError(_STRUCTURE_TOO_COMPLEX_MESSAGE, reason="malformed")
+        raise _too_complex()
     return length
 
 
@@ -350,7 +405,7 @@ def _has_optional_content(doc: _mupdf.PdfDocument) -> bool:
     """Whether ``doc``'s ``/OCProperties /OCGs`` lists any group.
 
     MuPDF shows everything when it lists none, ``/AnyOff`` members
-    included, so the prune then has nothing to do.
+    included, so there is then nothing to judge.
     """
     mupdf = _mupdf
     catalog = mupdf.pdf_dict_gets(mupdf.pdf_trailer(doc), "Root")  # type: ignore[no-untyped-call]
@@ -363,8 +418,7 @@ def _hidden_ocg_xrefs(doc: _mupdf.PdfDocument) -> set[int]:
     Of the groups ``/OCProperties /OCGs`` lists -- MuPDF ignores ``/D``'s
     word on any other -- those ``/D /OFF`` names; when ``/D /BaseState`` is
     ``/OFF``, also those ``/D /ON`` does not name. Object numbers in
-    ``doc``, which :func:`_copy_pages` passes the copy, after grafting
-    ``/OCProperties`` into it. Reads the catalog's dictionaries only.
+    ``doc``. Reads the catalog's dictionaries only.
     """
     mupdf = _mupdf
     catalog = mupdf.pdf_dict_gets(mupdf.pdf_trailer(doc), "Root")  # type: ignore[no-untyped-call]
@@ -377,49 +431,47 @@ def _hidden_ocg_xrefs(doc: _mupdf.PdfDocument) -> set[int]:
     return hidden & listed
 
 
-def _oc_hidden(
-    oc: _mupdf.PdfObj, hidden: set[int], cache: dict[int, bool], active: set[int], depth: int
-) -> bool:
+def _oc_hidden(oc: _mupdf.PdfObj, judgement: _OcJudgement, depth: int) -> bool:
     """Whether MuPDF hides what the ``/OC`` value ``oc`` governs.
 
     Mirrors MuPDF 1.29's ``pdf_is_ocg_hidden`` for viewing, measured on
     synthetic files (#274 review: the goal is the teacher's view, not the
     spec's). An optional-content group (``/Type /OCG``) is hidden when it
-    is in ``hidden`` or its ``/Usage /View /ViewState`` is ``/OFF``; a
-    membership dictionary (``/Type /OCMD``) as :func:`_ocmd_hidden`
-    judges it; anything else is shown. Each indirect object is judged once
-    (``cache``); a membership dictionary naming itself is shown, as MuPDF
-    shows it, and one nested past :data:`_MAX_OC_DEPTH` is refused.
+    is in ``judgement.hidden`` or its ``/Usage /View /ViewState`` is
+    ``/OFF``; a membership dictionary (``/Type /OCMD``) as
+    :func:`_ocmd_hidden` judges it; anything else is shown. Each indirect
+    object is judged once. A membership dictionary that reaches itself is
+    refused as malformed (#274 review round 2): MuPDF's answer then depends
+    on where its walk starts, so no cached verdict could match it, and the
+    spec allows no membership dictionary inside another. So is one nested
+    past :data:`_MAX_OC_DEPTH`.
     """
     mupdf = _mupdf
+    judgement.step()
     number = int(mupdf.pdf_to_num(oc)) if mupdf.pdf_is_indirect(oc) else 0  # type: ignore[no-untyped-call]
-    if number in cache:
-        return cache[number]
-    if number in active:
-        return False
-    if depth > _MAX_OC_DEPTH:
-        raise ScanRejectedError(_STRUCTURE_TOO_COMPLEX_MESSAGE, reason="malformed")
+    if number in judgement.cache:
+        return judgement.cache[number]
+    if number in judgement.active or depth > _MAX_OC_DEPTH:
+        raise _too_complex()
     kind = mupdf.pdf_to_name(mupdf.pdf_dict_gets(oc, "Type"))  # type: ignore[no-untyped-call]
     if kind == "OCG":
         state = mupdf.pdf_dict_getp(oc, "Usage/View/ViewState")  # type: ignore[no-untyped-call]
-        result = number in hidden or mupdf.pdf_to_name(state) == "OFF"  # type: ignore[no-untyped-call]
+        result = number in judgement.hidden or mupdf.pdf_to_name(state) == "OFF"  # type: ignore[no-untyped-call]
     elif kind == "OCMD":
         if number:
-            active.add(number)
+            judgement.active.add(number)
         try:
-            result = _ocmd_hidden(oc, hidden, cache, active, depth)
+            result = _ocmd_hidden(oc, judgement, depth)
         finally:
-            active.discard(number)
+            judgement.active.discard(number)
     else:
         result = False
     if number:
-        cache[number] = result
+        judgement.cache[number] = result
     return result
 
 
-def _ocmd_hidden(
-    ocmd: _mupdf.PdfObj, hidden: set[int], cache: dict[int, bool], active: set[int], depth: int
-) -> bool:
+def _ocmd_hidden(ocmd: _mupdf.PdfObj, judgement: _OcJudgement, depth: int) -> bool:
     """Whether MuPDF hides what the membership dictionary ``ocmd`` governs.
 
     A ``/VE`` array is shown (MuPDF does not evaluate it). Otherwise ``/P``
@@ -429,10 +481,14 @@ def _ocmd_hidden(
     * over an array (each distinct member judged once, stopping at the
       first that settles it): ``/AnyOn`` hides when every member is hidden,
       ``/AllOff`` when any is shown, ``/AllOn`` never hides and ``/AnyOff``
-      always does, whatever the members' states;
+      always does, whatever the members' states -- but every member is
+      still judged, so a cycle through it is refused as it would be
+      anywhere else;
     * over anything else -- a single reference, or nothing, which counts
       as one shown member: ``/AnyOn`` and ``/AnyOff`` hide when the member
       is hidden, ``/AllOn`` and ``/AllOff`` when it is shown.
+
+    Each member read is one step of the judgement's budget.
     """
     mupdf = _mupdf
     if mupdf.pdf_is_array(mupdf.pdf_dict_gets(ocmd, "VE")):  # type: ignore[no-untyped-call]
@@ -441,10 +497,8 @@ def _ocmd_hidden(
     members = mupdf.pdf_dict_gets(ocmd, "OCGs")  # type: ignore[no-untyped-call]
     if mupdf.pdf_is_array(members):  # type: ignore[no-untyped-call]
         length = _bounded_length(members)
-        if policy == "AllOn":
-            return False
-        if policy == "AnyOff":
-            return True
+        judgement.step(length)
+        settled_by_members = policy not in ("AllOn", "AnyOff")
         every_member_hidden = True
         judged: set[int] = set()
         for index in range(length):
@@ -454,69 +508,121 @@ def _ocmd_hidden(
                 if number in judged:
                     continue
                 judged.add(number)
-            if not _oc_hidden(member, hidden, cache, active, depth + 1):
+            if not _oc_hidden(member, judgement, depth + 1):
                 every_member_hidden = False
-                break
+                if settled_by_members:
+                    break
+        if policy == "AllOn":
+            return False
+        if policy == "AnyOff":
+            return True
         return not every_member_hidden if policy == "AllOff" else every_member_hidden
-    member_hidden = bool(members.m_internal) and _oc_hidden(
-        members, hidden, cache, active, depth + 1
-    )
+    member_hidden = bool(members.m_internal) and _oc_hidden(members, judgement, depth + 1)
     return not member_hidden if policy in ("AllOn", "AllOff") else member_hidden
 
 
-def _is_hidden(obj: _mupdf.PdfObj, hidden: set[int], cache: dict[int, bool]) -> bool:
+def _is_hidden(obj: _mupdf.PdfObj, judgement: _OcJudgement) -> bool:
     """Whether MuPDF hides ``obj`` -- an XObject or annotation -- by its ``/OC``.
 
-    ``hidden``: :func:`_hidden_ocg_xrefs`. ``cache``: judgements by object
-    number, shared across one prune. See :func:`_oc_hidden`.
+    See :func:`_oc_hidden`.
     """
     oc = _mupdf.pdf_dict_gets(obj, "OC")  # type: ignore[no-untyped-call]
     if not oc.m_internal:
         return False
-    return _oc_hidden(oc, hidden, cache, set(), 0)
+    return _oc_hidden(oc, judgement, 0)
+
+
+def _judge_pages(doc: _mupdf.PdfDocument, judgement: _OcJudgement, *, prune: bool) -> None:
+    """Judge every page's XObjects and annotations; with ``prune``, drop the hidden.
+
+    For each page (looked up in the page tree, never loaded), each entry of
+    its ``/Resources /XObject`` dictionary and each element of its
+    ``/Annots`` is judged by :func:`_is_hidden`; with ``prune`` the hidden
+    ones are deleted. Each object -- an annotation listed twice, a group many
+    members name, a resource dictionary or ``/Annots`` array pages share --
+    is judged once; a dictionary or array past :data:`_MAX_OC_ARRAY` is
+    refused as malformed, and every visit counts against the judgement's
+    step budget. Only dictionaries are read: no content stream is parsed.
+    """
+    mupdf = _mupdf
+    decided: dict[int, bool] = {}
+    containers: set[int] = set()
+
+    def judged(obj: _mupdf.PdfObj) -> bool:
+        judgement.step()
+        if not mupdf.pdf_is_indirect(obj):  # type: ignore[no-untyped-call]
+            return _is_hidden(obj, judgement)
+        number = int(mupdf.pdf_to_num(obj))  # type: ignore[no-untyped-call]
+        if number not in decided:
+            decided[number] = _is_hidden(obj, judgement)
+        return decided[number]
+
+    def first_visit(container: _mupdf.PdfObj) -> bool:
+        if not mupdf.pdf_is_indirect(container):  # type: ignore[no-untyped-call]
+            return True
+        number = int(mupdf.pdf_to_num(container))  # type: ignore[no-untyped-call]
+        if number in containers:
+            return False
+        containers.add(number)
+        return True
+
+    resources_key = mupdf.pdf_new_name("Resources")  # type: ignore[no-untyped-call]
+    for index in range(int(mupdf.pdf_count_pages(doc))):  # type: ignore[no-untyped-call]
+        page = mupdf.pdf_lookup_page_obj(doc, index)  # type: ignore[no-untyped-call]
+        resources = mupdf.pdf_dict_get_inheritable(page, resources_key)  # type: ignore[no-untyped-call]
+        xobjects = mupdf.pdf_dict_gets(resources, "XObject")  # type: ignore[no-untyped-call]
+        if (
+            mupdf.pdf_is_dict(xobjects)  # type: ignore[no-untyped-call]
+            and first_visit(resources)
+            and first_visit(xobjects)
+        ):
+            length = int(mupdf.pdf_dict_len(xobjects))  # type: ignore[no-untyped-call]
+            if length > _MAX_OC_ARRAY:
+                raise _too_complex()
+            names = [
+                mupdf.pdf_dict_get_key(xobjects, entry)  # type: ignore[no-untyped-call]
+                for entry in range(length)
+                if judged(mupdf.pdf_dict_get_val(xobjects, entry))  # type: ignore[no-untyped-call]
+            ]
+            if prune:
+                for name in names:
+                    mupdf.pdf_dict_del(xobjects, name)  # type: ignore[no-untyped-call]
+        annots = mupdf.pdf_dict_gets(page, "Annots")  # type: ignore[no-untyped-call]
+        if not first_visit(annots):
+            continue
+        for entry in reversed(range(_bounded_length(annots))):
+            if judged(mupdf.pdf_array_get(annots, entry)) and prune:  # type: ignore[no-untyped-call]
+                mupdf.pdf_array_delete(annots, entry)  # type: ignore[no-untyped-call]
+
+
+def check_optional_content_bounds(doc: pymupdf.Document) -> None:
+    """Refuse a PDF whose optional content the rewrite could not judge in bounds.
+
+    Runs the judgement :func:`canonical_pdf_bytes` prunes by, without
+    pruning: the caps on ``/OCGs``, ``/D /ON``, ``/D /OFF``, ``/Annots``
+    and ``/XObject`` (:data:`_MAX_OC_ARRAY`), the refusal of a membership
+    dictionary that reaches itself, and the step budget
+    (:data:`_MAX_OC_STEPS`). Raises :class:`ScanRejectedError` with reason
+    ``malformed`` past any of them, so the upload check refuses at once
+    (#274 review round 2) what extraction would refuse later. A document
+    with no optional content, or that is not a PDF, passes untouched. Reads
+    dictionaries only; run it after :func:`check_pdf_content`.
+    """
+    if not doc.is_pdf:
+        return
+    source = _mupdf.pdf_document_from_fz_document(doc.this)  # type: ignore[no-untyped-call]
+    if _has_optional_content(source):
+        _judge_pages(source, _OcJudgement(_hidden_ocg_xrefs(source)), prune=False)
 
 
 def _prune_hidden_optional_content(target: _mupdf.PdfDocument, hidden: set[int]) -> None:
-    """Drop the XObjects and annotations hidden by default from ``target``'s pages.
+    """Drop the XObjects and annotations MuPDF hides by default from ``target``.
 
-    For each page of the copy (looked up in the page tree, never loaded), each
-    ``/Resources /XObject`` entry whose value :func:`_is_hidden` judges hidden
-    is deleted, and so is each such element of ``/Annots``. Each object --
-    an annotation listed twice, a group many members name -- is judged once,
-    and an ``/Annots`` array past :data:`_MAX_OC_ARRAY` is refused as
-    malformed, so the work is bounded by the file's size. Only dictionaries
-    are read: no content stream is parsed, so an operator that draws marked
-    content (``/OC /name BDC``) is left as it is -- pdfium honours that
-    itself.
+    ``target`` is the copy; ``hidden``: its :func:`_hidden_ocg_xrefs`. See
+    :func:`_judge_pages`. An operator that draws marked content
+    (``/OC /name BDC``) is left as it is -- pdfium honours that itself.
     """
-    mupdf = _mupdf
-    cache: dict[int, bool] = {}
-    decided: dict[int, bool] = {}
-
-    def judged(obj: _mupdf.PdfObj) -> bool:
-        if not mupdf.pdf_is_indirect(obj):  # type: ignore[no-untyped-call]
-            return _is_hidden(obj, hidden, cache)
-        number = int(mupdf.pdf_to_num(obj))  # type: ignore[no-untyped-call]
-        if number not in decided:
-            decided[number] = _is_hidden(obj, hidden, cache)
-        return decided[number]
-
-    for index in range(int(mupdf.pdf_count_pages(target))):  # type: ignore[no-untyped-call]
-        page = mupdf.pdf_lookup_page_obj(target, index)  # type: ignore[no-untyped-call]
-        resources = mupdf.pdf_dict_gets(page, "Resources")  # type: ignore[no-untyped-call]
-        xobjects = mupdf.pdf_dict_gets(resources, "XObject")  # type: ignore[no-untyped-call]
-        if mupdf.pdf_is_dict(xobjects):  # type: ignore[no-untyped-call]
-            names = [
-                mupdf.pdf_dict_get_key(xobjects, entry)  # type: ignore[no-untyped-call]
-                for entry in range(int(mupdf.pdf_dict_len(xobjects)))  # type: ignore[no-untyped-call]
-                if judged(mupdf.pdf_dict_get_val(xobjects, entry))  # type: ignore[no-untyped-call]
-            ]
-            for name in names:
-                mupdf.pdf_dict_del(xobjects, name)  # type: ignore[no-untyped-call]
-        annots = mupdf.pdf_dict_gets(page, "Annots")  # type: ignore[no-untyped-call]
-        for entry in reversed(range(_bounded_length(annots))):
-            if judged(mupdf.pdf_array_get(annots, entry)):  # type: ignore[no-untyped-call]
-                mupdf.pdf_array_delete(annots, entry)  # type: ignore[no-untyped-call]
+    _judge_pages(target, _OcJudgement(hidden), prune=True)
 
 
 def _pdfium_page_count(data: bytes) -> int:

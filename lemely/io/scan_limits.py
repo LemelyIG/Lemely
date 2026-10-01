@@ -203,7 +203,9 @@ def check_scan_bytes(data: bytes) -> None:
         scanned = prescan_pdf(data)
         # Task 11b: geometry first, then content -- with pdfium's count, so
         # a page only pdfium would render is not left unmeasured (Task 9b).
-        check_pdf_content_bytes(scanned, pdfium_pages=_pdfium_plan(data))
+        # #274: and the optional-content bounds extraction's rewrite would
+        # refuse, so such a file is a 422 now rather than a failed extraction.
+        check_pdf_content_bytes(scanned, pdfium_pages=_pdfium_plan(data), optional_content=True)
         return
     try:
         # #256 review: allowlisted formats only, so no plugin decodes inside the open.

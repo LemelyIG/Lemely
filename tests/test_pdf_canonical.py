@@ -11,7 +11,6 @@ from __future__ import annotations
 import contextlib
 import io
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -24,6 +23,7 @@ import lemely.io.pdf_canonical as pdf_canonical
 import lemely.io.pdf_content_walk as pdf_content_walk
 from lemely.io import scan_limits
 from lemely.io._scan_common import (
+    _STRUCTURE_TOO_COMPLEX_MESSAGE,
     ScanRejectedError,
     ScanTooLargeError,
     ScanUnsupportedFormatError,
@@ -40,14 +40,17 @@ from lemely.io.scan_limits import MAX_SCAN_PAGES, check_scan_bytes
 from tests.fakes_reader_agreement import (
     dark_pixels,
     differing_bytes,
+    direct_ocmd_annotations_pdf,
     mupdf_grey,
     mupdf_size,
     oc_annotation_flood_pdf,
     oc_hidden_bomb_pdf,
+    ocmd_cycle_pdf,
     ocmd_image_pdf,
     optional_content_square_pdf,
     pdfium_grey,
     pdfium_size,
+    shared_resources_pdf,
     visible_layer_text_pdf,
     with_all_on_optional_content,
 )
@@ -406,24 +409,77 @@ class ReaderAgreementTests(unittest.TestCase):
                         marker_sees_less=(label, holder) in _GROUP_MARKER_SEES_LESS,
                     )
 
-    def test_a_reference_flood_is_refused_quickly_and_a_page_at_the_cap_is_judged_quickly(
-        self,
-    ) -> None:
+    def _assert_refused_as_malformed(self, data: bytes) -> None:
+        """Refused at upload (``check_scan_bytes``) and at extraction alike."""
+        for check in (check_scan_bytes, canonical_pdf_bytes):
+            with self.subTest(check=check.__name__):
+                with self.assertRaises(ScanRejectedError) as caught:
+                    check(data)
+                self.assertEqual(caught.exception.reason, "malformed")
+                self.assertEqual(str(caught.exception), _STRUCTURE_TOO_COMPLEX_MESSAGE)
+
+    def test_a_reference_flood_is_refused_and_a_page_at_the_cap_is_judged_once(self) -> None:
         """The reviewer's 49 KB probe -- 4,000 references to one annotation,
         governed by an ``/OCMD`` naming one group 4,000 times -- cost 29 s
         when every annotation re-walked the whole array. An ``/Annots`` or
-        ``/OCGs`` array past 1,000 entries is refused as malformed, and a
-        page at the cap is judged once per object, well inside a second."""
+        ``/OCGs`` array past 1,000 entries is refused as malformed, at upload
+        too; at the cap each object is judged once. Counted, not timed: the
+        membership dictionary and its group are each judged once by the
+        bounds check on the original and once by the prune of the copy."""
         for annots, groups in ((4_000, 4_000), (4_000, 1), (1, 4_000)):
             with self.subTest(annotations=annots, groups=groups):
-                start = time.perf_counter()
-                with self.assertRaises(ScanRejectedError) as caught:
-                    canonical_pdf_bytes(oc_annotation_flood_pdf(annots, groups))
-                self.assertLess(time.perf_counter() - start, 1.0)
-                self.assertEqual(caught.exception.reason, "malformed")
-        start = time.perf_counter()
-        canonical_pdf_bytes(oc_annotation_flood_pdf(1_000, 1_000))
-        self.assertLess(time.perf_counter() - start, 1.0)
+                self._assert_refused_as_malformed(oc_annotation_flood_pdf(annots, groups))
+        calls: list[object] = []
+        real = pdf_canonical._oc_hidden
+
+        def counted(*args: object, **kwargs: object) -> bool:
+            calls.append(args[0])
+            return real(*args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(pdf_canonical, "_oc_hidden", side_effect=counted):
+            canonical_pdf_bytes(oc_annotation_flood_pdf(1_000, 1_000))
+        self.assertEqual(len(calls), 4)
+        for variant in ("text", "image"):
+            check_scan_bytes(hidden_layer_pdf(variant=variant))  # ordinary layers pass
+
+    def test_a_membership_cycle_is_refused_whichever_annotation_comes_first(self) -> None:
+        """A = ``/AllOff [B]``, B = ``/AnyOn [A g]``, g OFF: MuPDF shows
+        neither annotation, but a walk that cut the cycle at A and cached B
+        showed B's annotation to the marker (2,550 dark pixels against the
+        teacher's 0) when it came second. The spec allows no membership
+        dictionary inside another, so any cycle is refused, in both
+        ``/Annots`` orders."""
+        for governed_by_b_first in (True, False):
+            with self.subTest(governed_by_b_first=governed_by_b_first):
+                self._assert_refused_as_malformed(
+                    ocmd_cycle_pdf(governed_by_b_first=governed_by_b_first)
+                )
+
+    def test_direct_membership_dictionaries_are_bounded_by_the_step_budget(self) -> None:
+        """A direct ``/OC`` has no object number to judge it once by, so each
+        annotation's membership array is read again. Every member, annotation
+        and XObject visited across the whole judgement counts against
+        ``_MAX_OC_STEPS`` (200,000); past it the file is refused as
+        malformed. Scaled down by patching the budget: 30 annotations of
+        1,000 members each is past 20,000 visits, 10 of them is within."""
+        self.assertEqual(pdf_canonical._MAX_OC_STEPS, 200_000)
+        with patch.object(pdf_canonical, "_MAX_OC_STEPS", 20_000):
+            self._assert_refused_as_malformed(direct_ocmd_annotations_pdf(30, 1_000))
+            within = direct_ocmd_annotations_pdf(10, 1_000)
+            check_scan_bytes(within)
+            canonical_pdf_bytes(within)
+
+    def test_a_shared_resource_dictionary_is_judged_once_not_per_page(self) -> None:
+        """40 pages sharing one ``/XObject`` dictionary of 1,000 entries:
+        judged per page that is 40,000 visits, judged once about 2,000 -- so
+        it passes a budget of 5,000. An ``/XObject`` dictionary past 1,000
+        entries is refused as malformed, as an array is."""
+        with patch.object(pdf_canonical, "_MAX_OC_STEPS", 5_000):
+            data = shared_resources_pdf(MAX_SCAN_PAGES, 1_000)
+            check_scan_bytes(data)
+            with pymupdf.open(stream=canonical_pdf_bytes(data), filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+                self.assertEqual(doc.page_count, MAX_SCAN_PAGES)
+        self._assert_refused_as_malformed(shared_resources_pdf(1, 1_001))
 
     def test_the_prune_runs_on_the_copy_after_the_walk_and_loads_no_page(self) -> None:
         """The prune reads dictionaries only: no page is loaded (loading

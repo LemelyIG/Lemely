@@ -343,3 +343,101 @@ def with_all_on_optional_content(data: bytes) -> bytes:
                 doc.xref_set_key(xref, "OC", f"{group} 0 R")
         out: bytes = doc.tobytes()
     return out
+
+
+def ocmd_cycle_pdf(*, governed_by_b_first: bool) -> bytes:
+    """Two membership dictionaries that name each other (the reviewer's probe).
+
+    A (object 6) is ``/AllOff [B]``; B (object 7) is ``/AnyOn [A g]``, with
+    group g (object 8) OFF. Annotation X (object 5) has ``/OC A`` and Y
+    (object 9) ``/OC B``; ``/Annots`` lists Y first when
+    ``governed_by_b_first``, else X. The spec allows no membership
+    dictionary inside another, and a cycle makes the answer depend on where
+    the walk starts, so the file is refused either way.
+    """
+
+    def square(x0: int) -> bytes:
+        return pdf_stream(
+            b"/Type /XObject /Subtype /Form /BBox [%d 500 %d 600]" % (x0, x0 + 100),
+            b"0 g %d 500 100 100 re f" % x0,
+        )
+
+    order = b"[9 0 R 5 0 R]" if governed_by_b_first else b"[5 0 R 9 0 R]"
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R"
+            b" /OCProperties << /OCGs [8 0 R] /D << /OFF [8 0 R] >> >> >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Annots "
+            + order
+            + b" >>",
+            pdf_stream(b"", b""),
+            b"<< /Type /Annot /Subtype /Square /Rect [100 500 200 600] /F 4 /OC 6 0 R"
+            b" /AP << /N 10 0 R >> >>",
+            b"<< /Type /OCMD /OCGs [7 0 R] /P /AllOff >>",
+            b"<< /Type /OCMD /OCGs [6 0 R 8 0 R] /P /AnyOn >>",
+            b"<< /Type /OCG /Name (g) >>",
+            b"<< /Type /Annot /Subtype /Square /Rect [300 500 400 600] /F 4 /OC 7 0 R"
+            b" /AP << /N 11 0 R >> >>",
+            square(100),
+            square(300),
+        ]
+    )
+
+
+def direct_ocmd_annotations_pdf(annotations: int, members: int) -> bytes:
+    """One page with ``annotations`` distinct annotations, each governed by its
+    own direct ``/OCMD`` naming the one listed (ON) group ``members`` times.
+
+    A direct ``/OC`` has no object number to judge it once by, so each
+    annotation's membership array is read again: the work is
+    ``annotations * members`` member visits.
+    """
+    group = 5 + annotations
+    ocmd = b"<< /Type /OCMD /OCGs [" + b"%d 0 R " % group * members + b"] >>"
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R"
+            b" /OCProperties << /OCGs [%d 0 R] /D << /ON [%d 0 R] >> >> >>" % (group, group),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Annots ["
+            + b" ".join(b"%d 0 R" % (5 + i) for i in range(annotations))
+            + b"] >>",
+            pdf_stream(b"", b""),
+            *[b"<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /OC " + ocmd + b" >>"]
+            * annotations,
+            b"<< /Type /OCG /Name (g) >>",
+        ]
+    )
+
+
+def shared_resources_pdf(pages: int, xobjects: int) -> bytes:
+    """``pages`` pages sharing one ``/Resources`` dictionary whose ``/XObject``
+    dictionary names one image ``xobjects`` times, the image on an ON group.
+
+    Judging the shared dictionary again on every page would cost
+    ``pages * xobjects`` visits; once, ``xobjects``.
+    """
+    first_page = 7
+    kids = b" ".join(b"%d 0 R" % (first_page + i) for i in range(pages))
+    names = b" ".join(b"/Im%d 5 0 R" % i for i in range(xobjects))
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R"
+            b" /OCProperties << /OCGs [6 0 R] /D << /ON [6 0 R] >> >> >>",
+            b"<< /Type /Pages /Kids [" + kids + b"] /Count %d >>" % pages,
+            b"<< /XObject << " + names + b" >> >>",
+            pdf_stream(b"", b"q 10 0 0 10 0 0 cm /Im0 Do Q"),
+            pdf_stream(
+                b"/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray"
+                b" /BitsPerComponent 8 /OC 6 0 R",
+                b"\x00",
+            ),
+            b"<< /Type /OCG /Name (g) >>",
+            *[
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R"
+                b" /Resources 3 0 R >>"
+            ]
+            * pages,
+        ]
+    )
