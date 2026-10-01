@@ -14,9 +14,10 @@ from unittest.mock import MagicMock, patch
 
 from pydantic import ValidationError
 
-from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
+from lemely.core.loose_schemas import AnswerPoint, MarkScheme, Question, QuestionType
 from lemely.core.schemas import (
     ConfidenceBand,
+    CorrectedQuestion,
     ExtractedAnswer,
     ExtractedAnswers,
     PointVerdict,
@@ -3178,10 +3179,11 @@ class DuplicatePointVerdictTests(unittest.TestCase):
         that matters: passing ``point_verdicts=None`` (what the legacy call
         site actually passes) means the new repeat check cannot fire,
         regardless of what ``matched_point_ids`` contains."""
-        from lemely.io.correction_ai import _check_coherence
+        from lemely.io.correction_ai import _check_coherence, _scheme_groups
 
         q = self._question()
-        reason = _check_coherence(q, ["p1", "p1"], awarded_marks=2)
+        _, groups = _scheme_groups(q)
+        reason = _check_coherence(q, ["p1", "p1"], awarded_marks=2, groups=groups)
         self.assertIsNone(reason)
 
 
@@ -3676,6 +3678,128 @@ class CoherenceGateTests(unittest.TestCase):
         )
         self.assertTrue(cq.needs_teacher_review)
         self.assertIn("matched_point_ids", cq.review_reason or "")
+
+
+class LegacyPathGroupedCoherenceTests(unittest.TestCase):
+    """#272: the legacy path (equivalence gate off) checks coherence on the
+    grouped interval, the same rule the verdict path uses. The global
+    ``primary + non-additive`` rule flagged either/or pairs matched both ways
+    and det-shaped schemes whose independent tariffs exceed the question,
+    and missed an over-award on a stated ``select_count`` pool."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+
+    def _mark(
+        self,
+        question: dict[str, Any],
+        awarded: int,
+        matched: list[str],
+        *,
+        extra_points: list[dict[str, Any]] | None = None,
+    ) -> CorrectedQuestion:
+        scheme = MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 4,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2020,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": question["marks"],
+                    "scheme_format": "point_based",
+                },
+                "questions": [question],
+            }
+        )
+        if extra_points:
+            # io/det/reconcile.py assigns answer_points after construction and
+            # bypasses the point-sum validator; assigning here models the same.
+            scheme.questions[0].answer_points = [
+                *scheme.questions[0].answer_points,
+                *(AnswerPoint.model_validate(pt) for pt in extra_points),
+            ]
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id=question["id"], answer="an answer", confidence=0.99)
+            ],
+        )
+        client = _client_with_seq(self.tmp, [_mock_marker_response(awarded, matched)])
+        result = correct_paper(scheme, extracted, gemini_client=client)
+        return next(q for q in result.questions if q.question_id == question["id"])
+
+    @staticmethod
+    def _either_or() -> dict[str, Any]:
+        return {
+            "id": "1",
+            "marks": 1,
+            "type": "explanation",
+            "question_command": "explain why",
+            "topic_hint": "forces",
+            "answer_points": [
+                {"id": "p1", "point": "gravity acts on it", "marks": 1},
+                {"id": "p2", "point": "weight acts on it", "marks": 1, "is_alternative": True},
+            ],
+        }
+
+    def test_either_or_pair_matched_both_ways_is_not_flagged(self) -> None:
+        cq = self._mark(self._either_or(), 1, ["p1", "p2"])
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
+
+    def test_det_shaped_scheme_fully_matched_is_not_flagged(self) -> None:
+        question = {
+            "id": "1",
+            "marks": 4,
+            "type": "explanation",
+            "question_command": "explain why",
+            "topic_hint": "forces",
+            "answer_points": [
+                {"id": f"p{i}", "point": f"point {i}", "marks": 1} for i in range(1, 5)
+            ],
+        }
+        cq = self._mark(
+            question,
+            4,
+            [f"p{i}" for i in range(1, 6)],
+            extra_points=[{"id": "p5", "point": "point 5", "marks": 1}],
+        )
+        self.assertEqual(cq.awarded_marks, 4)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
+
+    def test_over_award_on_a_stated_pool_is_now_flagged(self) -> None:
+        """The grouped interval caps a ``select_count: 2`` pool at 2, so an
+        award of 3 off three matched pool members is outside [2, 2]. The
+        legacy global rule allowed [1, 3]. Disclosed as a new true flag."""
+        from lemely.io.correction_ai import COHERENCE_TRIGGER_MARKER
+
+        question = {
+            "id": "1",
+            "marks": 4,
+            "type": "list",
+            "question_command": "state",
+            "topic_hint": "forces",
+            "select_count": 2,
+            "answer_points": [
+                {"id": f"p{i}", "point": f"item {i}", "marks": 1, "is_optional": True}
+                for i in range(1, 5)
+            ],
+        }
+        cq = self._mark(question, 3, ["p1", "p2", "p3"])
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn(COHERENCE_TRIGGER_MARKER, cq.review_reason or "")
+
+    def test_second_member_only_of_an_either_or_pair_is_not_flagged(self) -> None:
+        cq = self._mark(self._either_or(), 1, ["p2"])
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
 
 
 class ThinkingRetryTests(unittest.TestCase):
@@ -6308,9 +6432,9 @@ class RereadFixRound1Tests(unittest.TestCase):
     def test_text_agreement_is_case_and_whitespace_insensitive(self) -> None:
         """ "A" vs " a" must score 1.0 -- an MCQ re-read differing only in
         case or incidental surrounding whitespace is not a disagreement."""
-        from lemely.io.reread import _text_agreement
+        from lemely.io.second_read import text_agreement
 
-        self.assertEqual(_text_agreement("A", " a"), 1.0)
+        self.assertEqual(text_agreement("A", " a"), 1.0)
 
     def test_blank_row_with_disagreeing_nonblank_reread_stays_unflagged_us039_guard(self) -> None:
         """US-039 self-review guard (fix round 2, reverting fix round 1):
