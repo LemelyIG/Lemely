@@ -208,6 +208,11 @@ class _PageWalk:
     one kind of work never marks another done, so what happens to an
     object depends only on the set of roles it is reached in, never on the
     order the walk meets them.
+
+    ``deferred`` maps an object expanded as a drawn Form XObject to the
+    references its :data:`_FORM_PRIVATE_KEYS` named, which that expansion
+    did not follow. Met again in any other role, the object is already in
+    ``seen``, so the walk follows them then (see :func:`_walk_resource_graph`).
     """
 
     page_index: int
@@ -217,6 +222,7 @@ class _PageWalk:
     font_seen: set[int] = field(default_factory=set)
     image_seen: set[int] = field(default_factory=set)
     annot_seen: set[int] = field(default_factory=set)
+    deferred: dict[int, list[int]] = field(default_factory=dict)
 
 
 def _key(doc: pymupdf.Document, xref: int, key: str) -> tuple[str, str]:
@@ -487,37 +493,70 @@ def _page_tree(doc: pymupdf.Document, *, bound: _PageBound) -> _PageTree:
     return _PageTree(xrefs=frozenset(nodes), holders=holders)
 
 
-#: Dictionary keys :func:`_dict_refs` does not follow. ``/Resources`` is read
-#: by :func:`_resources_refs` instead, which keeps each reference's role.
+#: Keys of a Form XObject's own dictionary that hold no drawing data:
 #: ``/PieceInfo`` (page-piece dictionaries, ISO 32000-1 section 14.5) and
-#: ``/Metadata`` (metadata streams, section 14.3.2) are private data and XMP
-#: that no renderer draws; pdfTeX copies Illustrator's ``/PieceInfo`` into
-#: every form it includes. The skip is on the edge, not the object: a stream
-#: also reachable through a drawn key is still counted there.
-_SKIPPED_DICT_KEYS = frozenset({"Resources", "PieceInfo", "Metadata"})
+#: ``/Metadata`` (metadata streams, section 14.3.2). pdfTeX copies
+#: Illustrator's ``/PieceInfo`` into every form it includes (#261). The
+#: names mean this only on a form a renderer draws as a form: the same
+#: object read as a container (a Type3 ``/CharProcs`` dict, an appearance
+#: state dict) is looked up by arbitrary names, and a glyph or a state named
+#: ``/PieceInfo`` is drawn. So :func:`_dict_refs` holds them back only for a
+#: ``/Subtype /Form`` stream met in the ``"xobject"`` role, and the walk
+#: follows them if it meets the same object in any other role.
+_FORM_PRIVATE_KEYS = frozenset({"PieceInfo", "Metadata"})
 
 
-def _dict_refs(doc: pymupdf.Document, xref: int) -> list[int]:
-    """Every reference in ``xref``'s dictionary outside :data:`_SKIPPED_DICT_KEYS`.
+def _names_a_dict(doc: pymupdf.Document, kind: str, value: str) -> bool:
+    """Whether one ``xref_get_key`` result is a dictionary, inline or indirect.
 
-    Works for a stream's dictionary and a plain dict alike. Otherwise a
-    reference's key plays no part: an object used as a container (a
-    graphics state, an appearance state dict, a stream that is also a soft
-    mask) is read by whatever key the renderer looks up, and nothing here
-    assumes which.
+    A stream is not one here, though it has a dictionary: what a renderer
+    can run as a form or a glyph is a stream, never a plain dict.
     """
-    refs: list[int] = []
+    if kind == "dict":
+        return True
+    target = _ref_target(doc, kind, value)
+    if not target or doc.xref_is_stream(target):  # type: ignore[no-untyped-call]
+        return False
+    return str(doc.xref_object(target)).lstrip().startswith("<<")  # type: ignore[no-untyped-call]
+
+
+def _dict_refs(
+    doc: pymupdf.Document, xref: int, *, drawn_form: bool
+) -> tuple[list[int], list[int]]:
+    """Every reference in ``xref``'s dictionary, and the ones held back.
+
+    Returns ``(follow, held)``. Works for a stream's dictionary and a plain
+    dict alike. A reference's key decides nothing, with two exceptions:
+
+    * ``/Resources`` naming a dictionary (inline or indirect) is left to
+      :func:`_resources_refs`, which reads it by category and keeps each
+      reference's role. Naming anything else -- a stream, a bare reference
+      -- it is followed like any key: in a ``/CharProcs`` or appearance
+      state dict, ``/Resources`` is just the name of a glyph or a state,
+      and a renderer draws the stream it names.
+    * With ``drawn_form`` (``xref`` is a ``/Subtype /Form`` stream met in
+      the ``"xobject"`` role), references under :data:`_FORM_PRIVATE_KEYS`
+      are returned in ``held`` instead of ``follow``.
+
+    Otherwise an object used as a container (a graphics state, an
+    appearance state dict, a glyph-procedure dict, a stream that is also a
+    soft mask) is read by whatever key the renderer looks up, and nothing
+    here assumes which.
+    """
+    follow: list[int] = []
+    held: list[int] = []
     for key in doc.xref_get_keys(xref):  # type: ignore[no-untyped-call]
-        if key in _SKIPPED_DICT_KEYS:
-            continue
         kind, value = _key(doc, xref, key)
+        if key == "Resources" and _names_a_dict(doc, kind, value):
+            continue
+        refs = held if drawn_form and key in _FORM_PRIVATE_KEYS else follow
         if kind == "xref":
             target = _ref_target(doc, kind, value)
             if target:
                 refs.append(target)
         elif kind in ("dict", "array"):
             refs.extend(int(m.group(1)) for m in _REF_RE.finditer(value))
-    return refs
+    return follow, held
 
 
 def _resources_refs(doc: pymupdf.Document, container_xref: int) -> list[tuple[int, _Role]]:
@@ -551,12 +590,21 @@ def _walk_resource_graph(
     * Any object reachable from a page is expanded in full exactly once,
       regardless of role or visit order: a stream has its decoded size
       counted once, and every object has its ``/Resources`` (by category,
-      with roles) and every other reference in its dictionary -- or, for an
-      array, every reference in it -- walked. An object used as a
-      container (a graphics state, an appearance state dict, a soft mask)
-      is read by whatever key the renderer looks up, so no key is assumed.
+      with roles, when it names a dictionary) and every other reference in
+      its dictionary -- or, for an array, every reference in it -- walked.
+      An object used as a container (a graphics state, an appearance state
+      dict, a glyph-procedure dict, a soft mask) is read by whatever key
+      the renderer looks up, so no key is assumed (see :func:`_dict_refs`).
       Over-counting a stream that is never drawn is accepted: it can only
       reject.
+    * One edge depends on the role (#261): a ``/Subtype /Form`` stream met
+      under ``/XObject`` is drawn as a form, so its
+      :data:`_FORM_PRIVATE_KEYS` are page-piece data and XMP, not drawing,
+      and are not followed. They are kept in ``walk.deferred``; met again
+      in any other role -- read as ``/CharProcs``, as an appearance state
+      dict, or as any other container -- the object is already expanded,
+      but those references are followed then. Either order of meeting
+      gives the same count.
     * Two roles narrow this, and only for that role: an image met under
       ``/XObject`` is decoded as an image, so its declared size and its
       masks' are checked against :data:`MAX_DECODE_PX` instead; a
@@ -591,7 +639,11 @@ def _walk_resource_graph(
                 _MALFORMED_STRUCTURE_MESSAGE.format(page=walk.page_index + 1), reason="malformed"
             )
         if ref in walk.seen:
-            continue  # expanded in full already: every role's work is done
+            # Expanded in full already, except for the edges a drawn form
+            # held back, which any other role must follow.
+            if role != "xobject":
+                stack.extend((target, "any") for target in walk.deferred.pop(ref, ()))
+            continue
         is_stream = bool(doc.xref_is_stream(ref))  # type: ignore[no-untyped-call]
         subtype = _name(doc, ref, "Subtype")
         if role == "font" and subtype != "/Type3":
@@ -607,7 +659,11 @@ def _walk_resource_graph(
             _count_stream(doc, ref, walk)
         if is_stream or doc.xref_get_keys(ref):  # type: ignore[no-untyped-call]
             stack.extend(_resources_refs(doc, ref))
-            stack.extend((target, "any") for target in _dict_refs(doc, ref))
+            drawn_form = is_stream and role == "xobject" and subtype == "/Form"
+            follow, held = _dict_refs(doc, ref, drawn_form=drawn_form)
+            stack.extend((target, "any") for target in follow)
+            if held:
+                walk.deferred[ref] = held
         else:
             text = doc.xref_object(ref)  # type: ignore[no-untyped-call]
             stack.extend((int(m.group(1)), "any") for m in _REF_RE.finditer(text))

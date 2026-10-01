@@ -14,6 +14,7 @@ from __future__ import annotations
 import time
 import tracemalloc
 import unittest
+import zlib
 from unittest.mock import MagicMock, patch
 
 import pymupdf
@@ -35,6 +36,11 @@ from lemely.io.scan_limits import (
     MAX_SCAN_CONTENT_BYTES,
     MAX_SCAN_PAGES,
     check_scan_bytes,
+)
+from tests.fakes_container_keys import (
+    appearance_state_named_pdf,
+    type3_charprocs_is_drawn_form_pdf,
+    type3_glyph_named_pdf,
 )
 from tests.fakes_pdftex import pdftex_included_figure_pdf
 from tests.pdf_fakes import (
@@ -1257,6 +1263,74 @@ class PieceInfoTests(unittest.TestCase):
             return grey
         finally:
             pdf.close()
+
+
+class ContainerKeyTests(unittest.TestCase):
+    """A ``/CharProcs`` dict or an appearance-state dict names what it holds
+    by arbitrary keys a renderer dereferences to draw. A glyph or a state
+    named ``/PieceInfo``, ``/Metadata`` or ``/Resources`` is drawn like any
+    other, so the walk counts it: the #261 skip applies only to a Form
+    XObject drawn under ``/XObject``, and ``/Resources`` is read by category
+    only when it names a dictionary."""
+
+    _NINE_MB = 9_000_000
+
+    def _assert_page_refused(self, data: bytes) -> None:
+        with self.assertRaises(ScanTooLargeError) as caught:
+            check_scan_bytes(data)
+        self.assertIn("Page 1", str(caught.exception))
+
+    def test_a_type3_glyph_named_pieceinfo_is_counted(self) -> None:
+        self._assert_page_refused(type3_glyph_named_pdf(b"PieceInfo", self._NINE_MB))
+
+    def test_a_type3_glyph_named_metadata_is_counted(self) -> None:
+        self._assert_page_refused(type3_glyph_named_pdf(b"Metadata", self._NINE_MB))
+
+    def test_a_type3_glyph_named_resources_is_counted(self) -> None:
+        self._assert_page_refused(type3_glyph_named_pdf(b"Resources", self._NINE_MB))
+
+    def test_an_appearance_state_named_metadata_is_counted(self) -> None:
+        self._assert_page_refused(appearance_state_named_pdf(b"Metadata", self._NINE_MB))
+
+    def test_an_appearance_state_named_pieceinfo_is_counted(self) -> None:
+        self._assert_page_refused(appearance_state_named_pdf(b"PieceInfo", self._NINE_MB))
+
+    def test_an_appearance_state_named_resources_is_counted(self) -> None:
+        self._assert_page_refused(appearance_state_named_pdf(b"Resources", self._NINE_MB))
+
+    def test_charprocs_that_is_also_a_drawn_form_is_counted(self) -> None:
+        self._assert_page_refused(type3_charprocs_is_drawn_form_pdf(self._NINE_MB))
+
+    def test_charprocs_drawn_as_a_form_first_is_still_counted_as_charprocs(self) -> None:
+        """The walk meets the holder under ``/XObject`` before it meets it as
+        ``/CharProcs``: the skipped edge is followed on the second meeting."""
+        self._assert_page_refused(type3_charprocs_is_drawn_form_pdf(self._NINE_MB, form_first=True))
+
+    def test_an_appearance_resources_image_is_still_checked_as_an_image(self) -> None:
+        """A real ``/Resources`` dict on an appearance stream is read by
+        category: its 9 MB image is pixel-checked, not counted as content."""
+        image = pdf_stream(
+            b"/Type /XObject /Subtype /Image /Width 1500 /Height 2000 "
+            b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode",
+            zlib.compress(bytes(1500 * 2000 * 3), 9),
+        )
+        data = assemble_pdf(
+            [
+                b"<< /Type /Catalog /Pages 2 0 R >>",
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
+                b"/Annots [5 0 R] >>",
+                pdf_stream(b"", b"q Q"),
+                b"<< /Type /Annot /Subtype /Stamp /Rect [10 10 300 300] /AP << /N 6 0 R >> >>",
+                pdf_stream(
+                    b"/Type /XObject /Subtype /Form /BBox [0 0 300 300] "
+                    b"/Resources << /XObject << /Im 7 0 R >> >>",
+                    b"q 300 0 0 300 0 0 cm /Im Do Q",
+                ),
+                image,
+            ]
+        )
+        self.assertIsNone(check_scan_bytes(data))
 
 
 if __name__ == "__main__":
