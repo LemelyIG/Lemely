@@ -32,7 +32,8 @@ process through :func:`sandbox_settings`.
 (``"lemely.io.rasterise.rasterise_pdf_to_pages"``) and imported in the child
 when first called, and the child sorts exceptions by ``LemelyError`` alone.
 Target names are fixed strings in the calling code, never user input; even
-so, only ``lemely`` code (and ``tests.sandbox_targets``) can be named, so a
+so, only ``lemely`` code can be named (tests add their own target module,
+see :data:`_EXTRA_TARGET_MODULES`), so a
 stray name can never run, say, ``os.system``.
 
 This is a RESOURCE boundary (memory and time), not a privilege boundary. The
@@ -103,7 +104,11 @@ _SHUTDOWN_LOCK_WAIT_SECONDS = 5.0
 #: but the child imports and calls whatever it is told; this keeps a mistaken
 #: or injected name from reaching the standard library or a dependency.
 _TARGET_PACKAGE = "lemely"
-_TEST_TARGET_MODULE = "tests.sandbox_targets"
+
+#: Further modules allowed to provide targets. Empty in production; the test
+#: fixtures (``tests/sandbox_fixtures.py``) add ``tests.sandbox_targets`` with
+#: monkeypatch. A child gets the value in force when it is started.
+_EXTRA_TARGET_MODULES: frozenset[str] = frozenset()
 
 #: The limits a child sets, in the order its ready message reports them:
 #: ``RLIMIT_DATA``, ``RLIMIT_AS`` and ``RLIMIT_CORE`` (0: a crashing decoder
@@ -181,14 +186,18 @@ class _Target(Protocol):
 
 
 def _is_allowed_module(name: str) -> bool:
-    return name in (_TARGET_PACKAGE, _TEST_TARGET_MODULE) or name.startswith(f"{_TARGET_PACKAGE}.")
+    return (
+        name == _TARGET_PACKAGE
+        or name.startswith(f"{_TARGET_PACKAGE}.")
+        or name in _EXTRA_TARGET_MODULES
+    )
 
 
 def _resolve(target: str) -> _Target:
     """The function named by the dotted path ``target``, imported now.
 
     ``ValueError`` unless both the path and the function it names belong to
-    ``lemely`` (or ``tests.sandbox_targets``): the second check stops a
+    ``lemely`` (or :data:`_EXTRA_TARGET_MODULES`): the second check stops a
     ``lemely`` module's import of someone else's function (``os.system``,
     say) from being reached through that module.
     """
@@ -287,9 +296,16 @@ def _serve(  # pragma: no cover - runs in the child
 
 
 def _child_main(  # pragma: no cover - runs in the child
-    conn: Connection[_Reply, _Request], data_limit: int, address_limit: int
+    conn: Connection[_Reply, _Request],
+    data_limit: int,
+    address_limit: int,
+    extra_target_modules: frozenset[str] = frozenset(),
 ) -> None:
     """The worker's loop, run in the ``spawn``ed child (hence no coverage).
+
+    ``extra_target_modules`` is the parent's :data:`_EXTRA_TARGET_MODULES`
+    at start: the child imports this module afresh, so a patch in the parent
+    reaches it only this way.
 
     Sets the limits, sends ``("ready", applied)`` (the soft limits now in
     force, see :func:`_apply_limits`), then per request replies
@@ -302,6 +318,8 @@ def _child_main(  # pragma: no cover - runs in the child
     SIGINT is ignored: a Ctrl-C in the terminal reaches the whole process
     group, and the child's lifetime belongs to the parent.
     """
+    global _EXTRA_TARGET_MODULES  # this child's own copy, set once at start
+    _EXTRA_TARGET_MODULES = extra_target_modules
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     applied = _apply_limits(data_limit, address_limit)
     try:
@@ -386,7 +404,7 @@ class ChildWorker:
             return False
         process = context.Process(
             target=_child_main,
-            args=(child_conn, data_limit, address_limit),
+            args=(child_conn, data_limit, address_limit, _EXTRA_TARGET_MODULES),
             name=self.name,
             daemon=True,
         )
@@ -638,6 +656,7 @@ class ChildWorker:
         be resumed, and so release the lock, on another thread.
         """
         if not self._lock.acquire(timeout=_SHUTDOWN_LOCK_WAIT_SECONDS):
+            self._start_failed_at = None
             process = self._process
             if process is not None and self._owner_pid == os.getpid():
                 with contextlib.suppress(ValueError, OSError):  # closed or gone meanwhile

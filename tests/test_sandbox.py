@@ -42,6 +42,7 @@ from tests.sandbox_fixtures import in_process_sandbox, sandboxed  # noqa: F401
 
 MiB = 2**20
 _T = "tests.sandbox_targets"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 _RENDER_FIXTURE = Path("tests/fixtures/handwritten-59/0625_w24_qp_42.pdf")
 
 type WorkerFactory = Callable[[int, int], ChildWorker]
@@ -250,6 +251,7 @@ _CLAMPED_LIMIT_SCRIPT = textwrap.dedent(
     from lemely.runtime import sandbox
     from lemely.runtime.config import SandboxSettings
     sandbox.sandbox_settings = lambda: SandboxSettings()
+    sandbox._EXTRA_TARGET_MODULES = frozenset({"tests.sandbox_targets"})
     messages = []
     class Keep(logging.Handler):
         def emit(self, record):
@@ -279,7 +281,8 @@ def test_a_limit_the_child_could_not_apply_is_warned_about_in_the_parent() -> No
         text=True,
         timeout=120,
         check=False,
-        env={**os.environ, "PYTHONPATH": str(Path.cwd())},
+        cwd=_REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(_REPO_ROOT)},
     )
 
     assert proc.returncode == 0, proc.stderr
@@ -324,11 +327,13 @@ def test_a_render_out_of_memory_is_a_sandbox_failure_and_the_worker_recovers(
 def test_shutdown_clears_the_start_cool_down(
     worker: ChildWorker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(worker, "_spawn", lambda: False)
-    with pytest.raises(SandboxUnavailable):
-        worker.call(f"{_T}.pid", timeout=5, result_type=int)
-    assert worker.last_outcome == "unavailable"
-    monkeypatch.undo()
+    # A context of its own: a bare monkeypatch.undo() would also undo the
+    # sandboxed fixture's patches (settings and the test-target allowlist).
+    with monkeypatch.context() as patch:
+        patch.setattr(worker, "_spawn", lambda: False)
+        with pytest.raises(SandboxUnavailable):
+            worker.call(f"{_T}.pid", timeout=5, result_type=int)
+        assert worker.last_outcome == "unavailable"
 
     # Still inside the 30 s cool-down: refused without trying to start.
     assert worker._start_failed_at is not None
@@ -468,12 +473,14 @@ def test_shutdown_returns_within_its_bound_behind_a_suspended_stream(
     """A stream kept alive (by a traceback, say) holds the lock; shutdown must
     not wait for it forever. It kills the child; the holder's next pipe
     operation then sees the crash and cleans up."""
-    monkeypatch.setattr(sandbox, "_SHUTDOWN_LOCK_WAIT_SECONDS", 0.5, raising=False)
+    monkeypatch.setattr(sandbox, "_SHUTDOWN_LOCK_WAIT_SECONDS", 0.5)
     items = worker.stream(f"{_T}.slow_count", 3, 5.0, timeout=30, item_type=int)
     try:
         assert next(items) == 0
         old_pid = worker.pid()
         assert old_pid is not None
+        # A stale cool-down must not outlive a shutdown, even a timed-out one.
+        worker._start_failed_at = time.monotonic()
         stopped = threading.Event()
 
         def stop() -> None:
@@ -484,6 +491,7 @@ def test_shutdown_returns_within_its_bound_behind_a_suspended_stream(
         threading.Thread(target=stop, daemon=True).start()
         assert stopped.wait(timeout=5)
         assert time.monotonic() - started < 2.0
+        assert worker._start_failed_at is None
 
         with pytest.raises(SandboxCrash):
             next(items)
@@ -530,3 +538,19 @@ def test_a_target_outside_lemely_is_refused_in_the_child_and_in_process(
         worker.call(
             "tests.sandbox_fixtures.SandboxSettings", timeout=10, result_type=SandboxSettings
         )
+
+
+def test_test_targets_run_only_where_the_fixtures_opt_in(
+    worker: ChildWorker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production allows ``lemely`` code alone; ``tests.sandbox_targets`` is
+    added by the ``sandboxed`` / ``in_process_sandbox`` fixtures."""
+    assert frozenset({_T}) == sandbox._EXTRA_TARGET_MODULES
+    monkeypatch.setattr(sandbox, "_EXTRA_TARGET_MODULES", frozenset())
+
+    # The worker has not started yet, so its child gets the production list.
+    with pytest.raises(SandboxError, match="sandbox_targets"):
+        worker.call(f"{_T}.pid", timeout=10, result_type=int)
+    monkeypatch.setattr(sandbox, "sandbox_settings", lambda: SandboxSettings(enabled=False))
+    with pytest.raises(ValueError, match="sandbox_targets"):
+        worker.call(f"{_T}.pid", timeout=10, result_type=int)

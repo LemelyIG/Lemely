@@ -20,6 +20,11 @@ from lemely.runtime.config import SandboxSettings
 #: the patched stand-in, which has no ``cache_clear``.
 _CACHED_SANDBOX_SETTINGS = sandbox.sandbox_settings
 
+#: Production lets a worker run ``lemely`` code only; both fixtures also
+#: allow the test targets. Workers are reset first, so every child started
+#: under a fixture gets this list.
+_TEST_TARGET_MODULES = frozenset({"tests.sandbox_targets"})
+
 
 def _reset_workers() -> None:
     sandbox.EXTRACTION_WORKER.shutdown()
@@ -35,6 +40,7 @@ def in_process_sandbox(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     which a child would never see.
     """
     _reset_workers()
+    monkeypatch.setattr(sandbox, "_EXTRA_TARGET_MODULES", _TEST_TARGET_MODULES)
     monkeypatch.setattr(sandbox, "sandbox_settings", lambda: SandboxSettings(enabled=False))
     yield
     _reset_workers()
@@ -48,6 +54,7 @@ def sandboxed(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     ``sandbox.sandbox_settings`` again with its own ``SandboxSettings``.
     """
     _reset_workers()
+    monkeypatch.setattr(sandbox, "_EXTRA_TARGET_MODULES", _TEST_TARGET_MODULES)
     monkeypatch.setattr(sandbox, "sandbox_settings", lambda: SandboxSettings(enabled=True))
     yield
     _reset_workers()
