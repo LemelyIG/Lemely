@@ -44,7 +44,24 @@ What it cannot see. Each is reviewer territory, and
   reported, which is the safe direction), and rebinding after the fact
   (``o = pymupdf.open; o = something_else; o(x)`` is reported too);
 * any other library that opens a PDF (pypdfium2 has its own gate, in
-  ``pdf_canonical``'s renderers).
+  ``pdf_canonical``'s renderers);
+* roots other than ``lemely/``: only ``root/"lemely"`` is swept, so
+  ``scripts/`` and ``main.py`` are not. Known exempt case:
+  ``scripts/run_real_paper_accuracy.py:151``, a dev script that calls
+  ``fitz.open`` on the accuracy corpus (not user bytes);
+* the walrus alias (``(z := pymupdf.open)(b)``): ``:=`` binds no name the sweep
+  reads;
+* subclassing the opener (``class D(pymupdf.Document): ...`` then ``D(b)``, or
+  a subclass of an imported ``Document``/``open``): the subclass is a new name
+  bound to nothing the sweep tracks;
+* ``PrescannedPdf`` reached through a module attribute alias
+  (``P = prescan_module.PrescannedPdf; P(b)``): only a name imported or
+  assigned from a bare name is followed (``m.PrescannedPdf(b)`` itself is seen).
+
+What the allowlists mean. They are ``(file, function)`` membership: an open
+inside a sanctioned function passes. Whether the pre-scan runs, and in what
+order, inside a sanctioned opener is not this sweep's job; the opener's own
+tests cover that.
 """
 
 from __future__ import annotations

@@ -269,6 +269,34 @@ class MupdfOpenKnownBlindSpotTests(unittest.TestCase):
             set(),
         )
 
+    def test_walrus_alias(self) -> None:
+        self.assertEqual(_opens("import pymupdf\n(z := pymupdf.open)(b)\n"), set())
+        self.assertEqual(_opens("import pymupdf\nif (z := pymupdf.open):\n    z(b)\n"), set())
+
+    def test_subclassing_document_or_open(self) -> None:
+        self.assertEqual(
+            _opens("import pymupdf\nclass D(pymupdf.Document):\n    pass\nD(b)\n"),
+            set(),
+        )
+        self.assertEqual(
+            _opens("from pymupdf import Document\nclass D(Document):\n    pass\nD(b)\n"),
+            set(),
+        )
+
+    def test_prescanned_through_a_module_attribute_alias(self) -> None:
+        source = "import m\nP = m.PrescannedPdf\nP(b)\n"
+        self.assertEqual(find_prescanned_constructions(source, _F), set())
+
+    def test_roots_other_than_lemely_are_not_swept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("scripts/run_real_paper_accuracy.py", "main.py"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("import fitz\ndoc = fitz.open(p)\n", encoding="utf-8")
+            (root / "lemely").mkdir()
+            self.assertEqual(sweep(root, find_mupdf_opens), set())
+
 
 class PrescannedConstructionTests(unittest.TestCase):
     def test_direct_and_attribute_construction(self) -> None:
