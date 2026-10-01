@@ -121,13 +121,25 @@ def _stream_data_starts(data: bytes, pos: int) -> list[int]:
 #: take as the separator after ``stream`` in ways the starts above do not
 #: all cover (#273 item 2).
 _SEPARATOR_BYTES = frozenset({0x09, 0x00, 0x0C})
+_SPACES_RE = re.compile(rb" *")
+_WHITESPACE_RUN_RE = re.compile(rb"[" + _WS + rb"]*")
 
 
-def _separator_after_stream(data: bytes, pos: int) -> bool:
-    """Whether the first non-space byte after ``stream`` (``pos`` follows it) is HT, NUL or FF."""
-    while data[pos : pos + 1] == b" ":
-        pos += 1
-    return pos < len(data) and data[pos] in _SEPARATOR_BYTES
+def _separator_after_stream(data: bytes, pos: int, starts: list[int]) -> bool:
+    """Whether the data after ``stream`` sits behind a separator no start covers.
+
+    ``pos`` follows the keyword. True when the first non-space byte is a tab,
+    NUL or form feed AND the run of whitespace it opens ends at an offset that
+    is none of ``starts`` (what :func:`_stream_data_starts` returned): the
+    readers open such a file but no start the checker tries reaches the data.
+    A lone tab, NUL or form feed is the byte MuPDF consumes, and a tab then an
+    end-of-line ends at the end-of-line start, so neither counts. Both scans
+    are regex runs, C-speed however long the run of spaces or whitespace.
+    """
+    first = _SPACES_RE.match(data, pos).end()  # type: ignore[union-attr]
+    if first >= len(data) or data[first] not in _SEPARATOR_BYTES:
+        return False
+    return _WHITESPACE_RUN_RE.match(data, first).end() not in starts  # type: ignore[union-attr]
 
 
 def _stream_data_end(data: bytes, start: int, length: tuple[str, object] | None) -> int:
@@ -319,7 +331,7 @@ def check_object_stream_bytes(data: bytes) -> None:
     bytes in ``lemely/``).
     """
     budget = _ScanBudget()
-    containers: list[tuple[tuple[str, object] | None, list[tuple[int, int]], bool]] = []
+    containers: list[tuple[tuple[str, object] | None, list[tuple[int, int]], int]] = []
     scanned_to = 0
     for header in _OBJ_HEADER_RE.finditer(data):
         budget.spend()
@@ -338,11 +350,16 @@ def check_object_stream_bytes(data: bytes) -> None:
         spans = [(begin, _stream_data_end(data, begin, entries.get(b"Length"))) for begin in starts]
         scanned_to = max(scanned_to, *(end for _, end in spans))
         if entries.get(b"Type") == ("name", b"ObjStm"):
-            containers.append((entries.get(b"Filter"), spans, _separator_after_stream(data, start)))
+            containers.append((entries.get(b"Filter"), spans, start))
     encrypted = _declares_encryption(data, budget)
     total = 0
-    for filters, spans, separated in containers:
+    # What the same containers count without Flate's worst case: an encrypted
+    # file's Flate container at its raw length. An overrun this total shares
+    # is not the worst-case rule's doing (``objstm_bomb``, not ``encrypted_objstm``).
+    plain_total = 0
+    for filters, spans, stream_pos in containers:
         longest = max(end - begin for begin, end in spans)
+        worst_case = False
         if filters is None or filters == ("array", []):
             size = longest
         elif filters in (("name", b"FlateDecode"), ("name", b"Fl")) or filters in (
@@ -354,6 +371,7 @@ def check_object_stream_bytes(data: bytes) -> None:
                 # password its plaintext is the attacker's to choose. Count the
                 # most Flate can expand this many bytes to.
                 size = longest * _FLATE_MAX_RATIO
+                worst_case = True
             else:
                 sizes = [
                     _strict_inflate_size(data[begin:end], budget=MAX_OBJECT_STREAM_BYTES - total)
@@ -361,7 +379,7 @@ def check_object_stream_bytes(data: bytes) -> None:
                 ]
                 decoded = [found for found in sizes if found]
                 if not decoded and longest > 0:
-                    if separated:
+                    if _separator_after_stream(data, stream_pos, [begin for begin, _ in spans]):
                         raise ScanRejectedError(
                             _OBJECT_STREAM_SEPARATOR_MESSAGE, reason="objstm_separator"
                         )
@@ -372,10 +390,13 @@ def check_object_stream_bytes(data: bytes) -> None:
         else:
             raise ScanRejectedError(_OBJECT_STREAM_ENCODING_MESSAGE, reason="objstm_encoding")
         total += size
+        plain_total += longest if worst_case else size
         if total > MAX_OBJECT_STREAM_BYTES:
             raise ScanTooLargeError(
                 _OBJECT_STREAMS_MESSAGE,
-                reason="encrypted_objstm" if encrypted else "objstm_bomb",
+                reason="objstm_bomb"
+                if plain_total > MAX_OBJECT_STREAM_BYTES
+                else "encrypted_objstm",
             )
 
 
