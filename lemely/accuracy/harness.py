@@ -10,13 +10,14 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 import structlog
 from pydantic import BaseModel, Field
 
 from lemely.core.loose_schemas import MarkScheme, QuestionType
-from lemely.eval.analyses import exclusion_funnel
+from lemely.eval.analyses import _percentile, exclusion_funnel
 from lemely.eval.manifest import RunManifest, Split
 from lemely.eval.records import Arm, EvalRecord
 from lemely.eval.test_touch import DEFAULT_LEDGER_PATH, authorize_test_split_join
@@ -436,6 +437,15 @@ class AccuracyResult:
     means this run's marks are timing-dependent and not comparable with
     another run's; ``format_report`` warns and ``measure-accuracy
     --fail-on-skipped-rereads`` fails on it."""
+    cost_usd_by_paper: dict[str, dict[str, float]] = field(default_factory=dict)
+    """#201: Gemini spend attributed to each case, ``{key: {task_tag: usd}}``.
+    The key is ``paper_id``, or ``paper_id/fixture_variant`` for a sibling
+    variant (variants share a ``paper_id``; summing them would report a
+    four-variant paper as four times its cost). A case that spent nothing
+    (e.g. every call cached) is present with ``{}``. Only a real cost at
+    ``--cache-mode bypass``: cached calls record no spend."""
+    cost_usd_total: float = 0.0
+    """#201: the sum of every value in ``cost_usd_by_paper``."""
 
 
 # ---------------------------------------------------------------------------
@@ -1089,8 +1099,14 @@ def measure_accuracy(
     ledger_path: Path = DEFAULT_LEDGER_PATH,
     arm: Literal["extract+mark", "oracle+mark"] | None = None,
     n_unparseable: int = 0,
+    cost_probe: Callable[[], dict[str, float]] | None = None,
 ) -> AccuracyResult:
     """Run correction over all golden cases; compute metrics.
+
+    ``cost_probe`` (#201): returns the process-wide accumulated Gemini USD
+    spend by task tag; the delta across each case is attributed to it in
+    ``AccuracyResult.cost_usd_by_paper``. ``None`` reads
+    ``lemely.io.gemini.process_token_totals_by_task``; tests inject a fake.
 
     ``n_unparseable`` (US-037): the count of golden-case directories the
     caller's `load_golden_cases` call could not parse and dropped before
@@ -1162,6 +1178,7 @@ def measure_accuracy(
             )
     from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers, marker_scored
     from lemely.io.correction_ai import correct_paper
+    from lemely.io.gemini import process_token_totals_by_task
     from lemely.io.prompts.answer_extraction import VERSION as EXT_VERSION
     from lemely.io.prompts.correction_ai import VERSION as COR_VERSION
     from lemely.io.prompts.mark_scheme_parsing import VERSION as MS_VERSION
@@ -1174,8 +1191,11 @@ def measure_accuracy(
     total_extraction_questions = 0
     funnel = FunnelCounts()
     reread_skipped_by_budget = 0
+    probe = cost_probe if cost_probe is not None else process_token_totals_by_task
+    cost_usd_by_paper: dict[str, dict[str, float]] = {}
 
     for case_position, case in enumerate(cases, start=1):
+        cost_before = probe()
         # Terminology (spec §1): real vision extraction is "extract+mark"; the
         # correction-only bypass injects ground-truth text and marks only,
         # i.e. "oracle+mark". Default per-case selection is by scan_path
@@ -1241,6 +1261,17 @@ def measure_accuracy(
             raise _ceiling_aborted_sweep(
                 exc, case.paper_id, "marking", case_position, cases
             ) from exc
+        cost_after = probe()
+        cost_key = (
+            case.paper_id
+            if case.fixture_variant is None
+            else f"{case.paper_id}/{case.fixture_variant}"
+        )
+        cost_usd_by_paper[cost_key] = {
+            tag: cost_after[tag] - cost_before.get(tag, 0.0)
+            for tag in cost_after
+            if cost_after[tag] - cost_before.get(tag, 0.0) > 0.0
+        }
         cq_by_id = {cq.question_id: cq for cq in correction.questions}
 
         # Iterate the ground-truth leaves, not correction.questions (D18,
@@ -1380,6 +1411,8 @@ def measure_accuracy(
         eval_records=eval_records,
         funnel=funnel,
         reread_skipped_by_budget=reread_skipped_by_budget,
+        cost_usd_by_paper=cost_usd_by_paper,
+        cost_usd_total=sum(sum(d.values()) for d in cost_usd_by_paper.values()),
     )
 
 
@@ -1492,6 +1525,21 @@ def format_report(result: AccuracyResult, targets: object) -> str:
     # reads as a denominator growing mid-funnel. Reported separately instead.
     lines.append(f"  (extracted={f.extracted} — independent count, not a stage of the chain above)")
 
+    lines.append("")
+    per_case_totals = sorted(sum(d.values()) for d in result.cost_usd_by_paper.values())
+    cost_mean = sum(per_case_totals) / len(per_case_totals) if per_case_totals else 0.0
+    cost_p95 = _percentile(per_case_totals, 0.95)
+    cache_mode = result.manifest.cache_mode
+    lines.append(
+        f"Cost per paper (cache_mode={cache_mode}): mean=${cost_mean:.4f} "
+        f"p95=${cost_p95:.4f} total=${result.cost_usd_total:.4f} "
+        f"over {len(per_case_totals)} case(s)"
+    )
+    if cache_mode != "bypass":
+        lines.append(
+            "  (cached calls record no spend; this is a real cost only at --cache-mode bypass)"
+        )
+
     if result.reread_skipped_by_budget:
         lines.append("")
         lines.append(
@@ -1542,6 +1590,8 @@ def save_result(result: AccuracyResult, output_dir: Path) -> Path:
         ],
         "prompt_versions": result.prompt_versions,
         "reread_skipped_by_budget": result.reread_skipped_by_budget,
+        "cost_usd_by_paper": result.cost_usd_by_paper,
+        "cost_usd_total": result.cost_usd_total,
         "question_results": [
             {
                 "question_id": r.question_id,

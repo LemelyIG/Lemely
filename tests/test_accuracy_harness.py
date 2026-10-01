@@ -2037,6 +2037,112 @@ class RunManifestTests(unittest.TestCase):
                 correct_spy.assert_not_called()
 
 
+class CostPerPaperTests(unittest.TestCase):
+    """#201: ``measure_accuracy`` attributes the process-wide Gemini spend
+    delta of each case to that case and exposes it on ``AccuracyResult``."""
+
+    def _mark_scheme(self, question_ids: list[str]) -> object:
+        return RunManifestTests._mark_scheme(self, question_ids)  # type: ignore[arg-type]
+
+    def _case(self, paper_id: str = "p1", fixture_variant: str | None = None) -> object:
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase
+
+        return GoldenCase(
+            paper_id=paper_id,
+            mark_scheme=self._mark_scheme(["1"]),
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=None,
+            fixture_variant=fixture_variant,
+        )
+
+    @staticmethod
+    def _probe(snapshots: list[dict[str, float]]) -> object:
+        calls: list[int] = []
+        it = iter(snapshots)
+
+        def probe() -> dict[str, float]:
+            calls.append(1)
+            return next(it)
+
+        probe.calls = calls  # type: ignore[attr-defined]
+        return probe
+
+    _SNAPSHOTS = (
+        {"correction": 0.10},
+        {"correction": 0.25},
+        {"correction": 0.25, "extraction": 0.05},
+        {"correction": 0.40, "extraction": 0.05},
+    )
+
+    def _two_case_result(self) -> object:
+        from lemely.accuracy.harness import measure_accuracy
+
+        probe = self._probe(list(self._SNAPSHOTS))
+        result = measure_accuracy(
+            [self._case("p1"), self._case("p2")],
+            gemini_client=None,
+            settings=None,
+            cost_probe=probe,  # type: ignore[arg-type]
+        )
+        self.assertEqual(len(probe.calls), 4)  # type: ignore[attr-defined]
+        return result
+
+    def test_cost_probe_deltas_are_attributed_per_case_and_summed(self):
+        result = self._two_case_result()
+
+        self.assertEqual(set(result.cost_usd_by_paper), {"p1", "p2"})  # type: ignore[attr-defined]
+        self.assertEqual(set(result.cost_usd_by_paper["p1"]), {"correction"})  # type: ignore[attr-defined]
+        self.assertEqual(set(result.cost_usd_by_paper["p2"]), {"correction"})  # type: ignore[attr-defined]
+        self.assertAlmostEqual(result.cost_usd_by_paper["p1"]["correction"], 0.15)  # type: ignore[attr-defined]
+        self.assertAlmostEqual(result.cost_usd_by_paper["p2"]["correction"], 0.15)  # type: ignore[attr-defined]
+        self.assertAlmostEqual(result.cost_usd_total, 0.30)  # type: ignore[attr-defined]
+
+    def test_a_variant_case_is_keyed_by_paper_and_variant(self):
+        from lemely.accuracy.harness import measure_accuracy
+
+        result = measure_accuracy(
+            [self._case("p1", fixture_variant="partial")],
+            gemini_client=None,
+            settings=None,
+            cost_probe=self._probe(list(self._SNAPSHOTS[:2])),  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(list(result.cost_usd_by_paper), ["p1/partial"])
+
+    def test_a_probe_that_reports_no_spend_yields_empty_cost(self):
+        from lemely.accuracy.harness import measure_accuracy
+
+        result = measure_accuracy(
+            [self._case("p1")],
+            gemini_client=None,
+            settings=None,
+            cost_probe=lambda: {},
+        )
+
+        self.assertEqual(result.cost_usd_by_paper, {"p1": {}})
+        self.assertEqual(result.cost_usd_total, 0.0)
+
+    def test_format_report_prints_cost_beside_the_cache_mode(self):
+        from lemely.accuracy.harness import format_report
+        from lemely.runtime.config import Settings
+
+        report = format_report(self._two_case_result(), Settings().accuracy_eval)  # type: ignore[arg-type]
+
+        self.assertIn("Cost per paper (cache_mode=read_write)", report)
+        self.assertIn("total=$0.3000", report)
+        self.assertIn("real cost only at --cache-mode bypass", report)
+
+    def test_save_result_writes_both_cost_fields(self):
+        from lemely.accuracy.harness import save_result
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = save_result(self._two_case_result(), Path(tmp))  # type: ignore[arg-type]
+            data = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertAlmostEqual(data["cost_usd_total"], 0.30)
+        self.assertAlmostEqual(data["cost_usd_by_paper"]["p1"]["correction"], 0.15)
+
+
 class SaveResultRoundTripTests(unittest.TestCase):
     """#72: save_result must persist manifest and eval_records, not just the
     legacy metrics/calibration/question_results keys -- both were computed
