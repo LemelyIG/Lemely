@@ -14,8 +14,10 @@ import os
 import resource
 import struct
 import time
+import weakref
 import zlib
 from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
 from typing import cast
 
 from lemely.runtime.errors import LemelyError
@@ -190,3 +192,86 @@ def boom(*ignored: object) -> bytes:
     in the logs and out of the response.
     """
     raise RuntimeError("DISTINCTIVE-RENDERER-TEXT")
+
+
+def render_fails_on_second_page(scan_path: object, dpi: float) -> Iterator[object]:
+    """``iter_scan_pages(scan_path, dpi)`` with pdfium's render raising on page two.
+
+    Stands in for the extraction target (Task 10 review, item 1): a
+    ``ValueError`` part-way through a scan must reach the caller as a failure,
+    never as a shorter scan. The patch lives only as long as the stream, so
+    the child's next call renders normally.
+    """
+    from unittest.mock import patch
+
+    import pypdfium2 as pdfium
+
+    from lemely.io.rasterise import iter_scan_pages
+
+    real_render = pdfium.PdfPage.render
+    calls = 0
+
+    def render(page: object, *args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ValueError("page two would not render")
+        return real_render(page, *args, **kwargs)  # type: ignore[arg-type]
+
+    with patch.object(pdfium.PdfPage, "render", render):
+        yield from iter_scan_pages(scan_path, dpi)  # type: ignore[arg-type]
+
+
+#: Room left above the child's current ``VmData`` by
+#: :func:`starved_iter_scan_pages`: far below one page's render at 400 DPI
+#: (a ~40 MB bitmap plus its ~30 MB RGB copy), whatever the imports cost.
+STARVED_HEADROOM_BYTES = 16 * 1024 * 1024
+
+
+def _vm_data_bytes() -> int:
+    with open("/proc/self/status", encoding="ascii") as status:
+        for line in status:
+            if line.startswith("VmData:"):
+                return int(line.split()[1]) * 1024
+    raise RuntimeError("no VmData in /proc/self/status")
+
+
+def starved_iter_scan_pages(scan_path: object, dpi: float) -> Iterator[object]:
+    """``iter_scan_pages(scan_path, dpi)`` under ``RLIMIT_DATA`` = current ``VmData`` + headroom.
+
+    Stands in for the extraction target (Task 10 review, item 5). The
+    rasterise module is imported first, and the limit is set relative to what
+    the child already uses, so the test does not depend on how much a given
+    machine's imports cost. The soft limit is restored when the stream ends,
+    however it ends.
+    """
+    from lemely.io.rasterise import iter_scan_pages
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_DATA)
+    resource.setrlimit(resource.RLIMIT_DATA, (_vm_data_bytes() + STARVED_HEADROOM_BYTES, hard))
+    try:
+        yield from iter_scan_pages(scan_path, dpi)  # type: ignore[arg-type]
+    finally:
+        resource.setrlimit(resource.RLIMIT_DATA, (soft, hard))
+
+
+@dataclass
+class TrackedItem:
+    """One item of :func:`tracked_items`: whether the item before it was still alive."""
+
+    index: int
+    previous_alive: bool
+
+
+def tracked_items(n: int) -> Iterator[TrackedItem]:
+    """Yield ``n`` items, each recording whether its predecessor was still referenced.
+
+    For ``sandbox._serve`` (Task 10 review, item 3): a streaming child must
+    drop each item once it is sent, so it holds one at a time.
+    """
+    previous: weakref.ref[TrackedItem] | None = None
+    for index in range(n):
+        item = TrackedItem(index, previous is not None and previous() is not None)
+        previous = weakref.ref(item)
+        yield item
+        del item

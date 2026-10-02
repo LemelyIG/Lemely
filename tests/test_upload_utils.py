@@ -219,6 +219,10 @@ def test_a_catalog_metadata_bomb_is_refused_without_growing_this_process() -> No
     check; in-process the check peaked at about 1.98 GB. In the worker the
     child hits its limit and dies, the upload is a 422 with the fixed
     message, and the web process's peak barely moves."""
+    # Control (review item 4): the same shape at 100 MB passes in the worker,
+    # so the refusal below is the 1 GB inflate's, not the shape's.
+    check_scan_geometry(catalog_metadata_bomb_pdf(100_000_000), "application/pdf")
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "ok"
     bomb = catalog_metadata_bomb_pdf(1_000_000_000)
     assert len(bomb) < 2 * _MB
     before = reset_peak_rss()

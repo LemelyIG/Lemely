@@ -5,14 +5,18 @@ from __future__ import annotations
 import io
 import itertools
 import os
+import pickle
 import sys
 import tempfile
 import unittest
+import weakref
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pypdfium2 as pdfium
 import pytest
+import structlog.testing
 from PIL import Image
 
 import lemely.io._scan_common as _scan_common
@@ -21,6 +25,7 @@ import lemely.io.scan_limits as scan_limits
 from lemely.io.rasterise import (
     EXTRACTION_DPI,
     RasterisedPage,
+    ScanRenderFailedError,
     rasterise_pdf_to_pages,
     rasterise_scan_to_pages,
 )
@@ -32,7 +37,6 @@ from lemely.io.scan_limits import (
     decode_pixel_cap,
 )
 from lemely.runtime import sandbox
-from lemely.runtime.config import SandboxSettings
 from tests.fakes_worker_bombs import peak_rss_bytes, reset_peak_rss
 from tests.pdf_fakes import (
     SIXTEEN_BIT_INK,
@@ -54,6 +58,11 @@ from tests.pdf_fakes import (
     xref_repair_bomb_pdf,
 )
 from tests.sandbox_fixtures import in_process_sandbox, sandboxed  # noqa: F401
+
+if TYPE_CHECKING:
+    from multiprocessing.connection import Connection
+
+    from tests.sandbox_targets import TrackedItem
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "handwritten-59" / "0625_w24_qp_42.pdf"
 
@@ -840,14 +849,9 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
 # -- #260: extraction runs in the extraction worker ----------------------------
 
 _MB = 1_000_000
-_MIB = 1024 * 1024
 
-#: ``RLIMIT_DATA`` for the forced-past-the-limit test: room for the child's
-#: imports and a one-page render, never for the committed scan at 400 DPI.
-#: Measured (2026-10-02, this venv): the one-page extraction passes from
-#: 96 MiB up, and the 400 DPI render fails up to 160 MiB and passes from
-#: 192 MiB, so 112 MiB sits inside that window with room on both sides.
-_STARVED_DATA_LIMIT = 112 * _MIB
+#: The fixed text a user sees for any extraction worker failure.
+_RENDER_FAILED = "Could not render this scan"
 
 
 @pytest.mark.usefixtures("sandboxed")
@@ -895,39 +899,153 @@ def test_an_empty_pdf_still_raises_value_error_through_the_worker(tmp_path: Path
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="VmHWM is Linux-only")
 @pytest.mark.usefixtures("sandboxed")
 def test_a_render_forced_past_the_limit_fails_without_growing_this_process(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#260: a render that outgrows the child's ``RLIMIT_DATA`` fails as a
-    ``SandboxFailure`` in the child, the test process's peak barely moves,
-    and the worker serves the next call. The same child first extracts a
-    one-page scan, so its imports provably fit the limit and the failure is
-    the render's."""
+    """#260: a render that outgrows the child's ``RLIMIT_DATA`` fails in the
+    child, the test process's peak barely moves, and the worker serves the
+    next call. The target lowers the limit to what the child already uses
+    plus 16 MiB once its imports are done (``starved_iter_scan_pages``), so
+    the result does not depend on a machine's import footprint (review
+    item 5)."""
     _require_committed_fixture(_FIXTURE)
     monkeypatch.setattr(
-        sandbox,
-        "sandbox_settings",
-        lambda: SandboxSettings(
-            enabled=True,
-            extraction_data_limit_bytes=_STARVED_DATA_LIMIT,
-            extraction_address_limit_bytes=1024 * _MIB,
-        ),
+        rasterise_module, "SCAN_PAGES_TARGET", "tests.sandbox_targets.starved_iter_scan_pages"
     )
-    small = tmp_path / "small.pdf"
-    _write_pdf(small, pages=1)
-    assert len(rasterise_scan_to_pages(small)) == 1
+    worker = sandbox.EXTRACTION_WORKER
+    assert worker.call("tests.sandbox_targets.pid", timeout=60, result_type=int)  # started
     before = reset_peak_rss()
-    with pytest.raises(sandbox.SandboxFailure) as caught:
+    with structlog.testing.capture_logs() as logs, pytest.raises(ScanRenderFailedError) as caught:
         rasterise_scan_to_pages(_FIXTURE, dpi=400.0)
     grown = peak_rss_bytes() - before
     # The limit, not a timeout or a busy worker, stopped it. Measured: a
     # Python MemoryError in the child (SandboxMemory), which it survives; a
     # C library may instead raise its own error or abort.
-    assert isinstance(
-        caught.value, (sandbox.SandboxMemory, sandbox.SandboxError, sandbox.SandboxCrash)
-    ), repr(caught.value)
+    cause = caught.value.__cause__
+    assert isinstance(cause, (sandbox.SandboxMemory, sandbox.SandboxError, sandbox.SandboxCrash)), (
+        repr(cause)
+    )
+    assert str(caught.value) == _RENDER_FAILED
+    assert [(log["event"], log["reason"]) for log in logs] == [("scan_render_failed", cause.reason)]
     assert grown < 32 * _MB, f"the test process grew by {grown / _MB:.0f} MB"
-    assert sandbox.EXTRACTION_WORKER.call("tests.sandbox_targets.pid", timeout=60, result_type=int)
-    assert sandbox.EXTRACTION_WORKER.last_outcome == "ok"
+    # The limit was restored (or the child replaced): the next scan renders.
+    monkeypatch.setattr(
+        rasterise_module, "SCAN_PAGES_TARGET", "lemely.io.rasterise.iter_scan_pages"
+    )
+    assert len(rasterise_scan_to_pages(_FIXTURE)) == 16
+    assert worker.last_outcome == "ok"
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_a_worker_failure_reaches_the_caller_as_the_fixed_message() -> None:
+    """Review item 2: a worker failure's text (an exception's repr, a library
+    message, a path) is not the user's business. Extraction raises one fixed
+    message, which the student's error frame and the teacher's failed row
+    show as they are; the failure itself goes to the log line and ``__cause__``."""
+    with (
+        patch.object(rasterise_module, "SCAN_PAGES_TARGET", "tests.sandbox_targets.boom"),
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(ScanRenderFailedError) as caught,
+    ):
+        rasterise_scan_to_pages(_FIXTURE)
+    assert str(caught.value) == _RENDER_FAILED
+    assert isinstance(caught.value.__cause__, sandbox.SandboxError)
+    assert "DISTINCTIVE-RENDERER-TEXT" in str(caught.value.__cause__)
+    (event,) = logs
+    assert (event["event"], event["reason"]) == ("scan_render_failed", "error")
+    assert "DISTINCTIVE-RENDERER-TEXT" in event["error"]
+
+
+def _render_fails_on_second_page() -> object:
+    """A stand-in for ``PdfPage.render`` that raises ``ValueError`` on its second call."""
+    real_render = pdfium.PdfPage.render
+    calls = 0
+
+    def render(page: pdfium.PdfPage, *args: object, **kwargs: object) -> pdfium.PdfBitmap:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ValueError("page two would not render")
+        return real_render(page, *args, **kwargs)  # type: ignore[arg-type]
+
+    return render
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_a_failure_part_way_through_a_scan_is_never_a_shorter_scan(tmp_path: Path) -> None:
+    """Review item 1: only the rewrite's "no pages" ``ValueError`` means an
+    empty scan. A ``ValueError`` while page two renders must fail the
+    extraction, not hand back page one as the whole scan."""
+    path = tmp_path / "three.pdf"
+    _write_pdf(path, pages=3)
+    with (
+        patch.object(pdfium.PdfPage, "render", _render_fails_on_second_page()),
+        pytest.raises(ValueError, match="page two would not render") as caught,
+    ):
+        rasterise_scan_to_pages(path)
+    assert "produced no pages" not in str(caught.value)
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_a_failure_part_way_through_a_scan_in_the_worker_is_a_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Review item 1, in the worker: the same failure arrives as an error,
+    never as a one-page scan."""
+    path = tmp_path / "three.pdf"
+    _write_pdf(path, pages=3)
+    monkeypatch.setattr(
+        rasterise_module, "SCAN_PAGES_TARGET", "tests.sandbox_targets.render_fails_on_second_page"
+    )
+    with pytest.raises(ScanRenderFailedError) as caught:
+        rasterise_scan_to_pages(path)
+    assert isinstance(caught.value.__cause__, sandbox.SandboxError)
+    assert "page two would not render" in str(caught.value.__cause__)
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "error"
+
+
+def test_the_child_drops_each_page_before_it_renders_the_next(tmp_path: Path) -> None:
+    """Review item 3: once a page is handed on, the generator keeps no
+    reference to it, so while it renders the next page the child holds at
+    most the page in flight. In this process: the child runs the same code."""
+    path = tmp_path / "three.pdf"
+    _write_pdf(path, pages=3)
+    handed_on: list[weakref.ref[RasterisedPage]] = []
+    alive_at_render: list[bool] = []
+    real_render = pdfium.PdfPage.render
+
+    def render(page: pdfium.PdfPage, *args: object, **kwargs: object) -> pdfium.PdfBitmap:
+        alive_at_render.append(any(ref() is not None for ref in handed_on))
+        return real_render(page, *args, **kwargs)  # type: ignore[arg-type]
+
+    with patch.object(pdfium.PdfPage, "render", render):
+        pages = rasterise_module.iter_scan_pages(path, EXTRACTION_DPI)
+        for page in pages:
+            handed_on.append(weakref.ref(page))
+            del page
+    assert alive_at_render == [False, False, False]
+    assert len(handed_on) == 3
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_a_streaming_child_drops_each_item_once_it_is_sent() -> None:
+    """Review item 3: the child's stream loop (``sandbox._serve``) lets go of
+    each item once it is sent, so it never holds a sent page while the next
+    one renders. Run here with a stand-in pipe; the child runs the same loop."""
+    sent: list[tuple[str, object]] = []
+
+    class _Pipe:
+        def send_bytes(self, data: bytes) -> None:
+            sent.append(pickle.loads(data))  # noqa: S301 - our own pickles
+
+    sandbox._serve(
+        cast("Connection[Any, Any]", _Pipe()), "stream", "tests.sandbox_targets.tracked_items", (3,)
+    )
+    assert [kind for kind, _ in sent] == ["item", "item", "item", "ok"]
+    assert [cast("TrackedItem", value).previous_alive for _, value in sent[:3]] == [
+        False,
+        False,
+        False,
+    ]
 
 
 def test_the_child_yields_each_page_before_it_renders_the_next(tmp_path: Path) -> None:

@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 import pypdfium2 as pdfium
+import structlog
 
 from lemely.io.scan_limits import (
     EXTRACTION_DPI,
@@ -46,6 +47,7 @@ from lemely.io.scan_limits import (
     plan_pdf_pages,
 )
 from lemely.runtime import sandbox
+from lemely.runtime.errors import LemelyError
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -53,12 +55,16 @@ if TYPE_CHECKING:
 
     from PIL.Image import Image as PILImage
 
+log = structlog.get_logger(__name__)
+
 __all__ = [
     "EXTRACTION_DPI",
     "PDF_MAGIC",
+    "RENDER_FAILED_MESSAGE",
     "SCAN_PAGES_TARGET",
     "RasterisedPage",
     "ScanRejectedError",
+    "ScanRenderFailedError",
     "ScanTooLargeError",
     "iter_scan_pages",
     "looks_like_pdf",
@@ -66,6 +72,24 @@ __all__ = [
     "rasterise_scan_to_pages",
     "single_channel_or_rgb",
 ]
+
+
+#: What a user is told when the extraction worker could not render a scan.
+#: The same words the preview and crop routes answer (``SANDBOX_FAILED_DETAIL``).
+RENDER_FAILED_MESSAGE = "Could not render this scan"
+
+
+class ScanRenderFailedError(LemelyError):
+    """The extraction worker produced no pages; ``str()`` is :data:`RENDER_FAILED_MESSAGE`.
+
+    Both grading flows show an extraction error's ``str()`` to the user (the
+    student's SSE error frame, the teacher's failed row), so the worker's
+    own failure -- an exception's repr, a library message -- travels only
+    as ``__cause__`` and on the ``scan_render_failed`` log line.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(RENDER_FAILED_MESSAGE)
 
 
 @dataclass(frozen=True)
@@ -143,6 +167,10 @@ def _iter_canonical_pages(canonical: bytes, *, dpi: float) -> Iterator[Rasterise
             # keep this page's full-size RGB copy alive through the next render.
             del pil_image
             yield rasterised
+            # And the page itself once it is handed on: the child sends it
+            # and drops its own reference, so nothing holds it through the
+            # next render.
+            del rasterised
     finally:
         pdf.close()
 
@@ -370,11 +398,14 @@ def rasterise_scan_to_pages(
     #260: the decoding runs in :data:`~lemely.runtime.sandbox.EXTRACTION_WORKER`,
     a child bounded in memory and killed past
     ``sandbox_settings().extraction_timeout_seconds``. The child streams the
-    pages (:func:`iter_scan_pages`), so it holds one at a time; this process
-    collects them all. A scan refusal arrives as itself; any other failure is
-    a :class:`~lemely.runtime.sandbox.SandboxFailure`, which the grading
-    pipeline records as a failed run like any other exception. Raises
-    :class:`ValueError` when the scan produced no pages.
+    pages (:func:`iter_scan_pages`) and lets go of each once it is sent, so
+    besides the page it is rendering it holds at most the one being sent;
+    this process collects them all. A scan refusal arrives as itself. Any
+    other worker failure is logged (``scan_render_failed``, with its
+    ``reason`` and text) and raised as :class:`ScanRenderFailedError`, whose
+    message is the fixed :data:`RENDER_FAILED_MESSAGE`: both grading flows
+    show the error's text to the user. Raises :class:`ValueError` when the
+    scan produced no pages.
     """
     # `stream` is a generator function, so its result has `close()`.
     stream = cast(
@@ -389,8 +420,12 @@ def rasterise_scan_to_pages(
     )
     # Closed on every exit: an abandoned stream holds the worker until it is
     # garbage-collected.
-    with contextlib.closing(stream):
-        pages = list(stream)
+    try:
+        with contextlib.closing(stream):
+            pages = list(stream)
+    except sandbox.SandboxFailure as exc:
+        log.warning("scan_render_failed", reason=exc.reason, error=str(exc))
+        raise ScanRenderFailedError from exc
     if not pages:
         raise ValueError(f"{scan_path} produced no pages")
     return pages

@@ -283,6 +283,9 @@ def _serve(  # pragma: no cover - runs in the child
         if mode == "stream":
             for item in cast("Iterable[object]", result):
                 _send(conn, "item", item)
+                # Sent: let it go before the iterator makes the next one, so
+                # the child never holds a sent item through the next.
+                del item
             result = None
         _send(conn, "ok", result)
     except _PipeClosedError:

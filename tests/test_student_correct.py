@@ -70,6 +70,7 @@ from lemely.web.push import RecordingPushTransport
 from lemely.web.routers import student
 from lemely.web.routers.student import resolve_mark_scheme
 from lemely.web.upload_utils import check_upload_cap
+from tests.sandbox_fixtures import in_process_sandbox, sandboxed  # noqa: F401
 from tests.storage_fakes import FakeStorageBackend
 
 if TYPE_CHECKING:
@@ -719,6 +720,41 @@ def test_correct_complete_frame_includes_result_header_fields(
     assert complete_frame["rail_left"] == 50
     assert complete_frame["pct"] == 50
     assert complete_frame["rail_foot"].startswith("A boundary sat at")
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_a_worker_failure_in_extraction_never_reaches_the_students_error_frame(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#260 (Task 10 review item 2): when the extraction worker fails, the
+    student's error frame says the fixed "Could not render this scan", never
+    the child's exception text. The route sends ``str(exc)`` as it always has."""
+    from lemely.io import rasterise
+
+    api, _, _ = client
+    monkeypatch.setattr(
+        student,
+        "extract_answers",
+        lambda scan_path, *_a, **_k: rasterise.rasterise_scan_to_pages(scan_path),
+    )
+    monkeypatch.setattr(rasterise, "SCAN_PAGES_TARGET", "tests.sandbox_targets.boom")
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    assert up.status_code == 200, up.text
+
+    resp = api.post("/api/student/correct", json={"paperId": up.json()["paperId"]})
+
+    assert resp.status_code == 200
+    frames = [
+        json.loads(frame.removeprefix("data: "))
+        for frame in resp.text.split("\n\n")
+        if frame.startswith("data: {")
+    ]
+    assert [f["message"] for f in frames if f["type"] == "error"] == ["Could not render this scan"]
+    assert "DISTINCTIVE" not in resp.text
 
 
 def test_upload_sets_status_and_writes_file(

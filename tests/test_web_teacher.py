@@ -1574,6 +1574,35 @@ def test_failed_grade_is_terminal_and_carries_the_reason(
     assert "gemini exploded" in client.get(f"/api/papers/{paper_id}").json()["error"]
 
 
+@pytest.mark.usefixtures("sandboxed")
+def test_a_worker_failure_in_extraction_never_reaches_the_paper_row(
+    client: TestClient, paper_repo: TeacherPaperRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#260 (Task 10 review item 2): when the extraction worker fails, the
+    failed row says the fixed "Could not render this scan", never the
+    child's exception text. The route formats ``str(exc)`` as it always has."""
+    from lemely.io import rasterise
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(
+        grading_service,
+        "extract_answers",
+        lambda scan_path, *_a, **_k: rasterise.rasterise_scan_to_pages(scan_path),
+    )
+    monkeypatch.setattr(rasterise, "SCAN_PAGES_TARGET", "tests.sandbox_targets.boom")
+
+    paper_id = _upload(client)
+    row = _settle(paper_repo, paper_id)
+
+    assert teacher._row_kind(row) == "failed"
+    assert row.error == "Grading failed: Could not render this scan"
+    detail = client.get(f"/api/papers/{paper_id}")
+    assert detail.json()["error"] == row.error
+    assert "DISTINCTIVE" not in detail.text
+
+
 def test_paper_without_a_resolvable_scheme_does_not_sit_queued(
     client: TestClient, paper_repo: TeacherPaperRepository, monkeypatch: pytest.MonkeyPatch
 ) -> None:
