@@ -430,7 +430,9 @@ def fitted_region(image: PILImage, rect: tuple[int, int, int, int]) -> PILImage:
     Either way the region reaches RGB through ``single_channel_or_rgb``, so
     a 16-bit greyscale region is scaled to 8 bits, as extraction scales it,
     never clipped to white by a bare ``convert("RGB")`` (final review,
-    Important 2).
+    Important 2). The full scale is inferred from the whole ``image``, not
+    the region (#275): extraction infers it from the whole page, and a
+    region that is all ink is flat, which inferred alone maps to white.
     """
     from PIL import Image
 
@@ -446,7 +448,7 @@ def fitted_region(image: PILImage, rect: tuple[int, int, int, int]) -> PILImage:
         # bilevel page goes to "L" (same size), not to a full-size RGB (#256).
         image = single_channel_or_rgb(image)
         region = image.resize(fitted, Image.Resampling.LANCZOS, box=rect, reducing_gap=3.0)
-    region = single_channel_or_rgb(region)
+    region = single_channel_or_rgb(region, scale_of=image)
     return region if region.mode == "RGB" else region.convert("RGB")
 
 

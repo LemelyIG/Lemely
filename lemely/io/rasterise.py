@@ -327,10 +327,12 @@ def _full_scale(image: PILImage) -> float | None:
     return next((scale for scale in scales if scale >= hi), hi)
 
 
-def _wide_grey_to_l(image: PILImage) -> PILImage:
-    """``image`` (a :data:`_WIDE_GREY_MODES` mode) as "L", scaled from its :func:`_full_scale`.
+def _wide_grey_to_l(image: PILImage, full_scale: float | None) -> PILImage:
+    """``image`` (a :data:`_WIDE_GREY_MODES` mode) as "L", ``full_scale`` mapped to white.
 
-    A flat image is white. Otherwise in strips (:func:`_wide_strips`), so
+    ``full_scale`` is :func:`_full_scale` of ``image``, or of the whole
+    image ``image`` was cut from. ``None`` (a flat image) gives white.
+    Otherwise in strips (:func:`_wide_strips`), so
     the only full-size allocation is the "L" result: the peak is what
     Pillow's own clipping conversion costs, after one pass for the extrema
     (:func:`_extrema`). Each strip is scaled -- linearly, so Pillow's
@@ -341,7 +343,6 @@ def _wide_grey_to_l(image: PILImage) -> PILImage:
     """
     from PIL import Image
 
-    full_scale = _full_scale(image)
     if full_scale is None:
         return Image.new("L", image.size, 255)
     factor = 255 / full_scale
@@ -352,7 +353,7 @@ def _wide_grey_to_l(image: PILImage) -> PILImage:
     return result
 
 
-def single_channel_or_rgb(image: PILImage) -> PILImage:
+def single_channel_or_rgb(image: PILImage, *, scale_of: PILImage | None = None) -> PILImage:
     """``image`` in a mode Pillow can ``reduce`` and resample well: "L" or "RGB".
 
     #256: a bilevel ("1") or other single-channel scan is taken to "L" (the
@@ -363,11 +364,17 @@ def single_channel_or_rgb(image: PILImage) -> PILImage:
     16- or 32-bit single-channel image is scaled to 8 bits, not clipped
     (:func:`_wide_grey_to_l`). Extraction and the review crop route both
     convert through here, so the model and the teacher see the same tones.
+
+    ``scale_of``: for a region cut from a larger wide-grey image, that
+    whole image (in the same mode). The full scale is inferred from it
+    rather than from the region (#275), so a crop has extraction's tones: a
+    region that is all ink is flat, and inferred alone it would be white.
     """
     if image.mode in ("L", "RGB"):
         return image
     if image.mode in _WIDE_GREY_MODES:
-        return _wide_grey_to_l(image)
+        source = scale_of if scale_of is not None and scale_of.mode == image.mode else image
+        return _wide_grey_to_l(image, _full_scale(source))
     if image.mode in _ONE_CHANNEL_MODES:
         return image.convert("L")
     return image.convert("RGB")

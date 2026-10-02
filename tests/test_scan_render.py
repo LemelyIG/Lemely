@@ -8,6 +8,7 @@ import pickle
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pymupdf
@@ -27,7 +28,7 @@ from lemely.io.scan_render import (
     pdf_crop_plan,
     render_preview_png,
 )
-from tests.fakes_reader_agreement import dark_pixels, oriented_tiff
+from tests.fakes_reader_agreement import dark_pixels, oriented_tiff, wide_grey_scan
 from tests.pdf_fakes import empty_page_tree_pdf
 from tests.sandbox_fixtures import sandboxed  # noqa: F401
 
@@ -170,6 +171,29 @@ class CropImageScanTests(unittest.TestCase):
                 with Image.open(io.BytesIO(png)) as crop:
                     size = crop.size
                 self.assertGreater(dark_pixels(png, size), 100)
+
+    @pytest.mark.usefixtures("sandboxed")
+    def test_an_all_ink_crop_of_a_wide_grey_scan_keeps_extractions_tone(self) -> None:
+        """#275: wide grey is scaled by a full scale inferred from the
+        image's maximum. The crop must infer it from the whole image, as
+        extraction does, not from the region: a region that is all ink is
+        flat, and a flat image maps to white, so the teacher was shown blank
+        paper where the model read ink. 12-bit samples in a 16-bit
+        container: ink 200 is about 12 in "L", paper 4000 about 249."""
+        scan = wide_grey_scan("I;16", (400, 300), 4000, 200, (0, 0, 400, 200), image_format="PNG")
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "scan.png"
+            path.write_bytes(scan)
+            (page,) = rasterise_scan_to_pages(path)
+        with Image.open(io.BytesIO(page.png_bytes)) as decoded:
+            extracted_ink = decoded.convert("L").getpixel((200, 50))
+        self.assertLessEqual(abs(cast("int", extracted_ink) - round(200 * 255 / 4095)), 1)
+
+        # [ymin, xmin, ymax, xmax]: well inside the ink, padding included.
+        png = crop_image_scan(scan, [100, 300, 300, 700])
+
+        with Image.open(io.BytesIO(png)) as crop:
+            self.assertEqual(crop.convert("L").getextrema(), (extracted_ink, extracted_ink))
 
     def test_crop_image_scan_refuses_a_page_the_single_image_lacks(self) -> None:
         with self.assertRaises(RenderRefused) as caught:
