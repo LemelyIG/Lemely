@@ -3539,18 +3539,9 @@ def test_an_ico_wrapping_a_big_png_is_refused_at_the_crop_without_being_opened(
             200,
             None,
             id="13.32Mpx-under",
-            # Rendered in the interactive worker since #260: this crop peaks at
-            # ~216 MB (VmHWM growth, measured in the child), over the starting
-            # 192 MiB RLIMIT_DATA, so it is a 422 ("memory") until Task 11 sets
-            # the limit from the measured paths. Strict: remove it then.
-            marks=pytest.mark.xfail(
-                strict=True,
-                raises=AssertionError,
-                reason=(
-                    "#260: the WebP at its ceiling outgrows the starting interactive "
-                    "limit; Task 11 owns removing this marker"
-                ),
-            ),
+            # Rendered in the interactive worker since #260: this crop needs
+            # RLIMIT_DATA >= 280 MiB (Task 11's measurement), inside the
+            # interactive worker's limit (see lemely.runtime.sandbox).
         ),
         pytest.param((3700, 3700), 422, "review_crop_page_too_large", id="13.69Mpx-over"),
     ],
@@ -3596,14 +3587,6 @@ def test_a_webp_is_judged_against_the_webp_ceiling_at_the_crop(
         pytest.param((6300, 6300), id="39.7Mpx"),
     ],
 )
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "#260: a colour image under the 40 Mpx colour ceiling outgrows the starting "
-        "interactive limit (SandboxMemory); Task 11 owns removing this marker"
-    ),
-)
 def test_a_colour_scan_under_the_colour_ceiling_is_cropped_in_the_worker(
     size: tuple[int, int],
     client: TestClient,
@@ -3614,9 +3597,9 @@ def test_a_colour_scan_under_the_colour_ceiling_is_cropped_in_the_worker(
 ) -> None:
     """An admitted colour scan must crop in the interactive worker, as it did in
     process: an A4 page scanned at 600 dpi in colour is an ordinary upload.
-    Rendered in the worker since #260, it runs out of memory under the starting
-    interactive limit (``RLIMIT_DATA`` 192 MiB); Task 11 sets the limits from
-    the measured paths and removes this strict ``xfail``."""
+    Rendered in the worker since #260: it ran out of memory under the starting
+    interactive limit (``RLIMIT_DATA`` 192 MiB) and needs 248-272 MiB
+    (Task 11's measurement), inside the limit set from it."""
     from lemely.io.scan_limits import MAX_DECODE_PX
 
     width, height = size

@@ -2682,14 +2682,6 @@ def _streamed_rgb_png(width: int, height: int) -> bytes:
     return signature + chunk(b"IHDR", header) + chunk(b"IDAT", bytes(idat)) + chunk(b"IEND", b"")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "#260: a colour image under the 40 Mpx colour ceiling outgrows the starting "
-        "interactive limit (SandboxError, FzErrorSystem); Task 11 owns removing this marker"
-    ),
-)
 def test_preview_of_an_a4_600_dpi_colour_scan_renders_in_the_worker(
     client: TestClient,
     paper_repo: TeacherPaperRepository,
@@ -2700,9 +2692,9 @@ def test_preview_of_an_a4_600_dpi_colour_scan_renders_in_the_worker(
     """An admitted colour scan must preview in the interactive worker, as it did
     in process: an A4 page scanned at 600 dpi in colour (4960 x 7016, 34.8 Mpx,
     under the 40 Mpx colour ceiling) is an ordinary upload. Rendered in the
-    worker since #260, MuPDF's decode fails under the starting interactive
-    limit (``RLIMIT_DATA`` 192 MiB); Task 11 sets the limits from the measured
-    paths and removes this strict ``xfail``."""
+    worker since #260: MuPDF's decode failed under the starting interactive
+    limit (``RLIMIT_DATA`` 192 MiB) and needs 272 MiB (Task 11's
+    measurement), inside the limit set from it."""
     from lemely.io.scan_limits import MAX_DECODE_PX
 
     assert MAX_DECODE_PX >= 4960 * 7016

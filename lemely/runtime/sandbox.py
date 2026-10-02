@@ -10,11 +10,16 @@ lazily and reused, and runs a named function (a *target*) in it:
 * The child runs under ``RLIMIT_DATA`` (heap and private mappings: the bound
   that matters) and a looser ``RLIMIT_AS`` backstop (address space, which also
   counts shared libraries and reserved-but-untouched arenas). A Python
-  ``MemoryError`` in the child is reported and the child lives on; an
-  allocation failure inside a C library may instead arrive as that library's
-  own exception (pypdfium2 5.11 raises ``PdfiumError``, a ``RuntimeError``;
-  pymupdf has no memory error class), or as an abort that ends the child.
-  Callers therefore treat every :class:`SandboxFailure` alike.
+  ``MemoryError`` in the child is reported (:class:`SandboxMemory`) and the
+  child lives on. So is an allocation failure a C library reports as its own
+  exception, recognised by class and text (:func:`_is_allocation_failure`):
+  MuPDF's ``FzErrorSystem`` saying ``"malloc (N bytes) failed"`` (MuPDF has
+  no memory error class; ``FZ_ERROR_SYSTEM`` also carries I/O failures), and
+  pypdfium2's ``PdfiumError`` for a bitmap it could not get. pdfium's own
+  allocator aborts on failure, which ends the child (:class:`SandboxCrash`),
+  and a failure MuPDF reports some other way (inside the PDF rewrite it
+  surfaces as an ``uncheckable`` refusal) is not recognised. Callers
+  therefore treat every :class:`SandboxFailure` alike.
 * A call that outlives its timeout kills the child; the next call respawns it.
 * A :class:`~lemely.runtime.errors.LemelyError` raised by the target (a scan
   refusal) crosses the pipe intact, pickled with its ``args``, and is raised
@@ -58,11 +63,69 @@ For the routes that use it (Task 10):
 Measured in this venv (Linux, CPython 3.13, 2026-10-01): a cold start, from
 ``spawn`` to ``("ready", None)``, takes 0.16-0.18 s; a warm round trip to a
 trivial target about 0.02 ms. At ready the child is about 41 MB resident,
-``VmData`` 26 MB and ``VmSize`` 65 MB, so what it imports before its limits
-apply sits well inside even the interactive worker's 192 MiB ``RLIMIT_DATA``
-and 448 MiB ``RLIMIT_AS``. The limits themselves are the starting points of
-the 2 GiB memory budget (owner decision S1), to be replaced by the measured
-peak of each render path inside the child.
+``VmData`` 26 MB and ``VmSize`` 65 MB; with the render modules imported
+(``lemely.io.rasterise``, ``scan_render``, ``scan_limits``) it is 79 MiB
+resident, ``VmData`` 67 MiB and ``VmSize`` 150 MiB.
+
+The limits (Task 11, #260; measured 2026-10-02 on Linux 7.2 x86_64, CPython
+3.13.12, pymupdf 1.28.0 / MuPDF 1.29.0, pypdfium2 5.11.0 / pdfium 7920,
+Pillow 12.2.0). Every path ran through its real worker on the worst scan of
+each kind the upload check admits, in a fresh warm child under 4 GiB / 8 GiB
+limits. ``Peak`` is ``VmPeak`` and ``HWM`` ``VmHWM`` at the end of the call,
+``Data`` the largest ``VmData`` sampled from the parent every 5 ms, ``need``
+the smallest ``RLIMIT_DATA`` (8 MiB steps, a fresh child per try) the path
+completes under, all in MiB; ``s`` is wall seconds. The PDFs: 40 A4 pages
+each a 2480 x 3508 1-bit image (155 Mpx at 200 dpi); 3 A4 pages each a
+4960 x 7016 RGB image (A4 at 600 dpi), Flate or JPEG. The images, each at
+its cap: 1-bit 10000 x 15900, RGB JPEG 7300 x 5479, I;16 10000 x 8000, WebP
+3650 x 3650 (the WebP ceiling)::
+
+    extraction: extract | upload check
+                        Peak  HWM Data need     s    Peak  HWM Data need     s
+    PDF 40p 1-bit        208  141  124  112  4.48     152   84   69   72  0.03
+    PDF 3p RGB Flate     207  140  124  120  0.92     150   83   66   72  0.00
+    PDF 3p RGB JPEG      241  170  157  136  2.65     165   93   81   88  0.16
+    1-bit PNG 160Mpx     471  394  382  384  0.35     158   81   69   72  0.02
+    RGB JPEG 40Mpx       222  145  133  136  1.27     165   91   78   80  0.02
+    RGB PNG 4960x7016    324  248  235  240  0.30     158   81   69   72  0.02
+    RGB PNG 6300x6300    349  271  259  264  0.33     158   81   69   72  0.02
+    I;16 PNG 80Mpx       401  324  311  312  0.49     158   81   69   72  0.02
+    WebP 3650^2 (L)      362  285  272  280  0.27     260   81   68   72  0.02
+    WebP 3650^2 (RGBA)   364  287  274  280  2.17     265   87   74   72  0.02
+    interactive: preview | crop
+    PDF 40p 1-bit        159   90   75   80  0.05     160   92   76   80  0.06
+    PDF 3p RGB Flate     158   89   74   80  0.16     159   92   75   80  0.07
+    PDF 3p RGB JPEG      173  105   89   88  0.30     175  109   92   96  0.34
+    1-bit PNG 160Mpx     330  256  240  248  0.16     481  404  392  392  0.38
+    RGB JPEG 40Mpx       180  104   91   96  0.16     380  301  290  296  1.22
+    RGB PNG 4960x7016    360  285  270  272  0.31     334  257  245  248  0.25
+    RGB PNG 6300x6300    387  314  298  304  0.37     359  282  269  272  0.30
+    I;16 PNG 80Mpx       390  315  300  304  0.49     408  332  319  320  0.62
+    WebP 3650^2 (L)      (MuPDF cannot open a WebP)     362  285  272  280  0.16
+    WebP 3650^2 (RGBA)   (MuPDF cannot open a WebP)     366  289  276  280  0.59
+
+Every path of a worker run in turn in ONE child (as in production, where
+the allocator keeps some of what it freed) peaks higher: ``VmData`` 386 MiB
+and ``VmPeak`` 475 MiB for extraction, 402 MiB and 492 MiB for preview and
+crop.
+
+The rule: ``RLIMIT_DATA`` is the next 64 MiB at or above 1.5 x the largest
+``VmData`` of the worker's paths (fresh or in turn); ``RLIMIT_AS`` the next
+64 MiB at or above 1.25 x the largest ``VmPeak``, but at least 128 MiB above
+``RLIMIT_DATA``: ``VmSize`` runs ~84 MiB above ``VmData`` (libraries,
+stack), so an address limit equal to the data limit (the 1.25 x rule alone
+gives 640 MiB for both) would be the real bound. Hence 640 MiB / 768 MiB for
+both workers. Headroom over the worst path: extraction 640 / 386 = 1.66x
+data and 768 / 475 = 1.62x address; interactive 640 / 402 = 1.59x and
+768 / 492 = 1.56x, and at least 2x over every colour image under the colour
+ceiling (at most 304 MiB). Re-run under 640 / 768, every path above
+completed (``last_outcome == "ok"``), fresh and in turn. The 2 GiB budget
+(owner decision S1): web process 233 + pages in the parent 441 + 640 + 640 +
+parse worker 75 = 2029 MB, under 2048 (pinned by
+``tests/test_sandbox.py::test_the_default_limits_fit_the_two_gib_budget``).
+The extraction timeout is 4 x the slowest extraction (4.48 s, the 40-page
+PDF) rounded up to 30 s and floored at 120 s for a slower 1-vCPU Cloud Run
+instance: 120 s. The upload check's slowest run is 0.16 s, so it keeps 20 s.
 """
 
 from __future__ import annotations
@@ -74,6 +137,7 @@ import logging
 import multiprocessing
 import os
 import pickle
+import re
 import signal
 import threading
 import time
@@ -114,6 +178,21 @@ _EXTRA_TARGET_MODULES: frozenset[str] = frozenset()
 #: ``RLIMIT_DATA``, ``RLIMIT_AS`` and ``RLIMIT_CORE`` (0: a crashing decoder
 #: must not write a core file full of a user's scan).
 _LIMIT_NAMES = ("RLIMIT_DATA", "RLIMIT_AS", "RLIMIT_CORE")
+
+#: The text MuPDF's allocator throws with when ``malloc`` fails
+#: (``fz_malloc``, ``fz_calloc``, ``fz_realloc`` and their array forms, e.g.
+#: ``"malloc (119076300 bytes) failed"``). MuPDF has no memory error class:
+#: these arrive as ``FzErrorSystem`` (``FZ_ERROR_SYSTEM``), the class that
+#: also carries I/O failures, so the class alone does not say "memory".
+_MUPDF_ALLOCATION_FAILED = re.compile(
+    r"\b(?:malloc|calloc|realloc)(?: of array)? \([^)]*\) failed\b"
+)
+
+#: The ``PdfiumError`` pypdfium2 raises for a bitmap pdfium could not
+#: allocate. Unreachable with pypdfium2's default (native) bitmaps, whose
+#: buffer is a ctypes allocation that fails as a Python ``MemoryError``;
+#: kept so a switch to a pdfium-allocated bitmap is still read as memory.
+_PDFIUM_BITMAP_FAILED = "Failed to get bitmap buffer"
 
 #: The pipe protocol. Parent to child: ``("call" | "stream", target, args)``,
 #: or ``None`` to stop. Child to parent: ``(kind, value)``, see `_child_main`.
@@ -213,6 +292,26 @@ def _resolve(target: str) -> _Target:
     return cast("_Target", function)
 
 
+def _is_allocation_failure(exc: BaseException) -> bool:
+    """Whether ``exc`` is a C library's report that an allocation failed.
+
+    Matched by class name, so this module imports neither library: MuPDF's
+    ``FzErrorSystem`` carrying its allocator's text
+    (:data:`_MUPDF_ALLOCATION_FAILED`), or pypdfium2's ``PdfiumError`` for a
+    bitmap it could not get (:data:`_PDFIUM_BITMAP_FAILED`). Both class and
+    text must match: the same classes also report I/O and format failures.
+    """
+    classes = {(cls.__module__, cls.__qualname__) for cls in type(exc).__mro__}
+    try:
+        if ("pymupdf.mupdf", "FzErrorSystem") in classes:
+            return _MUPDF_ALLOCATION_FAILED.search(str(exc)) is not None
+        if ("pypdfium2._helpers.misc", "PdfiumError") in classes:
+            return str(exc).startswith(_PDFIUM_BITMAP_FAILED)
+    except Exception:  # an exception whose str() fails: not ours to read, an error
+        return False
+    return False
+
+
 def _apply_limits(  # pragma: no cover - runs in the child
     data_limit: int, address_limit: int
 ) -> tuple[int, ...] | None:
@@ -295,7 +394,10 @@ def _serve(  # pragma: no cover - runs in the child
     except LemelyError as exc:
         _send(conn, "rejected", exc)
     except Exception as exc:
-        _send(conn, "error", repr(exc))
+        if _is_allocation_failure(exc):
+            _send(conn, "memory", None)
+        else:
+            _send(conn, "error", repr(exc))
 
 
 def _child_main(  # pragma: no cover - runs in the child
@@ -314,7 +416,8 @@ def _child_main(  # pragma: no cover - runs in the child
     force, see :func:`_apply_limits`), then per request replies
     ``("ok", value)``; for a stream, ``("item", value)`` per element first
     and then ``("ok", None)``; ``("rejected", exc)`` for a ``LemelyError``
-    (the instance itself), ``("memory", None)`` for a ``MemoryError`` and
+    (the instance itself), ``("memory", None)`` for a ``MemoryError`` or a C
+    library's allocation failure (:func:`_is_allocation_failure`) and
     ``("error", repr(exc))`` for any other exception. ``None`` ends the loop,
     as does a closed pipe (the parent exited or was killed).
 

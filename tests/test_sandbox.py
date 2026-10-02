@@ -315,9 +315,10 @@ def test_a_render_out_of_memory_is_a_sandbox_failure_and_the_worker_recovers(
         )
     grown = _vm_hwm_bytes() - before
 
-    # Which subclass depends on where the allocation failed (pdfium's
-    # PdfiumError -> SandboxError, a Python MemoryError -> SandboxMemory, an
-    # abort -> SandboxCrash); the claim is recovery and a bounded parent.
+    # Which subclass depends on where the allocation failed (a Python
+    # MemoryError or a recognised MuPDF/pdfium allocation failure ->
+    # SandboxMemory, any other library error -> SandboxError, an abort ->
+    # SandboxCrash); the claim is recovery and a bounded parent.
     assert isinstance(failure.value, SandboxError | SandboxMemory | SandboxCrash)
     record_property("render_failure", f"{type(failure.value).__name__}: {failure.value}")
     assert worker.call(f"{_T}.pid", timeout=30, result_type=int) > 0
@@ -353,16 +354,20 @@ def test_the_settings_block_round_trips_through_env(monkeypatch: pytest.MonkeyPa
 
     assert settings.sandbox.enabled is False
     assert settings.sandbox.extraction_data_limit_bytes == 100 * MiB
-    assert settings.sandbox.interactive_data_limit_bytes == 192 * MiB
+    assert (
+        settings.sandbox.interactive_data_limit_bytes
+        == SandboxSettings().interactive_data_limit_bytes
+    )
 
 
 def test_a_data_limit_above_its_address_limit_is_refused() -> None:
+    defaults = SandboxSettings()
     with pytest.raises(ValidationError, match="extraction_data_limit_bytes"):
-        SandboxSettings(extraction_data_limit_bytes=700 * MiB)
+        SandboxSettings(extraction_data_limit_bytes=defaults.extraction_address_limit_bytes + MiB)
     with pytest.raises(ValidationError, match="interactive_data_limit_bytes"):
-        SandboxSettings(interactive_data_limit_bytes=500 * MiB)
-    equal = SandboxSettings(interactive_data_limit_bytes=448 * MiB)
-    assert equal.interactive_data_limit_bytes == 448 * MiB
+        SandboxSettings(interactive_data_limit_bytes=defaults.interactive_address_limit_bytes + MiB)
+    equal = SandboxSettings(interactive_data_limit_bytes=defaults.interactive_address_limit_bytes)
+    assert equal.interactive_data_limit_bytes == defaults.interactive_address_limit_bytes
 
 
 def test_a_disabled_sandbox_is_warned_about_when_the_settings_load(
@@ -554,3 +559,94 @@ def test_test_targets_run_only_where_the_fixtures_opt_in(
     monkeypatch.setattr(sandbox, "sandbox_settings", lambda: SandboxSettings(enabled=False))
     with pytest.raises(ValueError, match="sandbox_targets"):
         worker.call(f"{_T}.pid", timeout=10, result_type=int)
+
+
+def _white_rgb_png(width: int, height: int) -> bytes:
+    """A white 8-bit RGB PNG, built row by row: a few KB of file, ``3 * width * height`` decoded."""
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+
+    compressor = zlib.compressobj(6)
+    row = b"\x00" + b"\xff\xff\xff" * width
+    idat = b"".join(compressor.compress(row) for _ in range(height)) + compressor.flush()
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
+    )
+
+
+def test_an_allocation_failure_inside_mupdf_or_pdfium_is_recognised_by_class_and_text() -> None:
+    """MuPDF has no memory error class: ``fz_malloc``/``fz_calloc``/``fz_realloc``
+    throw ``FZ_ERROR_SYSTEM`` saying ``"malloc (N bytes) failed"``, and the
+    same class also carries I/O failures. pypdfium2 names a bitmap it could
+    not allocate. Only the class AND the allocator's text together count."""
+    from pymupdf import mupdf
+    from pypdfium2 import PdfiumError
+
+    for text in (
+        "malloc (119076300 bytes) failed",
+        "calloc (3 x 4 bytes) failed",
+        "realloc (5 bytes) failed",
+        "malloc of array (3 x 4 bytes) failed",
+    ):
+        assert sandbox._is_allocation_failure(mupdf.FzErrorSystem(text)), text
+    assert sandbox._is_allocation_failure(
+        PdfiumError("Failed to get bitmap buffer (null pointer returned)")
+    )
+
+    assert not sandbox._is_allocation_failure(mupdf.FzErrorSystem("cannot open file 'x'"))
+    assert not sandbox._is_allocation_failure(mupdf.FzErrorFormat("malloc (1 bytes) failed"))
+    assert not sandbox._is_allocation_failure(PdfiumError("Failed to load page."))
+    assert not sandbox._is_allocation_failure(RuntimeError("code=2: malloc (1 bytes) failed"))
+    assert not sandbox._is_allocation_failure(ValueError("Failed to get bitmap buffer"))
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="RLIMIT_DATA bounds malloc on Linux")
+def test_mupdf_running_out_of_memory_in_the_child_is_sandbox_memory(
+    make_worker: WorkerFactory,
+) -> None:
+    """The preview path that failed first (Task 8): MuPDF decoding a colour PNG
+    under a data limit too small for it. Its ``FzErrorSystem`` is an
+    allocation failure, so it is reported as memory, not as an error, and
+    the child lives on."""
+    from tests.sandbox_targets import ONE_PIXEL_PNG
+
+    worker = make_worker(1024 * MiB, 2048 * MiB)
+    preview = "lemely.io.scan_render.render_preview_png"
+    # A first preview imports everything the render uses, so the limit below
+    # is set over what a warm child already holds, on any machine.
+    worker.call(preview, ONE_PIXEL_PNG, timeout=60, result_type=bytes)
+    first_pid = worker.call(f"{_T}.pid", timeout=10, result_type=int)
+    in_use = worker.call(f"{_T}._vm_data_bytes", timeout=10, result_type=int)
+
+    with pytest.raises(SandboxFailure) as failure:
+        worker.call(
+            f"{_T}.lower_data_limit_then",
+            in_use + 24 * MiB,
+            preview,
+            _white_rgb_png(4000, 4000),  # 48 MB decoded: MuPDF's malloc fails
+            timeout=60,
+            result_type=bytes,
+        )
+
+    assert type(failure.value) is SandboxMemory, repr(failure.value)
+    assert worker.last_outcome == "memory"
+    assert worker.call(f"{_T}.pid", timeout=10, result_type=int) == first_pid
+
+
+def test_the_default_limits_fit_the_two_gib_budget() -> None:
+    """Owner decision S1: on a 2 GiB instance, the web process (~233 MB), the
+    pages a 40-page scan accumulates in it (~441 MB), both workers' data
+    limits and the equivalence parse worker (~75 MB) must fit together."""
+    settings = SandboxSettings()
+    total_mib = (
+        233
+        + 441
+        + settings.extraction_data_limit_bytes / MiB
+        + settings.interactive_data_limit_bytes / MiB
+        + 75
+    )
+    assert total_mib < 2048, total_mib

@@ -736,22 +736,25 @@ class SandboxSettings(BaseModel):
     private mappings) plus a looser ``RLIMIT_AS`` backstop (address space,
     which also counts shared libraries and reserved-but-untouched memory).
     The extraction worker serves extraction and the upload check; the
-    interactive worker serves preview and crop. The limits are the starting
-    points from the 2 GiB memory budget (owner decision S1), to be replaced by
-    measured values. The timeouts bound one call, including any wait for a
-    busy worker. ``enabled=False`` runs every target in the calling process,
-    for tests that patch a library in that process; it is not a deploy knob.
+    interactive worker serves preview and crop. The limits and the extraction
+    timeout are set from the worst admitted scans measured inside each child
+    (Task 11; the numbers, the rule and the headroom are in the
+    ``lemely.runtime.sandbox`` docstring), and the two data limits fit the
+    2 GiB memory budget (owner decision S1). The timeouts bound one call,
+    including any wait for a busy worker. ``enabled=False`` runs every target
+    in the calling process, for tests that patch a library in that process;
+    it is not a deploy knob.
     Set in the environment as ``LEMELY_SANDBOX__<FIELD>``.
     """
 
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
     start_timeout_seconds: float = Field(default=30.0, gt=0)
-    extraction_data_limit_bytes: int = Field(default=384 * 1024 * 1024, ge=64 * 1024 * 1024)
-    extraction_address_limit_bytes: int = Field(default=640 * 1024 * 1024, ge=128 * 1024 * 1024)
-    interactive_data_limit_bytes: int = Field(default=192 * 1024 * 1024, ge=64 * 1024 * 1024)
-    interactive_address_limit_bytes: int = Field(default=448 * 1024 * 1024, ge=128 * 1024 * 1024)
-    extraction_timeout_seconds: float = Field(default=180.0, gt=0)  # replaced by Task 11
+    extraction_data_limit_bytes: int = Field(default=640 * 1024 * 1024, ge=64 * 1024 * 1024)
+    extraction_address_limit_bytes: int = Field(default=768 * 1024 * 1024, ge=128 * 1024 * 1024)
+    interactive_data_limit_bytes: int = Field(default=640 * 1024 * 1024, ge=64 * 1024 * 1024)
+    interactive_address_limit_bytes: int = Field(default=768 * 1024 * 1024, ge=128 * 1024 * 1024)
+    extraction_timeout_seconds: float = Field(default=120.0, gt=0)
     upload_check_timeout_seconds: float = Field(default=20.0, gt=0)
     preview_timeout_seconds: float = Field(default=15.0, gt=0)
     crop_timeout_seconds: float = Field(default=10.0, gt=0)
