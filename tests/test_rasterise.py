@@ -1099,10 +1099,10 @@ def test_the_child_yields_each_page_before_it_renders_the_next(tmp_path: Path) -
 _AGREEMENT_SLACK = 200
 
 
-def _extraction_vs_mupdf(data: bytes, scratch: Path) -> tuple[int, int]:
+def _extraction_vs_mupdf(data: bytes, scratch: Path) -> tuple[int, int, int]:
     """Extraction's page 1 of ``data`` (in the worker) against MuPDF's render
     of the stored file at the same size: (differing grey bytes, dark pixels
-    in the extraction render)."""
+    in the extraction render, dark pixels in MuPDF's)."""
     path = scratch / "scan.pdf"
     path.write_bytes(data)
     page = rasterise_scan_to_pages(path)[0]
@@ -1113,7 +1113,12 @@ def _extraction_vs_mupdf(data: bytes, scratch: Path) -> tuple[int, int]:
     zoom = page.dpi / 72
     size = (page.width, page.height)
     assert mupdf_size(data, 0, zoom=zoom) == size
-    return differing_bytes(marker, mupdf_grey(data, 0, zoom=zoom)), dark_pixels(marker, size)
+    teacher = mupdf_grey(data, 0, zoom=zoom)
+    return (
+        differing_bytes(marker, teacher),
+        dark_pixels(marker, size),
+        dark_pixels(teacher, size),
+    )
 
 
 @pytest.mark.usefixtures("sandboxed")
@@ -1123,9 +1128,15 @@ def test_the_marker_sees_a_filled_text_field_as_the_teacher_does(tmp_path: Path)
     draws no field value until the document's forms are initialised, so the
     model was sent a blank box. The renders agree within the tolerance the
     ``text`` variant of ``hidden_layer_pdf`` sets (anti-aliasing of text both
-    readers draw), and the extraction render has the value's ink."""
-    text, _ = _extraction_vs_mupdf(hidden_layer_pdf(variant="text"), tmp_path)
-    field, dark = _extraction_vs_mupdf(filled_text_field_pdf("42"), tmp_path)
+    readers draw), and the extraction render has the value's ink.
+
+    That tolerance is loose for a two-digit value (the blank field was 1,415
+    bytes from MuPDF, inside it), so the dark-pixel counts are compared too:
+    the marker's ink is within a tenth of the teacher's (1,138 vs 1,200
+    measured; 0 vs 1,200 without the forms)."""
+    text, _, _ = _extraction_vs_mupdf(hidden_layer_pdf(variant="text"), tmp_path)
+    field, dark, teacher_dark = _extraction_vs_mupdf(filled_text_field_pdf("42"), tmp_path)
+    assert abs(dark - teacher_dark) <= teacher_dark // 10, (dark, teacher_dark)
     assert dark > 1_000
     assert field <= text + _AGREEMENT_SLACK, f"text variant: {text}"
 
