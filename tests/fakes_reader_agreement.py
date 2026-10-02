@@ -1,4 +1,4 @@
-"""Builders for the marker/teacher agreement tests; lane 3b appends TIFF builders.
+"""Builders for the marker/teacher agreement tests, and the scan images #275 turns on.
 
 The marker reads pdfium's render of the canonical rewrite
 (:func:`lemely.io.pdf_canonical.canonical_pdf_bytes`); the teacher's preview
@@ -6,16 +6,20 @@ is MuPDF's render of the stored file. These builders make small synthetic
 files on which the two could disagree -- optional content hidden by default
 (#274), a filled form field -- and the helpers render a page with either
 reader to one byte per pixel ("L"), so a test can count dark pixels or
-compare two renders byte for byte. Generated in-test; nothing is committed.
+compare two renders byte for byte. The image builders at the end (#275)
+make TIFFs whose stored frame is turned by an orientation tag. Generated
+in-test; nothing is committed.
 """
 
 from __future__ import annotations
 
 import io
+import struct
+from typing import Literal
 
 import pymupdf
 import pypdfium2 as pdfium
-from PIL import Image
+from PIL import Image, ImageOps
 
 from tests.pdf_fakes import assemble_pdf, flate_bomb_ops, pdf_stream
 
@@ -441,3 +445,66 @@ def shared_resources_pdf(pages: int, xobjects: int) -> bytes:
             * pages,
         ]
     )
+
+
+#: The paper and ink samples :func:`oriented_tiff` writes, per mode: white
+#: paper and black ink in "L" and "1"; for "I;16", the 16-bit values
+#: ``tests.pdf_fakes.sixteen_bit_grey_scan`` uses.
+_TIFF_PAPER_AND_INK = {"L": (255, 0), "1": (1, 0), "I;16": (60_000, 5_000)}
+
+#: The TIFF tag that says how the stored frame is turned (EXIF's, 274).
+_TIFF_ORIENTATION = 274
+
+#: The TIFF tag for rows per strip (278): the height makes one strip.
+_TIFF_ROWS_PER_STRIP = 278
+
+
+def oriented_tiff(
+    mode: Literal["L", "I;16", "1"],
+    size: tuple[int, int],
+    orientation: int,
+    *,
+    compression: Literal["raw", "tiff_lzw"],
+    mark: tuple[int, int, int, int],
+) -> bytes:
+    """A TIFF whose stored frame is ``size`` with a dark ``mark`` box, tagged ``orientation``.
+
+    ``mark`` is (left, top, right, bottom) in the STORED frame, in pixels.
+    The ``Orientation`` tag (274) says how to turn that frame upright, as a
+    scanner or phone writes it. ``raw`` is written as ONE strip (rows per
+    strip = the height): the layout whose single tile Pillow memory-maps
+    when it opens the file by name (#275). ``tiff_lzw`` goes through
+    libtiff. The "I;16" image is built from raw little-endian samples,
+    since Pillow's ``paste`` of an integer into an "I;16" image does not
+    store the value given.
+    """
+    paper, ink = _TIFF_PAPER_AND_INK[mode]
+    width, height = size
+    left, top, right, bottom = mark
+    if mode == "I;16":
+        paper_sample, ink_sample = struct.pack("<H", paper), struct.pack("<H", ink)
+        plain_row = paper_sample * width
+        ink_row = paper_sample * left + ink_sample * (right - left) + paper_sample * (width - right)
+        rows = (ink_row if top <= y < bottom else plain_row for y in range(height))
+        image = Image.frombytes("I;16", size, b"".join(rows))
+    else:
+        image = Image.new(mode, size, paper)
+        image.paste(ink, mark)
+    buf = io.BytesIO()
+    image.save(
+        buf,
+        format="TIFF",
+        compression=compression,
+        tiffinfo={_TIFF_ORIENTATION: orientation, _TIFF_ROWS_PER_STRIP: height},
+    )
+    return buf.getvalue()
+
+
+def expected_upright(stored: bytes) -> Image.Image:
+    """The upright frame of an image file: Pillow's ``exif_transpose`` of an in-memory open.
+
+    The reference the TIFF orientation tests compare against. Opened from a
+    ``BytesIO``, so Pillow never memory-maps it (#275).
+    """
+    with Image.open(io.BytesIO(stored)) as opened:
+        return ImageOps.exif_transpose(opened)

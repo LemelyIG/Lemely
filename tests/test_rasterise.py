@@ -40,9 +40,11 @@ from lemely.runtime import sandbox
 from tests.fakes_reader_agreement import (
     dark_pixels,
     differing_bytes,
+    expected_upright,
     filled_text_field_pdf,
     mupdf_grey,
     mupdf_size,
+    oriented_tiff,
 )
 from tests.fakes_worker_bombs import peak_rss_bytes, reset_peak_rss
 from tests.pdf_fakes import (
@@ -1123,6 +1125,48 @@ def test_the_marker_sees_a_filled_text_field_as_the_teacher_does(tmp_path: Path)
     field, dark = _extraction_vs_mupdf(filled_text_field_pdf("42"), tmp_path)
     assert dark > 1_000
     assert field <= text + _AGREEMENT_SLACK, f"text variant: {text}"
+
+
+#: The dark box :func:`oriented_tiff` draws, in the stored 600 x 300 frame.
+_TIFF_MARK = (20, 30, 120, 90)
+
+
+def _dark_box(image: Image.Image) -> tuple[int, int, int, int] | None:
+    """The bounding box of ``image``'s dark pixels (below 128 once in "L")."""
+    grey = rasterise_module.single_channel_or_rgb(image).convert("L")
+    return grey.point(lambda value: 255 if value < 128 else 0).getbbox()
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_an_uncompressed_oriented_tiff_is_turned_upright(tmp_path: Path) -> None:
+    """#275: an uncompressed single-strip TIFF opened by name took Pillow's
+    memory-mapped fast path, which maps the stored rows into the
+    orientation-swapped size: a 600 x 300 frame tagged 6 came back 600 x 300
+    with the mark scattered. Opened from a file object it is upright, the
+    mark where ``exif_transpose`` of an in-memory open puts it."""
+    for mode in ("L", "I;16"):
+        data = oriented_tiff(mode, (600, 300), 6, compression="raw", mark=_TIFF_MARK)
+        path = tmp_path / f"turned-{mode.replace(';', '')}.tif"
+        path.write_bytes(data)
+        upright = expected_upright(data)
+
+        (page,) = rasterise_scan_to_pages(path)
+
+        assert (page.width, page.height) == upright.size == (300, 600), mode
+        with Image.open(io.BytesIO(page.png_bytes)) as decoded:
+            assert _dark_box(decoded) == _dark_box(upright), mode
+
+
+def test_pillow_turns_a_tiff_upright_at_load_and_drops_the_tag() -> None:
+    """The contract the crop relies on (#275), pinned so a Pillow change
+    goes red: a TIFF opened through ``open_scan_image`` is upright once
+    loaded and no longer carries its orientation tag, uncompressed or LZW."""
+    for compression in ("raw", "tiff_lzw"):
+        data = oriented_tiff("L", (600, 300), 6, compression=compression, mark=_TIFF_MARK)
+        with scan_limits.open_scan_image(io.BytesIO(data)) as opened:
+            opened.load()
+            assert opened.size == (300, 600), compression
+            assert opened.getexif().get(0x0112) is None, compression
 
 
 if __name__ == "__main__":

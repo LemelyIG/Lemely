@@ -324,7 +324,12 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
 
     try:
         # #256 review: allowlisted formats only (no plugin decodes in the open).
-        with open_scan_image(image_path) as opened:
+        # #275: from a file object, never by name. Opened by name, Pillow
+        # memory-maps an uncompressed single-strip image, and for a TIFF whose
+        # orientation tag is 5-8 it maps the stored rows into the already
+        # swapped (upright) size: the page came back scrambled. A file object
+        # takes the ordinary decode, which turns a TIFF upright at load.
+        with image_path.open("rb") as handle, open_scan_image(handle) as opened:
             # The format too: a WebP has its own, lower cap (#256 review round 2).
             image_format = opened.format
             factor = plan_image(opened.width, opened.height, opened.mode, image_format)

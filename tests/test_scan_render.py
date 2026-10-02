@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import io
+import itertools
 import pickle
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import pymupdf
+import pytest
 from PIL import Image, ImageDraw, ImageOps
 
+from lemely.io.rasterise import rasterise_scan_to_pages
 from lemely.io.reread import padded_crop_rect
 from lemely.io.scan_render import (
     CROP_RENDER_DPI,
@@ -22,7 +27,9 @@ from lemely.io.scan_render import (
     pdf_crop_plan,
     render_preview_png,
 )
+from tests.fakes_reader_agreement import dark_pixels, oriented_tiff
 from tests.pdf_fakes import empty_page_tree_pdf
+from tests.sandbox_fixtures import sandboxed  # noqa: F401
 
 _REASONS = ("no_pages", "page_out_of_range", "page_too_large", "box_unusable")
 _BOX = [100, 100, 300, 400]  # [ymin, xmin, ymax, xmax]
@@ -129,6 +136,40 @@ class CropImageScanTests(unittest.TestCase):
 
         self.assertEqual(got.size, want.size)
         self.assertEqual(got.tobytes(), want.tobytes())
+
+    @pytest.mark.usefixtures("sandboxed")
+    def test_crop_agrees_with_extraction_for_an_oriented_tiff(self) -> None:
+        """#275: Pillow turns a TIFF upright when it loads it and drops the
+        orientation tag, and its header already reports the upright size.
+        The crop read the tag before the load and turned the region again,
+        so a box extraction drew around the mark cropped blank paper.
+        Extraction boxes the mark on its upright page (0-1000, as the model
+        does); the crop of that box contains it."""
+        for compression, orientation in itertools.product(("raw", "tiff_lzw"), (6, 8)):
+            with self.subTest(compression=compression, orientation=orientation):
+                scan = oriented_tiff(
+                    "L", (600, 300), orientation, compression=compression, mark=(20, 30, 120, 90)
+                )
+                with tempfile.TemporaryDirectory() as scratch:
+                    path = Path(scratch) / "scan.tif"
+                    path.write_bytes(scan)
+                    (page,) = rasterise_scan_to_pages(path)
+                with Image.open(io.BytesIO(page.png_bytes)) as decoded:
+                    dark = decoded.convert("L").point(lambda v: 255 if v < 128 else 0).getbbox()
+                assert dark is not None
+                left, top, right, bottom = dark
+                box = [
+                    top * 1000 // page.height,
+                    left * 1000 // page.width,
+                    -(-bottom * 1000 // page.height),
+                    -(-right * 1000 // page.width),
+                ]
+
+                png = crop_image_scan(scan, box)
+
+                with Image.open(io.BytesIO(png)) as crop:
+                    size = crop.size
+                self.assertGreater(dark_pixels(png, size), 100)
 
     def test_crop_image_scan_refuses_a_page_the_single_image_lacks(self) -> None:
         with self.assertRaises(RenderRefused) as caught:

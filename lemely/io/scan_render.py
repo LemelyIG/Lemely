@@ -455,14 +455,17 @@ def crop_image_scan(data: bytes, box: list[int], *, page: int = 0) -> bytes:
 
     Extraction decodes an image upload with PIL and applies its EXIF
     orientation (``rasterise._rasterise_single_image``, #255), so ``box`` is
-    in the UPRIGHT frame. The padded rectangle is computed in that frame,
-    mapped back into the stored frame (:func:`stored_frame_rect`), cut from
-    the decode there, and only that small crop is turned upright. Turning
-    the whole decode first would make Pillow allocate a second full-size
-    image (``in_place`` does not avoid it), doubling the peak for a phone
-    photo. A single image has one page, as it does for extraction: ``page``
-    is the page the stored box names, refused (``page_out_of_range``) unless
-    it is 0.
+    in the UPRIGHT frame. The orientation is the one the loaded image still
+    carries (#275): Pillow turns a TIFF upright as it loads it and drops the
+    tag, so a TIFF needs no turn here, while a JPEG or PNG keeps its stored
+    frame and its tag. The padded rectangle is computed in the upright
+    frame, mapped back into the stored frame (:func:`stored_frame_rect`),
+    cut from the decode there, and only that small crop is turned upright.
+    Turning the whole decode first would make Pillow allocate a second
+    full-size image (``in_place`` does not avoid it), doubling the peak for
+    a phone photo. A single image has one page, as it does for extraction:
+    ``page`` is the page the stored box names, refused
+    (``page_out_of_range``) unless it is 0.
 
     Raises :class:`~lemely.io.scan_limits.ScanRejectedError` for a format
     outside the allowlist (named from its first bytes and never opened, #256
@@ -473,6 +476,13 @@ def crop_image_scan(data: bytes, box: list[int], *, page: int = 0) -> bytes:
     with opened:
         require_page_in_range(page, 1)
         decode_within_ceiling(opened)
+        # #275: the orientation is read AFTER the load. Pillow turns a TIFF
+        # upright as it loads it and drops the tag (its header already
+        # reports the upright size), so a tag read before the load turned
+        # an upright frame a second time. A JPEG or PNG keeps its tag
+        # through the load and its stored frame. The ceiling above reads
+        # only the header, so it still runs first.
+        opened.load()
         orientation = opened.getexif().get(EXIF_ORIENTATION_TAG)
         transpose = upright_transpose(orientation)
         stored_size = opened.size
