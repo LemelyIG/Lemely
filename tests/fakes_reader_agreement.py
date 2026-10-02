@@ -500,6 +500,46 @@ def oriented_tiff(
     return buf.getvalue()
 
 
+#: Each mode's raw sample layout, as ``Image.frombytes`` reads it by default:
+#: "I;16" is little-endian, "I" and "F" are native.
+_WIDE_SAMPLE_FORMATS = {"I;16": "<H", "I": "=i", "F": "=f"}
+
+
+def wide_grey_scan(
+    mode: Literal["I;16", "I", "F"],
+    size: tuple[int, int],
+    paper: float,
+    ink: float,
+    box: tuple[int, int, int, int],
+    *,
+    image_format: Literal["PNG", "TIFF"],
+) -> bytes:
+    """A single-channel scan wider than a byte: ``paper`` samples with an ``ink`` box.
+
+    Generalises ``tests.pdf_fakes.sixteen_bit_grey_scan`` to any sample
+    values and to the 32-bit modes, so a test can put 8- or 12-bit samples
+    in a 16-bit container (#275). ``box`` is (left, top, right, bottom) in
+    pixels. Built from raw samples, since Pillow's ``paste``
+    of a number into an "I;16" image does not store the value given. "F"
+    is written only as TIFF: PNG has no floating-point samples.
+    """
+    if mode == "F" and image_format != "TIFF":
+        raise ValueError("PNG has no floating-point samples; write 'F' as TIFF")
+    sample = _WIDE_SAMPLE_FORMATS[mode]
+    value = float if mode == "F" else int
+    paper_sample = struct.pack(sample, value(paper))
+    ink_sample = struct.pack(sample, value(ink))
+    width, height = size
+    left, top, right, bottom = box
+    plain_row = paper_sample * width
+    ink_row = paper_sample * left + ink_sample * (right - left) + paper_sample * (width - right)
+    rows = (ink_row if top <= y < bottom else plain_row for y in range(height))
+    image = Image.frombytes(mode, size, b"".join(rows))
+    buf = io.BytesIO()
+    image.save(buf, format=image_format)
+    return buf.getvalue()
+
+
 def expected_upright(stored: bytes) -> Image.Image:
     """The upright frame of an image file: Pillow's ``exif_transpose`` of an in-memory open.
 

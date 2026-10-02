@@ -248,37 +248,106 @@ _ONE_CHANNEL_MODES = GREY_CEILING_MODES | {"I", "F"}
 #: conversion to "L" CLIPS these to 0-255 rather than scaling them (final
 #: review, Important 2: ink at 5000 on paper at 60000 became an all-white
 #: page), so :func:`_wide_grey_to_l` scales them instead. Pillow opens a
-#: 16-bit PNG or TIFF as "I;16"; a 32-bit TIFF opens as "I" or "F", whose
-#: range the mode does not say -- they are read as 16-bit samples too, the
-#: range Pillow itself uses "I" for, and anything past 65535 is white.
+#: 16-bit PNG or TIFF as "I;16"; a 32-bit TIFF opens as "I" or "F". None of
+#: these modes says how many bits the samples really use, so the full scale
+#: is inferred from the image's maximum (:func:`_full_scale`, #275).
 _WIDE_GREY_MODES = frozenset({"I;16", "I;16L", "I;16B", "I;16N", "I", "F"})
 
-#: 65535 -> 255: the 16-bit range onto the 8-bit one.
-_SIXTEEN_TO_EIGHT_BITS = 255 / 65535
+#: The sample depths a 16-bit container is taken to hold (#275): a scanner
+#: writing 8-, 10-, 12- or 14-bit samples into 16 bits leaves the top bits
+#: unused, and scaled from 65535 its white paper came out near black.
+_SIXTEEN_BIT_CONTAINER_SCALES = tuple(2**bits - 1 for bits in (8, 10, 12, 14, 16))
+
+#: The same for a 32-bit "I" image, or an "F" image holding integers.
+_THIRTY_TWO_BIT_CONTAINER_SCALES = _SIXTEEN_BIT_CONTAINER_SCALES + tuple(
+    2**bits - 1 for bits in (20, 24, 32)
+)
 
 #: Pixels converted per strip by :func:`_wide_grey_to_l`: its working copies
 #: ("I" is four bytes a pixel) stay at a few MB whatever the page's size.
 _WIDE_STRIP_PX = 1 << 20
 
 
-def _wide_grey_to_l(image: PILImage) -> PILImage:
-    """``image`` (a :data:`_WIDE_GREY_MODES` mode) as "L", scaled from 0-65535.
+#: The wide modes Pillow's ``getextrema`` reads directly; it refuses the
+#: byte-ordered "I;16" variants (a big-endian 16-bit TIFF opens as "I;16B").
+_EXTREMA_MODES = frozenset({"I;16", "I", "F"})
 
-    In strips, so the only full-size allocation is the "L" result: the peak
-    is what Pillow's own clipping conversion costs. Each strip goes to "I"
-    (the one wide mode besides "F" that ``point`` scales), is scaled, and
-    only then converted to "L", which clips nothing left in range.
+
+def _wide_strips(image: PILImage) -> Iterator[tuple[int, PILImage]]:
+    """``image`` in horizontal strips of about :data:`_WIDE_STRIP_PX` pixels.
+
+    Each is ``(top, strip)``, the strip in "I" or "F" -- the wide modes
+    ``point`` scales and ``getextrema`` reads -- so the working copies stay
+    at a few MB whatever the page's size.
     """
-    from PIL import Image
-
     width, height = image.size
-    result = Image.new("L", image.size)
     rows = max(1, _WIDE_STRIP_PX // max(1, width))
     for top in range(0, height, rows):
         strip = image.crop((0, top, width, min(height, top + rows)))
-        if strip.mode not in ("I", "F"):
-            strip = strip.convert("I")
-        scaled = strip.point(lambda value: value * _SIXTEEN_TO_EIGHT_BITS)
+        yield top, strip if strip.mode in ("I", "F") else strip.convert("I")
+
+
+def _extrema(image: PILImage) -> tuple[float, float]:
+    """``image``'s smallest and largest sample.
+
+    One C-level pass, with no copy, for the modes Pillow reads directly
+    (:data:`_EXTREMA_MODES`); strip by strip for the others.
+    """
+    if image.mode in _EXTREMA_MODES:
+        return cast("tuple[float, float]", image.getextrema())
+    lows, highs = zip(
+        *(cast("tuple[float, float]", strip.getextrema()) for _, strip in _wide_strips(image)),
+        strict=True,
+    )
+    return min(lows), max(highs)
+
+
+def _full_scale(image: PILImage) -> float | None:
+    """The sample value that maps to white for ``image`` (a :data:`_WIDE_GREY_MODES` mode).
+
+    #275: inferred from the image's maximum, ``hi``: the smallest usual
+    container depth (``2**bits - 1``) that holds it -- 8 to 16 bits for an
+    "I;16*" image, 8 to 32 bits for "I", and for "F" whose samples pass
+    1.0 (integers stored as floats). An "F" image whose maximum is at most
+    1.0 is normalised, so its full scale is 1.0. ``None`` for a flat image
+    (``lo == hi``), which says nothing about its depth: blank paper. A
+    maximum past every listed depth (an "F" image only) is its own full
+    scale.
+    """
+    lo, hi = _extrema(image)
+    if lo == hi:
+        return None
+    if image.mode == "F" and hi <= 1.0:
+        return 1.0
+    scales = (
+        _SIXTEEN_BIT_CONTAINER_SCALES
+        if image.mode.startswith("I;16")
+        else _THIRTY_TWO_BIT_CONTAINER_SCALES
+    )
+    return next((scale for scale in scales if scale >= hi), hi)
+
+
+def _wide_grey_to_l(image: PILImage) -> PILImage:
+    """``image`` (a :data:`_WIDE_GREY_MODES` mode) as "L", scaled from its :func:`_full_scale`.
+
+    A flat image is white. Otherwise in strips (:func:`_wide_strips`), so
+    the only full-size allocation is the "L" result: the peak is what
+    Pillow's own clipping conversion costs, after one pass for the extrema
+    (:func:`_extrema`). Each strip is scaled -- linearly, so Pillow's
+    scale-and-offset path applies -- and only then converted to "L", which
+    clips nothing left in range: no sample passes the full scale. The half
+    added rounds, since both conversions to "L" truncate (0.05 of a
+    normalised float is 12.75, so 13).
+    """
+    from PIL import Image
+
+    full_scale = _full_scale(image)
+    if full_scale is None:
+        return Image.new("L", image.size, 255)
+    factor = 255 / full_scale
+    result = Image.new("L", image.size)
+    for top, strip in _wide_strips(image):
+        scaled = strip.point(lambda value: value * factor + 0.5)
         result.paste(scaled.convert("L"), (0, top))
     return result
 

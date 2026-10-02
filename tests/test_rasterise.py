@@ -11,7 +11,7 @@ import tempfile
 import unittest
 import weakref
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import patch
 
 import pypdfium2 as pdfium
@@ -45,6 +45,7 @@ from tests.fakes_reader_agreement import (
     mupdf_grey,
     mupdf_size,
     oriented_tiff,
+    wide_grey_scan,
 )
 from tests.fakes_worker_bombs import peak_rss_bytes, reset_peak_rss
 from tests.pdf_fakes import (
@@ -568,8 +569,10 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
     def test_wide_single_channel_modes_are_scaled_from_the_sixteen_bit_range(self) -> None:
         """Final review, Important 2: every mode wider than a byte -- "I;16" in
         either byte order, and the 32-bit "I" and "F" -- is taken to "L" by
-        scaling its samples from 0-65535 to 0-255, never by clipping. Pinned
-        for all four, from the same two sample values."""
+        scaling its samples to 0-255, never by clipping. Samples reaching
+        60000 fill a 16-bit container, so all four scale from 0-65535 (#275
+        infers the container from the maximum). Pinned for all four, from
+        the same two sample values."""
         import struct
 
         samples = (SIXTEEN_BIT_INK, SIXTEEN_BIT_PAPER)
@@ -1167,6 +1170,110 @@ def test_pillow_turns_a_tiff_upright_at_load_and_drops_the_tag() -> None:
             opened.load()
             assert opened.size == (300, 600), compression
             assert opened.getexif().get(0x0112) is None, compression
+
+
+#: Where :func:`_extracted_ink_and_paper` draws and reads: a 400 x 300 scan
+#: with an ink box, one pixel inside the box and one on the paper.
+_WIDE_BOX = (50, 60, 250, 120)
+_WIDE_INK_AT = (150, 90)
+_WIDE_PAPER_AT = (350, 250)
+
+
+def _extracted_ink_and_paper(
+    scratch: Path,
+    mode: Literal["I;16", "I", "F"],
+    paper: float,
+    ink: float,
+    image_format: Literal["PNG", "TIFF"],
+) -> tuple[int, int]:
+    """The "L" tones extraction (in the worker) gives ``ink`` and ``paper``."""
+    path = scratch / f"wide-{mode.replace(';', '')}-{paper}-{ink}.{image_format.lower()}"
+    path.write_bytes(
+        wide_grey_scan(mode, (400, 300), paper, ink, _WIDE_BOX, image_format=image_format)
+    )
+    (page,) = rasterise_scan_to_pages(path)
+    with Image.open(io.BytesIO(page.png_bytes)) as decoded:
+        grey = decoded.convert("L")
+        return cast("int", grey.getpixel(_WIDE_INK_AT)), cast("int", grey.getpixel(_WIDE_PAPER_AT))
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_twelve_bit_samples_in_a_sixteen_bit_container_keep_their_contrast(
+    tmp_path: Path,
+) -> None:
+    """#275: a 12-bit scanner writes its samples into a 16-bit container, so
+    paper at 4000 is near white. Scaled as if the samples filled 16 bits it
+    came out near black (paper 15, ink 0); scaled by the inferred 12-bit
+    container (4095) it keeps its contrast."""
+    for image_format in ("PNG", "TIFF"):
+        ink, paper = _extracted_ink_and_paper(tmp_path, "I;16", 4000, 200, image_format)
+        assert abs(paper - round(4000 * 255 / 4095)) <= 1, (image_format, paper)  # 249
+        assert abs(ink - round(200 * 255 / 4095)) <= 1, (image_format, ink)  # 12
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_eight_bit_samples_in_a_sixteen_bit_container_are_scaled_by_255(tmp_path: Path) -> None:
+    """#275: 8-bit samples in a 16-bit container are their own 8-bit values."""
+    assert _extracted_ink_and_paper(tmp_path, "I;16", 250, 20, "PNG") == (20, 250)
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_a_flat_wide_grey_image_maps_to_white(tmp_path: Path) -> None:
+    """#275: an image with one sample value says nothing about its
+    container; it is blank paper, so every pixel is white."""
+    path = tmp_path / "flat.png"
+    path.write_bytes(wide_grey_scan("I;16", (400, 300), 4000, 4000, _WIDE_BOX, image_format="PNG"))
+    (page,) = rasterise_scan_to_pages(path)
+    with Image.open(io.BytesIO(page.png_bytes)) as decoded:
+        assert decoded.convert("L").getextrema() == (255, 255)
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_a_genuine_sixteen_bit_scan_is_unchanged(tmp_path: Path) -> None:
+    """Samples that reach past 14 bits fill the 16-bit container, so a real
+    16-bit scan keeps the tones it had before the container was inferred."""
+    for image_format in ("PNG", "TIFF"):
+        assert _extracted_ink_and_paper(
+            tmp_path, "I;16", SIXTEEN_BIT_PAPER, SIXTEEN_BIT_INK, image_format
+        ) == (SIXTEEN_BIT_INK * 255 // 65535, SIXTEEN_BIT_PAPER * 255 // 65535), image_format
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_a_normalised_float_tiff_is_scaled_by_255(tmp_path: Path) -> None:
+    """#275: a floating-point TIFF whose samples are at most 1.0 is
+    normalised: 0.95 paper is 242 and 0.05 ink is 13 (rounded), not the
+    black page a 16-bit scale made of it."""
+    assert _extracted_ink_and_paper(tmp_path, "F", 0.95, 0.05, "TIFF") == (13, 242)
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_a_float_tiff_above_one_is_treated_like_i(tmp_path: Path) -> None:
+    """Float samples past 1.0 are integers stored as floats: the container
+    is inferred as for "I", so 60000 and 5000 come out as the 16-bit scan's."""
+    assert _extracted_ink_and_paper(
+        tmp_path, "F", float(SIXTEEN_BIT_PAPER), float(SIXTEEN_BIT_INK), "TIFF"
+    ) == (SIXTEEN_BIT_INK * 255 // 65535, SIXTEEN_BIT_PAPER * 255 // 65535)
+
+
+def test_the_container_is_the_smallest_that_holds_the_maximum() -> None:
+    """#275, the inference itself: the maximum picks the smallest of the
+    usual sample depths that holds it, per mode family. A 20-bit "I" scan
+    scales by 2**20 - 1; a 10-bit big-endian "I;16B" by 2**10 - 1."""
+    import struct
+
+    # "I;16B" too, which Pillow's ``getextrema`` does not read: a big-endian
+    # 16-bit TIFF opens in it.
+    cases = {
+        "I": ("=2i", (1_000, 1_000_000), 2**20 - 1),
+        "I;16B": (">2H", (100, 1_000), 2**10 - 1),
+    }
+    for mode, (layout, (low, high), container) in cases.items():
+        image = Image.frombytes(mode, (2, 1), struct.pack(layout, low, high))
+        converted = rasterise_module.single_channel_or_rgb(image)
+        assert [converted.getpixel((x, 0)) for x in range(2)] == [
+            round(low * 255 / container),
+            round(high * 255 / container),
+        ], mode
 
 
 if __name__ == "__main__":
