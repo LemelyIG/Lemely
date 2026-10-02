@@ -133,6 +133,13 @@ def _iter_canonical_pages(canonical: bytes, *, dpi: float) -> Iterator[Rasterise
     # `canonical_pdf_bytes` is the only sanctioned source of pdfium input.
     pdf = pdfium.PdfDocument(canonical)
     try:
+        # #274: pdfium draws no form field's value until the document's forms
+        # are initialised, so a student's typed answer -- ink the teacher's
+        # MuPDF preview shows -- reached the model as a blank box. This parses
+        # the rewrite's /AcroForm, which MuPDF copies unwalked; it is bounded
+        # by the object-stream bound and the upload cap, and runs in the
+        # extraction worker (#260) with the rest of the render.
+        pdf.init_forms()
         # Planning reads the page count and page sizes only (no page is
         # loaded), so the page cap applies before the content walk below
         # visits every page (final review M1).
@@ -155,7 +162,9 @@ def _iter_canonical_pages(canonical: bytes, *, dpi: float) -> Iterator[Rasterise
             page = pdf[plan.index]
             try:
                 # pypdfium2's scale is in units of 72dpi-points.
-                bitmap = page.render(scale=plan.dpi / 72.0)
+                # `may_draw_forms` is pypdfium2's default (5.11); spelled out
+                # so the form values above survive a change of default.
+                bitmap = page.render(scale=plan.dpi / 72.0, may_draw_forms=True)
                 try:
                     pil_image = bitmap.to_pil().convert("RGB")
                 finally:

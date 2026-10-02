@@ -37,6 +37,13 @@ from lemely.io.scan_limits import (
     decode_pixel_cap,
 )
 from lemely.runtime import sandbox
+from tests.fakes_reader_agreement import (
+    dark_pixels,
+    differing_bytes,
+    filled_text_field_pdf,
+    mupdf_grey,
+    mupdf_size,
+)
 from tests.fakes_worker_bombs import peak_rss_bytes, reset_peak_rss
 from tests.pdf_fakes import (
     SIXTEEN_BIT_INK,
@@ -45,6 +52,7 @@ from tests.pdf_fakes import (
     assemble_pdf,
     bilevel_png,
     declared_image,
+    hidden_layer_pdf,
     ico_wrapping,
     image_bomb_pdf,
     off_page_object_pdf,
@@ -1078,6 +1086,43 @@ def test_the_child_yields_each_page_before_it_renders_the_next(tmp_path: Path) -
         pages.close()
         assert len(closed) == open_documents + 1
     assert len(rendered) == 1
+
+
+#: How far the marker's render may differ from the teacher's beyond the
+#: ``text`` variant of ``hidden_layer_pdf`` (Task 14's rule): the two readers
+#: round edges to different pixel rows.
+_AGREEMENT_SLACK = 200
+
+
+def _extraction_vs_mupdf(data: bytes, scratch: Path) -> tuple[int, int]:
+    """Extraction's page 1 of ``data`` (in the worker) against MuPDF's render
+    of the stored file at the same size: (differing grey bytes, dark pixels
+    in the extraction render)."""
+    path = scratch / "scan.pdf"
+    path.write_bytes(data)
+    page = rasterise_scan_to_pages(path)[0]
+    with Image.open(io.BytesIO(page.png_bytes)) as image:
+        marker = image.convert("L").tobytes()
+    # pdfium's own scale (Task 14): width / 595 would make MuPDF round the
+    # A4 height to one row more than pdfium.
+    zoom = page.dpi / 72
+    size = (page.width, page.height)
+    assert mupdf_size(data, 0, zoom=zoom) == size
+    return differing_bytes(marker, mupdf_grey(data, 0, zoom=zoom)), dark_pixels(marker, size)
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_the_marker_sees_a_filled_text_field_as_the_teacher_does(tmp_path: Path) -> None:
+    """#274: a student's typed answer in a form field is ink the teacher's
+    preview (MuPDF) draws, so the extraction render must draw it too. pdfium
+    draws no field value until the document's forms are initialised, so the
+    model was sent a blank box. The renders agree within the tolerance the
+    ``text`` variant of ``hidden_layer_pdf`` sets (anti-aliasing of text both
+    readers draw), and the extraction render has the value's ink."""
+    text, _ = _extraction_vs_mupdf(hidden_layer_pdf(variant="text"), tmp_path)
+    field, dark = _extraction_vs_mupdf(filled_text_field_pdf("42"), tmp_path)
+    assert dark > 1_000
+    assert field <= text + _AGREEMENT_SLACK, f"text variant: {text}"
 
 
 if __name__ == "__main__":
