@@ -11,6 +11,7 @@ helpers on ``pdf_content_walk``, whose globals the code reads.
 
 from __future__ import annotations
 
+import io
 import time
 import tracemalloc
 import unittest
@@ -19,6 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pymupdf
 import pypdfium2 as pdfium
+from PIL import Image
 
 import lemely.io.pdf_canonical as pdf_canonical
 import lemely.io.pdf_content_walk as pdf_content_walk
@@ -1333,16 +1335,20 @@ class ContainerKeyTests(unittest.TestCase):
         self.assertIsNone(check_scan_bytes(data))
 
 
-def _declared_image_pdf(entries: bytes, *extra: bytes, width: int, height: int) -> bytes:
+def _declared_image_pdf(
+    entries: bytes, *extra: bytes, width: int, height: int, data: bytes = b"\x00"
+) -> bytes:
     """One page drawing image object 5, whose dictionary DECLARES ``width x height``.
 
     ``entries`` are the image's own keys after its size (colour space, depth,
     filter, masks); ``extra`` are objects 6 onwards for it to reference.
-    The stream is one byte: the walk judges the dictionary and never decodes.
+    The stream is ``data``, one byte unless a test needs a JPEG header: the
+    walk judges the dictionary (and a DCT image's frame header) and never
+    decodes.
     """
     image = pdf_stream(
         f"/Type /XObject /Subtype /Image /Width {width} /Height {height} ".encode() + entries,
-        b"\x00",
+        data,
     )
     return assemble_pdf(
         [
@@ -1364,6 +1370,30 @@ _RGB = b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode"
 #: are never read by the walk.
 _ICC_N1 = pdf_stream(b"/N 1 /Alternate /DeviceGray", b"icc")
 _ICC_N4 = pdf_stream(b"/N 4 /Alternate /DeviceCMYK", b"icc")
+_GREY_DCT = b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /DCTDecode"
+
+
+def _jpeg(mode: str = "L", **save: object) -> bytes:
+    """A real 16x16 JPEG from Pillow; ``save`` passes ``progressive=True`` and the like."""
+    buffer = io.BytesIO()
+    Image.new(mode, (16, 16), 0 if mode == "CMYK" else 200).save(buffer, "JPEG", **save)
+    return buffer.getvalue()
+
+
+def _with_app_padding(jpeg: bytes, n_bytes: int) -> bytes:
+    """``jpeg`` with ``n_bytes`` of APP15 segment bodies between SOI and the rest."""
+    segments = bytearray()
+    while n_bytes > 0:
+        body = min(n_bytes, 65_000)
+        segments += b"\xff\xef" + (body + 2).to_bytes(2, "big") + bytes(body)
+        n_bytes -= body
+    return jpeg[:2] + bytes(segments) + jpeg[2:]
+
+
+def _sof_marker_set_to(jpeg: bytes, marker: int) -> bytes:
+    """``jpeg`` with its SOF0 marker byte replaced (the segment layout is the same)."""
+    at = jpeg.index(b"\xff\xc0")
+    return jpeg[: at + 1] + bytes([marker]) + jpeg[at + 2 :]
 
 
 class ImageModeCapTests(unittest.TestCase):
@@ -1371,11 +1401,12 @@ class ImageModeCapTests(unittest.TestCase):
     against ``decode_pixel_cap`` for the mode its dictionary declares, not
     the flat 40 Mpx colour cap. Bilevel and one-component grey get the grey
     ceilings (160 Mpx; 80 Mpx at 16 bits), measured inside both workers
-    (Tasks 21 and 22) for no filter, Flate, DCT and CCITT G4; four-component
-    and 16-bit colour get their bytes-a-pixel caps (30, 20, 15 Mpx).
-    Anything unproven -- ``/Indexed``, an unknown colour space, JBIG2, JPX,
-    any other filter or a filter chain, 2- or 4-bit grey, a 1-bit colour
-    image -- keeps the colour cap."""
+    (Tasks 21 and 22) for no filter, Flate, CCITT G4 and a sequential
+    one-component JPEG. Colour of any kind keeps the colour cap, as does
+    anything unproven -- ``/Indexed``, an unknown colour space, JBIG2, JPX,
+    a progressive or colour JPEG, any other filter or a filter chain, 2- or
+    4-bit grey, a 1-bit colour image -- and any image drawn through a soft
+    mask or stream mask, with the mask itself (Task 22 review)."""
 
     def _passes(self, data: bytes) -> None:
         self.assertIsNone(check_scan_bytes(data))
@@ -1416,14 +1447,41 @@ class ImageModeCapTests(unittest.TestCase):
     def test_a_hundred_megapixel_eight_bit_grey_image_passes(self) -> None:
         self._passes(_declared_image_pdf(_GREY, width=10_000, height=10_000))
 
-    def test_a_hundred_megapixel_grey_jpeg_passes(self) -> None:
-        self._passes(
-            _declared_image_pdf(
-                b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /DCTDecode",
-                width=10_000,
-                height=10_000,
-            )
-        )
+    def test_a_hundred_megapixel_sequential_grey_jpeg_passes(self) -> None:
+        """Baseline (SOF0) and extended sequential (SOF1), one component each,
+        as the first frame header within the first 64 KiB."""
+        image_mask = b"/ImageMask true /Filter /DCTDecode"
+        for name, entries, jpeg in (
+            ("baseline", _GREY_DCT, _jpeg()),
+            ("extended sequential", _GREY_DCT, _sof_marker_set_to(_jpeg(), 0xC1)),
+            ("after 60 KiB of APP segments", _GREY_DCT, _with_app_padding(_jpeg(), 60 * 1024)),
+            ("an image mask", image_mask, _jpeg()),
+        ):
+            with self.subTest(name):
+                self._passes(_declared_image_pdf(entries, width=10_000, height=10_000, data=jpeg))
+
+    def test_a_dct_image_that_is_not_a_sequential_grey_jpeg_keeps_the_colour_cap(self) -> None:
+        """Task 22 review: a progressive grey JPEG at 159 Mpx cost 68% of the
+        extraction worker's limit, and a JPEG holding 3 or 4 components decodes
+        as such whatever the dictionary says. Only the stream's first frame
+        header vouches for a DCT image; without one it keeps 40 Mpx."""
+        for name, entries, jpeg in (
+            ("progressive", _GREY_DCT, _jpeg(progressive=True)),
+            ("lossless frame", _GREY_DCT, _sof_marker_set_to(_jpeg(), 0xC3)),
+            ("arithmetic frame", _GREY_DCT, _sof_marker_set_to(_jpeg(), 0xC9)),
+            ("three components", _GREY_DCT, _jpeg("RGB")),
+            ("four components", _GREY_DCT, _jpeg("CMYK")),
+            ("not a JPEG", _GREY_DCT, b"\x00" * 64),
+            ("cut off before its frame header", _GREY_DCT, _jpeg()[:20]),
+            ("frame header past 64 KiB", _GREY_DCT, _with_app_padding(_jpeg(), 70 * 1024)),
+            (
+                "an image mask holding a colour JPEG",
+                b"/ImageMask true /Filter /DCTDecode",
+                _jpeg("RGB"),
+            ),
+        ):
+            with self.subTest(name):
+                self._refused(_declared_image_pdf(entries, width=10_000, height=10_000, data=jpeg))
 
     def test_a_hundred_megapixel_eight_bit_grey_image_passes_icc_based_n1(self) -> None:
         self._passes(
@@ -1498,27 +1556,24 @@ class ImageModeCapTests(unittest.TestCase):
     def test_a_bilevel_image_over_one_hundred_sixty_megapixels_is_refused(self) -> None:
         self._refused(_declared_image_pdf(_BILEVEL, width=13_000, height=13_000))
 
-    def test_four_component_and_sixteen_bit_colour_get_their_bytes_a_pixel_caps(self) -> None:
-        """Task 11's colour caps by decoded bytes a pixel, read from the dictionary:
-        CMYK (and ICC ``/N 4``) 30 Mpx, 16-bit RGB 20 Mpx, 16-bit CMYK 15 Mpx."""
-        cmyk = b"/ColorSpace /DeviceCMYK /BitsPerComponent 8 /Filter /FlateDecode"
-        icc4 = b"/ColorSpace [/ICCBased 6 0 R] /BitsPerComponent 8 /Filter /DCTDecode"
-        rgb16 = b"/ColorSpace /DeviceRGB /BitsPerComponent 16 /Filter /FlateDecode"
-        cmyk16 = b"/ColorSpace /DeviceCMYK /BitsPerComponent 16 /Filter /FlateDecode"
-        for entries, extra, passing, refused in (
-            (cmyk, (), (5_000, 6_000), (5_000, 7_000)),
-            (icc4, (_ICC_N4,), (5_000, 6_000), (5_000, 7_000)),
-            (rgb16, (), (4_000, 5_000), (5_000, 5_000)),
-            (cmyk16, (), (3_000, 5_000), (4_000, 4_000)),
+    def test_colour_keeps_the_flat_colour_cap_whatever_its_depth_or_components(self) -> None:
+        """S6 widens bilevel and grey only: CMYK, ICC ``/N 4`` and 16-bit
+        colour are judged at 40 Mpx, as before #273 (an A4 CMYK page at
+        600 dpi, 34.8 Mpx, passes)."""
+        icc4 = b"/ColorSpace [/ICCBased 6 0 R] /BitsPerComponent 8 /Filter /FlateDecode"
+        for entries, extra in (
+            (b"/ColorSpace /DeviceCMYK /BitsPerComponent 8 /Filter /FlateDecode", ()),
+            (icc4, (_ICC_N4,)),
+            (b"/ColorSpace /DeviceRGB /BitsPerComponent 16 /Filter /FlateDecode", ()),
+            (b"/ColorSpace /DeviceCMYK /BitsPerComponent 16 /Filter /FlateDecode", ()),
         ):
             with self.subTest(entries=entries):
-                w, h = passing
-                self._passes(_declared_image_pdf(entries, *extra, width=w, height=h))
-                w, h = refused
-                self._refused(_declared_image_pdf(entries, *extra, width=w, height=h))
+                self._passes(_declared_image_pdf(entries, *extra, width=4_960, height=7_016))
+                self._refused(_declared_image_pdf(entries, *extra, width=5_000, height=8_001))
 
-    def test_the_soft_mask_of_a_colour_image_gets_the_grey_cap(self) -> None:
-        for (w, h), passes in (((10_000, 10_000), True), ((10_000, 17_000), False)):
+    def test_a_grey_soft_mask_keeps_the_colour_cap(self) -> None:
+        """Task 22 review: a mask is drawn with its image, so neither is widened."""
+        for (w, h), passes in (((5_000, 8_000), True), ((10_000, 10_000), False)):
             with self.subTest(width=w, height=h):
                 data = _declared_image_pdf(
                     _RGB + b" /SMask 6 0 R",
@@ -1534,7 +1589,7 @@ class ImageModeCapTests(unittest.TestCase):
                 else:
                     self._refused(data)
 
-    def test_a_stream_mask_is_judged_as_an_image_mask(self) -> None:
+    def test_a_stream_mask_keeps_the_colour_cap(self) -> None:
         data = _declared_image_pdf(
             _RGB + b" /Mask 6 0 R",
             pdf_stream(
@@ -1545,7 +1600,34 @@ class ImageModeCapTests(unittest.TestCase):
             width=1_000,
             height=1_000,
         )
-        self._passes(data)
+        self._refused(data)
+
+    def test_a_grey_image_with_a_grey_soft_mask_keeps_the_colour_cap(self) -> None:
+        """Task 22 review, critical: a 159 Mpx grey image with a 159 Mpx grey
+        soft mask rendered blank under the extraction worker's limit, for a
+        progressive-JPEG pair and for a Flate pair. A masked image is judged
+        at 40 Mpx, and so is its mask, however small the other one is."""
+        pairs = {"flate pair": (_GREY, b"\x00"), "dct pair": (_GREY_DCT, _jpeg())}
+        for name, (entries, data) in pairs.items():
+            for (iw, ih), (mw, mh), passes in (
+                ((10_000, 15_900), (10_000, 15_900), False),
+                ((10_000, 15_900), (1, 1), False),
+                ((1, 1), (10_000, 15_900), False),
+                ((5_000, 7_950), (5_000, 7_950), True),
+            ):
+                with self.subTest(name, image=(iw, ih), mask=(mw, mh)):
+                    mask = pdf_stream(
+                        f"/Type /XObject /Subtype /Image /Width {mw} /Height {mh} ".encode()
+                        + entries,
+                        data,
+                    )
+                    pdf = _declared_image_pdf(
+                        entries + b" /SMask 6 0 R", mask, width=iw, height=ih, data=data
+                    )
+                    if passes:
+                        self._passes(pdf)
+                    else:
+                        self._refused(pdf)
 
     def test_an_rgb_soft_mask_keeps_the_colour_cap(self) -> None:
         data = _declared_image_pdf(
