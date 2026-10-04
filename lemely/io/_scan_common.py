@@ -475,17 +475,32 @@ def decode_pixel_cap(mode: str, image_format: str | None = None, *, sample_bits:
     return MAX_DECODE_PX * _COLOUR_CEILING_BYTES // max(_COLOUR_CEILING_BYTES, per_pixel)
 
 
-def _image_sample_bits(opened: ImageFile.ImageFile) -> int:
-    """16 for a file storing more than 8 bits a sample in a mode Pillow narrows to 8, else 8.
+#: The endings of a raw mode naming 16 bits a SAMPLE: the depth, then the
+#: byte order (``"RGB;16B"`` for a 16-bit RGB PNG, ``"LA;16B"``). Not
+#: ``"BGR;16"``: a 5-6-5 BMP's two bytes a PIXEL, which decode to 8-bit RGB.
+_SIXTEEN_BIT_SAMPLE_RAWMODES = (";16B", ";16L", ";16N")
 
-    Read from the decoder's raw mode (``"RGB;16B"`` for a 16-bit RGB PNG,
-    ``"RGBA;16N"`` for a 16-bit RGBA TIFF), which ``Image.open`` sets from
-    the header without decoding anything.
+
+def _image_sample_bits(opened: ImageFile.ImageFile) -> int:
+    """The file's bits a sample, as far as the colour cap is concerned: 8 unless it says more.
+
+    Read from the header, before anything is decoded. A TIFF says it in
+    ``BitsPerSample`` (tag 258): its raw modes cannot be trusted for it,
+    since an uncompressed planar TIFF gets one raw mode a band (``"R"``,
+    ``"G"``, ...) with no depth at all (Task 11 re-review). Anything else
+    says it in the decoder's raw mode (:data:`_SIXTEEN_BIT_SAMPLE_RAWMODES`).
     """
-    for tile in opened.tile[:1]:
+    tags = getattr(opened, "tag_v2", None)
+    if tags is not None:
+        declared = tags.get(258)
+        if isinstance(declared, tuple) and declared:
+            return max(int(bits) for bits in declared)
+        if isinstance(declared, int):
+            return declared
+    for tile in opened.tile:
         args = tile.args
         raw = args if isinstance(args, str) else args[0] if args else None
-        if isinstance(raw, str) and ";16" in raw:
+        if isinstance(raw, str) and raw.endswith(_SIXTEEN_BIT_SAMPLE_RAWMODES):
             return 16
     return 8
 

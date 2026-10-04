@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 import struct
 import zlib
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -56,20 +57,35 @@ def _png_header(width: int, height: int, *, colour_type: int, depth: int) -> byt
 
 
 def _tiff_header(
-    width: int, height: int, *, bits: int, samples: int, photometric: int, sample_format: int = 1
+    width: int,
+    height: int,
+    *,
+    bits: int,
+    samples: int,
+    photometric: int,
+    sample_format: int = 1,
+    planar: bool = False,
 ) -> bytes:
-    """A little-endian TIFF declaring ``width`` x ``height`` with an empty strip."""
+    """A little-endian, uncompressed TIFF declaring ``width`` x ``height``; no pixel data.
+
+    ``planar``: one strip per sample (PlanarConfiguration 2), each declared
+    full size. Pillow's raw decoder then names each plane by its band
+    (``"R"``, ``"G"``, ...), so the depth is not in the raw mode at all.
+    """
     short, long_ = 3, 4
+    strips = samples if planar else 1
+    strip_bytes = width * height * bits // 8 * (1 if planar else samples)
     entries = [
         (256, long_, [width]),
         (257, long_, [height]),
         (258, short, [bits] * samples),
         (259, short, [1]),
         (262, short, [photometric]),
-        (273, long_, [0]),
+        (273, long_, [0] * strips),
         (277, short, [samples]),
         (278, long_, [height]),
-        (279, long_, [0]),
+        (279, long_, [strip_bytes] * strips),
+        (284, short, [2 if planar else 1]),
         (339, short, [sample_format] * samples),
     ]
     if photometric == 2 and samples == 4:
@@ -87,6 +103,20 @@ def _tiff_header(
             extra += packed
     ifd += struct.pack("<I", 0)
     return b"II*\x00" + struct.pack("<I", 8) + ifd + extra
+
+
+def _bmp_565_header(width: int, height: int) -> bytes:
+    """A 16-bit 5-6-5 BMP declaring ``width`` x ``height``; no pixel data.
+
+    Two bytes a PIXEL (Pillow's raw mode ``"BGR;16"``), decoded to 8-bit RGB:
+    not 16 bits a sample.
+    """
+    stride = (width * 2 + 3) // 4 * 4
+    dib = struct.pack(
+        "<IiiHHIIiiII", 40, width, height, 1, 16, 3, stride * height, 2835, 2835, 0, 0
+    ) + struct.pack("<III", 0xF800, 0x07E0, 0x001F)
+    offset = 14 + len(dib)
+    return b"BM" + struct.pack("<IHHI", offset + stride * height, 0, 0, offset) + dib
 
 
 def _cmyk_jpeg_header(width: int, height: int) -> bytes:
@@ -127,6 +157,31 @@ _CASES = [
         15_000_000,
         lambda w, h: _tiff_header(w, h, bits=16, samples=4, photometric=2),
     ),
+    (
+        "RGBA 16-bit planar TIFF",
+        "RGBA",
+        15_000_000,
+        lambda w, h: _tiff_header(w, h, bits=16, samples=4, photometric=2, planar=True),
+    ),
+    (
+        "RGB 16-bit planar TIFF",
+        "RGB",
+        20_000_000,
+        lambda w, h: _tiff_header(w, h, bits=16, samples=3, photometric=2, planar=True),
+    ),
+    (
+        "CMYK 16-bit TIFF",
+        "CMYK",
+        15_000_000,
+        lambda w, h: _tiff_header(w, h, bits=16, samples=4, photometric=5),
+    ),
+    (
+        "LA 16-bit PNG (Pillow: RGBA)",
+        "RGBA",
+        15_000_000,
+        lambda w, h: _png_header(w, h, colour_type=4, depth=16),
+    ),
+    ("RGB 5-6-5 BMP", "RGB", 40_000_000, _bmp_565_header),
     (
         "CMYK 8-bit TIFF",
         "CMYK",
@@ -206,8 +261,51 @@ def test_a_sixteen_bit_colour_image_over_its_cap_is_refused_on_every_path(bits_c
         open_scan_image_document(over)
 
 
-def test_an_eight_bit_colour_image_is_read_as_eight_bits() -> None:
-    with open_scan_image(io.BytesIO(_png_header(10, 10, colour_type=2, depth=8))) as opened:
-        assert _scan_common._image_sample_bits(opened) == 8
-    with open_scan_image(io.BytesIO(_png_header(10, 10, colour_type=2, depth=16))) as opened:
-        assert _scan_common._image_sample_bits(opened) == 16
+@pytest.mark.parametrize(
+    ("data", "bits"),
+    [
+        pytest.param(_png_header(10, 10, colour_type=2, depth=8), 8, id="RGB 8-bit PNG"),
+        pytest.param(_png_header(10, 10, colour_type=2, depth=16), 16, id="RGB 16-bit PNG"),
+        pytest.param(_png_header(10, 10, colour_type=4, depth=16), 16, id="LA 16-bit PNG"),
+        pytest.param(
+            _tiff_header(10, 10, bits=16, samples=4, photometric=2, planar=True),
+            16,
+            id="RGBA 16-bit planar TIFF",
+        ),
+        pytest.param(
+            _tiff_header(10, 10, bits=16, samples=4, photometric=5), 16, id="CMYK 16-bit TIFF"
+        ),
+        pytest.param(
+            _tiff_header(10, 10, bits=8, samples=3, photometric=2), 8, id="RGB 8-bit TIFF"
+        ),
+        pytest.param(_bmp_565_header(10, 10), 8, id="RGB 5-6-5 BMP"),
+    ],
+)
+def test_the_sample_depth_is_read_per_sample(data: bytes, bits: int) -> None:
+    """Task 11 re-review: a TIFF's depth comes from ``BitsPerSample`` (a
+    planar TIFF's raw modes name bands, not depths), and a 5-6-5 BMP is two
+    bytes a pixel, not 16 bits a sample."""
+    with open_scan_image(io.BytesIO(data)) as opened:
+        assert _scan_common._image_sample_bits(opened) == bits
+
+
+@pytest.mark.parametrize("bits_case", ["RGB 16-bit PNG", "RGBA 16-bit planar TIFF"])
+def test_the_crop_and_extraction_refuse_a_sixteen_bit_image_over_its_cap(
+    bits_case: str, tmp_path: Path
+) -> None:
+    """Both open the image through ``open_scan_image``, so a 16-bit image over
+    its cap is refused there, before anything is decoded."""
+    from lemely.io.rasterise import iter_scan_pages
+    from lemely.io.scan_render import crop_image_scan
+
+    _case, _mode, cap, build = next(c for c in _CASES if c[0] == bits_case)
+    over = build(cap // _HEIGHT + 1, _HEIGHT)  # type: ignore[operator]
+    path = tmp_path / "scan.img"
+    path.write_bytes(over)
+
+    with pytest.raises(ScanTooLargeError) as crop:
+        crop_image_scan(over, [100, 100, 300, 400])
+    assert crop.value.reason == "image_px"
+    with pytest.raises(ScanTooLargeError) as extraction:
+        list(iter_scan_pages(path, 200.0))
+    assert extraction.value.reason == "image_px"
