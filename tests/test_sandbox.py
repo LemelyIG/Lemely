@@ -12,6 +12,7 @@ from __future__ import annotations
 import gc
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -582,7 +583,10 @@ def test_an_allocation_failure_inside_mupdf_or_pdfium_is_recognised_by_class_and
     """MuPDF has no memory error class: ``fz_malloc``/``fz_calloc``/``fz_realloc``
     throw ``FZ_ERROR_SYSTEM`` saying ``"malloc (N bytes) failed"``, and the
     same class also carries I/O failures. pypdfium2 names a bitmap it could
-    not allocate. Only the class AND the allocator's text together count."""
+    not allocate. Only the class AND the allocator's text together count.
+    A size computation that overflows (``"... failed (overflow)"``) is a
+    malformed request, not memory running out, so it stays an error. The
+    texts are MuPDF 1.29's own (``strings libmupdf.so.29.0``)."""
     from pymupdf import mupdf
     from pypdfium2 import PdfiumError
 
@@ -590,13 +594,18 @@ def test_an_allocation_failure_inside_mupdf_or_pdfium_is_recognised_by_class_and
         "malloc (119076300 bytes) failed",
         "calloc (3 x 4 bytes) failed",
         "realloc (5 bytes) failed",
-        "malloc of array (3 x 4 bytes) failed",
     ):
         assert sandbox._is_allocation_failure(mupdf.FzErrorSystem(text)), text
     assert sandbox._is_allocation_failure(
         PdfiumError("Failed to get bitmap buffer (null pointer returned)")
     )
 
+    for text in (
+        "calloc (3 x 4 bytes) failed (overflow)",
+        "malloc array (3 x 4 bytes) failed (overflow)",
+        "realloc array (3 x 4 bytes) failed (overflow)",
+    ):
+        assert not sandbox._is_allocation_failure(mupdf.FzErrorSystem(text)), text
     assert not sandbox._is_allocation_failure(mupdf.FzErrorSystem("cannot open file 'x'"))
     assert not sandbox._is_allocation_failure(mupdf.FzErrorFormat("malloc (1 bytes) failed"))
     assert not sandbox._is_allocation_failure(PdfiumError("Failed to load page."))
@@ -611,7 +620,9 @@ def test_mupdf_running_out_of_memory_in_the_child_is_sandbox_memory(
     """The preview path that failed first (Task 8): MuPDF decoding a colour PNG
     under a data limit too small for it. Its ``FzErrorSystem`` is an
     allocation failure, so it is reported as memory, not as an error, and
-    the child lives on."""
+    the child lives on. The failure's own text (the allocation's size) comes
+    with it, for the logs; a Python ``MemoryError`` has no such text, so the
+    message pins the MuPDF branch."""
     from tests.sandbox_targets import ONE_PIXEL_PNG
 
     worker = make_worker(1024 * MiB, 2048 * MiB)
@@ -633,20 +644,76 @@ def test_mupdf_running_out_of_memory_in_the_child_is_sandbox_memory(
         )
 
     assert type(failure.value) is SandboxMemory, repr(failure.value)
+    assert re.fullmatch(
+        r"lemely-test-worker ran out of memory: code=2: malloc \(\d+ bytes\) failed",
+        str(failure.value),
+    ), str(failure.value)
     assert worker.last_outcome == "memory"
     assert worker.call(f"{_T}.pid", timeout=10, result_type=int) == first_pid
 
 
+def test_a_python_memory_error_is_sandbox_memory_with_the_bare_message(
+    make_worker: WorkerFactory,
+) -> None:
+    worker = make_worker(256 * MiB, 1024 * MiB)
+    with pytest.raises(SandboxMemory) as failure:
+        worker.call(
+            f"{_T}.lower_data_limit_then",
+            96 * MiB,
+            f"{_T}.allocate",
+            512 * MiB,
+            timeout=10,
+            result_type=int,
+        )
+    assert str(failure.value) == "lemely-test-worker ran out of memory"
+
+
+#: The 2 GiB budget's fixed parts (owner decision S1), in MB: the web process,
+#: the pages a 40-page scan accumulates in it, the equivalence parse worker,
+#: and multiprocessing's ``resource_tracker``, which the first ``spawn``
+#: starts (measured 16.0 MB resident, Task 11 review).
+_WEB_PROCESS_MB = 233
+_PARENT_PAGES_MB = 441
+_PARSE_WORKER_MB = 75
+_RESOURCE_TRACKER_MB = 16
+
+
 def test_the_default_limits_fit_the_two_gib_budget() -> None:
-    """Owner decision S1: on a 2 GiB instance, the web process (~233 MB), the
-    pages a 40-page scan accumulates in it (~441 MB), both workers' data
-    limits and the equivalence parse worker (~75 MB) must fit together."""
+    """Owner decision S1: on a 2 GiB instance the web process, the pages a
+    40-page scan accumulates in it, both workers' data limits, the parse
+    worker and the resource tracker must fit together."""
     settings = SandboxSettings()
     total_mib = (
-        233
-        + 441
+        _WEB_PROCESS_MB
+        + _PARENT_PAGES_MB
         + settings.extraction_data_limit_bytes / MiB
         + settings.interactive_data_limit_bytes / MiB
-        + 75
+        + _PARSE_WORKER_MB
+        + _RESOURCE_TRACKER_MB
     )
     assert total_mib < 2048, total_mib
+
+
+def test_the_extraction_timeout_is_the_owner_decision() -> None:
+    """Task 11 review, owner decision 2: 180 s, counting any wait for the
+    worker (``test_the_lock_wait_shrinks_the_call_budget``)."""
+    assert SandboxSettings().extraction_timeout_seconds == 180.0
+
+
+def test_measure_reports_peaks_and_time_of_a_target_in_the_child(worker: ChildWorker) -> None:
+    """``tests.sandbox_targets.measure`` (Task 11 brief; Task 21 uses it):
+    ``VmPeak``, ``VmHWM``, the largest ``VmData`` sampled every 25 ms, and
+    wall seconds, all of the target run in the child, an iterator drained."""
+    held = 64 * MiB
+    before = worker.call(f"{_T}._vm_data_bytes", timeout=30, result_type=int)
+
+    result = worker.call(f"{_T}.measure", f"{_T}.hold", held, 0.2, timeout=30, result_type=dict)
+
+    assert set(result) == {"vm_peak", "vm_hwm", "vm_data_max", "seconds"}
+    assert result["vm_data_max"] >= before + held
+    assert result["vm_hwm"] >= held
+    assert result["vm_peak"] >= result["vm_hwm"]
+    assert 0.2 <= result["seconds"] < 10
+
+    drained = worker.call(f"{_T}.measure", f"{_T}.slow_count", 4, 0.1, timeout=30, result_type=dict)
+    assert drained["seconds"] >= 0.3  # three pauses: every item was pulled

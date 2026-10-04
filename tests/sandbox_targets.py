@@ -13,6 +13,7 @@ import importlib
 import os
 import resource
 import struct
+import threading
 import time
 import weakref
 import zlib
@@ -275,3 +276,75 @@ def tracked_items(n: int) -> Iterator[TrackedItem]:
         previous = weakref.ref(item)
         yield item
         del item
+
+
+def hold(n_bytes: int, seconds: float) -> int:
+    """Allocate and touch ``n_bytes``, keep them ``seconds``, then let them go."""
+    block = bytearray(n_bytes)
+    block[::4096] = b"\x01" * len(block[::4096])
+    time.sleep(seconds)
+    return len(block)
+
+
+#: How often :func:`measure` samples ``VmData`` (the Task 11 brief: 25 ms).
+MEASURE_INTERVAL_SECONDS = 0.025
+
+
+def _status_bytes(*fields: str) -> dict[str, int]:
+    found: dict[str, int] = {}
+    with open("/proc/self/status", encoding="ascii") as status:
+        for line in status:
+            key = line.split(":", 1)[0]
+            if key in fields:
+                found[key] = int(line.split()[1]) * 1024
+    return found
+
+
+def measure(target: str, *args: object) -> dict[str, int | float]:
+    """What running ``target(*args)`` here costs: the Task 11 measurement, in the child.
+
+    Returns, in bytes but the last:
+
+    * ``vm_peak``: ``VmPeak``, the largest address space this process has
+      ever had, so a fresh child is needed to pin it on one target;
+    * ``vm_hwm``: ``VmHWM``, reset before the call, so the call's resident peak;
+    * ``vm_data_max``: the largest ``VmData`` (what ``RLIMIT_DATA`` bounds),
+      sampled every 25 ms by a thread, plus once before and once after; the
+      thread's own stack counts in it;
+    * ``seconds``: wall time.
+
+    The target is imported first, so its import is not counted. An iterator
+    it returns is drained, each item dropped as it comes. Task 21 measures
+    its render path with this.
+    """
+    function = _resolve(target)
+    with open("/proc/self/clear_refs", "w", encoding="ascii") as clear:
+        clear.write("5")
+    samples = [_vm_data_bytes()]
+    stop = threading.Event()
+
+    def sample() -> None:
+        while not stop.wait(MEASURE_INTERVAL_SECONDS):
+            samples.append(_vm_data_bytes())
+
+    sampler = threading.Thread(target=sample, name="measure-vmdata", daemon=True)
+    sampler.start()
+    started = time.perf_counter()
+    try:
+        result = function(*args)
+        if isinstance(result, Iterator):
+            for _item in cast("Iterable[object]", result):
+                pass
+        del result
+    finally:
+        seconds = time.perf_counter() - started
+        stop.set()
+        sampler.join()
+    samples.append(_vm_data_bytes())
+    peaks = _status_bytes("VmPeak", "VmHWM")
+    return {
+        "vm_peak": peaks["VmPeak"],
+        "vm_hwm": peaks["VmHWM"],
+        "vm_data_max": max(samples),
+        "seconds": seconds,
+    }

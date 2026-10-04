@@ -14,8 +14,11 @@ lazily and reused, and runs a named function (a *target*) in it:
   child lives on. So is an allocation failure a C library reports as its own
   exception, recognised by class and text (:func:`_is_allocation_failure`):
   MuPDF's ``FzErrorSystem`` saying ``"malloc (N bytes) failed"`` (MuPDF has
-  no memory error class; ``FZ_ERROR_SYSTEM`` also carries I/O failures), and
-  pypdfium2's ``PdfiumError`` for a bitmap it could not get. pdfium's own
+  no memory error class; ``FZ_ERROR_SYSTEM`` also carries I/O failures, and
+  a size that overflows, ``"... failed (overflow)"``, stays an error), and
+  pypdfium2's ``PdfiumError`` for a bitmap it could not get. The failure's
+  own text, which names the allocation's size, rides in the
+  :class:`SandboxMemory` message for the logs. pdfium's own
   allocator aborts on failure, which ends the child (:class:`SandboxCrash`),
   and a failure MuPDF reports some other way (inside the PDF rewrite it
   surfaces as an ``uncheckable`` refusal) is not recognised. Callers
@@ -67,65 +70,112 @@ trivial target about 0.02 ms. At ready the child is about 41 MB resident,
 (``lemely.io.rasterise``, ``scan_render``, ``scan_limits``) it is 79 MiB
 resident, ``VmData`` 67 MiB and ``VmSize`` 150 MiB.
 
-The limits (Task 11, #260; measured 2026-10-02 on Linux 7.2 x86_64, CPython
+The limits (Task 11, #260; measured 2026-10-04 on Linux 7.2 x86_64, CPython
 3.13.12, pymupdf 1.28.0 / MuPDF 1.29.0, pypdfium2 5.11.0 / pdfium 7920,
 Pillow 12.2.0). Every path ran through its real worker on the worst scan of
-each kind the upload check admits, in a fresh warm child under 4 GiB / 8 GiB
-limits. ``Peak`` is ``VmPeak`` and ``HWM`` ``VmHWM`` at the end of the call,
-``Data`` the largest ``VmData`` sampled from the parent every 5 ms, ``need``
-the smallest ``RLIMIT_DATA`` (8 MiB steps, a fresh child per try) the path
-completes under, all in MiB; ``s`` is wall seconds. The PDFs: 40 A4 pages
-each a 2480 x 3508 1-bit image (155 Mpx at 200 dpi); 3 A4 pages each a
-4960 x 7016 RGB image (A4 at 600 dpi), Flate or JPEG. The images, each at
-its cap: 1-bit 10000 x 15900, RGB JPEG 7300 x 5479, I;16 10000 x 8000, WebP
-3650 x 3650 (the WebP ceiling)::
+each kind the upload check admits, every mode and depth at its own ceiling
+(``lemely.io._scan_common.decode_pixel_cap``), in a fresh warm child under
+4 GiB / 8 GiB limits. ``Peak`` is ``VmPeak`` and ``HWM`` ``VmHWM`` at the
+end of the call, ``Data`` the largest ``VmData`` sampled from the parent
+every 5 ms, ``need`` the smallest ``RLIMIT_DATA`` (8 MiB steps, a fresh
+child per try) the path completes under, all in MiB; ``s`` is wall seconds.
+The PDFs: 40 A4 pages each a 2480 x 3508 1-bit image (155 Mpx at 200 dpi);
+40 A4 pages each a different 4960 x 7016 RGB JPEG (23 MiB, under the upload
+cap); 3 A4 pages each a 4960 x 7016 RGB image, Flate or JPEG. TIFFs hold the
+whole image in one Deflate strip, the most a TIFF can make a decoder hold::
 
     extraction: extract | upload check
-                        Peak  HWM Data need     s    Peak  HWM Data need     s
-    PDF 40p 1-bit        208  141  124  112  4.48     152   84   69   72  0.03
-    PDF 3p RGB Flate     207  140  124  120  0.92     150   83   66   72  0.00
-    PDF 3p RGB JPEG      241  170  157  136  2.65     165   93   81   88  0.16
-    1-bit PNG 160Mpx     471  394  382  384  0.35     158   81   69   72  0.02
-    RGB JPEG 40Mpx       222  145  133  136  1.27     165   91   78   80  0.02
-    RGB PNG 4960x7016    324  248  235  240  0.30     158   81   69   72  0.02
-    RGB PNG 6300x6300    349  271  259  264  0.33     158   81   69   72  0.02
-    I;16 PNG 80Mpx       401  324  311  312  0.49     158   81   69   72  0.02
-    WebP 3650^2 (L)      362  285  272  280  0.27     260   81   68   72  0.02
-    WebP 3650^2 (RGBA)   364  287  274  280  2.17     265   87   74   72  0.02
+                         Peak  HWM Data need     s    Peak  HWM Data need     s
+    PDF 40p 1-bit         208  141  124  112  5.51     152   84   68   72  0.04
+    PDF 40p RGB JPEG      287  221  203  160 33.20     196  124  112  120  0.65
+    PDF 3p RGB Flate      206  140  123  120  1.13     150   83   67   72  0.01
+    PDF 3p RGB JPEG       240  169  156  136  3.27     167   94   83   88  0.20
+    1-bit PNG 159Mpx      471  394  382  384  0.42     159   81   69   72  0.02
+    1-bit TIFF 160Mpx     473  396  383  384  0.43     158   81   68   72  0.02
+    L TIFF 160Mpx         464  386  375  376  0.56     159   81   70   72  0.02
+    I;16 PNG 80Mpx        406  328  316  320  0.72     158   81   69   72  0.02
+    I;16 TIFF 80Mpx       463  387  374  376  0.48     158   81   69   72  0.02
+    RGB JPEG 40Mpx        222  145  133  136  1.51     165   93   82   80  0.03
+    RGB PNG 34.8Mpx       324  248  235  240  0.37     159   81   70   72  0.02
+    RGB PNG 39.7Mpx       349  271  259  264  0.41     158   81   69   72  0.02
+    RGB TIFF 40Mpx        426  348  336  344  0.44     159   81   70   72  0.02
+    LA PNG 40Mpx          501  425  412  416  0.43     159   81   70   72  0.02
+    P PNG 40Mpx           387  310  297  304  0.33     158   81   69   72  0.02
+    P BMP RLE 40Mpx       391  314  302  304  0.39     159   81   70   72  0.02
+    RGBA PNG 30Mpx        416  338  326  328  0.40     158   81   69   72  0.02
+    RGBA TIFF 30Mpx       417  339  327  328  0.42     159   81   70   72  0.02
+    CMYK TIFF 30Mpx       416  339  326  328  0.45     158   81   69   72  0.02
+    CMYK JPEG 30Mpx       216  139  126  128  0.21     161   84   72   72  0.02
+    I TIFF 30Mpx          388  310  298  304  0.38     158   81   69   72  0.02
+    F TIFF 30Mpx          387  310  297  304  0.39     159   81   70   72  0.02
+    RGB16 PNG 20Mpx       254  177  164  168  0.27     158   81   69   72  0.02
+    RGB16 TIFF 20Mpx      350  272  260  264  0.33     158   81   69   72  0.02
+    RGBA16 PNG 15Mpx      273  196  183  184  0.44     158   81   69   72  0.03
+    RGBA16 TIFF 15Mpx     331  253  241  248  0.46     159   81   70   72  0.02
+    LA16 PNG 15Mpx        273  196  183  184  0.35     158   81   69   72  0.02
+    WebP 13.3Mpx (L)      362  285  272  280  0.34     260   81   68   72  0.02
+    WebP 13.3Mpx RGBA     365  287  275  280  2.64     265   85   74   72  0.03
     interactive: preview | crop
-    PDF 40p 1-bit        159   90   75   80  0.05     160   92   76   80  0.06
-    PDF 3p RGB Flate     158   89   74   80  0.16     159   92   75   80  0.07
-    PDF 3p RGB JPEG      173  105   89   88  0.30     175  109   92   96  0.34
-    1-bit PNG 160Mpx     330  256  240  248  0.16     481  404  392  392  0.38
-    RGB JPEG 40Mpx       180  104   91   96  0.16     380  301  290  296  1.22
-    RGB PNG 4960x7016    360  285  270  272  0.31     334  257  245  248  0.25
-    RGB PNG 6300x6300    387  314  298  304  0.37     359  282  269  272  0.30
-    I;16 PNG 80Mpx       390  315  300  304  0.49     408  332  319  320  0.62
-    WebP 3650^2 (L)      (MuPDF cannot open a WebP)     362  285  272  280  0.16
-    WebP 3650^2 (RGBA)   (MuPDF cannot open a WebP)     366  289  276  280  0.59
+    PDF 40p 1-bit         159   90   75   80  0.05     159   93   75   80  0.07
+    PDF 40p RGB JPEG      202  127  118  120  0.79     196  124  112  120  0.88
+    PDF 3p RGB Flate      158   89   74   80  0.20     160   92   76   80  0.10
+    PDF 3p RGB JPEG       173  105   89   88  0.34     177  109   93   96  0.41
+    1-bit PNG 159Mpx      331  256  241  248  0.20     481  405  392  400  0.47
+    1-bit TIFF 160Mpx     331  256  241  248  0.27     490  414  400  400  0.45
+    L TIFF 160Mpx         464  390  374  376  0.57     463  387  374  376  0.60
+    I;16 PNG 80Mpx        389  315  299  304  0.61     409  332  320  320  0.83
+    I;16 TIFF 80Mpx       388  313  299  304  0.54     463  387  374  376  0.63
+    RGB JPEG 40Mpx        180  104   91   96  0.17     379  301  289  296  1.46
+    RGB PNG 34.8Mpx       360  285  270  272  0.36     335  258  246  248  0.33
+    RGB PNG 39.7Mpx       387  314  298  304  0.45     359  282  269  272  0.37
+    RGB TIFF 40Mpx        387  313  298  304  0.40     425  349  336  344  0.40
+    LA PNG 40Mpx          314  239  224  224  0.36     360  284  271  272  0.32
+    P PNG 40Mpx           351  277  261  264  0.32     249  172  159  160  0.23
+    P BMP RLE 40Mpx       350  275  260  264  0.48     279  200  189  192  0.23
+    RGBA PNG 30Mpx        390  315  301  304  0.45     310  233  220  224  0.26
+    RGBA TIFF 30Mpx       388  313  299  304  0.47     388  310  299  304  0.31
+    CMYK TIFF 30Mpx       387  313  298  304  0.46     387  311  298  304  0.32
+    CMYK JPEG 30Mpx       179  105   89   88  0.12     311  235  222  224  0.26
+    I TIFF 30Mpx          244  170  155  160  0.22     388  311  299  304  0.33
+    F TIFF 30Mpx          244  170  155  160  0.22     387  310  298  304  0.34
+    RGB16 PNG 20Mpx       332  258  242  248  0.37     260  183  170  176  0.23
+    RGB16 TIFF 20Mpx      331  256  241  248  0.35     349  272  259  264  0.29
+    RGBA16 PNG 15Mpx      333  258  243  248  0.41     235  157  146  152  0.20
+    RGBA16 TIFF 15Mpx     331  256  241  248  0.42     330  253  240  248  0.28
+    LA16 PNG 15Mpx        246  172  156  160  0.21     235  157  146  152  0.15
+    WebP 13.3Mpx (L)       (MuPDF cannot open a WebP)     362  285  272  280  0.18
+    WebP 13.3Mpx RGBA      (MuPDF cannot open a WebP)     366  289  276  280  0.77
 
 Every path of a worker run in turn in ONE child (as in production, where
-the allocator keeps some of what it freed) peaks higher: ``VmData`` 386 MiB
-and ``VmPeak`` 475 MiB for extraction, 402 MiB and 492 MiB for preview and
-crop.
+the allocator keeps some of what it freed) peaks higher: ``VmData`` 417 MiB
+and ``VmPeak`` 507 MiB for extraction, 404 MiB and 494 MiB for preview and
+crop. The worst single paths: extraction of the 40 Mpx LA PNG (412 MiB;
+Pillow holds LA at four bytes a pixel and converts it), and the crop of a
+160 Mpx 1-bit image (401 MiB).
 
-The rule: ``RLIMIT_DATA`` is the next 64 MiB at or above 1.5 x the largest
-``VmData`` of the worker's paths (fresh or in turn); ``RLIMIT_AS`` the next
-64 MiB at or above 1.25 x the largest ``VmPeak``, but at least 128 MiB above
-``RLIMIT_DATA``: ``VmSize`` runs ~84 MiB above ``VmData`` (libraries,
-stack), so an address limit equal to the data limit (the 1.25 x rule alone
-gives 640 MiB for both) would be the real bound. Hence 640 MiB / 768 MiB for
-both workers. Headroom over the worst path: extraction 640 / 386 = 1.66x
-data and 768 / 475 = 1.62x address; interactive 640 / 402 = 1.59x and
-768 / 492 = 1.56x, and at least 2x over every colour image under the colour
-ceiling (at most 304 MiB). Re-run under 640 / 768, every path above
-completed (``last_outcome == "ok"``), fresh and in turn. The 2 GiB budget
-(owner decision S1): web process 233 + pages in the parent 441 + 640 + 640 +
-parse worker 75 = 2029 MB, under 2048 (pinned by
+The rule: ``RLIMIT_DATA = next64(1.5 x the largest VmData)`` of the
+worker's paths, fresh or in turn: extraction next64(1.5 x 417) = 640 MiB,
+interactive next64(1.5 x 404) = 640 MiB. ``RLIMIT_AS = max(next64(1.25 x
+the largest VmPeak), RLIMIT_DATA + 128 MiB)``: next64(1.25 x 507) = 640 and
+next64(1.25 x 494) = 640, so 768 MiB for both. The ``+ 128 MiB`` term is a
+deviation from the plan, which had the 1.25 x term alone: ``VmSize`` runs
+~84 MiB above ``VmData`` (libraries, stack), so an address limit equal to
+the data limit would be the real bound. Headroom over the worst path:
+extraction 640 / 417 = 1.53x data and 768 / 507 = 1.52x address;
+interactive 640 / 404 = 1.58x and 768 / 494 = 1.56x. Re-run under
+640 / 768, every admitted path completed (``last_outcome == "ok"``), fresh
+and in turn; the only failures are MuPDF's, on a WebP preview, at any limit.
+
+The 2 GiB budget (owner decision S1), resident MB: web process 233 + pages
+in the parent 441 + extraction 640 + interactive 640 + parse worker 75 +
+multiprocessing's ``resource_tracker`` 16 (measured 16.0 MB resident) =
+2045, under 2048 by 3 MB (pinned by
 ``tests/test_sandbox.py::test_the_default_limits_fit_the_two_gib_budget``).
-The extraction timeout is 4 x the slowest extraction (4.48 s, the 40-page
-PDF) rounded up to 30 s and floored at 120 s for a slower 1-vCPU Cloud Run
-instance: 120 s. The upload check's slowest run is 0.16 s, so it keeps 20 s.
+
+The extraction timeout is 180 s (owner decision, Task 11 review), counting
+any wait for the worker: the slowest extraction measured is 33 s, the
+40-page JPEG PDF. The upload check's slowest run is 0.65 s, so it keeps
+20 s.
 """
 
 from __future__ import annotations
@@ -180,12 +230,16 @@ _EXTRA_TARGET_MODULES: frozenset[str] = frozenset()
 _LIMIT_NAMES = ("RLIMIT_DATA", "RLIMIT_AS", "RLIMIT_CORE")
 
 #: The text MuPDF's allocator throws with when ``malloc`` fails
-#: (``fz_malloc``, ``fz_calloc``, ``fz_realloc`` and their array forms, e.g.
-#: ``"malloc (119076300 bytes) failed"``). MuPDF has no memory error class:
-#: these arrive as ``FzErrorSystem`` (``FZ_ERROR_SYSTEM``), the class that
-#: also carries I/O failures, so the class alone does not say "memory".
+#: (``fz_malloc``, ``fz_calloc``, ``fz_realloc``: ``"malloc (119076300
+#: bytes) failed"``). MuPDF has no memory error class: these arrive as
+#: ``FzErrorSystem`` (``FZ_ERROR_SYSTEM``), the class that also carries I/O
+#: failures, so the class alone does not say "memory". A size computation
+#: that overflows (``"calloc (N x M bytes) failed (overflow)"``, and the
+#: ``malloc array``/``realloc array`` forms, which exist only as overflows)
+#: is a malformed request, not memory running out, so it is excluded. The
+#: texts are MuPDF 1.29's (``strings libmupdf.so.29.0``).
 _MUPDF_ALLOCATION_FAILED = re.compile(
-    r"\b(?:malloc|calloc|realloc)(?: of array)? \([^)]*\) failed\b"
+    r"\b(?:malloc|calloc|realloc) \([^)]*\) failed(?! \(overflow\))"
 )
 
 #: The ``PdfiumError`` pypdfium2 raises for a bitmap pdfium could not
@@ -312,6 +366,14 @@ def _is_allocation_failure(exc: BaseException) -> bool:
     return False
 
 
+def _memory_detail(exc: BaseException) -> str | None:  # pragma: no cover - runs in the child
+    """``str(exc)`` for the logs (MuPDF's names the allocation's size), or ``None``."""
+    try:
+        return str(exc) or None
+    except Exception:  # a C exception whose text cannot be read
+        return None
+
+
 def _apply_limits(  # pragma: no cover - runs in the child
     data_limit: int, address_limit: int
 ) -> tuple[int, ...] | None:
@@ -389,13 +451,13 @@ def _serve(  # pragma: no cover - runs in the child
         _send(conn, "ok", result)
     except _PipeClosedError:
         raise
-    except MemoryError:
-        _send(conn, "memory", None)
+    except MemoryError as exc:
+        _send(conn, "memory", _memory_detail(exc))
     except LemelyError as exc:
         _send(conn, "rejected", exc)
     except Exception as exc:
         if _is_allocation_failure(exc):
-            _send(conn, "memory", None)
+            _send(conn, "memory", _memory_detail(exc))
         else:
             _send(conn, "error", repr(exc))
 
@@ -416,8 +478,10 @@ def _child_main(  # pragma: no cover - runs in the child
     force, see :func:`_apply_limits`), then per request replies
     ``("ok", value)``; for a stream, ``("item", value)`` per element first
     and then ``("ok", None)``; ``("rejected", exc)`` for a ``LemelyError``
-    (the instance itself), ``("memory", None)`` for a ``MemoryError`` or a C
-    library's allocation failure (:func:`_is_allocation_failure`) and
+    (the instance itself), ``("memory", detail)`` for a ``MemoryError`` or a C
+    library's allocation failure (:func:`_is_allocation_failure`; ``detail``
+    is the failure's own text, which names the allocation's size, or
+    ``None`` when it has none) and
     ``("error", repr(exc))`` for any other exception. ``None`` ends the loop,
     as does a closed pipe (the parent exited or was killed).
 
@@ -660,7 +724,10 @@ class ChildWorker:
             raise value
         if kind == "memory":
             self.last_outcome = "memory"
-            raise SandboxMemory(f"{self.name} ran out of memory", "memory")
+            # The detail (MuPDF's "malloc (N bytes) failed") goes to the logs
+            # with the message; no route shows a SandboxFailure's text to a client.
+            detail = f": {value}" if isinstance(value, str) and value else ""
+            raise SandboxMemory(f"{self.name} ran out of memory{detail}", "memory")
         if kind == "error":
             self.last_outcome = "error"
             raise SandboxError(str(value), "error")
