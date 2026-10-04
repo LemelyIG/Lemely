@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import math
 import os
 import re
 import signal
@@ -676,12 +677,16 @@ _WEB_PROCESS_MB = 233
 _PARENT_PAGES_MB = 441
 _PARSE_WORKER_MB = 75
 _RESOURCE_TRACKER_MB = 16
+#: What is left of the 2 GiB once everything above is counted, at least
+#: (Task 11 review round 2: 2048 - 1981 = 67 MB with the growth rule). A
+#: change that eats into it should be a decision, not a rounding.
+_BUDGET_MARGIN_MB = 64
 
 
 def test_the_default_limits_fit_the_two_gib_budget() -> None:
     """Owner decision S1: on a 2 GiB instance the web process, the pages a
     40-page scan accumulates in it, both workers' data limits, the parse
-    worker and the resource tracker must fit together."""
+    worker and the resource tracker must fit together, with a real margin."""
     settings = SandboxSettings()
     total_mib = (
         _WEB_PROCESS_MB
@@ -691,7 +696,30 @@ def test_the_default_limits_fit_the_two_gib_budget() -> None:
         + _PARSE_WORKER_MB
         + _RESOURCE_TRACKER_MB
     )
-    assert total_mib < 2048, total_mib
+    assert total_mib <= 2048 - _BUDGET_MARGIN_MB, total_mib
+
+
+def _next64(mib: float) -> int:
+    return math.ceil(mib / 64) * 64
+
+
+def test_the_default_limits_follow_the_measured_growth_rule() -> None:
+    """Task 11 (owner decision on review round 2): ``RLIMIT_DATA =
+    next64(baseline + 1.5 x (worst - baseline))``, 1.5x headroom on what the
+    child allocates over its warm baseline; ``RLIMIT_AS = max(next64(1.25 x
+    worst VmPeak), RLIMIT_DATA + 128)``. The measured MiB are recorded in the
+    ``lemely.runtime.sandbox`` docstring; a re-measurement changes them here."""
+    baseline = 66.71  # warm child: the render modules imported
+    measured = {  # worker: (worst VmData, worst VmPeak), every path in turn in one child
+        "extraction": (417.09, 506.6),
+        "interactive": (404.21, 493.7),
+    }
+    settings = SandboxSettings()
+    for worker, (worst_data, worst_peak) in measured.items():
+        data = _next64(baseline + 1.5 * (worst_data - baseline))
+        address = max(_next64(1.25 * worst_peak), data + 128)
+        assert getattr(settings, f"{worker}_data_limit_bytes") == data * MiB, worker
+        assert getattr(settings, f"{worker}_address_limit_bytes") == address * MiB, worker
 
 
 def test_the_extraction_timeout_is_the_owner_decision() -> None:

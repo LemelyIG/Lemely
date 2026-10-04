@@ -153,23 +153,29 @@ crop. The worst single paths: extraction of the 40 Mpx LA PNG (412 MiB;
 Pillow holds LA at four bytes a pixel and converts it), and the crop of a
 160 Mpx 1-bit image (401 MiB).
 
-The rule: ``RLIMIT_DATA = next64(1.5 x the largest VmData)`` of the
-worker's paths, fresh or in turn: extraction next64(1.5 x 417) = 640 MiB,
-interactive next64(1.5 x 404) = 640 MiB. ``RLIMIT_AS = max(next64(1.25 x
-the largest VmPeak), RLIMIT_DATA + 128 MiB)``: next64(1.25 x 507) = 640 and
-next64(1.25 x 494) = 640, so 768 MiB for both. The ``+ 128 MiB`` term is a
-deviation from the plan, which had the 1.25 x term alone: ``VmSize`` runs
-~84 MiB above ``VmData`` (libraries, stack), so an address limit equal to
-the data limit would be the real bound. Headroom over the worst path:
-extraction 640 / 417 = 1.53x data and 768 / 507 = 1.52x address;
-interactive 640 / 404 = 1.58x and 768 / 494 = 1.56x. Re-run under
-640 / 768, every admitted path completed (``last_outcome == "ok"``), fresh
-and in turn; the only failures are MuPDF's, on a WebP preview, at any limit.
+The rule (owner decision, Task 11 review round 2): 1.5x headroom on what the
+child allocates over its warm baseline (``VmData`` 66.7 MiB with the render
+modules imported), ``RLIMIT_DATA = next64(baseline + 1.5 x (worst -
+baseline))``, the worst being the largest ``VmData`` of the worker's paths,
+fresh or in turn: extraction next64(66.7 + 1.5 x 350.4) = next64(592) = 640
+MiB, interactive next64(66.7 + 1.5 x 337.5) = next64(573) = 576 MiB.
+``RLIMIT_AS = max(next64(1.25 x the largest VmPeak), RLIMIT_DATA + 128
+MiB)``: extraction max(640, 768) = 768 MiB, interactive max(640, 704) =
+704 MiB. The ``+ 128 MiB`` term is a deviation from the plan, which had the
+1.25 x term alone: ``VmSize`` runs ~84 MiB above ``VmData`` (libraries,
+stack), so an address limit equal to the data limit would be the real
+bound. Headroom over the worst path: extraction 1.64x on the growth (640 /
+417 = 1.53x overall) and 768 / 507 = 1.52x address; interactive 1.51x on the
+growth (576 / 404 = 1.43x overall) and 704 / 494 = 1.43x address. Re-run
+under 640 / 768 and 576 / 704, every admitted path completed
+(``last_outcome == "ok"``), fresh and in turn; the only failures are
+MuPDF's, on a WebP preview, at any limit. Both rules are pinned by
+``tests/test_sandbox.py::test_the_default_limits_follow_the_measured_growth_rule``.
 
 The 2 GiB budget (owner decision S1), resident MB: web process 233 + pages
-in the parent 441 + extraction 640 + interactive 640 + parse worker 75 +
+in the parent 441 + extraction 640 + interactive 576 + parse worker 75 +
 multiprocessing's ``resource_tracker`` 16 (measured 16.0 MB resident) =
-2045, under 2048 by 3 MB (pinned by
+1981, under 2048 by 67 MB (pinned by
 ``tests/test_sandbox.py::test_the_default_limits_fit_the_two_gib_budget``).
 
 The extraction timeout is 180 s (owner decision, Task 11 review), counting
