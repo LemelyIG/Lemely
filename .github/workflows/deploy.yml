@@ -255,7 +255,8 @@ jobs:
           service: lemely-backend-${{ needs.resolve-env.outputs.environment }}
           region: us-central1
           image: ${{ env.IMAGE }}
-          # gen2 is the load-bearing flag here; 1Gi is only insurance.
+          # gen2 is the load-bearing flag here; --memory is a budget (see the last
+          # paragraph of this comment, and docs/ci-cd.md).
           #
           # The first run of this pipeline died 55s into startup, before uvicorn
           # bound, with "Uncaught signal: 7, pid=1, tid=1" — SIGBUS. That message
@@ -274,8 +275,18 @@ jobs:
           # being the bottleneck, not the heap. Dropping back to 512Mi would
           # very likely still work, but 1Gi costs nothing extra while idle
           # (min-instances=0) and buys headroom against a cold-start spike that
-          # the per-minute metric could miss, so it stays.
-          flags: --allow-unauthenticated --service-account=lemely-backend-${{ needs.resolve-env.outputs.environment }}@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com --max-instances=3 --min-instances=0 --memory=1Gi --cpu=1 --timeout=300 --port=8000 --execution-environment=gen2
+          # the per-minute metric could miss, so it stayed. That held until the
+          # scan workers (#260, #271).
+          #
+          # --memory=2Gi is a sum, not insurance: the two scan worker limits
+          # (extraction 640 MiB, interactive 576 MiB RLIMIT_DATA), the web
+          # process (237 MB idle), the pages it holds while an extraction runs
+          # (500 MB), the parse worker and the resource tracker. They total
+          # 2003.9 of 2048 MiB. A worker child is the kernel's first choice if
+          # the instance runs out (oom_score_adj 1000). There is no
+          # --concurrency flag: the serialised workers are the cap. See
+          # "Memory budget" in docs/ci-cd.md.
+          flags: --allow-unauthenticated --service-account=lemely-backend-${{ needs.resolve-env.outputs.environment }}@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com --max-instances=3 --min-instances=0 --memory=2Gi --cpu=1 --timeout=300 --port=8000 --execution-environment=gen2
           #
           # --service-account runs the revision as the per-environment runtime
           # identity provisioned by scripts/gcp-bootstrap.sh, which holds

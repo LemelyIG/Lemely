@@ -308,6 +308,59 @@ does nothing:
 2. Set `SECTION_KEY` in each environment where it should differ from the
    default, then redeploy that environment.
 
+### Memory budget
+
+The backend runs at `--memory=2Gi`. The figure is a sum: scan work (#260,
+#271) runs in two child processes, each under a hard memory limit, and the
+instance has to hold both children at their limits at the same time as the
+web process and the pages it keeps while an extraction runs. Every number
+below is measured; the measurements and the rule that sets the limits are in
+the docstring of `lemely/runtime/sandbox.py`.
+
+| Part | Size |
+|---|---|
+| Extraction worker, `RLIMIT_DATA` (`RLIMIT_AS` 768 MiB) | 640 MiB |
+| Interactive worker, `RLIMIT_DATA` (`RLIMIT_AS` 704 MiB) | 576 MiB |
+| Web process, idle after start-up | 237.4 MB (226.4 MiB) |
+| Pages the web process holds during the adversarial 40-page extraction | 500.5 MB (477.3 MiB) |
+| Equivalence parse worker | 71.9 MB (68.6 MiB) |
+| `multiprocessing` resource tracker | 16.4 MB (15.6 MiB) |
+| **Total** | **2003.9 MiB of 2048** |
+
+That leaves a margin of 44.1 MiB, which the owner accepted. The backstop is
+the OOM priority: every worker child sets `oom_score_adj=1000`, so if the
+instance does run out, the kernel kills a worker (that request gets a 422)
+before it kills the web server.
+
+The extraction worker serves extraction and the upload check; the
+interactive worker serves preview and crop. Each worker handles one call at a
+time, so the serialised workers are the concurrency cap, and the service sets
+no `--concurrency` flag. One interactive worker serialises every preview and
+crop, so a page that asks for many thumbnails at once can get 503 "busy"
+under load.
+
+The limits and timeouts are settings, so each can be changed with an
+environment variable (and a line in `env_vars`, as described above). The
+defaults are the measured values. A timeout bounds one call, including any
+wait for a busy worker; the extraction timeout is 180 s because the slowest
+extraction measured takes 33 s.
+
+| Environment variable | Default |
+|---|---|
+| `LEMELY_SANDBOX__EXTRACTION_DATA_LIMIT_BYTES` | 671088640 (640 MiB) |
+| `LEMELY_SANDBOX__EXTRACTION_ADDRESS_LIMIT_BYTES` | 805306368 (768 MiB) |
+| `LEMELY_SANDBOX__INTERACTIVE_DATA_LIMIT_BYTES` | 603979776 (576 MiB) |
+| `LEMELY_SANDBOX__INTERACTIVE_ADDRESS_LIMIT_BYTES` | 738197504 (704 MiB) |
+| `LEMELY_SANDBOX__EXTRACTION_TIMEOUT_SECONDS` | 180 |
+| `LEMELY_SANDBOX__UPLOAD_CHECK_TIMEOUT_SECONDS` | 20 |
+| `LEMELY_SANDBOX__PREVIEW_TIMEOUT_SECONDS` | 15 |
+| `LEMELY_SANDBOX__CROP_TIMEOUT_SECONDS` | 10 |
+
+Raising a data limit raises the total above: keep the two data limits, the
+rest of the table and the margin within the instance's memory, or raise
+`--memory` with them. `tests/test_sandbox.py` pins the defaults to the
+measured growth rule and to a margin of at least 40 MiB.
+
 ### The marking flags
 
 Three settings change how answers are marked:
