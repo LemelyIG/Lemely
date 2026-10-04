@@ -348,3 +348,60 @@ def measure(target: str, *args: object) -> dict[str, int | float]:
         "vm_data_max": max(samples),
         "seconds": seconds,
     }
+
+
+#: The bilevel-in-PDF measurement's decoded-pixel ceiling (Task 21, #273): a
+#: 10 000 x 15 900 image, 159 Mpx, is over the walk's 40 Mpx colour cap.
+BILEVEL_PDF_MAX_DECODE_PX = 160_000_000
+
+
+def _extract_bilevel_pdf(path: str) -> Iterator[object]:
+    from pathlib import Path
+
+    from lemely.io.rasterise import iter_scan_pages
+
+    return iter_scan_pages(Path(path), 200.0)
+
+
+def _crop_bilevel_pdf(path: str) -> bytes:
+    from pathlib import Path
+
+    from lemely.io.scan_render import crop_pdf_scan
+
+    return crop_pdf_scan(Path(path).read_bytes(), 0, [100, 100, 300, 400])
+
+
+def _preview_bilevel_pdf(path: str) -> bytes:
+    from pathlib import Path
+
+    from lemely.io.scan_render import render_preview_png
+
+    return render_preview_png(Path(path).read_bytes())
+
+
+_BILEVEL_PDF_PATHS = {
+    "extraction": "_extract_bilevel_pdf",
+    "crop": "_crop_bilevel_pdf",
+    "preview": "_preview_bilevel_pdf",
+}
+
+
+def bilevel_pdf_paths(path: str, mode: str) -> dict[str, object]:
+    """Measure one render path over a 160 Mpx bilevel PDF in this child (Task 21, #273).
+
+    ``mode`` is ``"extraction"`` (``iter_scan_pages(path, 200.0)``),
+    ``"crop"`` (``crop_pdf_scan(data, 0, [100, 100, 300, 400])``) or
+    ``"preview"`` (``render_preview_png(data)``). The PDF walk refuses the
+    image at its 40 Mpx colour cap, so the child lifts
+    ``pdf_content_walk.MAX_DECODE_PX`` (read at call time) to
+    :data:`BILEVEL_PDF_MAX_DECODE_PX` first; nothing restores it, the child
+    being a throwaway. Returns :func:`measure`'s numbers plus the soft
+    ``RLIMIT_DATA`` and ``RLIMIT_AS`` the child ran under.
+    """
+    from lemely.io import pdf_content_walk
+
+    setattr(pdf_content_walk, "MAX_DECODE_PX", BILEVEL_PDF_MAX_DECODE_PX)  # noqa: B010
+    numbers: dict[str, object] = dict(measure(f"{__name__}.{_BILEVEL_PDF_PATHS[mode]}", path))
+    numbers["rlimit_data"] = resource.getrlimit(resource.RLIMIT_DATA)[0]
+    numbers["rlimit_as"] = resource.getrlimit(resource.RLIMIT_AS)[0]
+    return numbers
