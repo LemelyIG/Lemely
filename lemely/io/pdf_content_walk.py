@@ -40,7 +40,6 @@ from lemely.io._scan_common import (
     _WALK_FAILED_MESSAGE,
     _WHOLE_SCAN_MESSAGE,
     MAX_CROP_PAGES,
-    MAX_DECODE_PX,
     MAX_OBJECT_STREAM_BYTES,
     MAX_PAGE_CONTENT_BYTES,
     MAX_PDF_OBJECTS,
@@ -49,6 +48,7 @@ from lemely.io._scan_common import (
     ScanRejectedError,
     ScanTooLargeError,
     ScanUnsupportedEncodingError,
+    decode_pixel_cap,
 )
 
 
@@ -607,7 +607,8 @@ def _walk_resource_graph(
       gives the same count.
     * Two roles narrow this, and only for that role: an image met under
       ``/XObject`` is decoded as an image, so its declared size and its
-      masks' are checked against :data:`MAX_DECODE_PX` instead; a
+      masks' are checked against their own mode's pixel cap
+      (:func:`_image_pixel_cap`) instead; a
       non-Type3 font met under ``/Font`` is loaded by the font engine, so it
       is not expanded. Reached in any other role too, the same object is
       also expanded in full (an appearance stream labelled ``/Image`` is
@@ -724,18 +725,148 @@ def _resolve_int(doc: pymupdf.Document, kind: str, value: str) -> int | None:
     return None
 
 
+#: The filters an image may carry and still be judged by its one-component
+#: mode (#273 item 3): each was measured at 159 Mpx (80 Mpx at 16 bits)
+#: inside both workers, every render path ``ok`` and at most 31% of the
+#: worker's ``RLIMIT_DATA`` (Tasks 21 and 22). No filter at all is measured
+#: too. JBIG2 (not generatable here), JPX (OpenJPEG holds 32-bit samples) and
+#: every other filter or chain keep the colour cap until measured.
+_GREY_PROVEN_FILTERS = frozenset({"/FlateDecode", "/DCTDecode", "/CCITTFaxDecode"})
+#: Colour-space names by component count, as both renderers read an image
+#: XObject's ``/ColorSpace``. A name not here (``/Pattern``, an inline-image
+#: abbreviation, anything unknown) is not trusted to mean anything.
+_COMPONENTS_BY_NAME = {
+    "/DeviceGray": 1,
+    "/CalGray": 1,
+    "/DeviceRGB": 3,
+    "/CalRGB": 3,
+    "/Lab": 3,
+    "/DeviceCMYK": 4,
+}
+#: The Pillow mode :func:`decode_pixel_cap` charges a colour image as, by
+#: component count: three bytes a pixel at 8 bits, or four.
+_COLOUR_MODE_BY_COMPONENTS = {3: "RGB", 4: "CMYK"}
+
+
+def _resolved_text(doc: pymupdf.Document, kind: str, value: str) -> tuple[str, str]:
+    """``(kind, value)`` with one level of indirection followed, as text.
+
+    An ``xref`` value is read back as its object's text, its kind ``"name"``,
+    ``"array"`` or ``"other"`` by its first character; an out-of-range
+    reference becomes ``("null", "")``.
+    """
+    if kind != "xref":
+        return kind, value
+    target = _ref_target(doc, kind, value)
+    if not target:
+        return "null", ""
+    text = doc.xref_object(target).strip()  # type: ignore[no-untyped-call]
+    if text.startswith("/"):
+        return "name", text
+    if text.startswith("["):
+        return "array", text
+    return "other", text
+
+
+def _colour_components(doc: pymupdf.Document, xref: int) -> int | None:
+    """How many components image ``xref``'s ``/ColorSpace`` declares, or ``None`` if unknown.
+
+    Reads a bare name, an array whose first name is a known family
+    (``[/CalGray << ... >>]``), and ``[/ICCBased n 0 R]`` by its profile
+    stream's ``/N``, following one indirection for the colour space and one
+    for ``/N``. ``/Indexed``, ``/Separation``, ``/DeviceN`` and anything
+    unreadable are ``None``: a palette or tint transform is drawn in its
+    base space, which this does not judge.
+    """
+    kind, value = _resolved_text(doc, *_key(doc, xref, "ColorSpace"))
+    if kind == "name":
+        return _COMPONENTS_BY_NAME.get(value)
+    if kind != "array":
+        return None
+    names = re.findall(r"/[^\s/\[\]<>()]+", value)
+    if not names or not value.lstrip("[ \t\r\n").startswith(names[0]):
+        return None
+    family = names[0]
+    if family == "/ICCBased":
+        ref = _REF_RE.search(value)
+        if ref is None:
+            return None
+        profile = _ref_target(doc, "xref", f"{ref.group(1)} 0 R")
+        if not profile or not doc.xref_is_stream(profile):  # type: ignore[no-untyped-call]
+            return None
+        n = _resolve_int(doc, *_key(doc, profile, "N"))
+        return n if n in (1, 3, 4) else None
+    if family in ("/CalGray", "/CalRGB", "/Lab", "/DeviceGray", "/DeviceRGB", "/DeviceCMYK"):
+        return _COMPONENTS_BY_NAME[family]
+    return None
+
+
+def _is_image_mask(doc: pymupdf.Document, xref: int) -> bool:
+    kind, value = _resolved_text(doc, *_key(doc, xref, "ImageMask"))
+    return value.strip() == "true" and kind in ("bool", "other")
+
+
+def _image_mode(doc: pymupdf.Document, xref: int) -> tuple[str, int]:
+    """The Pillow mode and sample depth image ``xref`` decodes as, for :func:`decode_pixel_cap`.
+
+    Read from its dictionary only (``/ImageMask``, ``/BitsPerComponent``,
+    ``/ColorSpace``, ``/Filter``); nothing is decoded. Returns
+    ``(mode, sample_bits)``:
+
+    * ``"1"``: an image mask, or a one-component image at 1 bit;
+    * ``"L"``: one component at 8 bits (or a depth that cannot be read: a
+      DCT image's depth is its JPEG's, and a grey JPEG is 8 bits);
+    * ``"I;16"``: one component at 16 bits;
+    * ``"RGB"`` or ``"CMYK"`` with the declared depth (8 if unreadable) for
+      three- and four-component colour, so 16-bit colour is charged its
+      doubled bytes (Task 11);
+    * ``("RGB", 8)``, the flat colour cap, for everything else:
+      ``/Indexed``, an unknown or unreadable colour space, a 1-bit colour
+      image, 2- or 4-bit grey, and any image mask or grey image whose filter
+      is not a single entry of :data:`_GREY_PROVEN_FILTERS` (JBIG2 and JPX
+      among them). None of those was measured, so none is widened.
+    """
+    colour_cap = ("RGB", 8)
+    bits = _resolve_int(doc, *_key(doc, xref, "BitsPerComponent"))
+    components = 1 if _is_image_mask(doc, xref) else _colour_components(doc, xref)
+    if components in _COLOUR_MODE_BY_COMPONENTS:
+        return _COLOUR_MODE_BY_COMPONENTS[components], bits if bits in (8, 16) else 8
+    if components != 1:
+        return colour_cap
+    kind, value = _key(doc, xref, "Filter")
+    if kind != "null":  # absent: unfiltered, measured too
+        filters = _normalise_filter(doc, kind, value)  # None: a /Filter of no readable shape
+        if filters is None or len(filters) != 1 or filters[0] not in _GREY_PROVEN_FILTERS:
+            return colour_cap
+    if _is_image_mask(doc, xref) or bits == 1:
+        return "1", 1
+    if bits is None or bits == 8:
+        return "L", 8
+    if bits == 16:
+        return "I;16", 16
+    return colour_cap
+
+
+def _image_pixel_cap(doc: pymupdf.Document, xref: int) -> int:
+    """The most pixels image ``xref`` may declare: :func:`decode_pixel_cap` of its mode."""
+    mode, sample_bits = _image_mode(doc, xref)
+    return decode_pixel_cap(mode, sample_bits=sample_bits)
+
+
 def _check_declared_pixels(doc: pymupdf.Document, xref: int, *, page_index: int) -> None:
-    """:data:`MAX_DECODE_PX` against image object ``xref``'s own declared size.
+    """Image object ``xref``'s own declared size against its mode's cap (:func:`_image_pixel_cap`).
 
     ``/Width`` and ``/Height`` may be integers or reals, direct or
     indirect (:func:`_resolve_int`). Used for images the walk reaches and
-    for every image's ``/SMask`` and stream ``/Mask``.
+    for every image's ``/SMask`` and stream ``/Mask``, each judged by its
+    own dictionary: a soft mask declaring ``/DeviceGray`` gets the grey
+    cap, a stream mask declaring ``/ImageMask true`` the bilevel one.
     """
     width = _resolve_int(doc, *_key(doc, xref, "Width"))
     height = _resolve_int(doc, *_key(doc, xref, "Height"))
     if width is None or height is None:
         return
-    if width * height > MAX_DECODE_PX:
+    if width * height > _image_pixel_cap(doc, xref):
         raise ScanTooLargeError(
             _IMAGE_TOO_LARGE_MESSAGE.format(page=page_index + 1, mpx=width * height // 1_000_000),
             reason="image_px",
@@ -783,10 +914,13 @@ def _tuple_int(value: object) -> int:
 def _check_image_and_masks(
     doc: pymupdf.Document, image: tuple[object, ...], *, page_index: int
 ) -> None:
-    """Reject an image or its mask whose declared pixels exceed :data:`MAX_DECODE_PX`.
+    """Reject an image or its mask whose declared pixels exceed its mode's cap.
 
     ``image`` is one entry of ``page.get_images(full=True)``:
     ``(xref, smask_xref, width, height, ...)``, sizes as pymupdf read them.
+    The cap is :func:`_image_pixel_cap` of ``xref``'s own dictionary; the
+    tuple's depth and colour-space fields are not used, so this and the
+    walk's :func:`_check_declared_pixels` judge one image alike.
     """
     xref, smask_xref, width, height = (
         _tuple_int(image[0]),
@@ -794,7 +928,7 @@ def _check_image_and_masks(
         _tuple_int(image[2]),
         _tuple_int(image[3]),
     )
-    if width * height > MAX_DECODE_PX:
+    if width * height > _image_pixel_cap(doc, xref):
         raise ScanTooLargeError(
             _IMAGE_TOO_LARGE_MESSAGE.format(page=page_index + 1, mpx=width * height // 1_000_000),
             reason="image_px",
@@ -863,10 +997,11 @@ def check_pdf_content(doc: pymupdf.Document, *, pdfium_pages: int | None = None)
 
     Images are not content and their streams are never read; instead each
     image's DECLARED ``/Width x /Height`` -- and its ``/SMask``'s and
-    stream ``/Mask``'s -- is checked against :data:`MAX_DECODE_PX`,
-    because the renderer allocates for the declared size whatever the
-    stream holds. Images are found both by ``page.get_images(full=True)``
-    and by the walk, which reaches the ones ``get_images`` does not list.
+    stream ``/Mask``'s -- is checked against :func:`decode_pixel_cap` for
+    the mode its dictionary declares (:func:`_image_mode`), because the
+    renderer allocates for the declared size whatever the stream holds.
+    Images are found both by ``page.get_images(full=True)`` and by the
+    walk, which reaches the ones ``get_images`` does not list.
 
     The page tree (:func:`_page_tree`) is read once, up front: a walk that
     reaches it from a page's drawing resources rejects the file (see

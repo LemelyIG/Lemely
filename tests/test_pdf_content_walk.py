@@ -1333,5 +1333,261 @@ class ContainerKeyTests(unittest.TestCase):
         self.assertIsNone(check_scan_bytes(data))
 
 
+def _declared_image_pdf(entries: bytes, *extra: bytes, width: int, height: int) -> bytes:
+    """One page drawing image object 5, whose dictionary DECLARES ``width x height``.
+
+    ``entries`` are the image's own keys after its size (colour space, depth,
+    filter, masks); ``extra`` are objects 6 onwards for it to reference.
+    The stream is one byte: the walk judges the dictionary and never decodes.
+    """
+    image = pdf_stream(
+        f"/Type /XObject /Subtype /Image /Width {width} /Height {height} ".encode() + entries,
+        b"\x00",
+    )
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
+            b"/Resources << /XObject << /Im0 5 0 R >> >> >>",
+            pdf_stream(b"", b"q 595 0 0 842 0 0 cm /Im0 Do Q"),
+            image,
+            *extra,
+        ]
+    )
+
+
+_BILEVEL = b"/ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /FlateDecode"
+_GREY = b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode"
+_RGB = b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode"
+#: An ``/ICCBased`` profile stream object declaring ``/N``; the profile bytes
+#: are never read by the walk.
+_ICC_N1 = pdf_stream(b"/N 1 /Alternate /DeviceGray", b"icc")
+_ICC_N4 = pdf_stream(b"/N 4 /Alternate /DeviceCMYK", b"icc")
+
+
+class ImageModeCapTests(unittest.TestCase):
+    """#273 item 3 (owner decision S6): an image inside a PDF is judged
+    against ``decode_pixel_cap`` for the mode its dictionary declares, not
+    the flat 40 Mpx colour cap. Bilevel and one-component grey get the grey
+    ceilings (160 Mpx; 80 Mpx at 16 bits), measured inside both workers
+    (Tasks 21 and 22) for no filter, Flate, DCT and CCITT G4; four-component
+    and 16-bit colour get their bytes-a-pixel caps (30, 20, 15 Mpx).
+    Anything unproven -- ``/Indexed``, an unknown colour space, JBIG2, JPX,
+    any other filter or a filter chain, 2- or 4-bit grey, a 1-bit colour
+    image -- keeps the colour cap."""
+
+    def _passes(self, data: bytes) -> None:
+        self.assertIsNone(check_scan_bytes(data))
+
+    def _refused(self, data: bytes) -> None:
+        with self.assertRaises(ScanTooLargeError) as ctx:
+            check_scan_bytes(data)
+        self.assertEqual(ctx.exception.reason, "image_px")
+        self.assertIn("megapixels, which is too large to process safely", str(ctx.exception))
+
+    def test_a_hundred_megapixel_bilevel_image_in_a_pdf_passes(self) -> None:
+        self._passes(_declared_image_pdf(_BILEVEL, width=10_000, height=10_000))
+
+    def test_a_hundred_megapixel_unfiltered_bilevel_image_passes(self) -> None:
+        self._passes(
+            _declared_image_pdf(
+                b"/ColorSpace /DeviceGray /BitsPerComponent 1", width=10_000, height=10_000
+            )
+        )
+
+    def test_an_image_mask_of_a_hundred_megapixels_passes(self) -> None:
+        self._passes(
+            _declared_image_pdf(
+                b"/ImageMask true /Filter /FlateDecode", width=10_000, height=10_000
+            )
+        )
+
+    def test_a_hundred_megapixel_ccitt_bilevel_image_passes(self) -> None:
+        self._passes(
+            _declared_image_pdf(
+                b"/ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /CCITTFaxDecode "
+                b"/DecodeParms << /K -1 /Columns 10000 /Rows 10000 >>",
+                width=10_000,
+                height=10_000,
+            )
+        )
+
+    def test_a_hundred_megapixel_eight_bit_grey_image_passes(self) -> None:
+        self._passes(_declared_image_pdf(_GREY, width=10_000, height=10_000))
+
+    def test_a_hundred_megapixel_grey_jpeg_passes(self) -> None:
+        self._passes(
+            _declared_image_pdf(
+                b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /DCTDecode",
+                width=10_000,
+                height=10_000,
+            )
+        )
+
+    def test_a_hundred_megapixel_eight_bit_grey_image_passes_icc_based_n1(self) -> None:
+        self._passes(
+            _declared_image_pdf(
+                b"/ColorSpace [/ICCBased 6 0 R] /BitsPerComponent 8 /Filter /FlateDecode",
+                _ICC_N1,
+                width=10_000,
+                height=10_000,
+            )
+        )
+
+    def test_grey_spelled_indirectly_or_as_cal_gray_passes(self) -> None:
+        for entries, extra in (
+            (b"/ColorSpace 6 0 R /BitsPerComponent 8", (b"/DeviceGray",)),
+            (b"/ColorSpace 6 0 R /BitsPerComponent 8", (b"[/ICCBased 7 0 R]", _ICC_N1)),
+            (b"/ColorSpace [/CalGray << /WhitePoint [1 1 1] >>] /BitsPerComponent 8", ()),
+            (b"/ColorSpace /DeviceGray /BitsPerComponent 6 0 R", (b"1",)),
+            (b"/ColorSpace /DeviceGray /BitsPerComponent 1 /Filter 6 0 R", (b"/FlateDecode",)),
+        ):
+            with self.subTest(entries=entries):
+                self._passes(_declared_image_pdf(entries, *extra, width=10_000, height=10_000))
+
+    def test_a_hundred_megapixel_rgb_image_is_still_refused(self) -> None:
+        self._refused(_declared_image_pdf(_RGB, width=10_000, height=10_000))
+
+    def test_a_hundred_megapixel_indexed_image_is_still_refused(self) -> None:
+        self._refused(
+            _declared_image_pdf(
+                b"/ColorSpace [/Indexed /DeviceGray 1 <00FF>] /BitsPerComponent 1",
+                width=10_000,
+                height=10_000,
+            )
+        )
+
+    def test_unproven_grey_and_bilevel_images_keep_the_colour_cap(self) -> None:
+        """No measurement covers these, so none is widened past 40 Mpx."""
+        for entries in (
+            b"/ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /JBIG2Decode",
+            b"/ImageMask true /Filter /JBIG2Decode",
+            b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /JPXDecode",
+            b"/Filter /JPXDecode",
+            b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /LZWDecode",
+            b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter [/ASCIIHexDecode /FlateDecode]",
+            b"/ColorSpace /DeviceGray /BitsPerComponent 4 /Filter /FlateDecode",
+            b"/ColorSpace /DeviceRGB /BitsPerComponent 1 /Filter /FlateDecode",
+            b"/ColorSpace [/Separation /Black /DeviceGray 6 0 R] /BitsPerComponent 8",
+            b"/ColorSpace /G /BitsPerComponent 8",
+            b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter 5",
+            b"/BitsPerComponent 8",
+        ):
+            with self.subTest(entries=entries):
+                self._refused(_declared_image_pdf(entries, width=10_000, height=10_000))
+
+    def test_a_sixteen_bit_grey_image_over_eighty_megapixels_is_refused(self) -> None:
+        self._refused(
+            _declared_image_pdf(
+                b"/ColorSpace /DeviceGray /BitsPerComponent 16 /Filter /FlateDecode",
+                width=9_000,
+                height=9_000,
+            )
+        )
+
+    def test_a_sixteen_bit_grey_image_of_eighty_megapixels_passes(self) -> None:
+        self._passes(
+            _declared_image_pdf(
+                b"/ColorSpace /DeviceGray /BitsPerComponent 16 /Filter /FlateDecode",
+                width=8_000,
+                height=10_000,
+            )
+        )
+
+    def test_a_bilevel_image_over_one_hundred_sixty_megapixels_is_refused(self) -> None:
+        self._refused(_declared_image_pdf(_BILEVEL, width=13_000, height=13_000))
+
+    def test_four_component_and_sixteen_bit_colour_get_their_bytes_a_pixel_caps(self) -> None:
+        """Task 11's colour caps by decoded bytes a pixel, read from the dictionary:
+        CMYK (and ICC ``/N 4``) 30 Mpx, 16-bit RGB 20 Mpx, 16-bit CMYK 15 Mpx."""
+        cmyk = b"/ColorSpace /DeviceCMYK /BitsPerComponent 8 /Filter /FlateDecode"
+        icc4 = b"/ColorSpace [/ICCBased 6 0 R] /BitsPerComponent 8 /Filter /DCTDecode"
+        rgb16 = b"/ColorSpace /DeviceRGB /BitsPerComponent 16 /Filter /FlateDecode"
+        cmyk16 = b"/ColorSpace /DeviceCMYK /BitsPerComponent 16 /Filter /FlateDecode"
+        for entries, extra, passing, refused in (
+            (cmyk, (), (5_000, 6_000), (5_000, 7_000)),
+            (icc4, (_ICC_N4,), (5_000, 6_000), (5_000, 7_000)),
+            (rgb16, (), (4_000, 5_000), (5_000, 5_000)),
+            (cmyk16, (), (3_000, 5_000), (4_000, 4_000)),
+        ):
+            with self.subTest(entries=entries):
+                w, h = passing
+                self._passes(_declared_image_pdf(entries, *extra, width=w, height=h))
+                w, h = refused
+                self._refused(_declared_image_pdf(entries, *extra, width=w, height=h))
+
+    def test_the_soft_mask_of_a_colour_image_gets_the_grey_cap(self) -> None:
+        for (w, h), passes in (((10_000, 10_000), True), ((10_000, 17_000), False)):
+            with self.subTest(width=w, height=h):
+                data = _declared_image_pdf(
+                    _RGB + b" /SMask 6 0 R",
+                    pdf_stream(
+                        f"/Type /XObject /Subtype /Image /Width {w} /Height {h} ".encode() + _GREY,
+                        b"\x00",
+                    ),
+                    width=1_000,
+                    height=1_000,
+                )
+                if passes:
+                    self._passes(data)
+                else:
+                    self._refused(data)
+
+    def test_a_stream_mask_is_judged_as_an_image_mask(self) -> None:
+        data = _declared_image_pdf(
+            _RGB + b" /Mask 6 0 R",
+            pdf_stream(
+                b"/Type /XObject /Subtype /Image /Width 10000 /Height 10000 "
+                b"/ImageMask true /Filter /FlateDecode",
+                b"\x00",
+            ),
+            width=1_000,
+            height=1_000,
+        )
+        self._passes(data)
+
+    def test_an_rgb_soft_mask_keeps_the_colour_cap(self) -> None:
+        data = _declared_image_pdf(
+            _RGB + b" /SMask 6 0 R",
+            pdf_stream(
+                b"/Type /XObject /Subtype /Image /Width 10000 /Height 10000 " + _RGB, b"\x00"
+            ),
+            width=1_000,
+            height=1_000,
+        )
+        self._refused(data)
+
+    def test_a_walked_bilevel_image_gets_the_grey_cap(self) -> None:
+        """An image only the walk reaches (an annotation appearance; not in
+        ``get_images``) is judged the same way."""
+        for entries, passes in ((_BILEVEL, True), (_RGB, False)):
+            with self.subTest(entries=entries):
+                data = assemble_pdf(
+                    [
+                        b"<< /Type /Catalog /Pages 2 0 R >>",
+                        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+                        b"/Contents 4 0 R /Annots [5 0 R] >>",
+                        pdf_stream(b"", b"q Q"),
+                        b"<< /Type /Annot /Subtype /Stamp /Rect [0 0 300 300] "
+                        b"/AP << /N 6 0 R >> >>",
+                        pdf_stream(
+                            b"/Type /XObject /Subtype /Form /BBox [0 0 300 300] "
+                            b"/Resources << /XObject << /Im 7 0 R >> >>",
+                            b"q 300 0 0 300 0 0 cm /Im Do Q",
+                        ),
+                        pdf_stream(
+                            b"/Type /XObject /Subtype /Image /Width 10000 /Height 10000 " + entries,
+                            b"\x00",
+                        ),
+                    ]
+                )
+                if passes:
+                    self._passes(data)
+                else:
+                    self._refused(data)
+
+
 if __name__ == "__main__":
     unittest.main()
