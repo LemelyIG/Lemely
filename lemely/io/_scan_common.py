@@ -45,7 +45,7 @@ import math
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, NoReturn
 
 from PIL import Image
 
@@ -422,15 +422,46 @@ GREY_CEILING_MODES = _ONE_BYTE_GREY_MODES | _TWO_BYTE_GREY_MODES
 MAX_DECODE_PX_WEBP = MAX_DECODE_PX // 3
 
 
-def decode_pixel_cap(mode: str, image_format: str | None = None) -> int:
+#: Task 11 review (owner decision 1): bytes per pixel a colour mode decodes
+#: to at 8 bits a sample -- the samples as MuPDF holds them for the preview,
+#: before its 8-bit pixmap (measured: an image there costs its samples plus
+#: that pixmap, 6.1 bytes a pixel for 8-bit RGB, 8.2 for RGBA and CMYK, 9.2
+#: for 16-bit RGB, 12.4 for 16-bit RGBA). ``I`` and ``F`` are one 32-bit
+#: sample. Two-channel and palette modes stay at RGB's ceiling (a palette is
+#: drawn as RGB). Grey has its own ceilings above.
+_COLOUR_BYTES_PER_PIXEL = {
+    "RGB": 3,
+    "YCbCr": 3,
+    "LAB": 3,
+    "HSV": 3,
+    "RGBA": 4,
+    "RGBX": 4,
+    "RGBa": 4,
+    "CMYK": 4,
+    "I": 4,
+    "F": 4,
+}
+#: Modes whose 4 bytes are one 32-bit sample: a 32-bit file is not charged twice.
+_WIDE_SAMPLE_MODES = frozenset({"I", "F"})
+#: :data:`MAX_DECODE_PX` is set for 8-bit RGB, three bytes a pixel.
+_COLOUR_CEILING_BYTES = 3
+
+
+def decode_pixel_cap(mode: str, image_format: str | None = None, *, sample_bits: int = 8) -> int:
     """The most pixels an image may decode to, by Pillow ``mode`` and ``image_format``.
 
     The one rule for every image path: upload (:func:`check_scan_bytes`),
     extraction (via :func:`plan_image`) and the review crop route, each
     passing the opened image's ``mode`` and ``format``. A WebP gets
-    :data:`MAX_DECODE_PX_WEBP` whatever its mode; otherwise the mode decides
-    (see :data:`MAX_DECODE_PX_GREY`). ``image_format`` is ``None`` for an
-    image that is not straight from a file (a converted copy).
+    :data:`MAX_DECODE_PX_WEBP` whatever its mode; grey its own ceilings (see
+    :data:`MAX_DECODE_PX_GREY`). Colour is charged by the bytes a pixel
+    decodes to (owner decision, Task 11 review): ``MAX_DECODE_PX`` (40 Mpx)
+    for 8-bit RGB's three, and proportionally fewer above, ``MAX_DECODE_PX *
+    3 // bytes``: RGBA, CMYK and 32-bit ``I``/``F`` 30 Mpx, 16-bit RGB 20 Mpx,
+    16-bit RGBA or CMYK 15 Mpx. ``sample_bits`` is the file's depth a sample
+    (:func:`_image_sample_bits`): Pillow names a 16-bit RGB image ``"RGB"``,
+    so the mode alone cannot say. ``image_format`` is ``None`` for an image
+    that is not straight from a file (a converted copy).
     """
     if image_format == "WEBP":
         return MAX_DECODE_PX_WEBP
@@ -438,7 +469,52 @@ def decode_pixel_cap(mode: str, image_format: str | None = None) -> int:
         return MAX_DECODE_PX_GREY
     if mode in _TWO_BYTE_GREY_MODES:
         return MAX_DECODE_PX_GREY // 2
-    return MAX_DECODE_PX
+    per_pixel = _COLOUR_BYTES_PER_PIXEL.get(mode, _COLOUR_CEILING_BYTES)
+    if sample_bits > 8 and mode not in _WIDE_SAMPLE_MODES:
+        per_pixel *= -(-sample_bits // 8)
+    return MAX_DECODE_PX * _COLOUR_CEILING_BYTES // max(_COLOUR_CEILING_BYTES, per_pixel)
+
+
+def _image_sample_bits(opened: ImageFile.ImageFile) -> int:
+    """16 for a file storing more than 8 bits a sample in a mode Pillow narrows to 8, else 8.
+
+    Read from the decoder's raw mode (``"RGB;16B"`` for a 16-bit RGB PNG,
+    ``"RGBA;16N"`` for a 16-bit RGBA TIFF), which ``Image.open`` sets from
+    the header without decoding anything.
+    """
+    for tile in opened.tile[:1]:
+        args = tile.args
+        raw = args if isinstance(args, str) else args[0] if args else None
+        if isinstance(raw, str) and ";16" in raw:
+            return 16
+    return 8
+
+
+def _refuse_over_cap(cap: int, mode: str, image_format: str | None) -> NoReturn:
+    """Raise the too-large refusal for an image over ``cap``, worded for its kind."""
+    mpx = cap // 1_000_000
+    if image_format == "WEBP":
+        raise ScanTooLargeError(
+            f"This WebP image is too large to process (limit {mpx} megapixels for WebP, "
+            "which costs far more to decode than other formats). Save it as a PNG or "
+            "JPEG, or at a lower resolution.",
+            reason="webp_px",
+        )
+    if mode in _ONE_BYTE_GREY_MODES:
+        limit = f"{mpx} megapixels for a black-and-white or greyscale image"
+    elif mode in _TWO_BYTE_GREY_MODES:
+        limit = f"{mpx} megapixels for a 16-bit greyscale image"
+    else:
+        # Colour, but also "LA", "I" and "F": say what the limit is and
+        # how to get the larger one, rather than name the image's kind.
+        limit = (
+            f"{mpx} megapixels; a black-and-white or 8-bit greyscale scan may be up "
+            f"to {MAX_DECODE_PX_GREY // 1_000_000}"
+        )
+    raise ScanTooLargeError(
+        f"This scan is too large to process (limit {limit}). Rescan at a lower resolution.",
+        reason="image_px",
+    )
 
 
 def plan_image(width: int, height: int, mode: str = "RGB", image_format: str | None = None) -> int:
@@ -453,29 +529,7 @@ def plan_image(width: int, height: int, mode: str = "RGB", image_format: str | N
     px = width * height
     cap = decode_pixel_cap(mode, image_format)
     if px > cap:
-        mpx = cap // 1_000_000
-        if image_format == "WEBP":
-            raise ScanTooLargeError(
-                f"This WebP image is too large to process (limit {mpx} megapixels for WebP, "
-                "which costs far more to decode than other formats). Save it as a PNG or "
-                "JPEG, or at a lower resolution.",
-                reason="webp_px",
-            )
-        if mode in _ONE_BYTE_GREY_MODES:
-            limit = f"{mpx} megapixels for a black-and-white or greyscale image"
-        elif mode in _TWO_BYTE_GREY_MODES:
-            limit = f"{mpx} megapixels for a 16-bit greyscale image"
-        else:
-            # Colour, but also "LA", "I" and "F": say what the limit is and
-            # how to get the larger one, rather than name the image's kind.
-            limit = (
-                f"{mpx} megapixels; a black-and-white or 8-bit greyscale scan may be up "
-                f"to {MAX_DECODE_PX_GREY // 1_000_000}"
-            )
-        raise ScanTooLargeError(
-            f"This scan is too large to process (limit {limit}). Rescan at a lower resolution.",
-            reason="image_px",
-        )
+        _refuse_over_cap(cap, mode, image_format)
     for factor in _REDUCE_FACTORS:
         if px / (factor * factor) <= MAX_PAGE_PX:
             return factor
@@ -587,4 +641,16 @@ def open_scan_image(source: Path | IO[bytes]) -> ImageFile.ImageFile:
             _UNSUPPORTED_IMAGE_MESSAGE.format(format=claimed[0]), reason="format_not_allowed"
         )
     _ignore_capped_bomb_warning()
-    return Image.open(source, formats=SCAN_IMAGE_FORMATS)
+    opened = Image.open(source, formats=SCAN_IMAGE_FORMATS)
+    # Task 11 review: Pillow names a 16-bit colour image by its 8-bit mode
+    # ("RGB", "RGBA"), so a caller judging the mode alone would allow it the
+    # 8-bit ceiling. Its depth is known here, from the header, before any
+    # pixel is decoded, and every image path opens through here.
+    sample_bits = _image_sample_bits(opened)
+    if sample_bits > 8:
+        cap = decode_pixel_cap(opened.mode, opened.format, sample_bits=sample_bits)
+        if opened.width * opened.height > cap:
+            mode, image_format = opened.mode, opened.format
+            opened.close()
+            _refuse_over_cap(cap, mode, image_format)
+    return opened

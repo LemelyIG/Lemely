@@ -199,14 +199,15 @@ class ImagePlanTests(unittest.TestCase):
             self.assertIn("limit 160 megapixels", str(caught.exception))
 
     def test_the_refusal_names_a_limit_that_is_true_for_the_mode(self) -> None:
-        """#256 review: "LA", "I" and "F" get the 40 Mpx ceiling without being
-        colour, so the message states the limit and how to reach the larger
-        one instead of calling every such image "colour"."""
-        for mode in ("RGB", "LA", "I", "F", "P"):
+        """#256 review: "LA", "I" and "F" get a colour-sized ceiling without
+        being colour, so the message states the limit and how to reach the
+        larger one instead of calling every such image "colour". Task 11
+        review: "I" and "F" decode to 4 bytes a pixel, so 30 Mpx."""
+        for mode, mpx in (("RGB", 40), ("LA", 40), ("P", 40), ("I", 30), ("F", 30)):
             with self.subTest(mode=mode), self.assertRaises(ScanTooLargeError) as caught:
                 plan_image(*_COLOUR_OVER_CAP, mode)
             message = str(caught.exception)
-            self.assertIn("limit 40 megapixels; a black-and-white or 8-bit greyscale", message)
+            self.assertIn(f"limit {mpx} megapixels; a black-and-white or 8-bit greyscale", message)
             self.assertNotIn("colour", message)
         with self.assertRaises(ScanTooLargeError) as caught:
             plan_image(9000, 9000, "I;16")
@@ -239,15 +240,20 @@ class ImagePlanTests(unittest.TestCase):
         """Pillow keeps mode "1" at one byte per pixel (measured: 100 Mpx of
         "1" and of "L" both cost 96 MB), so both get the grey ceiling; 16-bit
         grey is two bytes, so half; "P" is converted to RGB before it can be
-        reduced and "LA" is two channels, so both keep the colour ceiling."""
+        reduced and "LA" is two channels, so both keep the colour ceiling.
+        Four-byte modes get three quarters of it (Task 11 review; the full
+        rule is tested in ``test_colour_decode_caps.py``)."""
         self.assertEqual(decode_pixel_cap("1"), MAX_DECODE_PX_GREY)
         self.assertEqual(decode_pixel_cap("L"), MAX_DECODE_PX_GREY)
         for mode in ("I;16", "I;16L", "I;16B", "I;16N"):
             with self.subTest(mode=mode):
                 self.assertEqual(decode_pixel_cap(mode), MAX_DECODE_PX_GREY // 2)
-        for mode in ("I", "F", "LA", "P", "RGB", "RGBA", "CMYK", "no-such-mode"):
+        for mode in ("LA", "P", "RGB", "no-such-mode"):
             with self.subTest(mode=mode):
                 self.assertEqual(decode_pixel_cap(mode), MAX_DECODE_PX)
+        for mode in ("I", "F", "RGBA", "CMYK"):
+            with self.subTest(mode=mode):
+                self.assertEqual(decode_pixel_cap(mode), MAX_DECODE_PX * 3 // 4)
 
     def test_the_grey_ceiling_fits_the_scan_budget_and_the_page_target(self) -> None:
         """#256 consistency: one grey image may cost what a whole PDF scan
