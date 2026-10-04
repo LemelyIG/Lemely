@@ -1629,6 +1629,60 @@ class ImageModeCapTests(unittest.TestCase):
                     else:
                         self._refused(pdf)
 
+    def _on_page_and_in_an_appearance(self, entries: bytes, *extra: bytes) -> list[bytes]:
+        """A 100 Mpx grey image keyed ``entries`` (``{ref}`` naming the first of
+        ``extra``), drawn from the page -- judged by ``get_images`` and the walk --
+        and from an annotation appearance, which only the walk reaches."""
+        size = b"/Type /XObject /Subtype /Image /Width 10000 /Height 10000 " + _GREY + b" "
+        page = _declared_image_pdf(
+            _GREY + b" " + entries.replace(b"{ref}", b"6 0 R"),
+            *extra,
+            width=10_000,
+            height=10_000,
+        )
+        appearance = assemble_pdf(
+            [
+                b"<< /Type /Catalog /Pages 2 0 R >>",
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+                b"/Contents 4 0 R /Annots [5 0 R] >>",
+                pdf_stream(b"", b"q Q"),
+                b"<< /Type /Annot /Subtype /Stamp /Rect [0 0 300 300] /AP << /N 6 0 R >> >>",
+                pdf_stream(
+                    b"/Type /XObject /Subtype /Form /BBox [0 0 300 300] "
+                    b"/Resources << /XObject << /Im 7 0 R >> >>",
+                    b"q 300 0 0 300 0 0 cm /Im Do Q",
+                ),
+                pdf_stream(size + entries.replace(b"{ref}", b"8 0 R"), b"\x00"),
+                *extra,
+            ]
+        )
+        return [page, appearance]
+
+    def test_a_colour_key_mask_leaves_the_image_unmasked(self) -> None:
+        """Task 22 re-review: pymupdf's ``get_images`` puts an indirect
+        ``/Mask`` in its smask column even when it names a colour-key array,
+        which is no allocation; both paths read the dictionary instead."""
+        for entries, extra in (
+            (b"/Mask [0 10]", ()),
+            (b"/Mask {ref}", (b"[0 10]",)),
+        ):
+            for data in self._on_page_and_in_an_appearance(entries, *extra):
+                with self.subTest(entries=entries, extra=extra):
+                    self._passes(data)
+
+    def test_a_mask_key_that_names_no_stream_keeps_the_colour_cap(self) -> None:
+        """A dangling ``/SMask`` (or one naming no stream) never widens the cap."""
+        for entries, extra in (
+            (b"/SMask 99 0 R", ()),
+            (b"/SMask {ref}", (b"<< /Width 1 >>",)),
+            (b"/SMask /None", ()),
+            (b"/Mask 99 0 R", ()),
+        ):
+            for data in self._on_page_and_in_an_appearance(entries, *extra):
+                with self.subTest(entries=entries, extra=extra):
+                    self._refused(data)
+
     def test_an_rgb_soft_mask_keeps_the_colour_cap(self) -> None:
         data = _declared_image_pdf(
             _RGB + b" /SMask 6 0 R",

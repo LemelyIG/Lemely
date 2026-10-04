@@ -906,18 +906,36 @@ def _image_mode(doc: pymupdf.Document, xref: int) -> str:
     return "RGB"
 
 
-def _mask_xrefs(doc: pymupdf.Document, xref: int, smask_xref: int) -> list[int]:
-    """Image ``xref``'s ``/SMask`` (``smask_xref``, 0 for none) and stream ``/Mask``, as present.
+def _image_masks(doc: pymupdf.Document, xref: int, smask_xref: int = 0) -> tuple[list[int], bool]:
+    """Image ``xref``'s mask streams, and whether it is masked, from its own dictionary.
 
-    Each is an image object with its own declared size, decoded at that size
-    to render the image. A ``/Mask`` array (colour-key masking) is not a
-    decode-sized allocation and is left out.
+    Returns ``(masks, masked)``. ``masks`` are the ``/SMask`` and ``/Mask``
+    streams, each an image object decoded at its own declared size to render
+    the image; ``smask_xref`` (``get_images``' column, 0 for none) is added
+    only if it names a stream in range, since pymupdf puts an indirect
+    ``/Mask`` there too, even one naming a colour-key array. A ``/Mask``
+    array, direct or indirect (colour-key masking), is no allocation and
+    leaves the image unmasked. Any other ``/SMask`` or ``/Mask`` value -- a
+    dangling reference, a dictionary, a name -- makes ``masked`` true without
+    a stream to judge: a key that cannot be read never widens the cap.
     """
-    masks = [smask_xref] if smask_xref else []
-    mask_xref = _ref_target(doc, *_key(doc, xref, "Mask"))
-    if mask_xref and doc.xref_is_stream(mask_xref):  # type: ignore[no-untyped-call]
-        masks.append(mask_xref)
-    return masks
+    masks: list[int] = []
+    unreadable = False
+    for key in ("SMask", "Mask"):
+        kind, value = _key(doc, xref, key)
+        if kind == "null":
+            continue
+        target = _ref_target(doc, kind, value)
+        if target and doc.xref_is_stream(target):  # type: ignore[no-untyped-call]
+            masks.append(target)
+        elif key == "Mask" and _resolved_text(doc, kind, value)[0] == "array":
+            continue
+        else:
+            unreadable = True
+    in_range = 0 < smask_xref < doc.xref_length()  # type: ignore[no-untyped-call]
+    if in_range and smask_xref not in masks and doc.xref_is_stream(smask_xref):  # type: ignore[no-untyped-call]
+        masks.append(smask_xref)
+    return masks, unreadable or bool(masks)
 
 
 def _image_pixel_cap(doc: pymupdf.Document, xref: int, *, masked: bool) -> int:
@@ -955,7 +973,7 @@ def _check_declared_pixels(doc: pymupdf.Document, xref: int, *, cap: int, page_i
 
 
 def _check_masks(doc: pymupdf.Document, masks: list[int], *, page_index: int) -> None:
-    """Each of an image's masks (:func:`_mask_xrefs`) against the colour cap."""
+    """Each of an image's mask streams (:func:`_image_masks`) against the colour cap."""
     for mask in masks:
         _check_declared_pixels(doc, mask, cap=decode_pixel_cap("RGB"), page_index=page_index)
 
@@ -969,8 +987,8 @@ def _check_image_xref(doc: pymupdf.Document, xref: int, *, page_index: int) -> N
     image checked both here and via ``get_images`` is judged the same way
     twice.
     """
-    masks = _mask_xrefs(doc, xref, _ref_target(doc, *_key(doc, xref, "SMask")))
-    cap = _image_pixel_cap(doc, xref, masked=bool(masks))
+    masks, masked = _image_masks(doc, xref)
+    cap = _image_pixel_cap(doc, xref, masked=masked)
     _check_declared_pixels(doc, xref, cap=cap, page_index=page_index)
     _check_masks(doc, masks, page_index=page_index)
 
@@ -1002,10 +1020,8 @@ def _check_image_and_masks(
         _tuple_int(image[2]),
         _tuple_int(image[3]),
     )
-    masks = _mask_xrefs(doc, xref, smask_xref)
-    _refuse_over(
-        width, height, _image_pixel_cap(doc, xref, masked=bool(masks)), page_index=page_index
-    )
+    masks, masked = _image_masks(doc, xref, smask_xref)
+    _refuse_over(width, height, _image_pixel_cap(doc, xref, masked=masked), page_index=page_index)
     _check_masks(doc, masks, page_index=page_index)
 
 
