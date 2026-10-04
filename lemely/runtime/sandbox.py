@@ -172,11 +172,25 @@ under 640 / 768 and 576 / 704, every admitted path completed
 MuPDF's, on a WebP preview, at any limit. Both rules are pinned by
 ``tests/test_sandbox.py::test_the_default_limits_follow_the_measured_growth_rule``.
 
-The 2 GiB budget (owner decision S1), resident MB: web process 233 + pages
-in the parent 441 + extraction 640 + interactive 576 + parse worker 75 +
-multiprocessing's ``resource_tracker`` 16 (measured 16.0 MB resident) =
-1981, under 2048 by 67 MB (pinned by
-``tests/test_sandbox.py::test_the_default_limits_fit_the_two_gib_budget``).
+The 2 GiB budget (owner decision S1), resident, every fixed part measured
+(Task 11 re-review, 2026-10-04):
+
+* the web process idle after start-up (``python -m lemely.web``, as the
+  container runs it): 237.4 MB (226.4 MiB);
+* the parent's growth while it holds the pages of the adversarial 40-page
+  extraction (12.3 MB of PDF, every page one shared full-page noise image,
+  scaled to the 160 Mpx scan cap: 466.0 MB of PNG): 500.5 MB (477.3 MiB);
+* the equivalence parse worker's child: 71.9 MB (68.6 MiB);
+* multiprocessing's ``resource_tracker``: 16.4 MB (15.6 MiB);
+* the extraction worker's ``RLIMIT_DATA`` 640 MiB and the interactive
+  worker's 576 MiB.
+
+Together 2003.9 MiB of the instance's 2048: a margin of 44.1 MiB. The owner
+accepted it, with the OOM priority as the backstop: every worker child sets
+``oom_score_adj`` to 1000 (:data:`_OOM_SCORE_ADJ`), so if the instance runs
+out the kernel kills a worker (one request gets a 422) before the web
+server. Pinned at 40 MiB or more by
+``tests/test_sandbox.py::test_the_default_limits_fit_the_two_gib_budget``.
 
 The extraction timeout is 180 s (owner decision, Task 11 review), counting
 any wait for the worker: the slowest extraction measured is 33 s, the
@@ -231,9 +245,18 @@ _TARGET_PACKAGE = "lemely"
 _EXTRA_TARGET_MODULES: frozenset[str] = frozenset()
 
 #: The limits a child sets, in the order its ready message reports them:
-#: ``RLIMIT_DATA``, ``RLIMIT_AS`` and ``RLIMIT_CORE`` (0: a crashing decoder
-#: must not write a core file full of a user's scan).
-_LIMIT_NAMES = ("RLIMIT_DATA", "RLIMIT_AS", "RLIMIT_CORE")
+#: ``RLIMIT_DATA``, ``RLIMIT_AS``, ``RLIMIT_CORE`` (0: a crashing decoder
+#: must not write a core file full of a user's scan) and its OOM priority
+#: (:data:`_OOM_SCORE_ADJ`).
+_LIMIT_NAMES = ("RLIMIT_DATA", "RLIMIT_AS", "RLIMIT_CORE", "oom_score_adj")
+
+#: The child's ``/proc/self/oom_score_adj``: 1000, the most, so when the
+#: instance runs out of memory the kernel kills a worker child (that request
+#: gets a 422; the next call respawns it) before the web server. Owner
+#: decision, Task 11 re-review: the 2 GiB budget's measured margin is ~44 MiB.
+#: Raising one's own score needs no privilege; a kernel or container that
+#: forbids the write leaves the inherited score, and the parent warns.
+_OOM_SCORE_ADJ = 1000
 
 #: The text MuPDF's allocator throws with when ``malloc`` fails
 #: (``fz_malloc``, ``fz_calloc``, ``fz_realloc``: ``"malloc (119076300
@@ -383,10 +406,11 @@ def _memory_detail(exc: BaseException) -> str | None:  # pragma: no cover - runs
 def _apply_limits(  # pragma: no cover - runs in the child
     data_limit: int, address_limit: int
 ) -> tuple[int, ...] | None:
-    """Set ``RLIMIT_DATA``, ``RLIMIT_AS`` and ``RLIMIT_CORE`` (to 0), each alone.
+    """Set ``RLIMIT_DATA``, ``RLIMIT_AS``, ``RLIMIT_CORE`` (to 0) and the OOM priority, each alone.
 
-    Returns the soft limits now in force, in :data:`_LIMIT_NAMES` order, for
-    the ready message; ``None`` without a ``resource`` module. A limit that
+    Returns the soft limits now in force and the ``oom_score_adj`` read back
+    (:func:`_apply_oom_priority`), in :data:`_LIMIT_NAMES` order, for the
+    ready message; ``None`` without a ``resource`` module. A limit that
     cannot be set is left as it was (the parent sees the difference and
     warns), and a hard limit already below the request is kept, never raised.
     """
@@ -408,7 +432,25 @@ def _apply_limits(  # pragma: no cover - runs in the child
         except (ValueError, OSError):  # a refused limit: reported as it stands
             pass
         applied.append(resource.getrlimit(which)[0])
+    applied.append(_apply_oom_priority())
     return tuple(applied)
+
+
+def _apply_oom_priority() -> int:  # pragma: no cover - runs in the child
+    """Write :data:`_OOM_SCORE_ADJ` to ``/proc/self/oom_score_adj``; return what it reads.
+
+    Guarded: some kernels and containers forbid the write, and a system
+    without ``/proc`` has no such file. Either way the score in force is
+    reported (0, the default, where it cannot be read).
+    """
+    path = "/proc/self/oom_score_adj"
+    with contextlib.suppress(OSError), open(path, "w", encoding="ascii") as adj:
+        adj.write(str(_OOM_SCORE_ADJ))
+    try:
+        with open(path, encoding="ascii") as adj:
+            return int(adj.read().strip())
+    except (OSError, ValueError):
+        return 0
 
 
 class _PipeClosedError(Exception):
@@ -480,8 +522,9 @@ def _child_main(  # pragma: no cover - runs in the child
     at start: the child imports this module afresh, so a patch in the parent
     reaches it only this way.
 
-    Sets the limits, sends ``("ready", applied)`` (the soft limits now in
-    force, see :func:`_apply_limits`), then per request replies
+    Sets the limits and the OOM priority, sends ``("ready", applied)`` (the
+    soft limits and ``oom_score_adj`` now in force, see
+    :func:`_apply_limits`), then per request replies
     ``("ok", value)``; for a stream, ``("item", value)`` per element first
     and then ``("ok", None)``; ``("rejected", exc)`` for a ``LemelyError``
     (the instance itself), ``("memory", detail)`` for a ``MemoryError`` or a C
@@ -547,9 +590,10 @@ class ChildWorker:
         #: `time.monotonic()` of the last failed start, for the cool-down.
         self._start_failed_at: float | None = None
         self.last_outcome: str | None = None
-        #: The soft ``(RLIMIT_DATA, RLIMIT_AS, RLIMIT_CORE)`` the current child
-        #: reported at start (``None`` before a start, or where it could not
-        #: read them). Differs from what was asked for only after a warning.
+        #: The soft ``(RLIMIT_DATA, RLIMIT_AS, RLIMIT_CORE)`` and the
+        #: ``oom_score_adj`` the current child reported at start (``None``
+        #: before a start, or where it could not read them). Differs from what
+        #: was asked for only after a warning.
         self.applied_limits: tuple[int, ...] | None = None
 
     def _forget_after_fork(self) -> None:
@@ -611,10 +655,10 @@ class ChildWorker:
             _logger.warning("%s did not report ready", self.name)
             self._discard(kill=True)
             return False
-        self._check_limits((data_limit, address_limit, 0), reply[1])
+        self._check_limits((data_limit, address_limit, 0, _OOM_SCORE_ADJ), reply[1])
         return True
 
-    def _check_limits(self, requested: tuple[int, int, int], applied: object) -> None:
+    def _check_limits(self, requested: tuple[int, ...], applied: object) -> None:
         """Record the limits the child reported, and warn where they fall short."""
         if not (isinstance(applied, tuple) and len(applied) == len(requested)):
             self.applied_limits = None
@@ -624,8 +668,7 @@ class ChildWorker:
         for name, asked, got in zip(_LIMIT_NAMES, requested, self.applied_limits, strict=True):
             if got != asked:
                 _logger.warning(
-                    "%s runs with %s=%d, not the %d asked for (setrlimit refused or "
-                    "a lower hard limit)",
+                    "%s runs with %s=%d, not the %d asked for (refused, or a lower hard limit)",
                     self.name,
                     name,
                     got,

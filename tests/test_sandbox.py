@@ -242,8 +242,25 @@ def test_the_child_runs_under_both_rlimits_and_dumps_no_core(worker: ChildWorker
     limits = worker.call(f"{_T}.rlimits", timeout=10, result_type=tuple)
 
     assert limits == (256 * MiB, 512 * MiB, 0)
-    # The child's ready message reports what it actually applied.
-    assert worker.applied_limits == (256 * MiB, 512 * MiB, 0)
+    # The child's ready message reports what it actually applied, the OOM
+    # priority with the limits.
+    assert worker.applied_limits == (256 * MiB, 512 * MiB, 0, 1000)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="oom_score_adj is Linux's")
+def test_the_kernel_kills_a_worker_child_before_the_web_server(worker: ChildWorker) -> None:
+    """Owner decision (Task 11 re-review): with the 2 GiB budget's margin at
+    ~44 MiB, a worker child is the OOM killer's first choice (score adjust
+    1000, the most), so an exhausted instance costs one request a 422, not
+    the web server. The parent keeps its own, lower score."""
+    worker.call(f"{_T}.pid", timeout=10, result_type=int)
+    child = worker.pid()
+    assert child is not None
+
+    with open(f"/proc/{child}/oom_score_adj", encoding="ascii") as adj:
+        assert adj.read().strip() == "1000"
+    with open("/proc/self/oom_score_adj", encoding="ascii") as adj:
+        assert int(adj.read()) < 1000
 
 
 _CLAMPED_LIMIT_SCRIPT = textwrap.dedent(
@@ -289,7 +306,7 @@ def test_a_limit_the_child_could_not_apply_is_warned_about_in_the_parent() -> No
 
     assert proc.returncode == 0, proc.stderr
     applied, messages = proc.stdout.strip().splitlines()[-2:]
-    assert applied == str((300 * MiB, 1024 * MiB, 0))
+    assert applied == str((300 * MiB, 1024 * MiB, 0, 1000))
     assert "RLIMIT_DATA" in messages
     assert str(300 * MiB) in messages
 
@@ -669,18 +686,25 @@ def test_a_python_memory_error_is_sandbox_memory_with_the_bare_message(
     assert str(failure.value) == "lemely-test-worker ran out of memory"
 
 
-#: The 2 GiB budget's fixed parts (owner decision S1), in MB: the web process,
-#: the pages a 40-page scan accumulates in it, the equivalence parse worker,
-#: and multiprocessing's ``resource_tracker``, which the first ``spawn``
-#: starts (measured 16.0 MB resident, Task 11 review).
-_WEB_PROCESS_MB = 233
-_PARENT_PAGES_MB = 441
-_PARSE_WORKER_MB = 75
-_RESOURCE_TRACKER_MB = 16
-#: What is left of the 2 GiB once everything above is counted, at least
-#: (Task 11 review round 2: 2048 - 1981 = 67 MB with the growth rule). A
-#: change that eats into it should be a decision, not a rounding.
-_BUDGET_MARGIN_MB = 64
+#: The 2 GiB budget's fixed parts (owner decision S1), resident, MEASURED
+#: (Task 11 re-review; ``lemely.runtime.sandbox`` docstring), in MB:
+#: the web process idle after start-up (``python -m lemely.web``), the
+#: parent's growth while it holds the pages of the adversarial 40-page
+#: extraction (40 incompressible pages at the 160 Mpx scan cap), the
+#: equivalence parse worker's child, and multiprocessing's
+#: ``resource_tracker``, which the first ``spawn`` starts.
+_WEB_PROCESS_MB = 237.4
+_PARENT_PAGES_MB = 500.5
+_PARSE_WORKER_MB = 71.9
+_RESOURCE_TRACKER_MB = 16.4
+#: The instance: Cloud Run's ``--memory=2Gi``.
+_INSTANCE_MIB = 2048
+#: What must be left once everything above is counted, at least. Owner
+#: decision (Task 11 re-review): the measured margin is 44 MiB and is
+#: accepted, because a worker child is the OOM killer's first choice
+#: (``oom_score_adj`` 1000), so running out costs one request, not the web
+#: server. A change that eats into it should be a decision, not a rounding.
+_BUDGET_MARGIN_MIB = 40
 
 
 def test_the_default_limits_fit_the_two_gib_budget() -> None:
@@ -688,15 +712,14 @@ def test_the_default_limits_fit_the_two_gib_budget() -> None:
     40-page scan accumulates in it, both workers' data limits, the parse
     worker and the resource tracker must fit together, with a real margin."""
     settings = SandboxSettings()
-    total_mib = (
-        _WEB_PROCESS_MB
-        + _PARENT_PAGES_MB
-        + settings.extraction_data_limit_bytes / MiB
-        + settings.interactive_data_limit_bytes / MiB
-        + _PARSE_WORKER_MB
-        + _RESOURCE_TRACKER_MB
+    fixed_mib = (
+        (_WEB_PROCESS_MB + _PARENT_PAGES_MB + _PARSE_WORKER_MB + _RESOURCE_TRACKER_MB) * 1e6 / MiB
     )
-    assert total_mib <= 2048 - _BUDGET_MARGIN_MB, total_mib
+    workers_mib = (
+        settings.extraction_data_limit_bytes + settings.interactive_data_limit_bytes
+    ) / MiB
+    margin_mib = _INSTANCE_MIB - fixed_mib - workers_mib
+    assert margin_mib >= _BUDGET_MARGIN_MIB, margin_mib
 
 
 def _next64(mib: float) -> int:
