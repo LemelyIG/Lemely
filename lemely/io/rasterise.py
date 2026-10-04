@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -138,8 +139,13 @@ def _iter_canonical_pages(canonical: bytes, *, dpi: float) -> Iterator[Rasterise
         # MuPDF preview shows -- reached the model as a blank box. This parses
         # the rewrite's /AcroForm, which MuPDF copies unwalked; it is bounded
         # by the object-stream bound and the upload cap, and runs in the
-        # extraction worker (#260) with the rest of the render.
-        pdf.init_forms()
+        # extraction worker (#260) with the rest of the render. pdfium can
+        # refuse the form environment; the scan is then rendered without its
+        # field values rather than not at all, and the refusal is logged.
+        try:
+            pdf.init_forms()
+        except pdfium.PdfiumError as exc:
+            log.warning("scan_forms_not_drawn", error=str(exc))
         # Planning reads the page count and page sizes only (no page is
         # loaded), so the page cap applies before the content walk below
         # visits every page (final review M1).
@@ -258,10 +264,15 @@ _WIDE_GREY_MODES = frozenset({"I;16", "I;16L", "I;16B", "I;16N", "I", "F"})
 #: unused, and scaled from 65535 its white paper came out near black.
 _SIXTEEN_BIT_CONTAINER_SCALES = tuple(2**bits - 1 for bits in (8, 10, 12, 14, 16))
 
-#: The same for a 32-bit "I" image, or an "F" image holding integers.
+#: The same for a 32-bit "I" image, or an "F" image holding integers. "I"
+#: samples are signed, so the widest container is 2**31 - 1.
 _THIRTY_TWO_BIT_CONTAINER_SCALES = _SIXTEEN_BIT_CONTAINER_SCALES + tuple(
-    2**bits - 1 for bits in (20, 24, 32)
+    2**bits - 1 for bits in (20, 24, 31)
 )
+
+#: An "F" page whose maximum is below this is normalised (0-1), with at most
+#: a scanner's overshoot past 1.0; its maximum, or 1.0, maps to white.
+_NORMALISED_FLOAT_CEILING = 2.0
 
 #: Pixels converted per strip by :func:`_wide_grey_to_l`: its working copies
 #: ("I" is four bytes a pixel) stay at a few MB whatever the page's size.
@@ -291,10 +302,19 @@ def _extrema(image: PILImage) -> tuple[float, float]:
     """``image``'s smallest and largest sample.
 
     One C-level pass, with no copy, for the modes Pillow reads directly
-    (:data:`_EXTREMA_MODES`); strip by strip for the others.
+    (:data:`_EXTREMA_MODES`); strip by strip for the others. Of the finite
+    samples only: an infinite sample in an "F" page (Pillow's own extrema
+    include it), or a NaN first sample (which makes them NaN), would
+    otherwise set the full scale and turn every other sample black, so such
+    a page is read again (:func:`_finite_extrema`). A page with no finite
+    sample reads as flat. Infinite samples themselves still scale to white
+    (or black, negative), and a NaN sample to black.
     """
     if image.mode in _EXTREMA_MODES:
-        return cast("tuple[float, float]", image.getextrema())
+        lo, hi = cast("tuple[float, float]", image.getextrema())
+        if math.isfinite(lo) and math.isfinite(hi):
+            return lo, hi
+        return _finite_extrema(image)
     lows, highs = zip(
         *(cast("tuple[float, float]", strip.getextrema()) for _, strip in _wide_strips(image)),
         strict=True,
@@ -302,23 +322,53 @@ def _extrema(image: PILImage) -> tuple[float, float]:
     return min(lows), max(highs)
 
 
+#: The largest finite float32, which an "F" sample cannot pass.
+_FLOAT32_MAX = 3.4028234663852886e38
+
+
+def _finite_extrema(image: PILImage) -> tuple[float, float]:
+    """The smallest and largest finite sample of an "F" ``image``, strip by strip.
+
+    In Pillow alone: numpy's import starts OpenBLAS threads that the
+    extraction worker's address-space limit refuses. Per strip, ``a + a * 0``
+    is ``a`` where finite and NaN elsewhere; ``ImageMath``'s ``min`` and
+    ``max`` keep their second operand where the first is NaN, so the NaNs
+    become :data:`_FLOAT32_MAX` for the minimum and its negative for the
+    maximum, where they cannot win. (Pillow's ``getextrema`` cannot skip a
+    NaN itself: a NaN first sample makes the result NaN.) ``(0.0, 0.0)`` --
+    flat, so white -- when no sample is finite.
+    """
+    from PIL import ImageMath
+
+    lo, hi = math.inf, -math.inf
+    for _, strip in _wide_strips(image):
+        finite = ImageMath.lambda_eval(lambda args: args["a"] + args["a"] * 0.0, a=strip)
+        low = ImageMath.lambda_eval(lambda args: args["min"](args["f"], _FLOAT32_MAX), f=finite)
+        high = ImageMath.lambda_eval(lambda args: args["max"](args["f"], -_FLOAT32_MAX), f=finite)
+        lo = min(lo, cast("tuple[float, float]", low.getextrema())[0])
+        hi = max(hi, cast("tuple[float, float]", high.getextrema())[1])
+    return (lo, hi) if lo <= hi else (0.0, 0.0)
+
+
 def _full_scale(image: PILImage) -> float | None:
     """The sample value that maps to white for ``image`` (a :data:`_WIDE_GREY_MODES` mode).
 
-    #275: inferred from the image's maximum, ``hi``: the smallest usual
-    container depth (``2**bits - 1``) that holds it -- 8 to 16 bits for an
-    "I;16*" image, 8 to 32 bits for "I", and for "F" whose samples pass
-    1.0 (integers stored as floats). An "F" image whose maximum is at most
-    1.0 is normalised, so its full scale is 1.0. ``None`` for a flat image
-    (``lo == hi``), which says nothing about its depth: blank paper. A
-    maximum past every listed depth (an "F" image only) is its own full
-    scale.
+    #275: inferred from the image's largest finite sample, ``hi``
+    (:func:`_extrema`): the smallest usual container depth
+    (``2**bits - 1``) that holds it -- 8 to 16 bits for an "I;16*" image,
+    8 to 31 bits for "I", and the same for "F" whose samples reach 2.0
+    (integers stored as floats). An "F" image whose maximum is below 2.0 is
+    normalised: its full scale is 1.0, or its maximum when a sample
+    overshoots 1.0 (one 1.02 pixel used to turn the page black). ``None``
+    for a flat image (``lo == hi``), which says nothing about its depth:
+    blank paper. A maximum past every listed depth (an "F" image only) is
+    its own full scale.
     """
     lo, hi = _extrema(image)
     if lo == hi:
         return None
-    if image.mode == "F" and hi <= 1.0:
-        return 1.0
+    if image.mode == "F" and hi < _NORMALISED_FLOAT_CEILING:
+        return max(1.0, hi)
     scales = (
         _SIXTEEN_BIT_CONTAINER_SCALES
         if image.mode.startswith("I;16")

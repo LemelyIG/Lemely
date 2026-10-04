@@ -513,8 +513,12 @@ def wide_grey_scan(
     box: tuple[int, int, int, int],
     *,
     image_format: Literal["PNG", "TIFF"],
+    spot: tuple[tuple[int, int], float] | None = None,
 ) -> bytes:
     """A single-channel scan wider than a byte: ``paper`` samples with an ``ink`` box.
+
+    ``spot``: ``((x, y), value)``, one sample overwritten after the box is
+    drawn -- an overshoot past 1.0 or an infinity in a float page.
 
     Generalises ``tests.pdf_fakes.sixteen_bit_grey_scan`` to any sample
     values and to the 32-bit modes, so a test can put 8- or 12-bit samples
@@ -534,7 +538,13 @@ def wide_grey_scan(
     plain_row = paper_sample * width
     ink_row = paper_sample * left + ink_sample * (right - left) + paper_sample * (width - right)
     rows = (ink_row if top <= y < bottom else plain_row for y in range(height))
-    image = Image.frombytes(mode, size, b"".join(rows))
+    samples = bytearray(b"".join(rows))
+    if spot is not None:
+        (x, y), spot_value = spot
+        sample_bytes = len(paper_sample)
+        at = (y * width + x) * sample_bytes
+        samples[at : at + sample_bytes] = struct.pack(sample, value(spot_value))
+    image = Image.frombytes(mode, size, bytes(samples))
     buf = io.BytesIO()
     image.save(buf, format=image_format)
     return buf.getvalue()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import itertools
+import math
 import os
 import pickle
 import sys
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import patch
 
+import numpy as np
 import pypdfium2 as pdfium
 import pytest
 import structlog.testing
@@ -550,9 +552,9 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
         """Final review, Important 2: Pillow CLIPS a 16-bit sample to 0-255 when
         it converts to "L" -- it does not scale -- so ink at 5000 on paper at
         60000 became an all-white page, and the model was sent a blank scan.
-        The samples are scaled from the 16-bit range instead: the ink stays
-        dark and the paper light. PNG and TIFF, the two allowlisted formats
-        that carry 16-bit greyscale."""
+        The samples are scaled from the 16-bit range instead (rounded, #275):
+        the ink stays dark and the paper light. PNG and TIFF, the two
+        allowlisted formats that carry 16-bit greyscale."""
         for image_format in ("PNG", "TIFF"):
             with self.subTest(image_format=image_format):
                 path = Path(self.tmp) / f"grey16.{image_format.lower()}"
@@ -563,16 +565,18 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
                 (page,) = rasterise_scan_to_pages(path)
 
                 decoded = Image.open(io.BytesIO(page.png_bytes)).convert("L")
-                self.assertEqual(decoded.getpixel((150, 90)), SIXTEEN_BIT_INK * 255 // 65535)
-                self.assertEqual(decoded.getpixel((350, 250)), SIXTEEN_BIT_PAPER * 255 // 65535)
+                self.assertEqual(decoded.getpixel((150, 90)), round(SIXTEEN_BIT_INK * 255 / 65535))
+                self.assertEqual(
+                    decoded.getpixel((350, 250)), round(SIXTEEN_BIT_PAPER * 255 / 65535)
+                )
 
     def test_wide_single_channel_modes_are_scaled_from_the_sixteen_bit_range(self) -> None:
         """Final review, Important 2: every mode wider than a byte -- "I;16" in
         either byte order, and the 32-bit "I" and "F" -- is taken to "L" by
-        scaling its samples to 0-255, never by clipping. Samples reaching
-        60000 fill a 16-bit container, so all four scale from 0-65535 (#275
-        infers the container from the maximum). Pinned for all four, from
-        the same two sample values."""
+        scaling its samples to 0-255 (rounded), never by clipping. Samples
+        reaching 60000 fill a 16-bit container, so all four scale from
+        0-65535 (#275 infers the container from the maximum). Pinned for all
+        four, from the same two sample values."""
         import struct
 
         samples = (SIXTEEN_BIT_INK, SIXTEEN_BIT_PAPER)
@@ -588,7 +592,7 @@ class GeometryBoundedRasteriseTests(unittest.TestCase):
                 self.assertEqual(converted.mode, "L")
                 self.assertEqual(
                     [converted.getpixel((x, 0)) for x in range(2)],
-                    [value * 255 // 65535 for value in samples],
+                    [round(value * 255 / 65535) for value in samples],
                 )
 
     @pytest.mark.usefixtures("sandboxed")
@@ -1145,10 +1149,18 @@ def test_the_marker_sees_a_filled_text_field_as_the_teacher_does(tmp_path: Path)
 _TIFF_MARK = (20, 30, 120, 90)
 
 
-def _dark_box(image: Image.Image) -> tuple[int, int, int, int] | None:
-    """The bounding box of ``image``'s dark pixels (below 128 once in "L")."""
-    grey = rasterise_module.single_channel_or_rgb(image).convert("L")
-    return grey.point(lambda value: 255 if value < 128 else 0).getbbox()
+def _dark_box(page: Image.Image) -> tuple[int, int, int, int] | None:
+    """The bounding box of an extracted page's dark pixels (below 128 in "L")."""
+    return page.convert("L").point(lambda value: 255 if value < 128 else 0).getbbox()
+
+
+def _raw_dark_box(image: Image.Image) -> tuple[int, int, int, int]:
+    """The bounding box of ``image``'s samples below the midpoint of its own
+    range, read from the raw samples: the reference never passes through
+    the conversion under test."""
+    samples = np.asarray(image)
+    ys, xs = np.nonzero(samples < (int(samples.min()) + int(samples.max())) / 2)
+    return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
 
 
 @pytest.mark.usefixtures("sandboxed")
@@ -1168,7 +1180,7 @@ def test_an_uncompressed_oriented_tiff_is_turned_upright(tmp_path: Path) -> None
 
         assert (page.width, page.height) == upright.size == (300, 600), mode
         with Image.open(io.BytesIO(page.png_bytes)) as decoded:
-            assert _dark_box(decoded) == _dark_box(upright), mode
+            assert _dark_box(decoded) == _raw_dark_box(upright), mode
 
 
 def test_pillow_turns_a_tiff_upright_at_load_and_drops_the_tag() -> None:
@@ -1188,6 +1200,7 @@ def test_pillow_turns_a_tiff_upright_at_load_and_drops_the_tag() -> None:
 _WIDE_BOX = (50, 60, 250, 120)
 _WIDE_INK_AT = (150, 90)
 _WIDE_PAPER_AT = (350, 250)
+_WIDE_SPOT_AT = (390, 290)
 
 
 def _extracted_ink_and_paper(
@@ -1196,11 +1209,26 @@ def _extracted_ink_and_paper(
     paper: float,
     ink: float,
     image_format: Literal["PNG", "TIFF"],
+    *,
+    spot: float | None = None,
 ) -> tuple[int, int]:
-    """The "L" tones extraction (in the worker) gives ``ink`` and ``paper``."""
-    path = scratch / f"wide-{mode.replace(';', '')}-{paper}-{ink}.{image_format.lower()}"
+    """The "L" tones extraction (in the worker) gives ``ink`` and ``paper``.
+
+    ``spot``: one more sample, at :data:`_WIDE_SPOT_AT`, away from both
+    pixels read.
+    """
+    name = f"wide-{mode.replace(';', '')}-{paper}-{ink}-{spot}.{image_format.lower()}"
+    path = scratch / name
     path.write_bytes(
-        wide_grey_scan(mode, (400, 300), paper, ink, _WIDE_BOX, image_format=image_format)
+        wide_grey_scan(
+            mode,
+            (400, 300),
+            paper,
+            ink,
+            _WIDE_BOX,
+            image_format=image_format,
+            spot=None if spot is None else (_WIDE_SPOT_AT, spot),
+        )
     )
     (page,) = rasterise_scan_to_pages(path)
     with Image.open(io.BytesIO(page.png_bytes)) as decoded:
@@ -1240,13 +1268,18 @@ def test_a_flat_wide_grey_image_maps_to_white(tmp_path: Path) -> None:
 
 
 @pytest.mark.usefixtures("sandboxed")
-def test_a_genuine_sixteen_bit_scan_is_unchanged(tmp_path: Path) -> None:
+def test_a_genuine_sixteen_bit_scan_keeps_its_tones_within_one(tmp_path: Path) -> None:
     """Samples that reach past 14 bits fill the 16-bit container, so a real
-    16-bit scan keeps the tones it had before the container was inferred."""
+    16-bit scan is still scaled from 0-65535. The tones now round rather
+    than truncate, so each is within one of what it was before #275:
+    ``round(v * 255 / 65535)``."""
     for image_format in ("PNG", "TIFF"):
         assert _extracted_ink_and_paper(
             tmp_path, "I;16", SIXTEEN_BIT_PAPER, SIXTEEN_BIT_INK, image_format
-        ) == (SIXTEEN_BIT_INK * 255 // 65535, SIXTEEN_BIT_PAPER * 255 // 65535), image_format
+        ) == (
+            round(SIXTEEN_BIT_INK * 255 / 65535),
+            round(SIXTEEN_BIT_PAPER * 255 / 65535),
+        ), image_format
 
 
 @pytest.mark.usefixtures("sandboxed")
@@ -1263,28 +1296,88 @@ def test_a_float_tiff_above_one_is_treated_like_i(tmp_path: Path) -> None:
     is inferred as for "I", so 60000 and 5000 come out as the 16-bit scan's."""
     assert _extracted_ink_and_paper(
         tmp_path, "F", float(SIXTEEN_BIT_PAPER), float(SIXTEEN_BIT_INK), "TIFF"
-    ) == (SIXTEEN_BIT_INK * 255 // 65535, SIXTEEN_BIT_PAPER * 255 // 65535)
+    ) == (round(SIXTEEN_BIT_INK * 255 / 65535), round(SIXTEEN_BIT_PAPER * 255 / 65535))
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_a_float_page_slightly_over_one_is_still_normalised(tmp_path: Path) -> None:
+    """A normalised float page with one sample a little past 1.0 (1.02, a
+    scanner's overshoot) is still normalised: its maximum is the full scale,
+    so the ink and paper keep their tones. Read as an integer page it was
+    scaled by 255 and came out black."""
+    ink, paper = _extracted_ink_and_paper(tmp_path, "F", 0.95, 0.05, "TIFF", spot=1.02)
+    # 12.5 and 237.5: within one, since 12.5 sits on a rounding boundary.
+    assert abs(ink - 0.05 * 255 / 1.02) <= 1, ink
+    assert abs(paper - 0.95 * 255 / 1.02) <= 1, paper
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_an_infinite_float_sample_does_not_zero_the_page(tmp_path: Path) -> None:
+    """One infinite sample on a normalised float page is ignored when the
+    full scale is inferred (it maps to white itself). Taken as the maximum,
+    every finite sample scaled to 0: a black page."""
+    assert _extracted_ink_and_paper(tmp_path, "F", 0.95, 0.05, "TIFF", spot=math.inf) == (13, 242)
+
+
+def test_non_finite_float_samples_never_set_the_full_scale() -> None:
+    """Pillow's extrema of an "F" image include an infinity, and are NaN when
+    the first sample is NaN; either way the paper and ink keep the tones of
+    the finite samples alone. A page with no finite sample is flat: white."""
+    import struct
+
+    finite = (0.05, 0.95)
+    for first in (math.nan, math.inf, -math.inf):
+        image = Image.frombytes("F", (3, 1), struct.pack("=3f", first, *finite))
+        converted = rasterise_module.single_channel_or_rgb(image)
+        assert [converted.getpixel((x, 0)) for x in (1, 2)] == [13, 242], first
+    none_finite = Image.frombytes("F", (2, 1), struct.pack("=2f", math.inf, math.nan))
+    assert rasterise_module.single_channel_or_rgb(none_finite).getextrema() == (255, 255)
 
 
 def test_the_container_is_the_smallest_that_holds_the_maximum() -> None:
     """#275, the inference itself: the maximum picks the smallest of the
     usual sample depths that holds it, per mode family. A 20-bit "I" scan
-    scales by 2**20 - 1; a 10-bit big-endian "I;16B" by 2**10 - 1."""
+    scales by 2**20 - 1; a 10-bit big-endian "I;16B" by 2**10 - 1; an "I"
+    page past 24 bits by 2**31 - 1, the largest a signed 32-bit sample
+    holds."""
     import struct
 
     # "I;16B" too, which Pillow's ``getextrema`` does not read: a big-endian
     # 16-bit TIFF opens in it.
-    cases = {
-        "I": ("=2i", (1_000, 1_000_000), 2**20 - 1),
-        "I;16B": (">2H", (100, 1_000), 2**10 - 1),
-    }
-    for mode, (layout, (low, high), container) in cases.items():
+    cases = [
+        ("I", "=2i", (1_000, 1_000_000), 2**20 - 1),
+        ("I", "=2i", (2**24, 2**30), 2**31 - 1),
+        ("I;16B", ">2H", (100, 1_000), 2**10 - 1),
+    ]
+    for mode, layout, (low, high), container in cases:
         image = Image.frombytes(mode, (2, 1), struct.pack(layout, low, high))
         converted = rasterise_module.single_channel_or_rgb(image)
         assert [converted.getpixel((x, 0)) for x in range(2)] == [
             round(low * 255 / container),
             round(high * 255 / container),
-        ], mode
+        ], (mode, high)
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_forms_that_fail_to_initialise_are_logged_and_the_page_still_renders(
+    tmp_path: Path,
+) -> None:
+    """``init_forms`` parses the file's /AcroForm; pdfium can refuse it
+    (``PdfiumError``). Field values are then not drawn, but the scan is
+    still extracted, and the failure is logged, not raised."""
+    path = tmp_path / "scan.pdf"
+    path.write_bytes(filled_text_field_pdf("42"))
+    with (
+        patch.object(
+            pdfium.PdfDocument, "init_forms", side_effect=pdfium.PdfiumError("no form env")
+        ),
+        structlog.testing.capture_logs() as logs,
+    ):
+        pages = rasterise_pdf_to_pages(path)
+    assert len(pages) == 1
+    assert [entry["event"] for entry in logs if entry["event"] == "scan_forms_not_drawn"] == [
+        "scan_forms_not_drawn"
+    ]
 
 
 if __name__ == "__main__":

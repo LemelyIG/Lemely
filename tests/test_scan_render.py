@@ -28,7 +28,12 @@ from lemely.io.scan_render import (
     pdf_crop_plan,
     render_preview_png,
 )
-from tests.fakes_reader_agreement import dark_pixels, oriented_tiff, wide_grey_scan
+from tests.fakes_reader_agreement import (
+    dark_pixels,
+    expected_upright,
+    oriented_tiff,
+    wide_grey_scan,
+)
 from tests.pdf_fakes import empty_page_tree_pdf
 from tests.sandbox_fixtures import sandboxed  # noqa: F401
 
@@ -145,7 +150,9 @@ class CropImageScanTests(unittest.TestCase):
         The crop read the tag before the load and turned the region again,
         so a box extraction drew around the mark cropped blank paper.
         Extraction boxes the mark on its upright page (0-1000, as the model
-        does); the crop of that box contains it."""
+        does); the crop of that box is the same padded region of
+        ``expected_upright`` (an independent upright frame), upscaled as the
+        crop upscales, pixel for pixel."""
         for compression, orientation in itertools.product(("raw", "tiff_lzw"), (6, 8)):
             with self.subTest(compression=compression, orientation=orientation):
                 scan = oriented_tiff(
@@ -168,9 +175,16 @@ class CropImageScanTests(unittest.TestCase):
 
                 png = crop_image_scan(scan, box)
 
+                upright = expected_upright(scan).convert("RGB")
+                region = upright.crop(padded_crop_rect(upright.width, upright.height, box))
+                want = region.resize(
+                    (region.width * 2, region.height * 2), Image.Resampling.LANCZOS
+                )
                 with Image.open(io.BytesIO(png)) as crop:
-                    size = crop.size
-                self.assertGreater(dark_pixels(png, size), 100)
+                    got = crop.convert("RGB")
+                self.assertEqual(got.size, want.size)
+                self.assertEqual(got.tobytes(), want.tobytes())
+                self.assertGreater(dark_pixels(png, got.size), 100)
 
     @pytest.mark.usefixtures("sandboxed")
     def test_an_all_ink_crop_of_a_wide_grey_scan_keeps_extractions_tone(self) -> None:
