@@ -350,11 +350,6 @@ def measure(target: str, *args: object) -> dict[str, int | float]:
     }
 
 
-#: The bilevel-in-PDF measurement's decoded-pixel ceiling (Task 21, #273): a
-#: 10 000 x 15 900 image, 159 Mpx, is over the walk's 40 Mpx colour cap.
-BILEVEL_PDF_MAX_DECODE_PX = 160_000_000
-
-
 def _extract_bilevel_pdf(path: str) -> Iterator[object]:
     from pathlib import Path
 
@@ -387,21 +382,44 @@ _BILEVEL_PDF_PATHS = {
 
 
 def bilevel_pdf_paths(path: str, mode: str) -> dict[str, object]:
-    """Measure one render path over a 160 Mpx bilevel PDF in this child (Task 21, #273).
+    """Measure one render path over a 160 Mpx bilevel PDF in this child (Tasks 21 and 22, #273).
 
     ``mode`` is ``"extraction"`` (``iter_scan_pages(path, 200.0)``),
     ``"crop"`` (``crop_pdf_scan(data, 0, [100, 100, 300, 400])``) or
-    ``"preview"`` (``render_preview_png(data)``). The PDF walk refuses the
-    image at its 40 Mpx colour cap, so the child lifts
-    ``pdf_content_walk.MAX_DECODE_PX`` (read at call time) to
-    :data:`BILEVEL_PDF_MAX_DECODE_PX` first; nothing restores it, the child
-    being a throwaway. Returns :func:`measure`'s numbers plus the soft
-    ``RLIMIT_DATA`` and ``RLIMIT_AS`` the child ran under.
+    ``"preview"`` (``render_preview_png(data)``). Nothing is lifted: the PDF
+    walk judges an unmasked bilevel or grey image by its own mode's cap
+    (Task 22), so the file must pass the production checks to be measured.
+    Returns :func:`measure`'s numbers plus the soft ``RLIMIT_DATA`` and
+    ``RLIMIT_AS`` the child ran under.
     """
-    from lemely.io import pdf_content_walk
-
-    setattr(pdf_content_walk, "MAX_DECODE_PX", BILEVEL_PDF_MAX_DECODE_PX)  # noqa: B010
     numbers: dict[str, object] = dict(measure(f"{__name__}.{_BILEVEL_PDF_PATHS[mode]}", path))
     numbers["rlimit_data"] = resource.getrlimit(resource.RLIMIT_DATA)[0]
     numbers["rlimit_as"] = resource.getrlimit(resource.RLIMIT_AS)[0]
     return numbers
+
+
+def pdf_path_digests(path: str, mode: str) -> dict[str, object]:
+    """What one render path of :func:`bilevel_pdf_paths` drew here, and its peak (Task 22, #273).
+
+    Runs the path once and returns the SHA-256 of each PNG it produced (a
+    page's ``png_bytes`` for extraction, the one PNG for crop and preview),
+    ``VmHWM`` over the call (reset first), and the soft ``RLIMIT_DATA``.
+    The same function run in an unlimited process gives the reference: equal
+    digests mean the limited render is pixel-identical, so a page that came
+    back blank or short under the limit, with no error, shows as a mismatch.
+    """
+    import hashlib
+
+    with open("/proc/self/clear_refs", "w", encoding="ascii") as clear:
+        clear.write("5")
+    result = _resolve(f"{__name__}.{_BILEVEL_PDF_PATHS[mode]}")(path)
+    outputs = (
+        [cast("bytes", getattr(page, "png_bytes")) for page in cast("Iterable[object]", result)]  # noqa: B009
+        if isinstance(result, Iterator)
+        else [cast("bytes", result)]
+    )
+    return {
+        "digests": [hashlib.sha256(png).hexdigest() for png in outputs],
+        "vm_hwm": _status_bytes("VmHWM")["VmHWM"],
+        "rlimit_data": resource.getrlimit(resource.RLIMIT_DATA)[0],
+    }
