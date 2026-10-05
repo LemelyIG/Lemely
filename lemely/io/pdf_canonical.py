@@ -1,8 +1,10 @@
 """Opening user scans with MuPDF, and the canonical rewrite pdfium renders.
 
 #262: moved out of :mod:`lemely.io.scan_limits`, which re-exports its public
-names. Owns the only sanctioned MuPDF openers (:func:`open_checked_pdf`,
-:func:`open_scan_image_document`), the whole-document check on bytes
+names. Owns the only sanctioned MuPDF opener of user bytes
+(:func:`open_checked_pdf`; an image scan never reaches MuPDF: the preview
+decodes it with Pillow, as extraction and the crop do, final review R3, I1),
+the whole-document check on bytes
 (:func:`check_pdf_content_bytes`), the pages-only rewrite
 (:func:`canonical_pdf_bytes`) and pdfium's page count and plan for the
 upload check. Imports :mod:`lemely.io._scan_common`,
@@ -11,7 +13,6 @@ upload check. Imports :mod:`lemely.io._scan_common`,
 
 from __future__ import annotations
 
-import io
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -25,8 +26,6 @@ from lemely.io._scan_common import (
     _UNCHECKABLE_MESSAGE,
     ScanRejectedError,
     ScanTooLargeError,
-    open_scan_image,
-    plan_image,
     plan_pdf_pages,
 )
 from lemely.io.pdf_content_walk import (
@@ -60,46 +59,6 @@ def open_checked_pdf(pdf: bytes | PrescannedPdf) -> pymupdf.Document:
     # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
     # call needs the ignore. Narrowed to this one code, not the module.
     return pymupdf.open(stream=scanned.data, filetype="pdf")  # type: ignore[no-untyped-call]
-
-
-#: MuPDF's ``filetype`` for each format :func:`open_scan_image` admits. An MPO
-#: (a phone JPEG with a second image) is a JPEG to MuPDF.
-_MUPDF_IMAGE_FILETYPES = {
-    "JPEG": "jpeg",
-    "MPO": "jpeg",
-    "PNG": "png",
-    "TIFF": "tiff",
-    "WEBP": "webp",
-    "BMP": "bmp",
-}
-
-
-def open_scan_image_document(data: bytes) -> pymupdf.Document:
-    """MuPDF's one-page document for the scan image ``data``; never a PDF.
-
-    For a caller that draws an image upload with MuPDF (the paper preview).
-    The format is named from the header by :func:`open_scan_image` --
-    allowlisted formats only, nothing decoded -- and the image's size is
-    held to :func:`decode_pixel_cap` for its mode and format, as upload,
-    extraction and the crop route hold it. MuPDF is then told that format,
-    so the image's own magic bytes, at offset 0, decide how it is read:
-    bytes Pillow does not recognise as an allowlisted image (a PDF among
-    them) never reach MuPDF, which would otherwise sniff and repair a PDF
-    while opening it, before any pre-scan. Raises
-    :class:`ScanRejectedError` (a format outside the allowlist, a size over
-    the cap, or a document MuPDF opened as a PDF anyway), or what Pillow
-    and MuPDF raise for bytes they cannot read. The caller closes the
-    document.
-    """
-    with open_scan_image(io.BytesIO(data)) as opened:
-        image_format = opened.format
-        plan_image(opened.width, opened.height, opened.mode, image_format)
-    filetype = _MUPDF_IMAGE_FILETYPES[image_format or ""]
-    doc = pymupdf.open(stream=data, filetype=filetype)  # type: ignore[no-untyped-call]
-    if doc.is_pdf:
-        doc.close()  # type: ignore[no-untyped-call]
-        raise ScanRejectedError(_UNCHECKABLE_MESSAGE, reason="uncheckable")
-    return doc
 
 
 def _check_opened(

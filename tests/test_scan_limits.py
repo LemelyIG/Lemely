@@ -516,8 +516,8 @@ class SanctionedOpenerSweepTests(unittest.TestCase):
         ``fitz.open``/``Document``, through any import, ``from`` import or
         one-level alias) given anything to open, and every ``insert_pdf`` /
         ``insert_file``, anywhere in ``lemely/``, is inside
-        :func:`open_checked_pdf`, :func:`open_scan_image_document` or
-        ``_copy_pages``. A bare ``pymupdf.open()`` makes a new, empty document.
+        :func:`open_checked_pdf` or ``_copy_pages`` (an image scan never
+        reaches MuPDF: final review R3, I1). A bare ``pymupdf.open()`` makes a new, empty document.
         The sweep, and the forms it cannot see, are in ``tests/mupdf_sweep.py``."""
         from tests.mupdf_sweep import ALLOWED_OPENS, find_mupdf_opens, sweep
 
@@ -773,7 +773,6 @@ class SplitModuleTests(unittest.TestCase):
             "PrescannedPdf",
             "check_object_stream_bytes",
             "open_checked_pdf",
-            "open_scan_image_document",
             "canonical_pdf_bytes",
             "plan_pdf_pages",
             "plan_page_dpi",

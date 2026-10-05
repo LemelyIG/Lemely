@@ -1,9 +1,8 @@
 """Unit tests for lemely.io.pdf_canonical: the sanctioned openers and the rewrite.
 
-Split from ``test_scan_limits.py`` (#262): ``open_checked_pdf`` and
-``open_scan_image_document`` (the only ways user bytes reach MuPDF), the
-whole-document check on bytes, and ``canonical_pdf_bytes``, MuPDF's
-pages-only rewrite that pdfium renders.
+Split from ``test_scan_limits.py`` (#262): ``open_checked_pdf`` (the only
+way user bytes reach MuPDF), the whole-document check on bytes, and
+``canonical_pdf_bytes``, MuPDF's pages-only rewrite that pdfium renders.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from unittest.mock import patch
 
 import pymupdf
 import pypdfium2 as pdfium
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 
 import lemely.io.pdf_canonical as pdf_canonical
 import lemely.io.pdf_content_walk as pdf_content_walk
@@ -32,11 +31,11 @@ from lemely.io.pdf_canonical import (
     canonical_pdf_bytes,
     check_pdf_content_bytes,
     open_checked_pdf,
-    open_scan_image_document,
 )
 from lemely.io.pdf_content_walk import check_pdf_content, check_pdf_page_content
 from lemely.io.rasterise import rasterise_pdf_to_pages
 from lemely.io.scan_limits import MAX_SCAN_PAGES, check_scan_bytes
+from lemely.io.scan_render import render_preview_png
 from tests.fakes_reader_agreement import (
     dark_pixels,
     differing_bytes,
@@ -132,10 +131,10 @@ class CanonicalPdfBytesTests(unittest.TestCase):
 
 
 class CheckedOpenerTests(unittest.TestCase):
-    """``open_checked_pdf`` and ``open_scan_image_document``: every MuPDF open of
-    user bytes goes through one of them (the sweep in ``test_scan_limits.py``
-    holds ``lemely/`` to that), so neither may let MuPDF repair a PDF before
-    the raw pre-scan has bounded its object streams."""
+    """``open_checked_pdf``: every MuPDF open of user bytes goes through it
+    (the sweep in ``test_scan_limits.py`` holds ``lemely/`` to that), so it
+    may not let MuPDF repair a PDF before the raw pre-scan has bounded its
+    object streams."""
 
     _BOMB = scan_limits.MAX_OBJECT_STREAM_BYTES // 2 + 1_000
 
@@ -157,23 +156,22 @@ class CheckedOpenerTests(unittest.TestCase):
             self.assertTrue(doc.is_pdf)
             self.assertEqual(doc.page_count, 2)
 
-    def test_open_scan_image_document_never_opens_a_pdf(self) -> None:
-        """The preview's image path: an allowlisted image opens as a one-page
-        image document; PDF bytes -- which MuPDF would repair while opening,
-        before any pre-scan -- are refused before MuPDF sees them, as is a
-        format outside the allowlist."""
+    def test_an_image_preview_never_reaches_mupdf(self) -> None:
+        """Final review R3, I1: an image scan's preview is Pillow's decode, as
+        extraction's and the crop's, so image bytes never reach MuPDF and
+        ``open_checked_pdf`` is its only opener of user bytes. PDF bytes,
+        whatever the client called them, go to it and its pre-scan; a format
+        outside the allowlist is refused unopened."""
         buf = io.BytesIO()
         Image.new("L", (40, 30), 200).save(buf, "PNG")
-        with open_scan_image_document(buf.getvalue()) as doc:
-            self.assertFalse(doc.is_pdf)
-            self.assertEqual(doc.page_count, 1)
-        refused: tuple[tuple[bytes, type[Exception]], ...] = (
-            (shared_container_broken_xref_pdf(self._BOMB), UnidentifiedImageError),
-            (ico_wrapping(buf.getvalue()), ScanUnsupportedFormatError),
-        )
-        for data, error in refused:
-            with self.subTest(error=error.__name__), self._trapped(), self.assertRaises(error):
-                open_scan_image_document(data)
+        with self._trapped():
+            png = render_preview_png(buf.getvalue())
+        with Image.open(io.BytesIO(png)) as preview:
+            self.assertEqual(preview.size, (40, 30))
+        with self._trapped(), self.assertRaises(ScanUnsupportedFormatError):
+            render_preview_png(ico_wrapping(buf.getvalue()))
+        with self._trapped(), self.assertRaises(ScanTooLargeError):
+            render_preview_png(shared_container_broken_xref_pdf(self._BOMB))
 
 
 class RewriteFidelityTests(unittest.TestCase):

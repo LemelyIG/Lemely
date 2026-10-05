@@ -103,7 +103,6 @@ from lemely.io.pdf_canonical import (
     canonical_pdf_bytes,
     check_pdf_content_bytes,
     open_checked_pdf,
-    open_scan_image_document,
 )
 from lemely.io.pdf_content_walk import (
     _CROP_PAGE_BOUND,  # noqa: F401
@@ -163,7 +162,6 @@ __all__ = [
     "looks_like_pdf",
     "open_checked_pdf",
     "open_scan_image",
-    "open_scan_image_document",
     "plan_image",
     "plan_page_dpi",
     "plan_pdf_pages",

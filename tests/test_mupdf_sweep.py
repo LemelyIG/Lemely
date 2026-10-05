@@ -414,7 +414,6 @@ class AllowlistTests(unittest.TestCase):
             ALLOWED_OPENS,
             {
                 ("lemely/io/pdf_canonical.py", "open_checked_pdf"),
-                ("lemely/io/pdf_canonical.py", "open_scan_image_document"),
                 ("lemely/io/pdf_canonical.py", "_copy_pages"),
             },
         )

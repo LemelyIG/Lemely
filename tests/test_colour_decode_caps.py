@@ -26,7 +26,6 @@ import pytest
 from PIL import Image
 
 from lemely.io import _scan_common
-from lemely.io.pdf_canonical import open_scan_image_document
 from lemely.io.scan_limits import (
     MAX_DECODE_PX,
     MAX_DECODE_PX_GREY,
@@ -37,6 +36,7 @@ from lemely.io.scan_limits import (
     open_scan_image,
     plan_image,
 )
+from lemely.io.scan_render import render_preview_png
 
 _TOO_LARGE = "This scan is too large to process (limit {mpx} megapixels"
 
@@ -248,8 +248,8 @@ def test_each_colour_mode_is_admitted_at_its_cap_and_refused_one_column_over(
 def test_a_sixteen_bit_colour_image_over_its_cap_is_refused_on_every_path(bits_case: str) -> None:
     """Pillow calls a 16-bit RGB image "RGB", so a caller judging it by mode
     alone would allow 40 Mpx. The opener every path uses -- upload, extraction,
-    the crop and (through ``open_scan_image_document``) the preview -- refuses
-    it from the raw mode, before anything is decoded."""
+    the crop and the preview -- refuses it from the raw mode, before anything
+    is decoded."""
     _case, _mode, cap, build = next(c for c in _CASES if c[0] == bits_case)
     over = build(cap // _HEIGHT + 1, _HEIGHT)  # type: ignore[operator]
     assert plan_image(cap // _HEIGHT + 1, _HEIGHT, _mode) >= 1  # by mode alone: admitted
@@ -258,7 +258,7 @@ def test_a_sixteen_bit_colour_image_over_its_cap_is_refused_on_every_path(bits_c
         open_scan_image(io.BytesIO(over))
     assert caught.value.reason == "image_px"
     with pytest.raises(ScanTooLargeError):
-        open_scan_image_document(over)
+        render_preview_png(over)
 
 
 @pytest.mark.parametrize(

@@ -80,10 +80,10 @@ __all__ = [
 ]
 
 #: Every place in ``lemely/`` allowed to open (or graft) MuPDF bytes. The
-#: ``_copy_pages`` entry is its ``insert_pdf``; the other two are ``pymupdf.open``.
+#: ``_copy_pages`` entry is its ``insert_pdf``; the other is ``pymupdf.open``.
+#: An image scan never reaches MuPDF (final review R3, I1).
 ALLOWED_OPENS: set[tuple[str, str]] = {
     ("lemely/io/pdf_canonical.py", "open_checked_pdf"),
-    ("lemely/io/pdf_canonical.py", "open_scan_image_document"),
     ("lemely/io/pdf_canonical.py", "_copy_pages"),
 }
 #: The one place in ``lemely/`` allowed to make a ``PrescannedPdf``.
