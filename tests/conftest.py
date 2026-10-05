@@ -162,6 +162,24 @@ def _reset_structlog_config() -> Iterator[None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _shut_down_sandbox_workers() -> Iterator[None]:
+    """Stop both scan-render children once the session ends (#260).
+
+    A test that renders or checks a scan without a sandbox fixture (the
+    upload and grading routes, the extractor) starts a real worker child
+    and leaves it for the next test. The fixtures in
+    ``tests/sandbox_fixtures.py`` shut the workers down around their own
+    tests; this stops whatever is left at the end, so no child outlives the
+    run.
+    """
+    yield
+    from lemely.runtime import sandbox
+
+    sandbox.EXTRACTION_WORKER.shutdown()
+    sandbox.INTERACTIVE_WORKER.shutdown()
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _disable_notification_sweeper() -> Iterator[None]:
     """Never race a background task under test (push-delivery spec §4).
 

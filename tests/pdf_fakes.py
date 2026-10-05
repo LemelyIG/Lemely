@@ -1,13 +1,14 @@
 """Deliberately-malformed and encrypted PDF builders, for scan-geometry tests.
 
-Shared by ``tests/test_scan_limits.py``, ``tests/test_web_teacher.py`` and
-``tests/test_student_correct.py`` (mirroring the role ``tests/storage_fakes.py``
-plays for :class:`~lemely.io.storage.StorageBackend`): the regression these
-back is that a scan whose bytes open but whose page tree does not fully
-parse must pass ``lemely.io.scan_limits.check_scan_bytes`` and both upload
-routes exactly like a document that fails to open at all -- see spec
-2026-09-26 §6 and task-11-report.md's "Fix round 1". Also the Task 11b bomb
-builders: small files whose page content or declared image size is far
+Shared by ``tests/test_scan_limits.py``, ``tests/test_pdf_prescan.py``,
+``tests/test_pdf_content_walk.py``, ``tests/test_pdf_canonical.py``,
+``tests/test_web_teacher.py`` and ``tests/test_student_correct.py``
+(mirroring the role ``tests/storage_fakes.py`` plays for
+:class:`~lemely.io.storage.StorageBackend`): the regression these back is
+that a scan whose bytes open but whose page tree does not fully parse must
+pass ``lemely.io.scan_limits.check_scan_bytes`` and both upload routes
+exactly like a document that fails to open at all -- see spec 2026-09-26
+§6. Also the Task 11b bomb builders: small files whose page content or declared image size is far
 larger than any scan's -- generated in-test, nothing committed. And (#256)
 two raster-image builders, :func:`declared_image` and :func:`bilevel_png`,
 for the per-mode image ceiling, used by the rasterise and crop-route tests.
@@ -221,7 +222,7 @@ def image_bomb_pdf(width: int, height: int, *, nested: bool = False) -> bytes:
 def annot_ap_bomb_pdf(inflated_bytes: int) -> bytes:
     """One annotation whose appearance stream (``/AP`` -> ``/N``) carries the bomb.
 
-    Fix round 1, Important 2(a). An appearance stream is a Form XObject per
+    An appearance stream is a Form XObject per
     spec, so the walk must find it via ``/Annots``, not just page resources.
     """
     return assemble_pdf(
@@ -241,7 +242,7 @@ def annot_ap_bomb_pdf(inflated_bytes: int) -> bytes:
 def tiling_pattern_bomb_pdf(inflated_bytes: int, *, type_name: str = "Pattern") -> bytes:
     """A page painted with a tiling pattern whose own stream carries the bomb.
 
-    Fix round 1, Important 2(b). ``type_name`` is the pattern's ``/Type``:
+    A tiling pattern's own content. ``type_name`` is the pattern's ``/Type``:
     a renderer finds a pattern by its ``/PatternType`` and ignores ``/Type``,
     so a pattern that calls itself ``/Font`` is drawn all the same.
     """
@@ -262,7 +263,7 @@ def tiling_pattern_bomb_pdf(inflated_bytes: int, *, type_name: str = "Pattern") 
 def type3_charproc_bomb_pdf(inflated_bytes: int) -> bytes:
     """A Type3 font whose one glyph procedure (``/CharProcs``) carries the bomb.
 
-    Fix round 1, Important 2(c).
+    A glyph procedure is content the renderer runs, like a page's.
     """
     return assemble_pdf(
         [
@@ -281,7 +282,8 @@ def type3_charproc_bomb_pdf(inflated_bytes: int) -> bytes:
 def smask_bomb_pdf(width: int, height: int) -> bytes:
     """A one-pixel image whose ``/SMask`` declares ``width`` x ``height``.
 
-    Fix round 1, Important 3. Only the mask's own header lies -- its stream
+    A soft mask is an image decoded at its own declared size. Only the
+    mask's own header lies -- its stream
     is one grey byte, same trick as :func:`image_bomb_pdf`.
     """
     smask = pdf_stream(
@@ -308,10 +310,10 @@ def smask_bomb_pdf(width: int, height: int) -> bytes:
 def form_xobject_cycle_pdf() -> bytes:
     """Two Form XObjects that reference each other; the walk must terminate.
 
-    Fix round 1, Important 2(e). An annotation-appearance cycle would
+    An annotation-appearance cycle would
     terminate the same way, through the same ``seen``-by-xref guard, once
     the AP stream is found -- it is handed to the identical Form-XObject
-    walker (see :func:`~lemely.io.scan_limits._visit_resource`).
+    walker (see :func:`~lemely.io.pdf_content_walk._walk_resource_graph`).
     """
     return assemble_pdf(
         [
@@ -357,7 +359,7 @@ def repeated_xobject_pdf(*, times: int, inflated_bytes: int) -> bytes:
 
 def indirect_filter_page_pdf(data: bytes) -> bytes:
     """One page whose content stream's ``/Filter`` is an indirect reference
-    to a bare name object -- unusual but legal PDF syntax (fix round 1)."""
+    to a bare name object -- unusual but legal PDF syntax."""
     return assemble_pdf(
         [
             *_CATALOG_AND_PAGES,
@@ -373,10 +375,10 @@ def indirect_xobject_dict_bomb_pdf(
 ) -> bytes:
     """A page whose ``/Resources /XObject`` is itself an indirect reference.
 
-    Fix round 2, Important 1: ``/Resources << /XObject 6 0 R >>`` where
+    An indirect name map: ``/Resources << /XObject 6 0 R >>`` where
     object 6 -- not the page's ``/Resources`` object, the ``/XObject`` name
-    map *inside* it -- is its own object (``<< /Fm1 5 0 R >>``). Round 1's
-    ``page.get_xobjects()`` resolved this level of indirection for us;
+    map *inside* it -- is its own object (``<< /Fm1 5 0 R >>``). An earlier
+    walk's ``page.get_xobjects()`` resolved this level of indirection for us;
     ``_collection_refs`` alone, called once on ``/Resources``, does not.
 
     ``name`` is the author-chosen resource name the form is
@@ -402,7 +404,7 @@ def indirect_xobject_dict_bomb_pdf(
 def indirect_ap_state_bomb_pdf(inflated_bytes: int, *, state: str = "On") -> bytes:
     """An annotation whose ``/AP /N`` appearance-state dict is its own object.
 
-    Fix round 2, Important 1: ``/AP << /N 6 0 R >>`` where object 6 is the
+    An indirect appearance-state dict: ``/AP << /N 6 0 R >>`` where object 6 is the
     ``/Off``/``/On`` appearance-state dict (``<< /Off 7 0 R /On 8 0 R >>``),
     not the appearance stream directly. Object 8 carries the bomb and is the
     selected state (``/AS``). ``state`` is that state's
@@ -431,7 +433,7 @@ def extgstate_smask_bomb_pdf(
     """A page whose graphics state's ``/SMask`` -> ``/G`` transparency-group
     form carries the bomb.
 
-    Fix round 2, minor 1. The soft mask itself (object 6) is a plain
+    An /SMask reached through /ExtGState. The soft mask itself (object 6) is a plain
     ``/Type /Mask`` dict, not a stream -- only its ``/G`` (a Form XObject,
     object 7) is content.
 
@@ -461,8 +463,7 @@ def extgstate_smask_bomb_pdf(
 
 def indirect_smask_dimension_bomb_pdf(width: int, height: int) -> bytes:
     """A small image whose ``/SMask``'s ``/Width`` is an indirect reference
-    to a bare number object -- unusual but legal PDF syntax (fix round 2,
-    Important 2)."""
+    to a bare number object -- unusual but legal PDF syntax."""
     smask = pdf_stream(
         f"/Type /XObject /Subtype /Image /Width 7 0 R /Height {height} "
         "/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode".encode(),
@@ -490,7 +491,8 @@ def deep_plain_dict_chain_bomb_pdf(*, depth: int, inflated_bytes: int) -> bytes:
     plain dicts (``<< /Next N 0 R >>``), the last one naming the Form
     XObject bomb.
 
-    Fix round 3, Important 1. Round 2's fallback in ``_visit_resource``
+    A chain deeper than Python's recursion limit. An earlier walk's
+    fallback in ``_visit_resource``
     recursed into each next-level plain dict via a direct Python call;
     above roughly 1,000 levels (well below ``depth=2000``) that exceeded
     ``sys.getrecursionlimit()`` before the bomb was ever reached, and the
@@ -521,7 +523,7 @@ def deep_xobject_chain_bomb_pdf(*, depth: int, inflated_bytes: int) -> bytes:
     """A chain of ``depth`` nested, otherwise-harmless Form XObjects, each
     naming the next in its own ``/Resources``, the last one naming the bomb.
 
-    Fix round 3, Important 1. Distinct from
+    Nesting deeper than Python's recursion limit. Distinct from
     :func:`deep_plain_dict_chain_bomb_pdf`: every intermediate object here
     IS a legitimate Form XObject, so the depth comes from ordinary form
     nesting, not from generic containers -- a recursive walk would hit
@@ -557,8 +559,9 @@ def resources_entry_pointing_at_pages_node_pdf() -> bytes:
     """A 3-page PDF whose page 0 ``/Resources`` has an entry pointing
     directly at the shared ``/Pages`` node (object 2).
 
-    Fix round 3, Important 2. Not a legitimate resource -- exactly the
-    shape the round-2 fallback's blind, key-blind object-text scan would
+    A back-pointer filed under a key that is not a resource category. Not
+    a legitimate resource -- exactly the shape an earlier walk's blind,
+    key-blind object-text scan would
     have followed straight into the page tree, from there visiting every
     other page's own dict and content along with it. A normal multi-page
     file with this back-pointer must still pass, and the walk starting
@@ -583,7 +586,7 @@ def real_smask_dimension_bomb_pdf(width: float, height: int) -> bytes:
     """A small image whose ``/SMask``'s ``/Width`` is written as a PDF
     *real* number (``40000.0``), not an integer -- legal PDF syntax.
 
-    Fix round 3, minor: ``_resolve_int`` used to accept only ``kind ==
+    A real-number declared size: ``_resolve_int`` used to accept only ``kind ==
     "int"``, so a real-number declared width/height silently passed.
     """
     smask = pdf_stream(
@@ -1238,7 +1241,7 @@ def wide_page_tree_pdf(kids: int, *, count: int, shared_kid: bool = False) -> by
     ``kids + 1`` nodes and only one of them names no ``/Kids``; each kid is
     still a ``/Type /Page``, which MuPDF counts as a page.
 
-    Review round 1 on triage F8: the crop route's page bound must count the
+    An understated ``/Count``: the crop route's page bound must count the
     tree a reader descends, not the ``/Count`` it declares, and must stop
     descending once it is over the bound.
     """
@@ -1268,7 +1271,7 @@ def wrapped_page_tree_pdf(pages: int, *, wrap: int = 0, fanout: int | None = Non
     ``fanout`` kids each. Every ``/Count`` is correct; MuPDF and pdfium both
     count and render these files.
 
-    Review round 2 on triage F8 (adapted from the reviewer's probe): the
+    Single-kid inner nodes (adapted from a reviewer's probe): the
     page-tree bounds must not refuse such a tree at the page cap.
     """
     objects: list[bytes] = [b"<< /Type /Catalog /Pages 2 0 R >>", b""]
@@ -1325,7 +1328,7 @@ def pages_carrying_kids_pdf(pages: int) -> bytes:
 
     MuPDF takes a ``/Type /Page`` as a page whatever else it carries, so it
     counts ``pages`` of them; a count that only knows "a node with no
-    ``/Kids`` is a page" sees none (review round 2 on triage F8, minor 1).
+    ``/Kids`` is a page" sees none.
     """
     dangling = 3 + pages + 1_000
     kid_refs = " ".join(f"{3 + i} 0 R" for i in range(pages))
@@ -1345,7 +1348,7 @@ def empty_pages_nodes_pdf(pages: int, empties: int) -> bytes:
     """``pages`` A4 pages plus ``empties`` empty ``/Type /Pages`` nodes
     (``/Kids [] /Count 0``), all kids of the root, under ``/Count pages``.
 
-    Review round 3 on triage F8 (adapted from the reviewer's probe): MuPDF
+    Empty ``/Pages`` nodes (adapted from a reviewer's probe): MuPDF
     and pdfium both count and render ``pages`` pages -- an empty ``/Pages``
     node is not a page, although it names no ``/Kids``.
     """
@@ -1371,7 +1374,7 @@ def repeated_subtree_pdf(inner: int, *, times: int, count: int) -> bytes:
     """A root whose ``/Kids`` names one ``/Pages`` subtree of ``inner`` pages
     ``times`` times, declaring ``/Count count``.
 
-    Adapted from the reviewer's round-3 probe on triage F8: at
+    A repeated ``/Pages`` subtree, adapted from a reviewer's probe: at
     ``inner=40, times=8, count=320`` pymupdf's own ``page_count`` raises
     (``Invalid number of pages``) while pdfium counts 320.
     """
@@ -1396,7 +1399,7 @@ def page_kids_bomb_pdf(inflated_bytes: int) -> bytes:
     """A root under ``/Count 2`` naming one ``/Type /Page`` node that has its
     own clean content AND a ``/Kids`` naming a clean page and a content bomb.
 
-    Task 9b (the reviewer's round-4 reproduction): MuPDF resolves page 0 to
+    A page node naming kids (a reviewer's reproduction): MuPDF resolves page 0 to
     the typed node and cannot resolve page 1 at all; pdfium descends the
     ``/Kids`` and renders the bomb as its page 1.
     """
@@ -1419,7 +1422,7 @@ def page_kids_equal_count_bomb_pdf(inflated_bytes: int) -> bytes:
     """Root ``/Kids [P C] /Count 2``: P is a ``/Type /Page`` with clean content
     that ALSO names ``/Kids [B]``, B a content-bomb page; C is clean.
 
-    Task 9b review round 1 (the reviewer's equal-count variant): both readers
+    A page node naming kids, at equal counts (a reviewer's variant): both readers
     count 2 pages, but MuPDF numbers them [P, C] and measures both, while
     pdfium descends P's ``/Kids`` and renders B as its page 1.
     """
@@ -1463,7 +1466,7 @@ def shared_container_broken_xref_pdf(
     nothing inflates. ``encrypt_entry`` (e.g. ``b"/Encrypt 99 0 R"``) is added
     to the xref stream's dictionary, which is the file's trailer, declaring
     the file encrypted. Adapted from the reviewer's ``c2_amp.py`` case
-    ``junk_shares_page_container_broken_xref`` (Task 9c review round 2).
+    ``junk_shares_page_container_broken_xref``: a container found by xref repair.
     """
     junk = b"[" + b"0 " * elements + b"]"
     content = b"q 1 0 0 rg 60 500 120 250 re f Q"
@@ -1554,7 +1557,7 @@ def hidden_layer_pdf(*, variant: str = "text") -> bytes:
     ``"image"`` -- a hidden image XObject and a hidden square annotation.
     Built with pymupdf's own layer API (the reviewer's fidelity probe).
 
-    Task 9c review round 2: a renderer shows the hidden content only if the
+    Hidden optional content: a renderer shows it only if the
     catalog's ``/OCProperties`` is lost, so the rewrite must keep it.
     """
     doc = pymupdf.open()
@@ -1594,7 +1597,7 @@ def off_page_object_pdf(
     few KB on disk parse into hundreds of MB; without, it is a plain object.
     Written with an xref stream (object 10), which object streams need.
 
-    Task 9c review round 1 (the reviewer's amplification probe): the
+    An object no page reaches (a reviewer's amplification probe): the
     content check never walks object 6, so nothing that renders extraction
     input may parse it either.
     """
@@ -1760,7 +1763,7 @@ def repeated_kid_pdf(times: int) -> bytes:
     """A ``/Pages`` root under ``/Count 1`` whose ``/Kids`` names ONE page
     ``times`` times: three objects in the tree, ``times`` pages to a reader.
 
-    Review round 1 on triage F8: the crop bound must not be dodged by
+    A repeated kid: the crop bound must not be dodged by
     repeating a kid, nor pay to read every repetition.
     """
     refs = " ".join(["3 0 R"] * times)
@@ -1777,7 +1780,7 @@ def long_parent_chain_pdf(length: int) -> bytes:
     """One A4 page whose ``/Parent`` starts a chain of ``length`` plain dicts,
     each naming the next as its ``/Parent``; none of them is in the page tree.
 
-    Review round 1 on triage F8: the ``/Parent`` climb for resource holders
+    A long ``/Parent`` chain: the climb for resource holders
     must stay bounded too, not only the ``/Kids`` descent.
     """
     chain = [f"<< /Parent {5 + i} 0 R >>".encode() for i in range(length - 1)]
@@ -1908,7 +1911,7 @@ def sixteen_bit_grey_scan(
 def plain_webp(width: int, height: int) -> bytes:
     """A real, white, lossless WebP -- a few dozen bytes at any size.
 
-    #256 review round 2: WebP decodes at about three times a PNG's cost, so
+    #256, the WebP ceiling: WebP decodes at about three times a PNG's cost, so
     it has its own lower pixel cap; this builds files either side of it.
     """
     buf = io.BytesIO()

@@ -8,3 +8,11 @@
  * `tests/unit/scanAccept.test.ts`.
  */
 export const SCAN_ACCEPT = "application/pdf,image/jpeg,image/png,image/tiff,image/webp,image/bmp"
+
+/*
+ * The `accept` list for the mark-scheme pickers: PDF only. The server parses a
+ * scheme as a PDF and nothing else (`lemely/web/routers/teacher.py` scheme
+ * upload, `DeterministicMarkSchemeParser`), so an image picked here would only
+ * be refused. Checked by `tests/unit/scanAccept.test.ts`.
+ */
+export const SCHEME_ACCEPT = "application/pdf"

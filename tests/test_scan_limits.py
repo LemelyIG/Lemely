@@ -1,123 +1,66 @@
-"""Unit tests for lemely.io.scan_limits (spec 2026-09-26 §6)."""
+"""Unit tests for lemely.io.scan_limits (spec 2026-09-26 §6).
+
+#262 split the module and its tests. This file keeps what ``scan_limits``
+and ``_scan_common`` own -- page and image planning, the per-scan pixel
+budget, ``check_scan_bytes`` and the image allowlist -- plus the sweeps over
+``lemely/`` and the split itself. The PDF checks are tested beside their
+modules: ``test_pdf_prescan.py``, ``test_pdf_content_walk.py`` and
+``test_pdf_canonical.py``, which share the helpers defined here.
+"""
 
 from __future__ import annotations
 
+import ast
 import contextlib
+import functools
 import io
 import math
-import time
-import tracemalloc
+import os
+import subprocess
+import symtable
+import sys
+import textwrap
 import unittest
 import warnings
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import ClassVar
+from unittest.mock import patch
 
 import pymupdf
 import pypdfium2 as pdfium
 from PIL import Image
 
+import lemely.io._scan_common as _scan_common
+import lemely.io.pdf_canonical as pdf_canonical
+import lemely.io.pdf_content_walk as pdf_content_walk
+import lemely.io.pdf_prescan as pdf_prescan
 import lemely.io.scan_limits as scan_limits
 from lemely.io.scan_limits import (
-    MAX_CROP_PAGES,
     MAX_DECODE_PX,
     MAX_DECODE_PX_GREY,
     MAX_DECODE_PX_WEBP,
-    MAX_PAGE_CONTENT_BYTES,
     MAX_PAGE_PX,
-    MAX_SCAN_CONTENT_BYTES,
     MAX_SCAN_PAGES,
     MAX_SCAN_TOTAL_PX,
     MIN_EXTRACTION_DPI,
     SCAN_IMAGE_FORMATS,
     ScanRejectedError,
     ScanTooLargeError,
-    ScanUnsupportedEncodingError,
     ScanUnsupportedFormatError,
-    canonical_pdf_bytes,
-    check_object_stream_bytes,
-    check_pdf_content_bytes,
-    check_pdf_page_content,
     check_scan_bytes,
     decode_pixel_cap,
-    decoded_stream_size,
     plan_image,
     plan_page_dpi,
     plan_pdf_pages,
 )
 from tests.pdf_fakes import (
-    annot_ap_bomb_pdf,
-    annot_ap_image_bomb_pdf,
-    annot_ap_nested_bomb_pdf,
-    assemble_pdf,
-    bare_encrypt_dict_pdf,
     bilevel_png,
-    bomb_on_second_page_pdf,
-    born_digital_text_pdf,
-    contents_also_appearance_bomb_pdf,
     declared_image,
-    deep_page_chain_pdf,
-    deep_plain_dict_chain_bomb_pdf,
-    deep_xobject_chain_bomb_pdf,
-    embedded_font_pdf,
-    empty_page_tree_pdf,
-    empty_pages_nodes_pdf,
     encrypted_pdf_bytes,
-    extgstate_smask_bomb_pdf,
-    filtered_page_pdf,
-    flate_bomb_ops,
-    form_also_graphics_state_bomb_pdf,
-    form_xobject_cycle_pdf,
-    hidden_layer_pdf,
     ico_wrapping,
-    image_bomb_pdf,
-    image_labelled_appearance_pdf,
-    indirect_ap_state_bomb_pdf,
-    indirect_filter_page_pdf,
-    indirect_smask_dimension_bomb_pdf,
-    indirect_subtype_form_bomb_pdf,
-    indirect_xobject_dict_bomb_pdf,
-    inherited_resources_bomb_pdf,
-    links_to_sibling_pages_pdf,
-    long_parent_chain_pdf,
-    many_form_xobjects_pdf,
-    many_objects_pdf,
-    non_stream_contents_pdf,
-    off_page_object_pdf,
-    overstated_count_pdf,
-    page_bomb_pdf,
-    page_kids_bomb_pdf,
-    page_kids_equal_count_bomb_pdf,
-    page_tree_poison_pdf,
-    pages_carrying_kids_pdf,
-    parent_poisoned_ap_state_bomb_pdf,
-    pdf_stream,
     pdf_with_inflated_count,
     pdf_with_missing_kid_object,
     plain_webp,
-    real_smask_dimension_bomb_pdf,
-    repeated_kid_pdf,
-    repeated_xobject_pdf,
-    resources_entry_pointing_at_pages_node_pdf,
-    seeded_page_tree_bomb_pdf,
-    shared_container_broken_xref_pdf,
-    sibling_page_as_soft_mask_bomb_pdf,
-    sibling_page_listed_as_annotation_pdf,
-    smask_bomb_pdf,
-    stamp_with_jpeg_appearance_pdf,
-    stream_extgstate_smask_bomb_pdf,
-    tiling_pattern_bomb_pdf,
-    tiling_pattern_image_bomb_pdf,
-    tree_node_ap_state_bomb_pdf,
-    type3_charproc_bomb_pdf,
-    type3_dict_font_with_jpeg_pdf,
-    type3_stream_font_bomb_pdf,
-    typed_form_xobject_bomb_pdf,
-    uncounted_bomb_pdf,
-    wide_page_tree_pdf,
-    wrapped_page_tree_pdf,
-    xobject_also_listed_as_annotation_bomb_pdf,
-    xobject_bomb_pdf,
-    xref_repair_bomb_pdf,
 )
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "handwritten-59" / "0625_w24_qp_42.pdf"
@@ -131,6 +74,20 @@ def _require_committed_fixture(path: Path) -> None:
     stopped running without anyone seeing a failure.
     """
     assert path.is_file(), f"committed fixture missing: {path}"
+
+
+def _readers_trapped() -> contextlib.ExitStack:
+    """Fail the test if any reader opens the file.
+
+    Shared by ``test_pdf_prescan.py`` and ``test_pdf_canonical.py``: the
+    pre-scan must refuse what it refuses before MuPDF or pdfium sees a byte.
+    """
+    stack = contextlib.ExitStack()
+    for target, name in ((pymupdf, "open"), (pdfium, "PdfDocument")):
+        stack.enter_context(
+            patch.object(target, name, side_effect=AssertionError(f"{name} was called"))
+        )
+    return stack
 
 
 def _pdf_bytes(*sizes_pt: tuple[float, float]) -> bytes:
@@ -204,7 +161,7 @@ _A4_AT_1200_DPI = (9921, 14031)
 #: #256: 12600^2 = 158.8 Mpx is under the grey ceiling, 12700^2 = 161.3 Mpx over it.
 _GREY_UNDER_CAP = (12600, 12600)
 _GREY_OVER_CAP = (12700, 12700)
-#: #256 review round 2: 3650^2 = 13.32 Mpx is under the WebP ceiling, 3700^2 = 13.69 Mpx over.
+#: #256, the WebP ceiling: 3650^2 = 13.32 Mpx is under it, 3700^2 = 13.69 Mpx over.
 _WEBP_UNDER_CAP = (3650, 3650)
 _WEBP_OVER_CAP = (3700, 3700)
 
@@ -242,14 +199,15 @@ class ImagePlanTests(unittest.TestCase):
             self.assertIn("limit 160 megapixels", str(caught.exception))
 
     def test_the_refusal_names_a_limit_that_is_true_for_the_mode(self) -> None:
-        """#256 review: "LA", "I" and "F" get the 40 Mpx ceiling without being
-        colour, so the message states the limit and how to reach the larger
-        one instead of calling every such image "colour"."""
-        for mode in ("RGB", "LA", "I", "F", "P"):
+        """#256 review: "LA", "I" and "F" get a colour-sized ceiling without
+        being colour, so the message states the limit and how to reach the
+        larger one instead of calling every such image "colour". Task 11
+        review: "I" and "F" decode to 4 bytes a pixel, so 30 Mpx."""
+        for mode, mpx in (("RGB", 40), ("LA", 40), ("P", 40), ("I", 30), ("F", 30)):
             with self.subTest(mode=mode), self.assertRaises(ScanTooLargeError) as caught:
                 plan_image(*_COLOUR_OVER_CAP, mode)
             message = str(caught.exception)
-            self.assertIn("limit 40 megapixels; a black-and-white or 8-bit greyscale", message)
+            self.assertIn(f"limit {mpx} megapixels; a black-and-white or 8-bit greyscale", message)
             self.assertNotIn("colour", message)
         with self.assertRaises(ScanTooLargeError) as caught:
             plan_image(9000, 9000, "I;16")
@@ -261,7 +219,7 @@ class ImagePlanTests(unittest.TestCase):
             plan_image(9000, 9000, "I;16B")  # 81 Mpx
 
     def test_a_webp_gets_a_third_of_the_colour_ceiling_whatever_its_mode(self) -> None:
-        """#256 review round 2: Pillow 12 decodes every WebP through
+        """#256, the WebP ceiling: Pillow 12 decodes every WebP through
         ``WebPAnimDecoder`` (extra full-canvas RGBA buffers; grey decodes as
         RGB) -- measured 609 MB to extract 39.7 Mpx against 192 MB for the
         same PNG -- so WebP is capped at a third of the colour budget."""
@@ -282,15 +240,20 @@ class ImagePlanTests(unittest.TestCase):
         """Pillow keeps mode "1" at one byte per pixel (measured: 100 Mpx of
         "1" and of "L" both cost 96 MB), so both get the grey ceiling; 16-bit
         grey is two bytes, so half; "P" is converted to RGB before it can be
-        reduced and "LA" is two channels, so both keep the colour ceiling."""
+        reduced and "LA" is two channels, so both keep the colour ceiling.
+        Four-byte modes get three quarters of it (Task 11 review; the full
+        rule is tested in ``test_colour_decode_caps.py``)."""
         self.assertEqual(decode_pixel_cap("1"), MAX_DECODE_PX_GREY)
         self.assertEqual(decode_pixel_cap("L"), MAX_DECODE_PX_GREY)
         for mode in ("I;16", "I;16L", "I;16B", "I;16N"):
             with self.subTest(mode=mode):
                 self.assertEqual(decode_pixel_cap(mode), MAX_DECODE_PX_GREY // 2)
-        for mode in ("I", "F", "LA", "P", "RGB", "RGBA", "CMYK", "no-such-mode"):
+        for mode in ("LA", "P", "RGB", "no-such-mode"):
             with self.subTest(mode=mode):
                 self.assertEqual(decode_pixel_cap(mode), MAX_DECODE_PX)
+        for mode in ("I", "F", "RGBA", "CMYK"):
+            with self.subTest(mode=mode):
+                self.assertEqual(decode_pixel_cap(mode), MAX_DECODE_PX * 3 // 4)
 
     def test_the_grey_ceiling_fits_the_scan_budget_and_the_page_target(self) -> None:
         """#256 consistency: one grey image may cost what a whole PDF scan
@@ -384,309 +347,6 @@ class ScanTotalPixelTests(unittest.TestCase):
     def test_the_reviewer_aggregate_shape_passes_the_upload_check(self) -> None:
         """It fits once downscaled, so the upload must not refuse it."""
         check_scan_bytes(_pdf_bytes(*([(1439.0, 1439.0)] * MAX_SCAN_PAGES)))
-
-
-class ContentWalkPageCapTests(unittest.TestCase):
-    def test_the_content_check_refuses_too_many_pages_without_walking_them(self) -> None:
-        """Final review M1: the content check applies the page cap itself
-        before reading the page tree, whoever calls it."""
-        data = _pdf_bytes(*([(595.0, 842.0)] * (MAX_SCAN_PAGES + 1)))
-        with (
-            patch.object(scan_limits, "_page_tree") as page_tree,
-            patch.object(scan_limits, "_walk_resource_graph") as walk,
-            self.assertRaises(ScanTooLargeError),
-        ):
-            check_pdf_content_bytes(data)
-        page_tree.assert_not_called()
-        walk.assert_not_called()
-
-    def test_an_understated_count_does_not_dodge_the_page_cap(self) -> None:
-        """``/Count 1`` over 41 real kids: pymupdf believes the ``/Count``, so
-        the ``doc.page_count`` check above passes it; the page-tree descent
-        counts the kids and refuses it with the same page-cap message shape."""
-        data = wide_page_tree_pdf(MAX_SCAN_PAGES + 1, count=1)
-        with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
-            self.assertEqual(doc.page_count, 1)
-        with self.assertRaises(ScanTooLargeError) as caught:
-            check_pdf_content_bytes(data)
-        self.assertIn(f"the limit is {MAX_SCAN_PAGES}.", str(caught.exception))
-
-    def test_a_huge_tree_under_an_understated_count_is_refused_early(self) -> None:
-        """20,000 real kids under ``/Count 1``: the descent reads at most a
-        cap's worth of nodes, and the ``/Parent`` climb never starts."""
-        counting = MagicMock(wraps=scan_limits._collection_refs)
-        climbing = MagicMock(wraps=scan_limits._parent)
-        with (
-            patch.object(scan_limits, "_collection_refs", counting),
-            patch.object(scan_limits, "_parent", climbing),
-            self.assertRaises(ScanTooLargeError),
-        ):
-            check_pdf_content_bytes(wide_page_tree_pdf(20_000, count=1))
-        # The root's /Kids (cut off one past the cap) is the one read made.
-        self.assertLessEqual(counting.call_count, MAX_SCAN_PAGES + 2)
-        climbing.assert_not_called()
-
-    def test_scans_at_the_page_cap_still_pass_the_bounded_tree_read(self) -> None:
-        """The bounded descent and climb refuse only what the cap refuses: a
-        born-digital 40-page PDF (text, one shared font) and a flat 40-page
-        tree both pass. The committed scan fixture is covered by
-        ``test_the_committed_fixture_passes_with_room_to_spare``."""
-        check_pdf_content_bytes(born_digital_text_pdf(pages=MAX_SCAN_PAGES))
-        check_pdf_content_bytes(_pdf_bytes(*([(595.0, 842.0)] * MAX_SCAN_PAGES)))
-        check_pdf_content_bytes(wide_page_tree_pdf(MAX_SCAN_PAGES, count=MAX_SCAN_PAGES))
-
-    def test_spec_valid_trees_with_single_kid_inner_nodes_pass_at_the_cap(self) -> None:
-        """Review round 2 on F8: the spec does not require an inner ``/Pages``
-        node to have two or more kids, and MuPDF and pdfium count and render
-        such trees. 40 pages under one or two single-kid wrappers each, or
-        under intermediate nodes, pass both the upload and content checks."""
-        for label, data in (
-            ("1 wrapper each", wrapped_page_tree_pdf(MAX_SCAN_PAGES, wrap=1)),
-            ("2 wrappers each", wrapped_page_tree_pdf(MAX_SCAN_PAGES, wrap=2)),
-            ("fanout 2", wrapped_page_tree_pdf(MAX_SCAN_PAGES, fanout=2)),
-            ("fanout 10", wrapped_page_tree_pdf(MAX_SCAN_PAGES, fanout=10)),
-        ):
-            with self.subTest(label):
-                check_pdf_content_bytes(data)
-                check_scan_bytes(data)
-
-    def test_one_page_over_the_cap_under_single_kid_wrappers_gets_the_page_message(
-        self,
-    ) -> None:
-        """41 pages, one wrapper each. The ``doc.page_count`` check refuses
-        it first; the tree read, asked directly, refuses it with its own
-        page message too -- a true one: 41 leaf references."""
-        data = wrapped_page_tree_pdf(MAX_SCAN_PAGES + 1, wrap=1)
-        with self.assertRaises(ScanTooLargeError) as caught:
-            check_pdf_content_bytes(data)
-        self.assertIn(f"the limit is {MAX_SCAN_PAGES}.", str(caught.exception))
-        with (
-            pymupdf.open(stream=data, filetype="pdf") as doc,  # type: ignore[no-untyped-call]
-            self.assertRaises(ScanTooLargeError) as caught,
-        ):
-            scan_limits._page_tree(doc, bound=scan_limits._SCAN_PAGE_BOUND)
-        self.assertEqual(str(caught.exception), scan_limits._SCAN_PAGES_MESSAGE)
-
-    def test_a_page_typed_node_carrying_kids_is_refused_as_malformed(self) -> None:
-        """T9b review round 1 (replaces round 2's "counts as a page"): a
-        ``/Type /Page`` naming ``/Kids`` is not valid PDF, and MuPDF (which
-        takes the node as a page) and pdfium (which descends its ``/Kids``)
-        resolve it differently by construction. Refused as malformed, at any
-        page count -- never with a page count it may not have."""
-        for pages in (1, MAX_SCAN_PAGES, MAX_SCAN_PAGES + 1):
-            with self.subTest(pages=pages):
-                with self.assertRaises(ScanRejectedError) as caught:
-                    check_pdf_content_bytes(pages_carrying_kids_pdf(pages))
-                self.assertEqual(
-                    str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE
-                )
-
-    def test_an_empty_pages_node_is_not_a_page(self) -> None:
-        """Review round 3 on F8: an empty ``/Type /Pages`` node (``/Kids []``)
-        names no kids but is no page to MuPDF or pdfium -- ``/Type`` decides,
-        and ``/Kids`` only when ``/Type`` is absent. 40 pages beside one or
-        five of them, under ``/Count 40``, pass the upload, content and crop
-        checks; their references still count as work, so hundreds of them
-        are refused as too complex, never as too many pages."""
-        for empties in (1, 5):
-            data = empty_pages_nodes_pdf(MAX_SCAN_PAGES, empties)
-            with self.subTest(empties=empties):
-                check_scan_bytes(data)
-                check_pdf_content_bytes(data)
-                with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
-                    check_pdf_page_content(doc, MAX_SCAN_PAGES - 1)
-        with self.assertRaises(ScanTooLargeError) as caught:
-            check_pdf_content_bytes(
-                empty_pages_nodes_pdf(MAX_SCAN_PAGES, scan_limits._SCAN_PAGE_BOUND.work)
-            )
-        self.assertEqual(str(caught.exception), scan_limits._PAGE_TREE_TOO_COMPLEX_MESSAGE)
-
-    def test_a_deep_chain_past_the_work_bound_is_refused_as_too_complex(self) -> None:
-        """One page under more nested single-kid nodes than the work bound
-        allows: refused, but never as "more than 40 pages" -- it has one.
-        The same page under a chain inside the bound passes."""
-        work = scan_limits._SCAN_PAGE_BOUND.work
-        with self.assertRaises(ScanTooLargeError) as caught:
-            check_pdf_content_bytes(deep_page_chain_pdf(work))
-        self.assertIn("too complex", str(caught.exception))
-        self.assertNotIn("pages", str(caught.exception))
-        check_pdf_content_bytes(deep_page_chain_pdf(work - 2))
-
-
-class PageScopedContentCheckTests(unittest.TestCase):
-    """Triage F8: ``check_pdf_page_content`` is ``check_pdf_content`` for the
-    one page a caller is about to render -- and only that page."""
-
-    def _doc(self, data: bytes) -> pymupdf.Document:
-        return pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
-
-    def test_a_clean_page_passes_when_another_page_is_a_bomb(self) -> None:
-        with self._doc(bomb_on_second_page_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)) as doc:
-            check_pdf_page_content(doc, 0)
-
-    def test_the_bomb_page_itself_is_still_refused(self) -> None:
-        with (
-            self._doc(bomb_on_second_page_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)) as doc,
-            self.assertRaises(ScanTooLargeError),
-        ):
-            check_pdf_page_content(doc, 1)
-
-    def test_the_whole_document_check_still_refuses_it(self) -> None:
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(bomb_on_second_page_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000))
-
-    def test_only_the_named_page_is_walked(self) -> None:
-        with (
-            self._doc(bomb_on_second_page_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)) as doc,
-            patch.object(scan_limits, "_walk_resource_graph") as walk,
-        ):
-            check_pdf_page_content(doc, 0)
-        pages_walked = {call.args[2].page_index for call in walk.call_args_list}
-        self.assertEqual(pages_walked, {0})
-
-    def test_the_page_cap_does_not_apply_to_a_page_scoped_check(self) -> None:
-        """User decision 2 (2026-09-29): a stored scan over MAX_SCAN_PAGES
-        keeps its review crops; the cap bounds whole-document work
-        (extraction, preview) and a one-page render is not that."""
-        with self._doc(_pdf_bytes(*([(595.0, 842.0)] * (MAX_SCAN_PAGES + 1)))) as doc:
-            check_pdf_page_content(doc, 0)
-            check_pdf_page_content(doc, MAX_SCAN_PAGES)
-
-    def test_a_page_the_page_tree_read_never_reached_is_refused(self) -> None:
-        """Fail closed: ``_page_tree`` stops at the first page whose number
-        pymupdf cannot give. The whole-document walk never goes past that
-        page, but a page-scoped check can name a later one, whose inherited
-        ``/Resources`` the tree then never recorded -- walking it with no
-        holders would skip them. Simulated by dropping every holder; both
-        callers share ``_check_page``, so both refuse."""
-        real_page_tree = scan_limits._page_tree
-
-        def truncated(doc: pymupdf.Document, *, bound: scan_limits._PageBound) -> object:
-            return scan_limits._PageTree(xrefs=real_page_tree(doc, bound=bound).xrefs, holders={})
-
-        data = xobject_bomb_pdf(MAX_PAGE_CONTENT_BYTES + 1_000_000)
-        with patch.object(scan_limits, "_page_tree", truncated):
-            with (
-                self.subTest("page-scoped"),
-                self._doc(data) as doc,
-                self.assertRaises(ScanRejectedError),
-            ):
-                check_pdf_page_content(doc, 0)
-            with self.subTest("whole-document"), self.assertRaises(ScanRejectedError):
-                check_pdf_content_bytes(data)
-
-    def test_a_scan_at_the_crop_page_bound_passes(self) -> None:
-        with self._doc(_pdf_bytes(*([(595.0, 842.0)] * MAX_CROP_PAGES))) as doc:
-            check_pdf_page_content(doc, MAX_CROP_PAGES - 1)
-
-    def test_a_scan_over_the_crop_page_bound_is_refused_before_the_tree_is_read(self) -> None:
-        """Review round 1 on F8: ``_page_tree`` costs time in proportion to
-        the page count, so the page-scoped check has its own bound
-        (``MAX_CROP_PAGES``), applied before anything is read."""
-        with (
-            self._doc(_pdf_bytes(*([(595.0, 842.0)] * (MAX_CROP_PAGES + 1)))) as doc,
-            patch.object(scan_limits, "_page_tree") as page_tree,
-            self.assertRaises(ScanTooLargeError) as caught,
-        ):
-            check_pdf_page_content(doc, 0)
-        page_tree.assert_not_called()
-        self.assertIn(f"limit for a review crop is {MAX_CROP_PAGES}", str(caught.exception))
-
-    def test_an_understated_count_does_not_hide_pages_from_the_crop_bound(self) -> None:
-        """``/Count 1`` over more real kids than the bound: pymupdf believes
-        the ``/Count``, the descent counts the kids."""
-        with self._doc(wide_page_tree_pdf(MAX_CROP_PAGES + 1, count=1)) as doc:
-            self.assertEqual(doc.page_count, 1)
-            with self.assertRaises(ScanTooLargeError):
-                check_pdf_page_content(doc, 0)
-
-    def test_a_shared_kid_does_not_hide_pages_from_the_crop_bound(self) -> None:
-        """Every kid is a ``/Type /Page`` that also names the same one page
-        under its own ``/Kids``: refused as malformed on the first one met
-        (T9b review round 1), never with a page count."""
-        with (
-            self._doc(wide_page_tree_pdf(MAX_CROP_PAGES + 1, count=1, shared_kid=True)) as doc,
-            self.assertRaises(ScanRejectedError) as caught,
-        ):
-            check_pdf_page_content(doc, 0)
-        self.assertEqual(str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE)
-
-    def test_the_crop_bound_stops_the_descent_early_on_a_huge_tree(self) -> None:
-        """20,000 real kids under ``/Count 1``: the descent reads at most
-        a bound's worth of nodes, and the ``/Parent`` climb never starts."""
-        counting = MagicMock(wraps=scan_limits._collection_refs)
-        climbing = MagicMock(wraps=scan_limits._parent)
-        with (
-            self._doc(wide_page_tree_pdf(20_000, count=1)) as doc,
-            patch.object(scan_limits, "_collection_refs", counting),
-            patch.object(scan_limits, "_parent", climbing),
-            self.assertRaises(ScanTooLargeError),
-        ):
-            check_pdf_page_content(doc, 0)
-        # The root's /Kids, then one read per kid up to the first past the bound.
-        self.assertLessEqual(counting.call_count, MAX_CROP_PAGES + 2)
-        climbing.assert_not_called()
-
-    def test_a_repeated_kid_does_not_hide_pages_from_the_crop_bound(self) -> None:
-        """One page named 201 times in the root's ``/Kids``: three tree
-        objects, 201 pages to MuPDF, which counts every reference. Refused
-        with the page message, which is true; 200 references pass."""
-        with self._doc(repeated_kid_pdf(MAX_CROP_PAGES)) as doc:
-            check_pdf_page_content(doc, 0)
-        with (
-            self._doc(repeated_kid_pdf(MAX_CROP_PAGES + 1)) as doc,
-            self.assertRaises(ScanTooLargeError) as caught,
-        ):
-            check_pdf_page_content(doc, 0)
-        self.assertIn(f"more than {MAX_CROP_PAGES} pages", str(caught.exception))
-
-    def test_a_huge_repeated_kid_array_is_read_no_further_than_the_work_bound(self) -> None:
-        """One page named 200,000 times: refused having read no more of the
-        array than the work bound allows, not all 200,000 entries."""
-        lengths: list[int] = []
-        real_collection_refs = scan_limits._collection_refs
-
-        def recording(*args: object, **kwargs: object) -> list[int]:
-            refs = real_collection_refs(*args, **kwargs)  # type: ignore[arg-type]
-            lengths.append(len(refs))
-            return refs
-
-        with (
-            self._doc(repeated_kid_pdf(200_000)) as doc,
-            patch.object(scan_limits, "_collection_refs", recording),
-            self.assertRaises(ScanTooLargeError),
-        ):
-            check_pdf_page_content(doc, 0)
-        self.assertLessEqual(max(lengths), scan_limits._CROP_PAGE_BOUND.work)
-
-    def test_a_crop_at_the_bound_under_single_kid_inner_nodes_passes(self) -> None:
-        """Review round 2 on F8: the spec does not require an inner ``/Pages``
-        node to have two or more kids. 200 pages each under one single-kid
-        wrapper, and 134 each under two, are crops MuPDF renders."""
-        for pages, wrap in ((MAX_CROP_PAGES, 1), (134, 2), (MAX_CROP_PAGES, 0)):
-            with (
-                self.subTest(pages=pages, wrap=wrap),
-                self._doc(wrapped_page_tree_pdf(pages, wrap=wrap)) as doc,
-            ):
-                check_pdf_page_content(doc, pages - 1)
-
-    def test_the_crop_bound_stops_a_long_parent_climb_early(self) -> None:
-        """A one-page tree whose page's ``/Parent`` chain runs through 20,000
-        objects outside the tree: the climb reads at most a bound's worth."""
-        climbing = MagicMock(wraps=scan_limits._parent)
-        with (
-            self._doc(long_parent_chain_pdf(20_000)) as doc,
-            patch.object(scan_limits, "_parent", climbing),
-            self.assertRaises(ScanRejectedError),
-        ):
-            check_pdf_page_content(doc, 0)
-        self.assertLessEqual(climbing.call_count, scan_limits._CROP_PAGE_BOUND.work)
-
-    def test_a_short_parent_chain_outside_the_tree_still_passes(self) -> None:
-        """The climb bound refuses only a chain longer than any real tree
-        under the page bound could have; a short odd one is walked as before."""
-        with self._doc(long_parent_chain_pdf(3)) as doc:
-            check_pdf_page_content(doc, 0)
 
 
 class CheckScanBytesTests(unittest.TestCase):
@@ -845,1261 +505,504 @@ class CheckScanBytesTests(unittest.TestCase):
         )
 
 
-class ContentStreamBombTests(unittest.TestCase):
-    """Task 11b: a small PDF whose page content inflates to hundreds of MB
-    must be refused from its raw streams, without inflating it."""
-
-    def test_bomb_pdf_is_small_but_inflates_far_past_the_cap(self) -> None:
-        data = page_bomb_pdf(112_000_000)
-        self.assertLess(len(data), 400_000)
-
-    def test_a_page_content_bomb_is_rejected_quickly_without_inflating_it(self) -> None:
-        data = page_bomb_pdf(112_000_000)
-        tracemalloc.start()
-        started = time.perf_counter()
-        try:
-            with self.assertRaises(ScanTooLargeError) as ctx:
-                check_pdf_content_bytes(data)
-            elapsed = time.perf_counter() - started
-            _, peak = tracemalloc.get_traced_memory()
-        finally:
-            tracemalloc.stop()
-        self.assertIn("drawing", str(ctx.exception))
-        self.assertLess(elapsed, 2.0)
-        self.assertLess(peak, 64_000_000)  # 1 MB chunks, never the 112 MB
-
-    def test_a_form_xobject_bomb_is_rejected(self) -> None:
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(xobject_bomb_pdf(112_000_000))
-
-    def test_a_form_xobject_reachable_twice_is_counted_once(self) -> None:
-        # 5 MB once is under the 8 MB page cap; counted twice it would trip it.
-        check_pdf_content_bytes(xobject_bomb_pdf(5_000_000))
-
-    def test_page_and_scan_caps_are_the_documented_values(self) -> None:
-        self.assertEqual((MAX_PAGE_CONTENT_BYTES, MAX_SCAN_CONTENT_BYTES), (8_000_000, 64_000_000))
-
-    def test_content_just_under_the_page_cap_passes(self) -> None:
-        check_pdf_content_bytes(page_bomb_pdf(MAX_PAGE_CONTENT_BYTES - 100_000))
-
-    def test_the_scan_cap_binds_across_pages(self) -> None:
-        # 9 pages x 7.5 MB = 67.5 MB: every page under its cap, the scan over its.
-        raw = flate_bomb_ops(7_500_000)
-        pages = [
-            (
-                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents {12 + i} 0 R >>"
-            ).encode()
-            for i in range(9)
-        ]
-        streams = [pdf_stream(b"/Filter /FlateDecode", raw) for _ in range(9)]
-        kids = " ".join(f"{3 + i} 0 R" for i in range(9))
-        objects = [
-            b"<< /Type /Catalog /Pages 2 0 R >>",
-            f"<< /Type /Pages /Kids [{kids}] /Count 9 >>".encode(),
-            *pages,
-            *streams,
-        ]
-        with self.assertRaises(ScanTooLargeError) as ctx:
-            check_pdf_content_bytes(assemble_pdf(objects))
-        self.assertIn("whole scan", str(ctx.exception))
-
-    def test_an_unfiltered_stream_is_measured_by_its_raw_length(self) -> None:
-        check_pdf_content_bytes(filtered_page_pdf(b"", b"q /Im0 Do Q"))
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(filtered_page_pdf(b"", b"0 0 m 1 1 l S\n" * 700_000))
-
-    def test_an_unknown_content_filter_is_rejected_as_unsupported(self) -> None:
-        for entry in (b"/Filter /LZWDecode", b"/Filter [/ASCIIHexDecode /FlateDecode]"):
-            with self.assertRaises(ScanUnsupportedEncodingError) as ctx:
-                check_pdf_content_bytes(filtered_page_pdf(entry, b"00>"))
-            self.assertIsInstance(ctx.exception, ScanRejectedError)
-            self.assertIn("re-export", str(ctx.exception))
-            # Fix round 1, minor: the raw filter token is attacker-controlled
-            # PDF syntax, not information a re-export needs -- must not leak.
-            self.assertNotIn("LZW", str(ctx.exception))
-            self.assertNotIn("ASCIIHex", str(ctx.exception))
-
-    def test_a_one_element_flate_array_is_accepted(self) -> None:
-        # Fix round 1, minor: `[/FlateDecode]` is a legitimate spelling.
-        check_pdf_content_bytes(filtered_page_pdf(b"/Filter [/FlateDecode]", flate_bomb_ops(1_000)))
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(
-                filtered_page_pdf(b"/Filter [/FlateDecode]", flate_bomb_ops(9_000_000))
-            )
-
-    def test_the_fl_abbreviation_is_accepted(self) -> None:
-        # Fix round 1, minor: `/Fl` is the inline-image abbreviation (Table 93).
-        check_pdf_content_bytes(filtered_page_pdf(b"/Filter /Fl", flate_bomb_ops(1_000)))
-
-    def test_an_indirect_filter_naming_flatedecode_is_accepted(self) -> None:
-        # Fix round 1, minor: `/Filter 5 0 R` where object 5 is `/FlateDecode`.
-        check_pdf_content_bytes(indirect_filter_page_pdf(flate_bomb_ops(1_000)))
-
-    def test_a_corrupt_flate_stream_counts_what_it_yielded(self) -> None:
-        # pdfium renders what it can of a truncated stream; so should the cap.
-        truncated = flate_bomb_ops(100_000)[:-40]
-        check_pdf_content_bytes(filtered_page_pdf(b"/Filter /FlateDecode", truncated))
-
-    def test_unparseable_and_encrypted_bytes_pass(self) -> None:
-        check_pdf_content_bytes(b"%PDF-1.4 fake")
-        check_pdf_content_bytes(b"not a pdf")
-
-    def test_the_committed_fixture_passes_with_room_to_spare(self) -> None:
-        _require_committed_fixture(_FIXTURE)
-        check_pdf_content_bytes(_FIXTURE.read_bytes())
-        doc = pymupdf.open(str(_FIXTURE))
-        try:
-            largest = max(
-                sum(
-                    decoded_stream_size(doc, xref, budget=MAX_PAGE_CONTENT_BYTES, page_index=i)
-                    for xref in doc[i].get_contents()
-                )
-                for i in range(doc.page_count)
-            )
-        finally:
-            doc.close()
-        self.assertLess(largest, 1_000)  # a scanned page is `q ... cm /Im0 Do Q`
-
-    def test_the_committed_fixture_passes_the_upload_check(self) -> None:
-        _require_committed_fixture(_FIXTURE)
-        check_scan_bytes(_FIXTURE.read_bytes())
-
-    def test_check_scan_bytes_applies_the_content_cap_to_pdfs(self) -> None:
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(page_bomb_pdf(112_000_000))
-
-
-class ImageXObjectBombTests(unittest.TestCase):
-    """Task 11b rev 2: an image XObject declaring more pixels than
-    MAX_DECODE_PX is refused from its dictionary, on the page or inside a
-    Form XObject, without reading the image stream."""
-
-    def test_a_declared_1_6_gigapixel_image_is_rejected(self) -> None:
-        data = image_bomb_pdf(40_000, 40_000)
-        self.assertLess(len(data), 2_000)  # one grey pixel; only the header lies
-        with self.assertRaises(ScanTooLargeError) as ctx:
-            check_pdf_content_bytes(data)
-        self.assertIn("megapixel", str(ctx.exception))
-
-    def test_an_oversized_image_inside_a_form_xobject_is_rejected(self) -> None:
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(image_bomb_pdf(40_000, 40_000, nested=True))
-
-    def test_a_600_dpi_a4_scan_image_passes(self) -> None:
-        check_pdf_content_bytes(image_bomb_pdf(4_960, 7_016))  # 34.8 Mpx, under 40 Mpx
-
-    def test_check_scan_bytes_applies_the_image_cap_to_pdfs(self) -> None:
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(image_bomb_pdf(40_000, 40_000))
-
-
-class AnnotationPatternType3BombTests(unittest.TestCase):
-    """Fix round 1, Important 2: annotation appearance streams, tiling
-    patterns and Type3 CharProcs must count toward the same content
-    budgets -- both renderers (pdfium at extraction, pymupdf at the crop
-    and preview routes) draw all three, not just page content and Form
-    XObjects."""
-
-    def test_an_annotation_appearance_stream_bomb_is_rejected(self) -> None:
-        with self.assertRaises(ScanTooLargeError) as ctx:
-            check_pdf_content_bytes(annot_ap_bomb_pdf(112_000_000))
-        self.assertIn("drawing", str(ctx.exception))
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(annot_ap_bomb_pdf(112_000_000))
-
-    def test_a_tiling_pattern_bomb_is_rejected(self) -> None:
-        with self.assertRaises(ScanTooLargeError) as ctx:
-            check_pdf_content_bytes(tiling_pattern_bomb_pdf(112_000_000))
-        self.assertIn("drawing", str(ctx.exception))
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(tiling_pattern_bomb_pdf(112_000_000))
-
-    def test_a_type3_charproc_bomb_is_rejected(self) -> None:
-        with self.assertRaises(ScanTooLargeError) as ctx:
-            check_pdf_content_bytes(type3_charproc_bomb_pdf(112_000_000))
-        self.assertIn("drawing", str(ctx.exception))
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(type3_charproc_bomb_pdf(112_000_000))
-
-    def test_a_form_xobject_cycle_terminates(self) -> None:
-        # Two Form XObjects referencing each other: must return, not hang.
-        check_pdf_content_bytes(form_xobject_cycle_pdf())
-
-    def test_a_form_xobject_drawn_many_times_is_counted_once(self) -> None:
-        # 5 MB once is under the page cap; the page draws it 500 times, but
-        # /Resources lists it once, so the walk visits (and counts) it once.
-        # Repeated *rendering* cost is a separate, still-open concern -- see
-        # repeated_xobject_pdf's docstring and the report's follow-up.
-        check_pdf_content_bytes(repeated_xobject_pdf(times=500, inflated_bytes=5_000_000))
-
-    def test_hitting_the_object_cap_is_rejected(self) -> None:
-        with (
-            patch.object(scan_limits, "_MAX_OBJECTS_PER_PAGE", 5),
-            self.assertRaises(ScanTooLargeError) as ctx,
-        ):
-            check_pdf_content_bytes(many_form_xobjects_pdf(10))
-        self.assertIn("drawing objects", str(ctx.exception))
-
-    def test_well_under_the_object_cap_passes(self) -> None:
-        with patch.object(scan_limits, "_MAX_OBJECTS_PER_PAGE", 5):
-            check_pdf_content_bytes(many_form_xobjects_pdf(3))
-
-    def test_an_indirect_xobject_dict_bomb_is_rejected(self) -> None:
-        # Fix round 2, Important 1: /Resources << /XObject 6 0 R >> --
-        # object 6 (not /Resources itself) is the name->ref map.
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(indirect_xobject_dict_bomb_pdf(112_000_000))
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(indirect_xobject_dict_bomb_pdf(112_000_000))
-
-    def test_an_indirect_ap_state_dict_bomb_is_rejected(self) -> None:
-        # Fix round 2, Important 1: /AP << /N 6 0 R >> -- object 6 is the
-        # /Off//On appearance-state dict, not the appearance stream itself.
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(indirect_ap_state_bomb_pdf(112_000_000))
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(indirect_ap_state_bomb_pdf(112_000_000))
-
-    def test_an_extgstate_smask_transparency_group_bomb_is_rejected(self) -> None:
-        # Fix round 2, minor 1: /ExtGState -> /SMask -> /G is a Form
-        # XObject the renderer draws.
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(extgstate_smask_bomb_pdf(112_000_000))
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(extgstate_smask_bomb_pdf(112_000_000))
-
-    def test_a_deep_plain_dict_chain_bomb_is_rejected(self) -> None:
-        # Fix round 3, Important 1: round 2's fallback recursed into each
-        # next-level plain dict via a direct Python call; 2,000 levels
-        # exceeded the recursion limit before the bomb at the end of the
-        # chain was ever reached, and the resulting RecursionError used to
-        # be swallowed silently.
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(
-                deep_plain_dict_chain_bomb_pdf(depth=2000, inflated_bytes=112_000_000)
-            )
-
-    def test_a_deep_form_xobject_chain_bomb_is_rejected(self) -> None:
-        # Fix round 3, Important 1: the same recursion-depth hole existed
-        # for an entirely ordinary chain of legitimate, nested Form
-        # XObjects, since round 1. `page.get_images(full=True)` itself
-        # independently walks nested Form XObjects looking for images and
-        # hits the identical RecursionError on this fixture -- caught by
-        # check_pdf_content's new fail-closed wrapper and turned into a
-        # plain ScanRejectedError (not specifically ScanTooLargeError,
-        # since it is pymupdf's own image-enumeration call that raises
-        # here, not this module's byte-budget check).
-        with self.assertRaises(ScanRejectedError):
-            check_pdf_content_bytes(
-                deep_xobject_chain_bomb_pdf(depth=2000, inflated_bytes=112_000_000)
-            )
-
-    def test_an_unexpected_error_during_the_walk_rejects_rather_than_passes(self) -> None:
-        # Fix round 3, Important 1 (fail-closed): a bug or unforeseen
-        # pymupdf quirk inside the resource-graph walk itself must reject
-        # the file, not silently pass it through the way a genuine
-        # page-tree/page-access failure still does.
-        with (
-            patch.object(scan_limits, "_walk_resource_graph", side_effect=RuntimeError("boom")),
-            self.assertRaises(ScanRejectedError) as ctx,
-        ):
-            check_pdf_content_bytes(filtered_page_pdf(b"", b"q Q"))
-        self.assertNotIsInstance(ctx.exception, ScanTooLargeError)
-
-    def test_a_non_resource_key_pointing_at_the_pages_node_is_never_walked(self) -> None:
-        # `/Poison` is not a
-        # resource category (ISO 32000-1 Table 33), so no renderer can reach
-        # anything through it and the walk does not read it at all. The
-        # in-category version of this attack is page_tree_poison_pdf.
-        data = resources_entry_pointing_at_pages_node_pdf()
-        check_pdf_content_bytes(data)  # must not raise
-        doc = pymupdf.open(stream=data, filetype="pdf")
-        try:
-            tree = scan_limits._page_tree(doc, bound=scan_limits._SCAN_PAGE_BOUND)
-            walk = scan_limits._PageWalk(
-                page_index=0, tree=tree.xrefs, budget=scan_limits._ContentBudget()
-            )
-            start = scan_limits._resources_refs(doc, doc.page_xref(0))
-            scan_limits._walk_resource_graph(doc, start, walk)
-        finally:
-            doc.close()
-        self.assertEqual(walk.budget.objects, 0)
-
-
-class ImageMaskBombTests(unittest.TestCase):
-    """Fix round 1, Important 3: an image's /SMask and stream-valued /Mask
-    are themselves image objects with their own declared size, and pdfium
-    decodes each at that declared size to render it -- same rule as the
-    image itself."""
-
-    def test_a_declared_smask_bomb_is_rejected(self) -> None:
-        with self.assertRaises(ScanTooLargeError) as ctx:
-            check_pdf_content_bytes(smask_bomb_pdf(40_000, 40_000))
-        self.assertIn("megapixel", str(ctx.exception))
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(smask_bomb_pdf(40_000, 40_000))
-
-    def test_a_600_dpi_smask_passes(self) -> None:
-        check_pdf_content_bytes(smask_bomb_pdf(4_960, 7_016))  # 34.8 Mpx
-
-    def test_an_smask_with_an_indirect_width_is_rejected(self) -> None:
-        # Fix round 2, Important 2: /Width 7 0 R where object 7 is a bare
-        # `40000` -- used to silently pass (kind != "int") without checking.
-        with self.assertRaises(ScanTooLargeError) as ctx:
-            check_pdf_content_bytes(indirect_smask_dimension_bomb_pdf(40_000, 40_000))
-        self.assertIn("megapixel", str(ctx.exception))
-
-    def test_an_smask_with_a_real_number_width_is_rejected(self) -> None:
-        # Fix round 3, minor: /Width 40000.0 (pymupdf's "float" kind, not
-        # "int") used to make _resolve_int return None without checking.
-        with self.assertRaises(ScanTooLargeError) as ctx:
-            check_pdf_content_bytes(real_smask_dimension_bomb_pdf(40000.0, 40_000))
-        self.assertIn("megapixel", str(ctx.exception))
-
-
-class PageTreeIdentityTests(unittest.TestCase):
-    """The page tree is recognised by object identity -- the catalog, every
-    page and every node reached through ``/Kids``, collected before any page
-    is walked -- never by resource names or ``/Type`` values, which the
-    PDF's author chooses and the renderer ignores. Reaching it from a page's
-    drawing resources, ``/Contents`` or ``/Annots`` rejects the file."""
-
-    def test_a_form_filed_under_a_page_tree_key_name_is_rejected(self) -> None:
-        # In an indirect /XObject name map these are author-chosen resource
-        # names the renderer draws by, like any other name.
-        for name in ("P", "Contents", "Parent", "Kids", "Annots", "B", "Dest"):
-            with self.subTest(name=name), self.assertRaises(ScanTooLargeError):
-                check_pdf_content_bytes(indirect_xobject_dict_bomb_pdf(112_000_000, name=name))
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(indirect_xobject_dict_bomb_pdf(112_000_000, name="P"))
-
-    def test_an_appearance_state_named_contents_is_rejected(self) -> None:
-        # /AP << /N 6 0 R >>, object 6 = << /Off .. /Contents 8 0 R >>,
-        # /AS /Contents selects the bomb.
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(indirect_ap_state_bomb_pdf(112_000_000, state="Contents"))
-
-    def test_a_form_xobject_typed_as_a_page_tree_node_is_rejected(self) -> None:
-        # The renderer draws by /Subtype /Form and ignores /Type.
-        for type_name in ("Page", "Pages", "Catalog"):
-            with self.subTest(type_name=type_name), self.assertRaises(ScanTooLargeError):
-                check_pdf_content_bytes(
-                    typed_form_xobject_bomb_pdf(112_000_000, type_name=type_name)
-                )
-
-    def test_containers_typed_as_fonts_are_still_walked(self) -> None:
-        # A name map, a tiling pattern or a graphics state labelled
-        # /Type /Font is drawn exactly as if it were not.
-        cases = {
-            "xobject map": indirect_xobject_dict_bomb_pdf(
-                112_000_000, map_entries=b"/Type /Font /Subtype /TrueType"
-            ),
-            "tiling pattern": tiling_pattern_bomb_pdf(112_000_000, type_name="Font"),
-            "extgstate": extgstate_smask_bomb_pdf(112_000_000, gs_type="Font"),
-        }
-        for label, data in cases.items():
-            with self.subTest(label), self.assertRaises(ScanTooLargeError):
-                check_pdf_content_bytes(data)
-
-    def test_a_graphics_state_also_filed_as_a_font_is_still_walked(self) -> None:
-        # One object under both /Font and /ExtGState: meeting it first as a
-        # font must not stop it being walked as the graphics state it is.
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(extgstate_smask_bomb_pdf(112_000_000, also_as_font=True))
-
-    def test_inherited_resources_are_walked(self) -> None:
-        # /Resources on the /Pages parent, none on the page: both renderers
-        # inherit it (ISO 32000-1 Table 30).
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(inherited_resources_bomb_pdf(112_000_000))
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(inherited_resources_bomb_pdf(112_000_000))
-
-    def test_a_large_embedded_font_program_is_not_page_content(self) -> None:
-        # Guard: a font reached through /Font is not expanded, so its
-        # 9 MB program (over the 8 MB page cap) does not count.
-        check_pdf_content_bytes(embedded_font_pdf(9_000_000))
-
-    def test_a_poisoned_name_map_is_rejected_without_climbing(self) -> None:
-        # Page 0's indirect /XObject map also names the catalog, a
-        # /Type-less /Pages root or a /Type-less sibling page. Reaching the
-        # page tree from drawing resources rejects the file -- by identity,
-        # before the node is expanded, so the siblings' 5 MB forms are never
-        # counted (an over-count would raise ScanTooLargeError instead).
-        cases = {
-            "all three": b"/Cat 1 0 R /Root 2 0 R /Sib 5 0 R",
-            "catalog": b"/Cat 1 0 R",
-            "root": b"/Root 2 0 R",
-            "sibling": b"/Sib 5 0 R",
-        }
-        for label, poison in cases.items():
-            with self.subTest(label):
-                data = page_tree_poison_pdf(form_bytes=5_000_000, poison=poison)
-                for check in (check_pdf_content_bytes, check_scan_bytes):
-                    with self.assertRaises(ScanRejectedError) as ctx:
-                        check(data)
-                    self.assertNotIsInstance(ctx.exception, ScanTooLargeError)
-                doc = pymupdf.open(stream=data, filetype="pdf")
-                try:
-                    tree = scan_limits._page_tree(doc, bound=scan_limits._SCAN_PAGE_BOUND)
-                    walk = scan_limits._PageWalk(
-                        page_index=0, tree=tree.xrefs, budget=scan_limits._ContentBudget()
-                    )
-                    start = scan_limits._resources_refs(doc, doc.page_xref(0))
-                    with self.assertRaises(ScanRejectedError):
-                        scan_limits._walk_resource_graph(doc, start, walk)
-                finally:
-                    doc.close()
-                self.assertEqual(tree.xrefs, frozenset({1, 2, 3, 5, 6}))
-                # Nothing behind a tree node was visited: the siblings'
-                # contents (7, 8) and forms (10, 11).
-                self.assertTrue({7, 8, 10, 11}.isdisjoint(walk.seen))
-
-    def test_a_page_tree_node_used_as_an_appearance_state_dict_is_rejected(self) -> None:
-        # The /Pages root or a sibling page doubles as page 0's /AP /N state
-        # dict, whose selected state is a Form XObject bomb.
-        for node in ("root", "sibling"):
-            with self.subTest(node=node):
-                data = tree_node_ap_state_bomb_pdf(112_000_000, node=node)
-                with self.assertRaises(ScanRejectedError):
-                    check_pdf_content_bytes(data)
-                with self.assertRaises(ScanRejectedError):
-                    check_scan_bytes(data)
-
-    def test_a_sibling_page_used_as_a_soft_mask_is_rejected(self) -> None:
-        # An ordinary ExtGState names the sibling page as its /SMask; the
-        # page's extra /G is the bomb. The tree is met inside a container.
-        data = sibling_page_as_soft_mask_bomb_pdf(112_000_000)
-        with self.assertRaises(ScanRejectedError) as ctx:
-            check_pdf_content_bytes(data)
-        self.assertNotIsInstance(ctx.exception, ScanTooLargeError)
-
-    def test_a_tree_node_already_listed_as_contents_or_annotation_is_rejected(self) -> None:
-        # The sibling page is listed in page 0's /Annots or /Contents before
-        # the annotation's /AP reaches it: handled once already, it must be
-        # rejected, not skipped.
-        for seed in ("annots", "contents"):
-            with self.subTest(seed=seed):
-                data = seeded_page_tree_bomb_pdf(112_000_000, seed=seed)
-                with self.assertRaises(ScanRejectedError):
-                    check_pdf_content_bytes(data)
-                with self.assertRaises(ScanRejectedError):
-                    check_scan_bytes(data)
-
-    def test_a_tree_node_is_rejected_even_when_already_seen(self) -> None:
-        # Pins the order of the walk's checks: the tree test runs before the
-        # visited-set test, so a tree node pre-seeded into `seen` (as
-        # /Contents or another role could) still rejects.
-        doc = pymupdf.open(stream=links_to_sibling_pages_pdf(), filetype="pdf")
-        try:
-            tree = scan_limits._page_tree(doc, bound=scan_limits._SCAN_PAGE_BOUND)
-            walk = scan_limits._PageWalk(
-                page_index=0, tree=tree.xrefs, budget=scan_limits._ContentBudget()
-            )
-            walk.seen.add(5)  # the sibling page
-            with self.assertRaises(ScanRejectedError):
-                scan_limits._walk_resource_graph(doc, [(5, "any")], walk)
-        finally:
-            doc.close()
-
-    def test_a_page_listed_in_annots_is_rejected(self) -> None:
-        # Only the /Annots check reaches this page-tree node: the listed
-        # page has no /AP and nothing else of page 0 names it.
-        data = sibling_page_listed_as_annotation_pdf()
-        with self.assertRaises(ScanRejectedError) as ctx:
-            check_pdf_content_bytes(data)
-        self.assertNotIsInstance(ctx.exception, ScanTooLargeError)
-
-    def test_a_contents_entry_that_is_not_a_stream_is_rejected(self) -> None:
-        with self.assertRaises(ScanRejectedError) as ctx:
-            check_pdf_content_bytes(non_stream_contents_pdf())
-        self.assertNotIsInstance(ctx.exception, ScanTooLargeError)
-
-    def test_links_to_a_sibling_page_pass(self) -> None:
-        # /Dest, /A /GoTo, /P and /Popup all name pages or annotations the
-        # renderer does not draw from; the walk follows only /AP.
-        data = links_to_sibling_pages_pdf()
-        check_pdf_content_bytes(data)
-        check_scan_bytes(data)
-
-    def test_a_deep_form_chain_bomb_is_rejected_by_the_walk_alone(self) -> None:
-        # With pymupdf's own (recursive) image enumeration taken
-        # out, the bomb at the end of the 2,000-deep chain is still found
-        # by this module's iterative walk and refused as too large.
-        with (
-            patch.object(pymupdf.Page, "get_images", return_value=[]),
-            self.assertRaises(ScanTooLargeError),
-        ):
-            check_pdf_content_bytes(
-                deep_xobject_chain_bomb_pdf(depth=2000, inflated_bytes=112_000_000)
-            )
-
-    def test_a_bogus_parent_does_not_hide_an_object_from_the_walk(self) -> None:
-        # The page's /Parent names its annotation's appearance-state dict.
-        # The tree set comes from /Kids, so that dict is still expanded.
-        data = parent_poisoned_ap_state_bomb_pdf(112_000_000)
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(data)
-        doc = pymupdf.open(stream=data, filetype="pdf")
-        try:
-            self.assertEqual(
-                scan_limits._page_tree(doc, bound=scan_limits._SCAN_PAGE_BOUND).xrefs,
-                frozenset({1, 2, 3}),
-            )
-        finally:
-            doc.close()
-
-
-class StreamRoleTests(unittest.TestCase):
-    """A stream is walked by what a renderer does with it: an appearance
-    stream is run as a form whatever its ``/Subtype`` says, and a
-    ``/Subtype`` written as an indirect name reads the same as a direct one."""
-
-    def test_an_appearance_stream_without_a_subtype_has_its_resources_walked(self) -> None:
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(annot_ap_nested_bomb_pdf(112_000_000, ap_dict=b""))
-
-    def test_an_appearance_stream_labelled_as_an_image_is_walked_as_a_form(self) -> None:
-        ap_dict = (
-            b"/Type /XObject /Subtype /Image /Width 1 /Height 1 "
-            b"/ColorSpace /DeviceGray /BitsPerComponent 8"
-        )
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(annot_ap_nested_bomb_pdf(112_000_000, ap_dict=ap_dict))
-
-    def test_a_form_with_an_indirect_subtype_has_its_resources_walked(self) -> None:
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(indirect_subtype_form_bomb_pdf(112_000_000))
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(indirect_subtype_form_bomb_pdf(112_000_000))
-
-    def test_a_type3_font_that_is_a_stream_has_its_glyphs_walked(self) -> None:
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(type3_stream_font_bomb_pdf(112_000_000))
-
-    def test_a_graphics_state_that_is_a_stream_is_walked_as_a_container(self) -> None:
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(stream_extgstate_smask_bomb_pdf(112_000_000))
-
-    def test_an_xobject_also_listed_as_an_annotation_has_its_appearance_walked(self) -> None:
-        # Walked first as an XObject, the same object's /AP is still read
-        # when /Annots lists it.
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(xobject_also_listed_as_annotation_bomb_pdf(112_000_000))
-
-    def test_a_form_also_used_as_a_graphics_state_is_expanded_in_full(self) -> None:
-        # Met first as an /XObject, the same form is still expanded as the
-        # graphics state it also is: its /SMask group is the bomb.
-        data = form_also_graphics_state_bomb_pdf(112_000_000, xobject_first=True)
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(data)
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(data)
-
-    def test_the_outcome_does_not_depend_on_visit_order(self) -> None:
-        # The same shared object reached in two roles, in both orders.
-        outcomes = []
-        for xobject_first in (True, False):
-            with self.subTest(xobject_first=xobject_first):
-                with self.assertRaises(ScanTooLargeError) as ctx:
-                    check_pdf_content_bytes(
-                        form_also_graphics_state_bomb_pdf(112_000_000, xobject_first=xobject_first)
-                    )
-                outcomes.append(str(ctx.exception))
-        self.assertEqual(len(set(outcomes)), 1)
-
-    def test_a_content_stream_also_used_as_an_appearance_has_its_resources_walked(
-        self,
-    ) -> None:
-        data = contents_also_appearance_bomb_pdf(112_000_000)
-        with self.assertRaises(ScanTooLargeError):
-            check_pdf_content_bytes(data)
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(data)
-
-    def test_a_stamp_appearance_drawing_a_jpeg_passes(self) -> None:
-        # Guard for the walk above: its image is met under /XObject and
-        # size-checked, never counted as unmeasurable page content.
-        data = stamp_with_jpeg_appearance_pdf()
-        check_pdf_content_bytes(data)
-        check_scan_bytes(data)
-
-    def test_a_type3_dict_font_drawing_a_jpeg_from_its_resources_passes(self) -> None:
-        # Pins that a plain dict container keeps its /Resources roles: read
-        # as bare text instead, the JPEG would be met in the "any" role,
-        # counted as content, and refused as an unmeasurable encoding.
-        data = type3_dict_font_with_jpeg_pdf()
-        check_pdf_content_bytes(data)
-        check_scan_bytes(data)
-
-    def test_an_image_labelled_appearance_declaring_40000_squared_is_rejected(self) -> None:
-        # Pins that an image-labelled stream is pixel-checked in every role,
-        # not only under /XObject: this one is reached only as an /AP /N.
-        with self.assertRaises(ScanTooLargeError) as ctx:
-            check_pdf_content_bytes(image_labelled_appearance_pdf(40_000, 40_000))
-        self.assertIn("1600 megapixels", str(ctx.exception))
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(image_labelled_appearance_pdf(40_000, 40_000))
-
-
-class WalkedImageTests(unittest.TestCase):
-    """An image the walk reaches is pixel-checked
-    there too -- ``page.get_images(full=True)`` does not list images inside
-    annotation appearance streams or tiling patterns."""
-
-    def test_an_oversized_image_in_an_annotation_appearance_is_rejected(self) -> None:
-        with self.assertRaises(ScanTooLargeError) as ctx:
-            check_pdf_content_bytes(annot_ap_image_bomb_pdf(40_000, 40_000))
-        self.assertIn("megapixel", str(ctx.exception))
-        with self.assertRaises(ScanTooLargeError):
-            check_scan_bytes(annot_ap_image_bomb_pdf(40_000, 40_000))
-
-    def test_an_oversized_image_in_a_tiling_pattern_is_rejected(self) -> None:
-        with self.assertRaises(ScanTooLargeError) as ctx:
-            check_pdf_content_bytes(tiling_pattern_image_bomb_pdf(40_000, 40_000))
-        self.assertIn("megapixel", str(ctx.exception))
-
-    def test_a_600_dpi_image_in_an_annotation_appearance_passes(self) -> None:
-        check_pdf_content_bytes(annot_ap_image_bomb_pdf(4_960, 7_016))
-
-
-class ReaderCoverageTests(unittest.TestCase):
-    """Task 9b: the content check must cover every page a renderer will
-    render, and fail closed when it cannot. MuPDF walks; pdfium renders
-    extraction; where they disagree, or MuPDF cannot read a page it
-    counted, the file is refused rather than passed unmeasured."""
-
-    _BOMB = MAX_PAGE_CONTENT_BYTES + 1_000_000
-
-    def test_a_bomb_only_pdfium_sees_is_refused_at_upload_and_in_the_content_check(
-        self,
-    ) -> None:
-        """The reviewer's reproduction: MuPDF takes the ``/Type /Page`` node
-        as page 1 and cannot load page 2; pdfium renders the bomb as page 2.
-        A ``/Type /Page`` naming ``/Kids`` is refused as malformed (T9b
-        review round 1) before any page is walked."""
-        data = page_kids_bomb_pdf(self._BOMB)
-        for check in (check_scan_bytes, check_pdf_content_bytes):
-            with self.subTest(check.__name__):
-                with self.assertRaises(ScanRejectedError) as caught:
-                    check(data)
-                self.assertEqual(
-                    str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE
-                )
-
-    def test_the_equal_count_page_kids_bomb_is_refused(self) -> None:
-        """T9b review round 1: both readers count 2 pages, but MuPDF numbers
-        [P, C] while pdfium renders P's kid, a bomb, as page 1. Every page
-        MuPDF numbered loads, and the counts agree -- refused because P, a
-        ``/Type /Page``, names ``/Kids``."""
-        data = page_kids_equal_count_bomb_pdf(self._BOMB)
-        with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
-            self.assertEqual(doc.page_count, 2)
-        for check in (check_scan_bytes, check_pdf_content_bytes):
-            with self.subTest(check.__name__):
-                with self.assertRaises(ScanRejectedError) as caught:
-                    check(data)
-                self.assertEqual(
-                    str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE
-                )
-
-    def test_pages_the_tree_holds_but_mupdf_does_not_number_are_refused(self) -> None:
-        """Defence in depth (T9b review round 1): the set of pages the tree
-        descent finds must be the set MuPDF numbers. ``/Count 1`` over two
-        real kids: both readers number one page and never render the other,
-        so the file is malformed, and refused whatever the ``/Kids`` rule
-        catches. Equal sets pass (a flat tree, a repeated kid)."""
-        with self.assertRaises(ScanRejectedError) as caught:
-            check_pdf_content_bytes(wide_page_tree_pdf(2, count=1))
-        self.assertEqual(str(caught.exception), scan_limits._PAGE_STRUCTURE_MALFORMED_MESSAGE)
-        check_pdf_content_bytes(wide_page_tree_pdf(2, count=2))
-        check_pdf_content_bytes(repeated_kid_pdf(3))
-
-    def test_readers_that_disagree_on_the_page_count_are_refused(self) -> None:
-        """No ``/Count``, or ``/Count 0``: MuPDF sees no pages, so its walk
-        measures nothing, while pdfium renders both, bomb included."""
-        for count_entry in (b"", b"/Count 0"):
-            data = uncounted_bomb_pdf(self._BOMB, count_entry=count_entry)
-            with self.subTest(count_entry=count_entry):
-                with self.assertRaises(ScanRejectedError) as caught:
-                    check_scan_bytes(data)
-                self.assertEqual(str(caught.exception), scan_limits._PAGE_COUNT_UNREADABLE_MESSAGE)
-
-    def test_a_page_count_mupdf_cannot_read_is_refused(self) -> None:
-        """``/Count -1``: MuPDF's own ``page_count`` raises. Opened but not
-        countable is not "cannot open": refused, not swallowed."""
-        data = uncounted_bomb_pdf(self._BOMB, count_entry=b"/Count -1")
-        for check in (check_scan_bytes, check_pdf_content_bytes):
-            with self.subTest(check.__name__):
-                with self.assertRaises(ScanRejectedError) as caught:
-                    check(data)
-                self.assertEqual(str(caught.exception), scan_limits._PAGE_COUNT_UNREADABLE_MESSAGE)
-
-    def test_an_overstated_count_is_refused_not_swallowed(self) -> None:
-        """The guard probe's file: ``/Count 5`` over 3 real pages. Upload and
-        the whole-document check refuse it; the crop route's page-scoped
-        check refuses a missing page with a ``ScanRejectedError``, which that
-        route answers with its 422, and still passes a real one."""
-        data = overstated_count_pdf(3, count=5)
-        for check in (check_scan_bytes, check_pdf_content_bytes):
-            with self.subTest(check.__name__):
-                with self.assertRaises(ScanRejectedError) as caught:
-                    check(data)
-                self.assertIn("Page 4 of this PDF could not be read", str(caught.exception))
-        with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
-            check_pdf_page_content(doc, 2)
-            with self.assertRaises(ScanRejectedError):
-                check_pdf_page_content(doc, 3)
-
-    def test_a_deep_chain_is_refused_at_upload(self) -> None:
-        """pdfium cannot plan a 2,000-deep chain, which used to end the upload
-        check before the MuPDF check ran. It runs now, and its work bound
-        refuses the chain."""
-        with self.assertRaises(ScanTooLargeError) as caught:
-            check_scan_bytes(deep_page_chain_pdf(2_000))
-        self.assertEqual(str(caught.exception), scan_limits._PAGE_TREE_TOO_COMPLEX_MESSAGE)
-
-    def test_a_file_mupdf_opened_but_could_not_walk_fails_closed(self) -> None:
-        """Only "MuPDF will not open it at all" is exempt; anything else going
-        wrong once it has is a refusal."""
-        data = _pdf_bytes((595.0, 842.0))
-        failing = patch.object(scan_limits, "check_pdf_content", side_effect=RuntimeError("x"))
-        with failing, self.assertRaises(ScanRejectedError):
-            check_pdf_content_bytes(data)
-
-    def test_a_pdf_only_pdfium_can_open_is_refused(self) -> None:
-        """pdfium counted pages MuPDF could not open the file to measure: the
-        two readers disagree, so refused. With no pdfium count (pdfium could
-        not open it either) it passes, as garbage bytes always have."""
-        data = _pdf_bytes((595.0, 842.0))
-        with patch.object(scan_limits.pymupdf, "open", side_effect=RuntimeError("x")):
-            with self.assertRaises(ScanRejectedError):
-                check_pdf_content_bytes(data, pdfium_pages=1)
-            check_pdf_content_bytes(data)
-
-    def test_ordinary_pdfs_still_pass_upload(self) -> None:
-        check_scan_bytes(_pdf_bytes((595.0, 842.0), (595.0, 842.0)))
-        check_scan_bytes(born_digital_text_pdf(pages=MAX_SCAN_PAGES))
-        check_scan_bytes(wrapped_page_tree_pdf(MAX_SCAN_PAGES, wrap=2))
-        check_scan_bytes(b"%PDF-1.4 fake")
-
-    def test_the_committed_fixture_still_passes_upload(self) -> None:
-        _require_committed_fixture(_FIXTURE)
-        check_scan_bytes(_FIXTURE.read_bytes())
-
-
-class CanonicalPdfBytesTests(unittest.TestCase):
-    """Task 9c: MuPDF's rewrite of a PDF, so pdfium renders exactly the
-    objects MuPDF measured, whatever either reader's xref repair would do."""
-
-    def _pdfium_objects(self, data: bytes) -> int:
-        pdf = pdfium.PdfDocument(data)
-        try:
-            page = pdf[0]
-            try:
-                return sum(1 for _ in page.get_objects())
-            finally:
-                page.close()
-        finally:
-            pdf.close()
-
-    def test_the_rewrite_holds_the_object_mupdf_measured(self) -> None:
-        """19-byte xref entries: MuPDF reads the xref (object 4 is the clean
-        rectangle); the rewrite has one clean xref and that one object 4, so
-        pdfium draws one rectangle. A small bomb stands in: the object count
-        is what differs."""
-        for eol in (b"\n", b"\r"):
-            data = xref_repair_bomb_pdf(200_000, entry_eol=eol)
-            with self.subTest(entry_eol=eol):
-                self.assertGreater(self._pdfium_objects(data), 1)  # the premise
-                self.assertEqual(self._pdfium_objects(canonical_pdf_bytes(data)), 1)
-
-    def test_an_ordinary_pdf_keeps_its_pages(self) -> None:
-        data = born_digital_text_pdf(pages=3)
-        canonical = canonical_pdf_bytes(data)
-        with pymupdf.open(stream=canonical, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
-            self.assertEqual(doc.page_count, 3)
-            self.assertIn("quick brown fox", doc[2].get_text())
-
-    def test_bytes_mupdf_cannot_open_or_rewrite_are_refused(self) -> None:
-        for label, data in (("garbage", b"%PDF-1.4 fake"), ("encrypted", encrypted_pdf_bytes())):
-            with self.subTest(label), self.assertRaises(ScanRejectedError):
-                canonical_pdf_bytes(data)
-
-    def test_a_pdf_with_no_pages_is_a_value_error(self) -> None:
-        """Extraction's contract: a PDF neither reader finds a page in is a
-        ``ValueError``. Pages pdfium finds but MuPDF does not are pages MuPDF
-        never measured: refused, not called empty."""
-        with self.assertRaises(ValueError) as caught:
-            canonical_pdf_bytes(empty_page_tree_pdf())
-        self.assertNotIsInstance(caught.exception, ScanRejectedError)
-        # Refused by the whole-document check that runs first (review round 1):
-        # the tree holds two pages MuPDF does not number.
-        with self.assertRaises(ScanRejectedError):
-            canonical_pdf_bytes(uncounted_bomb_pdf(200_000, count_entry=b"/Count 0"))
-
-    def test_a_pdf_with_too_many_objects_is_refused_before_it_is_rewritten(self) -> None:
-        """The rewrite costs time per object in the file (13.7 s for 200,000
-        small ones), so past ``MAX_PDF_OBJECTS`` the file is refused first."""
-        with (
-            patch.object(pymupdf.Document, "tobytes") as tobytes,
-            self.assertRaises(ScanTooLargeError),
-        ):
-            canonical_pdf_bytes(many_objects_pdf(scan_limits.MAX_PDF_OBJECTS))
-        tobytes.assert_not_called()
-        canonical_pdf_bytes(many_objects_pdf(1_000))
-
-
-class RawObjectStreamTests(unittest.TestCase):
-    """Task 9c review round 2: with a broken xref, MuPDF's repair loads every
-    object stream it finds while the file is being OPENED, container-mates
-    and all -- before any check can run. So object streams are found and
-    bounded in the raw bytes, before any reader opens the file."""
-
-    _BOMB = scan_limits.MAX_OBJECT_STREAM_BYTES // 2 + 1_000
-
-    def _trapped(self) -> contextlib.ExitStack:
-        """Fail the test if any reader opens the file."""
-        stack = contextlib.ExitStack()
-        for target, name in ((scan_limits.pymupdf, "open"), (scan_limits.pdfium, "PdfDocument")):
-            stack.enter_context(
-                patch.object(target, name, side_effect=AssertionError(f"{name} was called"))
-            )
-        return stack
-
-    def test_a_container_bomb_is_refused_before_any_reader_opens_the_file(self) -> None:
-        """A 16 KB file whose page dict shares a Flate object stream with an
-        array that inflates past the bound; startxref is off, so MuPDF's
-        repair would parse the whole container at open (459 MB for the
-        reviewer's 10M-element case). Refused from the raw bytes, however
-        the container's dictionary is spelled."""
-        variants = {
-            "plain": {},
-            "no space": {"type_entry": b"/Type/ObjStm"},
-            "whitespace and a comment": {"type_entry": b"/Type \r\n  % note\n  /ObjStm"},
-            "escaped name": {"type_entry": b"/Type /Obj#53tm"},
-            "keywords inside a string first": {
-                "type_entry": b"/Note (stream endobj 1 0 obj \\) x) /Type /ObjStm"
-            },
-            "filter array": {"filter_entry": b"/Filter [ /FlateDecode ]"},
-            "abbreviated filter in an array": {"filter_entry": b"/Filter[/Fl]"},
-            "length too long": {"length_delta": 40},
-            "length too short": {"length_delta": -40},
-        }
-        for label, kwargs in variants.items():
-            data = shared_container_broken_xref_pdf(self._BOMB, **kwargs)  # type: ignore[arg-type]
-            self.assertLess(len(data), 100_000)
-            for check in (
-                check_scan_bytes,
-                check_pdf_content_bytes,
-                canonical_pdf_bytes,
-                check_object_stream_bytes,
-            ):
-                with self.subTest(label, check=check.__name__), self._trapped():
-                    with self.assertRaises(ScanTooLargeError) as caught:
-                        check(data)
-                    self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
-
-    def test_the_upload_check_prescans_a_pdf_exactly_once(self) -> None:
-        """Final review, item 5: ``check_scan_bytes`` ran the raw pre-scan
-        itself and then again inside ``check_pdf_content_bytes`` -- the same
-        bytes, twice (up to ~1.5 s each on a crafted 25 MB file). Once, and
-        still before either reader opens the file (the bomb test above)."""
-        real = scan_limits.check_object_stream_bytes
-        with patch.object(scan_limits, "check_object_stream_bytes", wraps=real) as prescan:
-            check_scan_bytes(_pdf_bytes((595.0, 842.0), (595.0, 842.0)))
-        self.assertEqual(prescan.call_count, 1)
-
-    def test_every_pdf_entry_point_still_prescans(self) -> None:
-        """Item 5 must not drop the pre-scan from any path: each entry point
-        that opens user PDF bytes runs it at least once."""
-        from lemely.io.scan_limits import open_checked_pdf
-
-        data = _pdf_bytes((595.0, 842.0))
-        for entry in (check_scan_bytes, check_pdf_content_bytes, canonical_pdf_bytes):
-            real = scan_limits.check_object_stream_bytes
-            with (
-                self.subTest(entry=entry.__name__),
-                patch.object(scan_limits, "check_object_stream_bytes", wraps=real) as prescan,
-            ):
-                entry(data)
-                self.assertGreaterEqual(prescan.call_count, 1)
-        with patch.object(scan_limits, "check_object_stream_bytes", wraps=real) as prescan:
-            open_checked_pdf(data).close()
-        self.assertEqual(prescan.call_count, 1)
-
-    def test_open_checked_pdf_refuses_a_container_bomb_before_mupdf_opens_it(self) -> None:
-        """Final review, item 4: the one way to open user PDF bytes with MuPDF
-        runs the raw pre-scan first, so the bomb is refused and
-        ``pymupdf.open`` is never reached."""
-        from lemely.io.scan_limits import open_checked_pdf
-
-        data = shared_container_broken_xref_pdf(self._BOMB)
-        with self._trapped(), self.assertRaises(ScanTooLargeError) as caught:
-            open_checked_pdf(data)
-        self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
-
-    def test_open_checked_pdf_opens_a_clean_pdf(self) -> None:
-        from lemely.io.scan_limits import open_checked_pdf
-
-        with open_checked_pdf(_pdf_bytes((595.0, 842.0), (595.0, 842.0))) as doc:
-            self.assertTrue(doc.is_pdf)
-            self.assertEqual(doc.page_count, 2)
-
-    def test_open_scan_image_document_never_opens_a_pdf(self) -> None:
-        """The preview's image path: an allowlisted image opens as a one-page
-        image document; PDF bytes -- which MuPDF would repair while opening,
-        before any pre-scan -- are refused before MuPDF sees them, as is a
-        format outside the allowlist."""
-        from lemely.io.scan_limits import open_scan_image_document
-
-        buf = io.BytesIO()
-        Image.new("L", (40, 30), 200).save(buf, "PNG")
-        with open_scan_image_document(buf.getvalue()) as doc:
-            self.assertFalse(doc.is_pdf)
-            self.assertEqual(doc.page_count, 1)
-        from PIL import UnidentifiedImageError
-
-        refused: tuple[tuple[bytes, type[Exception]], ...] = (
-            (shared_container_broken_xref_pdf(self._BOMB), UnidentifiedImageError),
-            (ico_wrapping(buf.getvalue()), ScanUnsupportedFormatError),
-        )
-        for data, error in refused:
-            with self.subTest(error=error.__name__), self._trapped(), self.assertRaises(error):
-                open_scan_image_document(data)
+class SanctionedOpenerSweepTests(unittest.TestCase):
+    """Sweeps over ``lemely/``: user PDF bytes reach MuPDF only through the
+    sanctioned openers, and only :func:`prescan_pdf` vouches for a pre-scan.
+    Each reads every module's source, so neither belongs to one module."""
 
     def test_every_mupdf_open_of_user_bytes_goes_through_the_sanctioned_openers(self) -> None:
         """Final review, item 4: "pre-scan before any MuPDF open" is enforced
         by code, not by each caller remembering. Every ``pymupdf.open`` (or
-        ``fitz.open``/``Document``) given anything to open, anywhere in
-        ``lemely/``, is inside :func:`open_checked_pdf` or
-        :func:`open_scan_image_document`. A bare ``pymupdf.open()`` makes a new,
-        empty document and opens no bytes."""
-        import ast
+        ``fitz.open``/``Document``, through any import, ``from`` import or
+        one-level alias) given anything to open, and every ``insert_pdf`` /
+        ``insert_file``, anywhere in ``lemely/``, is inside
+        :func:`open_checked_pdf` or ``_copy_pages`` (an image scan never
+        reaches MuPDF: final review R3, I1). A bare ``pymupdf.open()`` makes a new, empty document.
+        The sweep, and the forms it cannot see, are in ``tests/mupdf_sweep.py``."""
+        from tests.mupdf_sweep import ALLOWED_OPENS, find_mupdf_opens, sweep
 
-        allowed = {
-            ("lemely/io/scan_limits.py", "open_checked_pdf"),
-            ("lemely/io/scan_limits.py", "open_scan_image_document"),
-        }
-        root = Path(__file__).resolve().parents[1]
-        found: set[tuple[str, str]] = set()
-
-        class _Opens(ast.NodeVisitor):
-            def __init__(self, relative: str) -> None:
-                self.relative = relative
-                self.functions: list[str] = []
-
-            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-                self.functions.append(node.name)
-                self.generic_visit(node)
-                self.functions.pop()
-
-            visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
-
-            def visit_Call(self, node: ast.Call) -> None:
-                func = node.func
-                if (
-                    isinstance(func, ast.Attribute)
-                    and isinstance(func.value, ast.Name)
-                    and func.value.id in ("pymupdf", "fitz")
-                    and func.attr in ("open", "Document")
-                    and (node.args or node.keywords)
-                ):
-                    where = self.functions[-1] if self.functions else "<module>"
-                    found.add((self.relative, where))
-                self.generic_visit(node)
-
-        for path in sorted((root / "lemely").rglob("*.py")):
-            relative = path.relative_to(root).as_posix()
-            _Opens(relative).visit(ast.parse(path.read_text(encoding="utf-8")))
-        self.assertEqual(found - allowed, set(), "a MuPDF open outside the sanctioned openers")
-        self.assertEqual(found, allowed)
+        found = sweep(Path(__file__).resolve().parents[1], find_mupdf_opens)
+        self.assertEqual(
+            found - ALLOWED_OPENS, set(), "a MuPDF open outside the sanctioned openers"
+        )
+        self.assertEqual(found, ALLOWED_OPENS)
 
     def test_only_prescan_pdf_makes_a_prescanned_pdf(self) -> None:
         """Final review, item 5: a :class:`PrescannedPdf` is how a caller skips
         the pre-scan in ``open_checked_pdf``, so nothing in ``lemely/`` makes
         one except :func:`prescan_pdf`, which has just run it."""
-        import ast
+        from tests.mupdf_sweep import ALLOWED_PRESCANNED, find_prescanned_constructions, sweep
 
-        root = Path(__file__).resolve().parents[1]
-        found: set[tuple[str, str]] = set()
+        found = sweep(Path(__file__).resolve().parents[1], find_prescanned_constructions)
+        self.assertEqual(found, ALLOWED_PRESCANNED)
 
-        class _Makes(ast.NodeVisitor):
-            def __init__(self, relative: str) -> None:
-                self.relative = relative
-                self.functions: list[str] = []
 
-            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-                self.functions.append(node.name)
-                self.generic_visit(node)
-                self.functions.pop()
+#: The split modules by import path. A name any of them re-exports is one object
+#: in all of them, and a patch on any of them is checked by the sweep below.
+_SCAN_MODULES = {
+    module.__name__: module
+    for module in (_scan_common, pdf_prescan, pdf_content_walk, pdf_canonical, scan_limits)
+}
+#: ``patch.multiple``'s own keywords, which name no attribute.
+_MULTIPLE_OPTIONS = frozenset({"target", "spec", "create", "spec_set", "autospec", "new_callable"})
 
-            visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
 
-            def visit_Call(self, node: ast.Call) -> None:
-                func = node.func
-                name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
-                if name == "PrescannedPdf":
-                    where = self.functions[-1] if self.functions else "<module>"
-                    found.add((self.relative, where))
-                self.generic_visit(node)
+def _dotted(expr: ast.expr) -> str | None:
+    """``a.b.c`` for an attribute chain ending in a name, else ``None``."""
+    parts: list[str] = []
+    while isinstance(expr, ast.Attribute):
+        parts.append(expr.attr)
+        expr = expr.value
+    if not isinstance(expr, ast.Name):
+        return None
+    parts.append(expr.id)
+    return ".".join(reversed(parts))
 
-        for path in sorted((root / "lemely").rglob("*.py")):
-            relative = path.relative_to(root).as_posix()
-            _Makes(relative).visit(ast.parse(path.read_text(encoding="utf-8")))
-        self.assertEqual(found, {("lemely/io/scan_limits.py", "prescan_pdf")})
 
-    def test_a_scan_past_the_token_budget_is_refused_as_too_complex(self) -> None:
-        """The raw scan reads every dictionary token by token; one crafted
-        dictionary of 600,000 names (1.2M tokens) is refused once past
-        ``MAX_PRESCAN_TOKENS``, rather than costing seconds per upload."""
-        data = b"%PDF-1.7\n1 0 obj\n<<" + b"/K 0 " * 600_000 + b">>\nendobj\n"
-        self.assertGreater(1_200_000, scan_limits.MAX_PRESCAN_TOKENS)
-        with self._trapped(), self.assertRaises(ScanTooLargeError) as caught:
-            check_object_stream_bytes(data)
-        self.assertEqual(str(caught.exception), scan_limits._STRUCTURE_TOO_COMPLEX_MESSAGE)
+def _argument(call: ast.Call, position: int, *keywords: str) -> ast.expr | None:
+    """``call``'s argument at ``position``, or the one passed by any of ``keywords``."""
+    if len(call.args) > position:
+        return call.args[position]
+    return next((kw.value for kw in call.keywords if kw.arg in keywords), None)
 
-    def test_spaces_after_the_stream_keyword_do_not_hide_a_container(self) -> None:
-        """Scanner review: MuPDF skips any run of spaces after ``stream``
-        before the data, and pdfium skips to the end of the line, so a
-        container whose data follows ``stream \\n`` inflates in full at open
-        (a 16 KB file to 388 MB). The scan measures from where each reader
-        starts, so these are refused, not scored as 0 bytes."""
-        for separator in (b" \n", b"   \n", b" \t\n", b" \r\n", b"  \r"):
-            data = shared_container_broken_xref_pdf(self._BOMB, stream_separator=separator)
-            with self.subTest(separator=separator), self._trapped():
-                with self.assertRaises(ScanTooLargeError) as caught:
-                    check_object_stream_bytes(data)
-                self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
 
-    def test_every_standard_separator_is_measured_in_full(self) -> None:
-        """``\\r\\n``, ``\\n`` and ``\\r``: a container just under the bound
-        passes, one just over it is refused -- so each is measured in full."""
-        under = scan_limits.MAX_OBJECT_STREAM_BYTES // 2 - 10_000
-        for separator in (b"\r\n", b"\n", b"\r"):
-            with self.subTest(separator=separator), self._trapped():
-                check_object_stream_bytes(
-                    shared_container_broken_xref_pdf(under, stream_separator=separator)
-                )
-                with self.assertRaises(ScanTooLargeError):
-                    check_object_stream_bytes(
-                        shared_container_broken_xref_pdf(self._BOMB, stream_separator=separator)
-                    )
+def _scan_module_patches(source: str) -> list[tuple[int, str, str | None]]:
+    """``(line, module, name)`` for every patch in ``source`` of ``name`` on a split module.
 
-    def test_a_container_no_reader_can_inflate_is_refused(self) -> None:
-        """Fail closed: a Flate container that yields nothing from any start a
-        reader could use is refused as unreadable, never scored as 0 bytes."""
-        data = shared_container_broken_xref_pdf(1_000, corrupt_header=True)
-        with self._trapped(), self.assertRaises(ScanRejectedError) as caught:
-            check_object_stream_bytes(data)
-        self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAM_UNREADABLE_MESSAGE)
-
-    def test_an_encrypted_files_object_streams_count_at_their_flate_ceiling(self) -> None:
-        """Scanner review: an encrypted file's object streams are ciphertext --
-        nothing inflates, and with an empty user password an attacker can make
-        the ciphertext inflate to a harmless few bytes while the plaintext MuPDF
-        decrypts is a bomb. So each counts at the most Flate can expand its
-        length to (``_FLATE_MAX_RATIO``). The committed RC4 fixture's 2.7 KB of
-        object streams passes; a 16 KB one is refused, however /Encrypt is
-        spelled, and even when its bytes do not inflate at all."""
-        small = shared_container_broken_xref_pdf(
-            1_000, encrypt_entry=b"/Encrypt 99 0 R", corrupt_header=True
-        )
-        check_object_stream_bytes(small)
-        for entry in (b"/Encrypt 99 0 R", b"/Encr#79pt 99 0 R", b"/Encrypt<</Filter/Standard>>"):
-            data = shared_container_broken_xref_pdf(
-                self._BOMB, encrypt_entry=entry, corrupt_header=True
+    Finds ``patch.object(m, "name")``, ``patch.multiple(m, name=...)``,
+    ``monkeypatch.setattr(m, "name", ...)``, ``setattr(m, "name", ...)`` --
+    with the module and the attribute passed by position or by keyword
+    (``target=``, ``attribute=``, ``name=``) -- and the string forms
+    ``patch("lemely.io.<module>.name")`` and
+    ``monkeypatch.setattr("lemely.io.<module>.name", ...)``. ``m`` is any of
+    the five split modules, under any alias the file imports it as, or
+    spelled out in full. ``name`` is ``None`` when the attribute is not a
+    string literal (a variable, ``**kwargs``): the sweep cannot tell what
+    such a patch replaces, so it counts as a miss.
+    """
+    tree = ast.parse(source)
+    aliases = {path: path for path in _SCAN_MODULES}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in _SCAN_MODULES and alias.asname:
+                    aliases[alias.asname] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module == "lemely.io":
+            for alias in node.names:
+                if f"lemely.io.{alias.name}" in _SCAN_MODULES:
+                    aliases[alias.asname or alias.name] = f"lemely.io.{alias.name}"
+    found: list[tuple[int, str, str | None]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        verb = (_dotted(node.func) or "").rpartition(".")[2]
+        target = _argument(node, 0, "target")
+        if verb not in ("patch", "object", "multiple", "setattr") or target is None:
+            continue
+        if isinstance(target, ast.Constant) and isinstance(target.value, str):
+            module, _, name = target.value.rpartition(".")
+            if verb in ("patch", "setattr") and module in _SCAN_MODULES:
+                found.append((node.lineno, module, name))
+            continue
+        module = aliases.get(_dotted(target) or "")
+        if module is None:
+            continue
+        if verb == "multiple":
+            found.extend(
+                (node.lineno, module, kw.arg)
+                for kw in node.keywords
+                if kw.arg not in _MULTIPLE_OPTIONS
             )
-            with self.subTest(entry=entry), self._trapped():
-                with self.assertRaises(ScanTooLargeError) as caught:
-                    check_object_stream_bytes(data)
-                self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
+        elif verb in ("object", "setattr"):
+            attribute = _argument(node, 1, "attribute", "name")
+            literal = isinstance(attribute, ast.Constant) and isinstance(attribute.value, str)
+            found.append((node.lineno, module, attribute.value if literal else None))  # type: ignore[union-attr]
+    return sorted(found, key=lambda patch: (patch[0], patch[1], patch[2] or ""))
 
-    def test_encrypt_in_a_bare_dictionary_counts_as_encrypted(self) -> None:
-        """Encrypt parity: MuPDF's xref repair reads /Encrypt from any top-level
-        dictionary -- with the ``trailer`` keyword, with another word before it,
-        or with nothing at all -- so the scan treats any /Encrypt name in the
-        file (escapes decoded) as declaring encryption. Each case's ~20 KB
-        object stream then counts at Flate's ceiling and is refused; the same
-        file with no /Encrypt passes."""
-        check_object_stream_bytes(bare_encrypt_dict_pdf(encrypt_key=b""))
-        for label, kwargs in (
-            ("trailer keyword", {"prefix": b"trailer\n"}),
-            ("no keyword", {}),
-            ("another keyword", {"prefix": b"foobar\n"}),
-            ("escaped name, no keyword", {"encrypt_key": b"/Encr#79pt"}),
-            ("fully escaped name", {"encrypt_key": b"/#45#6e#63#72#79#70#74"}),
+
+#: The re-exporting modules. A patch on one reaches only code that looks the
+#: name up there, so every other reader of the name counts against it.
+_FACADES = frozenset({"lemely.io.scan_limits", "lemely.io._scan_common"})
+
+
+class _ModuleScopeReads(ast.NodeVisitor):
+    """Names read at module scope: outside any function, lambda or class body
+    (those are their own scopes, read by :func:`_global_reads` from the
+    symbol table), and not a comprehension's own loop variable."""
+
+    def __init__(self) -> None:
+        self.reads: set[str] = set()
+        self._comprehension_names: list[set[str]] = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        # Decorators and defaults run at module scope; the body does not.
+        for expr in (*node.decorator_list, *node.args.defaults, *node.args.kw_defaults):
+            if expr is not None:
+                self.visit(expr)
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        for expr in (*node.args.defaults, *node.args.kw_defaults):
+            if expr is not None:
+                self.visit(expr)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for expr in (*node.decorator_list, *node.bases, *(kw.value for kw in node.keywords)):
+            self.visit(expr)
+
+    def _comprehension(
+        self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
+    ) -> None:
+        self._comprehension_names.append(
+            {
+                name.id
+                for generator in node.generators
+                for name in ast.walk(generator.target)
+                if isinstance(name, ast.Name)
+            }
+        )
+        self.generic_visit(node)
+        self._comprehension_names.pop()
+
+    visit_ListComp = visit_SetComp = visit_DictComp = visit_GeneratorExp = _comprehension
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load) and not any(
+            node.id in names for names in self._comprehension_names
         ):
-            with self.subTest(label), self._trapped():
-                with self.assertRaises(ScanTooLargeError) as caught:
-                    check_object_stream_bytes(bare_encrypt_dict_pdf(**kwargs))  # type: ignore[arg-type]
-                self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
-
-    def test_the_committed_encrypted_fixture_passes(self) -> None:
-        """``0580_s11_gt.pdf`` is RC4-encrypted (empty user password) and keeps
-        its objects in object streams: it passes the raw scan and upload."""
-        fixture = Path(__file__).parent / "fixtures" / "0580_s11_gt.pdf"
-        _require_committed_fixture(fixture)
-        data = fixture.read_bytes()
-        check_object_stream_bytes(data)
-        check_scan_bytes(data)
-
-    def test_a_container_the_bounded_inflate_cannot_measure_is_refused(self) -> None:
-        data = shared_container_broken_xref_pdf(1_000, filter_entry=b"/Filter /LZWDecode")
-        with self._trapped(), self.assertRaises(ScanRejectedError) as caught:
-            check_object_stream_bytes(data)
-        self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAM_ENCODING_MESSAGE)
-
-    def test_ordinary_object_streams_pass(self) -> None:
-        """Object streams as producers write them -- pymupdf's use_objstms
-        save of a 40-page born-digital file, a merge of image scans with an
-        xref stream and object streams, and the same small shared container
-        under a broken xref -- pass the raw scan and upload."""
-        with pymupdf.open(
-            stream=born_digital_text_pdf(pages=MAX_SCAN_PAGES), filetype="pdf"
-        ) as doc:  # type: ignore[no-untyped-call]
-            born_digital: bytes = doc.tobytes(garbage=1, use_objstms=1)  # type: ignore[no-untyped-call]
-        merged = pymupdf.open()  # type: ignore[no-untyped-call]
-        for _ in range(12):
-            scan = pymupdf.open()  # type: ignore[no-untyped-call]
-            page = scan.new_page(width=595, height=842)
-            pixmap = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 200, 280), 0)
-            page.insert_image(page.rect, stream=pixmap.tobytes("png"))
-            merged.insert_pdf(scan)
-            scan.close()
-        merged_objstm: bytes = merged.tobytes(garbage=1, deflate=True, use_objstms=1)
-        merged.close()
-        for label, data in (
-            ("born-digital", born_digital),
-            ("merged scans", merged_objstm),
-            ("small shared container, broken xref", shared_container_broken_xref_pdf(1_000)),
-        ):
-            with self.subTest(label):
-                self.assertIn(b"/ObjStm", data)
-                check_object_stream_bytes(data)
-                check_scan_bytes(data)
+            self.reads.add(node.id)
 
 
-class RewriteFidelityTests(unittest.TestCase):
-    """Task 9c review round 2: pdfium must render the rewrite exactly as it
-    renders the stored file -- including what the file says to hide."""
+@functools.cache
+def _global_reads(source: str) -> frozenset[str]:
+    """Every name ``source`` reads as a module global.
 
-    def _pdfium_grey(self, data: bytes) -> list[bytes]:
-        pdf = pdfium.PdfDocument(data)
-        try:
-            pages = []
-            for index in range(len(pdf)):
-                page = pdf[index]
-                try:
-                    bitmap = page.render(scale=0.5)
-                    try:
-                        pages.append(bitmap.to_pil().convert("L").tobytes())
-                    finally:
-                        bitmap.close()
-                finally:
-                    page.close()
-            return pages
-        finally:
-            pdf.close()
+    At module scope, any read of the name (:class:`_ModuleScopeReads`). In a
+    function, lambda, comprehension or class body, only a read the symbol
+    table resolves to the module global: a parameter or local variable of
+    the same name, or a closure's free variable, is not one.
+    """
+    reads: set[str] = set()
 
-    def test_layers_hidden_by_default_stay_hidden(self) -> None:
-        """Content on an optional-content layer that is OFF by default --
-        text and a filled rectangle, or an image XObject and an annotation --
-        renders from the rewrite exactly as from the stored file: hidden.
-        Losing the catalog's ``/OCProperties`` would show it to the marker
-        while the teacher's preview does not."""
-        for variant in ("text", "image"):
-            data = hidden_layer_pdf(variant=variant)
-            with self.subTest(variant=variant):
-                stored = self._pdfium_grey(data)
-                rewritten = self._pdfium_grey(canonical_pdf_bytes(data))
-                self.assertEqual(len(rewritten), len(stored))
-                differing = [
-                    sum(a != b for a, b in zip(x, y, strict=True))
-                    for x, y in zip(stored, rewritten, strict=True)
-                ]
-                self.assertEqual(differing, [0] * len(stored), "grey bytes differing per page")
+    def scope(table: symtable.SymbolTable) -> None:
+        reads.update(
+            symbol.get_name()
+            for symbol in table.get_symbols()
+            if symbol.is_referenced() and symbol.is_global()
+        )
+        for child in table.get_children():
+            scope(child)
+
+    for child in symtable.symtable(source, "<module>", "exec").get_children():
+        scope(child)
+    module_scope = _ModuleScopeReads()
+    module_scope.visit(ast.parse(source))
+    return frozenset(reads | module_scope.reads)
 
 
-class OffPageObjectTests(unittest.TestCase):
-    """Task 9c review round 1: extraction's rewrite may parse only what the
-    content check has bounded -- the pages and what they draw from -- and
-    compressed object data is bounded before anything parses it."""
+def _unreached_readers(patched: str, name: str) -> list[str]:
+    """The modules whose reads of ``name`` a patch of ``name`` on ``patched``
+    never reaches: every module but ``patched`` that binds ``patched.name``'s
+    object to ``name`` and reads it as a global (:func:`_global_reads`).
 
-    def test_objects_no_page_reaches_are_not_carried_into_the_rewrite(self) -> None:
-        """A big object hung off the catalog, or off a page-dict key no
-        renderer reads, in any shape, compressed or not: the rewrite copies
-        pages, so it never resolves it, and its output stays small."""
-        for holder in ("catalog", "page"):
-            for compressed in (True, False):
-                for shape, elements in (
-                    ("array", 2_000_000),
-                    ("string", 2_000_000),
-                    ("dict", 100_000),
-                ):
-                    data = off_page_object_pdf(
-                        elements, shape=shape, compressed=compressed, holder=holder
-                    )
-                    with self.subTest(holder=holder, compressed=compressed, shape=shape):
-                        canonical = canonical_pdf_bytes(data)
-                        self.assertLess(len(canonical), 20_000)
-                        with pymupdf.open(stream=canonical, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
-                            self.assertEqual(doc.page_count, 1)
+    A split module binds it if its own ``name`` is the same object (defined
+    there, or imported); any other module under ``lemely/`` or ``scripts/``
+    binds it by importing ``name`` from a split module.
 
-    def test_an_object_stream_bomb_is_refused_before_anything_parses_it(self) -> None:
-        """An object stream that inflates past ``MAX_OBJECT_STREAM_BYTES``
-        is measured with the bounded inflate and refused -- at upload, in
-        the whole-document and page-scoped checks, and at extraction --
-        before the page tree is read or the file rewritten."""
-        elements = scan_limits.MAX_OBJECT_STREAM_BYTES // 2 + 1_000
-        data = off_page_object_pdf(elements, compressed=True)
-        self.assertLess(len(data), 100_000)
-        with (
-            patch.object(scan_limits, "_page_tree") as page_tree,
-            patch.object(pymupdf.Document, "tobytes") as tobytes,
-        ):
-            for check in (check_scan_bytes, check_pdf_content_bytes, canonical_pdf_bytes):
-                with self.subTest(check.__name__):
-                    with self.assertRaises(ScanTooLargeError) as caught:
-                        check(data)
-                    self.assertEqual(str(caught.exception), scan_limits._OBJECT_STREAMS_MESSAGE)
-            with (
-                pymupdf.open(stream=data, filetype="pdf") as doc,  # type: ignore[no-untyped-call]
-                self.assertRaises(ScanTooLargeError),
-            ):
-                check_pdf_page_content(doc, 0)
-        page_tree.assert_not_called()
-        tobytes.assert_not_called()
-
-    def test_ordinary_object_streams_pass(self) -> None:
-        """A born-digital 40-page PDF written with object streams and an xref
-        stream passes upload and rewrites to its 40 pages."""
-        with pymupdf.open(
-            stream=born_digital_text_pdf(pages=MAX_SCAN_PAGES), filetype="pdf"
-        ) as doc:  # type: ignore[no-untyped-call]
-            data: bytes = doc.tobytes(garbage=1, use_objstms=1)  # type: ignore[no-untyped-call]
-        check_scan_bytes(data)
-        with pymupdf.open(stream=canonical_pdf_bytes(data), filetype="pdf") as doc:  # type: ignore[no-untyped-call]
-            self.assertEqual(doc.page_count, MAX_SCAN_PAGES)
+    On a facade (``scan_limits``, ``_scan_common``) that is the whole rule:
+    every such reader is a miss, even when the facade reads ``name`` too.
+    On one of the three owning modules, patching the owner's own binding is
+    the idiom for driving the owner's code, so the list is empty when the
+    owner reads ``name`` as a global itself.
+    """
+    sentinel = object()
+    target = getattr(_SCAN_MODULES[patched], name, sentinel)
+    if target is sentinel:
+        return []
+    root = Path(scan_limits.__file__).resolve().parents[2]
+    readers: list[str] = []
+    for path in sorted([*(root / "lemely").rglob("*.py"), *(root / "scripts").rglob("*.py")]):
+        module = path.relative_to(root).with_suffix("").as_posix().replace("/", ".")
+        source = path.read_text(encoding="utf-8")
+        if name not in source:
+            continue
+        reads = name in _global_reads(source)
+        if module == patched:
+            if reads and patched not in _FACADES:
+                return []
+            continue
+        if module in _SCAN_MODULES:
+            binds = getattr(_SCAN_MODULES[module], name, sentinel) is target
+        else:
+            binds = any(
+                isinstance(node, ast.ImportFrom)
+                and node.module in _SCAN_MODULES
+                and getattr(_SCAN_MODULES[node.module], name, sentinel) is target
+                and any(alias.name == name and alias.asname in (None, name) for alias in node.names)
+                for node in ast.walk(ast.parse(source))
+            )
+        if reads and binds:
+            readers.append(module)
+    return readers
 
 
-class NonPdfDocumentTests(unittest.TestCase):
-    """Fix round 1, Important 1: an image-type pymupdf document (the
-    teacher console's preview route opens a PNG/JPEG upload the same way it
-    opens a PDF) has no PDF page tree -- `page.get_contents()` asserts on
-    one. `check_pdf_content` must return, not crash, so an image paper's
-    preview stays a 200."""
+class SplitModuleTests(unittest.TestCase):
+    """#262: ``scan_limits`` was split into ``_scan_common``, ``pdf_prescan``,
+    ``pdf_content_walk`` and ``pdf_canonical`` as a pure move, and still
+    re-exports every name its callers import from it."""
 
-    def test_a_png_document_is_left_alone(self) -> None:
-        import pymupdf
+    _MODULES = (
+        "lemely.io._scan_common",
+        "lemely.io.pdf_prescan",
+        "lemely.io.pdf_content_walk",
+        "lemely.io.pdf_canonical",
+        "lemely.io.scan_limits",
+    )
 
-        buf = io.BytesIO()
-        Image.new("RGB", (100, 100), "white").save(buf, "PNG")
-        doc = pymupdf.open(stream=buf.getvalue(), filetype="png")  # type: ignore[no-untyped-call]
-        try:
-            scan_limits.check_pdf_content(doc)
-        finally:
-            doc.close()  # type: ignore[no-untyped-call]
+    def test_every_name_in_all_imports_from_scan_limits(self) -> None:
+        for name in scan_limits.__all__:
+            with self.subTest(name=name):
+                getattr(scan_limits, name)
+        expected = {
+            "check_pdf_content",
+            "check_pdf_page_content",
+            "check_pdf_content_bytes",
+            "check_scan_bytes",
+            "prescan_pdf",
+            "PrescannedPdf",
+            "check_object_stream_bytes",
+            "open_checked_pdf",
+            "canonical_pdf_bytes",
+            "plan_pdf_pages",
+            "plan_page_dpi",
+            "plan_image",
+            "decode_pixel_cap",
+            "open_scan_image",
+            "decoded_stream_size",
+            "looks_like_pdf",
+            "PagePlan",
+            "MAX_SCAN_PAGES",
+            "MAX_CROP_PAGES",
+            "MAX_DECODE_PX",
+            "MAX_DECODE_PX_GREY",
+            "MAX_DECODE_PX_WEBP",
+            "MAX_PAGE_PX",
+            "MAX_SCAN_TOTAL_PX",
+            "MAX_PAGE_CONTENT_BYTES",
+            "MAX_SCAN_CONTENT_BYTES",
+            "MAX_OBJECT_STREAM_BYTES",
+            "MAX_PDF_OBJECTS",
+            "MAX_PRESCAN_TOKENS",
+            "MIN_EXTRACTION_DPI",
+            "EXTRACTION_DPI",
+            "PDF_MAGIC",
+            "SCAN_IMAGE_FORMATS",
+            "GREY_CEILING_MODES",
+            "ScanRejectedError",
+            "ScanTooLargeError",
+            "ScanUnsupportedEncodingError",
+            "ScanUnsupportedFormatError",
+        }
+        self.assertEqual(expected - set(scan_limits.__all__), set())
+
+    #: Each module, imported first, and the scan modules that import loads: the
+    #: import direction (``_scan_common`` is the leaf, ``pdf_prescan`` and
+    #: ``pdf_content_walk`` sit on it alone, ``pdf_canonical`` on those three,
+    #: ``scan_limits`` on all four).
+    _LOADS: ClassVar[dict[str, set[str]]] = {
+        "lemely.io._scan_common": {"lemely.io._scan_common"},
+        "lemely.io.pdf_prescan": {"lemely.io._scan_common", "lemely.io.pdf_prescan"},
+        "lemely.io.pdf_content_walk": {"lemely.io._scan_common", "lemely.io.pdf_content_walk"},
+        "lemely.io.pdf_canonical": {
+            "lemely.io._scan_common",
+            "lemely.io.pdf_prescan",
+            "lemely.io.pdf_content_walk",
+            "lemely.io.pdf_canonical",
+        },
+        "lemely.io.scan_limits": set(_MODULES),
+    }
+
+    #: Run in a fresh interpreter: argv is the repo root, the module to import
+    #: first, the scan modules that import must load, and the five scan modules
+    #: (comma-joined). Only the scan modules are compared, so another
+    #: ``lemely.io`` module a scan module comes to import does not trip it.
+    _CHILD = textwrap.dedent(
+        """
+        import importlib, sys
+        from pathlib import Path
+
+        root, first = Path(sys.argv[1]), sys.argv[2]
+        expected, scan = set(sys.argv[3].split(",")), set(sys.argv[4].split(","))
+        module = importlib.import_module(first)
+        assert Path(module.__file__).resolve().is_relative_to(root), module.__file__
+        loaded = scan.intersection(sys.modules)
+        assert loaded == expected, f"{first} loaded {sorted(loaded)}"
+        import lemely.io.scan_limits as s
+        s.open_checked_pdf; s.check_pdf_content; s.MAX_SCAN_PAGES
+        """
+    )
+
+    def test_the_split_modules_import_in_any_order(self) -> None:
+        """Each module imported first, in a fresh interpreter run from this
+        repo's root: it resolves to this checkout (the shared venv's editable
+        install may point at another), loads exactly the scan modules the
+        import direction allows, and leaves ``scan_limits`` importable after
+        it -- no cycle."""
+        self.assertEqual(set(self._LOADS), set(self._MODULES))
+        root = Path(__file__).resolve().parents[1]
+        for module, loads in self._LOADS.items():
+            with self.subTest(module=module):
+                result = subprocess.run(  # noqa: S603 -- our own interpreter, a fixed script
+                    [
+                        sys.executable,
+                        "-c",
+                        self._CHILD,
+                        str(root),
+                        module,
+                        ",".join(loads),
+                        ",".join(self._MODULES),
+                    ],
+                    cwd=root,
+                    env={**os.environ, "PYTHONPATH": str(root)},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_moved_names_are_the_same_objects(self) -> None:
+        self.assertIs(scan_limits.check_pdf_content, pdf_content_walk.check_pdf_content)
+        self.assertIs(scan_limits.open_checked_pdf, pdf_canonical.open_checked_pdf)
+        self.assertIs(scan_limits.prescan_pdf, pdf_prescan.prescan_pdf)
+        self.assertIs(scan_limits.canonical_pdf_bytes, pdf_canonical.canonical_pdf_bytes)
+        self.assertIs(scan_limits.ScanRejectedError, _scan_common.ScanRejectedError)
+
+    def test_the_patch_finder_sees_a_patch_that_misses_its_reader(self) -> None:
+        """The sweep below, held to known cases. Flagged, each with the
+        reader the patch never reaches: ``_page_tree`` patched on
+        ``scan_limits`` (``pdf_content_walk`` defines and calls it), by
+        position or by keyword; ``_MAX_OBJECTS_PER_PAGE`` patched on
+        ``_scan_common`` (``pdf_content_walk`` binds and reads its own);
+        ``MAX_SCAN_PAGES`` patched on ``_scan_common``, which reads it too
+        but is a facade, so ``pdf_content_walk``'s own binding still counts;
+        and ``check_pdf_content`` patched on ``pdf_content_walk``, an owner
+        that never calls it, while ``pdf_canonical`` calls its own binding.
+        Found with no name, so counted as misses: an attribute that is not a
+        string literal, and ``patch.multiple`` given ``**kwargs``. Not
+        flagged: a patch on the owning module (``pdf_content_walk._page_tree``);
+        one on a name only its own module reads (``MAX_SCAN_TOTAL_PX``, read
+        by ``plan_pdf_pages`` in ``_scan_common``); and one on an owning
+        module's own binding that the owner reads as a global
+        (``pdf_prescan.MAX_OBJECT_STREAM_BYTES``, read by
+        ``check_object_stream_bytes``), the idiom for driving the owner."""
+        source = textwrap.dedent(
+            """
+            import lemely.io.scan_limits as limits
+            from lemely.io import _scan_common, pdf_content_walk, pdf_prescan
+            patch.object(limits, "_page_tree")
+            patch("lemely.io._scan_common._MAX_OBJECTS_PER_PAGE", 5)
+            patch.object(pdf_content_walk, "_page_tree")
+            patch.object(_scan_common, "MAX_SCAN_TOTAL_PX", 40_000)
+            patch.object(target=limits, attribute="_parent")
+            monkeypatch.setattr(limits, name="_collection_refs", value=None)
+            patch.object(pdf_content_walk, "check_pdf_content")
+            patch.object(pdf_prescan, "MAX_OBJECT_STREAM_BYTES", 1)
+            patch.object(_scan_common, "MAX_SCAN_PAGES", 1)
+            patch.object(pdf_content_walk, attribute)
+            patch.multiple(limits, **overrides)
+            """
+        )
+        common, walk = "lemely.io._scan_common", "lemely.io.pdf_content_walk"
+        limits, prescan = "lemely.io.scan_limits", "lemely.io.pdf_prescan"
+        patched = _scan_module_patches(source)
+        self.assertEqual(
+            patched,
+            [
+                (4, limits, "_page_tree"),
+                (5, common, "_MAX_OBJECTS_PER_PAGE"),
+                (6, walk, "_page_tree"),
+                (7, common, "MAX_SCAN_TOTAL_PX"),
+                (8, limits, "_parent"),
+                (9, limits, "_collection_refs"),
+                (10, walk, "check_pdf_content"),
+                (11, prescan, "MAX_OBJECT_STREAM_BYTES"),
+                (12, common, "MAX_SCAN_PAGES"),
+                (13, walk, None),
+                (14, limits, None),
+            ],
+        )
+        readers = {line: _unreached_readers(module, name) for line, module, name in patched if name}
+        self.assertEqual(
+            {line: found for line, found in readers.items() if line not in (10, 12)},
+            {4: [walk], 5: [walk], 6: [], 7: [], 8: [walk], 9: [walk], 11: []},
+        )
+        self.assertIn("lemely.io.pdf_canonical", readers[10])
+        self.assertIn(walk, readers[12])
+        self.assertIn("MAX_SCAN_PAGES", _global_reads(Path(_scan_common.__file__).read_text()))
+
+    def test_a_local_of_the_same_name_is_not_a_global_read(self) -> None:
+        """What counts as reading a name, for the sweep: a read the symbol
+        table resolves to the module global, in any function, lambda or
+        class body, or any read at module scope. A parameter, a local
+        variable, a closure's free variable or a comprehension's loop
+        variable of the same name is not one, so an owner that only shadows
+        the name never excuses a patch of its global."""
+        source = textwrap.dedent(
+            """
+            def parameter(SHADOWED_ARG):
+                return SHADOWED_ARG
+
+            def local():
+                SHADOWED_LOCAL = 1
+                return SHADOWED_LOCAL
+
+            def outer():
+                FREE = 1
+                def inner():
+                    return FREE + GLOBAL_IN_CLOSURE
+                return inner
+
+            def function():
+                return GLOBAL_IN_FUNCTION
+
+            class Holder:
+                value = GLOBAL_IN_CLASS
+
+            squares = [LOOP for LOOP in GLOBAL_ITERABLE]
+            GLOBAL_AT_MODULE
+            """
+        )
+        self.assertEqual(
+            _global_reads(source),
+            {
+                "GLOBAL_IN_CLOSURE",
+                "GLOBAL_IN_FUNCTION",
+                "GLOBAL_IN_CLASS",
+                "GLOBAL_ITERABLE",
+                "GLOBAL_AT_MODULE",
+            },
+        )
+
+    def test_no_test_patches_a_name_where_its_reader_cannot_see_it(self) -> None:
+        """#262: ``patch.object(scan_limits, name)`` replaces ``scan_limits``'s
+        attribute only, so it never reaches a module that bound ``name`` for
+        itself -- the module that defines it, or one that imported it from a
+        scan module. Such a patch would leave the code it targets running
+        unpatched, and an ``assert_not_called`` on it would pass vacuously.
+        No test anywhere patches a name on any of the five split modules
+        that another module binds and reads, and every such patch spells its
+        attribute out, so the sweep can check it."""
+        tests = Path(__file__).resolve().parent
+        misses = []
+        for path in sorted(tests.rglob("*.py")):
+            for line, module, name in _scan_module_patches(path.read_text(encoding="utf-8")):
+                where = f"{path.relative_to(tests)}:{line} patches {module}"
+                if name is None:
+                    misses.append(f"{where} with an attribute that is not a string literal")
+                elif readers := _unreached_readers(module, name):
+                    misses.append(f"{where}.{name}, read by {', '.join(readers)}")
+        self.assertEqual(misses, [])
 
 
 if __name__ == "__main__":

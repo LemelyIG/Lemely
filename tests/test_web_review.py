@@ -62,7 +62,8 @@ from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.review_repo import ReviewService
 from lemely.db.self_review_repo import PointVerdict, SelfReviewService
 from lemely.db.teacher_paper_repo import TeacherPaperRepository
-from lemely.runtime.config import DatabaseSettings
+from lemely.runtime import sandbox
+from lemely.runtime.config import DatabaseSettings, SandboxSettings
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
@@ -71,6 +72,7 @@ from lemely.web.deps import (
     get_settings,
     get_storage_backend,
 )
+from tests.sandbox_fixtures import in_process_sandbox, sandboxed  # noqa: F401
 from tests.storage_fakes import FakeStorageBackend
 
 if TYPE_CHECKING:
@@ -1513,7 +1515,7 @@ def test_crop_route_returns_a_png_of_the_boxed_region(
 
     from lemely.io.rasterise import RasterisedPage
     from lemely.io.reread import crop_and_upscale
-    from lemely.web.routers.review import _CROP_RENDER_DPI
+    from lemely.io.scan_render import CROP_RENDER_DPI
 
     scan = _synthetic_scan()
     teacher, item_id = _seed_boxed_review_item(
@@ -1530,7 +1532,7 @@ def test_crop_route_returns_a_png_of_the_boxed_region(
     got = Image.open(io.BytesIO(resp.content)).convert("RGB")
 
     with pymupdf.open(stream=scan, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
-        pixmap = doc.load_page(_MARKED_PAGE).get_pixmap(dpi=_CROP_RENDER_DPI)
+        pixmap = doc.load_page(_MARKED_PAGE).get_pixmap(dpi=CROP_RENDER_DPI)
     expected_png = crop_and_upscale(
         RasterisedPage(
             index=_MARKED_PAGE,
@@ -1555,6 +1557,7 @@ def test_crop_route_returns_a_png_of_the_boxed_region(
     assert abs(got.width / got.height - expected_aspect) < 0.03 * expected_aspect
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_crop_route_refuses_a_stored_content_stream_bomb(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -1889,7 +1892,7 @@ def test_stored_frame_rect_matches_exif_transpose_for_every_orientation(orientat
     every corner and the middle (including ones flush with the edges)."""
     from PIL import ImageOps
 
-    from lemely.web.routers.review import _stored_frame_rect, _upright_transpose
+    from lemely.io.scan_render import stored_frame_rect, upright_transpose
 
     upright = _random_photo((60, 40))
     stored = (
@@ -1914,9 +1917,9 @@ def test_stored_frame_rect_matches_exif_transpose_for_every_orientation(orientat
         (49, 33, 60, 40),
         (13, 6, 41, 29),
     ]:
-        stored_rect = _stored_frame_rect(rect, reopened.size, orientation)
+        stored_rect = stored_frame_rect(rect, reopened.size, orientation)
         crop = reopened.crop(stored_rect)
-        method = _upright_transpose(orientation)
+        method = upright_transpose(orientation)
         if method is not None:
             crop = crop.transpose(method)
         assert crop.size == (rect[2] - rect[0], rect[3] - rect[1]), (orientation, rect)
@@ -1929,14 +1932,14 @@ def test_upright_transpose_looks_the_flag_up_the_way_exif_transpose_does() -> No
     from PIL import Image
     from PIL.TiffImagePlugin import IFDRational
 
-    from lemely.web.routers.review import _stored_frame_rect, _upright_transpose
+    from lemely.io.scan_render import stored_frame_rect, upright_transpose
 
     for six in (6, 6.0, IFDRational(6, 1)):
-        assert _upright_transpose(six) == Image.Transpose.ROTATE_270, six
-        assert _stored_frame_rect((1, 2, 3, 4), (10, 20), six) != (1, 2, 3, 4), six
+        assert upright_transpose(six) == Image.Transpose.ROTATE_270, six
+        assert stored_frame_rect((1, 2, 3, 4), (10, 20), six) != (1, 2, 3, 4), six
     for junk in (None, 0, 1, 9, "6", b"\x06", 6.5):
-        assert _upright_transpose(junk) is None, junk
-        assert _stored_frame_rect((1, 2, 3, 4), (10, 10), junk) == (1, 2, 3, 4), junk
+        assert upright_transpose(junk) is None, junk
+        assert stored_frame_rect((1, 2, 3, 4), (10, 10), junk) == (1, 2, 3, 4), junk
 
 
 def _jpeg_with_typed_orientation(stored: Image.Image, tag_type: int, value: bytes) -> bytes:
@@ -1988,7 +1991,7 @@ def test_crop_route_agrees_with_extraction_for_any_orientation_tag_type(
     pass by both sides ignoring it."""
     from PIL import ImageOps
 
-    from lemely.web.routers.review import _crop_image_scan
+    from lemely.io.scan_render import crop_image_scan
 
     stored = Image.open(io.BytesIO(_synthetic_phone_photo(6)))
     stored.load()
@@ -1997,7 +2000,7 @@ def test_crop_route_agrees_with_extraction_for_any_orientation_tag_type(
     frame = ImageOps.exif_transpose(Image.open(io.BytesIO(scan)))
     assert (frame.size == _PHOTO_UPRIGHT_SIZE) is turned, (name, frame.size)
 
-    got = _crop_image_scan(scan, SourceBox(page=0, box=list(_MARK_BOX)), item_id="typed")
+    got = crop_image_scan(scan, list(_MARK_BOX))
     got_image = Image.open(io.BytesIO(got)).convert("RGB")
     want = _expected_upright_crop(scan)
     assert got_image.size == want.size, (name, got_image.size, want.size)
@@ -2006,16 +2009,16 @@ def test_crop_route_agrees_with_extraction_for_any_orientation_tag_type(
 
 @pytest.mark.parametrize("orientation", [6, 8])
 def test_a_flagged_photo_over_the_crop_ceiling_is_fitted_and_upright(orientation: int) -> None:
-    """A region over ``_MAX_CROP_PX`` is resampled down before it is turned.
+    """A region over ``MAX_CROP_PX`` is resampled down before it is turned.
     The size and the way up are checked (not bytes: the resample runs on the
     stored frame here). The whole 2600x2000 upright page is 5.2 Mpx, over the
     4 Mpx ceiling; the green square is its top-left corner."""
     from PIL import ImageDraw
 
-    from lemely.web.routers.review import _MAX_CROP_PX, _crop_image_scan
+    from lemely.io.scan_render import MAX_CROP_PX, crop_image_scan
 
     width, height = 2600, 2000
-    assert width * height > _MAX_CROP_PX
+    assert width * height > MAX_CROP_PX
     upright = Image.new("RGB", (width, height), (255, 255, 255))
     ImageDraw.Draw(upright).rectangle((0, 0, 299, 299), fill=_CORNER_RGB)
     stored = upright.transpose(_STORED_FRAME_FOR[orientation])
@@ -2024,7 +2027,7 @@ def test_a_flagged_photo_over_the_crop_ceiling_is_fitted_and_upright(orientation
     buf = io.BytesIO()
     stored.save(buf, format="JPEG", exif=exif.tobytes(), quality=95)
 
-    out = _crop_image_scan(buf.getvalue(), SourceBox(page=0, box=[0, 0, 1000, 1000]), item_id="big")
+    out = crop_image_scan(buf.getvalue(), [0, 0, 1000, 1000])
 
     got = Image.open(io.BytesIO(out)).convert("RGB")
     assert got.width > got.height, got.size
@@ -2050,16 +2053,16 @@ def test_a_sixteen_bit_greyscale_crop_keeps_its_ink(
     by clipping each sample to 0-255, so ink at 5000 on paper at 60000 came
     back as a white crop. It is scaled from the 16-bit range, as extraction
     does. Both crop paths: a region cut as it is, and one over
-    ``_MAX_CROP_PX`` (5 Mpx) resampled down."""
-    from lemely.web.routers.review import _MAX_CROP_PX, _crop_image_scan
+    ``MAX_CROP_PX`` (5 Mpx) resampled down."""
+    from lemely.io.scan_render import MAX_CROP_PX, crop_image_scan
     from tests.pdf_fakes import sixteen_bit_grey_scan
 
     width, height = size
     ink = (width // 8, height // 5, width * 5 // 8, height * 2 // 5)
     scan = sixteen_bit_grey_scan(width, height, ink, image_format=image_format)
-    assert (width * height > _MAX_CROP_PX) == (width == 2500)
+    assert (width * height > MAX_CROP_PX) == (width == 2500)
 
-    out = _crop_image_scan(scan, SourceBox(page=0, box=[0, 0, 1000, 1000]), item_id="grey16")
+    out = crop_image_scan(scan, [0, 0, 1000, 1000])
 
     got = Image.open(io.BytesIO(out)).convert("L")
     ink_centre = ((ink[0] + ink[2]) / 2 / width, (ink[1] + ink[3]) / 2 / height)
@@ -2070,8 +2073,7 @@ def test_a_sixteen_bit_greyscale_crop_keeps_its_ink(
 _PEAK_RSS_CHILD = """
 import sys
 
-from lemely.core.schemas import SourceBox
-from lemely.web.routers.review import _crop_image_scan
+from lemely.io.scan_render import crop_image_scan
 
 
 def peak_bytes() -> int:
@@ -2083,7 +2085,7 @@ def peak_bytes() -> int:
 
 
 data = open(sys.argv[1], "rb").read()
-box = SourceBox(page=0, box=[100, 100, 300, 400])
+box = [100, 100, 300, 400]
 # A forked child inherits its parent's peak, so reset the high-water mark
 # (5 = CLEAR_REFS_MM_HIWATER_RSS) before measuring.
 try:
@@ -2092,7 +2094,7 @@ try:
 except OSError:
     raise SystemExit(77)  # cannot reset the high-water mark here: the parent skips
 before = peak_bytes()
-png = _crop_image_scan(data, box, item_id="mem")
+png = crop_image_scan(data, box)
 print(peak_bytes() - before, len(png))
 """
 
@@ -2395,6 +2397,7 @@ def test_crop_route_404s_when_the_stored_object_has_gone(
     assert missing[0]["item_id"] == str(item_id)
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_crop_route_422s_for_a_page_out_of_range_without_rendering(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -2579,7 +2582,7 @@ def test_page_indices_agree_between_the_extractor_and_the_crop_renderer(
     import pymupdf
 
     from lemely.io.rasterise import rasterise_pdf_to_pages
-    from lemely.web.routers.review import _CROP_RENDER_DPI
+    from lemely.io.scan_render import CROP_RENDER_DPI
 
     # One distinctive mark per page: a renderer that reordered pages, or
     # counted from one, would show a different colour at the same index.
@@ -2617,9 +2620,7 @@ def test_page_indices_agree_between_the_extractor_and_the_crop_renderer(
         for index, expected_rgb in enumerate(marks):
             via_extractor = Image.open(io.BytesIO(extractor_pages[index].png_bytes)).convert("RGB")
             via_renderer = Image.open(
-                io.BytesIO(
-                    renderer.load_page(index).get_pixmap(dpi=_CROP_RENDER_DPI).tobytes("png")
-                )
+                io.BytesIO(renderer.load_page(index).get_pixmap(dpi=CROP_RENDER_DPI).tobytes("png"))
             ).convert("RGB")
             assert _dominant_colour(via_extractor) == expected_rgb
             assert _dominant_colour(via_renderer) == expected_rgb
@@ -2747,6 +2748,7 @@ def test_has_source_box_is_false_when_the_attempt_has_no_upload(
     assert client.get(f"/api/teacher/review/{with_upload}/crop").status_code == 200
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_a_pil_failure_inside_the_crop_is_a_422_not_a_500(
     lenient_client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -2757,7 +2759,7 @@ def test_a_pil_failure_inside_the_crop_is_a_422_not_a_500(
 ) -> None:
     """The area ceiling and the error handler are two defences, and this is the second.
 
-    With ``_MAX_CROP_PX`` in place an ordinary scan never reaches PIL's own
+    With ``MAX_CROP_PX`` in place an ordinary scan never reaches PIL's own
     ceiling, which would leave the handler's coverage of ``crop_and_upscale``
     asserted by nothing. So PIL's ceiling is lowered instead of the page being
     enlarged: ``Image.MAX_IMAGE_PIXELS`` is dropped far below an A4 render, which
@@ -2811,6 +2813,7 @@ def test_the_crop_is_never_kept_in_the_browser_cache(
     assert not any(d.startswith("max-age") for d in directives), directives
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_an_unrenderable_scan_does_not_echo_the_renderer_error(
     lenient_client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -2895,7 +2898,7 @@ def test_crop_of_an_oversized_pdf_page_stays_under_the_pixel_ceiling(
     The census on the mark case shows the smaller output is still the right
     region; the ceiling is paid for in resolution, never in place.
     """
-    from lemely.web.routers.review import _MAX_CROP_PX
+    from lemely.io.scan_render import MAX_CROP_PX
 
     scan = _synthetic_scan(width=_OVERSIZED_PAGE_PT, height=_OVERSIZED_PAGE_PT)
     teacher, item_id = _seed_boxed_review_item(
@@ -2908,7 +2911,7 @@ def test_crop_of_an_oversized_pdf_page_stays_under_the_pixel_ceiling(
     resp = client.get(f"/api/teacher/review/{item_id}/crop")
     assert resp.status_code == 200, resp.text
     got = Image.open(io.BytesIO(resp.content)).convert("RGB")
-    assert got.width * got.height <= _MAX_CROP_PX, got.size
+    assert got.width * got.height <= MAX_CROP_PX, got.size
 
     if box == _MARK_BOX:
         reddish, bluish, total = _colour_counts(got)
@@ -2926,32 +2929,32 @@ def test_pdf_crop_plan_keeps_every_output_under_the_ceiling() -> None:
     import pymupdf
 
     from lemely.io.reread import REREAD_UPSCALE
-    from lemely.web.routers.review import _CROP_RENDER_DPI, _MAX_CROP_PX, _pdf_crop_plan
+    from lemely.io.scan_render import CROP_RENDER_DPI, MAX_CROP_PX, pdf_crop_plan
 
-    a4 = _pdf_crop_plan(pymupdf.Rect(0, 0, _PAGE_WIDTH_PT, _PAGE_HEIGHT_PT), list(_MARK_BOX))
+    a4 = pdf_crop_plan(pymupdf.Rect(0, 0, _PAGE_WIDTH_PT, _PAGE_HEIGHT_PT), list(_MARK_BOX))
     assert a4 is not None
-    assert (a4.dpi, a4.upscale) == (_CROP_RENDER_DPI, REREAD_UPSCALE)
+    assert (a4.dpi, a4.upscale) == (CROP_RENDER_DPI, REREAD_UPSCALE)
 
     sizes = ((_PAGE_WIDTH_PT, _PAGE_HEIGHT_PT), (_OVERSIZED_PAGE_PT, _OVERSIZED_PAGE_PT))
     sizes += ((8000.0, 8000.0), (20_000.0, 3_000.0), (14_400.0, 14_400.0))
     boxes = (_WHOLE_PAGE_BOX, list(_MARK_BOX), [0, 0, 1, 1000], [499, 0, 501, 1000])
     for width, height in sizes:
         for box in boxes:
-            plan = _pdf_crop_plan(pymupdf.Rect(0, 0, width, height), box)
+            plan = pdf_crop_plan(pymupdf.Rect(0, 0, width, height), box)
             assert plan is not None, (width, height, box)
             region_w, region_h = plan.size
-            assert region_w * region_h * plan.upscale**2 <= _MAX_CROP_PX, (width, height, box)
-            assert 1 <= plan.dpi <= _CROP_RENDER_DPI
+            assert region_w * region_h * plan.upscale**2 <= MAX_CROP_PX, (width, height, box)
+            assert 1 <= plan.dpi <= CROP_RENDER_DPI
 
     # Clamped, not merely capped: a whole 8000pt page cannot fit at 150 dpi, so
     # a plan that kept the preferred DPI would only pass the bound above by
     # accident of the arithmetic.
-    big = _pdf_crop_plan(pymupdf.Rect(0, 0, 8000, 8000), _WHOLE_PAGE_BOX)
+    big = pdf_crop_plan(pymupdf.Rect(0, 0, 8000, 8000), _WHOLE_PAGE_BOX)
     assert big is not None
-    assert big.dpi < _CROP_RENDER_DPI
+    assert big.dpi < CROP_RENDER_DPI
 
     # A page no DPI can fit is refused; the route answers 422.
-    assert _pdf_crop_plan(pymupdf.Rect(0, 0, 500_000, 500_000), _WHOLE_PAGE_BOX) is None
+    assert pdf_crop_plan(pymupdf.Rect(0, 0, 500_000, 500_000), _WHOLE_PAGE_BOX) is None
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
@@ -2966,7 +2969,7 @@ def test_a_clipped_render_is_the_same_pixels_as_cropping_the_whole_page(
     import pymupdf
 
     from lemely.io.reread import padded_crop_rect
-    from lemely.web.routers.review import _pdf_crop_plan
+    from lemely.io.scan_render import pdf_crop_plan
 
     doc = pymupdf.open()
     try:
@@ -2979,7 +2982,7 @@ def test_a_clipped_render_is_the_same_pixels_as_cropping_the_whole_page(
         page.set_rotation(rotation)
 
         for box in (list(_MARK_BOX), _WHOLE_PAGE_BOX, [37, 911, 38, 912]):
-            plan = _pdf_crop_plan(page.rect, box)
+            plan = pdf_crop_plan(page.rect, box)
             assert plan is not None
             clipped = page.get_pixmap(matrix=pymupdf.Matrix(plan.zoom, plan.zoom), clip=plan.clip)
             assert (clipped.width, clipped.height) == plan.size, box
@@ -3009,6 +3012,26 @@ def _streamed_png(width: int, height: int) -> bytes:
         idat += compressor.compress(row)
     idat += compressor.flush()
     header = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    signature = b"\x89PNG\r\n\x1a\n"
+    return signature + chunk(b"IHDR", header) + chunk(b"IDAT", bytes(idat)) + chunk(b"IEND", b"")
+
+
+def _streamed_rgb_png(width: int, height: int) -> bytes:
+    """A white RGB PNG built row by row, so the test never holds the decoded image."""
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        crc = struct.pack(">I", zlib.crc32(tag + data))
+        return struct.pack(">I", len(data)) + tag + data + crc
+
+    compressor = zlib.compressobj(6)
+    row = b"\x00" + b"\xff\xff\xff" * width
+    idat = bytearray()
+    for _ in range(height):
+        idat += compressor.compress(row)
+    idat += compressor.flush()
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
     signature = b"\x89PNG\r\n\x1a\n"
     return signature + chunk(b"IHDR", header) + chunk(b"IDAT", bytes(idat)) + chunk(b"IEND", b"")
 
@@ -3116,6 +3139,7 @@ def test_crop_route_serves_a_stored_scan_over_the_page_cap(
     assert bluish == 0 and reddish / total > 0.5, "wrong region on the over-cap scan"
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_crop_route_422s_for_a_scan_whose_page_count_pymupdf_cannot_read(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -3150,6 +3174,7 @@ def test_crop_route_422s_for_a_scan_whose_page_count_pymupdf_cannot_read(
     assert resp.json()["detail"] == "Could not render this scan"
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 @pytest.mark.parametrize(("extra_pages", "status"), [(0, 200), (1, 422)])
 def test_crop_route_bounds_the_page_count_at_max_crop_pages(
     extra_pages: int,
@@ -3186,11 +3211,12 @@ def test_crop_route_bounds_the_page_count_at_max_crop_pages(
     assert resp.status_code == status, resp.text
     if status == 422:
         get_pixmap.assert_not_called()
-        assert f"limit for a review crop is {MAX_CROP_PAGES}" in resp.json()["detail"]
+        assert f"limit for a crop or a preview is {MAX_CROP_PAGES}" in resp.json()["detail"]
     else:
         assert resp.headers["content-type"] == "image/png"
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_crop_route_refuses_an_object_stream_bomb_before_opening_the_scan(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -3249,7 +3275,7 @@ def test_a_high_resolution_photo_is_decoded_smaller_and_still_cropped_right(
     from PIL import ImageDraw
 
     from lemely.io.scan_limits import MAX_DECODE_PX
-    from lemely.web.routers.review import _MAX_CROP_PX
+    from lemely.io.scan_render import MAX_CROP_PX
 
     width, height = 8000, 5400
     assert width * height > MAX_DECODE_PX
@@ -3287,7 +3313,7 @@ def test_a_high_resolution_photo_is_decoded_smaller_and_still_cropped_right(
     # reported as its size below rather than as PIL's own bomb error.
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", None)
     got = Image.open(io.BytesIO(resp.content)).convert("RGB")
-    assert got.width * got.height <= _MAX_CROP_PX, got.size
+    assert got.width * got.height <= MAX_CROP_PX, got.size
 
     reddish, bluish, total = _colour_counts(got)
     assert bluish == 0, "the crop reaches outside the box -- this is the page, not the region"
@@ -3313,7 +3339,7 @@ def test_an_image_region_over_the_ceiling_is_scaled_down_not_refused(
     """
     from PIL import ImageDraw
 
-    from lemely.web.routers.review import _MAX_CROP_PX
+    from lemely.io.scan_render import MAX_CROP_PX
 
     width, height = 3000, 2000
     image = Image.new("RGB", (width, height), (255, 255, 255))
@@ -3339,8 +3365,8 @@ def test_an_image_region_over_the_ceiling_is_scaled_down_not_refused(
     resp = client.get(f"/api/teacher/review/{item_id}/crop")
     assert resp.status_code == 200, resp.text
     got = Image.open(io.BytesIO(resp.content)).convert("RGB")
-    assert width * height > _MAX_CROP_PX
-    assert got.width * got.height <= _MAX_CROP_PX, got.size
+    assert width * height > MAX_CROP_PX
+    assert got.width * got.height <= MAX_CROP_PX, got.size
     assert abs(got.width / got.height - width / height) < 0.01
     grey = got.convert("L")
     histogram = grey.histogram()
@@ -3348,6 +3374,7 @@ def test_an_image_region_over_the_ceiling_is_scaled_down_not_refused(
     assert mid_tones > 0.5, f"{mid_tones:.2f} mid-tone: the stripes were point-sampled"
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 @pytest.mark.parametrize(
     "size",
     [
@@ -3370,9 +3397,9 @@ def test_a_bilevel_scan_over_forty_megapixels_is_cropped_not_refused(
     from the "L" copy, never from a full-size RGB expansion of the page
     (556 MB for the A4: Pillow stores RGB at four bytes a pixel): every RGB
     conversion the route makes is of a region already fitted to
-    ``_MAX_CROP_PX``. Built row by row (``bilevel_png``),
+    ``MAX_CROP_PX``. Built row by row (``bilevel_png``),
     so the test never holds the page itself."""
-    from lemely.web.routers.review import _MAX_CROP_PX
+    from lemely.io.scan_render import MAX_CROP_PX
     from tests.pdf_fakes import bilevel_png
 
     width, height = size
@@ -3408,7 +3435,7 @@ def test_a_bilevel_scan_over_forty_megapixels_is_cropped_not_refused(
         resp = client.get(f"/api/teacher/review/{item_id}/crop")
     assert resp.status_code == 200, resp.text
     assert converted_to_rgb, "the route never converted the region to RGB"
-    assert max(w * h for w, h in converted_to_rgb) <= _MAX_CROP_PX, converted_to_rgb
+    assert max(w * h for w, h in converted_to_rgb) <= MAX_CROP_PX, converted_to_rgb
     got = Image.open(io.BytesIO(resp.content)).convert("L")
     dark = sum(got.histogram()[:64]) / (got.width * got.height)
     assert dark > 0.5, f"{dark:.2f} dark: the black mark inside the box is missing"
@@ -3461,6 +3488,7 @@ def test_an_image_over_its_modes_ceiling_is_still_refused_at_the_crop(
     ]
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_an_ico_wrapping_a_big_png_is_refused_at_the_crop_without_being_opened(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -3506,7 +3534,15 @@ def test_an_ico_wrapping_a_big_png_is_refused_at_the_crop_without_being_opened(
 @pytest.mark.parametrize(
     ("size", "status", "event"),
     [
-        pytest.param((3650, 3650), 200, None, id="13.32Mpx-under"),
+        pytest.param(
+            (3650, 3650),
+            200,
+            None,
+            id="13.32Mpx-under",
+            # Rendered in the interactive worker since #260: this crop needs
+            # RLIMIT_DATA >= 280 MiB (Task 11's measurement), inside the
+            # interactive worker's limit (see lemely.runtime.sandbox).
+        ),
         pytest.param((3700, 3700), 422, "review_crop_page_too_large", id="13.69Mpx-over"),
     ],
 )
@@ -3542,3 +3578,303 @@ def test_a_webp_is_judged_against_the_webp_ceiling_at_the_crop(
     assert resp.status_code == status, (resp.status_code, resp.text[:200])
     events = [e["event"] for e in logs if e["event"].startswith("review_crop_")]
     assert events == ([event] if event else []), events
+
+
+@pytest.mark.parametrize(
+    "size",
+    [
+        pytest.param((4960, 7016), id="A4-600dpi-34.8Mpx"),
+        pytest.param((6300, 6300), id="39.7Mpx"),
+    ],
+)
+def test_a_colour_scan_under_the_colour_ceiling_is_cropped_in_the_worker(
+    size: tuple[int, int],
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """An admitted colour scan must crop in the interactive worker, as it did in
+    process: an A4 page scanned at 600 dpi in colour is an ordinary upload.
+    Rendered in the worker since #260: it ran out of memory under the starting
+    interactive limit (``RLIMIT_DATA`` 192 MiB) and needs 248-272 MiB
+    (Task 11's measurement), inside the limit set from it."""
+    from lemely.io.scan_limits import MAX_DECODE_PX
+
+    width, height = size
+    assert width * height <= MAX_DECODE_PX
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=_streamed_rgb_png(width, height),
+        page=0,
+        content_type="image/png",
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+
+    assert resp.status_code == 200, (resp.status_code, resp.text[:200])
+    assert resp.headers["content-type"] == "image/png"
+
+
+# ---------------------------------------------------------------------------
+# The crop renders in the interactive worker (#260).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_crop_end_to_end_in_the_worker(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """The route's outcomes, through a real child. A crop is cut there; each
+    refusal crosses the pipe with its own message and, for a ``RenderRefused``,
+    the fields its log line carries. One child serves every request: a
+    refusal is an answer, not a reason to restart it."""
+    import os
+
+    from tests.pdf_fakes import declared_image, page_bomb_pdf
+
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+
+    def _crop(
+        scan: bytes,
+        name: str,
+        *,
+        page: int = _MARKED_PAGE,
+        box: list[int] | None = None,
+        content_type: str = "application/pdf",
+    ) -> tuple[int, bytes, str | None, list[dict[str, object]]]:
+        """``(status, body, detail, review_crop_* log lines)`` for one stored item."""
+        teacher, item_id = _seed_boxed_review_item(
+            pg_sessionmaker,
+            class_service,
+            storage=storage_backend,
+            scan=scan,
+            page=page,
+            box=box,
+            content_type=content_type,
+            student_name=name,
+        )
+        _auth_as(client, teacher, Role.teacher)
+        with structlog.testing.capture_logs() as logs:
+            resp = client.get(f"/api/teacher/review/{item_id}/crop")
+        detail = resp.json()["detail"] if resp.status_code != 200 else None
+        events = [e for e in logs if str(e["event"]).startswith("review_crop_")]
+        return resp.status_code, resp.content, detail, events
+
+    # (a) A normal crop: the boxed region, by the happy path's colour census.
+    status, body, _, events = _crop(_synthetic_scan(), "Ada")
+    assert status == 200, body[:200]
+    assert events == []
+    reddish, bluish, total = _colour_counts(Image.open(io.BytesIO(body)).convert("RGB"))
+    assert bluish == 0, "the crop reaches outside the box -- this is the page, not the region"
+    assert reddish / total > 0.6, "the mark inside the box is missing -- this is a failed crop"
+    child = sandbox.INTERACTIVE_WORKER.pid()
+    assert child is not None
+    assert child != os.getpid()
+
+    # (b) A box on page 10 of a 3-page scan.
+    status, _, detail, events = _crop(
+        _synthetic_scan(pages=_SCAN_PAGES), "Ben", page=_SCAN_PAGES + 6
+    )
+    assert status == 422
+    assert detail == "Stored crop region names page 10 of a 3-page scan"
+    assert [(e["event"], e["page"], e["page_count"]) for e in events] == [
+        ("review_crop_page_out_of_range", _SCAN_PAGES + 6, _SCAN_PAGES)
+    ]
+
+    # (c) Too large to render, on the PDF path: a 500,000 pt page with the
+    # whole page boxed is over the render ceiling at any dpi ...
+    status, _, detail, events = _crop(
+        _synthetic_scan(width=500_000.0, height=500_000.0), "Cleo", box=_WHOLE_PAGE_BOX
+    )
+    assert status == 422
+    assert detail == "This scan's pages are too large to render"
+    assert [(e["event"], e["width_pt"], e["height_pt"]) for e in events] == [
+        ("review_crop_page_too_large", 500_000.0, 500_000.0)
+    ]
+
+    # ... and on the image path: a colour image over its decode ceiling.
+    status, _, detail, events = _crop(
+        declared_image("RGB", 6500, 6400), "Dev", page=0, content_type="image/png"
+    )
+    assert status == 422
+    assert detail == "This scan's pages are too large to render"
+    assert [(e["event"], e["width_px"], e["height_px"]) for e in events] == [
+        ("review_crop_page_too_large", 6500, 6400)
+    ]
+
+    # (d) A stored content-stream bomb, refused with the scan check's message.
+    status, _, detail, events = _crop(page_bomb_pdf(112_000_000), "Eve", page=0)
+    assert status == 422
+    assert detail == (
+        "Page 1 of this PDF contains far more drawing data than a scanned page can "
+        "(over 8 MB once decompressed). Re-export it as a plain scan."
+    )
+    assert [(e["event"], e["reason"]) for e in events] == [
+        ("review_crop_scan_rejected", "page_content")
+    ]
+
+    assert sandbox.INTERACTIVE_WORKER.pid() == child
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_the_crop_runs_in_the_interactive_worker(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """Not in the web process: the crop is drawn by a child of it."""
+    import os
+
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+
+    assert resp.status_code == 200, resp.text
+    child = sandbox.INTERACTIVE_WORKER.pid()
+    assert child is not None
+    assert child != os.getpid()
+    assert sandbox.INTERACTIVE_WORKER.last_outcome == "ok"
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_a_refused_crop_is_a_422_with_the_fixed_message(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crop that runs out of memory in the worker is a 422 with the fixed
+    message; why it failed goes to the ``review_crop_render_failed`` line."""
+    from lemely.web.routers import review
+
+    monkeypatch.setattr(
+        sandbox,
+        "sandbox_settings",
+        lambda: SandboxSettings(interactive_data_limit_bytes=64 * 1024 * 1024),
+    )
+    monkeypatch.setattr(review, "CROP_PDF_TARGET", "tests.sandbox_targets.oom")
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "Could not render this scan"
+    (failed,) = [e for e in logs if e["event"] == "review_crop_render_failed"]
+    assert failed["reason"] == "memory"
+    assert failed["item_id"] == str(item_id)
+    assert sandbox.INTERACTIVE_WORKER.last_outcome == "memory"
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_a_crop_answers_503_when_no_worker_can_start(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No child to render in: 503, and nothing is rendered in the web process."""
+    monkeypatch.setattr(sandbox.INTERACTIVE_WORKER, "_spawn", lambda: False)
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["detail"] == (
+        "Scan rendering is temporarily unavailable. Try again in a moment."
+    )
+    (failed,) = [e for e in logs if e["event"] == "review_crop_render_failed"]
+    assert failed["reason"] == "unavailable"
+    assert sandbox.INTERACTIVE_WORKER.last_outcome == "unavailable"
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_two_concurrent_crops_are_served_one_after_the_other(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """One interactive child, so two crops at once take turns: both are
+    served, and the two renders never overlap. The stand-in target records
+    its own start and end in the file the environment names, which the
+    child inherits when it starts (the ``sandboxed`` fixture shut the worker
+    down, so it starts after this test sets the variable)."""
+    import threading
+
+    from lemely.web.routers import review
+    from tests.sandbox_targets import WINDOW_FILE_ENV
+
+    window_file = tmp_path / "w"
+    monkeypatch.setenv(WINDOW_FILE_ENV, str(window_file))
+    monkeypatch.setattr(review, "CROP_PDF_TARGET", "tests.sandbox_targets.record_window_from_env")
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    answers: list[tuple[int, str]] = []
+
+    # One event loop for both requests, as under uvicorn. A bare TestClient
+    # runs each request on its own event-loop thread, and two of them racing
+    # FastAPI's lazily built route cache (``_IncludedRouter.effective_candidates``)
+    # sometimes routed one request to a bare 404 -- a harness race, not the app's.
+    with TestClient(client.app) as concurrent:
+
+        def _get() -> None:
+            resp = concurrent.get(f"/api/teacher/review/{item_id}/crop")
+            answers.append((resp.status_code, resp.text[:200] if resp.status_code != 200 else ""))
+
+        threads = [threading.Thread(target=_get) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+    assert answers == [(200, ""), (200, "")]
+    windows = sorted(
+        (float(start), float(end))
+        for start, end in (line.split() for line in window_file.read_text().splitlines())
+    )
+    assert len(windows) == 2, windows
+    (_, first_end), (second_start, _) = windows
+    assert first_end <= second_start, f"the two renders overlapped: {windows}"

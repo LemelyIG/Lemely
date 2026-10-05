@@ -11,7 +11,15 @@ from urllib.parse import urlsplit
 
 import structlog
 from dotenv import dotenv_values
-from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    SecretStr,
+    model_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     DotEnvSettingsSource,
@@ -721,6 +729,54 @@ def log_marking_flags(options: MarkingOptions) -> None:
     getattr(log, level)("marking_flags", **fields)
 
 
+class SandboxSettings(BaseModel):
+    """The two scan-render child processes (#260; see `lemely.runtime.sandbox`).
+
+    Each worker's child runs under ``RLIMIT_DATA`` (the real bound: heap and
+    private mappings) plus a looser ``RLIMIT_AS`` backstop (address space,
+    which also counts shared libraries and reserved-but-untouched memory).
+    The extraction worker serves extraction and the upload check; the
+    interactive worker serves preview and crop. The limits and the extraction
+    timeout are set from the worst admitted scans measured inside each child
+    (Task 11; the numbers, the rule and the headroom are in the
+    ``lemely.runtime.sandbox`` docstring). The two data limits are part of
+    the 2 GiB budget's worst case, which does not fit and which the owner
+    accepted on 2026-10-05 (``docs/ci-cd.md``, "Memory budget"). The
+    timeouts bound one call, including any wait for a busy worker.
+    ``scheme_parse_timeout_seconds`` cuts a user mark-scheme parse short, on
+    both paths (memory limits do not bound pdfplumber's CPU time).
+    ``enabled=False`` runs every target in the calling process, for tests
+    that patch a library in that process; it is not a deploy knob.
+    Set in the environment as ``LEMELY_SANDBOX__<FIELD>``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    start_timeout_seconds: float = Field(default=30.0, gt=0)
+    extraction_data_limit_bytes: int = Field(default=640 * 1024 * 1024, ge=64 * 1024 * 1024)
+    extraction_address_limit_bytes: int = Field(default=768 * 1024 * 1024, ge=128 * 1024 * 1024)
+    interactive_data_limit_bytes: int = Field(default=640 * 1024 * 1024, ge=64 * 1024 * 1024)
+    interactive_address_limit_bytes: int = Field(default=768 * 1024 * 1024, ge=128 * 1024 * 1024)
+    extraction_timeout_seconds: float = Field(default=180.0, gt=0)
+    upload_check_timeout_seconds: float = Field(default=20.0, gt=0)
+    scheme_parse_timeout_seconds: float = Field(default=20.0, gt=0)
+    preview_timeout_seconds: float = Field(default=15.0, gt=0)
+    crop_timeout_seconds: float = Field(default=10.0, gt=0)
+
+    @model_validator(mode="after")
+    def _data_limits_fit_their_address_limits(self) -> SandboxSettings:
+        """``RLIMIT_DATA`` above ``RLIMIT_AS`` would make the backstop the real bound."""
+        for worker in ("extraction", "interactive"):
+            data = getattr(self, f"{worker}_data_limit_bytes")
+            address = getattr(self, f"{worker}_address_limit_bytes")
+            if data > address:
+                raise ValueError(
+                    f"sandbox.{worker}_data_limit_bytes ({data}) must not exceed "
+                    f"sandbox.{worker}_address_limit_bytes ({address})"
+                )
+        return self
+
+
 class StorageSettings(BaseModel):
     """Object storage for uploads (P2.5) and profile pictures (spec 2026-09-03, DS7/DS12).
 
@@ -939,6 +995,7 @@ class Settings(BaseSettings):
     det_parser: DetParserSettings = DetParserSettings()
     integrity: IntegritySettings = IntegritySettings()
     grading: GradingSettings = GradingSettings()
+    sandbox: SandboxSettings = SandboxSettings()
     storage: StorageSettings = StorageSettings()
     push: PushSettings = PushSettings()
     notifications: NotificationsSettings = NotificationsSettings()

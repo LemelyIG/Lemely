@@ -3939,3 +3939,55 @@ def test_the_worker_and_tables_modules_import_and_back_the_facade() -> None:
     assert worker._PARSE_WORKER is eq._PARSE_WORKER
     assert worker._ParseWorker is eq._ParseWorker
     assert tables._UNIT_LOCAL_DICT is eq._UNIT_LOCAL_DICT
+
+
+#: A path-run script that calls ``parse_expr_safe`` at its top level, with no
+#: ``if __name__ == "__main__":`` guard, and appends its pid to a marker file
+#: each time it runs. ``spawn`` used to re-run it in the parse worker's child
+#: before the child's memory cap was set: the child wrote its own pid, and
+#: started a nested worker of its own.
+_PATH_RUN_PARSE_SCRIPT = """\
+import os
+import sys
+from pathlib import Path
+
+with Path({marker!r}).open("a", encoding="utf-8") as marker:
+    marker.write(f"{{os.getpid()}}\\n")
+
+import lemely.core.equivalence as eq
+
+print(os.getpid())
+print(eq.parse_expr_safe("1+2"), eq._PARSE_WORKER.last_outcome)
+print(sys.modules["__main__"].__spec__)
+eq._PARSE_WORKER.shutdown()
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="spawn's main-module handling is POSIX here")
+def test_a_path_run_parent_main_is_not_re_run_in_the_parse_worker(tmp_path: Path) -> None:
+    """The parse worker's child starts without the parent's script, as the
+    scan workers' children do (``lemely.runtime.process_start``): the script
+    runs once, in the parent, and the parse runs in the child."""
+    marker = tmp_path / "runs.txt"
+    script = tmp_path / "path_run_parse.py"
+    script.write_text(_PATH_RUN_PARSE_SCRIPT.format(marker=str(marker)), encoding="utf-8")
+    repo_root = Path(__file__).resolve().parents[1]
+
+    proc = subprocess.run(
+        [sys.executable, str(script)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        cwd=repo_root,
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    parent_pid, result, parent_spec = proc.stdout.strip().splitlines()[-3:]
+    # Parsed in the worker ("ok"), not by a fallback.
+    assert result == "3 ok"
+    # Only the parent ran the script; a re-run in the child adds its own pid.
+    assert marker.read_text(encoding="utf-8").split() == [parent_pid]
+    # The script's own spec (None: it was run by path) is back after the start.
+    assert parent_spec == "None"

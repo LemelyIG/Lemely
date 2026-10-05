@@ -974,15 +974,19 @@ export function usePaperDetail(paperId: string | undefined): UseQueryResult<Pape
  * object URL is a resource with an owner, and the only place that can revoke it
  * at exactly the right moment is the component holding it; parking one in a
  * shared cache means either leaking a blob per card or guessing at eviction. The
- * cost of owning it here is a refetch when a card remounts, which the response's
- * own `Cache-Control: private, max-age=3600` already absorbs — the scan behind a
- * paper id never changes.
+ * cost of owning it here is a request when a card remounts. The route answers
+ * with `Cache-Control: private, no-cache` and an `ETag` (#249), so the browser
+ * keeps the thumbnail but revalidates it every time: the request still goes to
+ * the server, which re-runs the authorisation check and, when the tag matches,
+ * answers `304` without rendering anything. The scan behind a paper id never
+ * changes, so after the first render a remount costs a revalidation, not a
+ * render.
  *
  * P6.3: `enabled` is how this hook is made lazy, and it has to live here rather
  * than on the `<img>`. `loading="lazy"` defers a request the *element* makes;
  * this request is made by `fetchBlobUrl` before any element exists, so the
  * attribute would have been a no-op that looked like a fix. The endpoint is a
- * live PyMuPDF render of page 1 of the stored scan, `GET /papers` is
+ * live render of page 1 of the stored scan (a sandboxed worker's), `GET /papers` is
  * unpaginated, and every card mounts one of these — so with `enabled` defaulting
  * to true the console re-rendered every scan the school has ever uploaded on
  * every visit, to fill a 64px strip most readers never scroll to. See
