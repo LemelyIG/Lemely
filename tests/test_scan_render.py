@@ -15,7 +15,7 @@ import pymupdf
 import pytest
 from PIL import Image, ImageDraw, ImageOps
 
-from lemely.io.rasterise import rasterise_scan_to_pages
+from lemely.io.rasterise import iter_scan_pages, rasterise_scan_to_pages
 from lemely.io.reread import padded_crop_rect
 from lemely.io.scan_render import (
     CROP_RENDER_DPI,
@@ -214,6 +214,98 @@ class CropImageScanTests(unittest.TestCase):
             crop_image_scan(_phone_photo(), list(_BOX), page=1)
         self.assertEqual(caught.exception.reason, "page_out_of_range")
         self.assertEqual(str(caught.exception), "Stored crop region names page 2 of a 1-page scan")
+
+
+#: The transparent scans' page: (width, height), the ink box in pixels
+#: (left, top, right, bottom), and a 0-1000 box over it and one over blank
+#: canvas only, padding included ([ymin, xmin, ymax, xmax]).
+_CANVAS_SIZE = (400, 300)
+_CANVAS_INK = (40, 30, 160, 120)
+_INK_BOX = [100, 100, 400, 400]
+_BLANK_BOX = [700, 700, 900, 900]
+
+
+def _png(image: Image.Image, **params: object) -> bytes:
+    buf = io.BytesIO()
+    image.save(buf, format="PNG", **params)
+    return buf.getvalue()
+
+
+def _transparent_scans() -> dict[str, bytes]:
+    """Dark ink on a transparent canvas whose hidden colour is black, one per way of saying so.
+
+    A drawing or tablet app exports its canvas as black under alpha 0; a
+    palette, grey or RGB PNG names a transparent index or sample instead
+    (``tRNS``). The 16-bit one holds 12-bit samples: its canvas, 4000, is
+    the key, and would be grey 249 if it were not composited.
+    """
+    size, ink = _CANVAS_SIZE, _CANVAS_INK
+    rgba = Image.new("RGBA", size, (0, 0, 0, 0))
+    rgba.paste((0, 0, 0, 255), ink)
+    grey_alpha = Image.new("LA", size, (0, 0))
+    grey_alpha.paste((0, 255), ink)
+    palette = Image.new("P", size, 0)
+    palette.putpalette([0, 0, 0, 10, 10, 10])
+    palette.paste(1, ink)
+    grey = Image.new("L", size, 0)
+    grey.paste(10, ink)
+    rgb = Image.new("RGB", size, (0, 0, 0))
+    rgb.paste((10, 10, 10), ink)
+    return {
+        "RGBA": _png(rgba),
+        "LA": _png(grey_alpha),
+        "P tRNS": _png(palette, transparency=0),
+        "L tRNS": _png(grey, transparency=0),
+        "RGB tRNS": _png(rgb, transparency=(0, 0, 0)),
+        "I;16 tRNS": _png(
+            Image.open(
+                io.BytesIO(wide_grey_scan("I;16", size, 4000, 200, ink, image_format="PNG"))
+            ),
+            transparency=4000,
+        ),
+    }
+
+
+def _grey(png: bytes) -> Image.Image:
+    with Image.open(io.BytesIO(png)) as opened:
+        return opened.convert("L")
+
+
+def _extracted(scan: bytes) -> Image.Image:
+    """The page the marker is sent, as "L"."""
+    with tempfile.TemporaryDirectory() as scratch:
+        path = Path(scratch) / "scan"
+        path.write_bytes(scan)
+        (page,) = iter_scan_pages(path, 200.0)
+    return _grey(page.png_bytes)
+
+
+class TransparentScanTests(unittest.TestCase):
+    """Final review R3, I2: a transparent canvas reached the marker, and the
+    crop, as black, while the student's ink was on it. The marker, the
+    crop and the preview must all show white canvas and dark ink."""
+
+    def test_every_transparent_scan_reads_white_with_its_ink_on_every_path(self) -> None:
+        for name, scan in _transparent_scans().items():
+            with self.subTest(scan=name):
+                with Image.open(io.BytesIO(scan)) as opened:
+                    self.assertTrue(
+                        opened.mode in ("RGBA", "LA") or "transparency" in opened.info, name
+                    )
+                marker = _extracted(scan)
+                self.assertEqual(marker.getpixel((350, 250)), 255)
+                self.assertLess(cast("int", marker.getpixel((100, 75))), 64)
+
+                self.assertEqual(_grey(crop_image_scan(scan, _BLANK_BOX)).getextrema(), (255, 255))
+                ink_low, _ = cast(
+                    "tuple[int, int]", _grey(crop_image_scan(scan, _INK_BOX)).getextrema()
+                )
+                self.assertLess(ink_low, 64)
+
+                preview = _grey(render_preview_png(scan))
+                width, height = preview.size
+                self.assertEqual(preview.getpixel((width * 7 // 8, height * 5 // 6)), 255)
+                self.assertLess(cast("int", preview.getpixel((width // 4, height // 4))), 64)
 
 
 class RenderRefusedTests(unittest.TestCase):

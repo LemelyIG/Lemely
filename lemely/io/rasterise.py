@@ -284,17 +284,25 @@ _WIDE_STRIP_PX = 1 << 20
 _EXTREMA_MODES = frozenset({"I;16", "I", "F"})
 
 
-def _wide_strips(image: PILImage) -> Iterator[tuple[int, PILImage]]:
+def _row_strips(image: PILImage) -> Iterator[tuple[int, PILImage]]:
     """``image`` in horizontal strips of about :data:`_WIDE_STRIP_PX` pixels.
 
-    Each is ``(top, strip)``, the strip in "I" or "F" -- the wide modes
-    ``point`` scales and ``getextrema`` reads -- so the working copies stay
-    at a few MB whatever the page's size.
+    Each is ``(top, strip)``, a copy in ``image``'s own mode that keeps its
+    palette and ``info`` (a transparency key among them), so the working
+    copies stay at a few MB whatever the page's size.
     """
     width, height = image.size
     rows = max(1, _WIDE_STRIP_PX // max(1, width))
     for top in range(0, height, rows):
-        strip = image.crop((0, top, width, min(height, top + rows)))
+        yield top, image.crop((0, top, width, min(height, top + rows)))
+
+
+def _wide_strips(image: PILImage) -> Iterator[tuple[int, PILImage]]:
+    """:func:`_row_strips`, each strip in "I" or "F".
+
+    The wide modes ``point`` scales and ``getextrema`` reads.
+    """
+    for top, strip in _row_strips(image):
         yield top, strip if strip.mode in ("I", "F") else strip.convert("I")
 
 
@@ -403,6 +411,77 @@ def _wide_grey_to_l(image: PILImage, full_scale: float | None) -> PILImage:
     return result
 
 
+#: Modes whose pixels carry an alpha band.
+_ALPHA_MODES = frozenset({"RGBA", "LA", "PA"})
+
+#: The premultiplied alpha modes, and the plain mode each is taken to first.
+#: Pillow opens no file in these (a TIFF with associated alpha decodes to
+#: "RGBA"); handled so no caller can pass one through with its alpha lost.
+_PREMULTIPLIED_MODES = {"RGBa": "RGBA", "La": "LA"}
+
+
+def _has_transparency(image: PILImage) -> bool:
+    """Whether ``image`` has an alpha band or a transparency key (``info["transparency"]``)."""
+    return image.mode in _ALPHA_MODES or "transparency" in image.info
+
+
+def _opacity(strip: PILImage) -> PILImage:
+    """``strip``'s opacity as "L": its alpha band, or its transparency key made one.
+
+    A key is turned into alpha by Pillow's own conversion, which knows how
+    each mode stores it (a palette's per-index alphas or index, a grey
+    sample, an RGB triple), except for a wide grey key (a 16-bit PNG's
+    ``tRNS``): Pillow compares that after clipping the samples to 8 bits, so
+    a key above 255 never matches, and it is compared here at full width.
+    """
+    from PIL import ImageMath
+
+    if strip.mode in _WIDE_GREY_MODES:
+        key = strip.info["transparency"]
+        wide = strip if strip.mode in ("I", "F") else strip.convert("I")
+        opaque = cast(
+            "PILImage",
+            ImageMath.lambda_eval(lambda args: args["notequal"](args["a"], key) * 255, a=wide),
+        )
+        return opaque.convert("L")
+    if strip.mode not in _ALPHA_MODES:
+        strip = strip.convert("RGBA" if strip.mode in ("RGB", "P") else "LA")
+    return strip.getchannel(len(strip.getbands()) - 1)
+
+
+def _onto_white(opaque: PILImage, source: PILImage) -> PILImage:
+    """``opaque`` (``source`` in "L" or "RGB") composited onto white by ``source``'s opacity.
+
+    Strip by strip (:func:`_row_strips`), so besides ``opaque`` only a few
+    MB are held. ``opaque`` is written in place when it is a new image, and
+    copied first when it is ``source`` itself (an "L" or "RGB" image with a
+    transparency key), which belongs to the caller.
+    """
+    from PIL import Image
+
+    result = opaque.copy() if opaque is source else opaque
+    white: int | tuple[int, int, int] = 255 if result.mode == "L" else (255, 255, 255)
+    for top, strip in _row_strips(source):
+        box = (0, top, strip.width, top + strip.height)
+        backdrop = Image.new(result.mode, strip.size, white)
+        backdrop.paste(result.crop(box), (0, 0), _opacity(strip))
+        result.paste(backdrop, box[:2])
+    result.info.pop("transparency", None)
+    return result
+
+
+def _opaque_single_channel_or_rgb(image: PILImage, scale_of: PILImage | None) -> PILImage:
+    """:func:`single_channel_or_rgb` before any compositing: alpha and keys ignored."""
+    if image.mode in ("L", "RGB"):
+        return image
+    if image.mode in _WIDE_GREY_MODES:
+        source = scale_of if scale_of is not None and scale_of.mode == image.mode else image
+        return _wide_grey_to_l(image, _full_scale(source))
+    if image.mode in _ONE_CHANNEL_MODES or image.mode == "LA":
+        return image.convert("L")
+    return image.convert("RGB")
+
+
 def single_channel_or_rgb(image: PILImage, *, scale_of: PILImage | None = None) -> PILImage:
     """``image`` in a mode Pillow can ``reduce`` and resample well: "L" or "RGB".
 
@@ -412,22 +491,26 @@ def single_channel_or_rgb(image: PILImage, *, scale_of: PILImage | None = None) 
     to RGB, which is why :func:`~lemely.io.scan_limits.decode_pixel_cap`
     gives it the colour ceiling. "L" and "RGB" are returned as they are. A
     16- or 32-bit single-channel image is scaled to 8 bits, not clipped
-    (:func:`_wide_grey_to_l`). Extraction and the review crop route both
-    convert through here, so the model and the teacher see the same tones.
+    (:func:`_wide_grey_to_l`). Extraction, the review crop and the paper
+    preview all convert through here, so the model and the teacher see the
+    same tones.
+
+    An image with alpha ("RGBA", "LA", "PA") or a transparency key is
+    composited onto white (:func:`_onto_white`), grey ("LA", a keyed grey)
+    staying "L". Pillow's own conversions drop the alpha and keep the colour
+    under it, and a drawing or tablet app exports its transparent canvas as
+    black under alpha 0: the model read an all-black page, and the crop
+    showed one, while the student's ink was there (final review R3, I2).
 
     ``scale_of``: for a region cut from a larger wide-grey image, that
     whole image (in the same mode). The full scale is inferred from it
     rather than from the region (#275), so a crop has extraction's tones: a
     region that is all ink is flat, and inferred alone it would be white.
     """
-    if image.mode in ("L", "RGB"):
-        return image
-    if image.mode in _WIDE_GREY_MODES:
-        source = scale_of if scale_of is not None and scale_of.mode == image.mode else image
-        return _wide_grey_to_l(image, _full_scale(source))
-    if image.mode in _ONE_CHANNEL_MODES:
-        return image.convert("L")
-    return image.convert("RGB")
+    if image.mode in _PREMULTIPLIED_MODES:
+        image = image.convert(_PREMULTIPLIED_MODES[image.mode])
+    opaque = _opaque_single_channel_or_rgb(image, scale_of)
+    return _onto_white(opaque, image) if _has_transparency(image) else opaque
 
 
 def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
