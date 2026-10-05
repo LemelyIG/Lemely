@@ -315,7 +315,8 @@ child processes, each under a hard memory limit, so the instance has to hold
 both children at their limits at the same time as the web process, the
 equivalence parse worker and the scan pages the web process holds while it
 marks. At worst the sum does not fit in 2 GiB. The owner **accepted** that
-worst case on 2026-10-05: keep 2 GiB, and cap marking runs at one at a time.
+worst case on 2026-10-05, at the corrected figure below (2993.0 MiB, a margin
+of -945.0): keep 2 GiB, and cap marking runs at one at a time.
 The measurements and the rule that sets the limits are in the docstring of
 `lemely/runtime/sandbox.py`.
 
@@ -334,14 +335,34 @@ stream gets an `extraction_queued` frame that says so, and an
 `extraction_dequeued` frame when its run has the slot. The container runs
 one web process, so the cap is per instance.
 
-**Mark-scheme parse.** A user's mark-scheme PDF is parsed with pdfplumber, which inflates every content stream it reads with no bound of its own: the reviewer's 204 KB PDF took the parse to 475 MiB, and the same shape at 1 GiB needs 2.1 GiB. Both places that parse a user's scheme run it in the extraction worker (`lemely.io.scheme_parse`): `POST /api/schemes`, off the event loop, within `upload_check_timeout_seconds`, and a scheme attached alongside a scan, in the grading thread, within `extraction_timeout_seconds`. That adds no child and no budget term. Real schemes peak at 47–71 MiB, and a synthetic 102-page scheme at 149 MiB, in under 2 s, well inside 640 MiB. A scheme upload shares the worker's lock with scan extraction, so one that arrives during an extraction longer than 20 s answers 503, as the scan upload check does. A failed parse is a 422 with the fixed text "Could not read this mark scheme"; the cause goes only to the `scheme_parse_failed` log line.
+A waiting run is heard from at least once a minute: it publishes
+`extraction_queued` again every 60 s (`QUEUED_HEARTBEAT_SECONDS`). A teacher's
+row is written on each one, so its `updated_at` stays inside the 900 s
+stale window and a queued paper is not shown as a lost run, nor claimable by a
+duplicate regrade. A student's stream gets a frame inside Cloud Run's 300 s
+request timeout; a student who waits longer than that in total is still cut by
+it (`--timeout=300`), and the cap has no answer for that, only the heartbeat
+for the frames.
 
-One run costs the web process the worse of two cases:
+**Mark-scheme parse.** A user's mark-scheme PDF is parsed with pdfplumber, which inflates every content stream it reads with no bound of its own: the reviewer's 204 KB PDF took the parse to 475 MiB, and the same shape at 1 GiB needs 2.1 GiB. Both places that parse a user's scheme run it in the extraction worker (`lemely.io.scheme_parse`): `POST /api/schemes`, off the event loop, and a scheme attached alongside a scan, in the grading thread. Both are cut at `scheme_parse_timeout_seconds`, 20 s. That adds no child and no budget term. Real schemes peak at 47–71 MiB, and a synthetic 102-page scheme at 149 MiB, and parse in under 2 s, well inside 640 MiB. The memory limit does not bound CPU time, though: a 29 KB PDF of ruling-line grids takes 21 s, growing linearly with its pages, so the parse is cut at 20 s and not held for the extraction timeout (180 s). A scheme parse shares the worker's lock with scan extraction, so one that arrives during an extraction longer than 20 s answers 503, as the scan upload check does. A failed parse is a 422 with the fixed text "Could not read this mark scheme"; the cause goes only to the `scheme_parse_failed` log line.
+
+One run costs the web process the worst of three cases. The pages held
+scale with the scan's total pixels (cap 160 Mpx), and the `scan_hygiene`
+transient scales with its largest page (cap 16 Mpx), so the worst scan maxes
+both at once: ten 16 Mpx pages.
 
 | Case | Pages held | `scan_hygiene`, one page | Run |
 |---|---|---|---|
 | The adversarial 40-page PDF (4.1 Mpx pages) | 477.3 MiB | 129.2 MiB | 606.5 MiB |
 | One 16 Mpx image page | 45.8 MiB (incompressible PNG) | 504.7 MiB | 550.5 MiB |
+| **Ten 16 Mpx pages (160 Mpx, the worst)** | **458.0 MiB** (10 x 45.8, incompressible) | **501.0 MiB** | **959.0 MiB** |
+
+The third row was measured on 2026-10-05, in the final review (R4, I1): ten
+4000 x 4000 noise pages (200 DPI of a 20 in square), held as PNG, assumed as
+incompressible as the 40-page case, and `scan_hygiene` on one of them as
+`VmHWM` growth over the resident size. The budget first accepted counted the
+run at 606.5 MiB (total 2640.5, margin -592.5), which was the 40-page row, not
+the worst.
 
 The budget, with every term at its worst at the same time:
 
@@ -350,16 +371,17 @@ The budget, with every term at its worst at the same time:
 | Extraction worker, `RLIMIT_DATA` (`RLIMIT_AS` 768 MiB) | limit | 640 MiB |
 | Interactive worker, `RLIMIT_DATA` (`RLIMIT_AS` 768 MiB) | limit | 640 MiB |
 | Web process, idle after start-up | measured peak | 226.4 MiB (237.4 MB) |
-| One marking run in the web process (the worse case above) | measured peak | 606.5 MiB |
+| One marking run in the web process (the worst case above) | measured peak | 959.0 MiB |
 | Equivalence parse worker, at its `RLIMIT_AS` | limit | 512 MiB |
 | `multiprocessing` resource tracker | measured peak | 15.6 MiB (16.4 MB) |
-| **Total** | | **2640.5 MiB of 2048** |
+| **Total** | | **2993.0 MiB of 2048** |
 
-The margin is **-592.5 MiB**: the instance can run out of memory. The
-owner accepted this on 2026-10-05, because it needs every term at its worst
-at once: both workers at their limits, the parse worker at its limit, and
-the run holding the adversarial scan's pages. With the cap, a second run
-adds nothing; without it, each run in flight would add 606.5 MiB.
+The margin is **-945.0 MiB**: the instance can run out of memory. The
+owner accepted this on 2026-10-05, at this corrected figure, keeping 2 GiB and
+the cap of one run, because it needs every term at its worst at once: both
+workers at their limits, the parse worker at its limit, and the run holding
+ten 16 Mpx pages and running `scan_hygiene` on one. With the cap, a second run
+adds nothing; without it, each run in flight would add 959.0 MiB.
 
 The interactive worker went from 576 / 704 MiB to 640 / 768 MiB on
 2026-10-05, by the 1.5x-growth rule: a crop of a whole page of a 160 Mpx
@@ -391,14 +413,17 @@ interactive worker serves preview and crop. Each handles one call at a time,
 and a call's timeout includes the wait for the worker. That has three
 consequences:
 
-- **An upload check can fail behind an extraction.** An upload arriving
-  during an extraction waits up to its 20 s timeout and then gets 503 "Scan
-  rendering is temporarily unavailable", though the scan is fine. The
-  slowest extraction measured takes 33 s.
-- **An extraction waits only behind upload checks.** With runs capped at
-  one, an extraction no longer queues behind another extraction on the same
-  instance. If it still outlives its 180 s, it fails with "Could not render
-  this scan", and the paper is marked as failed rather than retried.
+- **An upload check or a scheme parse can fail behind an extraction.** An
+  upload arriving during an extraction waits up to its 20 s timeout and then
+  gets 503 "Scan rendering is temporarily unavailable" (a scheme upload, 503
+  "Reading mark schemes is temporarily unavailable"), though the file is
+  fine. The slowest extraction measured takes 33 s.
+- **An extraction can wait behind an upload check or a scheme parse.** With
+  runs capped at one, an extraction no longer queues behind another
+  extraction on the same instance. It can still wait behind an upload check
+  or a scheme parse, at most 20 s each. If it outlives its 180 s, it fails
+  with "Could not render this scan", and the paper is marked as failed rather
+  than retried.
 - **Thumbnails can come back busy.** One interactive worker serialises every
   preview and crop, so a page that asks for many thumbnails at once can get
   503 "busy" under load.
@@ -421,13 +446,19 @@ a call's timeout; it has its own bound.
 | `LEMELY_SANDBOX__START_TIMEOUT_SECONDS` | 30 |
 | `LEMELY_SANDBOX__EXTRACTION_TIMEOUT_SECONDS` | 180 |
 | `LEMELY_SANDBOX__UPLOAD_CHECK_TIMEOUT_SECONDS` | 20 |
+| `LEMELY_SANDBOX__SCHEME_PARSE_TIMEOUT_SECONDS` | 20 |
 | `LEMELY_SANDBOX__PREVIEW_TIMEOUT_SECONDS` | 15 |
 | `LEMELY_SANDBOX__CROP_TIMEOUT_SECONDS` | 10 |
 
 Raising a data limit raises the total above. `tests/test_sandbox.py` pins
 the defaults to the measured growth rule, and pins the accepted total
-(2640.5 MiB, one run): a raised limit or a second concurrent run fails it,
+(2993.0 MiB, one run): a raised limit or a second concurrent run fails it,
 and should come with a new decision.
+
+The sandbox settings are read by `sandbox_settings()`, which does not go
+through the app's `get_settings` dependency, so a test that overrides
+`dependency_overrides[get_settings]` does not change them; patch
+`sandbox.sandbox_settings` instead (`tests/sandbox_fixtures.py`).
 
 ### The marking flags
 

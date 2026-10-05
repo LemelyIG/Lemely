@@ -754,22 +754,25 @@ def test_a_python_memory_error_is_sandbox_memory_with_the_bare_message(
 #: term at its worst at once (``docs/ci-cd.md``, "Memory budget"; the
 #: ``lemely.runtime.sandbox`` docstring). MEASURED peaks, resident: the web
 #: process idle after start-up (``python -m lemely.web``; 237.4 MB), and one
-#: marking run's share of it, the pages of the adversarial 40-page extraction
-#: (40 incompressible pages at the 160 Mpx scan cap; 500.5 MB) plus
-#: ``scan_hygiene`` on one of them (``VmHWM`` growth); multiprocessing's
-#: ``resource_tracker`` (16.4 MB). LIMITS, read from the code: both workers'
-#: ``RLIMIT_DATA``, the parse worker's ``RLIMIT_AS``, and the run cap
-#: (``lemely.io.run_cap``).
+#: marking run's share of it, at its worst: ten 16 Mpx pages (the 160 Mpx scan
+#: cap at the 16 Mpx page cap), all held, as incompressible as the adversarial
+#: 40-page extraction (45.8 MiB of PNG each), plus ``scan_hygiene`` on one of
+#: them (``VmHWM`` growth, 501.0; final review R4, I1). The 40-page case the
+#: docs first took (477.3 + 129.2 = 606.5) is the smaller run. Also
+#: multiprocessing's ``resource_tracker`` (16.4 MB). LIMITS, read from the
+#: code: both workers' ``RLIMIT_DATA``, the parse worker's ``RLIMIT_AS``, and
+#: the run cap (``lemely.io.run_cap``).
 _WEB_PROCESS_MIB = 226.4
-_RUN_PAGES_MIB = 477.3
-_RUN_SCAN_HYGIENE_MIB = 129.2
+_RUN_PAGES_MIB = 458.0
+_RUN_SCAN_HYGIENE_MIB = 501.0
 _RESOURCE_TRACKER_MIB = 15.6
 #: The instance: Cloud Run's ``--memory=2Gi``.
 _INSTANCE_MIB = 2048
-#: Owner decision, 2026-10-05: the total above, 2640.5 MiB, a margin of
-#: -592.5 MiB, accepted as the worst case. A change that adds to it (a
+#: Owner decision, 2026-10-05: the total above, 2993.0 MiB, a margin of
+#: -945.0 MiB, accepted as the worst case (corrected from 2640.5 / -592.5,
+#: which counted the run at 606.5). A change that adds to it (a
 #: higher limit, a second run) should be a new decision, not a rounding.
-_ACCEPTED_WORST_CASE_MIB = 2640.5
+_ACCEPTED_WORST_CASE_MIB = 2993.0
 
 
 def test_the_default_limits_fit_the_accepted_worst_case() -> None:
@@ -790,7 +793,7 @@ def test_the_default_limits_fit_the_accepted_worst_case() -> None:
         + _RESOURCE_TRACKER_MIB
     )
     assert total_mib == pytest.approx(_ACCEPTED_WORST_CASE_MIB, abs=0.05), total_mib
-    assert _INSTANCE_MIB - total_mib == pytest.approx(-592.5, abs=0.05)
+    assert _INSTANCE_MIB - total_mib == pytest.approx(-945.0, abs=0.05)
 
 
 def _next64(mib: float) -> int:

@@ -212,20 +212,28 @@ its worst at the same time. In MiB:
 * MEASURED: the web process idle after start-up (``python -m lemely.web``,
   as the container runs it), 237.4 MB = 226.4 (Task 11 re-review,
   2026-10-04);
-* MEASURED: one marking run's share of the web process, 606.5. The parent
+* MEASURED: one marking run's share of the web process, 959.0. The parent
   holds a scan's pages from the worker's return until the extraction's
-  Gemini calls are done: 500.5 MB = 477.3 for the adversarial 40-page
-  extraction (12.3 MB of PDF, every page one shared full-page noise image,
-  scaled to the 160 Mpx scan cap: 466.0 MB of PNG). Before the first call
-  it runs ``scan_hygiene`` on each page, one at a time: 129.2 on one
-  4.1 Mpx page of that scan (``VmHWM`` growth, 2026-10-05). The other case,
-  one 16 Mpx image page, is less: 45.8 + 504.7 = 550.5;
+  Gemini calls are done, and before the first call it runs
+  ``scan_hygiene`` on each page, one at a time. The pages scale with the
+  scan's total pixels (cap 160 Mpx), the hygiene transient with its
+  largest page (cap 16 Mpx), so the worst scan maxes both: TEN pages of
+  16 Mpx (4000 x 4000 px at 200 DPI), all held, plus hygiene on one. The
+  pages are taken as incompressible as the adversarial 40-page case
+  (every page noise): 10 x 45.8 = 458.0 of PNG; ``scan_hygiene`` on one
+  4000 x 4000 page, 501.0 (``VmHWM`` growth over the resident size,
+  2026-10-05, final review R4, I1). The two cases the docs first took are
+  less: the adversarial 40-page extraction (4.1 Mpx pages, 500.5 MB =
+  477.3 held, hygiene 129.2 on one of them) is 606.5, and one 16 Mpx image
+  page is 45.8 + 504.7 = 550.5;
 * LIMIT: the equivalence parse worker's child at its ``RLIMIT_AS``, 512
   (idle it is 68.6);
 * MEASURED: multiprocessing's ``resource_tracker``, 16.4 MB = 15.6.
 
-640 + 640 + 226.4 + 606.5 + 512 + 15.6 = 2640.5 MiB of the instance's
-2048: a margin of -592.5 MiB. That counts ONE run, because runs are capped
+640 + 640 + 226.4 + 959.0 + 512 + 15.6 = 2993.0 MiB of the instance's
+2048: a margin of -945.0 MiB. (The budget first accepted counted the run at
+606.5, 2640.5 and -592.5; the owner accepted the corrected figure on
+2026-10-05, keeping 2 GiB and the cap of one run.) That counts ONE run, because runs are capped
 at one per process (:mod:`lemely.io.run_cap`, the other half of the
 owner's decision): a second run waits for the first to release its pages,
 and never fails for waiting. The serialised workers alone capped only how
@@ -244,11 +252,15 @@ kernel's next choice is the web process itself.
 The extraction timeout is 180 s (owner decision, Task 11 review), counting
 any wait for the worker: the slowest extraction measured is 33 s, the
 40-page JPEG PDF. The upload check's slowest run is 0.65 s, so it keeps
-20 s. Both share the extraction worker, so an upload check that arrives
-during an extraction can wait its 20 s out and answer 503, though the
-scan is fine. With runs capped at one, an extraction no longer queues
-behind another extraction in the same process, only behind upload checks;
-should it still outlive its 180 s, it fails its paper with
+20 s, and a user mark-scheme parse is cut at 20 s too
+(``scheme_parse_timeout_seconds``; real schemes take under 2 s, and a
+29 KB PDF built to be slow takes 21 s). All three share the extraction
+worker, so an upload check or a scheme parse that arrives during an
+extraction can wait its 20 s out and answer 503, though the file is fine.
+With runs capped at one, an extraction no longer queues behind another
+extraction in the same process, only behind an upload check or a scheme
+parse (at most 20 s each); should it still outlive its 180 s, it fails
+its paper with
 :data:`~lemely.io.rasterise.RENDER_FAILED_MESSAGE` (a
 :class:`SandboxUnavailable` becomes ``ScanRenderFailedError``).
 """
@@ -310,7 +322,7 @@ _LIMIT_NAMES = ("RLIMIT_DATA", "RLIMIT_AS", "RLIMIT_CORE", "oom_score_adj")
 #: instance runs out of memory the kernel kills a worker child (that request
 #: gets a 422; the next call respawns it) before the web server. Owner
 #: decision, Task 11 re-review, when the 2 GiB budget's margin was put at
-#: ~44 MiB. At worst it is -592.5 MiB, a worst case the owner accepted on
+#: ~44 MiB. At worst it is -945.0 MiB, a worst case the owner accepted on
 #: 2026-10-05 (see the module docstring): when the pressure is in the web
 #: process, a killed idle worker frees little and the web process is next.
 #: Raising one's own score needs no privilege; a kernel or container that

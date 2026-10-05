@@ -284,11 +284,13 @@ jobs:
           # and the parse worker's RLIMIT_AS (512 MiB). Measured peaks: the
           # web process idle (226.4 MiB), one marking run's share of it (its
           # pages, held until the Gemini calls are done, plus scan_hygiene:
-          # 606.5 MiB at worst) and the resource tracker (15.6 MiB). Total
-          # 2640.5 of 2048 MiB, a margin of -592.5 MiB, with every term at its
-          # worst at once. Marking runs are capped at one per process
-          # (lemely/io/run_cap.py), so a second run waits for the first and
-          # adds nothing. A worker child is the kernel's first choice if the
+          # 959.0 MiB at worst, ten 16 Mpx pages as incompressible as the
+          # 40-page case, 458.0, plus 501.0 of hygiene on one) and the
+          # resource tracker (15.6 MiB). Total 2993.0 of 2048 MiB, a margin
+          # of -945.0 MiB, with every term at its worst at once. The owner
+          # accepted that corrected figure on 2026-10-05. Marking runs are
+          # capped at one per process (lemely/io/run_cap.py), so a second run
+          # waits for the first and adds nothing. A worker child is the kernel's first choice if the
           # instance runs out (oom_score_adj 1000), but when the pressure is
           # in the web process, killing an idle one frees little and the web
           # process is next. There is no --concurrency flag. See "Memory
