@@ -255,6 +255,14 @@ jobs:
           service: lemely-backend-${{ needs.resolve-env.outputs.environment }}
           region: us-central1
           image: ${{ env.IMAGE }}
+          # Incident 2026-10-05: staging was left pinned to a named revision
+          # (00041-pwk), so every deploy built a new revision that got 0% traffic
+          # and was retired; three deploys and their smoke tests went green while
+          # the old code kept serving. `migrate` runs BEFORE this job, so the
+          # database moved on (0040 dropped plagiarism_flagged) under that old code.
+          # Always route 100% to the new revision (idempotent; tags such as a debug
+          # tag survive), and the next step proves what is actually serving.
+          revision_traffic: LATEST=100
           # gen2 is the load-bearing flag here; --memory is a budget (see the last
           # paragraph of this comment, and docs/ci-cd.md).
           #
@@ -365,6 +373,43 @@ jobs:
             LEMELY_PUSH__VAPID_PUBLIC_KEY=${{ vars.VAPID_PUBLIC_KEY }}
             LEMELY_PUSH__VAPID_PRIVATE_KEY=${{ secrets.VAPID_PRIVATE_KEY }}
             LEMELY_PUSH__VAPID_SUBJECT=mailto:support@lemelyig.com
+
+      # Asserts what is SERVING, not what was created. `revision_traffic` above
+      # should have sent 100% to the new revision; this step does not trust that.
+      # It resolves the revision holding 100% of traffic (tagged 0% entries are
+      # ignored, and a `latestRevision` entry is resolved to the latest ready
+      # revision) and fails unless its `commit-sha` label is this run's commit.
+      # deploy-cloudrun@v3 stamps that label on every revision it deploys
+      # (skip_default_labels is false), so a mismatch means traffic is pinned
+      # elsewhere or the rollout did not take. See "Traffic pinning" in
+      # docs/ci-cd.md for the fix.
+      - name: Verify the serving revision runs this commit
+        run: |
+          set -euo pipefail
+          SERVICE="lemely-backend-${{ needs.resolve-env.outputs.environment }}"
+          REGION="us-central1"
+          SERVING="$(gcloud run services describe "$SERVICE" --region="$REGION" --format=json | jq -r '
+            .status.latestReadyRevisionName as $latest
+            | [.status.traffic[]?
+                | {rev: (.revisionName // (if .latestRevision then $latest else null end)),
+                   pct: (.percent // 0)}]
+            | map(select(.rev != null))
+            | group_by(.rev)
+            | map({rev: .[0].rev, pct: (map(.pct) | add)})
+            | map(select(.pct == 100))
+            | .[0].rev // empty')"
+          if [ -z "$SERVING" ]; then
+            echo "::error::No single revision of $SERVICE receives 100% of traffic."
+            gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.traffic)'
+            exit 1
+          fi
+          SERVING_SHA="$(gcloud run revisions describe "$SERVING" --region="$REGION" \
+                           --format='value(metadata.labels.commit-sha)')"
+          echo "serving revision: $SERVING (commit-sha=${SERVING_SHA:-<none>}); this run: ${{ github.sha }}"
+          if [ "$SERVING_SHA" != "${{ github.sha }}" ]; then
+            echo "::error::$SERVICE is serving revision $SERVING, built from commit ${SERVING_SHA:-<unlabelled>}, not ${{ github.sha }}. The deploy created a revision that is not taking traffic; the database has already been migrated, so old code is running on the new schema. Run: gcloud run services update-traffic $SERVICE --to-latest --region=$REGION"
+            exit 1
+          fi
 
       # A rollout that fails the startup probe reports only "the user-provided
       # container failed to start and listen on the port" plus a Cloud Console
