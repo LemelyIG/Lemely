@@ -280,16 +280,19 @@ _SPACED_DIGIT_AFTER_ARGUMENT_RE = re.compile(r"\s+\d")
 #: pass runs first, so it took the ``x`` and ``sin2x10^3`` was EQUAL_PROVEN
 #: to ``1000*sin(2)`` (whole-branch review A, Important 1). Two readings,
 #: so the text is refused. No guard before the name: a coefficient
-#: (``5sin2x10^3``) is caught too.
+#: (``5sin2x10^3``) is caught too. A lost-base ``log`` with a spaced
+#: argument (``log2 8x10^3``, ``log10 2x10^3``) is its own alternative: the
+#: number pattern after the bare name takes the base, so the space and the
+#: argument never match it (re-review of the first version of this guard).
 _FUNCTION_ARGUMENT_TIMES_X_RE = re.compile(
-    "(?:"
+    "(?:(?:"
     + "|".join(
         sorted(
             _NUMBER_LETTER_ARGUMENT_FUNCTIONS | _AMBIGUOUS_NUMBER_LETTER_FUNCTIONS,
             key=lambda name: (-len(name), name),
         )
     )
-    + r")\s*\d+(?:\s+\d{3})*(?:\.\d+)?\s*[xX]\s*10\s*(?:\^|\*\*)"
+    + r")|log(?:10|[2-9])\s+)\s*\d+(?:\s+\d{3})*(?:\.\d+)?\s*[xX]\s*10\s*(?:\^|\*\*)"
 )
 
 #: A ``log`` base whose subscript extraction lost: ``10`` (owner decision,

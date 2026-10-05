@@ -3403,6 +3403,21 @@ _ISSUE_270_TABLE: list[tuple[str, str, str, str]] = [
     # continue the number or are a factor, so the text is refused.
     ("ln1.5 000", "0", "unparseable", "spaced-digits-after-decimal-argument-is-refused"),
     ("sin30 2", "2*sin(30)", "unparseable", "spaced-digit-after-number-argument-is-refused"),
+    # Re-review of 24ae9bfb: a lost-base log whose spaced argument is a
+    # number then `x` before `10^` (`log2 8x10^3`). The first guard's number
+    # pattern took the base, so the space and argument never matched and
+    # these were still EQUAL_PROVEN to 1000*log_b(n).
+    (
+        "log10 2x10^3",
+        "1000*log(2, 10)",
+        "unparseable",
+        "lost-base-log10-spaced-arg-times-x-refused",
+    ),
+    ("log2 8x10^3", "1000*log(8, 2)", "unparseable", "lost-base-log2-spaced-arg-times-x-refused"),
+    ("log2 8x10^3", "3000", "unparseable", "lost-base-log2-spaced-arg-times-x-is-not-3000"),
+    ("log3 9x10^2", "100*log(9, 3)", "unparseable", "lost-base-log3-spaced-arg-times-x-refused"),
+    ("log2 4 x 10^3", "1000*log(4, 2)", "unparseable", "lost-base-log2-spaced-x-spaced-refused"),
+    ("log2 8x", "log(8*x, 2)", "equal", "lost-base-log2-of-8x-unchanged"),
 ]
 
 
@@ -3434,6 +3449,10 @@ def test_issue_270_row_matches_expected_verdict(
         "cos2x10^-3",
         "5sin2x10^3",
         "sin1 000x10^3",
+        "log10 2x10^3",
+        "log2 8x10^3",
+        "log3 9x10^2",
+        "log2 4 x 10^3",
     ],
 )
 def test_issue_270_function_argument_x_before_ten_power_is_refused_ambiguous(
