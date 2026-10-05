@@ -14,9 +14,9 @@ memory-limited child killed past its timeout:
 * A scheme uploaded alongside a scan is parsed in the grading thread by
   :class:`WorkerSchemeParser`, the deterministic half of the
   ``ChainedMarkSchemeParser`` both portals build. The parse is cut at
-  ``scheme_parse_timeout_seconds`` too, but a worker busy with a scan is
-  waited for, up to ``extraction_timeout_seconds``, rather than failing the
-  paper.
+  ``scheme_parse_timeout_seconds`` too, counted from when it has the worker:
+  a worker busy with a scan is waited for, up to
+  ``extraction_timeout_seconds``, rather than failing the paper.
 
 The child imports this module and runs :func:`parse_scheme_pdf`
 (:data:`SCHEME_PARSE_TARGET`). The parser is imported inside it, so the web
@@ -59,7 +59,6 @@ among them. The worker's limits are the bound.
 from __future__ import annotations
 
 import tempfile
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -90,11 +89,6 @@ SCHEME_PARSE_TARGET = "lemely.io.scheme_parse.parse_scheme_pdf"
 #: What a user is told when their mark scheme could not be read, whatever the
 #: cause: the parser's refusal, an unreadable file, or a worker failure.
 SCHEME_READ_FAILED_MESSAGE = "Could not read this mark scheme"
-
-#: How long to pause before asking a busy worker again when the refusal came
-#: back sooner than the attempt's own timeout; a lock wait that used its whole
-#: timeout needs none.
-_BUSY_PAUSE_SECONDS = 0.25
 
 #: The name the PDF is parsed under when the client sent none worth keeping.
 _FALLBACK_NAME = "scheme.pdf"
@@ -139,19 +133,33 @@ def parse_scheme_pdf(data: bytes, filename: str, cfg: DetParserSettings) -> Mark
 
 
 def parse_scheme_in_worker(
-    data: bytes, filename: str, cfg: DetParserSettings, *, timeout: float
+    data: bytes,
+    filename: str,
+    cfg: DetParserSettings,
+    *,
+    timeout: float,
+    lock_timeout: float | None = None,
 ) -> MarkScheme:
     """:func:`parse_scheme_pdf` run in :data:`~lemely.runtime.sandbox.EXTRACTION_WORKER`.
 
     Blocks for up to ``timeout`` seconds, counting any wait for a scan
-    extraction already running there; call it off the event loop. Raises the
+    extraction already running there; call it off the event loop. With
+    ``lock_timeout`` the wait for the worker is bounded by that alone and the
+    parse then gets its whole ``timeout``, so the call can take
+    ``lock_timeout + timeout``. Raises the
     parser's :class:`~lemely.runtime.errors.ParseError` as it was raised, or
     a :class:`~lemely.runtime.sandbox.SandboxFailure`. With the sandbox
     disabled the parse runs in this process, and its exceptions propagate
     unchanged.
     """
     return sandbox.EXTRACTION_WORKER.call(
-        SCHEME_PARSE_TARGET, data, filename, cfg, timeout=timeout, result_type=MarkScheme
+        SCHEME_PARSE_TARGET,
+        data,
+        filename,
+        cfg,
+        timeout=timeout,
+        result_type=MarkScheme,
+        lock_timeout=lock_timeout,
     )
 
 
@@ -168,13 +176,14 @@ class WorkerSchemeParser:
 
     A busy worker is not a failure of the scheme. The worker also renders
     every marking run's scan, for up to ``extraction_timeout_seconds``, and
-    a parse that waits for it spends its 20 s on the lock. This parser
-    therefore asks again while the worker answers
-    :class:`~lemely.runtime.sandbox.SandboxBusy`, until
-    ``extraction_timeout_seconds`` have passed since the first attempt; each
-    attempt still has ``scheme_parse_timeout_seconds``, so the parse itself
-    is cut at 20 s as before. Only a worker still busy at that deadline
-    fails the paper (reason ``busy``).
+    a parse that waited for it out of its own 20 s would fail a valid scheme.
+    The wait for the worker is therefore bounded by
+    ``extraction_timeout_seconds`` (``lock_timeout``) and the parse then gets
+    its own ``scheme_parse_timeout_seconds`` from the moment it has the worker,
+    so the parse itself is cut at 20 s as before. Only a worker still busy at
+    the deadline fails the paper, as :class:`SandboxBusy`; the worst case is
+    ``extraction_timeout_seconds + scheme_parse_timeout_seconds`` (200 s), under
+    the 300 s Cloud Run request timeout.
     """
 
     def __init__(self, cfg: DetParserSettings) -> None:
@@ -183,33 +192,16 @@ class WorkerSchemeParser:
     def __call__(self, pdf_path: Path) -> MarkScheme:
         data = pdf_path.read_bytes()
         settings = sandbox.sandbox_settings()
-        started = time.monotonic()
-        deadline = started + settings.extraction_timeout_seconds
         try:
-            while True:
-                attempt = time.monotonic()
-                try:
-                    return parse_scheme_in_worker(
-                        data,
-                        pdf_path.name,
-                        self._cfg,
-                        timeout=settings.scheme_parse_timeout_seconds,
-                    )
-                except sandbox.SandboxBusy:
-                    now = time.monotonic()
-                    if now >= deadline:
-                        raise
-                    # The lock wait normally spent the whole attempt; only an
-                    # answer that came back early needs a pause, so this
-                    # never spins.
-                    if now - attempt < settings.scheme_parse_timeout_seconds:
-                        time.sleep(min(_BUSY_PAUSE_SECONDS, deadline - now))
+            return parse_scheme_in_worker(
+                data,
+                pdf_path.name,
+                self._cfg,
+                timeout=settings.scheme_parse_timeout_seconds,
+                lock_timeout=settings.extraction_timeout_seconds,
+            )
         except sandbox.SandboxFailure as exc:
             log.warning(
-                "scheme_parse_failed",
-                reason="busy" if isinstance(exc, sandbox.SandboxBusy) else exc.reason,
-                error=str(exc),
-                byte_size=len(data),
-                elapsed_seconds=round(time.monotonic() - started, 1),
+                "scheme_parse_failed", reason=exc.reason, error=str(exc), byte_size=len(data)
             )
             raise SchemeReadFailedError from exc

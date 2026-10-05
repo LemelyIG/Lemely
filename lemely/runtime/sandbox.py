@@ -646,12 +646,16 @@ class ChildWorker:
     daemon, so ``multiprocessing``'s atexit hook ends it with the parent.
     Calls are serialised by a lock, and the time spent waiting for it counts
     against the caller's ``timeout``: a call that cannot get the worker in
-    time is refused with :class:`SandboxUnavailable` (``"busy"``) instead of
-    queueing past its deadline. The time to (re)start a child is not counted,
-    so a cold start on a slow host is never mistaken for a runaway target; it
-    has its own bound, ``start_timeout_seconds``. The owner pid is recorded
-    and :meth:`_forget_after_fork` resets the lock and forgets the child in
-    a forked process.
+    time is refused with :class:`SandboxBusy` (``"busy"``, a
+    :class:`SandboxUnavailable`) instead of queueing past its deadline. A
+    caller that can afford to wait longer for the lock than for the target
+    passes ``lock_timeout`` to :meth:`call`, which bounds the lock wait on
+    its own and leaves the whole ``timeout`` to the target. The time to
+    (re)start a child is not counted, so a cold start on a slow host is never
+    mistaken for a runaway target; it has its own bound,
+    ``start_timeout_seconds``. The owner pid is recorded and
+    :meth:`_forget_after_fork` resets the lock and forgets the child in a
+    forked process.
 
     With ``sandbox_settings().enabled`` false, :meth:`call` and :meth:`stream`
     run the target in the calling process and its exceptions propagate
@@ -787,21 +791,31 @@ class ChildWorker:
     # -- one call ---------------------------------------------------------------
 
     def _enter(
-        self, target: str, args: tuple[object, ...], *, mode: str, timeout: float
+        self,
+        target: str,
+        args: tuple[object, ...],
+        *,
+        mode: str,
+        timeout: float,
+        lock_timeout: float | None = None,
     ) -> tuple[Connection[_Request, _Reply], float]:
         """Take the lock, make sure a child is up, send the request.
 
         Returns the pipe and the deadline (``time.monotonic()``) for the
-        replies; the caller releases the lock. Raises
-        :class:`SandboxUnavailable` (lock released) when the lock wait uses
-        up ``timeout`` or no child starts.
+        replies; the caller releases the lock. With ``lock_timeout`` ``None``
+        the lock wait counts against ``timeout``; otherwise it is bounded by
+        ``lock_timeout`` alone and the reply deadline is ``timeout`` from the
+        moment the lock is taken. Raises :class:`SandboxBusy` (lock released)
+        when the lock wait uses up its bound, or :class:`SandboxUnavailable`
+        when no child starts.
         """
         entered = time.monotonic()
-        if not self._lock.acquire(timeout=max(timeout, 0.0)):
+        lock_wait = timeout if lock_timeout is None else lock_timeout
+        if not self._lock.acquire(timeout=max(lock_wait, 0.0)):
             self.last_outcome = "busy"
             raise SandboxBusy
         try:
-            remaining = timeout - (time.monotonic() - entered)
+            remaining = timeout - (time.monotonic() - entered) if lock_timeout is None else timeout
             if remaining <= 0:
                 self.last_outcome = "busy"
                 raise SandboxBusy
@@ -875,8 +889,21 @@ class ChildWorker:
             f"{target} returned {type(value).__name__}, not {expected.__name__}", "error"
         )
 
-    def call[T](self, target: str, *args: object, timeout: float, result_type: type[T]) -> T:
+    def call[T](
+        self,
+        target: str,
+        *args: object,
+        timeout: float,
+        result_type: type[T],
+        lock_timeout: float | None = None,
+    ) -> T:
         """``target(*args)`` run in the child, within ``timeout`` seconds of entry.
+
+        ``lock_timeout`` ``None`` (the default) counts the wait for the worker
+        against ``timeout``. A number bounds that wait separately and gives the
+        target its whole ``timeout`` from the moment the worker is free, so a
+        worker released late in the wait still gets the target a full budget;
+        the call can then take ``lock_timeout + timeout`` in all.
 
         Raises the target's ``LemelyError`` as it was raised, or a
         :class:`SandboxFailure`: :class:`SandboxTimeout`,
@@ -889,7 +916,9 @@ class ChildWorker:
             if not isinstance(value, result_type):
                 raise self._wrong_type(target, value, result_type)
             return value
-        conn, deadline = self._enter(target, args, mode="call", timeout=timeout)
+        conn, deadline = self._enter(
+            target, args, mode="call", timeout=timeout, lock_timeout=lock_timeout
+        )
         try:
             kind, value = self._receive(conn, deadline, timeout)
             if kind != "ok":

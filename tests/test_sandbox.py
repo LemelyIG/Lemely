@@ -109,6 +109,52 @@ def test_a_target_allocating_past_the_limit_fails_and_the_next_call_succeeds(
     assert worker.call(f"{_T}.pid", timeout=5, result_type=int) == first_pid
 
 
+def test_a_lock_timeout_gives_the_target_its_whole_timeout_once_the_worker_is_free(
+    worker: ChildWorker,
+) -> None:
+    """With ``lock_timeout`` the wait for the worker is not charged to
+    ``timeout``: a worker freed 0.4 s into a 0.5 s timeout still runs a target
+    that needs 0.3 s, which the default (counted) wait would cut."""
+    worker.call(f"{_T}.pid", timeout=10, result_type=int)  # a warm child
+    held = threading.Event()
+
+    def hold() -> None:
+        with worker._lock:
+            held.set()
+            time.sleep(0.4)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    assert held.wait(5)
+    try:
+        worker.call(f"{_T}.sleep_for", 0.3, timeout=0.5, result_type=type(None), lock_timeout=5)
+    finally:
+        holder.join(timeout=10)
+    assert worker.last_outcome == "ok"
+
+
+def test_a_lock_timeout_is_a_busy_refusal_when_it_runs_out(worker: ChildWorker) -> None:
+    held = threading.Event()
+
+    def hold() -> None:
+        with worker._lock:
+            held.set()
+            time.sleep(1.0)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    assert held.wait(5)
+    try:
+        started = time.monotonic()
+        with pytest.raises(SandboxBusy):
+            worker.call(f"{_T}.pid", timeout=30, result_type=int, lock_timeout=0.3)
+        waited = time.monotonic() - started
+    finally:
+        holder.join(timeout=10)
+    assert 0.25 <= waited < 0.9
+    assert worker.last_outcome == "busy"
+
+
 def test_a_call_waiting_behind_a_busy_worker_is_unavailable_within_its_timeout(
     worker: ChildWorker,
 ) -> None:

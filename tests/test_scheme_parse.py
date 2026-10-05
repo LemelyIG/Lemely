@@ -177,28 +177,48 @@ def _hold_the_extraction_worker(seconds: float) -> threading.Thread:
     return holder
 
 
+def _parse_a_scheme_while_the_worker_is_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, scheme: float, hold: float
+) -> MarkScheme:
+    """Parse a scheme with a ``scheme`` s parse timeout while a scan render has
+    the extraction worker for ``hold`` s (the retry deadline is 30 s)."""
+    path = tmp_path / "0625_s23_ms_41.pdf"
+    path.write_bytes(synthetic_theory_scheme_pdf())
+    # A warm child, so the parse itself takes a fraction of the time it is given.
+    parse_scheme_in_worker(path.read_bytes(), path.name, DetParserSettings(), timeout=30)
+    monkeypatch.setattr(
+        sandbox, "sandbox_settings", lambda: _busy_settings(scheme=scheme, extraction=30)
+    )
+    holder = _hold_the_extraction_worker(hold)
+    try:
+        return WorkerSchemeParser(DetParserSettings())(path)
+    finally:
+        holder.join(timeout=10)
+
+
 @pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
 def test_worker_scheme_parser_waits_out_a_worker_busy_with_a_scan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A scan render holds the worker for longer than the scheme parse's own
-    timeout (here 1.6 s against 1 s): the parse asks again until the worker
-    is free and succeeds, instead of failing the paper as busy."""
-    path = tmp_path / "0625_s23_ms_41.pdf"
-    path.write_bytes(synthetic_theory_scheme_pdf())
-    # A warm child, so the parse itself takes a fraction of the 1 s it is given.
-    parse_scheme_in_worker(path.read_bytes(), path.name, DetParserSettings(), timeout=30)
-    monkeypatch.setattr(
-        sandbox, "sandbox_settings", lambda: _busy_settings(scheme=1.0, extraction=30)
-    )
-
-    holder = _hold_the_extraction_worker(1.6)
-    try:
-        scheme = WorkerSchemeParser(DetParserSettings())(path)
-    finally:
-        holder.join(timeout=10)
-
+    timeout (here 2 s against 1 s, and far inside the 30 s the wait is given):
+    the parse waits for the worker and succeeds, instead of failing the paper
+    as busy."""
+    scheme = _parse_a_scheme_while_the_worker_is_held(tmp_path, monkeypatch, scheme=1.0, hold=2.0)
     assert scheme.metadata.source_document == "0625_s23_ms_41.pdf"
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "ok"
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_worker_scheme_parser_parses_when_the_worker_is_freed_just_before_its_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lock wait that ends 0.03 s inside the parse timeout leaves a counted
+    wait 0.03 s to parse in, and the parse is cut at that and not retried (the
+    reviewer's repro: 2.0 s timeout, lock held 1.97 s). The parse's timeout runs
+    from when it has the worker, so it still gets all of it."""
+    scheme = _parse_a_scheme_while_the_worker_is_held(tmp_path, monkeypatch, scheme=1.0, hold=0.97)
+    assert scheme.metadata.maximum_mark == 18
     assert sandbox.EXTRACTION_WORKER.last_outcome == "ok"
 
 
@@ -207,7 +227,8 @@ def test_worker_scheme_parser_fails_once_the_worker_stays_busy_past_the_deadline
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A worker busy for longer than ``extraction_timeout_seconds`` (here 1 s)
-    fails the paper with the fixed text, logged as ``busy``."""
+    fails the paper with the fixed text, logged as the route logs a busy worker
+    (reason ``unavailable``, error ``busy``)."""
     monkeypatch.setattr(
         sandbox, "sandbox_settings", lambda: _busy_settings(scheme=0.2, extraction=1.0)
     )
@@ -228,7 +249,7 @@ def test_worker_scheme_parser_fails_once_the_worker_stays_busy_past_the_deadline
     assert isinstance(failure.value.__cause__, sandbox.SandboxBusy)
     assert sandbox.EXTRACTION_WORKER.last_outcome == "busy"
     failed = [entry for entry in logs if entry["event"] == "scheme_parse_failed"]
-    assert [entry["reason"] for entry in failed] == ["busy"]
+    assert [(entry["reason"], entry["error"]) for entry in failed] == [("unavailable", "busy")]
 
 
 @pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
