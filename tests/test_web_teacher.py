@@ -1697,6 +1697,74 @@ def test_paper_detail_reports_live_pipeline_instead_of_409(
     assert client.get(f"/api/papers/{paper_id}").json()["awardedMarks"] == 2
 
 
+def test_paper_waiting_for_the_run_slot_says_so_in_its_pipeline(
+    client: TestClient, paper_repo: TeacherPaperRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A teacher run whose extraction waits for the process's one marking-run
+    slot (#260, #271) shows the extract step active with "Waiting for another
+    paper", not a bare spinner; once it holds the slot, its next event puts
+    the step back to plain "extract"."""
+    from lemely.io import run_cap
+    from lemely.runtime.events import EventType, bus
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    resumed = threading.Event()
+    finish = threading.Event()
+
+    def _extract(*_a: object, **_k: object) -> dict[str, str]:
+        # What GeminiAnswerExtractor.__call__ does: the whole extraction under
+        # the slot, its first event a Gemini call once it holds it.
+        with run_cap.marking_run_slot():
+            bus.publish(EventType.GEMINI_CALL_START, task_tag="answer_extraction")
+            resumed.set()
+            finish.wait(timeout=10)
+            return {"5b": "42"}
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(grading_service, "extract_answers", _extract)
+    monkeypatch.setattr(
+        grading_service, "grade_paper", lambda *_a, **_k: _report(needs_review=False, grade="A")
+    )
+
+    def _extract_step(paper_id: str) -> dict[str, str]:
+        body = client.get(f"/api/papers/{paper_id}").json()
+        (step,) = [s for s in body["pipeline"] if s["label"] == "Handwriting read"]
+        return step
+
+    with run_cap.marking_run_slot():  # another paper's run holds the slot
+        paper_id = _upload(client)
+        deadline = time.monotonic() + 10.0
+        step = _extract_step(paper_id)
+        while step["count"] != "Waiting for another paper" and time.monotonic() < deadline:
+            time.sleep(0.02)
+            step = _extract_step(paper_id)
+        assert step == {
+            "label": "Handwriting read",
+            "count": "Waiting for another paper",
+            "state": "active",
+        }
+        waiting = paper_repo.get(uuid.UUID(paper_id))
+        assert waiting is not None and waiting.stage == "queued"
+
+    try:
+        assert resumed.wait(timeout=10), "the run never took the slot"
+        deadline = time.monotonic() + 10.0
+        row = paper_repo.get(uuid.UUID(paper_id))
+        while row is not None and row.stage == "queued" and time.monotonic() < deadline:
+            time.sleep(0.02)
+            row = paper_repo.get(uuid.UUID(paper_id))
+        assert row is not None and row.stage == "extract"
+        assert _extract_step(paper_id) == {
+            "label": "Handwriting read",
+            "count": "",
+            "state": "active",
+        }
+    finally:
+        finish.set()
+    assert teacher._row_kind(_settle(paper_repo, paper_id)) == "graded"
+
+
 def test_unknown_paper_detail_is_still_404(client: TestClient) -> None:
     """Serving live state for known papers must not turn an unknown id into a 200."""
     assert client.get("/api/papers/nope").status_code == 404

@@ -308,6 +308,16 @@ _JOB_STAGES: tuple[tuple[str, str], ...] = (
     ("mark", "Questions marked"),
 )
 
+#: The row's ``stage`` while its extraction waits for this process's one
+#: marking-run slot (:func:`~lemely.io.run_cap.marking_run_slot`, #260, #271):
+#: a student's run, or another job, holds the scan's pages. Not a phase of its
+#: own: :func:`_live_pipeline_steps` shows it as the extract step, still
+#: active, with :data:`_QUEUED_COUNT` where its counter would be.
+_QUEUED_STAGE = "queued"
+
+#: What the extract step says, in its counter's place, while the run waits.
+_QUEUED_COUNT = "Waiting for another paper"
+
 # One worker so Queued means queued — a paper genuinely waiting behind another
 # on this instance (DS13). Raising it is a one-line change now that per-run
 # event scoping (spec §4.5) is in place: `_run_grading_job` sets
@@ -444,6 +454,15 @@ def _track_progress(
     worker (DS13), on two — each get their own scoped queue and so cannot mix
     counters, whatever payload shape either publisher emits.
 
+    ``EXTRACTION_QUEUED`` (the run waits for the process's one marking-run
+    slot, :mod:`lemely.io.run_cap`) moves the row to :data:`_QUEUED_STAGE`.
+    The slot is taken inside extraction and nothing announces it, so the row
+    leaves that stage on the next event the run publishes, whatever its type:
+    a waiting run publishes nothing, so any later event of this run's means
+    it holds the slot. That is the extraction's first Gemini call, or the
+    scan-quality warning before it, so the row says "waiting" for the render
+    as well (up to the extraction worker's timeout, 33 s at worst measured).
+
     Shutdown is the caller's ``stop`` flag, deliberately **not** the queue's
     ``None`` sentinel. Scoping means a foreign run's ``publish_done()`` no
     longer reaches this queue in practice — but this loop still does not lean
@@ -455,6 +474,7 @@ def _track_progress(
 
     Runs on its own daemon thread for the lifetime of one job.
     """
+    queued = False
     while not stop.is_set():
         try:
             event = q.get(timeout=_TRACKER_POLL_SECONDS)
@@ -462,12 +482,20 @@ def _track_progress(
             continue
         if event is None:
             continue
+        if event.type is EventType.EXTRACTION_QUEUED:
+            repo.set_stage(paper_id, _QUEUED_STAGE)
+            queued = True
+            continue
         if event.type is EventType.EXTRACTION_PROGRESS:
             repo.set_stage(paper_id, "extract")
         elif event.type is EventType.MARKING_PROGRESS:
             repo.set_stage(paper_id, "mark")
         else:
+            if queued:
+                repo.set_stage(paper_id, "extract")
+            queued = False
             continue
+        queued = False
         index = event.payload.get("index")
         total = event.payload.get("total")
         if isinstance(index, int) and isinstance(total, int) and total > 0:
@@ -755,9 +783,14 @@ def _live_pipeline_steps(row: TeacherPaperRow) -> list[PipelineStepDTO]:
     running) or a ``failed``/stale one — such a row freezes on the stage it
     stopped at, so the panel shows how far the run actually got instead of
     resetting to zero or claiming to still be working.
+
+    A run waiting for the marking-run slot (:data:`_QUEUED_STAGE`) is at the
+    extract step, which says :data:`_QUEUED_COUNT` in its counter's place.
     """
     order = [stage for stage, _label in _JOB_STAGES]
-    current = order.index(row.stage) if row.stage in order else 0
+    waiting = row.stage == _QUEUED_STAGE
+    stage = "extract" if waiting else row.stage
+    current = order.index(stage) if stage in order else 0
     running = row.status is UploadStatus.processing and not row.stale
     steps = [
         # The bytes are in object storage before the job is even submitted, so
@@ -772,7 +805,9 @@ def _live_pipeline_steps(row: TeacherPaperRow) -> list[PipelineStepDTO]:
         else:
             state = "idle"
         count = ""
-        if index == current and row.progress is not None:
+        if index == current and waiting:
+            count = _QUEUED_COUNT
+        elif index == current and row.progress is not None:
             count = f"{row.progress[0]} / {row.progress[1]}"
         steps.append(PipelineStepDTO(label=label, count=count, state=state))
     return steps
