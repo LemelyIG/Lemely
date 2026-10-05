@@ -15,16 +15,19 @@ import { SCAN_ACCEPT, SCHEME_ACCEPT } from "@/lib/scanAccept"
  * `image/*`.
  *
  * The mark scheme is narrower again: the server parses it as a PDF only
- * (`DeterministicMarkSchemeParser`), so the two scheme pickers take
- * `SCHEME_ACCEPT` and every other picker takes `SCAN_ACCEPT`.
+ * (`DeterministicMarkSchemeParser`), so the three scheme pickers take
+ * `SCHEME_ACCEPT` and every other picker takes `SCAN_ACCEPT`. The mark-scheme
+ * library's picker is among them (final review R1, minor 8), so a drift there
+ * is caught too.
  */
 
 const screens = [
   ["src", "portals", "student", "screens", "CorrectPaper.tsx"],
   ["src", "portals", "teacher", "screens", "Grading.tsx"],
+  ["src", "portals", "teacher", "screens", "MarkSchemes.tsx"],
 ] as const
 
-const schemeInputs = new Set(["scheme-file", "grading-scheme-file"])
+const schemeInputs = new Set(["scheme-file", "grading-scheme-file", "library-scheme-file"])
 
 const readScreen = (parts: readonly string[]) =>
   readFileSync(join(import.meta.dirname, "..", "..", ...parts), "utf8")
@@ -62,7 +65,7 @@ describe("upload pickers", () => {
     }
   })
 
-  it("covers both mark-scheme pickers", () => {
+  it("covers every mark-scheme picker", () => {
     const ids = screens.flatMap((parts) => pickers(readScreen(parts)).map((picker) => picker.id))
     for (const id of schemeInputs) expect(ids).toContain(id)
   })
