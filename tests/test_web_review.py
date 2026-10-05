@@ -3211,7 +3211,7 @@ def test_crop_route_bounds_the_page_count_at_max_crop_pages(
     assert resp.status_code == status, resp.text
     if status == 422:
         get_pixmap.assert_not_called()
-        assert f"limit for a review crop is {MAX_CROP_PAGES}" in resp.json()["detail"]
+        assert f"limit for a crop or a preview is {MAX_CROP_PAGES}" in resp.json()["detail"]
     else:
         assert resp.headers["content-type"] == "image/png"
 

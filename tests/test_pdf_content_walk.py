@@ -336,7 +336,7 @@ class PageScopedContentCheckTests(unittest.TestCase):
         ):
             check_pdf_page_content(doc, 0)
         page_tree.assert_not_called()
-        self.assertIn(f"limit for a review crop is {MAX_CROP_PAGES}", str(caught.exception))
+        self.assertIn(f"limit for a crop or a preview is {MAX_CROP_PAGES}", str(caught.exception))
 
     def test_an_understated_count_does_not_hide_pages_from_the_crop_bound(self) -> None:
         """``/Count 1`` over more real kids than the bound: pymupdf believes

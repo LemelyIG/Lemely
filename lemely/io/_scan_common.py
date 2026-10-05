@@ -196,9 +196,10 @@ _WALK_FAILED_MESSAGE = (
 _SCAN_PAGES_MESSAGE = (
     f"The scan has more than {MAX_SCAN_PAGES} pages; the limit is {MAX_SCAN_PAGES}."
 )
-#: The crop and preview routes' page bound (:data:`MAX_CROP_PAGES`) bit.
+#: The crop and preview routes' page bound (:data:`MAX_CROP_PAGES`) bit; the
+#: one text serves both, so it names both.
 _CROP_PAGES_MESSAGE = (
-    f"The scan has more than {MAX_CROP_PAGES} pages; the limit for a review crop "
+    f"The scan has more than {MAX_CROP_PAGES} pages; the limit for a crop or a preview "
     f"is {MAX_CROP_PAGES}."
 )
 #: The page-tree descent (:func:`_page_tree`) ran past its work bound
