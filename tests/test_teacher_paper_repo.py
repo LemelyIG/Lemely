@@ -461,3 +461,39 @@ def test_no_orm_relationship_between_teacher_paper_and_user(
         assert paper.uploaded_by == owner
         assert not hasattr(TeacherPaper, "uploader")
         assert not hasattr(TeacherPaper, "student")
+
+
+def test_a_report_stored_before_the_ai_detection_removal_still_lists(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Triage F1: one pre-PR row must not 500 the whole teacher paper list.
+
+    The injected ``report_json`` is ``_LEGACY_REPORT`` itself -- the
+    develop-exact shape asserted against directly in
+    ``test_schemas_corrected_question.py`` -- not ``repo.finish``'s current
+    shape with the key bolted on, so this proves the fix against the row
+    shape develop's code actually wrote, not an approximation of it.
+    """
+    import copy
+
+    from tests.test_schemas_corrected_question import _LEGACY_REPORT
+
+    repo = _repo(pg_sessionmaker)
+    owner = _user(pg_sessionmaker, Role.teacher)
+    pid = _paper(repo, owner)
+    repo.claim_run(pid)
+    repo.finish(pid, _report())
+
+    with pg_sessionmaker.begin() as s:
+        s.execute(
+            sa.update(TeacherPaper)
+            .where(TeacherPaper.id == pid)
+            .values(report_json=copy.deepcopy(_LEGACY_REPORT))
+        )
+
+    rows = repo.list_visible(viewer_id=owner, viewer_role=Role.teacher)
+    assert [r.id for r in rows] == [pid]
+    assert rows[0].report is not None and rows[0].report.correction.awarded_marks == 1
+    row = repo.get_visible(pid, viewer_id=owner, viewer_role=Role.teacher)
+    assert row is not None and row.report is not None
+    assert "ai_detection_flagged" not in row.report.correction.questions[0].model_dump()

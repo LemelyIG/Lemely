@@ -18,6 +18,7 @@ Three layers, per the chunk brief:
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import uuid
@@ -282,6 +283,21 @@ def _mock_marker_response(awarded: int, confidence: float, feedback: str = "ok")
 
 
 def _gemini_client(tmp_path: Path, responses: list[MagicMock]) -> GeminiClient:
+    client, _mock_genai = _gemini_client_and_mock(tmp_path, responses)
+    return client
+
+
+def _gemini_client_and_mock(
+    tmp_path: Path, responses: list[MagicMock]
+) -> tuple[GeminiClient, MagicMock]:
+    """Like :func:`_gemini_client`, but also hands back the raw SDK mock.
+
+    F1 (Gemini 3.x migration): the default correction model reads
+    ``escalation_confidence_threshold``/``thinking_level_for`` and can issue
+    more than one call per question (the Step-1 thinking retry, reachable
+    since F1's MUST-FIX 2), so a test asserting on exactly how many calls
+    were made — and in what order — needs the mock, not just the client.
+    """
     mock_genai = MagicMock()
     mock_genai.models.generate_content.side_effect = responses
     mock_genai.files.upload.return_value = MagicMock()
@@ -291,7 +307,7 @@ def _gemini_client(tmp_path: Path, responses: list[MagicMock]) -> GeminiClient:
             "paths": PathsSettings(cache_dir=tmp_path / ".cache", output_dir=tmp_path / "outputs")
         }
     )
-    return GeminiClient(settings, _genai_client=mock_genai)
+    return GeminiClient(settings, _genai_client=mock_genai), mock_genai
 
 
 def _never_called_gemini_client(tmp_path: Path) -> GeminiClient:
@@ -651,6 +667,89 @@ def test_mark_submission_unknown_id_is_not_found(
         service.mark_submission(uuid.uuid4())
 
 
+def test_marking_passes_configured_marking_options(
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+    taking_service: QuizTakingService,
+    attempt_repo: AttemptRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The configured ``MarkingOptions`` reach ``correct_paper`` verbatim."""
+    from lemely.db import quiz_marking_repo
+    from lemely.runtime.config import MarkingOptions
+
+    teacher, class_id, assignment_id = _assigned_quiz(
+        quiz_service, class_service, pg_sessionmaker, mcq=True
+    )
+    student = _enroll(pg_sessionmaker, class_id)
+    submission_id = _submit_with_answer(taking_service, student, assignment_id, answer_text="B")
+
+    service = QuizMarkingService(
+        pg_sessionmaker,
+        attempt_repo,
+        _never_called_gemini_client(tmp_path),
+        marking_options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
+    )
+
+    seen: dict[str, object] = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _spy(**kwargs: object) -> None:
+        seen.update(kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(quiz_marking_repo, "correct_paper", _spy)
+
+    with contextlib.suppress(Exception):
+        service.mark_submission(submission_id)
+
+    assert seen["options"] == MarkingOptions(equivalence_gate=True, ecf_substitution=True)
+
+
+def test_marking_defaults_marking_options_off(
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+    taking_service: QuizTakingService,
+    attempt_repo: AttemptRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When no ``marking_options`` is supplied, ``correct_paper`` gets both flags off."""
+    from lemely.db import quiz_marking_repo
+    from lemely.runtime.config import MarkingOptions
+
+    teacher, class_id, assignment_id = _assigned_quiz(
+        quiz_service, class_service, pg_sessionmaker, mcq=True
+    )
+    student = _enroll(pg_sessionmaker, class_id)
+    submission_id = _submit_with_answer(taking_service, student, assignment_id, answer_text="B")
+
+    service = QuizMarkingService(
+        pg_sessionmaker, attempt_repo, _never_called_gemini_client(tmp_path)
+    )
+
+    seen: dict[str, object] = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _spy(**kwargs: object) -> None:
+        seen.update(kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(quiz_marking_repo, "correct_paper", _spy)
+
+    with contextlib.suppress(Exception):
+        service.mark_submission(submission_id)
+
+    assert seen["options"] == MarkingOptions()
+
+
 def test_mark_submission_records_marking_error_and_leaves_status_submitted(
     pg_sessionmaker: sessionmaker[Session],
     quiz_service: QuizService,
@@ -712,9 +811,38 @@ def test_mark_submission_low_confidence_non_mcq_queues_review(
         taking_service, student, assignment_id, answer_text="A partial answer"
     )
 
-    gemini = _gemini_client(tmp_path, [_mock_marker_response(awarded=1, confidence=0.5)])
+    # F1 (Gemini 3.x migration, MUST-FIX 2): with the shipped defaults, a
+    # first-call confidence of 0.5 is below escalation_confidence_threshold
+    # (0.80), so AICorrector.mark_question's Step-1 thinking retry fires — a
+    # SECOND call, on the same model at a higher thinking_level. A stub with
+    # only one response starves that second call, `correct_paper` swallows
+    # the resulting error as `ai_marking_failed`, and this test would
+    # silently become vacuous (falling back to `_build_missing_corrected`,
+    # awarded_marks=0) exactly as its own comment below warns about — this
+    # was caught failing loudly instead, which is what that comment is for.
+    # The second response's confidence (0.85) sits ABOVE the escalation
+    # threshold (0.80) but still below REVIEW_CONFIDENCE_THRESHOLD (0.90), so
+    # Step 2 (Pro/stronger-model escalation) does NOT fire — exactly two
+    # calls, and the mark still needs teacher review.
+    gemini, mock_genai = _gemini_client_and_mock(
+        tmp_path,
+        [
+            _mock_marker_response(awarded=1, confidence=0.5),
+            _mock_marker_response(awarded=1, confidence=0.85),
+        ],
+    )
     service = QuizMarkingService(pg_sessionmaker, attempt_repo, gemini)
     result = service.mark_submission(submission_id)
+
+    # Pin the call sequence explicitly (not just the count) so the next
+    # change to the escalation gates fails here, visibly, rather than
+    # silently under- or over-supplying stub responses in some other test.
+    calls = mock_genai.models.generate_content.call_args_list
+    assert len(calls) == 2, (
+        f"expected exactly 2 calls (correction + the Step-1 thinking retry), got {len(calls)}"
+    )
+    assert calls[0].kwargs["model"] == "gemini-3.8-flash"
+    assert calls[1].kwargs["model"] == "gemini-3.8-flash"
 
     assert result.status == QuizSubmissionStatus.marked
     assert result.attempt_id is not None

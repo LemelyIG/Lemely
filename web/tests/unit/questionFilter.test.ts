@@ -60,6 +60,24 @@ describe("isFlagged", () => {
     expect(isFlagged(q({ confidence: 0.5 }))).toBe(false)
   })
 
+  it("US-039 MUST-FIX 2: false on an unflagged blank (reviewReason set, needsTeacherReview false)", () => {
+    // `_build_blank_corrected`'s shape: a `reviewReason` message the DB
+    // needs to distinguish a genuine blank, but `needsTeacherReview: false`
+    // -- the product owner's "unflagged zero" ruling. Before this fix,
+    // `isFlagged` read `reviewReason != null` ALONE, so this question was
+    // flagged despite the backend explicitly deciding it needs no review.
+    const blank = q({
+      reviewReason: "student left this question blank (0 awarded, no AI call made)",
+      needsTeacherReview: false,
+      confidence: 0,
+    })
+    expect(isFlagged(blank)).toBe(false)
+  })
+
+  it("US-039 MUST-FIX 2: `needsTeacherReview: undefined` preserves today's behaviour", () => {
+    expect(isFlagged(q({ reviewReason: "Handwriting unclear" }))).toBe(true)
+  })
+
   it("stale-flag defect (S2 review): false once pendingTeacher says the queue closed", () => {
     // Same question, `reviewReason` unchanged -- only `pendingTeacher` moves,
     // exactly as a settled self-mark leaves it. Without this, a question the
@@ -68,6 +86,47 @@ describe("isFlagged", () => {
     const settled = q({ reviewReason: "low confidence", pendingTeacher: false })
     expect(isFlagged(settled)).toBe(false)
     expect(isFlagged(q({ reviewReason: "low confidence", pendingTeacher: true }))).toBe(true)
+  })
+
+  it("merge intersection: a blank stays unflagged whether or not pendingTeacher is sent", () => {
+    // A US-039 blank reaches `isFlagged` in two shapes once both fixes exist:
+    // from the result screen (no `pendingTeacher` — nothing computed it) and
+    // from the self-review list (`pendingTeacher: false`, because a blank is
+    // exempt from the queue by design, so no row is ever open). Both must be
+    // false, by the two different routes documented on `isFlagged`.
+    const blankReason = "student left this question blank (0 awarded, no AI call made)"
+    expect(
+      isFlagged(q({ reviewReason: blankReason, needsTeacherReview: false, confidence: 0 })),
+    ).toBe(false)
+    expect(
+      isFlagged(
+        q({
+          reviewReason: blankReason,
+          needsTeacherReview: false,
+          confidence: 0,
+          pendingTeacher: false,
+        }),
+      ),
+    ).toBe(false)
+  })
+
+  it("merge intersection: pendingTeacher: true does not un-suppress an unflagged blank", () => {
+    // The inverse guard. `pendingTeacher` is develop's override for a STALE
+    // flag; it must not resurrect the blank exemption, which is about the
+    // marker never having looked. (Unreachable in practice — a blank opens no
+    // queue row — but the two fields are independent on the wire, and this is
+    // the row that says the suppression is not merely a side effect of the
+    // queue being empty.)
+    expect(
+      isFlagged(
+        q({
+          reviewReason: "student left this question blank (0 awarded, no AI call made)",
+          needsTeacherReview: false,
+          confidence: 0,
+          pendingTeacher: true,
+        }),
+      ),
+    ).toBe(false)
   })
 })
 

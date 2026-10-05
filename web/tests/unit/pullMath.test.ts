@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { pullStartAllowed, pullState, usesOwnScrollTop } from "@/lib/gestures/pullMath"
+import { pullStartAllowed, pullStartDecision, pullState, usesOwnScrollTop } from "@/lib/gestures/pullMath"
 
 /*
  * Task 5 (B4a) · the pure decision `usePullToRefresh` reduces a vertical
@@ -67,6 +67,36 @@ describe("pullStartAllowed", () => {
       const onEdge = x <= 24 || x >= width - 24
       expect(pullStartAllowed(x, width, 24)).toBe(!onEdge)
     }
+  })
+})
+
+/*
+ * Issue #246/#247 · `pullStartDecision` is the full `startFilter` rule as a
+ * pure function, so this fix is pinned by what it computes rather than only
+ * by which strings appear in `usePullToRefresh.ts`'s source
+ * (`gestureWiring.test.ts`/`gestureSafety.test.ts` still pin that the wiring
+ * calls it, but a reverted decision — the interactive check silently
+ * dropped, say — fails here without a browser).
+ */
+describe("pullStartDecision", () => {
+  const base = { atTop: true, clientX: 195, viewportWidth: 390, edgeZonePx: 24 }
+
+  it("refuses to arm on an interactive target, even at the scroll top and away from the edges", () => {
+    expect(pullStartDecision({ ...base, interactive: true })).toBe(false)
+  })
+
+  it("arms on a non-interactive target at the scroll top, away from the edges", () => {
+    expect(pullStartDecision({ ...base, interactive: false })).toBe(true)
+  })
+
+  it("refuses when not at the scroll top, interactive or not", () => {
+    expect(pullStartDecision({ ...base, interactive: false, atTop: false })).toBe(false)
+    expect(pullStartDecision({ ...base, interactive: true, atTop: false })).toBe(false)
+  })
+
+  it("refuses inside either edge strip even for a non-interactive target at the scroll top", () => {
+    expect(pullStartDecision({ ...base, interactive: false, clientX: 0 })).toBe(false)
+    expect(pullStartDecision({ ...base, interactive: false, clientX: 390 })).toBe(false)
   })
 })
 

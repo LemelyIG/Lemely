@@ -47,7 +47,7 @@ export interface FileDropProps {
   label: string
   /** Short qualifier beside the label, e.g. "required" or "optional". */
   labelNote?: string
-  /** `accept` for the underlying input, e.g. "application/pdf,image/*". */
+  /** `accept` for the underlying input, e.g. `SCAN_ACCEPT` from `@/lib/scanAccept`. */
   accept?: string
   /** The currently chosen file, or null. This component is controlled. */
   file: File | null

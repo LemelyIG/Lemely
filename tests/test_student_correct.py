@@ -475,6 +475,89 @@ def test_correct_does_not_pass_the_upload_id_as_paper_id(
     assert "paper_id" not in persist.call_args.kwargs
 
 
+def test_upload_flow_passes_marking_options_from_settings(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both flags must reach ``grade_paper`` through the student upload/correct flow.
+
+    Mirrors ``test_correct_passes_the_resolved_mark_scheme_to_persist_correction``'s
+    arrangement (upload -> correct, assert on a patched call's kwargs), on
+    ``student.grade_paper`` instead, with the settings' marking flags on.
+
+    Deliberately does NOT follow the env-var + ``deps.reset_singletons()``
+    recipe: the ``client`` fixture overrides FastAPI's ``get_settings``
+    dependency directly with a fixed ``settings`` object (see the ``client``
+    fixture above), never the real ``lru_cache``d
+    ``lemely.web.deps.get_settings()`` -- so an env var and a singleton-cache
+    reset have no path to this route's ``settings``. The override is
+    swapped for one carrying the flags instead, the same way this file's
+    ``client`` fixture itself installs its overrides.
+    """
+    from lemely.runtime.config import MarkingOptions
+
+    api, _, _ = client
+    seen: dict[str, object] = {}
+    report = AccuracyReport(
+        correction=CorrectionResult(
+            metadata=ExamMetadata(
+                subject_code="0580",
+                session_month="May/June",
+                session_year=2024,
+                paper_number=2,
+                paper_variant=1,
+            ),
+            questions=[
+                CorrectedQuestion(
+                    question_id="1",
+                    awarded_marks=1,
+                    maximum_marks=1,
+                    confidence=ConfidenceBand.HIGH,
+                    confidence_score=0.99,
+                    needs_teacher_review=False,
+                    marker_source="deterministic",
+                )
+            ],
+        ),
+        weaknesses=WeaknessReport(weak_areas=[]),
+        grade_prediction=GradePrediction(
+            awarded_marks=1,
+            maximum_marks=1,
+            percentage=100.0,
+            grade="A",
+            confidence=ConfidenceBand.HIGH,
+        ),
+    )
+
+    def _grade(*_a: object, **kwargs: object) -> AccuracyReport:
+        seen["options"] = kwargs.get("options")
+        return report
+
+    monkeypatch.setattr(student, "grade_paper", _grade)
+
+    settings = cast("FastAPI", api.app).dependency_overrides[get_settings]()
+    marking_settings = settings.model_copy(
+        update={
+            "grading": settings.grading.model_copy(
+                update={"equivalence_gate": True, "ecf_substitution": True}
+            )
+        }
+    )
+    cast("FastAPI", api.app).dependency_overrides[get_settings] = lambda: marking_settings
+
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    assert up.status_code == 200, up.text
+    paper_id = up.json()["paperId"]
+
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert resp.status_code == 200
+
+    assert seen["options"] == MarkingOptions(equivalence_gate=True, ecf_substitution=True)
+
+
 def test_correct_complete_frame_includes_full_questions(
     client: tuple[TestClient, str, StudentUploadRepository],
 ) -> None:
@@ -538,7 +621,6 @@ def test_correct_complete_frame_never_shows_a_student_an_integrity_finding(
         marker_source="deterministic",
         review_reason="plagiarism (score 0.94) | low confidence | ai_detection (score 0.88)",
         plagiarism_flagged=True,
-        ai_detection_flagged=True,
     )
     report = AccuracyReport(
         correction=CorrectionResult(
@@ -578,9 +660,14 @@ def test_correct_complete_frame_never_shows_a_student_an_integrity_finding(
     [question] = complete_frame["questions"]
     assert question["reviewReason"] == "low confidence"
     assert question["plagiarismFlagged"] is False
-    assert question["aiDetectionFlagged"] is False
-    # Values only -- the field *names* carry "plagiarism"/"aiDetection", so a
-    # whole-frame substring check would pass on the keys alone.
+    # The pre-F4 "ai_detection (score 0.88)" segment in the input above is
+    # deliberate: F4 deleted the detector and the `aiDetectionFlagged` field,
+    # but `0037_remove_ai_detection` does not rewrite
+    # `teacher_papers.report_json`, so that text can still arrive on a
+    # console-graded paper snapshot and `_INTEGRITY_REASON_PREFIXES` still has
+    # to strip it. The last assertion below is what pins that.
+    # Values only -- the field *name* carries "plagiarism", so a whole-frame
+    # substring check would pass on the key alone.
     values = json.dumps([v for v in question.values() if isinstance(v, str)])
     assert "plagiarism" not in values
     assert "ai_detection" not in values
@@ -671,6 +758,61 @@ def test_upload_over_size_cap_is_413(
         files={"scan": ("scan.pdf", b"way too many bytes here", "application/pdf")},
     )
     assert resp.status_code == 413
+
+
+def test_upload_rejects_an_oversized_page_geometry_with_422(
+    client: tuple[TestClient, str, StudentUploadRepository],
+) -> None:
+    import io
+
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument.new()
+    pdf.new_page(14400, 14400)
+    buf = io.BytesIO()
+    pdf.save(buf)
+    pdf.close()
+    api, _, _ = client
+    resp = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", buf.getvalue(), "application/pdf")},
+    )
+    assert resp.status_code == 422
+    assert "too large to process" in resp.json()["detail"]
+
+
+def test_upload_rejects_a_content_stream_bomb_with_422(
+    client: tuple[TestClient, str, StudentUploadRepository],
+) -> None:
+    from tests.pdf_fakes import page_bomb_pdf
+
+    api, _, _ = client
+    resp = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", page_bomb_pdf(112_000_000), "application/pdf")},
+    )
+    assert resp.status_code == 422
+    assert "drawing" in resp.json()["detail"]
+
+
+def test_upload_with_a_malformed_page_tree_still_succeeds(
+    client: tuple[TestClient, str, StudentUploadRepository],
+) -> None:
+    """Regression: a PDF that opens but has a page that will not load (a
+    broken ``/Kids`` entry) used to crash this route with a 500 (see
+    ``tests/test_web_teacher.py``'s route-level counterpart and
+    ``tests/test_scan_limits.py``'s unit-level coverage). It must upload
+    exactly like any other scan this module cannot fully make sense of --
+    extraction handles it later, same as before this task existed."""
+    from tests.pdf_fakes import pdf_with_missing_kid_object
+
+    api, _, _ = client
+    resp = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", pdf_with_missing_kid_object(), "application/pdf")},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["paperId"]
 
 
 def test_correct_marks_upload_complete(

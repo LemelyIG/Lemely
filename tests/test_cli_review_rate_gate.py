@@ -48,6 +48,7 @@ def _fake_result(
     n_total: int = 10,
     mark_accuracy: float = 1.0,
     split: str = "dev",
+    reread_skipped: int = 0,
 ) -> AccuracyResult:
     """An ``AccuracyResult`` with a controllable review rate (``n_reviewed``
     of ``n_total`` records carry a non-empty ``triggers`` list), a
@@ -92,6 +93,7 @@ def _fake_result(
             matched=len(records),
             marked=len(records),
         ),
+        reread_skipped_by_budget=reread_skipped,
     )
 
 
@@ -102,10 +104,17 @@ def _run_cli(
     n_reviewed: int,
     mark_accuracy: float = 1.0,
     split: str = "dev",
+    reread_skipped: int = 0,
+    extra_args: tuple[str, ...] = (),
 ) -> object:
     from lemely.app.cli import cli
 
-    breaching_result = _fake_result(n_reviewed=n_reviewed, mark_accuracy=mark_accuracy, split=split)
+    breaching_result = _fake_result(
+        n_reviewed=n_reviewed,
+        mark_accuracy=mark_accuracy,
+        split=split,
+        reread_skipped=reread_skipped,
+    )
 
     runner = CliRunner()
     with (
@@ -121,7 +130,14 @@ def _run_cli(
         }
         return runner.invoke(
             cli,
-            ["measure-accuracy", "--golden", "tests/golden", "--results-dir", str(tmp_path)],
+            [
+                "measure-accuracy",
+                "--golden",
+                "tests/golden",
+                "--results-dir",
+                str(tmp_path),
+                *extra_args,
+            ],
             env=env,
         )
 
@@ -197,3 +213,29 @@ class TestMeasureAccuracyRefusesNonDevSplit:
         assert "train" in result.output
         # And it must fail BEFORE computing/printing a review rate line.
         assert "Review rate" not in result.output
+
+
+class TestSkippedRereadsFlag:
+    """#263: a run that skipped re-reads is reported, and fails only on request."""
+
+    def test_skipped_rereads_are_reported_but_do_not_fail_by_default(self, tmp_path) -> None:
+        result = _run_cli(tmp_path, armed=False, n_reviewed=0, reread_skipped=3)
+        assert result.exit_code == 0, result.output
+        assert "WARNING: 3 re-read(s) were skipped" in result.output
+
+    def test_fail_on_skipped_rereads_exits_nonzero_naming_the_count(self, tmp_path) -> None:
+        result = _run_cli(
+            tmp_path,
+            armed=False,
+            n_reviewed=0,
+            reread_skipped=3,
+            extra_args=("--fail-on-skipped-rereads",),
+        )
+        assert result.exit_code != 0
+        assert "reread_skipped_by_budget 3 > 0" in result.output
+
+    def test_fail_on_skipped_rereads_is_quiet_when_none_were_skipped(self, tmp_path) -> None:
+        result = _run_cli(
+            tmp_path, armed=False, n_reviewed=0, extra_args=("--fail-on-skipped-rereads",)
+        )
+        assert result.exit_code == 0, result.output

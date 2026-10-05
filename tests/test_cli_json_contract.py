@@ -73,7 +73,48 @@ class JsonContractTests(unittest.TestCase):
                 ],
             )
         self.assertEqual(result.exit_code, 0, msg=result.output)
-        AccuracyReport.model_validate(json.loads(result.output))
+        # `.stdout`, not `.output`: `correct-paper` now also logs one
+        # `marking_flags` line (Task 2's `log_marking_flags` call) to stderr
+        # on every invocation, and Click 8.2+'s `.output` is stdout+stderr
+        # mixed in write order -- reading that here would prepend the log
+        # line's JSON to the command's own JSON payload.
+        AccuracyReport.model_validate(json.loads(result.stdout))
+
+    def test_correct_paper_passes_marking_options_from_settings(self) -> None:
+        import os
+        from unittest import mock
+
+        from lemely.io import correction_ai
+        from lemely.runtime.config import MarkingOptions
+
+        seen: dict[str, object] = {}
+
+        class _Stop(Exception):
+            pass
+
+        def _spy(**kwargs: object) -> None:
+            seen.update(kwargs)
+            raise _Stop
+
+        with TemporaryDirectory() as tmp:
+            ms = Path(tmp) / "ms.json"
+            ms.write_text(_real_ms_text(), "utf-8")
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "LEMELY_GRADING__EQUIVALENCE_GATE": "true",
+                        "LEMELY_GRADING__ECF_SUBSTITUTION": "true",
+                    },
+                ),
+                mock.patch.object(correction_ai, "correct_paper", _spy),
+            ):
+                self.runner.invoke(
+                    cli, ["correct-paper", "--mark-scheme", str(ms), "--answers", "1 A"]
+                )
+        self.assertEqual(
+            seen.get("options"), MarkingOptions(equivalence_gate=True, ecf_substitution=True)
+        )
 
     def test_predict_grade_and_detect_weaknesses_json_validate(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -84,7 +125,9 @@ class JsonContractTests(unittest.TestCase):
                 ["--json", "correct-paper", "--mark-scheme", str(ms), "--answers", "1 A"],
             )
             self.assertEqual(r1.exit_code, 0, msg=r1.output)
-            ar = json.loads(r1.output)
+            # `.stdout`, not `.output` -- see the comment in
+            # `test_correct_paper_json_validates_accuracy_report` above.
+            ar = json.loads(r1.stdout)
             corr = Path(tmp) / "correction.json"
             corr.write_text(json.dumps(ar["correction"]), "utf-8")
 
@@ -105,7 +148,9 @@ class JsonContractTests(unittest.TestCase):
                 ["--json", "correct-paper", "--mark-scheme", str(ms), "--answers", "1 A"],
             )
             corr = Path(tmp) / "correction.json"
-            corr.write_text(json.dumps(json.loads(r1.output)["correction"]), "utf-8")
+            # `.stdout`, not `.output` -- see the comment in
+            # `test_correct_paper_json_validates_accuracy_report` above.
+            corr.write_text(json.dumps(json.loads(r1.stdout)["correction"]), "utf-8")
             r2 = self.runner.invoke(cli, ["--json", "detect-weaknesses", str(corr)])
             weak = Path(tmp) / "weak.json"
             weak.write_text(r2.output, "utf-8")

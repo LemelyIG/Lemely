@@ -36,6 +36,32 @@ class EventType(StrEnum):
     GEMINI_RETRY = "gemini_retry"
     GEMINI_ESCALATE = "gemini_escalate"
     EXTRACTION_PROGRESS = "extraction_progress"
+    SCAN_QUALITY_WARNING = "scan_quality_warning"
+    SOURCE_BOX_DROPPED = "source_box_dropped"
+    # US-031 review MUST-FIX 7: a whole answer dropped (unrecoverable
+    # question_id/answer/list-element shape), a confidence value repaired
+    # (missing/non-finite/out-of-range/malformed), or a cosmetic field
+    # repaired (NIT A: non-string source_region/working_out), published the
+    # same way SOURCE_BOX_DROPPED already is -- without this, ExtractedAnswers's
+    # answer_drops/confidence_repairs/field_repairs fields had no consumer
+    # and a dropped answer's loss was not actually visible anywhere, despite
+    # an in-code comment claiming it was.
+    ANSWER_DROPPED = "answer_dropped"
+    # NIT-B: two `ExtractedAnswer`s sharing one `question_id` survive
+    # validation (each is individually well-formed), so nothing upstream of
+    # `_flatten_answers` catches this -- the plain dict comprehension it used
+    # to be silently kept only the last one. Published the same way
+    # ANSWER_DROPPED is, so the loss is observable instead of an artifact of
+    # dict construction.
+    DUPLICATE_QUESTION_ID = "duplicate_question_id"
+    REREAD_FAILED = "reread_failed"
+    # Spec 2026-09-26 §8 (#3): the optional I3 second read failed; extraction
+    # continued on the primary answers with extraction_agreement unset.
+    SECOND_READ_FAILED = "second_read_failed"
+    REREAD_CAP_REACHED = "reread_cap_reached"
+    # Spec 2026-09-26 §5: the re-read stage's wall-clock budget ran out;
+    # `started` re-reads were issued, `skipped` answers kept their first read.
+    REREAD_BUDGET_EXHAUSTED = "reread_budget_exhausted"
     MARKING_PROGRESS = "marking_progress"
     MARK_SCHEME_PROGRESS = "mark_scheme_progress"
     BUDGET_WARNING = "budget_warning"

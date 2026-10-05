@@ -179,6 +179,15 @@ function AnnouncementCard({
           {announcement.body}
         </p>
 
+        {/* Issue #246/#247: this button row used to be swallowed by the
+            screen's pull-to-refresh surface — a plain tap here armed
+            `usePullToRefresh`'s gesture and its `setPointerCapture` retargeted
+            the tap's `click` away from the button entirely, so neither "Show
+            more" nor "Mark as read" ever fired. Fixed at the source in
+            `usePullToRefresh`'s own `startFilter` (it now exempts every
+            interactive control, not just this card), so this row needs no
+            special handling of its own any more — see that hook's comment for
+            the fix and the trade-off it carries. */}
         <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="ghost"

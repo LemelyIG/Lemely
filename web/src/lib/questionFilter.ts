@@ -29,6 +29,13 @@ export function markState(q: QuestionResult): MarkState {
  * "needs-review"), but `reviewReason` is checked explicitly rather than
  * relying on that as an implementation detail of the tier function.
  *
+ * US-039 MUST-FIX 2 (independent review, blocking 674f309d): the direct
+ * `reviewReason` check is gated by `needsTeacherReview !== false`, mirroring
+ * `confidenceTierFor`'s gate — see `ConfidenceInput.needsTeacherReview` in
+ * `lib/markingConfidence.ts` for why a set `reviewReason` does not always
+ * mean "needs review" (`_build_blank_corrected`'s unflagged blank).
+ * `undefined` preserves today's behaviour for every existing caller.
+ *
  * `pendingTeacher === false` overrides both: it says no teacher review is
  * open for this question right now, so a `reviewReason` frozen from marking
  * time must not keep it in the Flagged tab (or its count) after a self-mark
@@ -36,10 +43,20 @@ export function markState(q: QuestionResult): MarkState {
  * `confidenceTierFor` applies, checked explicitly here for the same reason
  * `reviewReason` is: this function must not depend on it as an
  * implementation detail of the tier function.
+ *
+ * Unlike `confidenceTierFor`, the two guards do not compete for first place
+ * here: a US-039 blank answers `false` through either route — `pendingTeacher`
+ * is `false` for it (no row is open, by design) and, when the field is absent,
+ * `needsTeacherReview === false` suppresses the `reviewReason` disjunct while
+ * the tier comes back `"not-marked"`. The order below is the cheap check
+ * first, not a precedence decision.
  */
 export function isFlagged(q: QuestionResult): boolean {
   if (q.pendingTeacher === false) return false
-  return q.reviewReason != null || confidenceTierFor(q) === "needs-review"
+  return (
+    (q.reviewReason != null && q.needsTeacherReview !== false) ||
+    confidenceTierFor(q) === "needs-review"
+  )
 }
 
 export type QuestionFilter = "all" | "lost" | "flagged"

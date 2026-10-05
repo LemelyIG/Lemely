@@ -108,15 +108,13 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-#: :class:`~lemely.core.generation.GeneratedQuestion` carries no
-#: ``question_type`` field — the generator only ever produces open-ended,
-#: mark-scheme-based responses (never MCQ, diagram, graph, levels-based, or
-#: indicative-content). ``docs/quiz-model.md`` §2 says "GeneratedQuestion
-#: maps field-for-field [onto bank rows]", but the source schema has no
-#: field to map for this column: a gap in the design doc, not in this
-#: ingest. Every row :func:`import_generated_quiz_files` creates records
-#: this documented default; if ``GeneratedQuestion`` ever grows a real
-#: declared type, read it here instead of defaulting it.
+#: N3 (US-012) gave :class:`~lemely.core.generation.GeneratedQuestion` a real
+#: declared ``question_type`` field. This is the fallback for the narrow
+#: case the field itself cannot cover: a row constructed before that field
+#: existed, deserialised from an on-disk ``GeneratedQuiz`` JSON file that
+#: predates it — Pydantic fills such a missing field with its own default
+#: (``QuestionType.EXPLANATION``), so this constant only documents what that
+#: default means here rather than picking one itself.
 _GENERATED_QUESTION_TYPE: Final = QuestionType.EXPLANATION.value
 
 
@@ -730,7 +728,7 @@ def generated_questions_to_bank_rows(
     ``POST /quizzes/generate`` (chunk D, ``owner_id=`` the generating
     teacher — ``docs/quiz-model.md`` §2: "their generation, their pool")
     so the mapping, including :data:`_GENERATED_QUESTION_TYPE`'s documented
-    gap, is expressed exactly once rather than drifting between the two
+    fallback, is expressed exactly once rather than drifting between the two
     writers.
     """
     return [
@@ -739,7 +737,7 @@ def generated_questions_to_bank_rows(
             source=QuestionSource.generated,
             difficulty=question.difficulty,
             difficulty_source=DifficultySource.declared_by_generator,
-            question_type=_GENERATED_QUESTION_TYPE,
+            question_type=question.question_type.value,
             prompt=question.prompt,
             total_marks=question.total_marks,
             topic=question.topic,

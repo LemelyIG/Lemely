@@ -30,9 +30,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
-from lemely.core.schemas import StrictModel
+from lemely.core.schemas import _SUBJECT_CODE_RE, StrictModel
 
 FigureKind = Literal["image", "vector_drawing", "unmapped_symbol", "diagram_only_option"]
 
@@ -77,11 +77,11 @@ class QuestionPaperQuestion(StrictModel):
     ref: str = Field(..., description="Hierarchical question ref, e.g. '1', '2a', '1a_i'.")
     stem: str = Field(..., description="Extracted question text, verbatim from the PDF.")
     options: dict[str, str] | None = Field(
-        None,
+        default=None,
         description="MCQ only: option letter -> option text. None for theory questions.",
     )
     marks: int | None = Field(
-        None,
+        default=None,
         ge=0,
         description="Marks annotation parsed for this leaf ('[n]' in the source, or 1 "
         "for every MCQ leaf). None when no annotation could be found — such a leaf "
@@ -89,7 +89,7 @@ class QuestionPaperQuestion(StrictModel):
     )
     page_number: int = Field(..., ge=1, description="1-indexed page the question starts on.")
     has_figure: bool = Field(
-        False,
+        default=False,
         description="True when a detected image/vector-drawing region overlaps this "
         "question's bounding region — the stem text alone is not a faithful "
         "representation of the question. Such questions are excluded from the bank "
@@ -104,19 +104,27 @@ class QuestionPaperQuestion(StrictModel):
 class QuestionPaperMetadata(StrictModel):
     """Header metadata for a question paper — filename-derived, authoritative."""
 
-    subject_code: str = Field(..., pattern=r"^\d{4}$")
+    subject_code: str = Field(...)
     paper_number: int = Field(..., ge=1, le=9)
     paper_variant: int = Field(..., ge=1, le=9)
     session_month: Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]
-    session_year: int | None = Field(None, ge=2000, le=2100)
+    session_year: int | None = Field(default=None, ge=2000, le=2100)
     is_mcq: bool = Field(..., description="True for the MCQ paper shape, False for theory.")
     stated_total_marks: int | None = Field(
-        None,
+        default=None,
         description="'The total mark for this paper is N' parsed from the cover page, "
         "if present. Used for the reconciliation sanity check, never as a tolerance "
         "knob to hide a mismatch (BUILD/BLOCKERS.md B2).",
     )
     source_document: str | None = None
+
+    @field_validator("subject_code")
+    @classmethod
+    def validate_subject_code(cls, v: str) -> str:
+        # F1: moved off `Field(pattern=...)` — see lemely.core.schemas._SUBJECT_CODE_RE.
+        if not _SUBJECT_CODE_RE.fullmatch(v):
+            raise ValueError(f"subject_code must be a four-digit CAIE syllabus code, got {v!r}.")
+        return v
 
 
 class QuestionPaper(StrictModel):

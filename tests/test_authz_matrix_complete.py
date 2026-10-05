@@ -218,7 +218,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # bearer credential than the link's opaque token, so it is scoped to the
     # caller's own session rather than redeemable by anyone who has it.
     ("POST", "/api/auth/verify-email/code"): AUTH_ANY,
-    # ── STAFF (43) ────────────────────
+    # ── STAFF (44) ────────────────────
     ("GET", "/api/classes/{class_id}"): STAFF,
     ("GET", "/api/classes/{class_id}/analytics"): STAFF,
     # Console paper deletion (Task 17, R2). Row-level: only the uploader may
@@ -271,6 +271,15 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/teacher/review"): STAFF,
     ("POST", "/api/teacher/review/bulk-approve"): STAFF,
     ("GET", "/api/teacher/review/{item_id}"): STAFF,
+    # The staff triple is the router-level guard only. This route serves an
+    # image of a student's script, so the guard that matters is the row-level
+    # one inside `ReviewService.get_item_crop_source` — the review item's own
+    # roster-union visibility rule, under which `platform_admin` sees no
+    # classes and therefore no scan. Proven in
+    # `tests/test_web_review.py::test_crop_route_refuses_a_caller_who_cannot_see_the_student`,
+    # which this table's role sweep cannot reach (it never gets past
+    # `require_role`).
+    ("GET", "/api/teacher/review/{item_id}/crop"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,

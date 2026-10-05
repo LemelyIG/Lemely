@@ -139,6 +139,19 @@ const GROUP_ACCENT: Record<"ok" | "warn" | "info", string> = {
   info: "border-s-2 border-s-info",
 }
 
+/*
+ * Student-facing wording for I6's three verdicts. Deliberately NOT the teacher
+ * screen's labels ("Withheld, judged absent" / "Unverifiable, could not
+ * confirm"): that is institutional hedging to a student mid-revision, and this
+ * copy says the same thing while implying what to do differently. The two
+ * vocabularies are intended -- see the 2026-09-24 production-readiness spec.
+ */
+const STUDENT_VERDICT_LABEL: Record<"awarded" | "withheld" | "unverifiable", string> = {
+  awarded: "Marked correct",
+  withheld: "We did not see this step in your answer",
+  unverifiable: "The marker credited this, but we could not confirm your value",
+}
+
 function verdictValue(earned: boolean | undefined): string | undefined {
   if (earned === undefined) return undefined
   return earned ? "earned" : "missed"
@@ -383,6 +396,17 @@ function RevealedOutcome({ view }: { view: SelfReviewRevealed }) {
                         <span>Marker: {point.awarded ? "awarded" : "not awarded"}</span>
                         <span>You: {point.studentSelfmark ? "earned" : "not earned"}</span>
                       </div>
+                      {point.verdict ? (
+                        <Chip tone="neutral">{STUDENT_VERDICT_LABEL[point.verdict]}</Chip>
+                      ) : null}
+                      {point.ecfApplied ? (
+                        <Chip tone="info">Carried forward, so one earlier slip did not cost you twice</Chip>
+                      ) : null}
+                      {point.evidenceSpan ? (
+                        <p className="text-body-sm text-ink-muted m-0 whitespace-pre-wrap">
+                          "{point.evidenceSpan}"
+                        </p>
+                      ) : null}
                       {detail ? <p className="text-body-sm text-ink-muted">{detail}</p> : null}
                       {point.studentEvidence ? (
                         <p className="text-body-sm text-ink-faint">

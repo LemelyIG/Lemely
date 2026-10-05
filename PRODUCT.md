@@ -67,7 +67,8 @@ Three things a neighboring product could not truthfully copy:
 
 **Hard product rules:**
 - Leaderboards rank XP (effort), never grades. Grades are private to the student, their parents, and their teachers.
-- Plagiarism and AI-detection results are advisory teacher-review signals only. They never auto-penalize, and copy must present them as signals, not verdicts.
+- Plagiarism results are advisory teacher-review signals only, and never auto-penalize. AI-detection was removed outright (migration 0037): the product no longer makes that claim about a student at all. The standing advisory notice that carried the "signals, not verdicts" framing on the teacher review screen was also removed (2026-09-21); what enforces the rule now is behaviour, not copy — `apply_integrity_checks` never touches marks, and flagged items are excluded from bulk-approve.
+- Copy must not promise a teacher will check a mark "before it counts". It already counts: `QuestionResult.effective_marks` returns the AI's award whenever no teacher override exists, and `needs_teacher_review` is a routing boolean that withholds nothing.
 - Maximum 3 concurrent devices per account; a 4th login silently invalidates the oldest session.
 - 25MB upload cap.
 

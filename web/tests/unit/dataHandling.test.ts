@@ -204,6 +204,22 @@ describe("the page states facts, not promises — D6.8", () => {
   })
 })
 
+describe("the access it describes is the access the backend grants — #243", () => {
+  /*
+   * `teacher_paper_visible` (`lemely/db/teacher_paper_repo.py`) returns
+   * `sa.true()` for platform_admin and every school-member teacher's papers
+   * for school_admin; `ClassService` (`lemely/db/class_repo.py`) gives a
+   * school_admin every class in their schools. A page that named only
+   * class-scoped teachers was narrower than the code.
+   */
+  it("names the school administrator and the platform administrator", () => {
+    const section = dataHandlingSections.find((s) => s.heading === "Who else can see your work")
+    expect(section).toBeDefined()
+    expect(section!.body).toMatch(/school administrator/i)
+    expect(section!.body).toMatch(/platform administrator/i)
+  })
+})
+
 describe("the page cannot silently outlive the product it describes — D6.8", () => {
   /**
    * Every `@router.delete` path declared by the backend.

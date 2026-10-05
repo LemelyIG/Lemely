@@ -229,6 +229,27 @@ def test_migrations_have_a_single_head() -> None:
     )
 
 
+def test_0043_merge_heads_joins_the_develop_and_branch_chains() -> None:
+    """Triage F3 (2026-09-29): ``feat/ai-improvements`` consumed
+    ``0038_point_group_key`` with ``0039_merge_heads`` while develop grew
+    ``0039_paper_soft_delete`` on the same parent, so the merged tree had two
+    heads. ``0043_merge_heads`` is the pure no-op join (``0035`` precedent):
+    ``0039_paper_soft_delete`` only ADDs enum values, columns and a table, and
+    no branch migration touches ``reviewstatus``/``notificationtype``, so the
+    two chains are order-independent.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
+    revision = script_dir.get_revision("0043_merge_heads")
+    assert set(revision.down_revision) == {
+        "0042_question_result_source_box",
+        "0039_paper_soft_delete",
+    }
+    assert script_dir.get_heads() == ["0043_merge_heads"]
+
+
 def test_every_enum_column_binds_its_value_not_its_member_name() -> None:
     """Every ``sa.Enum`` column must send ``.value`` to Postgres, not ``.name``.
 

@@ -117,10 +117,17 @@ def _seed_question(
     sm: sessionmaker[Session],
     attempt_id: uuid.UUID,
     *,
-    plagiarism: bool = False,
-    ai_detection: bool = False,
     overridden_by: uuid.UUID | None = None,
 ) -> uuid.UUID:
+    """Seed a bare question result.
+
+    No ``plagiarism``/``ai_detection`` flags here: ``0040_marker_source_blank``
+    dropped ``question_results.plagiarism_flagged`` (F4 had already dropped its
+    ``ai_detection_flagged`` twin), so neither is a column on ``QuestionResult``
+    any more. An integrity finding is now a :class:`ReviewQueueItem` row
+    (``_seed_item`` with :attr:`ReviewReason.plagiarism_flag`) — see
+    ``deletion_repo._has_integrity_flag``.
+    """
     qr_id = uuid.uuid4()
     with sm.begin() as session:
         session.add(
@@ -133,8 +140,6 @@ def _seed_question(
                 confidence_band=ConfidenceBand.low,
                 confidence_score=0.4,
                 marker_source=MarkerSource.ai,
-                plagiarism_flagged=plagiarism,
-                ai_detection_flagged=ai_detection,
                 teacher_awarded_marks=3 if overridden_by else None,
                 overridden_by=overridden_by,
                 overridden_at=datetime.now(UTC) if overridden_by else None,
@@ -251,15 +256,28 @@ def open_item(sessionmaker_: sessionmaker[Session], attempt: Seeded) -> uuid.UUI
 
 @pytest.fixture
 def flagged_attempt(sessionmaker_: sessionmaker[Session], owner: str) -> Seeded:
-    """Recorded now, with a plagiarism flag on one question: inside the D8 hold."""
+    """Recorded now, with an open plagiarism-flag review item: inside the D8 hold.
+
+    The review-queue row IS the flag (see ``_seed_question``'s docstring), so
+    this seeds that row directly rather than a boolean on the question —
+    :func:`integrity_item` returns this same row's id, not a second one, so
+    that closing "the" item here is closing the only item that exists.
+    """
     seeded = _seed_attempt(sessionmaker_, owner, _seed_upload(sessionmaker_, owner))
-    _seed_question(sessionmaker_, seeded.attempt_id, plagiarism=True)
+    _seed_question(sessionmaker_, seeded.attempt_id)
+    _seed_item(sessionmaker_, seeded.attempt_id, ReviewReason.plagiarism_flag)
     return seeded
 
 
 @pytest.fixture
 def integrity_item(sessionmaker_: sessionmaker[Session], flagged_attempt: Seeded) -> uuid.UUID:
-    return _seed_item(sessionmaker_, flagged_attempt.attempt_id, ReviewReason.plagiarism_flag)
+    """The id of the review-queue item :func:`flagged_attempt` already seeded."""
+    with sessionmaker_() as session:
+        return session.scalars(
+            select(ReviewQueueItem.id).where(
+                ReviewQueueItem.attempt_id == flagged_attempt.attempt_id
+            )
+        ).one()
 
 
 # ── the delete itself ───────────────────────────────────────────────────────
@@ -376,7 +394,8 @@ def test_an_integrity_hold_on_a_sibling_refuses_the_whole_upload(
 ) -> None:
     """Deleting the clean attempt must not take a held sibling's scan with it."""
     sibling = _seed_attempt(sessionmaker_, owner, attempt.upload_id)
-    _seed_question(sessionmaker_, sibling.attempt_id, ai_detection=True)
+    _seed_question(sessionmaker_, sibling.attempt_id)
+    _seed_item(sessionmaker_, sibling.attempt_id, ReviewReason.plagiarism_flag)
 
     with pytest.raises(PaperNotDeletableError) as exc:
         service.delete(owner, str(attempt.attempt_id))
@@ -466,7 +485,8 @@ def test_an_integrity_flag_past_the_retention_window_does_not_block(
         _seed_upload(sessionmaker_, owner),
         recorded_at=datetime.now(UTC) - timedelta(days=RETENTION_DAYS + 1),
     )
-    _seed_question(sessionmaker_, old.attempt_id, plagiarism=True)
+    _seed_question(sessionmaker_, old.attempt_id)
+    _seed_item(sessionmaker_, old.attempt_id, ReviewReason.plagiarism_flag)
     service.delete(owner, str(old.attempt_id))  # does not raise
 
 
@@ -532,8 +552,14 @@ def test_one_resolved_and_one_open_integrity_item_keeps_the_block(
     flagged_attempt: Seeded,
     integrity_item: uuid.UUID,
 ) -> None:
-    """§13: closing the plagiarism item does not clear an open AI-detection one."""
-    _seed_item(sessionmaker_, flagged_attempt.attempt_id, ReviewReason.ai_detection_flag)
+    """§13: closing one plagiarism item does not clear another open one.
+
+    F4 removed ``ReviewReason.ai_detection_flag`` — the second, distinct
+    integrity reason this test once used to make the same point — so this
+    now seeds a second ``plagiarism_flag`` item instead (e.g. two separate
+    questions on the same attempt each flagged).
+    """
+    _seed_item(sessionmaker_, flagged_attempt.attempt_id, ReviewReason.plagiarism_flag)
     _set_status(sessionmaker_, integrity_item, ReviewStatus.resolved)
     with pytest.raises(PaperNotDeletableError):
         service.delete(owner, str(flagged_attempt.attempt_id))
@@ -548,23 +574,6 @@ def test_a_closed_low_confidence_item_does_not_lift_an_integrity_hold(
     integrity_item: uuid.UUID,
 ) -> None:
     """The lifting query must filter on reason, not merely on status."""
-    _seed_item(
-        sessionmaker_,
-        flagged_attempt.attempt_id,
-        ReviewReason.low_confidence,
-        ReviewStatus.resolved,
-    )
-    with pytest.raises(PaperNotDeletableError):
-        service.delete(owner, str(flagged_attempt.attempt_id))
-
-
-def test_a_closed_low_confidence_item_alone_does_not_lift_an_integrity_hold(
-    service: PaperDeletionService,
-    sessionmaker_: sessionmaker[Session],
-    owner: str,
-    flagged_attempt: Seeded,
-) -> None:
-    """With no integrity item at all, a closed marking review must not count."""
     _seed_item(
         sessionmaker_,
         flagged_attempt.attempt_id,
@@ -640,8 +649,10 @@ def test_two_held_siblings_are_deletable_from_the_later_hold_end(
     newer = _seed_attempt(
         sessionmaker_, owner, attempt.upload_id, recorded_at=now - timedelta(days=2)
     )
-    _seed_question(sessionmaker_, older.attempt_id, plagiarism=True)
-    _seed_question(sessionmaker_, newer.attempt_id, ai_detection=True)
+    _seed_question(sessionmaker_, older.attempt_id)
+    _seed_item(sessionmaker_, older.attempt_id, ReviewReason.plagiarism_flag)
+    _seed_question(sessionmaker_, newer.attempt_id)
+    _seed_item(sessionmaker_, newer.attempt_id, ReviewReason.plagiarism_flag)
 
     with pytest.raises(PaperNotDeletableError) as exc:
         service.delete(owner, str(attempt.attempt_id))
@@ -982,7 +993,7 @@ def test_a_flag_raised_while_deleted_holds_after_restore(
     ``test_restore_reopens_exactly_the_items_this_deletion_withdrew``.
     """
     service.delete(owner, str(attempt.attempt_id))
-    _seed_question(sessionmaker_, attempt.attempt_id, plagiarism=True)
+    _seed_question(sessionmaker_, attempt.attempt_id)
     _seed_item(sessionmaker_, attempt.attempt_id, ReviewReason.plagiarism_flag)
 
     service.restore(owner, str(attempt.attempt_id))
@@ -1005,7 +1016,7 @@ def test_delete_then_restore_puts_an_integrity_review_back_in_the_queue(
         _seed_upload(sessionmaker_, owner),
         recorded_at=now - retention - timedelta(seconds=1),
     )
-    _seed_question(sessionmaker_, old.attempt_id, plagiarism=True)
+    _seed_question(sessionmaker_, old.attempt_id)
     item_id = _seed_item(sessionmaker_, old.attempt_id, ReviewReason.plagiarism_flag)
     original_created_at = _item_row(sessionmaker_, item_id).created_at
 
@@ -1329,8 +1340,25 @@ def test_a_bulk_approval_racing_a_delete_cannot_lift_the_integrity_hold(
     ``resolved`` is in the set that lifts D8's hold. A bulk approval that read
     the item open, then overwrote the delete's ``withdrawn``, would leave it
     ``resolved`` — never reopened by restore, and counted as a teacher having
-    cleared the flag. The real delete is paused after its withdrawal UPDATE so
-    the approval queues on the item row; it must re-check and skip.
+    cleared the flag.
+
+    The flag is now a ``review_queue`` row itself (``deletion_repo._has_integrity_flag``,
+    since 6958300c), so an open ``plagiarism_flag`` row cannot be seeded before
+    ``delete`` starts — its own D8 check would find it and refuse before the
+    race ever begins. Seeding a second session's write mid-pause does not work
+    either: ``_lock_siblings`` holds ``FOR UPDATE`` on the attempt row for the
+    whole delete, and inserting a new ``review_queue`` row referencing it would
+    block on that same lock (the exact mechanism this test's own withdraw/approve
+    race relies on — see ``_withdraw_open_items``'s docstring), deadlocking the
+    two pauses. Instead the row is seeded *before* ``delete`` starts, with a
+    reason D8 does not act on, so the D8 check finds nothing; the delete is
+    paused right after that check, and the row's *reason* (not its
+    ``attempt_id`` FK, so no lock conflict) is flipped to ``plagiarism_flag``
+    during the pause — by the time the delete resumes into its own withdrawal,
+    a later statement in the same transaction sees the row as it now stands
+    (default Postgres READ COMMITTED). The real delete is paused a second
+    time, after its withdrawal UPDATE, so the approval queues on the item row;
+    it must re-check and skip.
     """
     from lemely.db.class_repo import ClassService
     from lemely.db.review_repo import BulkApproveSkip, ReviewService
@@ -1342,25 +1370,43 @@ def test_a_bulk_approval_racing_a_delete_cannot_lift_the_integrity_hold(
     cls = classes.create_class(teacher, "Physics 10A")
     assert cls.join_code is not None
     classes.join_by_code(uuid.UUID(owner), cls.join_code)
-    # The integrity review exists while the flag booleans (the fact D8 reads)
-    # are not yet set, so this first delete is not held.
-    qr_id = _seed_question(sessionmaker_, attempt.attempt_id)
-    item_id = _seed_item(sessionmaker_, attempt.attempt_id, ReviewReason.plagiarism_flag)
     reviews = ReviewService(sessionmaker_, classes)
 
-    inside, release = threading.Event(), threading.Event()
-    real = PaperDeletionService._withdraw_open_items
+    _seed_question(sessionmaker_, attempt.attempt_id)
+    item_id = _seed_item(sessionmaker_, attempt.attempt_id, ReviewReason.low_confidence)
 
-    def paused(
+    hold_checked, item_flagged = threading.Event(), threading.Event()
+    inside, release = threading.Event(), threading.Event()
+    real_hold = PaperDeletionService._integrity_hold
+    real_withdraw = PaperDeletionService._withdraw_open_items
+
+    def paused_hold(
+        self: PaperDeletionService, session: Session, attempt_row: Attempt, now: datetime
+    ) -> datetime | None:
+        result = real_hold(self, session, attempt_row, now)
+        hold_checked.set()
+        assert item_flagged.wait(timeout=20)
+        return result
+
+    def paused_withdraw(
         self: PaperDeletionService, session: Session, attempt_ids: list[uuid.UUID], now: datetime
     ) -> list[uuid.UUID]:
-        withdrawn = real(self, session, attempt_ids, now)
+        withdrawn = real_withdraw(self, session, attempt_ids, now)
         inside.set()
         assert release.wait(timeout=20)
         return withdrawn
 
-    monkeypatch.setattr(PaperDeletionService, "_withdraw_open_items", paused)
+    monkeypatch.setattr(PaperDeletionService, "_integrity_hold", paused_hold)
+    monkeypatch.setattr(PaperDeletionService, "_withdraw_open_items", paused_withdraw)
     deleting = _Paused(lambda: service.delete(owner, str(attempt.attempt_id)))
+    assert hold_checked.wait(timeout=20)
+
+    with sessionmaker_.begin() as session:
+        item = session.get(ReviewQueueItem, item_id)
+        assert item is not None
+        item.reason = ReviewReason.plagiarism_flag
+    item_flagged.set()
+
     assert inside.wait(timeout=20)
     approving = _Paused(lambda: reviews.bulk_approve(teacher, Role.teacher, [item_id]))
     _wait_until_a_backend_waits_on_a_lock(sessionmaker_)
@@ -1375,14 +1421,11 @@ def test_a_bulk_approval_racing_a_delete_cannot_lift_the_integrity_hold(
     ]
     assert _item_row(sessionmaker_, item_id).status is ReviewStatus.withdrawn
 
+    # Restore reopens the item (Task 6); an open plagiarism_flag row is itself
+    # the flag now, so it re-triggers D8 on its own — nothing needs to be
+    # written onto the (now nonexistent) QuestionResult boolean to prove it.
     service.restore(owner, str(attempt.attempt_id))
     assert _item_row(sessionmaker_, item_id).status is ReviewStatus.open
-    with sessionmaker_.begin() as session:
-        session.execute(
-            sa.update(QuestionResult)
-            .where(QuestionResult.id == qr_id)
-            .values(plagiarism_flagged=True)
-        )
 
     with pytest.raises(PaperNotDeletableError) as exc:
         service.delete(owner, str(attempt.attempt_id))

@@ -57,14 +57,14 @@ Checked against the local corpus rather than assumed:
 | paper | mark scheme |
 |---|---|
 | `0625_w24_ms_42` | **parsed, in `corpus/`** |
-| `0625_s25_ms_42` | source PDF exists, **not parsed** — one of the 190 det-failures (#88) |
-| `0625_w25_ms_42` | **does not exist locally at all** — not in PaperScraper |
+| `0625_s25_ms_42` | **now available** in `Sources/Physics/MarkingSchemes/`, supplied 2026-09-17; **not parsed** — one of the 190 det-failures (#88) |
+| `0625_w25_ms_42` | **now available** in `Sources/Physics/MarkingSchemes/`, supplied 2026-09-17 |
 
-So #59's stated n = 3 is **not achievable**: it is **n = 1** today, **n = 2** if
-`0625_s25_ms_42` is parsed through the Gemini path, and **never 3** unless a
-`0625_w25` mark scheme is obtained. #59 already warns that n = 3 is far below any
-inferential floor and that the result must be descriptive; at n = 1–2 that
-warning binds harder, not less.
+So #59's stated n = 3 is **now reachable**: it is **n = 1** today with `0625_w24_ms_42` in
+`corpus/`, **n = 2** if `0625_s25_ms_42` is parsed through the Gemini path, and **n = 3** if
+`0625_w25_ms_42` is also parsed — both PDFs are now on disk and parsing is planned work.
+#59 already warns that n = 3 is far below any inferential floor and that the result must be descriptive;
+that warning remains binding, and at n = 1 today it binds harder still.
 
 Unchanged and still binding: **scan realism remains unmeasured** (these are ink
 on clean PDFs — no camera perspective, shadows, lighting, sensor noise or JPEG

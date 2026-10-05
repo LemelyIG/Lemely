@@ -8,9 +8,16 @@ for.
 
 from __future__ import annotations
 
-from lemely.core.loose_schemas import AnswerPoint, MarkScheme, MathMarkType
-from lemely.core.schemas import ConfidenceBand, CorrectedQuestion
+from lemely.core.loose_schemas import (
+    AnswerPoint,
+    MarkScheme,
+    MathMarkType,
+)
+from lemely.core.loose_schemas import Question as SchemeQuestion
+from lemely.core.loose_schemas import QuestionType as SchemeQuestionType
+from lemely.core.schemas import AIMarkResponse, ConfidenceBand, CorrectedQuestion, PointVerdict
 from lemely.db.question_points import derive_point_rows
+from lemely.io.correction_ai import _build_ai_corrected
 from tests.conftest import _scheme
 
 
@@ -52,6 +59,9 @@ def test_carries_tariff_mark_type_and_text_from_the_scheme() -> None:
         "rationale": None,
         "group_key": None,
         "group_max_marks": None,
+        "verdict": None,
+        "evidence_span": "",
+        "ecf_applied": False,
     }
 
 
@@ -336,18 +346,14 @@ def test_pool_select_count_cap_still_subtracts_independent_and_alt_marks() -> No
     assert _groups(rows) == [(None, None), ("pool:1", 1), ("pool:1", 1), ("pool:1", 1)]
 
 
-def test_two_pools_in_one_question_share_the_leftover_rather_than_each_taking_it() -> None:
-    """The leftover is the room the *question* has for all its pools together.
-
-    Each pool used to receive the whole figure: on this fixture, two caps of 3
-    on a question holding 3 marks of pool room. That is not absorbed by the
-    question clamp in general -- measured on a 4-mark question (one
-    independent point plus an "any 1 from" pool of three), a student claiming
-    every pool point gained 3 where the scheme allows 1, with the clamp never
-    firing because 3 sits under ``maximum_marks``.
-
-    The second pool ends at 0 here: under-crediting, which is the only safe
-    direction for a cap that exists to bound a grant.
+def test_two_pools_without_a_select_count_do_not_share_the_leftover() -> None:
+    """Triage F5 (user decision, 2026-09-29). A pool whose N is unstated used
+    to take the whole leftover and leave a later pool capped at 0, so a
+    student earning two marks in each of two pools got 4/6 with no review
+    flag (``probe_marking.py``, case F5). Each such pool is now worth
+    min(leftover, its own tariffs) = min(4 - 1, 2) = 2, the leftover NOT
+    consumed by the earlier pool; the question-level clamp in the consumers
+    bounds the total.
     """
     scheme = _scheme_with(
         _points(
@@ -363,14 +369,42 @@ def test_two_pools_in_one_question_share_the_leftover_rather_than_each_taking_it
     rows = derive_point_rows(_corrected(), scheme)
 
     assert _groups(rows) == [
-        ("pool:1", 3),
-        ("pool:1", 3),
+        ("pool:1", 2),
+        ("pool:1", 2),
+        (None, None),
+        ("pool:2", 2),
+        ("pool:2", 2),
+    ]
+
+
+def test_a_pool_without_a_select_count_never_exceeds_the_question() -> None:
+    scheme = _scheme_with(_points(("p1", 2, "opt"), ("p2", 2, "opt"), ("p3", 2, "opt")), marks=4)
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("pool:1", 4)] * 3
+
+
+def test_a_pool_with_a_select_count_still_shares_the_leftover() -> None:
+    """The stated-N rule is unchanged: ``min(pool_room, N largest tariffs)``,
+    consumed in scheme order, so a later stated-N pool can still end at 0."""
+    scheme = _scheme_with(
+        _points(
+            ("p1", 1, "opt"), ("p2", 1, "opt"), ("p3", 1, ""), ("p4", 1, "opt"), ("p5", 1, "opt")
+        ),
+        marks=2,
+        select_count=2,
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [
+        ("pool:1", 1),
+        ("pool:1", 1),
         (None, None),
         ("pool:2", 0),
         ("pool:2", 0),
     ]
-    caps = {key: cap for key, cap in _groups(rows) if key is not None}
-    assert sum(caps.values()) <= 3, "the two pools may not promise more room than the question has"
 
 
 def test_an_alternative_after_a_pool_member_joins_the_pool() -> None:
@@ -410,16 +444,57 @@ def test_two_alt_groups_in_one_question_are_numbered_alt_1_and_alt_2() -> None:
     assert _groups(rows) == [("alt:1", 1), ("alt:1", 1), ("alt:2", 2), ("alt:2", 2)]
 
 
+def test_stated_n_pool_leftover_is_zero_when_independents_consume_the_whole_total() -> None:
+    """Finding 5 (review round): when independent points already claim every
+    mark, a pool WITH a ``select_count`` is worth 0 -- it draws on the
+    leftover, and the question has nothing left to give."""
+    scheme = _scheme_with(
+        _points(("p1", 2, ""), ("p2", 1, "opt"), ("p3", 1, "opt")), marks=2, select_count=1
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [(None, None), ("pool:1", 0), ("pool:1", 0)]
+
+
 def test_pool_leftover_is_zero_when_independents_consume_the_whole_total() -> None:
     """Finding 5: when independent points already claim every mark, a pool
     without a ``select_count`` is worth 0 — no grant in it can ever be
     correct, since the question has nothing left to give. Conservative and
-    correct, not previously asserted."""
+    correct, not previously asserted. Still true under the non-shared
+    leftover cap (triage F5, 2026-09-29): min(leftover 0, tariffs 2) = 0."""
     scheme = _scheme_with(_points(("p1", 2, ""), ("p2", 1, "opt"), ("p3", 1, "opt")), marks=2)
 
     rows = derive_point_rows(_corrected(), scheme)
 
     assert _groups(rows) == [(None, None), ("pool:1", 0), ("pool:1", 0)]
+
+
+def test_two_unstated_pools_are_each_bounded_by_the_leftover_independently() -> None:
+    """Triage F5 (user decision, 2026-09-29): 6 marks, two independent 1-mark
+    points, two unstated pools of five 1-mark points. Leftover 6 - 2 = 4.
+    Each pool is worth min(4, 5) = 4 on its own: not 4 then 0 (the old
+    shared leftover) and not 5 and 5 (own tariffs capped only at the
+    question). The pools together may promise 8 > 4; the consumers'
+    question-level clamp bounds the grant at 6."""
+    scheme = _scheme_with(
+        _points(
+            ("i1", 1, ""),
+            *((f"a{n}", 1, "opt") for n in range(5)),
+            ("i2", 1, ""),
+            *((f"b{n}", 1, "opt") for n in range(5)),
+        ),
+        marks=6,
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [
+        (None, None),
+        *[("pool:1", 4)] * 5,
+        (None, None),
+        *[("pool:2", 4)] * 5,
+    ]
 
 
 def test_a_container_question_total_falls_back_to_the_marked_maximum() -> None:
@@ -430,3 +505,188 @@ def test_a_container_question_total_falls_back_to_the_marked_maximum() -> None:
     rows = derive_point_rows(_corrected(), scheme)
 
     assert _groups(rows) == [("alt:1", 2), ("alt:1", 2)]
+
+
+# ── US-045: `verdict` / `evidence_span` / `ecf_applied` ──────────────────────
+#
+# `PointVerdict` is I6's per-point record. `verdict` distinguishes `withheld`
+# from `unverifiable` where `awarded` alone collapses both to `False`; `note`
+# is deliberately NOT a second column and instead reuses `rationale` (see
+# `derive_point_rows`'s docstring and `QuestionResultPoint.rationale`).
+
+
+def _verdict_scheme() -> MarkScheme:
+    """A scheme whose one question mirrors
+    ``tests.test_correction_ai.PointVerdictBuildTests._question`` exactly
+    (same id, same two points), so a real ``_build_ai_corrected`` output can
+    be looked up against it by ``derive_point_rows``.
+    """
+    scheme = _scheme()
+    scheme.questions[0] = SchemeQuestion(
+        id="2",
+        marks=2,
+        type=SchemeQuestionType.EXPLANATION,
+        answer_points=[
+            AnswerPoint(id="p1", point="method step", marks=1, math_mark_type=MathMarkType.M),
+            AnswerPoint(id="p2", point="final value", marks=1, math_mark_type=MathMarkType.A),
+        ],
+    )
+    return scheme
+
+
+def test_awarded_matches_the_verdict_over_real_verdict_path_output() -> None:
+    """The consistency invariant, proven over ``_build_ai_corrected_from_verdicts``'s
+    real output -- not hand-built rows (``probes/README.md``'s rule): wherever
+    a point carries a verdict, ``awarded`` must agree with it.
+    """
+    scheme = _verdict_scheme()
+    question = scheme.get_question_by_id("2")
+    assert question is not None
+    mark = AIMarkResponse(
+        awarded_marks=0,  # stale/ignored under the verdict path, as elsewhere
+        confidence=0.95,
+        matched_point_ids=[],
+        feedback="fb",
+        point_verdicts=[
+            PointVerdict(point_id="p1", verdict="awarded", evidence_span="did the method"),
+            PointVerdict(point_id="p2", verdict="withheld", evidence_span=""),
+        ],
+    )
+    cq = _build_ai_corrected(
+        question,
+        "did the method, answer is 42",
+        mark,
+        student_working="did the method",
+        equivalence_gate=True,
+    )
+    assert cq.point_verdicts, "the verdict path must actually have run"
+
+    rows = derive_point_rows(cq, scheme)
+
+    by_id = {row["mark_point_id"]: row for row in rows}
+    assert by_id["p1"]["verdict"] == "awarded"
+    assert by_id["p1"]["awarded"] is True
+    assert by_id["p2"]["verdict"] == "withheld"
+    assert by_id["p2"]["awarded"] is False
+    for row in rows:
+        if row["verdict"] is not None:
+            assert row["awarded"] == (row["verdict"] == "awarded")
+
+
+def test_unverifiable_and_withheld_both_read_as_not_awarded_but_verdict_tells_them_apart() -> None:
+    """The distinction I6 exists to carry: both collapse to ``awarded=False``,
+    but ``verdict`` still tells them apart."""
+    scheme = _verdict_scheme()
+    question = scheme.get_question_by_id("2")
+    assert question is not None
+    mark = AIMarkResponse(
+        awarded_marks=0,
+        confidence=0.95,
+        matched_point_ids=[],
+        feedback="fb",
+        point_verdicts=[
+            PointVerdict(point_id="p1", verdict="withheld", evidence_span=""),
+            PointVerdict(point_id="p2", verdict="unverifiable", evidence_span=""),
+        ],
+    )
+    cq = _build_ai_corrected(
+        question, "attempted", mark, student_working="attempted", equivalence_gate=True
+    )
+
+    rows = derive_point_rows(cq, scheme)
+    by_id = {row["mark_point_id"]: row for row in rows}
+    assert by_id["p1"]["awarded"] is False
+    assert by_id["p2"]["awarded"] is False
+    assert by_id["p1"]["verdict"] == "withheld"
+    assert by_id["p2"]["verdict"] == "unverifiable"
+
+
+def test_verdict_note_wins_over_point_notes_when_a_verdict_exists_for_the_point() -> None:
+    rows = derive_point_rows(
+        _corrected(
+            point_verdicts=[
+                PointVerdict(point_id="p1", verdict="awarded", note="from the verdict")
+            ],
+            point_notes={"p1": "from point_notes, must lose"},
+        ),
+        _scheme(),
+    )
+
+    assert rows[0]["rationale"] == "from the verdict"
+
+
+def test_point_notes_is_the_only_source_when_the_point_has_no_verdict() -> None:
+    rows = derive_point_rows(
+        _corrected(point_notes={"p1": "from point_notes"}),
+        _scheme(),
+    )
+
+    assert rows[0]["rationale"] == "from point_notes"
+
+
+def test_both_note_sources_empty_yields_null_rationale() -> None:
+    rows = derive_point_rows(
+        _corrected(point_verdicts=[PointVerdict(point_id="p1", verdict="awarded")]),
+        _scheme(),
+    )
+
+    assert rows[0]["rationale"] is None
+
+
+def test_a_point_with_no_verdict_gets_the_column_defaults() -> None:
+    """No ``point_verdicts`` at all (the legacy path): every point gets
+    ``verdict=None``, matching ``QuestionResultPoint``'s nullable column, and
+    ``evidence_span``/``ecf_applied`` at the same defaults their columns
+    carry (``''``/``False``), not ``None``."""
+    rows = derive_point_rows(_corrected(), _scheme())
+
+    for row in rows:
+        assert row["verdict"] is None
+        assert row["evidence_span"] == ""
+        assert row["ecf_applied"] is False
+
+
+def test_evidence_span_and_ecf_applied_are_carried_from_the_verdict() -> None:
+    rows = derive_point_rows(
+        _corrected(
+            point_verdicts=[
+                PointVerdict(
+                    point_id="p1",
+                    verdict="awarded",
+                    evidence_span="12.5 m/s",
+                    ecf_applied=True,
+                )
+            ]
+        ),
+        _scheme(),
+    )
+
+    assert rows[0]["evidence_span"] == "12.5 m/s"
+    assert rows[0]["ecf_applied"] is True
+    # p2/p3 carry no verdict: defaults, not the first point's values.
+    assert rows[1]["evidence_span"] == ""
+    assert rows[1]["ecf_applied"] is False
+
+
+def test_group_capped_points_total_caps_each_group_then_clamps_only_when_asked() -> None:
+    """``lemely.core.point_groups.group_capped_points_total`` directly: an
+    independent point adds its tariff, a group adds ``min(cap, its tariffs)``
+    (either/or cap 1 holding two awarded 1-mark members to 1, a pool cap 2
+    holding three to 2), and ``total`` clamps the sum -- or, as ``None``,
+    leaves the raw per-group figure the self-review upward step needs."""
+    from lemely.core.point_groups import group_capped_points_total
+
+    awarded = [
+        (2, None, None),
+        (1, "alt:1", 1),
+        (1, "alt:1", 1),
+        (1, "pool:1", 2),
+        (1, "pool:1", 2),
+        (1, "pool:1", 2),
+    ]
+    assert group_capped_points_total(awarded, total=None) == 2 + 1 + 2
+    assert group_capped_points_total(awarded, total=4) == 4
+    assert group_capped_points_total(awarded, total=10) == 5
+    assert group_capped_points_total([], total=None) == 0
+    # No producer writes a named group without a cap; it counts 0.
+    assert group_capped_points_total([(3, "alt:9", None)], total=None) == 0

@@ -19,7 +19,17 @@ from lemely.core.schemas import (
     WeakArea as CoreWeakArea,
 )
 
-MarkerSource = Literal["deterministic", "ai", "missing"]
+# US-031 review MUST-FIX 7: "dropped" (an answer the model returned but
+# extraction discarded as malformed, distinct from "missing" -- nothing was
+# ever attempted -- and from a live "ai" marking failure) is a fourth real
+# value of CorrectedQuestion.marker_source (lemely/core/schemas.py). Without
+# it here, question_to_dto's markerSource=question.marker_source raised a
+# pydantic ValidationError for the exact class of answer this fix exists to
+# surface, turning a wrong-but-flagged mark into an unhandled 500 instead.
+# Task #36: "blank" (a question the student left empty, no marking call made)
+# is a fifth real value, migration `0040_marker_source_blank`. The frontend
+# mirror is `web/src/lib/types.ts`.
+MarkerSource = Literal["deterministic", "ai", "missing", "dropped", "blank"]
 
 
 class ApiModel(BaseModel):
@@ -40,8 +50,33 @@ class QuestionResultDTO(ApiModel):
     matchedPointIds: list[str] | None = None
     reviewReason: str | None = None
     plagiarismFlagged: bool = False
-    aiDetectionFlagged: bool = False
     topic: str | None = None
+    #: US-039 MUST-FIX 2 (independent review, blocking 674f309d): a paper-level
+    #: ``needsTeacherReview`` -- the one this comment used to name on
+    #: ``GradeResultDTO``, which develop's ``4945b307`` deleted as dead along
+    #: with ``correction_to_dto``, and the surviving ones on
+    #: ``schemas_practice.py``/``schemas_quiz.py`` -- is not this. The frontend's
+    #: review signal is ``reviewReason`` (``markingConfidence.ts::confidenceTierFor``,
+    #: ``questionFilter.ts::isFlagged``), which used to mean "any non-null
+    #: reviewReason needs a human" -- true for every case *except* US-039's
+    #: unflagged blank, which sets a `review_reason` message precisely so the
+    #: DB/queue can tell a genuine blank apart from every other blank-shaped
+    #: state, while deliberately leaving `needs_teacher_review=False`. Without
+    #: this field the frontend has no way to see that distinction and rendered
+    #: "Needs review: <blank message>" for every unattempted question exactly
+    #: like the review queue used to before MUST-FIX 1. See ``question_to_dto``.
+    #:
+    #: No default (second review pass on US-039's fix): ``False`` is the value
+    #: that *suppresses* the frontend's review signal
+    #: (``reviewReason && needsTeacherReview !== false``,
+    #: ``web/src/lib/studentTypes.ts``), so a DTO built without setting this
+    #: field explicitly would default to exactly the value that hides a
+    #: flagged question. ``question_to_dto`` always sets it today, but a
+    #: future constructor built from persisted ``QuestionResult`` rows that
+    #: forgets this field would ship a silently-unflagged page with no test
+    #: failure. A missing field now raises ``ValidationError`` at
+    #: construction instead.
+    needsTeacherReview: bool
     questionResultId: str | None = None
     """``question_results.id`` once the attempt is persisted; the address the
     self-review routes take. ``None`` on a frame built before persistence
@@ -51,7 +86,12 @@ class QuestionResultDTO(ApiModel):
     right now — not ``reviewReason``'s frozen record of why it was once
     flagged. ``None`` on every call site except the student self-review list
     (``routers/student_self_review.py``), which is the only one with a queue
-    to ask; a client must not read absence as "settled"."""
+    to ask; a client must not read absence as "settled".
+
+    Distinct from ``needsTeacherReview`` above, and the two are NOT
+    interchangeable: that one is the marker's flag frozen at marking time,
+    this one is the live queue state. ``markingConfidence.ts`` reads both for
+    exactly that reason — see its ``confidenceTierFor``."""
 
 
 class WeakAreaDTO(ApiModel):
@@ -95,6 +135,15 @@ class HealthDTO(ApiModel):
 #: for a plagiarism or AI-content finding, e.g. ``"plagiarism (score 0.94)"``.
 #: The reason is a ``" | "``-joined list, so an integrity finding travels in the
 #: same free-text field as ordinary marking reasons.
+#:
+#: ``"ai_detection"`` STAYS even though F4 deleted the detector that wrote it
+#: and ``0037_remove_ai_detection`` strips the segment from
+#: ``question_results.review_reason``. This is a reader, not a writer, and it
+#: still has rows to read: that migration deliberately does NOT rewrite
+#: ``teacher_papers.report_json`` (its docstring, point 5), which snapshots each
+#: question's ``review_reason`` for console-graded papers. Dropping the prefix
+#: here would un-sanitise exactly those, so do not "tidy" this tuple down to one
+#: entry on the grounds that the detector is gone.
 _INTEGRITY_REASON_PREFIXES = ("plagiarism", "ai_detection")
 
 
@@ -162,8 +211,8 @@ def question_to_dto(
             else question.review_reason
         ),
         plagiarismFlagged=False if for_student else question.plagiarism_flagged,
-        aiDetectionFlagged=False if for_student else question.ai_detection_flagged,
         topic=question.topic,
+        needsTeacherReview=question.needs_teacher_review,
         questionResultId=question_result_id,
     )
 

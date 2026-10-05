@@ -355,16 +355,19 @@ def test_deleting_twice_is_a_404_and_keeps_the_first_instant(
     assert row.deleted_at == first.deleted_at
 
 
-@pytest.mark.parametrize("reason", [ReviewReason.plagiarism_flag, ReviewReason.ai_detection_flag])
 def test_an_integrity_flag_does_not_block_a_console_paper(
     service: TeacherPaperDeletionService,
     sessionmaker_: sessionmaker[Session],
     teacher: uuid.UUID,
     console_paper: uuid.UUID,
-    reason: ReviewReason,
 ) -> None:
-    """No attributed student, so D8's evidence argument does not apply."""
-    flagged = _item(sessionmaker_, console_paper, reason=reason)
+    """No attributed student, so D8's evidence argument does not apply.
+
+    F4 removed ``ReviewReason.ai_detection_flag``; ``plagiarism_flag`` is the
+    only integrity reason left, so this no longer needs to parametrize over
+    two reasons.
+    """
+    flagged = _item(sessionmaker_, console_paper, reason=ReviewReason.plagiarism_flag)
 
     result = service.delete(str(teacher), str(console_paper))
 

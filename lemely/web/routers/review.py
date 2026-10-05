@@ -17,14 +17,18 @@ from __future__ import annotations
 
 import base64
 import binascii
+import io
+import math
 import uuid
 from datetime import datetime
-from typing import Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NamedTuple, NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from lemely.db.models.enums import Role
 from lemely.db.review_repo import (
+    CROP_ABSENT_DETAIL,
     ReviewAlreadyClosedError,
     ReviewError,
     ReviewItemDetail,
@@ -35,7 +39,32 @@ from lemely.db.review_repo import (
     ReviewService,
     ReviewValidationError,
 )
-from lemely.web.deps import AuthContext, get_review_service, require_role
+from lemely.io.rasterise import RasterisedPage, looks_like_pdf, single_channel_or_rgb
+from lemely.io.reread import REREAD_UPSCALE, crop_and_upscale, padded_crop_rect
+from lemely.io.scan_limits import (
+    ScanRejectedError,
+    check_pdf_page_content,
+    decode_pixel_cap,
+    open_checked_pdf,
+    open_scan_image,
+)
+from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
+
+# A runtime import, not a TYPE_CHECKING one: FastAPI resolves
+# `Annotated[Settings, Depends(get_settings)]` when the route is registered, and
+# a `Settings` that only exists to the type checker makes it a required query
+# parameter instead of a dependency — a 422 on every request. Suppressed here
+# rather than file-wide (the blanket `TC001`/`TC002`/`TC003` ignore the sibling
+# routers carry in `pyproject.toml`) so a future type-only import in this file
+# still gets flagged.
+from lemely.runtime.config import Settings  # noqa: TC001
+from lemely.web.deps import (
+    AuthContext,
+    get_review_service,
+    get_settings,
+    get_storage_backend,
+    require_role,
+)
 from lemely.web.schemas_review import (
     BulkApproveRequestDTO,
     BulkApproveResponseDTO,
@@ -48,6 +77,15 @@ from lemely.web.schemas_review import (
     ReviewQueueItemDTO,
     ReviewQueueListDTO,
 )
+
+if TYPE_CHECKING:
+    import pymupdf
+    from PIL.Image import Image as PILImage
+    from PIL.Image import Transpose
+
+    from lemely.core.schemas import SourceBox
+
+log = structlog.get_logger(__name__)
 
 # Mirrors teacher.py's/classes.py's staff triple.
 _STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
@@ -148,6 +186,10 @@ def _point_to_dto(point: ReviewItemPoint) -> ReviewItemPointDTO:
         studentSelfmark=point.student_selfmark,
         studentEvidence=point.student_evidence,
         evidenceVerdict=point.evidence_verdict,
+        verdict=point.verdict,
+        evidenceSpan=point.evidence_span,
+        ecfApplied=point.ecf_applied,
+        rationale=point.rationale,
     )
 
 
@@ -193,6 +235,7 @@ def _detail_to_dto(detail: ReviewItemDetail) -> ReviewItemDetailDTO:
         resolvedBy=str(detail.resolved_by) if detail.resolved_by else None,
         resolvedAt=detail.resolved_at.isoformat() if detail.resolved_at else None,
         points=[_point_to_dto(p) for p in detail.points],
+        hasSourceBox=detail.has_source_box,
     )
 
 
@@ -270,6 +313,500 @@ def get_review_item(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _detail_to_dto(detail)
+
+
+# 150 dpi, not ``get_paper_preview``'s 72. That route renders a whole A4 page
+# into a 64px card strip, where 72 dpi is already sharper than the consumer;
+# this one renders one region of a page for a teacher reading a student's
+# handwriting at a few hundred CSS pixels. At 150 dpi a box a tenth of the page
+# tall is ~175px before ``crop_and_upscale``'s 2x upscale, which is legible; at
+# 72 dpi it is ~84px, which is not. Deliberately below the extractor's
+# ``EXTRACTION_DPI`` of 200, which is pinned to Gemini's image-tokenisation
+# tiers — a budget that has nothing to say about what a person can read, and
+# one this route does not share because it renders a single page on request.
+_CROP_RENDER_DPI = 150
+
+# A scan's size bounds nothing. A PDF well under 2KB can declare an 8000x8000pt
+# page, and a PNG of a few hundred kilobytes can declare tens of megapixels.
+# Nothing upstream stops either: the student upload route checks neither content
+# type nor page geometry, and extraction renders or decodes the same file (so a
+# ``source_box`` is persisted for it). So the route bounds its own pixels.
+#
+# ``_MAX_CROP_PX`` bounds the response, and for a PDF the render too: only the
+# padded box is rendered (``_pdf_crop_plan``), at a DPI and upscale chosen so the
+# response fits. ``source_box`` is normalised 0-1000, so a lower DPI or a skipped
+# upscale lands on the same region and costs resolution only. An A4 page is
+# ~2.2 Mpx at 150 dpi, so it is never rendered lower, and a box keeps its 2x
+# upscale until its padded area passes ~45% of the page.
+_MAX_CROP_PX = 4_000_000
+
+# The image decode bound is `lemely.io.scan_limits.decode_pixel_cap` for the
+# image's mode (#256): 40 Mpx for colour, 160 Mpx for a bilevel or greyscale
+# scan -- one "too big to open" rule for the app, shared with upload and
+# extraction (spec 2026-09-26 §6). The image is opened through
+# `scan_limits.open_scan_image`, so only allowlisted formats are opened at all
+# (#256 review: an ICO decodes the image it wraps inside `Image.open`).
+
+
+class _PdfCropPlan(NamedTuple):
+    """How to render one padded box out of one PDF page."""
+
+    dpi: int
+    zoom: float
+    clip: pymupdf.Rect
+    """In page space: exactly the padded box's pixels at ``zoom``."""
+    size: tuple[int, int]
+    upscale: int
+
+
+def _upscale_within_ceiling(pixels: int) -> int:
+    """``crop_and_upscale``'s upscale when the result fits the ceiling, else none."""
+    return REREAD_UPSCALE if pixels * REREAD_UPSCALE**2 <= _MAX_CROP_PX else 1
+
+
+def _pdf_crop_plan(page_rect: pymupdf.Rect, box: list[int]) -> _PdfCropPlan | None:
+    """The DPI, clip and upscale that render ``box`` under :data:`_MAX_CROP_PX`.
+
+    The padded rectangle is the one ``crop_and_upscale`` would cut from a
+    whole-page render at the same DPI, so rendering only that clip gives the same
+    pixels. ``None`` when no DPI fits, which is reachable: a PDF may declare a
+    500,000pt page. The caller answers 422 for that.
+    """
+    import pymupdf
+
+    dpi = _CROP_RENDER_DPI
+    while dpi >= 1:
+        zoom = dpi / 72.0
+        # MuPDF's own rounding of the page to pixels at this zoom, which is the
+        # size of the whole-page pixmap it would render. PyMuPDF's geometry
+        # constructors are untyped, hence the narrow ignores.
+        matrix = pymupdf.Matrix(zoom, zoom)  # type: ignore[no-untyped-call]
+        page_px = (page_rect * matrix).irect
+        left, upper, right, lower = padded_crop_rect(page_px.width, page_px.height, box)
+        pixels = (right - left) * (lower - upper)
+        if pixels <= _MAX_CROP_PX:
+            clip = pymupdf.Rect(  # type: ignore[no-untyped-call]
+                page_rect.x0 + left / zoom,
+                page_rect.y0 + upper / zoom,
+                page_rect.x0 + right / zoom,
+                page_rect.y0 + lower / zoom,
+            )
+            return _PdfCropPlan(
+                dpi=dpi,
+                zoom=zoom,
+                clip=clip,
+                size=(right - left, lower - upper),
+                upscale=_upscale_within_ceiling(pixels),
+            )
+        # Pixels scale with dpi squared. Truncated, and always at least one
+        # lower, so the loop ends even when rounding keeps a step just over.
+        dpi = min(dpi - 1, int(dpi * math.sqrt(_MAX_CROP_PX / pixels)))
+    return None
+
+
+def _require_renderable_box(box: SourceBox, *, item_id: str) -> None:
+    """Re-check a box read back from columns before any pixel arithmetic runs.
+
+    :class:`~lemely.core.schemas.SourceBox`'s validator runs at construction
+    only — ``model_copy``/``model_construct`` do not re-run it — so a box that
+    reached this route through a copy, or out of columns written before
+    ``ck_question_results_source_box_positive_area`` existed, is not guaranteed
+    sane. ``PIL.Image.crop`` does not raise on an inverted or zero-area
+    rectangle: it returns an empty or garbage image. That would render as a
+    blank crop beside a real student's answer, the one outcome
+    ``CorrectedQuestion.source_box`` forbids ("absence must render as absence,
+    never as a failed crop"). So the bounds and the area are checked here and
+    the route fails closed, rather than inferring either from what came out.
+    """
+    ymin, xmin, ymax, xmax = box.box
+    # ``page`` first, and not folded into the route's ``>= doc.page_count``
+    # bound: ``SourceBox.page``'s ``ge=0`` is validator-only too, that bound does
+    # not exclude a negative, and ``doc.load_page(-1)`` does not raise — it
+    # returns the LAST page. So an unvalidated ``page=-1`` served the wrong
+    # region of the wrong page with a 200 and every appearance of success, which
+    # is worse than any of the coordinate cases below.
+    if box.page < 0 or not (0 <= ymin < ymax <= 1000 and 0 <= xmin < xmax <= 1000):
+        log.warning("review_crop_box_unusable", item_id=item_id, page=box.page, box=box.box)
+        raise HTTPException(status_code=422, detail="Stored crop region is not renderable")
+
+
+def _require_page_in_range(box: SourceBox, page_count: int, *, item_id: str) -> None:
+    """Refuse a box naming a page the scan does not have, before anything is rendered.
+
+    A box captured against a different render of this upload, or against the
+    upload it replaced, must cost a bounds check rather than a page render.
+    Covers the zero-page document too, since ``box.page`` is non-negative.
+    """
+    if box.page >= page_count:
+        log.warning(
+            "review_crop_page_out_of_range",
+            item_id=item_id,
+            page=box.page,
+            page_count=page_count,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=f"Stored crop region names page {box.page + 1} of a {page_count}-page scan",
+        )
+
+
+# The whole of an image that is already the padded region: handed to
+# ``crop_and_upscale`` with no padding, it only upscales and encodes.
+_WHOLE_REGION = [0, 0, 1000, 1000]
+
+
+_EXIF_ORIENTATION_TAG = 0x0112
+
+
+def _upright_transpose(orientation: object) -> Transpose | None:
+    """The transpose that turns a stored frame upright for an EXIF orientation.
+
+    The same table, and the same bare ``dict.get``, as Pillow's
+    ``ImageOps.exif_transpose``, which extraction uses. There is deliberately
+    no type check: a tag written as RATIONAL, FLOAT or DOUBLE parses to
+    ``IFDRational(6, 1)`` or ``6.0``, which hash equal to ``6`` and so turn
+    the page upright at extraction, and the crop must land in that same frame.
+    Anything that is not a key (1, a missing flag, 0, 9, a BYTE-typed tag)
+    gives ``None``, as ``exif_transpose`` leaves it alone. Not delegated to
+    Pillow because the route turns a crop, and ``exif_transpose`` only takes a
+    whole image.
+    """
+    from PIL import Image
+
+    # Keyed by `object`, not `int`: the lookup takes whatever Pillow parsed.
+    table: dict[object, Transpose] = {
+        2: Image.Transpose.FLIP_LEFT_RIGHT,
+        3: Image.Transpose.ROTATE_180,
+        4: Image.Transpose.FLIP_TOP_BOTTOM,
+        5: Image.Transpose.TRANSPOSE,
+        6: Image.Transpose.ROTATE_270,
+        7: Image.Transpose.TRANSVERSE,
+        8: Image.Transpose.ROTATE_90,
+    }
+    return table.get(orientation)
+
+
+def _stored_frame_rect(
+    rect: tuple[int, int, int, int], stored_size: tuple[int, int], orientation: object
+) -> tuple[int, int, int, int]:
+    """Where ``rect``, given in the UPRIGHT frame, lies in the STORED frame.
+
+    ``stored_size`` is the stored frame's (width, height). Cutting this
+    rectangle from the stored image and turning that crop with
+    :func:`_upright_transpose` gives exactly the pixels ``rect`` selects from
+    ``ImageOps.exif_transpose`` of the whole image, without ever holding a
+    second full-size copy. Rectangles are half-open edge coordinates, as
+    ``Image.crop`` takes them.
+    """
+    from PIL import Image
+
+    left, upper, right, lower = rect
+    width, height = stored_size
+    match _upright_transpose(orientation):
+        case None:
+            return rect
+        case Image.Transpose.FLIP_LEFT_RIGHT:
+            return (width - right, upper, width - left, lower)
+        case Image.Transpose.ROTATE_180:
+            return (width - right, height - lower, width - left, height - upper)
+        case Image.Transpose.FLIP_TOP_BOTTOM:
+            return (left, height - lower, right, height - upper)
+        case Image.Transpose.TRANSPOSE:
+            return (upper, left, lower, right)
+        case Image.Transpose.ROTATE_270:
+            return (upper, height - right, lower, height - left)
+        case Image.Transpose.TRANSVERSE:
+            return (width - lower, height - right, width - upper, height - left)
+        case _:  # ROTATE_90
+            return (width - lower, left, width - upper, right)
+
+
+def _swaps_axes(transpose: Transpose | None) -> bool:
+    """Whether turning by ``transpose`` exchanges width and height (the quarter turns)."""
+    from PIL import Image
+
+    return transpose in (
+        Image.Transpose.TRANSPOSE,
+        Image.Transpose.ROTATE_270,
+        Image.Transpose.TRANSVERSE,
+        Image.Transpose.ROTATE_90,
+    )
+
+
+def _refuse_too_large(box: SourceBox, *, item_id: str, **size: float) -> NoReturn:
+    """422 for a scan no ceiling-respecting render can serve, with its size logged."""
+    log.warning("review_crop_page_too_large", item_id=item_id, page=box.page, **size)
+    raise HTTPException(status_code=422, detail="This scan's pages are too large to render")
+
+
+def _upscaled_png(png: bytes, width: int, height: int, *, page: int) -> bytes:
+    """Upscale an already-cropped region within the ceiling, as PNG bytes.
+
+    Through ``crop_and_upscale`` with the whole region and no padding, so the
+    resampling and encoding stay the re-read's own.
+    """
+    return crop_and_upscale(
+        RasterisedPage(index=page, width=width, height=height, png_bytes=png),
+        list(_WHOLE_REGION),
+        padding_frac=0.0,
+        upscale=_upscale_within_ceiling(width * height),
+    )
+
+
+def _crop_pdf_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
+    """Render only the padded ``box`` of the page it names (see ``_pdf_crop_plan``)."""
+    import pymupdf
+
+    # Task 9c review round 2: with a broken xref, MuPDF repairs the file while
+    # opening it and parses every object stream it finds, so `open_checked_pdf`
+    # bounds object streams from the raw bytes before the open.
+    try:
+        doc = open_checked_pdf(data)
+    except ScanRejectedError as exc:
+        log.warning("review_crop_scan_rejected", item_id=item_id, page=box.page, reason=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    with doc:
+        # `_require_page_in_range` first: it reads only `doc.page_count`, no
+        # `load_page` -- an out-of-range box must still cost a bounds check,
+        # not a page load (test_crop_route_422s_for_a_page_out_of_range_without_rendering
+        # booby-traps `load_page` to prove it). Then the content check for the
+        # ONE page MuPDF will parse (triage F8): the whole-document walk cost
+        # 35-48 ms per request against a 60-78 ms render, a bomb on some OTHER
+        # page refused a crop that never touched it, and the document page cap
+        # refused every crop of a scan stored before that cap existed. Uploads
+        # that pre-date the upload-time check still get the render-bomb
+        # protection for the page actually rendered; MAX_SCAN_PAGES (40) stays
+        # with the whole-document callers (extraction, the preview route). The
+        # check reads the page tree, which costs time per page, so crops have
+        # their own bound, MAX_CROP_PAGES (200), counted from the real tree.
+        _require_page_in_range(box, doc.page_count, item_id=item_id)
+        try:
+            check_pdf_page_content(doc, box.page)
+        except ScanRejectedError as exc:
+            log.warning(
+                "review_crop_scan_rejected", item_id=item_id, page=box.page, reason=str(exc)
+            )
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        page = doc.load_page(box.page)  # type: ignore[no-untyped-call]
+        # A fresh list, so nothing downstream can rescale this request's box.
+        plan = _pdf_crop_plan(page.rect, list(box.box))
+        if plan is None:
+            _refuse_too_large(
+                box, item_id=item_id, width_pt=page.rect.width, height_pt=page.rect.height
+            )
+        matrix = pymupdf.Matrix(plan.zoom, plan.zoom)  # type: ignore[no-untyped-call]
+        pixmap = page.get_pixmap(matrix=matrix, clip=plan.clip)
+        png: bytes = pixmap.tobytes("png")
+        width, height = pixmap.width, pixmap.height
+    return _upscaled_png(png, width, height, page=box.page)
+
+
+def _decode_within_ceiling(opened: PILImage, box: SourceBox, *, item_id: str) -> None:
+    """Keep ``opened``'s decode under its mode's ceiling, before it happens.
+
+    ``Image.open`` has read only the header, so the size and mode are known
+    and nothing is decoded yet. The ceiling is per mode (#256:
+    ``scan_limits.decode_pixel_cap`` -- 40 Mpx for colour, 160 Mpx for a
+    bilevel or greyscale scan that decodes to one byte per pixel, a third of
+    the colour ceiling for a WebP, whose decoder costs about three times as
+    much), the same rule upload and extraction apply. A JPEG can be decoded
+    at 1/2, 1/4 or 1/8 scale natively (``draft``); anything else over the
+    ceiling is refused.
+
+    Checked by ``isinstance``, not ``opened.format == "JPEG"``: a phone JPEG
+    carrying a second embedded image (Android Ultra HDR's gain map, some
+    iPhone exports) is reported by Pillow as ``format == "MPO"`` through
+    ``MpoImageFile``, which subclasses ``JpegImageFile`` and supports the
+    same ``draft`` reduced-scale decode. The format-string check refused
+    exactly the high-resolution phone photos this reduced-scale path exists
+    for.
+    """
+    from PIL import JpegImagePlugin
+
+    width, height = opened.size
+    cap = decode_pixel_cap(opened.mode, opened.format)
+    if width * height <= cap:
+        return
+    if isinstance(opened, JpegImagePlugin.JpegImageFile):
+        for scale in (2, 4, 8):
+            if -(-width // scale) * -(-height // scale) <= cap:
+                # Floor division here: ``draft`` picks the largest scale whose
+                # result is no smaller than the size asked for.
+                opened.draft(None, (width // scale, height // scale))
+                break
+        if opened.width * opened.height <= cap:
+            return
+    _refuse_too_large(box, item_id=item_id, width_px=width, height_px=height)
+
+
+def _fitted_region(image: PILImage, rect: tuple[int, int, int, int]) -> PILImage:
+    """``rect`` of ``image`` as RGB, scaled down if needed to fit :data:`_MAX_CROP_PX`.
+
+    A region over the ceiling is resampled straight out of ``image`` rather
+    than cropped first, which would copy up to the whole decode once more.
+    Either way the region reaches RGB through ``single_channel_or_rgb``, so
+    a 16-bit greyscale region is scaled to 8 bits, as extraction scales it,
+    never clipped to white by a bare ``convert("RGB")`` (final review,
+    Important 2).
+    """
+    from PIL import Image
+
+    left, upper, right, lower = rect
+    width, height = right - left, lower - upper
+    if width * height <= _MAX_CROP_PX:
+        region = image.crop(rect)
+    else:
+        # Floored, so the product cannot round back over the ceiling.
+        scale = math.sqrt(_MAX_CROP_PX / (width * height))
+        fitted = (max(1, int(width * scale)), max(1, int(height * scale)))
+        # PIL resamples palette and bilevel images by nearest neighbour; a
+        # bilevel page goes to "L" (same size), not to a full-size RGB (#256).
+        image = single_channel_or_rgb(image)
+        region = image.resize(fitted, Image.Resampling.LANCZOS, box=rect, reducing_gap=3.0)
+    region = single_channel_or_rgb(region)
+    return region if region.mode == "RGB" else region.convert("RGB")
+
+
+def _crop_image_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
+    """Crop ``box`` out of a non-PDF scan, in the pixel grid extraction boxed.
+
+    Extraction decodes an image upload with PIL and applies its EXIF
+    orientation (``rasterise._rasterise_single_image``, #255), so ``box`` is
+    in the UPRIGHT frame. The padded rectangle is computed in that frame,
+    mapped back into the stored frame (:func:`_stored_frame_rect`), cut from
+    the decode there, and only that small crop is turned upright. Turning
+    the whole decode first would make Pillow allocate a second full-size
+    image (``in_place`` does not avoid it), doubling the peak for a phone
+    photo. A single image has one page, as it does for extraction.
+    """
+    try:
+        opened = open_scan_image(io.BytesIO(data))
+    except ScanRejectedError as exc:
+        # #256 review: a format outside the allowlist, named from its first
+        # bytes and never opened -- a refusal, logged as the PDF path does.
+        log.warning("review_crop_scan_rejected", item_id=item_id, page=box.page, reason=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    with opened:
+        _require_page_in_range(box, 1, item_id=item_id)
+        _decode_within_ceiling(opened, box, item_id=item_id)
+        orientation = opened.getexif().get(_EXIF_ORIENTATION_TAG)
+        transpose = _upright_transpose(orientation)
+        stored_size = opened.size
+        upright_size = stored_size[::-1] if _swaps_axes(transpose) else stored_size
+        rect = padded_crop_rect(upright_size[0], upright_size[1], list(box.box))
+        region = _fitted_region(opened, _stored_frame_rect(rect, stored_size, orientation))
+    if transpose is not None:
+        region = region.transpose(transpose)
+    buf = io.BytesIO()
+    region.save(buf, format="PNG")
+    return _upscaled_png(buf.getvalue(), region.width, region.height, page=box.page)
+
+
+@router.get(
+    "/{item_id}/crop",
+    responses={200: {"content": {"image/png": {}}, "description": "The boxed region of the scan"}},
+)
+def get_review_item_crop(
+    item_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    settings: Annotated[Settings, Depends(get_settings)],
+    service: Annotated[ReviewService, Depends(get_review_service)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+) -> Response:
+    """Render the region of the student's scan this question's answer was read from.
+
+    Question-level, not per mark point: marking is text-only, so the marker
+    never sees the page and cannot attribute a region to one mark point. This
+    answers "where did this answer come from".
+
+    A ``def`` route, not ``async def``: FastAPI runs a synchronous handler in
+    its own worker thread, so the blocking ``storage.download`` needs no
+    explicit ``anyio.to_thread`` wrap — the same reasoning ``get_paper_preview``
+    records.
+
+    Authorization comes from :meth:`ReviewService.get_item_crop_source`, which
+    applies the review item's own visibility rule. This route does not resolve
+    ownership itself, and must not learn to: an image endpoint that resolves
+    its own is where IDOR gets written, because it reads as "just serve bytes".
+
+    An item outside the caller's scope is a 403, exactly as on
+    :func:`get_review_item` (``ReviewOwnershipError`` through ``_raise_for``);
+    the two routes must never disagree about the same caller and item, and
+    ``test_crop_route_refuses_a_caller_who_cannot_see_the_student`` pins that
+    by comparison. For an item the caller MAY see, every "there is no image
+    here" — no such item, a console item, no upload, no box, or a stored
+    object that has expired — answers with the same 404 and the same body, so
+    the response cannot be used to learn which of the caller's students have
+    scans on file or why a crop is missing. The distinguishable reason is
+    logged server-side instead. Ownership is checked before any of those
+    absences is evaluated, so an out-of-scope caller learns nothing about
+    scans at all (triage F9; the broader 403-vs-404 question is #248).
+    """
+    try:
+        object_path, box = service.get_item_crop_source(auth.user_id, auth.role, item_id)
+    except ReviewError as exc:
+        _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # One spelling of the id in everything this request emits. The lookup logs the
+    # canonical form; logging the caller's raw path string here as well would make
+    # a single request carry two spellings of one id, for no reason other than that
+    # nobody normalised it -- and a reader joining the two lines pays for that.
+    # `uuid.UUID` cannot raise: the lookup above already parsed this same value.
+    logged_id = str(uuid.UUID(item_id))
+
+    _require_renderable_box(box, item_id=logged_id)
+
+    try:
+        data = storage.download(settings.storage.bucket, object_path)
+    except StorageObjectNotFoundError:
+        # A stored scan is not forever (GCS lifecycle, a cleared dev
+        # filesystem). 404 with the same body as every other absence; the
+        # reason is here in the log, where "the object expired" and "this item
+        # never had a box" need different operational responses.
+        log.warning("review_crop_object_missing", item_id=logged_id, object_path=object_path)
+        # Canonicalised (see `logged_id`) so this body is byte-identical to the
+        # one the lookup's own absences produce, whatever spelling of the id the
+        # caller sent — a difference there would be the oracle this collapse
+        # exists to close.
+        raise HTTPException(
+            status_code=404, detail=CROP_ABSENT_DETAIL.format(item_id=logged_id)
+        ) from None
+
+    try:
+        # Sniffed from the bytes, not from ``uploads.content_type``, the same
+        # way ``rasterise_scan_to_pages`` dispatches, and through the same
+        # ``looks_like_pdf``. Anything that is not a PDF is decoded the way
+        # extraction decoded it (see ``_crop_image_scan``).
+        #
+        # Inside this ``try``: everything PIL does is PIL raising, and
+        # ``Image.open`` enforces its own ``MAX_IMAGE_PIXELS`` ceiling. Left
+        # outside, a page large enough to trip it escaped as a 500 instead of
+        # the 422 every other unrenderable scan gets.
+        if looks_like_pdf(data):
+            crop = _crop_pdf_scan(data, box, item_id=logged_id)
+        else:
+            crop = _crop_image_scan(data, box, item_id=logged_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # A scan that cannot be rendered is not a server fault — it is a stored
+        # file that is not the document type it claimed to be, or one whose page
+        # geometry no renderer will accept. The renderer's own message is for
+        # the log; the client gets a fixed one.
+        log.warning("review_crop_render_failed", item_id=logged_id, error=str(exc))
+        raise HTTPException(status_code=422, detail="Could not render this scan") from exc
+
+    # Never stored. The bytes do not change for an item id, but who may see
+    # them does: a student leaves a class, a teacher signs out of a shared
+    # school computer. The browser cache is keyed by URL, not by the bearer
+    # token, so a cached crop would reopen with no authorization check at all.
+    return Response(
+        content=crop,
+        media_type="image/png",
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 @router.post("/bulk-approve", response_model=BulkApproveResponseDTO)

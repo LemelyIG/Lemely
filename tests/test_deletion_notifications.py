@@ -64,7 +64,7 @@ _seed_upload = _deletion_routes._seed_upload
 _seed_attempt = _deletion_routes._seed_attempt
 
 #: Comfortably outside the D8 integrity-hold window (``RETENTION_DAYS``), so a
-#: seeded ``QuestionResult.plagiarism_flagged=True`` row proves the *copy*
+#: seeded ``ReviewReason.plagiarism_flag`` review-queue row proves the *copy*
 #: never leaks the finding without also tripping the 409 hold that a
 #: within-window flag would raise instead of letting the delete succeed.
 _PAST_HOLD_WINDOW = timedelta(days=RETENTION_DAYS + 5)
@@ -142,7 +142,6 @@ def _seed_flagged_review_item(
                 confidence_band=ConfidenceBand.low,
                 confidence_score=0.4,
                 marker_source=MarkerSource.ai,
-                plagiarism_flagged=True,
             )
         )
         session.add(

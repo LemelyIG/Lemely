@@ -8,7 +8,7 @@ import { SectionHead } from "@/components/ui/section-head"
 import { Chip } from "@/components/ui/chip"
 import { EmptyState } from "@/components/ui/state-views"
 import { relativeTime } from "@/lib/utils"
-import { confidenceTierFor } from "@/lib/markingConfidence"
+import { confidenceTierFor, markerScored } from "@/lib/markingConfidence"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import {
@@ -39,15 +39,22 @@ import { ForwardArrow } from "@/components/ui/inline-arrow"
  * item" action walks the same filtered batch the teacher opened, and "back
  * to queue" restores the filters instead of silently resetting them.
  *
- * **`manual` is deliberately excluded from the reason filter.** Nothing in
- * the current pipeline (`AttemptRepository.persist_correction`, the only
- * place `ReviewQueueItem` rows are created) ever writes a `manual`-reason
- * row — every row is `low_confidence`, `plagiarism_flag`, or
- * `ai_detection_flag`. Offering a filter option that can never match a real
- * row today would imply data this build doesn't have — the same reasoning
- * that used to keep `below_target` out of `AtRiskList.tsx`'s reason filter
- * before P4.3/D4.5 wired up a real target grade there; `manual` has no such
- * wiring in this codebase, so it stays excluded.
+ * **`manual`/`random_audit` are deliberately excluded from the reason
+ * filter.** `ReviewQueueItem` rows have two production producers —
+ * `AttemptRepository.persist_correction` for a student attempt and
+ * `_review_items_for` (`teacher_paper_repo.py`) for a console-graded paper
+ * — and both route through the same `review_reasons_for`
+ * (`review_queue_rules.py`), which only ever yields `low_confidence` or
+ * `plagiarism_flag`. Neither producer writes `manual` or `random_audit`.
+ * (Migration `0037` did write
+ * `manual` once, as the one-way rewrite target for the now-removed
+ * AI-generated-answer detector's flag — but that is historical data from a
+ * schema migration, not something the live pipeline produces, so it stays
+ * out of the filter for the same reason `random_audit`, N2's still-unbuilt
+ * sampler, does.) Offering a filter option that can never match a row the
+ * live pipeline creates would imply data this build doesn't have — the same
+ * reasoning that used to keep `below_target` out of `AtRiskList.tsx`'s
+ * reason filter before P4.3/D4.5 wired up a real target grade there.
  * **Separately, the spec's fourth T-07 reason category — "student disputed
  * the transcription" — has no backing `ReviewReason` value or creation path
  * anywhere in this codebase.** `manual` is the closest enum member but is a
@@ -75,17 +82,24 @@ import { ForwardArrow } from "@/components/ui/inline-arrow"
 
 export const REASON_LABEL: Record<string, string> = {
   low_confidence: "Low confidence",
-  plagiarism_flag: "Possible mark-scheme copying",
-  ai_detection_flag: "Possible AI-written answer",
+  // F4: renamed from "Possible mark-scheme copying" — the check is a
+  // similarity match against the mark scheme's own model answer, and this
+  // label says exactly that rather than implying a judgement about intent.
+  plagiarism_flag: "Matches mark-scheme wording",
   manual: "Manually flagged",
+  random_audit: "Random audit",
   student_evidence_unjudged: "Student challenged a mark",
+  // `ai_detection_flag` is deliberately absent: F4 removed the detector and
+  // `0037_remove_ai_detection` rewrote every row carrying that reason to
+  // `manual`, so no queue row can reach this map with it. `reasonLabel` falls
+  // back to the raw value, which is what `reviewAdvisoryCopy.test.ts` pins.
 }
 
 export function reasonLabel(reason: string): string {
   return REASON_LABEL[reason] ?? reason
 }
 
-const INTEGRITY_REASONS = new Set(["plagiarism_flag", "ai_detection_flag"])
+const INTEGRITY_REASONS = new Set(["plagiarism_flag"])
 
 export function isIntegrityReason(reason: string): boolean {
   return INTEGRITY_REASONS.has(reason)
@@ -160,17 +174,48 @@ export function paperIdentityLabel(item: {
  *
  * `null` stays its own case: a queue item with no score at all, which the
  * integrity checks produce, is genuinely not the same as a low score.
+ *
+ * US-039 finding G. `markerSource` is optional and — for this queue's own
+ * row type, `ReviewQueueItemDTO` — always absent: it isn't on that DTO's
+ * wire shape at all today, only on `ReviewItemDetailDTO`'s (T-08's single-item
+ * view).
+ *
+ * **A genuine blank cannot reach this queue as a `plagiarism_flag` row at
+ * all.** `integrity.py` is the only writer of `plagiarism_flagged` and its
+ * gate requires `expected_answer` truthy; every site that sets
+ * `expected_answer` non-`None` also sets `marker_source="deterministic"`. No
+ * unscored marker source can therefore ever be `plagiarism_flagged`, so this
+ * parameter's neutral-tone branch cannot fire on any row this queue holds
+ * today. It is added anyway, as a defensive gate rather than a live one:
+ * `ReviewQueueItemDTO` doesn't carry `markerSource` at all today, but if a
+ * future producer ever emits an unscored row into this queue, this function
+ * already knows what to do with it.
+ *
+ * This asks `markerScored` rather than going through `confidenceTierFor`'s
+ * `needsTeacherReview`-gated "not-marked" branch: this screen has no
+ * `reviewReason`/`needsTeacherReview` to give that function (it never did —
+ * see the two-tones note above), so requiring them would make the gate
+ * exactly as unreachable as the bug this closes. An unscored marker source is
+ * unambiguous on its own: no marker (human or AI) produced this score, so it
+ * cannot be a confidence tone at all. Task #36 replaced a hand-spelled
+ * `=== "missing" || === "dropped"` here with the shared predicate — that
+ * spelling would have silently excluded `"blank"`.
  */
-export function confidenceTone(score: number | null): "ok" | "warn" {
+export function confidenceTone(
+  score: number | null,
+  markerSource?: string | null,
+): "ok" | "warn" | "neutral" {
   if (score == null) return "warn"
+  if (!markerScored(markerSource)) return "neutral"
   return confidenceTierFor({ confidence: score }) === "confident" ? "ok" : "warn"
 }
 
 const REASON_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "All reasons" },
   { value: "low_confidence", label: "Low confidence" },
-  { value: "plagiarism_flag", label: "Possible mark-scheme copying" },
-  { value: "ai_detection_flag", label: "Possible AI-written answer" },
+  // F4's wording, not develop's "Possible mark-scheme copying" — see
+  // `REASON_LABEL` above for why the label does not imply intent.
+  { value: "plagiarism_flag", label: "Matches mark-scheme wording" },
   { value: "student_evidence_unjudged", label: "Student challenged a mark" },
 ]
 

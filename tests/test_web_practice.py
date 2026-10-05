@@ -22,7 +22,14 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.base import Base
 from lemely.db.models import User
-from lemely.db.models.enums import DifficultySource, QuestionSource, QuizKind, QuizStatus, Role
+from lemely.db.models.enums import (
+    DifficultySource,
+    MarkerSource,
+    QuestionSource,
+    QuizKind,
+    QuizStatus,
+    Role,
+)
 from lemely.db.models.quizzes import Quiz, QuizAssignment
 from lemely.db.practice_repo import (
     PracticeRequest,
@@ -255,6 +262,106 @@ def test_result_payload_structurally_cannot_carry_marking_material() -> None:
     assert not banned & set(PracticeResultDTO.model_fields)
     assert not banned & set(PracticeResultQuestion.__dataclass_fields__)
     assert not banned & set(PracticeResultRow.__dataclass_fields__)
+
+
+def test_result_dto_carries_marker_source_and_needs_teacher_review() -> None:
+    """Important A (US-039 final branch review): the practice result wire DTO
+
+    must carry the same ``markerSource``/``needsTeacherReview`` twin signal
+    ``QuestionResultDTO`` carries on the quiz wire, not just ``confidenceBand``.
+
+    ``_build_blank_corrected`` produces ``confidence_band=LOW``,
+    ``needs_teacher_review=False``, ``marker_source="blank"`` for a
+    genuine blank -- before this fix ``PracticeResultQuestion`` and its DTO
+    had no way to carry the second two fields at all, so
+    ``practiceData.ts::confidenceBandTier`` had only the band to go on and
+    rendered the blank as "needs-review" (the same false claim finding G
+    fixed for the quiz result screen). This test needs no database: it pins
+    the dataclass -> DTO conversion directly, the same way
+    ``test_result_payload_structurally_cannot_carry_marking_material`` pins
+    the field set above without one.
+    """
+    from lemely.web.routers.practice import _result_to_dto
+
+    row = PracticeResultRow(
+        assignment_id=uuid.uuid4(),
+        quiz_id=uuid.uuid4(),
+        subject_code="0625",
+        marked=True,
+        submission_status="marked",
+        awarded_marks=3,
+        maximum_marks=10,
+        questions=[
+            PracticeResultQuestion(
+                question_ref="q1",
+                position=1,
+                topic="1 Motion",
+                total_marks=5,
+                awarded_marks=0,
+                confidence_band="low",
+                confidence_score=0.0,
+                marker_source="blank",
+                needs_teacher_review=False,
+            ),
+            PracticeResultQuestion(
+                question_ref="q2",
+                position=2,
+                topic="1 Motion",
+                total_marks=5,
+                awarded_marks=3,
+                confidence_band="high",
+                confidence_score=0.98,
+                marker_source="ai",
+                needs_teacher_review=False,
+            ),
+        ],
+    )
+
+    dto = _result_to_dto(row)
+
+    blank, scored = dto.questions
+    assert blank.markerSource == "blank"
+    assert blank.needsTeacherReview is False
+    assert scored.markerSource == "ai"
+    assert scored.needsTeacherReview is False
+
+
+@pytest.mark.parametrize("member", list(MarkerSource), ids=lambda m: m.value)
+def test_marker_source_narrows_every_sanctioned_value(member: MarkerSource) -> None:
+    """``_marker_source`` (``lemely/web/routers/practice.py``) narrows
+
+    ``PracticeResultQuestion.marker_source`` (a plain ``str`` in the repo
+    layer, sourced from ``lemely.db.models.enums.MarkerSource.value``) onto
+    ``PracticeResultQuestionDTO.markerSource``'s ``Literal`` -- the fix for the
+    type error the DTO field exists to enforce (a ``str`` reaching a
+    ``Literal``-typed wire field would defeat the one check that lets the
+    frontend branch on this value). Every member of the db enum must round-trip
+    unchanged.
+
+    Parametrised over ``MarkerSource`` itself rather than a written-out list of
+    values, which is what it used to be. Task #36 added a fifth member
+    (``blank``) and a hand-written list would have gone green without covering
+    it -- exactly the "a fixture that names its field values freezes them"
+    failure ``tests/test_self_review_authority_builders.py`` was written about.
+    Adding a sixth member without a branch in ``_marker_source`` now fails here.
+    """
+    from lemely.web.routers.practice import _marker_source
+
+    assert _marker_source(member.value) == member.value
+
+
+def test_marker_source_rejects_an_unsanctioned_value() -> None:
+    """Inverse of the parametrized case above: a value outside the sanctioned
+
+    set raises rather than silently reaching the wire. Not reachable today (the
+    db enum only ever produces its own members), but this is the one seam that
+    would catch a future enum member added without updating this narrowing
+    function.
+    """
+    from lemely.web.routers.practice import _marker_source
+
+    with pytest.raises(ValueError, match="Unknown marker source"):
+        _marker_source("some_future_source")
 
 
 def test_export_route_never_returns_marking_material(
