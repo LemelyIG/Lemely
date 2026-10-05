@@ -87,9 +87,13 @@ class ScanRenderFailedError(LemelyError):
     student's SSE error frame, the teacher's failed row), so the worker's
     own failure -- an exception's repr, a library message -- travels only
     as ``__cause__`` and on the ``scan_render_failed`` log line.
+
+    Pickles: ``BaseException.__reduce__`` rebuilds it from its ``args`` (the
+    message), which ``__init__`` accepts and ignores, so it can cross a
+    worker's pipe as every other ``LemelyError`` does (final review R3).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *_: object) -> None:
         super().__init__(RENDER_FAILED_MESSAGE)
 
 

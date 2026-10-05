@@ -41,10 +41,10 @@ upload check logs beside the error class (#276, #273):
 
 from __future__ import annotations
 
+import io
 import math
 import warnings
 from dataclasses import dataclass
-from pathlib import Path
 from typing import IO, TYPE_CHECKING, NoReturn
 
 from PIL import Image
@@ -624,12 +624,18 @@ def _pillow_claims(image_format: str, prefix: bytes) -> bool:
         return False
 
 
-def open_scan_image(source: Path | IO[bytes]) -> ImageFile.ImageFile:
+def open_scan_image(source: bytes | IO[bytes]) -> ImageFile.ImageFile:
     """``Image.open`` for a scan image: allowlisted formats only, and no bomb warning.
 
-    The one opener for upload (:func:`check_scan_bytes`), extraction and the
-    review crop route. Bytes that one of Pillow's other plugins would claim
-    by their prefix (an ICO, an ICNS, a GIF, ...) raise
+    The one opener for upload (:func:`check_scan_bytes`), extraction, the
+    review crop and the paper preview. ``source`` is the image's bytes or an
+    open binary file, never a path: opened by name, Pillow memory-maps an
+    uncompressed single-strip image, and for a TIFF tagged with orientation
+    5-8 it maps the stored rows into the already turned size, so the page
+    came back scrambled (#275).
+
+    Bytes that one of Pillow's other plugins would claim by their prefix
+    (an ICO, an ICNS, a GIF, ...) raise
     :class:`ScanUnsupportedFormatError` naming the format, found from those
     16 bytes without running that plugin's opener -- the step that decodes.
     Everything else is opened with ``formats=SCAN_IMAGE_FORMATS``, so no
@@ -642,14 +648,12 @@ def open_scan_image(source: Path | IO[bytes]) -> ImageFile.ImageFile:
     before a pixel is decoded, and the warning's threshold (89.5 Mpx) is
     below :data:`MAX_DECODE_PX_GREY`. Its error, above every cap, stands.
     """
+    if isinstance(source, bytes):
+        source = io.BytesIO(source)
     Image.init()
-    if isinstance(source, Path):
-        with source.open("rb") as handle:
-            prefix = handle.read(16)
-    else:
-        position = source.tell()
-        prefix = source.read(16)
-        source.seek(position)
+    position = source.tell()
+    prefix = source.read(16)
+    source.seek(position)
     claimed = [image_format for image_format in Image.ID if _pillow_claims(image_format, prefix)]
     if claimed and not any(image_format in SCAN_IMAGE_FORMATS for image_format in claimed):
         raise ScanUnsupportedFormatError(

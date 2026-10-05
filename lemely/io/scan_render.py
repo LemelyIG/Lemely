@@ -155,7 +155,7 @@ def _image_preview_png(data: bytes) -> bytes:
     from PIL import Image, JpegImagePlugin
 
     try:
-        with open_scan_image(io.BytesIO(data)) as opened:
+        with open_scan_image(data) as opened:
             plan_image(opened.width, opened.height, opened.mode, opened.format)
             if isinstance(opened, JpegImagePlugin.JpegImageFile):
                 opened.draft(None, _preview_size(opened.size))
@@ -531,7 +531,7 @@ def crop_image_scan(data: bytes, box: list[int], *, page: int = 0) -> bytes:
     review) and :class:`RenderRefused` for a stale page or a decode over the
     ceiling.
     """
-    opened = open_scan_image(io.BytesIO(data))
+    opened = open_scan_image(data)
     with opened:
         require_page_in_range(page, 1)
         decode_within_ceiling(opened)

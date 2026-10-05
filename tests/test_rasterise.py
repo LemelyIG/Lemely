@@ -1195,6 +1195,33 @@ def test_pillow_turns_a_tiff_upright_at_load_and_drops_the_tag() -> None:
             assert opened.getexif().get(0x0112) is None, compression
 
 
+def test_open_scan_image_takes_the_bytes_or_an_open_file_never_a_path() -> None:
+    """Final review R3: the Path route was the one way back to Pillow's
+    memory-mapped open, which scrambled an oriented TIFF (#275). Bytes and
+    an open binary file are both opened the same way, and each is upright
+    once loaded."""
+    data = oriented_tiff("L", (600, 300), 6, compression="raw", mark=_TIFF_MARK)
+    with (
+        scan_limits.open_scan_image(data) as from_bytes,
+        scan_limits.open_scan_image(io.BytesIO(data)) as from_file,
+    ):
+        from_bytes.load()
+        from_file.load()
+        assert from_bytes.format == from_file.format == "TIFF"
+        assert from_bytes.size == from_file.size == (300, 600)
+        assert from_bytes.tobytes() == from_file.tobytes()
+
+
+def test_a_scan_render_failure_survives_a_pickle_round_trip() -> None:
+    """Final review R3: ``sandbox`` promises that a ``LemelyError`` crosses
+    the worker's pipe pickled with its ``args``. This one took no argument,
+    so rebuilding it from its message raised ``TypeError``."""
+    back = pickle.loads(pickle.dumps(ScanRenderFailedError()))  # noqa: S301 - our own bytes
+
+    assert type(back) is ScanRenderFailedError
+    assert str(back) == _RENDER_FAILED
+
+
 #: Where :func:`_extracted_ink_and_paper` draws and reads: a 400 x 300 scan
 #: with an ink box, one pixel inside the box and one on the paper.
 _WIDE_BOX = (50, 60, 250, 120)
