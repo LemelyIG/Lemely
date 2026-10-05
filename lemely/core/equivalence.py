@@ -845,7 +845,8 @@ def _application_at(
     """Read a function application starting at ``start``: ``(end, replacement)`` or ``None``.
 
     Only the longest function name at ``start`` is tried. Followed by ``(``
-    it is left as it is (``log10(`` becomes ``(1/log(10))*log(``); followed
+    it is left as it is (``log10`` is the base-10 log, see
+    :func:`_apply_function_names` rule 2); followed
     by an argument (see :func:`_argument_candidates`) the argument is
     bracketed, provided what comes after it ends the argument or is itself
     an application, which is how ``sinxcosx`` splits into two.
@@ -870,11 +871,55 @@ def _read_application(
     if name is None:
         return None
     after = start + len(name)
-    if name == "log" and text.startswith("10(", after):
-        return after + len("10"), "(1/log(10))*log"
+    if name == "log" and text.startswith("10", after):
+        argument_start = _base_ten_argument_start(text, after + len("10"))
+        if argument_start is not None:
+            if text.startswith("(", argument_start):
+                return argument_start, "(1/log(10))*log"
+            # No fallback to `log(10)` when the argument is refused: a lost
+            # subscript is never read as log(10*x) or log(10)*x.
+            return _bracket_argument(name, text, start, argument_start, memo, "log({}, 10)")
     if text.startswith("(", after):
         return after, name
-    for end, argument in _argument_candidates(name, text, after):
+    return _bracket_argument(name, text, start, after, memo, f"{name}({{}})")
+
+
+def _base_ten_argument_start(text: str, after_ten: int) -> int | None:
+    """Where the argument of a ``log10`` with its subscript lost starts, or ``None``.
+
+    Owner decision (#270): "log10(x) is often expressed as log10x." A
+    ``log10`` followed by ``(``, by a letter, or by spaces and then a
+    letter, a digit or ``(`` is the base-10 log of what follows. A digit or
+    ``.`` straight after the ``10`` (``log100``, ``log10.5``) and anything
+    else (a bare ``log10``, ``log10 + 1``) is not that shape and keeps the
+    ordinary rule (``log(100)``, ``log(10.5)``, ``log(10)``).
+    """
+    position = after_ten
+    while position < len(text) and text[position] in " \t":
+        position += 1
+    if position == len(text):
+        return None
+    if text[position] == "(" or _LETTER_RE.match(text, position) is not None:
+        return position
+    if position > after_ten and text[position] in "0123456789":
+        return position
+    return None
+
+
+def _bracket_argument(
+    name: str,
+    text: str,
+    start: int,
+    argument_start: int,
+    memo: dict[int, tuple[int, str] | None],
+    call: str,
+) -> tuple[int, str] | None:
+    """Bracket ``name``'s argument at ``argument_start`` into ``call`` (``"sin({})"``).
+
+    The argument must end (:func:`_argument_ends`) or be followed by another
+    application; otherwise ``None``.
+    """
+    for end, argument in _argument_candidates(name, text, argument_start):
         if _argument_ends(text, end):
             tail: tuple[int, str] | None = (end, "")
         else:
@@ -884,7 +929,7 @@ def _read_application(
             continue
         if not argument:
             raise _AmbiguousFunctionArgumentError(text[start:end])
-        return tail[0], f"{name}({argument}){tail[1]}"
+        return tail[0], call.format(argument) + tail[1]
     return None
 
 
@@ -898,8 +943,11 @@ def _apply_function_names(text: str) -> str:
     one letter run at a time:
 
     1. a name followed by ``(`` is left alone, except that
-    2. ``log10(`` becomes ``(1/log(10))*log(``, a base-10 log built from
-       allowed calls only;
+    2. ``log10`` is the base-10 log with its subscript lost (owner
+       decision): ``log10(`` and ``log10 (`` become ``(1/log(10))*log(``,
+       built from allowed calls only, and ``log10x``, ``log10 x`` and
+       ``log10 100`` become ``log(x, 10)`` and ``log(100, 10)``, never
+       ``log(10*x)`` or ``log(10)*x`` (see :func:`_base_ten_argument_start`);
     3. letters before the name are a coefficient when the name is followed
        by ``(`` or an argument: ``Asin(`` -> ``A*sin(``. A name is never
        matched inside a run otherwise;

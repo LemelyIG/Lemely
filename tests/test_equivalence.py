@@ -3426,6 +3426,38 @@ def test_issue_270_function_name_pass_is_linear_on_a_failing_chain(
     assert calls <= 4 * len(text), calls
 
 
+def test_issue_270_log10_without_brackets_is_log_base_ten() -> None:
+    """Owner decision (#270): "log10(x) is often expressed as log10x.
+    depending on context the student intent is to be inferred." A lost
+    subscript (log₁₀) is the common case, so ``log10x``, ``log10 x`` and
+    ``log10 100`` are the base-10 log of their argument, like ``log10(``,
+    and never ``log(10x)`` or ``log(10)*x``."""
+    x = sympy.Symbol("x")
+    assert parse_expr_safe("log10x") == sympy.log(x, 10)
+    assert parse_expr_safe("log10 x") == sympy.log(x, 10)
+    assert parse_expr_safe("log10 100") == sympy.Integer(2)
+    assert equivalent("log10 100", "2").kind is VerdictKind.EQUAL_PROVEN
+    assert equivalent("log10(1000)", "3").kind is VerdictKind.EQUAL_PROVEN
+    assert not _kind_matches(equivalent("log10x", "log(10*x)").kind, "equal")
+
+
+@pytest.mark.parametrize(
+    ("text", "readings"),
+    [
+        ("log10x^2", ("log(x,10)^2", "log(x^2,10)")),
+        ("log10xy", ("log(x,10)*y", "log(x*y,10)")),
+    ],
+    ids=["log10-exponent-after-argument", "log10-two-letters-after-name"],
+)
+def test_issue_270_log10_does_not_guess_an_ambiguous_argument(
+    text: str, readings: tuple[str, str]
+) -> None:
+    """Guard: the base-10 reading takes the same arguments as every other
+    function name, so the shapes the pass refuses elsewhere stay refused."""
+    for reading in readings:
+        assert not _kind_matches(equivalent(text, reading).kind, "equal"), reading
+
+
 def test_issue_270_sqrt_of_a_number_then_a_letter_is_refused() -> None:
     """``sqrt2x`` is ``sqrt(2x)`` or ``sqrt(2)*x``; unlike the trig, ``ln`` and
     ``log`` forms, no convention settles it, so it is refused."""
