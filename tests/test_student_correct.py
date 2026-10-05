@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import sqlalchemy as sa
+import structlog.testing
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -50,7 +51,10 @@ from lemely.db.notification_repo import NotificationService
 from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.session import INCLUDE_DELETED
 from lemely.db.upload_repo import StudentUploadRepository
+from lemely.io import scheme_parse
 from lemely.io.gemini import GeminiClient
+from lemely.io.scheme_parse import SchemeReadFailedError
+from lemely.runtime import sandbox
 from lemely.runtime.config import DatabaseSettings, Settings, load_settings
 from lemely.web import create_app
 from lemely.web.deps import (
@@ -70,6 +74,7 @@ from lemely.web.push import RecordingPushTransport
 from lemely.web.routers import student
 from lemely.web.routers.student import resolve_mark_scheme
 from lemely.web.upload_utils import check_upload_cap
+from tests.fakes_scheme_pdfs import synthetic_theory_scheme_pdf
 from tests.sandbox_fixtures import in_process_sandbox, sandboxed  # noqa: F401
 from tests.storage_fakes import FakeStorageBackend
 
@@ -1241,6 +1246,88 @@ def test_resolver_corpus_near_miss_returns_none_not_a_different_papers_scheme(
     assert (
         resolve_mark_scheme(None, corpus_repo, settings, gemini_client, metadata=near_miss) is None
     )
+
+
+# The sibling scheme's deterministic parse runs in the extraction worker (#260).
+
+
+@pytest.fixture
+def _forget_last_outcome(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the extraction worker's ``last_outcome``, which outlives a worker
+    shutdown, so an assertion on it reads this test's call and no earlier one."""
+    monkeypatch.setattr(sandbox.EXTRACTION_WORKER, "last_outcome", None)
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_resolver_parses_a_sibling_scheme_in_the_worker(
+    tmp_path: Path,
+    corpus_repo: SchemeCorpusRepository,
+    settings: Settings,
+    gemini_client: MagicMock,
+) -> None:
+    """A scheme attached alongside a scan is parsed in the extraction worker's
+    child, and a scheme it can read never reaches Gemini."""
+    sibling = tmp_path / "mark_scheme.pdf"
+    sibling.write_bytes(synthetic_theory_scheme_pdf(questions=2, parts=2))
+
+    resolved = resolve_mark_scheme(sibling, corpus_repo, settings, gemini_client, metadata=None)
+
+    assert resolved is not None
+    assert (resolved.metadata.subject_code, resolved.metadata.paper_number) == ("0625", 4)
+    assert (resolved.metadata.maximum_mark, len(resolved.questions)) == (8, 2)
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "ok"
+    gemini_client.generate_structured.assert_not_called()
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_resolver_hands_a_sibling_the_parser_refuses_to_gemini(
+    tmp_path: Path,
+    corpus_repo: SchemeCorpusRepository,
+    settings: Settings,
+    gemini_client: MagicMock,
+) -> None:
+    """The parser's ``ParseError`` crosses the worker intact, so the chain
+    still falls back to the Gemini parser for a scheme det cannot read."""
+    sibling = tmp_path / "mark_scheme.pdf"
+    sibling.write_bytes(synthetic_theory_scheme_pdf(maximum_mark_on_cover=False))
+    from_gemini = _scheme(paper=4)
+    gemini_client.generate_structured.return_value = from_gemini
+
+    resolved = resolve_mark_scheme(sibling, corpus_repo, settings, gemini_client, metadata=None)
+
+    assert resolved is from_gemini
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "rejected"
+    assert gemini_client.generate_structured.call_args.kwargs["file_paths"] == [sibling]
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_resolver_worker_failure_is_a_fixed_error_that_never_reaches_gemini(
+    tmp_path: Path,
+    corpus_repo: SchemeCorpusRepository,
+    settings: Settings,
+    gemini_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both grading flows show a failure's text to the user. A worker failure
+    becomes :class:`SchemeReadFailedError`, whose text is fixed; the cause
+    goes to the log. It is not a ``ParseError``, so a file that broke the
+    worker is never sent on to Gemini."""
+    monkeypatch.setattr(scheme_parse, "SCHEME_PARSE_TARGET", "tests.sandbox_targets.boom")
+    sibling = tmp_path / "mark_scheme.pdf"
+    sibling.write_bytes(synthetic_theory_scheme_pdf())
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(SchemeReadFailedError) as caught,
+    ):
+        resolve_mark_scheme(sibling, corpus_repo, settings, gemini_client, metadata=None)
+
+    assert str(caught.value) == "Could not read this mark scheme"
+    assert "DISTINCTIVE-RENDERER-TEXT" in str(caught.value.__cause__)
+    (failed,) = [e for e in logs if e["event"] == "scheme_parse_failed"]
+    assert failed["reason"] == "error"
+    assert "DISTINCTIVE-RENDERER-TEXT" in failed["error"]
+    gemini_client.generate_structured.assert_not_called()
 
 
 def test_correct_complete_frame_carries_question_result_ids(

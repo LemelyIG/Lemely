@@ -20,6 +20,7 @@ route and a restart loses nothing mid-run.
 # dependency injection. (The per-file-ignore in pyproject.toml handles this.)
 from __future__ import annotations
 
+import functools
 import hashlib
 import queue
 import tempfile
@@ -103,6 +104,7 @@ from lemely.io.question_generation import QuestionGenerator
 from lemely.io.scan_limits import ScanRejectedError
 from lemely.io.scan_metadata import ScanMetadataExtractor
 from lemely.io.scan_render import RenderRefused
+from lemely.io.scheme_parse import SCHEME_READ_FAILED_MESSAGE, parse_scheme_in_worker
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.io.teacher_quiz import TeacherQuizBuilder
 from lemely.runtime import sandbox
@@ -171,6 +173,7 @@ from lemely.web.schemas_teacher import (
 )
 from lemely.web.upload_utils import (
     SANDBOX_FAILED_DETAIL,
+    SCHEME_PARSE_UNAVAILABLE_DETAIL,
     check_scan_geometry,
     check_upload_cap,
     safe_upload_name,
@@ -1313,8 +1316,20 @@ async def upload_scheme(
     parsed scheme replaces the ``mark_schemes`` row for its paper (``store`` is
     insert-or-replace, keyed on paper identity) and the PDF itself lands in
     object storage at ``schemes/{mark_scheme_id}/{safe_name}`` (spec §4.1).
-    Parse failures surface as a 422, and so does a subject with no bundled
-    syllabus taxonomy — see :meth:`SchemeCorpusRepository.store`.
+    A subject with no bundled syllabus taxonomy is a 422 — see
+    :meth:`SchemeCorpusRepository.store`.
+
+    The parse runs in :data:`~lemely.runtime.sandbox.EXTRACTION_WORKER`
+    (:func:`~lemely.io.scheme_parse.parse_scheme_in_worker`, #260), off the
+    event loop, within ``upload_check_timeout_seconds``: pdfplumber inflates
+    whatever a PDF's content streams hold, and a 204 KB upload took the web
+    process 416 MiB (final review R3, I3). A scheme that cannot be read —
+    the parser's refusal, a file it cannot open, a worker that ran out of
+    memory or time — is a 422 with the fixed
+    :data:`~lemely.io.scheme_parse.SCHEME_READ_FAILED_MESSAGE`; no worker to
+    parse in (busy past the timeout behind a scan extraction, or none could
+    start) is a 503. Why it failed goes to the ``scheme_parse_failed`` log
+    line only.
 
     A re-upload for a paper identity already in the corpus reuses that paper's
     ``mark_scheme_id`` (``store`` is insert-or-replace), so the *object key*
@@ -1325,20 +1340,45 @@ async def upload_scheme(
     against a create-only backend (spec §4.1); on a different-filename
     re-upload it is what stops the old object being orphaned forever.
     """
-    from lemely.io.det import DeterministicMarkSchemeParser
-
     pdf_bytes = await scheme_pdf.read()
     check_upload_cap(pdf_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=scheme_pdf.content_type)
-    # Sanitise the client filename to a basename before joining — the raw value
-    # must never be trusted as a path (traversal into ``../`` etc.).
+    # Sanitise the client filename to a basename — the raw value must never be
+    # trusted as a path (traversal into ``../`` etc.). The parser reads the
+    # paper's identity from it, so the worker parses the file under this name.
     filename = _safe_upload_name(scheme_pdf.filename, "scheme.pdf")
-    with tempfile.TemporaryDirectory() as tmp:
-        pdf_path = Path(tmp) / filename
-        pdf_path.write_bytes(pdf_bytes)
-        try:
-            scheme = DeterministicMarkSchemeParser(cfg=settings.det_parser)(pdf_path)
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail=f"Mark scheme parse failed: {exc}") from exc
+    try:
+        scheme = await anyio.to_thread.run_sync(
+            functools.partial(
+                parse_scheme_in_worker,
+                pdf_bytes,
+                filename,
+                settings.det_parser,
+                timeout=sandbox.sandbox_settings().upload_check_timeout_seconds,
+            )
+        )
+    except sandbox.SandboxFailure as exc:
+        raise sandbox_failure_to_http(
+            exc,
+            event="scheme_parse_failed",
+            failed_detail=SCHEME_READ_FAILED_MESSAGE,
+            unavailable_detail=SCHEME_PARSE_UNAVAILABLE_DETAIL,
+            content_type=scheme_pdf.content_type,
+            byte_size=len(pdf_bytes),
+        ) from exc
+    except Exception as exc:
+        # The parser's refusal (a ``ParseError``, which crosses the worker
+        # intact), or, with the sandbox disabled, whatever pdfplumber raised in
+        # this process. Its text names the file and the parser's internals: the
+        # log keeps it, the client gets the fixed message.
+        log.warning(
+            "scheme_parse_failed",
+            reason="parse",
+            error=str(exc),
+            error_type=type(exc).__name__,
+            content_type=scheme_pdf.content_type,
+            byte_size=len(pdf_bytes),
+        )
+        raise HTTPException(status_code=422, detail=SCHEME_READ_FAILED_MESSAGE) from exc
 
     scheme_id = corpus.store(scheme, provenance="teacher_upload:deterministic")
     if scheme_id is None:

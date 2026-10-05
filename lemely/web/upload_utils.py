@@ -8,9 +8,9 @@ size — live here so a single hardened implementation backs them all.
 Neither helper trusts the client filename as a path: only its basename survives
 :func:`safe_upload_name`, and :func:`check_upload_cap` rejects a body once the
 byte cap is exceeded rather than letting a hostile client exhaust disk or
-memory. :func:`sandbox_failure_to_http` is the one mapping from a render
-worker's failure to an HTTP answer, shared by every route that renders a
-stored scan in a worker.
+memory. :func:`sandbox_failure_to_http` is the one mapping from a worker's
+failure to an HTTP answer, shared by every route that renders a stored scan
+or parses an uploaded mark scheme in a worker.
 """
 
 from __future__ import annotations
@@ -144,21 +144,36 @@ SANDBOX_UNAVAILABLE_DETAIL = "Scan rendering is temporarily unavailable. Try aga
 SANDBOX_FAILED_DETAIL = RENDER_FAILED_MESSAGE
 
 
-def sandbox_failure_to_http(exc: SandboxFailure, *, event: str, **fields: object) -> HTTPException:
-    """The HTTP answer for a render worker failure (#260), logged as ``event``.
+#: The client's answer when no worker could take a mark-scheme parse.
+SCHEME_PARSE_UNAVAILABLE_DETAIL = (
+    "Reading mark schemes is temporarily unavailable. Try again in a moment."
+)
+
+
+def sandbox_failure_to_http(
+    exc: SandboxFailure,
+    *,
+    event: str,
+    failed_detail: str = SANDBOX_FAILED_DETAIL,
+    unavailable_detail: str = SANDBOX_UNAVAILABLE_DETAIL,
+    **fields: object,
+) -> HTTPException:
+    """The HTTP answer for a worker failure (#260), logged as ``event``.
 
     :class:`~lemely.runtime.sandbox.SandboxUnavailable` (the worker is busy
     past the call's timeout, or no child could start) is the server's
-    problem, not the scan's: 503, so the client tries again. Every other
-    failure (timeout, memory, crash, an unexpected error in the target) is a
-    422 with a fixed message. The failure's ``reason`` and text go to the
-    log line, with the caller's ``fields``; they never reach the client.
-    The caller raises the result (``raise sandbox_failure_to_http(...) from exc``).
+    problem, not the file's: 503 with ``unavailable_detail``, so the client
+    tries again. Every other failure (timeout, memory, crash, an unexpected
+    error in the target) is a 422 with the fixed ``failed_detail``. The
+    defaults are a scan render's texts; the mark-scheme upload passes its
+    own. The failure's ``reason`` and text go to the log line, with the
+    caller's ``fields``; they never reach the client. The caller raises the
+    result (``raise sandbox_failure_to_http(...) from exc``).
     """
     log.warning(event, reason=exc.reason, error=str(exc), **fields)
     if isinstance(exc, SandboxUnavailable):
-        return HTTPException(status_code=503, detail=SANDBOX_UNAVAILABLE_DETAIL)
-    return HTTPException(status_code=422, detail=SANDBOX_FAILED_DETAIL)
+        return HTTPException(status_code=503, detail=unavailable_detail)
+    return HTTPException(status_code=422, detail=failed_detail)
 
 
 __all__ = [
@@ -166,6 +181,7 @@ __all__ = [
     "SANDBOX_FAILED_DETAIL",
     "SANDBOX_UNAVAILABLE_DETAIL",
     "SCAN_CHECK_TARGET",
+    "SCHEME_PARSE_UNAVAILABLE_DETAIL",
     "check_scan_geometry",
     "check_upload_cap",
     "safe_upload_name",

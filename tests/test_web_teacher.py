@@ -54,6 +54,7 @@ from lemely.db.models.quizzes import QuestionBank
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.teacher_paper_repo import TeacherPaperRepository, TeacherPaperRow
+from lemely.io import scheme_parse
 from lemely.io.gemini import GeminiClient
 from lemely.io.history_store import HistoryStore
 from lemely.runtime import sandbox
@@ -73,11 +74,15 @@ from lemely.web.deps import (
     get_teacher_paper_repo,
 )
 from lemely.web.routers import teacher
+from tests.fakes_scheme_pdfs import synthetic_theory_scheme_pdf, whitespace_bomb_pdf
+from tests.fakes_worker_bombs import peak_rss_bytes, reset_peak_rss
 from tests.sandbox_fixtures import in_process_sandbox, sandboxed  # noqa: F401
 from tests.storage_fakes import FakeStorageBackend
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from httpx import Response
 
 # A real, deterministically-parseable CAIE mark scheme PDF (0625 Physics),
 # already used across the suite as the canonical "real, parseable scheme"
@@ -2939,6 +2944,7 @@ def test_schemes_empty(client: TestClient, corpus_repo: SchemeCorpusRepository) 
     assert body["stats"][0]["value"] == "0"
 
 
+@pytest.mark.usefixtures("sandboxed")
 def test_upload_scheme_persists_row_and_pdf(
     client: TestClient,
     corpus_repo: SchemeCorpusRepository,
@@ -2984,6 +2990,7 @@ def test_schemes_lists_corpus_rows_with_data_backed_fields(
     assert stats["Parsed"] == "1"
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_upload_unknown_subject_scheme_is_422_and_stores_nothing(
     client: TestClient,
     corpus_repo: SchemeCorpusRepository,
@@ -2994,7 +3001,8 @@ def test_upload_unknown_subject_scheme_is_422_and_stores_nothing(
 
     ``SchemeCorpusRepository.store`` returns ``None`` for this case rather
     than raising; the route must turn that into a 422 and must not upload the
-    PDF to storage on that path.
+    PDF to storage on that path. In process: the parser stand-in is patched
+    into this process, which a worker child would never see.
     """
     from lemely.core.loose_schemas import (
         AnswerPoint,
@@ -3047,12 +3055,13 @@ def test_upload_unknown_subject_scheme_is_422_and_stores_nothing(
 
 
 def _patch_parser_to_return(monkeypatch: pytest.MonkeyPatch, scheme: MarkScheme) -> None:
-    """Make ``upload_scheme``'s lazy ``DeterministicMarkSchemeParser`` import return ``scheme``.
+    """Make ``parse_scheme_pdf``'s lazy ``DeterministicMarkSchemeParser`` import return ``scheme``.
 
     Isolates the re-upload tests below from the real parser (and the real
     filename-derived paper identity it would extract), so "the same paper" is
     guaranteed by construction rather than by picking real PDF bytes/filenames
-    that happen to parse identically.
+    that happen to parse identically. Only in process (``in_process_sandbox``):
+    the parse runs in a worker child otherwise, which never sees the patch.
     """
 
     class _FakeParser:
@@ -3064,6 +3073,7 @@ def _patch_parser_to_return(monkeypatch: pytest.MonkeyPatch, scheme: MarkScheme)
     monkeypatch.setattr("lemely.io.det.DeterministicMarkSchemeParser", _FakeParser)
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_reupload_same_filename_replaces_the_stored_pdf_without_error(
     client: TestClient,
     corpus_repo: SchemeCorpusRepository,
@@ -3100,6 +3110,7 @@ def test_reupload_same_filename_replaces_the_stored_pdf_without_error(
     assert storage_backend._objects[key] == b"%PDF-1.4 v2"
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_reupload_different_filename_does_not_orphan_the_old_pdf(
     client: TestClient,
     corpus_repo: SchemeCorpusRepository,
@@ -3136,6 +3147,234 @@ def test_reupload_different_filename_does_not_orphan_the_old_pdf(
     assert old_key not in storage_backend._objects, "the old PDF was orphaned, not cleaned up"
     assert list(storage_backend._objects) == [new_key]
     assert storage_backend._objects[new_key] == b"%PDF-1.4 v2"
+
+
+# ---------------------------------------------------------------------------
+# The scheme parse runs in the extraction worker (#260, final review R3, I3).
+# ---------------------------------------------------------------------------
+
+#: A CAIE-style name, so the parser reads the paper's identity from it.
+_SCHEME_NAME = "0625_s23_ms_41.pdf"
+_MB = 1024 * 1024
+
+
+@pytest.fixture
+def _forget_last_outcome(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the extraction worker's ``last_outcome``, which outlives a worker
+    shutdown, so an assertion on it reads this test's call and no earlier one."""
+    monkeypatch.setattr(sandbox.EXTRACTION_WORKER, "last_outcome", None)
+
+
+def _post_scheme(client: TestClient, data: bytes, name: str = _SCHEME_NAME) -> Response:
+    return client.post("/api/schemes", files={"scheme_pdf": (name, data, "application/pdf")})
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_upload_scheme_parses_a_synthetic_scheme_in_the_worker(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+) -> None:
+    """A valid scheme still parses and files through the route, and the parse
+    ran in the extraction worker's child, not in the web process."""
+    resp = _post_scheme(client, synthetic_theory_scheme_pdf(questions=4, parts=3))
+
+    assert resp.status_code == 200, resp.text
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "ok"
+    assert sandbox.EXTRACTION_WORKER.pid() is not None
+    (row,) = corpus_repo.list_rows()
+    assert (row.doc, row.maximum_mark, row.question_count) == (_SCHEME_NAME, 24, 4)
+    assert (resp.json()["maxMarks"], resp.json()["paper"]) == (24, "Paper 4 V1")
+    assert list(storage_backend._objects) == [
+        (settings.storage.bucket, f"schemes/{row.id}/{_SCHEME_NAME}")
+    ]
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_upload_scheme_parse_failure_is_a_422_with_only_the_fixed_text(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """The parser's refusal crosses the worker as a ``ParseError``; the client
+    gets the fixed text, and the parser's own message (which names the file)
+    goes to the ``scheme_parse_failed`` log line only."""
+    with structlog.testing.capture_logs() as logs:
+        resp = _post_scheme(client, synthetic_theory_scheme_pdf(maximum_mark_on_cover=False))
+
+    assert resp.status_code == 422
+    assert resp.json() == {"detail": "Could not read this mark scheme"}
+    assert "maximum_mark" not in resp.text
+    assert _SCHEME_NAME not in resp.text
+    (failed,) = [e for e in logs if e["event"] == "scheme_parse_failed"]
+    assert (failed["reason"], failed["error_type"]) == ("parse", "ParseError")
+    assert "Cannot extract maximum_mark" in failed["error"]
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "rejected"
+    assert corpus_repo.list_rows() == []
+    assert storage_backend._objects == {}
+
+
+@pytest.mark.parametrize(
+    ("target", "reason"),
+    [("tests.sandbox_targets.boom", "error"), ("tests.sandbox_targets.oom", "memory")],
+)
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_upload_scheme_worker_failure_is_a_422_with_only_the_fixed_text(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+    reason: str,
+) -> None:
+    """An exception the parse raises (a ``SandboxError``) or a parse that runs
+    the child out of memory (``SandboxMemory``) is the same 422 with the
+    fixed text; the failure's own text stays in the log."""
+    monkeypatch.setattr(
+        sandbox,
+        "sandbox_settings",
+        lambda: SandboxSettings(extraction_data_limit_bytes=128 * _MB),
+    )
+    monkeypatch.setattr(scheme_parse, "SCHEME_PARSE_TARGET", target)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = _post_scheme(client, synthetic_theory_scheme_pdf())
+
+    assert resp.status_code == 422
+    assert resp.json() == {"detail": "Could not read this mark scheme"}
+    assert "DISTINCTIVE-RENDERER-TEXT" not in resp.text
+    assert "worker" not in resp.text
+    (failed,) = [e for e in logs if e["event"] == "scheme_parse_failed"]
+    assert failed["reason"] == reason
+    assert sandbox.EXTRACTION_WORKER.last_outcome == reason
+    assert corpus_repo.list_rows() == []
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="VmHWM is Linux-only")
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_upload_scheme_bomb_is_refused_without_growing_the_web_process(
+    client: TestClient, corpus_repo: SchemeCorpusRepository
+) -> None:
+    """The reviewer's pdfplumber bomb at 1 GiB: a 1 MB PDF whose one page
+    inflates to 1 GiB of spaces. Parsed in the web process it needs about
+    2.1 GiB (the 200 MiB one took it 416 MiB); in the worker the child runs
+    out under its limit, the upload is a 422 with the fixed text, and the
+    test process's peak barely moves. The next upload gets a working child."""
+    bomb = whitespace_bomb_pdf(1024 * _MB)
+    assert len(bomb) < 2 * _MB
+    # Control: the route works, and the child, the app and the multipart
+    # parser are all warm before the peak is reset.
+    assert _post_scheme(client, synthetic_theory_scheme_pdf()).status_code == 200
+    before = reset_peak_rss()
+
+    with structlog.testing.capture_logs() as logs:
+        resp = _post_scheme(client, bomb, name="0625_s23_ms_42.pdf")
+    grown = peak_rss_bytes() - before
+
+    assert resp.status_code == 422, resp.text
+    assert grown < 32 * _MB, f"the test process grew by {grown / _MB:.0f} MiB"
+    assert resp.json() == {"detail": "Could not read this mark scheme"}
+    # Measured: pdfminer catches the MemoryError and raises its own
+    # exception, so the child reports an error (SandboxError), not memory.
+    assert sandbox.EXTRACTION_WORKER.last_outcome in {"error", "memory"}
+    (failed,) = [e for e in logs if e["event"] == "scheme_parse_failed"]
+    assert "MemoryError" in failed["error"]
+    assert [r.doc for r in corpus_repo.list_rows()] == [_SCHEME_NAME]
+    again = _post_scheme(client, synthetic_theory_scheme_pdf(), name="0625_s23_ms_43.pdf")
+    assert again.status_code == 200, again.text
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_upload_scheme_behind_a_running_extraction_is_a_503_within_its_timeout(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scheme parse shares the extraction worker. An extraction stream
+    holding it makes the parse wait out ``upload_check_timeout_seconds``,
+    then answer 503 so the client tries again; the extraction is not
+    disturbed."""
+    worker = sandbox.EXTRACTION_WORKER
+    primed = threading.Event()
+    extracted: list[int] = []
+    failures: list[BaseException] = []
+
+    def extract() -> None:
+        stream = worker.stream(
+            "tests.sandbox_targets.slow_count", 3, 1.0, timeout=30, item_type=int
+        )
+        try:
+            with contextlib.closing(stream):
+                extracted.append(next(stream))
+                primed.set()
+                extracted.extend(stream)
+        except BaseException as exc:  # reported on the main thread
+            failures.append(exc)
+            primed.set()
+
+    extraction = threading.Thread(target=extract)
+    extraction.start()
+    try:
+        assert primed.wait(timeout=60), "the extraction stream never yielded"
+        assert not failures, failures
+        monkeypatch.setattr(
+            sandbox,
+            "sandbox_settings",
+            lambda: SandboxSettings(enabled=True, upload_check_timeout_seconds=0.5),
+        )
+        with structlog.testing.capture_logs() as logs:
+            resp = _post_scheme(client, synthetic_theory_scheme_pdf())
+    finally:
+        extraction.join(timeout=30)
+    assert not extraction.is_alive()
+    assert resp.status_code == 503, resp.text
+    assert resp.json() == {
+        "detail": "Reading mark schemes is temporarily unavailable. Try again in a moment."
+    }
+    assert [(e["event"], e["reason"]) for e in logs if e["event"] == "scheme_parse_failed"] == [
+        ("scheme_parse_failed", "unavailable")
+    ]
+    assert not failures, failures
+    assert extracted == [0, 1, 2]
+    assert corpus_repo.list_rows() == []
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_upload_scheme_is_a_503_when_no_worker_can_start(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No child to parse in is the server's problem: 503, and nothing is
+    parsed in the web process instead."""
+    monkeypatch.setattr(sandbox.EXTRACTION_WORKER, "_spawn", lambda: False)
+
+    resp = _post_scheme(client, synthetic_theory_scheme_pdf())
+
+    assert resp.status_code == 503, resp.text
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "unavailable"
+
+
+def test_upload_scheme_parses_off_the_event_loop(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``upload_scheme`` is ``async def``: the blocking worker call must run on
+    a thread, or every other request in the process waits for the parse."""
+    import asyncio
+
+    calls: list[bool] = []
+
+    def fake_parse(data: bytes, filename: str, cfg: object, *, timeout: float) -> MarkScheme:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            calls.append(False)
+        else:
+            calls.append(True)
+        return _scheme()
+
+    monkeypatch.setattr(teacher, "parse_scheme_in_worker", fake_parse)
+
+    assert _post_scheme(client, b"%PDF-1.4 stand-in").status_code == 200
+    assert calls == [False], "the parse ran on the event loop's thread"
 
 
 # ---------------------------------------------------------------------------
