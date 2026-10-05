@@ -447,8 +447,15 @@ _DIGIT_AFTER_PAREN_RE = re.compile(r"\)\d")
 #: multiplication sign of standard form (``3.0x10^8``, ``2.4 x 10^4``), not
 #: the variable ``x`` (#270; the generation gate used to rewrite this shape
 #: itself). Narrow on purpose: ``2x``, ``5x3``, ``x10`` and ``2x10`` (no
-#: exponent marker) keep ``x`` as a symbol.
-_TIMES_X_RE = re.compile(r"(?<=[\d.])\s*[xX]\s*(?=10\s*(?:\^|\*\*))")
+#: exponent marker) keep ``x`` as a symbol, and so does ``2x10^x``: the
+#: exponent must be a signed whole number, optionally bracketed, as the
+#: gate's own rule required (Task 6 review, Important 1: ``2x10^x`` was
+#: EQUAL_PROVEN to ``2*10^x``). :func:`_read_times_x` adds the other half:
+#: no other ``x`` in the text may be the variable.
+_TIMES_X_RE = re.compile(
+    r"(?<=[\d.])\s*[xX]\s*(?=10\s*(?:\^|\*\*)\s*\(?\s*[-+]?\d+\s*\)?(?![\w.]))"
+)
+_ANY_X_RE = re.compile(r"[xX]")
 
 #: :data:`_ALLOWED_FUNCTIONS`, longest first, so ``sinh``/``asin`` win over
 #: ``sin`` at the same position (:func:`_apply_function_names`).
@@ -578,8 +585,6 @@ def _looks_like_prose_or_unsafe(text: str) -> bool:
     if _MIXED_FRACTION_RE.search(text):
         return True
     if _has_unsafe_factorial(text):
-        return True
-    if _DIGIT_AFTER_PAREN_RE.search(text):
         return True
     calls = _FUNCTION_CALL_RE.findall(text)
     return any(_is_disallowed_sympy_call(name) for name in calls)
@@ -813,8 +818,32 @@ def _vet_and_parse(normalized: str, *, vet: bool = True) -> tuple[str, sympy.Exp
     return ("ok", expr)
 
 
+def _read_times_x(text: str) -> str:
+    """Read standard form's ``x`` as times (:data:`_TIMES_X_RE`), or leave the text alone.
+
+    Every such ``x`` is read as times, or none is: when an ``x`` survives the
+    substitution, the text uses ``x`` as the variable, and ``3x+2x10^2`` is as
+    likely ``3x + 2*x_10^2`` as ``3x + 200`` (Task 6 review, Important 1: it
+    was EQUAL_PROVEN to ``3x+200``). Left alone, ``x10`` is a subscript
+    symbol, which can only ever equal itself.
+    """
+    replaced = _TIMES_X_RE.sub("*", text)
+    if replaced != text and _ANY_X_RE.search(replaced):
+        return text
+    return replaced
+
+
 class _AmbiguousFunctionArgumentError(Exception):
     """A bracketless argument with no settled reading (``sqrt2x``): refuse the text."""
+
+
+class _Ambiguous:
+    """Memo marker: reading this start raised :class:`_AmbiguousFunctionArgumentError`."""
+
+
+_AMBIGUOUS = _Ambiguous()
+
+type _ApplicationMemo = dict[int, tuple[int, str] | None | _Ambiguous]
 
 
 def _argument_ends(text: str, end: int) -> bool:
@@ -839,9 +868,7 @@ def _argument_candidates(name: str, text: str, start: int) -> list[tuple[int, st
     return candidates
 
 
-def _application_at(
-    text: str, start: int, memo: dict[int, tuple[int, str] | None]
-) -> tuple[int, str] | None:
+def _application_at(text: str, start: int, memo: _ApplicationMemo) -> tuple[int, str] | None:
     """Read a function application starting at ``start``: ``(end, replacement)`` or ``None``.
 
     Only the longest function name at ``start`` is tried. Followed by ``(``
@@ -855,17 +882,24 @@ def _application_at(
     Two candidate arguments can both recurse (``sin2asin...``: ``2a`` then
     ``sin``, or ``2`` then ``asin``), so without it a chain that fails at
     its tail is retried 2**n ways -- in the caller, outside the parse
-    worker's kill and memory bounds.
+    worker's kill and memory bounds. A start whose reading was refused as
+    ambiguous is remembered as :data:`_AMBIGUOUS` and refused again.
     """
     if start in memo:
-        return memo[start]
-    memo[start] = result = _read_application(text, start, memo)
+        cached = memo[start]
+        if isinstance(cached, _Ambiguous):
+            raise _AmbiguousFunctionArgumentError(text[start:])
+        return cached
+    try:
+        result = _read_application(text, start, memo)
+    except _AmbiguousFunctionArgumentError:
+        memo[start] = _AMBIGUOUS
+        raise
+    memo[start] = result
     return result
 
 
-def _read_application(
-    text: str, start: int, memo: dict[int, tuple[int, str] | None]
-) -> tuple[int, str] | None:
+def _read_application(text: str, start: int, memo: _ApplicationMemo) -> tuple[int, str] | None:
     """:func:`_application_at` without the memo lookup."""
     name = next((n for n in _FUNCTION_NAMES_LONGEST_FIRST if text.startswith(n, start)), None)
     if name is None:
@@ -911,7 +945,7 @@ def _bracket_argument(
     text: str,
     start: int,
     argument_start: int,
-    memo: dict[int, tuple[int, str] | None],
+    memo: _ApplicationMemo,
     call: str,
 ) -> tuple[int, str] | None:
     """Bracket ``name``'s argument at ``argument_start`` into ``call`` (``"sin({})"``).
@@ -968,7 +1002,16 @@ def _apply_function_names(text: str) -> str:
     after the argument (``ln2(x+1)``) -- is left to the older rules.
     """
     out: list[str] = []
-    memo: dict[int, tuple[int, str] | None] = {}
+    memo: _ApplicationMemo = {}
+    # Right to left first: an application's chain only reaches starts to its
+    # right, so each start then finds the next link already in `memo`, one
+    # frame down. Read left to right, a chain recursed once per link, and
+    # `"lnx" * 166` needed ~527 frames (Task 6 review, Minor 5) -- a
+    # RecursionError in a deep caller. Ambiguity is recorded here and raised
+    # only if the scan below reaches that start.
+    for position in range(len(text) - 1, -1, -1):
+        with contextlib.suppress(_AmbiguousFunctionArgumentError):
+            _application_at(text, position, memo)
     index = 0
     while index < len(text):
         run_start = index
@@ -1131,7 +1174,7 @@ def _normalize_text(text: str) -> str:
     normalized = normalized.replace("÷", "/")
     for alias, canonical in _UNIT_ALIASES.items():
         normalized = normalized.replace(alias, canonical)
-    normalized = _TIMES_X_RE.sub("*", normalized)
+    normalized = _read_times_x(normalized)
     normalized = _apply_function_names(normalized)
     normalized = _rewrite_digit_suffixes(normalized)
     normalized = _collapse_thousands_separators(normalized)
@@ -1480,13 +1523,17 @@ if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_PARSE_WORKER._forget_after_fork)
 
 
-#: Outcomes of :func:`parse_expr_outcome` that say nothing about the text:
-#: the worker was held by another caller past this one's timeout
+#: Outcomes of :func:`parse_expr_outcome` that do not say the text is not an
+#: expression: the worker was held by another caller past this one's timeout
 #: (``"busy"``), did not answer in time (``"timeout"``), could not be started
-#: (``"unavailable"``) or died mid-reply (``"crash"``). A caller deciding
-#: what the text IS from a ``None`` expression must treat these as "could
-#: not decide", never as "not an expression" (Task 2 review, Important 1).
-PARSE_UNDECIDED_OUTCOMES = frozenset({"busy", "timeout", "unavailable", "crash"})
+#: (``"unavailable"``) or died mid-reply (``"crash"``) -- nothing about the
+#: text -- or the text has two readings and was refused rather than guessed
+#: (``"refused-ambiguous"``, #270). A caller deciding what the text IS from a
+#: ``None`` expression must treat these as "could not decide", never as "not
+#: an expression" (Task 2 review, Important 1; Task 6 review, Minor 4).
+PARSE_UNDECIDED_OUTCOMES = frozenset(
+    {"busy", "timeout", "unavailable", "crash", "refused-ambiguous"}
+)
 
 
 def parse_expr_safe(
@@ -1533,7 +1580,10 @@ def parse_expr_outcome(
 
     ``(expr, "ok")`` on success. Otherwise ``(None, outcome)``: ``"refused"``
     when the text is refused before the worker sees it (empty, too long,
-    prose, an unsafe construct, see :func:`parse_expr_safe`), the worker's
+    prose, an unsafe construct, see :func:`parse_expr_safe`);
+    ``"refused-ambiguous"`` when it is refused because it has two readings
+    and no convention settles them (a digit after a closing bracket,
+    ``(x+1)2``; a bracketless argument such as ``sqrt2x``, #270); the worker's
     own outcome after that (:attr:`_ParseWorker.last_outcome`'s values,
     ``"interrupted"`` aside, which propagates), and ``"error"`` for an
     ``"ok"`` reply that is not a SymPy object. A ``None`` with an outcome in
@@ -1547,8 +1597,12 @@ def parse_expr_outcome(
         return None, "refused"
     if _looks_like_prose_or_unsafe(stripped):
         return None, "refused"
+    if _DIGIT_AFTER_PAREN_RE.search(stripped):
+        return None, "refused-ambiguous"
     normalized = _normalize_text(stripped)
-    if not normalized or _has_unsafe_exponent(normalized) or _has_unsafe_factorial(normalized):
+    if not normalized:  # the function-name pass refused it (`sqrt2x`)
+        return None, "refused-ambiguous"
+    if _has_unsafe_exponent(normalized) or _has_unsafe_factorial(normalized):
         return None, "refused"
     # Triage F2: every power of an UNEVALUATED parse is bounded first (the
     # regexes above read literals; a computed exponent needs the tree), then

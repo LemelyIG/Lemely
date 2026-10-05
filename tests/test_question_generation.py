@@ -771,6 +771,69 @@ class TestRecallScopedToNumeric:
         client.generate_with_code_execution.assert_called_once()
         assert worker.pid() is None  # no caller ever reached the child
 
+    @pytest.mark.parametrize("outcome", ["busy", "timeout", "unavailable", "crash"])
+    def test_numeric_recall_takes_the_solver_path_on_every_undecided_outcome(
+        self, outcome: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Task 6 review, Important 2 and Minor 3. The worker here reports
+        ``outcome`` for every call while its SHARED ``last_outcome`` says
+        "ok", so a gate that read the shared attribute instead of the call's
+        own outcome would take this for a non-numeric answer and pass it as
+        ``validity_only``; parametrised over all four outcomes, so dropping
+        one from ``PARSE_UNDECIDED_OUTCOMES`` is red too."""
+        from lemely.core import equivalence as eq
+
+        class UndecidedWorker:
+            last_outcome = "ok"
+
+            def parse_with_outcome(
+                self, text: str, timeout: float, *, vet: bool = True
+            ) -> tuple[None, str]:
+                return None, outcome
+
+            def parse(self, text: str, timeout: float, *, vet: bool = True) -> None:
+                return None
+
+            def pid(self) -> None:
+                return None
+
+            def shutdown(self) -> None:
+                return None
+
+        monkeypatch.setattr(eq, "_PARSE_WORKER", UndecidedWorker())
+        question = _generated_question(
+            "Atomic number of carbon",
+            question_type=QuestionType.RECALL,
+            solution_expr="6",
+            answer="6",
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        client.generate_with_code_execution.return_value = "6"
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by is None
+        client.generate_with_code_execution.assert_called_once()
+
+    @pytest.mark.parametrize("answer", ["(2)3", "(1.5)2", "sqrt2x"])
+    def test_recall_answer_refused_as_ambiguous_takes_the_solver_path(self, answer: str) -> None:
+        """Task 6 review, Minor 4. #270 refuses a digit after a bracket and a
+        bracketless argument with no settled reading; read as "not numeric",
+        those RECALL answers passed as ``validity_only`` with less checking
+        than before #270. They are "could not decide", so the solver runs and
+        fails closed: nothing proves the stated answer, the sandbox runs, and
+        the item is rejected."""
+        question = _generated_question(
+            "Area", question_type=QuestionType.RECALL, solution_expr="6", answer=answer
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        client.generate_with_code_execution.return_value = "6"
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by is None
+        client.generate_with_code_execution.assert_called_once()
+
     def test_missing_answer_is_rejected_before_spending_a_tool_call(self) -> None:
         """MUST-FIX 2's backstop: an item with no stated answer at all must
         be rejected before _run_code_execution ever runs — not after a

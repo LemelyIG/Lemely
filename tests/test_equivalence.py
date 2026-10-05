@@ -2920,6 +2920,67 @@ def test_parse_expr_outcome_reports_each_calls_own_outcome(
     assert worker.pid() is None
 
 
+class _UndecidedWorker:
+    """Every parse ends with ``outcome``; the SHARED ``last_outcome`` says "ok".
+
+    Task 6 review, Important 2: a parse that reads ``last_outcome`` after the
+    call -- one attribute every thread overwrites -- instead of the call's own
+    outcome gets "ok" from this worker and is caught; the real worker writes
+    both, so it hides the difference.
+    """
+
+    def __init__(self, outcome: str) -> None:
+        self.outcome = outcome
+        self.last_outcome = "ok"
+
+    def parse_with_outcome(
+        self, text: str, timeout: float, *, vet: bool = True
+    ) -> tuple[sympy.Expr | None, str]:
+        return None, self.outcome
+
+    def parse(self, text: str, timeout: float, *, vet: bool = True) -> sympy.Expr | None:
+        return None
+
+    def pid(self) -> int | None:
+        return None
+
+    def shutdown(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize("outcome", ["busy", "timeout", "unavailable", "crash"])
+def test_parse_expr_outcome_is_the_calls_own_not_the_shared_attribute(
+    outcome: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lemely.core import equivalence as eq
+
+    monkeypatch.setattr(eq, "_PARSE_WORKER", _UndecidedWorker(outcome))
+    assert eq.parse_expr_outcome("24") == (None, outcome)
+    assert outcome in eq.PARSE_UNDECIDED_OUTCOMES
+
+
+def test_parse_undecided_outcomes_are_exactly_the_ones_that_say_nothing_about_the_text() -> None:
+    """Task 6 review, Minor 3/4: pinned as a set, so dropping a member is red."""
+    from lemely.core import equivalence as eq
+
+    assert (
+        frozenset({"busy", "timeout", "unavailable", "crash", "refused-ambiguous"})
+        == eq.PARSE_UNDECIDED_OUTCOMES
+    )
+
+
+@pytest.mark.parametrize("text", ["(2)3", "(1.5)2", "(x+1)2", "sqrt2x"])
+def test_refusals_without_a_settled_reading_have_their_own_outcome(text: str) -> None:
+    """Task 6 review, Minor 4: a digit after a bracket and a bracketless
+    argument with no settled reading are refused because the text has two
+    readings, not because it is not an expression -- a distinct outcome, so a
+    caller can treat it as "could not decide"."""
+    from lemely.core import equivalence as eq
+
+    assert eq.parse_expr_outcome(text) == (None, "refused-ambiguous")
+    assert parse_expr_safe(text) is None
+
+
 def test_the_worker_parses_normally_once_the_lock_is_free() -> None:
     """#271 guard: with the lock free, a fresh worker starts (outside the
     caller's budget) and parses as before."""
@@ -3369,6 +3430,68 @@ def test_issue_270_narrow_times_rule_leaves_x_without_ten_power_alone(
     """Guard: ``x`` is read as times only between a number and ``10^``/``10**``;
     anywhere else it stays the variable."""
     assert _kind_matches(equivalent(a, b).kind, expected_kind)
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("2x10^x", "2*10^x"),
+        ("2*10^x", "2x10^x"),
+        ("3x+2x10^2", "3x+200"),
+        ("3x+200", "3x+2x10^2"),
+    ],
+    ids=[
+        "symbolic-exponent",
+        "symbolic-exponent-reversed",
+        "x-is-a-variable-elsewhere",
+        "x-is-a-variable-elsewhere-reversed",
+    ],
+)
+def test_issue_270_times_x_is_never_read_where_x_may_be_the_variable(a: str, b: str) -> None:
+    """Task 6 review, Important 1: ``x`` is read as times only before ``10^``
+    with a whole-number exponent, and only when no other ``x`` in the text
+    is the variable. ``2x10^x`` (exponent ``x``) and ``3x+2x10^2`` (``3x``
+    uses ``x`` as the variable) were false EQUAL_PROVEN after 65ba2bd6."""
+    assert equivalent(a, b).kind not in _EQUAL_KINDS
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("2.4 x 10^(-3)", "0.0024"),
+        ("6.4x10⁻³", "0.0064"),
+        ("2 x 10^+3", "2000"),
+        ("3.0 x 10 ** 8", "300000000"),
+        ("2.4 x 10^4 J", "24000 J"),
+    ],
+    ids=["bracketed-negative", "superscript", "plus-sign", "spaced-star-star", "unit-after"],
+)
+def test_issue_270_times_x_still_reads_standard_form(a: str, b: str) -> None:
+    """Guard: the narrowed rule still reads every standard-form shape."""
+    assert _kind_matches(equivalent(a, b).kind, "equal")
+
+
+def test_issue_270_function_name_pass_does_not_recurse_per_link() -> None:
+    """Task 6 review, Minor 5. A chain of applications recursed once per link,
+    so ``"lnx" * 166`` (498 characters, under the input cap) needed about 527
+    frames: a caller already deep in its stack got a RecursionError, which
+    breaks ``parse_expr_safe``'s never-raises promise. Run here with only 80
+    frames to spare."""
+    from lemely.core import equivalence as eq
+
+    frame = sys._getframe()
+    depth = 0
+    while frame is not None:
+        depth += 1
+        frame = frame.f_back  # type: ignore[assignment]
+    text = "lnx" * 166
+    old_limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(depth + 80)
+    try:
+        result = eq._apply_function_names(text)
+    finally:
+        sys.setrecursionlimit(old_limit)
+    assert result == "*".join(["ln(x)"] * 166)
 
 
 #: (a, b, expected_kind, note). The function-application reading (#270,
