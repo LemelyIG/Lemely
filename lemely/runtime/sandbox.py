@@ -105,7 +105,7 @@ whole image in one Deflate strip, the most a TIFF can make a decoder hold::
     RGB PNG 34.8Mpx       324  248  235  240  0.37     159   81   70   72  0.02
     RGB PNG 39.7Mpx       349  271  259  264  0.41     158   81   69   72  0.02
     RGB TIFF 40Mpx        426  348  336  344  0.44     159   81   70   72  0.02
-    LA PNG 40Mpx          501  425  412  416  0.43     159   81   70   72  0.02
+    LA PNG 40Mpx          360  283  271  272  0.41     159   81   70   72  0.02
     P PNG 40Mpx           387  310  297  304  0.33     158   81   69   72  0.02
     P BMP RLE 40Mpx       391  314  302  304  0.39     159   81   70   72  0.02
     RGBA PNG 30Mpx        416  338  326  328  0.40     158   81   69   72  0.02
@@ -118,7 +118,7 @@ whole image in one Deflate strip, the most a TIFF can make a decoder hold::
     RGB16 TIFF 20Mpx      350  272  260  264  0.33     158   81   69   72  0.02
     RGBA16 PNG 15Mpx      273  196  183  184  0.44     158   81   69   72  0.03
     RGBA16 TIFF 15Mpx     331  253  241  248  0.46     159   81   70   72  0.02
-    LA16 PNG 15Mpx        273  196  183  184  0.35     158   81   69   72  0.02
+    LA16 PNG 15Mpx        286  209  196  200  0.40     158   81   69   72  0.02
     WebP 13.3Mpx (L)      362  285  272  280  0.34     260   81   68   72  0.02
     WebP 13.3Mpx RGBA     365  287  275  280  2.64     265   85   74   72  0.03
     interactive: preview | crop
@@ -126,31 +126,31 @@ whole image in one Deflate strip, the most a TIFF can make a decoder hold::
     PDF 40p RGB JPEG      202  127  118  120  0.79     196  124  112  120  0.88
     PDF 3p RGB Flate      158   89   74   80  0.20     160   92   76   80  0.10
     PDF 3p RGB JPEG       173  105   89   88  0.34     177  109   93   96  0.41
-    1-bit PNG 159Mpx      331  256  241  248  0.20     481  405  392  400  0.47
-    1-bit TIFF 160Mpx     331  256  241  248  0.27     490  414  400  400  0.45
-    L TIFF 160Mpx         464  390  374  376  0.57     463  387  374  376  0.60
-    I;16 PNG 80Mpx        389  315  299  304  0.61     409  332  320  320  0.83
-    I;16 TIFF 80Mpx       388  313  299  304  0.54     463  387  374  376  0.63
-    RGB JPEG 40Mpx        180  104   91   96  0.17     379  301  289  296  1.46
-    RGB PNG 34.8Mpx       360  285  270  272  0.36     335  258  246  248  0.33
-    RGB PNG 39.7Mpx       387  314  298  304  0.45     359  282  269  272  0.37
-    RGB TIFF 40Mpx        387  313  298  304  0.40     425  349  336  344  0.40
-    LA PNG 40Mpx          314  239  224  224  0.36     360  284  271  272  0.32
-    P PNG 40Mpx           351  277  261  264  0.32     249  172  159  160  0.23
-    P BMP RLE 40Mpx       350  275  260  264  0.48     279  200  189  192  0.23
-    RGBA PNG 30Mpx        390  315  301  304  0.45     310  233  220  224  0.26
-    RGBA TIFF 30Mpx       388  313  299  304  0.47     388  310  299  304  0.31
-    CMYK TIFF 30Mpx       387  313  298  304  0.46     387  311  298  304  0.32
-    CMYK JPEG 30Mpx       179  105   89   88  0.12     311  235  222  224  0.26
-    I TIFF 30Mpx          244  170  155  160  0.22     388  311  299  304  0.33
-    F TIFF 30Mpx          244  170  155  160  0.22     387  310  298  304  0.34
-    RGB16 PNG 20Mpx       332  258  242  248  0.37     260  183  170  176  0.23
-    RGB16 TIFF 20Mpx      331  256  241  248  0.35     349  272  259  264  0.29
-    RGBA16 PNG 15Mpx      333  258  243  248  0.41     235  157  146  152  0.20
-    RGBA16 TIFF 15Mpx     331  256  241  248  0.42     330  253  240  248  0.28
-    LA16 PNG 15Mpx        246  172  156  160  0.21     235  157  146  152  0.15
-    WebP 13.3Mpx (L)       (MuPDF cannot open a WebP)     362  285  272  280  0.18
-    WebP 13.3Mpx RGBA      (MuPDF cannot open a WebP)     366  289  276  280  0.77
+    1-bit PNG 159Mpx      468  391  379  384  0.30     481  405  392  400  0.47
+    1-bit TIFF 160Mpx     474  396  385  392  0.29     490  414  400  400  0.45
+    L TIFF 160Mpx         464  387  374  376  0.37     463  387  374  376  0.60
+    I;16 PNG 80Mpx        406  329  316  320  0.64     409  332  320  320  0.83
+    I;16 TIFF 80Mpx       464  387  374  376  0.40     463  387  374  376  0.63
+    RGB JPEG 40Mpx        172   95   83   88  0.17     379  301  289  296  1.46
+    RGB PNG 34.8Mpx       335  258  245  248  0.31     335  258  246  248  0.33
+    RGB PNG 39.7Mpx       361  284  272  272  0.36     359  282  269  272  0.37
+    RGB TIFF 40Mpx        427  349  337  344  0.34     425  349  336  344  0.40
+    LA PNG 40Mpx          363  286  273  280  0.31     360  284  271  272  0.32
+    P PNG 40Mpx           401  324  311  312  0.36     249  172  159  160  0.23
+    P BMP RLE 40Mpx       402  324  312  312  0.38     279  200  189  192  0.23
+    RGBA PNG 30Mpx        428  351  339  344  0.48     310  233  220  224  0.26
+    RGBA TIFF 30Mpx       428  351  339  344  0.47     388  310  299  304  0.31
+    CMYK TIFF 30Mpx       428  351  339  344  0.51     387  311  298  304  0.32
+    CMYK JPEG 30Mpx       182  105   92   96  0.13     311  235  222  224  0.26
+    I TIFF 30Mpx          389  311  299  304  0.26     388  311  299  304  0.33
+    F TIFF 30Mpx          388  311  298  304  0.31     387  310  298  304  0.34
+    RGB16 PNG 20Mpx       253  176  163  168  0.35     260  183  170  176  0.23
+    RGB16 TIFF 20Mpx      349  272  260  264  0.42     349  272  259  264  0.29
+    RGBA16 PNG 15Mpx      289  212  199  200  0.40     235  157  146  152  0.20
+    RGBA16 TIFF 15Mpx     330  253  241  248  0.43     330  253  240  248  0.28
+    LA16 PNG 15Mpx        289  211  199  200  0.31     235  157  146  152  0.15
+    WebP 13.3Mpx (L)      362  285  273  280  0.29     362  285  272  280  0.18
+    WebP 13.3Mpx RGBA     366  290  277  280  0.56     366  289  276  280  0.77
 
 Every path of a worker run in turn in ONE child (as in production, where
 the allocator keeps some of what it freed) peaks higher: ``VmData`` 417 MiB
@@ -158,6 +158,27 @@ and ``VmPeak`` 507 MiB for extraction, 404 MiB and 494 MiB for preview and
 crop. The worst single paths: extraction of the 40 Mpx LA PNG (412 MiB;
 Pillow holds LA at four bytes a pixel and converts it), and the crop of a
 160 Mpx 1-bit image (401 MiB).
+
+Re-measured 2026-10-05 (final fix B, same harness): the image rows of the
+preview column and the two LA extraction rows above. An image preview is
+now Pillow's decode, as extraction's and the crop's (final review R3, I1),
+not MuPDF's, and transparency is composited onto white, LA staying one
+channel (R3, I2). The worst image preview is the 160 Mpx 1-bit TIFF,
+``VmData`` 385 MiB and ``VmPeak`` 474 MiB, against 576 / 704 MiB; LA
+extraction fell from 412 to 271 MiB. Transparent scans at their caps
+(``Data``): a keyed 159 Mpx 1-bit PNG previews at 381 MiB and crops a
+whole page at 432 MiB; a keyed 40 Mpx RGB PNG previews at 273 MiB; a
+palette PNG with ``tRNS`` at 313 MiB; a keyed 16-bit grey PNG at 322 MiB.
+Two measurements this table lacks: a crop of a WHOLE page (box 0-1000) of
+a 160 Mpx 1-bit image, transparent or not, is the interactive worker's
+worst path, ``VmData`` 429 MiB (432 MiB keyed transparent) and ``VmPeak``
+519 MiB (the table's crop box is a small one); and in turn in one child
+the interactive worker reached 428 MiB and 518 MiB. On those numbers the growth rule below would
+ask for next64(66.7 + 1.5 x 365) = 640 MiB, not 576: the interactive
+worker's headroom on the growth is 1.40x, not 1.5x. The limits are
+unchanged (an owner decision); under 576 / 704 every path above completed,
+fresh and in turn. The extraction in-turn figure (417 MiB) predates the LA
+change and was not re-run.
 
 The rule (owner decision, Task 11 review round 2): 1.5x headroom on what the
 child allocates over its warm baseline (``VmData`` 66.7 MiB with the render
@@ -174,8 +195,9 @@ bound. Headroom over the worst path: extraction 1.64x on the growth (640 /
 417 = 1.53x overall) and 768 / 507 = 1.52x address; interactive 1.51x on the
 growth (576 / 404 = 1.43x overall) and 704 / 494 = 1.43x address. Re-run
 under 640 / 768 and 576 / 704, every admitted path completed
-(``last_outcome == "ok"``), fresh and in turn; the only failures are
-MuPDF's, on a WebP preview, at any limit. Both rules are pinned by
+(``last_outcome == "ok"``), fresh and in turn; the only failures were
+MuPDF's, on a WebP preview, at any limit (gone: images no longer reach
+MuPDF). Both rules are pinned by
 ``tests/test_sandbox.py::test_the_default_limits_follow_the_measured_growth_rule``.
 
 The 2 GiB budget (owner decision S1), resident, every fixed part measured

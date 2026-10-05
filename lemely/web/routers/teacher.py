@@ -203,8 +203,9 @@ PREVIEW_TARGET = "lemely.io.scan_render.render_preview_png"
 #: of :func:`preview_etag`: bump it whenever a change to
 #: :func:`~lemely.io.scan_render.render_preview_png` changes the pixels it
 #: draws (size, DPI, colour), so every browser's cached thumbnail stops
-#: matching and is drawn again.
-PREVIEW_RENDER_VERSION = 1
+#: matching and is drawn again. 2: image scans are drawn by Pillow, as the
+#: marker reads them, not by MuPDF (final review R3, I1).
+PREVIEW_RENDER_VERSION = 2
 
 #: The preview's caching (owner decision S2, #249): the browser may keep the
 #: thumbnail but must revalidate on every view, and the revalidation runs the
@@ -1157,9 +1158,10 @@ def get_paper_preview(
     the object's expiry does not change who may see the paper; the first
     request without the tag after expiry gets the 404.
 
-    Image uploads (the console accepts images as well as PDFs) are drawn by
-    PyMuPDF too, so one code path covers both; the bytes decide which
-    opener runs (:func:`~lemely.io.scan_render.render_preview_png`).
+    Image uploads (the console accepts images as well as PDFs) are decoded
+    by Pillow exactly as the marker and the crop decode them (orientation,
+    wide grey, transparency), and PDFs are drawn by PyMuPDF; the bytes
+    decide which (:func:`~lemely.io.scan_render.render_preview_png`).
 
     The render runs in :data:`~lemely.runtime.sandbox.INTERACTIVE_WORKER`, a
     memory-limited child that is killed past ``preview_timeout_seconds``

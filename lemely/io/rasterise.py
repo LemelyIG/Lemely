@@ -449,17 +449,19 @@ def _opacity(strip: PILImage) -> PILImage:
     return strip.getchannel(len(strip.getbands()) - 1)
 
 
-def _onto_white(opaque: PILImage, source: PILImage) -> PILImage:
+def _onto_white(opaque: PILImage, source: PILImage, *, in_place: bool) -> PILImage:
     """``opaque`` (``source`` in "L" or "RGB") composited onto white by ``source``'s opacity.
 
     Strip by strip (:func:`_row_strips`), so besides ``opaque`` only a few
     MB are held. ``opaque`` is written in place when it is a new image, and
-    copied first when it is ``source`` itself (an "L" or "RGB" image with a
-    transparency key), which belongs to the caller.
+    when it is ``source`` itself (an "L" or "RGB" image with a transparency
+    key) only if ``in_place``: otherwise ``source`` belongs to the caller
+    and is copied first. In place, each strip's opacity is read before its
+    rows are written.
     """
     from PIL import Image
 
-    result = opaque.copy() if opaque is source else opaque
+    result = opaque.copy() if opaque is source and not in_place else opaque
     white: int | tuple[int, int, int] = 255 if result.mode == "L" else (255, 255, 255)
     for top, strip in _row_strips(source):
         box = (0, top, strip.width, top + strip.height)
@@ -482,7 +484,9 @@ def _opaque_single_channel_or_rgb(image: PILImage, scale_of: PILImage | None) ->
     return image.convert("RGB")
 
 
-def single_channel_or_rgb(image: PILImage, *, scale_of: PILImage | None = None) -> PILImage:
+def single_channel_or_rgb(
+    image: PILImage, *, scale_of: PILImage | None = None, in_place: bool = False
+) -> PILImage:
     """``image`` in a mode Pillow can ``reduce`` and resample well: "L" or "RGB".
 
     #256: a bilevel ("1") or other single-channel scan is taken to "L" (the
@@ -506,11 +510,19 @@ def single_channel_or_rgb(image: PILImage, *, scale_of: PILImage | None = None) 
     whole image (in the same mode). The full scale is inferred from it
     rather than from the region (#275), so a crop has extraction's tones: a
     region that is all ink is flat, and inferred alone it would be white.
+
+    ``in_place``: the caller is done with ``image``. An "L" or "RGB" image
+    with a transparency key, the one case that would otherwise be copied
+    before it is composited, is then written in place: a 40 Mpx keyed RGB
+    page's preview measured 426 MiB ``VmData`` with the copy (final fix B).
+    Every other mode converts to a new image either way.
     """
     if image.mode in _PREMULTIPLIED_MODES:
         image = image.convert(_PREMULTIPLIED_MODES[image.mode])
     opaque = _opaque_single_channel_or_rgb(image, scale_of)
-    return _onto_white(opaque, image) if _has_transparency(image) else opaque
+    if not _has_transparency(image):
+        return opaque
+    return _onto_white(opaque, image, in_place=in_place)
 
 
 def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
@@ -557,7 +569,8 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
             # a one-channel scan to RGB at full size; the RGB conversion waits
             # until after the reduce below. The transpose above is untouched:
             # pixel caps are areas, which a transpose does not change.
-            pil_image = single_channel_or_rgb(opened)
+            # `in_place`: nothing reads `opened` afterwards.
+            pil_image = single_channel_or_rgb(opened, in_place=True)
             # Decoded here, while the file is open: an "L" or "RGB" image
             # comes back as `opened` itself, and the reduce below runs after
             # the `with` has closed the file. `exif_transpose` happens to load

@@ -15,7 +15,7 @@ import pymupdf
 import pytest
 from PIL import Image, ImageDraw, ImageOps
 
-from lemely.io.rasterise import iter_scan_pages, rasterise_scan_to_pages
+from lemely.io.rasterise import iter_scan_pages, rasterise_scan_to_pages, single_channel_or_rgb
 from lemely.io.reread import padded_crop_rect
 from lemely.io.scan_render import (
     CROP_RENDER_DPI,
@@ -306,6 +306,105 @@ class TransparentScanTests(unittest.TestCase):
                 width, height = preview.size
                 self.assertEqual(preview.getpixel((width * 7 // 8, height * 5 // 6)), 255)
                 self.assertLess(cast("int", preview.getpixel((width // 4, height // 4))), 64)
+
+    def test_a_keyed_page_is_copied_unless_the_caller_gives_it_up(self) -> None:
+        """An "L" or "RGB" page with a key is the one mode the conversion
+        returns as it is, so compositing it writes into the caller's image
+        unless the caller says it is done with it (``in_place``)."""
+        for mode, canvas in (("L", 0), ("RGB", (0, 0, 0))):
+            with self.subTest(mode=mode):
+                page = Image.new(mode, (4, 2), canvas)
+                page.info["transparency"] = canvas
+
+                kept = single_channel_or_rgb(page)
+
+                self.assertIsNot(kept, page)
+                self.assertEqual(kept.convert("L").getextrema(), (255, 255))
+                self.assertEqual(page.getpixel((0, 0)), canvas)
+                self.assertEqual(page.info["transparency"], canvas)
+
+                given_up = single_channel_or_rgb(page, in_place=True)
+
+                self.assertIs(given_up, page)
+                self.assertEqual(page.convert("L").getextrema(), (255, 255))
+                self.assertNotIn("transparency", page.info)
+
+
+def _oriented(image: Image.Image, image_format: str, orientation: int, **params: object) -> bytes:
+    """``image`` (upright) stored as a camera stores it for EXIF ``orientation`` 6, tagged so."""
+    assert orientation == 6
+    exif = Image.Exif()
+    exif[EXIF_ORIENTATION_TAG] = orientation
+    buf = io.BytesIO()
+    # Orientation 6 stores the page turned a quarter: ROTATE_90 undoes the
+    # ROTATE_270 that exif_transpose applies for it.
+    image.transpose(Image.Transpose.ROTATE_90).save(
+        buf, format=image_format, exif=exif.tobytes(), **params
+    )
+    return buf.getvalue()
+
+
+def _marked_page(size: tuple[int, int]) -> Image.Image:
+    """A white "L" page with a dark mark in its top-left corner and a grey bar along its foot."""
+    width, height = size
+    page = Image.new("L", size, 255)
+    page.paste(20, (width // 10, height // 10, width // 3, height // 4))
+    page.paste(128, (0, height * 9 // 10, width, height))
+    return page
+
+
+def _image_previews() -> dict[str, bytes]:
+    """Image scans the MuPDF preview drew unlike the marker (final review R3, I1)."""
+    page = _marked_page((300, 600))
+    return {
+        # MuPDF honours EXIF orientation in a JPEG only.
+        "PNG, eXIf orientation 6": _oriented(page, "PNG", 6),
+        "TIFF, Orientation 6": oriented_tiff(
+            "L", (600, 300), 6, compression="raw", mark=(20, 30, 120, 90)
+        ),
+        # 12-bit samples in a 16-bit container: MuPDF drew them nearly black.
+        "TIFF, 12-bit grey": wide_grey_scan(
+            "I;16", (400, 300), 4000, 200, (40, 30, 160, 120), image_format="TIFF"
+        ),
+        "TIFF, normalised float grey": wide_grey_scan(
+            "F", (400, 300), 0.95, 0.05, (40, 30, 160, 120), image_format="TIFF"
+        ),
+        # MuPDF cannot open a WebP at all.
+        "WebP, EXIF orientation 6": _oriented(page.convert("RGB"), "WEBP", 6, lossless=True),
+    }
+
+
+class ImagePreviewTests(unittest.TestCase):
+    """Final review R3, I1: an image's preview is the marker's view of it."""
+
+    def test_an_image_preview_is_the_page_the_marker_is_sent(self) -> None:
+        for name, scan in _image_previews().items():
+            with self.subTest(scan=name):
+                marker = _extracted(scan)
+                self.assertLessEqual(max(marker.size), PREVIEW_LONG_EDGE_PX)
+
+                preview = _grey(render_preview_png(scan))
+
+                self.assertEqual(preview.size, marker.size)
+                self.assertEqual(preview.tobytes(), marker.tobytes())
+
+    def test_a_large_image_preview_is_the_marker_page_scaled_to_the_preview(self) -> None:
+        """Past the preview's size the page is reduced before it is turned
+        upright; it must still be the marker's page, scaled."""
+        scan = _oriented(_marked_page((1200, 1800)), "PNG", 6)
+        marker = _extracted(scan)
+        self.assertEqual(marker.size, (1200, 1800))
+
+        preview = _grey(render_preview_png(scan))
+
+        self.assertEqual(preview.size, (561, PREVIEW_LONG_EDGE_PX))
+        want = marker.resize(preview.size, Image.Resampling.LANCZOS, reducing_gap=3.0)
+        difference = sum(
+            abs(got - expected)
+            for got, expected in zip(preview.tobytes(), want.tobytes(), strict=True)
+        )
+        self.assertLess(difference / (preview.width * preview.height), 1.0)
+        self.assertEqual(preview.getpixel((100, 120)), want.getpixel((100, 120)))
 
 
 class RenderRefusedTests(unittest.TestCase):

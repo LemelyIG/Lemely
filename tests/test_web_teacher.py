@@ -2749,7 +2749,11 @@ def test_preview_of_a_160_mpx_bilevel_scan_has_a_bounded_peak() -> None:
     process (``VmHWM`` growth over the peak after imports and after building
     the file): 958 MB drawn at ``dpi=72``, 183 MB at the bounded zoom -- most
     of it MuPDF's decode of the whole image at one byte a pixel (159 MB),
-    which no zoom avoids. The bound, 400 MB, sits between the two."""
+    which no zoom avoids. The bound, 400 MB, sits between the two. Since
+    the preview decodes images with Pillow, as the marker does (final review
+    R3, I1), it is 328 MB: the decode (159 MB) and its "L" copy (159 MB),
+    which Pillow needs to reduce a bilevel image by anything but nearest
+    neighbour."""
     import subprocess
 
     root = Path(__file__).resolve().parents[1]

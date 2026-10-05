@@ -24,11 +24,12 @@ from lemely.io._scan_common import _PAGE_COUNT_UNREADABLE_MESSAGE, ScanRejectedE
 from lemely.io.rasterise import RasterisedPage, looks_like_pdf, single_channel_or_rgb
 from lemely.io.reread import REREAD_UPSCALE, crop_and_upscale, padded_crop_rect
 from lemely.io.scan_limits import (
+    ScanTooLargeError,
     check_pdf_page_content,
     decode_pixel_cap,
     open_checked_pdf,
     open_scan_image,
-    open_scan_image_document,
+    plan_image,
 )
 from lemely.runtime.errors import LemelyError
 
@@ -125,16 +126,68 @@ EXIF_ORIENTATION_TAG = 0x0112
 WHOLE_REGION = [0, 0, 1000, 1000]
 
 
+def _preview_size(size: tuple[int, int]) -> tuple[int, int]:
+    """``size`` scaled down, never up, to :data:`PREVIEW_LONG_EDGE_PX` on its long edge."""
+    width, height = size
+    scale = min(1.0, PREVIEW_LONG_EDGE_PX / max(width, height, 1))
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
+def _image_preview_png(data: bytes) -> bytes:
+    """An image scan as a PNG thumbnail, decoded as extraction and the crop decode it.
+
+    Final review R3, I1: MuPDF drew the image preview, but the marker and
+    the crop read Pillow's decode, so the teacher's card disagreed with what
+    was marked. MuPDF honours EXIF orientation in a JPEG only (a PNG or TIFF
+    previewed sideways), draws 12-bit samples in a 16-bit container and
+    normalised float samples nearly black (#275 fixed that for extraction
+    and the crop only), and cannot open a WebP at all. So the image goes
+    through the same steps: :func:`~lemely.io.scan_limits.open_scan_image`
+    (allowlisted formats), :func:`~lemely.io.scan_limits.plan_image` (the
+    decode cap for its mode and format, refused as extraction refuses it),
+    the orientation read after the load as the crop reads it (a TIFF is
+    turned upright by the load), :func:`single_channel_or_rgb` (wide grey
+    scaled, transparency composited onto white), then a reduce to the
+    preview's size, and only the small result is turned upright. A JPEG is
+    decoded at a reduced scale first (``draft``), as extraction decodes it.
+    The first frame of a multi-frame TIFF, as extraction reads.
+    """
+    from PIL import Image, JpegImagePlugin
+
+    try:
+        with open_scan_image(io.BytesIO(data)) as opened:
+            plan_image(opened.width, opened.height, opened.mode, opened.format)
+            if isinstance(opened, JpegImagePlugin.JpegImageFile):
+                opened.draft(None, _preview_size(opened.size))
+            opened.load()
+            transpose = upright_transpose(opened.getexif().get(EXIF_ORIENTATION_TAG))
+            image = single_channel_or_rgb(opened, in_place=True)
+            # Always a new image (a resize to the same size copies), so it
+            # outlives the decode, which the `with` releases.
+            image = image.resize(
+                _preview_size(image.size), Image.Resampling.LANCZOS, reducing_gap=3.0
+            )
+    except Image.DecompressionBombError as exc:
+        raise ScanTooLargeError(
+            "image declares too many pixels to decode", reason="image_px"
+        ) from exc
+    if transpose is not None:
+        image = image.transpose(transpose)
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def render_preview_png(data: bytes) -> bytes:
     """Page 1 of a stored scan, ``data``, as a PNG thumbnail.
 
     PDF or image is decided from the bytes (``looks_like_pdf``), as the crop
     and extraction decide it, never from the client-supplied content type:
     MuPDF sniffs the bytes, so PDF bytes stored as ``image/png`` used to skip
-    the pre-scan and were repaired while opening (final review, item 4). A PDF
-    opens through ``open_checked_pdf`` (the raw pre-scan first), an image
-    through ``open_scan_image_document`` (allowlisted, and never opened as a
-    PDF).
+    the pre-scan and were repaired while opening (final review, item 4). An
+    image is decoded by Pillow, exactly as extraction and the crop decode it
+    (:func:`_image_preview_png`), and never reaches MuPDF. A PDF opens
+    through ``open_checked_pdf`` (the raw pre-scan first) and MuPDF draws it.
 
     One page is drawn, so the content check is the crop's one-page rule
     (``check_pdf_page_content``, owner decision S3, #269): page 1's content
@@ -153,7 +206,9 @@ def render_preview_png(data: bytes) -> bytes:
     """
     import pymupdf
 
-    doc = open_checked_pdf(data) if looks_like_pdf(data) else open_scan_image_document(data)
+    if not looks_like_pdf(data):
+        return _image_preview_png(data)
+    doc = open_checked_pdf(data)
     with doc:
         try:
             page_count = int(doc.page_count)
@@ -446,7 +501,9 @@ def fitted_region(image: PILImage, rect: tuple[int, int, int, int]) -> PILImage:
         fitted = (max(1, int(width * scale)), max(1, int(height * scale)))
         # PIL resamples palette and bilevel images by nearest neighbour; a
         # bilevel page goes to "L" (same size), not to a full-size RGB (#256).
-        image = single_channel_or_rgb(image)
+        # `in_place`: the caller reads only this region of `image`, and only
+        # through what is returned here.
+        image = single_channel_or_rgb(image, in_place=True)
         region = image.resize(fitted, Image.Resampling.LANCZOS, box=rect, reducing_gap=3.0)
     region = single_channel_or_rgb(region, scale_of=image)
     return region if region.mode == "RGB" else region.convert("RGB")
