@@ -109,6 +109,16 @@ def test_each_sandbox_failure_maps_to_its_status_and_is_logged(
     ]
 
 
+def test_the_fixed_failure_text_is_extractions_constant_itself() -> None:
+    """Final review R1, minor 3: the owner-decided text a user sees when a
+    scan cannot be rendered was written out in four places. The routes'
+    detail is extraction's constant, the same object, so they cannot drift."""
+    from lemely.io.rasterise import RENDER_FAILED_MESSAGE
+
+    assert SANDBOX_FAILED_DETAIL is RENDER_FAILED_MESSAGE
+    assert RENDER_FAILED_MESSAGE == "Could not render this scan"
+
+
 @pytest.mark.usefixtures("sandboxed")
 def test_the_upload_check_runs_in_the_extraction_worker() -> None:
     """#260: the upload check opens the user's bytes with pdfium and MuPDF,

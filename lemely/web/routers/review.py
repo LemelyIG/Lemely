@@ -70,7 +70,7 @@ from lemely.web.schemas_review import (
     ReviewQueueItemDTO,
     ReviewQueueListDTO,
 )
-from lemely.web.upload_utils import sandbox_failure_to_http
+from lemely.web.upload_utils import SANDBOX_FAILED_DETAIL, sandbox_failure_to_http
 
 if TYPE_CHECKING:
     from lemely.core.schemas import SourceBox
@@ -471,7 +471,7 @@ def get_review_item_crop(
         # claimed to be, or one whose page geometry no renderer will accept.
         # The renderer's own message is for the log; the client gets a fixed one.
         log.warning("review_crop_render_failed", item_id=logged_id, error=str(exc))
-        raise HTTPException(status_code=422, detail="Could not render this scan") from exc
+        raise HTTPException(status_code=422, detail=SANDBOX_FAILED_DETAIL) from exc
 
     # Never stored. The bytes do not change for an item id, but who may see
     # them does: a student leaves a class, a teacher signs out of a shared

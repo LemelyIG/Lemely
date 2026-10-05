@@ -2106,7 +2106,9 @@ def test_preview_of_a_stored_scan_with_no_pages_is_a_422(
 ) -> None:
     """A stored PDF whose page tree is empty has nothing to draw: the render
     refuses it (``RenderRefused``, ``no_pages``) and the route answers 422 with
-    the render's own message, as it did when the route raised the 422 itself."""
+    the render's own message, as it did when the route raised the 422 itself.
+    The refusal is logged by reason, as the crop logs its refusals (final
+    review R1, minor 7)."""
     from tests.pdf_fakes import empty_page_tree_pdf
 
     paper_id = _seed_stored_scan(
@@ -2119,10 +2121,20 @@ def test_preview_of_a_stored_scan_with_no_pages_is_a_422(
         name="empty.pdf",
     )
 
-    preview = client.get(f"/api/papers/{paper_id}/preview")
+    with structlog.testing.capture_logs() as logs:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
 
     assert preview.status_code == 422, preview.text
     assert preview.json()["detail"] == "Stored scan has no pages"
+    refused = [e for e in logs if e["event"] == "paper_preview_refused"]
+    assert refused == [
+        {
+            "event": "paper_preview_refused",
+            "log_level": "warning",
+            "paper_id": str(paper_id),
+            "reason": "no_pages",
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------

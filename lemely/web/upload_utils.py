@@ -20,6 +20,7 @@ from pathlib import Path
 import structlog
 from fastapi import HTTPException
 
+from lemely.io.rasterise import RENDER_FAILED_MESSAGE
 from lemely.io.scan_limits import ScanRejectedError
 from lemely.runtime import sandbox
 from lemely.runtime.sandbox import SandboxFailure, SandboxUnavailable
@@ -136,8 +137,11 @@ def check_scan_geometry(data: bytes, content_type: str | None = None) -> None:
 #: The client's answer when no render worker could take the request.
 SANDBOX_UNAVAILABLE_DETAIL = "Scan rendering is temporarily unavailable. Try again in a moment."
 
-#: The client's answer for any other render worker failure.
-SANDBOX_FAILED_DETAIL = "Could not render this scan"
+#: The client's answer for any other render worker failure, and for a render
+#: that fails in process: the one fixed text a user is shown (owner decision,
+#: #249), extraction's :data:`~lemely.io.rasterise.RENDER_FAILED_MESSAGE`
+#: itself, so the copies cannot drift.
+SANDBOX_FAILED_DETAIL = RENDER_FAILED_MESSAGE
 
 
 def sandbox_failure_to_http(exc: SandboxFailure, *, event: str, **fields: object) -> HTTPException:

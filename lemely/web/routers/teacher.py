@@ -170,6 +170,7 @@ from lemely.web.schemas_teacher import (
     UploadResponseDTO,
 )
 from lemely.web.upload_utils import (
+    SANDBOX_FAILED_DETAIL,
     check_scan_geometry,
     check_upload_cap,
     safe_upload_name,
@@ -1195,6 +1196,9 @@ def get_paper_preview(
             result_type=bytes,
         )
     except RenderRefused as exc:
+        # The refusal's message is the user's; its reason and numbers go to
+        # the log, as the crop logs its refusals (final review R1, minor 7).
+        log.warning("paper_preview_refused", paper_id=paper_id, reason=exc.reason, **exc.fields)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ScanRejectedError as exc:
         log.warning("paper_preview_rejected", paper_id=paper_id, reason=exc.reason, detail=str(exc))
@@ -1210,7 +1214,7 @@ def get_paper_preview(
         # Its text (a library's message, a path) stays in the log; the client
         # gets the fixed message (#249).
         log.warning("paper_preview_failed", paper_id=paper_id, error=str(exc))
-        raise HTTPException(status_code=422, detail="Could not render this scan") from exc
+        raise HTTPException(status_code=422, detail=SANDBOX_FAILED_DETAIL) from exc
 
     return Response(content=png, media_type="image/png", headers=caching)
 
