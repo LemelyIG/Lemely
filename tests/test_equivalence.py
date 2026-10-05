@@ -3221,12 +3221,11 @@ def test_a_greek_head_call_is_not_read_as_one_flat_symbol_family() -> None:
 
 
 def test_a_function_call_head_never_reports_a_false_equal() -> None:
-    """False-EQUAL guard (review round 1): ``cosθ`` (no digit suffix) reads
-    as the letter-split product ``c*o*s*θ`` -- SymPy's ``split_symbols``
-    transformation on a multi-letter identifier that is not itself a known
-    function or unit. ``cosθ1`` must never be reported ``equal_proven``
-    against that product; a wrong match would be worse than the
-    UNPARSEABLE this fix's call reading replaces."""
+    """False-EQUAL guard (review round 1): ``cosθ1`` must never be reported
+    ``equal_proven`` against ``cosθ`` (no digit suffix); a wrong match would
+    be worse than the UNPARSEABLE this fix's call reading replaces. ``cosθ``
+    was the letter-split product ``c*o*s*θ`` when this was written; since
+    #270 it is ``cos(θ)``, and ``cos(θ_1)`` is still a different call."""
     assert equivalent("cosθ1", "cosθ").kind is not VerdictKind.EQUAL_PROVEN
 
 
@@ -3244,6 +3243,173 @@ def test_scientific_notation_is_not_a_subscript(text: str) -> None:
     digit suffix: the subscript rule must leave it to Python's float
     literal, exactly as before."""
     assert parse_expr_safe(text) == sympy.Float("3e8")
+
+
+# ---------------------------------------------------------------------------
+# #270: function names, a digit after a bracket, `x` as times, one micro sign
+# ---------------------------------------------------------------------------
+
+#: (a, b, expected_kind, note). Each `equal` row is a reading SymPy's letter
+#: splitting got wrong (``ln6`` was ``6*l*n``, so ``ln6`` and ``3ln2`` were
+#: both letter products and EQUAL_PROVEN to each other); each `not_equal` row
+#: is the false match that reading produced. ``sin2x`` is ``sin(2x)``, the
+#: CAIE convention (owner decision D1), pinned both ways. The two micro rows
+#: spell U+00B5 (the micro sign) and U+03BC (Greek mu) as escapes so the
+#: difference survives an editor.
+_ISSUE_270_TABLE: list[tuple[str, str, str, str]] = [
+    ("ln6", "3ln2", "not_equal", "ln6-is-not-3ln2"),
+    ("ln6", "ln(6)", "equal", "ln6-is-ln-of-6"),
+    ("3ln2", "ln(8)", "equal", "3ln2-is-ln-of-8"),
+    ("sin2x", "2sinx", "not_equal", "sin2x-is-not-2sinx"),
+    ("sin2x", "sin(2x)", "equal", "sin2x-is-sin-of-2x"),
+    ("2sinx", "2*sin(x)", "equal", "2sinx-is-2-sin-x"),
+    ("log10(100)", "2", "equal", "log10-call-is-base-10"),
+    ("Asin(ωt1)", "A*sin(ω*t_1)", "equal", "coefficient-before-a-call"),
+    ("(x+1)2", "x^2+2x+1", "unparseable", "digit-after-bracket-is-refused"),
+    ("(x+1)^2", "x^2+2x+1", "equal", "caret-after-bracket-unchanged"),
+    ("3.0x10^8", "3.0×10^8", "equal", "ascii-x-times-ten-vs-times-sign"),
+    ("3.0x10^8", "3.0*10**8", "equal", "ascii-x-times-ten-vs-star"),
+    ("2x", "2*x", "equal", "2x-is-still-2-times-x"),
+    ("4.5 µg", "4.5 μg", "equal", "micro-sign-is-greek-mu"),
+    ("4.5 µg", "4.5 mg", "not_equal", "micrograms-are-not-milligrams"),
+]
+
+
+@pytest.mark.parametrize(
+    "a,b,expected_kind,note", _ISSUE_270_TABLE, ids=[t[3] for t in _ISSUE_270_TABLE]
+)
+def test_issue_270_row_matches_expected_verdict(
+    a: str, b: str, expected_kind: str, note: str
+) -> None:
+    """#270: each row asserts its own verdict, the guards included."""
+    verdict = equivalent(a, b)
+    assert _kind_matches(verdict.kind, expected_kind), (
+        f"{a!r} vs {b!r} ({note}): expected {expected_kind}, got "
+        f"{verdict.kind.value} (method={verdict.method}, detail={verdict.detail})"
+    )
+
+
+def test_both_micro_spellings_parse_to_one_unit_symbol() -> None:
+    """#270: ``µg`` (U+00B5) was protected as a unit symbol, but Python's
+    tokenizer NFKC-folds an identifier's U+00B5 to U+03BC, so the name SymPy
+    looked up was not the one in ``local_dict`` -- a NameError, and
+    ``parse_expr_safe("4.5 µg")`` was ``None``. The U+03BC spelling was
+    never protected, so ``4.5 μg`` split into ``4.5*g*μ``. Both must
+    be the one microgram symbol, spelled with U+03BC."""
+    micrograms = 4.5 * sympy.Symbol("μg")
+    assert parse_expr_safe("4.5 µg") == micrograms
+    assert parse_expr_safe("4.5 μg") == micrograms
+
+
+def test_issue_270_digit_after_bracket_is_refused() -> None:
+    """#270: ``(x+1)2`` is either a lost superscript (``(x+1)²``) or a
+    coefficient written after the bracket; implicit multiplication read it as
+    ``2x+2``. Refused rather than guessed."""
+    assert parse_expr_safe("(x+1)2") is None
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [("(x+1)x", "x^2+x"), ("(x+1)(x-1)", "x^2-1")],
+    ids=["bracket-then-letter", "bracket-then-bracket"],
+)
+def test_issue_270_unaffected_bracket_shapes_still_multiply(a: str, b: str) -> None:
+    """Guard: only a DIGIT after ``)`` is refused."""
+    assert _kind_matches(equivalent(a, b).kind, "equal")
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "expected_kind"),
+    [("5x3", "5*x_3", "equal"), ("x10", "x*10", "not_equal"), ("2x10", "20", "not_equal")],
+    ids=["5x3-is-a-subscript", "x10-is-a-subscript", "2x10-has-no-exponent-marker"],
+)
+def test_issue_270_narrow_times_rule_leaves_x_without_ten_power_alone(
+    a: str, b: str, expected_kind: str
+) -> None:
+    """Guard: ``x`` is read as times only between a number and ``10^``/``10**``;
+    anywhere else it stays the variable."""
+    assert _kind_matches(equivalent(a, b).kind, expected_kind)
+
+
+#: (a, b, expected_kind, note). The function-application reading (#270,
+#: controller decision extending D1): a function name followed directly by
+#: one letter, a number, or a number then one letter is that function
+#: applied to it. Every row here was a letter product before #270
+#: (``cost`` was ``c*o*s*t``, ``sqrt2`` was ``2*q*r*s*t``).
+_FUNCTION_APPLICATION_TABLE: list[tuple[str, str, str, str]] = [
+    ("cost", "cos(t)", "equal", "cost-is-cos-of-t"),
+    ("sinx", "sin(x)", "equal", "sinx-is-sin-of-x"),
+    ("sinxcosx", "sin(x)*cos(x)", "equal", "concatenated-applications-split"),
+    ("sqrt2", "sqrt(2)", "equal", "sqrt2-is-root-2"),
+    ("ln2x", "ln(2*x)", "equal", "ln2x-is-ln-of-2x"),
+    ("log3x", "log(3*x)", "equal", "log3x-is-log-of-3x"),
+    ("tan2x", "tan(2*x)", "equal", "tan2x-is-tan-of-2x"),
+]
+
+
+@pytest.mark.parametrize(
+    "a,b,expected_kind,note",
+    _FUNCTION_APPLICATION_TABLE,
+    ids=[t[3] for t in _FUNCTION_APPLICATION_TABLE],
+)
+def test_issue_270_function_application_row(a: str, b: str, expected_kind: str, note: str) -> None:
+    verdict = equivalent(a, b)
+    assert _kind_matches(verdict.kind, expected_kind), (
+        f"{a!r} vs {b!r} ({note}): expected {expected_kind}, got "
+        f"{verdict.kind.value} (method={verdict.method}, detail={verdict.detail})"
+    )
+
+
+def test_issue_270_function_name_pass_is_linear_on_a_failing_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The function-name pass runs in the caller, not in the killable parse
+    worker, so its work must stay bounded. ``sin2asin2a...`` offers two
+    readings at every level (``2a`` then ``sin``, or ``2`` then ``asin``);
+    when the chain fails at its tail (``sin2xy``), a pass that retries every
+    level without remembering what already failed does 2**n work: before
+    the fix, 16 repeats (86 characters) took 786,427 calls and about 0.8 s,
+    and a 500-character answer would never return."""
+    from lemely.core import equivalence as eq
+
+    calls = 0
+    real = eq._application_at
+
+    def counting(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(eq, "_application_at", counting)
+    text = "sin2a" * 16 + "sin2xy"
+    assert eq._apply_function_names(text) == text
+    assert calls <= 4 * len(text), calls
+
+
+def test_issue_270_sqrt_of_a_number_then_a_letter_is_refused() -> None:
+    """``sqrt2x`` is ``sqrt(2x)`` or ``sqrt(2)*x``; unlike the trig, ``ln`` and
+    ``log`` forms, no convention settles it, so it is refused."""
+    assert parse_expr_safe("sqrt2x") is None
+    assert parse_expr_safe("sqrt2") == sympy.sqrt(2)
+
+
+@pytest.mark.parametrize(
+    ("text", "readings"),
+    [
+        ("sinx^2", ("sin(x)^2", "sin(x^2)")),
+        ("sinxy", ("sin(x)*y", "sin(x*y)")),
+        ("ln2(x+1)", ("ln(2)*(x+1)", "ln(2*(x+1))")),
+    ],
+    ids=["exponent-after-argument", "two-letters-after-name", "bracket-after-number"],
+)
+def test_issue_270_function_names_do_not_guess_an_ambiguous_argument(
+    text: str, readings: tuple[str, str]
+) -> None:
+    """Guard: the function-name pass brackets only an argument that ends at an
+    operator, a space or the end of the text. ``sinx^2`` (``sin²x`` or
+    ``sin(x²)``), ``sinxy`` and ``ln2(x+1)`` match neither reading."""
+    for reading in readings:
+        assert not _kind_matches(equivalent(text, reading).kind, "equal"), reading
 
 
 def test_an_interrupted_start_kills_the_child_and_leaves_the_worker_clean(

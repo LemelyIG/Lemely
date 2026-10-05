@@ -213,6 +213,16 @@ _SUPERSCRIPT_RUN_RE = re.compile(f"[{_SUPERSCRIPT_CHARS}]+")
 _MULT_CHARS = "×·∙"
 _UNICODE_MINUS = "−"
 
+#: The two code points for "micro". U+00B5 (the MICRO SIGN a keyboard or
+#: a PDF often gives) is folded to U+03BC (GREEK SMALL LETTER MU) before
+#: anything else runs, so the unit tables and the letter class hold one
+#: spelling (#270). Python's tokenizer NFKC-folds an identifier's U+00B5
+#: to U+03BC, so a ``local_dict`` key spelled with U+00B5 is never the
+#: name SymPy looks up: ``4.5 \u00b5g`` was a NameError (unparseable) while
+#: ``4.5 \u03bcg``, never protected, split into ``4.5*g*\u03bc``.
+_MICRO_SIGN = "\u00b5"
+_GREEK_MU = "\u03bc"
+
 #: Base SI/CAIE unit symbols. Ordered longest-first so the unit-digit
 #: alternation below cannot match a short prefix of a longer symbol (e.g.
 #: "cm" before "c").
@@ -273,24 +283,28 @@ _BASE_UNIT_SYMBOLS = (
 #: (`not_equal`, never a false `equal_proven`): pinned by
 #: ``test_kg_ms_known_limitation_is_not_equal_never_equal_proven`` in
 #: tests/test_equivalence.py.
-_SI_PREFIXES = ("p", "n", "µ", "u", "m", "c", "d", "k", "M", "G")
+#:
+#: Micro is spelled U+03BC (:data:`_GREEK_MU`; :func:`_normalize_text` folds
+#: the micro sign to it first); ``u`` stays as its ASCII alias.
+_SI_PREFIXES = ("p", "n", _GREEK_MU, "u", "m", "c", "d", "k", "M", "G")
 
 _UNIT_SYMBOLS: tuple[str, ...] = _BASE_UNIT_SYMBOLS + tuple(
     prefix + base for prefix in _SI_PREFIXES for base in _BASE_UNIT_SYMBOLS
 )
 _SINGLE_LETTER_UNITS = frozenset(unit for unit in _UNIT_SYMBOLS if len(unit) == 1)
 
-#: The letters a subscript can follow: Latin, the micro sign and degree
-#: sign the unit tables use, and Greek -- capitals U+0391-U+03A9 (Ω, U+03A9,
-#: is also the ohm), lower case U+03B1-U+03C9 (final sigma ς included), and
-#: the variant forms a transcriber or keyboard produces for the same letters
+#: The letters a subscript can follow: Latin, the degree sign the unit
+#: tables use, and Greek -- capitals U+0391-U+03A9 (Ω, U+03A9, is also the
+#: ohm), lower case U+03B1-U+03C9 (final sigma ς included; micro, U+03BC,
+#: is in this range once :func:`_normalize_text` has folded the micro sign,
+#: #270), and the variant forms a transcriber or keyboard produces for the same letters
 #: (ϑ U+03D1, ϕ U+03D5, ϖ U+03D6, ϰ U+03F0, ϱ U+03F1, ϵ U+03F5). Review
 #: round 3: without Greek, SymPy still split `ε0` into `ε*0` = 0, `θ1+θ2`
 #: into `3θ` and `μ0*I` into 0 -- each a false EQUAL_PROVEN. This module
 #: does not normalise the Unicode subscript digits of a handwritten `ε₀`
 #: (it is unparseable, so it routes to review); a transcriber's `ε0` is the
 #: form that reaches this rule.
-_SUBSCRIPTABLE_LETTERS = "A-Za-zµΩ°\u0391-\u03a9\u03b1-\u03c9\u03d1\u03d5\u03d6\u03f0\u03f1\u03f5"
+_SUBSCRIPTABLE_LETTERS = "A-Za-zΩ°\u0391-\u03a9\u03b1-\u03c9\u03d1\u03d5\u03d6\u03f0\u03f1\u03f5"
 
 #: A run of letters directly followed by digits (`cm3`, `m2`, `N0`, `x2`,
 #: `v1`, `mv2`, `ε0`), not itself preceded by a letter or `_`. A digit MAY
@@ -422,6 +436,51 @@ _EXPONENT_TOWER_RE = re.compile(r"(?:\*\*|\^)\s*\(?-?[0-9]+\)?\s*(?:\*\*|\^)")
 #: integer — see `_MAX_EXPONENT_VALUE`.
 _EXPONENT_VALUE_RE = re.compile(r"(?:\*\*|\^)\s*\(?(-?\d+)\)?")
 
+#: An ASCII digit straight after a closing bracket (#270): ``(x+1)2`` is a
+#: lost superscript (``(x+1)²``) or a coefficient written after the bracket,
+#: and implicit multiplication read it as ``2x+2``. Refused on the raw text
+#: rather than guessed. ``)x``, ``)(``, ``)^2``, ``)*`` and ``)²`` (a
+#: superscript is not an ASCII digit) are untouched.
+_DIGIT_AFTER_PAREN_RE = re.compile(r"\)\d")
+
+#: An ASCII ``x``/``X`` between a number and ``10^``/``10**`` is the
+#: multiplication sign of standard form (``3.0x10^8``, ``2.4 x 10^4``), not
+#: the variable ``x`` (#270; the generation gate used to rewrite this shape
+#: itself). Narrow on purpose: ``2x``, ``5x3``, ``x10`` and ``2x10`` (no
+#: exponent marker) keep ``x`` as a symbol.
+_TIMES_X_RE = re.compile(r"(?<=[\d.])\s*[xX]\s*(?=10\s*(?:\^|\*\*))")
+
+#: :data:`_ALLOWED_FUNCTIONS`, longest first, so ``sinh``/``asin`` win over
+#: ``sin`` at the same position (:func:`_apply_function_names`).
+_FUNCTION_NAMES_LONGEST_FIRST = tuple(
+    sorted(_ALLOWED_FUNCTIONS, key=lambda name: (-len(name), name))
+)
+
+#: Functions whose argument may be written as a number then one letter with
+#: no bracket: ``sin2x`` is ``sin(2x)``, the CAIE convention (owner decision
+#: D1, extended by the controller to the other trig functions, ``ln`` and
+#: ``log``).
+_NUMBER_LETTER_ARGUMENT_FUNCTIONS = frozenset(
+    {"sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "ln", "log"}
+)
+
+#: Functions for which that form has no settled reading: ``sqrt2x`` is
+#: ``sqrt(2x)`` or ``sqrt(2)*x``, so the whole text is refused. ``exp`` and
+#: ``Abs`` are in neither set: their number-then-letter form is left to the
+#: older rules, which never read it as a call.
+_AMBIGUOUS_NUMBER_LETTER_FUNCTIONS = frozenset({"sqrt"})
+
+_NUMBER_ARGUMENT_RE = re.compile(r"\d+(?:\.\d+)?")
+_LETTER_RE = re.compile(f"[{_SUBSCRIPTABLE_LETTERS}]")
+_LETTER_ARGUMENT_RE = re.compile(rf"[{_SUBSCRIPTABLE_LETTERS}]\d*")
+
+#: What may not follow a bracketed argument. A letter or digit would make
+#: the argument longer than the rule reads; ``.`` and ``_`` likewise; ``(``,
+#: ``^``/``**`` and ``!`` would bind to the argument or to the call with no
+#: way to tell which (``sinx^2`` is ``sin²x`` or ``sin(x²)``), so those
+#: shapes are left to the older rules rather than guessed.
+_ARGUMENT_CONTINUES_RE = re.compile(rf"[{_SUBSCRIPTABLE_LETTERS}\d._(^!]|\*\*")
+
 
 class EquivalenceMethod(StrEnum):
     """How a :class:`Verdict` was reached."""
@@ -519,6 +578,8 @@ def _looks_like_prose_or_unsafe(text: str) -> bool:
     if _MIXED_FRACTION_RE.search(text):
         return True
     if _has_unsafe_factorial(text):
+        return True
+    if _DIGIT_AFTER_PAREN_RE.search(text):
         return True
     calls = _FUNCTION_CALL_RE.findall(text)
     return any(_is_disallowed_sympy_call(name) for name in calls)
@@ -752,6 +813,148 @@ def _vet_and_parse(normalized: str, *, vet: bool = True) -> tuple[str, sympy.Exp
     return ("ok", expr)
 
 
+class _AmbiguousFunctionArgumentError(Exception):
+    """A bracketless argument with no settled reading (``sqrt2x``): refuse the text."""
+
+
+def _argument_ends(text: str, end: int) -> bool:
+    return end == len(text) or _ARGUMENT_CONTINUES_RE.match(text, end) is None
+
+
+def _argument_candidates(name: str, text: str, start: int) -> list[tuple[int, str]]:
+    """The bracketless arguments ``name`` may take at ``start``, preferred first."""
+    candidates: list[tuple[int, str]] = []
+    number = _NUMBER_ARGUMENT_RE.match(text, start)
+    if number is not None:
+        letter = _LETTER_RE.match(text, number.end())
+        if letter is not None and name in _NUMBER_LETTER_ARGUMENT_FUNCTIONS:
+            candidates.append((letter.end(), f"{number.group()}*{letter.group()}"))
+        elif letter is not None and name in _AMBIGUOUS_NUMBER_LETTER_FUNCTIONS:
+            candidates.append((letter.end(), ""))
+        candidates.append((number.end(), number.group()))
+        return candidates
+    letter_argument = _LETTER_ARGUMENT_RE.match(text, start)
+    if letter_argument is not None:
+        candidates.append((letter_argument.end(), letter_argument.group()))
+    return candidates
+
+
+def _application_at(
+    text: str, start: int, memo: dict[int, tuple[int, str] | None]
+) -> tuple[int, str] | None:
+    """Read a function application starting at ``start``: ``(end, replacement)`` or ``None``.
+
+    Only the longest function name at ``start`` is tried. Followed by ``(``
+    it is left as it is (``log10(`` becomes ``(1/log(10))*log(``); followed
+    by an argument (see :func:`_argument_candidates`) the argument is
+    bracketed, provided what comes after it ends the argument or is itself
+    an application, which is how ``sinxcosx`` splits into two.
+
+    ``memo`` holds the answer for every start already read in this text.
+    Two candidate arguments can both recurse (``sin2asin...``: ``2a`` then
+    ``sin``, or ``2`` then ``asin``), so without it a chain that fails at
+    its tail is retried 2**n ways -- in the caller, outside the parse
+    worker's kill and memory bounds.
+    """
+    if start in memo:
+        return memo[start]
+    memo[start] = result = _read_application(text, start, memo)
+    return result
+
+
+def _read_application(
+    text: str, start: int, memo: dict[int, tuple[int, str] | None]
+) -> tuple[int, str] | None:
+    """:func:`_application_at` without the memo lookup."""
+    name = next((n for n in _FUNCTION_NAMES_LONGEST_FIRST if text.startswith(n, start)), None)
+    if name is None:
+        return None
+    after = start + len(name)
+    if name == "log" and text.startswith("10(", after):
+        return after + len("10"), "(1/log(10))*log"
+    if text.startswith("(", after):
+        return after, name
+    for end, argument in _argument_candidates(name, text, after):
+        if _argument_ends(text, end):
+            tail: tuple[int, str] | None = (end, "")
+        else:
+            following = _application_at(text, end, memo)
+            tail = None if following is None else (following[0], f"*{following[1]}")
+        if tail is None:
+            continue
+        if not argument:
+            raise _AmbiguousFunctionArgumentError(text[start:end])
+        return tail[0], f"{name}({argument}){tail[1]}"
+    return None
+
+
+def _apply_function_names(text: str) -> str:
+    """Read an allowed function name written without brackets as a call (#270).
+
+    SymPy's ``split_symbols`` reads any letter run it does not know as a
+    product of letters: ``ln6`` was ``6*l*n`` and ``3ln2`` was ``6*l*n`` too
+    (a false EQUAL_PROVEN), ``cost`` was ``c*o*s*t``, ``sqrt2`` was
+    ``2*q*r*s*t``. Driven by :data:`_ALLOWED_FUNCTIONS`, longest name first,
+    one letter run at a time:
+
+    1. a name followed by ``(`` is left alone, except that
+    2. ``log10(`` becomes ``(1/log(10))*log(``, a base-10 log built from
+       allowed calls only;
+    3. letters before the name are a coefficient when the name is followed
+       by ``(`` or an argument: ``Asin(`` -> ``A*sin(``. A name is never
+       matched inside a run otherwise;
+    4. a name followed directly by an argument is bracketed: a number
+       (``ln6`` -> ``ln(6)``, ``3ln2`` -> ``3ln(2)``, ``sqrt2`` ->
+       ``sqrt(2)``; implicit multiplication supplies the ``*`` before it),
+       one letter with optional digits (``sinx`` -> ``sin(x)``, ``cosθ1``
+       -> ``cos(θ1)``, which :func:`_rewrite_digit_suffixes` then makes
+       ``cos(θ_1)``), or a number then one letter, for the trig functions,
+       ``ln`` and ``log`` only (``sin2x`` -> ``sin(2*x)``, owner decision
+       D1). ``sqrt2x`` has no settled reading, so the text is refused: this
+       returns ``""``, which :func:`parse_expr_safe` turns into ``None``;
+    5. after an argument the run is scanned again, so ``sinxcosx`` ->
+       ``sin(x)*cos(x)``.
+
+    Anything else after a name -- a space (``sin x``, already a call to
+    SymPy), a second letter (``sinxy``), an exponent (``sinx^2``), a bracket
+    after the argument (``ln2(x+1)``) -- is left to the older rules.
+    """
+    out: list[str] = []
+    memo: dict[int, tuple[int, str] | None] = {}
+    index = 0
+    while index < len(text):
+        run_start = index
+        if _LETTER_RE.match(text, index) is None or (
+            index > 0 and (text[index - 1] == "_" or _LETTER_RE.match(text, index - 1))
+        ):
+            out.append(text[index])
+            index += 1
+            continue
+        run_end = index
+        while _LETTER_RE.match(text, run_end) is not None:
+            run_end += 1
+        try:
+            application = next(
+                (
+                    (position, found)
+                    for position in range(run_start, run_end)
+                    if (found := _application_at(text, position, memo)) is not None
+                ),
+                None,
+            )
+        except _AmbiguousFunctionArgumentError:
+            return ""
+        if application is None:
+            out.append(text[run_start:run_end])
+            index = run_end
+            continue
+        position, (end, replacement) = application
+        coefficient = text[run_start:position]
+        out.append(f"{coefficient}*{replacement}" if coefficient else replacement)
+        index = end
+    return "".join(out)
+
+
 def _rewrite_digit_suffixes(text: str) -> str:
     """Read a letter followed by digits as a unit power or as ONE subscripted symbol.
 
@@ -853,20 +1056,35 @@ def _collapse_thousands_separators(text: str) -> str:
 def _normalize_text(text: str) -> str:
     """Rewrite CAIE-style notation into something SymPy's parser accepts.
 
-    Order matters: superscripts must be unfolded before NFKC normalisation
-    (see :data:`_SUPERSCRIPT_RUN_RE`'s docstring note above); unit-digit
-    splitting must run after multiplication-glyph replacement so a unit
-    right after a `×` isn't mistaken for part of the preceding number; the
-    thousands-separator collapse runs last of the rewrites, once mixed
-    fractions have already been rejected on the original spacing.
+    Order matters. The micro sign is folded to Greek mu first, so every
+    later pass and the unit tables see one spelling (:data:`_MICRO_SIGN`).
+    Superscripts must be unfolded before NFKC normalisation (see
+    :data:`_SUPERSCRIPT_RUN_RE`'s docstring note above). The ``x``-as-times
+    rule (:data:`_TIMES_X_RE`) runs after the superscript unfold and the
+    multiplication-glyph replacement, so ``3.0x10⁸`` and ``3.0×10^8`` reach
+    it in the same ``10**``/``10^`` shape, and before the function-name pass
+    and the digit-suffix rule, which would otherwise read ``x10`` as a
+    subscripted symbol. The function-name pass
+    (:func:`_apply_function_names`) runs immediately before the digit-suffix
+    rule, which then subscripts the digits inside a bracketed argument
+    (``sin(x2)`` -> ``sin((x_2))``); unit-digit splitting must run after
+    multiplication-glyph replacement so a unit right after a `×` isn't
+    mistaken for part of the preceding number. The thousands-separator
+    collapse runs last of the rewrites, once mixed fractions have already
+    been rejected on the original spacing.
+
+    Returns ``""`` when the function-name pass refuses the text (``sqrt2x``).
     """
-    normalized = _unfold_superscripts(text)
+    normalized = text.replace(_MICRO_SIGN, _GREEK_MU)
+    normalized = _unfold_superscripts(normalized)
     normalized = normalized.replace(_UNICODE_MINUS, "-")
     for ch in _MULT_CHARS:
         normalized = normalized.replace(ch, "*")
     normalized = normalized.replace("÷", "/")
     for alias, canonical in _UNIT_ALIASES.items():
         normalized = normalized.replace(alias, canonical)
+    normalized = _TIMES_X_RE.sub("*", normalized)
+    normalized = _apply_function_names(normalized)
     normalized = _rewrite_digit_suffixes(normalized)
     normalized = _collapse_thousands_separators(normalized)
     return normalized.strip()
@@ -1208,21 +1426,23 @@ def parse_expr_safe(
     exception, since callers use this on untrusted, free-text student and
     mark-scheme content.
 
-    Also returns ``None`` — deliberately, not a bug — for text this module
-    can technically make SymPy accept but must not, because the result
-    would be a confident verdict on a meaning nobody wrote: mark-scheme
-    prose ("N/A", a range, "±"/"~" tolerance notation), disallowed function
-    calls, and exponent towers/oversized literal exponents that have no
-    realistic CAIE reading and would otherwise defeat the timeout budget
-    below by hanging *parsing* itself. Bounded by ``timeout`` for the same
-    reason (I8 review MUST-FIX #9): a handful of characters (``9^9^9``) can
-    otherwise run unbounded, or return a valid but multi-million-digit
-    integer (``2**100000000``) — caught by the exponent and factorial checks
-    and by the structural bound on every Pow of an unevaluated parse; and
-    the evaluated parse itself runs in a killable child process with an
-    address-space limit (_ParseWorker), which is the backstop for whatever
-    those miss -- a thread timeout is not, see _run_bounded. The structural
-    bound runs in that child too (see _pow_would_explode for why).
+    Also returns ``None`` — deliberately, not a bug — for text this module can
+    technically make SymPy accept but must not, because the result would be a
+    confident verdict on a meaning nobody wrote: mark-scheme prose ("N/A", a
+    range, "±"/"~" tolerance notation), disallowed function calls, a digit
+    straight after a closing bracket (``(x+1)2``: a lost superscript or a
+    trailing coefficient, #270), a bracketless function argument with no
+    settled reading (``sqrt2x``, #270), and exponent towers/oversized literal
+    exponents that have no realistic CAIE reading and would otherwise defeat
+    the timeout budget below by hanging *parsing* itself. Bounded by
+    ``timeout`` for the same reason (I8 review MUST-FIX #9): a handful of
+    characters (``9^9^9``) can otherwise run unbounded, or return a valid but
+    multi-million-digit integer (``2**100000000``) — caught by the exponent
+    and factorial checks and by the structural bound on every Pow of an
+    unevaluated parse; and the evaluated parse itself runs in a killable child
+    process with an address-space limit (_ParseWorker), which is the backstop
+    for whatever those miss -- a thread timeout is not, see _run_bounded. The
+    structural bound runs in that child too (see _pow_would_explode for why).
     """
     if text is None:
         return None
