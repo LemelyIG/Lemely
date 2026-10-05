@@ -85,6 +85,20 @@ def startup_state() -> tuple[int, bool, str | None]:
     return _vm_data_bytes(), "lemely.web" in sys.modules, main_file
 
 
+def mupdf_draws_image(image: bytes) -> bytes:
+    """MuPDF opening the PNG ``image`` as an image document and drawing it at full size.
+
+    What the paper preview did for an image scan before it moved to Pillow
+    (final review R3, I1): kept so a test can still make MuPDF's own
+    allocator fail inside a child.
+    """
+    import pymupdf
+
+    with pymupdf.open(stream=image, filetype="png") as doc:  # type: ignore[no-untyped-call]
+        pixmap = doc.load_page(0).get_pixmap()  # type: ignore[no-untyped-call]
+        return bytes(pixmap.samples[:1])
+
+
 def rlimits() -> tuple[int, int, int]:
     return (
         resource.getrlimit(resource.RLIMIT_DATA)[0],

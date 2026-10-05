@@ -694,19 +694,24 @@ def test_an_allocation_failure_inside_mupdf_or_pdfium_is_recognised_by_class_and
 def test_mupdf_running_out_of_memory_in_the_child_is_sandbox_memory(
     make_worker: WorkerFactory,
 ) -> None:
-    """The preview path that failed first (Task 8): MuPDF decoding a colour PNG
-    under a data limit too small for it. Its ``FzErrorSystem`` is an
+    """MuPDF decoding a colour image under a data limit too small for it (the
+    failure Task 8 first met in the preview). Its ``FzErrorSystem`` is an
     allocation failure, so it is reported as memory, not as an error, and
     the child lives on. The failure's own text (the allocation's size) comes
     with it, for the logs; a Python ``MemoryError`` has no such text, so the
-    message pins the MuPDF branch."""
+    message pins the MuPDF branch. The draw is a test target
+    (``mupdf_draws_image``), the preview's old image path: an image scan is
+    decoded by Pillow on every path now (final review R3, I1). A PDF page
+    was tried instead and did not do: the preview draws it at most 842 px,
+    so MuPDF decodes its image subsampled and nothing fails, and a crop of
+    it under this limit failed in Python first (a bare ``MemoryError``)."""
     from tests.sandbox_targets import ONE_PIXEL_PNG
 
     worker = make_worker(1024 * MiB, 2048 * MiB)
-    preview = "lemely.io.scan_render.render_preview_png"
-    # A first preview imports everything the render uses, so the limit below
-    # is set over what a warm child already holds, on any machine.
-    worker.call(preview, ONE_PIXEL_PNG, timeout=60, result_type=bytes)
+    draw = f"{_T}.mupdf_draws_image"
+    # A first draw imports MuPDF, so the limit below is set over what a warm
+    # child already holds, on any machine.
+    worker.call(draw, ONE_PIXEL_PNG, timeout=60, result_type=bytes)
     first_pid = worker.call(f"{_T}.pid", timeout=10, result_type=int)
     in_use = worker.call(f"{_T}._vm_data_bytes", timeout=10, result_type=int)
 
@@ -714,7 +719,7 @@ def test_mupdf_running_out_of_memory_in_the_child_is_sandbox_memory(
         worker.call(
             f"{_T}.lower_data_limit_then",
             in_use + 24 * MiB,
-            preview,
+            draw,
             _white_rgb_png(4000, 4000),  # 48 MB decoded: MuPDF's malloc fails
             timeout=60,
             result_type=bytes,
