@@ -59,6 +59,7 @@ from lemely.io.gemini import GeminiClient
 from lemely.io.history_store import HistoryStore
 from lemely.runtime import sandbox
 from lemely.runtime.config import DatabaseSettings, SandboxSettings, Settings, load_settings
+from lemely.runtime.errors import ExternalServiceError
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
@@ -1765,6 +1766,125 @@ def test_paper_waiting_for_the_run_slot_says_so_in_its_pipeline(
     assert teacher._row_kind(_settle(paper_repo, paper_id)) == "graded"
 
 
+def test_a_row_queued_for_the_run_slot_is_alive_and_not_lost_while_it_waits(
+    pg_sessionmaker: sessionmaker[Session],
+    teacher_user: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A teacher run waiting for the marking-run slot is heard from every
+    heartbeat: its tracker writes the row each time, so ``updated_at`` stays
+    inside the stale window and the row is neither shown as a lost run nor
+    claimable for a second, duplicate run. Without the heartbeat the single
+    queued write goes stale and both happen."""
+    from lemely.io import run_cap
+    from lemely.runtime.events import bus
+
+    repo = TeacherPaperRepository(pg_sessionmaker, stale_after=timedelta(seconds=1.0))
+    pid = uuid.uuid4()
+    repo.create(
+        paper_id=pid,
+        uploaded_by=teacher_user,
+        storage_path=f"teacher/{teacher_user}/{pid.hex}/scan.pdf",
+        scheme_storage_path=None,
+        original_filename="scan.pdf",
+        content_type="application/pdf",
+        byte_size=10,
+    )
+    assert repo.claim_run(pid)
+    monkeypatch.setattr(run_cap, "_slots", threading.BoundedSemaphore(run_cap.MAX_CONCURRENT_RUNS))
+    monkeypatch.setattr(run_cap, "QUEUED_HEARTBEAT_SECONDS", 0.2)
+
+    def wait_for_the_slot() -> None:
+        with run_cap.marking_run_slot():
+            pass
+
+    q = bus.subscribe_queue()
+    stop = threading.Event()
+    tracker = threading.Thread(
+        target=teacher._track_progress, args=(repo, pid, q, stop), daemon=True
+    )
+    tracker.start()
+    waiter = threading.Thread(target=wait_for_the_slot, daemon=True)
+    try:
+        with run_cap.marking_run_slot():  # another paper's run holds the slot
+            waiter.start()
+            deadline = time.monotonic() + 10.0
+            row = repo.get(pid)
+            while row is not None and row.stage != "queued" and time.monotonic() < deadline:
+                time.sleep(0.02)
+                row = repo.get(pid)
+            assert row is not None and row.stage == "queued"
+            # Three stale windows of waiting: only a heartbeat keeps it alive.
+            end = time.monotonic() + 3.0
+            while time.monotonic() < end:
+                row = repo.get(pid)
+                assert row is not None
+                assert not row.stale, "a queued run was reported as lost"
+                assert not repo.claim_run(pid), "a queued run could be claimed twice"
+                time.sleep(0.1)
+    finally:
+        bus.unsubscribe_queue(q)
+        stop.set()
+        tracker.join(timeout=5)
+        waiter.join(timeout=5)
+
+
+def test_a_dead_row_frozen_while_queued_does_not_claim_to_be_waiting(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    teacher_user: uuid.UUID,
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A run that died while queued (its row is stale, so shown as a lost run)
+    stops on the extract step with no "Waiting for another paper" counter: it
+    is not waiting for anything."""
+    pid = _seed_graded_paper(paper_repo, storage_backend, teacher_user, _report())
+    paper_repo.claim_run(uuid.UUID(pid))
+    paper_repo.set_stage(uuid.UUID(pid), "queued")
+    with pg_sessionmaker.begin() as s:
+        s.execute(
+            sa.update(TeacherPaper)
+            .where(TeacherPaper.id == uuid.UUID(pid))
+            .values(updated_at=datetime.now(UTC) - timedelta(hours=1))
+        )
+
+    body = client.get(f"/api/papers/{pid}").json()
+
+    assert body["kind"] == "failed"
+    (step,) = [s for s in body["pipeline"] if s["label"] == "Handwriting read"]
+    assert step == {"label": "Handwriting read", "count": "", "state": "idle"}
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_upload_scheme_storage_failure_is_a_503_without_the_backends_text(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    storage_backend: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The backend's message can name the bucket and key; the client gets a
+    fixed text, and the cause is logged."""
+    _patch_parser_to_return(monkeypatch, _scheme())
+
+    def refuse(*_a: object, **_k: object) -> None:
+        raise ExternalServiceError("denied on gs://secret-bucket/schemes/key")
+
+    monkeypatch.setattr(storage_backend, "upload", refuse)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = client.post(
+            "/api/schemes",
+            files={"scheme_pdf": ("same.pdf", b"%PDF-1.4 v1", "application/pdf")},
+        )
+
+    assert resp.status_code == 503
+    assert resp.json() == {"detail": "Storing the mark scheme PDF failed. Try again in a moment."}
+    assert "secret-bucket" not in resp.text
+    (failed,) = [e for e in logs if e["event"] == "scheme_pdf_store_failed"]
+    assert "secret-bucket" in failed["error"]
+
+
 def test_unknown_paper_detail_is_still_404(client: TestClient) -> None:
     """Serving live state for known papers must not turn an unknown id into a 200."""
     assert client.get("/api/papers/nope").status_code == 404
@@ -3318,6 +3438,41 @@ def test_upload_scheme_worker_failure_is_a_422_with_only_the_fixed_text(
     assert corpus_repo.list_rows() == []
 
 
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_upload_scheme_parse_is_cut_at_the_scheme_timeout(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``POST /api/schemes`` cuts a slow parse at ``scheme_parse_timeout_seconds``
+    (not ``upload_check_timeout_seconds``, nor the extraction timeout): a 422
+    with the fixed text, and the cause only in the log."""
+    monkeypatch.setattr(
+        sandbox,
+        "sandbox_settings",
+        lambda: SandboxSettings(
+            enabled=True,
+            scheme_parse_timeout_seconds=0.5,
+            extraction_timeout_seconds=180,
+            upload_check_timeout_seconds=180,
+        ),
+    )
+    monkeypatch.setattr(
+        scheme_parse, "SCHEME_PARSE_TARGET", "tests.sandbox_targets.slow_scheme_parse"
+    )
+
+    started = time.monotonic()
+    with structlog.testing.capture_logs() as logs:
+        resp = _post_scheme(client, synthetic_theory_scheme_pdf())
+
+    assert time.monotonic() - started < 2.5, "the parse ran to its own end"
+    assert resp.status_code == 422, resp.text
+    assert resp.json() == {"detail": "Could not read this mark scheme"}
+    (failed,) = [e for e in logs if e["event"] == "scheme_parse_failed"]
+    assert failed["reason"] == "timeout"
+    assert corpus_repo.list_rows() == []
+
+
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="VmHWM is Linux-only")
 @pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
 def test_upload_scheme_bomb_is_refused_without_growing_the_web_process(
@@ -3359,7 +3514,7 @@ def test_upload_scheme_behind_a_running_extraction_is_a_503_within_its_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The scheme parse shares the extraction worker. An extraction stream
-    holding it makes the parse wait out ``upload_check_timeout_seconds``,
+    holding it makes the parse wait out ``scheme_parse_timeout_seconds``,
     then answer 503 so the client tries again; the extraction is not
     disturbed."""
     worker = sandbox.EXTRACTION_WORKER
@@ -3388,7 +3543,7 @@ def test_upload_scheme_behind_a_running_extraction_is_a_503_within_its_timeout(
         monkeypatch.setattr(
             sandbox,
             "sandbox_settings",
-            lambda: SandboxSettings(enabled=True, upload_check_timeout_seconds=0.5),
+            lambda: SandboxSettings(enabled=True, scheme_parse_timeout_seconds=0.5),
         )
         with structlog.testing.capture_logs() as logs:
             resp = _post_scheme(client, synthetic_theory_scheme_pdf())

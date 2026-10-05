@@ -298,15 +298,20 @@ _REUSE_POOL_PER_BAND = 20
 # ---------------------------------------------------------------------------
 
 #: The phases :func:`_run_grading_job` walks, in the order it walks them, paired
-#: with the console's label for each. ``TeacherPaperRow.stage`` always holds one
-#: of these ids; :func:`_live_pipeline_steps` turns it into the Pipeline panel's
-#: rows. Ingestion is not here because it is finished before the job starts.
+#: with the console's label for each. ``TeacherPaperRow.stage`` holds one of
+#: these ids, or :data:`_QUEUED_STAGE` while the extraction waits for the
+#: marking-run slot; :func:`_live_pipeline_steps` turns it into the Pipeline
+#: panel's rows. Ingestion is not here because it is finished before the job starts.
 _JOB_STAGES: tuple[tuple[str, str], ...] = (
     ("detect", "Exam details read"),
     ("scheme", "Mark scheme parsed"),
     ("extract", "Handwriting read"),
     ("mark", "Questions marked"),
 )
+
+#: What the client is told when ``POST /api/schemes`` parsed a scheme but could
+#: not store its PDF (the cause goes to the ``scheme_pdf_store_failed`` log line).
+_SCHEME_STORE_FAILED_DETAIL = "Storing the mark scheme PDF failed. Try again in a moment."
 
 #: The row's ``stage`` while its extraction waits for this process's one
 #: marking-run slot (:func:`~lemely.io.run_cap.marking_run_slot`, #260, #271):
@@ -455,7 +460,10 @@ def _track_progress(
     counters, whatever payload shape either publisher emits.
 
     ``EXTRACTION_QUEUED`` (the run waits for the process's one marking-run
-    slot, :mod:`lemely.io.run_cap`) moves the row to :data:`_QUEUED_STAGE`, and
+    slot, :mod:`lemely.io.run_cap`) moves the row to :data:`_QUEUED_STAGE`.
+    The waiting run publishes it again every minute, and each write moves the
+    row's ``updated_at``: a queued row is alive, and is not reported as a lost
+    run after ``stale_run_after_seconds`` (900 s) however long it waits. And
     ``EXTRACTION_DEQUEUED`` (the run holds the slot, published only by a run
     that waited) moves it back to ``extract``, the stage the run was in when
     it queued. Without that event the row would leave "queued" only on the
@@ -781,7 +789,9 @@ def _live_pipeline_steps(row: TeacherPaperRow) -> list[PipelineStepDTO]:
     resetting to zero or claiming to still be working.
 
     A run waiting for the marking-run slot (:data:`_QUEUED_STAGE`) is at the
-    extract step, which says :data:`_QUEUED_COUNT` in its counter's place.
+    extract step, which says :data:`_QUEUED_COUNT` in its counter's place. A
+    row that died while it waited (failed, or stale) freezes on that step with
+    no counter: it is not waiting for anything any more.
     """
     order = [stage for stage, _label in _JOB_STAGES]
     waiting = row.stage == _QUEUED_STAGE
@@ -801,7 +811,7 @@ def _live_pipeline_steps(row: TeacherPaperRow) -> list[PipelineStepDTO]:
         else:
             state = "idle"
         count = ""
-        if index == current and waiting:
+        if index == current and waiting and running:
             count = _QUEUED_COUNT
         elif index == current and row.progress is not None:
             count = f"{row.progress[0]} / {row.progress[1]}"
@@ -1352,7 +1362,7 @@ async def upload_scheme(
 
     The parse runs in :data:`~lemely.runtime.sandbox.EXTRACTION_WORKER`
     (:func:`~lemely.io.scheme_parse.parse_scheme_in_worker`, #260), off the
-    event loop, within ``upload_check_timeout_seconds``: pdfplumber inflates
+    event loop, within ``scheme_parse_timeout_seconds``: pdfplumber inflates
     whatever a PDF's content streams hold, and a 204 KB upload took the web
     process 416 MiB (final review R3, I3). A scheme that cannot be read —
     the parser's refusal, a file it cannot open, a worker that ran out of
@@ -1384,7 +1394,7 @@ async def upload_scheme(
                 pdf_bytes,
                 filename,
                 settings.det_parser,
-                timeout=sandbox.sandbox_settings().upload_check_timeout_seconds,
+                timeout=sandbox.sandbox_settings().scheme_parse_timeout_seconds,
             )
         )
     except sandbox.SandboxFailure as exc:
@@ -1433,10 +1443,10 @@ async def upload_scheme(
             storage.delete(settings.storage.bucket, previous_key)
         storage.upload(settings.storage.bucket, key, pdf_bytes, scheme_pdf.content_type)
     except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Storing the mark scheme PDF failed: {exc}",
-        ) from exc
+        # The backend's text can name the bucket and the object key: log it,
+        # tell the client only that storing failed.
+        log.warning("scheme_pdf_store_failed", error=str(exc), error_type=type(exc).__name__)
+        raise HTTPException(status_code=503, detail=_SCHEME_STORE_FAILED_DETAIL) from exc
     corpus.set_source_document(scheme_id, key)
     return _scheme_row_dto(next(r for r in corpus.list_rows() if r.id == scheme_id))
 
