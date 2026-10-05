@@ -72,6 +72,8 @@ from sympy.parsing.sympy_parser import (
     standard_transformations,
 )
 
+from lemely.runtime.process_start import start_without_parent_main
+
 _logger = logging.getLogger(__name__)
 
 #: Longer inputs are rejected before ever reaching the parser. Mark-scheme
@@ -1001,12 +1003,13 @@ class _ParseWorker:
     daemon, so ``multiprocessing``'s atexit hook terminates it with the
     parent; :meth:`shutdown` does so explicitly.
 
-    ``spawn`` re-runs a path-based ``__main__`` (a script, not ``-m``) in the
-    child, so a script that calls :func:`parse_expr_safe` at import time
-    needs the usual ``if __name__ == "__main__":`` guard; without it the
-    child's own nested start fails (logged) and the child's copy of the
-    script sees ``None`` -- the caller's results are unaffected. The server
-    (``python -m lemely.web``), pytest and the ``lemely`` CLI are unaffected.
+    The child never runs the parent's ``__main__``: ``spawn`` would re-run a
+    path-run script (or a ``-m`` module not named ``__main__``) in the child,
+    before its memory cap is set, and a script that called
+    :func:`parse_expr_safe` at import time without an
+    ``if __name__ == "__main__":`` guard then had the child start a nested
+    worker of its own. :func:`~lemely.runtime.process_start.start_without_parent_main`
+    starts it, as it starts the scan workers.
     """
 
     def __init__(self) -> None:
@@ -1056,7 +1059,7 @@ class _ParseWorker:
             daemon=True,
         )
         try:
-            process.start()
+            start_without_parent_main(process)
         except BaseException as exc:  # e.g. a daemonic parent, out of fds -- or an interrupt
             parent_conn.close()
             child_conn.close()

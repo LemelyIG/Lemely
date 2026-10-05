@@ -33,7 +33,8 @@ lazily and reused, and runs a named function (a *target*) in it:
   before the limits are set, so a script that imported ``lemely.web`` at
   its top level left the child at ~827 MB ``VmData``, over both limits, and
   every scan failed (final review R1, Important 1).
-  :func:`_start_without_parent_main` hides it for the start.
+  :func:`lemely.runtime.process_start.start_without_parent_main` hides it
+  for the start (the equivalence parse worker starts its child the same way).
 
 Two module workers split the work so a long extraction never blocks an
 interactive request: :data:`EXTRACTION_WORKER` (extraction and the upload
@@ -255,20 +256,19 @@ from __future__ import annotations
 import contextlib
 import functools
 import importlib
-import importlib.machinery
 import logging
 import multiprocessing
 import os
 import pickle
 import re
 import signal
-import sys
 import threading
 import time
 from typing import TYPE_CHECKING, NoReturn, Protocol, cast
 
 from lemely.runtime.config import SandboxSettings, load_settings
 from lemely.runtime.errors import LemelyError
+from lemely.runtime.process_start import start_without_parent_main
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
@@ -609,52 +609,6 @@ def _child_main(  # pragma: no cover - runs in the child
         return
 
 
-#: Held while ``__main__.__spec__`` is swapped for a child's start
-#: (:func:`_start_without_parent_main`): two workers starting at once would
-#: otherwise save each other's stand-in and leave it in place. Also held
-#: across an ``os.fork`` (the ``register_at_fork`` call at the end of this
-#: module), so a forked process never inherits the stand-in or a held lock.
-#: ``spawn`` starts its child with ``fork_exec``, which runs no fork hooks,
-#: so a start under the lock cannot deadlock on it.
-_MAIN_SWAP_LOCK = threading.Lock()
-
-#: What ``spawn`` is shown as ``__main__``'s spec while a child starts.
-#: CPython's ``multiprocessing.spawn`` re-runs the parent's main module in the
-#: child (``_fixup_main_from_path``, ``_fixup_main_from_name``) unless that
-#: module is named ``"__main__"`` or ends in ``".__main__"``, which it leaves
-#: alone. ``python -m lemely.web`` (the container) already has such a name.
-_UNRUN_MAIN_SPEC = importlib.machinery.ModuleSpec("__main__", None)
-
-
-def _start_without_parent_main(process: BaseProcess) -> None:
-    """``process.start()``, with the child told to leave its ``__main__`` alone.
-
-    ``spawn`` reads ``sys.modules["__main__"].__spec__`` (and, when that is
-    ``None``, ``__file__``) inside ``start()`` to decide what the child
-    re-runs before it unpickles its target. For the start the spec is
-    :data:`_UNRUN_MAIN_SPEC`, so the child runs only :func:`_child_main` and
-    the modules its targets import. The parent's own spec (``None`` for a
-    path-run script) is put back as soon as ``start()`` returns, under
-    :data:`_MAIN_SWAP_LOCK`. Nothing a child is given lives in
-    ``__main__``: targets are dotted paths into importable modules.
-    """
-    main = sys.modules.get("__main__")
-    if main is None:  # an embedding with no main module: nothing to re-run
-        process.start()
-        return
-    with _MAIN_SWAP_LOCK:
-        had_spec = "__spec__" in vars(main)
-        saved = main.__spec__ if had_spec else None
-        main.__spec__ = _UNRUN_MAIN_SPEC
-        try:
-            process.start()
-        finally:
-            if had_spec:
-                main.__spec__ = saved
-            else:
-                del main.__spec__
-
-
 class ChildWorker:
     """One reusable, killable, rlimit-bounded child process.
 
@@ -731,7 +685,7 @@ class ChildWorker:
             daemon=True,
         )
         try:
-            _start_without_parent_main(process)
+            start_without_parent_main(process)
         except BaseException as exc:  # a daemonic parent, out of fds -- or an interrupt
             parent_conn.close()
             child_conn.close()
@@ -1018,10 +972,5 @@ INTERACTIVE_WORKER = ChildWorker(
     limits=lambda s: (s.interactive_data_limit_bytes, s.interactive_address_limit_bytes),
 )
 if hasattr(os, "register_at_fork"):
-    os.register_at_fork(
-        before=_MAIN_SWAP_LOCK.acquire,
-        after_in_parent=_MAIN_SWAP_LOCK.release,
-        after_in_child=_MAIN_SWAP_LOCK.release,
-    )
     os.register_at_fork(after_in_child=EXTRACTION_WORKER._forget_after_fork)
     os.register_at_fork(after_in_child=INTERACTIVE_WORKER._forget_after_fork)
