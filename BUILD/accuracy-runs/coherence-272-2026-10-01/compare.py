@@ -25,6 +25,11 @@ Two modes, both run with ``PYTHONPATH`` pinned to the AFTER tree:
 Mark identity is the strongest check and the stop rule: if any
 ``(paper_id, fixture_variant, question_id, mark_point_id)`` present in both
 runs differs in ``predicted_marks`` or ``outcome``, a mark moved.
+
+Exit codes: 0 = every check held. 3 = compare mode failed a check (a mark or
+outcome moved; a leaf or record key exists in only one run; mark metrics, the
+per-parse_path counts or the corpus digest differ). 4 = ``--count-out-of-range``
+added cache files (it was not a replay). ``report.json`` is still written on 3.
 """
 
 from __future__ import annotations
@@ -438,8 +443,31 @@ def _compare(args: argparse.Namespace) -> None:
         "per_path_correct_equal": path_correct_equal,
         "baseline_reading": baseline_cmp["reading"],
     }, indent=2, default=str))
+    # Every silent path is a failure: a comparison over a different leaf or key
+    # set, or over unequal mark metrics, is not the replay this script certifies.
+    failures: list[str] = []
     if not identity["predicted_marks_and_outcome_identical_on_every_shared_key"]:
-        print("STOP: a mark or outcome moved; do not refresh the baseline.", file=sys.stderr)
+        failures.append("a mark or outcome moved (record_identity.differences)")
+    if identity["keys_only_before"] or identity["keys_only_after"]:
+        failures.append(
+            f"record keys exist in only one run (only_before={len(identity['keys_only_before'])}, "
+            f"only_after={len(identity['keys_only_after'])})"
+        )
+    for name, flip in (("generic", generic), ("coherence", coherence)):
+        if flip["leaves_only_before"] or flip["leaves_only_after"]:
+            failures.append(
+                f"{name} flags: leaves exist in only one run "
+                f"(only_before={len(flip['leaves_only_before'])}, "
+                f"only_after={len(flip['leaves_only_after'])})"
+            )
+    if not (metrics["mark_accuracy_equal"] and metrics["mark_accuracy_theory_equal"]):
+        failures.append("mark_accuracy or mark_accuracy_theory differs between the runs")
+    if not path_correct_equal:
+        failures.append("per-parse_path correct/scored counts differ between the runs")
+    if not report["manifest"]["corpus_digest_equal"]:
+        failures.append("corpus_digest differs between the runs")
+    if failures:
+        print("STOP, do not refresh the baseline: " + "; ".join(failures), file=sys.stderr)
         sys.exit(3)
 
 
@@ -475,6 +503,13 @@ def _count_out_of_range(args: argparse.Namespace) -> None:
         "out_of_range": hits,
         "cost_usd_total": result.cost_usd_total,
     }, indent=2, default=str))
+    if n_after != n_before:
+        print(
+            f"STOP: the replay added {n_after - n_before} cache file(s); some call missed "
+            "the cache, so the count is over fresh model output, not a replay.",
+            file=sys.stderr,
+        )
+        sys.exit(4)
 
 
 def main() -> None:
