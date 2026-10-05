@@ -73,6 +73,18 @@ def slow_count(n: int, pause: float) -> Iterator[int]:
         yield i
 
 
+def startup_state() -> tuple[int, bool, str | None]:
+    """The child's ``VmData`` in bytes, whether ``lemely.web`` is loaded, and ``__main__.__file__``.
+
+    For the test that a path-run parent's ``__main__`` is never re-run in the
+    child (final review R1, Important 1).
+    """
+    import sys
+
+    main_file = getattr(sys.modules["__main__"], "__file__", None)
+    return _vm_data_bytes(), "lemely.web" in sys.modules, main_file
+
+
 def rlimits() -> tuple[int, int, int]:
     return (
         resource.getrlimit(resource.RLIMIT_DATA)[0],

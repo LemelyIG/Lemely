@@ -9,6 +9,7 @@ test, so no child outlives the test that started it.
 
 from __future__ import annotations
 
+import ast
 import gc
 import logging
 import math
@@ -288,6 +289,58 @@ _CLAMPED_LIMIT_SCRIPT = textwrap.dedent(
             worker.shutdown()
     """
 )
+
+
+#: A path-run script whose top level imports ``lemely.web``, as
+#: ``scripts/e2e_server.py`` does. ``spawn`` used to re-run it in the child
+#: before the limits were set: ~827 MB ``VmData``, over both limits.
+_PATH_RUN_SCRIPT = textwrap.dedent(
+    """
+    import lemely.web  # noqa: F401
+    from lemely.runtime import sandbox
+    from lemely.runtime.config import SandboxSettings
+    sandbox.sandbox_settings = lambda: SandboxSettings()
+    sandbox._EXTRA_TARGET_MODULES = frozenset({"tests.sandbox_targets"})
+    worker = sandbox.ChildWorker(
+        "path-run",
+        limits=lambda s: (s.interactive_data_limit_bytes, s.interactive_address_limit_bytes),
+    )
+    if __name__ == "__main__":
+        import sys
+        try:
+            print(worker.call("tests.sandbox_targets.startup_state", timeout=60, result_type=tuple))
+            print(sys.modules["__main__"].__spec__)
+        finally:
+            worker.shutdown()
+    """
+)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="reads /proc/self/status in the child")
+def test_a_path_run_parent_main_is_not_re_run_in_the_child(tmp_path: Path) -> None:
+    """The child starts without the script's imports, under its limits, and the call succeeds."""
+    script = tmp_path / "path_run_parent.py"
+    script.write_text(_PATH_RUN_SCRIPT, encoding="utf-8")
+
+    proc = subprocess.run(  # noqa: S603 -- our own interpreter and a fixed script
+        [sys.executable, str(script)],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+        cwd=_REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(_REPO_ROOT)},
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    state, parent_spec = proc.stdout.strip().splitlines()[-2:]
+    vm_data, web_loaded, child_main_file = ast.literal_eval(state)
+    # The child's main is spawn's own -c stub, not this script re-run.
+    assert (web_loaded, child_main_file) == (False, None)
+    # About 26 MiB measured; the re-run script put it at ~827 MB.
+    assert vm_data < 128 * MiB
+    # The script's own spec (None: it was run by path) is back after the start.
+    assert parent_spec == "None"
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="lowers a hard rlimit in a subprocess")
