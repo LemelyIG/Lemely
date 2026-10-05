@@ -300,6 +300,11 @@ _FUNCTION_ARGUMENT_TIMES_X_RE = re.compile(
 #: decision 2026-10-05), not followed by another digit or a decimal point --
 #: ``log100``, ``log25`` and ``log2.5`` keep the ordinary reading.
 _LOST_LOG_BASE_RE = re.compile(r"(?:10|[2-9])(?![\d.])")
+
+#: ``log`` and a lost base (:data:`_LOST_LOG_BASE_RE`) before a bracket,
+#: ``log10(`` or ``log2 (``: rewritten as ONE grouped term by
+#: :func:`_group_bracketed_lost_base_logs`.
+_BRACKETED_LOST_BASE_LOG_RE = re.compile(r"log((?:10|[2-9])(?![\d.]))[ \t]*\(")
 _LETTER_RE = re.compile(f"[{_SUBSCRIPTABLE_LETTERS}]")
 _LETTER_ARGUMENT_RE = re.compile(rf"[{_SUBSCRIPTABLE_LETTERS}]\d*")
 
@@ -530,8 +535,9 @@ def _read_application(text: str, start: int, memo: _ApplicationMemo) -> tuple[in
     if base is not None:
         argument_start = _lost_base_argument_start(text, base.end())
         if argument_start is not None:
-            if text.startswith("(", argument_start):
-                return argument_start, f"(1/log({base.group()}))*log"
+            # A bracketed argument (`log10(`) was already made one grouped
+            # term by `_group_bracketed_lost_base_logs`; one that reaches
+            # here finds no candidate below and is refused.
             applied = _bracket_argument(
                 name, text, start, argument_start, memo, f"log({{}}, {base.group()})"
             )
@@ -601,6 +607,57 @@ def _bracket_argument(
     return None
 
 
+def _group_bracketed_lost_base_logs(text: str) -> str | None:
+    """Rewrite ``log10(arg)`` and ``log2 (arg)`` as ``((1/log(b))*log(arg))``.
+
+    One grouped term, so an operator that binds to the whole log binds to
+    all of it. The earlier rewrite made the text ``(1/log(10))*log(`` -- a
+    product -- so ``1/log10(100)`` read as ``log(10)*log(100)`` and was
+    EQUAL_PROVEN to ``2*log(10)**2``, and ``log10(100)^2`` squared only the
+    second factor (code review of 2316175a, HIGH). The argument is left in
+    place for the passes after this one (``log10(sinx)`` still reads
+    ``sinx``); only the matching ``)`` gains a second ``)``.
+
+    Brackets are matched once, with a stack, so the work is linear in the
+    text however deep the nesting. ``None`` when the text's brackets do not
+    match, which the caller refuses. Letters, digits or ``)`` just before
+    ``log`` are a coefficient and get an explicit ``*``: ``A((`` would be a
+    call to ``A``.
+    """
+    matches = list(_BRACKETED_LOST_BASE_LOG_RE.finditer(text))
+    if not matches:
+        return text
+    closing: dict[int, int] = {}
+    open_at: list[int] = []
+    for index, char in enumerate(text):
+        if char == "(":
+            open_at.append(index)
+        elif char == ")":
+            if not open_at:
+                return None
+            closing[open_at.pop()] = index
+    if open_at:
+        return None
+    rewrites = {m.start(): m for m in matches}
+    extra_close_at = {closing[m.end() - 1] for m in matches}
+    out: list[str] = []
+    index = 0
+    while index < len(text):
+        match = rewrites.get(index)
+        if match is not None:
+            before = text[index - 1] if index else ""
+            if before == ")" or before == "_" or before.isalnum():
+                out.append("*")
+            out.append(f"((1/log({match.group(1)}))*log(")
+            index = match.end()
+            continue
+        out.append(text[index])
+        if index in extra_close_at:
+            out.append(")")
+        index += 1
+    return "".join(out)
+
+
 def _apply_function_names(text: str) -> str:
     """Read an allowed function name written without brackets as a call (#270).
 
@@ -612,9 +669,11 @@ def _apply_function_names(text: str) -> str:
 
     1. a name followed by ``(`` is left alone, except that
     2. ``log10`` and ``log2`` to ``log9`` are logs with their subscript base
-       lost (owner decisions): ``log10(`` and ``log2 (`` become
-       ``(1/log(10))*log(`` and ``(1/log(2))*log(``, built from allowed
-       calls only, and ``log10x``, ``log2 8`` and ``log3x`` become
+       lost (owner decisions): ``log10(x)`` and ``log2 (8)`` become the
+       grouped terms ``((1/log(10))*log(x))`` and ``((1/log(2))*log(8))``,
+       built from allowed calls only, before the scan below
+       (:func:`_group_bracketed_lost_base_logs`; unmatched brackets refuse
+       the text), and ``log10x``, ``log2 8`` and ``log3x`` become
        ``log(x, 10)``, ``log(8, 2)`` and ``log(x, 3)``, never ``log(10*x)``
        or ``log(2)*8`` (see :func:`_lost_base_argument_start`). When the
        argument is one the pass will not read (``log2x^2``), the text is
@@ -641,6 +700,10 @@ def _apply_function_names(text: str) -> str:
     SymPy), a second letter (``sinxy``), an exponent (``sinx^2``), a bracket
     after the argument (``ln2(x+1)``) -- is left to the older rules.
     """
+    grouped = _group_bracketed_lost_base_logs(text)
+    if grouped is None:
+        return ""
+    text = grouped
     out: list[str] = []
     memo: _ApplicationMemo = {}
     # Right to left first: an application's chain only reaches starts to its

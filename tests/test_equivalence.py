@@ -3468,6 +3468,53 @@ def test_issue_270_function_argument_x_before_ten_power_is_refused_ambiguous(
     assert eq.parse_expr_outcome(text) == (None, "refused-ambiguous")
 
 
+#: (text, its value, the value the ungrouped rewrite gave). ``log10(`` and
+#: ``log<d>(`` were rewritten to the PRODUCT ``(1/log(b))*log(``, so an
+#: operator binding to the whole log took one factor: ``1/log10(100)`` read
+#: as ``log(10)*log(100)`` and was EQUAL_PROVEN to ``2*log(10)**2`` (code
+#: review of 2316175a, HIGH). The bracketed form must be one grouped term.
+_BRACKETED_LOST_BASE_LOG_TABLE: list[tuple[str, str, str]] = [
+    ("1/log10(100)", "0.5", "2*log(10)**2"),
+    ("6/log10(100)", "3", "6*log(10)*log(100)"),
+    ("log10(100)^2", "4", "log(100)**2/log(10)"),
+    ("log2(8)^2", "9", "log(8)**2/log(2)"),
+    ("x/log10(x)", "x*log(10)/log(x)", "x*log(10)*log(x)"),
+    ("10^log10(x)", "x", "10**(1/log(10))*log(x)"),
+    ("a/log2 (8)", "a/3", "a*log(2)*log(8)"),
+    ("log10(x)²", "log(x)**2/log(10)**2", "log(x)**2/log(10)"),
+    ("2^log2(8)", "8", "2**(1/log(2))*log(8)"),
+    ("log10(log10(10^10))", "1", "log(10)"),
+    ("1/(2log10(100))", "0.25", "log(10)*log(100)/2"),
+    ("Alog10(1000)", "3*A", "A*log(1000)"),
+]
+
+
+@pytest.mark.parametrize(
+    ("text", "value", "ungrouped"),
+    _BRACKETED_LOST_BASE_LOG_TABLE,
+    ids=[row[0] for row in _BRACKETED_LOST_BASE_LOG_TABLE],
+)
+def test_bracketed_lost_base_log_is_one_grouped_term(text: str, value: str, ungrouped: str) -> None:
+    """Both directions: the right value is EQUAL_PROVEN, the value the
+    ungrouped product gave is not equal at all."""
+    for left, right in ((text, value), (value, text)):
+        verdict = equivalent(left, right)
+        assert verdict.kind is VerdictKind.EQUAL_PROVEN, (left, right, verdict)
+    for left, right in ((text, ungrouped), (ungrouped, text)):
+        verdict = equivalent(left, right)
+        assert verdict.kind not in _EQUAL_KINDS, (left, right, verdict)
+
+
+@pytest.mark.parametrize("text", ["log10(100", "log10(100))", "1/log2 (8", "log10(log10(10)"])
+def test_bracketed_lost_base_log_with_an_unmatched_bracket_is_refused(text: str) -> None:
+    """An unmatched bracket around a lost-base log is refused, never raised."""
+    from lemely.core import equivalence as eq
+
+    expr, outcome = eq.parse_expr_outcome(text)
+    assert expr is None
+    assert outcome in {"refused", "refused-ambiguous", "error"}, outcome
+
+
 def test_both_micro_spellings_parse_to_one_unit_symbol() -> None:
     """#270: ``µg`` (U+00B5) was protected as a unit symbol, but Python's
     tokenizer NFKC-folds an identifier's U+00B5 to U+03BC, so the name SymPy
