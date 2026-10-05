@@ -79,7 +79,6 @@
     "0625_w21_qp_32_theory_nested": 0.00816699999999998
   },
   "mean_usd": 0.01732035833333333,
-  "p95_usd_linear_interp": 0.021990000000000006,
   "cost_usd_total": 0.20784429999999995,
   "max_case": [
     "0625_s20_qp_31_theory/correct",
@@ -113,6 +112,20 @@
     "review_rate_n": 31,
     "coherence_trigger_rate": 0.032,
     "exclusion_funnel": "leaves=78 -> matched=78 -> marked=78 -> scored=31",
-    "exit_code": 0
+    "exit_code": "not observed (piped through tee without pipefail)",
+    "exit_code_note": "The CLI reached its 'Targets missed' Exit(1) path (cli.py raise click.exceptions.Exit(1)); the 0 seen in run.exit was tee's status, not the CLI's.",
+    "review_rate_gate_breach": "per_paper_p95 0.2857 > target 0.1500 (ratchet unarmed, recorded, not blocking)"
+  },
+  "p95_usd": 0.02202905,
+  "p95_method": "nearest-rank (harness _cost_p95)",
+  "p95_note": "At n=12, ceil(0.95*12) = 12, so p95 equals the maximum case; it is not a tail estimate.",
+  "p95_usd_linear_interp_non_canonical": 0.021990000000000006,
+  "provenance": {
+    "original_results_filename": "2026-10-05-ddec7f22.json",
+    "manifest_git_sha_in_results_json": "ddec7f22",
+    "manifest_git_sha_meaning": "the cwd HEAD of the process, not the measured tree",
+    "measured_tree": "62c7c61a5d0fb472561862be7854add5dce40f64",
+    "diff_62c7c61a_to_ddec7f22": "touches only lemely/core/equivalence.py and tests/test_equivalence.py (git diff --stat 62c7c61a ddec7f22)",
+    "equivalence_gate_during_run": false
   }
 }
