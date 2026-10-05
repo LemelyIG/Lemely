@@ -36,6 +36,10 @@ class EventType(StrEnum):
     GEMINI_RETRY = "gemini_retry"
     GEMINI_ESCALATE = "gemini_escalate"
     EXTRACTION_PROGRESS = "extraction_progress"
+    # A marking run is waiting for this process's one run slot
+    # (lemely.io.run_cap, #260, #271); it starts by itself when the run ahead
+    # of it ends. Carries a ``message`` the student's progress view shows.
+    EXTRACTION_QUEUED = "extraction_queued"
     SCAN_QUALITY_WARNING = "scan_quality_warning"
     SOURCE_BOX_DROPPED = "source_box_dropped"
     # US-031 review MUST-FIX 7: a whole answer dropped (unrecoverable
