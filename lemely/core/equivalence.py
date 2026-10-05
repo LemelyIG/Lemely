@@ -990,14 +990,17 @@ class _ParseWorker:
     is reported and the child lives on; a crash or broken pipe is joined and
     the next call respawns; a child that cannot be started, or does not
     report ready within :data:`_PARSE_WORKER_START_TIMEOUT`, is killed and
-    the call returns ``None``. The caller's ``timeout`` covers the parse
-    only, never the start. ``spawn``, never ``fork``: the web server runs
-    sync routes on threads. Calls are serialised by a lock (one worker per
-    parent), so a caller waits at most one timeout plus one respawn behind a
-    runaway sibling. The owner pid is recorded, and an ``os.register_at_fork``
-    hook resets the lock and forgets the child in a forked process, so a
-    pre-forked server worker or a forking test harness starts its own child
-    instead of sharing a pipe or inheriting a held lock. The child is a
+    the call returns ``None``. The caller's ``timeout`` covers the wait for
+    the lock and the parse, never the start. ``spawn``, never ``fork``: the
+    web server runs sync routes on threads. Calls are serialised by a lock
+    (one worker per parent), and the wait for it counts against the caller's
+    own ``timeout``: a caller that cannot take the worker in time returns
+    ``None`` (``"busy"``) without touching the child, so no caller waits past
+    its own deadline behind a runaway sibling (#271). The owner pid is
+    recorded, and an ``os.register_at_fork`` hook resets the lock and
+    forgets the child in a forked process, so a pre-forked server worker or
+    a forking test harness starts its own child instead of sharing a pipe or
+    inheriting a held lock. The child is a
     daemon, so ``multiprocessing``'s atexit hook terminates it with the
     parent; :meth:`shutdown` does so explicitly.
 
@@ -1020,7 +1023,8 @@ class _ParseWorker:
         #: diagnostic for tests, which assert on the STEP that refused an
         #: input instead of on elapsed time: "ok", "refused-unevaluated",
         #: "refused-evaluated", "memory", "error", "timeout", "crash",
-        #: "interrupted" or "unavailable" (no worker could be started).
+        #: "interrupted", "unavailable" (no worker could be started) or
+        #: "busy" (the lock was not free within the caller's timeout).
         self.last_outcome: str | None = None
 
     def _forget_after_fork(self) -> None:
@@ -1108,16 +1112,27 @@ class _ParseWorker:
         """``text`` vetted and parsed in the child (:func:`_vetted_parse`).
 
         ``None`` when the vetting walk refuses it, and on timeout, memory,
-        crash or parse error. ``vet=False`` is for tests only (see there).
+        crash or parse error -- and ``"busy"`` when the lock is not free within
+        ``timeout``. The wait for the lock and the parse share one deadline; a
+        child start inside :meth:`_ready` extends it by the time the start
+        took, so a cold start never eats the caller's budget. ``vet=False``
+        is for tests only (see there).
         """
-        with self._lock:
-            if not self._ready() or self._conn is None:
+        deadline = time.monotonic() + timeout
+        if not self._lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+            self.last_outcome = "busy"
+            return None
+        try:
+            started = time.monotonic()
+            ready = self._ready()
+            deadline += time.monotonic() - started
+            if not ready or self._conn is None:
                 self.last_outcome = "unavailable"
                 return None
             conn = self._conn
             try:
                 conn.send((text, vet))
-                if not conn.poll(timeout):
+                if not conn.poll(max(0.0, deadline - time.monotonic())):
                     self._discard(kill=True)
                     self.last_outcome = "timeout"
                     return None
@@ -1139,6 +1154,8 @@ class _ParseWorker:
             # Any Basic, exactly as the in-process parse returned before (a
             # relational is not an Expr); parse_expr_safe applies the same test.
             return cast("sympy.Expr", value)
+        finally:
+            self._lock.release()
 
     def pid(self) -> int | None:
         process = self._process

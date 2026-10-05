@@ -2848,6 +2848,51 @@ def test_a_caller_queued_behind_a_timeout_gets_its_own_result() -> None:
     assert finished["ordinary"] >= finished["runaway"], "the second caller did not queue"
 
 
+def test_a_caller_that_cannot_take_the_worker_lock_returns_busy_within_its_timeout() -> None:
+    """#271. The lock wait is bounded by the caller's own ``timeout``: a
+    caller that cannot take the worker within it gets ``None`` with
+    ``last_outcome == "busy"`` -- it does not queue unboundedly behind a
+    holder, and it never touches the child."""
+    from lemely.core import equivalence as eq
+
+    worker = eq._ParseWorker()  # private instance, never the singleton
+    outcome: dict[str, object] = {}
+
+    def call() -> None:
+        started = time.monotonic()
+        outcome["result"] = worker.parse("1+1", timeout=0.2)
+        outcome["elapsed"] = time.monotonic() - started
+
+    worker._lock.acquire()
+    thread = threading.Thread(target=call)
+    try:
+        thread.start()
+        thread.join(1.0)
+        finished_in_time = not thread.is_alive()
+    finally:
+        worker._lock.release()
+        thread.join(30)
+        worker.shutdown()
+    assert finished_in_time is True, "the caller waited past its timeout for the lock"
+    assert outcome["result"] is None
+    elapsed = outcome["elapsed"]
+    assert isinstance(elapsed, float) and elapsed < 0.5
+    assert worker.last_outcome == "busy"
+
+
+def test_the_worker_parses_normally_once_the_lock_is_free() -> None:
+    """#271 guard: with the lock free, a fresh worker starts (outside the
+    caller's budget) and parses as before."""
+    from lemely.core import equivalence as eq
+
+    worker = eq._ParseWorker()
+    try:
+        assert worker.parse("1+1", timeout=5.0) == sympy.Integer(2)
+        assert worker.last_outcome == "ok"
+    finally:
+        worker.shutdown()
+
+
 def test_equivalent_never_raises_when_its_difference_is_too_long_to_print() -> None:
     """Review round 2 (item 2). Each operand fits the result bound, but
     ``a - b`` does not: ``1/(10^4298+1) - 997`` has a 4,301-digit numerator,
