@@ -202,6 +202,10 @@ function describeFrame(frame: StudentCorrectFrame): string {
       return frame.message ?? "Resolving the mark scheme"
     case "extraction_progress":
       return frame.message ?? "Reading your answers"
+    case "extraction_queued":
+      return frame.message ?? "Waiting for another paper to finish"
+    case "extraction_dequeued":
+      return frame.message ?? "Reading your answers"
     case "marking_progress":
       if (frame.phase === "complete") {
         // Middle dot, not a spaced hyphen: this is a separator between a word

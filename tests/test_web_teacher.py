@@ -1702,10 +1702,10 @@ def test_paper_waiting_for_the_run_slot_says_so_in_its_pipeline(
 ) -> None:
     """A teacher run whose extraction waits for the process's one marking-run
     slot (#260, #271) shows the extract step active with "Waiting for another
-    paper", not a bare spinner; once it holds the slot, its next event puts
-    the step back to plain "extract"."""
+    paper", not a bare spinner; the moment it holds the slot, the dequeue event
+    puts the step back to plain "extract", without waiting for the run's next
+    event (the scan render comes first, up to 33 s)."""
     from lemely.io import run_cap
-    from lemely.runtime.events import EventType, bus
     from lemely.web.routers import student as student_router
     from lemely.web.services import grading as grading_service
 
@@ -1714,9 +1714,9 @@ def test_paper_waiting_for_the_run_slot_says_so_in_its_pipeline(
 
     def _extract(*_a: object, **_k: object) -> dict[str, str]:
         # What GeminiAnswerExtractor.__call__ does: the whole extraction under
-        # the slot, its first event a Gemini call once it holds it.
+        # the slot. The scan render that follows publishes nothing, so the
+        # slot's own dequeue event is the only thing that can clear "queued".
         with run_cap.marking_run_slot():
-            bus.publish(EventType.GEMINI_CALL_START, task_tag="answer_extraction")
             resumed.set()
             finish.wait(timeout=10)
             return {"5b": "42"}

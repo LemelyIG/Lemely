@@ -455,13 +455,12 @@ def _track_progress(
     counters, whatever payload shape either publisher emits.
 
     ``EXTRACTION_QUEUED`` (the run waits for the process's one marking-run
-    slot, :mod:`lemely.io.run_cap`) moves the row to :data:`_QUEUED_STAGE`.
-    The slot is taken inside extraction and nothing announces it, so the row
-    leaves that stage on the next event the run publishes, whatever its type:
-    a waiting run publishes nothing, so any later event of this run's means
-    it holds the slot. That is the extraction's first Gemini call, or the
-    scan-quality warning before it, so the row says "waiting" for the render
-    as well (up to the extraction worker's timeout, 33 s at worst measured).
+    slot, :mod:`lemely.io.run_cap`) moves the row to :data:`_QUEUED_STAGE`, and
+    ``EXTRACTION_DEQUEUED`` (the run holds the slot, published only by a run
+    that waited) moves it back to ``extract``, the stage the run was in when
+    it queued. Without that event the row would leave "queued" only on the
+    run's next event, which comes after the scan render (up to the extraction
+    worker's timeout, 33 s at worst measured).
 
     Shutdown is the caller's ``stop`` flag, deliberately **not** the queue's
     ``None`` sentinel. Scoping means a foreign run's ``publish_done()`` no
@@ -474,7 +473,6 @@ def _track_progress(
 
     Runs on its own daemon thread for the lifetime of one job.
     """
-    queued = False
     while not stop.is_set():
         try:
             event = q.get(timeout=_TRACKER_POLL_SECONDS)
@@ -484,18 +482,16 @@ def _track_progress(
             continue
         if event.type is EventType.EXTRACTION_QUEUED:
             repo.set_stage(paper_id, _QUEUED_STAGE)
-            queued = True
+            continue
+        if event.type is EventType.EXTRACTION_DEQUEUED:
+            repo.set_stage(paper_id, "extract")
             continue
         if event.type is EventType.EXTRACTION_PROGRESS:
             repo.set_stage(paper_id, "extract")
         elif event.type is EventType.MARKING_PROGRESS:
             repo.set_stage(paper_id, "mark")
         else:
-            if queued:
-                repo.set_stage(paper_id, "extract")
-            queued = False
             continue
-        queued = False
         index = event.payload.get("index")
         total = event.payload.get("total")
         if isinstance(index, int) and isinstance(total, int) and total > 0:

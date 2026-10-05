@@ -194,9 +194,46 @@ def test_two_concurrent_runs_hold_their_pages_one_after_the_other(
     assert sections.peak == 1, "two runs held their pages at once"
     assert sections.entered == ["first", "second"]
     assert first.result is not None and second.result is not None
-    queued = [p for t, p in _drain(second_queue) if t is EventType.EXTRACTION_QUEUED]
-    assert queued == [{"message": run_cap.RUN_QUEUED_MESSAGE}]
-    assert not [p for t, p in _drain(first_queue) if t is EventType.EXTRACTION_QUEUED]
+    status = [
+        (t, p)
+        for t, p in _drain(second_queue)
+        if t in (EventType.EXTRACTION_QUEUED, EventType.EXTRACTION_DEQUEUED)
+    ]
+    assert status == [
+        (EventType.EXTRACTION_QUEUED, {"message": run_cap.RUN_QUEUED_MESSAGE}),
+        (EventType.EXTRACTION_DEQUEUED, {"message": run_cap.RUN_DEQUEUED_MESSAGE}),
+    ]
+    assert not [
+        t
+        for t, _p in _drain(first_queue)
+        if t in (EventType.EXTRACTION_QUEUED, EventType.EXTRACTION_DEQUEUED)
+    ]
+
+
+def test_the_dequeued_status_comes_after_the_slot_is_taken_and_before_the_run(
+    sections: _Sections, tmp: Path
+) -> None:
+    """The event that clears a "waiting" view is published once the run holds
+    the slot, and before anything the run itself publishes: the run's render
+    comes after it, so the view clears at once, not after the render."""
+    sections.hold = True
+    queue = bus.subscribe_queue("second")
+    try:
+        first = _Run("first", tmp).start()
+        assert sections.first_entered.wait(_WAIT)
+        second = _Run("second", tmp).start()
+        assert sections.second_arrived.wait(_WAIT)
+        sections.release.set()
+        first.join()
+        second.join()
+    finally:
+        bus.unsubscribe_queue(queue)
+    types = [t for t, _p in _drain(queue)]
+    assert types[:3] == [
+        EventType.EXTRACTION_QUEUED,
+        EventType.EXTRACTION_DEQUEUED,
+        EventType.WARNING,  # "holding second", published by the fake render
+    ], types
 
 
 def test_a_free_slot_is_taken_without_a_queued_status(sections: _Sections, tmp: Path) -> None:
@@ -207,11 +244,13 @@ def test_a_free_slot_is_taken_without_a_queued_status(sections: _Sections, tmp: 
         seen.append(payload)
 
     bus.subscribe(EventType.EXTRACTION_QUEUED, spy)
+    bus.subscribe(EventType.EXTRACTION_DEQUEUED, spy)
     try:
         _extractor(tmp)(tmp / "alone.pdf", _scheme())
     finally:
         bus.unsubscribe(EventType.EXTRACTION_QUEUED, spy)
-    assert seen == []
+        bus.unsubscribe(EventType.EXTRACTION_DEQUEUED, spy)
+    assert seen == []  # a run that never waited publishes neither status
 
 
 def _wait_for_free_slot() -> None:
@@ -228,11 +267,13 @@ def _assert_slot_is_free(tmp: Path) -> None:
         seen.append(payload)
 
     bus.subscribe(EventType.EXTRACTION_QUEUED, spy)
+    bus.subscribe(EventType.EXTRACTION_DEQUEUED, spy)
     try:
         after = _Run("after", tmp).start()
         after.join()
     finally:
         bus.unsubscribe(EventType.EXTRACTION_QUEUED, spy)
+        bus.unsubscribe(EventType.EXTRACTION_DEQUEUED, spy)
     assert after.result is not None
     assert seen == [], "the slot was still held"
 
@@ -334,7 +375,8 @@ def test_the_slot_is_released_after_the_client_disconnects(sections: _Sections, 
 def test_a_waiting_student_stream_says_it_is_queued(sections: _Sections, tmp: Path) -> None:
     """The progress channel: a student's SSE stream gets an
     ``extraction_queued`` frame, carrying the message the progress view
-    shows, while their paper waits; then the run goes ahead."""
+    shows, while their paper waits; then an ``extraction_dequeued`` frame
+    when it has the slot, and the run goes ahead."""
     sections.hold = True
     first = _Run("first", tmp).start()
     assert sections.first_entered.wait(_WAIT)
@@ -364,6 +406,8 @@ def test_a_waiting_student_stream_says_it_is_queued(sections: _Sections, tmp: Pa
     types = [f["type"] for f in frames]
     assert types[0] == "extraction_queued", types
     assert frames[0]["message"] == run_cap.RUN_QUEUED_MESSAGE
+    assert types[1] == "extraction_dequeued", types
+    assert frames[1]["message"] == run_cap.RUN_DEQUEUED_MESSAGE
     assert {"type": "warning", "message": "holding waiting"} in frames  # it went ahead
     assert sections.peak == 1
 

@@ -21,7 +21,10 @@ semaphore around its body caps them all, whoever calls.
 A second run WAITS for the slot, with no timeout: the queue never fails a
 paper. While it waits, it publishes :attr:`EventType.EXTRACTION_QUEUED` once
 on the bus, scoped to its own run, so a student's SSE stream says why
-nothing is moving. The slot is released on every exit from the run: a
+nothing is moving. When the slot is taken it publishes
+:attr:`EventType.EXTRACTION_DEQUEUED`, again once and only for a run that
+waited, so the "waiting" state clears at once and not on the run's next event,
+which comes after the scan render. The slot is released on every exit from the run: a
 return, any exception (``BaseException`` included, so a ``KeyboardInterrupt``
 or ``SystemExit`` too) and, since a thread cannot be cancelled, the end of a
 run whose client has gone (an SSE stream closed mid-run keeps its worker
@@ -57,6 +60,10 @@ MAX_CONCURRENT_RUNS = 1
 #: student sees while their paper waits for the run ahead of it.
 RUN_QUEUED_MESSAGE = "Waiting for another paper to finish. Yours will start by itself."
 
+#: The ``message`` of the :attr:`EventType.EXTRACTION_DEQUEUED` frame: what a
+#: student sees once their paper has the slot and the read begins.
+RUN_DEQUEUED_MESSAGE = "Reading your answers"
+
 _slots = threading.BoundedSemaphore(MAX_CONCURRENT_RUNS)
 
 
@@ -66,8 +73,10 @@ def marking_run_slot() -> Iterator[None]:
 
     Takes a free slot at once. Otherwise publishes
     :attr:`EventType.EXTRACTION_QUEUED` (with :data:`RUN_QUEUED_MESSAGE`) and
-    waits, for as long as it takes, for the run ahead to end. The slot is
-    given back however the block ends.
+    waits, for as long as it takes, for the run ahead to end, then publishes
+    :attr:`EventType.EXTRACTION_DEQUEUED` (with :data:`RUN_DEQUEUED_MESSAGE`).
+    A run that took a free slot publishes neither. The slot is given back
+    however the block ends.
     """
     if not _slots.acquire(blocking=False):
         bus.publish(EventType.EXTRACTION_QUEUED, message=RUN_QUEUED_MESSAGE)
@@ -75,6 +84,7 @@ def marking_run_slot() -> Iterator[None]:
         queued_at = time.monotonic()
         _slots.acquire()
         log.info("marking_run_dequeued", waited_seconds=round(time.monotonic() - queued_at, 3))
+        bus.publish(EventType.EXTRACTION_DEQUEUED, message=RUN_DEQUEUED_MESSAGE)
     try:
         yield
     finally:

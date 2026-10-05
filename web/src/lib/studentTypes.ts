@@ -356,6 +356,8 @@ export interface StudentCorrectFrame {
     | "gemini_retry"
     | "gemini_escalate"
     | "extraction_progress"
+    | "extraction_queued"
+    | "extraction_dequeued"
     | "marking_progress"
     | "mark_scheme_progress"
     | "budget_warning"
