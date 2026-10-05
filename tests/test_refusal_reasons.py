@@ -17,32 +17,78 @@ from lemely.io.pdf_prescan import check_object_stream_bytes
 from tests.pdf_fakes import shared_container_broken_xref_pdf
 
 _ROOT = Path(__file__).resolve().parent.parent
-_ERROR_NAMES = frozenset(
-    {
-        "ScanRejectedError",
-        "ScanTooLargeError",
-        "ScanUnsupportedEncodingError",
-        "ScanUnsupportedFormatError",
+_SOURCES = {
+    path: ast.parse(path.read_text(encoding="utf-8"))
+    for path in sorted((_ROOT / "lemely").rglob("*.py"))
+}
+
+
+def _base_name(node: ast.expr) -> str:
+    """The name a class base or a callee is spelled with: ``X`` or ``mod.X``."""
+    if isinstance(node, ast.Name):
+        return node.id
+    return node.attr if isinstance(node, ast.Attribute) else ""
+
+
+def _error_class_names(trees: list[ast.Module]) -> frozenset[str]:
+    """``ScanRejectedError`` and every class in ``trees`` that derives from it.
+
+    Final review R2 M3: derived from the source to a fixpoint, not listed by
+    hand, so a new subclass is swept the day it is written.
+    """
+    classes = [
+        (node.name, {_base_name(base) for base in node.bases})
+        for tree in trees
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef)
+    ]
+    names = {"ScanRejectedError"}
+    grew = True
+    while grew:
+        found = {name for name, bases in classes if bases & names}
+        grew = not found <= names
+        names |= found
+    return frozenset(names)
+
+
+_ERROR_NAMES = _error_class_names(list(_SOURCES.values()))
+
+
+def _refusal_calls_in(tree: ast.Module, names: frozenset[str]) -> list[ast.Call]:
+    """Every call in ``tree`` that builds one of the error classes ``names``.
+
+    Every construction counts, not only one under ``raise``: an error built
+    by a factory and raised later carries the reason it was built with. A
+    class imported under another name is followed through its alias.
+    """
+    aliases = {
+        alias.asname
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.name in names and alias.asname
     }
-)
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _base_name(node.func) in names | aliases
+    ]
 
 
-def _refusal_raises() -> list[tuple[Path, ast.Call]]:
-    """Every ``raise Scan...Error(...)`` in ``lemely/io``, with the file it is in."""
-    found: list[tuple[Path, ast.Call]] = []
-    for path in sorted((_ROOT / "lemely" / "io").glob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if not (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)):
-                continue
-            func = node.exc.func
-            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-            if name in _ERROR_NAMES:
-                found.append((path, node.exc))
-    return found
+def _refusal_calls() -> list[tuple[Path, ast.Call]]:
+    """Every construction of a refusal in ``lemely/``, with the file it is in."""
+    return [
+        (path, call)
+        for path, tree in _SOURCES.items()
+        for call in _refusal_calls_in(tree, _ERROR_NAMES)
+    ]
 
 
 def _reason_values(call: ast.Call) -> list[ast.expr]:
-    return [kw.value for kw in call.keywords if kw.arg == "reason"]
+    """What a construction passes as its reason: ``reason=``, the second
+    positional argument, or a ``**`` mapping (which is never a literal)."""
+    values = [kw.value for kw in call.keywords if kw.arg in ("reason", None)]
+    return values + call.args[1:2]
 
 
 def _split_reason(node: ast.expr) -> tuple[list[str], list[ast.expr]]:
@@ -55,6 +101,64 @@ def _split_reason(node: ast.expr) -> tuple[list[str], list[ast.expr]]:
         other, other_rest = _split_reason(node.orelse)
         return body + other, body_rest + other_rest
     return [], [node]
+
+
+def _unreasoned(calls: list[ast.Call]) -> list[ast.Call]:
+    """The constructions that leave the reason on its ``"unspecified"`` default."""
+    return [call for call in calls if not _reason_values(call)]
+
+
+def _undocumented(calls: list[ast.Call]) -> list[str]:
+    """Every literal reason, both arms of a conditional, not in ``REFUSAL_REASONS``."""
+    return [
+        literal
+        for call in calls
+        for value in _reason_values(call)
+        for literal in _split_reason(value)[0]
+        if literal not in scan_limits.REFUSAL_REASONS
+    ]
+
+
+def _dynamic(calls: list[ast.Call]) -> set[str]:
+    """Every reason expression that is not a literal, as source text."""
+    return {
+        ast.unparse(rest)
+        for call in calls
+        for value in _reason_values(call)
+        for rest in _split_reason(value)[1]
+    }
+
+
+#: Final review R2 M3: the forms the sweep used to miss, each with a reason
+#: it must flag -- a positional unknown code, a factory's default, a new
+#: subclass, an aliased import and a ``**`` mapping.
+_PLANTED = """
+from lemely.io._scan_common import ScanRejectedError as Refusal
+
+class ScanNewError(ScanTooLargeError):
+    pass
+
+class ScanNewerError(ScanNewError):
+    pass
+
+def positional():
+    raise ScanRejectedError("m", "not_a_code")
+
+def factory():
+    return ScanRejectedError("m")
+
+def via_factory():
+    raise factory()
+
+def subclassed():
+    raise ScanNewerError("m")
+
+def aliased():
+    raise Refusal("m", reason="also_not_a_code")
+
+def splatted(**options):
+    raise ScanRejectedError("m", **options)
+"""
 
 
 def _container_raw_length(data: bytes) -> int:
@@ -74,31 +178,30 @@ class ReasonCodeTests(unittest.TestCase):
     def test_str_is_the_message_alone(self) -> None:
         self.assertEqual(str(ScanRejectedError("m", reason="r")), "m")
 
-    def test_the_default_reason_is_unspecified_and_every_io_raise_overrides_it(self) -> None:
+    def test_the_default_reason_is_unspecified_and_every_refusal_overrides_it(self) -> None:
         self.assertEqual(ScanRejectedError("m").reason, "unspecified")
         offenders = [
             f"{path.name}:{call.lineno}"
-            for path, call in _refusal_raises()
-            if not (any(kw.arg == "reason" for kw in call.keywords) or len(call.args) >= 2)
+            for path, call in _refusal_calls()
+            if not _reason_values(call)
         ]
         self.assertEqual(offenders, [])
 
     def test_every_literal_reason_is_documented(self) -> None:
-        """Both arms of a conditional count, not just a bare literal."""
+        """Both arms of a conditional count, not just a bare literal, and a
+        positional reason as well as ``reason=``."""
         documented = scan_limits.REFUSAL_REASONS
         self.assertIsInstance(documented, frozenset)
         self.assertNotIn("unspecified", documented)
         undocumented = [
             f"{path.name}:{call.lineno} {literal!r}"
-            for path, call in _refusal_raises()
-            for value in _reason_values(call)
-            for literal in _split_reason(value)[0]
-            if literal not in documented
+            for path, call in _refusal_calls()
+            for literal in _undocumented([call])
         ]
         self.assertEqual(undocumented, [])
         arms = {
             literal
-            for _, call in _refusal_raises()
+            for _, call in _refusal_calls()
             for value in _reason_values(call)
             if isinstance(value, ast.IfExp)
             for literal in _split_reason(value)[0]
@@ -108,12 +211,7 @@ class ReasonCodeTests(unittest.TestCase):
     def test_every_non_literal_reason_is_a_page_bound_and_documented(self) -> None:
         """The only reason that is not a literal is a ``_PageBound``'s; every
         bound the module defines carries a documented code."""
-        dynamic = {
-            ast.unparse(rest)
-            for _, call in _refusal_raises()
-            for value in _reason_values(call)
-            for rest in _split_reason(value)[1]
-        }
+        dynamic = _dynamic([call for _, call in _refusal_calls()])
         self.assertEqual(dynamic, {"bound.reason"})
         reasons = {
             pdf_content_walk._SCAN_PAGE_BOUND.reason,
@@ -121,6 +219,55 @@ class ReasonCodeTests(unittest.TestCase):
         }
         self.assertEqual(reasons, {"page_cap", "crop_page_cap"})
         self.assertLessEqual(reasons, scan_limits.REFUSAL_REASONS)
+
+    def test_the_sweep_covers_every_error_class_and_construction(self) -> None:
+        """The swept classes are every subclass the package defines (checked
+        against the live class tree), and the sweep reaches the factory in
+        ``pdf_canonical`` that builds an error for a later ``raise``."""
+        live: set[str] = set()
+        pending: list[type[ScanRejectedError]] = [ScanRejectedError]
+        while pending:
+            cls = pending.pop()
+            if cls.__module__.startswith("lemely."):
+                live.add(cls.__name__)
+            pending.extend(cls.__subclasses__())
+        self.assertLessEqual(live, _ERROR_NAMES)
+        self.assertLessEqual(
+            {
+                "ScanRejectedError",
+                "ScanTooLargeError",
+                "ScanUnsupportedEncodingError",
+                "ScanUnsupportedFormatError",
+            },
+            _ERROR_NAMES,
+        )
+        factory_built = [
+            call
+            for path, call in _refusal_calls()
+            if path.name == "pdf_canonical.py"
+            and isinstance(call.args[0], ast.Name)
+            and call.args[0].id == "_STRUCTURE_TOO_COMPLEX_MESSAGE"
+        ]
+        self.assertEqual(len(factory_built), 1)
+        self.assertEqual(_undocumented(factory_built), [])
+        self.assertEqual(_unreasoned(factory_built), [])
+
+    def test_the_sweep_flags_each_form_it_used_to_miss(self) -> None:
+        """Final review R2 M3, the sweep's own red proof: planted source with
+        a positional unknown code, a factory left on the default, a new
+        subclass (two levels down) on the default, an aliased import with an
+        unknown code, and a ``**`` mapping."""
+        tree = ast.parse(_PLANTED)
+        names = _error_class_names([*_SOURCES.values(), tree])
+        self.assertLessEqual({"ScanNewError", "ScanNewerError"}, names)
+        calls = _refusal_calls_in(tree, names)
+        lines = _PLANTED.splitlines()
+        self.assertEqual(
+            {lines[call.lineno - 1].strip() for call in _unreasoned(calls)},
+            {'return ScanRejectedError("m")', 'raise ScanNewerError("m")'},
+        )
+        self.assertEqual(sorted(_undocumented(calls)), ["also_not_a_code", "not_a_code"])
+        self.assertEqual(_dynamic(calls), {"options"})
 
     def test_the_encrypted_worst_case_refusal_is_logged_as_encrypted_objstm(self) -> None:
         data = shared_container_broken_xref_pdf(
