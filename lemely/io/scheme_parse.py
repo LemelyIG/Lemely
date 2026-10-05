@@ -9,12 +9,12 @@ therefore parsed in :data:`~lemely.runtime.sandbox.EXTRACTION_WORKER`, a
 memory-limited child killed past its timeout:
 
 * ``POST /api/schemes`` calls :func:`parse_scheme_in_worker` off the event
-  loop, within ``upload_check_timeout_seconds``, and maps every failure to a
+  loop, within ``scheme_parse_timeout_seconds``, and maps every failure to a
   fixed message (``teacher.upload_scheme``).
 * A scheme uploaded alongside a scan is parsed in the grading thread by
   :class:`WorkerSchemeParser`, the deterministic half of the
   ``ChainedMarkSchemeParser`` both portals build, within
-  ``extraction_timeout_seconds``.
+  ``scheme_parse_timeout_seconds`` too.
 
 The child imports this module and runs :func:`parse_scheme_pdf`
 (:data:`SCHEME_PARSE_TARGET`). The parser is imported inside it, so the web
@@ -36,6 +36,15 @@ synthetic theory schemes of 8, 42 and 102 pages at 43, 79 and 149 in 0.10,
 peaks at 475 and fails to parse (``ParseError``) in 1.3 s; inflating to
 1 GiB, it needs 2133 unbounded and, under the worker's 640 MiB, fails with
 pdfminer's ``MemoryError`` (a ``SandboxError``) in 1.0 s.
+
+The memory limit does not bound pdfplumber's CPU time. Table finding is
+superlinear in a page's ruling lines and nothing caps the page count: a
+16.8 KB single page of a 100 x 100 line grid parses in 2.1 s, and the same
+page ten times over (29.4 KB) in 21.4 s, linear at about 2.1 s a page, so
+about 140 KB would outlast the extraction worker's 180 s (final review R4,
+I2). Both paths therefore use ``scheme_parse_timeout_seconds`` (20 s) and not
+the extraction timeout, which would hold the shared worker, and with it every
+scan check and render, for minutes. Real schemes take under 2 s.
 
 The scan pre-scan (:func:`~lemely.io.scan_limits.check_scan_bytes`) is not
 applied. It bounds what MuPDF and pdfium would do with a file, not pdfminer,
@@ -160,7 +169,7 @@ class WorkerSchemeParser:
                 data,
                 pdf_path.name,
                 self._cfg,
-                timeout=sandbox.sandbox_settings().extraction_timeout_seconds,
+                timeout=sandbox.sandbox_settings().scheme_parse_timeout_seconds,
             )
         except sandbox.SandboxFailure as exc:
             log.warning(

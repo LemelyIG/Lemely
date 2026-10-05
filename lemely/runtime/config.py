@@ -743,6 +743,8 @@ class SandboxSettings(BaseModel):
     the 2 GiB budget's worst case, which does not fit and which the owner
     accepted on 2026-10-05 (``docs/ci-cd.md``, "Memory budget"). The
     timeouts bound one call, including any wait for a busy worker.
+    ``scheme_parse_timeout_seconds`` cuts a user mark-scheme parse short, on
+    both paths (memory limits do not bound pdfplumber's CPU time).
     ``enabled=False`` runs every target in the calling process, for tests
     that patch a library in that process; it is not a deploy knob.
     Set in the environment as ``LEMELY_SANDBOX__<FIELD>``.
@@ -757,6 +759,7 @@ class SandboxSettings(BaseModel):
     interactive_address_limit_bytes: int = Field(default=768 * 1024 * 1024, ge=128 * 1024 * 1024)
     extraction_timeout_seconds: float = Field(default=180.0, gt=0)
     upload_check_timeout_seconds: float = Field(default=20.0, gt=0)
+    scheme_parse_timeout_seconds: float = Field(default=20.0, gt=0)
     preview_timeout_seconds: float = Field(default=15.0, gt=0)
     crop_timeout_seconds: float = Field(default=10.0, gt=0)
 

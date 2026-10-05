@@ -32,6 +32,17 @@ def sleep_for(seconds: float) -> None:
     time.sleep(seconds)
 
 
+def slow_scheme_parse(data: bytes, filename: str, cfg: object) -> object:
+    """:func:`lemely.io.scheme_parse.parse_scheme_pdf` after a 3 s stall: a
+    parse that outlasts a short ``scheme_parse_timeout_seconds`` and would
+    finish well inside every other worker timeout (pdfplumber's CPU time on a
+    ruling-line grid, as the final review's probe measured it)."""
+    time.sleep(3.0)
+    from lemely.io.scheme_parse import parse_scheme_pdf
+
+    return parse_scheme_pdf(data, filename, cfg)  # type: ignore[arg-type]
+
+
 def allocate(n_bytes: int) -> int:
     """Allocate and touch ``n_bytes``; a negative size is a ``ValueError``."""
     block = bytearray(n_bytes)

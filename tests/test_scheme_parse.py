@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import pickle
+import time
 from pathlib import Path
 
 import pytest
 
 from lemely.core.loose_schemas import MarkScheme
+from lemely.io import scheme_parse
 from lemely.io.scheme_parse import (
     SCHEME_PARSE_TARGET,
     SCHEME_READ_FAILED_MESSAGE,
@@ -17,7 +19,7 @@ from lemely.io.scheme_parse import (
     parse_scheme_pdf,
 )
 from lemely.runtime import sandbox
-from lemely.runtime.config import DetParserSettings
+from lemely.runtime.config import DetParserSettings, SandboxSettings
 from lemely.runtime.errors import LemelyError, ParseError
 from tests.fakes_scheme_pdfs import synthetic_theory_scheme_pdf
 from tests.sandbox_fixtures import in_process_sandbox, sandboxed  # noqa: F401
@@ -111,6 +113,46 @@ def test_worker_scheme_parser_parses_a_file_under_its_own_name(tmp_path: Path) -
     scheme = WorkerSchemeParser(DetParserSettings())(path)
     assert scheme.metadata.source_document == "0625_s23_ms_41.pdf"
     assert sandbox.EXTRACTION_WORKER.last_outcome == "ok"
+
+
+def _only_the_scheme_timeout_is_short() -> SandboxSettings:
+    """A slow scheme parse (3 s) is far inside every other timeout (180 s) and
+    far outside the scheme one (0.5 s), so only the scheme setting can cut it."""
+    return SandboxSettings(
+        enabled=True,
+        scheme_parse_timeout_seconds=0.5,
+        extraction_timeout_seconds=180,
+        upload_check_timeout_seconds=180,
+    )
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_worker_scheme_parser_cuts_the_parse_at_the_scheme_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scheme attached to a scan, on the grading path, is cut at
+    ``scheme_parse_timeout_seconds`` and not held for the extraction worker's
+    180 s: a small PDF that takes pdfplumber minutes would otherwise stall
+    every scan check and render on the instance."""
+    monkeypatch.setattr(sandbox, "sandbox_settings", _only_the_scheme_timeout_is_short)
+    monkeypatch.setattr(
+        scheme_parse, "SCHEME_PARSE_TARGET", "tests.sandbox_targets.slow_scheme_parse"
+    )
+    path = tmp_path / "0625_s23_ms_41.pdf"
+    path.write_bytes(synthetic_theory_scheme_pdf())
+
+    started = time.monotonic()
+    with pytest.raises(SchemeReadFailedError) as failure:
+        WorkerSchemeParser(DetParserSettings())(path)
+
+    assert time.monotonic() - started < 2.5, "the parse ran to its own end"
+    assert str(failure.value) == SCHEME_READ_FAILED_MESSAGE
+    assert isinstance(failure.value.__cause__, sandbox.SandboxTimeout)
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "timeout"
+
+
+def test_the_scheme_parse_timeout_defaults_to_20_seconds() -> None:
+    assert SandboxSettings().scheme_parse_timeout_seconds == 20.0
 
 
 @pytest.mark.usefixtures("in_process_sandbox")
