@@ -182,6 +182,9 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 # numeric fallback's sample points need reproducibility, not cryptographic
 # randomness (S311).
 "lemely/core/equivalence.py" = ["RUF001", "RUF002", "RUF003", "S311"]
+# Moved verbatim out of equivalence.py (#271): the unit tables carry `×`, `µ`, `Ω`.
+# The worker module holds no ambiguous character, so it needs no entry here.
+"lemely/core/equivalence_tables.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_equivalence.py" = ["RUF001", "T201", "S603"]
 "lemely/io/subject.py" = ["TCH"]
 "lemely/io/answer_extraction.py" = ["ANN401", "TCH"]
@@ -504,6 +507,15 @@ reportAttributeAccessIssue = "none"
 # signature.
 [[tool.pyright.executionEnvironments]]
 root = "lemely/core/equivalence.py"
+reportAttributeAccessIssue = "none"
+reportArgumentType = "none"
+
+# NOT A DEFECT: same sympy stubs gap as above. `_pow_would_explode` and
+# `_coefficient_height` (moved here from equivalence.py, #271) touch `Basic`
+# attributes (`.exp`, `.base`, `.is_Rational`) that pyright's fallback typing
+# of sympy does not know.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/core/equivalence_worker.py"
 reportAttributeAccessIssue = "none"
 reportArgumentType = "none"
 

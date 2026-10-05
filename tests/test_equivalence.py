@@ -3799,3 +3799,18 @@ def test_verdict_auto_awardable_requires_equal_proven() -> None:
     assert not Verdict(VerdictKind.EQUAL_SAMPLED, method=EquivalenceMethod.NUMERIC).auto_awardable
     assert not Verdict(VerdictKind.NOT_EQUAL, method=EquivalenceMethod.SIMPLIFY).auto_awardable
     assert not Verdict(VerdictKind.UNPARSEABLE).auto_awardable
+
+
+def test_the_worker_and_tables_modules_import_and_back_the_facade() -> None:
+    """#271: the split is a move. The facade re-exports what the tests reach
+    through it, and the names it re-exports are the modules' own objects, so
+    a monkeypatch on the facade (``eq._PARSE_WORKER``) steers the one
+    ``parse_expr_outcome`` reads while the worker module holds the original.
+    """
+    import lemely.core.equivalence_tables as tables
+    import lemely.core.equivalence_worker as worker
+    from lemely.core import equivalence as eq
+
+    assert worker._PARSE_WORKER is eq._PARSE_WORKER
+    assert worker._ParseWorker is eq._ParseWorker
+    assert tables._UNIT_LOCAL_DICT is eq._UNIT_LOCAL_DICT
