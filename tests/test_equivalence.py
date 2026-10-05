@@ -2893,6 +2893,46 @@ def test_the_worker_parses_normally_once_the_lock_is_free() -> None:
         worker.shutdown()
 
 
+def test_a_lock_wait_that_leaves_no_budget_returns_busy_without_killing_the_worker() -> None:
+    """#271 floor. A caller that takes the lock with (almost) none of its
+    budget left must not poll ``~0`` and then kill a healthy worker for the
+    "timeout": it returns ``None`` with ``last_outcome == "busy"`` and the
+    child lives on (same pid). Deterministic: the lock is a wrapper whose
+    ``acquire`` consumes all but ~20 ms of the caller's timeout and then
+    succeeds, which is a contended acquire that won at the last moment."""
+    from lemely.core import equivalence as eq
+
+    class LateLock:
+        """Takes the real lock only after consuming nearly all of ``timeout``."""
+
+        def __init__(self, real: threading.Lock) -> None:
+            self.real = real
+
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            time.sleep(max(0.0, timeout - 0.02))
+            return self.real.acquire(blocking, timeout)
+
+        def release(self) -> None:
+            self.real.release()
+
+    worker = eq._ParseWorker()
+    real_lock = worker._lock
+    try:
+        assert worker.parse("1+1", timeout=5.0) == sympy.Integer(2)  # warm: a live child
+        pid_before = worker.pid()
+        assert pid_before is not None
+        worker._lock = LateLock(real_lock)  # type: ignore[assignment]
+        result = worker.parse("2+2", timeout=0.2)
+        worker._lock = real_lock
+        assert result is None
+        assert worker.last_outcome == "busy"
+        assert worker.pid() == pid_before, "a healthy worker was killed for a lock wait"
+        assert worker.parse("3+3", timeout=5.0) == sympy.Integer(6)  # and it still serves
+    finally:
+        worker._lock = real_lock
+        worker.shutdown()
+
+
 def test_equivalent_never_raises_when_its_difference_is_too_long_to_print() -> None:
     """Review round 2 (item 2). Each operand fits the result bound, but
     ``a - b`` does not: ``1/(10^4298+1) - 997`` has a 4,301-digit numerator,

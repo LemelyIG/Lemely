@@ -183,6 +183,13 @@ _PARSE_WORKER_START_TIMEOUT = 30.0
 #: the cool-down return None at once; one warning per failed start.
 _PARSE_WORKER_START_COOLDOWN = 30.0
 
+#: The least budget a caller must still have, once it holds the worker's lock,
+#: for a parse to be attempted (#271). Below it the caller gets ``"busy"``
+#: without touching the child: a reply wait this short would end in
+#: ``poll(~0)`` and, unless the reply were already there, a ``"timeout"`` that
+#: kills a healthy worker and charges the next caller a respawn.
+_PARSE_WORKER_MIN_REPLY_WAIT = 0.05
+
 #: The worker's pipe protocol: ``(normalised text, vet)`` or ``None`` to stop;
 #: ``(kind, payload)`` back -- see `_parse_worker_main`.
 type _ParseRequest = tuple[str, bool] | None
@@ -1024,7 +1031,8 @@ class _ParseWorker:
         #: input instead of on elapsed time: "ok", "refused-unevaluated",
         #: "refused-evaluated", "memory", "error", "timeout", "crash",
         #: "interrupted", "unavailable" (no worker could be started) or
-        #: "busy" (the lock was not free within the caller's timeout).
+        #: "busy" (the lock was not free within the caller's timeout, or left
+        #: less than :data:`_PARSE_WORKER_MIN_REPLY_WAIT` of it).
         self.last_outcome: str | None = None
 
     def _forget_after_fork(self) -> None:
@@ -1113,16 +1121,22 @@ class _ParseWorker:
 
         ``None`` when the vetting walk refuses it, and on timeout, memory,
         crash or parse error -- and ``"busy"`` when the lock is not free within
-        ``timeout``. The wait for the lock and the parse share one deadline; a
-        child start inside :meth:`_ready` extends it by the time the start
-        took, so a cold start never eats the caller's budget. ``vet=False``
-        is for tests only (see there).
+        ``timeout``, or frees up with under :data:`_PARSE_WORKER_MIN_REPLY_WAIT`
+        of it left (the child is then left untouched). The wait for the lock
+        and the parse share one deadline; a child start inside :meth:`_ready`
+        extends it by the time the start took, so a cold start never eats the
+        caller's budget. ``vet=False`` is for tests only (see there).
         """
         deadline = time.monotonic() + timeout
         if not self._lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
             self.last_outcome = "busy"
             return None
         try:
+            if deadline - time.monotonic() < _PARSE_WORKER_MIN_REPLY_WAIT:
+                # The lock wait left no budget worth a parse: do not poll ~0 and
+                # then kill a healthy child for it.
+                self.last_outcome = "busy"
+                return None
             started = time.monotonic()
             ready = self._ready()
             deadline += time.monotonic() - started
