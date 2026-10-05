@@ -304,8 +304,10 @@ _MAX_OC_DEPTH = 32
 #: members -- one judgement of a whole document may make before the file is
 #: refused as malformed (#274 review round 2). Holders need not be indirect
 #: objects (a direct ``/OC`` has no number to judge it once by), so the caps
-#: on each array alone do not bound the total; this does. 300,000 member
-#: visits measured 0.77 s.
+#: on each array alone do not bound the total; this does. At the budget
+#: (199 direct ``/OCMD`` annotations of 1,000 OFF members each, about 199,400
+#: visits) one judgement measured 0.02 s on 2026-10-05; the whole rewrite of
+#: that 1.6 MB file took 0.63 s, most of it the pre-scan.
 _MAX_OC_STEPS = 200_000
 
 

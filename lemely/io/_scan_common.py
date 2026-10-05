@@ -15,7 +15,8 @@ upload check logs beside the error class (#276, #273):
 * ``page_px``: one PDF page's pixels are past the decode ceiling.
 * ``scan_px``: the pages' summed pixels are past the whole-scan budget.
 * ``page_cap``: more pages than :data:`MAX_SCAN_PAGES`.
-* ``crop_page_cap``: more pages than :data:`MAX_CROP_PAGES` (the crop route).
+* ``crop_page_cap``: more pages than :data:`MAX_CROP_PAGES` (the crop and
+  preview routes).
 * ``image_px``: an image's pixels are past its mode's ceiling, as declared by
   the file, a PDF's image object, or Pillow's own bomb guard.
 * ``webp_px``: a WebP past its lower ceiling.
@@ -60,14 +61,15 @@ if TYPE_CHECKING:
 #: continuation sheets reach the low 30s. Also bounds the number of page
 #: images one extraction call carries.
 MAX_SCAN_PAGES = 40
-#: The review crop route's page bound (user decision, review round 1 on
-#: triage F8), separate from :data:`MAX_SCAN_PAGES`: the crop renders one
-#: page, so a stored scan over 40 pages keeps its crops, but its content
-#: check reads the page tree (:func:`_page_tree`), which costs about 33 us
-#: per page -- tens of seconds for the million-odd pages a 25 MB file can
-#: declare. Counted from the tree a reader descends, not from ``/Count``,
-#: by MuPDF's rule: a ``/Type /Page`` is a page, a ``/Type /Pages`` is not,
-#: and an untyped node is one if it names no ``/Kids`` (see :func:`_page_tree`).
+#: The crop and preview routes' page bound (user decision, review round 1 on
+#: triage F8; the preview by owner decision S3, #269), separate from
+#: :data:`MAX_SCAN_PAGES`: each renders one page, so a stored scan over 40
+#: pages keeps its crops and previews, but their content check reads the page
+#: tree (:func:`_page_tree`), which costs about 33 us per page -- tens of
+#: seconds for the million-odd pages a 25 MB file can declare. Counted from
+#: the tree a reader descends, not from ``/Count``, by MuPDF's rule: a
+#: ``/Type /Page`` is a page, a ``/Type /Pages`` is not, and an untyped node
+#: is one if it names no ``/Kids`` (see :func:`_page_tree`).
 MAX_CROP_PAGES = 200
 #: Task 9c: extraction renders MuPDF's rewrite of a stored PDF
 #: (:func:`canonical_pdf_bytes`), and the rewrite costs time per object in
@@ -194,7 +196,7 @@ _WALK_FAILED_MESSAGE = (
 _SCAN_PAGES_MESSAGE = (
     f"The scan has more than {MAX_SCAN_PAGES} pages; the limit is {MAX_SCAN_PAGES}."
 )
-#: The review crop route's page bound (:data:`MAX_CROP_PAGES`) bit.
+#: The crop and preview routes' page bound (:data:`MAX_CROP_PAGES`) bit.
 _CROP_PAGES_MESSAGE = (
     f"The scan has more than {MAX_CROP_PAGES} pages; the limit for a review crop "
     f"is {MAX_CROP_PAGES}."
