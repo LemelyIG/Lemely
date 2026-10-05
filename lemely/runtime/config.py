@@ -739,11 +739,12 @@ class SandboxSettings(BaseModel):
     interactive worker serves preview and crop. The limits and the extraction
     timeout are set from the worst admitted scans measured inside each child
     (Task 11; the numbers, the rule and the headroom are in the
-    ``lemely.runtime.sandbox`` docstring), and the two data limits fit the
-    2 GiB memory budget (owner decision S1). The timeouts bound one call,
-    including any wait for a busy worker. ``enabled=False`` runs every target
-    in the calling process, for tests that patch a library in that process;
-    it is not a deploy knob.
+    ``lemely.runtime.sandbox`` docstring). The two data limits are part of
+    the 2 GiB budget's worst case, which does not fit and which the owner
+    accepted on 2026-10-05 (``docs/ci-cd.md``, "Memory budget"). The
+    timeouts bound one call, including any wait for a busy worker.
+    ``enabled=False`` runs every target in the calling process, for tests
+    that patch a library in that process; it is not a deploy knob.
     Set in the environment as ``LEMELY_SANDBOX__<FIELD>``.
     """
 
@@ -752,8 +753,8 @@ class SandboxSettings(BaseModel):
     start_timeout_seconds: float = Field(default=30.0, gt=0)
     extraction_data_limit_bytes: int = Field(default=640 * 1024 * 1024, ge=64 * 1024 * 1024)
     extraction_address_limit_bytes: int = Field(default=768 * 1024 * 1024, ge=128 * 1024 * 1024)
-    interactive_data_limit_bytes: int = Field(default=576 * 1024 * 1024, ge=64 * 1024 * 1024)
-    interactive_address_limit_bytes: int = Field(default=704 * 1024 * 1024, ge=128 * 1024 * 1024)
+    interactive_data_limit_bytes: int = Field(default=640 * 1024 * 1024, ge=64 * 1024 * 1024)
+    interactive_address_limit_bytes: int = Field(default=768 * 1024 * 1024, ge=128 * 1024 * 1024)
     extraction_timeout_seconds: float = Field(default=180.0, gt=0)
     upload_check_timeout_seconds: float = Field(default=20.0, gt=0)
     preview_timeout_seconds: float = Field(default=15.0, gt=0)

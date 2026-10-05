@@ -165,90 +165,92 @@ preview column and the two LA extraction rows above. An image preview is
 now Pillow's decode, as extraction's and the crop's (final review R3, I1),
 not MuPDF's, and transparency is composited onto white, LA staying one
 channel (R3, I2). The worst image preview is the 160 Mpx 1-bit TIFF,
-``VmData`` 385 MiB and ``VmPeak`` 474 MiB, against 576 / 704 MiB; LA
-extraction fell from 412 to 271 MiB. Transparent scans at their caps
-(``Data``): a keyed 159 Mpx 1-bit PNG previews at 381 MiB and crops a
-whole page at 432 MiB; a keyed 40 Mpx RGB PNG previews at 273 MiB; a
+``VmData`` 385 MiB and ``VmPeak`` 474 MiB; LA extraction fell from 412 to
+271 MiB. Transparent scans at their caps (``Data``): a keyed 159 Mpx 1-bit
+PNG previews at 381 MiB; a keyed 40 Mpx RGB PNG previews at 273 MiB; a
 palette PNG with ``tRNS`` at 313 MiB; a keyed 16-bit grey PNG at 322 MiB.
-Two measurements this table lacks: a crop of a WHOLE page (box 0-1000) of
-a 160 Mpx 1-bit image, transparent or not, is the interactive worker's
-worst path, ``VmData`` 429 MiB (432 MiB keyed transparent) and ``VmPeak``
-519 MiB (the table's crop box is a small one); and in turn in one child
-the interactive worker reached 428 MiB and 518 MiB. On those numbers the growth rule below would
-ask for next64(66.7 + 1.5 x 365) = 640 MiB, not 576: the interactive
-worker's headroom on the growth is 1.40x, not 1.5x. The limits are
-unchanged (an owner decision); under 576 / 704 every path above completed,
-fresh and in turn. The extraction in-turn figure (417 MiB) predates the LA
-change and was not re-run.
+Two measurements this table lacks. A crop of a WHOLE page (box 0-1000) of
+a 160 Mpx 1-bit image is the interactive worker's worst path: ``VmData``
+429 MiB and ``VmPeak`` 519 MiB, and 431.5 / 521.0 MiB for a keyed
+transparent one (the table's crop box is a small one). And in turn in one
+child the interactive worker reached 428 MiB and 518 MiB. Under the
+interactive limits then in force, 576 / 704 MiB, every path above
+completed, fresh and in turn, but with 1.40x headroom on the growth, not
+the rule's 1.5x. The owner raised them to the rule's 640 / 768 MiB on
+2026-10-05 (below). The extraction in-turn figure (417 MiB) predates the
+LA change and was not re-run.
 
 The rule (owner decision, Task 11 review round 2): 1.5x headroom on what the
 child allocates over its warm baseline (``VmData`` 66.7 MiB with the render
 modules imported), ``RLIMIT_DATA = next64(baseline + 1.5 x (worst -
 baseline))``, the worst being the largest ``VmData`` of the worker's paths,
 fresh or in turn: extraction next64(66.7 + 1.5 x 350.4) = next64(592) = 640
-MiB, interactive next64(66.7 + 1.5 x 337.5) = next64(573) = 576 MiB.
+MiB, interactive next64(66.7 + 1.5 x 364.8) = next64(614) = 640 MiB (the
+whole-page crop of the keyed 1-bit PNG).
 ``RLIMIT_AS = max(next64(1.25 x the largest VmPeak), RLIMIT_DATA + 128
-MiB)``: extraction max(640, 768) = 768 MiB, interactive max(640, 704) =
-704 MiB. The ``+ 128 MiB`` term is a deviation from the plan, which had the
+MiB)``: extraction max(640, 768) = 768 MiB, interactive max(704, 768) =
+768 MiB. The ``+ 128 MiB`` term is a deviation from the plan, which had the
 1.25 x term alone: ``VmSize`` runs ~84 MiB above ``VmData`` (libraries,
 stack), so an address limit equal to the data limit would be the real
 bound. Headroom over the worst path: extraction 1.64x on the growth (640 /
-417 = 1.53x overall) and 768 / 507 = 1.52x address; interactive 1.51x on the
-growth (576 / 404 = 1.43x overall) and 704 / 494 = 1.43x address. Re-run
-under 640 / 768 and 576 / 704, every admitted path completed
-(``last_outcome == "ok"``), fresh and in turn; the only failures were
-MuPDF's, on a WebP preview, at any limit (gone: images no longer reach
+417 = 1.53x overall) and 768 / 507 = 1.52x address; interactive 1.57x on
+the growth (640 / 431.5 = 1.48x overall) and 768 / 521 = 1.47x address.
+Re-run under 640 / 768 (extraction) and 576 / 704 (interactive), every
+admitted path completed (``last_outcome == "ok"``), fresh and in turn; the
+interactive worker's raised limits can only admit more. The only failures
+were MuPDF's, on a WebP preview, at any limit (gone: images no longer reach
 MuPDF). Both rules are pinned by
 ``tests/test_sandbox.py::test_the_default_limits_follow_the_measured_growth_rule``.
 
-The 2 GiB budget (owner decision S1), resident, every fixed part measured
-(Task 11 re-review, 2026-10-04):
+The 2 GiB budget does not fit at worst, and the owner ACCEPTED that worst
+case on 2026-10-05 (final review R1, Important 2, and R3, I4;
+``docs/ci-cd.md``, "Memory budget", has the table). It needs every term at
+its worst at the same time. In MiB:
 
-* the web process idle after start-up (``python -m lemely.web``, as the
-  container runs it): 237.4 MB (226.4 MiB);
-* the parent's growth while it holds the pages of the adversarial 40-page
+* LIMIT: the extraction worker's ``RLIMIT_DATA``, 640;
+* LIMIT: the interactive worker's ``RLIMIT_DATA``, 640;
+* MEASURED: the web process idle after start-up (``python -m lemely.web``,
+  as the container runs it), 237.4 MB = 226.4 (Task 11 re-review,
+  2026-10-04);
+* MEASURED: one marking run's share of the web process, 606.5. The parent
+  holds a scan's pages from the worker's return until the extraction's
+  Gemini calls are done: 500.5 MB = 477.3 for the adversarial 40-page
   extraction (12.3 MB of PDF, every page one shared full-page noise image,
-  scaled to the 160 Mpx scan cap: 466.0 MB of PNG): 500.5 MB (477.3 MiB);
-* the equivalence parse worker's child: 71.9 MB (68.6 MiB);
-* multiprocessing's ``resource_tracker``: 16.4 MB (15.6 MiB);
-* the extraction worker's ``RLIMIT_DATA`` 640 MiB and the interactive
-  worker's 576 MiB.
+  scaled to the 160 Mpx scan cap: 466.0 MB of PNG). Before the first call
+  it runs ``scan_hygiene`` on each page, one at a time: 129.2 on one
+  4.1 Mpx page of that scan (``VmHWM`` growth, 2026-10-05). The other case,
+  one 16 Mpx image page, is less: 45.8 + 504.7 = 550.5;
+* LIMIT: the equivalence parse worker's child at its ``RLIMIT_AS``, 512
+  (idle it is 68.6);
+* MEASURED: multiprocessing's ``resource_tracker``, 16.4 MB = 15.6.
 
-Together 2003.9 MiB of the instance's 2048: a margin of 44.1 MiB, which
-the owner accepted. That sum, pinned at 40 MiB or more by
-``tests/test_sandbox.py::test_the_default_limits_fit_the_two_gib_budget``,
-holds only for one set of held pages, an idle parse worker and nothing
-else in the web process. It is not the worst case (final review R1,
-Important 2, and R3, I4; ``docs/ci-cd.md``, "Memory budget", has the
-table):
+640 + 640 + 226.4 + 606.5 + 512 + 15.6 = 2640.5 MiB of the instance's
+2048: a margin of -592.5 MiB. That counts ONE run, because runs are capped
+at one per process (:mod:`lemely.io.run_cap`, the other half of the
+owner's decision): a second run waits for the first to release its pages,
+and never fails for waiting. The serialised workers alone capped only how
+many scans RENDER at once, not how many sets of pages the web process
+held. The sum, the cap and both limits are pinned by
+``tests/test_sandbox.py::test_the_default_limits_fit_the_accepted_worst_case``.
+The re-reads, which decode whole pages in the web process up to
+``gemini.reread_concurrency`` at once, were not measured and are not in it.
 
-* The parent holds a scan's pages after the worker returns them, until
-  the extraction call to Gemini returns, and nothing bounds how many runs
-  do so at once. Teacher runs share one thread; student runs each get
-  their own, uncapped. The serialised workers cap how many scans RENDER at
-  once, not how many sets of pages the web process holds: each run in
-  flight adds its pages.
-* ``scan_hygiene`` runs in the web process, on each page, before that
-  call. Measured as ``VmHWM`` growth (2026-10-05): 504.7 MiB for one
-  16 Mpx page, 129.2 MiB for one 4.1 Mpx page of the adversarial scan.
-* The parse worker counts at its 512 MiB ``RLIMIT_AS``, not idle.
-
-On those terms one extraction run needs 640 + 576 + 226.4 + (477.3 +
-129.2) + 512 + 15.6 = 2576.5 MiB, a margin of -528.5 MiB, and each further
-run in flight 606.5 MiB more. The OOM priority does not cover this: every
-worker child sets ``oom_score_adj`` to 1000 (:data:`_OOM_SCORE_ADJ`), so
-the kernel kills a worker first, but when the growth is in the web process
-an idle worker frees only its ~70-80 MiB and the web process is next.
+The OOM priority does not cover this. Every worker child sets
+``oom_score_adj`` to 1000 (:data:`_OOM_SCORE_ADJ`), so when the instance
+runs out the kernel kills a worker child first. When the pressure is in the
+web process, though, an idle worker frees only its ~70-80 MiB, and the
+kernel's next choice is the web process itself.
 
 The extraction timeout is 180 s (owner decision, Task 11 review), counting
 any wait for the worker: the slowest extraction measured is 33 s, the
 40-page JPEG PDF. The upload check's slowest run is 0.65 s, so it keeps
 20 s. Both share the extraction worker, so an upload check that arrives
-during an extraction can wait its 20 s out and answer 503, and an
-extraction queued behind more than 180 s of others fails its paper with
+during an extraction can wait its 20 s out and answer 503, though the
+scan is fine. With runs capped at one, an extraction no longer queues
+behind another extraction in the same process, only behind upload checks;
+should it still outlive its 180 s, it fails its paper with
 :data:`~lemely.io.rasterise.RENDER_FAILED_MESSAGE` (a
-:class:`SandboxUnavailable` becomes ``ScanRenderFailedError``), though the
-scan is fine.
+:class:`SandboxUnavailable` becomes ``ScanRenderFailedError``).
 """
 
 from __future__ import annotations
@@ -308,8 +310,9 @@ _LIMIT_NAMES = ("RLIMIT_DATA", "RLIMIT_AS", "RLIMIT_CORE", "oom_score_adj")
 #: instance runs out of memory the kernel kills a worker child (that request
 #: gets a 422; the next call respawns it) before the web server. Owner
 #: decision, Task 11 re-review, when the 2 GiB budget's margin was put at
-#: ~44 MiB. It is negative at worst (see the module docstring), and when the
-#: growth is in the web process a killed idle worker frees little.
+#: ~44 MiB. At worst it is -592.5 MiB, a worst case the owner accepted on
+#: 2026-10-05 (see the module docstring): when the pressure is in the web
+#: process, a killed idle worker frees little and the web process is next.
 #: Raising one's own score needs no privilege; a kernel or container that
 #: forbids the write leaves the inherited score, and the parent warns.
 _OOM_SCORE_ADJ = 1000

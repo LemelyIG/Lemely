@@ -750,46 +750,47 @@ def test_a_python_memory_error_is_sandbox_memory_with_the_bare_message(
     assert str(failure.value) == "lemely-test-worker ran out of memory"
 
 
-#: The 2 GiB budget's fixed parts (owner decision S1), resident, MEASURED
-#: (Task 11 re-review; ``lemely.runtime.sandbox`` docstring), in MB:
-#: the web process idle after start-up (``python -m lemely.web``), the
-#: parent's growth while it holds the pages of the adversarial 40-page
-#: extraction (40 incompressible pages at the 160 Mpx scan cap), the
-#: equivalence parse worker's child, and multiprocessing's
-#: ``resource_tracker``, which the first ``spawn`` starts.
-_WEB_PROCESS_MB = 237.4
-_PARENT_PAGES_MB = 500.5
-_PARSE_WORKER_MB = 71.9
-_RESOURCE_TRACKER_MB = 16.4
+#: The 2 GiB worst case the owner accepted on 2026-10-05, in MiB, with every
+#: term at its worst at once (``docs/ci-cd.md``, "Memory budget"; the
+#: ``lemely.runtime.sandbox`` docstring). MEASURED peaks, resident: the web
+#: process idle after start-up (``python -m lemely.web``; 237.4 MB), and one
+#: marking run's share of it, the pages of the adversarial 40-page extraction
+#: (40 incompressible pages at the 160 Mpx scan cap; 500.5 MB) plus
+#: ``scan_hygiene`` on one of them (``VmHWM`` growth); multiprocessing's
+#: ``resource_tracker`` (16.4 MB). LIMITS, read from the code: both workers'
+#: ``RLIMIT_DATA``, the parse worker's ``RLIMIT_AS``, and the run cap
+#: (``lemely.io.run_cap``).
+_WEB_PROCESS_MIB = 226.4
+_RUN_PAGES_MIB = 477.3
+_RUN_SCAN_HYGIENE_MIB = 129.2
+_RESOURCE_TRACKER_MIB = 15.6
 #: The instance: Cloud Run's ``--memory=2Gi``.
 _INSTANCE_MIB = 2048
-#: What must be left once everything above is counted, at least. Owner
-#: decision (Task 11 re-review): the measured margin is 44 MiB and is
-#: accepted, because a worker child is the OOM killer's first choice
-#: (``oom_score_adj`` 1000), so running out costs one request, not the web
-#: server. A change that eats into it should be a decision, not a rounding.
-_BUDGET_MARGIN_MIB = 40
+#: Owner decision, 2026-10-05: the total above, 2640.5 MiB, a margin of
+#: -592.5 MiB, accepted as the worst case. A change that adds to it (a
+#: higher limit, a second run) should be a new decision, not a rounding.
+_ACCEPTED_WORST_CASE_MIB = 2640.5
 
 
-def test_the_default_limits_fit_the_two_gib_budget() -> None:
-    """Owner decision S1: on a 2 GiB instance the web process, the pages a
-    40-page scan accumulates in it, both workers' data limits, the parse
-    worker and the resource tracker must fit together, with a real margin.
+def test_the_default_limits_fit_the_accepted_worst_case() -> None:
+    """The 2 GiB budget does not fit at worst, and the owner accepted that
+    worst case (2026-10-05): both workers at their data limits, the web
+    process idle, one marking run (its pages plus ``scan_hygiene``), the
+    parse worker at its address limit and the resource tracker. This pins
+    it, so a raised limit or a second concurrent run goes red."""
+    from lemely.core.equivalence import _PARSE_WORKER_MEMORY_BYTES
+    from lemely.io.run_cap import MAX_CONCURRENT_RUNS
 
-    This is the sum the owner accepted, and only that: one set of held
-    pages, the parse worker idle, no ``scan_hygiene`` in the web process.
-    It is not the worst case, which does not fit (final review R1,
-    Important 2, and R3, I4): ``docs/ci-cd.md``, "Memory budget", has that
-    table, and the limits are the owner's to change."""
     settings = SandboxSettings()
-    fixed_mib = (
-        (_WEB_PROCESS_MB + _PARENT_PAGES_MB + _PARSE_WORKER_MB + _RESOURCE_TRACKER_MB) * 1e6 / MiB
+    total_mib = (
+        (settings.extraction_data_limit_bytes + settings.interactive_data_limit_bytes) / MiB
+        + _WEB_PROCESS_MIB
+        + MAX_CONCURRENT_RUNS * (_RUN_PAGES_MIB + _RUN_SCAN_HYGIENE_MIB)
+        + _PARSE_WORKER_MEMORY_BYTES / MiB
+        + _RESOURCE_TRACKER_MIB
     )
-    workers_mib = (
-        settings.extraction_data_limit_bytes + settings.interactive_data_limit_bytes
-    ) / MiB
-    margin_mib = _INSTANCE_MIB - fixed_mib - workers_mib
-    assert margin_mib >= _BUDGET_MARGIN_MIB, margin_mib
+    assert total_mib == pytest.approx(_ACCEPTED_WORST_CASE_MIB, abs=0.05), total_mib
+    assert _INSTANCE_MIB - total_mib == pytest.approx(-592.5, abs=0.05)
 
 
 def _next64(mib: float) -> int:
@@ -801,11 +802,16 @@ def test_the_default_limits_follow_the_measured_growth_rule() -> None:
     next64(baseline + 1.5 x (worst - baseline))``, 1.5x headroom on what the
     child allocates over its warm baseline; ``RLIMIT_AS = max(next64(1.25 x
     worst VmPeak), RLIMIT_DATA + 128)``. The measured MiB are recorded in the
-    ``lemely.runtime.sandbox`` docstring; a re-measurement changes them here."""
+    ``lemely.runtime.sandbox`` docstring; a re-measurement changes them here.
+    The interactive worker's worst is the crop of a WHOLE page of a keyed
+    transparent 159 Mpx 1-bit PNG (final fix B, 2026-10-05), worse than
+    every path in turn in one child (428 / 518): next64(66.71 + 1.5 x
+    364.8) = 640 MiB, and max(next64(1.25 x 521.0), 640 + 128) = 768 MiB
+    (owner decision, 2026-10-05)."""
     baseline = 66.71  # warm child: the render modules imported
-    measured = {  # worker: (worst VmData, worst VmPeak), every path in turn in one child
+    measured = {  # worker: (worst VmData, worst VmPeak), fresh or in turn
         "extraction": (417.09, 506.6),
-        "interactive": (404.21, 493.7),
+        "interactive": (431.5, 521.0),
     }
     settings = SandboxSettings()
     for worker, (worst_data, worst_peak) in measured.items():
