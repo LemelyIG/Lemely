@@ -14,6 +14,7 @@ import gc
 import logging
 import math
 import os
+import pickle
 import re
 import signal
 import subprocess
@@ -34,6 +35,7 @@ from lemely.runtime.sandbox import (
     EXTRACTION_WORKER,
     INTERACTIVE_WORKER,
     ChildWorker,
+    SandboxBusy,
     SandboxCrash,
     SandboxError,
     SandboxFailure,
@@ -133,6 +135,8 @@ def test_a_call_waiting_behind_a_busy_worker_is_unavailable_within_its_timeout(
 
     assert str(refused.value) == "busy"
     assert refused.value.reason == "unavailable"
+    assert isinstance(refused.value, SandboxBusy)
+    assert str(pickle.loads(pickle.dumps(refused.value))) == "busy"  # noqa: S301
     assert 0.4 <= waited < 1.0
     assert not holder.is_alive()
     assert errors == []

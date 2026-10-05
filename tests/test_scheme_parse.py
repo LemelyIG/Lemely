@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import pickle
+import threading
 import time
 from pathlib import Path
 
 import pytest
+from structlog.testing import capture_logs
 
 from lemely.core.loose_schemas import MarkScheme
 from lemely.io import scheme_parse
@@ -149,6 +151,116 @@ def test_worker_scheme_parser_cuts_the_parse_at_the_scheme_timeout(
     assert str(failure.value) == SCHEME_READ_FAILED_MESSAGE
     assert isinstance(failure.value.__cause__, sandbox.SandboxTimeout)
     assert sandbox.EXTRACTION_WORKER.last_outcome == "timeout"
+
+
+def _busy_settings(*, scheme: float, extraction: float) -> SandboxSettings:
+    return SandboxSettings(
+        enabled=True,
+        scheme_parse_timeout_seconds=scheme,
+        extraction_timeout_seconds=extraction,
+        upload_check_timeout_seconds=180,
+    )
+
+
+def _hold_the_extraction_worker(seconds: float) -> threading.Thread:
+    """Take the extraction worker's lock, as a scan render does, for ``seconds``."""
+    held = threading.Event()
+
+    def hold() -> None:
+        with sandbox.EXTRACTION_WORKER._lock:
+            held.set()
+            time.sleep(seconds)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    assert held.wait(5)
+    return holder
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_worker_scheme_parser_waits_out_a_worker_busy_with_a_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scan render holds the worker for longer than the scheme parse's own
+    timeout (here 1.6 s against 1 s): the parse asks again until the worker
+    is free and succeeds, instead of failing the paper as busy."""
+    path = tmp_path / "0625_s23_ms_41.pdf"
+    path.write_bytes(synthetic_theory_scheme_pdf())
+    # A warm child, so the parse itself takes a fraction of the 1 s it is given.
+    parse_scheme_in_worker(path.read_bytes(), path.name, DetParserSettings(), timeout=30)
+    monkeypatch.setattr(
+        sandbox, "sandbox_settings", lambda: _busy_settings(scheme=1.0, extraction=30)
+    )
+
+    holder = _hold_the_extraction_worker(1.6)
+    try:
+        scheme = WorkerSchemeParser(DetParserSettings())(path)
+    finally:
+        holder.join(timeout=10)
+
+    assert scheme.metadata.source_document == "0625_s23_ms_41.pdf"
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "ok"
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_worker_scheme_parser_fails_once_the_worker_stays_busy_past_the_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A worker busy for longer than ``extraction_timeout_seconds`` (here 1 s)
+    fails the paper with the fixed text, logged as ``busy``."""
+    monkeypatch.setattr(
+        sandbox, "sandbox_settings", lambda: _busy_settings(scheme=0.2, extraction=1.0)
+    )
+    path = tmp_path / "0625_s23_ms_41.pdf"
+    path.write_bytes(synthetic_theory_scheme_pdf())
+
+    holder = _hold_the_extraction_worker(4.0)
+    started = time.monotonic()
+    try:
+        with capture_logs() as logs, pytest.raises(SchemeReadFailedError) as failure:
+            WorkerSchemeParser(DetParserSettings())(path)
+        waited = time.monotonic() - started
+    finally:
+        holder.join(timeout=10)
+
+    assert 1.0 <= waited < 2.5, "it gave up before the deadline, or kept asking after it"
+    assert str(failure.value) == SCHEME_READ_FAILED_MESSAGE
+    assert isinstance(failure.value.__cause__, sandbox.SandboxBusy)
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "busy"
+    failed = [entry for entry in logs if entry["event"] == "scheme_parse_failed"]
+    assert [entry["reason"] for entry in failed] == ["busy"]
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_worker_scheme_parser_does_not_retry_a_parse_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only busy is asked again. A parse the worker cut at its timeout fails
+    once, at about that timeout, though the retry deadline (180 s) is far off."""
+    monkeypatch.setattr(
+        sandbox, "sandbox_settings", lambda: _busy_settings(scheme=0.5, extraction=180)
+    )
+    monkeypatch.setattr(
+        scheme_parse, "SCHEME_PARSE_TARGET", "tests.sandbox_targets.slow_scheme_parse"
+    )
+    calls: list[float] = []
+    real = scheme_parse.parse_scheme_in_worker
+
+    def counting(*args: object, **kwargs: float) -> MarkScheme:
+        calls.append(kwargs["timeout"])
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(scheme_parse, "parse_scheme_in_worker", counting)
+    path = tmp_path / "0625_s23_ms_41.pdf"
+    path.write_bytes(synthetic_theory_scheme_pdf())
+
+    started = time.monotonic()
+    with pytest.raises(SchemeReadFailedError) as failure:
+        WorkerSchemeParser(DetParserSettings())(path)
+
+    assert time.monotonic() - started < 2.5
+    assert calls == [0.5]
+    assert isinstance(failure.value.__cause__, sandbox.SandboxTimeout)
 
 
 def test_the_scheme_parse_timeout_defaults_to_20_seconds() -> None:

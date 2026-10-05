@@ -387,6 +387,20 @@ class SandboxUnavailable(SandboxFailure):
     """No child could serve the call: it is busy, or it could not be started."""
 
 
+class SandboxBusy(SandboxUnavailable):
+    """The lock wait used up the call's timeout: another call holds the worker.
+
+    A kind of :class:`SandboxUnavailable` (``reason`` ``"unavailable"``,
+    ``str()`` ``"busy"``), so a caller that does not tell the two apart need
+    not change. Nothing is wrong with the worker: a caller that can wait may
+    ask again.
+    """
+
+    def __init__(self, *_: object) -> None:
+        # Accepts and ignores the ``args`` it is rebuilt from when unpickled.
+        super().__init__("busy", "unavailable")
+
+
 class SandboxError(SandboxFailure):
     """The target raised something other than a ``LemelyError``.
 
@@ -785,12 +799,12 @@ class ChildWorker:
         entered = time.monotonic()
         if not self._lock.acquire(timeout=max(timeout, 0.0)):
             self.last_outcome = "busy"
-            raise SandboxUnavailable("busy", "unavailable")
+            raise SandboxBusy
         try:
             remaining = timeout - (time.monotonic() - entered)
             if remaining <= 0:
                 self.last_outcome = "busy"
-                raise SandboxUnavailable("busy", "unavailable")
+                raise SandboxBusy
             conn = self._ready()
             if conn is None:
                 self.last_outcome = "unavailable"
