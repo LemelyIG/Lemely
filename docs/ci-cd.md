@@ -308,6 +308,54 @@ does nothing:
 2. Set `SECTION_KEY` in each environment where it should differ from the
    default, then redeploy that environment.
 
+### Traffic pinning
+
+Never leave a Cloud Run service pinned to a named revision. While traffic
+targets a named revision instead of `LATEST`, a deploy creates a new revision
+that receives 0% of traffic, and the old code keeps serving. The deploy step
+still reports success, and so do the smoke tests, which only ask whether
+*something* answers. On 2026-10-05 this left `lemely-backend-staging` on a
+two-week-old revision across three deploys while `migrate` had already
+dropped `question_results.plagiarism_flagged`, so every marking insert failed.
+
+**Check** where traffic goes:
+
+```bash
+gcloud run services describe lemely-backend-staging --region us-central1 \
+  --format='value(status.traffic)'
+```
+
+Healthy output has one entry with `latestRevision: True` at `percent: 100`.
+A `revisionName` at `percent: 100` is a pin.
+
+**Restore** it:
+
+```bash
+gcloud run services update-traffic lemely-backend-staging --region us-central1 --to-latest
+```
+
+This keeps existing tags.
+
+**The pipeline now enforces and verifies it.** The deploy step passes
+`revision_traffic: LATEST=100`, so every deploy sends 100% of traffic to its
+own revision, even when the service was pinned. The "Verify the serving
+revision runs this commit" step then finds the revision holding 100% of
+traffic and fails the job unless its `commit-sha` label equals the commit
+being deployed. The error names the serving revision and its commit. The check
+reads what is serving, not what the deploy created.
+
+**To keep a debug revision reachable without pinning**, give it a tag at 0%
+traffic and leave `LATEST` at 100%:
+
+```bash
+gcloud run services update-traffic lemely-backend-staging --region us-central1 \
+  --update-tags debug-foo=lemely-backend-staging-00040-xyz
+```
+
+The tag gets its own URL (`https://debug-foo---<service-url>`) and no share of
+traffic. `gcloud run deploy ... --tag debug-foo --no-traffic` does the same for
+a fresh revision. Remove the tag with `--remove-tags debug-foo` when done.
+
 ### Memory budget
 
 The backend runs at `--memory=2Gi`. Scan work (#260, #271) runs in two
