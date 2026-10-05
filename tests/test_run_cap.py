@@ -16,8 +16,8 @@ import asyncio
 import contextvars
 import io
 import json
-import tempfile
 import threading
+import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -161,8 +161,8 @@ def _scheme() -> MarkScheme:
 
 
 @pytest.fixture
-def tmp() -> Path:
-    return Path(tempfile.mkdtemp())
+def tmp(tmp_path: Path) -> Path:
+    return tmp_path
 
 
 def _drain(q: Any) -> list[tuple[EventType, dict[str, Any]]]:
@@ -410,6 +410,81 @@ def test_a_waiting_student_stream_says_it_is_queued(sections: _Sections, tmp: Pa
     assert frames[1]["message"] == run_cap.RUN_DEQUEUED_MESSAGE
     assert {"type": "warning", "message": "holding waiting"} in frames  # it went ahead
     assert sections.peak == 1
+
+
+def test_a_waiting_run_publishes_queued_again_at_the_heartbeat_interval(
+    sections: _Sections, tmp: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that waits is heard from every ``QUEUED_HEARTBEAT_SECONDS``, not
+    once: the teacher's tracker refreshes the row's liveness on each frame and
+    a student's SSE stream gets a frame inside Cloud Run's request timeout.
+    The slot is still taken once the run ahead ends, and the dequeue frame
+    follows the last heartbeat."""
+    monkeypatch.setattr(run_cap, "QUEUED_HEARTBEAT_SECONDS", 0.05)
+    sections.hold = True
+    queue = bus.subscribe_queue("second")
+    try:
+        first = _Run("first", tmp).start()
+        assert sections.first_entered.wait(_WAIT)
+        second = _Run("second", tmp).start()
+        deadline = time.monotonic() + _WAIT
+        queued = 0
+        while queued < 4 and time.monotonic() < deadline:
+            queued += sum(1 for t, _p in _drain(queue) if t is EventType.EXTRACTION_QUEUED)
+            time.sleep(0.01)
+        sections.release.set()
+        first.join()
+        second.join()
+        tail = [
+            t
+            for t, _p in _drain(queue)
+            if t in (EventType.EXTRACTION_QUEUED, EventType.EXTRACTION_DEQUEUED)
+        ]
+    finally:
+        bus.unsubscribe_queue(queue)
+    assert queued >= 4, "the waiting run published queued fewer than four times"
+    assert tail[-1] is EventType.EXTRACTION_DEQUEUED
+    assert sections.peak == 1
+    assert second.result is not None
+
+
+def test_a_raising_subscriber_on_the_dequeue_publish_does_not_leak_the_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The slot is taken before the dequeue publish, so a subscriber that raises
+    there must still give it back; otherwise every later run waits forever."""
+    monkeypatch.setattr(run_cap, "_slots", threading.BoundedSemaphore(run_cap.MAX_CONCURRENT_RUNS))
+    monkeypatch.setattr(run_cap, "QUEUED_HEARTBEAT_SECONDS", 0.05)
+    waiter_queued = threading.Event()
+    outcome: list[BaseException] = []
+
+    def on_queued(**_payload: object) -> None:
+        waiter_queued.set()
+
+    def on_dequeued(**_payload: object) -> None:
+        raise RuntimeError("a subscriber blew up")
+
+    def waiter() -> None:
+        try:
+            with run_cap.marking_run_slot():
+                pytest.fail("the body must not run when the dequeue publish raised")
+        except BaseException as exc:
+            outcome.append(exc)
+
+    bus.subscribe(EventType.EXTRACTION_QUEUED, on_queued)
+    bus.subscribe(EventType.EXTRACTION_DEQUEUED, on_dequeued)
+    try:
+        with run_cap.marking_run_slot():  # the run ahead
+            thread = threading.Thread(target=waiter, daemon=True)
+            thread.start()
+            assert waiter_queued.wait(_WAIT)
+        thread.join(_WAIT)
+        assert not thread.is_alive()
+    finally:
+        bus.unsubscribe(EventType.EXTRACTION_QUEUED, on_queued)
+        bus.unsubscribe(EventType.EXTRACTION_DEQUEUED, on_dequeued)
+    assert [type(e) for e in outcome] == [RuntimeError]
+    _wait_for_free_slot()
 
 
 def test_the_cap_is_one_run() -> None:
