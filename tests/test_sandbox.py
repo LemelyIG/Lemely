@@ -462,10 +462,16 @@ def test_the_lock_wait_shrinks_the_call_budget(worker: ChildWorker) -> None:
     holder = threading.Thread(target=hold)
     holder.start()
     try:
-        time.sleep(0.05)
+        # The holder must own the lock before the clock starts: on a loaded
+        # runner a fixed sleep let this thread win it instead. Bounded, so a
+        # holder that never starts fails here rather than hanging.
+        waited_until = time.monotonic() + 5.0
+        while not worker._lock.locked():
+            assert time.monotonic() < waited_until, "the holder never took the worker's lock"
+            time.sleep(0.001)
         started = time.monotonic()
-        # ~0.35 s waiting for the lock leaves ~0.25 s of the 0.6 s budget,
-        # too little for a 0.3 s target.
+        # Up to ~0.4 s waiting for the lock leaves ~0.2 s of the 0.6 s
+        # budget, too little for a 0.3 s target.
         with pytest.raises(SandboxTimeout):
             worker.call(f"{_T}.sleep_for", 0.3, timeout=0.6, result_type=type(None))
         elapsed = time.monotonic() - started
