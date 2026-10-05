@@ -3775,8 +3775,9 @@ class LegacyPathGroupedCoherenceTests(unittest.TestCase):
 
     def test_over_award_on_a_stated_pool_is_now_flagged(self) -> None:
         """The grouped interval caps a ``select_count: 2`` pool at 2, so an
-        award of 3 off three matched pool members is outside [2, 2]. The
-        legacy global rule allowed [1, 3]. Disclosed as a new true flag."""
+        award of 3 off three matched pool members is outside [1, 2]. The
+        legacy global rule allowed [1, 3]. Disclosed as a new true flag; the
+        flag never moves the mark, which stays the marker's 3."""
         from lemely.io.correction_ai import COHERENCE_TRIGGER_MARKER
 
         question = {
@@ -3792,8 +3793,10 @@ class LegacyPathGroupedCoherenceTests(unittest.TestCase):
             ],
         }
         cq = self._mark(question, 3, ["p1", "p2", "p3"])
+        self.assertEqual(cq.awarded_marks, 3)
         self.assertTrue(cq.needs_teacher_review)
         self.assertIn(COHERENCE_TRIGGER_MARKER, cq.review_reason or "")
+        self.assertIn("between 1 and 2", cq.review_reason or "")
 
     def test_second_member_only_of_an_either_or_pair_is_not_flagged(self) -> None:
         cq = self._mark(self._either_or(), 1, ["p2"])
@@ -6432,7 +6435,7 @@ class RereadFixRound1Tests(unittest.TestCase):
     def test_text_agreement_is_case_and_whitespace_insensitive(self) -> None:
         """ "A" vs " a" must score 1.0 -- an MCQ re-read differing only in
         case or incidental surrounding whitespace is not a disagreement."""
-        from lemely.io.second_read import text_agreement
+        from lemely.core.text_agreement import text_agreement
 
         self.assertEqual(text_agreement("A", " a"), 1.0)
 

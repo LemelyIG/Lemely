@@ -841,8 +841,9 @@ def _check_coherence(
     backstop revises the awarded marks.
 
     See BUILD/DECISIONS.md DA10 for the empty/absent ``matched_point_ids``
-    rule, the type-scoped exemption, and the ``is_alternative``/
-    ``is_optional`` range-reconciliation rule.
+    rule and the type-scoped exemption. DA10's Decision 3 (the global
+    ``primary + non-additive`` range) is superseded by #272 and DA10a: the
+    range is the grouped interval described in mode 2 above, on both paths.
     """
     if not question.answer_points and question.type in _COHERENCE_EXEMPT_TYPES:
         # Nothing to reconcile against — this type's mark scheme is not
@@ -1456,7 +1457,8 @@ def _build_ai_corrected(
        that stated confidence does not separate correct from wrong on this
        failure mode, so it must not depend on confidence at all.
     4. ``matched_point_ids`` is incoherent with ``awarded_marks`` (a dangling
-       id, or a sum mismatch) — see ``_check_coherence``. Also independent of
+       id, or a range mismatch on the grouped interval, #272) — see
+       ``_check_coherence``. Also independent of
        confidence: a marker can be fully confident about an internally
        inconsistent result.
     """

@@ -54,7 +54,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from lemely.core.schemas import SecondReadOutput
-from lemely.core.text_agreement import text_agreement
+from lemely.core.text_agreement import text_agreement as text_agreement
 from lemely.io.prompts.answer_extraction import (
     EXTRACTOR_SYSTEM_PROMPT,
     FIELD_GUIDED_SYSTEM_PROMPT,

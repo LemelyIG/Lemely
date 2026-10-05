@@ -443,7 +443,7 @@ class AccuracyResult:
     variant (variants share a ``paper_id``; summing them would report a
     four-variant paper as four times its cost). A case that spent nothing
     (e.g. every call cached) is present with ``{}``. Only a real cost at
-    ``--cache-mode bypass``: cached calls record no spend."""
+    ``--cache-mode bypass`` or ``refresh``: cached calls record no spend."""
     cost_usd_total: float = 0.0
     """#201: the sum of every value in ``cost_usd_by_paper``."""
 

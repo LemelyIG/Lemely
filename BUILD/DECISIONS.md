@@ -11209,6 +11209,44 @@ stands uncorrected. But any future authorised sweep over fresh (or newly
 question-identity-linked) data will now compute and print the number, which
 was not true before this correction.
 
+## DA10a — Amendment: #272 superseded DA10 Decision 3's global range (fix/marking-accuracy)
+
+**What changed.** DA10 stays as written above for the historical record. This
+amendment supersedes only its Decision 3. The legacy coherence path
+(`equivalence_gate` off) no longer computes the global
+`implied_min = sum(primary) + max(non-additive)` and
+`implied_max = sum(primary) + sum(non-additive)` range. Since #272 (owner
+decision D3 in `docs/superpowers/specs/2026-10-01-marking-accuracy-design.md`),
+both callers of `_check_coherence` (`lemely/io/correction_ai.py`) pass the
+per-point `(group_key, cap)` list from `lemely.core.point_groups.group_points`,
+and the range is the **grouped interval**:
+
+- a point with no group adds its own tariff to both ends;
+- each matched group adds at least `min(cap, its largest matched tariff)` and
+  at most `min(cap, sum of its matched tariffs)`;
+- both ends are then clamped at `question.marks` (triage F6).
+
+As before, only an `awarded_marks` outside the interval is flagged, and the
+message names the interval. The verdict path already used this rule, so the
+two paths now share one rule.
+
+**Why.** The global rule had no group identity. It flagged an either/or pair
+matched both ways, a det-shaped scheme whose independent tariffs exceed the
+question, and an alternative that outweighs its sibling. It also missed an
+over-award on a stated `select_count` pool.
+
+**What it moves.** Only `needs_teacher_review` and `review_reason`, never
+`awarded_marks`. The flag is computed on the marker's raw claim, before
+`_verify_calculated_answers`, and does not feed the award. The non-regression
+evidence is `BUILD/accuracy-runs/coherence-272-2026-10-01/`: 0 flag flips
+either way, and 78/78 records have identical `predicted_marks` and `outcome`
+between the pre-#272 and #272 trees replaying one cache. Every new flag the
+grouped rule can raise is an award above the group rule's value. The five
+shapes are named in that report's shape split: `stated_pool_over_award`,
+`unequal_tariff_either_or_summed`, `unstated_pool_leftover_cap_binds`,
+`pool_capped_at_0` and `later_stated_pool_no_room`. In the last one, pools
+consume room in scheme order, which is the verdict path's existing rule.
+
 ## DA11 — the ledger file is authoritative for spend, and the header is a programme-wide SUM
 
 **Decided 2026-08-25**, discharging inbox item 7 of the 2026-08-25T17:36:27
