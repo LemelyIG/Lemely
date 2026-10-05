@@ -7,6 +7,7 @@ opens a user PDF, so every test here traps both readers.
 from __future__ import annotations
 
 import contextlib
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -233,6 +234,40 @@ class RawObjectStreamTests(unittest.TestCase):
                 self.assertIn(b"/ObjStm", data)
                 check_object_stream_bytes(data)
                 check_scan_bytes(data)
+
+
+class StreamDataStartsTests(unittest.TestCase):
+    """The offsets the three readings take a stream's data to start at
+    (``_stream_data_starts``): strict, MuPDF's and pdfium's. Final review R2
+    M5: MuPDF's run of spaces is skipped at C speed."""
+
+    def test_each_reading_of_the_separator_gives_its_start(self) -> None:
+        # Offsets count from the end of ``stream`` (6).
+        for data, starts in (
+            (b"stream\r\nX", [8]),
+            (b"stream\nX", [7]),
+            (b"stream\rX", [7]),
+            (b"stream\r\r\nX", [7]),  # a CR not followed by LF: one byte for all three
+            (b"stream   \nX", [6, 10]),  # spaces: MuPDF and pdfium skip them, strict does not
+            (b"stream   \r\nX", [6, 11]),
+            (b"stream   \rX", [6, 10]),
+            (b"stream  X\nY", [6, 9, 10]),  # MuPDF consumes the X after the spaces
+            (b"stream\tX", [6, 7]),  # no end of line: pdfium has no start
+            (b"stream    ", [6, 10]),  # spaces to the end of the data
+            (b"stream", [6]),
+        ):
+            with self.subTest(data=data):
+                self.assertEqual(pdf_prescan._stream_data_starts(data, 6), starts)
+
+    def test_a_long_run_of_spaces_is_skipped_at_c_speed(self) -> None:
+        """16 MB of spaces after ``stream``: 0.8 s one byte at a time, a few
+        milliseconds as a regex match."""
+        data = b"stream" + b" " * 16_000_000 + b"\nX"
+        began = time.perf_counter()
+        starts = pdf_prescan._stream_data_starts(data, 6)
+        elapsed = time.perf_counter() - began
+        self.assertEqual(starts, [6, 16_000_007])
+        self.assertLess(elapsed, 0.25)
 
 
 if __name__ == "__main__":

@@ -91,7 +91,8 @@ def _stream_data_starts(data: bytes, pos: int) -> list[int]:
     exactly one byte, whatever it is. pdfium skips to the end of the line.
     The strict reading takes one CR LF, LF or CR. For every standard
     separator the three agree; where they do not, each is measured and the
-    largest counts.
+    largest counts. The run of spaces is skipped by one regex match, so a
+    long run costs C speed, not a Python step per byte.
     """
     starts = set()
     strict = pos
@@ -100,9 +101,7 @@ def _stream_data_starts(data: bytes, pos: int) -> list[int]:
     elif data[pos : pos + 1] in (b"\n", b"\r"):
         strict += 1
     starts.add(strict)
-    mupdf = pos
-    while data[mupdf : mupdf + 1] == b" ":
-        mupdf += 1
+    mupdf = _SPACES_RE.match(data, pos).end()  # type: ignore[union-attr]
     if data[mupdf : mupdf + 1] == b"\r":
         mupdf += 2 if data[mupdf + 1 : mupdf + 2] == b"\n" else 1
     elif mupdf < len(data):
