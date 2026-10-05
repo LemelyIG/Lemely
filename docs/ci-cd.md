@@ -330,8 +330,11 @@ Laplacian arrays. This is a marking run.
 grading jobs, student corrections and every other caller of the extractor
 share the one slot. A second run waits until the first has released its
 pages, and never fails for waiting. While it waits, a student's progress
-stream gets an `extraction_queued` frame that says so. The container runs
+stream gets an `extraction_queued` frame that says so, and an
+`extraction_dequeued` frame when its run has the slot. The container runs
 one web process, so the cap is per instance.
+
+**Mark-scheme parse.** A user's mark-scheme PDF is parsed with pdfplumber, which inflates every content stream it reads with no bound of its own: the reviewer's 204 KB PDF took the parse to 475 MiB, and the same shape at 1 GiB needs 2.1 GiB. Both places that parse a user's scheme run it in the extraction worker (`lemely.io.scheme_parse`): `POST /api/schemes`, off the event loop, within `upload_check_timeout_seconds`, and a scheme attached alongside a scan, in the grading thread, within `extraction_timeout_seconds`. That adds no child and no budget term. Real schemes peak at 47–71 MiB, and a synthetic 102-page scheme at 149 MiB, in under 2 s, well inside 640 MiB. A scheme upload shares the worker's lock with scan extraction, so one that arrives during an extraction longer than 20 s answers 503, as the scan upload check does. A failed parse is a 422 with the fixed text "Could not read this mark scheme"; the cause goes only to the `scheme_parse_failed` log line.
 
 One run costs the web process the worse of two cases:
 
