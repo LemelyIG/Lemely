@@ -1725,5 +1725,172 @@ class ImageModeCapTests(unittest.TestCase):
                     self._refused(data)
 
 
+_RGB_DCT = b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode"
+
+
+def _jpeg_declaring(jpeg: bytes, *, width: int, height: int) -> bytes:
+    """``jpeg`` with its SOF0 frame header rewritten to declare ``width x height``.
+
+    Only the header changes; the walk never decodes the scan data behind it.
+    """
+    at = jpeg.index(b"\xff\xc0")
+    size = height.to_bytes(2, "big") + width.to_bytes(2, "big")
+    return jpeg[: at + 5] + size + jpeg[at + 9 :]
+
+
+def _image_on_page_and_in_an_appearance(entries: bytes, data: bytes) -> dict[str, bytes]:
+    """A 1 x 1 image keyed ``entries`` holding ``data``, two ways.
+
+    ``"page"`` draws it from the page, where ``get_images`` and the walk both
+    judge it; ``"appearance"`` from an annotation appearance, which only the
+    walk reaches.
+    """
+    image = pdf_stream(b"/Type /XObject /Subtype /Image /Width 1 /Height 1 " + entries, data)
+    appearance = assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            b"/Contents 4 0 R /Annots [5 0 R] >>",
+            pdf_stream(b"", b"q Q"),
+            b"<< /Type /Annot /Subtype /Stamp /Rect [0 0 300 300] /AP << /N 6 0 R >> >>",
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 300 300] "
+                b"/Resources << /XObject << /Im 7 0 R >> >>",
+                b"q 300 0 0 300 0 0 cm /Im Do Q",
+            ),
+            image,
+        ]
+    )
+    return {
+        "page": _declared_image_pdf(entries, width=1, height=1, data=data),
+        "appearance": appearance,
+    }
+
+
+class JpegFrameTests(unittest.TestCase):
+    """Final review R2 I1 and triage 8c: a DCT image's frame header.
+
+    The header is read once per image per check, whichever path and page
+    reach the image, and fill bytes are skipped at C speed: 40 pages sharing
+    60 such images took 27 s to check, re-read per page and per path one
+    fill byte at a time. A renderer decodes a JPEG at its frame's size, so
+    the larger of the dictionary's size and the frame's is judged, for every
+    lone ``/DCTDecode`` image, colour included, and every mask."""
+
+    def _passes(self, data: bytes) -> None:
+        self.assertIsNone(check_scan_bytes(data))
+
+    def _refused(self, data: bytes) -> None:
+        with self.assertRaises(ScanTooLargeError) as ctx:
+            check_scan_bytes(data)
+        self.assertEqual(ctx.exception.reason, "image_px")
+        self.assertIn("megapixels, which is too large to process safely", str(ctx.exception))
+
+    def test_the_frame_header_gives_its_marker_size_and_components(self) -> None:
+        frame = pdf_content_walk._jpeg_frame(_jpeg_declaring(_jpeg(), width=300, height=200))
+        self.assertEqual(frame, (0xC0, 200, 300, 1))
+        self.assertEqual(pdf_content_walk._jpeg_frame(_jpeg("RGB")), (0xC0, 16, 16, 3))
+
+    def test_a_run_of_fill_bytes_before_a_marker_is_skipped(self) -> None:
+        jpeg = _jpeg()
+        at = jpeg.index(b"\xff\xc0")
+        filled = jpeg[:at] + b"\xff" * 1_000 + jpeg[at:]
+        self.assertEqual(pdf_content_walk._jpeg_frame(filled), (0xC0, 16, 16, 1))
+
+    def test_sixty_four_kib_of_fill_bytes_is_walked_at_c_speed(self) -> None:
+        """5-6 ms a call one fill byte at a time (over 0.5 s for these 100 calls)."""
+        prefix = b"\xff\xd8" + b"\xff" * (pdf_content_walk._JPEG_HEADER_PREFIX_BYTES - 2)
+        began = time.perf_counter()
+        for _ in range(100):
+            self.assertIsNone(pdf_content_walk._jpeg_frame(prefix))
+        self.assertLess(time.perf_counter() - began, 0.1)
+
+    def test_the_marker_walk_gives_up_past_its_bound(self) -> None:
+        """A real JPEG has a few dozen markers before its frame; past
+        ``_MAX_JPEG_MARKERS`` the frame is not read (and not vouched for)."""
+        self.assertEqual(pdf_content_walk._MAX_JPEG_MARKERS, 256)
+        jpeg = _jpeg()
+        for restarts, found in ((200, True), (300, False)):
+            padded = jpeg[:2] + b"\xff\xd0" * restarts + jpeg[2:]
+            with self.subTest(restarts=restarts):
+                self.assertEqual(pdf_content_walk._jpeg_frame(padded) is not None, found)
+
+    def test_each_dct_image_is_read_once_per_check(self) -> None:
+        """40 pages share one ``/Resources`` naming six DCT images, grey and
+        colour, and one annotation whose appearance draws them too: each
+        image's raw prefix is read once, not once per page and path."""
+        pages, images = 40, 6
+        first_image, first_page = 7, 7 + images
+        names = " ".join(f"/Im{i} {first_image + i} 0 R" for i in range(images))
+        draws = b" ".join(f"/Im{i} Do".encode() for i in range(images))
+        objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            (
+                "<< /Type /Pages /Kids ["
+                + " ".join(f"{first_page + p} 0 R" for p in range(pages))
+                + f"] /Count {pages} >>"
+            ).encode(),
+            f"<< /XObject << {names} >> >>".encode(),
+            pdf_stream(b"", b"q " + draws + b" Q"),
+            b"<< /Type /Annot /Subtype /Stamp /Rect [0 0 300 300] /AP << /N 6 0 R >> >>",
+            pdf_stream(
+                b"/Type /XObject /Subtype /Form /BBox [0 0 300 300] /Resources 3 0 R", draws
+            ),
+        ]
+        for i in range(images):
+            entries, jpeg = (_GREY_DCT, _jpeg()) if i % 2 else (_RGB_DCT, _jpeg("RGB"))
+            objects.append(
+                pdf_stream(b"/Type /XObject /Subtype /Image /Width 16 /Height 16 " + entries, jpeg)
+            )
+        objects.extend(
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources 3 0 R "
+            b"/Contents 4 0 R /Annots [5 0 R] >>"
+            for _ in range(pages)
+        )
+        data = assemble_pdf(objects)
+        reader = pdf_content_walk._jpeg_prefix
+        with patch.object(pdf_content_walk, "_jpeg_prefix", wraps=reader) as read:
+            check_pdf_content_bytes(data)
+        reads = [call.args[1] for call in read.call_args_list]
+        self.assertEqual(sorted(reads), list(range(first_image, first_page)))
+
+    def test_a_dictionary_under_its_jpeg_frame_is_judged_by_the_frame(self) -> None:
+        """A dictionary declaring 1 x 1 over a JPEG whose frame declares
+        158.8 Mpx: the colour cap (40 Mpx) refuses it, on either path."""
+        jpeg = _jpeg_declaring(_jpeg("RGB"), width=12_600, height=12_600)
+        for path, data in _image_on_page_and_in_an_appearance(_RGB_DCT, jpeg).items():
+            with self.subTest(path):
+                self._refused(data)
+
+    def test_a_frame_within_the_cap_passes(self) -> None:
+        """Exactly the colour cap (5000 x 8000) passes behind a 1 x 1 dictionary."""
+        jpeg = _jpeg_declaring(_jpeg("RGB"), width=5_000, height=8_000)
+        for path, data in _image_on_page_and_in_an_appearance(_RGB_DCT, jpeg).items():
+            with self.subTest(path):
+                self._passes(data)
+
+    def test_a_grey_jpeg_frame_is_judged_against_the_grey_cap(self) -> None:
+        """A sequential grey JPEG keeps its own cap (160 Mpx): 158.8 Mpx passes
+        behind a 1 x 1 dictionary, 169 Mpx does not."""
+        for side, passes in ((12_600, True), (13_000, False)):
+            jpeg = _jpeg_declaring(_jpeg(), width=side, height=side)
+            for path, data in _image_on_page_and_in_an_appearance(_GREY_DCT, jpeg).items():
+                with self.subTest(path, side=side):
+                    if passes:
+                        self._passes(data)
+                    else:
+                        self._refused(data)
+
+    def test_a_mask_is_judged_by_its_jpeg_frame(self) -> None:
+        """A DCT soft mask declaring 1 x 1 over a 158.8 Mpx frame is held to
+        the colour cap like any mask."""
+        mask = pdf_stream(
+            b"/Type /XObject /Subtype /Image /Width 1 /Height 1 " + _GREY_DCT,
+            _jpeg_declaring(_jpeg(), width=12_600, height=12_600),
+        )
+        self._refused(_declared_image_pdf(_RGB + b" /SMask 6 0 R", mask, width=1_000, height=1_000))
+
+
 if __name__ == "__main__":
     unittest.main()

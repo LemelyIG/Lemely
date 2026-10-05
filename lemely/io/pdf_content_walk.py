@@ -14,7 +14,7 @@ import itertools
 import re
 import zlib
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import pymupdf
 import pymupdf.mupdf as _mupdf
@@ -150,16 +150,22 @@ _RESOURCE_CATEGORIES = ("XObject", "Pattern", "ExtGState", "Shading", "ColorSpac
 
 @dataclass
 class _ContentBudget:
-    """Running totals shared across the scan's page walks.
+    """Running totals shared across the scan's page walks, and the image memo.
 
     ``scan_total`` is fixed for the duration of a page (everything counted
     on *earlier* pages); ``page_total`` and ``objects`` accumulate as the
     current page is walked, then fold into ``scan_total`` once it is done.
+
+    ``image_facts`` holds each image object's :class:`_ImageFacts`, read
+    once per check (:func:`_image_facts`): ``get_images``, the walk and
+    every page that shares the image all judge it from the same read, so a
+    DCT image's frame header is read at most once per document.
     """
 
     scan_total: int = 0
     page_total: int = 0
     objects: int = 0
+    image_facts: dict[int, _ImageFacts] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -652,7 +658,9 @@ def _walk_resource_graph(
             continue
         if is_stream and subtype == "/Image":
             if _enter(ref, walk.image_seen, walk):
-                _check_image_xref(doc, ref, page_index=walk.page_index)
+                _check_image_xref(
+                    doc, ref, cache=walk.budget.image_facts, page_index=walk.page_index
+                )
             if role == "xobject":
                 continue
         _enter(ref, walk.seen, walk)
@@ -739,7 +747,7 @@ def _resolve_int(doc: pymupdf.Document, kind: str, value: str) -> int | None:
 #: page under the limit that had ink without it). Excluded, so keeping the
 #: colour cap: a progressive JPEG (68% of the limit, 429 MiB of 640 in
 #: extraction, for one grey 159 Mpx image), and any DCT image whose stream is
-#: not a sequential one-component JPEG (:func:`_is_sequential_grey_jpeg`),
+#: not a sequential one-component JPEG (:func:`_is_sequential_grey`),
 #: since a JPEG holding 3 or 4 components decodes as such whatever the
 #: dictionary says; JBIG2 (not generatable here), JPX (OpenJPEG holds 32-bit
 #: samples) and every other filter or chain, until measured.
@@ -760,6 +768,13 @@ _STANDALONE_MARKERS = frozenset({0x01, *range(0xD0, 0xD8)})
 #: SOI, EOI, SOS, DHP and EXP: met before any frame header, the stream is not
 #: a plain sequential JPEG this check can vouch for.
 _NO_FRAME_MARKERS = frozenset({0xD8, 0xD9, 0xDA, 0xDE, 0xDF})
+#: A run of fill bytes; its last ``0xFF`` opens the marker that follows.
+_JPEG_FILL_RE = re.compile(rb"\xff+")
+#: The most markers :func:`_jpeg_frame` walks before giving up on a frame
+#: header. A real JPEG has a few dozen segments before its frame at most;
+#: the bound keeps a stream of tiny segments from costing a Python step
+#: per four bytes of the prefix.
+_MAX_JPEG_MARKERS = 256
 
 
 def _resolved_text(doc: pymupdf.Document, kind: str, value: str) -> tuple[str, str]:
@@ -813,25 +828,50 @@ def _is_image_mask(doc: pymupdf.Document, xref: int) -> bool:
     return value.strip() == "true" and kind in ("bool", "other")
 
 
-def _jpeg_frame(prefix: bytes) -> tuple[int, int] | None:
-    """``(SOF marker, component count)`` of the first frame header in ``prefix``, or ``None``.
+class _JpegFrame(NamedTuple):
+    """A JPEG's first frame header: its SOF marker, declared size and component count."""
 
-    Walks the marker segments from SOI, skipping fill bytes, standalone
-    markers and every other segment by its length. ``None`` when ``prefix``
-    is not a JPEG, a segment is malformed, a marker in
-    :data:`_NO_FRAME_MARKERS` (scan data, a hierarchical frame) comes first,
-    or the header lies past the prefix.
+    marker: int
+    height: int
+    width: int
+    components: int
+
+
+@dataclass(frozen=True)
+class _ImageFacts:
+    """What one image object's dictionary and stream say, read once per check.
+
+    ``mode`` is the mode an unmasked image is judged as (:func:`_image_mode`).
+    ``frame_px`` is its JPEG frame header's height x width, or 0 when no
+    frame header was read: only a lone ``/DCTDecode`` stream has one, and a
+    renderer decodes it at the frame's size whatever the dictionary says.
+    """
+
+    mode: str
+    frame_px: int
+
+
+def _jpeg_frame(prefix: bytes) -> _JpegFrame | None:
+    """The first frame header in ``prefix``, or ``None``.
+
+    Walks the marker segments from SOI, skipping each run of fill bytes in
+    one C-speed regex match, standalone markers, and every other segment by
+    its length. ``None`` when ``prefix`` is not a JPEG, a segment is
+    malformed, a marker in :data:`_NO_FRAME_MARKERS` (scan data, a
+    hierarchical frame) comes first, the header lies past the prefix, or
+    more than :data:`_MAX_JPEG_MARKERS` markers come before it.
     """
     if prefix[:2] != b"\xff\xd8":
         return None
     at = 2
-    while at + 4 <= len(prefix):
-        if prefix[at] != 0xFF:
+    for _ in range(_MAX_JPEG_MARKERS):
+        fill = _JPEG_FILL_RE.match(prefix, at)
+        if fill is None:
+            return None
+        at = fill.end() - 1  # the last 0xFF of the run opens the marker
+        if at + 4 > len(prefix):
             return None
         marker = prefix[at + 1]
-        if marker == 0xFF:  # a fill byte before the marker
-            at += 1
-            continue
         if marker in _STANDALONE_MARKERS:
             at += 2
             continue
@@ -841,40 +881,80 @@ def _jpeg_frame(prefix: bytes) -> tuple[int, int] | None:
         if length < 2:
             return None
         if marker in _SOF_MARKERS:
+            if at + 10 > len(prefix):
+                return None
             # FF Cn, length (2), precision (1), height (2), width (2), components (1)
-            return (marker, prefix[at + 9]) if at + 10 <= len(prefix) else None
+            return _JpegFrame(
+                marker=marker,
+                height=int.from_bytes(prefix[at + 5 : at + 7], "big"),
+                width=int.from_bytes(prefix[at + 7 : at + 9], "big"),
+                components=prefix[at + 9],
+            )
         at += 2 + length
     return None
 
 
-def _is_sequential_grey_jpeg(doc: pymupdf.Document, xref: int) -> bool:
-    """Whether DCT image ``xref``'s JPEG opens with a sequential one-component frame.
+def _jpeg_prefix(doc: pymupdf.Document, xref: int) -> bytes | None:
+    """At most :data:`_JPEG_HEADER_PREFIX_BYTES` of stream ``xref``'s raw data.
 
-    Reads at most :data:`_JPEG_HEADER_PREFIX_BYTES` of the raw stream (the
-    whole stream if shorter) and never decodes it. True only for SOF0 or
-    SOF1 declaring exactly one component (:func:`_jpeg_frame`); a stream
-    MuPDF cannot open raw is not vouched for.
+    The whole stream if shorter; nothing is decoded. ``None`` when MuPDF
+    cannot open it raw.
     """
     try:
         pdf = _mupdf.pdf_document_from_fz_document(doc.this)  # type: ignore[no-untyped-call]
         raw = _mupdf.pdf_open_raw_stream_number(pdf, xref)  # type: ignore[no-untyped-call]
         head = _mupdf.fz_open_null_filter(raw, _JPEG_HEADER_PREFIX_BYTES, 0)  # type: ignore[no-untyped-call]
         buffer = _mupdf.fz_read_all(head, 4096)  # type: ignore[no-untyped-call]
-        prefix = bytes(buffer.fz_buffer_extract())
+        return bytes(buffer.fz_buffer_extract())[:_JPEG_HEADER_PREFIX_BYTES]
     except Exception:  # an unreadable stream keeps the colour cap, as before #273
-        return False
-    frame = _jpeg_frame(prefix[:_JPEG_HEADER_PREFIX_BYTES])
-    return frame is not None and frame[0] in _SEQUENTIAL_SOF_MARKERS and frame[1] == 1
+        return None
 
 
-def _image_mode(doc: pymupdf.Document, xref: int) -> str:
+def _is_sequential_grey(frame: _JpegFrame | None) -> bool:
+    """Whether a DCT image's first frame header is sequential and one-component.
+
+    True only for SOF0 or SOF1 declaring exactly one component; no frame
+    header read (:func:`_jpeg_frame`, :func:`_jpeg_prefix`) is not vouched for.
+    """
+    return frame is not None and frame.marker in _SEQUENTIAL_SOF_MARKERS and frame.components == 1
+
+
+def _image_facts(doc: pymupdf.Document, xref: int, cache: dict[int, _ImageFacts]) -> _ImageFacts:
+    """Image object ``xref``'s :class:`_ImageFacts`, from ``cache`` or read into it.
+
+    R2 I1: a lone ``/DCTDecode`` image has its raw stream's first
+    :data:`_JPEG_HEADER_PREFIX_BYTES` read for its frame header, whatever
+    its colour space -- for the mode of a grey one, and for the size of
+    every one. ``cache`` is the check's (:attr:`_ContentBudget.image_facts`),
+    so each image is read once per document, not once per page and path.
+    """
+    facts = cache.get(xref)
+    if facts is None:
+        kind, value = _key(doc, xref, "Filter")
+        # []: no /Filter, unfiltered. None: one of no readable shape, or an empty array.
+        filters = [] if kind == "null" else (_normalise_filter(doc, kind, value) or None)
+        frame = None
+        if filters == ["/DCTDecode"]:
+            prefix = _jpeg_prefix(doc, xref)
+            frame = _jpeg_frame(prefix) if prefix is not None else None
+        facts = _ImageFacts(
+            mode=_image_mode(doc, xref, filters, frame),
+            frame_px=frame.height * frame.width if frame is not None else 0,
+        )
+        cache[xref] = facts
+    return facts
+
+
+def _image_mode(
+    doc: pymupdf.Document, xref: int, filters: list[str] | None, frame: _JpegFrame | None
+) -> str:
     """The Pillow mode :func:`decode_pixel_cap` judges image ``xref`` as.
 
     Read from its dictionary (``/ImageMask``, ``/BitsPerComponent``,
-    ``/ColorSpace``, ``/Filter``) and, for ``/DCTDecode`` only, its JPEG
-    frame header; nothing is decoded. For an image with no filter or one
-    filter in :data:`_GREY_PROVEN_FILTERS` (DCT only as a sequential grey
-    JPEG):
+    ``/ColorSpace``; ``filters`` is its ``/Filter`` as :func:`_image_facts`
+    read it) and, for ``/DCTDecode`` only, its JPEG ``frame`` header;
+    nothing is decoded. For an image with no filter or one filter in
+    :data:`_GREY_PROVEN_FILTERS` (DCT only as a sequential grey JPEG):
 
     * ``"1"``: an image mask, or a one-component image at 1 bit;
     * ``"L"``: one component at 8 bits, or at a depth that cannot be read;
@@ -889,12 +969,10 @@ def _image_mode(doc: pymupdf.Document, xref: int) -> str:
     image_mask = _is_image_mask(doc, xref)
     if not (image_mask or _is_one_component(doc, xref)):
         return "RGB"
-    kind, value = _key(doc, xref, "Filter")
-    if kind != "null":  # absent: unfiltered, measured too
-        filters = _normalise_filter(doc, kind, value)  # None: a /Filter of no readable shape
+    if filters != []:  # absent: unfiltered, measured too
         if filters is None or len(filters) != 1 or filters[0] not in _GREY_PROVEN_FILTERS:
             return "RGB"
-        if filters[0] == "/DCTDecode" and not _is_sequential_grey_jpeg(doc, xref):
+        if filters[0] == "/DCTDecode" and not _is_sequential_grey(frame):
             return "RGB"
     bits = _resolve_int(doc, *_key(doc, xref, "BitsPerComponent"))
     if image_mask or bits == 1:
@@ -938,59 +1016,76 @@ def _image_masks(doc: pymupdf.Document, xref: int, smask_xref: int = 0) -> tuple
     return masks, unreadable or bool(masks)
 
 
-def _image_pixel_cap(doc: pymupdf.Document, xref: int, *, masked: bool) -> int:
-    """The most pixels image ``xref`` may declare.
+def _image_pixel_cap(facts: _ImageFacts, *, masked: bool) -> int:
+    """The most pixels an image with these :class:`_ImageFacts` may declare.
 
-    :func:`decode_pixel_cap` of its :func:`_image_mode`, unless it is
+    :func:`decode_pixel_cap` of its mode (:func:`_image_mode`), unless it is
     ``masked``: an image drawn through a soft mask or a stream mask, and
     each such mask, keeps the colour cap. Rendering one costs the image and
     its mask together, and the Task 22 review measured a widened grey image
     with a widened grey soft mask rendering blank under the extraction
     worker's limit.
     """
-    return decode_pixel_cap("RGB" if masked else _image_mode(doc, xref))
+    return decode_pixel_cap("RGB" if masked else facts.mode)
 
 
-def _refuse_over(width: int, height: int, cap: int, *, page_index: int) -> None:
-    if width * height > cap:
+def _refuse_over(pixels: int, cap: int, *, page_index: int) -> None:
+    if pixels > cap:
         raise ScanTooLargeError(
-            _IMAGE_TOO_LARGE_MESSAGE.format(page=page_index + 1, mpx=width * height // 1_000_000),
+            _IMAGE_TOO_LARGE_MESSAGE.format(page=page_index + 1, mpx=pixels // 1_000_000),
             reason="image_px",
         )
 
 
-def _check_declared_pixels(doc: pymupdf.Document, xref: int, *, cap: int, page_index: int) -> None:
+def _check_declared_pixels(
+    doc: pymupdf.Document,
+    xref: int,
+    *,
+    cap: int,
+    cache: dict[int, _ImageFacts],
+    page_index: int,
+) -> None:
     """Image object ``xref``'s own declared size against ``cap``.
 
     ``/Width`` and ``/Height`` may be integers or reals, direct or
-    indirect (:func:`_resolve_int`). Used for images the walk reaches and
-    for every image's ``/SMask`` and stream ``/Mask``.
+    indirect (:func:`_resolve_int`). The size judged is the larger of the
+    dictionary's and the JPEG frame header's (:attr:`_ImageFacts.frame_px`),
+    so a dictionary declaring 1 x 1 over a large JPEG does not pass. Used
+    for images the walk reaches and for every image's ``/SMask`` and stream
+    ``/Mask``.
     """
     width = _resolve_int(doc, *_key(doc, xref, "Width"))
     height = _resolve_int(doc, *_key(doc, xref, "Height"))
-    if width is not None and height is not None:
-        _refuse_over(width, height, cap, page_index=page_index)
+    declared = width * height if width is not None and height is not None else 0
+    pixels = max(declared, _image_facts(doc, xref, cache).frame_px)
+    _refuse_over(pixels, cap, page_index=page_index)
 
 
-def _check_masks(doc: pymupdf.Document, masks: list[int], *, page_index: int) -> None:
+def _check_masks(
+    doc: pymupdf.Document, masks: list[int], *, cache: dict[int, _ImageFacts], page_index: int
+) -> None:
     """Each of an image's mask streams (:func:`_image_masks`) against the colour cap."""
     for mask in masks:
-        _check_declared_pixels(doc, mask, cap=decode_pixel_cap("RGB"), page_index=page_index)
+        _check_declared_pixels(
+            doc, mask, cap=decode_pixel_cap("RGB"), cache=cache, page_index=page_index
+        )
 
 
-def _check_image_xref(doc: pymupdf.Document, xref: int, *, page_index: int) -> None:
+def _check_image_xref(
+    doc: pymupdf.Document, xref: int, *, cache: dict[int, _ImageFacts], page_index: int
+) -> None:
     """An image the walk reached: its declared size, then its masks'.
 
     ``page.get_images(full=True)`` does not list images inside annotation
     appearance streams or tiling patterns, so the walk checks every image
     it reaches itself. The per-image limit has no running total, so an
     image checked both here and via ``get_images`` is judged the same way
-    twice.
+    twice, from the same :class:`_ImageFacts` in ``cache``.
     """
     masks, masked = _image_masks(doc, xref)
-    cap = _image_pixel_cap(doc, xref, masked=masked)
-    _check_declared_pixels(doc, xref, cap=cap, page_index=page_index)
-    _check_masks(doc, masks, page_index=page_index)
+    cap = _image_pixel_cap(_image_facts(doc, xref, cache), masked=masked)
+    _check_declared_pixels(doc, xref, cap=cap, cache=cache, page_index=page_index)
+    _check_masks(doc, masks, cache=cache, page_index=page_index)
 
 
 def _tuple_int(value: object) -> int:
@@ -1004,15 +1099,21 @@ def _tuple_int(value: object) -> int:
 
 
 def _check_image_and_masks(
-    doc: pymupdf.Document, image: tuple[object, ...], *, page_index: int
+    doc: pymupdf.Document,
+    image: tuple[object, ...],
+    *,
+    cache: dict[int, _ImageFacts],
+    page_index: int,
 ) -> None:
     """Reject an image or its mask whose declared pixels exceed its cap.
 
     ``image`` is one entry of ``page.get_images(full=True)``:
-    ``(xref, smask_xref, width, height, ...)``, sizes as pymupdf read them.
-    The cap is :func:`_image_pixel_cap` of ``xref``'s own dictionary and
-    masks; the tuple's depth and colour-space fields are not used, so this
-    and the walk's :func:`_check_image_xref` judge one image alike.
+    ``(xref, smask_xref, width, height, ...)``, sizes as pymupdf read them,
+    judged with the JPEG frame's size where larger. The cap is
+    :func:`_image_pixel_cap` of ``xref``'s own dictionary and masks; the
+    tuple's depth and colour-space fields are not used, so this and the
+    walk's :func:`_check_image_xref` judge one image alike, from the same
+    :class:`_ImageFacts` in ``cache``.
     """
     xref, smask_xref, width, height = (
         _tuple_int(image[0]),
@@ -1021,8 +1122,13 @@ def _check_image_and_masks(
         _tuple_int(image[3]),
     )
     masks, masked = _image_masks(doc, xref, smask_xref)
-    _refuse_over(width, height, _image_pixel_cap(doc, xref, masked=masked), page_index=page_index)
-    _check_masks(doc, masks, page_index=page_index)
+    facts = _image_facts(doc, xref, cache)
+    _refuse_over(
+        max(width * height, facts.frame_px),
+        _image_pixel_cap(facts, masked=masked),
+        page_index=page_index,
+    )
+    _check_masks(doc, masks, cache=cache, page_index=page_index)
 
 
 def _check_object_streams(doc: pymupdf.Document) -> None:
@@ -1091,9 +1197,11 @@ def check_pdf_content(doc: pymupdf.Document, *, pdfium_pages: int | None = None)
     :func:`decode_pixel_cap` for the mode an unmasked image declares
     (:func:`_image_mode`), the colour cap for a masked image and its masks,
     because the renderer allocates for the declared size whatever the
-    stream holds.
+    stream holds. A DCT image's frame header declares a size too, which
+    the decoder allocates for, so the larger of the two is judged.
     Images are found both by ``page.get_images(full=True)`` and by the
-    walk, which reaches the ones ``get_images`` does not list.
+    walk, which reaches the ones ``get_images`` does not list; each image
+    object is read once per check (:attr:`_ContentBudget.image_facts`).
 
     The page tree (:func:`_page_tree`) is read once, up front: a walk that
     reaches it from a page's drawing resources rejects the file (see
@@ -1195,7 +1303,7 @@ def _check_page(
     walk = _PageWalk(page_index=page_index, tree=tree.xrefs, budget=budget)
     try:
         for image in page.get_images(full=True):
-            _check_image_and_masks(doc, image, page_index=page_index)
+            _check_image_and_masks(doc, image, cache=budget.image_facts, page_index=page_index)
         start: list[tuple[int, _Role]] = []
         for xref in page.get_contents():
             xref = int(xref)
@@ -1228,19 +1336,23 @@ def check_pdf_page_content(doc: pymupdf.Document, page_index: int) -> None:
     documents left alone, fail-closed on any walk failure -- with a fresh
     budget, since no other page contributes to it.
 
+    The preview route uses it too, for page 1 (owner decision S3, #269),
+    since it also draws one page. Upload and extraction, which handle every
+    page, go through :func:`check_pdf_content`.
+
     Not :data:`MAX_SCAN_PAGES` (user decision 2, 2026-09-29): that cap
     bounds whole-document work, and a one-page render is not that, so a
-    stored scan of 41-200 pages keeps its review crops. Extraction and the
-    preview route still go through :func:`check_pdf_content` and keep it
-    (issue #269 is about the preview route alone from here on). But the
-    page tree this check reads (:func:`_page_tree`) costs time in
-    proportion to its size, so it has its own bound, :data:`MAX_CROP_PAGES`
-    (review round 1 on F8): ``doc.page_count`` is checked against it before
-    anything is read, and, since an understated ``/Count`` would dodge
-    that, :func:`_page_tree` stops its descent once the real tree is over
-    it. Either way the refusal is a :class:`ScanTooLargeError` and costs
-    at most a bound's worth of reads. The caller has already bounds-checked
-    ``page_index`` (``review._require_page_in_range``).
+    stored scan of 41-200 pages keeps its review crops and its preview;
+    upload and extraction keep the cap. But the page tree this check reads
+    (:func:`_page_tree`) costs time in proportion to its size, so it has its
+    own bound, :data:`MAX_CROP_PAGES` (review round 1 on F8):
+    ``doc.page_count`` is checked against it before anything is read, and,
+    since an understated ``/Count`` would dodge that, :func:`_page_tree`
+    stops its descent once the real tree is over it. Either way the refusal
+    is a :class:`ScanTooLargeError` and costs at most a bound's worth of
+    reads. The caller has already bounds-checked ``page_index`` (the crop
+    with ``review._require_page_in_range``, the preview by refusing a
+    document with no pages).
     """
     if not doc.is_pdf:
         return
