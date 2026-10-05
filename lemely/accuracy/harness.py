@@ -17,7 +17,7 @@ import structlog
 from pydantic import BaseModel, Field
 
 from lemely.core.loose_schemas import MarkScheme, QuestionType
-from lemely.eval.analyses import _percentile, exclusion_funnel
+from lemely.eval.analyses import exclusion_funnel
 from lemely.eval.manifest import RunManifest, Split
 from lemely.eval.records import Arm, EvalRecord
 from lemely.eval.test_touch import DEFAULT_LEDGER_PATH, authorize_test_split_join
@@ -451,6 +451,50 @@ class AccuracyResult:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _cost_case_key(case: GoldenCase) -> str:
+    """Return the ``cost_usd_by_paper`` key for *case* (#201).
+
+    ``paper_id``, or ``paper_id/fixture_variant`` for a sibling variant.
+    """
+    if case.fixture_variant is None:
+        return case.paper_id
+    return f"{case.paper_id}/{case.fixture_variant}"
+
+
+def _cost_delta(
+    before: dict[str, float], after: dict[str, float], *, case_key: str
+) -> dict[str, float]:
+    """#201: per-tag spend between two probe snapshots, positive entries only.
+
+    The probe is a monotonically accumulating counter, so a negative delta
+    means it was reset (or is not process-wide) mid-case. The attribution
+    for that tag is meaningless, so it is clamped out of the result and
+    logged rather than silently dropped.
+    """
+    delta: dict[str, float] = {}
+    for tag, total in after.items():
+        spent = total - before.get(tag, 0.0)
+        if spent < 0.0:
+            log.warning(
+                "cost_probe_went_backwards",
+                case=case_key,
+                task_tag=tag,
+                before=before.get(tag, 0.0),
+                after=total,
+            )
+        elif spent > 0.0:
+            delta[tag] = spent
+    return delta
+
+
+def _cost_p95(sorted_totals: list[float]) -> float:
+    """Nearest-rank 95th percentile of an ascending list; 0.0 when empty."""
+    if not sorted_totals:
+        return 0.0
+    rank = -(-95 * len(sorted_totals) // 100)  # ceil(0.95 * n) in integers
+    return sorted_totals[max(0, min(rank, len(sorted_totals)) - 1)]
 
 
 def _make_calibration_buckets() -> list[CalibrationBucket]:
@@ -1261,17 +1305,18 @@ def measure_accuracy(
             raise _ceiling_aborted_sweep(
                 exc, case.paper_id, "marking", case_position, cases
             ) from exc
+        # The probe reads the process-wide spend counters, so this delta is
+        # attributable to the case only because the sweep is serial: any
+        # concurrent Gemini work in the process would be counted against
+        # whichever case happened to be open. Sample it AFTER correct_paper.
         cost_after = probe()
-        cost_key = (
-            case.paper_id
-            if case.fixture_variant is None
-            else f"{case.paper_id}/{case.fixture_variant}"
-        )
-        cost_usd_by_paper[cost_key] = {
-            tag: cost_after[tag] - cost_before.get(tag, 0.0)
-            for tag in cost_after
-            if cost_after[tag] - cost_before.get(tag, 0.0) > 0.0
-        }
+        cost_key = _cost_case_key(case)
+        case_cost = _cost_delta(cost_before, cost_after, case_key=cost_key)
+        # A repeated key (the same paper_id/variant listed twice) adds up
+        # rather than overwriting the earlier case's spend.
+        merged = cost_usd_by_paper.setdefault(cost_key, {})
+        for tag, usd in case_cost.items():
+            merged[tag] = merged.get(tag, 0.0) + usd
         cq_by_id = {cq.question_id: cq for cq in correction.questions}
 
         # Iterate the ground-truth leaves, not correction.questions (D18,
@@ -1526,19 +1571,24 @@ def format_report(result: AccuracyResult, targets: object) -> str:
     lines.append(f"  (extracted={f.extracted} — independent count, not a stage of the chain above)")
 
     lines.append("")
-    per_case_totals = sorted(sum(d.values()) for d in result.cost_usd_by_paper.values())
-    cost_mean = sum(per_case_totals) / len(per_case_totals) if per_case_totals else 0.0
-    cost_p95 = _percentile(per_case_totals, 0.95)
     cache_mode = result.manifest.cache_mode
-    lines.append(
-        f"Cost per paper (cache_mode={cache_mode}): mean=${cost_mean:.4f} "
-        f"p95=${cost_p95:.4f} total=${result.cost_usd_total:.4f} "
-        f"over {len(per_case_totals)} case(s)"
-    )
-    if cache_mode != "bypass":
+    if not result.cost_usd_by_paper:
+        lines.append(f"Cost per paper (cache_mode={cache_mode}): no cost recorded (no cases)")
+    else:
+        per_case_totals = sorted(sum(d.values()) for d in result.cost_usd_by_paper.values())
+        cost_mean = sum(per_case_totals) / len(per_case_totals)
         lines.append(
-            "  (cached calls record no spend; this is a real cost only at --cache-mode bypass)"
+            f"Cost per paper (cache_mode={cache_mode}): mean=${cost_mean:.4f} "
+            f"p95=${_cost_p95(per_case_totals):.4f} total=${result.cost_usd_total:.4f} "
+            f"over {len(per_case_totals)} case(s)"
         )
+        # Only read_write can serve a call from cache (no spend). bypass and
+        # refresh both always call the API, so their figure is a real cost.
+        if cache_mode == "read_write":
+            lines.append(
+                "  (cached calls record no spend; this is a real cost only at "
+                "--cache-mode bypass or refresh)"
+            )
 
     if result.reread_skipped_by_budget:
         lines.append("")
