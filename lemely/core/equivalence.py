@@ -1216,12 +1216,15 @@ class _ParseWorker:
     the next call respawns; a child that cannot be started, or does not
     report ready within :data:`_PARSE_WORKER_START_TIMEOUT`, is killed and
     the call returns ``None``. The caller's ``timeout`` covers the wait for
-    the lock and the parse, never the start. ``spawn``, never ``fork``: the
-    web server runs sync routes on threads. Calls are serialised by a lock
-    (one worker per parent), and the wait for it counts against the caller's
-    own ``timeout``: a caller that cannot take the worker in time returns
-    ``None`` (``"busy"``) without touching the child, so no caller waits past
-    its own deadline behind a runaway sibling (#271). The owner pid is
+    the lock and the parse; a start the caller performs itself is not
+    charged to it, but a start performed by ANOTHER caller holding the lock
+    is, because it is part of this caller's wait for the lock. ``spawn``,
+    never ``fork``: the web server runs sync routes on threads. Calls are
+    serialised by a lock (one worker per parent), and the wait for it counts
+    against the caller's own ``timeout``: a caller that cannot take the
+    worker in time returns ``None`` with the outcome ``"busy"`` without
+    touching the child, so no caller waits past its own deadline behind a
+    runaway sibling (#271). The owner pid is
     recorded, and an ``os.register_at_fork`` hook resets the lock and
     forgets the child in a forked process, so a pre-forked server worker or
     a forking test harness starts its own child instead of sharing a pipe or
@@ -1246,8 +1249,11 @@ class _ParseWorker:
         self._start_failed_at: float | None = None
         #: How the most recent :meth:`parse` ended, on any thread -- a
         #: diagnostic for tests, which assert on the STEP that refused an
-        #: input instead of on elapsed time: "ok", "refused-unevaluated",
-        #: "refused-evaluated", "memory", "error", "timeout", "crash",
+        #: input instead of on elapsed time. Written without the lock (the
+        #: busy outcome never holds it), so it is unsynchronised and only
+        #: tests may read it; a caller that needs its own outcome uses
+        #: :meth:`parse_with_outcome` (:func:`parse_expr_outcome`). Values:
+        #: "ok", "refused-unevaluated", "refused-evaluated", "memory", "error", "timeout", "crash",
         #: "interrupted", "unavailable" (no worker could be started) or
         #: "busy" (the lock was not free within the caller's timeout, or left
         #: less than :data:`_PARSE_WORKER_MIN_REPLY_WAIT` of it).
@@ -1335,59 +1341,73 @@ class _ParseWorker:
         return True
 
     def parse(self, text: str, timeout: float, *, vet: bool = True) -> sympy.Expr | None:
-        """``text`` vetted and parsed in the child (:func:`_vetted_parse`).
+        """:meth:`parse_with_outcome`'s expression, without the outcome."""
+        return self.parse_with_outcome(text, timeout, vet=vet)[0]
 
-        ``None`` when the vetting walk refuses it, and on timeout, memory,
-        crash or parse error -- and ``"busy"`` when the lock is not free within
-        ``timeout``, or frees up with under :data:`_PARSE_WORKER_MIN_REPLY_WAIT`
-        of it left (the child is then left untouched). The wait for the lock
-        and the parse share one deadline; a child start inside :meth:`_ready`
-        extends it by the time the start took, so a cold start never eats the
-        caller's budget. ``vet=False`` is for tests only (see there).
+    def _finish(self, expr: sympy.Expr | None, outcome: str) -> tuple[sympy.Expr | None, str]:
+        # Unsynchronised: the busy outcome is written without the lock, and
+        # any thread may overwrite it. Only tests read `last_outcome`.
+        self.last_outcome = outcome
+        return expr, outcome
+
+    def parse_with_outcome(
+        self, text: str, timeout: float, *, vet: bool = True
+    ) -> tuple[sympy.Expr | None, str]:
+        """``text`` vetted and parsed in the child (:func:`_vetted_parse`), with how it ended.
+
+        The expression is ``None`` when the vetting walk refuses it, and on
+        timeout, memory, crash or parse error; the outcome says which (see
+        :attr:`last_outcome` for the values). When the lock is not free
+        within ``timeout``, or frees up with under
+        :data:`_PARSE_WORKER_MIN_REPLY_WAIT` of it left, the expression is
+        ``None`` and the outcome ``"busy"``; the child is then left
+        untouched. The wait for the lock and the parse share one deadline. A
+        child start inside :meth:`_ready` extends it by the time the start
+        took, so a start THIS caller performs does not eat its budget; a
+        start another caller performs while holding the lock does, as part
+        of the wait for the lock. ``vet=False`` is for tests only (see
+        there).
         """
         deadline = time.monotonic() + timeout
-        if not self._lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
-            self.last_outcome = "busy"
-            return None
+        # Bound once: `_forget_after_fork` replaces `self._lock`, and the
+        # release must be of the object this call acquired.
+        lock = self._lock
+        if not lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+            return self._finish(None, "busy")
         try:
             if deadline - time.monotonic() < _PARSE_WORKER_MIN_REPLY_WAIT:
                 # The lock wait left no budget worth a parse: do not poll ~0 and
                 # then kill a healthy child for it.
-                self.last_outcome = "busy"
-                return None
+                return self._finish(None, "busy")
             started = time.monotonic()
             ready = self._ready()
             deadline += time.monotonic() - started
             if not ready or self._conn is None:
-                self.last_outcome = "unavailable"
-                return None
+                return self._finish(None, "unavailable")
             conn = self._conn
             try:
                 conn.send((text, vet))
                 if not conn.poll(max(0.0, deadline - time.monotonic())):
                     self._discard(kill=True)
-                    self.last_outcome = "timeout"
-                    return None
+                    return self._finish(None, "timeout")
                 kind, value = conn.recv()
             except Exception:  # EOFError/OSError on a crash, or an unpicklable reply
                 self._discard(kill=True)
-                self.last_outcome = "crash"
-                return None
+                return self._finish(None, "crash")
             except BaseException:
                 # KeyboardInterrupt/SystemExit while the reply is outstanding:
                 # a live worker would hand THIS text's reply to the next
                 # caller (review round 1), so it is killed before propagating.
                 self._discard(kill=True)
-                self.last_outcome = "interrupted"
+                self._finish(None, "interrupted")
                 raise
-            self.last_outcome = kind
             if kind != "ok" or not isinstance(value, sympy.Basic):
-                return None
+                return self._finish(None, kind)
             # Any Basic, exactly as the in-process parse returned before (a
             # relational is not an Expr); parse_expr_safe applies the same test.
-            return cast("sympy.Expr", value)
+            return self._finish(cast("sympy.Expr", value), kind)
         finally:
-            self._lock.release()
+            lock.release()
 
     def pid(self) -> int | None:
         process = self._process
@@ -1412,10 +1432,21 @@ if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_PARSE_WORKER._forget_after_fork)
 
 
+#: Outcomes of :func:`parse_expr_outcome` that say nothing about the text:
+#: the worker was held by another caller past this one's timeout
+#: (``"busy"``), did not answer in time (``"timeout"``), could not be started
+#: (``"unavailable"``) or died mid-reply (``"crash"``). A caller deciding
+#: what the text IS from a ``None`` expression must treat these as "could
+#: not decide", never as "not an expression" (Task 2 review, Important 1).
+PARSE_UNDECIDED_OUTCOMES = frozenset({"busy", "timeout", "unavailable", "crash"})
+
+
 def parse_expr_safe(
     text: str | None, *, timeout: float = _DEFAULT_PARSE_TIMEOUT
 ) -> sympy.Expr | None:
-    """Parse CAIE-style answer text into a SymPy expression, or ``None``.
+    """:func:`parse_expr_outcome`'s expression, without the outcome.
+
+    Parse CAIE-style answer text into a SymPy expression, or ``None``.
 
     Handles plain arithmetic, unicode superscripts/multiplication signs,
     standard-form notation (``3.0×10^8``), simple unit expressions
@@ -1444,26 +1475,43 @@ def parse_expr_safe(
     for whatever those miss -- a thread timeout is not, see _run_bounded. The
     structural bound runs in that child too (see _pow_would_explode for why).
     """
+    return parse_expr_outcome(text, timeout=timeout)[0]
+
+
+def parse_expr_outcome(
+    text: str | None, *, timeout: float = _DEFAULT_PARSE_TIMEOUT
+) -> tuple[sympy.Expr | None, str]:
+    """:func:`parse_expr_safe`, plus how THIS call ended.
+
+    ``(expr, "ok")`` on success. Otherwise ``(None, outcome)``: ``"refused"``
+    when the text is refused before the worker sees it (empty, too long,
+    prose, an unsafe construct, see :func:`parse_expr_safe`), the worker's
+    own outcome after that (:attr:`_ParseWorker.last_outcome`'s values,
+    ``"interrupted"`` aside, which propagates), and ``"error"`` for an
+    ``"ok"`` reply that is not a SymPy object. A ``None`` with an outcome in
+    :data:`PARSE_UNDECIDED_OUTCOMES` says nothing about the text. Per call,
+    unlike ``last_outcome``, which every thread overwrites.
+    """
     if text is None:
-        return None
+        return None, "refused"
     stripped = text.strip()
     if not stripped or len(stripped) > _MAX_INPUT_LEN:
-        return None
+        return None, "refused"
     if _looks_like_prose_or_unsafe(stripped):
-        return None
+        return None, "refused"
     normalized = _normalize_text(stripped)
     if not normalized or _has_unsafe_exponent(normalized) or _has_unsafe_factorial(normalized):
-        return None
+        return None, "refused"
     # Triage F2: every power of an UNEVALUATED parse is bounded first (the
     # regexes above read literals; a computed exponent needs the tree), then
     # the evaluated parse runs. Both evaluate SymPy expressions built from
     # untrusted text, which can hold the GIL for seconds, so both run in a
     # killable, memory-capped child (`_ParseWorker`, `_vetted_parse`): None
     # on refusal, timeout, memory-limit breach, crash or parse error alike.
-    expr = _PARSE_WORKER.parse(normalized, timeout)
+    expr, outcome = _PARSE_WORKER.parse_with_outcome(normalized, timeout)
     if not isinstance(expr, sympy.Basic):
-        return None
-    return expr
+        return None, "error" if outcome == "ok" else outcome
+    return expr, outcome
 
 
 #: Recognised free-text shapes for `CalculatedAnswer.tolerance`

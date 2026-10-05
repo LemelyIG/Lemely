@@ -2819,7 +2819,13 @@ def test_a_caller_queued_behind_a_timeout_gets_its_own_result() -> None:
     """Review round 1 (Minor 3). Calls are serialised on one worker: a caller
     that queues behind a runaway parse must get ITS OWN expression after the
     runaway is killed and the worker respawned -- not ``None``, and not the
-    runaway's late reply."""
+    runaway's late reply.
+
+    Holds only because the queued caller's budget is 5.0 s: since #271 the
+    wait for the lock counts against the caller's own ``timeout``, so at the
+    1.0 s default a caller queued behind a 1.0 s runaway gets ``None`` with
+    the outcome ``"busy"`` instead (see
+    ``test_a_caller_that_cannot_take_the_worker_lock_returns_busy_within_its_timeout``)."""
     from lemely.core import equivalence as eq
 
     assert parse_expr_safe("2+2") == sympy.Integer(4)
@@ -2872,12 +2878,46 @@ def test_a_caller_that_cannot_take_the_worker_lock_returns_busy_within_its_timeo
     finally:
         worker._lock.release()
         thread.join(30)
+        pid_before_shutdown = worker.pid()
         worker.shutdown()
+    assert pid_before_shutdown is None, "a caller that never took the lock started a child"
     assert finished_in_time is True, "the caller waited past its timeout for the lock"
     assert outcome["result"] is None
     elapsed = outcome["elapsed"]
     assert isinstance(elapsed, float) and elapsed < 0.5
     assert worker.last_outcome == "busy"
+
+
+def test_parse_expr_outcome_reports_each_calls_own_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task 2 review, Important 1 (#271). ``parse_expr_safe`` collapses
+    "busy" into ``None``, and ``last_outcome`` is one attribute every thread
+    overwrites, so a caller cannot tell "not an expression" from "could not
+    decide". ``parse_expr_outcome`` returns the outcome of THIS call."""
+    from lemely.core import equivalence as eq
+
+    assert eq.parse_expr_outcome("2+2") == (sympy.Integer(4), "ok")
+    assert eq.parse_expr_outcome("accept 30 to 32") == (None, "refused")  # before the worker
+    assert eq.parse_expr_outcome("not an answer at all, really") == (None, "error")  # in it
+    assert eq.parse_expr_outcome(None) == (None, "refused")
+    assert not {"refused", "error"} & eq.PARSE_UNDECIDED_OUTCOMES
+
+    class NeverFreeLock:
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            return False
+
+        def release(self) -> None:
+            raise AssertionError("released a lock that was never acquired")
+
+    worker = eq._ParseWorker()
+    worker._lock = NeverFreeLock()  # type: ignore[assignment]
+    monkeypatch.setattr(eq, "_PARSE_WORKER", worker)
+    worker.last_outcome = "ok"  # another thread's outcome: never this call's
+    assert eq.parse_expr_outcome("24") == (None, "busy")
+    assert "busy" in eq.PARSE_UNDECIDED_OUTCOMES
+    assert parse_expr_safe("24") is None
+    assert worker.pid() is None
 
 
 def test_the_worker_parses_normally_once_the_lock_is_free() -> None:

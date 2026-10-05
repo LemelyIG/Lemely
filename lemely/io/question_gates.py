@@ -52,7 +52,14 @@ from typing import TYPE_CHECKING
 import structlog
 import sympy
 
-from lemely.core.equivalence import Verdict, VerdictKind, equivalent, parse_expr_safe
+from lemely.core.equivalence import (
+    PARSE_UNDECIDED_OUTCOMES,
+    Verdict,
+    VerdictKind,
+    equivalent,
+    parse_expr_outcome,
+    parse_expr_safe,
+)
 from lemely.core.generation import (
     SOLVABLE_QUESTION_TYPES,
     GeneratedQuestion,
@@ -294,11 +301,22 @@ def _admits_solver(question: GeneratedQuestion) -> bool:
     common prose RECALL ("name the process...") which has no stated
     answer for a solver to check at all. Every other question_type never
     admits a solver.
+
+    Task 2 review, Important 1 (#271): a parse that could not decide (the
+    worker busy past the timeout, timed out, unavailable or crashed, see
+    :data:`~lemely.core.equivalence.PARSE_UNDECIDED_OUTCOMES`) also returns
+    no expression, and reading that as "not numeric" passed a numeric RECALL
+    item as ``validity_only`` with no solver comparison. It admits the
+    solver instead: that path fails closed (UNPARSEABLE, then the sandbox,
+    and only EQUAL_PROVEN verifies).
     """
     if question.question_type in SOLVABLE_QUESTION_TYPES:
         return True
     if question.question_type is QuestionType.RECALL:
-        return question.answer is not None and parse_expr_safe(question.answer) is not None
+        if question.answer is None:
+            return False
+        expr, outcome = parse_expr_outcome(question.answer)
+        return expr is not None or outcome in PARSE_UNDECIDED_OUTCOMES
     return False
 
 

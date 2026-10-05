@@ -727,6 +727,50 @@ class TestRecallScopedToNumeric:
         assert result.rejection_reason is None
         client.generate_with_code_execution.assert_not_called()
 
+    def test_numeric_recall_takes_the_solver_path_when_its_parse_is_undecided(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Task 2 review, Important 1 (#271). A contended parse returns
+        ``None`` with the outcome ``"busy"``; `_admits_solver` read that
+        ``None`` as "not numeric" and a numeric RECALL item passed as
+        ``validity_only`` with no solver comparison at all. Busy, timeout,
+        unavailable and crash mean "could not decide", so the solver is
+        admitted, and that path fails closed: here every parse is busy, so
+        SymPy proves nothing, the sandbox runs, its answer cannot be proved
+        equal either, and the item is rejected."""
+        from lemely.core import equivalence as eq
+
+        class NeverFreeLock:
+            """A worker lock some other caller holds for longer than any timeout."""
+
+            def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+                return False
+
+            def release(self) -> None:
+                raise AssertionError("released a lock that was never acquired")
+
+            def locked(self) -> bool:
+                return True
+
+        worker = eq._ParseWorker()
+        worker._lock = NeverFreeLock()  # type: ignore[assignment]
+        monkeypatch.setattr(eq, "_PARSE_WORKER", worker)
+        question = _generated_question(
+            "Atomic number of carbon",
+            question_type=QuestionType.RECALL,
+            solution_expr="6",
+            answer="6",
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        client.generate_with_code_execution.return_value = "6"
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by != "validity_only"
+        assert result.verified_by is None
+        client.generate_with_code_execution.assert_called_once()
+        assert worker.pid() is None  # no caller ever reached the child
+
     def test_missing_answer_is_rejected_before_spending_a_tool_call(self) -> None:
         """MUST-FIX 2's backstop: an item with no stated answer at all must
         be rejected before _run_code_execution ever runs — not after a
