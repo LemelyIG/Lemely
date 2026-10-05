@@ -13,12 +13,12 @@ again.
 
 from __future__ import annotations
 
-import difflib
 import io
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
+from lemely.core.text_agreement import text_agreement
 from lemely.io.prompts.answer_extraction import VERSION
 
 if TYPE_CHECKING:
@@ -67,7 +67,7 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.60
 #: Spec 2026-09-26 §4 (#9): a re-read whose ``reread_agreement`` is below this
 #: sends the question to teacher review (and, under ``reread_substitution``,
 #: is what gets marked). The plan's 0.8 (docs/plans/ai-improvements-plan.md
-#: :186), applied unrevalidated to the difflib stand-in ``_text_agreement``
+#: :186), applied unrevalidated to the difflib stand-in ``text_agreement``
 #: -- the same caveat lemely.io.second_read records for its own 0.8.
 REREAD_REVIEW_AGREEMENT_THRESHOLD = 0.8
 
@@ -162,24 +162,6 @@ def crop_and_upscale(
     return buf.getvalue()
 
 
-def _text_agreement(a: str, b: str) -> float:
-    """Similarity in [0, 1] between the original and re-read answer text.
-
-    A ``difflib``-based stand-in for I3's rapidfuzz normalised-Levenshtein
-    agreement metric: I1 needs *a* number to store in ``reread_agreement``,
-    not I3's specific algorithm, which ships with the ``SecondReader``
-    protocol it is defined for and is a separate, dedicated story.
-
-    Fix round 1 (spec 2026-09-26 §4): compared case- and whitespace-folded
-    (``.strip().casefold()``), not raw -- an MCQ re-read of "a" against a
-    first read of "A" (or either with incidental surrounding whitespace)
-    scored 0.00 unfolded, flagging every case-only OCR difference as a
-    disagreement the review queue and ``reread_substitution`` should not
-    have seen at all.
-    """
-    return difflib.SequenceMatcher(None, a.strip().casefold(), b.strip().casefold()).ratio()
-
-
 class Rereader:
     """Runs the crop-and-re-read step for one low-confidence answer."""
 
@@ -218,7 +200,7 @@ class Rereader:
             extra_cache_key=(f"{extra_cache_key}:reread:{answer.question_id}:{box.page}:{box.box}"),
             task_tag="extraction",
         )
-        agreement = _text_agreement(answer.answer, result.answer)
+        agreement = text_agreement(answer.answer, result.answer)
         return answer.model_copy(
             update={"answer_reread": result.answer, "reread_agreement": agreement}
         )

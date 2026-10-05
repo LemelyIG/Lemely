@@ -772,7 +772,7 @@ def _check_coherence(
     awarded_marks: int,
     *,
     point_verdicts: list[PointVerdict] | None = None,
-    groups: Sequence[tuple[str | None, int | None]] | None = None,
+    groups: Sequence[tuple[str | None, int | None]],
 ) -> str | None:
     """Coherence check (M1.5, #40).
 
@@ -813,10 +813,9 @@ def _check_coherence(
        needing a separate branch.
     2. ``awarded_marks`` falls outside the RANGE of marks the matched points
        can imply. ``is_alternative``/``is_optional`` points are non-additive.
-       On the verdict path the caller passes ``groups`` -- the
-       ``(group_key, cap)`` per scheme point from
-       :func:`lemely.core.point_groups.group_points` -- and each matched
-       group contributes at least ``min(cap, its largest matched tariff)``
+       Both paths pass ``groups`` -- the ``(group_key, cap)`` per scheme
+       point from :func:`lemely.core.point_groups.group_points` -- and each
+       matched group contributes at least ``min(cap, its largest matched tariff)``
        and at most ``min(cap, sum of matched tariffs)`` -- the floor is
        capped too, so a group whose cap binds below its largest matched
        tariff (a pool whose room is smaller than one member's own tariff:
@@ -825,12 +824,12 @@ def _check_coherence(
        ``select_count`` pools left of it -- only stated-N pools consume a
        shared room) narrows rather than inverts the interval. Both ends are
        then clamped at ``question.marks`` (triage F6), because the awarded
-       figure compared against them already is. The legacy
-       path passes no groups and keeps the global rule (spec 2026-09-26 §1,
-       out of scope):
-
-       ``implied_min = sum(primary marks) + max(non-additive marks, default 0)``
-       ``implied_max = sum(primary marks) + sum(non-additive marks)``
+       figure compared against them already is. There is one rule: the
+       legacy path passes ``groups`` too (#272), reversing the 2026-09-26
+       spec's §1 statement that it keeps the global ``primary +
+       non-additive`` rule. That rule flagged an either/or pair matched both
+       ways and a det-shaped scheme whose independent tariffs exceed the
+       question, and missed an over-award on a stated ``select_count`` pool.
 
        Only ``awarded_marks`` OUTSIDE ``[implied_min, implied_max]`` is
        flagged; the message names the interval, not a single number.
@@ -842,8 +841,9 @@ def _check_coherence(
     backstop revises the awarded marks.
 
     See BUILD/DECISIONS.md DA10 for the empty/absent ``matched_point_ids``
-    rule, the type-scoped exemption, and the ``is_alternative``/
-    ``is_optional`` range-reconciliation rule.
+    rule and the type-scoped exemption. DA10's Decision 3 (the global
+    ``primary + non-additive`` range) is superseded by #272 and DA10a: the
+    range is the grouped interval described in mode 2 above, on both paths.
     """
     if not question.answer_points and question.type in _COHERENCE_EXEMPT_TYPES:
         # Nothing to reconcile against — this type's mark scheme is not
@@ -876,40 +876,33 @@ def _check_coherence(
         return None
 
     matched_points = [points_by_id[pid] for pid in matched_point_ids]
-    if groups is not None:
-        scheme_points, _ = _scheme_groups(question)
-        group_of = {
-            point.id: (key, cap) for point, (key, cap) in zip(scheme_points, groups, strict=True)
-        }
-        implied_min = 0
-        implied_max = 0
-        by_group: dict[str, tuple[int, list[int]]] = {}
-        for p in matched_points:
-            key, cap = group_of.get(p.id, (None, None))
-            if key is None:
-                implied_min += p.marks
-                implied_max += p.marks
-            else:
-                by_group.setdefault(key, (cap or 0, []))[1].append(p.marks)
-        for cap, tariffs in by_group.values():
-            implied_min += min(cap, max(tariffs))
-            implied_max += min(cap, sum(tariffs))
-        # Triage F6: `awarded_marks` reaches here already clamped at
-        # `question.marks` (`_group_capped_total`), so the interval must be
-        # too, or a fully-correct answer is routed to review. Three shapes
-        # overfill the question: a det-parsed scheme whose independent
-        # tariffs exceed it (reconcile.py bypasses validate_mark_point_sum; 4
-        # of 479 corpus schemes), a valid scheme whose alternative outweighs
-        # its sibling, and unstated pools, each bounded by the full leftover
-        # (triage F5) so their caps can sum past the question.
-        implied_min = min(implied_min, question.marks)
-        implied_max = min(implied_max, question.marks)
-    else:
-        primary = [p for p in matched_points if not p.is_alternative and not p.is_optional]
-        non_additive = [p for p in matched_points if p.is_alternative or p.is_optional]
-        primary_sum = sum(p.marks for p in primary)
-        implied_min = primary_sum + max((p.marks for p in non_additive), default=0)
-        implied_max = primary_sum + sum(p.marks for p in non_additive)
+    scheme_points, _ = _scheme_groups(question)
+    group_of = {
+        point.id: (key, cap) for point, (key, cap) in zip(scheme_points, groups, strict=True)
+    }
+    implied_min = 0
+    implied_max = 0
+    by_group: dict[str, tuple[int, list[int]]] = {}
+    for p in matched_points:
+        key, cap = group_of.get(p.id, (None, None))
+        if key is None:
+            implied_min += p.marks
+            implied_max += p.marks
+        else:
+            by_group.setdefault(key, (cap or 0, []))[1].append(p.marks)
+    for cap, tariffs in by_group.values():
+        implied_min += min(cap, max(tariffs))
+        implied_max += min(cap, sum(tariffs))
+    # Triage F6: `awarded_marks` reaches here already clamped at
+    # `question.marks` (`_group_capped_total`), so the interval must be
+    # too, or a fully-correct answer is routed to review. Three shapes
+    # overfill the question: a det-parsed scheme whose independent
+    # tariffs exceed it (reconcile.py bypasses validate_mark_point_sum; 4
+    # of 479 corpus schemes), a valid scheme whose alternative outweighs
+    # its sibling, and unstated pools, each bounded by the full leftover
+    # (triage F5) so their caps can sum past the question.
+    implied_min = min(implied_min, question.marks)
+    implied_max = min(implied_max, question.marks)
     if not (implied_min <= awarded_marks <= implied_max):
         return (
             f"awarded {awarded_marks} mark(s) but {COHERENCE_TRIGGER_MARKER} implies "
@@ -1403,7 +1396,8 @@ def _build_ai_corrected(
     test's shape, since ``build_marker_user_prompt`` does not yet ask for
     them unless ``equivalence_gate`` is also passed through to it -- or with
     an empty ``question.answer_points``, everything below this dispatch is
-    UNCHANGED from before this story, line for line.
+    the legacy path, which trusts ``mark.awarded_marks`` and checks coherence
+    against the same group-aware interval as the verdict path (#272).
 
     The ``question.answer_points`` guard (post-I6 review, Critical A) exists
     because :func:`_awarded_from_verdicts` and :func:`_check_point_evidence`
@@ -1464,7 +1458,8 @@ def _build_ai_corrected(
        that stated confidence does not separate correct from wrong on this
        failure mode, so it must not depend on confidence at all.
     4. ``matched_point_ids`` is incoherent with ``awarded_marks`` (a dangling
-       id, or a sum mismatch) — see ``_check_coherence``. Also independent of
+       id, or a range mismatch on the grouped interval, #272) — see
+       ``_check_coherence``. Also independent of
        confidence: a marker can be fully confident about an internally
        inconsistent result.
     """
@@ -1476,7 +1471,10 @@ def _build_ai_corrected(
     clamped = max(0, min(mark.awarded_marks, question.marks))
     out_of_range = mark.awarded_marks != clamped
 
-    coherence_reason = _check_coherence(question, list(mark.matched_point_ids), clamped)
+    _, groups = _scheme_groups(question)
+    coherence_reason = _check_coherence(
+        question, list(mark.matched_point_ids), clamped, groups=groups
+    )
     coherence_mismatch = coherence_reason is not None
 
     awarded, matched_point_ids, rejections = _verify_calculated_answers(
@@ -1524,10 +1522,10 @@ def _build_ai_corrected(
     # answer_points fallback) -- but a model that disobeys either
     # instruction and returns verdicts anyway has them silently discarded
     # here, with no flag and no log line. Left as a documented limit rather
-    # than plumbed through: this is the SAME legacy body every non-I6 call
-    # has always used, and preserving that body unchanged, line for line,
-    # is precisely what makes the two dispatch branches provably equivalent
-    # (see `_build_ai_corrected`'s own docstring).
+    # than plumbed through: this is the legacy body every non-I6 call uses,
+    # and keeping verdicts out of it is what keeps the two dispatch branches
+    # separable (see `_build_ai_corrected`'s own docstring). Both branches
+    # now share the group-aware coherence interval (#272).
     return CorrectedQuestion(
         question_id=question.id,
         awarded_marks=awarded,

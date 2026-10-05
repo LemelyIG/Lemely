@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 import structlog
@@ -436,11 +437,64 @@ class AccuracyResult:
     means this run's marks are timing-dependent and not comparable with
     another run's; ``format_report`` warns and ``measure-accuracy
     --fail-on-skipped-rereads`` fails on it."""
+    cost_usd_by_paper: dict[str, dict[str, float]] = field(default_factory=dict)
+    """#201: Gemini spend attributed to each case, ``{key: {task_tag: usd}}``.
+    The key is ``paper_id``, or ``paper_id/fixture_variant`` for a sibling
+    variant (variants share a ``paper_id``; summing them would report a
+    four-variant paper as four times its cost). A case that spent nothing
+    (e.g. every call cached) is present with ``{}``. Only a real cost at
+    ``--cache-mode bypass`` or ``refresh``: cached calls record no spend."""
+    cost_usd_total: float = 0.0
+    """#201: the sum of every value in ``cost_usd_by_paper``."""
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _cost_case_key(case: GoldenCase) -> str:
+    """Return the ``cost_usd_by_paper`` key for *case* (#201).
+
+    ``paper_id``, or ``paper_id/fixture_variant`` for a sibling variant.
+    """
+    if case.fixture_variant is None:
+        return case.paper_id
+    return f"{case.paper_id}/{case.fixture_variant}"
+
+
+def _cost_delta(
+    before: dict[str, float], after: dict[str, float], *, case_key: str
+) -> dict[str, float]:
+    """#201: per-tag spend between two probe snapshots, positive entries only.
+
+    The probe is a monotonically accumulating counter, so a negative delta
+    means it was reset (or is not process-wide) mid-case. The attribution
+    for that tag is meaningless, so it is clamped out of the result and
+    logged rather than silently dropped.
+    """
+    delta: dict[str, float] = {}
+    for tag, total in after.items():
+        spent = total - before.get(tag, 0.0)
+        if spent < 0.0:
+            log.warning(
+                "cost_probe_went_backwards",
+                case=case_key,
+                task_tag=tag,
+                before=before.get(tag, 0.0),
+                after=total,
+            )
+        elif spent > 0.0:
+            delta[tag] = spent
+    return delta
+
+
+def _cost_p95(sorted_totals: list[float]) -> float:
+    """Nearest-rank 95th percentile of an ascending list; 0.0 when empty."""
+    if not sorted_totals:
+        return 0.0
+    rank = -(-95 * len(sorted_totals) // 100)  # ceil(0.95 * n) in integers
+    return sorted_totals[max(0, min(rank, len(sorted_totals)) - 1)]
 
 
 def _make_calibration_buckets() -> list[CalibrationBucket]:
@@ -1089,8 +1143,14 @@ def measure_accuracy(
     ledger_path: Path = DEFAULT_LEDGER_PATH,
     arm: Literal["extract+mark", "oracle+mark"] | None = None,
     n_unparseable: int = 0,
+    cost_probe: Callable[[], dict[str, float]] | None = None,
 ) -> AccuracyResult:
     """Run correction over all golden cases; compute metrics.
+
+    ``cost_probe`` (#201): returns the process-wide accumulated Gemini USD
+    spend by task tag; the delta across each case is attributed to it in
+    ``AccuracyResult.cost_usd_by_paper``. ``None`` reads
+    ``lemely.io.gemini.process_token_totals_by_task``; tests inject a fake.
 
     ``n_unparseable`` (US-037): the count of golden-case directories the
     caller's `load_golden_cases` call could not parse and dropped before
@@ -1162,6 +1222,7 @@ def measure_accuracy(
             )
     from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers, marker_scored
     from lemely.io.correction_ai import correct_paper
+    from lemely.io.gemini import process_token_totals_by_task
     from lemely.io.prompts.answer_extraction import VERSION as EXT_VERSION
     from lemely.io.prompts.correction_ai import VERSION as COR_VERSION
     from lemely.io.prompts.mark_scheme_parsing import VERSION as MS_VERSION
@@ -1174,8 +1235,11 @@ def measure_accuracy(
     total_extraction_questions = 0
     funnel = FunnelCounts()
     reread_skipped_by_budget = 0
+    probe = cost_probe if cost_probe is not None else process_token_totals_by_task
+    cost_usd_by_paper: dict[str, dict[str, float]] = {}
 
     for case_position, case in enumerate(cases, start=1):
+        cost_before = probe()
         # Terminology (spec §1): real vision extraction is "extract+mark"; the
         # correction-only bypass injects ground-truth text and marks only,
         # i.e. "oracle+mark". Default per-case selection is by scan_path
@@ -1241,6 +1305,18 @@ def measure_accuracy(
             raise _ceiling_aborted_sweep(
                 exc, case.paper_id, "marking", case_position, cases
             ) from exc
+        # The probe reads the process-wide spend counters, so this delta is
+        # attributable to the case only because the sweep is serial: any
+        # concurrent Gemini work in the process would be counted against
+        # whichever case happened to be open. Sample it AFTER correct_paper.
+        cost_after = probe()
+        cost_key = _cost_case_key(case)
+        case_cost = _cost_delta(cost_before, cost_after, case_key=cost_key)
+        # A repeated key (the same paper_id/variant listed twice) adds up
+        # rather than overwriting the earlier case's spend.
+        merged = cost_usd_by_paper.setdefault(cost_key, {})
+        for tag, usd in case_cost.items():
+            merged[tag] = merged.get(tag, 0.0) + usd
         cq_by_id = {cq.question_id: cq for cq in correction.questions}
 
         # Iterate the ground-truth leaves, not correction.questions (D18,
@@ -1380,6 +1456,8 @@ def measure_accuracy(
         eval_records=eval_records,
         funnel=funnel,
         reread_skipped_by_budget=reread_skipped_by_budget,
+        cost_usd_by_paper=cost_usd_by_paper,
+        cost_usd_total=sum(sum(d.values()) for d in cost_usd_by_paper.values()),
     )
 
 
@@ -1492,6 +1570,26 @@ def format_report(result: AccuracyResult, targets: object) -> str:
     # reads as a denominator growing mid-funnel. Reported separately instead.
     lines.append(f"  (extracted={f.extracted} — independent count, not a stage of the chain above)")
 
+    lines.append("")
+    cache_mode = result.manifest.cache_mode
+    if not result.cost_usd_by_paper:
+        lines.append(f"Cost per paper (cache_mode={cache_mode}): no cost recorded (no cases)")
+    else:
+        per_case_totals = sorted(sum(d.values()) for d in result.cost_usd_by_paper.values())
+        cost_mean = sum(per_case_totals) / len(per_case_totals)
+        lines.append(
+            f"Cost per paper (cache_mode={cache_mode}): mean=${cost_mean:.4f} "
+            f"p95=${_cost_p95(per_case_totals):.4f} total=${result.cost_usd_total:.4f} "
+            f"over {len(per_case_totals)} case(s)"
+        )
+        # Only read_write can serve a call from cache (no spend). bypass and
+        # refresh both always call the API, so their figure is a real cost.
+        if cache_mode == "read_write":
+            lines.append(
+                "  (cached calls record no spend; this is a real cost only at "
+                "--cache-mode bypass or refresh)"
+            )
+
     if result.reread_skipped_by_budget:
         lines.append("")
         lines.append(
@@ -1542,6 +1640,8 @@ def save_result(result: AccuracyResult, output_dir: Path) -> Path:
         ],
         "prompt_versions": result.prompt_versions,
         "reread_skipped_by_budget": result.reread_skipped_by_budget,
+        "cost_usd_by_paper": result.cost_usd_by_paper,
+        "cost_usd_total": result.cost_usd_total,
         "question_results": [
             {
                 "question_id": r.question_id,

@@ -2819,7 +2819,13 @@ def test_a_caller_queued_behind_a_timeout_gets_its_own_result() -> None:
     """Review round 1 (Minor 3). Calls are serialised on one worker: a caller
     that queues behind a runaway parse must get ITS OWN expression after the
     runaway is killed and the worker respawned -- not ``None``, and not the
-    runaway's late reply."""
+    runaway's late reply.
+
+    Holds only because the queued caller's budget is 5.0 s: since #271 the
+    wait for the lock counts against the caller's own ``timeout``, so at the
+    1.0 s default a caller queued behind a 1.0 s runaway gets ``None`` with
+    the outcome ``"busy"`` instead (see
+    ``test_a_caller_that_cannot_take_the_worker_lock_returns_busy_within_its_timeout``)."""
     from lemely.core import equivalence as eq
 
     assert parse_expr_safe("2+2") == sympy.Integer(4)
@@ -2846,6 +2852,186 @@ def test_a_caller_queued_behind_a_timeout_gets_its_own_result() -> None:
     second.join(30)
     assert results == {"runaway": None, "ordinary": sympy.Integer(21)}
     assert finished["ordinary"] >= finished["runaway"], "the second caller did not queue"
+
+
+def test_a_caller_that_cannot_take_the_worker_lock_returns_busy_within_its_timeout() -> None:
+    """#271. The lock wait is bounded by the caller's own ``timeout``: a
+    caller that cannot take the worker within it gets ``None`` with
+    ``last_outcome == "busy"`` -- it does not queue unboundedly behind a
+    holder, and it never touches the child."""
+    from lemely.core import equivalence as eq
+
+    worker = eq._ParseWorker()  # private instance, never the singleton
+    outcome: dict[str, object] = {}
+
+    def call() -> None:
+        started = time.monotonic()
+        outcome["result"] = worker.parse("1+1", timeout=0.2)
+        outcome["elapsed"] = time.monotonic() - started
+
+    worker._lock.acquire()
+    thread = threading.Thread(target=call)
+    try:
+        thread.start()
+        thread.join(1.0)
+        finished_in_time = not thread.is_alive()
+    finally:
+        worker._lock.release()
+        thread.join(30)
+        pid_before_shutdown = worker.pid()
+        worker.shutdown()
+    assert pid_before_shutdown is None, "a caller that never took the lock started a child"
+    assert finished_in_time is True, "the caller waited past its timeout for the lock"
+    assert outcome["result"] is None
+    elapsed = outcome["elapsed"]
+    assert isinstance(elapsed, float) and elapsed < 0.5
+    assert worker.last_outcome == "busy"
+
+
+def test_parse_expr_outcome_reports_each_calls_own_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task 2 review, Important 1 (#271). ``parse_expr_safe`` collapses
+    "busy" into ``None``, and ``last_outcome`` is one attribute every thread
+    overwrites, so a caller cannot tell "not an expression" from "could not
+    decide". ``parse_expr_outcome`` returns the outcome of THIS call."""
+    from lemely.core import equivalence as eq
+
+    assert eq.parse_expr_outcome("2+2") == (sympy.Integer(4), "ok")
+    assert eq.parse_expr_outcome("accept 30 to 32") == (None, "refused")  # before the worker
+    assert eq.parse_expr_outcome("not an answer at all, really") == (None, "error")  # in it
+    assert eq.parse_expr_outcome(None) == (None, "refused")
+    assert not {"refused", "error"} & eq.PARSE_UNDECIDED_OUTCOMES
+
+    class NeverFreeLock:
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            return False
+
+        def release(self) -> None:
+            raise AssertionError("released a lock that was never acquired")
+
+    worker = eq._ParseWorker()
+    worker._lock = NeverFreeLock()  # type: ignore[assignment]
+    monkeypatch.setattr(eq, "_PARSE_WORKER", worker)
+    worker.last_outcome = "ok"  # another thread's outcome: never this call's
+    assert eq.parse_expr_outcome("24") == (None, "busy")
+    assert "busy" in eq.PARSE_UNDECIDED_OUTCOMES
+    assert parse_expr_safe("24") is None
+    assert worker.pid() is None
+
+
+class _UndecidedWorker:
+    """Every parse ends with ``outcome``; the SHARED ``last_outcome`` says "ok".
+
+    Task 6 review, Important 2: a parse that reads ``last_outcome`` after the
+    call -- one attribute every thread overwrites -- instead of the call's own
+    outcome gets "ok" from this worker and is caught; the real worker writes
+    both, so it hides the difference.
+    """
+
+    def __init__(self, outcome: str) -> None:
+        self.outcome = outcome
+        self.last_outcome = "ok"
+
+    def parse_with_outcome(
+        self, text: str, timeout: float, *, vet: bool = True
+    ) -> tuple[sympy.Expr | None, str]:
+        return None, self.outcome
+
+    def parse(self, text: str, timeout: float, *, vet: bool = True) -> sympy.Expr | None:
+        return None
+
+    def pid(self) -> int | None:
+        return None
+
+    def shutdown(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize("outcome", ["busy", "timeout", "unavailable", "crash"])
+def test_parse_expr_outcome_is_the_calls_own_not_the_shared_attribute(
+    outcome: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lemely.core import equivalence as eq
+
+    monkeypatch.setattr(eq, "_PARSE_WORKER", _UndecidedWorker(outcome))
+    assert eq.parse_expr_outcome("24") == (None, outcome)
+    assert outcome in eq.PARSE_UNDECIDED_OUTCOMES
+
+
+def test_parse_undecided_outcomes_are_exactly_the_ones_that_say_nothing_about_the_text() -> None:
+    """Task 6 review, Minor 3/4: pinned as a set, so dropping a member is red."""
+    from lemely.core import equivalence as eq
+
+    assert (
+        frozenset({"busy", "timeout", "unavailable", "crash", "refused-ambiguous"})
+        == eq.PARSE_UNDECIDED_OUTCOMES
+    )
+
+
+@pytest.mark.parametrize("text", ["(2)3", "(1.5)2", "(x+1)2", "sqrt2x"])
+def test_refusals_without_a_settled_reading_have_their_own_outcome(text: str) -> None:
+    """Task 6 review, Minor 4: a digit after a bracket and a bracketless
+    argument with no settled reading are refused because the text has two
+    readings, not because it is not an expression -- a distinct outcome, so a
+    caller can treat it as "could not decide"."""
+    from lemely.core import equivalence as eq
+
+    assert eq.parse_expr_outcome(text) == (None, "refused-ambiguous")
+    assert parse_expr_safe(text) is None
+
+
+def test_the_worker_parses_normally_once_the_lock_is_free() -> None:
+    """#271 guard: with the lock free, a fresh worker starts (outside the
+    caller's budget) and parses as before."""
+    from lemely.core import equivalence as eq
+
+    worker = eq._ParseWorker()
+    try:
+        assert worker.parse("1+1", timeout=5.0) == sympy.Integer(2)
+        assert worker.last_outcome == "ok"
+    finally:
+        worker.shutdown()
+
+
+def test_a_lock_wait_that_leaves_no_budget_returns_busy_without_killing_the_worker() -> None:
+    """#271 floor. A caller that takes the lock with (almost) none of its
+    budget left must not poll ``~0`` and then kill a healthy worker for the
+    "timeout": it returns ``None`` with ``last_outcome == "busy"`` and the
+    child lives on (same pid). Deterministic: the lock is a wrapper whose
+    ``acquire`` consumes all but ~20 ms of the caller's timeout and then
+    succeeds, which is a contended acquire that won at the last moment."""
+    from lemely.core import equivalence as eq
+
+    class LateLock:
+        """Takes the real lock only after consuming nearly all of ``timeout``."""
+
+        def __init__(self, real: threading.Lock) -> None:
+            self.real = real
+
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            time.sleep(max(0.0, timeout - 0.02))
+            return self.real.acquire(blocking, timeout)
+
+        def release(self) -> None:
+            self.real.release()
+
+    worker = eq._ParseWorker()
+    real_lock = worker._lock
+    try:
+        assert worker.parse("1+1", timeout=5.0) == sympy.Integer(2)  # warm: a live child
+        pid_before = worker.pid()
+        assert pid_before is not None
+        worker._lock = LateLock(real_lock)  # type: ignore[assignment]
+        result = worker.parse("2+2", timeout=0.2)
+        worker._lock = real_lock
+        assert result is None
+        assert worker.last_outcome == "busy"
+        assert worker.pid() == pid_before, "a healthy worker was killed for a lock wait"
+        assert worker.parse("3+3", timeout=5.0) == sympy.Integer(6)  # and it still serves
+    finally:
+        worker._lock = real_lock
+        worker.shutdown()
 
 
 def test_equivalent_never_raises_when_its_difference_is_too_long_to_print() -> None:
@@ -3136,12 +3322,11 @@ def test_a_greek_head_call_is_not_read_as_one_flat_symbol_family() -> None:
 
 
 def test_a_function_call_head_never_reports_a_false_equal() -> None:
-    """False-EQUAL guard (review round 1): ``cosθ`` (no digit suffix) reads
-    as the letter-split product ``c*o*s*θ`` -- SymPy's ``split_symbols``
-    transformation on a multi-letter identifier that is not itself a known
-    function or unit. ``cosθ1`` must never be reported ``equal_proven``
-    against that product; a wrong match would be worse than the
-    UNPARSEABLE this fix's call reading replaces."""
+    """False-EQUAL guard (review round 1): ``cosθ1`` must never be reported
+    ``equal_proven`` against ``cosθ`` (no digit suffix); a wrong match would
+    be worse than the UNPARSEABLE this fix's call reading replaces. ``cosθ``
+    was the letter-split product ``c*o*s*θ`` when this was written; since
+    #270 it is ``cos(θ)``, and ``cos(θ_1)`` is still a different call."""
     assert equivalent("cosθ1", "cosθ").kind is not VerdictKind.EQUAL_PROVEN
 
 
@@ -3159,6 +3344,449 @@ def test_scientific_notation_is_not_a_subscript(text: str) -> None:
     digit suffix: the subscript rule must leave it to Python's float
     literal, exactly as before."""
     assert parse_expr_safe(text) == sympy.Float("3e8")
+
+
+# ---------------------------------------------------------------------------
+# #270: function names, a digit after a bracket, `x` as times, one micro sign
+# ---------------------------------------------------------------------------
+
+#: (a, b, expected_kind, note). Each `equal` row is a reading SymPy's letter
+#: splitting got wrong (``ln6`` was ``6*l*n``, so ``ln6`` and ``3ln2`` were
+#: both letter products and EQUAL_PROVEN to each other); each `not_equal` row
+#: is the false match that reading produced. ``sin2x`` is ``sin(2x)``, the
+#: CAIE convention (owner decision D1), pinned both ways. The two micro rows
+#: spell U+00B5 (the micro sign) and U+03BC (Greek mu) as escapes so the
+#: difference survives an editor.
+_ISSUE_270_TABLE: list[tuple[str, str, str, str]] = [
+    ("ln6", "3ln2", "not_equal", "ln6-is-not-3ln2"),
+    ("ln6", "ln(6)", "equal", "ln6-is-ln-of-6"),
+    ("3ln2", "ln(8)", "equal", "3ln2-is-ln-of-8"),
+    ("sin2x", "2sinx", "not_equal", "sin2x-is-not-2sinx"),
+    ("sin2x", "sin(2x)", "equal", "sin2x-is-sin-of-2x"),
+    ("2sinx", "2*sin(x)", "equal", "2sinx-is-2-sin-x"),
+    ("log10(100)", "2", "equal", "log10-call-is-base-10"),
+    ("Asin(ωt1)", "A*sin(ω*t_1)", "equal", "coefficient-before-a-call"),
+    ("(x+1)2", "x^2+2x+1", "unparseable", "digit-after-bracket-is-refused"),
+    ("(x+1)^2", "x^2+2x+1", "equal", "caret-after-bracket-unchanged"),
+    ("3.0x10^8", "3.0×10^8", "equal", "ascii-x-times-ten-vs-times-sign"),
+    ("3.0x10^8", "3.0*10**8", "equal", "ascii-x-times-ten-vs-star"),
+    ("2x", "2*x", "equal", "2x-is-still-2-times-x"),
+    ("4.5 µg", "4.5 μg", "equal", "micro-sign-is-greek-mu"),
+    ("4.5 µg", "4.5 mg", "not_equal", "micrograms-are-not-milligrams"),
+    # Whole-branch review A, Important 1: the times-x pass ran before the
+    # function-name pass and took a bracketless argument's `x` as a times
+    # sign, so each of these was EQUAL_PROVEN to f(number)*1000. The `x` is
+    # either D1's / a lost-base log's argument or standard form's times
+    # sign: two readings, so the text is refused.
+    ("sin2x10^3", "1000*sin(2)", "unparseable", "sin2x-times-ten-is-refused"),
+    ("ln2x10^3", "1000*ln(2)", "unparseable", "ln2x-times-ten-is-refused"),
+    ("log10x10^3", "1000*log(10)", "unparseable", "log10x-times-ten-is-refused"),
+    ("log2 x10^3", "1000*log(2)", "unparseable", "lost-base-log2-x-times-ten-is-refused"),
+    ("sqrt2x10^3", "1000*sqrt(2)", "unparseable", "sqrt2x-times-ten-is-refused"),
+    ("cos2x10^-3", "cos(2)/1000", "unparseable", "cos2x-times-ten-negative-is-refused"),
+    ("5sin2x10^3", "5000*sin(2)", "unparseable", "coefficient-sin2x-times-ten-is-refused"),
+    ("3.0x10^8", "300000000", "equal", "times-x-guard-standard-form-still-reads"),
+    ("2x10^3 µm", "2000 μm", "equal", "times-x-guard-standard-form-with-micro-unit"),
+    ("2.4 x 10^4 J", "24000 J", "equal", "times-x-guard-spaced-standard-form-with-unit"),
+    # Whole-branch review A, Important 2: the thousands-separator collapse
+    # ran after the function-name pass, which closed a number argument at
+    # the space, so `ln10 000` read as ln(10)*000 = 0 (EQUAL_PROVEN to 0).
+    ("ln10 000", "0", "not_equal", "spaced-thousands-argument-is-not-zero"),
+    ("ln10 000", "ln(10000)", "equal", "spaced-thousands-argument-is-one-number"),
+    ("ln1 000", "ln(1000)", "equal", "spaced-thousands-ln-argument"),
+    ("sin30 000", "0", "not_equal", "spaced-thousands-sin-argument-is-not-zero"),
+    ("3ln2 000", "3*ln(2000)", "equal", "spaced-thousands-argument-after-coefficient"),
+    ("log10 1 000", "3", "equal", "lost-base-log10-of-spaced-thousands"),
+    ("log10 1 000", "0", "not_equal", "lost-base-log10-of-spaced-thousands-is-not-zero"),
+    ("log10 100", "2", "equal", "lost-base-log10-of-spaced-argument-unchanged"),
+    # Spaced digits the argument cannot take as a thousands group: they
+    # continue the number or are a factor, so the text is refused.
+    ("ln1.5 000", "0", "unparseable", "spaced-digits-after-decimal-argument-is-refused"),
+    ("sin30 2", "2*sin(30)", "unparseable", "spaced-digit-after-number-argument-is-refused"),
+    # Re-review of 24ae9bfb: a lost-base log whose spaced argument is a
+    # number then `x` before `10^` (`log2 8x10^3`). The first guard's number
+    # pattern took the base, so the space and argument never matched and
+    # these were still EQUAL_PROVEN to 1000*log_b(n).
+    (
+        "log10 2x10^3",
+        "1000*log(2, 10)",
+        "unparseable",
+        "lost-base-log10-spaced-arg-times-x-refused",
+    ),
+    ("log2 8x10^3", "1000*log(8, 2)", "unparseable", "lost-base-log2-spaced-arg-times-x-refused"),
+    ("log2 8x10^3", "3000", "unparseable", "lost-base-log2-spaced-arg-times-x-is-not-3000"),
+    ("log3 9x10^2", "100*log(9, 3)", "unparseable", "lost-base-log3-spaced-arg-times-x-refused"),
+    ("log2 4 x 10^3", "1000*log(4, 2)", "unparseable", "lost-base-log2-spaced-x-spaced-refused"),
+    ("log2 8x", "log(8*x, 2)", "equal", "lost-base-log2-of-8x-unchanged"),
+]
+
+
+@pytest.mark.parametrize(
+    "a,b,expected_kind,note", _ISSUE_270_TABLE, ids=[t[3] for t in _ISSUE_270_TABLE]
+)
+def test_issue_270_row_matches_expected_verdict(
+    a: str, b: str, expected_kind: str, note: str
+) -> None:
+    """#270: each row asserts its own verdict, the guards included, in both
+    directions (D1 is "pinned both ways"; a false EQUAL in one direction only
+    is still a false EQUAL)."""
+    for left, right in ((a, b), (b, a)):
+        verdict = equivalent(left, right)
+        assert _kind_matches(verdict.kind, expected_kind), (
+            f"{left!r} vs {right!r} ({note}): expected {expected_kind}, got "
+            f"{verdict.kind.value} (method={verdict.method}, detail={verdict.detail})"
+        )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "sin2x10^3",
+        "ln2x10^3",
+        "log10x10^3",
+        "log2 x10^3",
+        "sqrt2x10^3",
+        "cos2x10^-3",
+        "5sin2x10^3",
+        "sin1 000x10^3",
+        "log10 2x10^3",
+        "log2 8x10^3",
+        "log3 9x10^2",
+        "log2 4 x 10^3",
+    ],
+)
+def test_issue_270_function_argument_x_before_ten_power_is_refused_ambiguous(
+    text: str,
+) -> None:
+    """Whole-branch review A, Important 1: ``x`` right after a function name
+    and a number is the argument D1 or a lost-base log would take, and also
+    the times sign of standard form. Neither reading is settled, so the
+    parse reports ``"refused-ambiguous"`` and the generation gate sends it
+    to the solver instead of verifying it by SymPy."""
+    from lemely.core import equivalence as eq
+
+    assert eq.parse_expr_outcome(text) == (None, "refused-ambiguous")
+
+
+#: (text, its value, the value the ungrouped rewrite gave). ``log10(`` and
+#: ``log<d>(`` were rewritten to the PRODUCT ``(1/log(b))*log(``, so an
+#: operator binding to the whole log took one factor: ``1/log10(100)`` read
+#: as ``log(10)*log(100)`` and was EQUAL_PROVEN to ``2*log(10)**2`` (code
+#: review of 2316175a, HIGH). The bracketed form must be one grouped term.
+_BRACKETED_LOST_BASE_LOG_TABLE: list[tuple[str, str, str]] = [
+    ("1/log10(100)", "0.5", "2*log(10)**2"),
+    ("6/log10(100)", "3", "6*log(10)*log(100)"),
+    ("log10(100)^2", "4", "log(100)**2/log(10)"),
+    ("log2(8)^2", "9", "log(8)**2/log(2)"),
+    ("x/log10(x)", "x*log(10)/log(x)", "x*log(10)*log(x)"),
+    ("10^log10(x)", "x", "10**(1/log(10))*log(x)"),
+    ("a/log2 (8)", "a/3", "a*log(2)*log(8)"),
+    ("log10(x)²", "log(x)**2/log(10)**2", "log(x)**2/log(10)"),
+    ("2^log2(8)", "8", "2**(1/log(2))*log(8)"),
+    ("log10(log10(10^10))", "1", "log(10)"),
+    ("1/(2log10(100))", "0.25", "log(10)*log(100)/2"),
+    ("Alog10(1000)", "3*A", "A*log(1000)"),
+]
+
+
+@pytest.mark.parametrize(
+    ("text", "value", "ungrouped"),
+    _BRACKETED_LOST_BASE_LOG_TABLE,
+    ids=[row[0] for row in _BRACKETED_LOST_BASE_LOG_TABLE],
+)
+def test_bracketed_lost_base_log_is_one_grouped_term(text: str, value: str, ungrouped: str) -> None:
+    """Both directions: the right value is EQUAL_PROVEN, the value the
+    ungrouped product gave is not equal at all."""
+    for left, right in ((text, value), (value, text)):
+        verdict = equivalent(left, right)
+        assert verdict.kind is VerdictKind.EQUAL_PROVEN, (left, right, verdict)
+    for left, right in ((text, ungrouped), (ungrouped, text)):
+        verdict = equivalent(left, right)
+        assert verdict.kind not in _EQUAL_KINDS, (left, right, verdict)
+
+
+@pytest.mark.parametrize("text", ["log10(100", "log10(100))", "1/log2 (8", "log10(log10(10)"])
+def test_bracketed_lost_base_log_with_an_unmatched_bracket_is_refused(text: str) -> None:
+    """An unmatched bracket around a lost-base log is refused, never raised."""
+    from lemely.core import equivalence as eq
+
+    expr, outcome = eq.parse_expr_outcome(text)
+    assert expr is None
+    assert outcome in {"refused", "refused-ambiguous", "error"}, outcome
+
+
+def test_both_micro_spellings_parse_to_one_unit_symbol() -> None:
+    """#270: ``µg`` (U+00B5) was protected as a unit symbol, but Python's
+    tokenizer NFKC-folds an identifier's U+00B5 to U+03BC, so the name SymPy
+    looked up was not the one in ``local_dict`` -- a NameError, and
+    ``parse_expr_safe("4.5 µg")`` was ``None``. The U+03BC spelling was
+    never protected, so ``4.5 μg`` split into ``4.5*g*μ``. Both must
+    be the one microgram symbol, spelled with U+03BC."""
+    micrograms = 4.5 * sympy.Symbol("μg")
+    assert parse_expr_safe("4.5 µg") == micrograms
+    assert parse_expr_safe("4.5 μg") == micrograms
+
+
+def test_issue_270_digit_after_bracket_is_refused() -> None:
+    """#270: ``(x+1)2`` is either a lost superscript (``(x+1)²``) or a
+    coefficient written after the bracket; implicit multiplication read it as
+    ``2x+2``. Refused rather than guessed."""
+    assert parse_expr_safe("(x+1)2") is None
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [("(x+1)x", "x^2+x"), ("(x+1)(x-1)", "x^2-1")],
+    ids=["bracket-then-letter", "bracket-then-bracket"],
+)
+def test_issue_270_unaffected_bracket_shapes_still_multiply(a: str, b: str) -> None:
+    """Guard: only a DIGIT after ``)`` is refused."""
+    assert _kind_matches(equivalent(a, b).kind, "equal")
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "expected_kind"),
+    [("5x3", "5*x_3", "equal"), ("x10", "x*10", "not_equal"), ("2x10", "20", "not_equal")],
+    ids=["5x3-is-a-subscript", "x10-is-a-subscript", "2x10-has-no-exponent-marker"],
+)
+def test_issue_270_narrow_times_rule_leaves_x_without_ten_power_alone(
+    a: str, b: str, expected_kind: str
+) -> None:
+    """Guard: ``x`` is read as times only between a number and ``10^``/``10**``;
+    anywhere else it stays the variable."""
+    assert _kind_matches(equivalent(a, b).kind, expected_kind)
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("2x10^x", "2*10^x"),
+        ("2*10^x", "2x10^x"),
+        ("3x+2x10^2", "3x+200"),
+        ("3x+200", "3x+2x10^2"),
+        ("2x10^n", "2*10^n"),
+        ("2*10^n", "2x10^n"),
+    ],
+    ids=[
+        "symbolic-exponent",
+        "symbolic-exponent-reversed",
+        "x-is-a-variable-elsewhere",
+        "x-is-a-variable-elsewhere-reversed",
+        "symbolic-exponent-no-other-x",
+        "symbolic-exponent-no-other-x-reversed",
+    ],
+)
+def test_issue_270_times_x_is_never_read_where_x_may_be_the_variable(a: str, b: str) -> None:
+    """Task 6 review, Important 1: ``x`` is read as times only before ``10^``
+    with a whole-number exponent, and only when no other ``x`` in the text
+    is the variable. ``2x10^x`` (exponent ``x``) and ``3x+2x10^2`` (``3x``
+    uses ``x`` as the variable) were false EQUAL_PROVEN after 65ba2bd6.
+    ``2x10^n`` pins the exponent check on its own (re-review): no other
+    ``x`` is left once it is read as times, so only the whole-number
+    exponent stops it becoming ``2*10^n``."""
+    assert equivalent(a, b).kind not in _EQUAL_KINDS
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("2.4 x 10^(-3)", "0.0024"),
+        ("6.4x10⁻³", "0.0064"),
+        ("2 x 10^+3", "2000"),
+        ("3.0 x 10 ** 8", "300000000"),
+        ("2.4 x 10^4 J", "24000 J"),
+    ],
+    ids=["bracketed-negative", "superscript", "plus-sign", "spaced-star-star", "unit-after"],
+)
+def test_issue_270_times_x_still_reads_standard_form(a: str, b: str) -> None:
+    """Guard: the narrowed rule still reads every standard-form shape."""
+    assert _kind_matches(equivalent(a, b).kind, "equal")
+
+
+def test_issue_270_function_name_pass_does_not_recurse_per_link() -> None:
+    """Task 6 review, Minor 5. A chain of applications recursed once per link,
+    so ``"lnx" * 166`` (498 characters, under the input cap) needed about 527
+    frames: a caller already deep in its stack got a RecursionError, which
+    breaks ``parse_expr_safe``'s never-raises promise. Run here with only 80
+    frames to spare."""
+    from lemely.core import equivalence as eq
+
+    frame = sys._getframe()
+    depth = 0
+    while frame is not None:
+        depth += 1
+        frame = frame.f_back  # type: ignore[assignment]
+    text = "lnx" * 166
+    old_limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(depth + 80)
+    try:
+        result = eq._apply_function_names(text)
+    finally:
+        sys.setrecursionlimit(old_limit)
+    assert result == "*".join(["ln(x)"] * 166)
+
+
+#: (a, b, expected_kind, note). The function-application reading (#270,
+#: controller decision extending D1): a function name followed directly by
+#: one letter, a number, or a number then one letter is that function
+#: applied to it. Every row here was a letter product before #270
+#: (``cost`` was ``c*o*s*t``, ``sqrt2`` was ``2*q*r*s*t``).
+_FUNCTION_APPLICATION_TABLE: list[tuple[str, str, str, str]] = [
+    ("cost", "cos(t)", "equal", "cost-is-cos-of-t"),
+    ("sinx", "sin(x)", "equal", "sinx-is-sin-of-x"),
+    ("sinxcosx", "sin(x)*cos(x)", "equal", "concatenated-applications-split"),
+    ("sqrt2", "sqrt(2)", "equal", "sqrt2-is-root-2"),
+    ("ln2x", "ln(2*x)", "equal", "ln2x-is-ln-of-2x"),
+    # Owner decision 2026-10-05 supersedes the D1 extension for `log`: a
+    # single digit after `log` is a lost subscript base, so `log3x` is
+    # log base 3 of x, not `log(3*x)`.
+    ("log3x", "log(x, 3)", "equal", "log3x-is-log-base-3-of-x"),
+    ("log25x", "log(25*x)", "equal", "log25x-multi-digit-is-a-coefficient"),
+    ("tan2x", "tan(2*x)", "equal", "tan2x-is-tan-of-2x"),
+]
+
+
+@pytest.mark.parametrize(
+    "a,b,expected_kind,note",
+    _FUNCTION_APPLICATION_TABLE,
+    ids=[t[3] for t in _FUNCTION_APPLICATION_TABLE],
+)
+def test_issue_270_function_application_row(a: str, b: str, expected_kind: str, note: str) -> None:
+    verdict = equivalent(a, b)
+    assert _kind_matches(verdict.kind, expected_kind), (
+        f"{a!r} vs {b!r} ({note}): expected {expected_kind}, got "
+        f"{verdict.kind.value} (method={verdict.method}, detail={verdict.detail})"
+    )
+
+
+def test_issue_270_function_name_pass_is_linear_on_a_failing_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The function-name pass runs in the caller, not in the killable parse
+    worker, so its work must stay bounded. ``sin2asin2a...`` offers two
+    readings at every level (``2a`` then ``sin``, or ``2`` then ``asin``);
+    when the chain fails at its tail (``sin2xy``), a pass that retries every
+    level without remembering what already failed does 2**n work: before
+    the fix, 16 repeats (86 characters) took 786,427 calls and about 0.8 s,
+    and a 500-character answer would never return."""
+    from lemely.core import equivalence as eq
+
+    calls = 0
+    real = eq._application_at
+
+    def counting(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(eq, "_application_at", counting)
+    text = "sin2a" * 16 + "sin2xy"
+    assert eq._apply_function_names(text) == text
+    assert calls <= 4 * len(text), calls
+
+
+def test_issue_270_log10_without_brackets_is_log_base_ten() -> None:
+    """Owner decision (#270): "log10(x) is often expressed as log10x.
+    depending on context the student intent is to be inferred." A lost
+    subscript (log₁₀) is the common case, so ``log10x``, ``log10 x`` and
+    ``log10 100`` are the base-10 log of their argument, like ``log10(``,
+    and never ``log(10x)`` or ``log(10)*x``."""
+    x = sympy.Symbol("x")
+    assert parse_expr_safe("log10x") == sympy.log(x, 10)
+    assert parse_expr_safe("log10 x") == sympy.log(x, 10)
+    assert parse_expr_safe("log10 100") == sympy.Integer(2)
+    assert equivalent("log10 100", "2").kind is VerdictKind.EQUAL_PROVEN
+    assert equivalent("log10(1000)", "3").kind is VerdictKind.EQUAL_PROVEN
+    assert not _kind_matches(equivalent("log10x", "log(10*x)").kind, "equal")
+
+
+@pytest.mark.parametrize(
+    ("text", "readings"),
+    [
+        ("log10x^2", ("log(x,10)^2", "log(x^2,10)")),
+        ("log10xy", ("log(x,10)*y", "log(x*y,10)")),
+    ],
+    ids=["log10-exponent-after-argument", "log10-two-letters-after-name"],
+)
+def test_issue_270_log10_does_not_guess_an_ambiguous_argument(
+    text: str, readings: tuple[str, str]
+) -> None:
+    """Guard: the base-10 reading takes the same arguments as every other
+    function name, so the shapes the pass refuses elsewhere stay refused."""
+    for reading in readings:
+        assert not _kind_matches(equivalent(text, reading).kind, "equal"), reading
+
+
+def test_issue_270_log_with_a_single_digit_base_is_that_base() -> None:
+    """Owner decision (2026-10-05): the lost-subscript reading of ``log10``
+    extends to single-digit bases 2 to 9. ``log2x`` is ``log(x, 2)``, never
+    ``log(2x)``; ``log2 8`` is 3; ``log2(8)`` is ``log(8, 2)`` as ``log10(``
+    is base 10."""
+    x = sympy.Symbol("x")
+    assert parse_expr_safe("log2x") == sympy.log(x, 2)
+    assert parse_expr_safe("log3x") == sympy.log(x, 3)
+    assert parse_expr_safe("log2 8") == sympy.Integer(3)
+    assert parse_expr_safe("log3 9") == sympy.Integer(2)
+    assert equivalent("log2(8)", "3").kind is VerdictKind.EQUAL_PROVEN
+    assert not _kind_matches(equivalent("log2x", "log(2*x)").kind, "equal")
+
+
+@pytest.mark.parametrize(
+    ("text", "same_as"),
+    [
+        ("log100", "log(100)"),
+        ("log25", "log(25)"),
+        ("log2.5", "log(2.5)"),
+        ("log10.5", "log(10.5)"),
+        ("log2", "log(2)"),
+        ("log2 + 1", "log(2) + 1"),
+        ("ln2x", "ln(2*x)"),
+    ],
+    ids=["multi-digit", "multi-digit-not-10", "decimal", "decimal-10", "bare", "operator", "ln"],
+)
+def test_issue_270_log_base_reading_leaves_other_digits_alone(text: str, same_as: str) -> None:
+    """Guard (owner decision 2026-10-05): a multi-digit number other than 10,
+    a decimal, a bare ``log2`` and ``log2 + 1`` keep their readings, and
+    ``ln`` has no base."""
+    assert parse_expr_safe(text) == parse_expr_safe(same_as)
+
+
+@pytest.mark.parametrize("text", ["log2x^2", "log2xy", "log10x^2", "log10xy", "log3x!"])
+def test_issue_270_a_lost_base_log_with_an_ambiguous_argument_is_refused(text: str) -> None:
+    """A ``log`` with a lost subscript base whose argument the pass will not
+    read (``log2x^2`` is log₂(x²) or (log₂x)²) used to fall to the letter
+    product ``2*g*l*o*x**2`` -- a confident NOT_EQUAL on a reading nobody
+    wrote. It is refused as ambiguous, the same outcome as ``sqrt2x``, so the
+    generation gate admits the solver and fails closed."""
+    from lemely.core import equivalence as eq
+
+    assert eq.parse_expr_outcome(text) == (None, "refused-ambiguous")
+
+
+def test_issue_270_sqrt_of_a_number_then_a_letter_is_refused() -> None:
+    """``sqrt2x`` is ``sqrt(2x)`` or ``sqrt(2)*x``; unlike the trig, ``ln`` and
+    ``log`` forms, no convention settles it, so it is refused."""
+    assert parse_expr_safe("sqrt2x") is None
+    assert parse_expr_safe("sqrt2") == sympy.sqrt(2)
+
+
+@pytest.mark.parametrize(
+    ("text", "readings"),
+    [
+        ("sinx^2", ("sin(x)^2", "sin(x^2)")),
+        ("sinxy", ("sin(x)*y", "sin(x*y)")),
+        ("ln2(x+1)", ("ln(2)*(x+1)", "ln(2*(x+1))")),
+    ],
+    ids=["exponent-after-argument", "two-letters-after-name", "bracket-after-number"],
+)
+def test_issue_270_function_names_do_not_guess_an_ambiguous_argument(
+    text: str, readings: tuple[str, str]
+) -> None:
+    """Guard: the function-name pass brackets only an argument that ends at an
+    operator, a space or the end of the text. ``sinx^2`` (``sin²x`` or
+    ``sin(x²)``), ``sinxy`` and ``ln2(x+1)`` match neither reading."""
+    for reading in readings:
+        assert not _kind_matches(equivalent(text, reading).kind, "equal"), reading
 
 
 def test_an_interrupted_start_kills_the_child_and_leaves_the_worker_clean(
@@ -3296,6 +3924,21 @@ def test_verdict_auto_awardable_requires_equal_proven() -> None:
     assert not Verdict(VerdictKind.EQUAL_SAMPLED, method=EquivalenceMethod.NUMERIC).auto_awardable
     assert not Verdict(VerdictKind.NOT_EQUAL, method=EquivalenceMethod.SIMPLIFY).auto_awardable
     assert not Verdict(VerdictKind.UNPARSEABLE).auto_awardable
+
+
+def test_the_worker_and_tables_modules_import_and_back_the_facade() -> None:
+    """#271: the split is a move. The facade re-exports what the tests reach
+    through it, and the names it re-exports are the modules' own objects, so
+    a monkeypatch on the facade (``eq._PARSE_WORKER``) steers the one
+    ``parse_expr_outcome`` reads while the worker module holds the original.
+    """
+    import lemely.core.equivalence_tables as tables
+    import lemely.core.equivalence_worker as worker
+    from lemely.core import equivalence as eq
+
+    assert worker._PARSE_WORKER is eq._PARSE_WORKER
+    assert worker._ParseWorker is eq._ParseWorker
+    assert tables._UNIT_LOCAL_DICT is eq._UNIT_LOCAL_DICT
 
 
 #: A path-run script that calls ``parse_expr_safe`` at its top level, with no

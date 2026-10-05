@@ -316,7 +316,7 @@ class TestVerifyQuestionSympyGate:
             ("9.81*2", "19.6 m/s"),
             ("2*pi", "2 pi"),
             # Fix round 2: "<mantissa> x 10^<exp>" magnitude notation is
-            # PARSED (not refused) -- see _expand_sci_x_notation.
+            # PARSED (not refused) -- by lemely.core.equivalence since #270.
             ("24000", "2.4 x 10^4 J"),
         ],
     )
@@ -517,48 +517,38 @@ class TestVerifyQuestionSympyGate:
         assert _compare_stated("24000", "24 kJ").kind is VerdictKind.NOT_EQUAL
         assert _compare_stated("0.024", "24 mm").kind is VerdictKind.NOT_EQUAL
 
-    def test_expand_sci_x_notation_handles_a_huge_exponent_without_overflow(self) -> None:
-        """Fix round 4, Minor: the old computation, ``mantissa *
-        10.0**exponent`` in Python floats, raised an uncaught
-        `OverflowError` for an exponent this large -- nothing catches it
-        around `verify_question`, so it aborted the whole generation
-        request. Tested directly against `_expand_sci_x_notation` (not
-        through `verify_question`/`_compare_stated`): for a magnitude this
-        extreme, `equivalence.equivalent`'s own tolerance check has a
-        separate, pre-existing blind spot (`_magnitude`'s
-        ``complex(value.evalf())`` itself overflows/underflows past
-        double-precision range, ~1e308) that resolves the comparison
-        before ever reaching this function either way -- so the full
-        pipeline cannot distinguish the fixed behaviour from the bug at
-        this magnitude, and the only way to prove this fix is to call the
-        function itself."""
+    def test_x_times_ten_magnitude_is_read_by_equivalence_without_overflow(self) -> None:
+        """Fix round 4, Minor, carried by #270: the gate used to rewrite
+        ``"<mantissa> x 10^<exp>"`` itself with its own regex, and before
+        that computed ``mantissa * 10.0**exponent`` in Python floats, which
+        raised an uncaught `OverflowError` for an exponent this large
+        and aborted the whole generation request. #270 moved the rule from
+        the gate into `lemely.core.equivalence` (``_TIMES_X_RE``): the shape
+        reaches `parse_expr_safe` unchanged, which reads the ``x`` as times
+        and lets SymPy's arbitrary-precision arithmetic hold ``10**400``
+        exactly. Asserted on the parse rather than through
+        `verify_question`/`_compare_stated`: for a magnitude this extreme,
+        `equivalence.equivalent`'s own tolerance check (`_magnitude`'s
+        ``complex(value.evalf())``) overflows past double-precision range,
+        ~1e308, and resolves the comparison first either way."""
         from lemely.core.equivalence import parse_expr_safe
-        from lemely.io.question_gates import _expand_sci_x_notation
 
-        result = _expand_sci_x_notation("2 x 10^400 J")
-        expr = parse_expr_safe(result)
+        expr = parse_expr_safe("2 x 10^400 J")
         j = parse_expr_safe("J")
         assert expr is not None
         assert j is not None
-        assert expr == parse_expr_safe("(2)*10**(400) J")
         assert expr == 2 * 10**400 * j
 
-    def test_expand_sci_x_notation_handles_a_hugely_negative_exponent_without_underflow(
-        self,
-    ) -> None:
-        """Fix round 4, Minor: the same float computation silently
-        underflowed a very negative exponent to exactly ``0.0``,
-        discarding the mantissa entirely. The rewrite emits a SymPy
-        expression and lets SymPy's own arbitrary-precision arithmetic
-        parse it exactly -- never a Python float, so no underflow. See
-        the previous test's docstring for why this can only be proven at
-        the function level, not through the full `verify_question`
-        pipeline."""
+    def test_x_times_ten_magnitude_is_read_by_equivalence_without_underflow(self) -> None:
+        """Fix round 4, Minor, carried by #270: the float computation
+        silently underflowed a very negative exponent to exactly ``0.0``,
+        discarding the mantissa. The rule now lives in
+        `lemely.core.equivalence` (#270 moved it from the gate), and the
+        parse is exact -- never a Python float, so no underflow. See the
+        previous test's docstring for why this is asserted on the parse."""
         from lemely.core.equivalence import parse_expr_safe
-        from lemely.io.question_gates import _expand_sci_x_notation
 
-        result = _expand_sci_x_notation("2 x 10^-400 J")
-        expr = parse_expr_safe(result)
+        expr = parse_expr_safe("2 x 10^-400 J")
         j = parse_expr_safe("J")
         assert expr is not None
         assert j is not None
@@ -736,6 +726,113 @@ class TestRecallScopedToNumeric:
         assert result.verified_by == "sympy"
         assert result.rejection_reason is None
         client.generate_with_code_execution.assert_not_called()
+
+    def test_numeric_recall_takes_the_solver_path_when_its_parse_is_undecided(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Task 2 review, Important 1 (#271). A contended parse returns
+        ``None`` with the outcome ``"busy"``; `_admits_solver` read that
+        ``None`` as "not numeric" and a numeric RECALL item passed as
+        ``validity_only`` with no solver comparison at all. Busy, timeout,
+        unavailable and crash mean "could not decide", so the solver is
+        admitted, and that path fails closed: here every parse is busy, so
+        SymPy proves nothing, the sandbox runs, its answer cannot be proved
+        equal either, and the item is rejected."""
+        from lemely.core import equivalence as eq
+
+        class NeverFreeLock:
+            """A worker lock some other caller holds for longer than any timeout."""
+
+            def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+                return False
+
+            def release(self) -> None:
+                raise AssertionError("released a lock that was never acquired")
+
+            def locked(self) -> bool:
+                return True
+
+        worker = eq._ParseWorker()
+        worker._lock = NeverFreeLock()  # type: ignore[assignment]
+        monkeypatch.setattr(eq, "_PARSE_WORKER", worker)
+        question = _generated_question(
+            "Atomic number of carbon",
+            question_type=QuestionType.RECALL,
+            solution_expr="6",
+            answer="6",
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        client.generate_with_code_execution.return_value = "6"
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by != "validity_only"
+        assert result.verified_by is None
+        client.generate_with_code_execution.assert_called_once()
+        assert worker.pid() is None  # no caller ever reached the child
+
+    @pytest.mark.parametrize("outcome", ["busy", "timeout", "unavailable", "crash"])
+    def test_numeric_recall_takes_the_solver_path_on_every_undecided_outcome(
+        self, outcome: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Task 6 review, Important 2 and Minor 3. The worker here reports
+        ``outcome`` for every call while its SHARED ``last_outcome`` says
+        "ok", so a gate that read the shared attribute instead of the call's
+        own outcome would take this for a non-numeric answer and pass it as
+        ``validity_only``; parametrised over all four outcomes, so dropping
+        one from ``PARSE_UNDECIDED_OUTCOMES`` is red too."""
+        from lemely.core import equivalence as eq
+
+        class UndecidedWorker:
+            last_outcome = "ok"
+
+            def parse_with_outcome(
+                self, text: str, timeout: float, *, vet: bool = True
+            ) -> tuple[None, str]:
+                return None, outcome
+
+            def parse(self, text: str, timeout: float, *, vet: bool = True) -> None:
+                return None
+
+            def pid(self) -> None:
+                return None
+
+            def shutdown(self) -> None:
+                return None
+
+        monkeypatch.setattr(eq, "_PARSE_WORKER", UndecidedWorker())
+        question = _generated_question(
+            "Atomic number of carbon",
+            question_type=QuestionType.RECALL,
+            solution_expr="6",
+            answer="6",
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        client.generate_with_code_execution.return_value = "6"
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by is None
+        client.generate_with_code_execution.assert_called_once()
+
+    @pytest.mark.parametrize("answer", ["(2)3", "(1.5)2", "sqrt2x"])
+    def test_recall_answer_refused_as_ambiguous_takes_the_solver_path(self, answer: str) -> None:
+        """Task 6 review, Minor 4. #270 refuses a digit after a bracket and a
+        bracketless argument with no settled reading; read as "not numeric",
+        those RECALL answers passed as ``validity_only`` with less checking
+        than before #270. They are "could not decide", so the solver runs and
+        fails closed: nothing proves the stated answer, the sandbox runs, and
+        the item is rejected."""
+        question = _generated_question(
+            "Area", question_type=QuestionType.RECALL, solution_expr="6", answer=answer
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        client.generate_with_code_execution.return_value = "6"
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by is None
+        client.generate_with_code_execution.assert_called_once()
 
     def test_missing_answer_is_rejected_before_spending_a_tool_call(self) -> None:
         """MUST-FIX 2's backstop: an item with no stated answer at all must

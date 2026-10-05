@@ -52,7 +52,14 @@ from typing import TYPE_CHECKING
 import structlog
 import sympy
 
-from lemely.core.equivalence import Verdict, VerdictKind, equivalent, parse_expr_safe
+from lemely.core.equivalence import (
+    PARSE_UNDECIDED_OUTCOMES,
+    Verdict,
+    VerdictKind,
+    equivalent,
+    parse_expr_outcome,
+    parse_expr_safe,
+)
 from lemely.core.generation import (
     SOLVABLE_QUESTION_TYPES,
     GeneratedQuestion,
@@ -85,19 +92,6 @@ MAX_GENERATION_ATTEMPTS = 3
 #: deriving its tolerance from the scheme (`lemely.core.equivalence`).
 GATE_SIG_FIGS = 3
 
-#: Fix round 2: CAIE physics notation for scientific-notation magnitude,
-#: "<mantissa> x 10^<exp>" (also accepting the multiplication-sign glyph in
-#: place of the ASCII 'x'/'X'). That glyph stands for "times" here, never
-#: SymPy's algebra variable ``x`` -- without this being consumed FIRST,
-#: "2.4 x 10^4 J" parses (via implicit multiplication) as
-#: ``24000.0*J*x``, a spurious free-symbol product, not the number 24000
-#: with a unit.
-_SCI_X_NOTATION_RE = re.compile(
-    r"^\s*(?P<mantissa>[-+]?(?:\d+\.?\d*|\.\d+))"
-    r"\s*[xX\u00d7]\s*10\s*\^\s*(?P<exponent>[-+]?\d+)"
-    r"(?P<rest>.*)$"
-)
-
 #: Fix round 4 (Important): a whitelist of UNPREFIXED base unit symbols
 #: only -- ``kg`` is its own entry (the SI base unit), never a composed
 #: ``k`` prefix + ``g`` base. Round 2/3 also allowed an SI prefix
@@ -127,11 +121,11 @@ _UNIT_ATOM_RE = rf"(?:{_UNIT_BASE_RE})(?:\^-?\d+)?"
 #: strips to ``"24"``, but ``"6x"``, ``"24 pi"`` and ``"24 J 5"`` (a unit
 #: atom followed by a bare, non-unit "5") never match at all. Searched
 #: (not matched) from the end, rather than requiring a specific NUMBER
-#: shape before it, because Fix round 4's `_expand_sci_x_notation` can
-#: leave a compound expression (``"(2.4)*10**(4)"``) in front of the unit,
-#: not a plain number. The ``(?<![A-Za-z/·*^])`` guard is what makes a
-#: PREFIXED tail like ``"kJ"`` fail entirely rather than partially --
-#: without it, the search would still find "J" alone (leaving a dangling,
+#: shape before it, because an "x 10^n" magnitude (``"2.4 x 10^4"``) can
+#: sit in front of the unit, not a plain number; `lemely.core.equivalence`
+#: reads that magnitude itself (#270). The ``(?<![A-Za-z/·*^])`` guard is
+#: what makes a PREFIXED tail like ``"kJ"`` fail entirely rather than
+#: partially -- without it, the search would still find "J" alone (leaving a dangling,
 #: nonsensical "k" glued onto the number) since only "kJ" as a WHOLE is
 #: unrecognised, not "J" on its own. Fix round 5 addendum (a): widened to
 #: also exclude a preceding SEPARATOR ('/', '·', '*', '^') -- "24 km/s"
@@ -146,34 +140,16 @@ _UNIT_TAIL_RE = re.compile(
 )
 
 
-def _expand_sci_x_notation(stated: str) -> str:
-    """``"2.4 x 10^4 J"`` -> ``"(2.4)*10**(4) J"``; anything else unchanged.
-
-    Fix round 4 (Minor): rewritten as a SymPy-parseable EXPRESSION rather
-    than computed in Python floats (``mantissa * 10.0**exponent``) -- the
-    float computation raised an uncaught ``OverflowError`` for an exponent
-    like 400 (nothing catches it around ``verify_question``, so it aborted
-    the whole generation request) and silently underflowed a very negative
-    exponent (``"2 x 10^-400"``) to exactly ``0.0``. SymPy's own arbitrary-
-    precision arithmetic parses ``10**(400)``/``10**(-400)`` exactly, with
-    neither failure mode.
-    """
-    match = _SCI_X_NOTATION_RE.match(stated)
-    if match is None:
-        return stated
-    return f"({match.group('mantissa')})*10**({match.group('exponent')}){match.group('rest')}"
-
-
 def _strip_trailing_unit(stated: str) -> str:
-    """Normalise CAIE-style magnitude/unit notation, or return unchanged.
+    """Drop a trailing unit tail, or return ``stated`` unchanged.
 
-    Two independent, sequential transforms: :func:`_expand_sci_x_notation`
-    resolves an "x 10^n" magnitude first (a unit tail after it is still
-    found by :data:`_UNIT_TAIL_RE`, which searches from the end rather
-    than anchoring at a specific value shape), then a trailing tail is
-    dropped ONLY when it fully matches :data:`_UNIT_TAIL_RE` -- one or
-    more whitelisted, UNPREFIXED unit atoms and nothing else, so ``"24
-    J"`` strips to ``"24"`` but ``"6x"``, ``"24 pi"``, ``"24 J 5"`` and a
+    An "x 10^n" magnitude is left as it is: `lemely.core.equivalence` reads
+    it (``_TIMES_X_RE``, #270), and a unit tail after it is still found by
+    :data:`_UNIT_TAIL_RE`, which searches from the end rather than
+    anchoring at a specific value shape. A trailing tail is dropped ONLY
+    when it fully matches :data:`_UNIT_TAIL_RE` -- one or more whitelisted,
+    UNPREFIXED unit atoms and nothing else, so ``"24 J"`` strips to
+    ``"24"`` but ``"6x"``, ``"24 pi"``, ``"24 J 5"`` and a
     PREFIXED tail like ``"24 kJ"`` are all left alone.
 
     Fix round 5 addendum (a): :data:`_UNIT_TAIL_RE`'s lookbehind still lets
@@ -186,7 +162,6 @@ def _strip_trailing_unit(stated: str) -> str:
     that shape is rejected here explicitly rather than returned as a
     stripped (but nonsensical, unparseable) value.
     """
-    stated = _expand_sci_x_notation(stated)
     match = _UNIT_TAIL_RE.search(stated)
     if match is None:
         return stated
@@ -205,8 +180,9 @@ def _safe_equivalent(a: str | sympy.Expr, b: str | sympy.Expr, *, sig_figs: int)
     a Python ``float`` overflows to ``inf``, and ``math.floor(inf)`` raises
     ``OverflowError``. ``GATE_SIG_FIGS`` always sets ``sig_figs``, so this
     branch runs on every comparison this module makes -- a magnitude this
-    extreme is reachable in practice through ``_expand_sci_x_notation``
-    (``"2 x 10^400"``), not merely synthetic. Treated the same way
+    extreme is reachable in practice through an "x 10^n" magnitude
+    (``"2 x 10^400"``, read by `lemely.core.equivalence`), not merely
+    synthetic. Treated the same way
     :func:`equivalent` itself treats a resource/timeout failure (I8 review
     MUST-FIX #4): the comparison could not be completed, which is not a
     disproof, so ``UNPARSEABLE`` rather than letting the exception escape
@@ -245,10 +221,11 @@ def _compare_stated(exact: str, stated: str) -> Verdict:
        a still-symbolic ``sqrt(2)``, a term-key mismatch of exactly the
        same shape -- which is why step 1 must run FIRST and unmodified;
        this step is only a fallback for what it could not prove.
-    3. When that also fails, strip a trailing unit or an "x 10^n" magnitude
-       from ``stated`` (:func:`_strip_trailing_unit`) and retry the whole
-       comparison recursively -- ``"24 J"`` -> ``"24"``, ``"2.4 x 10^4 J"``
-       -> ``"24000.0"``. A ``stated`` that is genuinely wrong (``"24
+    3. When that also fails, strip a trailing unit from ``stated``
+       (:func:`_strip_trailing_unit`) and retry the whole comparison
+       recursively -- ``"24 J"`` -> ``"24"``, ``"2.4 x 10^4 J"`` ->
+       ``"2.4 x 10^4"``, whose "x 10^n" magnitude `lemely.core.equivalence`
+       reads as 24000 (#270). A ``stated`` that is genuinely wrong (``"24
        pi"``, ``"6x"``, ``"24 J 5"``) either fails step 2 on its own merits
        (a real numeric or structural mismatch) or is never touched by the
        stripper at all (no whitelisted unit tail to strip), so it falls
@@ -324,11 +301,22 @@ def _admits_solver(question: GeneratedQuestion) -> bool:
     common prose RECALL ("name the process...") which has no stated
     answer for a solver to check at all. Every other question_type never
     admits a solver.
+
+    Task 2 review, Important 1 (#271): a parse that could not decide (the
+    worker busy past the timeout, timed out, unavailable or crashed, see
+    :data:`~lemely.core.equivalence.PARSE_UNDECIDED_OUTCOMES`) also returns
+    no expression, and reading that as "not numeric" passed a numeric RECALL
+    item as ``validity_only`` with no solver comparison. It admits the
+    solver instead: that path fails closed (UNPARSEABLE, then the sandbox,
+    and only EQUAL_PROVEN verifies).
     """
     if question.question_type in SOLVABLE_QUESTION_TYPES:
         return True
     if question.question_type is QuestionType.RECALL:
-        return question.answer is not None and parse_expr_safe(question.answer) is not None
+        if question.answer is None:
+            return False
+        expr, outcome = parse_expr_outcome(question.answer)
+        return expr is not None or outcome in PARSE_UNDECIDED_OUTCOMES
     return False
 
 

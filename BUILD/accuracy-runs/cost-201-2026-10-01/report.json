@@ -1,0 +1,162 @@
+{
+  "T4_SHA": "62c7c61a5d0fb472561862be7854add5dce40f64",
+  "run_id": "run-96c47f6a21f5",
+  "corpus_digest": "76989782d6fda9fc",
+  "cache_mode": "bypass",
+  "split": "dev",
+  "params_fingerprint": "2942b7e8a679",
+  "manifest_git_sha_note": "manifest git_sha (ddec7f22) is the cwd HEAD; the code measured was the detached tree at T4_SHA",
+  "models_by_task": {
+    "mark_scheme": "gemini-2.5-flash",
+    "extraction": "gemini-3.5-flash-lite",
+    "correction": "gemini-3.8-flash",
+    "correction_borderline": "gemini-3.8-flash",
+    "escalation": "gemini-3.8-flash",
+    "scan_metadata": "gemini-3.5-flash-lite"
+  },
+  "n": 12,
+  "cost_usd_by_paper": {
+    "0580_s23_qp_22_theory/correct": {
+      "extraction": 0.0033669,
+      "correction": 0.012602249999999999
+    },
+    "0580_s23_qp_22_theory/partial": {
+      "extraction": 0.0032518999999999994,
+      "correction": 0.015251999999999998
+    },
+    "0580_s23_qp_22_theory/whitespace": {
+      "extraction": 0.0031593999999999997,
+      "correction": 0.016094999999999998
+    },
+    "0580_s23_qp_22_theory/wrong": {
+      "extraction": 0.0030144000000000004,
+      "correction": 0.012665999999999997
+    },
+    "0606_s23_qp_12_theory/correct": {
+      "extraction": 0.0032811000000000003,
+      "correction": 0.01801424999999998
+    },
+    "0606_s23_qp_12_theory/partial": {
+      "extraction": 0.0033410999999999996,
+      "correction": 0.017762999999999987
+    },
+    "0606_s23_qp_12_theory/wrong": {
+      "extraction": 0.0026435999999999994,
+      "correction": 0.01823849999999999
+    },
+    "0625_m20_qp_12_mcq": {
+      "extraction": 0.0029745000000000014
+    },
+    "0625_s20_qp_31_theory/correct": {
+      "extraction": 0.003216799999999999,
+      "correction": 0.018812250000000003
+    },
+    "0625_s20_qp_31_theory/partial": {
+      "extraction": 0.003166800000000001,
+      "correction": 0.01879125000000001
+    },
+    "0625_s20_qp_31_theory/wrong": {
+      "extraction": 0.0027118000000000003,
+      "correction": 0.01731450000000001
+    },
+    "0625_w21_qp_32_theory_nested": {
+      "extraction": 0.0017935000000000034,
+      "correction": 0.006373499999999976
+    }
+  },
+  "cost_usd_total_by_paper": {
+    "0580_s23_qp_22_theory/correct": 0.015969149999999998,
+    "0580_s23_qp_22_theory/partial": 0.018503899999999997,
+    "0580_s23_qp_22_theory/whitespace": 0.019254399999999998,
+    "0580_s23_qp_22_theory/wrong": 0.015680399999999997,
+    "0606_s23_qp_12_theory/correct": 0.021295349999999984,
+    "0606_s23_qp_12_theory/partial": 0.021104099999999987,
+    "0606_s23_qp_12_theory/wrong": 0.02088209999999999,
+    "0625_m20_qp_12_mcq": 0.0029745000000000014,
+    "0625_s20_qp_31_theory/correct": 0.02202905,
+    "0625_s20_qp_31_theory/partial": 0.02195805000000001,
+    "0625_s20_qp_31_theory/wrong": 0.02002630000000001,
+    "0625_w21_qp_32_theory_nested": 0.00816699999999998
+  },
+  "mean_usd": 0.01732035833333333,
+  "cost_usd_total": 0.20784429999999995,
+  "max_case": [
+    "0625_s20_qp_31_theory/correct",
+    0.02202905
+  ],
+  "min_case": [
+    "0625_m20_qp_12_mcq",
+    0.0029745000000000014
+  ],
+  "spend_by_task_tag_usd": {
+    "extraction": 0.035921800000000004,
+    "correction": 0.17192249999999995
+  },
+  "log_sum_of_gemini_call_usd_cost": 0.207842,
+  "log_spend_by_task_and_model_usd": {
+    "extraction|gemini-3.5-flash-lite": 0.035922,
+    "correction|gemini-3.8-flash": 0.17192000000000005
+  },
+  "n_gemini_calls_in_log": 82,
+  "printed_cost_lines_verbatim": [
+    "Cost per paper (cache_mode=bypass): mean=$0.0173 p95=$0.0220 total=$0.2078 over 12 case(s)"
+  ],
+  "printed_for_context_only": {
+    "mark_accuracy": 0.91,
+    "mark_accuracy_theory": 0.9,
+    "id_match_rate": 1.0,
+    "flag_precision_high": 0.921,
+    "flag_recall": 0.143,
+    "review_rate_signal": 0.065,
+    "review_rate_per_paper_p95": 0.286,
+    "review_rate_n": 31,
+    "coherence_trigger_rate": 0.032,
+    "exclusion_funnel": "leaves=78 -> matched=78 -> marked=78 -> scored=31",
+    "exit_code": "0 observed; carries no information (see exit_code_note)",
+    "exit_code_note": "Exit status 0 observed; it carries no information. lemely.app.cli.main() calls cli.main(args=argv, standalone_mode=False, ...) and then returns 0 (lemely/app/cli.py:1485-1486). In non-standalone mode Click 8.4.2 returns the Exit(1) raised after 'Targets missed' (cli.py:1363) as a value instead of raising it, and main() discards that value, so the CLI process itself exits 0; the 'except click.exceptions.Exit' at cli.py:1490 is unreachable for it. Reproduced without an API call by registering a command on lemely.app.cli.cli that raises click.exceptions.Exit(1): cli.main(standalone_mode=False) returns 1 and lemely.app.cli.main([...]) returns 0 (whole-branch review B, I1). The shell and tee are not the cause. cli.py is outside this branch's file set; the fix is a follow-up issue.",
+    "review_rate_gate_breach": "per_paper_p95 0.2857 > target 0.1500 (ratchet unarmed, recorded, not blocking)"
+  },
+  "p95_usd": 0.02202905,
+  "p95_method": "nearest-rank (harness _cost_p95)",
+  "p95_note": "At n=12, ceil(0.95*12) = 12, so p95 equals the maximum case; it is not a tail estimate.",
+  "p95_usd_linear_interp_non_canonical": 0.021990000000000006,
+  "provenance": {
+    "original_results_filename": "2026-10-05-ddec7f22.json",
+    "manifest_git_sha_in_results_json": "ddec7f22",
+    "manifest_git_sha_meaning": "the cwd HEAD of the process, not the measured tree",
+    "measured_tree": "62c7c61a5d0fb472561862be7854add5dce40f64",
+    "diff_62c7c61a_to_ddec7f22": "touches only lemely/core/equivalence.py and tests/test_equivalence.py (git diff --stat 62c7c61a ddec7f22)",
+    "equivalence_gate_during_run": false
+  },
+  "pricing_basis": {
+    "source": "lemely/io/gemini.py pricing table at this tree (GA rates, thinking tokens billed as output, M0.2/#26 landed); rates resolved for 2026-10-05",
+    "rates_usd_per_1k_tokens_input_output": {
+      "gemini-3.8-flash": [
+        0.00075,
+        0.00375
+      ],
+      "gemini-3.5-flash-lite": [
+        0.0003,
+        0.0025
+      ]
+    },
+    "gemini-3.8-flash_rate_is_promotional": true,
+    "promo_end_date": "2026-12-31",
+    "gemini-3.8-flash_post_promo_rate_from_2027-01-01": [
+      0.0015,
+      0.0075
+    ],
+    "share_of_spend_at_promo_rate": {
+      "correction|gemini-3.8-flash_usd": 0.1719225,
+      "fraction_of_total": 0.8272
+    },
+    "projected_post_promo": {
+      "method": "same per-case token spend; correction (gemini-3.8-flash) cost scaled by the post-promo/promo ratio, 2.0 for both input and output; extraction (gemini-3.5-flash-lite, no scheduled change) unchanged",
+      "cost_usd_total": 0.3797668,
+      "mean_usd": 0.0316472,
+      "p95_usd_nearest_rank": 0.0408413,
+      "ratio_to_measured_mean": 1.8272
+    },
+    "qualifier": "mean_usd 0.0173 is at the gemini-3.8-flash promotional rate, which ends 2026-12-31; from 2027-01-01 the same run would cost about $0.0316 per case (about 1.8x)."
+  }
+}

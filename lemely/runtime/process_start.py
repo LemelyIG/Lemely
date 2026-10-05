@@ -12,10 +12,10 @@ start, and a script calling ``parse_expr_safe`` at import time needed an
 
 :func:`start_without_parent_main` is the one start both child processes use:
 the scan workers (:class:`lemely.runtime.sandbox.ChildWorker`) and the parse
-worker (``lemely.core.equivalence._ParseWorker``). Nothing either child is
-given lives in ``__main__``: the scan workers name their targets by dotted
-path, and the parse worker's entry point is a module-level function of
-``lemely.core.equivalence``.
+worker (``lemely.core.equivalence_worker._ParseWorker``). Nothing either
+child is given lives in ``__main__``: the scan workers name their targets by
+dotted path, and the parse worker's entry point is a module-level function of
+``lemely.core.equivalence_worker`` (``_parse_worker_main``).
 """
 
 from __future__ import annotations

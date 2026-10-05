@@ -43,38 +43,57 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
-import logging
 import math
-import multiprocessing
-import os
 import queue
 import random
 import re
-import signal
-import sys
 import threading
-import time
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import sympy
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from multiprocessing.connection import Connection
-    from multiprocessing.process import BaseProcess
-from sympy.parsing.sympy_parser import (
-    convert_xor,
-    implicit_multiplication_application,
-    parse_expr,
-    standard_transformations,
+
+from lemely.core.equivalence_tables import (
+    _ALLOWED_FUNCTIONS,
+    _FUNCTION_CALL_RE,
+    _GREEK_MU,
+    _LETTER_DIGITS_RE,
+    _MICRO_SIGN,
+    _SINGLE_LETTER_UNITS,
+    _SUBSCRIPTABLE_LETTERS,
+    _UNIT_ALIASES,
+    _UNIT_SYMBOLS,
+    _is_disallowed_sympy_call,
+)
+from lemely.core.equivalence_worker import (
+    _MAX_EXPONENT_VALUE,
+    _MAX_RESULT_INT_BITS,
+    _PARSE_WORKER,
 )
 
-from lemely.runtime.process_start import start_without_parent_main
+# isort: split
+# Re-exports for `tests/test_equivalence.py`, which reaches these through the
+# facade (`eq.<name>`) since the #271 split moved them. Each is the defining
+# module's own object, so `monkeypatch.setattr(eq, "_PARSE_WORKER", ...)` still
+# steers `parse_expr_outcome`, which reads THIS module's global (imported above).
+# `multiprocessing` is the shared module object: patching
+# `eq.multiprocessing.get_context` patches it for the worker module too.
+import multiprocessing  # noqa: F401  # tests/test_equivalence.py: eq.multiprocessing
 
-_logger = logging.getLogger(__name__)
+from lemely.core.equivalence_tables import (
+    _UNIT_LOCAL_DICT,  # noqa: F401  # tests/test_equivalence.py: eq._UNIT_LOCAL_DICT
+)
+from lemely.core.equivalence_worker import (
+    _PARSE_WORKER_START_COOLDOWN,  # noqa: F401  # tests/test_equivalence.py: eq._PARSE_WORKER_START_COOLDOWN
+    _evaluated_would_explode,  # noqa: F401  # tests/test_equivalence.py: eq._evaluated_would_explode
+    _parse_normalized,  # noqa: F401  # tests/test_equivalence.py: eq._parse_normalized
+    _ParseWorker,  # noqa: F401  # tests/test_equivalence.py: eq._ParseWorker
+)
 
 #: Longer inputs are rejected before ever reaching the parser. Mark-scheme
 #: and student-answer text is at most a few dozen characters in every
@@ -129,33 +148,6 @@ _ABS_TOLERANCE_DISCARD_MULTIPLE = 10.0
 #: The cap applied to a plausible absolute-shaped candidate — see above.
 _ABS_TOLERANCE_SANITY_FRACTION = 0.5
 
-#: A caret/`**` tower (`9^9^9`) or a single huge literal exponent
-#: (`2**100000000`) has no realistic CAIE reading and can otherwise hang
-#: parsing or produce a multi-million-digit integer (I8 review MUST-FIX #9).
-_MAX_EXPONENT_VALUE = 1000
-
-#: The longest exact number a parse may RETURN (review round 1 of triage F2).
-#: `str()`/`srepr()` of a longer int raises ValueError under CPython's
-#: int-to-string limit (`sys.get_int_max_str_digits()`, default 4300 digits),
-#: and `equivalent` prints both sides -- so `(10^300+1)^1000*(10^300+3)^1000`,
-#: each power within bounds, returned a 1,993,157-bit Integer and then raised
-#: straight through `correction_ai`. Never above the default (the caller may
-#: not share this process's setting); lower if this process lowered it.
-_MAX_RESULT_DIGITS = min(sys.get_int_max_str_digits() or 4300, 4300)
-#: ...in bits: any int of at most this many bits has at most that many digits.
-_MAX_RESULT_INT_BITS = int((_MAX_RESULT_DIGITS - 1) / math.log10(2))
-
-#: Triage F2 (2026-09-29): the exponent regexes read literals, so a COMPUTED
-#: exponent (`2^(999*999*999)`, `2^(999!)`) slipped past them and SymPy then
-#: built the integer -- 997,003,000 bits in 3.8 s with the GIL held, so the
-#: whole process froze and `_run_bounded`'s timeout was moot. The structural
-#: bound in `_pow_would_explode` refuses any power whose RESULT would exceed
-#: this many bits, on top of the per-exponent literal cap above. It was
-#: 1,000,000 until review round 1: a power the result bound above would
-#: refuse anyway is not worth computing first, so the two now agree
-#: (14,280 bits, ~4,300 digits: no CAIE answer is near it).
-_MAX_POW_RESULT_BITS = _MAX_RESULT_INT_BITS
-
 #: `factorial_notation` is one of SymPy's `standard_transformations`, and a
 #: factorial is computed at PARSE time even under `evaluate=False`, so it must
 #: be bounded textually, before parsing: `9999999!` hangs the parser. `1000!`
@@ -163,38 +155,6 @@ _MAX_POW_RESULT_BITS = _MAX_RESULT_INT_BITS
 #: parenthesised expression (`(999!)!`), is refused.
 _MAX_FACTORIAL_OPERAND = 1000
 _FACTORIAL_RE = re.compile(r"(\)|\d+)\s*!")
-
-#: Address-space limit for the parse worker (see `_ParseWorker`). Measured:
-#: the child's VmSize after importing SymPy is ~75 MB; under this limit
-#: `2**999999999` (a 125 MB integer) raises MemoryError in 1.8 s and the
-#: child survives. Small enough that the worst case fits a 1 GiB worker.
-_PARSE_WORKER_MEMORY_BYTES = 512 * 1024 * 1024
-
-#: How long a (re)started parse worker may take to report ready -- interpreter
-#: start, SymPy import and one warm-up parse; measured 0.17-0.23 s plus up to
-#: ~0.19 s for the first parse. Kept SEPARATE from the caller's parse
-#: `timeout` so a cold start on a slow or CPU-throttled host (a fresh Cloud
-#: Run instance, a coverage-instrumented CI run) is never mistaken for a
-#: runaway parse: without it, the first answer after every (re)start could
-#: come back unparseable. Generous because it is paid at most once per start.
-_PARSE_WORKER_START_TIMEOUT = 30.0
-
-#: After a failed start, no new start is attempted for this long (review
-#: round 1): where a child can never start -- from a daemonic process, say --
-#: each call would otherwise pay a spawn attempt and log a warning. Calls in
-#: the cool-down return None at once; one warning per failed start.
-_PARSE_WORKER_START_COOLDOWN = 30.0
-
-#: The worker's pipe protocol: ``(normalised text, vet)`` or ``None`` to stop;
-#: ``(kind, payload)`` back -- see `_parse_worker_main`.
-type _ParseRequest = tuple[str, bool] | None
-type _ParseReply = tuple[str, object]
-
-_TRANSFORMATIONS = (
-    *standard_transformations,
-    implicit_multiplication_application,
-    convert_xor,
-)
 
 #: Unicode superscript digits/signs, unfolded to an explicit `**(...)`
 #: exponent *before* any other normalisation runs — NFKC alone silently
@@ -207,166 +167,6 @@ _SUPERSCRIPT_RUN_RE = re.compile(f"[{_SUPERSCRIPT_CHARS}]+")
 #: Multiplication/division glyphs CAIE mark schemes use instead of `*`/`/`.
 _MULT_CHARS = "×·∙"
 _UNICODE_MINUS = "−"
-
-#: Base SI/CAIE unit symbols. Ordered longest-first so the unit-digit
-#: alternation below cannot match a short prefix of a longer symbol (e.g.
-#: "cm" before "c").
-_BASE_UNIT_SYMBOLS = (
-    "mol",
-    "atm",
-    "cm",
-    "mm",
-    "km",
-    "kg",
-    "Hz",
-    "Pa",
-    "cd",
-    "m",
-    "g",
-    "s",
-    "N",
-    "J",
-    "W",
-    "A",
-    "V",
-    "C",
-    "F",
-    "T",
-    "H",
-    "K",
-    "L",
-    "l",
-    "Ω",
-)
-
-#: SI prefixes CAIE mark schemes combine with a base unit ("mg", "kJ",
-#: "MHz", ...). Each (prefix, base) pair is protected as its OWN atomic
-#: symbol — never as prefix-symbol times base-symbol — because "mg" is a
-#: unit of mass, not the product of a unit "m" (metre) and a unit "g"
-#: (gram). Without this, "4.5 mg" and "4.5 gm" (gram times metre, a
-#: dimensionally different and nonsensical quantity here) parse to the same
-#: expression and compare `equal` (I8 review mechanism 5).
-#:
-#: KNOWN LIMITATION (I8 re-review round 4 SHOULD-FIX 7, deliberately not
-#: fixed): "m" is the one SI prefix that is ALSO a base unit symbol
-#: (metre), so a compound written with no separator and no exponent on the
-#: first factor is genuinely ambiguous — "kg ms^-2" reads as
-#: `kg / ms**2` (kilogram per millisecond squared, the atomic-prefix
-#: reading this table exists for) rather than `kg * m / s**2` (the newton,
-#: what "kg m s^-2" without the missing space meant). Every discriminator
-#: tried (neighbouring-token context, exponent position, a
-#: prefix-plus-exponent rule) either breaks a case this table is already
-#: pinned on (`g/cm3`, `4.5 mg`) or trades this known over-rejection for a
-#: new silent WRONG parse on the award path — worse, since a wrong parse
-#: can auto-award and an over-rejection can only route to review. The only
-#: correct discriminator is a dimensional-plausibility check against a
-#: table of named derived units, which is a different, larger piece of
-#: work than this module. The affected shape is narrow — a two-letter
-#: prefix-ambiguous factor (`mA`, `mC`, `mF`, `mg`, `mH`, `mJ`, `mK`, `mL`,
-#: `ml`, `mm`, `mN`, `ms`, `mT`, `mV`, `mW`), no separator, no exponent on
-#: that factor specifically — and the direction is always over-rejection
-#: (`not_equal`, never a false `equal_proven`): pinned by
-#: ``test_kg_ms_known_limitation_is_not_equal_never_equal_proven`` in
-#: tests/test_equivalence.py.
-_SI_PREFIXES = ("p", "n", "µ", "u", "m", "c", "d", "k", "M", "G")
-
-_UNIT_SYMBOLS: tuple[str, ...] = _BASE_UNIT_SYMBOLS + tuple(
-    prefix + base for prefix in _SI_PREFIXES for base in _BASE_UNIT_SYMBOLS
-)
-_SINGLE_LETTER_UNITS = frozenset(unit for unit in _UNIT_SYMBOLS if len(unit) == 1)
-
-#: The letters a subscript can follow: Latin, the micro sign and degree
-#: sign the unit tables use, and Greek -- capitals U+0391-U+03A9 (Ω, U+03A9,
-#: is also the ohm), lower case U+03B1-U+03C9 (final sigma ς included), and
-#: the variant forms a transcriber or keyboard produces for the same letters
-#: (ϑ U+03D1, ϕ U+03D5, ϖ U+03D6, ϰ U+03F0, ϱ U+03F1, ϵ U+03F5). Review
-#: round 3: without Greek, SymPy still split `ε0` into `ε*0` = 0, `θ1+θ2`
-#: into `3θ` and `μ0*I` into 0 -- each a false EQUAL_PROVEN. This module
-#: does not normalise the Unicode subscript digits of a handwritten `ε₀`
-#: (it is unparseable, so it routes to review); a transcriber's `ε0` is the
-#: form that reaches this rule.
-_SUBSCRIPTABLE_LETTERS = "A-Za-zµΩ°\u0391-\u03a9\u03b1-\u03c9\u03d1\u03d5\u03d6\u03f0\u03f1\u03f5"
-
-#: A run of letters directly followed by digits (`cm3`, `m2`, `N0`, `x2`,
-#: `v1`, `mv2`, `ε0`), not itself preceded by a letter or `_`. A digit MAY
-#: precede it (`4x2`, `30cm3`); scientific notation (`3e8`) is excluded in
-#: `_rewrite_digit_suffixes`.
-_LETTER_DIGITS_RE = re.compile(
-    rf"(?<![{_SUBSCRIPTABLE_LETTERS}_])([{_SUBSCRIPTABLE_LETTERS}]+)(\d+)(?![\d.])"
-)
-
-#: Unit spellings that are textually different but dimensionally identical,
-#: normalised to a single canonical spelling before parsing so e.g. "g/cm3"
-#: and "g cm^-3" are compared as the same symbolic expression rather than
-#: relying on `simplify` to discover the identity from scratch.
-_UNIT_ALIASES: dict[str, str] = {
-    "ohm": "Ω",
-    "degC": "°C",
-    "degreeC": "°C",
-}
-
-#: Names SymPy's default global namespace already binds to something other
-#: than a free variable, but which are exactly the symbols CAIE physics
-#: questions use most (energy `E`, current/imaginary `I`). Left unprotected,
-#: `"E"` parses as `sympy.E` (Euler's number) and `"I"` as the imaginary
-#: unit, so e.g. `equivalent("E", "2.718281828459045")` was reported `equal`
-#: — a wrong physics answer confirmed by an unrelated mathematical identity
-#: (I8 review mechanism 4). Shadowing them as plain symbols here means a
-#: literal `E`/`I`/etc. typed in student or mark-scheme text is always
-#: treated as the variable it is meant to be, never as the SymPy constant.
-_RESERVED_NAME_OVERRIDES = ("E", "I", "O", "S", "Q", "oo", "zoo", "nan")
-
-#: Predefined as ``local_dict`` when parsing, for two reasons:
-#: (1) SymPy's `split_symbols` (part of `implicit_multiplication_application`)
-#: otherwise splits multi-letter identifiers into single-letter factors —
-#: without this, "cm" parses as `c * m` and "mg" as `m * g`.
-#: (2) a handful of names collide with SymPy's default global namespace
-#: (`_RESERVED_NAME_OVERRIDES` above).
-#: Every unit symbol is included regardless of length (I8 review fix #4) —
-#: a bare single-letter unit needs no *splitting* protection, but including
-#: it here is harmless and keeps this the one place unit identity is
-#: defined.
-_UNIT_LOCAL_DICT: dict[str, sympy.Symbol] = {
-    symbol: sympy.Symbol(symbol) for symbol in (*_UNIT_SYMBOLS, *_RESERVED_NAME_OVERRIDES)
-}
-
-#: Function calls this module will evaluate. Anything else that IS a known
-#: SymPy callable — `factorial(100000)`, `Integral(...)` — is rejected
-#: outright rather than handed to SymPy: both can be made arbitrarily
-#: expensive, and `Integral` in particular reaches SymPy machinery with no
-#: relevance to mark-scheme text (I8 review, "silent WRONG parses" table).
-#: This is an allowlist among SymPy's own names, not a blocklist on
-#: identifiers generally — an identifier that is NOT a SymPy attribute
-#: (`a`, `x`, `v`, `T`, ...) is never treated as a "call" here regardless
-#: of what follows it: implicit multiplication turns `a(b+c)`/`x(x+1)`/
-#: `v(t)` into ordinary products, which is what a student meant. Checking
-#: `hasattr(sympy, name)` is what makes that distinction — the earlier
-#: version rejected identifier-before-`(` unconditionally and took out
-#: every such row (I8 review S1).
-_ALLOWED_FUNCTIONS = frozenset(
-    {
-        "sin",
-        "cos",
-        "tan",
-        "asin",
-        "acos",
-        "atan",
-        "sinh",
-        "cosh",
-        "tanh",
-        "sqrt",
-        "log",
-        "ln",
-        "exp",
-        "Abs",
-    }
-)
-_FUNCTION_CALL_RE = re.compile(r"([A-Za-zΩ°][A-Za-z0-9]*)\s*\(")
-
-
-def _is_disallowed_sympy_call(name: str) -> bool:
-    return name not in _ALLOWED_FUNCTIONS and hasattr(sympy, name)
-
 
 #: Mark-scheme prose this module must never silently coerce into an
 #: expression: "N/A", a range ("30 to 32"), a tolerance/approximation
@@ -416,6 +216,104 @@ _EXPONENT_TOWER_RE = re.compile(r"(?:\*\*|\^)\s*\(?-?[0-9]+\)?\s*(?:\*\*|\^)")
 #: is just as capable of hanging parsing or producing a multi-million-digit
 #: integer — see `_MAX_EXPONENT_VALUE`.
 _EXPONENT_VALUE_RE = re.compile(r"(?:\*\*|\^)\s*\(?(-?\d+)\)?")
+
+#: An ASCII digit straight after a closing bracket (#270): ``(x+1)2`` is a
+#: lost superscript (``(x+1)²``) or a coefficient written after the bracket,
+#: and implicit multiplication read it as ``2x+2``. Refused on the raw text
+#: rather than guessed. ``)x``, ``)(``, ``)^2``, ``)*`` and ``)²`` (a
+#: superscript is not an ASCII digit) are untouched.
+_DIGIT_AFTER_PAREN_RE = re.compile(r"\)\d")
+
+#: An ASCII ``x``/``X`` between a number and ``10^``/``10**`` is the
+#: multiplication sign of standard form (``3.0x10^8``, ``2.4 x 10^4``), not
+#: the variable ``x`` (#270; the generation gate used to rewrite this shape
+#: itself). Narrow on purpose: ``2x``, ``5x3``, ``x10`` and ``2x10`` (no
+#: exponent marker) keep ``x`` as a symbol, and so does ``2x10^x``: the
+#: exponent must be a signed whole number, optionally bracketed, as the
+#: gate's own rule required (Task 6 review, Important 1: ``2x10^x`` was
+#: EQUAL_PROVEN to ``2*10^x``). :func:`_read_times_x` adds the other half:
+#: no other ``x`` in the text may be the variable.
+_TIMES_X_RE = re.compile(
+    r"(?<=[\d.])\s*[xX]\s*(?=10\s*(?:\^|\*\*)\s*\(?\s*[-+]?\d+\s*\)?(?![\w.]))"
+)
+_ANY_X_RE = re.compile(r"[xX]")
+
+#: :data:`_ALLOWED_FUNCTIONS`, longest first, so ``sinh``/``asin`` win over
+#: ``sin`` at the same position (:func:`_apply_function_names`).
+_FUNCTION_NAMES_LONGEST_FIRST = tuple(
+    sorted(_ALLOWED_FUNCTIONS, key=lambda name: (-len(name), name))
+)
+
+#: Functions whose argument may be written as a number then one letter with
+#: no bracket: ``sin2x`` is ``sin(2x)``, the CAIE convention (owner decision
+#: D1, extended by the controller to the other trig functions, ``ln`` and
+#: ``log``). For ``log`` this applies only to a number that is not a lost
+#: subscript base (:data:`_LOST_LOG_BASE_RE`): ``log25x`` is ``log(25x)``,
+#: but ``log3x`` is log base 3 of x.
+_NUMBER_LETTER_ARGUMENT_FUNCTIONS = frozenset(
+    {"sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "ln", "log"}
+)
+
+#: Functions for which that form has no settled reading: ``sqrt2x`` is
+#: ``sqrt(2x)`` or ``sqrt(2)*x``, so the whole text is refused. ``exp`` and
+#: ``Abs`` are in neither set: their number-then-letter form is left to the
+#: older rules, which never read it as a call.
+_AMBIGUOUS_NUMBER_LETTER_FUNCTIONS = frozenset({"sqrt"})
+
+#: A bracketless number argument. Spaced thousands groups belong to it
+#: (``ln1 000`` is ``ln(1000)``), matching :data:`_SPACED_DIGIT_GROUP_RE`'s
+#: reading of the same digits: the collapse runs after the function-name
+#: pass, so an argument closed at the space read ``ln10 000`` as
+#: ``ln(10)*000`` = 0, a false EQUAL_PROVEN (whole-branch review A,
+#: Important 2).
+_NUMBER_ARGUMENT_RE = re.compile(r"\d+(?:\s+\d{3}(?!\d))*(?:\.\d+)?")
+
+#: Spaces then a digit right after a bracketless number argument: the digits
+#: either continue the argument (a thousands group the argument could not
+#: take, ``ln1.5 000``) or are a separate factor (``sin30 2``). Two readings,
+#: so the text is refused.
+_SPACED_DIGIT_AFTER_ARGUMENT_RE = re.compile(r"\s+\d")
+
+#: A function name, a number, then ``x`` before ``10^``/``10**``. That ``x``
+#: is the argument D1 or a lost-base ``log`` takes (``sin2x``, ``log2 x``)
+#: and also standard form's times sign (:data:`_TIMES_X_RE`). The times-x
+#: pass runs first, so it took the ``x`` and ``sin2x10^3`` was EQUAL_PROVEN
+#: to ``1000*sin(2)`` (whole-branch review A, Important 1). Two readings,
+#: so the text is refused. No guard before the name: a coefficient
+#: (``5sin2x10^3``) is caught too. A lost-base ``log`` with a spaced
+#: argument (``log2 8x10^3``, ``log10 2x10^3``) is its own alternative: the
+#: number pattern after the bare name takes the base, so the space and the
+#: argument never match it (re-review of the first version of this guard).
+_FUNCTION_ARGUMENT_TIMES_X_RE = re.compile(
+    "(?:(?:"
+    + "|".join(
+        sorted(
+            _NUMBER_LETTER_ARGUMENT_FUNCTIONS | _AMBIGUOUS_NUMBER_LETTER_FUNCTIONS,
+            key=lambda name: (-len(name), name),
+        )
+    )
+    + r")|log(?:10|[2-9])\s+)\s*\d+(?:\s+\d{3})*(?:\.\d+)?\s*[xX]\s*10\s*(?:\^|\*\*)"
+)
+
+#: A ``log`` base whose subscript extraction lost: ``10`` (owner decision,
+#: "log10(x) is often expressed as log10x") or one digit 2 to 9 (owner
+#: decision 2026-10-05), not followed by another digit or a decimal point --
+#: ``log100``, ``log25`` and ``log2.5`` keep the ordinary reading.
+_LOST_LOG_BASE_RE = re.compile(r"(?:10|[2-9])(?![\d.])")
+
+#: ``log`` and a lost base (:data:`_LOST_LOG_BASE_RE`) before a bracket,
+#: ``log10(`` or ``log2 (``: rewritten as ONE grouped term by
+#: :func:`_group_bracketed_lost_base_logs`.
+_BRACKETED_LOST_BASE_LOG_RE = re.compile(r"log((?:10|[2-9])(?![\d.]))[ \t]*\(")
+_LETTER_RE = re.compile(f"[{_SUBSCRIPTABLE_LETTERS}]")
+_LETTER_ARGUMENT_RE = re.compile(rf"[{_SUBSCRIPTABLE_LETTERS}]\d*")
+
+#: What may not follow a bracketed argument. A letter or digit would make
+#: the argument longer than the rule reads; ``.`` and ``_`` likewise; ``(``,
+#: ``^``/``**`` and ``!`` would bind to the argument or to the call with no
+#: way to tell which (``sinx^2`` is ``sin²x`` or ``sin(x²)``), so those
+#: shapes are left to the older rules rather than guessed.
+_ARGUMENT_CONTINUES_RE = re.compile(rf"[{_SUBSCRIPTABLE_LETTERS}\d._(^!]|\*\*")
 
 
 class EquivalenceMethod(StrEnum):
@@ -546,205 +444,309 @@ def _has_unsafe_factorial(text: str) -> bool:
     return False
 
 
-def _magnitude_bits(value: sympy.Expr) -> int | None:
-    """Bit length of a finite number's magnitude, or ``None`` when it has none."""
-    if not value.is_number or not value.is_finite:
-        return None
-    if value.is_Integer:
-        return int(abs(value)).bit_length()
-    if value.is_Rational:
-        return max(int(abs(value.p)).bit_length(), int(value.q).bit_length())
-    try:
-        magnitude = abs(float(value))
-    except (OverflowError, TypeError, ValueError):
-        return None
-    if not math.isfinite(magnitude):  # `float(exp(exp(exp(10))))` is inf, not an OverflowError
-        return None
-    return int(math.log2(magnitude)) + 1 if magnitude >= 1 else 1
+def _read_times_x(text: str) -> str:
+    """Read standard form's ``x`` as times (:data:`_TIMES_X_RE`), or leave the text alone.
 
-
-def _pow_would_explode(node: sympy.Pow) -> bool:
-    """Would evaluating this (still unevaluated) power build an oversized integer?
-
-    Called by :func:`_vetted_parse` -- IN THE PARSE WORKER, never in the
-    caller's process -- on every ``Pow`` of an ``evaluate=False`` parse in
-    POST-order, so the node's own children have already passed this check
-    and evaluating them here (``subs`` rebuilds and evaluates) costs at most
-    what they were bounded to per power. Their PRODUCT is not bounded: the
-    base ``((10^300+1)^1000*...*1)`` of a 405-character input evaluates to a
-    25-million-bit integer, measured at 33.5 s with a 2.5 s GIL stall when
-    this walk ran in the caller's process. That, and ``float()`` of a nested
-    ``exp`` coming back ``inf``, is why the walk runs where the timeout and
-    the memory cap apply. Free symbols are substituted with 1: ``x^(n+1)`` bounds as
-    ``x^2`` and stays parseable, while ``(2+x-x)^(999*999*999)`` -- which SymPy
-    would collapse to ``2**997002999`` -- bounds as the number it is. Refused
-    when the exponent's magnitude exceeds :data:`_MAX_EXPONENT_VALUE`, when
-    ``bits(base) * exponent`` exceeds :data:`_MAX_POW_RESULT_BITS`, or when
-    either side does not bound to a finite number (fail closed) -- with one
-    exception. A side that is SINGULAR at the all-ones point (``zoo``,
-    ``oo``, ``nan``) is not refused on that basis: every symbol gets the
-    same value, so any difference of symbols (``M - m``, ``1 - v²/c²``) is 0
-    there, and refusing turned the Lorentz factor ``(1/(1-v²/c²))^(1/2)`` and
-    every ``(x/(x-1))^2`` into UNPARSEABLE -- a property of the substitution
-    point, not of the answer. Such a power is left to the evaluated parse,
-    which runs in the killable, memory-capped :class:`_ParseWorker`
-    (``2^(999*999*999 + 0/(n-1))`` is killed there at the timeout). A
-    second substitution point was rejected: it would re-evaluate inner
-    powers that were bounded only at 1 (``((x^999)^999)^999`` is 1 there,
-    but ``3**(999**3)`` at ``x = 3``), so a legitimate answer could time out
-    in its own vetting.
+    Every such ``x`` is read as times, or none is: when an ``x`` survives the
+    substitution, the text uses ``x`` as the variable, and ``3x+2x10^2`` is as
+    likely ``3x + 2*x_10^2`` as ``3x + 200`` (Task 6 review, Important 1: it
+    was EQUAL_PROVEN to ``3x+200``). Left alone, ``x10`` is a subscript
+    symbol, which can only ever equal itself.
     """
-    ones: dict[sympy.Basic | complex, sympy.Basic | complex] = {
-        symbol: sympy.Integer(1) for symbol in node.free_symbols
-    }
-    try:
-        exponent = sympy.sympify(node.exp).subs(ones).doit()
-        base = sympy.sympify(node.base).subs(ones).doit()
-    except Exception:
-        return True
-    exponent_bits = _magnitude_bits(exponent)
-    if exponent_bits is None:
-        return not _is_singular(exponent)
-    if abs(exponent) > _MAX_EXPONENT_VALUE:
-        return True
-    base_bits = _magnitude_bits(base)
-    if base_bits is None:
-        return not _is_singular(base)
-    return base_bits * math.ceil(float(abs(exponent))) > _MAX_POW_RESULT_BITS
+    replaced = _TIMES_X_RE.sub("*", text)
+    if replaced != text and _ANY_X_RE.search(replaced):
+        return text
+    return replaced
 
 
-def _is_singular(value: sympy.Expr) -> bool:
-    """``zoo``/``oo``/``-oo``/``nan`` anywhere in ``value``: see :func:`_pow_would_explode`."""
-    return bool(value.has(sympy.zoo, sympy.oo, sympy.S.NegativeInfinity, sympy.nan))
+class _AmbiguousFunctionArgumentError(Exception):
+    """A bracketless argument with no settled reading (``sqrt2x``): refuse the text."""
 
 
-def _parse_normalized(normalized: str, *, evaluate: bool) -> sympy.Expr:
-    """The one ``parse_expr`` call, for both the vetting parse and the evaluated one."""
-    return parse_expr(
-        normalized,
-        transformations=_TRANSFORMATIONS,
-        local_dict=dict(_UNIT_LOCAL_DICT),
-        evaluate=evaluate,
-    )
+class _Ambiguous:
+    """Memo marker: reading this start raised :class:`_AmbiguousFunctionArgumentError`."""
 
 
-def _coefficient_height(expr: sympy.Basic) -> float:
-    """An upper bound on every EXACT coefficient any rewriting of ``expr`` can produce.
+_AMBIGUOUS = _Ambiguous()
 
-    The L1 norm of ``expr`` read as a polynomial: ``|r|`` for a Rational;
-    the sum over an ``Add``; the product over a ``Mul``; ``height(base)**k``
-    for a power with a positive numeric exponent ``k``. Because
-    ``|p + q| <= |p| + |q|``, ``|p * q| <= |p| * |q|`` and ``|p**k| <= |p|**k``
-    hold for these norms, no ``expand``, split, ``powsimp`` or ``simplify`` of
-    ``expr`` can produce an exact number larger than this -- including the
-    constant term of ``(999x-999)(999y-999)(999z-999)``, whose atoms are all
-    999 but whose expansion holds ``-997002999``. Everything else counts as
-    1: a symbol, a Float (inexact, so SymPy never builds an exact integer
-    from it), a power with a negative or symbolic exponent (an atom here;
-    every power is bounded where it stands, see :func:`_evaluated_would_explode`).
-    A function application counts as the largest of 1 and its arguments'
-    heights, so ``log(10^300)`` -- which ``exp(k*log(n)) -> n**k`` can turn
-    back into an integer -- is not a height of 1. ``inf`` on float overflow.
+type _ApplicationMemo = dict[int, tuple[int, str] | None | _Ambiguous]
+
+
+def _argument_ends(text: str, end: int) -> bool:
+    return end == len(text) or _ARGUMENT_CONTINUES_RE.match(text, end) is None
+
+
+def _argument_candidates(name: str, text: str, start: int) -> list[tuple[int, str]]:
+    """The bracketless arguments ``name`` may take at ``start``, preferred first."""
+    candidates: list[tuple[int, str]] = []
+    number = _NUMBER_ARGUMENT_RE.match(text, start)
+    if number is not None:
+        letter = _LETTER_RE.match(text, number.end())
+        if letter is not None and name in _NUMBER_LETTER_ARGUMENT_FUNCTIONS:
+            candidates.append((letter.end(), f"{number.group()}*{letter.group()}"))
+        elif letter is not None and name in _AMBIGUOUS_NUMBER_LETTER_FUNCTIONS:
+            candidates.append((letter.end(), ""))
+        candidates.append((number.end(), number.group()))
+        return candidates
+    letter_argument = _LETTER_ARGUMENT_RE.match(text, start)
+    if letter_argument is not None:
+        candidates.append((letter_argument.end(), letter_argument.group()))
+    return candidates
+
+
+def _application_at(text: str, start: int, memo: _ApplicationMemo) -> tuple[int, str] | None:
+    """Read a function application starting at ``start``: ``(end, replacement)`` or ``None``.
+
+    Only the longest function name at ``start`` is tried. Followed by ``(``
+    it is left as it is (``log10`` is the base-10 log, see
+    :func:`_apply_function_names` rule 2); followed
+    by an argument (see :func:`_argument_candidates`) the argument is
+    bracketed, provided what comes after it ends the argument or is itself
+    an application, which is how ``sinxcosx`` splits into two.
+
+    ``memo`` holds the answer for every start already read in this text.
+    Two candidate arguments can both recurse (``sin2asin...``: ``2a`` then
+    ``sin``, or ``2`` then ``asin``), so without it a chain that fails at
+    its tail is retried 2**n ways -- in the caller, outside the parse
+    worker's kill and memory bounds. A start whose reading was refused as
+    ambiguous is remembered as :data:`_AMBIGUOUS` and refused again.
     """
+    if start in memo:
+        cached = memo[start]
+        if isinstance(cached, _Ambiguous):
+            raise _AmbiguousFunctionArgumentError(text[start:])
+        return cached
     try:
-        if expr.is_Rational:
-            return float(abs(expr))
-        if expr.is_Add:
-            return math.fsum(_coefficient_height(arg) for arg in expr.args)
-        if expr.is_Mul:
-            return math.prod(_coefficient_height(arg) for arg in expr.args)
-        if isinstance(expr, sympy.Pow):
-            if expr.exp.is_Rational and expr.exp > 0:
-                height: float = _coefficient_height(expr.base) ** float(expr.exp)
-                return height
-            return 1.0
-        if isinstance(expr, sympy.Function):
-            return max([1.0, *(_coefficient_height(arg) for arg in expr.args)])
-    except OverflowError:
-        return math.inf
-    return 1.0
+        result = _read_application(text, start, memo)
+    except _AmbiguousFunctionArgumentError:
+        memo[start] = _AMBIGUOUS
+        raise
+    memo[start] = result
+    return result
 
 
-def _evaluated_would_explode(expr: sympy.Basic) -> bool:
-    """Would ``expr`` -- the EVALUATED parse -- hurt the caller that receives it?
+def _read_application(text: str, start: int, memo: _ApplicationMemo) -> tuple[int, str] | None:
+    """:func:`_application_at` without the memo lookup."""
+    name = next((n for n in _FUNCTION_NAMES_LONGEST_FIRST if text.startswith(n, start)), None)
+    if name is None:
+        return None
+    after = start + len(name)
+    base = _LOST_LOG_BASE_RE.match(text, after) if name == "log" else None
+    if base is not None:
+        argument_start = _lost_base_argument_start(text, base.end())
+        if argument_start is not None:
+            # A bracketed argument (`log10(`) was already made one grouped
+            # term by `_group_bracketed_lost_base_logs`; one that reaches
+            # here finds no candidate below and is refused.
+            applied = _bracket_argument(
+                name, text, start, argument_start, memo, f"log({{}}, {base.group()})"
+            )
+            if applied is None:
+                # A lost-subscript log whose argument the pass will not read
+                # (`log2x^2` is log2(x^2) or (log2 x)^2): never log(2*x) or
+                # log(2)*x, and never the letter product `2*g*l*o*x**2` the
+                # older rules make of it. Two readings, so refused.
+                raise _AmbiguousFunctionArgumentError(text[start:])
+            return applied
+    if text.startswith("(", after):
+        return after, name
+    return _bracket_argument(name, text, start, after, memo, f"{name}({{}})")
 
-    Review round 1 of triage F2. The unevaluated walk bounds each power at
-    the all-ones point, where ``999*999*999*(x-1)`` is 0; the worker then
-    returned ``2**(997002999*x - 997002999)`` in 0.02 s, and the CALLER froze
-    for 3.7-3.9 s in ``equivalent`` (``simplify`` splitting off
-    ``2**-997002999`` with the GIL held) or never returned from
-    ``sympy.expand``. Those run on the caller's side of the pipe, on exactly
-    this tree, so this tree is what is bounded:
 
-    - every exact number must print (:data:`_MAX_RESULT_INT_BITS`), which
-      also bounds the reply's pickle;
-    - every power and every ``exp`` must have an exponent of coefficient
-      height (:func:`_coefficient_height`) at most :data:`_MAX_EXPONENT_VALUE`
-      -- for ANY base: ``expand`` turns ``(x+1)**(N*y - N)`` into a
-      multinomial of degree N without a number in sight, and ``simplify``
-      turns ``exp(N*log(2)*(x-1))`` into ``2**-N``;
-    - and a power's result must fit: ``bits(height(base)) * height(exponent)``
-      at most :data:`_MAX_RESULT_INT_BITS` (``(10^300+1)**(1000*(x-1))``
-      splits off a 997,000-bit integer).
+def _lost_base_argument_start(text: str, after_base: int) -> int | None:
+    """Where the argument of a ``log`` with its subscript base lost starts, or ``None``.
+
+    Owner decisions (#270): "log10(x) is often expressed as log10x", and the
+    same for a single-digit base 2 to 9 (2026-10-05). A ``log`` and its base
+    (:data:`_LOST_LOG_BASE_RE`) followed by ``(``, by a letter, or by spaces
+    and then a letter, a digit or ``(`` is the log to that base of what
+    follows. Anything else (a bare ``log2``, ``log10 + 1``) is not that
+    shape and keeps the ordinary rule (``log(2)``, ``log(10) + 1``).
     """
-    for atom in expr.atoms(sympy.Rational):
-        if max(abs(atom.p).bit_length(), atom.q.bit_length()) > _MAX_RESULT_INT_BITS:
-            return True
-    for node in sympy.preorder_traversal(expr):
-        if isinstance(node, sympy.Pow):
-            base_height = _coefficient_height(node.base)
-            exponent_height = _coefficient_height(node.exp)
-        elif isinstance(node, sympy.exp) and node.args[0].has(sympy.log):
-            # Only `exp(k*log(n))` is `n**k` in disguise (review round 2):
-            # without a log, `exp(-5000/T)`, `A*exp(-2000*t)` are ordinary
-            # answers that no rewrite turns into an exact power.
-            base_height, exponent_height = 1.0, _coefficient_height(node.args[0])
+    position = after_base
+    while position < len(text) and text[position] in " \t":
+        position += 1
+    if position == len(text):
+        return None
+    if text[position] == "(" or _LETTER_RE.match(text, position) is not None:
+        return position
+    if position > after_base and text[position] in "0123456789":
+        return position
+    return None
+
+
+def _bracket_argument(
+    name: str,
+    text: str,
+    start: int,
+    argument_start: int,
+    memo: _ApplicationMemo,
+    call: str,
+) -> tuple[int, str] | None:
+    """Bracket ``name``'s argument at ``argument_start`` into ``call`` (``"sin({})"``).
+
+    The argument must end (:func:`_argument_ends`) or be followed by another
+    application; otherwise ``None``.
+    """
+    for end, argument in _argument_candidates(name, text, argument_start):
+        if (
+            _NUMBER_ARGUMENT_RE.fullmatch(argument)
+            and _SPACED_DIGIT_AFTER_ARGUMENT_RE.match(text, end) is not None
+        ):
+            raise _AmbiguousFunctionArgumentError(text[start:])
+        if _argument_ends(text, end):
+            tail: tuple[int, str] | None = (end, "")
         else:
+            following = _application_at(text, end, memo)
+            tail = None if following is None else (following[0], f"*{following[1]}")
+        if tail is None:
             continue
-        # `not (x <= limit)`, not `x > limit`: a height that overflowed to
-        # inf and met a 0 is nan, and nan must fail closed.
-        if not exponent_height <= _MAX_EXPONENT_VALUE:
-            return True
-        base_bits = math.log2(base_height) + 1 if base_height >= 1 else 1.0
-        if not base_bits * exponent_height <= _MAX_RESULT_INT_BITS:
-            return True
-    return False
+        if not argument:
+            raise _AmbiguousFunctionArgumentError(text[start:end])
+        return tail[0], call.format(argument) + tail[1]
+    return None
 
 
-def _vetted_parse(normalized: str, *, vet: bool = True) -> sympy.Expr | None:
-    """:func:`_vet_and_parse`'s expression: ``None`` if refused at either stage."""
-    return _vet_and_parse(normalized, vet=vet)[1]
+def _group_bracketed_lost_base_logs(text: str) -> str | None:
+    """Rewrite ``log10(arg)`` and ``log2 (arg)`` as ``((1/log(b))*log(arg))``.
 
+    One grouped term, so an operator that binds to the whole log binds to
+    all of it. The earlier rewrite made the text ``(1/log(10))*log(`` -- a
+    product -- so ``1/log10(100)`` read as ``log(10)*log(100)`` and was
+    EQUAL_PROVEN to ``2*log(10)**2``, and ``log10(100)^2`` squared only the
+    second factor (code review of 2316175a, HIGH). The argument is left in
+    place for the passes after this one (``log10(sinx)`` still reads
+    ``sinx``); only the matching ``)`` gains a second ``)``.
 
-def _vet_and_parse(normalized: str, *, vet: bool = True) -> tuple[str, sympy.Expr | None]:
-    """Bound every power of an UNEVALUATED parse, parse for real, bound the result.
-
-    Returns ``("ok", expr)``, or ``("refused-unevaluated", None)`` when the
-    walk refused it BEFORE the evaluated parse ran (so no big-int work was
-    ever done), or ``("refused-evaluated", None)`` when the result bound
-    refused it after. The stage is reported to the parent
-    (:attr:`_ParseWorker.last_outcome`) so a test can assert WHICH step
-    refused an input rather than how long it took. Runs in the parse worker
-    (see :class:`_ParseWorker`).
-    The ``evaluate=False`` parse builds a tree and evaluates nothing but
-    whitelisted function calls and textually-bounded factorials; the regexes
-    in :func:`parse_expr_safe` read literals, and a computed exponent (triage
-    F2: ``2^(999*999*999)``) needs the tree. The evaluated result is then
-    bounded too (:func:`_evaluated_would_explode`), because that is the form
-    the caller's ``simplify`` and ``expand`` operate on. ``vet=False`` skips
-    both -- only for tests that must reach the evaluated parse with a
-    known-dangerous text, to exercise the worker's own kill and memory
-    bounds. Parse errors propagate to the worker loop, which reports them.
+    Brackets are matched once, with a stack, so the work is linear in the
+    text however deep the nesting. ``None`` when the text's brackets do not
+    match, which the caller refuses. Letters, digits or ``)`` just before
+    ``log`` are a coefficient and get an explicit ``*``: ``A((`` would be a
+    call to ``A``.
     """
-    if vet:
-        unevaluated = _parse_normalized(normalized, evaluate=False)
-        for node in sympy.postorder_traversal(unevaluated):
-            if isinstance(node, sympy.Pow) and _pow_would_explode(node):
-                return ("refused-unevaluated", None)
-    expr = _parse_normalized(normalized, evaluate=True)
-    if vet and _evaluated_would_explode(expr):
-        return ("refused-evaluated", None)
-    return ("ok", expr)
+    matches = list(_BRACKETED_LOST_BASE_LOG_RE.finditer(text))
+    if not matches:
+        return text
+    closing: dict[int, int] = {}
+    open_at: list[int] = []
+    for index, char in enumerate(text):
+        if char == "(":
+            open_at.append(index)
+        elif char == ")":
+            if not open_at:
+                return None
+            closing[open_at.pop()] = index
+    if open_at:
+        return None
+    rewrites = {m.start(): m for m in matches}
+    extra_close_at = {closing[m.end() - 1] for m in matches}
+    out: list[str] = []
+    index = 0
+    while index < len(text):
+        match = rewrites.get(index)
+        if match is not None:
+            before = text[index - 1] if index else ""
+            if before == ")" or before == "_" or before.isalnum():
+                out.append("*")
+            out.append(f"((1/log({match.group(1)}))*log(")
+            index = match.end()
+            continue
+        out.append(text[index])
+        if index in extra_close_at:
+            out.append(")")
+        index += 1
+    return "".join(out)
+
+
+def _apply_function_names(text: str) -> str:
+    """Read an allowed function name written without brackets as a call (#270).
+
+    SymPy's ``split_symbols`` reads any letter run it does not know as a
+    product of letters: ``ln6`` was ``6*l*n`` and ``3ln2`` was ``6*l*n`` too
+    (a false EQUAL_PROVEN), ``cost`` was ``c*o*s*t``, ``sqrt2`` was
+    ``2*q*r*s*t``. Driven by :data:`_ALLOWED_FUNCTIONS`, longest name first,
+    one letter run at a time:
+
+    1. a name followed by ``(`` is left alone, except that
+    2. ``log10`` and ``log2`` to ``log9`` are logs with their subscript base
+       lost (owner decisions): ``log10(x)`` and ``log2 (8)`` become the
+       grouped terms ``((1/log(10))*log(x))`` and ``((1/log(2))*log(8))``,
+       built from allowed calls only, before the scan below
+       (:func:`_group_bracketed_lost_base_logs`; unmatched brackets refuse
+       the text), and ``log10x``, ``log2 8`` and ``log3x`` become
+       ``log(x, 10)``, ``log(8, 2)`` and ``log(x, 3)``, never ``log(10*x)``
+       or ``log(2)*8`` (see :func:`_lost_base_argument_start`). When the
+       argument is one the pass will not read (``log2x^2``), the text is
+       refused rather than guessed;
+    3. letters before the name are a coefficient when the name is followed
+       by ``(`` or an argument: ``Asin(`` -> ``A*sin(``. A name is never
+       matched inside a run otherwise;
+    4. a name followed directly by an argument is bracketed: a number
+       (``ln6`` -> ``ln(6)``, ``3ln2`` -> ``3ln(2)``, ``sqrt2`` ->
+       ``sqrt(2)``; implicit multiplication supplies the ``*`` before it),
+       one letter with optional digits (``sinx`` -> ``sin(x)``, ``cosθ1``
+       -> ``cos(θ1)``, which :func:`_rewrite_digit_suffixes` then makes
+       ``cos(θ_1)``), or a number then one letter, for the trig functions,
+       ``ln`` and ``log`` only (``sin2x`` -> ``sin(2*x)``, owner decision
+       D1). ``sqrt2x`` has no settled reading, so the text is refused: this
+       returns ``""``, which :func:`parse_expr_safe` turns into ``None``.
+       A number argument takes its spaced thousands groups (``ln1 000`` ->
+       ``ln(1 000)``); any other spaces-then-digit after it (``sin30 2``,
+       ``ln1.5 000``) is a second reading, so that text is refused too;
+    5. after an argument the run is scanned again, so ``sinxcosx`` ->
+       ``sin(x)*cos(x)``.
+
+    Anything else after a name -- a space (``sin x``, already a call to
+    SymPy), a second letter (``sinxy``), an exponent (``sinx^2``), a bracket
+    after the argument (``ln2(x+1)``) -- is left to the older rules.
+    """
+    grouped = _group_bracketed_lost_base_logs(text)
+    if grouped is None:
+        return ""
+    text = grouped
+    out: list[str] = []
+    memo: _ApplicationMemo = {}
+    # Right to left first: an application's chain only reaches starts to its
+    # right, so each start then finds the next link already in `memo`, one
+    # frame down. Read left to right, a chain recursed once per link, and
+    # `"lnx" * 166` needed ~527 frames (Task 6 review, Minor 5) -- a
+    # RecursionError in a deep caller. Ambiguity is recorded here and raised
+    # only if the scan below reaches that start.
+    for position in range(len(text) - 1, -1, -1):
+        with contextlib.suppress(_AmbiguousFunctionArgumentError):
+            _application_at(text, position, memo)
+    index = 0
+    while index < len(text):
+        run_start = index
+        if _LETTER_RE.match(text, index) is None or (
+            index > 0 and (text[index - 1] == "_" or _LETTER_RE.match(text, index - 1))
+        ):
+            out.append(text[index])
+            index += 1
+            continue
+        run_end = index
+        while _LETTER_RE.match(text, run_end) is not None:
+            run_end += 1
+        try:
+            application = next(
+                (
+                    (position, found)
+                    for position in range(run_start, run_end)
+                    if (found := _application_at(text, position, memo)) is not None
+                ),
+                None,
+            )
+        except _AmbiguousFunctionArgumentError:
+            return ""
+        if application is None:
+            out.append(text[run_start:run_end])
+            index = run_end
+            continue
+        position, (end, replacement) = application
+        coefficient = text[run_start:position]
+        out.append(f"{coefficient}*{replacement}" if coefficient else replacement)
+        index = end
+    return "".join(out)
 
 
 def _rewrite_digit_suffixes(text: str) -> str:
@@ -848,20 +850,41 @@ def _collapse_thousands_separators(text: str) -> str:
 def _normalize_text(text: str) -> str:
     """Rewrite CAIE-style notation into something SymPy's parser accepts.
 
-    Order matters: superscripts must be unfolded before NFKC normalisation
-    (see :data:`_SUPERSCRIPT_RUN_RE`'s docstring note above); unit-digit
-    splitting must run after multiplication-glyph replacement so a unit
-    right after a `×` isn't mistaken for part of the preceding number; the
-    thousands-separator collapse runs last of the rewrites, once mixed
-    fractions have already been rejected on the original spacing.
+    Order matters. The micro sign is folded to Greek mu first, so every
+    later pass and the unit tables see one spelling (:data:`_MICRO_SIGN`).
+    Superscripts must be unfolded before NFKC normalisation (see
+    :data:`_SUPERSCRIPT_RUN_RE`'s docstring note above). The ``x``-as-times
+    rule (:data:`_TIMES_X_RE`) runs after the superscript unfold and the
+    multiplication-glyph replacement, so ``3.0x10⁸`` and ``3.0×10^8`` reach
+    it in the same ``10**``/``10^`` shape, and before the function-name pass
+    and the digit-suffix rule, which would otherwise read ``x10`` as a
+    subscripted symbol. Running first, it would also take the ``x`` a
+    function's bracketless argument needs (``sin2x10^3``), so that shape is
+    refused before it (:data:`_FUNCTION_ARGUMENT_TIMES_X_RE`). The function-name pass
+    (:func:`_apply_function_names`) runs immediately before the digit-suffix
+    rule, which then subscripts the digits inside a bracketed argument
+    (``sin(x2)`` -> ``sin((x_2))``); unit-digit splitting must run after
+    multiplication-glyph replacement so a unit right after a `×` isn't
+    mistaken for part of the preceding number. The thousands-separator
+    collapse runs last of the rewrites; a bracketless number argument takes
+    its spaced thousands groups itself (:data:`_NUMBER_ARGUMENT_RE`), so the
+    collapse joins them inside the brackets (``ln(1 000)`` -> ``ln(1000)``).
+
+    Returns ``""`` when the text is refused as ambiguous (``sqrt2x``,
+    ``sin2x10^3``, ``sin30 2``).
     """
-    normalized = _unfold_superscripts(text)
+    normalized = text.replace(_MICRO_SIGN, _GREEK_MU)
+    normalized = _unfold_superscripts(normalized)
     normalized = normalized.replace(_UNICODE_MINUS, "-")
     for ch in _MULT_CHARS:
         normalized = normalized.replace(ch, "*")
     normalized = normalized.replace("÷", "/")
     for alias, canonical in _UNIT_ALIASES.items():
         normalized = normalized.replace(alias, canonical)
+    if _FUNCTION_ARGUMENT_TIMES_X_RE.search(normalized):
+        return ""
+    normalized = _read_times_x(normalized)
+    normalized = _apply_function_names(normalized)
     normalized = _rewrite_digit_suffixes(normalized)
     normalized = _collapse_thousands_separators(normalized)
     return normalized.strip()
@@ -923,253 +946,25 @@ def _run_bounded[T](func: Callable[[], T], timeout: float) -> T | None:
     return value  # type: ignore[return-value]
 
 
-def _parse_worker_main(  # pragma: no cover
-    conn: Connection[_ParseReply, _ParseRequest], memory_limit: int
-) -> None:
-    """The parse worker's loop, run in the child (hence no coverage).
-
-    ``(text, vet) -> ("ok", expr) | ("refused-unevaluated", None) |
-    ("refused-evaluated", None) | ("memory", None) | ("error", repr)``;
-    ``None`` ends the loop. See :func:`_vet_and_parse`.
-
-    Runs in a ``spawn``ed child, so this module is imported afresh there.
-    The address-space limit is set first; where ``resource`` is unavailable
-    or refuses, the parent's timeout is the only bound (documented on
-    :class:`_ParseWorker`). One warm-up parse runs before ``("ready", None)``
-    is sent, so SymPy's first-parse cost (~0.15-0.19 s) is paid inside the
-    parent's start budget, not inside a caller's parse ``timeout``.
-
-    SIGINT is ignored: a Ctrl-C in the terminal reaches the whole process
-    group, and the child's lifetime belongs to the parent (``daemon=True``
-    plus the parent's kill/shutdown), not to the keyboard. A closed pipe
-    (the parent exited or was killed) ends the loop quietly.
-    """
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-    try:
-        import resource
-
-        _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-        resource.setrlimit(resource.RLIMIT_AS, (memory_limit, hard))
-    except (ImportError, ValueError, OSError):
-        pass
-    _vetted_parse("2*x**2 + 1")
-    try:
-        conn.send(("ready", None))
-        while True:
-            message = conn.recv()
-            if message is None:
-                return
-            text, vet = message
-            try:
-                conn.send(_vet_and_parse(text, vet=vet))
-            except MemoryError:
-                conn.send(("memory", None))
-            except Exception as exc:
-                conn.send(("error", repr(exc)))
-    except (EOFError, OSError):
-        return
-
-
-class _ParseWorker:
-    """One reusable, killable child process for ALL of the parse's SymPy work.
-
-    Triage F2 (user decision 3, 2026-09-29). The parse is the one step of
-    this module where SymPy can do C-level big-integer work that holds the
-    GIL -- a thread timeout cannot interrupt it (see :func:`_run_bounded`),
-    but a process can be killed. That covers the vetting walk too
-    (:func:`_vetted_parse`): it evaluates bases and exponents, and a
-    product of individually-bounded powers froze the caller's process for
-    2.5 s at a time when the walk ran there. So the caller's process does
-    only the regex guards and the pipe round-trip; the unevaluated parse,
-    the walk and the evaluated parse all run here, under the timeout and
-    the memory cap. Measured in this venv: a spawn start costs
-    0.17-0.23 s, a warm call 0.3-0.6 ms, so ONE lazily-started worker is
-    kept and reused rather than one process per call (300-700x the parse).
-
-    Guarantees, in every failure mode, that :meth:`parse` returns ``None``
-    and never raises: a timeout kills and joins the child; a MemoryError in
-    the child (address space capped at :data:`_PARSE_WORKER_MEMORY_BYTES`)
-    is reported and the child lives on; a crash or broken pipe is joined and
-    the next call respawns; a child that cannot be started, or does not
-    report ready within :data:`_PARSE_WORKER_START_TIMEOUT`, is killed and
-    the call returns ``None``. The caller's ``timeout`` covers the parse
-    only, never the start. ``spawn``, never ``fork``: the web server runs
-    sync routes on threads. Calls are serialised by a lock (one worker per
-    parent), so a caller waits at most one timeout plus one respawn behind a
-    runaway sibling. The owner pid is recorded, and an ``os.register_at_fork``
-    hook resets the lock and forgets the child in a forked process, so a
-    pre-forked server worker or a forking test harness starts its own child
-    instead of sharing a pipe or inheriting a held lock. The child is a
-    daemon, so ``multiprocessing``'s atexit hook terminates it with the
-    parent; :meth:`shutdown` does so explicitly.
-
-    The child never runs the parent's ``__main__``: ``spawn`` would re-run a
-    path-run script (or a ``-m`` module not named ``__main__``) in the child,
-    before its memory cap is set, and a script that called
-    :func:`parse_expr_safe` at import time without an
-    ``if __name__ == "__main__":`` guard then had the child start a nested
-    worker of its own. :func:`~lemely.runtime.process_start.start_without_parent_main`
-    starts it, as it starts the scan workers.
-    """
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._process: BaseProcess | None = None
-        self._conn: Connection[_ParseRequest, _ParseReply] | None = None
-        self._owner_pid: int | None = None
-        #: `time.monotonic()` of the last failed start, for the cool-down.
-        self._start_failed_at: float | None = None
-        #: How the most recent :meth:`parse` ended, on any thread -- a
-        #: diagnostic for tests, which assert on the STEP that refused an
-        #: input instead of on elapsed time: "ok", "refused-unevaluated",
-        #: "refused-evaluated", "memory", "error", "timeout", "crash",
-        #: "interrupted" or "unavailable" (no worker could be started).
-        self.last_outcome: str | None = None
-
-    def _forget_after_fork(self) -> None:
-        """In a forked child: the parent's worker, pipe and lock are not ours."""
-        self._lock = threading.Lock()
-        self._process = self._conn = self._owner_pid = None
-        self._start_failed_at = None
-
-    def _start(self) -> bool:
-        """Start a child, or ``False`` after ONE warning if it cannot.
-
-        After a failure, ``False`` without trying for
-        :data:`_PARSE_WORKER_START_COOLDOWN` seconds.
-        """
-        failed_at = self._start_failed_at
-        if failed_at is not None and time.monotonic() - failed_at < _PARSE_WORKER_START_COOLDOWN:
-            return False
-        started = self._spawn()
-        self._start_failed_at = None if started else time.monotonic()
-        return started
-
-    def _spawn(self) -> bool:
-        context = multiprocessing.get_context("spawn")
-        try:
-            parent_conn, child_conn = context.Pipe()
-        except OSError:  # out of file descriptors
-            _logger.warning("parse worker not started: no pipe", exc_info=True)
-            return False
-        process = context.Process(
-            target=_parse_worker_main,
-            args=(child_conn, _PARSE_WORKER_MEMORY_BYTES),
-            name="lemely-parse-worker",
-            daemon=True,
-        )
-        try:
-            start_without_parent_main(process)
-        except BaseException as exc:  # e.g. a daemonic parent, out of fds -- or an interrupt
-            parent_conn.close()
-            child_conn.close()
-            if process.pid is not None:  # spawned before the failure: never leave it running
-                process.kill()
-                process.join()
-            if not isinstance(exc, Exception):
-                raise
-            _logger.warning("parse worker not started; parse_expr_safe returns None", exc_info=True)
-            return False
-        child_conn.close()
-        self._process, self._conn, self._owner_pid = process, parent_conn, os.getpid()
-        try:
-            ready = parent_conn.poll(_PARSE_WORKER_START_TIMEOUT)
-            ready = ready and parent_conn.recv() == ("ready", None)
-        except (EOFError, OSError):
-            ready = False
-        except BaseException:  # interrupted mid-handshake: an unread "ready" would desync
-            self._discard(kill=True)
-            raise
-        if not ready:
-            _logger.warning("parse worker did not report ready; parse_expr_safe returns None")
-            self._discard(kill=True)
-        return ready
-
-    def _discard(self, *, kill: bool) -> None:
-        process, conn = self._process, self._conn
-        self._process = self._conn = self._owner_pid = None
-        if conn is not None:
-            conn.close()
-        if process is None:
-            return
-        if kill:
-            process.kill()
-        process.join()
-        process.close()
-
-    def _ready(self) -> bool:
-        if self._process is None or self._owner_pid != os.getpid():
-            # A foreign or never-started worker: never joined here.
-            self._process = self._conn = None
-            return self._start()
-        if not self._process.is_alive():
-            self._discard(kill=False)
-            return self._start()
-        return True
-
-    def parse(self, text: str, timeout: float, *, vet: bool = True) -> sympy.Expr | None:
-        """``text`` vetted and parsed in the child (:func:`_vetted_parse`).
-
-        ``None`` when the vetting walk refuses it, and on timeout, memory,
-        crash or parse error. ``vet=False`` is for tests only (see there).
-        """
-        with self._lock:
-            if not self._ready() or self._conn is None:
-                self.last_outcome = "unavailable"
-                return None
-            conn = self._conn
-            try:
-                conn.send((text, vet))
-                if not conn.poll(timeout):
-                    self._discard(kill=True)
-                    self.last_outcome = "timeout"
-                    return None
-                kind, value = conn.recv()
-            except Exception:  # EOFError/OSError on a crash, or an unpicklable reply
-                self._discard(kill=True)
-                self.last_outcome = "crash"
-                return None
-            except BaseException:
-                # KeyboardInterrupt/SystemExit while the reply is outstanding:
-                # a live worker would hand THIS text's reply to the next
-                # caller (review round 1), so it is killed before propagating.
-                self._discard(kill=True)
-                self.last_outcome = "interrupted"
-                raise
-            self.last_outcome = kind
-            if kind != "ok" or not isinstance(value, sympy.Basic):
-                return None
-            # Any Basic, exactly as the in-process parse returned before (a
-            # relational is not an Expr); parse_expr_safe applies the same test.
-            return cast("sympy.Expr", value)
-
-    def pid(self) -> int | None:
-        process = self._process
-        return None if process is None else process.pid
-
-    def shutdown(self) -> None:
-        with self._lock:
-            if self._owner_pid is not None and self._owner_pid != os.getpid():
-                # Another process's child (no fork hook on this platform):
-                # not ours to signal or join. The lock is NOT replaced here --
-                # a thread may be waiting on it.
-                self._process = self._conn = self._owner_pid = None
-                return
-            if self._conn is not None:
-                with contextlib.suppress(OSError):
-                    self._conn.send(None)
-            self._discard(kill=True)
-
-
-_PARSE_WORKER = _ParseWorker()
-if hasattr(os, "register_at_fork"):
-    os.register_at_fork(after_in_child=_PARSE_WORKER._forget_after_fork)
+#: Outcomes of :func:`parse_expr_outcome` that do not say the text is not an
+#: expression: the worker was held by another caller past this one's timeout
+#: (``"busy"``), did not answer in time (``"timeout"``), could not be started
+#: (``"unavailable"``) or died mid-reply (``"crash"``) -- nothing about the
+#: text -- or the text has two readings and was refused rather than guessed
+#: (``"refused-ambiguous"``, #270). A caller deciding what the text IS from a
+#: ``None`` expression must treat these as "could not decide", never as "not
+#: an expression" (Task 2 review, Important 1; Task 6 review, Minor 4).
+PARSE_UNDECIDED_OUTCOMES = frozenset(
+    {"busy", "timeout", "unavailable", "crash", "refused-ambiguous"}
+)
 
 
 def parse_expr_safe(
     text: str | None, *, timeout: float = _DEFAULT_PARSE_TIMEOUT
 ) -> sympy.Expr | None:
-    """Parse CAIE-style answer text into a SymPy expression, or ``None``.
+    """:func:`parse_expr_outcome`'s expression, without the outcome.
+
+    Parse CAIE-style answer text into a SymPy expression, or ``None``.
 
     Handles plain arithmetic, unicode superscripts/multiplication signs,
     standard-form notation (``3.0×10^8``), simple unit expressions
@@ -1180,42 +975,68 @@ def parse_expr_safe(
     exception, since callers use this on untrusted, free-text student and
     mark-scheme content.
 
-    Also returns ``None`` — deliberately, not a bug — for text this module
-    can technically make SymPy accept but must not, because the result
-    would be a confident verdict on a meaning nobody wrote: mark-scheme
-    prose ("N/A", a range, "±"/"~" tolerance notation), disallowed function
-    calls, and exponent towers/oversized literal exponents that have no
-    realistic CAIE reading and would otherwise defeat the timeout budget
-    below by hanging *parsing* itself. Bounded by ``timeout`` for the same
-    reason (I8 review MUST-FIX #9): a handful of characters (``9^9^9``) can
-    otherwise run unbounded, or return a valid but multi-million-digit
-    integer (``2**100000000``) — caught by the exponent and factorial checks
-    and by the structural bound on every Pow of an unevaluated parse; and
-    the evaluated parse itself runs in a killable child process with an
-    address-space limit (_ParseWorker), which is the backstop for whatever
-    those miss -- a thread timeout is not, see _run_bounded. The structural
-    bound runs in that child too (see _pow_would_explode for why).
+    Also returns ``None`` — deliberately, not a bug — for text this module can
+    technically make SymPy accept but must not, because the result would be a
+    confident verdict on a meaning nobody wrote: mark-scheme prose ("N/A", a
+    range, "±"/"~" tolerance notation), disallowed function calls, a digit
+    straight after a closing bracket (``(x+1)2``: a lost superscript or a
+    trailing coefficient, #270), a bracketless function argument with no
+    settled reading (``sqrt2x``, #270), and exponent towers/oversized literal
+    exponents that have no realistic CAIE reading and would otherwise defeat
+    the timeout budget below by hanging *parsing* itself. Bounded by
+    ``timeout`` for the same reason (I8 review MUST-FIX #9): a handful of
+    characters (``9^9^9``) can otherwise run unbounded, or return a valid but
+    multi-million-digit integer (``2**100000000``) — caught by the exponent
+    and factorial checks and by the structural bound on every Pow of an
+    unevaluated parse; and the evaluated parse itself runs in a killable child
+    process with an address-space limit (_ParseWorker), which is the backstop
+    for whatever those miss -- a thread timeout is not, see _run_bounded. The
+    structural bound runs in that child too (see _pow_would_explode for why).
+    """
+    return parse_expr_outcome(text, timeout=timeout)[0]
+
+
+def parse_expr_outcome(
+    text: str | None, *, timeout: float = _DEFAULT_PARSE_TIMEOUT
+) -> tuple[sympy.Expr | None, str]:
+    """:func:`parse_expr_safe`, plus how THIS call ended.
+
+    ``(expr, "ok")`` on success. Otherwise ``(None, outcome)``: ``"refused"``
+    when the text is refused before the worker sees it (empty, too long,
+    prose, an unsafe construct, see :func:`parse_expr_safe`);
+    ``"refused-ambiguous"`` when it is refused because it has two readings
+    and no convention settles them (a digit after a closing bracket,
+    ``(x+1)2``; a bracketless argument such as ``sqrt2x``, #270); the worker's
+    own outcome after that (:attr:`_ParseWorker.last_outcome`'s values,
+    ``"interrupted"`` aside, which propagates), and ``"error"`` for an
+    ``"ok"`` reply that is not a SymPy object. A ``None`` with an outcome in
+    :data:`PARSE_UNDECIDED_OUTCOMES` says nothing about the text. Per call,
+    unlike ``last_outcome``, which every thread overwrites.
     """
     if text is None:
-        return None
+        return None, "refused"
     stripped = text.strip()
     if not stripped or len(stripped) > _MAX_INPUT_LEN:
-        return None
+        return None, "refused"
     if _looks_like_prose_or_unsafe(stripped):
-        return None
+        return None, "refused"
+    if _DIGIT_AFTER_PAREN_RE.search(stripped):
+        return None, "refused-ambiguous"
     normalized = _normalize_text(stripped)
-    if not normalized or _has_unsafe_exponent(normalized) or _has_unsafe_factorial(normalized):
-        return None
+    if not normalized:  # the function-name pass refused it (`sqrt2x`)
+        return None, "refused-ambiguous"
+    if _has_unsafe_exponent(normalized) or _has_unsafe_factorial(normalized):
+        return None, "refused"
     # Triage F2: every power of an UNEVALUATED parse is bounded first (the
     # regexes above read literals; a computed exponent needs the tree), then
     # the evaluated parse runs. Both evaluate SymPy expressions built from
     # untrusted text, which can hold the GIL for seconds, so both run in a
     # killable, memory-capped child (`_ParseWorker`, `_vetted_parse`): None
     # on refusal, timeout, memory-limit breach, crash or parse error alike.
-    expr = _PARSE_WORKER.parse(normalized, timeout)
+    expr, outcome = _PARSE_WORKER.parse_with_outcome(normalized, timeout)
     if not isinstance(expr, sympy.Basic):
-        return None
-    return expr
+        return None, "error" if outcome == "ok" else outcome
+    return expr, outcome
 
 
 #: Recognised free-text shapes for `CalculatedAnswer.tolerance`

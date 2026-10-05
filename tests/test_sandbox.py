@@ -831,7 +831,7 @@ def test_the_default_limits_fit_the_accepted_worst_case() -> None:
     process idle, one marking run (its pages plus ``scan_hygiene``), the
     parse worker at its address limit and the resource tracker. This pins
     it, so a raised limit or a second concurrent run goes red."""
-    from lemely.core.equivalence import _PARSE_WORKER_MEMORY_BYTES
+    from lemely.core.equivalence_worker import _PARSE_WORKER_MEMORY_BYTES
     from lemely.io.run_cap import MAX_CONCURRENT_RUNS
 
     settings = SandboxSettings()
