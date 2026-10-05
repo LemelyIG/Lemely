@@ -774,7 +774,13 @@ _BUDGET_MARGIN_MIB = 40
 def test_the_default_limits_fit_the_two_gib_budget() -> None:
     """Owner decision S1: on a 2 GiB instance the web process, the pages a
     40-page scan accumulates in it, both workers' data limits, the parse
-    worker and the resource tracker must fit together, with a real margin."""
+    worker and the resource tracker must fit together, with a real margin.
+
+    This is the sum the owner accepted, and only that: one set of held
+    pages, the parse worker idle, no ``scan_hygiene`` in the web process.
+    It is not the worst case, which does not fit (final review R1,
+    Important 2, and R3, I4): ``docs/ci-cd.md``, "Memory budget", has that
+    table, and the limits are the owner's to change."""
     settings = SandboxSettings()
     fixed_mib = (
         (_WEB_PROCESS_MB + _PARENT_PAGES_MB + _PARSE_WORKER_MB + _RESOURCE_TRACKER_MB) * 1e6 / MiB

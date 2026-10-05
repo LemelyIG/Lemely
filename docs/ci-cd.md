@@ -310,34 +310,86 @@ does nothing:
 
 ### Memory budget
 
-The backend runs at `--memory=2Gi`. The figure is a sum: scan work (#260,
-#271) runs in two child processes, each under a hard memory limit, and the
-instance has to hold both children at their limits at the same time as the
-web process and the pages it keeps while an extraction runs. Every number
-below is measured; the measurements and the rule that sets the limits are in
-the docstring of `lemely/runtime/sandbox.py`.
+The backend runs at `--memory=2Gi`. Scan work (#260, #271) runs in two
+child processes, each under a hard memory limit, so the instance has to hold
+both children at their limits at the same time as the web process, the
+equivalence parse worker and whatever the web process holds for the scans it
+is marking. The limits bound the children only. Nothing bounds the web
+process's share, and at worst the sum does not fit in 2 GiB (see the margin
+below). The measurements and the rule that sets the limits are in the
+docstring of `lemely/runtime/sandbox.py`.
+
+The worker returns a scan's pages to the web process, and the web process
+holds all of them until the extraction call to Gemini returns
+(`answer_extraction`), not just while the worker renders. Before that call
+it runs `scan_hygiene` on each page, in the web process, and that costs
+far more than the page itself: a float64 copy plus the Laplacian arrays.
+
+One extraction run costs the web process the worse of two cases:
+
+| Case | Pages held | `scan_hygiene`, one page | Run |
+|---|---|---|---|
+| The adversarial 40-page PDF (4.1 Mpx pages) | 477.3 MiB | 129.2 MiB | 606.5 MiB |
+| One 16 Mpx image page | 45.8 MiB (incompressible PNG) | 504.7 MiB | 550.5 MiB |
+
+The budget:
 
 | Part | Size |
 |---|---|
 | Extraction worker, `RLIMIT_DATA` (`RLIMIT_AS` 768 MiB) | 640 MiB |
 | Interactive worker, `RLIMIT_DATA` (`RLIMIT_AS` 704 MiB) | 576 MiB |
-| Web process, idle after start-up | 237.4 MB (226.4 MiB) |
-| Pages the web process holds during the adversarial 40-page extraction | 500.5 MB (477.3 MiB) |
-| Equivalence parse worker | 71.9 MB (68.6 MiB) |
-| `multiprocessing` resource tracker | 16.4 MB (15.6 MiB) |
-| **Total** | **2003.9 MiB of 2048** |
+| Web process, idle after start-up | 226.4 MiB (237.4 MB) |
+| One extraction run in the web process (the worse case above) | 606.5 MiB |
+| Equivalence parse worker, at its `RLIMIT_AS` | 512 MiB |
+| `multiprocessing` resource tracker | 15.6 MiB (16.4 MB) |
+| **Total with one extraction run** | **2576.5 MiB of 2048** |
+| Each further extraction run in flight at the same time | +606.5 MiB |
 
-That leaves a margin of 44.1 MiB, which the owner accepted. The backstop is
-the OOM priority: every worker child sets `oom_score_adj=1000`, so if the
-instance does run out, the kernel kills a worker (that request gets a 422)
-before it kills the web server.
+With one extraction run in flight, the margin is **-528.5 MiB**: the
+instance can run out of memory. Each further run in flight adds 606.5 MiB:
+with a teacher run and a student run at once, the margin is -1135.0 MiB.
+Teacher runs share one thread (`teacher.py`'s pool has one worker). Student runs are not capped: each `POST /student/correct` gets its
+own thread, with no limit across runs. The serialised extraction worker caps
+only how many scans render at once, not how many sets of pages the web
+process holds.
 
-The extraction worker serves extraction and the upload check; the
-interactive worker serves preview and crop. Each worker handles one call at a
-time, so the serialised workers are the concurrency cap, and the service sets
-no `--concurrency` flag. One interactive worker serialises every preview and
-crop, so a page that asks for many thumbnails at once can get 503 "busy"
-under load.
+The table leaves out one transient, because it was not measured: the
+re-reads decode whole pages in the web process, up to
+`gemini.reread_concurrency` (4) at once. The budget the owner first accepted
+(2003.9 MiB, a 44.1 MiB margin) counted the parse worker idle (68.6 MiB)
+and left out `scan_hygiene`.
+
+The figures in the table were measured on 2026-10-04 and 2026-10-05:
+
+- The web process, the held pages and the parse worker's idle size were
+  measured in Task 11.
+- `scan_hygiene` was measured on synthetic pages, as `VmHWM` growth over the
+  starting RSS.
+
+The OOM priority does not protect the web server from all of this. Every
+worker child sets `oom_score_adj=1000`, so the kernel kills a worker first.
+When the growth is in the web process, though, killing an idle worker child
+frees only its resident size, about 70 to 80 MiB. The kernel's next choice
+is then the web process itself, and with it every request and SSE stream in
+flight.
+
+The extraction worker serves extraction and the upload check, and the
+interactive worker serves preview and crop. Each handles one call at a time,
+and a call's timeout includes the wait for the worker. That has three
+consequences:
+
+- **An upload check can fail behind an extraction.** An upload arriving
+  during an extraction waits up to its 20 s timeout and then gets 503 "Scan
+  rendering is temporarily unavailable", though the scan is fine. The
+  slowest extraction measured takes 33 s.
+- **A busy extraction fails the paper.** An extraction queued behind more
+  than its 180 s of other work fails with "Could not render this scan", and
+  the paper is marked as failed rather than retried.
+- **Thumbnails can come back busy.** One interactive worker serialises every
+  preview and crop, so a page that asks for many thumbnails at once can get
+  503 "busy" under load.
+
+The service sets no `--concurrency` flag.
 
 The limits and timeouts are settings, so each can be changed with an
 environment variable (and a line in `env_vars`, as described above). The
@@ -356,10 +408,11 @@ extraction measured takes 33 s.
 | `LEMELY_SANDBOX__PREVIEW_TIMEOUT_SECONDS` | 15 |
 | `LEMELY_SANDBOX__CROP_TIMEOUT_SECONDS` | 10 |
 
-Raising a data limit raises the total above: keep the two data limits, the
-rest of the table and the margin within the instance's memory, or raise
-`--memory` with them. `tests/test_sandbox.py` pins the defaults to the
-measured growth rule and to a margin of at least 40 MiB.
+Raising a data limit raises the total above. `tests/test_sandbox.py` pins
+the defaults to the measured growth rule. It also pins a margin of at least
+40 MiB, but only for the sum the owner first accepted: one set of held
+pages, an idle parse worker and no `scan_hygiene`. On the terms in the table
+above there is no margin.
 
 ### The marking flags
 

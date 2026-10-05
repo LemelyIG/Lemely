@@ -278,13 +278,19 @@ jobs:
           # the per-minute metric could miss, so it stayed. That held until the
           # scan workers (#260, #271).
           #
-          # --memory=2Gi is a sum, not insurance: the two scan worker limits
-          # (extraction 640 MiB, interactive 576 MiB RLIMIT_DATA), the web
-          # process (237 MB idle), the pages it holds while an extraction runs
-          # (500 MB), the parse worker and the resource tracker. They total
-          # 2003.9 of 2048 MiB. A worker child is the kernel's first choice if
-          # the instance runs out (oom_score_adj 1000). There is no
-          # --concurrency flag: the serialised workers are the cap. See
+          # --memory=2Gi is a sum that does not fit at worst. The two scan
+          # worker limits (extraction 640 MiB, interactive 576 MiB
+          # RLIMIT_DATA), the web process (226 MiB idle), one extraction
+          # run's share of the web process (its pages, held until the Gemini
+          # call returns, plus scan_hygiene: 606.5 MiB at worst), the parse
+          # worker at its 512 MiB limit and the resource tracker total
+          # 2576.5 of 2048 MiB: a margin of -528.5 MiB. Each further run in
+          # flight adds 606.5 MiB, and student runs are not capped. The
+          # serialised workers cap how many scans render at once, not the
+          # pages the web process holds. A worker child is the kernel's first
+          # choice if the instance runs out (oom_score_adj 1000), but when
+          # the growth is in the web process, killing one frees little and
+          # the web process is next. There is no --concurrency flag. See
           # "Memory budget" in docs/ci-cd.md.
           flags: --allow-unauthenticated --service-account=lemely-backend-${{ needs.resolve-env.outputs.environment }}@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com --max-instances=3 --min-instances=0 --memory=2Gi --cpu=1 --timeout=300 --port=8000 --execution-environment=gen2
           #

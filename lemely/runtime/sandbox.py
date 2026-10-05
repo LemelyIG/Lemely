@@ -213,17 +213,41 @@ The 2 GiB budget (owner decision S1), resident, every fixed part measured
 * the extraction worker's ``RLIMIT_DATA`` 640 MiB and the interactive
   worker's 576 MiB.
 
-Together 2003.9 MiB of the instance's 2048: a margin of 44.1 MiB. The owner
-accepted it, with the OOM priority as the backstop: every worker child sets
-``oom_score_adj`` to 1000 (:data:`_OOM_SCORE_ADJ`), so if the instance runs
-out the kernel kills a worker (one request gets a 422) before the web
-server. Pinned at 40 MiB or more by
-``tests/test_sandbox.py::test_the_default_limits_fit_the_two_gib_budget``.
+Together 2003.9 MiB of the instance's 2048: a margin of 44.1 MiB, which
+the owner accepted. That sum, pinned at 40 MiB or more by
+``tests/test_sandbox.py::test_the_default_limits_fit_the_two_gib_budget``,
+holds only for one set of held pages, an idle parse worker and nothing
+else in the web process. It is not the worst case (final review R1,
+Important 2, and R3, I4; ``docs/ci-cd.md``, "Memory budget", has the
+table):
+
+* The parent holds a scan's pages after the worker returns them, until
+  the extraction call to Gemini returns, and nothing bounds how many runs
+  do so at once. Teacher runs share one thread; student runs each get
+  their own, uncapped. The serialised workers cap how many scans RENDER at
+  once, not how many sets of pages the web process holds: each run in
+  flight adds its pages.
+* ``scan_hygiene`` runs in the web process, on each page, before that
+  call. Measured as ``VmHWM`` growth (2026-10-05): 504.7 MiB for one
+  16 Mpx page, 129.2 MiB for one 4.1 Mpx page of the adversarial scan.
+* The parse worker counts at its 512 MiB ``RLIMIT_AS``, not idle.
+
+On those terms one extraction run needs 640 + 576 + 226.4 + (477.3 +
+129.2) + 512 + 15.6 = 2576.5 MiB, a margin of -528.5 MiB, and each further
+run in flight 606.5 MiB more. The OOM priority does not cover this: every
+worker child sets ``oom_score_adj`` to 1000 (:data:`_OOM_SCORE_ADJ`), so
+the kernel kills a worker first, but when the growth is in the web process
+an idle worker frees only its ~70-80 MiB and the web process is next.
 
 The extraction timeout is 180 s (owner decision, Task 11 review), counting
 any wait for the worker: the slowest extraction measured is 33 s, the
 40-page JPEG PDF. The upload check's slowest run is 0.65 s, so it keeps
-20 s.
+20 s. Both share the extraction worker, so an upload check that arrives
+during an extraction can wait its 20 s out and answer 503, and an
+extraction queued behind more than 180 s of others fails its paper with
+:data:`~lemely.io.rasterise.RENDER_FAILED_MESSAGE` (a
+:class:`SandboxUnavailable` becomes ``ScanRenderFailedError``), though the
+scan is fine.
 """
 
 from __future__ import annotations
@@ -283,7 +307,9 @@ _LIMIT_NAMES = ("RLIMIT_DATA", "RLIMIT_AS", "RLIMIT_CORE", "oom_score_adj")
 #: The child's ``/proc/self/oom_score_adj``: 1000, the most, so when the
 #: instance runs out of memory the kernel kills a worker child (that request
 #: gets a 422; the next call respawns it) before the web server. Owner
-#: decision, Task 11 re-review: the 2 GiB budget's measured margin is ~44 MiB.
+#: decision, Task 11 re-review, when the 2 GiB budget's margin was put at
+#: ~44 MiB. It is negative at worst (see the module docstring), and when the
+#: growth is in the web process a killed idle worker frees little.
 #: Raising one's own score needs no privilege; a kernel or container that
 #: forbids the write leaves the inherited score, and the parent warns.
 _OOM_SCORE_ADJ = 1000
