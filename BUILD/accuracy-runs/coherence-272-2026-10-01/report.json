@@ -365,22 +365,30 @@
       "consequence": "The before draw is one marker draw per distinct prompt, not one per call."
     },
     "exit_codes": {
-      "before": "not observed reliably",
-      "after": "not observed reliably",
-      "note": "The shell echoed 0 after a plain redirect (no tee) for both runs, but the CLI reaches its 'Targets missed' Exit(1) path (cli.py), so the 0 cannot be the CLI's own status; cause not investigated. Same disclosure as 111c5135, whose wording ('piped through tee without pipefail') does not describe these invocations."
+      "before": "0 observed; carries no information",
+      "after": "0 observed; carries no information",
+      "note": "Exit status 0 observed; it carries no information. lemely.app.cli.main() calls cli.main(args=argv, standalone_mode=False, ...) and then returns 0 (lemely/app/cli.py:1485-1486). In non-standalone mode Click 8.4.2 returns the Exit(1) raised after 'Targets missed' (cli.py:1363) as a value instead of raising it, and main() discards that value, so the CLI process itself exits 0; the 'except click.exceptions.Exit' at cli.py:1490 is unreachable for it. Reproduced without an API call by registering a command on lemely.app.cli.cli that raises click.exceptions.Exit(1): cli.main(standalone_mode=False) returns 1 and lemely.app.cli.main([...]) returns 0 (whole-branch review B, I1). The shell and tee are not the cause. cli.py is outside this branch's file set; the fix is a follow-up issue."
     },
     "out_of_range_residual": {
       "run_id": "run-7651050596ed",
       "question_results": 78,
       "review_reason_starting_with_marker_returned": 0,
-      "list": []
+      "list": [],
+      "source_file": "count-out-of-range.json"
     },
     "spend": {
       "before_run_live_usd_per_ledger": 0.1852,
       "after_run_live_usd": 0.0,
       "in_process_replay_usd": 0.0,
       "total_usd_per_ledger": 0.1852,
-      "caveat": "ledger comes from the lemely/io/gemini.py table, understates real spend 2-4x until M0.2 and excludes thinking-token billing; scaled 2-4x it is $0.37 to $0.74. The after run and the in-process replay were launched WITHOUT the API key, so a miss could not have gone live."
+      "caveat": "The ledger is the spend: it comes from the lemely/io/gemini.py pricing table at GA rates and bills thinking tokens as output tokens (M0.2/#26 landed before this branch), with gemini-3.8-flash at the promotional rate through 2026-12-31. The after run and the in-process replay were launched WITHOUT the API key, so a miss could not have gone live."
+    },
+    "evidence_files": {
+      "before_results": "before-results.json (the before run's saved results, run-7b21a32dc3b8; originally results-before/2026-10-05-ddec7f22.json in the job scratch directory, copied unchanged except the trailing newline end-of-file-fixer adds)",
+      "after_results": "after-results.json (run-7ac18bc25336)",
+      "out_of_range_count": "count-out-of-range.json (the --count-out-of-range replay's JSON object, run-7651050596ed; the structlog cache-hit lines that preceded it in the captured output were stripped)",
+      "compare_invocation": "From the repository root, with PYTHONPATH pinned to the tree under test: PYTHONPATH=$PWD .venv/bin/python BUILD/accuracy-runs/coherence-272-2026-10-01/compare.py --before BUILD/accuracy-runs/coherence-272-2026-10-01/before-results.json --after BUILD/accuracy-runs/coherence-272-2026-10-01/after-results.json --baseline BUILD/review-rate-baseline.json --golden tests/golden --out <out.json>",
+      "compare_invocation_note": "BUILD/review-rate-baseline.json is byte-identical to its a1563b4f content. Re-run at fix/marking-accuracy (after 839c32fb): exit 0, and manifest, review_rate, funnel, flips, scheme_shape_exposure_after_run, mark_metrics, per_parse_path_correct_equal, record_identity and baseline_comparison equal this report's sections exactly. meta, baseline_decision and task7_leaf_finding are added by hand, not by compare.py. The --count-out-of-range mode needs the job's scratch cache and config, which are not committed, so count-out-of-range.json is its recorded output."
     }
   },
   "baseline_decision": {
@@ -398,14 +406,17 @@
     "after_results_json_note": "after-results.json is kept as the replay's evidence. It is no longer any baseline's source_run."
   },
   "task7_leaf_finding": {
-    "source": "Task 7 live run at 62c7c61a (fresh draw, n = 31), as relayed by the coordinator; compared here at the level of what #272 can and cannot cause. Not re-derived from Task 7's records in this run.",
+    "source": "Re-derived from BUILD/accuracy-runs/cost-201-2026-10-01/results.json (Task 7's live run at 62c7c61a, fresh draw, n = 31): eval_records triggers and predicted_marks, compared key by key with after-results.json.",
     "0580_s23_qp_22_theory_Q14": {
       "variant_outcome": "partial",
       "scheme": "a single 2-mark point, no group (so the grouped interval equals the old global interval for it)",
       "coherence_flag_cause": "a fresh marker reply awarding 1 of 2; #272 cannot cause this flag"
     },
-    "Q2": "needs_teacher_review only, no coherence trigger",
-    "marks_between_the_two_draws": "three records differ in marks between Task 7's draw and this before/after draw; that is marker sampling noise, not a #272 effect (the before and after trees here agree on all 78 records)",
+    "0580_s23_qp_22_theory_Q2": {
+      "variant_outcome": "whitespace",
+      "triggers": "needs_teacher_review only, no coherence trigger"
+    },
+    "marks_between_the_two_draws": "three records differ in predicted_marks between Task 7's draw and this before/after draw (0580_s23_qp_22_theory correct Q2, 0580_s23_qp_22_theory partial Q14, 0625_s20_qp_31_theory correct Q11b); that is marker sampling noise, not a #272 effect (the before and after trees here agree on all 78 records)",
     "reading": "the 0.032 coherence rate and 0.065 signal in Task 7 versus 0.000 here is draw-to-draw variation at n = 31, not the coherence unification."
   }
 }

@@ -112,8 +112,8 @@
     "review_rate_n": 31,
     "coherence_trigger_rate": 0.032,
     "exclusion_funnel": "leaves=78 -> matched=78 -> marked=78 -> scored=31",
-    "exit_code": "not observed (piped through tee without pipefail)",
-    "exit_code_note": "The CLI reached its 'Targets missed' Exit(1) path (cli.py raise click.exceptions.Exit(1)); the 0 seen in run.exit was tee's status, not the CLI's.",
+    "exit_code": "0 observed; carries no information (see exit_code_note)",
+    "exit_code_note": "Exit status 0 observed; it carries no information. lemely.app.cli.main() calls cli.main(args=argv, standalone_mode=False, ...) and then returns 0 (lemely/app/cli.py:1485-1486). In non-standalone mode Click 8.4.2 returns the Exit(1) raised after 'Targets missed' (cli.py:1363) as a value instead of raising it, and main() discards that value, so the CLI process itself exits 0; the 'except click.exceptions.Exit' at cli.py:1490 is unreachable for it. Reproduced without an API call by registering a command on lemely.app.cli.cli that raises click.exceptions.Exit(1): cli.main(standalone_mode=False) returns 1 and lemely.app.cli.main([...]) returns 0 (whole-branch review B, I1). The shell and tee are not the cause. cli.py is outside this branch's file set; the fix is a follow-up issue.",
     "review_rate_gate_breach": "per_paper_p95 0.2857 > target 0.1500 (ratchet unarmed, recorded, not blocking)"
   },
   "p95_usd": 0.02202905,
@@ -127,5 +127,36 @@
     "measured_tree": "62c7c61a5d0fb472561862be7854add5dce40f64",
     "diff_62c7c61a_to_ddec7f22": "touches only lemely/core/equivalence.py and tests/test_equivalence.py (git diff --stat 62c7c61a ddec7f22)",
     "equivalence_gate_during_run": false
+  },
+  "pricing_basis": {
+    "source": "lemely/io/gemini.py pricing table at this tree (GA rates, thinking tokens billed as output, M0.2/#26 landed); rates resolved for 2026-10-05",
+    "rates_usd_per_1k_tokens_input_output": {
+      "gemini-3.8-flash": [
+        0.00075,
+        0.00375
+      ],
+      "gemini-3.5-flash-lite": [
+        0.0003,
+        0.0025
+      ]
+    },
+    "gemini-3.8-flash_rate_is_promotional": true,
+    "promo_end_date": "2026-12-31",
+    "gemini-3.8-flash_post_promo_rate_from_2027-01-01": [
+      0.0015,
+      0.0075
+    ],
+    "share_of_spend_at_promo_rate": {
+      "correction|gemini-3.8-flash_usd": 0.1719225,
+      "fraction_of_total": 0.8272
+    },
+    "projected_post_promo": {
+      "method": "same per-case token spend; correction (gemini-3.8-flash) cost scaled by the post-promo/promo ratio, 2.0 for both input and output; extraction (gemini-3.5-flash-lite, no scheduled change) unchanged",
+      "cost_usd_total": 0.3797668,
+      "mean_usd": 0.0316472,
+      "p95_usd_nearest_rank": 0.0408413,
+      "ratio_to_measured_mean": 1.8272
+    },
+    "qualifier": "mean_usd 0.0173 is at the gemini-3.8-flash promotional rate, which ends 2026-12-31; from 2027-01-01 the same run would cost about $0.0317 per case (about 1.8x)."
   }
 }
