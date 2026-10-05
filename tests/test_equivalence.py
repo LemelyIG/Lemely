@@ -3505,7 +3505,11 @@ _FUNCTION_APPLICATION_TABLE: list[tuple[str, str, str, str]] = [
     ("sinxcosx", "sin(x)*cos(x)", "equal", "concatenated-applications-split"),
     ("sqrt2", "sqrt(2)", "equal", "sqrt2-is-root-2"),
     ("ln2x", "ln(2*x)", "equal", "ln2x-is-ln-of-2x"),
-    ("log3x", "log(3*x)", "equal", "log3x-is-log-of-3x"),
+    # Owner decision 2026-10-05 supersedes the D1 extension for `log`: a
+    # single digit after `log` is a lost subscript base, so `log3x` is
+    # log base 3 of x, not `log(3*x)`.
+    ("log3x", "log(x, 3)", "equal", "log3x-is-log-base-3-of-x"),
+    ("log25x", "log(25*x)", "equal", "log25x-multi-digit-is-a-coefficient"),
     ("tan2x", "tan(2*x)", "equal", "tan2x-is-tan-of-2x"),
 ]
 
@@ -3579,6 +3583,52 @@ def test_issue_270_log10_does_not_guess_an_ambiguous_argument(
     function name, so the shapes the pass refuses elsewhere stay refused."""
     for reading in readings:
         assert not _kind_matches(equivalent(text, reading).kind, "equal"), reading
+
+
+def test_issue_270_log_with_a_single_digit_base_is_that_base() -> None:
+    """Owner decision (2026-10-05): the lost-subscript reading of ``log10``
+    extends to single-digit bases 2 to 9. ``log2x`` is ``log(x, 2)``, never
+    ``log(2x)``; ``log2 8`` is 3; ``log2(8)`` is ``log(8, 2)`` as ``log10(``
+    is base 10."""
+    x = sympy.Symbol("x")
+    assert parse_expr_safe("log2x") == sympy.log(x, 2)
+    assert parse_expr_safe("log3x") == sympy.log(x, 3)
+    assert parse_expr_safe("log2 8") == sympy.Integer(3)
+    assert parse_expr_safe("log3 9") == sympy.Integer(2)
+    assert equivalent("log2(8)", "3").kind is VerdictKind.EQUAL_PROVEN
+    assert not _kind_matches(equivalent("log2x", "log(2*x)").kind, "equal")
+
+
+@pytest.mark.parametrize(
+    ("text", "same_as"),
+    [
+        ("log100", "log(100)"),
+        ("log25", "log(25)"),
+        ("log2.5", "log(2.5)"),
+        ("log10.5", "log(10.5)"),
+        ("log2", "log(2)"),
+        ("log2 + 1", "log(2) + 1"),
+        ("ln2x", "ln(2*x)"),
+    ],
+    ids=["multi-digit", "multi-digit-not-10", "decimal", "decimal-10", "bare", "operator", "ln"],
+)
+def test_issue_270_log_base_reading_leaves_other_digits_alone(text: str, same_as: str) -> None:
+    """Guard (owner decision 2026-10-05): a multi-digit number other than 10,
+    a decimal, a bare ``log2`` and ``log2 + 1`` keep their readings, and
+    ``ln`` has no base."""
+    assert parse_expr_safe(text) == parse_expr_safe(same_as)
+
+
+@pytest.mark.parametrize("text", ["log2x^2", "log2xy", "log10x^2", "log10xy", "log3x!"])
+def test_issue_270_a_lost_base_log_with_an_ambiguous_argument_is_refused(text: str) -> None:
+    """A ``log`` with a lost subscript base whose argument the pass will not
+    read (``log2x^2`` is log₂(x²) or (log₂x)²) used to fall to the letter
+    product ``2*g*l*o*x**2`` -- a confident NOT_EQUAL on a reading nobody
+    wrote. It is refused as ambiguous, the same outcome as ``sqrt2x``, so the
+    generation gate admits the solver and fails closed."""
+    from lemely.core import equivalence as eq
+
+    assert eq.parse_expr_outcome(text) == (None, "refused-ambiguous")
 
 
 def test_issue_270_sqrt_of_a_number_then_a_letter_is_refused() -> None:

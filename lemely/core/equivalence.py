@@ -466,7 +466,9 @@ _FUNCTION_NAMES_LONGEST_FIRST = tuple(
 #: Functions whose argument may be written as a number then one letter with
 #: no bracket: ``sin2x`` is ``sin(2x)``, the CAIE convention (owner decision
 #: D1, extended by the controller to the other trig functions, ``ln`` and
-#: ``log``).
+#: ``log``). For ``log`` this applies only to a number that is not a lost
+#: subscript base (:data:`_LOST_LOG_BASE_RE`): ``log25x`` is ``log(25x)``,
+#: but ``log3x`` is log base 3 of x.
 _NUMBER_LETTER_ARGUMENT_FUNCTIONS = frozenset(
     {"sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "ln", "log"}
 )
@@ -478,6 +480,12 @@ _NUMBER_LETTER_ARGUMENT_FUNCTIONS = frozenset(
 _AMBIGUOUS_NUMBER_LETTER_FUNCTIONS = frozenset({"sqrt"})
 
 _NUMBER_ARGUMENT_RE = re.compile(r"\d+(?:\.\d+)?")
+
+#: A ``log`` base whose subscript extraction lost: ``10`` (owner decision,
+#: "log10(x) is often expressed as log10x") or one digit 2 to 9 (owner
+#: decision 2026-10-05), not followed by another digit or a decimal point --
+#: ``log100``, ``log25`` and ``log2.5`` keep the ordinary reading.
+_LOST_LOG_BASE_RE = re.compile(r"(?:10|[2-9])(?![\d.])")
 _LETTER_RE = re.compile(f"[{_SUBSCRIPTABLE_LETTERS}]")
 _LETTER_ARGUMENT_RE = re.compile(rf"[{_SUBSCRIPTABLE_LETTERS}]\d*")
 
@@ -905,37 +913,45 @@ def _read_application(text: str, start: int, memo: _ApplicationMemo) -> tuple[in
     if name is None:
         return None
     after = start + len(name)
-    if name == "log" and text.startswith("10", after):
-        argument_start = _base_ten_argument_start(text, after + len("10"))
+    base = _LOST_LOG_BASE_RE.match(text, after) if name == "log" else None
+    if base is not None:
+        argument_start = _lost_base_argument_start(text, base.end())
         if argument_start is not None:
             if text.startswith("(", argument_start):
-                return argument_start, "(1/log(10))*log"
-            # No fallback to `log(10)` when the argument is refused: a lost
-            # subscript is never read as log(10*x) or log(10)*x.
-            return _bracket_argument(name, text, start, argument_start, memo, "log({}, 10)")
+                return argument_start, f"(1/log({base.group()}))*log"
+            applied = _bracket_argument(
+                name, text, start, argument_start, memo, f"log({{}}, {base.group()})"
+            )
+            if applied is None:
+                # A lost-subscript log whose argument the pass will not read
+                # (`log2x^2` is log2(x^2) or (log2 x)^2): never log(2*x) or
+                # log(2)*x, and never the letter product `2*g*l*o*x**2` the
+                # older rules make of it. Two readings, so refused.
+                raise _AmbiguousFunctionArgumentError(text[start:])
+            return applied
     if text.startswith("(", after):
         return after, name
     return _bracket_argument(name, text, start, after, memo, f"{name}({{}})")
 
 
-def _base_ten_argument_start(text: str, after_ten: int) -> int | None:
-    """Where the argument of a ``log10`` with its subscript lost starts, or ``None``.
+def _lost_base_argument_start(text: str, after_base: int) -> int | None:
+    """Where the argument of a ``log`` with its subscript base lost starts, or ``None``.
 
-    Owner decision (#270): "log10(x) is often expressed as log10x." A
-    ``log10`` followed by ``(``, by a letter, or by spaces and then a
-    letter, a digit or ``(`` is the base-10 log of what follows. A digit or
-    ``.`` straight after the ``10`` (``log100``, ``log10.5``) and anything
-    else (a bare ``log10``, ``log10 + 1``) is not that shape and keeps the
-    ordinary rule (``log(100)``, ``log(10.5)``, ``log(10)``).
+    Owner decisions (#270): "log10(x) is often expressed as log10x", and the
+    same for a single-digit base 2 to 9 (2026-10-05). A ``log`` and its base
+    (:data:`_LOST_LOG_BASE_RE`) followed by ``(``, by a letter, or by spaces
+    and then a letter, a digit or ``(`` is the log to that base of what
+    follows. Anything else (a bare ``log2``, ``log10 + 1``) is not that
+    shape and keeps the ordinary rule (``log(2)``, ``log(10) + 1``).
     """
-    position = after_ten
+    position = after_base
     while position < len(text) and text[position] in " \t":
         position += 1
     if position == len(text):
         return None
     if text[position] == "(" or _LETTER_RE.match(text, position) is not None:
         return position
-    if position > after_ten and text[position] in "0123456789":
+    if position > after_base and text[position] in "0123456789":
         return position
     return None
 
@@ -977,11 +993,14 @@ def _apply_function_names(text: str) -> str:
     one letter run at a time:
 
     1. a name followed by ``(`` is left alone, except that
-    2. ``log10`` is the base-10 log with its subscript lost (owner
-       decision): ``log10(`` and ``log10 (`` become ``(1/log(10))*log(``,
-       built from allowed calls only, and ``log10x``, ``log10 x`` and
-       ``log10 100`` become ``log(x, 10)`` and ``log(100, 10)``, never
-       ``log(10*x)`` or ``log(10)*x`` (see :func:`_base_ten_argument_start`);
+    2. ``log10`` and ``log2`` to ``log9`` are logs with their subscript base
+       lost (owner decisions): ``log10(`` and ``log2 (`` become
+       ``(1/log(10))*log(`` and ``(1/log(2))*log(``, built from allowed
+       calls only, and ``log10x``, ``log2 8`` and ``log3x`` become
+       ``log(x, 10)``, ``log(8, 2)`` and ``log(x, 3)``, never ``log(10*x)``
+       or ``log(2)*8`` (see :func:`_lost_base_argument_start`). When the
+       argument is one the pass will not read (``log2x^2``), the text is
+       refused rather than guessed;
     3. letters before the name are a coefficient when the name is followed
        by ``(`` or an argument: ``Asin(`` -> ``A*sin(``. A name is never
        matched inside a run otherwise;
