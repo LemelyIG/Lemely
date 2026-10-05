@@ -30,6 +30,7 @@ from lemely.io.reread import (
     Rereader,
     should_reread,
 )
+from lemely.io.run_cap import marking_run_slot
 from lemely.io.scan_hygiene import check_scan_hygiene
 from lemely.io.second_read import REREAD_AGREEMENT_THRESHOLD, build_second_reader, compute_agreement
 from lemely.runtime.errors import CostCeilingError, LemelyError
@@ -928,6 +929,18 @@ class GeminiAnswerExtractor:
         return [results.get(i, a) for i, a in enumerate(answers)], started, skipped_by_budget
 
     def __call__(self, scan_path: Path, mark_scheme: MarkScheme) -> ExtractedAnswers:
+        """Extract ``scan_path``'s answers against ``mark_scheme``, one run at a time.
+
+        The rendered pages live in this process from the render to the
+        return, so the whole extraction holds a run slot
+        (:func:`~lemely.io.run_cap.marking_run_slot`, #260, #271): a second
+        call waits for the first to finish, and never fails for waiting.
+        """
+        with marking_run_slot():
+            return self._extract(scan_path, mark_scheme)
+
+    def _extract(self, scan_path: Path, mark_scheme: MarkScheme) -> ExtractedAnswers:
+        """:meth:`__call__`'s work, under its run slot."""
         manifest_key = build_question_manifest_hash_key(mark_scheme)
 
         # I1: rasterise to per-page images rather than uploading the whole

@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils"
 import { StatCard } from "../components/StatCard"
 import { useSchemes, useUploadScheme } from "@/lib/hooks/useTeacherApi"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
+import { SCHEME_ACCEPT } from "@/lib/scanAccept"
 import {
   teacherLoadFailureMessage,
   teacherMutationFailureMessage,
@@ -89,8 +90,9 @@ export function MarkSchemes() {
               <div className="flex-1" />
               <input
                 ref={fileInputRef}
+                id="library-scheme-file"
                 type="file"
-                accept="application/pdf"
+                accept={SCHEME_ACCEPT}
                 className="hidden"
                 onChange={handleFileChange}
                 data-kit-field="file"

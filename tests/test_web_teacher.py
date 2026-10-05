@@ -26,6 +26,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import sqlalchemy as sa
+import structlog.testing
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.engine import make_url
@@ -53,9 +54,12 @@ from lemely.db.models.quizzes import QuestionBank
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.teacher_paper_repo import TeacherPaperRepository, TeacherPaperRow
+from lemely.io import scheme_parse
 from lemely.io.gemini import GeminiClient
 from lemely.io.history_store import HistoryStore
-from lemely.runtime.config import DatabaseSettings, Settings, load_settings
+from lemely.runtime import sandbox
+from lemely.runtime.config import DatabaseSettings, SandboxSettings, Settings, load_settings
+from lemely.runtime.errors import ExternalServiceError
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
@@ -71,10 +75,15 @@ from lemely.web.deps import (
     get_teacher_paper_repo,
 )
 from lemely.web.routers import teacher
+from tests.fakes_scheme_pdfs import synthetic_theory_scheme_pdf, whitespace_bomb_pdf
+from tests.fakes_worker_bombs import peak_rss_bytes, reset_peak_rss
+from tests.sandbox_fixtures import in_process_sandbox, sandboxed  # noqa: F401
 from tests.storage_fakes import FakeStorageBackend
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from httpx import Response
 
 # A real, deterministically-parseable CAIE mark scheme PDF (0625 Physics),
 # already used across the suite as the canonical "real, parseable scheme"
@@ -676,6 +685,7 @@ def test_an_upload_refused_for_its_content_is_logged_without_its_bytes(
             "event": "upload_refused",
             "log_level": "warning",
             "refusal": "ScanTooLargeError",
+            "reason": "page_content",
             "byte_size": len(bomb),
             "content_type": "application/pdf",
         }
@@ -704,6 +714,7 @@ def test_an_upload_over_the_byte_cap_is_logged_without_its_bytes() -> None:
     ]
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_preview_refuses_a_stored_content_stream_bomb(
     client: TestClient,
     paper_repo: TeacherPaperRepository,
@@ -749,6 +760,7 @@ def test_preview_refuses_a_stored_content_stream_bomb(
     assert "drawing" in preview.json()["detail"]
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_preview_refuses_an_object_stream_bomb_before_opening_the_scan(
     client: TestClient,
     paper_repo: TeacherPaperRepository,
@@ -788,6 +800,7 @@ def test_preview_refuses_an_object_stream_bomb_before_opening_the_scan(
     assert "compressed internal data" in preview.json()["detail"]
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_preview_prescans_pdf_bytes_stored_under_an_image_content_type(
     client: TestClient,
     paper_repo: TeacherPaperRepository,
@@ -857,45 +870,81 @@ def test_preview_of_image_bytes_stored_as_a_pdf_renders_the_image(
     assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
 
 
-def test_preview_still_refuses_a_stored_scan_over_the_page_cap(
+def _blank_pages_pdf(pages: int) -> bytes:
+    """A PDF of ``pages`` blank A4 pages."""
+    import pymupdf
+
+    doc = pymupdf.open()
+    for _ in range(pages):
+        doc.new_page(width=595.0, height=842.0)
+    scan: bytes = doc.tobytes()
+    doc.close()
+    return scan
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_serves_page_one_of_a_stored_scan_over_the_page_cap(
     client: TestClient,
     paper_repo: TeacherPaperRepository,
     storage_backend: FakeStorageBackend,
     settings: Settings,
     teacher_user: uuid.UUID,
 ) -> None:
-    """User decision 2 (2026-09-29): the crop route dropped the page cap; the
-    preview route keeps it (#269 is about this route alone now). Seeded
-    directly into storage, as the upload route rejects the file."""
+    """Owner decision S3 (#269): the preview renders one page, so it takes the
+    crop's page rule, not the whole-document cap. A stored scan of 41-200
+    pages (stored before the upload cap, which the upload route now refuses)
+    keeps its thumbnail. Seeded directly into storage for that reason."""
+    from lemely.io.scan_limits import MAX_SCAN_PAGES
+
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _blank_pages_pdf(MAX_SCAN_PAGES + 1),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 200, preview.text
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_refuses_a_stored_scan_over_max_crop_pages(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """The crop's page rule bounds the preview too: past ``MAX_CROP_PAGES`` the
+    page tree costs too much to read, so the scan is refused with the crop's
+    message and nothing is drawn."""
     from unittest.mock import patch
 
     import pymupdf
 
-    from lemely.io.scan_limits import MAX_SCAN_PAGES
+    from lemely.io.scan_limits import _CROP_PAGES_MESSAGE, MAX_CROP_PAGES
 
-    doc = pymupdf.open()
-    for _ in range(MAX_SCAN_PAGES + 1):
-        doc.new_page(width=595.0, height=842.0)
-    scan: bytes = doc.tobytes()
-    doc.close()
-    paper_id = uuid.uuid4()
-    key = f"teacher/{teacher_user}/{paper_id.hex}/scan.pdf"
-    storage_backend.upload(settings.storage.bucket, key, scan, "application/pdf")
-    paper_repo.create(
-        paper_id=paper_id,
-        uploaded_by=teacher_user,
-        storage_path=key,
-        scheme_storage_path=None,
-        original_filename="scan.pdf",
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _blank_pages_pdf(MAX_CROP_PAGES + 1),
         content_type="application/pdf",
-        byte_size=len(scan),
+        name="scan.pdf",
     )
 
     with patch.object(pymupdf.Page, "get_pixmap") as get_pixmap:
         preview = client.get(f"/api/papers/{paper_id}/preview")
     get_pixmap.assert_not_called()
-    assert preview.status_code == 422
-    assert f"limit is {MAX_SCAN_PAGES}" in preview.json()["detail"]
+    assert preview.status_code == 422, preview.text
+    assert preview.json()["detail"] == _CROP_PAGES_MESSAGE
 
 
 def test_upload_with_a_malformed_page_tree_still_succeeds(
@@ -1531,6 +1580,35 @@ def test_failed_grade_is_terminal_and_carries_the_reason(
     assert "gemini exploded" in client.get(f"/api/papers/{paper_id}").json()["error"]
 
 
+@pytest.mark.usefixtures("sandboxed")
+def test_a_worker_failure_in_extraction_never_reaches_the_paper_row(
+    client: TestClient, paper_repo: TeacherPaperRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#260 (Task 10 review item 2): when the extraction worker fails, the
+    failed row says the fixed "Could not render this scan", never the
+    child's exception text. The route formats ``str(exc)`` as it always has."""
+    from lemely.io import rasterise
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(
+        grading_service,
+        "extract_answers",
+        lambda scan_path, *_a, **_k: rasterise.rasterise_scan_to_pages(scan_path),
+    )
+    monkeypatch.setattr(rasterise, "SCAN_PAGES_TARGET", "tests.sandbox_targets.boom")
+
+    paper_id = _upload(client)
+    row = _settle(paper_repo, paper_id)
+
+    assert teacher._row_kind(row) == "failed"
+    assert row.error == "Grading failed: Could not render this scan"
+    detail = client.get(f"/api/papers/{paper_id}")
+    assert detail.json()["error"] == row.error
+    assert "DISTINCTIVE" not in detail.text
+
+
 def test_paper_without_a_resolvable_scheme_does_not_sit_queued(
     client: TestClient, paper_repo: TeacherPaperRepository, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1618,6 +1696,193 @@ def test_paper_detail_reports_live_pipeline_instead_of_409(
     release.set()
     _settle(paper_repo, paper_id)
     assert client.get(f"/api/papers/{paper_id}").json()["awardedMarks"] == 2
+
+
+def test_paper_waiting_for_the_run_slot_says_so_in_its_pipeline(
+    client: TestClient, paper_repo: TeacherPaperRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A teacher run whose extraction waits for the process's one marking-run
+    slot (#260, #271) shows the extract step active with "Waiting for another
+    paper", not a bare spinner; the moment it holds the slot, the dequeue event
+    puts the step back to plain "extract", without waiting for the run's next
+    event (the scan render comes first, up to 33 s)."""
+    from lemely.io import run_cap
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    resumed = threading.Event()
+    finish = threading.Event()
+
+    def _extract(*_a: object, **_k: object) -> dict[str, str]:
+        # What GeminiAnswerExtractor.__call__ does: the whole extraction under
+        # the slot. The scan render that follows publishes nothing, so the
+        # slot's own dequeue event is the only thing that can clear "queued".
+        with run_cap.marking_run_slot():
+            resumed.set()
+            finish.wait(timeout=10)
+            return {"5b": "42"}
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(grading_service, "extract_answers", _extract)
+    monkeypatch.setattr(
+        grading_service, "grade_paper", lambda *_a, **_k: _report(needs_review=False, grade="A")
+    )
+
+    def _extract_step(paper_id: str) -> dict[str, str]:
+        body = client.get(f"/api/papers/{paper_id}").json()
+        (step,) = [s for s in body["pipeline"] if s["label"] == "Handwriting read"]
+        return step
+
+    with run_cap.marking_run_slot():  # another paper's run holds the slot
+        paper_id = _upload(client)
+        deadline = time.monotonic() + 10.0
+        step = _extract_step(paper_id)
+        while step["count"] != "Waiting for another paper" and time.monotonic() < deadline:
+            time.sleep(0.02)
+            step = _extract_step(paper_id)
+        assert step == {
+            "label": "Handwriting read",
+            "count": "Waiting for another paper",
+            "state": "active",
+        }
+        waiting = paper_repo.get(uuid.UUID(paper_id))
+        assert waiting is not None and waiting.stage == "queued"
+
+    try:
+        assert resumed.wait(timeout=10), "the run never took the slot"
+        deadline = time.monotonic() + 10.0
+        row = paper_repo.get(uuid.UUID(paper_id))
+        while row is not None and row.stage == "queued" and time.monotonic() < deadline:
+            time.sleep(0.02)
+            row = paper_repo.get(uuid.UUID(paper_id))
+        assert row is not None and row.stage == "extract"
+        assert _extract_step(paper_id) == {
+            "label": "Handwriting read",
+            "count": "",
+            "state": "active",
+        }
+    finally:
+        finish.set()
+    assert teacher._row_kind(_settle(paper_repo, paper_id)) == "graded"
+
+
+def test_a_row_queued_for_the_run_slot_is_alive_and_not_lost_while_it_waits(
+    pg_sessionmaker: sessionmaker[Session],
+    teacher_user: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A teacher run waiting for the marking-run slot is heard from every
+    heartbeat: its tracker writes the row each time, so ``updated_at`` stays
+    inside the stale window and the row is neither shown as a lost run nor
+    claimable for a second, duplicate run. Without the heartbeat the single
+    queued write goes stale and both happen."""
+    from lemely.io import run_cap
+    from lemely.runtime.events import bus
+
+    repo = TeacherPaperRepository(pg_sessionmaker, stale_after=timedelta(seconds=1.0))
+    pid = uuid.uuid4()
+    repo.create(
+        paper_id=pid,
+        uploaded_by=teacher_user,
+        storage_path=f"teacher/{teacher_user}/{pid.hex}/scan.pdf",
+        scheme_storage_path=None,
+        original_filename="scan.pdf",
+        content_type="application/pdf",
+        byte_size=10,
+    )
+    assert repo.claim_run(pid)
+    monkeypatch.setattr(run_cap, "_slots", threading.BoundedSemaphore(run_cap.MAX_CONCURRENT_RUNS))
+    monkeypatch.setattr(run_cap, "QUEUED_HEARTBEAT_SECONDS", 0.2)
+
+    def wait_for_the_slot() -> None:
+        with run_cap.marking_run_slot():
+            pass
+
+    q = bus.subscribe_queue()
+    stop = threading.Event()
+    tracker = threading.Thread(
+        target=teacher._track_progress, args=(repo, pid, q, stop), daemon=True
+    )
+    tracker.start()
+    waiter = threading.Thread(target=wait_for_the_slot, daemon=True)
+    try:
+        with run_cap.marking_run_slot():  # another paper's run holds the slot
+            waiter.start()
+            deadline = time.monotonic() + 10.0
+            row = repo.get(pid)
+            while row is not None and row.stage != "queued" and time.monotonic() < deadline:
+                time.sleep(0.02)
+                row = repo.get(pid)
+            assert row is not None and row.stage == "queued"
+            # Three stale windows of waiting: only a heartbeat keeps it alive.
+            end = time.monotonic() + 3.0
+            while time.monotonic() < end:
+                row = repo.get(pid)
+                assert row is not None
+                assert not row.stale, "a queued run was reported as lost"
+                assert not repo.claim_run(pid), "a queued run could be claimed twice"
+                time.sleep(0.1)
+    finally:
+        bus.unsubscribe_queue(q)
+        stop.set()
+        tracker.join(timeout=5)
+        waiter.join(timeout=5)
+
+
+def test_a_dead_row_frozen_while_queued_does_not_claim_to_be_waiting(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    teacher_user: uuid.UUID,
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A run that died while queued (its row is stale, so shown as a lost run)
+    stops on the extract step with no "Waiting for another paper" counter: it
+    is not waiting for anything."""
+    pid = _seed_graded_paper(paper_repo, storage_backend, teacher_user, _report())
+    paper_repo.claim_run(uuid.UUID(pid))
+    paper_repo.set_stage(uuid.UUID(pid), "queued")
+    with pg_sessionmaker.begin() as s:
+        s.execute(
+            sa.update(TeacherPaper)
+            .where(TeacherPaper.id == uuid.UUID(pid))
+            .values(updated_at=datetime.now(UTC) - timedelta(hours=1))
+        )
+
+    body = client.get(f"/api/papers/{pid}").json()
+
+    assert body["kind"] == "failed"
+    (step,) = [s for s in body["pipeline"] if s["label"] == "Handwriting read"]
+    assert step == {"label": "Handwriting read", "count": "", "state": "idle"}
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_upload_scheme_storage_failure_is_a_503_without_the_backends_text(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    storage_backend: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The backend's message can name the bucket and key; the client gets a
+    fixed text, and the cause is logged."""
+    _patch_parser_to_return(monkeypatch, _scheme())
+
+    def refuse(*_a: object, **_k: object) -> None:
+        raise ExternalServiceError("denied on gs://secret-bucket/schemes/key")
+
+    monkeypatch.setattr(storage_backend, "upload", refuse)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = client.post(
+            "/api/schemes",
+            files={"scheme_pdf": ("same.pdf", b"%PDF-1.4 v1", "application/pdf")},
+        )
+
+    assert resp.status_code == 503
+    assert resp.json() == {"detail": "Storing the mark scheme PDF failed. Try again in a moment."}
+    assert "secret-bucket" not in resp.text
+    (failed,) = [e for e in logs if e["event"] == "scheme_pdf_store_failed"]
+    assert "secret-bucket" in failed["error"]
 
 
 def test_unknown_paper_detail_is_still_404(client: TestClient) -> None:
@@ -1891,7 +2156,7 @@ def test_preview_renders_page_one_as_png(client: TestClient) -> None:
 
 def test_preview_of_an_image_upload_still_succeeds(client: TestClient) -> None:
     """Fix round 1, Important 1: `get_paper_preview` now runs
-    `check_pdf_content` on every stored scan, image uploads included --
+    `check_pdf_page_content` on every stored scan, image uploads included --
     `page.get_contents()` asserts on a document pymupdf opened as an image,
     not a PDF, so a PNG/JPEG paper's preview must not turn into a 422."""
     import io
@@ -2025,8 +2290,637 @@ def test_preview_of_an_a4_pdf_keeps_its_72_dpi_size(client: TestClient) -> None:
     assert Image.open(io.BytesIO(preview.content)).size == (595, 842)
 
 
+def test_preview_of_a_stored_scan_with_no_pages_is_a_422(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """A stored PDF whose page tree is empty has nothing to draw: the render
+    refuses it (``RenderRefused``, ``no_pages``) and the route answers 422 with
+    the render's own message, as it did when the route raised the 422 itself.
+    The refusal is logged by reason, as the crop logs its refusals (final
+    review R1, minor 7)."""
+    from tests.pdf_fakes import empty_page_tree_pdf
+
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        empty_page_tree_pdf(),
+        content_type="application/pdf",
+        name="empty.pdf",
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 422, preview.text
+    assert preview.json()["detail"] == "Stored scan has no pages"
+    refused = [e for e in logs if e["event"] == "paper_preview_refused"]
+    assert refused == [
+        {
+            "event": "paper_preview_refused",
+            "log_level": "warning",
+            "paper_id": str(paper_id),
+            "reason": "no_pages",
+        }
+    ]
+
+
+# ---------------------------------------------------------------------------
+# The preview renders in the interactive worker (#260).
+# ---------------------------------------------------------------------------
+
+
+def _a4_pdf() -> bytes:
+    import pymupdf
+
+    doc = pymupdf.open()
+    doc.new_page(width=595, height=842).insert_text((72, 72), "Question 1")
+    pdf_bytes: bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_preview_end_to_end_in_the_worker(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """The route's three outcomes, through a real child: a PDF and an image
+    are drawn there, and a stored bomb is refused there with its own message
+    (the ``ScanRejectedError`` crossed the pipe intact). One child serves all
+    three: a refusal is an answer, not a reason to restart it."""
+    import io
+    import os
+
+    from PIL import Image
+
+    from tests.pdf_fakes import page_bomb_pdf
+
+    def _seed(scan: bytes, content_type: str, name: str) -> uuid.UUID:
+        return _seed_stored_scan(
+            paper_repo,
+            storage_backend,
+            settings,
+            teacher_user,
+            scan,
+            content_type=content_type,
+            name=name,
+        )
+
+    pdf = client.get(f"/api/papers/{_seed(_a4_pdf(), 'application/pdf', 'scan.pdf')}/preview")
+    assert pdf.status_code == 200, pdf.text
+    assert pdf.headers["content-type"] == "image/png"
+    assert Image.open(io.BytesIO(pdf.content)).size == (595, 842)
+    child = sandbox.INTERACTIVE_WORKER.pid()
+    assert child is not None
+    assert child != os.getpid()
+
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 140), "white").save(buf, "PNG")
+    image = client.get(f"/api/papers/{_seed(buf.getvalue(), 'image/png', 'scan.png')}/preview")
+    assert image.status_code == 200, image.text
+    assert image.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert sandbox.INTERACTIVE_WORKER.pid() == child
+
+    bomb = page_bomb_pdf(112_000_000)
+    with structlog.testing.capture_logs() as logs:
+        refused = client.get(f"/api/papers/{_seed(bomb, 'application/pdf', 'bomb.pdf')}/preview")
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"] == (
+        "Page 1 of this PDF contains far more drawing data than a scanned page can "
+        "(over 8 MB once decompressed). Re-export it as a plain scan."
+    )
+    (rejected,) = [e for e in logs if e["event"] == "paper_preview_rejected"]
+    assert rejected["reason"] == "page_content"
+    assert rejected["detail"] == refused.json()["detail"]
+    assert sandbox.INTERACTIVE_WORKER.last_outcome == "rejected"
+    assert sandbox.INTERACTIVE_WORKER.pid() == child
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_preview_answers_422_with_the_fixed_message_when_the_worker_refuses(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A render that runs out of memory in the worker is a 422 with the fixed
+    message; why it failed goes to the ``paper_preview_failed`` log line."""
+    monkeypatch.setattr(
+        sandbox,
+        "sandbox_settings",
+        lambda: SandboxSettings(interactive_data_limit_bytes=64 * 1024 * 1024),
+    )
+    monkeypatch.setattr(teacher, "PREVIEW_TARGET", "tests.sandbox_targets.oom")
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 422, preview.text
+    assert preview.json()["detail"] == "Could not render this scan"
+    (failed,) = [e for e in logs if e["event"] == "paper_preview_failed"]
+    assert failed["reason"] == "memory"
+    assert failed["paper_id"] == str(paper_id)
+    assert sandbox.INTERACTIVE_WORKER.last_outcome == "memory"
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_preview_answers_503_when_no_worker_can_start(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No child to render in is the server's problem, not the scan's: 503,
+    so the client knows to try again, and nothing is rendered in the web
+    process instead."""
+    monkeypatch.setattr(sandbox.INTERACTIVE_WORKER, "_spawn", lambda: False)
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 503, preview.text
+    assert preview.json()["detail"] == (
+        "Scan rendering is temporarily unavailable. Try again in a moment."
+    )
+    (failed,) = [e for e in logs if e["event"] == "paper_preview_failed"]
+    assert failed["reason"] == "unavailable"
+    assert sandbox.INTERACTIVE_WORKER.last_outcome == "unavailable"
+
+
+# ---------------------------------------------------------------------------
+# The preview's failure text, caching and revalidation (#249).
+# ---------------------------------------------------------------------------
+
+
+class _CountingStorage(FakeStorageBackend):
+    """A :class:`FakeStorageBackend` that counts its downloads."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.downloads = 0
+
+    def download(self, bucket: str, object_path: str) -> bytes:
+        self.downloads += 1
+        return super().download(bucket, object_path)
+
+
+def _counting_client(client: TestClient) -> _CountingStorage:
+    """Point ``client``'s storage at a fresh :class:`_CountingStorage` and return it."""
+    counting = _CountingStorage()
+    client.app.dependency_overrides[get_storage_backend] = lambda: counting  # type: ignore[union-attr]
+    return counting
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_never_echoes_renderer_text(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#249: a renderer's own exception text (a library message, a path, a
+    pointer) is not the client's business. The route answers the fixed
+    message, and the text goes to the ``paper_preview_failed`` log line only.
+    In process, so the exception reaches the route's generic branch as raised."""
+    monkeypatch.setattr(teacher, "PREVIEW_TARGET", "tests.sandbox_targets.boom")
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 422, preview.text
+    assert "DISTINCTIVE" not in preview.text
+    assert preview.json()["detail"] == "Could not render this scan"
+    (failed,) = [e for e in logs if e["event"] == "paper_preview_failed"]
+    assert "DISTINCTIVE-RENDERER-TEXT" in failed["error"]
+    assert failed["paper_id"] == str(paper_id)
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_is_revalidated_not_cached(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """Owner decision S2: the browser keeps the thumbnail but asks again on
+    every view (``no-cache``), so every view runs the authorisation check; a
+    thumbnail cached for an hour outlived a revoked view by that hour."""
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 200, preview.text
+    assert preview.headers["cache-control"] == "private, no-cache"
+    assert re.fullmatch(r'"[0-9a-f]{32}"', preview.headers["etag"]), preview.headers
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_etag_round_trip_skips_download_and_render(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """A revalidation whose ``If-None-Match`` names the current tag is a 304
+    answered from the row: the stored object is not downloaded again and
+    nothing is drawn."""
+    from unittest.mock import patch
+
+    import pymupdf
+
+    counting = _counting_client(client)
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        counting,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+    url = f"/api/papers/{paper_id}/preview"
+
+    first = client.get(url)
+    assert first.status_code == 200, first.text
+    etag = first.headers["etag"]
+    assert counting.downloads == 1
+
+    with patch.object(pymupdf.Page, "get_pixmap") as get_pixmap:
+        second = client.get(url, headers={"If-None-Match": etag})
+    get_pixmap.assert_not_called()
+    assert second.status_code == 304, second.text
+    assert second.content == b""
+    assert second.headers["etag"] == etag
+    assert second.headers["cache-control"] == "private, no-cache"
+    assert counting.downloads == 1
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_etag_does_not_bypass_authorisation(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The ETag names the paper, not the viewer, so a matching tag must never
+    stand in for the visibility check: another teacher who sends the owner's
+    tag gets the same 404 as without it, and nothing is downloaded."""
+    from unittest.mock import patch
+
+    import pymupdf
+
+    counting = _counting_client(client)
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        counting,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+    url = f"/api/papers/{paper_id}/preview"
+    etag = client.get(url).headers["etag"]
+    assert counting.downloads == 1
+
+    _auth_as(client, _seed_user(pg_sessionmaker, Role.teacher), Role.teacher)
+    without_tag = client.get(url)
+    with patch.object(pymupdf.Page, "get_pixmap") as get_pixmap:
+        with_tag = client.get(url, headers={"If-None-Match": etag})
+    get_pixmap.assert_not_called()
+
+    assert with_tag.status_code == 404, with_tag.text
+    assert with_tag.json() == without_tag.json() == {"detail": f"Unknown paper: {paper_id}"}
+    assert "etag" not in with_tag.headers
+    assert counting.downloads == 1
+
+
+def test_preview_if_none_match_is_parsed_per_rfc_9110_unit() -> None:
+    """``etag_matches`` is RFC 9110 13.1.2's weak comparison over a list."""
+    ours = '"abc"'
+    assert teacher.etag_matches(None, ours) is False
+    assert teacher.etag_matches('"abc"', ours) is True
+    assert teacher.etag_matches('W/"abc"', ours) is True
+    assert teacher.etag_matches('"abc"', 'W/"abc"') is True
+    assert teacher.etag_matches('"x", "abc"', ours) is True
+    assert teacher.etag_matches('"x","abc"', ours) is True
+    assert teacher.etag_matches("*", ours) is True
+    assert teacher.etag_matches(" * ", ours) is True
+    assert teacher.etag_matches('"ab"', ours) is False
+    assert teacher.etag_matches('"abcd"', ours) is False
+    assert teacher.etag_matches("abc", ours) is False
+    assert teacher.etag_matches('w/"abc"', ours) is False
+    assert teacher.etag_matches('"abc', ours) is False
+    assert teacher.etag_matches("", ours) is False
+    assert teacher.etag_matches('"x", *', ours) is False
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_if_none_match_is_parsed_per_rfc_9110(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """At the route: a weak tag and a list containing the tag revalidate; a
+    list without it gets the image again."""
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+    url = f"/api/papers/{paper_id}/preview"
+    etag = client.get(url).headers["etag"]
+
+    assert client.get(url, headers={"If-None-Match": f"W/{etag}"}).status_code == 304
+    assert client.get(url, headers={"If-None-Match": f'"other", {etag}'}).status_code == 304
+    other = client.get(url, headers={"If-None-Match": '"other"'})
+    assert other.status_code == 200, other.text
+    assert other.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_joins_every_if_none_match_line(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """RFC 9110 5.3: a list header sent as two lines is one list. The tag on
+    the second line revalidates as if both were on one line."""
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+    url = f"/api/papers/{paper_id}/preview"
+    etag = client.get(url).headers["etag"]
+
+    two_lines = [("If-None-Match", '"other"'), ("If-None-Match", etag)]
+    assert client.get(url, headers=two_lines).status_code == 304
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_star_never_bypasses_authorisation_or_deletion(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``If-None-Match: *`` matches any tag, so it is the widest probe there
+    is: from another teacher it is still the 404 for a paper they cannot see,
+    and from the owner after a (soft) delete it is the 404 for a paper that is
+    gone. The row check comes first either way."""
+    from lemely.db.deletion_repo import TeacherPaperDeletionService
+
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+    url = f"/api/papers/{paper_id}/preview"
+    star = {"If-None-Match": "*"}
+    assert client.get(url, headers=star).status_code == 304
+    unknown = {"detail": f"Unknown paper: {paper_id}"}
+
+    _auth_as(client, _seed_user(pg_sessionmaker, Role.teacher), Role.teacher)
+    stranger = client.get(url, headers=star)
+    assert stranger.status_code == 404, stranger.text
+    assert stranger.json() == unknown
+
+    _auth_as(client, teacher_user, Role.teacher)
+    TeacherPaperDeletionService(pg_sessionmaker).delete(str(teacher_user), str(paper_id))
+    deleted = client.get(url, headers=star)
+    assert deleted.status_code == 404, deleted.text
+    assert deleted.json() == unknown
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_refuses_a_scan_whose_page_count_cannot_be_read(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """A page count MuPDF cannot read is a scan that cannot be checked: the
+    refusal ``check_pdf_content`` gives it (``uncheckable``, its own message),
+    not the generic render failure, and nothing is drawn."""
+    from unittest.mock import PropertyMock, patch
+
+    import pymupdf
+
+    from lemely.io.scan_limits import _PAGE_COUNT_UNREADABLE_MESSAGE
+
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+
+    unreadable = PropertyMock(side_effect=RuntimeError("cannot count"))
+    with (
+        patch.object(pymupdf.Document, "page_count", new_callable=lambda: unreadable),
+        patch.object(pymupdf.Page, "get_pixmap") as get_pixmap,
+        structlog.testing.capture_logs() as logs,
+    ):
+        preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    get_pixmap.assert_not_called()
+    assert preview.status_code == 422, preview.text
+    assert preview.json()["detail"] == _PAGE_COUNT_UNREADABLE_MESSAGE
+    (rejected,) = [e for e in logs if e["event"] == "paper_preview_rejected"]
+    assert rejected["reason"] == "uncheckable"
+
+
+@pytest.mark.usefixtures("in_process_sandbox")
+def test_preview_304_is_answered_from_the_row_after_the_object_expires(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """The documented order: the row authorises the view and is the existence
+    check a 304 relies on, so a revalidation is a 304 even once the stored
+    object has expired; the first request without the tag gets the 404."""
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _a4_pdf(),
+        content_type="application/pdf",
+        name="scan.pdf",
+    )
+    url = f"/api/papers/{paper_id}/preview"
+    first = client.get(url)
+    assert first.status_code == 200, first.text
+    etag = first.headers["etag"]
+
+    storage_backend.delete(
+        settings.storage.bucket, f"teacher/{teacher_user}/{paper_id.hex}/scan.pdf"
+    )
+
+    assert client.get(url, headers={"If-None-Match": etag}).status_code == 304
+    gone = client.get(url)
+    assert gone.status_code == 404, gone.text
+    assert gone.json()["detail"] == f"No stored scan for paper {paper_id}"
+
+
+def test_preview_etag_names_the_paper_its_object_and_the_render_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tag changes with the paper, with its stored object, and with
+    ``PREVIEW_RENDER_VERSION`` (a change to how the thumbnail is drawn), so
+    a browser never keeps a thumbnail drawn the old way."""
+    row = MagicMock(spec=TeacherPaperRow)
+    row.id = uuid.UUID(int=1)
+    row.storage_path = "teacher/t/1/scan.pdf"
+    base = teacher.preview_etag(row)
+    assert re.fullmatch(r'"[0-9a-f]{32}"', base)
+    assert teacher.preview_etag(row) == base
+
+    other_paper = MagicMock(spec=TeacherPaperRow)
+    other_paper.id = uuid.UUID(int=2)
+    other_paper.storage_path = row.storage_path
+    assert teacher.preview_etag(other_paper) != base
+
+    other_object = MagicMock(spec=TeacherPaperRow)
+    other_object.id = row.id
+    other_object.storage_path = "teacher/t/1/other.pdf"
+    assert teacher.preview_etag(other_object) != base
+
+    monkeypatch.setattr(teacher, "PREVIEW_RENDER_VERSION", teacher.PREVIEW_RENDER_VERSION + 1)
+    assert teacher.preview_etag(row) != base
+
+
+def _streamed_rgb_png(width: int, height: int) -> bytes:
+    """A white RGB PNG built row by row, so the test never holds the decoded image."""
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        crc = struct.pack(">I", zlib.crc32(tag + data))
+        return struct.pack(">I", len(data)) + tag + data + crc
+
+    compressor = zlib.compressobj(6)
+    row = b"\x00" + b"\xff\xff\xff" * width
+    idat = bytearray()
+    for _ in range(height):
+        idat += compressor.compress(row)
+    idat += compressor.flush()
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    signature = b"\x89PNG\r\n\x1a\n"
+    return signature + chunk(b"IHDR", header) + chunk(b"IDAT", bytes(idat)) + chunk(b"IEND", b"")
+
+
+def test_preview_of_an_a4_600_dpi_colour_scan_renders_in_the_worker(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    teacher_user: uuid.UUID,
+) -> None:
+    """An admitted colour scan must preview in the interactive worker, as it did
+    in process: an A4 page scanned at 600 dpi in colour (4960 x 7016, 34.8 Mpx,
+    under the 40 Mpx colour ceiling) is an ordinary upload. Rendered in the
+    worker since #260: MuPDF's decode failed under the starting interactive
+    limit (``RLIMIT_DATA`` 192 MiB) and needs 272 MiB (Task 11's
+    measurement), inside the limit set from it."""
+    from lemely.io.scan_limits import MAX_DECODE_PX
+
+    assert MAX_DECODE_PX >= 4960 * 7016
+    paper_id = _seed_stored_scan(
+        paper_repo,
+        storage_backend,
+        settings,
+        teacher_user,
+        _streamed_rgb_png(4960, 7016),
+        content_type="image/png",
+        name="scan.png",
+    )
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+
+    assert preview.status_code == 200, preview.text
+    assert preview.headers["content-type"] == "image/png"
+
+
 _PREVIEW_PEAK_RSS_CHILD = """
-from lemely.web.routers.teacher import _render_preview_png
+from lemely.io.scan_render import render_preview_png
 from tests.pdf_fakes import bilevel_png
 
 
@@ -2047,7 +2941,7 @@ try:
 except OSError:
     raise SystemExit(77)  # cannot reset the high-water mark here: the parent skips
 before = peak_bytes()
-png = _render_preview_png(scan)
+png = render_preview_png(scan)
 print(peak_bytes() - before, len(png))
 """
 
@@ -2060,7 +2954,11 @@ def test_preview_of_a_160_mpx_bilevel_scan_has_a_bounded_peak() -> None:
     process (``VmHWM`` growth over the peak after imports and after building
     the file): 958 MB drawn at ``dpi=72``, 183 MB at the bounded zoom -- most
     of it MuPDF's decode of the whole image at one byte a pixel (159 MB),
-    which no zoom avoids. The bound, 400 MB, sits between the two."""
+    which no zoom avoids. The bound, 400 MB, sits between the two. Since
+    the preview decodes images with Pillow, as the marker does (final review
+    R3, I1), it is 328 MB: the decode (159 MB) and its "L" copy (159 MB),
+    which Pillow needs to reduce a bilevel image by anything but nearest
+    neighbour."""
     import subprocess
 
     root = Path(__file__).resolve().parents[1]
@@ -2234,6 +3132,7 @@ def test_schemes_empty(client: TestClient, corpus_repo: SchemeCorpusRepository) 
     assert body["stats"][0]["value"] == "0"
 
 
+@pytest.mark.usefixtures("sandboxed")
 def test_upload_scheme_persists_row_and_pdf(
     client: TestClient,
     corpus_repo: SchemeCorpusRepository,
@@ -2279,6 +3178,7 @@ def test_schemes_lists_corpus_rows_with_data_backed_fields(
     assert stats["Parsed"] == "1"
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_upload_unknown_subject_scheme_is_422_and_stores_nothing(
     client: TestClient,
     corpus_repo: SchemeCorpusRepository,
@@ -2289,7 +3189,8 @@ def test_upload_unknown_subject_scheme_is_422_and_stores_nothing(
 
     ``SchemeCorpusRepository.store`` returns ``None`` for this case rather
     than raising; the route must turn that into a 422 and must not upload the
-    PDF to storage on that path.
+    PDF to storage on that path. In process: the parser stand-in is patched
+    into this process, which a worker child would never see.
     """
     from lemely.core.loose_schemas import (
         AnswerPoint,
@@ -2342,12 +3243,13 @@ def test_upload_unknown_subject_scheme_is_422_and_stores_nothing(
 
 
 def _patch_parser_to_return(monkeypatch: pytest.MonkeyPatch, scheme: MarkScheme) -> None:
-    """Make ``upload_scheme``'s lazy ``DeterministicMarkSchemeParser`` import return ``scheme``.
+    """Make ``parse_scheme_pdf``'s lazy ``DeterministicMarkSchemeParser`` import return ``scheme``.
 
     Isolates the re-upload tests below from the real parser (and the real
     filename-derived paper identity it would extract), so "the same paper" is
     guaranteed by construction rather than by picking real PDF bytes/filenames
-    that happen to parse identically.
+    that happen to parse identically. Only in process (``in_process_sandbox``):
+    the parse runs in a worker child otherwise, which never sees the patch.
     """
 
     class _FakeParser:
@@ -2359,6 +3261,7 @@ def _patch_parser_to_return(monkeypatch: pytest.MonkeyPatch, scheme: MarkScheme)
     monkeypatch.setattr("lemely.io.det.DeterministicMarkSchemeParser", _FakeParser)
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_reupload_same_filename_replaces_the_stored_pdf_without_error(
     client: TestClient,
     corpus_repo: SchemeCorpusRepository,
@@ -2395,6 +3298,7 @@ def test_reupload_same_filename_replaces_the_stored_pdf_without_error(
     assert storage_backend._objects[key] == b"%PDF-1.4 v2"
 
 
+@pytest.mark.usefixtures("in_process_sandbox")
 def test_reupload_different_filename_does_not_orphan_the_old_pdf(
     client: TestClient,
     corpus_repo: SchemeCorpusRepository,
@@ -2431,6 +3335,269 @@ def test_reupload_different_filename_does_not_orphan_the_old_pdf(
     assert old_key not in storage_backend._objects, "the old PDF was orphaned, not cleaned up"
     assert list(storage_backend._objects) == [new_key]
     assert storage_backend._objects[new_key] == b"%PDF-1.4 v2"
+
+
+# ---------------------------------------------------------------------------
+# The scheme parse runs in the extraction worker (#260, final review R3, I3).
+# ---------------------------------------------------------------------------
+
+#: A CAIE-style name, so the parser reads the paper's identity from it.
+_SCHEME_NAME = "0625_s23_ms_41.pdf"
+_MB = 1024 * 1024
+
+
+@pytest.fixture
+def _forget_last_outcome(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the extraction worker's ``last_outcome``, which outlives a worker
+    shutdown, so an assertion on it reads this test's call and no earlier one."""
+    monkeypatch.setattr(sandbox.EXTRACTION_WORKER, "last_outcome", None)
+
+
+def _post_scheme(client: TestClient, data: bytes, name: str = _SCHEME_NAME) -> Response:
+    return client.post("/api/schemes", files={"scheme_pdf": (name, data, "application/pdf")})
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_upload_scheme_parses_a_synthetic_scheme_in_the_worker(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+) -> None:
+    """A valid scheme still parses and files through the route, and the parse
+    ran in the extraction worker's child, not in the web process."""
+    resp = _post_scheme(client, synthetic_theory_scheme_pdf(questions=4, parts=3))
+
+    assert resp.status_code == 200, resp.text
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "ok"
+    assert sandbox.EXTRACTION_WORKER.pid() is not None
+    (row,) = corpus_repo.list_rows()
+    assert (row.doc, row.maximum_mark, row.question_count) == (_SCHEME_NAME, 24, 4)
+    assert (resp.json()["maxMarks"], resp.json()["paper"]) == (24, "Paper 4 V1")
+    assert list(storage_backend._objects) == [
+        (settings.storage.bucket, f"schemes/{row.id}/{_SCHEME_NAME}")
+    ]
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_upload_scheme_parse_failure_is_a_422_with_only_the_fixed_text(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """The parser's refusal crosses the worker as a ``ParseError``; the client
+    gets the fixed text, and the parser's own message (which names the file)
+    goes to the ``scheme_parse_failed`` log line only."""
+    with structlog.testing.capture_logs() as logs:
+        resp = _post_scheme(client, synthetic_theory_scheme_pdf(maximum_mark_on_cover=False))
+
+    assert resp.status_code == 422
+    assert resp.json() == {"detail": "Could not read this mark scheme"}
+    assert "maximum_mark" not in resp.text
+    assert _SCHEME_NAME not in resp.text
+    (failed,) = [e for e in logs if e["event"] == "scheme_parse_failed"]
+    assert (failed["reason"], failed["error_type"]) == ("parse", "ParseError")
+    assert "Cannot extract maximum_mark" in failed["error"]
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "rejected"
+    assert corpus_repo.list_rows() == []
+    assert storage_backend._objects == {}
+
+
+@pytest.mark.parametrize(
+    ("target", "reason"),
+    [("tests.sandbox_targets.boom", "error"), ("tests.sandbox_targets.oom", "memory")],
+)
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_upload_scheme_worker_failure_is_a_422_with_only_the_fixed_text(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+    reason: str,
+) -> None:
+    """An exception the parse raises (a ``SandboxError``) or a parse that runs
+    the child out of memory (``SandboxMemory``) is the same 422 with the
+    fixed text; the failure's own text stays in the log."""
+    monkeypatch.setattr(
+        sandbox,
+        "sandbox_settings",
+        lambda: SandboxSettings(extraction_data_limit_bytes=128 * _MB),
+    )
+    monkeypatch.setattr(scheme_parse, "SCHEME_PARSE_TARGET", target)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = _post_scheme(client, synthetic_theory_scheme_pdf())
+
+    assert resp.status_code == 422
+    assert resp.json() == {"detail": "Could not read this mark scheme"}
+    assert "DISTINCTIVE-RENDERER-TEXT" not in resp.text
+    assert "worker" not in resp.text
+    (failed,) = [e for e in logs if e["event"] == "scheme_parse_failed"]
+    assert failed["reason"] == reason
+    assert sandbox.EXTRACTION_WORKER.last_outcome == reason
+    assert corpus_repo.list_rows() == []
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_upload_scheme_parse_is_cut_at_the_scheme_timeout(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``POST /api/schemes`` cuts a slow parse at ``scheme_parse_timeout_seconds``
+    (not ``upload_check_timeout_seconds``, nor the extraction timeout): a 422
+    with the fixed text, and the cause only in the log."""
+    monkeypatch.setattr(
+        sandbox,
+        "sandbox_settings",
+        lambda: SandboxSettings(
+            enabled=True,
+            scheme_parse_timeout_seconds=0.5,
+            extraction_timeout_seconds=180,
+            upload_check_timeout_seconds=180,
+        ),
+    )
+    monkeypatch.setattr(
+        scheme_parse, "SCHEME_PARSE_TARGET", "tests.sandbox_targets.slow_scheme_parse"
+    )
+
+    started = time.monotonic()
+    with structlog.testing.capture_logs() as logs:
+        resp = _post_scheme(client, synthetic_theory_scheme_pdf())
+
+    assert time.monotonic() - started < 2.5, "the parse ran to its own end"
+    assert resp.status_code == 422, resp.text
+    assert resp.json() == {"detail": "Could not read this mark scheme"}
+    (failed,) = [e for e in logs if e["event"] == "scheme_parse_failed"]
+    assert failed["reason"] == "timeout"
+    assert corpus_repo.list_rows() == []
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="VmHWM is Linux-only")
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_upload_scheme_bomb_is_refused_without_growing_the_web_process(
+    client: TestClient, corpus_repo: SchemeCorpusRepository
+) -> None:
+    """The reviewer's pdfplumber bomb at 1 GiB: a 1 MB PDF whose one page
+    inflates to 1 GiB of spaces. Parsed in the web process it needs about
+    2.1 GiB (the 200 MiB one took it 416 MiB); in the worker the child runs
+    out under its limit, the upload is a 422 with the fixed text, and the
+    test process's peak barely moves. The next upload gets a working child."""
+    bomb = whitespace_bomb_pdf(1024 * _MB)
+    assert len(bomb) < 2 * _MB
+    # Control: the route works, and the child, the app and the multipart
+    # parser are all warm before the peak is reset.
+    assert _post_scheme(client, synthetic_theory_scheme_pdf()).status_code == 200
+    before = reset_peak_rss()
+
+    with structlog.testing.capture_logs() as logs:
+        resp = _post_scheme(client, bomb, name="0625_s23_ms_42.pdf")
+    grown = peak_rss_bytes() - before
+
+    assert resp.status_code == 422, resp.text
+    assert grown < 32 * _MB, f"the test process grew by {grown / _MB:.0f} MiB"
+    assert resp.json() == {"detail": "Could not read this mark scheme"}
+    # Measured: pdfminer catches the MemoryError and raises its own
+    # exception, so the child reports an error (SandboxError), not memory.
+    assert sandbox.EXTRACTION_WORKER.last_outcome in {"error", "memory"}
+    (failed,) = [e for e in logs if e["event"] == "scheme_parse_failed"]
+    assert "MemoryError" in failed["error"]
+    assert [r.doc for r in corpus_repo.list_rows()] == [_SCHEME_NAME]
+    again = _post_scheme(client, synthetic_theory_scheme_pdf(), name="0625_s23_ms_43.pdf")
+    assert again.status_code == 200, again.text
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_upload_scheme_behind_a_running_extraction_is_a_503_within_its_timeout(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scheme parse shares the extraction worker. An extraction stream
+    holding it makes the parse wait out ``scheme_parse_timeout_seconds``,
+    then answer 503 so the client tries again; the extraction is not
+    disturbed."""
+    worker = sandbox.EXTRACTION_WORKER
+    primed = threading.Event()
+    extracted: list[int] = []
+    failures: list[BaseException] = []
+
+    def extract() -> None:
+        stream = worker.stream(
+            "tests.sandbox_targets.slow_count", 3, 1.0, timeout=30, item_type=int
+        )
+        try:
+            with contextlib.closing(stream):
+                extracted.append(next(stream))
+                primed.set()
+                extracted.extend(stream)
+        except BaseException as exc:  # reported on the main thread
+            failures.append(exc)
+            primed.set()
+
+    extraction = threading.Thread(target=extract)
+    extraction.start()
+    try:
+        assert primed.wait(timeout=60), "the extraction stream never yielded"
+        assert not failures, failures
+        monkeypatch.setattr(
+            sandbox,
+            "sandbox_settings",
+            lambda: SandboxSettings(enabled=True, scheme_parse_timeout_seconds=0.5),
+        )
+        with structlog.testing.capture_logs() as logs:
+            resp = _post_scheme(client, synthetic_theory_scheme_pdf())
+    finally:
+        extraction.join(timeout=30)
+    assert not extraction.is_alive()
+    assert resp.status_code == 503, resp.text
+    assert resp.json() == {
+        "detail": "Reading mark schemes is temporarily unavailable. Try again in a moment."
+    }
+    assert [(e["event"], e["reason"]) for e in logs if e["event"] == "scheme_parse_failed"] == [
+        ("scheme_parse_failed", "unavailable")
+    ]
+    assert not failures, failures
+    assert extracted == [0, 1, 2]
+    assert corpus_repo.list_rows() == []
+
+
+@pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")
+def test_upload_scheme_is_a_503_when_no_worker_can_start(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No child to parse in is the server's problem: 503, and nothing is
+    parsed in the web process instead."""
+    monkeypatch.setattr(sandbox.EXTRACTION_WORKER, "_spawn", lambda: False)
+
+    resp = _post_scheme(client, synthetic_theory_scheme_pdf())
+
+    assert resp.status_code == 503, resp.text
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "unavailable"
+
+
+def test_upload_scheme_parses_off_the_event_loop(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``upload_scheme`` is ``async def``: the blocking worker call must run on
+    a thread, or every other request in the process waits for the parse."""
+    import asyncio
+
+    calls: list[bool] = []
+
+    def fake_parse(data: bytes, filename: str, cfg: object, *, timeout: float) -> MarkScheme:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            calls.append(False)
+        else:
+            calls.append(True)
+        return _scheme()
+
+    monkeypatch.setattr(teacher, "parse_scheme_in_worker", fake_parse)
+
+    assert _post_scheme(client, b"%PDF-1.4 stand-in").status_code == 200
+    assert calls == [False], "the parse ran on the event loop's thread"
 
 
 # ---------------------------------------------------------------------------

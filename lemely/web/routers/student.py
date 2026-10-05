@@ -73,6 +73,7 @@ from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
 from lemely.io.scan_metadata import ScanMetadataExtractor
+from lemely.io.scheme_parse import WorkerSchemeParser
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.runtime.config import Settings
 from lemely.web.deps import (
@@ -832,7 +833,9 @@ def resolve_mark_scheme(
 
     1. ``sibling_scheme``, when given: a mark-scheme PDF uploaded alongside the
        scan, parsed via :class:`ChainedMarkSchemeParser` (deterministic first,
-       Gemini fallback on a parse failure). A scheme handed to this call
+       in the extraction worker, then Gemini on a ``ParseError``; a worker
+       failure raises :class:`~lemely.io.scheme_parse.SchemeReadFailedError`,
+       whose text is fixed, and calls no Gemini). A scheme handed to this call
        explicitly always wins over the corpus, whatever the corpus holds for
        the same paper.
     2. Otherwise, when ``metadata`` was detected, the parsed scheme corpus
@@ -844,10 +847,13 @@ def resolve_mark_scheme(
     and marks the upload failed rather than inventing marks).
     """
     if sibling_scheme is not None:
-        from lemely.io.det import DeterministicMarkSchemeParser
-
+        # The deterministic parse runs in the extraction worker (#260): the
+        # PDF is the user's, and pdfplumber inflates whatever its content
+        # streams hold. A worker failure is a `SchemeReadFailedError` with a
+        # fixed text, not a `ParseError`, so it fails the run without reaching
+        # Gemini.
         parser = ChainedMarkSchemeParser(
-            DeterministicMarkSchemeParser(cfg=settings.det_parser),
+            WorkerSchemeParser(settings.det_parser),
             GeminiMarkSchemeParser(gemini_client),
         )
         return parser(sibling_scheme)

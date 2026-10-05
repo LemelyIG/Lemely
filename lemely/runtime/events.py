@@ -36,6 +36,15 @@ class EventType(StrEnum):
     GEMINI_RETRY = "gemini_retry"
     GEMINI_ESCALATE = "gemini_escalate"
     EXTRACTION_PROGRESS = "extraction_progress"
+    # A marking run is waiting for this process's one run slot
+    # (lemely.io.run_cap, #260, #271); it starts by itself when the run ahead
+    # of it ends. Carries a ``message`` the student's progress view shows.
+    EXTRACTION_QUEUED = "extraction_queued"
+    # The run that published EXTRACTION_QUEUED now holds the slot and goes on.
+    # Published only by a run that waited, so a progress view can drop its
+    # "waiting" state at once instead of on the run's next event, which comes
+    # after the scan render. Carries a ``message`` the student's view shows.
+    EXTRACTION_DEQUEUED = "extraction_dequeued"
     SCAN_QUALITY_WARNING = "scan_quality_warning"
     SOURCE_BOX_DROPPED = "source_box_dropped"
     # US-031 review MUST-FIX 7: a whole answer dropped (unrecoverable

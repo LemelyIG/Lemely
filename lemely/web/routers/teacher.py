@@ -20,6 +20,8 @@ route and a restart loses nothing mid-run.
 # dependency injection. (The per-file-ignore in pyproject.toml handles this.)
 from __future__ import annotations
 
+import functools
+import hashlib
 import queue
 import tempfile
 import threading
@@ -31,7 +33,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 
 import anyio
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 
 from lemely.core.analytics import (
     aggregate_weaknesses_from_history,
@@ -99,16 +101,13 @@ from lemely.db.review_repo import ReviewService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.gemini import GeminiClient
 from lemely.io.question_generation import QuestionGenerator
-from lemely.io.scan_limits import (
-    ScanRejectedError,
-    check_pdf_content,
-    looks_like_pdf,
-    open_checked_pdf,
-    open_scan_image_document,
-)
+from lemely.io.scan_limits import ScanRejectedError
 from lemely.io.scan_metadata import ScanMetadataExtractor
+from lemely.io.scan_render import RenderRefused
+from lemely.io.scheme_parse import SCHEME_READ_FAILED_MESSAGE, parse_scheme_in_worker
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.io.teacher_quiz import TeacherQuizBuilder
+from lemely.runtime import sandbox
 from lemely.runtime.config import Settings
 from lemely.runtime.events import Event, EventType, bus, current_run_id
 from lemely.web.deps import (
@@ -172,7 +171,14 @@ from lemely.web.schemas_teacher import (
     StudentRowDTO,
     UploadResponseDTO,
 )
-from lemely.web.upload_utils import check_scan_geometry, check_upload_cap, safe_upload_name
+from lemely.web.upload_utils import (
+    SANDBOX_FAILED_DETAIL,
+    SCHEME_PARSE_UNAVAILABLE_DETAIL,
+    check_scan_geometry,
+    check_upload_cap,
+    safe_upload_name,
+    sandbox_failure_to_http,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -192,6 +198,68 @@ router = APIRouter(
 # hostile client cannot exhaust disk by streaming an unbounded body.
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+#: The preview's render, run in :data:`~lemely.runtime.sandbox.INTERACTIVE_WORKER`
+#: (#260). Named by dotted path: the worker imports it in its child.
+PREVIEW_TARGET = "lemely.io.scan_render.render_preview_png"
+
+#: How the preview is drawn, as far as a cached thumbnail is concerned. Part
+#: of :func:`preview_etag`: bump it whenever a change to
+#: :func:`~lemely.io.scan_render.render_preview_png` changes the pixels it
+#: draws (size, DPI, colour), so every browser's cached thumbnail stops
+#: matching and is drawn again. 2: image scans are drawn by Pillow, as the
+#: marker reads them, not by MuPDF (final review R3, I1).
+PREVIEW_RENDER_VERSION = 2
+
+#: The preview's caching (owner decision S2, #249): the browser may keep the
+#: thumbnail but must revalidate on every view, and the revalidation runs the
+#: route's full authorisation check before any ``304``.
+_PREVIEW_CACHE_CONTROL = "private, no-cache"
+
+
+def preview_etag(row: TeacherPaperRow) -> str:
+    """The ETag of a paper's preview: its id, its stored object and the render version.
+
+    ``storage_path`` names the stored object, and it is immutable per paper:
+    :meth:`TeacherPaperRepository.create` is the only writer of the column,
+    the upload key carries the paper's own server-generated uuid, and storage
+    is create-only, so the bytes under it never change while the row exists.
+    The digest is truncated to 128 bits, plenty to tell one thumbnail from
+    another; it is not a secret and grants nothing (the route checks
+    visibility before it compares one).
+    """
+    material = f"{row.id}:{row.storage_path}:{PREVIEW_RENDER_VERSION}".encode()
+    return '"' + hashlib.sha256(material).hexdigest()[:32] + '"'
+
+
+def _opaque_tag(entity_tag: str) -> str | None:
+    """The quoted opaque tag of one RFC 9110 entity-tag, ``W/`` dropped; ``None`` if malformed."""
+    tag = entity_tag.removeprefix("W/")
+    if len(tag) < 2 or not tag.startswith('"') or not tag.endswith('"') or '"' in tag[1:-1]:
+        return None
+    return tag
+
+
+def etag_matches(if_none_match: str | None, etag: str) -> bool:
+    """Whether an ``If-None-Match`` value matches ``etag`` (RFC 9110 section 13.1.2).
+
+    ``*`` matches any current representation; otherwise the value is a
+    comma-separated list of entity-tags, compared with the weak comparison
+    the header calls for: a ``W/`` prefix on either side is ignored and the
+    quoted opaque tags must be equal byte for byte. A malformed member (an
+    unquoted tag, a lower-case ``w/``) matches nothing, and no header
+    matches nothing. A comma inside a quoted tag is not supported: the tags
+    this route issues are hex digits.
+    """
+    if if_none_match is None:
+        return False
+    if if_none_match.strip() == "*":
+        return True
+    ours = _opaque_tag(etag)
+    if ours is None:
+        return False
+    return any(_opaque_tag(member.strip()) == ours for member in if_none_match.split(","))
+
 
 # Confidence at/above which a marked question is treated as auto-graded; below it
 # the question is surfaced in the teacher review queue. Aliases the single domain
@@ -230,15 +298,30 @@ _REUSE_POOL_PER_BAND = 20
 # ---------------------------------------------------------------------------
 
 #: The phases :func:`_run_grading_job` walks, in the order it walks them, paired
-#: with the console's label for each. ``TeacherPaperRow.stage`` always holds one
-#: of these ids; :func:`_live_pipeline_steps` turns it into the Pipeline panel's
-#: rows. Ingestion is not here because it is finished before the job starts.
+#: with the console's label for each. ``TeacherPaperRow.stage`` holds one of
+#: these ids, or :data:`_QUEUED_STAGE` while the extraction waits for the
+#: marking-run slot; :func:`_live_pipeline_steps` turns it into the Pipeline
+#: panel's rows. Ingestion is not here because it is finished before the job starts.
 _JOB_STAGES: tuple[tuple[str, str], ...] = (
     ("detect", "Exam details read"),
     ("scheme", "Mark scheme parsed"),
     ("extract", "Handwriting read"),
     ("mark", "Questions marked"),
 )
+
+#: What the client is told when ``POST /api/schemes`` parsed a scheme but could
+#: not store its PDF (the cause goes to the ``scheme_pdf_store_failed`` log line).
+_SCHEME_STORE_FAILED_DETAIL = "Storing the mark scheme PDF failed. Try again in a moment."
+
+#: The row's ``stage`` while its extraction waits for this process's one
+#: marking-run slot (:func:`~lemely.io.run_cap.marking_run_slot`, #260, #271):
+#: a student's run, or another job, holds the scan's pages. Not a phase of its
+#: own: :func:`_live_pipeline_steps` shows it as the extract step, still
+#: active, with :data:`_QUEUED_COUNT` where its counter would be.
+_QUEUED_STAGE = "queued"
+
+#: What the extract step says, in its counter's place, while the run waits.
+_QUEUED_COUNT = "Waiting for another paper"
 
 # One worker so Queued means queued — a paper genuinely waiting behind another
 # on this instance (DS13). Raising it is a one-line change now that per-run
@@ -376,6 +459,17 @@ def _track_progress(
     worker (DS13), on two — each get their own scoped queue and so cannot mix
     counters, whatever payload shape either publisher emits.
 
+    ``EXTRACTION_QUEUED`` (the run waits for the process's one marking-run
+    slot, :mod:`lemely.io.run_cap`) moves the row to :data:`_QUEUED_STAGE`.
+    The waiting run publishes it again every minute, and each write moves the
+    row's ``updated_at``: a queued row is alive, and is not reported as a lost
+    run after ``stale_run_after_seconds`` (900 s) however long it waits. And
+    ``EXTRACTION_DEQUEUED`` (the run holds the slot, published only by a run
+    that waited) moves it back to ``extract``, the stage the run was in when
+    it queued. Without that event the row would leave "queued" only on the
+    run's next event, which comes after the scan render (up to the extraction
+    worker's timeout, 33 s at worst measured).
+
     Shutdown is the caller's ``stop`` flag, deliberately **not** the queue's
     ``None`` sentinel. Scoping means a foreign run's ``publish_done()`` no
     longer reaches this queue in practice — but this loop still does not lean
@@ -393,6 +487,12 @@ def _track_progress(
         except queue.Empty:
             continue
         if event is None:
+            continue
+        if event.type is EventType.EXTRACTION_QUEUED:
+            repo.set_stage(paper_id, _QUEUED_STAGE)
+            continue
+        if event.type is EventType.EXTRACTION_DEQUEUED:
+            repo.set_stage(paper_id, "extract")
             continue
         if event.type is EventType.EXTRACTION_PROGRESS:
             repo.set_stage(paper_id, "extract")
@@ -687,9 +787,16 @@ def _live_pipeline_steps(row: TeacherPaperRow) -> list[PipelineStepDTO]:
     running) or a ``failed``/stale one — such a row freezes on the stage it
     stopped at, so the panel shows how far the run actually got instead of
     resetting to zero or claiming to still be working.
+
+    A run waiting for the marking-run slot (:data:`_QUEUED_STAGE`) is at the
+    extract step, which says :data:`_QUEUED_COUNT` in its counter's place. A
+    row that died while it waited (failed, or stale) freezes on that step with
+    no counter: it is not waiting for anything any more.
     """
     order = [stage for stage, _label in _JOB_STAGES]
-    current = order.index(row.stage) if row.stage in order else 0
+    waiting = row.stage == _QUEUED_STAGE
+    stage = "extract" if waiting else row.stage
+    current = order.index(stage) if stage in order else 0
     running = row.status is UploadStatus.processing and not row.stale
     steps = [
         # The bytes are in object storage before the job is even submitted, so
@@ -704,52 +811,12 @@ def _live_pipeline_steps(row: TeacherPaperRow) -> list[PipelineStepDTO]:
         else:
             state = "idle"
         count = ""
-        if index == current and row.progress is not None:
+        if index == current and waiting and running:
+            count = _QUEUED_COUNT
+        elif index == current and row.progress is not None:
             count = f"{row.progress[0]} / {row.progress[1]}"
         steps.append(PipelineStepDTO(label=label, count=count, state=state))
     return steps
-
-
-#: The longest edge of a paper preview, in pixels: an A4 page's long edge at 72 dpi.
-_PREVIEW_LONG_EDGE_PX = 842.0
-
-
-def _render_preview_png(data: bytes) -> bytes:
-    """Page 1 of a stored scan, ``data``, as a PNG thumbnail (see :func:`get_paper_preview`).
-
-    PDF or image is decided from the bytes (``looks_like_pdf``), as the crop
-    route and extraction decide it, never from the client-supplied content
-    type: MuPDF sniffs the bytes, so PDF bytes stored as ``image/png`` used
-    to skip the pre-scan and were repaired while opening (final review,
-    item 4). A PDF opens through ``open_checked_pdf`` (the raw pre-scan
-    first), an image through ``open_scan_image_document`` (allowlisted, and
-    never opened as a PDF).
-
-    Raises :class:`HTTPException` 422 for a document with no pages,
-    :class:`ScanRejectedError` for a refused scan, and lets every other
-    failure propagate for the route to turn into a 422.
-    """
-    import pymupdf
-
-    doc = open_checked_pdf(data) if looks_like_pdf(data) else open_scan_image_document(data)
-    with doc:
-        check_pdf_content(doc)
-        if doc.page_count == 0:
-            raise HTTPException(status_code=422, detail="Stored scan has no pages")
-        page = doc.load_page(0)  # type: ignore[no-untyped-call]
-        # At most an A4 page at 72 dpi: 842px on the long edge. Sized against
-        # the consumer: the card thumbnail is a ~300px-wide strip, so this is
-        # still sharp on a 2x display, and every step up costs a bigger
-        # payload on every card in the grid at once (96 dpi produced a 320KB
-        # PNG per paper). A zoom, not `dpi=72`: MuPDF sizes an image's page
-        # from the image's own DPI metadata, so a 72 dpi image drew at full
-        # size -- 958 MB for a 160 Mpx bilevel scan the upload admits (final
-        # review, Critical 1); bounded, 183 MB, mostly the image's decode.
-        zoom = min(1.0, _PREVIEW_LONG_EDGE_PX / max(page.rect.width, page.rect.height, 1.0))
-        matrix = pymupdf.Matrix(zoom, zoom)  # type: ignore[no-untyped-call]
-        pixmap = page.get_pixmap(matrix=matrix)
-        png: bytes = pixmap.tobytes("png")
-    return png
 
 
 def _latest_records(history_store: HistoryStoreProtocol) -> list[PaperRecord]:
@@ -1095,6 +1162,7 @@ def get_paper(
 )
 def get_paper_preview(
     paper_id: str,
+    request: Request,
     auth: Annotated[AuthContext, Depends(get_auth_context)],
     settings: Annotated[Settings, Depends(get_settings)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
@@ -1113,13 +1181,50 @@ def get_paper_preview(
     below does not need an explicit ``anyio.to_thread`` wrap the way the
     upload routes' calls do from inside ``async def``.
 
-    404 when the object has expired or was never written (DS9) — a stored
-    scan is not forever, and a caller sees that as "no scan", not a crash.
-    Image uploads (the console accepts images as well as PDFs) are drawn by
-    PyMuPDF too, so one code path covers both; the bytes decide which
-    opener runs (``_render_preview_png``).
+    Caching (owner decision S2, #249): ``Cache-Control: private, no-cache``
+    with an ``ETag`` (:func:`preview_etag`), so the browser keeps the
+    thumbnail but asks again on every view. The checks run in this order:
+
+    1. ``_require_paper``: the DB row and the visibility rule. A paper the
+       caller may not see is the same 404 whatever ``If-None-Match`` says, so
+       a tag never stands in for authorisation. The row is also the
+       existence check a ``304`` relies on: a paper with no row never reaches
+       the tag.
+    2. The tag, from the row alone.
+    3. ``If-None-Match`` naming it (:func:`etag_matches`): a ``304``, with no
+       download and no render.
+    4. Otherwise the download (404 when the object has expired or was never
+       written, DS9: a stored scan is not forever, and a caller sees that as
+       "no scan", not a crash), the render, and a ``200``.
+
+    A consequence of answering a ``304`` from the row: a browser that cached
+    the thumbnail of a paper whose stored object has since expired keeps
+    seeing it until the row goes. The row is what authorises the view, and
+    the object's expiry does not change who may see the paper; the first
+    request without the tag after expiry gets the 404.
+
+    Image uploads (the console accepts images as well as PDFs) are decoded
+    by Pillow exactly as the marker and the crop decode them (orientation,
+    wide grey, transparency), and PDFs are drawn by PyMuPDF; the bytes
+    decide which (:func:`~lemely.io.scan_render.render_preview_png`).
+
+    The render runs in :data:`~lemely.runtime.sandbox.INTERACTIVE_WORKER`, a
+    memory-limited child that is killed past ``preview_timeout_seconds``
+    (#260): a scan's refusal crosses back with its own message (422); a
+    render that fails there is a 422 with a fixed message, and no worker to
+    render in is a 503 (``sandbox_failure_to_http``). A render that fails in
+    process (the sandbox disabled) gets the same fixed message: the
+    exception's text goes to the ``paper_preview_failed`` log line only.
     """
     row = _require_paper(repo, auth, paper_id)
+    etag = preview_etag(row)
+    caching = {"ETag": etag, "Cache-Control": _PREVIEW_CACHE_CONTROL}
+    # Every line of the header: a list header sent as several lines is one
+    # list (RFC 9110 section 5.3), and the matching tag may be on any of them.
+    if_none_match = ", ".join(request.headers.getlist("if-none-match")) or None
+    if etag_matches(if_none_match, etag):
+        return Response(status_code=304, headers=caching)
+
     try:
         data = storage.download(settings.storage.bucket, row.storage_path)
     except StorageObjectNotFoundError:
@@ -1128,25 +1233,34 @@ def get_paper_preview(
         ) from None
 
     try:
-        png = _render_preview_png(data)
-    except HTTPException:
-        raise
-    except ScanRejectedError as exc:
-        log.warning("paper_preview_rejected", paper_id=paper_id, reason=str(exc))
+        png = sandbox.INTERACTIVE_WORKER.call(
+            PREVIEW_TARGET,
+            data,
+            timeout=sandbox.sandbox_settings().preview_timeout_seconds,
+            result_type=bytes,
+        )
+    except RenderRefused as exc:
+        # The refusal's message is the user's; its reason and numbers go to
+        # the log, as the crop logs its refusals (final review R1, minor 7).
+        log.warning("paper_preview_refused", paper_id=paper_id, reason=exc.reason, **exc.fields)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ScanRejectedError as exc:
+        log.warning("paper_preview_rejected", paper_id=paper_id, reason=exc.reason, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except sandbox.SandboxFailure as exc:
+        raise sandbox_failure_to_http(exc, event="paper_preview_failed", paper_id=paper_id) from exc
     except Exception as exc:
-        # A scan that cannot be rendered is not a server fault — it is a file the
-        # teacher uploaded that is not the document type it claimed to be.
+        # The in-process path: with the sandbox disabled the render runs in
+        # this process and its own exceptions arrive here unchanged (from the
+        # worker, only a ``LemelyError`` other than the two above could). A
+        # scan that cannot be rendered is not a server fault — it is a file
+        # the teacher uploaded that is not the document type it claimed to be.
+        # Its text (a library's message, a path) stays in the log; the client
+        # gets the fixed message (#249).
         log.warning("paper_preview_failed", paper_id=paper_id, error=str(exc))
-        raise HTTPException(status_code=422, detail=f"Could not render this scan: {exc}") from exc
+        raise HTTPException(status_code=422, detail=SANDBOX_FAILED_DETAIL) from exc
 
-    # Immutable for the lifetime of the paper id: the stored scan never changes
-    # once uploaded, so the grid can cache every thumbnail it has already drawn.
-    return Response(
-        content=png,
-        media_type="image/png",
-        headers={"Cache-Control": "private, max-age=3600"},
-    )
+    return Response(content=png, media_type="image/png", headers=caching)
 
 
 @router.get("/grading/queue", response_model=GradingQueueDTO)
@@ -1243,8 +1357,20 @@ async def upload_scheme(
     parsed scheme replaces the ``mark_schemes`` row for its paper (``store`` is
     insert-or-replace, keyed on paper identity) and the PDF itself lands in
     object storage at ``schemes/{mark_scheme_id}/{safe_name}`` (spec §4.1).
-    Parse failures surface as a 422, and so does a subject with no bundled
-    syllabus taxonomy — see :meth:`SchemeCorpusRepository.store`.
+    A subject with no bundled syllabus taxonomy is a 422 — see
+    :meth:`SchemeCorpusRepository.store`.
+
+    The parse runs in :data:`~lemely.runtime.sandbox.EXTRACTION_WORKER`
+    (:func:`~lemely.io.scheme_parse.parse_scheme_in_worker`, #260), off the
+    event loop, within ``scheme_parse_timeout_seconds``: pdfplumber inflates
+    whatever a PDF's content streams hold, and a 204 KB upload took the web
+    process 416 MiB (final review R3, I3). A scheme that cannot be read —
+    the parser's refusal, a file it cannot open, a worker that ran out of
+    memory or time — is a 422 with the fixed
+    :data:`~lemely.io.scheme_parse.SCHEME_READ_FAILED_MESSAGE`; no worker to
+    parse in (busy past the timeout behind a scan extraction, or none could
+    start) is a 503. Why it failed goes to the ``scheme_parse_failed`` log
+    line only.
 
     A re-upload for a paper identity already in the corpus reuses that paper's
     ``mark_scheme_id`` (``store`` is insert-or-replace), so the *object key*
@@ -1255,20 +1381,45 @@ async def upload_scheme(
     against a create-only backend (spec §4.1); on a different-filename
     re-upload it is what stops the old object being orphaned forever.
     """
-    from lemely.io.det import DeterministicMarkSchemeParser
-
     pdf_bytes = await scheme_pdf.read()
     check_upload_cap(pdf_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=scheme_pdf.content_type)
-    # Sanitise the client filename to a basename before joining — the raw value
-    # must never be trusted as a path (traversal into ``../`` etc.).
+    # Sanitise the client filename to a basename — the raw value must never be
+    # trusted as a path (traversal into ``../`` etc.). The parser reads the
+    # paper's identity from it, so the worker parses the file under this name.
     filename = _safe_upload_name(scheme_pdf.filename, "scheme.pdf")
-    with tempfile.TemporaryDirectory() as tmp:
-        pdf_path = Path(tmp) / filename
-        pdf_path.write_bytes(pdf_bytes)
-        try:
-            scheme = DeterministicMarkSchemeParser(cfg=settings.det_parser)(pdf_path)
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail=f"Mark scheme parse failed: {exc}") from exc
+    try:
+        scheme = await anyio.to_thread.run_sync(
+            functools.partial(
+                parse_scheme_in_worker,
+                pdf_bytes,
+                filename,
+                settings.det_parser,
+                timeout=sandbox.sandbox_settings().scheme_parse_timeout_seconds,
+            )
+        )
+    except sandbox.SandboxFailure as exc:
+        raise sandbox_failure_to_http(
+            exc,
+            event="scheme_parse_failed",
+            failed_detail=SCHEME_READ_FAILED_MESSAGE,
+            unavailable_detail=SCHEME_PARSE_UNAVAILABLE_DETAIL,
+            content_type=scheme_pdf.content_type,
+            byte_size=len(pdf_bytes),
+        ) from exc
+    except Exception as exc:
+        # The parser's refusal (a ``ParseError``, which crosses the worker
+        # intact), or, with the sandbox disabled, whatever pdfplumber raised in
+        # this process. Its text names the file and the parser's internals: the
+        # log keeps it, the client gets the fixed message.
+        log.warning(
+            "scheme_parse_failed",
+            reason="parse",
+            error=str(exc),
+            error_type=type(exc).__name__,
+            content_type=scheme_pdf.content_type,
+            byte_size=len(pdf_bytes),
+        )
+        raise HTTPException(status_code=422, detail=SCHEME_READ_FAILED_MESSAGE) from exc
 
     scheme_id = corpus.store(scheme, provenance="teacher_upload:deterministic")
     if scheme_id is None:
@@ -1292,10 +1443,10 @@ async def upload_scheme(
             storage.delete(settings.storage.bucket, previous_key)
         storage.upload(settings.storage.bucket, key, pdf_bytes, scheme_pdf.content_type)
     except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Storing the mark scheme PDF failed: {exc}",
-        ) from exc
+        # The backend's text can name the bucket and the object key: log it,
+        # tell the client only that storing failed.
+        log.warning("scheme_pdf_store_failed", error=str(exc), error_type=type(exc).__name__)
+        raise HTTPException(status_code=503, detail=_SCHEME_STORE_FAILED_DETAIL) from exc
     corpus.set_source_document(scheme_id, key)
     return _scheme_row_dto(next(r for r in corpus.list_rows() if r.id == scheme_id))
 
