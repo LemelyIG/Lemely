@@ -1396,7 +1396,8 @@ def _build_ai_corrected(
     test's shape, since ``build_marker_user_prompt`` does not yet ask for
     them unless ``equivalence_gate`` is also passed through to it -- or with
     an empty ``question.answer_points``, everything below this dispatch is
-    UNCHANGED from before this story, line for line.
+    the legacy path, which trusts ``mark.awarded_marks`` and checks coherence
+    against the same group-aware interval as the verdict path (#272).
 
     The ``question.answer_points`` guard (post-I6 review, Critical A) exists
     because :func:`_awarded_from_verdicts` and :func:`_check_point_evidence`
@@ -1521,10 +1522,10 @@ def _build_ai_corrected(
     # answer_points fallback) -- but a model that disobeys either
     # instruction and returns verdicts anyway has them silently discarded
     # here, with no flag and no log line. Left as a documented limit rather
-    # than plumbed through: this is the SAME legacy body every non-I6 call
-    # has always used, and preserving that body unchanged, line for line,
-    # is precisely what makes the two dispatch branches provably equivalent
-    # (see `_build_ai_corrected`'s own docstring).
+    # than plumbed through: this is the legacy body every non-I6 call uses,
+    # and keeping verdicts out of it is what keeps the two dispatch branches
+    # separable (see `_build_ai_corrected`'s own docstring). Both branches
+    # now share the group-aware coherence interval (#272).
     return CorrectedQuestion(
         question_id=question.id,
         awarded_marks=awarded,
