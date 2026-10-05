@@ -3439,19 +3439,26 @@ def test_issue_270_narrow_times_rule_leaves_x_without_ten_power_alone(
         ("2*10^x", "2x10^x"),
         ("3x+2x10^2", "3x+200"),
         ("3x+200", "3x+2x10^2"),
+        ("2x10^n", "2*10^n"),
+        ("2*10^n", "2x10^n"),
     ],
     ids=[
         "symbolic-exponent",
         "symbolic-exponent-reversed",
         "x-is-a-variable-elsewhere",
         "x-is-a-variable-elsewhere-reversed",
+        "symbolic-exponent-no-other-x",
+        "symbolic-exponent-no-other-x-reversed",
     ],
 )
 def test_issue_270_times_x_is_never_read_where_x_may_be_the_variable(a: str, b: str) -> None:
     """Task 6 review, Important 1: ``x`` is read as times only before ``10^``
     with a whole-number exponent, and only when no other ``x`` in the text
     is the variable. ``2x10^x`` (exponent ``x``) and ``3x+2x10^2`` (``3x``
-    uses ``x`` as the variable) were false EQUAL_PROVEN after 65ba2bd6."""
+    uses ``x`` as the variable) were false EQUAL_PROVEN after 65ba2bd6.
+    ``2x10^n`` pins the exponent check on its own (re-review): no other
+    ``x`` is left once it is read as times, so only the whole-number
+    exponent stops it becoming ``2*10^n``."""
     assert equivalent(a, b).kind not in _EQUAL_KINDS
 
 
