@@ -3373,6 +3373,36 @@ _ISSUE_270_TABLE: list[tuple[str, str, str, str]] = [
     ("2x", "2*x", "equal", "2x-is-still-2-times-x"),
     ("4.5 µg", "4.5 μg", "equal", "micro-sign-is-greek-mu"),
     ("4.5 µg", "4.5 mg", "not_equal", "micrograms-are-not-milligrams"),
+    # Whole-branch review A, Important 1: the times-x pass ran before the
+    # function-name pass and took a bracketless argument's `x` as a times
+    # sign, so each of these was EQUAL_PROVEN to f(number)*1000. The `x` is
+    # either D1's / a lost-base log's argument or standard form's times
+    # sign: two readings, so the text is refused.
+    ("sin2x10^3", "1000*sin(2)", "unparseable", "sin2x-times-ten-is-refused"),
+    ("ln2x10^3", "1000*ln(2)", "unparseable", "ln2x-times-ten-is-refused"),
+    ("log10x10^3", "1000*log(10)", "unparseable", "log10x-times-ten-is-refused"),
+    ("log2 x10^3", "1000*log(2)", "unparseable", "lost-base-log2-x-times-ten-is-refused"),
+    ("sqrt2x10^3", "1000*sqrt(2)", "unparseable", "sqrt2x-times-ten-is-refused"),
+    ("cos2x10^-3", "cos(2)/1000", "unparseable", "cos2x-times-ten-negative-is-refused"),
+    ("5sin2x10^3", "5000*sin(2)", "unparseable", "coefficient-sin2x-times-ten-is-refused"),
+    ("3.0x10^8", "300000000", "equal", "times-x-guard-standard-form-still-reads"),
+    ("2x10^3 µm", "2000 μm", "equal", "times-x-guard-standard-form-with-micro-unit"),
+    ("2.4 x 10^4 J", "24000 J", "equal", "times-x-guard-spaced-standard-form-with-unit"),
+    # Whole-branch review A, Important 2: the thousands-separator collapse
+    # ran after the function-name pass, which closed a number argument at
+    # the space, so `ln10 000` read as ln(10)*000 = 0 (EQUAL_PROVEN to 0).
+    ("ln10 000", "0", "not_equal", "spaced-thousands-argument-is-not-zero"),
+    ("ln10 000", "ln(10000)", "equal", "spaced-thousands-argument-is-one-number"),
+    ("ln1 000", "ln(1000)", "equal", "spaced-thousands-ln-argument"),
+    ("sin30 000", "0", "not_equal", "spaced-thousands-sin-argument-is-not-zero"),
+    ("3ln2 000", "3*ln(2000)", "equal", "spaced-thousands-argument-after-coefficient"),
+    ("log10 1 000", "3", "equal", "lost-base-log10-of-spaced-thousands"),
+    ("log10 1 000", "0", "not_equal", "lost-base-log10-of-spaced-thousands-is-not-zero"),
+    ("log10 100", "2", "equal", "lost-base-log10-of-spaced-argument-unchanged"),
+    # Spaced digits the argument cannot take as a thousands group: they
+    # continue the number or are a factor, so the text is refused.
+    ("ln1.5 000", "0", "unparseable", "spaced-digits-after-decimal-argument-is-refused"),
+    ("sin30 2", "2*sin(30)", "unparseable", "spaced-digit-after-number-argument-is-refused"),
 ]
 
 
@@ -3382,12 +3412,41 @@ _ISSUE_270_TABLE: list[tuple[str, str, str, str]] = [
 def test_issue_270_row_matches_expected_verdict(
     a: str, b: str, expected_kind: str, note: str
 ) -> None:
-    """#270: each row asserts its own verdict, the guards included."""
-    verdict = equivalent(a, b)
-    assert _kind_matches(verdict.kind, expected_kind), (
-        f"{a!r} vs {b!r} ({note}): expected {expected_kind}, got "
-        f"{verdict.kind.value} (method={verdict.method}, detail={verdict.detail})"
-    )
+    """#270: each row asserts its own verdict, the guards included, in both
+    directions (D1 is "pinned both ways"; a false EQUAL in one direction only
+    is still a false EQUAL)."""
+    for left, right in ((a, b), (b, a)):
+        verdict = equivalent(left, right)
+        assert _kind_matches(verdict.kind, expected_kind), (
+            f"{left!r} vs {right!r} ({note}): expected {expected_kind}, got "
+            f"{verdict.kind.value} (method={verdict.method}, detail={verdict.detail})"
+        )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "sin2x10^3",
+        "ln2x10^3",
+        "log10x10^3",
+        "log2 x10^3",
+        "sqrt2x10^3",
+        "cos2x10^-3",
+        "5sin2x10^3",
+        "sin1 000x10^3",
+    ],
+)
+def test_issue_270_function_argument_x_before_ten_power_is_refused_ambiguous(
+    text: str,
+) -> None:
+    """Whole-branch review A, Important 1: ``x`` right after a function name
+    and a number is the argument D1 or a lost-base log would take, and also
+    the times sign of standard form. Neither reading is settled, so the
+    parse reports ``"refused-ambiguous"`` and the generation gate sends it
+    to the solver instead of verifying it by SymPy."""
+    from lemely.core import equivalence as eq
+
+    assert eq.parse_expr_outcome(text) == (None, "refused-ambiguous")
 
 
 def test_both_micro_spellings_parse_to_one_unit_symbol() -> None:

@@ -260,7 +260,37 @@ _NUMBER_LETTER_ARGUMENT_FUNCTIONS = frozenset(
 #: older rules, which never read it as a call.
 _AMBIGUOUS_NUMBER_LETTER_FUNCTIONS = frozenset({"sqrt"})
 
-_NUMBER_ARGUMENT_RE = re.compile(r"\d+(?:\.\d+)?")
+#: A bracketless number argument. Spaced thousands groups belong to it
+#: (``ln1 000`` is ``ln(1000)``), matching :data:`_SPACED_DIGIT_GROUP_RE`'s
+#: reading of the same digits: the collapse runs after the function-name
+#: pass, so an argument closed at the space read ``ln10 000`` as
+#: ``ln(10)*000`` = 0, a false EQUAL_PROVEN (whole-branch review A,
+#: Important 2).
+_NUMBER_ARGUMENT_RE = re.compile(r"\d+(?:\s+\d{3}(?!\d))*(?:\.\d+)?")
+
+#: Spaces then a digit right after a bracketless number argument: the digits
+#: either continue the argument (a thousands group the argument could not
+#: take, ``ln1.5 000``) or are a separate factor (``sin30 2``). Two readings,
+#: so the text is refused.
+_SPACED_DIGIT_AFTER_ARGUMENT_RE = re.compile(r"\s+\d")
+
+#: A function name, a number, then ``x`` before ``10^``/``10**``. That ``x``
+#: is the argument D1 or a lost-base ``log`` takes (``sin2x``, ``log2 x``)
+#: and also standard form's times sign (:data:`_TIMES_X_RE`). The times-x
+#: pass runs first, so it took the ``x`` and ``sin2x10^3`` was EQUAL_PROVEN
+#: to ``1000*sin(2)`` (whole-branch review A, Important 1). Two readings,
+#: so the text is refused. No guard before the name: a coefficient
+#: (``5sin2x10^3``) is caught too.
+_FUNCTION_ARGUMENT_TIMES_X_RE = re.compile(
+    "(?:"
+    + "|".join(
+        sorted(
+            _NUMBER_LETTER_ARGUMENT_FUNCTIONS | _AMBIGUOUS_NUMBER_LETTER_FUNCTIONS,
+            key=lambda name: (-len(name), name),
+        )
+    )
+    + r")\s*\d+(?:\s+\d{3})*(?:\.\d+)?\s*[xX]\s*10\s*(?:\^|\*\*)"
+)
 
 #: A ``log`` base whose subscript extraction lost: ``10`` (owner decision,
 #: "log10(x) is often expressed as log10x") or one digit 2 to 9 (owner
@@ -550,6 +580,11 @@ def _bracket_argument(
     application; otherwise ``None``.
     """
     for end, argument in _argument_candidates(name, text, argument_start):
+        if (
+            _NUMBER_ARGUMENT_RE.fullmatch(argument)
+            and _SPACED_DIGIT_AFTER_ARGUMENT_RE.match(text, end) is not None
+        ):
+            raise _AmbiguousFunctionArgumentError(text[start:])
         if _argument_ends(text, end):
             tail: tuple[int, str] | None = (end, "")
         else:
@@ -592,7 +627,10 @@ def _apply_function_names(text: str) -> str:
        ``cos(θ_1)``), or a number then one letter, for the trig functions,
        ``ln`` and ``log`` only (``sin2x`` -> ``sin(2*x)``, owner decision
        D1). ``sqrt2x`` has no settled reading, so the text is refused: this
-       returns ``""``, which :func:`parse_expr_safe` turns into ``None``;
+       returns ``""``, which :func:`parse_expr_safe` turns into ``None``.
+       A number argument takes its spaced thousands groups (``ln1 000`` ->
+       ``ln(1 000)``); any other spaces-then-digit after it (``sin30 2``,
+       ``ln1.5 000``) is a second reading, so that text is refused too;
     5. after an argument the run is scanned again, so ``sinxcosx`` ->
        ``sin(x)*cos(x)``.
 
@@ -754,16 +792,20 @@ def _normalize_text(text: str) -> str:
     multiplication-glyph replacement, so ``3.0x10⁸`` and ``3.0×10^8`` reach
     it in the same ``10**``/``10^`` shape, and before the function-name pass
     and the digit-suffix rule, which would otherwise read ``x10`` as a
-    subscripted symbol. The function-name pass
+    subscripted symbol. Running first, it would also take the ``x`` a
+    function's bracketless argument needs (``sin2x10^3``), so that shape is
+    refused before it (:data:`_FUNCTION_ARGUMENT_TIMES_X_RE`). The function-name pass
     (:func:`_apply_function_names`) runs immediately before the digit-suffix
     rule, which then subscripts the digits inside a bracketed argument
     (``sin(x2)`` -> ``sin((x_2))``); unit-digit splitting must run after
     multiplication-glyph replacement so a unit right after a `×` isn't
     mistaken for part of the preceding number. The thousands-separator
-    collapse runs last of the rewrites, once mixed fractions have already
-    been rejected on the original spacing.
+    collapse runs last of the rewrites; a bracketless number argument takes
+    its spaced thousands groups itself (:data:`_NUMBER_ARGUMENT_RE`), so the
+    collapse joins them inside the brackets (``ln(1 000)`` -> ``ln(1000)``).
 
-    Returns ``""`` when the function-name pass refuses the text (``sqrt2x``).
+    Returns ``""`` when the text is refused as ambiguous (``sqrt2x``,
+    ``sin2x10^3``, ``sin30 2``).
     """
     normalized = text.replace(_MICRO_SIGN, _GREEK_MU)
     normalized = _unfold_superscripts(normalized)
@@ -773,6 +815,8 @@ def _normalize_text(text: str) -> str:
     normalized = normalized.replace("÷", "/")
     for alias, canonical in _UNIT_ALIASES.items():
         normalized = normalized.replace(alias, canonical)
+    if _FUNCTION_ARGUMENT_TIMES_X_RE.search(normalized):
+        return ""
     normalized = _read_times_x(normalized)
     normalized = _apply_function_names(normalized)
     normalized = _rewrite_digit_suffixes(normalized)
