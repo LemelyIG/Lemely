@@ -130,6 +130,14 @@ class HealthDTO(ApiModel):
     #: A database that fails *after* boundaries loaded leaves this ``true``.
     gradeBoundariesLoaded: bool
 
+    #: The Cloud Run revision answering this request, read from the
+    #: ``K_REVISION`` variable Cloud Run sets in every container; ``None``
+    #: anywhere else (local, Compose, CI). The deploy pipeline compares it with
+    #: the revision it just rolled out, through the public domain, so a
+    #: frontend proxying to the wrong backend (incident 2026-10-06: a stale tag
+    #: URL) fails the smoke test instead of serving old code.
+    revision: str | None = None
+
 
 #: Prefixes of the ``review_reason`` segments ``lemely/io/integrity.py`` writes
 #: for a plagiarism or AI-content finding, e.g. ``"plagiarism (score 0.94)"``.

@@ -49,6 +49,37 @@ def test_health_returns_ok() -> None:
     assert isinstance(body["apiKeyConfigured"], bool)
 
 
+def test_health_reports_the_serving_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cloud Run sets K_REVISION in every container; health echoes it.
+
+    The deploy pipeline compares this against the revision it just rolled out,
+    through the public domain, to prove the frontend's proxy target is the
+    revision that is serving (incident 2026-10-06: a stale tag URL was handed
+    to the Worker and the public site proxied to old code).
+    """
+    monkeypatch.setenv("K_REVISION", "lemely-backend-staging-00042-abc")
+
+    body = TestClient(create_app()).get("/api/health").json()
+
+    assert body["revision"] == "lemely-backend-staging-00042-abc"
+
+
+def test_health_revision_is_null_outside_cloud_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No K_REVISION (local, docker-compose, CI) reports ``null``, not ``""``."""
+    monkeypatch.delenv("K_REVISION", raising=False)
+
+    body = TestClient(create_app()).get("/api/health").json()
+
+    assert "revision" in body
+    assert body["revision"] is None
+
+
+def test_health_revision_treats_an_empty_value_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("K_REVISION", "")
+
+    assert TestClient(create_app()).get("/api/health").json()["revision"] is None
+
+
 def test_health_survives_an_unreachable_database(monkeypatch: pytest.MonkeyPatch) -> None:
     """A database failure reports gradeBoundariesLoaded=false, not a 500.
 

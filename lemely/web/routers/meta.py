@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -115,6 +116,8 @@ def health(settings: Annotated[Settings, Depends(get_settings)]) -> HealthDTO:
     return HealthDTO(
         apiKeyConfigured=settings.gemini_api_key is not None,
         gradeBoundariesLoaded=grade_boundaries_loaded,
+        # Unset and empty both mean "not on Cloud Run"; ``or None`` folds them.
+        revision=os.environ.get("K_REVISION") or None,
         # Read straight off Settings, never by constructing a backend: the
         # deploy smoke test greps this, and a health route that dialled GCS
         # would fail exactly when it is most needed. Guarded by
