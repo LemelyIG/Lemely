@@ -198,7 +198,12 @@ jobs:
       contents: read
       id-token: write # Workload Identity Federation — no long-lived GCP key anywhere
     outputs:
-      url: ${{ steps.deploy.outputs.url }}
+      # NOT the deploy action's own `url` output: see the "Resolve the canonical
+      # backend URL" step. `revision` is the name of the revision holding 100%
+      # of traffic once this job has verified it runs this commit; the
+      # smoke-test job compares it with what the public domain reports.
+      url: ${{ steps.backend-url.outputs.url }}
+      revision: ${{ steps.serving.outputs.revision }}
     steps:
       - uses: actions/checkout@v4
 
@@ -261,7 +266,9 @@ jobs:
           # the old code kept serving. `migrate` runs BEFORE this job, so the
           # database moved on (0040 dropped plagiarism_flagged) under that old code.
           # Always route 100% to the new revision (idempotent; tags such as a debug
-          # tag survive), and the next step proves what is actually serving.
+          # tag survive, and each keeps serving its own old code at its own URL, so
+          # this action's `url` output must not be trusted: see the canonical URL
+          # step below), and the next step proves what is actually serving.
           revision_traffic: LATEST=100
           # gen2 is the load-bearing flag here; --memory is a budget (see the last
           # paragraph of this comment, and docs/ci-cd.md).
@@ -383,7 +390,12 @@ jobs:
       # (skip_default_labels is false), so a mismatch means traffic is pinned
       # elsewhere or the rollout did not take. See "Traffic pinning" in
       # docs/ci-cd.md for the fix.
+      #
+      # The resolved revision name is exported as the `revision` job output: it
+      # is what the smoke-test job expects /api/health (K_REVISION) to report
+      # through the public domain.
       - name: Verify the serving revision runs this commit
+        id: serving
         run: |
           set -euo pipefail
           SERVICE="lemely-backend-${{ needs.resolve-env.outputs.environment }}"
@@ -410,6 +422,43 @@ jobs:
             echo "::error::$SERVICE is serving revision $SERVING, built from commit ${SERVING_SHA:-<unlabelled>}, not ${{ github.sha }}. The deploy created a revision that is not taking traffic; the database has already been migrated, so old code is running on the new schema. Run: gcloud run services update-traffic $SERVICE --to-latest --region=$REGION"
             exit 1
           fi
+          echo "revision=$SERVING" >> "$GITHUB_OUTPUT"
+
+      # The URL handed to the frontend (wrangler's BACKEND_URL) and used for the
+      # direct health check. It comes from the SERVICE, never from the deploy
+      # action's `url` output.
+      #
+      # Incident 2026-10-06: with `revision_traffic: LATEST=100` the action's
+      # `url` output became the URL of the first traffic entry. On staging that
+      # was a tag URL (https://debug238---lemely-backend-staging-....run.app), a
+      # stale debug tag on revision 00040 running old code. The Worker was
+      # deployed with that as BACKEND_URL, so the public site proxied /api to old
+      # code on a migrated database and every marking insert failed with
+      # UndefinedColumn: plagiarism_flagged. The serving-revision check above
+      # passed, because it inspects the service's traffic, not the URL the
+      # frontend was given.
+      #
+      # `status.url` is the service's canonical URL; a tag URL has `---` in its
+      # host (`<tag>---<service>-<hash>.run.app`) and can never be canonical, so
+      # the job refuses one rather than hand it on.
+      - name: Resolve the canonical backend URL
+        id: backend-url
+        run: |
+          set -euo pipefail
+          SERVICE="lemely-backend-${{ needs.resolve-env.outputs.environment }}"
+          URL="$(gcloud run services describe "$SERVICE" --region=us-central1 --format='value(status.url)')"
+          if [ -z "$URL" ]; then
+            echo "::error::gcloud returned no status.url for $SERVICE."
+            exit 1
+          fi
+          case "$URL" in
+            *---*)
+              echo "::error::status.url for $SERVICE is a tag URL ($URL). A tagged revision has its own URL; the frontend must proxy to the service's canonical URL, which serves the latest revision."
+              exit 1
+              ;;
+          esac
+          echo "backend url: $URL"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
 
       # A rollout that fails the startup probe reports only "the user-provided
       # container failed to start and listen on the port" plus a Cloud Console
@@ -442,7 +491,7 @@ jobs:
 
       - name: Verify health and the storage backend directly against Cloud Run
         run: |
-          BODY="$(curl --fail --silent --show-error --retry 5 --retry-delay 5 "${{ steps.deploy.outputs.url }}/api/health")"
+          BODY="$(curl --fail --silent --show-error --retry 5 --retry-delay 5 "${{ steps.backend-url.outputs.url }}/api/health")"
           echo "$BODY"
           echo "$BODY" | grep -q '"backend":"gcs"' || { echo "health does not report the gcs backend"; exit 1; }
           # Same expression as LEMELY_STORAGE__BUCKET above, fallback included:
@@ -520,3 +569,41 @@ jobs:
 
       - name: API health through the same-origin proxy
         run: curl --fail --silent --show-error --retry 30 --retry-delay 10 --retry-all-errors "https://${{ steps.domain.outputs.host }}/api/health"
+
+      # The checks above prove that SOMETHING answers behind the public domain.
+      # This one proves WHICH backend: /api/health reports the Cloud Run revision
+      # that served it (K_REVISION), and it must be the revision deploy-backend
+      # verified is serving this commit. If the Worker's BACKEND_URL points
+      # anywhere else (incident 2026-10-06: a stale tag URL, old code on a
+      # migrated database) the revisions differ and this fails.
+      #
+      # Retries for ~90s because the Worker deploy and Cloudflare propagation
+      # take seconds; a backend too old to report `revision` never converges and
+      # fails the same way.
+      - name: Public domain reaches the revision just deployed
+        env:
+          HOST: ${{ steps.domain.outputs.host }}
+          EXPECTED: ${{ needs.deploy-backend.outputs.revision }}
+        run: |
+          set -uo pipefail
+          if [ -z "$EXPECTED" ]; then
+            echo "::error::deploy-backend exported no serving revision; cannot prove which backend the public domain reaches."
+            exit 1
+          fi
+          ACTUAL=""
+          for attempt in $(seq 1 18); do
+            BODY="$(curl --fail --silent --show-error -H 'Cache-Control: no-cache' "https://$HOST/api/health" || true)"
+            ACTUAL="$(printf '%s' "$BODY" | jq -r '.revision // empty' 2>/dev/null || true)"
+            if [ "$ACTUAL" = "$EXPECTED" ]; then
+              echo "https://$HOST/api/health reports revision $ACTUAL, the revision just deployed."
+              exit 0
+            fi
+            echo "attempt $attempt: expected revision $EXPECTED, public domain reports ${ACTUAL:-<none>}"
+            sleep 5
+          done
+          if [ -z "$ACTUAL" ]; then
+            echo "::error::https://$HOST/api/health reports no revision (last body: ${BODY:-<empty>}). The backend behind the public domain is either older than the revision field or not on Cloud Run, so it is not the revision just deployed ($EXPECTED); the frontend's BACKEND_URL points at a different revision."
+          else
+            echo "::error::https://$HOST/api/health reports revision $ACTUAL but the revision just deployed is $EXPECTED. The frontend's BACKEND_URL points at a different revision."
+          fi
+          exit 1

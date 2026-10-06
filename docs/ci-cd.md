@@ -345,7 +345,8 @@ being deployed. The error names the serving revision and its commit. The check
 reads what is serving, not what the deploy created.
 
 **To keep a debug revision reachable without pinning**, give it a tag at 0%
-traffic and leave `LATEST` at 100%:
+traffic and leave `LATEST` at 100%. Read "Tags" below first: a tag is not
+harmless to the pipeline.
 
 ```bash
 gcloud run services update-traffic lemely-backend-staging --region us-central1 \
@@ -355,6 +356,44 @@ gcloud run services update-traffic lemely-backend-staging --region us-central1 \
 The tag gets its own URL (`https://debug-foo---<service-url>`) and no share of
 traffic. `gcloud run deploy ... --tag debug-foo --no-traffic` does the same for
 a fresh revision. Remove the tag with `--remove-tags debug-foo` when done.
+
+#### Tags
+
+A tagged revision has its own URL (`https://<tag>---<service-host>`), separate
+from the service's canonical URL, and it keeps serving that revision's code
+whatever `LATEST` is. A tag left on an old revision is therefore a live,
+public copy of old code, not a harmless bookmark.
+
+On 2026-10-06 that is what broke staging. With `revision_traffic: LATEST=100`
+the deploy action's `url` output became the URL of the first traffic entry,
+which was a stale `debug238` tag on revision 00040. The pipeline gave that URL
+to the Worker as `BACKEND_URL`, so the public site proxied `/api` to old code on
+a migrated database and every marking insert failed with
+`UndefinedColumn: plagiarism_flagged`. The serving-revision check passed,
+because it reads the service's traffic, not the URL the frontend was given.
+
+What the pipeline does now:
+
+- `deploy-backend` no longer uses the deploy action's `url` output. The
+  "Resolve the canonical backend URL" step reads `status.url` from
+  `gcloud run services describe` and fails the job if it is empty or contains
+  `---` (the tag-URL marker). That value is the job's `url` output, used by the
+  direct health check and by the Worker's `BACKEND_URL`.
+- `/api/health` reports `revision`, the Cloud Run revision answering the
+  request (`K_REVISION`; `null` outside Cloud Run).
+- The `smoke-test` job's "Public domain reaches the revision just deployed" step
+  fetches `https://<host>/api/health` and requires `revision` to equal the
+  revision `deploy-backend` verified is serving this commit (its `revision`
+  output). It retries for about 90 seconds for the Worker deploy to propagate.
+  A mismatch, or a backend that reports no revision, fails the run and says the
+  frontend's `BACKEND_URL` points at a different revision.
+
+Remove debug tags when you are done with them. To check for stray ones:
+
+```bash
+gcloud run services describe lemely-backend-staging --region us-central1 \
+  --format='value(status.traffic)'
+```
 
 ### Memory budget
 
