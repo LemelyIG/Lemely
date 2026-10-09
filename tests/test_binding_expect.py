@@ -288,3 +288,40 @@ def test_enumerated_answer_still_reads_both_values(leaves: dict[str, Question]) 
     assert not matches_expected(
         "1. 43cm 2. 60cm", _question([{"point": "2", "math_mark_type": "B"}])
     )
+
+
+def test_public_functions_never_raise_on_hostile_strings() -> None:
+    numeric = _question([{"point": "4.9 N", "math_mark_type": "B"}])
+    hostile = [
+        "5 x 10" + "1" * 5000,
+        "",
+        "1" * 50_000,
+        " " * 50_000,
+        "1e999999",
+        "\u2212" * 1000,
+        "\u00d7 10" * 500,
+        "٣٤٥",
+        "\uff11\uff12\uff13",
+        "5 x 10^" + "9" * 5000,
+        "1." + "1" * 5000,
+    ]
+    for text in hostile:
+        assert answer_shape(text) in {"number", "text", "drawing", "unknown"}
+        assert isinstance(matches_expected(text, numeric), bool)
+        hostile_point = _question([{"point": text, "math_mark_type": "A"}])
+        assert isinstance(expected_numeric_values(hostile_point), list)
+        assert isinstance(expected_shape(hostile_point), str)
+
+
+def test_unicode_minus_reads_as_negative() -> None:
+    negative = _question([{"point": "-4.9 N", "math_mark_type": "B"}])
+    assert matches_expected("\u22124.9 N", negative)
+    assert not matches_expected("4.9 N", negative)
+
+
+def test_decimal_point_position_matters() -> None:
+    small = _question([{"point": "0.28", "math_mark_type": "B"}])
+    large = _question([{"point": "2.8", "math_mark_type": "B"}])
+    assert not matches_expected("0.28", large)
+    assert not matches_expected("2.8", small)
+    assert matches_expected("0.28", small)

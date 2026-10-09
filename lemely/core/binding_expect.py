@@ -95,6 +95,9 @@ def _exponent(match: re.Match[str]) -> int | None:
         return None
     raw = raw.replace("\u2212", "-").replace("\u2013", "-")
     digits = raw.lstrip("-")
+    # Bound the run before int(): a hostile digit run would hit Python's int limit.
+    if len(digits) > 3:
+        return None
     # ``2 x 1000`` is a product, not 2 x 10^0 with a lost superscript.
     if glued and digits.startswith("0"):
         return None
