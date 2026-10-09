@@ -185,3 +185,47 @@ def test_expected_values_never_raise_on_any_corpus_leaf() -> None:
         f"{non_mcq} non-MCQ, {with_values} with expected values ({share:.1%})"
     )
     assert schemes > 0
+
+
+@pytest.mark.parametrize(
+    ("point", "values"),
+    [
+        ("1220", ["1220"]),
+        ("\u221214", ["-14"]),
+        ("0.047", ["0.047"]),
+        ("2.76 \u00d7 106", ["2.76e6"]),
+        ("4100000 oe", ["4100000"]),
+        ("3.2(0)", ["3.2"]),
+        ("64.5 cm cao", ["64.5"]),
+        ("467.42 OR 467.4", ["467.42", "467.4"]),
+    ],
+)
+def test_untyped_bare_value_points_are_expected_values(point: str, values: list[str]) -> None:
+    assert expected_numeric_values(_question([{"point": point}])) == values
+    assert expected_shape(_question([{"point": point}])) == "number"
+
+
+@pytest.mark.parametrize(
+    "point",
+    [
+        "1, 2, 3, 4, 6, 12",
+        "4.15, 4.25",
+        "5.6 / 20",
+        "x = 3",
+        "area under the line",
+        "2 + 3",
+        "3 and 5",
+        "3\n5",
+        "2 pairs of equal angles oe",
+        "2 \u00d7 1000",
+    ],
+)
+def test_untyped_lists_and_expressions_are_not_expected_values(point: str) -> None:
+    assert expected_numeric_values(_question([{"point": point}])) == []
+
+
+def test_typed_method_points_still_excluded() -> None:
+    for mark in ("C", "M"):
+        assert expected_numeric_values(_question([{"point": "1220", "math_mark_type": mark}])) == []
+    # a typed A point keeps its permissive reading (list-free, units allowed)
+    assert expected_numeric_values(_question([{"point": "12 N", "math_mark_type": "A"}])) == ["12"]

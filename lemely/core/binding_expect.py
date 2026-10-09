@@ -60,11 +60,22 @@ _UNITS = frozenset(
 _UNIT_STRIP = re.compile(r"[()\[\]\d^²³⁻\-\u2212\u2013+.,;:]")
 
 
-def _unit_tokens_ok(rest: str) -> bool:
-    """True when ``rest`` is empty or made only of unit-like tokens."""
+_ANNOTATIONS = frozenset({"oe", "cao", "nfww", "www", "isw", "soi", "ft", "awrt", "aef"})
+
+
+def _unit_tokens_ok(rest: str, *, strict: bool = False) -> bool:
+    """True when ``rest`` is empty or made only of unit-like tokens.
+
+    ``strict`` also allows mark-scheme annotations, and rejects commas and
+    tokens with no letters (a second number or an operator after the value).
+    """
+    if strict and "," in rest:
+        return False
     for chunk in re.split(r"[\s/·*]+", rest.strip()):
         token = _UNIT_STRIP.sub("", chunk).lower()
-        if token and token not in _UNITS:
+        if strict and chunk and not re.search(r"[^\W\d_]|%|°", chunk):
+            return False
+        if token and token not in _UNITS and not (strict and token in _ANNOTATIONS):
             return False
     return True
 
@@ -96,7 +107,7 @@ def _standard_form_value(match: re.Match[str]) -> str | None:
     return f"{match.group('mant')}e{exponent}"
 
 
-def _leading_value(alternative: str) -> str | None:
+def _leading_value(alternative: str, *, strict: bool = False) -> str | None:
     """The numeric value an alternative starts with, units stripped, else None."""
     text = alternative.strip()
     # Splitting on AND/OR can leave a stray half of a bracketed phrase.
@@ -105,14 +116,14 @@ def _leading_value(alternative: str) -> str | None:
     standard = _LEADING_STANDARD_FORM.match(text)
     if standard:
         value = _standard_form_value(standard)
-        if value is None or not _unit_tokens_ok(text[standard.end() :]):
+        if value is None or not _unit_tokens_ok(text[standard.end() :], strict=strict):
             return None
         return value
     number = _LEADING_NUMBER.match(text)
     if not number:
         return None
     rest = text[number.end() :]
-    if rest[:1].isdigit() or not _unit_tokens_ok(rest):
+    if rest[:1].isdigit() or not _unit_tokens_ok(rest, strict=strict):
         return None
     digits = number.group("num").replace(",", "").replace(" ", "")
     return ("-" if number.group("sign") else "") + digits
@@ -123,7 +134,24 @@ def _format_float(value: float) -> str:
     return text[:-2] if text.endswith(".0") else text
 
 
+_OR_SPLIT = re.compile(r"\s+OR\s+")
+
+
+def _untyped_values(point: AnswerPoint) -> list[str]:
+    """Values of an untyped point, only where an alternative is a single bare value."""
+    values: list[str] = []
+    for alternative in _OR_SPLIT.split(point.point):
+        if "\n" in alternative or re.search(r"\bAND\b", alternative):
+            continue
+        value = _leading_value(alternative, strict=True)
+        if value is not None:
+            values.append(value)
+    return values
+
+
 def _point_values(point: AnswerPoint) -> list[str]:
+    if point.math_mark_type is None:
+        return _untyped_values(point)
     if point.math_mark_type not in (MathMarkType.A, MathMarkType.B):
         return []
     calculated = point.calculated_answer
@@ -138,7 +166,13 @@ def _point_values(point: AnswerPoint) -> list[str]:
 
 
 def expected_numeric_values(question: Question) -> list[str]:
-    """Final-answer values of the leaf, units stripped; ``[]`` when it has none."""
+    """Final-answer values of the leaf, units stripped; ``[]`` when it has none.
+
+    Points typed A or B contribute their leading value; C and M (method) points
+    never do; untyped points contribute only when an OR-alternative is a single
+    bare value (number, optional unit, optional annotation such as ``oe``).
+    When in doubt nothing is contributed: a false value is worse than a missing one.
+    """
     values: list[str] = []
     for point in question.answer_points:
         for value in _point_values(point):
@@ -215,6 +249,9 @@ def _values_match(answer_value: str, expected_value: str) -> bool:
 
 def matches_expected(answer: str, question: Question) -> bool:
     """True when ``answer`` holds a value equal to an expected final-answer value.
+
+    A plain-decimal expected value (``0.28``) also accepts a 2% relative
+    difference; integers and standard-form values must match exactly.
 
     Both sides are plain numerics, so float comparison decides every pair and
     ``lemely.core.equivalence.equivalent`` is never needed. A pair that cannot
