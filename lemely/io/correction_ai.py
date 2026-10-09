@@ -9,7 +9,6 @@ from typing import Literal, NamedTuple
 
 import structlog
 
-from lemely.core.binding import BindingReport
 from lemely.core.binding_gate import GateThresholds, check_off_topic, verdict
 from lemely.core.correction import _exam_metadata, _load_mark_scheme
 from lemely.core.equivalence import Verdict, VerdictKind, equivalent
@@ -2277,17 +2276,19 @@ def _with_off_topic_check(
     mark-scheme order (``correct_paper`` builds it by walking ``leaves``),
     which is the order a run of ``"no"`` verdicts is counted in.
 
-    A binding report exists only for answers that came off a scan. A plain
-    mapping (typed quiz answers, CLI JSON) was never bound to a question by
-    reading a page, so there is no binding to doubt: the result comes back
-    untouched, ``binding=None``, whatever the marker said.
+    The extraction's own report is the switch. G8 applies only when
+    ``extracted_answers`` is an ``ExtractedAnswers`` that carries one, which
+    is what the gated extractor attaches to answers it read off a scan.
+    Everything else comes back untouched, ``binding=None``, whatever the
+    marker said: a plain mapping (typed answers, CLI JSON), and an
+    ``ExtractedAnswers`` with no report (quiz marking, the accuracy harness's
+    golden answers, an extraction made with the gate off). Those answers were
+    never bound to a question by reading a page, or the gate was not asked,
+    so there is no binding to doubt and no report is invented for them.
 
-    For an ``ExtractedAnswers`` the report is the extraction's own with G8
-    appended and the verdict recomputed over every check, so a failure found
-    at extraction is never lost here. An extraction that carries no report
-    (the legacy extractor) gets a report holding G8 alone, with
-    ``retried=True`` so that a paper-scope G8 failure there is a ``hold``,
-    never a ``retry``: that path has no binder to retry with.
+    With a report, the result's ``binding`` is that report with G8 appended
+    and the verdict recomputed over every check with the report's own
+    ``retried``, so a failure found at extraction is never lost here.
 
     Scope decides what else changes. A PAPER-scope failure changes no
     question: the verdict stops the whole paper and the report names the
@@ -2297,23 +2298,14 @@ def _with_off_topic_check(
     result is REBUILT, not ``model_copy``-ed, so ``calculate_totals`` derives
     the paper-level ``needs_teacher_review`` from the flagged rows.
     """
-    if not isinstance(extracted_answers, ExtractedAnswers):
+    prior = extracted_answers.binding if isinstance(extracted_answers, ExtractedAnswers) else None
+    if prior is None:
         return result
     check = check_off_topic(result, GateThresholds())
-    prior = extracted_answers.binding
-    if prior is not None:
-        checks = [*prior.checks, check]
-        report = prior.model_copy(
-            update={"checks": checks, "verdict": verdict(checks, retried=prior.retried)}
-        )
-    else:
-        report = BindingReport(
-            # Placeholder the type requires: the legacy extractor has no binder.
-            binder="label",
-            checks=[check],
-            verdict=verdict([check], retried=True),
-            retried=True,
-        )
+    checks = [*prior.checks, check]
+    report = prior.model_copy(
+        update={"checks": checks, "verdict": verdict(checks, retried=prior.retried)}
+    )
     questions = result.questions
     if not check.passed and check.scope == "question":
         off_topic = set(check.question_ids)
@@ -2357,11 +2349,10 @@ def correct_paper(
             construction). Defaults to both off.
 
     Returns:
-        The marked paper. When ``extracted_answers`` is an
-        ``ExtractedAnswers``, its ``binding`` is the extraction's binding
-        report with check G8 (answers the marker judged off topic) appended;
-        for a plain mapping it is ``None`` -- see
-        :func:`_with_off_topic_check`.
+        The marked paper. When ``extracted_answers`` carries a binding
+        report, the result's ``binding`` is that report with check G8
+        (answers the marker judged off topic) appended; otherwise it is
+        ``None`` -- see :func:`_with_off_topic_check`.
 
     Raises:
         ConfigError: paper has non-MCQ questions, mcq_only=False, and gemini_client is None.

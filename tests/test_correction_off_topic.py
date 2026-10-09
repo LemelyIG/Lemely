@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -71,16 +72,27 @@ def _question(scheme: MarkScheme, qid: str) -> Question:
     return next(q for q in scheme.all_questions_flat() if q.id == qid)
 
 
+# What a gated extraction of a scan attaches when nothing failed and its one
+# retry is already spent, so a paper-scope G8 failure on top of it is a hold.
+GATED = BindingReport(
+    binder="label",
+    checks=[BindingCheck(id="G1", passed=True, scope="paper", detail="All ids are known.")],
+    verdict="pass",
+    retried=True,
+)
+
+
 def _extracted(
     answers: dict[str, str],
     *,
     binding: BindingReport | None = None,
     dropped: list[str] | None = None,
+    source_scan: str = "x.pdf",
 ) -> ExtractedAnswers:
     return ExtractedAnswers.model_validate(
         {
             "paper_id": "p",
-            "source_scan": "x.pdf",
+            "source_scan": source_scan,
             "answers": [
                 {"question_id": qid, "answer": text, "confidence": 0.95}
                 for qid, text in answers.items()
@@ -120,13 +132,21 @@ def _mark_with(replies: dict[str, AIMarkResponse], **kwargs: Any) -> CorrectionR
         return correct_paper(gemini_client=MagicMock(), **kwargs)
 
 
-def _paper(flags: list[str | None], **reply_kwargs: Any) -> CorrectionResult:
+def _paper(
+    flags: list[str | None],
+    *,
+    binding: BindingReport | None = GATED,
+    source_scan: str = "x.pdf",
+    **reply_kwargs: Any,
+) -> CorrectionResult:
     """One written question per flag, every one answered and marked."""
     ids = [str(n) for n in range(1, len(flags) + 1)]
     return _mark_with(
         {qid: _reply(flag, **reply_kwargs) for qid, flag in zip(ids, flags, strict=True)},
         mark_scheme=_scheme(len(flags)),
-        extracted_answers=_extracted({qid: f"answer {qid}" for qid in ids}),
+        extracted_answers=_extracted(
+            {qid: f"answer {qid}" for qid in ids}, binding=binding, source_scan=source_scan
+        ),
     )
 
 
@@ -134,6 +154,20 @@ def _g8(result: CorrectionResult) -> BindingCheck:
     assert result.binding is not None
     (check,) = [c for c in result.binding.checks if c.id == "G8"]
     return check
+
+
+def _assert_g8_never_applies(marked: Callable[[list[str | None]], CorrectionResult]) -> None:
+    """No report and no review reason, whatever the marker said about five answers."""
+    baseline = marked([None] * 5)
+    for flags in (["no"] * 5, ["yes", "yes", "no", "yes", "yes"], ["yes"] * 5):
+        result = marked(flags)
+        assert result.binding is None, flags
+        assert [q.addresses_question for q in result.questions] == flags
+        assert [q.review_reason for q in result.questions] == [None] * 5, flags
+        assert [q.needs_teacher_review for q in result.questions] == [
+            q.needs_teacher_review for q in baseline.questions
+        ], flags
+        assert result.needs_teacher_review == baseline.needs_teacher_review, flags
 
 
 def _fake_client(tmp_path: Path, bodies: list[dict[str, Any]], **gemini: Any) -> GeminiClient:
@@ -290,7 +324,9 @@ def test_escalated_reply_addresses_question_is_the_one_kept(tmp_path: Path):
         thinking_level_for={"correction": "low", "correction_borderline": "low"},
         thinking_budget_for={},
     )
-    result = correct_paper(_scheme(1), _extracted({"1": "an answer"}), gemini_client=client)
+    result = correct_paper(
+        _scheme(1), _extracted({"1": "an answer"}, binding=GATED), gemini_client=client
+    )
     (cq,) = result.questions
     assert (cq.feedback, cq.awarded_marks) == ("escalated pass", 1)
     assert cq.addresses_question == "yes"
@@ -400,7 +436,9 @@ def test_questions_reach_the_check_in_mark_scheme_order():
     result = _mark_with(
         {qid: _reply(flag) for qid, flag in flags.items()},
         mark_scheme=_scheme(6),
-        extracted_answers=_extracted({qid: f"answer {qid}" for qid in reversed(flags)}),
+        extracted_answers=_extracted(
+            {qid: f"answer {qid}" for qid in reversed(flags)}, binding=GATED
+        ),
     )
     assert [q.question_id for q in result.questions] == ["1", "2", "3", "4", "5", "6"]
     assert "3 in a row" in _g8(result).detail
@@ -458,30 +496,19 @@ def test_plain_mapping_answers_get_no_binding_report():
             extracted_answers={qid: f"answer {qid}" for qid in ids},
         )
 
-    baseline = marked([None] * 5)
-    for flags in (["no"] * 5, ["yes", "yes", "no", "yes", "yes"], ["yes"] * 5):
-        result = marked(flags)
-        assert result.binding is None, flags
-        assert [q.addresses_question for q in result.questions] == flags
-        assert [q.review_reason for q in result.questions] == [None] * 5, flags
-        assert [q.needs_teacher_review for q in result.questions] == [
-            q.needs_teacher_review for q in baseline.questions
-        ], flags
-        assert result.needs_teacher_review == baseline.needs_teacher_review, flags
+    _assert_g8_never_applies(marked)
 
 
-def test_extracted_answers_without_a_report_get_a_g8_only_report():
-    result = _paper(["no", "no", "no"])
-    assert result.binding is not None
-    assert [c.id for c in result.binding.checks] == ["G8"]
-    assert (result.binding.binder, result.binding.retried) == ("label", True)
-    assert result.binding.verdict == "hold"
+def test_extracted_answers_without_a_report_get_no_binding_report():
+    # No report means the gate did not run on this extraction; G8 stays off with it.
+    _assert_g8_never_applies(lambda flags: _paper(flags, binding=None))
 
-    clean = _paper(["yes", "yes", "yes"])
-    assert clean.binding is not None
-    assert [(c.id, c.passed) for c in clean.binding.checks] == [("G8", True)]
-    assert (clean.binding.binder, clean.binding.retried) == ("label", True)
-    assert clean.binding.verdict == "pass"
+
+def test_quiz_style_extracted_answers_are_never_held():
+    _assert_g8_never_applies(lambda flags: _paper(flags, binding=None, source_scan="quiz"))
+    held = _paper(["no"] * 5, binding=GATED, source_scan="quiz")
+    assert held.binding is not None  # the report decides, not where the answers came from
+    assert held.binding.verdict == "hold"
 
 
 @pytest.mark.parametrize(("retried", "expected"), [(False, "retry"), (True, "hold")])
