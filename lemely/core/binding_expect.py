@@ -30,7 +30,9 @@ _STANDARD_FORM = (
     rf"|(?P<exp_glued>[{_MINUS}\u2013]?\d+))"
 )
 _E_NOTATION = r"(?P<e_mant>\d+(?:\.\d+)?)[eE](?P<e_exp>[-+]?\d+)(?![\w.])"
-_PLAIN_NUMBER = r"(?P<num>\d{1,3}(?:,\d{3})+(?![\d])|\d+(?:\.\d+)?)"
+# ``1,8`` / ``12,5`` may be a decimal comma, so it is consumed and yields nothing.
+_PLAIN_NUMBER = r"(?P<num>\d{1,3}(?:,\d{3})+(?!\d)|\d+(?:\.\d+)?)"
+_AMBIGUOUS_COMMA = r"(?P<amb>\d+,\d{1,2}(?!\d))"
 
 _SUPERSCRIPT_DIGITS = str.maketrans("⁻⁰¹²³⁴⁵⁶⁷⁸⁹", "-0123456789")
 
@@ -43,7 +45,7 @@ _PLAIN_DECIMAL = re.compile(r"^-?\d*\.\d+$")
 
 _ANSWER_TOKEN = re.compile(
     rf"(?<![A-Za-z\d.^_])(?P<sign>(?<![\w.])[{_MINUS}](?=\d))?"
-    rf"(?:{_STANDARD_FORM}|{_E_NOTATION}|{_PLAIN_NUMBER})"
+    rf"(?:{_STANDARD_FORM}|{_E_NOTATION}|{_AMBIGUOUS_COMMA}|{_PLAIN_NUMBER})"
 )
 _ENUMERATOR = re.compile(r"(?<![\w.])\d{1,2}[.)]\s+(?=[-\d])")
 _WORD = re.compile(r"[A-Za-zµΩ°]+")
@@ -63,19 +65,19 @@ _UNIT_STRIP = re.compile(r"[()\[\]\d^²³⁻\-\u2212\u2013+.,;:]")
 _ANNOTATIONS = frozenset({"oe", "cao", "nfww", "www", "isw", "soi", "ft", "awrt", "aef"})
 
 
-def _unit_tokens_ok(rest: str, *, strict: bool = False) -> bool:
-    """True when ``rest`` is empty or made only of unit-like tokens.
+def _unit_tokens_ok(rest: str) -> bool:
+    """True when ``rest`` is empty or only units and mark-scheme annotations.
 
-    ``strict`` also allows mark-scheme annotations, and rejects commas and
-    tokens with no letters (a second number or an operator after the value).
+    A comma, or a token with no letters (a second number or an operator after
+    the value), means an expression or a list, so it is not a bare value.
     """
-    if strict and "," in rest:
+    if "," in rest:
         return False
-    for chunk in re.split(r"[\s/·*]+", rest.strip()):
+    for chunk in re.split(r"[\s/\u00b7*]+", rest.strip()):
         token = _UNIT_STRIP.sub("", chunk).lower()
-        if strict and chunk and not re.search(r"[^\W\d_]|%|°", chunk):
+        if chunk and not re.search(r"[^\W\d_]|%|\u00b0", chunk):
             return False
-        if token and token not in _UNITS and not (strict and token in _ANNOTATIONS):
+        if token and token not in _UNITS and token not in _ANNOTATIONS:
             return False
     return True
 
@@ -107,7 +109,7 @@ def _standard_form_value(match: re.Match[str]) -> str | None:
     return f"{match.group('mant')}e{exponent}"
 
 
-def _leading_value(alternative: str, *, strict: bool = False) -> str | None:
+def _leading_value(alternative: str) -> str | None:
     """The numeric value an alternative starts with, units stripped, else None."""
     text = alternative.strip()
     # Splitting on AND/OR can leave a stray half of a bracketed phrase.
@@ -116,14 +118,14 @@ def _leading_value(alternative: str, *, strict: bool = False) -> str | None:
     standard = _LEADING_STANDARD_FORM.match(text)
     if standard:
         value = _standard_form_value(standard)
-        if value is None or not _unit_tokens_ok(text[standard.end() :], strict=strict):
+        if value is None or not _unit_tokens_ok(text[standard.end() :]):
             return None
         return value
     number = _LEADING_NUMBER.match(text)
     if not number:
         return None
     rest = text[number.end() :]
-    if rest[:1].isdigit() or not _unit_tokens_ok(rest, strict=strict):
+    if rest[:1].isdigit() or not _unit_tokens_ok(rest):
         return None
     digits = number.group("num").replace(",", "").replace(" ", "")
     return ("-" if number.group("sign") else "") + digits
@@ -143,7 +145,7 @@ def _untyped_values(point: AnswerPoint) -> list[str]:
     for alternative in _OR_SPLIT.split(point.point):
         if "\n" in alternative or re.search(r"\bAND\b", alternative):
             continue
-        value = _leading_value(alternative, strict=True)
+        value = _leading_value(alternative)
         if value is not None:
             values.append(value)
     return values
@@ -202,11 +204,21 @@ def expected_shape(question: Question) -> Shape:
     return "unknown"
 
 
+def _is_unit_word(word: str) -> bool:
+    # A lone lowercase ``a`` is far likelier a label (``3a``) than amperes.
+    return word.lower() in _UNITS and word != "a"
+
+
 def _answer_values(answer: str) -> list[str]:
     """Every numeric value in an answer text, as float-parsable strings."""
     text = _ENUMERATOR.sub("", answer)
     values: list[str] = []
     for match in _ANSWER_TOKEN.finditer(text):
+        if match.group("amb") is not None:
+            continue
+        glued = _WORD.match(text, match.end())
+        if glued and not _is_unit_word(glued.group()):
+            continue
         if match.group("mant") is not None:
             value = _standard_form_value(match)
         elif match.group("e_mant") is not None:
@@ -258,6 +270,6 @@ def matches_expected(answer: str, question: Question) -> bool:
     be read counts as no match.
     """
     expected = expected_numeric_values(question)
-    if not expected:
+    if not expected or answer_shape(answer) != "number":
         return False
     return any(_values_match(got, want) for got in _answer_values(answer) for want in expected)

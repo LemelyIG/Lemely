@@ -229,3 +229,62 @@ def test_typed_method_points_still_excluded() -> None:
         assert expected_numeric_values(_question([{"point": "1220", "math_mark_type": mark}])) == []
     # a typed A point keeps its permissive reading (list-free, units allowed)
     assert expected_numeric_values(_question([{"point": "12 N", "math_mark_type": "A"}])) == ["12"]
+
+
+@pytest.mark.parametrize("mark", ["A", "B"])
+@pytest.mark.parametrize("point", ["2 + 3", "12 - 5", "5.6 / 20", "4.15, 4.25"])
+def test_typed_expressions_and_lists_are_not_expected_values(point: str, mark: str) -> None:
+    assert expected_numeric_values(_question([{"point": point, "math_mark_type": mark}])) == []
+
+
+@pytest.mark.parametrize(
+    ("point", "values"),
+    [
+        ("43 cm AND 63 cm", ["43", "63"]),
+        ("3.2(0) m / s2", ["3.2"]),
+        ("0.28 N / cm", ["0.28"]),
+        ("1.8 \u00d7 105 kg m / s OR 1.8 \u00d7 105 N s", ["1.8e5"]),
+        ("2.2 \u00d7 107 N m", ["2.2e7"]),
+        ("420 m", ["420"]),
+    ],
+)
+def test_typed_values_with_compound_units_still_read(point: str, values: list[str]) -> None:
+    assert expected_numeric_values(_question([{"point": point, "math_mark_type": "A"}])) == values
+
+
+def test_prose_answers_match_nothing() -> None:
+    one = _question([{"point": "1", "math_mark_type": "B"}])
+    two = _question([{"point": "2", "math_mark_type": "B"}])
+    assert not matches_expected("Fig 1 shows the spring", one)
+    assert not matches_expected("the reading increases by 2", two)
+    assert matches_expected("1", one)
+
+
+def test_decimal_comma_is_ambiguous_and_yields_no_value() -> None:
+    one = _question([{"point": "1", "math_mark_type": "B"}])
+    eight = _question([{"point": "8", "math_mark_type": "B"}])
+    for question in (one, eight):
+        assert not matches_expected("1,8 N", question)
+    assert answer_shape("1,8 N") == "text"
+    assert not matches_expected("12,5 N", _question([{"point": "12", "math_mark_type": "B"}]))
+    assert matches_expected(
+        "180,000kg m/s", _question([{"point": "1.8 \u00d7 105 kg m / s", "math_mark_type": "A"}])
+    )
+
+
+def test_number_glued_to_a_non_unit_letter_yields_no_value() -> None:
+    two = _question([{"point": "2", "math_mark_type": "B"}])
+    three = _question([{"point": "3", "math_mark_type": "B"}])
+    assert not matches_expected("2x", two)
+    assert not matches_expected("3a", three)
+    assert matches_expected("2cm", two)
+    assert matches_expected("3A", three)
+    assert matches_expected("4.9N", _question([{"point": "4.9 N", "math_mark_type": "B"}]))
+    assert matches_expected("1700 Hz", _question([{"point": "1700 Hz", "math_mark_type": "B"}]))
+
+
+def test_enumerated_answer_still_reads_both_values(leaves: dict[str, Question]) -> None:
+    assert matches_expected("1. 43cm 2. 63cm", leaves["1a_i"])
+    assert not matches_expected(
+        "1. 43cm 2. 60cm", _question([{"point": "2", "math_mark_type": "B"}])
+    )
