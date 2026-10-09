@@ -31,7 +31,7 @@ _STANDARD_FORM = (
 )
 _E_NOTATION = r"(?P<e_mant>\d+(?:\.\d+)?)[eE](?P<e_exp>[-+]?\d+)(?![\w.])"
 # ``1,8`` / ``12,5`` may be a decimal comma, so it is consumed and yields nothing.
-_PLAIN_NUMBER = r"(?P<num>\d{1,3}(?:,\d{3})+(?!\d)|\d+(?:\.\d+)?)"
+_PLAIN_NUMBER = r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?(?!\d)|\d+(?:\.\d+)?)"
 _AMBIGUOUS_COMMA = r"(?P<amb>\d+,\d{1,2}(?!\d))"
 
 _SUPERSCRIPT_DIGITS = str.maketrans("⁻⁰¹²³⁴⁵⁶⁷⁸⁹", "-0123456789")
@@ -39,7 +39,8 @@ _SUPERSCRIPT_DIGITS = str.maketrans("⁻⁰¹²³⁴⁵⁶⁷⁸⁹", "-01234567
 _ALTERNATIVE_SPLIT = re.compile(r"\s+(?:OR|AND)\s+|\n")
 _LEADING_STANDARD_FORM = re.compile(rf"^{_STANDARD_FORM}")
 _LEADING_NUMBER = re.compile(
-    rf"^(?P<sign>[{_MINUS}]?)(?P<num>\d{{1,3}}(?:[ ,]\d{{3}})+(?!\d)|\d+(?:\.\d+)?)(?:\(\d+\))?"
+    rf"^(?P<sign>[{_MINUS}]?)"
+    rf"(?P<num>\d{{1,3}}(?:[ ,]\d{{3}})+(?:\.\d+)?(?!\d)|\d+(?:\.\d+)?)(?:\(\d+\))?"
 )
 _PLAIN_DECIMAL = re.compile(r"^-?\d*\.\d+$")
 

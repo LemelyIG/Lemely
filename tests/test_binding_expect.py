@@ -325,3 +325,28 @@ def test_decimal_point_position_matters() -> None:
     assert not matches_expected("0.28", large)
     assert not matches_expected("2.8", small)
     assert matches_expected("0.28", small)
+
+
+def test_thousands_grouped_number_with_decimals_is_not_truncated() -> None:
+    whole = _question([{"point": "1234", "math_mark_type": "B"}])
+    decimal = _question([{"point": "1234.5", "math_mark_type": "B"}])
+    assert not matches_expected("1,234.5", whole)
+    assert matches_expected("1,234.5", decimal)
+    assert matches_expected("1,234.5 m", decimal)
+    grouped = _question([{"point": "1,234.5 m", "math_mark_type": "A"}])
+    assert expected_numeric_values(grouped) == ["1234.5"]
+    big = _question([{"point": "12,345.67 kg", "math_mark_type": "A"}])
+    assert expected_numeric_values(big) == ["12345.67"]
+    assert matches_expected("12,345.67 kg", big)
+    assert not matches_expected("13,000 kg", big)
+    assert expected_numeric_values(_question([{"point": "17 000.5 s", "math_mark_type": "A"}])) == [
+        "17000.5"
+    ]
+
+
+def test_relative_tolerance_boundary() -> None:
+    question = _question([{"point": "0.28", "math_mark_type": "B"}])
+    assert matches_expected("0.2855", question)  # +1.96%
+    assert matches_expected("0.2745", question)  # -1.96%
+    assert not matches_expected("0.2857", question)  # +2.04%
+    assert not matches_expected("0.2742", question)  # -2.07%
