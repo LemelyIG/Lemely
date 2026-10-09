@@ -5,7 +5,17 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    GetJsonSchemaHandler,
+    computed_field,
+    field_validator,
+    model_validator,
+)
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import core_schema as pydantic_core_schema
 
 # F1 (Gemini 3.x migration): 3.x models reject the JSON-Schema `pattern`
 # keyword outright (brief #15/B7), so the subject_code shape check that used
@@ -312,6 +322,13 @@ class CorrectedQuestion(StrictModel):
     needs_teacher_review: bool
     student_answer: str | None = None
     addresses_question: Literal["yes", "no", "unclear"] | None = None
+    """The marker's judgement of whether the response is an attempt at this
+    question at all: check G8's input
+    (``lemely.core.binding_gate.check_off_topic``). ``None`` means NOT
+    JUDGED: no marker was called for this row (MCQ, blank, dropped, missing,
+    marking failed), or the marker's reply left the field out. ``"unclear"``
+    is only ever the marker's own explicit answer. Never an input to
+    ``awarded_marks``."""
     expected_answer: str | None = None
     topic: str | None = None
     review_reason: str | None = None
@@ -748,22 +765,46 @@ class AIMarkResponse(StrictModel):
     function's docstring for the flag-off/empty-list fallback to the legacy
     ``awarded_marks``/``matched_point_ids`` fields above, which remain the
     source of truth until I6 is enabled (US-018)."""
-    addresses_question: Literal["yes", "no", "unclear"] = Field(
-        default="unclear",
-        description=(
+    addresses_question: Literal["yes", "no", "unclear"] = "unclear"
+    """Check G8's input (``lemely.core.binding_gate.check_off_topic``):
+    whether the response is an attempt at the question this mark scheme entry
+    belongs to. Declared LAST so the reply's marking fields come first.
+
+    REQUIRED on the wire, lenient here -- the split
+    ``lemely.io.answer_extraction``'s reply models use. The schema sent to
+    the model lists it under ``required`` (see
+    ``__get_pydantic_json_schema__`` below), so the model is asked for it on
+    every call; the Python default exists only so that a reply which leaves
+    it out anyway still parses instead of failing the whole marking call. A
+    reply that left it out is NOT a judgement of ``"unclear"``: read this
+    field through ``model_fields_set`` (``lemely.io.correction_ai`` does),
+    which tells an omitted field from an explicit one."""
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls,
+        core_schema: pydantic_core_schema.CoreSchema,
+        handler: GetJsonSchemaHandler,
+    ) -> JsonSchemaValue:
+        """The schema sent to the model: ``addresses_question`` required and described."""
+        # The Python-side default above is for lenient PARSING only. Left to
+        # pydantic, a field with a default is absent from ``required``, and a
+        # model that follows the schema may then never send it -- which reads
+        # as "no answer was off topic" and silently switches check G8 off.
+        # What is sent must say the field is required.
+        json_schema = handler(core_schema)
+        reply_schema = handler.resolve_ref_schema(json_schema)
+        reply_schema["required"] = [*reply_schema.get("required", []), "addresses_question"]
+        # Hard-coded here, never taken from a docstring: this text is part of
+        # ``model_json_schema()``, which ``GeminiClient._params_fingerprint``
+        # hashes into the cache key, and ``-O``/``-OO`` strips docstrings (see
+        # the Critical B note above ``PointVerdictWire``). Pinned by
+        # ``MarkingSchemaHashStableAcrossPythonOptimizeTests``.
+        reply_schema["properties"]["addresses_question"]["description"] = (
             "Whether the student's response is an attempt at the question this mark scheme "
             "entry belongs to: yes, no or unclear. Never changes the marks or the feedback."
-        ),
-    )
-    """Check G8's input (``lemely.core.binding_gate.check_off_topic``).
-    ``"unclear"`` when the reply omits it, so a reply cached or stored before
-    the field existed still validates and counts for nothing. Declared LAST
-    so the reply's marking fields come first. The description is an explicit
-    ``Field`` argument, never a docstring: it is part of
-    ``model_json_schema()``, which ``GeminiClient._params_fingerprint`` hashes
-    into the cache key, and a ``__doc__``-derived description would vanish
-    under ``-OO`` and move that key (see the Critical B note above
-    ``PointVerdictWire``)."""
+        )
+        return json_schema
 
 
 class SubjectResult(StrictModel):

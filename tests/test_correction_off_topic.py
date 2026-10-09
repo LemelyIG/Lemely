@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import structlog
 
 from lemely.core.binding import BindingCheck, BindingReport
 from lemely.core.loose_schemas import MarkScheme, Question
@@ -26,7 +27,7 @@ from lemely.io.correction_ai import (
     _build_ai_corrected_from_verdicts,
     correct_paper,
 )
-from lemely.io.gemini import GeminiClient
+from lemely.io.gemini import GeminiClient, _strip_schema
 from lemely.io.prompts.correction_ai import MARKER_SYSTEM_PROMPT, VERSION
 from lemely.runtime.config import MarkingOptions, PathsSettings, load_settings
 
@@ -35,6 +36,8 @@ OFF_TOPIC_REASON = "binding unverified: answer appears to address a different qu
 VERSION_5_PROMPT_SHA256 = "e1281162f0086b769a6686d38caab22c7bdd56560377f599a50aa624af3cea49"
 SECTION_START = "**Last field: `addresses_question`"
 SECTION_END = "---\n\n## Worked Examples"
+# What each worked reply example gained so the examples show the whole reply.
+EXAMPLE_ADDITION = ',\n   addresses_question="yes"'
 
 
 def _scheme(theory: int, *, mcq: bool = False) -> MarkScheme:
@@ -171,6 +174,12 @@ def _assert_g8_never_applies(marked: Callable[[list[str | None]], CorrectionResu
 
 
 def _fake_client(tmp_path: Path, bodies: list[dict[str, Any]], **gemini: Any) -> GeminiClient:
+    return _fake_client_and_sdk(tmp_path, bodies, **gemini)[0]
+
+
+def _fake_client_and_sdk(
+    tmp_path: Path, bodies: list[dict[str, Any]], **gemini: Any
+) -> tuple[GeminiClient, MagicMock]:
     genai = MagicMock()
     genai.models.generate_content.side_effect = [
         MagicMock(
@@ -191,19 +200,21 @@ def _fake_client(tmp_path: Path, bodies: list[dict[str, Any]], **gemini: Any) ->
             "gemini": settings.gemini.model_copy(update=gemini),
         }
     )
-    return GeminiClient(settings, _genai_client=genai)
+    return GeminiClient(settings, _genai_client=genai), genai
 
 
 # --- prompt -----------------------------------------------------------------
 
 
-def test_marker_prompt_version_is_6():
-    assert VERSION == "6"
+def test_marker_prompt_version_is_7():
+    assert VERSION == "7"
 
 
 def test_marker_prompt_explains_addresses_question_and_says_it_never_changes_the_mark():
     start = MARKER_SYSTEM_PROMPT.index(SECTION_START)
-    section = MARKER_SYSTEM_PROMPT[start : MARKER_SYSTEM_PROMPT.index(SECTION_END)]
+    section = " ".join(
+        MARKER_SYSTEM_PROMPT[start : MARKER_SYSTEM_PROMPT.index(SECTION_END)].split()
+    )
     for value in ("`yes`", "`no`", "`unclear`"):
         assert value in section
     assert "mark scheme entry" in section
@@ -213,11 +224,42 @@ def test_marker_prompt_explains_addresses_question_and_says_it_never_changes_the
         assert MARKER_SYSTEM_PROMPT.index(field) < start
 
 
+def test_marker_prompt_keeps_no_narrow_and_breaks_ties_towards_unclear():
+    start = MARKER_SYSTEM_PROMPT.index(SECTION_START)
+    section = " ".join(
+        MARKER_SYSTEM_PROMPT[start : MARKER_SYSTEM_PROMPT.index(SECTION_END)].split()
+    )
+    # A wrong attempt on the same subject matter is `yes`, named case by case.
+    for wrong_attempt in (
+        "a wrong method",
+        "a wrong quantity or unit",
+        "a definition offered where a calculation is needed",
+        "a muddled or incomplete attempt",
+    ):
+        assert wrong_attempt in section.lower()
+    assert "plainly about a different topic or task from anything this entry concerns" in section
+    assert "Being wrong, however badly, is never a reason for `no`" in section
+    assert "torn between `no` and anything else, choose `unclear`" in section
+    # The count of marking fields depends on the marking flags, so none is stated.
+    assert "four fields" not in section
+    # One example per verdict, so the boundary is shown and not only described.
+    examples = section[section.index("For instance:") : section.index("This field never")]
+    assert [examples.count(f"-> `{value}`") for value in ("yes", "no", "unclear")] == [1, 1, 1]
+
+
+def test_worked_reply_examples_include_addresses_question():
+    worked = MARKER_SYSTEM_PROMPT[MARKER_SYSTEM_PROMPT.index(SECTION_END) :]
+    assert worked.count("-> awarded_marks=") == 3
+    assert worked.count(EXAMPLE_ADDITION) == 3
+    assert MARKER_SYSTEM_PROMPT.count(EXAMPLE_ADDITION) == 3
+
+
 def test_marker_prompt_is_otherwise_unchanged_from_version_5():
     start = MARKER_SYSTEM_PROMPT.index(SECTION_START)
     end = MARKER_SYSTEM_PROMPT.index(SECTION_END)
     without_section = MARKER_SYSTEM_PROMPT[:start] + MARKER_SYSTEM_PROMPT[end:]
-    assert hashlib.sha256(without_section.encode()).hexdigest() == VERSION_5_PROMPT_SHA256
+    without_additions = without_section.replace(EXAMPLE_ADDITION, "")
+    assert hashlib.sha256(without_additions.encode()).hexdigest() == VERSION_5_PROMPT_SHA256
 
 
 def test_reply_schema_lists_addresses_question_last_with_a_description():
@@ -226,7 +268,31 @@ def test_reply_schema_lists_addresses_question_last_with_a_description():
     field = schema["properties"]["addresses_question"]
     assert field["enum"] == ["yes", "no", "unclear"]
     assert "Never changes the marks" in field["description"]
-    assert "addresses_question" not in schema["required"]
+
+
+def test_wire_schema_requires_addresses_question(tmp_path: Path):
+    for is_3x in (True, False):
+        sent = _strip_schema(AIMarkResponse.model_json_schema(), is_3x=is_3x)
+        assert sent["required"] == ["awarded_marks", "confidence", "feedback", "addresses_question"]
+    # And in the request the client builds, on the API line the default model uses.
+    body = {"awarded_marks": 1, "confidence": 0.95, "matched_point_ids": ["p1"], "feedback": "ok"}
+    client, sdk = _fake_client_and_sdk(tmp_path, [body])
+    correct_paper(_scheme(1), _extracted({"1": "an answer"}), gemini_client=client)
+    config = sdk.models.generate_content.call_args.kwargs["config"]
+    sent = config.response_json_schema or config.response_schema
+    assert "addresses_question" in sent["required"]
+
+
+def test_python_side_still_parses_a_reply_without_it():
+    reply = AIMarkResponse.model_validate_json(
+        '{"awarded_marks": 1, "confidence": 0.8, "feedback": "ok"}'
+    )
+    assert reply.addresses_question == "unclear"
+    assert "addresses_question" not in reply.model_fields_set
+    explicit = AIMarkResponse.model_validate_json(
+        '{"awarded_marks": 1, "confidence": 0.8, "feedback": "ok", "addresses_question": "unclear"}'
+    )
+    assert "addresses_question" in explicit.model_fields_set
 
 
 # --- builders ---------------------------------------------------------------
@@ -253,9 +319,80 @@ def test_ai_corrected_carries_addresses_question(flag: str):
     assert dispatched.addresses_question == flag
 
 
-def test_reply_without_the_field_is_carried_as_unclear():
-    cq = _build_ai_corrected(_question(_scheme(1), "1"), "an answer", _reply(None))
-    assert cq.addresses_question == "unclear"
+def test_omitted_field_is_recorded_as_no_judgement(tmp_path: Path):
+    question = _question(_scheme(1), "1")
+    omitted = _reply(None)
+    assert _build_ai_corrected(question, "an answer", omitted).addresses_question is None
+    verdicts = [PointVerdict(point_id="p1", verdict="awarded", evidence_span="an answer")]
+    omitted_with_verdicts = omitted.model_copy(update={"point_verdicts": verdicts})
+    for cq in (
+        _build_ai_corrected_from_verdicts(question, "an answer", omitted_with_verdicts, None, None),
+        _build_ai_corrected(question, "an answer", omitted_with_verdicts, equivalence_gate=True),
+    ):
+        assert cq.point_verdicts
+        assert cq.addresses_question is None
+    # An explicit `unclear` is a judgement and is kept as one.
+    assert _build_ai_corrected(question, "an answer", _reply("unclear")).addresses_question == (
+        "unclear"
+    )
+
+    # Through the client: the reply text has no such key, on a gated extraction.
+    body = {"awarded_marks": 1, "confidence": 0.95, "matched_point_ids": ["p1"], "feedback": "ok"}
+    result = correct_paper(
+        _scheme(1),
+        _extracted({"1": "an answer"}, binding=GATED),
+        gemini_client=_fake_client(tmp_path, [body]),
+    )
+    assert result.questions[0].marker_source == "ai"
+    assert result.questions[0].addresses_question is None
+    assert _g8(result).passed
+
+
+@pytest.mark.parametrize("said", ["no", None])
+def test_judgement_and_its_absence_survive_the_reply_cache(tmp_path: Path, said: str | None):
+    body = {"awarded_marks": 1, "confidence": 0.95, "matched_point_ids": ["p1"], "feedback": "ok"}
+    if said is not None:
+        body["addresses_question"] = said
+    # One SDK reply for two runs: the second run can only be served from the cache.
+    client, sdk = _fake_client_and_sdk(tmp_path, [body])
+    runs = [
+        correct_paper(_scheme(1), _extracted({"1": "an answer"}), gemini_client=client)
+        for _ in range(2)
+    ]
+    assert sdk.models.generate_content.call_count == 1
+    assert [run.questions[0].marker_source for run in runs] == ["ai", "ai"]
+    assert [run.questions[0].addresses_question for run in runs] == [said, said]
+
+
+def test_omitted_replies_are_counted_in_one_log_line_per_paper():
+    with structlog.testing.capture_logs() as logs:
+        _paper(["yes", None, "unclear", None, "no"])
+    assert [entry for entry in logs if entry["event"] == "marker_omitted_addresses_question"] == [
+        {
+            "event": "marker_omitted_addresses_question",
+            "log_level": "warning",
+            "component": "correct_paper",
+            "omitted": 2,
+            "marked": 5,
+        }
+    ]
+
+    with structlog.testing.capture_logs() as logs:
+        _paper(["yes", "unclear", "no"])
+        _paper([None, None], binding=None)
+    events = [entry for entry in logs if entry["event"] == "marker_omitted_addresses_question"]
+    # Nothing when every reply carried it; counted with or without a binding report.
+    assert [(entry["omitted"], entry["marked"]) for entry in events] == [(2, 2)]
+
+    # Rows no marker was called for have no judgement either, and are not replies.
+    with structlog.testing.capture_logs() as logs:
+        _mark_with(
+            {"1": _reply(None), "2": _reply("yes")},
+            mark_scheme=_scheme(3, mcq=True),
+            extracted_answers=_extracted({"1": "an answer", "2": "an answer", "3": " ", "4": "A"}),
+        )
+    events = [entry for entry in logs if entry["event"] == "marker_omitted_addresses_question"]
+    assert [(entry["omitted"], entry["marked"]) for entry in events] == [(1, 2)]
 
 
 def test_mcq_and_blank_paths_leave_addresses_question_none():
@@ -333,7 +470,8 @@ def test_escalated_reply_addresses_question_is_the_one_kept(tmp_path: Path):
     assert _g8(result).passed
 
 
-def test_ecf_re_mark_keeps_the_re_marks_addresses_question():
+@pytest.mark.parametrize("re_mark_says", ["yes", None])
+def test_ecf_re_mark_keeps_the_re_marks_addresses_question(re_mark_says: str | None):
     scheme = MarkScheme.model_validate(
         {
             "metadata": {
@@ -388,19 +526,21 @@ def test_ecf_re_mark_keeps_the_re_marks_addresses_question():
         }
     )
 
-    def reply(verdict: str, addresses: str, feedback: str) -> AIMarkResponse:
-        return AIMarkResponse(
-            awarded_marks=0,
-            confidence=0.95,
-            feedback=feedback,
-            point_verdicts=[PointVerdict(point_id="p1", verdict=verdict, evidence_span="x")],
-            addresses_question=addresses,
-        )
+    def reply(verdict: str, addresses: str | None, feedback: str) -> AIMarkResponse:
+        body: dict[str, Any] = {
+            "awarded_marks": 0,
+            "confidence": 0.95,
+            "feedback": feedback,
+            "point_verdicts": [{"point_id": "p1", "verdict": verdict, "evidence_span": "x"}],
+        }
+        if addresses is not None:
+            body["addresses_question"] = addresses
+        return AIMarkResponse.model_validate(body)
 
     replies = [
         reply("withheld", "yes", "prerequisite"),
         reply("withheld", "no", "first pass"),
-        reply("awarded", "yes", "re-mark"),
+        reply("awarded", re_mark_says, "re-mark"),
     ]
     with patch.object(correction_ai.AICorrector, "mark_question", side_effect=replies):
         result = correct_paper(
@@ -412,7 +552,7 @@ def test_ecf_re_mark_keeps_the_re_marks_addresses_question():
     second = result.questions[1]
     assert second.point_verdicts[0].ecf_applied
     assert second.feedback == "re-mark"
-    assert second.addresses_question == "yes"
+    assert second.addresses_question == re_mark_says
 
 
 # --- the check, applied to a marked paper -----------------------------------
@@ -542,6 +682,32 @@ def test_extraction_report_is_kept_with_g8_appended_and_verdict_recomputed(
         retried,
         "gemini-test",
     )
+    assert result.binding.verdict == expected
+
+
+@pytest.mark.parametrize(
+    ("incoming", "retried", "flags", "expected"),
+    [
+        # A verdict with no failing paper-scope check behind it still stands.
+        ("hold", True, ["yes", "yes", "yes"], "hold"),
+        ("hold", False, ["yes", "yes", "yes"], "hold"),
+        ("retry", False, ["yes", "yes", "yes"], "retry"),
+        ("retry", True, ["yes", "yes", "yes"], "retry"),
+        # G8 can raise it: a paper-scope failure after the retry is spent.
+        ("retry", True, ["no", "no", "no"], "hold"),
+        ("retry", False, ["no", "no", "no"], "retry"),
+        ("hold", False, ["no", "no", "no"], "hold"),
+        ("pass", False, ["no", "no", "no"], "retry"),
+        ("pass", True, ["yes", "yes", "yes"], "pass"),
+    ],
+)
+def test_g8_never_downgrades_an_incoming_verdict(
+    incoming: str, retried: bool, flags: list[str], expected: str
+):
+    report = GATED.model_copy(update={"verdict": incoming, "retried": retried})
+    result = _paper(flags, binding=report)
+    assert result.binding is not None
+    assert [c.id for c in result.binding.checks] == ["G1", "G8"]
     assert result.binding.verdict == expected
 
 

@@ -23,7 +23,7 @@ import dataclasses
 import json
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -869,6 +869,69 @@ def test_mark_submission_low_confidence_non_mcq_queues_review(
             "expected the stubbed AI marker's awarded=1; a 0 means correct_paper "
             "fell back to _build_missing_corrected and this test is vacuous"
         )
+
+
+def test_mark_submission_is_never_gated_on_addresses_question(
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+    taking_service: QuizTakingService,
+    attempt_repo: AttemptRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A typed quiz answer was never bound to its question by reading a scan,
+    so the binding gate's off-topic check (G8) does not apply to it: the
+    correction this service persists carries no binding report and no
+    "binding unverified" review reason, even when the marker judges the
+    answer to be about something else."""
+    teacher, class_id, assignment_id = _assigned_quiz(
+        quiz_service,
+        class_service,
+        pg_sessionmaker,
+        mcq=False,
+        mark_scheme_points=["key point"],
+        total_marks=2,
+    )
+    student = _enroll(pg_sessionmaker, class_id)
+    submission_id = _submit_with_answer(
+        taking_service, student, assignment_id, answer_text="Something about another topic"
+    )
+
+    off_topic_reply = MagicMock(
+        text=json.dumps(
+            {
+                "awarded_marks": 0,
+                "confidence": 0.95,
+                "matched_point_ids": [],
+                "feedback": "ok",
+                "addresses_question": "no",
+            }
+        ),
+        candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
+        usage_metadata=MagicMock(prompt_token_count=10, candidates_token_count=20),
+    )
+    persisted: list[CorrectionResult] = []
+    real_persist = attempt_repo.persist_quiz_correction
+
+    def _spy(**kwargs: Any) -> Any:
+        persisted.append(kwargs["correction"])
+        return real_persist(**kwargs)
+
+    monkeypatch.setattr(attempt_repo, "persist_quiz_correction", _spy)
+    service = QuizMarkingService(
+        pg_sessionmaker, attempt_repo, _gemini_client(tmp_path, [off_topic_reply])
+    )
+    result = service.mark_submission(submission_id)
+
+    assert result.status == QuizSubmissionStatus.marked
+    (correction,) = persisted
+    (question,) = correction.questions
+    # The marker ran and its judgement was recorded; it just gates nothing here.
+    assert (question.marker_source, question.addresses_question) == ("ai", "no")
+    assert correction.binding is None
+    assert "binding unverified" not in (question.review_reason or "")
+    assert question.needs_teacher_review is False
 
 
 # ---------------------------------------------------------------------------

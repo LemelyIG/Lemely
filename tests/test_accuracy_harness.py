@@ -8,7 +8,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 class LoadGoldenCasesTests(unittest.TestCase):
@@ -572,6 +572,87 @@ class MeasureAccuracyTests(unittest.TestCase):
         self.assertIsNone(result.metrics.id_match_rate)
         self.assertEqual(len(result.question_results), 1)
         self.assertTrue(result.question_results[0].is_correct)
+
+    def test_oracle_arm_corrections_are_never_gated_on_addresses_question(self):
+        """The correction-only arm marks golden answer text that was never
+        read off a scan, so the binding gate's off-topic check (G8) does not
+        apply: the correction ``measure_accuracy`` gets back carries no
+        binding report and no "binding unverified" review reason, even when
+        the marker judges every answer to be about something else."""
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.core.loose_schemas import MarkScheme
+        from lemely.core.schemas import AIMarkResponse
+        from lemely.io import correction_ai
+
+        ids = ["1", "2", "3", "4"]
+        scheme = MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Biology",
+                    "subject_code": "0610",
+                    "paper_number": 4,
+                    "paper_variant": 1,
+                    "session_month": "May/June",
+                    "session_year": 2021,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": len(ids),
+                    "scheme_format": "point_based",
+                },
+                "questions": [
+                    {
+                        "id": qid,
+                        "marks": 1,
+                        "type": "explanation",
+                        "answer_points": [{"id": "p1", "point": f"point {qid}", "marks": 1}],
+                    }
+                    for qid in ids
+                ],
+            }
+        )
+        case = GoldenCase(
+            paper_id="p1",
+            mark_scheme=scheme,
+            ground_truth={
+                qid: GoldenAnswer(student_answer=f"answer {qid}", awarded_marks=1) for qid in ids
+            },
+            scan_path=None,
+        )
+        off_topic_reply = AIMarkResponse.model_validate(
+            {
+                "awarded_marks": 1,
+                "confidence": 0.95,
+                "matched_point_ids": ["p1"],
+                "feedback": "ok",
+                "addresses_question": "no",
+            }
+        )
+        corrections = []
+        real_correct_paper = correction_ai.correct_paper
+
+        def _spy(*args: object, **kwargs: object) -> object:
+            corrections.append(real_correct_paper(*args, **kwargs))  # type: ignore[arg-type]
+            return corrections[-1]
+
+        with (
+            patch.object(correction_ai.AICorrector, "mark_question", return_value=off_topic_reply),
+            patch("lemely.io.correction_ai.correct_paper", side_effect=_spy),
+        ):
+            # A stand-in client: marking is patched above, and the run manifest
+            # only reads the cache mode off it.
+            client = MagicMock(default_cache_mode="read_write")
+            result = measure_accuracy([case], gemini_client=client, settings=None)
+
+        (correction,) = corrections
+        # The marker ran and its judgement was recorded; it just gates nothing here.
+        self.assertEqual(
+            [(q.marker_source, q.addresses_question) for q in correction.questions],
+            [("ai", "no")] * 4,
+        )
+        self.assertIsNone(correction.binding)
+        for question in correction.questions:
+            self.assertNotIn("binding unverified", question.review_reason or "")
+            self.assertFalse(question.needs_teacher_review)
+        self.assertEqual([r.review_reason for r in result.question_results], [None] * 4)
 
     def test_arm_override_forces_oracle_mark_even_with_scan_path(self):
         """#28/M0.4: passing arm="oracle+mark" explicitly must bypass

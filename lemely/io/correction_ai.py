@@ -9,6 +9,7 @@ from typing import Literal, NamedTuple
 
 import structlog
 
+from lemely.core.binding import BindingVerdict
 from lemely.core.binding_gate import GateThresholds, check_off_topic, verdict
 from lemely.core.correction import _exam_metadata, _load_mark_scheme
 from lemely.core.equivalence import Verdict, VerdictKind, equivalent
@@ -1189,6 +1190,18 @@ def _maybe_add_no_method_span_note(
     return feedback + _NO_METHOD_SPAN_NOTE
 
 
+def _addresses_judgement(mark: AIMarkResponse) -> Literal["yes", "no", "unclear"] | None:
+    """The marker's ``addresses_question``, or ``None`` when the reply left it out.
+
+    ``AIMarkResponse`` defaults the field to ``"unclear"`` so a reply without
+    it still parses, but an omitted field is not a judgement and must not be
+    stored as one. ``model_fields_set`` holds only the fields the reply
+    actually carried; it survives the cache (which stores the raw reply text
+    and re-validates it) and ``model_copy``.
+    """
+    return mark.addresses_question if "addresses_question" in mark.model_fields_set else None
+
+
 def _build_ai_corrected_from_verdicts(
     question: Question,
     student_answer: str,
@@ -1365,7 +1378,7 @@ def _build_ai_corrected_from_verdicts(
         matched_point_ids=matched_point_ids,
         point_verdicts=point_verdicts,
         extraction_confidence=extraction_confidence,
-        addresses_question=mark.addresses_question,
+        addresses_question=_addresses_judgement(mark),
     )
 
 
@@ -1543,7 +1556,7 @@ def _build_ai_corrected(
         feedback=mark.feedback,
         matched_point_ids=matched_point_ids,
         extraction_confidence=extraction_confidence,
-        addresses_question=mark.addresses_question,
+        addresses_question=_addresses_judgement(mark),
     )
 
 
@@ -2168,12 +2181,13 @@ def _maybe_apply_ecf_substitution(
             "confidence": min(mark.confidence, mark2.confidence),
             "feedback": mark2.feedback,
             "awarded_marks": mark2.awarded_marks,
-            # G8: the re-mark's feedback and claimed marks are the ones kept
-            # above, so its judgement of whether the answer addresses the
-            # question is kept with them rather than the first pass's.
-            "addresses_question": mark2.addresses_question,
         }
     )
+    # G8: the re-mark's feedback and claimed marks are the ones kept above, so
+    # its judgement of whether the answer addresses the question is kept with
+    # them rather than the first pass's. Set on the built row, not through
+    # `merged_mark`: a `model_copy` update would mark the field as set even
+    # when the re-mark left it out, turning "no judgement" into "unclear".
     return _build_ai_corrected(
         question,
         student_answer,
@@ -2181,7 +2195,7 @@ def _maybe_apply_ecf_substitution(
         student_working,
         extraction_confidence,
         equivalence_gate=equivalence_gate,
-    )
+    ).model_copy(update={"addresses_question": _addresses_judgement(mark2)})
 
 
 def _attach_extraction_context(
@@ -2263,6 +2277,8 @@ def _attach_extraction_context(
 #: names (see :func:`_with_off_topic_check`).
 OFF_TOPIC_REVIEW_REASON = "binding unverified: answer appears to address a different question"
 
+_VERDICT_SEVERITY: dict[BindingVerdict, int] = {"pass": 0, "retry": 1, "hold": 2}
+
 
 def _with_off_topic_check(
     result: CorrectionResult, extracted_answers: ExtractedAnswers | Mapping[str, str]
@@ -2286,9 +2302,12 @@ def _with_off_topic_check(
     never bound to a question by reading a page, or the gate was not asked,
     so there is no binding to doubt and no report is invented for them.
 
-    With a report, the result's ``binding`` is that report with G8 appended
-    and the verdict recomputed over every check with the report's own
-    ``retried``, so a failure found at extraction is never lost here.
+    With a report, the result's ``binding`` is that report with G8 appended.
+    Its verdict is the MORE SEVERE of the one the report arrived with and the
+    one recomputed over every check with the report's own ``retried``
+    (``hold`` over ``retry`` over ``pass``): adding G8 can raise a verdict
+    and can never lower it, whether or not the incoming verdict has a
+    failing paper-scope check behind it.
 
     Scope decides what else changes. A PAPER-scope failure changes no
     question: the verdict stops the whole paper and the report names the
@@ -2303,8 +2322,12 @@ def _with_off_topic_check(
         return result
     check = check_off_topic(result, GateThresholds())
     checks = [*prior.checks, check]
+    recomputed = verdict(checks, retried=prior.retried)
     report = prior.model_copy(
-        update={"checks": checks, "verdict": verdict(checks, retried=prior.retried)}
+        update={
+            "checks": checks,
+            "verdict": max(prior.verdict, recomputed, key=_VERDICT_SEVERITY.__getitem__),
+        }
     )
     questions = result.questions
     if not check.passed and check.scope == "question":
@@ -2615,6 +2638,15 @@ def correct_paper(
     corrected = [
         _attach_extraction_context(cq, answers, original, options, leaf_by_id) for cq in corrected
     ]
+    # G8 counts only explicit judgements, so a marker that leaves
+    # `addresses_question` out makes the check pass on no evidence. One line
+    # per paper says how many kept replies did (an "ai" row with no judgement
+    # is exactly that), so a check that never fires can be told from a model
+    # that never answers. Logged with or without a binding report.
+    marked = [cq for cq in corrected if cq.marker_source == "ai"]
+    omitted = sum(1 for cq in marked if cq.addresses_question is None)
+    if omitted:
+        log.warning("marker_omitted_addresses_question", omitted=omitted, marked=len(marked))
     return _with_off_topic_check(
         CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected), extracted_answers
     )

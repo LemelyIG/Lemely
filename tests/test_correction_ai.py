@@ -1689,18 +1689,21 @@ class PointVerdictPromptTests(unittest.TestCase):
         self.assertLess(evidence_pos, verdict_pos)
         self.assertLess(verdict_pos, total_pos)
 
-    def test_version_not_bumped(self):
-        """D19: I6/I7/I8 share one VERSION bump at US-018's funded sweep.
-        Asserted against the module constant, not retyped, so a later edit
-        cannot slip a bump in unnoticed.
+    def test_version_pin_shows_i6_has_taken_no_bump_of_its_own(self):
+        """Pins the marker prompt ``VERSION``, read off the module constant.
 
-        Re-pinned from ``"5"`` to ``"6"`` by the answer-binding G8 commit: the
-        system prompt gained the ``addresses_question`` section, a prompt
-        change of its own that must invalidate the cache. That bump is not
-        the I6/I7/I8 one, which is still owed at US-018."""
+        D19: I6/I7/I8 share one VERSION bump at US-018's funded sweep, and
+        this pin is how a bump slipped in by one of those stories would show.
+        The value has moved twice since, both times for a prompt change of
+        its own in the answer-binding work, never for I6: ``"5"`` to ``"6"``
+        when the system prompt gained the ``addresses_question`` section, and
+        ``"6"`` to ``"7"`` when that section was rewritten (a narrower ``no``
+        with a tie-break) and the worked reply examples gained the field. The
+        I6/I7/I8 bump is still owed at US-018.
+        """
         from lemely.io.prompts.correction_ai import VERSION
 
-        self.assertEqual(VERSION, "6")
+        self.assertEqual(VERSION, "7")
 
     def test_mark_question_forwards_equivalence_gate_without_raising(self):
         """The actual regression: before the fix this call raised TypeError
@@ -5780,16 +5783,15 @@ class ECFSubstitutionTests(unittest.TestCase):
                 options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
             )
 
-    def test_no_version_bump(self) -> None:
-        """D19: I6/I7/I8 share one VERSION bump, taken later at US-018's
-        funded sweep -- this story bumps nothing.
-
-        Re-pinned from ``"5"`` to ``"6"`` by the answer-binding G8 commit,
-        whose ``addresses_question`` prompt section is a prompt change of its
-        own; I7 still bumps nothing."""
+    def test_version_pin_shows_i7_has_taken_no_bump_of_its_own(self) -> None:
+        """Pins the marker prompt ``VERSION``. D19: I6/I7/I8 share one bump,
+        taken later at US-018's funded sweep; I7 itself bumps nothing. The
+        value is ``"7"`` because of two answer-binding prompt changes (the
+        ``addresses_question`` section, then its rewrite), see
+        ``PointVerdictPromptTests.test_version_pin_shows_i6_has_taken_no_bump_of_its_own``."""
         from lemely.io.prompts.correction_ai import VERSION
 
-        self.assertEqual(VERSION, "6")
+        self.assertEqual(VERSION, "7")
 
     def test_schema_hash_unchanged(self) -> None:
         """I7 adds no schema field (``PointVerdict.ecf_applied`` and
@@ -5824,6 +5826,13 @@ class ECFSubstitutionTests(unittest.TestCase):
         commit), a field the marker is now asked to fill on every call, so
         the key has to move with it. I7 and the marking flags still add no
         field: the schema is one class whatever ``MarkingOptions`` says.
+
+        Re-pinned to ``5ab323e940ae`` by the G8 review-fix commit (prompt
+        ``VERSION`` 7): ``addresses_question`` moved into the schema's
+        ``required`` list, because a model that may leave it out switches
+        the check off without a trace. A reply cached under the old key was
+        produced by a request that did not require the field, so the key
+        has to move again.
         """
         import hashlib
         import json as json_module
@@ -5832,7 +5841,7 @@ class ECFSubstitutionTests(unittest.TestCase):
 
         schema_json = json_module.dumps(AIMarkResponse.model_json_schema(), sort_keys=True)
         actual = hashlib.sha256(schema_json.encode()).hexdigest()[:12]
-        self.assertEqual(actual, "6b4f47f8b44a")
+        self.assertEqual(actual, "5ab323e940ae")
 
 
 class MarkingSchemaHashStableAcrossPythonOptimizeTests(unittest.TestCase):
@@ -5930,9 +5939,13 @@ class MarkingSchemaHashStableAcrossPythonOptimizeTests(unittest.TestCase):
         # production-readiness Task 1, evidence_box deletion), and again to
         # ``6b4f47f8b44a`` by the answer-binding G8 commit: the reply schema
         # gained ``addresses_question`` (prompt VERSION 6). That field is the
-        # first here to carry a ``description``; it is an explicit ``Field``
-        # argument, not a docstring, so the equality above still holds.
-        self.assertEqual(normal["hash"], "6b4f47f8b44a")
+        # first here to carry a ``description``. Re-pinned once more to
+        # ``5ab323e940ae`` by the G8 review-fix commit (VERSION 7), which
+        # made the field required on the wire. Its description is now
+        # hard-coded in ``AIMarkResponse.__get_pydantic_json_schema__``, the
+        # US-036 pattern, not taken from a docstring, so the equality above
+        # still holds.
+        self.assertEqual(normal["hash"], "5ab323e940ae")
 
 
 _GOLDEN_DIR = Path(__file__).parent / "golden"
