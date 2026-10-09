@@ -12,6 +12,7 @@ from lemely.core.label_sequence import (
     LabelDecompositionError,
     LabelStep,
     align,
+    duplicate_leaf_ids,
     expected_steps,
     parse_marker,
 )
@@ -120,7 +121,7 @@ def test_numbered_lines_inside_a_leaf_do_not_consume_the_next_leaf(
     aligned, unaligned, unmatched = align(markers, scheme_41)
     assert _ids(aligned) == ["1a_i", "1a_ii", "1b"]
     assert "1c_i" in unaligned
-    assert [m.text for m in unmatched] == ["1.", "2."]
+    assert unmatched == []
 
 
 def test_a_real_next_question_number_is_not_mistaken_for_an_answer_line(
@@ -138,7 +139,7 @@ def test_a_numbered_line_after_the_last_leaf_does_not_stand_in_for_the_next_ques
     markers = _markers(*_Q1, "1.", "2.", "2", "(a)", "(i)")
     aligned, _, unmatched = align(markers, scheme_41)
     assert _ids(aligned) == [*_Q1_LEAVES, "2a_i"]
-    assert [m.text for m in unmatched] == ["1.", "2."]
+    assert unmatched == []
 
 
 def test_a_missing_marker_costs_only_its_leaf(scheme_41: MarkScheme) -> None:
@@ -161,7 +162,8 @@ def test_a_misread_marker_costs_only_its_own_leaf(scheme_41: MarkScheme) -> None
     aligned, unaligned, unmatched = align(markers, scheme_41)
     assert _ids(aligned) == ["1a_ii", "1b", "1c_ii"]
     assert {"1a_i", "1c_i"} <= set(unaligned)
-    assert sorted(m.text for m in unmatched) == ["(1)", "(l)", "[2]"]
+    # "(1)" reads as a number that cannot start question 1 here: an answer line.
+    assert sorted(m.text for m in unmatched) == ["(l)", "[2]"]
 
 
 def test_a_label_read_twice_aligns_once(scheme_41: MarkScheme) -> None:
@@ -175,7 +177,7 @@ def test_leaf_needs_its_whole_path(scheme_41: MarkScheme) -> None:
     aligned, unaligned, unmatched = align(_markers("1", "(ii)"), scheme_41)
     assert aligned == []
     assert "1a_ii" in unaligned
-    assert len(unmatched) == 2
+    assert [m.text for m in unmatched] == ["(ii)"]  # "1" is explained as an answer line
     # Nor does a lone "(ii)" with nothing at all before it.
     aligned, _, unmatched = align(_markers("(ii)"), scheme_41)
     assert aligned == []
@@ -211,10 +213,10 @@ def _scheme(template: MarkScheme, tree: dict) -> MarkScheme:
     """A scheme with the given ``{id: {child id: ...}}`` shape, built from a real one."""
     leaf = template.all_questions_flat()[2]  # 1a_i, a leaf
 
-    def build(spec: dict) -> list:
+    def build(spec: dict | list) -> list:
+        pairs = spec.items() if isinstance(spec, dict) else spec
         return [
-            leaf.model_copy(update={"id": qid, "parts": build(children)})
-            for qid, children in spec.items()
+            leaf.model_copy(update={"id": qid, "parts": build(children)}) for qid, children in pairs
         ]
 
     return template.model_copy(update={"questions": build(tree)})
@@ -264,24 +266,63 @@ def test_no_markers_leaves_every_leaf_unaligned(scheme_41: MarkScheme) -> None:
     assert len(unaligned) == 43
 
 
+def test_recognised_answer_lines_are_not_reported_as_unmatched(
+    scheme_41: MarkScheme,
+) -> None:
+    markers = _markers("1", "(a)", "(i)", "1.", "2.", "(ii)", "(b)", "12", "(e)")
+    _, _, unmatched = align(markers, scheme_41)
+    # "1." and "2." are explained; "12" (no such question) and "(e)" are not.
+    assert [m.text for m in unmatched] == ["12", "(e)"]
+
+
+def test_duplicate_leaf_id_is_never_bound_and_does_not_shift_its_neighbours(
+    scheme_41: MarkScheme,
+) -> None:
+    scheme = _scheme(
+        scheme_41,
+        [
+            ("1", {"1a": {}, "1b": {}}),
+            ("2", {}),
+            ("2", {}),
+            ("3", {"3a": {}, "3b": {}}),
+        ],
+    )
+    assert duplicate_leaf_ids(scheme) == ["2"]
+    steps = expected_steps(scheme)
+    assert [s.token for s, _ in steps] == ["1", "a", "b", "2", "2", "3", "a", "b"]
+    assert [leaf for _, leaf in steps] == [None, "1a", "1b", None, None, None, "3a", "3b"]
+    markers = _markers("1", "(a)", "(b)", "2", "3", "(a)", "(b)")
+    aligned, unaligned, unmatched = align(markers, scheme)
+    assert _ids(aligned) == ["1a", "1b", "3a", "3b"]
+    assert unaligned == ["2"]
+    assert unmatched == []
+
+
+# Known defects in the extracted corpus schemes: (file name, duplicated leaf id).
+_KNOWN_DUPLICATES = {
+    ("0625_m19_ms_52.json", "4"),
+    ("0625_m19_ms_62.json", "4"),
+    ("0625_m20_ms_52.json", "4"),
+    ("0625_s20_ms_53.json", "4"),
+    ("0625_s20_ms_63.json", "4"),
+    ("0625_s22_ms_51.json", "4"),
+    ("0625_s20_ms_61.json", "3b_iii"),
+}
+
+
 def test_expected_steps_decompose_every_corpus_scheme() -> None:
-    paths = sorted(_CORPUS.rglob("*.json"))
     checked = 0
-    failures: list[str] = []
-    for path in paths:
+    found: set[tuple[str, str]] = set()
+    for path in sorted(_CORPUS.rglob("*.json")):
         try:
             scheme = MarkScheme.model_validate(json.loads(path.read_text()))
         except ValueError:
             continue
         checked += 1
+        duplicated = set(duplicate_leaf_ids(scheme))
+        found |= {(path.name, leaf_id) for leaf_id in duplicated}
         leaves = [q.id for q in scheme.all_questions_flat() if not q.parts]
-        try:
-            steps = expected_steps(scheme)
-        except LabelDecompositionError as exc:
-            failures.append(f"{path.name}: {exc}")
-            continue
-        completed = [leaf for _, leaf in steps if leaf is not None]
-        if sorted(completed) != sorted(leaves) or len(set(completed)) != len(completed):
-            failures.append(f"{path.name}: leaf-completing steps do not match the leaves")
+        completed = [leaf for _, leaf in expected_steps(scheme) if leaf is not None]
+        assert sorted(completed) == sorted(i for i in leaves if i not in duplicated), path.name
     assert checked > 0
-    assert not failures, f"{len(failures)} of {checked} schemes: {failures[:3]}"
+    assert found == _KNOWN_DUPLICATES

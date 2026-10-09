@@ -127,6 +127,20 @@ def _level(
     raise LabelDecompositionError(f"id {question.id!r} nests {token!r} under a roman")
 
 
+def _leaf_ids(mark_scheme: MarkScheme) -> list[str]:
+    return [q.id for q in mark_scheme.all_questions_flat() if not q.parts]
+
+
+def duplicate_leaf_ids(mark_scheme: MarkScheme) -> list[str]:
+    """Leaf ids that appear more than once, in paper order, each listed once.
+
+    Two leaves with one id cannot be told apart, so ``expected_steps`` pairs
+    neither with the id and ``align`` never binds to it.
+    """
+    counts = Counter(_leaf_ids(mark_scheme))
+    return [leaf_id for leaf_id, count in counts.items() if count > 1]
+
+
 def _decompose(mark_scheme: MarkScheme) -> list[_Node]:
     nodes: list[_Node] = []
 
@@ -148,19 +162,21 @@ def _decompose(mark_scheme: MarkScheme) -> list[_Node]:
             prev = level
 
     visit(mark_scheme.questions, None, None, None, 0)
-    counts = Counter(n.leaf_id for n in nodes if n.leaf_id is not None)
-    for leaf_id, count in counts.items():
-        if count > 1:
-            # Two leaves with one id cannot be told apart, so neither could be bound.
-            raise LabelDecompositionError(f"leaf id {leaf_id!r} appears {count} times")
-    return nodes
+    # A duplicated leaf id keeps its steps (the labels are still printed and help
+    # the alignment keep its place) but completes no leaf, so nothing binds to it.
+    duplicated = set(duplicate_leaf_ids(mark_scheme))
+    return [
+        _Node(n.step, None if n.leaf_id in duplicated else n.leaf_id, n.parent, n.depth)
+        for n in nodes
+    ]
 
 
 def expected_steps(mark_scheme: MarkScheme) -> list[tuple[LabelStep, str | None]]:
     """The label steps a reader meets walking the paper.
 
     Each step is paired with the leaf id it completes, or ``None`` for a
-    container. Raises ``LabelDecompositionError`` for an id it cannot decompose.
+    container. A duplicated leaf id is paired with ``None``. Raises
+    ``LabelDecompositionError`` for an id whose shape cannot be decomposed.
     """
     return [(node.step, node.leaf_id) for node in _decompose(mark_scheme)]
 
@@ -278,7 +294,10 @@ def align(
     aligned label, and the markers that matched nothing.
     """
     nodes = _decompose(mark_scheme)
-    number_nodes = {n.step.token: k for k, n in enumerate(nodes) if n.step.level == "number"}
+    number_nodes: dict[str, int] = {}
+    for k, n in enumerate(nodes):
+        if n.step.level == "number":
+            number_nodes.setdefault(n.step.token, k)
     order = sorted(range(len(markers)), key=lambda k: (markers[k].page, markers[k].top))
 
     slots: list[_Slot] = []
@@ -288,12 +307,14 @@ def align(
             slots.extend(_Slot(k, options) for options in readings)
 
     # Numbered answer lines leave the stream before the alignment sees it.
-    kept = [
-        slot
-        for position, slot in enumerate(slots)
-        if all(s.level != "number" for s in slot.options)
-        or _eligible_number(slots, position, nodes, number_nodes)
-    ]
+    kept: list[_Slot] = []
+    answer_lines: set[int] = set()
+    for position, slot in enumerate(slots):
+        numbers = [o for o in slot.options if o.level == "number"]
+        if not numbers or _eligible_number(slots, position, nodes, number_nodes):
+            kept.append(slot)
+        elif numbers[0].token in number_nodes:
+            answer_lines.add(slot.marker)  # recognised: explained, not unmatched
 
     aligned_nodes = _match(kept, nodes)
 
@@ -304,8 +325,8 @@ def align(
             marker = markers[kept[i].marker]
             aligned.append(AlignedLeaf(leaf_id, marker.page, marker.top, marker.text))
     aligned_ids = {leaf.question_id for leaf in aligned}
-    unaligned = [n.leaf_id for n in nodes if n.leaf_id is not None and n.leaf_id not in aligned_ids]
+    unaligned = [i for i in dict.fromkeys(_leaf_ids(mark_scheme)) if i not in aligned_ids]
 
     used = {kept[i].marker for i in aligned_nodes.values()}
-    unmatched = [markers[k] for k in order if k not in used]
+    unmatched = [markers[k] for k in order if k not in used and k not in answer_lines]
     return aligned, unaligned, unmatched
