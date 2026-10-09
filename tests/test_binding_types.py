@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from lemely.core.binding import BindingCheck, BindingReport, LabelMarker, ReadAnswer
-from lemely.core.schemas import AIMarkResponse, ExtractedAnswers
+from lemely.core.schemas import ExtractedAnswers
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "binding" / "0625_w24_41"
 
@@ -51,8 +51,3 @@ def test_check_id_rejects_unknown_ids():
         BindingCheck.model_validate(
             {"id": "G3", "passed": True, "scope": "paper", "question_ids": [], "detail": ""}
         )
-
-
-def test_addresses_question_defaults_to_unclear_on_a_reply_without_it():
-    reply = AIMarkResponse.model_validate({"awarded_marks": 1, "confidence": 0.8, "feedback": "ok"})
-    assert reply.addresses_question == "unclear"

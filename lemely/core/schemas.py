@@ -748,9 +748,6 @@ class AIMarkResponse(StrictModel):
     function's docstring for the flag-off/empty-list fallback to the legacy
     ``awarded_marks``/``matched_point_ids`` fields above, which remain the
     source of truth until I6 is enabled (US-018)."""
-    addresses_question: Literal["yes", "no", "unclear"] = "unclear"
-    """Whether the marker judged the student's answer to be a reply to this
-    question at all. ``"unclear"`` when the reply omits it."""
 
 
 class SubjectResult(StrictModel):
