@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 # schemas.py and broke that contract; importing it the other way round does
 # not, since question_papers.py already imports StrictModel from here with
 # no cycle either way.
+from lemely.core.binding import BindingReport, BindingSource, BindingStatus, ReadAnswer
 from lemely.core.loose_schemas import _SUBJECT_CODE_RE as _SUBJECT_CODE_RE
 
 
@@ -310,6 +311,7 @@ class CorrectedQuestion(StrictModel):
     confidence_score: float = Field(..., ge=0.0, le=1.0)
     needs_teacher_review: bool
     student_answer: str | None = None
+    addresses_question: Literal["yes", "no", "unclear"] | None = None
     expected_answer: str | None = None
     topic: str | None = None
     review_reason: str | None = None
@@ -472,6 +474,7 @@ class CorrectionResult(StrictModel):
     awarded_marks: int = 0
     maximum_marks: int = 0
     needs_teacher_review: bool = False
+    binding: BindingReport | None = None
 
     @model_validator(mode="after")
     def calculate_totals(self) -> CorrectionResult:
@@ -586,6 +589,22 @@ class ExtractedAnswer(StrictModel):
     paper. ``None`` when no second reader is configured
     (``GeminiSettings.second_reader == "none"``, the default) or when the
     second read did not return this ``question_id``."""
+    binding_source: BindingSource | None = None
+    """How ``question_id`` was assigned: ``"label"`` when it was matched to a
+    question label seen on the page, ``"position"`` when it came from the
+    answer's place in the list. ``None`` on records stored before binding
+    existed. Unrelated to ``confidence``, which is only legibility."""
+    binding_status: BindingStatus | None = None
+    """Whether the binding gate accepted this answer's ``question_id``:
+    ``"verified"`` (checked against the evidence), ``"unverified"`` (assigned
+    but not checked) or ``"unbound"`` (no label aligned, so no question was
+    assigned). ``None`` on records stored before binding existed. Unrelated
+    to ``confidence``, which is only legibility."""
+    label_seen: str | None = None
+    """The question label read on the page next to this answer, as written
+    (e.g. ``"(b)(ii)"``), kept as evidence for the binding. ``None`` when no
+    label was seen or binding did not run. Unrelated to ``confidence``,
+    which is only legibility."""
 
 
 class ExtractedAnswers(StrictModel):
@@ -676,6 +695,13 @@ class ExtractedAnswers(StrictModel):
     """The confidence threshold that gated which answers were eligible for
     a re-read on this run. ``None`` only when this ``ExtractedAnswers`` was
     not produced by the crop-and-re-read-aware extraction path at all."""
+    binding: BindingReport | None = None
+    """The binding gate's report for this paper. ``None`` when binding did
+    not run (records stored before it existed)."""
+    unbound_answers: list[ReadAnswer] = Field(default_factory=list)
+    """Answers read off the page that no question label aligned to, so they
+    are held here rather than assigned a ``question_id``. Empty when every
+    answer was bound."""
 
 
 class SecondReadAnswer(BaseModel):
@@ -722,6 +748,9 @@ class AIMarkResponse(StrictModel):
     function's docstring for the flag-off/empty-list fallback to the legacy
     ``awarded_marks``/``matched_point_ids`` fields above, which remain the
     source of truth until I6 is enabled (US-018)."""
+    addresses_question: Literal["yes", "no", "unclear"] = "unclear"
+    """Whether the marker judged the student's answer to be a reply to this
+    question at all. ``"unclear"`` when the reply omits it."""
 
 
 class SubjectResult(StrictModel):
