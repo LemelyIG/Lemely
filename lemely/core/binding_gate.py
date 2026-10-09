@@ -207,7 +207,7 @@ def check_shape(
             continue
         shaped += 1
         text = answered[leaf.id]
-        if (expected == "number" and not any(ch.isdigit() for ch in text)) or (
+        if (expected == "number" and not any(ch in "0123456789" for ch in text)) or (
             expected == "text" and answer_shape(text) == "number"
         ):
             contradicting.append(leaf.id)
@@ -236,61 +236,48 @@ def check_shape(
     return BindingCheck(id="G6", passed=True, scope="paper", detail=detail)
 
 
-_OFFSET_WORDS = {
-    -2: "the question two before it",
-    -1: "the previous question",
-    1: "the next question",
-    2: "the question two after it",
-}
+_NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
 
 
-def _pointing(
-    answered: dict[str, str], leaves: list[Question], thresholds: GateThresholds
-) -> list[str | int]:
-    """Per leaf: ``"own"``, an offset it points to, or ``"none"``.
+def _offset_words(offset: int) -> str:
+    """How an answer's neighbour is named in a detail sentence."""
+    if offset == -1:
+        return "the previous question"
+    if offset == 1:
+        return "the next question"
+    distance = abs(offset)
+    count = _NUMBER_WORDS[distance] if distance < len(_NUMBER_WORDS) else str(distance)
+    return f"the question {count} {'before' if offset < 0 else 'after'} it"
 
-    A leaf points at offset ``o`` when its answer does not match its own leaf and
-    matches, value for value, the leaf exactly ``o`` positions away and no other
-    leaf within ``shift_max_offset`` positions.
+
+def _offset_runs(
+    answered: dict[str, str], leaves: list[Question], offset: int, thresholds: GateThresholds
+) -> list[list[int]]:
+    """Runs of leaves whose answers hold the value of the leaf ``offset`` positions away.
+
+    A leaf points at the offset when its answer matches, value for value, the leaf
+    that far away and it does not match its own leaf. A leaf matching its own leaf
+    breaks a run, unless its answer also matches the leaf that far away (two
+    neighbouring questions share a value), when it is compatible: it neither breaks
+    nor counts. Every other leaf is neutral. Consecutive pointing leaves in a run
+    are at most ``shift_max_gap`` positions apart.
     """
-    offsets = [o for step in range(1, thresholds.shift_max_offset + 1) for o in (-step, step)]
-    states: list[str | int] = []
+    runs: list[list[int]] = []
+    current: list[int] | None = None
     for i, leaf in enumerate(leaves):
         text = answered.get(leaf.id)
         if text is None:
-            states.append("none")
-        elif matches_expected(text, leaf):
-            states.append("own")
-        else:
-            hits = [
-                o
-                for o in offsets
-                if 0 <= i + o < len(leaves) and answer_matches_only(text, leaves[i + o])
-            ]
-            states.append(hits[0] if len(hits) == 1 else "none")
-    return states
-
-
-def _runs(states: list[str | int], thresholds: GateThresholds) -> list[tuple[int, list[int]]]:
-    """Runs of leaves pointing the same way: (offset, indices of the pointing leaves).
-
-    A run ends at a leaf matching its own question, at a leaf pointing another way,
-    or when the next pointing leaf is more than ``shift_max_gap`` positions on.
-    """
-    runs: list[tuple[int, list[int]]] = []
-    current: tuple[int, list[int]] | None = None
-    for i, state in enumerate(states):
-        if state == "own":
-            current = None
-        elif isinstance(state, int):
-            if (
-                current is not None
-                and current[0] == state
-                and i - current[1][-1] <= thresholds.shift_max_gap
-            ):
-                current[1].append(i)
+            continue
+        target = i + offset
+        matches_away = 0 <= target < len(leaves) and answer_matches_only(text, leaves[target])
+        if matches_expected(text, leaf):
+            if not matches_away:
+                current = None
+        elif matches_away:
+            if current is not None and i - current[-1] <= thresholds.shift_max_gap:
+                current.append(i)
             else:
-                current = (state, [i])
+                current = [i]
                 runs.append(current)
     return runs
 
@@ -304,38 +291,48 @@ def check_shift(
 ) -> list[BindingCheck]:
     """G7: fails when runs of answers hold the value expected of a neighbouring question.
 
-    Works over the non-multiple-choice leaves in manifest order. An answered leaf
-    points to the leaf ``o`` positions away (``o`` up to ``shift_max_offset``, either
-    side, counting every leaf) when its answer does not match its own leaf and
-    matches only that leaf's expected values, every value read from it. A leaf that
-    would point two ways, or is blank or unreadable, gives no evidence.
+    Works over the non-multiple-choice leaves in manifest order, for each offset
+    from -``shift_max_offset`` to ``shift_max_offset`` (not 0) separately. An
+    answered leaf points at an offset when its answer does not match its own leaf
+    and matches only the expected values of the leaf that many positions away,
+    every value read from it; it may point at several offsets and counts in each.
 
-    A run is a stretch of leaves pointing the same way with no leaf matching its
-    own question in it and at most ``shift_max_gap`` positions between pointing
-    leaves. Runs of at least ``shift_min_matches`` pointing leaves fail at paper
-    scope and list those leaves; pointing leaves in shorter runs fail at question
-    scope. The paper-scope check is always first in the list.
+    A run at an offset is a stretch of leaves with no leaf in it matching its own
+    question alone (a leaf matching its own question and also the leaf at that
+    offset is compatible and does not break it), with at most ``shift_max_gap``
+    positions between pointing leaves. Runs of at least ``shift_min_matches``
+    pointing leaves fail at paper scope and list those leaves; pointing leaves
+    only in shorter runs fail at question scope. Each leaf is listed once. The
+    paper-scope check is always first in the list.
     """
     answered = _answers_by_id(extracted)
     leaves = [q for q in _leaves(mark_scheme) if not _is_mcq(q)]
-    runs = _runs(_pointing(answered, leaves, thresholds), thresholds)
-    long_runs = [r for r in runs if len(r[1]) >= thresholds.shift_min_matches]
-    short_runs = [r for r in runs if len(r[1]) < thresholds.shift_min_matches]
+    offsets = [o for step in range(1, thresholds.shift_max_offset + 1) for o in (-step, step)]
+    long_runs: list[tuple[int, list[int]]] = []
+    short_runs: list[list[int]] = []
+    for offset in offsets:
+        for run in _offset_runs(answered, leaves, offset, thresholds):
+            if len(run) >= thresholds.shift_min_matches:
+                long_runs.append((offset, run))
+            else:
+                short_runs.append(run)
 
     if long_runs:
         notes = [
-            f"{len(indices)} answers hold the value expected of {_OFFSET_WORDS[offset]}: "
-            + _listed(leaves[i].id for i in indices)
-            for offset, indices in long_runs
+            f"{len(run)} answers hold the value expected of {_offset_words(offset)}: "
+            + _listed(leaves[i].id for i in run)
+            for offset, run in long_runs
         ]
+        flagged = sorted({i for _, run in long_runs for i in run})
         paper = BindingCheck(
             id="G7",
             passed=False,
             scope="paper",
-            question_ids=[leaves[i].id for _, indices in long_runs for i in indices],
+            question_ids=[leaves[i].id for i in flagged],
             detail="; ".join(notes) + ".",
         )
     else:
+        flagged = []
         paper = BindingCheck(
             id="G7",
             passed=True,
@@ -343,8 +340,9 @@ def check_shift(
             detail="No run of answers holds the value expected of a neighbouring question.",
         )
     checks = [paper]
-    if short_runs:
-        ids = [leaves[i].id for _, indices in short_runs for i in indices]
+    minor = sorted({i for run in short_runs for i in run} - set(flagged))
+    if minor:
+        ids = [leaves[i].id for i in minor]
         checks.append(
             BindingCheck(
                 id="G7",
@@ -446,8 +444,7 @@ def check_second_read(
         if text_agreement(one[qid], two[qid]) < floor
         and any(
             text_agreement(two[qid], text) >= floor and text_agreement(text, one[qid]) < floor
-            for other, text in one.items()
-            if other != qid
+            for text in one.values()
         )
     ]
     if not disagreeing:

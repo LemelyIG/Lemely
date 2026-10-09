@@ -295,6 +295,12 @@ def test_g6_number_leaf_answered_without_any_digit_contradicts() -> None:
     assert check.question_ids == ["1", "2", "3", "4"]
 
 
+def test_g6_a_superscript_is_not_a_digit() -> None:
+    scheme = _scheme([_leaf(str(i), "5") for i in range(1, 5)])
+    extracted = _extracted([(str(i), "m/s\u00b2") for i in range(1, 5)])
+    assert not check_shape(extracted, scheme, DEFAULTS).passed
+
+
 def test_g6_text_leaf_answered_with_a_number_contradicts() -> None:
     scheme = _scheme([_leaf(str(i), None, prose=True) for i in range(1, 5)])
     extracted = _extracted([(str(i), "42") for i in range(1, 5)])
@@ -421,17 +427,6 @@ def test_g7_respects_non_default_min_matches() -> None:
     ].passed
 
 
-def test_g7_own_match_breaks_a_run() -> None:
-    scheme = _line(["11", "22", "33", "44", "55", "66"])
-    extracted = _extracted(
-        [("1", "11"), ("2", "11"), ("3", "22"), ("4", "44"), ("5", "44"), ("6", "55")]
-    )
-    checks = check_shift(extracted, scheme, DEFAULTS)
-    assert checks[0].passed
-    question = _by(checks, "G7", "question")
-    assert question is not None and question.question_ids == ["2", "3", "5", "6"]
-
-
 def test_g7_gap_larger_than_shift_max_gap_splits_a_run() -> None:
     values = [str(11 * (i + 1)) for i in range(10)]
     scheme = _line(values)
@@ -473,11 +468,78 @@ def test_g7_shift_by_three_is_out_of_reach() -> None:
     assert all(c.passed for c in check_shift(extracted, scheme, DEFAULTS))
 
 
-def test_g7_leaf_pointing_both_ways_is_no_evidence() -> None:
+def test_g7_leaf_pointing_both_ways_counts_in_both_offsets_and_is_listed_once() -> None:
     scheme = _line(["5", "7", "5", "7", "5", "7"])
-    extracted = _extracted([("1", "5"), ("2", "5"), ("3", "7"), ("4", "5"), ("5", "7")])
+    extracted = _extracted([("2", "5"), ("3", "7"), ("4", "5"), ("5", "7")])
+    paper = check_shift(extracted, scheme, DEFAULTS)[0]
+    assert not paper.passed
+    assert paper.question_ids == ["2", "3", "4", "5"]
+    assert "previous" in paper.detail and "next" in paper.detail
+
+
+def test_g7_leaf_matching_own_and_neighbour_does_not_break_a_run() -> None:
+    # Questions 2 and 3 share the value 22; everything is shifted later by one.
+    scheme = _line(["11", "22", "22", "44", "55", "66"])
+    extracted = _extracted(
+        [("1", "11"), ("2", "11"), ("3", "22"), ("4", "22"), ("5", "44"), ("6", "55")]
+    )
+    paper = check_shift(extracted, scheme, DEFAULTS)[0]
+    assert not paper.passed
+    assert paper.question_ids == ["2", "4", "5", "6"]
+
+
+def test_g7_own_only_match_breaks_a_run() -> None:
+    scheme = _line(["11", "22", "33", "44", "55", "66"])
+    extracted = _extracted(
+        [("1", "11"), ("2", "11"), ("3", "22"), ("4", "44"), ("5", "44"), ("6", "55")]
+    )
+    assert check_shift(extracted, scheme, DEFAULTS)[0].passed
+
+
+def test_g7_opposite_pointer_inside_a_real_run_does_not_split_it() -> None:
+    scheme = _line([str(11 * (i + 1)) for i in range(8)])
+    extracted = _extracted([("2", "11"), ("3", "22"), ("4", "55"), ("5", "44"), ("6", "55")])
     checks = check_shift(extracted, scheme, DEFAULTS)
-    assert len(checks) == 1 and checks[0].passed
+    assert not checks[0].passed
+    assert checks[0].question_ids == ["2", "3", "5", "6"]
+    question = _by(checks, "G7", "question")
+    assert question is not None and question.question_ids == ["4"]
+
+
+def test_g7_leaf_already_in_a_paper_run_is_not_repeated_at_question_scope() -> None:
+    # Leaf 4 holds 33: previous leaf's value (a run of three) and next leaf's (alone).
+    scheme = _line(["11", "22", "33", "44", "33"])
+    extracted = _extracted([("2", "11"), ("3", "22"), ("4", "33")])
+    checks = check_shift(extracted, scheme, DEFAULTS)
+    assert checks[0].question_ids == ["2", "3", "4"]
+    assert len(checks) == 1
+
+
+def test_g7_runs_are_per_offset() -> None:
+    scheme = _line([str(11 * (i + 1)) for i in range(7)])
+    # One leaf each pointing previous (3), next (5) and two back (7).
+    extracted = _extracted([("3", "22"), ("5", "66"), ("7", "55")])
+    checks = check_shift(extracted, scheme, DEFAULTS)
+    assert checks[0].passed
+    question = _by(checks, "G7", "question")
+    assert question is not None and question.question_ids == ["3", "5", "7"]
+
+
+def test_g7_supports_a_larger_max_offset() -> None:
+    scheme = _line([str(11 * (i + 1)) for i in range(7)])
+    extracted = _extracted([("4", "11"), ("5", "22"), ("6", "33"), ("7", "44")])
+    wide = replace(DEFAULTS, shift_max_offset=3)
+    paper = check_shift(extracted, scheme, wide)[0]
+    assert not paper.passed and paper.question_ids == ["4", "5", "6", "7"]
+    assert "three before it" in paper.detail
+    assert check_shift(extracted, scheme, DEFAULTS)[0].passed
+
+
+def test_g7_larger_offset_on_the_other_side_is_worded() -> None:
+    scheme = _line([str(11 * (i + 1)) for i in range(7)])
+    extracted = _extracted([("1", "44"), ("2", "55"), ("3", "66")])
+    wide = replace(DEFAULTS, shift_max_offset=4)
+    assert "three after it" in check_shift(extracted, scheme, wide)[0].detail
 
 
 def test_g7_answer_matching_its_own_leaf_never_points_away() -> None:
@@ -690,12 +752,14 @@ def test_g9_ignores_blank_and_whitespace_only_answers() -> None:
     assert check_second_read(first, blank, scheme, DEFAULTS).passed
 
 
-def test_g9_normalises_whitespace_before_measuring() -> None:
-    first, _ = _reads(0)
-    spaced = _extracted(
-        [(f"q{i}", f"  {s.replace(' ', '   ')}  ") for i, s in enumerate(SENTENCES)]
-    )
-    assert check_second_read(first, spaced, _text_scheme(), DEFAULTS).passed
+def test_g9_normalises_whitespace_before_measuring_length() -> None:
+    ids = [f"q{i}" for i in range(6)]
+    words = ["cat", "dog", "pig", "hen", "cow", "owl"]
+    padded = [f"  {w}    " for w in words]  # long raw, three characters once collapsed
+    first = _extracted(list(zip(ids, padded, strict=True)))
+    swapped = [*padded[1:4], padded[0], *padded[4:]]
+    second = _extracted(list(zip(ids, swapped, strict=True)))
+    assert check_second_read(first, second, _text_scheme(ids), DEFAULTS).passed
 
 
 def test_g9_shared_answers_are_not_evidence() -> None:
@@ -734,3 +798,11 @@ def test_question_scope_failures_do_not_hold_the_paper() -> None:
     checks = [_check("question", passed=False), _check("paper", passed=True)]
     assert verdict(checks, retried=False) == "pass"
     assert verdict(checks, retried=True) == "pass"
+
+
+def test_g7_reproduction_shared_value_shift_fails_at_paper_scope() -> None:
+    scheme = _line(["11", "22", "22", "44", "55", "66"])
+    extracted = _extracted(
+        [("1", "11"), ("2", "11"), ("3", "22"), ("4", "22"), ("5", "44"), ("6", "55")]
+    )
+    assert not check_shift(extracted, scheme, DEFAULTS)[0].passed
