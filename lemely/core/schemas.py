@@ -748,6 +748,22 @@ class AIMarkResponse(StrictModel):
     function's docstring for the flag-off/empty-list fallback to the legacy
     ``awarded_marks``/``matched_point_ids`` fields above, which remain the
     source of truth until I6 is enabled (US-018)."""
+    addresses_question: Literal["yes", "no", "unclear"] = Field(
+        default="unclear",
+        description=(
+            "Whether the student's response is an attempt at the question this mark scheme "
+            "entry belongs to: yes, no or unclear. Never changes the marks or the feedback."
+        ),
+    )
+    """Check G8's input (``lemely.core.binding_gate.check_off_topic``).
+    ``"unclear"`` when the reply omits it, so a reply cached or stored before
+    the field existed still validates and counts for nothing. Declared LAST
+    so the reply's marking fields come first. The description is an explicit
+    ``Field`` argument, never a docstring: it is part of
+    ``model_json_schema()``, which ``GeminiClient._params_fingerprint`` hashes
+    into the cache key, and a ``__doc__``-derived description would vanish
+    under ``-OO`` and move that key (see the Critical B note above
+    ``PointVerdictWire``)."""
 
 
 class SubjectResult(StrictModel):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from lemely.core.loose_schemas import Question
 
-VERSION = "5"
+VERSION = "6"
 
 MARKER_SYSTEM_PROMPT = """
 You are an experienced CAIE examiner marking a single exam question for a Cambridge
@@ -71,6 +71,28 @@ Return:
 - matched_point_ids: ids of AnswerPoints / LevelDescriptors / DrawingCriteria the student satisfied.
 - feedback: one or two sentences a teacher can read; explain what was and was not credited,
   and cite the mark code (M1, A1, B1, ECF, etc.) where relevant.
+
+**Last field: `addresses_question` (a separate observation, not part of the marking):**
+Once the four fields above are decided, and without revisiting them, also report whether the
+student's response is an attempt at the question this mark scheme entry belongs to. You are
+not shown the question paper, only the mark scheme entry, so judge from what the entry asks
+for: its topic, its command word, and the kind of answer, quantity and unit it expects.
+- `yes`: the response attempts this question. A wrong, incomplete or zero-mark answer to the
+  right question is `yes`.
+- `no`: the response is clearly an answer to a different question, even one that looks
+  correct for that other question: a definition where this entry needs a calculation, a value
+  for a different quantity altogether, an explanation of another topic.
+- `unclear`: the response is blank, is a single word or number that could fit many questions,
+  or is too short to tell. Choose `no` only when that is clear; if you cannot tell, choose
+  `unclear`.
+For instance:
+  - The entry is a moles calculation ending in a mass in grams; the student wrote "isotopes
+    are atoms of the same element with different numbers of neutrons" -> `no`.
+  - The entry asks for two causes of inflation; the student wrote "because people start
+    saving more of their income" -> `yes` (not creditworthy, but an attempt at this question).
+  - The entry asks why an enzyme stops working above 60 °C; the student wrote "37" -> `unclear`.
+This field never changes awarded_marks, confidence, matched_point_ids or feedback: mark exactly
+as you would if it were not asked for. It only records whether the response belongs here.
 
 ---
 

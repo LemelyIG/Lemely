@@ -9,6 +9,8 @@ from typing import Literal, NamedTuple
 
 import structlog
 
+from lemely.core.binding import BindingReport
+from lemely.core.binding_gate import GateThresholds, check_off_topic, verdict
 from lemely.core.correction import _exam_metadata, _load_mark_scheme
 from lemely.core.equivalence import Verdict, VerdictKind, equivalent
 from lemely.core.loose_schemas import (
@@ -1364,6 +1366,7 @@ def _build_ai_corrected_from_verdicts(
         matched_point_ids=matched_point_ids,
         point_verdicts=point_verdicts,
         extraction_confidence=extraction_confidence,
+        addresses_question=mark.addresses_question,
     )
 
 
@@ -1541,6 +1544,7 @@ def _build_ai_corrected(
         feedback=mark.feedback,
         matched_point_ids=matched_point_ids,
         extraction_confidence=extraction_confidence,
+        addresses_question=mark.addresses_question,
     )
 
 
@@ -2165,6 +2169,10 @@ def _maybe_apply_ecf_substitution(
             "confidence": min(mark.confidence, mark2.confidence),
             "feedback": mark2.feedback,
             "awarded_marks": mark2.awarded_marks,
+            # G8: the re-mark's feedback and claimed marks are the ones kept
+            # above, so its judgement of whether the answer addresses the
+            # question is kept with them rather than the first pass's.
+            "addresses_question": mark2.addresses_question,
         }
     )
     return _build_ai_corrected(
@@ -2252,6 +2260,70 @@ def _attach_extraction_context(
     return cq.model_copy(update=update)
 
 
+#: Appended to ``review_reason`` on each question a question-scope G8 failure
+#: names (see :func:`_with_off_topic_check`).
+OFF_TOPIC_REVIEW_REASON = "binding unverified: answer appears to address a different question"
+
+
+def _with_off_topic_check(
+    result: CorrectionResult, extracted_answers: ExtractedAnswers | Mapping[str, str]
+) -> CorrectionResult:
+    """Run check G8 over the marked paper and attach the binding report.
+
+    G8 (:func:`lemely.core.binding_gate.check_off_topic`) counts the answers
+    the MARKER judged not to address their question -- the one binding check
+    that can only run after marking, and the main one for prose answers,
+    which the checks run at extraction cannot see. ``result.questions`` is in
+    mark-scheme order (``correct_paper`` builds it by walking ``leaves``),
+    which is the order a run of ``"no"`` verdicts is counted in.
+
+    The report is the extraction's own with G8 appended and the verdict
+    recomputed over every check, so a failure found at extraction is never
+    lost here. A plain mapping, or an extraction that carries no report (the
+    legacy extractor), gets a report holding G8 alone, with ``retried=True``
+    so that a paper-scope G8 failure there is a ``hold``, never a ``retry``:
+    that path has no binder to retry with.
+
+    Scope decides what else changes. A PAPER-scope failure changes no
+    question: the verdict stops the whole paper and the report names the
+    answers. A QUESTION-scope failure (too few to doubt the paper's binding)
+    sends just those questions to teacher review, joined onto any reason the
+    builders already gave. ``awarded_marks`` is never touched either way. The
+    result is REBUILT, not ``model_copy``-ed, so ``calculate_totals`` derives
+    the paper-level ``needs_teacher_review`` from the flagged rows.
+    """
+    check = check_off_topic(result, GateThresholds())
+    prior = extracted_answers.binding if isinstance(extracted_answers, ExtractedAnswers) else None
+    if prior is not None:
+        checks = [*prior.checks, check]
+        report = prior.model_copy(
+            update={"checks": checks, "verdict": verdict(checks, retried=prior.retried)}
+        )
+    else:
+        report = BindingReport(
+            # Placeholder the type requires: the legacy extractor has no binder.
+            binder="label",
+            checks=[check],
+            verdict=verdict([check], retried=True),
+            retried=True,
+        )
+    questions = result.questions
+    if not check.passed and check.scope == "question":
+        off_topic = set(check.question_ids)
+        questions = [
+            cq.model_copy(
+                update={
+                    "needs_teacher_review": True,
+                    "review_reason": _join_reason(cq.review_reason, OFF_TOPIC_REVIEW_REASON),
+                }
+            )
+            if cq.question_id in off_topic
+            else cq
+            for cq in questions
+        ]
+    return CorrectionResult(metadata=result.metadata, questions=questions, binding=report)
+
+
 def correct_paper(
     mark_scheme: MarkScheme | str | Mapping[str, object],
     extracted_answers: ExtractedAnswers | Mapping[str, str],
@@ -2276,6 +2348,11 @@ def correct_paper(
             :func:`_maybe_apply_ecf_substitution` for the gate/chain rules and
             the measured activation ceiling (0 on the committed corpus by
             construction). Defaults to both off.
+
+    Returns:
+        The marked paper. Its ``binding`` is the extraction's binding report
+        with check G8 (answers the marker judged off topic) appended -- see
+        :func:`_with_off_topic_check`.
 
     Raises:
         ConfigError: paper has non-MCQ questions, mcq_only=False, and gemini_client is None.
@@ -2538,4 +2615,6 @@ def correct_paper(
     corrected = [
         _attach_extraction_context(cq, answers, original, options, leaf_by_id) for cq in corrected
     ]
-    return CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected)
+    return _with_off_topic_check(
+        CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected), extracted_answers
+    )
