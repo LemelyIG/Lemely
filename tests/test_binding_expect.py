@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from lemely.core.binding_expect import (
+    answer_matches_only,
     answer_shape,
     expected_numeric_values,
     expected_shape,
@@ -350,3 +351,30 @@ def test_relative_tolerance_boundary() -> None:
     assert matches_expected("0.2745", question)  # -1.96%
     assert not matches_expected("0.2857", question)  # +2.04%
     assert not matches_expected("0.2742", question)  # -2.07%
+
+
+def test_answer_matches_only_requires_every_value_to_match() -> None:
+    nine = _question([{"point": "9.6", "math_mark_type": "A"}])
+    assert answer_matches_only("9.6", nine)
+    assert answer_matches_only("9.6 cm", nine)
+    assert not answer_matches_only("9.6 x 2 = 19.2", nine)
+    two = _question(
+        [{"point": "43", "math_mark_type": "A"}, {"point": "63", "math_mark_type": "A"}]
+    )
+    assert answer_matches_only("1. 43cm 2. 63cm", two)
+    assert not answer_matches_only("1. 43cm 2. 64cm", two)
+
+
+def test_answer_matches_only_is_false_without_values_or_a_number_shape() -> None:
+    nine = _question([{"point": "9.6", "math_mark_type": "A"}])
+    prose = _question([{"point": "It stays the same"}])
+    assert not answer_matches_only("9.6", prose)
+    assert not answer_matches_only("", nine)
+    assert not answer_matches_only("no number here", nine)
+    assert not answer_matches_only("[diagram] 9.6", nine)
+
+
+def test_answer_matches_only_never_raises_on_hostile_strings() -> None:
+    nine = _question([{"point": "9.6", "math_mark_type": "A"}])
+    for text in ["\x00", "1e999", "9.6" * 5000, "\u2212", "1,2,3,4", "٣"]:
+        assert answer_matches_only(text, nine) in (True, False)

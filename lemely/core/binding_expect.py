@@ -277,3 +277,19 @@ def matches_expected(answer: str, question: Question) -> bool:
     if not expected or answer_shape(answer) != "number":
         return False
     return any(_values_match(got, want) for got in _answer_values(answer) for want in expected)
+
+
+def answer_matches_only(answer: str, question: Question) -> bool:
+    """True when every value read from ``answer`` equals an expected value of ``question``.
+
+    Stricter than ``matches_expected``: the answer must be a number, at least one
+    value must be read from it, and none may be left over. ``9.6 x 2 = 19.2``
+    against a leaf expecting ``9.6`` is false, because ``19.2`` is not expected.
+    """
+    expected = expected_numeric_values(question)
+    if not expected or answer_shape(answer) != "number":
+        return False
+    values = _answer_values(answer)
+    return bool(values) and all(
+        any(_values_match(got, want) for want in expected) for got in values
+    )
