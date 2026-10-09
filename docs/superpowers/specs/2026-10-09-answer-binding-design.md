@@ -154,7 +154,7 @@ Used for separate sheets, and for whole papers before the layout exists.
 
 The call carries an anchored manifest: printed label, marks, expected shape, slot count, and the stem when the layout has one. The prompt states that all lines before one `[n]` bracket belong to one question.
 
-The model quotes each label as written (`3 b ii`, `Q3(b)(ii)`, a bare `ii)`). Code parses the quoted labels with carry-down state over reading order, so `3`, then `a)`, then `ii)` yields `3a_ii`. A missing or ambiguous label leaves the answer unbound; it is never guessed.
+The model returns two streams and no question ids: every question label it can see, printed or handwritten, quoted as written (`3 b ii`, `Q3(b)(ii)`, a bare `ii)`) with its page and position; and every block of student writing with its page and box. Code aligns the label stream with the label sequence the mark scheme implies, carrying a question number down from an earlier page, so `3`, then `a)`, then `ii)` yields `3a_ii`. Each answer is attached to the aligned label above it. Numbered answer lines inside one part are not labels. A missing or ambiguous label leaves the answer unbound; it is never guessed.
 
 The second binding read, G9, is mandatory on this path.
 
@@ -173,7 +173,7 @@ Per-page calls use `high` media resolution. The choice of model for each binder 
 
 ## Existing results
 
-A one-off audit command runs G1, G2 and G7 over stored attempts and lists the suspects. Staging attempt 2 is one. Re-grading the listed attempts is a separate decision and is not part of this design.
+A one-off audit command runs G6 and G7 over stored attempts and lists the suspects. Stored results are already keyed by manifest id, so G1 and G2 cannot fire on them. Staging attempt 2 is one. Re-grading the listed attempts is a separate decision and is not part of this design.
 
 ## Errors
 
@@ -196,7 +196,7 @@ A failed or timed-out model call in the page map or a binder follows the existin
 
 One implementation plan per step.
 
-1. Gate with G1, G2 and G5-G9; anchored `LabelBinder`; hold flow; audit command.
+1. Gate with G1, G2 and G5-G9; anchored `LabelBinder`; hold flow; audit command. Planned in two parts: 1A, the binding core, in which a held paper fails closed through the existing `failed` path with a message that says why; and 1B, the hold flow in the product.
 2. Question-paper corpus, layout extractor, coverage report.
 3. `PageMap`, `PositionBinder`, G3 and G4.
 
