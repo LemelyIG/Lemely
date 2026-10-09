@@ -447,34 +447,41 @@ def test_marks_are_not_changed_by_addresses_question():
     assert marks(["no"] * 5) == baseline  # paper scope
 
 
-def test_plain_mapping_answers_still_get_a_g8_only_report():
-    ids = ["1", "2", "3", "4"]
-    result = _mark_with(
-        {qid: _reply("no") for qid in ids},
-        mark_scheme=_scheme(4),
-        extracted_answers={qid: f"answer {qid}" for qid in ids},
-    )
-    assert result.binding is not None
-    assert [c.id for c in result.binding.checks] == ["G8"]
-    assert (result.binding.binder, result.binding.retried) == ("label", True)
-    assert result.binding.verdict == "hold"
+def test_plain_mapping_answers_get_no_binding_report():
+    # Typed answers never came off a scan, so there is no binding to doubt.
+    ids = ["1", "2", "3", "4", "5"]
 
-    clean = _mark_with(
-        {qid: _reply("yes") for qid in ids},
-        mark_scheme=_scheme(4),
-        extracted_answers={qid: f"answer {qid}" for qid in ids},
-    )
-    assert clean.binding is not None
-    assert [(c.id, c.passed) for c in clean.binding.checks] == [("G8", True)]
-    assert clean.binding.verdict == "pass"
+    def marked(flags: list[str | None]) -> CorrectionResult:
+        return _mark_with(
+            {qid: _reply(flag) for qid, flag in zip(ids, flags, strict=True)},
+            mark_scheme=_scheme(5),
+            extracted_answers={qid: f"answer {qid}" for qid in ids},
+        )
+
+    baseline = marked([None] * 5)
+    for flags in (["no"] * 5, ["yes", "yes", "no", "yes", "yes"], ["yes"] * 5):
+        result = marked(flags)
+        assert result.binding is None, flags
+        assert [q.addresses_question for q in result.questions] == flags
+        assert [q.review_reason for q in result.questions] == [None] * 5, flags
+        assert [q.needs_teacher_review for q in result.questions] == [
+            q.needs_teacher_review for q in baseline.questions
+        ], flags
+        assert result.needs_teacher_review == baseline.needs_teacher_review, flags
 
 
-def test_extraction_without_a_report_gets_a_g8_only_report():
+def test_extracted_answers_without_a_report_get_a_g8_only_report():
     result = _paper(["no", "no", "no"])
     assert result.binding is not None
     assert [c.id for c in result.binding.checks] == ["G8"]
     assert (result.binding.binder, result.binding.retried) == ("label", True)
     assert result.binding.verdict == "hold"
+
+    clean = _paper(["yes", "yes", "yes"])
+    assert clean.binding is not None
+    assert [(c.id, c.passed) for c in clean.binding.checks] == [("G8", True)]
+    assert (clean.binding.binder, clean.binding.retried) == ("label", True)
+    assert clean.binding.verdict == "pass"
 
 
 @pytest.mark.parametrize(("retried", "expected"), [(False, "retry"), (True, "hold")])

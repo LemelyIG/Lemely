@@ -107,4 +107,10 @@ def apply_integrity_checks(
             cq = cq.model_copy(update=updates)
         updated_questions.append(cq)
 
-    return CorrectionResult(metadata=correction.metadata, questions=updated_questions)
+    return CorrectionResult(
+        metadata=correction.metadata,
+        questions=updated_questions,
+        # Rebuilding must not lose the binding gate's report (its verdict
+        # decides whether the paper may be published); carried unchanged.
+        binding=correction.binding,
+    )

@@ -2277,12 +2277,17 @@ def _with_off_topic_check(
     mark-scheme order (``correct_paper`` builds it by walking ``leaves``),
     which is the order a run of ``"no"`` verdicts is counted in.
 
-    The report is the extraction's own with G8 appended and the verdict
-    recomputed over every check, so a failure found at extraction is never
-    lost here. A plain mapping, or an extraction that carries no report (the
-    legacy extractor), gets a report holding G8 alone, with ``retried=True``
-    so that a paper-scope G8 failure there is a ``hold``, never a ``retry``:
-    that path has no binder to retry with.
+    A binding report exists only for answers that came off a scan. A plain
+    mapping (typed quiz answers, CLI JSON) was never bound to a question by
+    reading a page, so there is no binding to doubt: the result comes back
+    untouched, ``binding=None``, whatever the marker said.
+
+    For an ``ExtractedAnswers`` the report is the extraction's own with G8
+    appended and the verdict recomputed over every check, so a failure found
+    at extraction is never lost here. An extraction that carries no report
+    (the legacy extractor) gets a report holding G8 alone, with
+    ``retried=True`` so that a paper-scope G8 failure there is a ``hold``,
+    never a ``retry``: that path has no binder to retry with.
 
     Scope decides what else changes. A PAPER-scope failure changes no
     question: the verdict stops the whole paper and the report names the
@@ -2292,8 +2297,10 @@ def _with_off_topic_check(
     result is REBUILT, not ``model_copy``-ed, so ``calculate_totals`` derives
     the paper-level ``needs_teacher_review`` from the flagged rows.
     """
+    if not isinstance(extracted_answers, ExtractedAnswers):
+        return result
     check = check_off_topic(result, GateThresholds())
-    prior = extracted_answers.binding if isinstance(extracted_answers, ExtractedAnswers) else None
+    prior = extracted_answers.binding
     if prior is not None:
         checks = [*prior.checks, check]
         report = prior.model_copy(
@@ -2350,8 +2357,10 @@ def correct_paper(
             construction). Defaults to both off.
 
     Returns:
-        The marked paper. Its ``binding`` is the extraction's binding report
-        with check G8 (answers the marker judged off topic) appended -- see
+        The marked paper. When ``extracted_answers`` is an
+        ``ExtractedAnswers``, its ``binding`` is the extraction's binding
+        report with check G8 (answers the marker judged off topic) appended;
+        for a plain mapping it is ``None`` -- see
         :func:`_with_off_topic_check`.
 
     Raises:
