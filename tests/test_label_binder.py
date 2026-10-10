@@ -460,6 +460,21 @@ def test_a_key_beside_items_in_the_reply_is_not_an_error(tmp_path: Path) -> None
     assert genai.models.generate_content.call_count == 1  # no corrective second call
 
 
+def test_a_near_miss_item_is_read_and_not_dropped(tmp_path: Path) -> None:
+    """A value that is off the schema but plain in meaning costs nothing."""
+    items = [
+        _label(4, type="Label", page="1"),
+        _answer(9.5, type=" ANSWER ", page=2.0),
+    ]
+    read, _, _ = _read(tmp_path, items)
+    assert read.drops == {}
+    assert [(type(i), i.page) for i in read.items] == [(SeenLabel, 1), (SeenWriting, 2)]
+    assert isinstance(read.items[0], SeenLabel)
+    assert read.items[0].text == "4"
+    assert isinstance(read.items[1], SeenWriting)
+    assert read.items[1].answer == "9.5"
+
+
 def test_writing_whose_text_is_all_in_the_working_is_kept(tmp_path: Path) -> None:
     """The reader sometimes puts a note in ``working_out`` and leaves ``answer`` null.
 
