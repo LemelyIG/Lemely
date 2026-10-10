@@ -4909,7 +4909,7 @@ def test_acknowledgement_is_per_teacher_not_global(
 
 _HELD_SENTENCE = (
     "We could not match some answers to their questions, so this paper has not been marked. "
-    "Please check every page is included and in order, then upload it again."
+    "Please check every page is included and in order, then run it again or upload it again."
 )
 
 

@@ -557,6 +557,68 @@ UPDATE review_queue SET status = 'dismissed' WHERE status = 'withdrawn';
 
 The safe path is always a forward fix on top of `0039`, not a rollback under it.
 
+### 5.8 Answer binding: the settings, what changes on first start, the way back
+
+Marking a scanned script now ties each answer to its question by the question
+labels the model sees, then checks that tie before anything is marked
+(`lemely/io/binding`, `lemely/core/binding_gate.py`). A paper whose answers cannot
+be trusted to sit on the right questions is **held**: not marked, not stored, no XP,
+no "your paper is marked" notification, and the upload ends `failed` with a fixed
+sentence. A question whose answer could not be tied to it at all is stored as an
+unmarked zero, flagged for the teacher.
+
+**Settings** (`[binding]` in `lemely.toml`, or the environment):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LEMELY_BINDING__BINDER` | `label` | `label`: the model lists labels and writing, and the code binds them to the mark scheme. `legacy`: the model hands out question ids itself, as before this change. |
+| `LEMELY_BINDING__GATE` | `enforce` | `enforce`: a paper that fails the checks is held. `observe`: the checks run and are logged, nothing is held and the check after marking does not run. `off`: no checks. |
+| `LEMELY_BINDING__READ_MODEL` | `gemini-3.8-flash` | The label binder's model. Only this model returned a usable list when it was measured; the extraction default is a cheaper model that did not. |
+| `LEMELY_BINDING__SECOND_READ` | `true` | Read the script a second time (task tag `binding_second_read`) so two reads can be compared and a bad first read replaced. Doubles the binding step's cost. |
+| `LEMELY_BINDING__RETRY_MODEL` | `gemini-3.8-flash` | The model of the legacy binder's one retry. |
+
+**What changes on first start.** Nothing needs migrating, and the defaults are the new
+behaviour: every scanned paper, of every type, goes through the label binder, with
+two reads of the script on `gemini-3.8-flash`, and every marker cache entry is cold
+once (the marker prompt changed). The cost and time that were measured: one pilot
+paper (a 19-page theory script) ran the whole sequence (extraction with both reads,
+the checks, marking) in 572 s for $0.197, and used 157,824 tokens
+(`.superpowers/sdd/task-13-report.md`). That is one paper; there is no distribution
+behind it. The paper shapes read live so far are **one theory paper**: other
+subjects, multiple-choice papers and handwriting styles have not been read with the
+label binder against a real scan, so watch the hold rate (below) after the first
+real traffic.
+
+**The way back is configuration, not a revision rollback.** Set
+`LEMELY_BINDING__BINDER=legacy` and `LEMELY_BINDING__GATE=off` and restart: extraction
+is then what it was before this change. The gate cannot be off under the label
+binder (startup refuses `binder="label"` with `gate` other than `enforce`, because
+its coverage and lost-item checks are what stops lost writing being published as a
+blank), so switch both together. `gate="observe"` with `binder="legacy"` keeps the
+checks running and logged without holding anything, which is the way to watch the
+gate before trusting it. Rolling the Cloud Run revision back is not needed to
+undo this: the console's stored reports (`teacher_papers.report_json`) are kept in
+the pre-change shape, so older code still loads them, but that is a safety net, not
+the plan.
+
+**Two log lines to watch.**
+
+- `binding_gate_result`: one per scanned paper. Carries the binder, the gate mode,
+  the failed check ids (`G1` to `G9`), whether the second read replaced the first
+  (`retried`), the items the reader's reply lost (`drops`) and the unaligned leaf
+  count and reasons.
+- `binding_held`: one per held paper, from the student upload job (`upload_id`) and
+  the teacher console job (`paper_id`). Carries the verdict, the `stage`
+  (`before_marking` or `after_marking`), the failed check ids and the reasons.
+
+A rising share of `binding_held` among scanned papers means scans are arriving with
+pages missing or out of order (the usual cause, and the sentence the student sees
+says so), or that the reader is failing on a paper shape it has not been measured
+on. Group by `failed_checks` first: a single check dominating points at one cause.
+If the rate stays high on ordinary scans, switch to the legacy binder by
+configuration while it is investigated. A held paper has no queue yet (that is plan
+1B): the student uploads again, the teacher re-runs or uploads again.
+
 ---
 
 ## 6. Deployment checklist

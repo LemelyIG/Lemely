@@ -541,6 +541,7 @@ def _run_grading_job(
     """
     from lemely.web.routers.student import resolve_mark_scheme
     from lemely.web.services.grading import (
+        TEACHER_BINDING_HELD_MESSAGE,
         BindingHeldError,
         ensure_binding_allows_marking,
         extract_answers,
@@ -643,7 +644,7 @@ def _run_grading_job(
             failed_checks=exc.failed_check_ids,
             reasons=exc.reasons,
         )
-        repo.fail(paper_id, str(exc))
+        repo.fail(paper_id, TEACHER_BINDING_HELD_MESSAGE)
     except Exception as exc:
         # Marking is a long Gemini/parser call chain and can genuinely fail.
         # Recording it as a terminal state with the reason attached is the

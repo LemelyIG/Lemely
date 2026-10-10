@@ -174,3 +174,11 @@ def test_ensure_binding_allows_marking_stops_a_rejected_extraction() -> None:
         with pytest.raises(BindingHeldError) as held:
             ensure_binding_allows_marking(_extracted(_report(verdict)))  # type: ignore[arg-type]
         assert held.value.stage == "before_marking"
+
+
+def test_the_teacher_sentence_offers_a_re_run_and_the_student_sentence_is_unchanged() -> None:
+    from lemely.web.services.grading import TEACHER_BINDING_HELD_MESSAGE
+
+    assert str(BindingHeldError(_report("hold"), "before_marking")) == _SENTENCE
+    assert "run it again" in TEACHER_BINDING_HELD_MESSAGE
+    assert TEACHER_BINDING_HELD_MESSAGE.startswith(_SENTENCE.split(" Please")[0])

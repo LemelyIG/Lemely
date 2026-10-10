@@ -40,11 +40,18 @@ BINDING_HELD_MESSAGE = (
     "We could not match some answers to their questions, so this paper has not been marked. "
     "Please check every page is included and in order, then upload it again."
 )
-"""What the uploader is told when the binding gate rejects a paper.
+"""What the student is told when the binding gate rejects a paper.
 
 Fixed on purpose: the gate's own reasons can quote question ids and counts, and
 those go to the log, not to the student or the console.
 """
+
+TEACHER_BINDING_HELD_MESSAGE = (
+    "We could not match some answers to their questions, so this paper has not been marked. "
+    "Please check every page is included and in order, then run it again or upload it again."
+)
+"""What the grading console shows on a held paper. It fits the re-run button beside it:
+a re-run reads the scan afresh, so running it again is an option as well as uploading."""
 
 
 class BindingHeldError(LemelyError):
