@@ -361,6 +361,8 @@ def test_every_label_item_of_a_recorded_run_has_a_place(
 # fell straight after a container label, where no leaf has been opened (in run 1 that is
 # the last sentence of 4(b)(i), listed after "(b)"). That case is a known limit.
 _SET_ASIDE = {1: [], 2: ["6b", "7b_i", "8d"], 3: [], 4: [], 5: ["3c", "6b", "7b_i", "8d"]}
+# Blocks that fell straight after a container label, per run: unbound, under no leaf.
+_AFTER_CONTAINER = {1: 3, 2: 5, 3: 3, 4: 2, 5: 3}
 
 
 @pytest.mark.parametrize("run", _RUNS)
@@ -375,3 +377,6 @@ def test_an_answered_leaf_with_writing_set_aside_carries_the_doubt(
     assert all(leaf.writings for leaf in result.leaves if doubt in leaf.doubts)
     uncertain = sum(u.reason == "uncertain" for u in result.unbound)
     assert (uncertain > 0) == bool(_SET_ASIDE[run])
+    after_container = sum(u.reason == "after_container_label" for u in result.unbound)
+    assert after_container == _AFTER_CONTAINER[run]
+    assert len(result.unbound) == uncertain + after_container

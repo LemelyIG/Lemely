@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
-from lemely.core.binding import SeenLabel, SeenWriting, StreamItem
+from lemely.core.binding import SeenLabel, SeenWriting, StreamItem, UnboundReason
 from lemely.core.label_sequence import (
     CONTENT_DOUBTS,
     DOUBTS,
@@ -17,6 +18,7 @@ from lemely.core.label_sequence import (
     UNALIGNED_REASONS,
     BoundStream,
     LabelStep,
+    UnalignedReason,
     bind_stream,
     duplicate_leaf_ids,
     parse_label,
@@ -1438,6 +1440,27 @@ def test_known_limit_a_label_listed_out_of_place_beside_a_blank_leaf(
     assert _on(bound)["1a_i"] == []
 
 
+def test_known_limit_a_block_listed_a_second_time_under_another_label(
+    scheme_41: MarkScheme,
+) -> None:
+    """The reader lists 1(a)(i)'s block under "(i)" and again under "(ii)".
+
+    Each copy follows a label, in paper order: the second is bound to 1a_ii with
+    1a_ii's own block, and nothing in the order of the list shows it. Rate, on the
+    independent review's generators (not in the repository): 54 of 22,576 trials in
+    which a run of items is listed twice. What can still see it: the same text on two
+    leaves; the marker's check that an answer addresses its question (G8).
+
+    This test pins the limit; it does not approve of it.
+    """
+    stream = _cut(_clean(scheme_41), after={"(ii)": ["=1a_i"]})
+    assert stream[2:7] == ["(i)", "=1a_i", "(ii)", "=1a_i", "=1a_ii"]
+    bound = bind_stream(_items(*stream), scheme_41)
+    assert _on(bound)["1a_i"] == ["1a_i"]
+    assert _on(bound)["1a_ii"] == ["1a_i", "1a_ii"]
+    assert bound.unbound == []
+
+
 def test_the_last_leaf_of_the_paper_is_bracketed_by_the_end_of_the_list(
     scheme_41: MarkScheme,
 ) -> None:
@@ -1638,6 +1661,11 @@ def test_known_limit_a_question_number_that_names_the_wrong_question(
 # The independent review's wrong bindings that are ruled known limits: a gap in the
 # list (several labels in a row, a page, pages out of order), found on its own
 # generators. Each test pins the limit; it does not approve of it.
+#
+# The rates quoted "on the review's generator" in the docstrings of the known-limit
+# tests cannot be reproduced from this repository: those generators are not in it.
+# The module docstring of ``label_sequence`` lists every limit with where its figure
+# comes from.
 _GAP_SCHEME = {
     "1": {"1a": {}},
     "2": {
@@ -2458,6 +2486,35 @@ def _reasons(bound: BoundStream) -> dict[str, str]:
     assert list(bound.unaligned_reasons) == bound.unaligned_ids
     assert set(bound.unaligned_reasons.values()) <= set(UNALIGNED_REASONS)
     return bound.unaligned_reasons
+
+
+def test_the_module_docstring_names_every_pinned_limit() -> None:
+    # "Known limits" in the module docstring is the one list a reader is sent to: a
+    # limit pinned here and not named there would be a limit nobody is told about.
+    import lemely.core.label_sequence as module
+
+    doc = module.__doc__ or ""
+    assert "Known limits" in doc
+    pinned = sorted(name for name in globals() if name.startswith("test_known_"))
+    assert len(pinned) == 15
+    assert [name for name in pinned if f"``{name}``" not in doc] == []
+
+
+def test_one_vocabulary_for_why_a_leaf_is_unaligned() -> None:
+    # The tuple is the type's own values, so a value cannot be in one and not the
+    # other. Four facts carry one word on the block's side and the leaf's side; the
+    # rest are mapped in the comment at ``UnalignedReason``.
+    assert get_args(UnalignedReason) == UNALIGNED_REASONS
+    assert len(UNALIGNED_REASONS) == len(set(UNALIGNED_REASONS)) == 14
+    assert set(UNALIGNED_REASONS) & set(get_args(UnboundReason)) == {
+        "next_label_unreadable",
+        "neighbour_left_blank",
+        "list_too_long",
+        "scheme_too_deep",
+    }
+    assert BoundStream.__dataclass_fields__["unaligned_reasons"].type == (
+        "dict[str, UnalignedReason]"
+    )
 
 
 def test_an_aligned_paper_has_no_unaligned_reason(scheme_41: MarkScheme) -> None:

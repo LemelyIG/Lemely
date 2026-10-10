@@ -62,20 +62,93 @@ class B and class D can. What the module is held to is the outcome: no writing o
 leaf that is not its own, in the fault batteries of
 ``tests/test_label_sequence_faults.py``.
 
-What the list cannot show, and no rule here catches (the tests whose names begin
-``test_known_``):
+Known limits
+------------
 
-- a label listed after the writing it belongs to, or before the writing of the part
-  above it. The labels are then in paper order and each is followed by writing,
-  exactly as on a clean script. The one trace such a move leaves is handled (D10); a
-  move that leaves no trace puts writing on the neighbouring leaf;
-- a label read as another valid label while that label's own occurrence is missed;
-- several labels missed in a row, a page missing, or pages listed out of order: the
-  labels after the gap can stand in for the missed ones (on printed labels the tail
-  of class C stops this where the gap takes a question number with it);
-- a block continued from elsewhere whose own label was not listed.
+What the list cannot show, and no rule here catches. Only a check on what the writing
+says can catch a wrong binding below (the gate's off-topic check, or a second read
+that disagrees). Each limit is pinned by a test in ``tests/test_label_sequence.py``
+that asserts the wrong binding and does not approve of it.
 
-Only a check on what the writing says can catch these.
+Where the figures come from. "[review]": the generators of the independent review of
+this module, run over five schemes; they are not in the repository, so these rates
+cannot be reproduced from it. "[scratch]": a script of the author's that is not in
+the repository either; the review confirmed the figure. "[tests]": asserted by a test
+in ``tests/test_label_sequence_faults.py`` or ``tests/test_label_stream_fixtures.py``.
+Where two figures are given they are for labels the reader reports as printed and as
+handwritten, in that order.
+
+Writing on a wrong leaf:
+
+- Every block listed before its label: the whole paper is one part late (on 0625/41,
+  1(a)(i) holds 1(a)(ii)'s writing and so on down each group). [tests: the pin itself]
+  ``test_known_limit_a_reader_that_lists_writing_before_its_label_shifts_the_paper``;
+  ``BoundStream.listing_suspects`` names the groups that show the one trace it leaves.
+- One label listed on the wrong side of one block, beside a blank leaf: the block
+  lands on the blank leaf. Rate not measured.
+  ``test_known_limit_a_label_listed_out_of_place_beside_a_blank_leaf``.
+  With the full path on every label, two neighbouring labels in each other's place:
+  27 of 194 trials, all across a question boundary; 0 of 480 with other labellings.
+  [review] ``test_known_limit_full_path_labels_listed_in_the_other_order``.
+- A block listed a second time, under another label: it is bound there as well. 54 of
+  22,576 trials in which a run of items is listed twice. [review]
+  ``test_known_limit_a_block_listed_a_second_time_under_another_label``.
+- A label read as another valid label while that label's own occurrence is missed
+  (class A). Part labels: 226 of 526 trials. Question numbers: 82 of 150, and 90 of
+  150. [scratch] In the committed wider battery 22 trials have the shape and 8 go
+  wrong. [tests] ``test_known_limit_a_label_that_names_the_wrong_part``,
+  ``test_known_limit_a_question_number_that_names_the_wrong_question``.
+- A gap in the list: the labels after it stand in for the missed ones. [review]
+  One to six labels in a row missed: 63, and 100, of 5,112 trials (none for one
+  label; none for two with bare labels).
+  ``test_known_limit_three_labels_in_a_row_missed``.
+  A region of the page not read: 24, and 48, of 5,112.
+  ``test_known_limit_a_region_of_the_page_not_read``.
+  A page missing: 11, and 18, of 2,129. ``test_known_limit_a_page_missing``.
+  Two pages listed in the other order: 13, and 17, of 1,929.
+  ``test_known_limit_two_pages_listed_in_the_other_order``.
+  None of the four where every label carries its full path.
+- Two labels in a row missed where the first part of a question carries its number
+  (class C, what is left of it): 1 of 216 trials, and 2 of 216; on mixed labels 4 of
+  208, and 5 of 208; none with bare labels. [review]
+  ``test_known_limit_two_labels_missed_where_the_first_part_carries_the_number``,
+  ``test_known_gap_on_handwritten_labels_a_later_label_stands_in``.
+- Numbered lines listed as labels with their writing, and a later question number
+  missed: 9 of 12,604 trials. [review]
+  ``test_known_limit_numbered_lines_with_writing_and_a_number_missed``.
+- A block continued from elsewhere with no label listed for it: it lands on the leaf
+  before it in 2,416 of 2,784 placements with no doubt, and in the other 368 with
+  one. [review] ``test_known_limit_a_continuation_block_with_no_label``.
+- A stray label takes a fourth-level part, and that part's own label fills a missed
+  one: about 1 trial in 800,000 of random faults on the one battery scheme with a
+  fourth level. [scratch]
+  ``test_known_gap_a_stray_takes_a_fourth_level_part_and_its_label_fills_a_missed_one``.
+
+Writing that is lost to the marker without a flag on a leaf:
+
+- A block that falls straight after a container label is unbound, and no leaf says
+  so: it sat under none. In the five recorded replies of 0625/41 that is 2 to 5 blocks
+  a reply; in one it is the last sentence of 4(b)(i). [tests]
+  ``test_an_answered_leaf_with_writing_set_aside_under_it_carries_a_doubt``.
+
+What safe outcomes cost (nothing bound wrongly; answered leaves left unbound):
+
+- Separate sheets: each part the student skipped, or run of them, costs the answered
+  leaf before it. A skipped question costs 75 leaves over 80 trials [tests:
+  ``test_a_question_with_no_label_costs_one_leaf_by_hand_and_more_in_print``]; with a
+  tenth of the parts skipped, 7 to 10 in 100 answered leaves are unbound. [review] On
+  the printed paper a skipped part keeps its printed label and costs nothing. [tests]
+- Printed labels: a question the reader missed whole costs 109 leaves over the same
+  80 trials with bare labels, and a list that stops early 149 over 75. [tests]
+- ``kind`` is the reader's word. Handwritten labels reported as printed get the
+  printed rule and that cost: one skipped question, 0.9 leaves (worst 1), becomes
+  1.4 (worst 6) when every label is mis-reported. Printed labels reported as
+  handwritten lose the tail rule: the gap rates above move to their second figure.
+  No wrong binding comes of either. [review]
+- A part label read twice in a row costs about 2.3 answered leaves. [review]
+- Any text the reader types as a label is a barrier: mark brackets typed before each
+  answer leave the whole paper unbound (0 of 43 leaves). [review]
+  ``test_any_text_typed_as_a_label_is_a_barrier_whatever_it_says``.
 
 Pure functions: no I/O, no logging.
 """
@@ -85,7 +158,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, get_args
 
 from lemely.core.binding import SeenLabel, SeenWriting, UnboundReason, UnboundWriting
 
@@ -110,7 +183,9 @@ DOUBTS = (
     DOUBT_ARROW,
     DOUBT_SET_ASIDE,
 )
-# The two things a doubt can mean. A content doubt: the leaf's own label was seen, and
+# The two things a doubt can mean. (The binder turns a content doubt into "unverified"
+# and lets an inference doubt pass; both tuples are read there.)
+# A content doubt: the leaf's own label was seen, and
 # what it holds may not be the student's whole answer to it and no more: it may hold
 # writing that is someone else's, or a block that sat under its label was not given to
 # it. An inference doubt: the writing follows the leaf's label, and which question that
@@ -133,7 +208,26 @@ MAX_STREAM_ITEMS = 600
 MAX_SCHEME_DEPTH = 12
 
 # Why a leaf is in ``BoundStream.unaligned_ids``: one of these for each such leaf.
-UNALIGNED_REASONS = (
+#
+# ``UnboundReason`` (``lemely.core.binding``) says why a block of writing was not bound;
+# this says why a leaf was not aligned. Where the two name one fact they do not always
+# use one word, because each is read from its own side:
+#
+#   block (``UnboundReason``)     leaf (``UnalignedReason``)
+#   ``next_label_not_seen``       ``not_bracketed``: the label after the leaf is not
+#                                 the paper's next, so the block may be a neighbour's
+#   ``next_label_unreadable``     ``next_label_unreadable``
+#   ``neighbour_left_blank``      ``neighbour_left_blank``
+#   ``uncertain``                 ``writing_uncertain``
+#   ``after_unplaced_label``      ``unplaced_label_follows``, where the label with no
+#                                 place stands under a leaf whose own label has its
+#                                 place; any reason of the question or the part where
+#                                 the leaf's own label has none
+#   ``list_too_long``             ``list_too_long``
+#   ``scheme_too_deep``           ``scheme_too_deep``
+#   ``before_first_label``,       none: the block sat under no leaf
+#   ``after_container_label``
+UnalignedReason = Literal[
     # Nothing was read: see ``MAX_STREAM_ITEMS`` and ``MAX_SCHEME_DEPTH``.
     "list_too_long",
     "scheme_too_deep",
@@ -162,7 +256,9 @@ UNALIGNED_REASONS = (
     "neighbour_left_blank",
     "writing_uncertain",
     "unplaced_label_follows",
-)
+]
+# The same values as a tuple, in the order above.
+UNALIGNED_REASONS: tuple[UnalignedReason, ...] = get_args(UnalignedReason)
 
 # Roman numerals up to xxix: more than any question has parts.
 _ROMAN = re.compile(r"x{0,2}(?:ix|iv|v?i{0,3})")
@@ -194,6 +290,11 @@ class BoundLeaf:
     """A leaf question whose label was seen, and the writing that follows that label.
 
     ``writings`` is empty for a blank answer. ``doubts`` holds strings from ``DOUBTS``.
+
+    ``number_inferred`` is read by no code but tests: the binder reads the doubt
+    ``DOUBT_NUMBER_NOT_SEEN``, which every such leaf carries, and the questions are in
+    ``BoundStream.inferred_numbers``. No later step of the spec names it. It stays
+    because it is part of the shape this module was asked to produce.
     """
 
     question_id: str
@@ -212,8 +313,8 @@ class BoundStream:
     the writing after it could not be told from a neighbour's. ``unplaced_labels`` are
     the label items no question accounts for.
 
-    ``unaligned_reasons`` gives, for each id in ``unaligned_ids``, one string from
-    ``UNALIGNED_REASONS``. It is a report and changes no binding.
+    ``unaligned_reasons`` gives, for each id in ``unaligned_ids``, one
+    ``UnalignedReason``. It is a report and changes no binding.
 
     ``listing_suspects`` is an observation and changes no binding. Binding rests on the
     reader listing a label before the writing under it. A reader that lists the writing
@@ -229,7 +330,7 @@ class BoundStream:
     unplaced_labels: list[SeenLabel]
     inferred_numbers: list[str]
     listing_suspects: list[str]
-    unaligned_reasons: dict[str, str] = field(default_factory=dict)
+    unaligned_reasons: dict[str, UnalignedReason] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------------------
@@ -306,6 +407,10 @@ def parse_label(text: str) -> list[LabelStep]:
 
     Roman numerals are tried before single letters, so "(i)", "(v)" and "(x)" are
     romans here; ``bind_stream`` lets them be letters where the paper says so.
+
+    Called by tests only: ``bind_stream`` reads labels through ``_readings``, which
+    keeps both readings of an ambiguous step. No later step of the spec names it. It
+    is the public statement of what counts as a label, and stays for that.
     """
     readings = _readings(text)
     if readings is None:
@@ -1358,7 +1463,8 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
     # D3. Leaves with something in their stretch that was not bound (writing, or a label
     # with no place): they are not blank answers.
     set_aside: set[int] = set(blank)
-    aside: dict[int, str] = {}  # ... and, where the leaf is open, what was set aside first
+    # ... and, where the leaf is open, what was set aside first
+    aside: dict[int, UnalignedReason] = {}
     withheld: set[int] = set()  # leaves with a block under their label that is unbound
     unbound: list[UnboundWriting] = []
     unplaced: list[SeenLabel] = []
@@ -1416,9 +1522,10 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
             if stretch is not None:
                 set_aside.add(stretch)
                 withheld.add(stretch)
-                aside.setdefault(
-                    stretch, "writing_uncertain" if target is not None else "unplaced_label_follows"
-                )
+                if target is not None:
+                    aside.setdefault(stretch, "writing_uncertain")
+                else:
+                    aside.setdefault(stretch, "unplaced_label_follows")
             fell = fell or why in ("after_container_label", "before_first_label")
             continue
         writings[target].append(item)
@@ -1475,7 +1582,9 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
 
 
 def _nothing(
-    items: Sequence[StreamItem], leaf_ids: list[str], reason: UnboundReason
+    items: Sequence[StreamItem],
+    leaf_ids: list[str],
+    reason: Literal["list_too_long", "scheme_too_deep"],
 ) -> BoundStream:
     """The list or the scheme is not read: every block unbound, every label without a place."""
     unaligned = list(dict.fromkeys(leaf_ids))
@@ -1495,9 +1604,13 @@ def _nothing(
 
 
 def _why_unaligned(
-    paper: _Paper, labels: list[_Label], view: _Reading, aside: dict[int, str], unaligned: list[str]
-) -> dict[str, str]:
-    """One reason from ``UNALIGNED_REASONS`` for each unaligned leaf. A report only."""
+    paper: _Paper,
+    labels: list[_Label],
+    view: _Reading,
+    aside: dict[int, UnalignedReason],
+    unaligned: list[str],
+) -> dict[str, UnalignedReason]:
+    """One ``UnalignedReason`` for each unaligned leaf. A report only."""
     node_of: dict[str, int] = {}
     for index, node in enumerate(paper.nodes):
         node_of.setdefault(node.question_id, index)
@@ -1509,7 +1622,7 @@ def _why_unaligned(
     starts = sorted(first.values())
     numbers = {label.number for label in labels}
 
-    def why(index: int) -> str:
+    def why(index: int) -> UnalignedReason:
         node = paper.nodes[index]
         if node.doubled:
             return "duplicate_id"
