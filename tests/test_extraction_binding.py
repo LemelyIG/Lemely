@@ -535,12 +535,17 @@ def test_a_leaf_only_the_other_read_answered_goes_to_review_never_blank(
     # first read passes its own checks and is the one used, and in it 5(a) is a label
     # with nothing after it: a blank. It is not one.
     first = _without_items(_run(1), 53)
-    extracted = _extract(
-        tmp_path, scan, scheme, _Model(first=_items(first), second=_items(_run(1)))
-    )
+    with _events(EventType.BINDING_GATE_RESULT) as seen:
+        extracted = _extract(
+            tmp_path, scan, scheme, _Model(first=_items(first), second=_items(_run(1)))
+        )
     report = extracted.binding
     assert report is not None
     assert (report.verdict, report.retried) == ("pass", False)
+    # The event counts the leaves sent to a teacher, not only those with no label, and
+    # the writing kept with no question, the other read's block included.
+    (event,) = seen[EventType.BINDING_GATE_RESULT]
+    assert (event["unaligned"], event["unbound"]) == (1, 4)
     g9 = report.checks[-1]
     assert (g9.id, g9.passed, g9.scope, g9.question_ids) == ("G9", False, "question", ["5a"])
     assert "answered in one reading of the scan and left blank in the other: 5a" in g9.detail
@@ -598,6 +603,15 @@ def test_too_many_leaves_answered_in_one_read_only_hold_the_paper(
     # Held or not, the five are not trusted where they are.
     status = {a.question_id: a.binding_status for a in held.answers}
     assert all(status[qid] == "unverified" for qid in ("1b", "2a_i", "2a_iii", "2c", "5a"))
+
+    # The same five with the reads the other way round: the read that is returned has
+    # nothing under them. Held as the paper is, none of the five is left as a blank, and
+    # what the other read saw under each is kept.
+    mirror = _bind(tmp_path, scheme, _Model(first=_items(five), second=_items(_run(1))))
+    assert (mirror.report.verdict, _failed(mirror)) == ("hold", [("G9", "paper")])
+    assert mirror.review_only_ids == ["1b", "2a_i", "2a_iii", "2c", "5a"]
+    kept = [w.answer for w in mirror.unbound]
+    assert all(_run(1)[index]["answer"] in kept for index in (8, 18, 22, 29, 53))
 
     four = _without_items(_run(1), 8, 18, 22, 29)
     passed = _bind(tmp_path, scheme, _Model(first=_items(_run(1)), second=_items(four)))
@@ -724,7 +738,8 @@ def test_a_second_read_that_crashes_does_not_fail_a_good_paper(
 ) -> None:
     # Not a service error: a bug somewhere in reading or binding the second reply. The
     # first read is good, and the second read is an enhancement on it.
-    model = _Model(first=_items(_run(1)), second=RuntimeError("a bug in the second read"))
+    crash = RuntimeError("a bug in the second read")
+    model = _Model(first=_items(_run(1)), second=crash)
     with (
         _events(EventType.SECOND_READ_FAILED) as seen,
         structlog.testing.capture_logs() as logs,
@@ -736,10 +751,14 @@ def test_a_second_read_that_crashes_does_not_fail_a_good_paper(
     (failure,) = seen[EventType.SECOND_READ_FAILED]
     assert failure["error_type"] == "RuntimeError"
     assert failure["stage"] == "binding_second_read"
+    # This event is streamed to the student's browser, and the text of an arbitrary
+    # exception is internal: a fixed sentence goes out, the text stays in the log.
+    assert failure["error"] == "the second read of the script failed unexpectedly"
+    assert "a bug in the second read" not in str(failure)
     # It is a bug, so it is logged with its traceback, not only published.
     (logged,) = [entry for entry in logs if entry["event"] == "binding_second_read_crashed"]
     assert logged["log_level"] == "error"
-    assert isinstance(logged["exc_info"], RuntimeError)
+    assert logged["exc_info"] is crash
 
     # A crash in the first read is still a crash: there is no paper without it.
     crash = RuntimeError("a bug in the first read")
@@ -1067,6 +1086,159 @@ def test_only_items_that_may_have_been_writing_count_as_lost(
     assert not any(c.scope == "paper" and not c.passed for c in outcome.report.checks)
     assert outcome.report.verdict == "pass"
     assert "a late note" in [w.answer for w in outcome.unbound]
+
+
+def _with_1c_listed_first(items: list[Any]) -> list[Any]:
+    """Recorded reply 1 with the two blocks of 1(c) listed before their labels."""
+    out = list(items)
+    for label_at in (10, 12):
+        assert out[label_at]["type"] == "label" and out[label_at + 1]["type"] == "answer"
+        out[label_at], out[label_at + 1] = out[label_at + 1], out[label_at]
+    return out
+
+
+def _with_an_item_lost(items: list[Any], index: int) -> list[Any]:
+    assert items[index]["type"] == "answer"
+    return [*items[:index], "not an item", *items[index + 1 :]]
+
+
+def test_only_the_returned_read_s_suspect_groups_are_doubted(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The first read lists 1(c) out of order and also loses an item, which fails it; the
+    # clean second read is used. Its 1(c) is in order and is trusted.
+    first = _with_an_item_lost(_with_1c_listed_first(_run(1)), 60)
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(_run(1))))
+    assert (outcome.report.verdict, outcome.report.retried) == ("pass", True)
+    doubted = {a.question_id for a in outcome.answers if a.binding_status == "unverified"}
+    # 1c_i is answered in both reads and is not in a suspect group of the read used.
+    # 1c_ii and 5c_ii are doubted for another reason: the first read had nothing under
+    # them (the group's last part, and the lost item). 7b_i is the binder's own doubt.
+    assert doubted == {"1c_ii", "5c_ii", "7b_i"}
+    assert outcome.review_only_ids == []
+
+    # The other way round: the read that is used is the one with the group out of order.
+    first = _with_an_item_lost(_run(1), 60)
+    second = _with_1c_listed_first(_run(1))
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(second)))
+    assert (outcome.report.verdict, outcome.report.retried) == ("pass", True)
+    status = {a.question_id: a.binding_status for a in outcome.answers}
+    assert status["1c_i"] == "unverified"
+    assert "1c_ii" in outcome.review_only_ids
+
+
+def test_only_the_first_read_s_paper_scope_failures_are_recorded_as_why_it_was_set_aside(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The first read fails the paper (an item lost) and also has two answers under each
+    # other's part, which G7 names at question scope. Only the first is why it was
+    # replaced.
+    first = copy.deepcopy(_run(1))
+    assert (first[8]["answer"], first[11]["answer"]) == ("0.28 N/cm", "4.9 N")
+    first[8]["answer"], first[11]["answer"] = first[11]["answer"], first[8]["answer"]
+    first = _with_an_item_lost(first, 60)
+    alone = _bind(tmp_path, scheme, _Model(first=_items(first)), second_read=False)
+    assert sorted(_failed(alone)) == [("G5", "paper"), ("G7", "question")]
+
+    with (
+        _events(EventType.BINDING_GATE_RESULT) as seen,
+        structlog.testing.capture_logs() as logs,
+    ):
+        outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(_run(1))))
+    assert (outcome.report.verdict, outcome.report.retried) == ("pass", True)
+    (event,) = seen[EventType.BINDING_GATE_RESULT]
+    assert [(c["id"], c["scope"]) for c in event["first_read_failed_checks"]] == [("G5", "paper")]
+    (line,) = [entry for entry in logs if entry["event"] == "binding_gate_result"]
+    assert line["first_read_failed_checks"] == ["G5"]
+
+
+def _flat_reply(leaves: list[str], *, name: str | None, blank: set[str]) -> list[Any]:
+    """A reply for a paper of top-level questions: each label, then a letter under it."""
+    items: list[Any] = []
+    if name is not None:
+        items.append(
+            {
+                "type": "answer",
+                "page": 0,
+                "box": [1, 1, 5, 5],
+                "answer": name,
+                "working_out": None,
+                "confidence": 0.9,
+                "placed_by": "position",
+            }
+        )
+    for position, leaf in enumerate(leaves):
+        page = 1 + position // 10
+        items.append(
+            {
+                "type": "label",
+                "page": page,
+                "box": [10, 10, 20, 20],
+                "text": leaf,
+                "kind": "printed",
+            }
+        )
+        if leaf not in blank:
+            items.append(
+                {
+                    "type": "answer",
+                    "page": page,
+                    "box": [10, 30, 20, 40],
+                    "answer": "ABCD"[position % 4],
+                    "working_out": None,
+                    "confidence": 0.9,
+                    "placed_by": "position",
+                }
+            )
+    return items
+
+
+def test_one_suspect_trace_on_a_flat_paper_sends_every_answer_to_review(tmp_path: Path) -> None:
+    # A paper of forty multiple-choice questions and no parts. The student wrote a name
+    # above question 1 and left question 40 blank; both reads list everything in order
+    # and every answer is on its own question. But a block before the first label and
+    # the last question blank is exactly what the whole paper listed one out looks
+    # like, and on a paper with no parts the group that trace names is the whole paper.
+    # The cost is accepted: every answer is marked, keeps its marks and is flagged, and
+    # question 40 goes to a teacher. No flat paper has a recorded reply, so how often a
+    # reader reports writing above the first label is not known.
+    flat = MarkScheme.model_validate(
+        json.loads((_ROOT / "corpus" / "mark-schemes" / "0625_m19_ms_12.json").read_text())
+    )
+    leaves = [q.id for q in flat.all_questions_flat() if not q.parts and q.marks > 0]
+    assert len(leaves) == 40 and all(q.parent_id is None for q in flat.all_questions_flat())
+
+    def bind(*, name: str | None, blank: set[str]) -> BindingOutcome:
+        reply = _flat_reply(leaves, name=name, blank=blank)
+        client, _genai = _client(tmp_path)
+        pages = _pages(6)
+        with (
+            client.image_uploads([p.png_bytes for p in pages], concurrency=1) as uploads,
+            patch.object(
+                client,
+                "generate_structured",
+                side_effect=_Model(first=_items(reply), second=_items(reply)),
+            ),
+        ):
+            return run_binding(
+                client, pages, flat, uploads=uploads, settings=client._settings, manifest_key="m"
+            )
+
+    both = bind(name="Aisha Khan 0123", blank={"40"})
+    assert both.report.verdict == "pass"
+    assert _failed(both) == [("G5", "question")]
+    g5 = next(c for c in both.report.checks if c.id == "G5")
+    assert g5.question_ids == leaves  # all forty
+    assert len(both.answers) == 39
+    assert all(a.binding_status == "unverified" for a in both.answers)
+    assert both.review_only_ids == ["40"]
+
+    # Either half alone is ordinary and flags nothing.
+    for name, blank in (("Aisha Khan 0123", set()), (None, {"40"})):
+        alone = bind(name=name, blank=blank)
+        assert alone.report.verdict == "pass" and _failed(alone) == []
+        assert all(a.binding_status == "verified" for a in alone.answers)
+        assert alone.review_only_ids == []
 
 
 def test_listing_suspects_fail_the_paper(tmp_path: Path, scheme: MarkScheme) -> None:
