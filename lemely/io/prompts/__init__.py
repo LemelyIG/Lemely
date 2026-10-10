@@ -13,5 +13,12 @@ from lemely.io.prompts.correction_ai import (
 from lemely.io.prompts.correction_ai import (
     VERSION as MARKER_PROMPT_VERSION,
 )
+from lemely.io.prompts.label_binding import (
+    LABEL_BINDING_SYSTEM_PROMPT,
+    build_label_binding_user_prompt,
+)
+from lemely.io.prompts.label_binding import (
+    VERSION as LABEL_BINDING_PROMPT_VERSION,
+)
 
 from .mark_scheme_parsing import *
