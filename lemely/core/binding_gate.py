@@ -25,7 +25,7 @@ from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
 from lemely.core.text_agreement import text_agreement
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
     from lemely.core.schemas import CorrectionResult, ExtractedAnswers
 
@@ -122,6 +122,47 @@ def check_duplicate_ids(extracted: ExtractedAnswers) -> BindingCheck:
     )
 
 
+def suspect_group_leaves(mark_scheme: MarkScheme, suspects: Iterable[str]) -> list[str]:
+    """The leaves of the listing-suspect groups ``suspects``, in paper order, each once.
+
+    ``bind_stream`` names a suspect run of leaves by the question or part whose label
+    opens it, or by its first leaf when it opens before any label. The run is the
+    leaves listed after that label up to the next label of a question or part that has
+    parts of its own. From the scheme tree that is: every leaf under the named id (or
+    the leaf itself), and then each following leaf for as long as reaching it opens no
+    such label, which is as long as all of its ancestors are ancestors of the named id.
+    An id the scheme does not have names nothing.
+    """
+    questions = mark_scheme.all_questions_flat()
+    parent = {q.id: q.parent_id for q in questions}
+
+    def ancestors(qid: str) -> list[str]:
+        chain: list[str] = []
+        up = parent.get(qid)
+        while up is not None and up not in chain:
+            chain.append(up)
+            up = parent.get(up)
+        return chain
+
+    leaf_ids = [q.id for q in _leaves(mark_scheme)]
+    grouped: set[str] = set()
+    for suspect in suspects:
+        if suspect not in parent:
+            continue
+        outer = set(ancestors(suspect))
+        inside = False
+        for leaf in leaf_ids:
+            above = ancestors(leaf)
+            if leaf == suspect or suspect in above:
+                inside = True
+                grouped.add(leaf)
+            elif inside:
+                if not set(above) <= outer:
+                    break
+                grouped.add(leaf)
+    return [leaf for leaf in leaf_ids if leaf in grouped]
+
+
 def check_label_coverage(
     extracted: ExtractedAnswers,
     mark_scheme: MarkScheme,
@@ -129,7 +170,7 @@ def check_label_coverage(
     unmatched_markers: int,
     thresholds: GateThresholds,
     *,
-    listing_suspects: int = 0,
+    listing_suspects: Sequence[str] = (),
     lost_items: int = 0,
 ) -> BindingCheck:
     """G5: fails when question labels on the page could not be lined up with the mark scheme.
@@ -141,13 +182,15 @@ def check_label_coverage(
       (``unmatched_markers``). One or two are ordinary: a number on the cover page, a
       note the student numbered;
     - at least ``listing_suspects_min`` groups of parts carry the trace left when
-      writing is listed before its label (``listing_suspects``), which the binding
-      cannot see past;
+      writing is listed before its label (``listing_suspects``, the groups'
+      ids as ``bind_stream`` names them), which the binding cannot see past;
     - ``lost_items`` is above zero: items of the reader's reply that could not be read
       and were left out. Any of them may have been writing, so a part may look blank
       that is not.
 
-    Otherwise question scope when any leaf is unaligned.
+    Otherwise question scope when any leaf is unaligned or any group is suspect. A
+    suspect group is never trusted, whatever the count: its answers sit one part out,
+    so every leaf of it is listed (``suspect_group_leaves``), answered or not.
 
     An unaligned leaf cannot carry an answer, because answers attach to aligned
     labels; whatever the student wrote for it was attached to the aligned leaf
@@ -158,12 +201,13 @@ def check_label_coverage(
     leaf_ids = [q.id for q in _leaves(mark_scheme)]
     missing = set(unaligned_ids)
     unaligned = [qid for qid in leaf_ids if qid in missing]
+    groups = list(dict.fromkeys(listing_suspects))
     unplaced = (
         f"{_plural(unmatched_markers, 'label')} on the page matched no question in the mark scheme"
     )
     suspects = (
-        f"{_plural(listing_suspects, 'group')} of parts "
-        f"{'shows' if listing_suspects == 1 else 'show'} the trace of writing listed before "
+        f"{_plural(len(groups), 'group')} of parts "
+        f"{'shows' if len(groups) == 1 else 'show'} the trace of writing listed before "
         "its label (a block before the first part's label, the last part left blank)"
     )
     problems: list[str] = []
@@ -177,10 +221,8 @@ def check_label_coverage(
         problems.append(unplaced)
     elif unmatched_markers > 0:
         within.append(unplaced)
-    if listing_suspects >= thresholds.listing_suspects_min:
+    if len(groups) >= thresholds.listing_suspects_min:
         problems.append(suspects)
-    elif listing_suspects > 0:
-        within.append(suspects)
     if lost_items > 0:
         problems.append(
             f"{_plural(lost_items, 'item')} of the reader's reply could not be read and "
@@ -194,7 +236,7 @@ def check_label_coverage(
             question_ids=unaligned,
             detail="; ".join(problems) + ".",
         )
-    if not unaligned:
+    if not unaligned and not groups:
         detail = "Every question lined up with a label on the page."
         if within:
             detail += " Within the limit: " + "; ".join(within) + "."
@@ -208,16 +250,21 @@ def check_label_coverage(
                 listed.add(previous_aligned)
         else:
             previous_aligned = qid
-    ids = [qid for qid in leaf_ids if qid in listed]
+    listed.update(suspect_group_leaves(mark_scheme, groups))
+    sentences: list[str] = []
+    if unaligned:
+        sentences.append(
+            f"{_plural(len(unaligned), 'question')} had no label to line up with: "
+            f"{_listed(unaligned)}; the writing for them may sit in the answer before"
+        )
+    if groups:
+        sentences.append(f"{suspects}: {_listed(groups)}; each answer there may be the next part's")
     return BindingCheck(
         id="G5",
         passed=False,
         scope="question",
-        question_ids=ids,
-        detail=(
-            f"{_plural(len(unaligned), 'question')} had no label to line up with: "
-            f"{_listed(unaligned)}; the writing for them may sit in the answer before."
-        ),
+        question_ids=[qid for qid in leaf_ids if qid in listed],
+        detail=". ".join(sentence[0].upper() + sentence[1:] for sentence in sentences) + ".",
     )
 
 

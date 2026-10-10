@@ -19,6 +19,7 @@ from lemely.core.binding_gate import (
     check_shape,
     check_shift,
     check_unknown_ids,
+    suspect_group_leaves,
     verdict,
 )
 from lemely.core.loose_schemas import MarkScheme, Question
@@ -222,7 +223,7 @@ def _g5(
     markers: int = 0,
     thresholds: GateThresholds = DEFAULTS,
     *,
-    listing_suspects: int = 0,
+    listing_suspects: list[str] | None = None,
     lost_items: int = 0,
 ) -> BindingCheck:
     scheme = _scheme([_leaf(str(i), "5") for i in range(1, leaves + 1)])
@@ -232,7 +233,7 @@ def _g5(
         unaligned,
         markers,
         thresholds,
-        listing_suspects=listing_suspects,
+        listing_suspects=listing_suspects or [],
         lost_items=lost_items,
     )
 
@@ -309,16 +310,53 @@ def test_g5_unplaced_labels_within_the_limit_leave_question_scope_alone() -> Non
 
 def test_g5_listing_suspects_boundary_and_threshold() -> None:
     assert DEFAULTS.listing_suspects_min == 2
-    one = _g5(_extracted([]), 20, [], listing_suspects=1)
-    assert one.passed
-    assert "1 group of parts" in one.detail
-    two = _g5(_extracted([]), 20, [], listing_suspects=2)
+    two = _g5(_extracted([]), 20, [], listing_suspects=["3", "9"])
     assert not two.passed and two.scope == "paper"
     assert "2 groups of parts" in two.detail and "listed before its label" in two.detail
     strict = replace(DEFAULTS, listing_suspects_min=1)
-    assert not _g5(_extracted([]), 20, [], listing_suspects=1, thresholds=strict).passed
+    one = _g5(_extracted([]), 20, [], listing_suspects=["3"], thresholds=strict)
+    assert not one.passed and one.scope == "paper"
     lax = replace(DEFAULTS, listing_suspects_min=3)
-    assert _g5(_extracted([]), 20, [], listing_suspects=2, thresholds=lax).passed
+    assert _g5(_extracted([]), 20, [], listing_suspects=["3", "9"], thresholds=lax).scope == (
+        "question"
+    )
+
+
+def test_g5_one_suspect_group_is_never_trusted() -> None:
+    # Was: one group "passed, within the limit". A group that shows the trace of
+    # writing listed before its label has its answers one part out, so below the paper
+    # limit every leaf of the group is named, answered or not.
+    check = _g5(_extracted([("18", "5")]), 20, [], listing_suspects=["18"])
+    assert not check.passed and check.scope == "question"
+    # On a flat paper the run a leaf opens goes on to the next question that has parts.
+    assert check.question_ids == ["18", "19", "20"]
+    assert "1 group of parts shows the trace" in check.detail and "18" in check.detail
+    assert "Within the limit" not in check.detail
+
+
+def test_g5_suspect_leaves_join_the_unaligned_ones_at_question_scope() -> None:
+    check = _g5(_extracted([("2", "5")]), 20, ["3"], listing_suspects=["19"])
+    assert not check.passed and check.scope == "question"
+    assert check.question_ids == ["2", "3", "19", "20"]
+    assert "had no label to line up with" in check.detail
+    assert "1 group of parts shows the trace" in check.detail
+
+
+def test_suspect_group_leaves_come_from_the_scheme_tree(scheme: MarkScheme) -> None:
+    # 1(c) has two parts and question 2 follows: the group is exactly those two.
+    assert suspect_group_leaves(scheme, ["1c"]) == ["1c_i", "1c_ii"]
+    # 1(a) has two parts and 1(b), a part with none of its own, follows under the same
+    # question with no container label between: the run goes on through it, and stops
+    # at 1(c), whose label opens a new one.
+    assert suspect_group_leaves(scheme, ["1a"]) == ["1a_i", "1a_ii", "1b"]
+    # A whole question: its own leaves, and nothing of the next question.
+    assert suspect_group_leaves(scheme, ["9"])[0] == "9a"
+    assert all(leaf.startswith("9") for leaf in suspect_group_leaves(scheme, ["9"]))
+    # A leaf named as the group (the run opened before any label): from it onwards.
+    assert suspect_group_leaves(scheme, ["1c_i"]) == ["1c_i", "1c_ii"]
+    # Several groups come back once each, in paper order; an unknown id names nothing.
+    assert suspect_group_leaves(scheme, ["9c", "1c", "1c", "nope"])[:2] == ["1c_i", "1c_ii"]
+    assert suspect_group_leaves(scheme, []) == []
 
 
 def test_g5_any_lost_item_fails_the_paper() -> None:
@@ -330,7 +368,9 @@ def test_g5_any_lost_item_fails_the_paper() -> None:
 
 
 def test_g5_each_paper_scope_condition_has_its_own_sentence() -> None:
-    check = _g5(_extracted([]), 10, ["1", "2"], markers=3, listing_suspects=2, lost_items=1)
+    check = _g5(
+        _extracted([]), 10, ["1", "2"], markers=3, listing_suspects=["4", "8"], lost_items=1
+    )
     assert not check.passed and check.scope == "paper"
     assert check.question_ids == ["1", "2"]
     sentences = check.detail.rstrip(".").split("; ")
@@ -342,7 +382,7 @@ def test_g5_each_paper_scope_condition_has_its_own_sentence() -> None:
 
 
 def test_g5_a_failing_condition_does_not_speak_for_the_ones_that_hold() -> None:
-    check = _g5(_extracted([]), 20, [], markers=1, listing_suspects=1, lost_items=1)
+    check = _g5(_extracted([]), 20, [], markers=1, lost_items=1)
     assert not check.passed and check.scope == "paper"
     assert check.detail.startswith("1 item of the reader's reply")
     assert "matched no question" not in check.detail

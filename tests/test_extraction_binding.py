@@ -733,6 +733,52 @@ def test_what_the_reader_s_reply_lost_or_had_repaired_stays_on_the_record(
     assert extracted.unbound_question_ids == ["5a"]  # to a teacher, not a blank zero
 
 
+def test_one_group_listed_before_its_labels_is_never_trusted(
+    tmp_path: Path, scan: Path, scheme: MarkScheme
+) -> None:
+    # Both reads list the two blocks of 1(c) before their labels. The list then binds
+    # "13 m/s^2", the answer to 1(c)(ii), to 1(c)(i), leaves 1(c)(ii) with nothing, and
+    # "4.9 N" with no leaf. One such group is under the limit that holds a paper.
+    items = list(_run(1))
+    for label_at in (10, 12):
+        items[label_at], items[label_at + 1] = items[label_at + 1], items[label_at]
+    extracted = _extract(tmp_path, scan, scheme, _Model(first=_items(items), second=_items(items)))
+
+    report = extracted.binding
+    assert report is not None and report.verdict == "pass"
+    g5 = next(c for c in report.checks if c.id == "G5")
+    assert (g5.passed, g5.scope) == (False, "question")
+    assert g5.question_ids == ["1c_i", "1c_ii"]
+    by_id = {a.question_id: a for a in extracted.answers}
+    assert by_id["1c_i"].answer == "13 m/s^2" and by_id["1c_i"].binding_status == "unverified"
+    assert "1c_ii" not in by_id
+    assert extracted.unbound_question_ids == ["1c_ii"]
+    assert "4.9 N" in [w.answer for w in extracted.unbound_answers]
+    assert by_id["1b"].binding_status == "verified"  # the part before the group is untouched
+
+    marker = _Marker()
+    with patch.object(
+        correction_ai.AICorrector, "mark_question", autospec=True, side_effect=marker
+    ):
+        result = correct_paper(scheme, extracted, gemini_client=MagicMock())
+    rows = {q.question_id: q for q in result.questions}
+    assert rows["1c_i"].needs_teacher_review
+    assert "may include writing that belongs to another question" in (
+        rows["1c_i"].review_reason or ""
+    )
+    assert rows["1c_ii"].needs_teacher_review and rows["1c_ii"].marker_source == "dropped"
+    assert "1c_ii" not in marker.asked  # not marked as a blank, not marked at all
+
+
+@pytest.mark.parametrize("number", [1, 2, 3, 4, 5])
+def test_the_recorded_replies_show_no_suspect_group(scheme: MarkScheme, number: int) -> None:
+    stream = parse_stream_items(_run(number), page_count=_PAGE_COUNT)
+    read = to_bound_read(
+        bind_stream(stream.items, scheme), page_count=_PAGE_COUNT, drops=stream.drops
+    )
+    assert read.listing_suspects == []
+
+
 def test_listing_suspects_fail_the_paper(tmp_path: Path, scheme: MarkScheme) -> None:
     first = _listed_before_labels(_run(1))
     held = _bind(tmp_path, scheme, _Model(first=_items(first)), second_read=False)

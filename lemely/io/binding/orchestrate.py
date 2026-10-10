@@ -47,6 +47,7 @@ from lemely.core.binding_gate import (
     check_shape,
     check_shift,
     check_unknown_ids,
+    suspect_group_leaves,
     verdict,
 )
 from lemely.core.label_sequence import bind_stream
@@ -76,11 +77,13 @@ class BindingOutcome:
 
     ``answers`` are the chosen read's, one per leaf that has writing. Any verdict on
     ``report`` other than ``pass`` means the paper must not be published, and its
-    failed checks say why. ``unbound`` is the
-    writing no leaf could be given. ``review_only_ids`` are the chosen read's unaligned
-    leaves: no label was lined up with them, so whatever was written for them could not
-    be bound, and they must go to a teacher without a mark being attempted. ``drops`` is
-    the chosen read's count of reply items left out or repaired, by reason.
+    failed checks say why. ``unbound`` is the writing no leaf could be given.
+    ``review_only_ids`` are the leaves that have no answer and are not blanks, so they
+    must go to a teacher without a mark being attempted: the chosen read's unaligned
+    leaves (no label was lined up with them, so whatever was written for them could not
+    be bound), and the leaf left with nothing in a group whose writing was listed
+    before its labels. ``drops`` is the chosen read's count of reply items left out or
+    repaired, by reason.
     """
 
     answers: list[ExtractedAnswer]
@@ -143,7 +146,7 @@ def _label_checks(
             read.unaligned_ids,
             read.unplaced_labels,
             thresholds,
-            listing_suspects=len(read.listing_suspects),
+            listing_suspects=read.listing_suspects,
             lost_items=_lost_items(read.drops),
         ),
         check_shape(extracted, mark_scheme, thresholds),
@@ -261,6 +264,13 @@ def _read_both(
     return first_read, None
 
 
+def _in_paper_order(mark_scheme: MarkScheme, ids: list[str]) -> list[str]:
+    """``ids`` once each, in the order the paper has its questions; strangers last."""
+    wanted = dict.fromkeys(ids)
+    ordered = [q.id for q in mark_scheme.all_questions_flat() if q.id in wanted]
+    return [*ordered, *(qid for qid in wanted if qid not in ordered)]
+
+
 def _with_statuses(
     answers: list[ExtractedAnswer], unverified: frozenset[str]
 ) -> list[ExtractedAnswer]:
@@ -363,21 +373,32 @@ def run_binding(
         retried=retried,
         model=binding.read_model,
     )
+    # A group that shows the trace of writing listed before its label is never
+    # trusted, whatever the check's scope came out as: its answers sit one part out.
+    # The answered leaves keep their answer, doubted; the blank one is not a blank
+    # (its writing went to the leaf before) and goes to a teacher.
+    answered = {answer.question_id for answer in chosen.answers}
+    suspect_leaves = suspect_group_leaves(mark_scheme, chosen.listing_suspects)
+    unverified = _question_scope_ids(checks) | (frozenset(suspect_leaves) & answered)
+    review_only = _in_paper_order(
+        mark_scheme,
+        [*chosen.unaligned_ids, *(leaf for leaf in suspect_leaves if leaf not in answered)],
+    )
     _publish_result(
         enforced,
         settings=binding,
         returned_checks=checks,
         unbound=len(chosen.unbound),
-        unaligned=len(chosen.unaligned_ids),
+        unaligned=len(review_only),
         inferred_numbers=chosen.inferred_numbers,
         drops=chosen.drops,
         second_read=second is not None,
     )
     return BindingOutcome(
-        answers=_with_statuses(chosen.answers, _question_scope_ids(checks)),
+        answers=_with_statuses(chosen.answers, unverified),
         report=enforced,
         unbound=[u.writing for u in chosen.unbound],
-        review_only_ids=list(chosen.unaligned_ids),
+        review_only_ids=review_only,
         drops=dict(chosen.drops),
     )
 
