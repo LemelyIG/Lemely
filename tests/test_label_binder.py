@@ -1034,10 +1034,13 @@ def test_recorded_streams_keep_every_item(
 def test_recorded_review_ids(recorded: dict[int, tuple[StreamRead, BoundRead]]) -> None:
     assert {run: bound_read.review_ids for run, (_, bound_read) in recorded.items()} == {
         1: ["7b_i"],
-        2: ["2c"],
+        # Replies 2 and 5 flag the notes at the top of pages 13, 15 and 18 as uncertain,
+        # so they are set aside; the leaves they were listed under (6b, 7b_i, 8d) carry
+        # the doubt "some writing under this label was set aside".
+        2: ["2c", "6b", "7b_i", "8d"],
         3: ["4b_i", "6b", "7b_i", "8d"],
         4: ["3c", "4b_i"],
-        5: ["3c", "4b_i"],
+        5: ["3c", "4b_i", "6b", "7b_i", "8d"],
     }
 
 
@@ -1059,7 +1062,9 @@ def test_inferred_number_doubt_does_not_make_a_leaf_unverified(
     assert answers["3c"].binding_status == "unverified"
     # 4(b)(i) is unverified for its own reason: the arrow-tied sentence.
     assert answers["4b_i"].binding_status == "unverified"
-    assert bound_read.review_ids == ["3c", "4b_i"]
+    # In questions 3 and 4 nothing else is doubted. (Reply 5 doubts three leaves further
+    # on for a reason of their own: writing set aside under them.)
+    assert [qid for qid in bound_read.review_ids if qid[0] in "34"] == ["3c", "4b_i"]
 
 
 # --------------------------------------------------------------------------------------
@@ -1135,11 +1140,49 @@ def test_a_doubt_of_neither_class_makes_a_leaf_unverified() -> None:
 
 
 def test_the_two_doubt_classes_cover_every_doubt_the_binding_can_raise() -> None:
-    """The conversion reads the classes from ``label_sequence``; this pins what it relies on."""
-    assert set(CONTENT_DOUBTS) == {DOUBT_PREVIOUS_PAGE, DOUBT_ARROW, DOUBT_NEXT_NUMBER_NOT_SEEN}
-    assert set(INFERENCE_DOUBTS) == {DOUBT_NUMBER_NOT_SEEN}
+    """The conversion reads the classes from ``label_sequence`` and keeps no list of its own.
+
+    This pins only what it relies on: every doubt is in exactly one class. Which doubts
+    exist, and which class each is in, is ``label_sequence``'s to say.
+    """
     assert set(DOUBTS) == set(CONTENT_DOUBTS) | set(INFERENCE_DOUBTS)
     assert not set(CONTENT_DOUBTS) & set(INFERENCE_DOUBTS)
+    assert CONTENT_DOUBTS and INFERENCE_DOUBTS
+
+
+@pytest.mark.parametrize("doubt", CONTENT_DOUBTS)
+def test_every_content_doubt_makes_an_answer_unverified(doubt: str) -> None:
+    read = to_bound_read(
+        _bound(_leaf("1a", _writing("x"), doubts=(doubt,)), _leaf("1b", _writing("y"))),
+        page_count=2,
+        drops={},
+    )
+    assert [a.binding_status for a in read.answers] == ["unverified", "verified"]
+    assert read.review_ids == ["1a"]
+
+
+@pytest.mark.parametrize("doubt", INFERENCE_DOUBTS)
+def test_an_inference_doubt_alone_leaves_an_answer_verified(doubt: str) -> None:
+    read = to_bound_read(
+        _bound(_leaf("1a", _writing("x"), doubts=(doubt,))), page_count=2, drops={}
+    )
+    assert [a.binding_status for a in read.answers] == ["verified"]
+    # With a content doubt beside it, the content doubt decides.
+    both = to_bound_read(
+        _bound(_leaf("1a", _writing("x"), doubts=(doubt, CONTENT_DOUBTS[0]))),
+        page_count=2,
+        drops={},
+    )
+    assert [a.binding_status for a in both.answers] == ["unverified"]
+
+
+def test_a_doubt_of_neither_class_does_not_pass() -> None:
+    read = to_bound_read(
+        _bound(_leaf("1a", _writing("x"), doubts=("a doubt nobody has classified",))),
+        page_count=2,
+        drops={},
+    )
+    assert [a.binding_status for a in read.answers] == ["unverified"]
 
 
 def test_blank_aligned_leaf_produces_no_answer() -> None:

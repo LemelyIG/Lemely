@@ -15,7 +15,12 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import ConfigDict, ValidationError, create_model
 
 from lemely.core.binding import SeenLabel, SeenWriting, StreamItem, UnboundWriting
-from lemely.core.label_sequence import INFERENCE_DOUBTS, BoundLeaf, BoundStream
+from lemely.core.label_sequence import (
+    CONTENT_DOUBTS,
+    INFERENCE_DOUBTS,
+    BoundLeaf,
+    BoundStream,
+)
 from lemely.core.schemas import ExtractedAnswer, SourceBox
 from lemely.io.extraction_coerce import (
     _coerce_answer_text,
@@ -318,6 +323,34 @@ class LabelBinder:
         )
         return parse_stream_items(raw.model_dump()["items"], page_count=len(pages))
 
+    def forget(
+        self,
+        pages: list[RasterisedPage],
+        mark_scheme: MarkScheme,
+        *,
+        model: str | None = None,
+        media_resolution: str = "high",
+        extra_cache_key: str,
+        task_tag: str = "extraction",
+    ) -> bool:
+        """Remove the cached reply of the ``read`` these arguments make; say if one was there.
+
+        For a read whose paper was held or whose job failed: the next run on the same
+        script must look at it again, not be handed the same list. The arguments that
+        decide the cache key are the same as ``read``'s, in the same form.
+        """
+        return self._client.forget_structured(
+            system_prompt=LABEL_BINDING_SYSTEM_PROMPT,
+            user_prompt=build_label_binding_user_prompt(mark_scheme, page_count=len(pages)),
+            image_parts=[page.png_bytes for page in pages],
+            media_resolution=media_resolution,
+            response_schema=_StreamOutput,
+            prompt_version=VERSION,
+            model=model,
+            extra_cache_key=extra_cache_key,
+            task_tag=task_tag,
+        )
+
 
 def _source_box(writings: list[SeenWriting], page_count: int) -> SourceBox | None:
     """The union of the usable boxes on the first writing's page, or ``None``."""
@@ -344,11 +377,15 @@ def _source_box(writings: list[SeenWriting], page_count: int) -> SourceBox | Non
 def _status(leaf: BoundLeaf) -> BindingStatus:
     """``"unverified"`` when the leaf may hold someone else's writing.
 
-    That is any doubt but an inference doubt (the leaf's question number was not seen
-    and was inferred from strong evidence, which says nothing against what the leaf
-    holds). A doubt of neither class counts against the leaf: an unknown doubt must
-    not pass.
+    The two classes of doubt are ``label_sequence``'s, read from there and copied
+    nowhere. A content doubt (``CONTENT_DOUBTS``) says the leaf may hold writing that
+    is not its own, or lack some that is: unverified. An inference doubt
+    (``INFERENCE_DOUBTS``: the leaf's question number was not seen and was inferred
+    from strong evidence) says nothing against what the leaf holds. A doubt of neither
+    class counts against the leaf: an unknown doubt must not pass.
     """
+    if any(doubt in CONTENT_DOUBTS for doubt in leaf.doubts):
+        return "unverified"
     if all(doubt in INFERENCE_DOUBTS for doubt in leaf.doubts):
         return "verified"
     return "unverified"
