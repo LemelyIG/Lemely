@@ -377,6 +377,10 @@ def test_an_answered_leaf_with_writing_set_aside_carries_the_doubt(
     assert all(leaf.writings for leaf in result.leaves if doubt in leaf.doubts)
     uncertain = sum(u.reason == "uncertain" for u in result.unbound)
     assert (uncertain > 0) == bool(_SET_ASIDE[run])
+    # Every question of the recorded paper has its number or is inferred: no leaf is
+    # past an unseen question, whatever kind the reader gave a label.
+    unseen = "a question after this one has no label: its answers may be here"
+    assert not [leaf.question_id for leaf in result.leaves if unseen in leaf.doubts]
     after_container = sum(u.reason == "after_container_label" for u in result.unbound)
     assert after_container == _AFTER_CONTAINER[run]
     assert len(result.unbound) == uncertain + after_container

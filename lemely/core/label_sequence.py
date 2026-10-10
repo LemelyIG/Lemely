@@ -49,7 +49,10 @@ comments and the task report use.
    - a part label the question does not have and a later question with no anchor
      does, listed after the leaf's next label (class C, first form);
    - on printed labels, the last labels of a question that an unseen question after
-     it also has, where nothing separates the two (class C, the tail);
+     it also has, where nothing separates the two (class C, the tail). On labels by
+     hand a question with no label is most often one the student skipped, and the
+     rule does not run: every leaf that holds writing and would hold none were the
+     labels printed keeps it, and carries a doubt (``DOUBT_QUESTION_UNSEEN``);
    - two blocks beside a blank leaf (D10).
    A leaf with something listed under it that was not bound is not reported blank
    (D3). Each unaligned leaf is given one reason (``UNALIGNED_REASONS``).
@@ -108,6 +111,21 @@ Writing on a wrong leaf:
   Two pages listed in the other order: 13, and 17, of 1,929.
   ``test_known_limit_two_pages_listed_in_the_other_order``.
   None of the four where every label carries its full path.
+  The second figures were measured before the doubt for an unseen question
+  (``DOUBT_QUESTION_UNSEEN``). The bindings are the same with it and fewer are
+  silent: by hand 63 of 5,112 for labels missed and 24 for a region, the printed
+  figures. [scratch: the review's generator, run again] The two page figures were
+  not measured again on the review's trials.
+- The same gap on a separate sheet, where both reads of the scan have it (the scan
+  is at fault, not one read). The gate does not count a label that is absent from
+  both reads between handwritten labels (``binding_gate.skipped_parts``), so such a
+  paper is published where it was held. Of 5,112, 5,112 and 824 generated papers
+  (labels missed, a region not read, a page missing) 92, 44 and 7 are published
+  with a wrong binding, where 43, 17 and 4 were. In 17, 11 and 1 of them a wrong
+  leaf was sent to review by nothing; with the doubt for an unseen question, in
+  none. Where one read alone has the gap, what is published is what was published
+  before, each with every wrong leaf in review. [scratch]
+  ``test_past_an_unseen_tail_handwritten_labels_keep_their_writing_with_a_doubt``.
 - Two labels in a row missed where the first part of a question carries its number
   (class C, what is left of it): 1 of 216 trials, and 2 of 216; on mixed labels 4 of
   208, and 5 of 208; none with bare labels. [review]
@@ -138,13 +156,19 @@ What safe outcomes cost (nothing bound wrongly; answered leaves left unbound):
   ``test_a_question_with_no_label_costs_one_leaf_by_hand_and_more_in_print``]; with a
   tenth of the parts skipped, 7 to 10 in 100 answered leaves are unbound. [review] On
   the printed paper a skipped part keeps its printed label and costs nothing. [tests]
+- Separate sheets, a question not attempted: the leaves of the question before it
+  whose labels the missing question also has are marked and carry the doubt for an
+  unseen question. Over 80 generated sheets with bare labels that is 0.42 leaves a
+  sheet, 0.25 of them not in review already (worst 4); none where every label
+  carries its full path, and none for parts skipped here and there. [scratch]
 - Printed labels: a question the reader missed whole costs 109 leaves over the same
   80 trials with bare labels, and a list that stops early 149 over 75. [tests]
 - ``kind`` is the reader's word. Handwritten labels reported as printed get the
   printed rule and that cost: one skipped question, 0.9 leaves (worst 1), becomes
   1.4 (worst 6) when every label is mis-reported. Printed labels reported as
-  handwritten lose the tail rule: the gap rates above move to their second figure.
-  No wrong binding comes of either. [review]
+  handwritten lose the tail rule: the leaves it would unbind keep their writing
+  with the doubt for an unseen question. No wrong binding comes of the first; the
+  second binds what a gap on handwritten labels binds. [review]
 - A part label read twice in a row costs about 2.3 answered leaves. [review]
 - Any text the reader types as a label is a barrier: mark brackets typed before each
   answer leave the whole paper unbound (0 of 43 leaves). [review]
@@ -178,6 +202,7 @@ DOUBT_NEXT_NUMBER_NOT_SEEN = "next question number not seen"
 DOUBT_PREVIOUS_PAGE = "continues from the previous page"
 DOUBT_ARROW = "tied by an arrow"
 DOUBT_SET_ASIDE = "some writing under this label was set aside"
+DOUBT_QUESTION_UNSEEN = "a question after this one has no label: its answers may be here"
 # Every doubt a leaf can carry, in the order they are listed on it.
 DOUBTS = (
     DOUBT_NUMBER_NOT_SEEN,
@@ -185,6 +210,7 @@ DOUBTS = (
     DOUBT_PREVIOUS_PAGE,
     DOUBT_ARROW,
     DOUBT_SET_ASIDE,
+    DOUBT_QUESTION_UNSEEN,
 )
 # The two things a doubt can mean. (The binder turns a content doubt into "unverified"
 # and lets an inference doubt pass; both tuples are read there.)
@@ -198,6 +224,7 @@ CONTENT_DOUBTS = (
     DOUBT_PREVIOUS_PAGE,
     DOUBT_ARROW,
     DOUBT_SET_ASIDE,
+    DOUBT_QUESTION_UNSEEN,
 )
 INFERENCE_DOUBTS = (DOUBT_NUMBER_NOT_SEEN,)
 
@@ -1105,9 +1132,18 @@ class _Alignment:
 
 
 def _align(
-    paper: _Paper, labels: list[_Label], kept: dict[int, _Candidate], stops: frozenset[int]
+    paper: _Paper,
+    labels: list[_Label],
+    kept: dict[int, _Candidate],
+    stops: frozenset[int],
+    *,
+    as_printed: bool = False,
 ) -> _Alignment:
-    """Every question against its stretch of the list; a question ends at a ``stops``."""
+    """Every question against its stretch of the list; a question ends at a ``stops``.
+
+    ``as_printed`` reads every label as a printed one: the alignment the list would
+    have were it the list of a printed paper (the tail of class C, below).
+    """
     out = _Alignment()
     anchored = sorted(kept.values(), key=lambda cand: cand.position)
     spans: dict[int, tuple[int, int, _Span]] = {}  # question -> first label, next anchor, span
@@ -1190,6 +1226,11 @@ def _align(
     # the module does without it; a handwritten label reported as printed makes it
     # unbind what it would on a printed paper.
     #
+    # Where the rule does not run because a label is by hand, the labels after an
+    # unseen question may still be that question's. ``bind_stream`` aligns the list a
+    # second time ``as_printed`` and gives a doubt to every leaf that keeps writing
+    # only because of the kind: the writing stays, and the leaf is not silent.
+    #
     # The first form, on any labels. A part label the question does not have, and that
     # a question after it with no anchor does have, shows that question's labels inside
     # this one's stretch (``_open_leaves`` then breaks the bracket of the leaves before
@@ -1198,13 +1239,12 @@ def _align(
         nxt = anchored[k + 1].root if k + 1 < len(anchored) else len(paper.nodes)
         unseen = [r for r in paper.roots if cand.root < r < nxt and r not in out.inferred]
         lo, hi, read = spans[cand.root]
-        printed_after = hi == len(labels) or labels[hi].item.kind == "printed"
+        printed_after = as_printed or hi == len(labels) or labels[hi].item.kind == "printed"
         if unseen and read.end == hi and printed_after:
             for position in sorted(own[cand.root], reverse=True):
                 label = labels[position]
-                if label.item.kind != "printed" or not any(
-                    paper.chains(other, label.readings) for other in unseen
-                ):
+                printed = as_printed or label.item.kind == "printed"
+                if not printed or not any(paper.chains(other, label.readings) for other in unseen):
                     break  # a label that names its question number is nobody else's
                 del out.placed[position]
         for position in range(lo, read.end):
@@ -1357,8 +1397,10 @@ def _read(
     labels: list[_Label],
     kept: dict[int, _Candidate],
     stops: frozenset[int],
+    *,
+    as_printed: bool = False,
 ) -> _Reading:
-    alignment = _align(paper, labels, kept, stops)
+    alignment = _align(paper, labels, kept, stops, as_printed=as_printed)
     # Part labels with writing straight under them. A label that opens with a number is
     # left out: a numbered line or a continuation label says nothing about the parts
     # around it.
@@ -1467,6 +1509,16 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
     if stops:
         readings.append(_read(paper, items, labels, kept, frozenset()))
     view = _agreed(readings)
+    # The tail of class C runs on printed labels only. A leaf that holds writing in
+    # this reading and would hold none were every label printed is past the place
+    # where an unseen question's labels may begin: it keeps its writing, with a doubt.
+    # The second alignment is made only where it can differ: a label is not printed,
+    # and a question has no anchor.
+    past_tail: frozenset[int] = frozenset()
+    if len(kept) < len(paper.roots) and any(label.item.kind != "printed" for label in labels):
+        cuts = [stops, frozenset()] if stops else [stops]  # D7, as above
+        strict = _agreed([_read(paper, items, labels, kept, cut, as_printed=True) for cut in cuts])
+        past_tail = (view.opened - view.doubled) - (strict.opened - strict.doubled)
     opened, doubted, unreadable = view.opened, view.doubted, view.unreadable
     inferred, doubled, blank = view.inferred, view.doubled, view.blank
     node_at = _node_at(items, labels, view.placed)
@@ -1557,6 +1609,8 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
             mine.add(DOUBT_NUMBER_NOT_SEEN)
         if node in doubted:
             mine.add(DOUBT_NEXT_NUMBER_NOT_SEEN)
+        if node in past_tail:
+            mine.add(DOUBT_QUESTION_UNSEEN)
         if node in withheld:
             # The leaf is marked on the writing it holds, and a block that sat under
             # its label is not part of it: the marker sees less than was written.

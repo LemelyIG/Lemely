@@ -307,6 +307,7 @@ def test_the_doubts_fall_into_two_classes_and_no_doubt_is_in_neither() -> None:
         "continues from the previous page",
         "tied by an arrow",
         "some writing under this label was set aside",
+        "a question after this one has no label: its answers may be here",
     )
     assert INFERENCE_DOUBTS == ("question number not seen",)
     assert sorted(CONTENT_DOUBTS + INFERENCE_DOUBTS) == sorted(DOUBTS)
@@ -2198,6 +2199,67 @@ def test_the_tail_rule_is_for_printed_labels_only(scheme_41: MarkScheme) -> None
     assert _unplaced(bound) == ["(c)"]
 
 
+def test_past_an_unseen_tail_handwritten_labels_keep_their_writing_with_a_doubt(
+    scheme_41: MarkScheme,
+) -> None:
+    # The leaves the tail rule unbinds on printed labels keep their writing on
+    # handwritten ones, because there a question with no label is most often one the
+    # student skipped. They may still be the unseen question's, so they carry a doubt:
+    # every leaf that holds writing here and would hold none were the labels printed.
+    doubt = "a question after this one has no label: its answers may be here"
+    scheme = _scheme(
+        scheme_41,
+        {
+            "5": {"5a": {}, "5b": {}, "5c": {}},
+            "6": {"6a": {}, "6b": {}, "6c": {}},
+            "7": {"7a": {}},
+        },
+    )
+    # 5(b), the number 6 and 6(a) are missed. "(b)" and "(c)" are question 6's and
+    # stand in for question 5's: 5a holds three answers, 5b holds 6(b)'s.
+    stream = ["5", "(a)", "=5a", "=5b", "=6a", "(b)", "=6b", "(c)", "=6c", "7", "(a)", "=7a"]
+    bound = bind_stream(_by_hand(_items(*stream)), scheme)
+    assert _on(bound) == {"5a": ["5a", "5b", "6a"], "5b": ["6b"], "7a": ["7a"]}
+    assert _doubts(bound) == {"5a": [doubt], "5b": [doubt]}
+    assert bound.unaligned_reasons == {
+        "5c": "not_bracketed",
+        "6a": "number_not_seen",
+        "6b": "number_not_seen",
+        "6c": "number_not_seen",
+    }
+    # Printed, the same list binds none of it, as before: nothing to doubt.
+    printed = bind_stream(_items(*stream), scheme)
+    assert _on(printed) == {"7a": ["7a"]}
+    assert _doubts(printed) == {}
+    # The cost: a sheet on which the student skipped question 6 and nothing was
+    # missed. Every part label of question 5 is one question 6 has, so its answered
+    # leaves are marked, and flagged. (5c is unbound by D1, as before.)
+    honest = ["5", "(a)", "=5a", "(b)", "=5b", "(c)", "=5c", "7", "(a)", "=7a"]
+    bound = bind_stream(_by_hand(_items(*honest)), scheme)
+    assert _on(bound) == {"5a": ["5a"], "5b": ["5b"], "7a": ["7a"]}
+    assert _doubts(bound) == {"5a": [doubt], "5b": [doubt]}
+    # A label that names its question is nobody else's, by hand as in print.
+    full = ["5(a)", "=5a", "5(b)", "=5b", "5(c)", "=5c", "7(a)", "=7a"]
+    bound = bind_stream(_by_hand(_items(*full)), scheme)
+    assert _on(bound) == {"5a": ["5a"], "5b": ["5b"], "7a": ["7a"]}
+    assert _doubts(bound) == {}
+    # Nothing is unseen: no doubt, whoever wrote the labels. A skipped part is not an
+    # unseen question.
+    whole = [*honest[:7], "6", "(a)", "=6a", "(b)", "=6b", "(c)", "=6c", *honest[7:]]
+    assert _doubts(bind_stream(_by_hand(_items(*whole)), scheme)) == {}
+    part = [*whole[:3], *whole[5:]]  # without "(b)" and its answer in question 5
+    bound = bind_stream(_by_hand(_items(*part)), scheme)
+    assert bound.unaligned_reasons == {"5a": "not_bracketed", "5b": "label_not_seen"}
+    assert _doubts(bound) == {}
+    # One label reported as handwritten in a printed stretch is where the printed
+    # rule stops (the test above). The leaves it then leaves bound carry the doubt.
+    items = _items(*honest)
+    items[3] = _by_hand([items[3]])[0]
+    bound = bind_stream(items, scheme)
+    assert _on(bound) == {"5a": ["5a"], "7a": ["7a"]}
+    assert _doubts(bound) == {"5a": [doubt]}
+
+
 def test_known_gap_on_handwritten_labels_a_later_label_stands_in(scheme_41: MarkScheme) -> None:
     """What is left of class C on labels reported as handwritten; not ruled on.
 
@@ -2216,6 +2278,11 @@ def test_known_gap_on_handwritten_labels_a_later_label_stands_in(scheme_41: Mark
     bound = bind_stream(_by_hand(_items(*stream, "7(a)", "=7a")), scheme)
     assert _on(bound)["5a_iii"] == ["5a_iii", "5b", "6a"]
     assert ("6b", "next_label_not_seen") in _unbound(bound)
+    # The binding is wrong, and it is no longer silent: 5a_iii carries the doubt for
+    # a question with no label after it.
+    assert _doubts(bound) == {
+        "5a_iii": ["a question after this one has no label: its answers may be here"]
+    }
     # One label reported as handwritten is enough: the stand-in "(b)" itself.
     items = _items(*stream, "7(a)", "=7a")
     items[stream.index("(b)")] = _by_hand(_items("(b)"))[0]

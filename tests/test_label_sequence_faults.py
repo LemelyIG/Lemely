@@ -34,6 +34,7 @@ import pytest
 
 from lemely.core.binding import SeenLabel, SeenWriting, StreamItem
 from lemely.core.label_sequence import (
+    DOUBT_QUESTION_UNSEEN,
     DOUBT_SET_ASIDE,
     MAX_STREAM_ITEMS,
     UNALIGNED_REASONS,
@@ -863,14 +864,17 @@ def test_clean_stream_binds_every_unique_leaf_of_every_corpus_scheme() -> None:
 
 def test_no_clean_stream_sets_writing_aside() -> None:
     # The doubt for writing set aside under an answered leaf is raised by no clean
-    # stream: every corpus scheme, labels printed and labels by hand.
+    # stream: every corpus scheme, labels printed and labels by hand. Nor is the doubt
+    # for a question with no label.
     streams = 0
     for path in sorted(_CORPUS.rglob("*.json")):
         paper = Paper.load(path.name)
         for kind in ("printed", "handwritten"):
             result = bind_stream(_render(paper.perfect()[0], kind), paper.scheme)
             assert not [
-                leaf.question_id for leaf in result.leaves if DOUBT_SET_ASIDE in leaf.doubts
+                leaf.question_id
+                for leaf in result.leaves
+                if {DOUBT_SET_ASIDE, DOUBT_QUESTION_UNSEEN} & set(leaf.doubts)
             ]
             streams += 1
     assert streams == 578
