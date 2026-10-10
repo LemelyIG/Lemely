@@ -120,9 +120,10 @@ Writing on a wrong leaf:
   is at fault, not one read). The two reads are not independent witnesses: in nine
   stored pairs of live reads the number of one question was missing from at least
   one read in 7 pairs and from both reads in 5 of those 7. "Absent in both reads"
-  can be a miss the two reads share, not a part the student skipped. The gate does not count a label that is
-  absent from both reads between handwritten labels (``binding_gate.skipped_parts``), so such a
-  paper is published where it was held. Of 5,112, 5,112 and 824 generated papers
+  can be a miss the two reads share, not a part the student skipped. The gate does
+  not count a label that is absent from both reads between handwritten labels
+  (``binding_gate.skipped_parts``), so such a paper is published where it was held.
+  Of 5,112, 5,112 and 824 generated papers
   (labels missed, a region not read, a page missing) 92, 44 and 7 are published
   with a wrong binding, where 43, 17 and 4 were. In 17, 11 and 1 of them a wrong
   leaf was sent to review by nothing; with the doubt for an unseen question, in
