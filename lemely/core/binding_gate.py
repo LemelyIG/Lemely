@@ -144,8 +144,16 @@ def suspect_group_leaves(mark_scheme: MarkScheme, suspects: Iterable[str]) -> li
     apart. No flat paper has a recorded reply, so how often a reader reports writing
     above the first label is not known.
     """
-    questions = mark_scheme.all_questions_flat()
-    parent = {q.id: q.parent_id for q in questions}
+    # The tree is read from the nesting of ``parts``, as ``bind_stream`` reads it, and
+    # never from ``Question.parent_id``: that field is optional, filled by whichever
+    # parser made the scheme and checked by nothing, and a group found through it
+    # would be found only on schemes where it happens to be right.
+    parent: dict[str, str | None] = {}
+    stack: list[tuple[Question, str | None]] = [(q, None) for q in mark_scheme.questions]
+    while stack:
+        question, above_id = stack.pop()
+        parent.setdefault(question.id, above_id)
+        stack.extend((part, question.id) for part in question.parts)
 
     def ancestors(qid: str) -> list[str]:
         chain: list[str] = []
@@ -234,6 +242,15 @@ def check_label_coverage(
         within.append(unplaced)
     if len(groups) >= thresholds.listing_suspects_min:
         problems.append(suspects)
+    # A suspect group is never trusted. One that names no leaf of the scheme leaves
+    # nothing to doubt in its place, so it cannot be left at question scope.
+    nameless = [group for group in groups if not suspect_group_leaves(mark_scheme, [group])]
+    if nameless:
+        problems.append(
+            f"{_plural(len(nameless), 'group')} of parts with that trace "
+            f"{'names' if len(nameless) == 1 else 'name'} no question of the mark scheme: "
+            f"{_listed(nameless)}"
+        )
     if lost_items > 0:
         problems.append(
             f"{_plural(lost_items, 'item')} of the reader's reply could not be read and "

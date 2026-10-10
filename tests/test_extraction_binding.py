@@ -1241,6 +1241,96 @@ def test_one_suspect_trace_on_a_flat_paper_sends_every_answer_to_review(tmp_path
         assert alone.review_only_ids == []
 
 
+def _reply_for(scheme: MarkScheme, *, writing_first_under: str) -> list[Any]:
+    """A reader's list for ``scheme``: every label, each leaf's writing after its label.
+
+    Under the question ``writing_first_under`` each part's writing is listed before the
+    part's label instead. A leaf's writing is the text ``answer to <id>``.
+    """
+
+    def label(text: str) -> dict[str, Any]:
+        return {
+            "type": "label",
+            "page": 1,
+            "box": [10, 10, 20, 20],
+            "text": text,
+            "kind": "printed",
+        }
+
+    def writing(qid: str) -> dict[str, Any]:
+        return {
+            "type": "answer",
+            "page": 1,
+            "box": [10, 30, 20, 40],
+            "answer": f"answer to {qid}",
+            "working_out": None,
+            "confidence": 0.9,
+            "placed_by": "position",
+        }
+
+    items: list[Any] = []
+
+    def walk(question: Question, parent: Question | None, first: bool) -> None:
+        if parent is None:
+            token = question.id
+        else:
+            token = "(" + question.id[len(parent.id) :].removeprefix("_") + ")"
+        own = [label(token)]
+        if not question.parts:
+            own = [writing(question.id), *own] if first else [*own, writing(question.id)]
+        items.extend(own)
+        for part in question.parts:
+            walk(part, question, first or question.id == writing_first_under)
+
+    for top in scheme.questions:
+        walk(top, None, False)
+    return items
+
+
+def test_a_suspect_group_is_doubted_on_a_scheme_whose_parent_ids_are_missing(
+    tmp_path: Path,
+) -> None:
+    # Question 2 of 0625/42 (three parts) with each part's writing listed before its
+    # label: 2(a) holds 2(b)'s writing, 2(b) holds 2(c)'s, 2(c) has nothing. The scheme's
+    # `parent_id` fields are all null, as an AI-parsed scheme's can be.
+    path = _ROOT / "corpus" / "mark-schemes" / "0625_s23_ms_42.json"
+    as_parsed = MarkScheme.model_validate(json.loads(path.read_text(encoding="utf-8")))
+
+    def strip(node: dict[str, Any]) -> dict[str, Any]:
+        return {**node, "parent_id": None, "parts": [strip(part) for part in node["parts"]]}
+
+    data = as_parsed.model_dump()
+    data["questions"] = [strip(question) for question in data["questions"]]
+    orphaned = MarkScheme.model_validate(data)
+    assert {q.parent_id for q in orphaned.all_questions_flat()} == {None}
+
+    reply = _reply_for(as_parsed, writing_first_under="2")
+    client, _genai = _client(tmp_path)
+    pages = _pages(6)
+    with (
+        client.image_uploads([p.png_bytes for p in pages], concurrency=1) as uploads,
+        patch.object(
+            client,
+            "generate_structured",
+            side_effect=_Model(first=_items(reply), second=_items(reply)),
+        ),
+    ):
+        outcome = run_binding(
+            client, pages, orphaned, uploads=uploads, settings=client._settings, manifest_key="m"
+        )
+
+    assert outcome.report.verdict == "pass"
+    g5 = next(c for c in outcome.report.checks if c.id == "G5")
+    assert (g5.passed, g5.scope, g5.question_ids) == (False, "question", ["2a", "2b", "2c"])
+    by_id = {a.question_id: a for a in outcome.answers}
+    # The two answers are the next part's, and neither goes on as verified.
+    assert (by_id["2a"].answer, by_id["2a"].binding_status) == ("answer to 2b", "unverified")
+    assert (by_id["2b"].answer, by_id["2b"].binding_status) == ("answer to 2c", "unverified")
+    assert "2c" not in by_id and outcome.review_only_ids == ["2c"]
+    others = [a for qid, a in by_id.items() if qid not in {"2a", "2b"}]
+    assert len(others) > 20 and all(a.binding_status == "verified" for a in others)
+
+
 def test_listing_suspects_fail_the_paper(tmp_path: Path, scheme: MarkScheme) -> None:
     first = _listed_before_labels(_run(1))
     held = _bind(tmp_path, scheme, _Model(first=_items(first)), second_read=False)

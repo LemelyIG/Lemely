@@ -360,6 +360,63 @@ def test_suspect_group_leaves_come_from_the_scheme_tree(scheme: MarkScheme) -> N
     assert suspect_group_leaves(scheme, []) == []
 
 
+def _without_parent_ids(scheme: MarkScheme, value: str | None = None) -> MarkScheme:
+    """``scheme`` with ``parent_id`` set to ``value`` on every question and part."""
+
+    def strip(node: dict[str, Any]) -> dict[str, Any]:
+        return {**node, "parent_id": value, "parts": [strip(part) for part in node["parts"]]}
+
+    data = scheme.model_dump()
+    data["questions"] = [strip(question) for question in data["questions"]]
+    return MarkScheme.model_validate(data)
+
+
+def _corpus_scheme(name: str) -> MarkScheme:
+    path = ROOT / "corpus" / "mark-schemes" / f"{name}.json"
+    return MarkScheme.model_validate(json.loads(path.read_text()))
+
+
+def test_suspect_group_is_found_from_the_scheme_s_parts_not_parent_id() -> None:
+    # `parent_id` is an optional field that a parser fills; nothing validates it, and an
+    # AI-parsed scheme can have it null or wrong. `bind_stream` reads the tree from the
+    # nesting of `parts`, and so must the helper that turns its group id into leaves.
+    scheme = _corpus_scheme("0625_s23_ms_42")
+    expected = ["2a", "2b", "2c"]
+    assert suspect_group_leaves(scheme, ["2"]) == expected
+    for value in (None, "no such question", "2a"):
+        orphaned = _without_parent_ids(scheme, value)
+        assert {q.parent_id for q in orphaned.all_questions_flat()} == {value}
+        assert suspect_group_leaves(orphaned, ["2"]) == expected, value
+        check = check_label_coverage(
+            _extracted([]), orphaned, [], 0, DEFAULTS, listing_suspects=["2"]
+        )
+        assert (check.passed, check.scope, check.question_ids) == (False, "question", expected)
+
+
+def test_suspect_groups_do_not_depend_on_parent_id_on_any_golden_scheme() -> None:
+    for name, golden, _answers in GOLDEN_CASES:
+        orphaned = _without_parent_ids(golden)
+        wrong = _without_parent_ids(golden, "no such question")
+        ids = [q.id for q in golden.all_questions_flat()]
+        assert ids, name
+        for qid in ids:
+            as_parsed = suspect_group_leaves(golden, [qid])
+            assert as_parsed, (name, qid)  # every question of the scheme names a leaf
+            assert suspect_group_leaves(orphaned, [qid]) == as_parsed, (name, qid)
+            assert suspect_group_leaves(wrong, [qid]) == as_parsed, (name, qid)
+
+
+def test_g5_a_suspect_group_that_names_no_leaf_fails_the_paper() -> None:
+    # A group is never trusted. If the id the binder gave for it names no leaf of the
+    # scheme there is nothing to flag in its place, so the paper is not let through.
+    check = _g5(_extracted([("18", "5")]), 20, [], listing_suspects=["no such question"])
+    assert not check.passed and check.scope == "paper"
+    assert "names no question of the mark scheme" in check.detail
+    # One group that does name its leaves stays at question scope beside it.
+    both = _g5(_extracted([("18", "5")]), 20, [], listing_suspects=["18", "no such question"])
+    assert both.scope == "paper"
+
+
 def test_g5_any_lost_item_fails_the_paper() -> None:
     assert _g5(_extracted([]), 20, [], lost_items=0).passed
     one = _g5(_extracted([]), 20, [], lost_items=1)
