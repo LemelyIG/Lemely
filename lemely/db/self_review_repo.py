@@ -13,9 +13,12 @@ after ``student_selfmarked_at`` is set. A client cannot read a field the
 payload does not contain.
 
 **Authority** is :func:`lemely.core.self_review.decide_point`, fed by
-:func:`lemely.db.attempt_repo.is_marking_low_confidence` — the same function
-that opened the ``low_confidence`` review-queue row at correction time, so
-"the marker was unsure" means one thing across both paths. Integrity flags
+:func:`lemely.db.attempt_repo.grants_self_mark_authority`. It starts from the
+function that opened the ``low_confidence`` review-queue row at correction time
+(``is_marking_low_confidence``), so "the marker was unsure" means one thing
+across both paths, and then withholds authority in two deliberate cases the
+queue still counts: the US-039 blank, and a binding doubt (the transcription
+itself may belong to another question, or was never read). Integrity flags
 never reach the rule.
 
 **One transaction — but not the judge.** ``submit`` is three phases (Task
@@ -79,6 +82,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 import structlog
 from sqlalchemy import func, select
 
+from lemely.core.binding_review import has_binding_doubt
 from lemely.core.point_groups import group_capped_points_total
 from lemely.core.self_review import (
     JudgeRequest,
@@ -86,7 +90,7 @@ from lemely.core.self_review import (
     PointDecision,
     decide_point,
 )
-from lemely.db.attempt_repo import is_marking_low_confidence
+from lemely.db.attempt_repo import grants_self_mark_authority
 from lemely.db.models.attempts import (
     Attempt,
     QuestionResult,
@@ -377,7 +381,7 @@ class SelfReviewService:
                     f"Question {qr.id} has already been self-marked"
                 )
             by_point = _verdicts_by_point(verdicts, qr.points)
-            low_confidence = is_marking_low_confidence(qr)
+            low_confidence = grants_self_mark_authority(qr)
             teacher_settled = qr.is_overridden
             judge_requests: dict[str, JudgeRequest] = {}
             for point in qr.points:
@@ -433,7 +437,7 @@ class SelfReviewService:
             by_point = _verdicts_by_point(verdicts, qr.points)
 
             now = datetime.now(UTC)
-            low_confidence = is_marking_low_confidence(qr)
+            low_confidence = grants_self_mark_authority(qr)
             teacher_settled = qr.is_overridden
             unjudged = False
             passes: list[_PointPass] = []
@@ -1018,7 +1022,7 @@ def _owned_question(
 
 
 def _to_view(session: Session, qr: QuestionResult) -> PendingSelfReview | RevealedSelfReview:
-    evidence_required = not is_marking_low_confidence(qr)
+    evidence_required = not grants_self_mark_authority(qr)
     if not qr.is_self_marked:
         return PendingSelfReview(
             state="not_started",
@@ -1232,8 +1236,12 @@ def _resolve_low_confidence_rows(
     """D4: close the open ``low_confidence`` row(s) with the student as resolver.
 
     Only that reason. An integrity row on the same question is a teacher's
-    to dismiss and is never touched here.
+    to dismiss and is never touched here. Nor is the row of a question with a
+    binding doubt: the student's word cannot vouch for a transcription that may
+    not be theirs, so it stays open until a teacher resolves it.
     """
+    if has_binding_doubt(qr.review_reason):
+        return
     rows = session.scalars(
         select(ReviewQueueItem).where(
             ReviewQueueItem.question_result_id == qr.id,

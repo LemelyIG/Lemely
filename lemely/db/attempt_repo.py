@@ -61,6 +61,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
+from lemely.core.binding_review import has_binding_doubt
 from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD, dedupe_point_verdicts
 from lemely.core.topics import classify, is_writable
 from lemely.db.history_repo import month_to_enum, parse_user_id
@@ -569,8 +570,10 @@ def is_marking_low_confidence(qr: QuestionResult) -> bool:
     :meth:`AttemptRepository._persist` opens a ``low_confidence`` review-queue
     row, and also the condition under which a student's self-mark carries
     authority (self-review spec, "Authority"). Both read the same
-    :func:`~lemely.db.review_queue_rules.low_confidence_review_needed`, so the
-    two can never draw the line differently: a question flagged purely
+    :func:`~lemely.db.review_queue_rules.low_confidence_review_needed`. That is
+    the QUEUE question; the authority question is :func:`grants_self_mark_authority`,
+    which narrows it on purpose in two places (the US-039 blank below, and a
+    binding doubt). A question flagged purely
     ``plagiarism_flag`` is *not* low-confidence — integrity flags grant no
     authority and are never shown to a student.
 
@@ -612,6 +615,28 @@ def is_marking_low_confidence(qr: QuestionResult) -> bool:
         confidence_score=qr.confidence_score,
         plagiarism_flagged=_integrity_flagged(qr),
     )
+
+
+def grants_self_mark_authority(qr: QuestionResult) -> bool:
+    """Whether a student's self-mark on this question is applied without evidence.
+
+    The AUTHORITY rule, which is :func:`is_marking_low_confidence` (the marker
+    doubted its own mark, so the student gets the benefit of the doubt) minus a
+    binding doubt. When the transcription itself is in doubt (the answer may
+    belong to another question, or was never read) the marker's confidence says
+    nothing about what the student wrote, so a claim goes the ordinary way:
+    evidence and the judge, or no change. That holds whatever else is true of
+    the row: a low marker confidence plus a binding doubt grants nothing.
+
+    Two deliberate exceptions to "authority is what the queue rule says": the
+    US-039 blank, which the shared verdict already exempts (neither queued nor
+    granted), and this binding doubt, which only the authority side withholds.
+
+    The queue side is untouched: :func:`is_marking_low_confidence` still opens
+    the teacher's row for such a question, and that row stays open after a
+    self-mark (``self_review_repo._resolve_low_confidence_rows``).
+    """
+    return is_marking_low_confidence(qr) and not has_binding_doubt(qr.review_reason)
 
 
 def _source_box_columns(cq: CorrectedQuestion) -> dict[str, int | None]:
@@ -976,5 +1001,6 @@ __all__ = [
     "AttemptRepository",
     "UploadDeletedError",
     "fill_correction_topics",
+    "grants_self_mark_authority",
     "is_marking_low_confidence",
 ]

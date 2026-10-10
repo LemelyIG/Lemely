@@ -3002,3 +3002,100 @@ def test_low_confidence_recomputed_in_phase_c_overrides_a_stale_phase_a_judge_pl
     assert p2.mark_changed is True
     qr = _load_qr(pg_sessionmaker, qr_id)
     assert qr.student_selfmark_marks == 2
+
+
+# ── binding doubt: the teacher's row stays, the student gets no authority ───
+
+
+def _binding_doubt_question(kind: str) -> CorrectedQuestion:
+    from lemely.io.correction_ai import (
+        UNBOUND_QUESTION_REVIEW_REASON,
+        UNVERIFIED_BINDING_REVIEW_REASON,
+    )
+
+    if kind == "unbound":
+        # No marking call was made: dropped, score 0.0, flagged.
+        return _question(
+            "1",
+            matched=[],
+            maximum=2,
+            confidence_score=0.0,
+            needs_review=True,
+            marker_source="dropped",
+            review_reason=UNBOUND_QUESTION_REVIEW_REASON,
+        )
+    # Marked as usual with a confident score, then flagged by the binding gate.
+    return _question(
+        "1",
+        matched=["p1"],
+        maximum=2,
+        needs_review=True,
+        review_reason=UNVERIFIED_BINDING_REVIEW_REASON,
+    )
+
+
+@pytest.mark.parametrize("kind", ["unbound", "unverified"])
+def test_teacher_row_stays_open_after_a_student_self_mark_on_a_binding_doubt_question(
+    pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_binding_doubt_question(kind), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    before = _attempt_row(pg_sessionmaker, attempt_id).awarded_marks
+
+    view = _service(pg_sessionmaker).submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+
+    # No evidence and no judge: nothing moves, and the teacher's row is untouched.
+    assert view.student_marks is None
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == before
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [r.reason for r in rows] == [ReviewReason.low_confidence]
+    assert rows[0].status is ReviewStatus.open
+    assert rows[0].resolved_by is None and rows[0].resolved_at is None
+
+
+@pytest.mark.parametrize("kind", ["unbound", "unverified"])
+def test_student_is_offered_the_panel_on_a_binding_doubt_question_but_must_bring_evidence(
+    pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    """End to end: the panel is offered, a bare claim changes nothing, and a
+    claim with evidence faces the judge (which can say no)."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_binding_doubt_question(kind), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    service = _service(
+        pg_sessionmaker, judge=_StubJudge(JudgeVerdict(accepted=False, reason="Not shown."))
+    )
+
+    pending = service.get(student, attempt_id, qr_id)
+    assert pending.evidence_required is True
+
+    view = service.submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote it on page 3.")],
+    )
+
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.evidence_verdict == "rejected"
+    assert p2.mark_changed is False
+    assert view.student_marks is None
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [r.status for r in rows] == [ReviewStatus.open]
+
+
+def test_marker_low_confidence_row_is_still_resolved_by_a_self_mark(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Unchanged behaviour: the existing authority and auto-resolve still hold."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _all_earned(["p1", "p2", "p3"])
+    )
+
+    assert view.student_marks == 3
+    assert [r.status for r in _queue_rows(pg_sessionmaker, qr_id)] == [ReviewStatus.resolved]

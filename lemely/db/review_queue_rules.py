@@ -10,13 +10,23 @@ Three consumers, one statement, because they must not disagree:
   sync, and ``674f309d`` broke it (the US-039 blank exemption reached the attempt
   producer alone, so a paper with 8 unattempted parts still became 8 console
   queue items the product owner had rejected).
-* :func:`lemely.db.attempt_repo.is_marking_low_confidence` — the student
-  self-review AUTHORITY gate (``self_review_repo``'s
-  ``evidence_required = not is_marking_low_confidence(qr)``). A gate is not a
+* :func:`lemely.db.attempt_repo.is_marking_low_confidence`, the same verdict
+  read from a persisted row, which :func:`lemely.db.attempt_repo.grants_self_mark_authority`
+  narrows into the student self-review AUTHORITY gate (``self_review_repo``'s
+  ``evidence_required = not grants_self_mark_authority(qr)``). A gate is not a
   queue row, but both rest on this one question, and when they disagreed a
   student could self-award every mark on a blank with no evidence and no judge
   (measured on the merged tree: 0 of 4 marks to 4 of 4). Absence of a marker is
   not marker-doubt.
+
+The two consumers are separate questions with one shared verdict, and there are
+exactly two deliberate exceptions to "the same line", both stated in
+``grants_self_mark_authority``'s docstring: the US-039 blank (exempted inside
+this module's verdict, so queue and authority agree), and a binding doubt
+(``review_reason`` carries a ``binding unverified:`` segment: the teacher's row
+opens as for any flagged question, but the student's self-mark carries no
+authority and does not close it). This module's verdict is untouched by the
+second; the difference lives in the authority function alone.
 
 :func:`low_confidence_review_needed` holds the verdict over raw fields rather
 than a record because the two record types spell ``marker_source`` differently
