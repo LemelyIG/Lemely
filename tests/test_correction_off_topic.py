@@ -804,16 +804,30 @@ def test_no_unverified_answer_means_no_flag_from_it():
     assert not result.needs_teacher_review
 
 
-def test_unverified_status_without_a_report_changes_nothing():
-    # Quiz marking, the harness's golden answers, an extraction with the gate off or
-    # only observing: no report, so nothing is flagged even where a status is set.
-    statuses = ["unverified", "verified", "unverified"]
+def test_unverified_answer_is_flagged_whether_or_not_there_is_a_report():
+    # Was `test_unverified_status_without_a_report_changes_nothing`. The doubt is the
+    # binder's own and sits on the answer, so it does not wait for a gate to have run:
+    # an answer that may hold another question's writing is never published unflagged.
+    result = _paper_with_statuses(["unverified", "verified", "unverified"], binding=None)
+    assert result.binding is None  # no report is invented
+    assert [q.review_reason for q in result.questions] == [
+        UNVERIFIED_REASON,
+        None,
+        UNVERIFIED_REASON,
+    ]
+    assert [q.needs_teacher_review for q in result.questions] == [True, False, True]
+    assert result.needs_teacher_review
+    assert (result.awarded_marks, result.maximum_marks) == (3, 3)
+
+
+def test_answers_with_no_status_and_no_report_come_back_untouched():
+    # Quiz marking and the harness's golden answers: no status is ever set on them.
     baseline = _paper_with_statuses([None] * 3, binding=None)
-    result = _paper_with_statuses(statuses, binding=None)
-    assert result.binding is None
-    assert result.model_dump() == baseline.model_dump()
-    assert [q.review_reason for q in result.questions] == [None] * 3
-    assert not result.needs_teacher_review
+    verified = _paper_with_statuses(["verified"] * 3, binding=None)
+    assert baseline.binding is None and verified.binding is None
+    assert baseline.model_dump() == verified.model_dump()
+    assert [q.review_reason for q in baseline.questions] == [None] * 3
+    assert not baseline.needs_teacher_review
 
 
 def test_unverified_reason_is_joined_onto_existing_reasons():

@@ -2308,7 +2308,8 @@ def _attach_extraction_context(
 OFF_TOPIC_REVIEW_REASON = "binding unverified: answer appears to address a different question"
 
 #: Appended to ``review_reason`` on each question whose answer the binding left
-#: ``binding_status="unverified"`` (see :func:`_with_off_topic_check`): the binder
+#: ``binding_status="unverified"``, with or without a binding report on the
+#: extraction (see :func:`_with_off_topic_check`): the binder
 #: bound it but doubts what it holds (writing tied by an arrow, carried over from
 #: the page before, or beside a label that was not seen), or a question-scope
 #: gate check named it.
@@ -2373,16 +2374,30 @@ def _with_off_topic_check(
     result is REBUILT, not ``model_copy``-ed, so ``calculate_totals`` derives
     the paper-level ``needs_teacher_review`` from the flagged rows.
 
-    The same switch covers the binding's own doubts. With a report, a question
-    whose answer carries ``binding_status="unverified"`` was marked as usual
-    and is then sent to teacher review with
-    :data:`UNVERIFIED_BINDING_REVIEW_REASON` joined onto its reasons, after
-    G8's when both apply. Its marks and the verdict are untouched. Without a
-    report a status changes nothing.
+    The binding's own doubts do not wait for a report. A question whose answer
+    carries ``binding_status="unverified"`` was marked as usual and is then
+    sent to teacher review with :data:`UNVERIFIED_BINDING_REVIEW_REASON` joined
+    onto its reasons, after G8's when both apply; its marks and the verdict are
+    untouched. That is keyed on the answer, as ``unbound_question_ids`` is keyed
+    on its field: an answer that may hold another question's writing is never
+    published unflagged because no gate ran over it. Quiz marking and the
+    harness's golden answers never set a status, so nothing changes for them.
     """
-    if not isinstance(extracted_answers, ExtractedAnswers) or extracted_answers.binding is None:
+    if not isinstance(extracted_answers, ExtractedAnswers):
         return result
+    unverified = {
+        a.question_id for a in extracted_answers.answers if a.binding_status == "unverified"
+    }
     prior = extracted_answers.binding
+    if prior is None:
+        if not unverified:
+            return result
+        return CorrectionResult(
+            metadata=result.metadata,
+            questions=_sent_to_review(
+                result.questions, unverified, UNVERIFIED_BINDING_REVIEW_REASON
+            ),
+        )
     check = check_off_topic(result, GateThresholds())
     checks = [*prior.checks, check]
     recomputed = verdict(checks, retried=prior.retried)
@@ -2395,9 +2410,6 @@ def _with_off_topic_check(
     questions = result.questions
     if not check.passed and check.scope == "question":
         questions = _sent_to_review(questions, set(check.question_ids), OFF_TOPIC_REVIEW_REASON)
-    unverified = {
-        a.question_id for a in extracted_answers.answers if a.binding_status == "unverified"
-    }
     questions = _sent_to_review(questions, unverified, UNVERIFIED_BINDING_REVIEW_REASON)
     return CorrectionResult(metadata=result.metadata, questions=questions, binding=report)
 

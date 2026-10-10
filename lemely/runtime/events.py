@@ -75,9 +75,10 @@ class EventType(StrEnum):
     # `gate`, `verdict`, `retried`, `failed_checks` (check ids), `unbound` and
     # `unaligned` (counts), `inferred_numbers`, `drops`, `model`, `second_read`
     # (whether a second read came back) and `report` (the whole report an enforcing
-    # gate returns, every check with its sentence). Under `gate="observe"` the
-    # verdict and report here are what would have been enforced, and this event is
-    # the only place they go: the extraction itself carries no report.
+    # gate returns, every check with its sentence). Under `gate="observe"` (the
+    # legacy binder only) the verdict and report here are what would have been
+    # enforced, and this event is the only place they go: the extraction itself
+    # carries no report. Server-side only: lemely.web.sse never forwards it.
     BINDING_GATE_RESULT = "binding_gate_result"
     REREAD_CAP_REACHED = "reread_cap_reached"
     # Spec 2026-09-26 §5: the re-read stage's wall-clock budget ran out;

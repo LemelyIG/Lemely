@@ -583,32 +583,6 @@ def test_unaligned_leaves_go_to_review_and_are_never_marked_blank(
     assert blank.marker_source == "blank" and blank.needs_teacher_review is False
 
 
-@pytest.mark.parametrize("gate", ["enforce", "observe", "off"])
-def test_an_unaligned_leaf_reaches_a_teacher_whatever_the_gate(
-    tmp_path: Path, scan: Path, scheme: MarkScheme, gate: str
-) -> None:
-    # The binder could bind nothing to 4b_i. That does not depend on a gate having run
-    # over the binding, so neither does what becomes of the leaf.
-    first = _without_label(_run(4), "(i)", 9)
-    model = _Model(first=_items(first), second=_items(_run(1)))
-    extracted = _extract(tmp_path, scan, scheme, model, gate=gate)
-    assert (extracted.binding is not None) == (gate == "enforce")
-    assert extracted.unbound_question_ids == ["4b_i"]
-    assert extracted.dropped_question_ids == []
-
-    marker = _Marker()
-    with patch.object(
-        correction_ai.AICorrector, "mark_question", autospec=True, side_effect=marker
-    ):
-        result = correct_paper(scheme, extracted, gemini_client=MagicMock())
-    row = next(q for q in result.questions if q.question_id == "4b_i")
-    assert "4b_i" not in marker.asked
-    assert row.needs_teacher_review is True
-    assert row.review_reason is not None and "label was not found on the scan" in row.review_reason
-    assert row.marker_source != "blank" and row.confidence == ConfidenceBand.LOW
-    assert (result.binding is not None) == (gate == "enforce")
-
-
 @pytest.mark.parametrize("number", [1, 2, 3, 4, 5])
 def test_unbound_writing_travels_on_the_extraction(
     tmp_path: Path, scan: Path, scheme: MarkScheme, number: int
@@ -747,20 +721,16 @@ def test_what_the_reader_s_reply_lost_or_had_repaired_stays_on_the_record(
     tmp_path: Path, scan: Path, scheme: MarkScheme
 ) -> None:
     # The answer to 5(a) comes back with a page that is not a page. The block is kept,
-    # as writing with no question, and the repair is counted on the extraction itself:
-    # with the gate off there is no report and no event to carry it.
+    # as writing with no question, and the repair is counted on the extraction itself.
     first = copy.deepcopy(_run(1))
     assert first[53]["type"] == "answer"
     first[53]["page"] = "nowhere"
-    for gate in ("off", "enforce"):
-        extracted = _extract(
-            tmp_path, scan, scheme, _Model(first=_items(first)), gate=gate, second_read=False
-        )
-        # Under its own prefix: the legacy extractor's reasons live in the same field.
-        assert extracted.answer_drops == {"stream_repaired_page": 1}
-        assert first[53]["answer"] in [w.answer for w in extracted.unbound_answers]
-        assert "5a" not in {a.question_id for a in extracted.answers}
-        assert extracted.unbound_question_ids == ["5a"]  # to a teacher, not a blank zero
+    extracted = _extract(tmp_path, scan, scheme, _Model(first=_items(first)), second_read=False)
+    # Under its own prefix: the legacy extractor's reasons live in the same field.
+    assert extracted.answer_drops == {"stream_repaired_page": 1}
+    assert first[53]["answer"] in [w.answer for w in extracted.unbound_answers]
+    assert "5a" not in {a.question_id for a in extracted.answers}
+    assert extracted.unbound_question_ids == ["5a"]  # to a teacher, not a blank zero
 
 
 def test_listing_suspects_fail_the_paper(tmp_path: Path, scheme: MarkScheme) -> None:
@@ -783,93 +753,68 @@ def test_listing_suspects_fail_the_paper(tmp_path: Path, scheme: MarkScheme) -> 
 def test_observe_mode_never_holds_but_reports(
     tmp_path: Path, scan: Path, scheme: MarkScheme
 ) -> None:
-    first, second = _question_4_unanchored(4), _question_4_unanchored(5)
-    bad_pair = {"first": _items(first), "second": _items(second)}
-    enforced = _bind(tmp_path, scheme, _Model(**bad_pair))
-    assert enforced.report is not None and enforced.report.verdict == "hold"
-
+    # Observe is for watching the gate on the old path: the legacy binder's answers go
+    # on exactly as with the gate off, and the event says what enforcing would have done.
+    shifted = _legacy_reply("full_shift_lite")
+    model = _Model(legacy=shifted)
     with _events(EventType.BINDING_GATE_RESULT) as seen:
-        outcome = _bind(tmp_path, scheme, _Model(**bad_pair), gate="observe")
-    # Watch, change nothing: no report is returned, so nothing downstream can hold.
-    assert outcome.report is None
-    assert _pairs(outcome) == _bound_alone(first, scheme)
-    # The event carries all of it: the verdict enforce would have reached, and the
-    # report it would have returned, every check with its sentence.
+        extracted = _extract(tmp_path, scan, scheme, model, binder="legacy", gate="observe")
+
+    assert extracted.binding is None and "binding" not in extracted.model_fields_set
+    assert _pairs(extracted) == [(a["question_id"], a["answer"]) for a in shifted["answers"]]
     (event,) = seen[EventType.BINDING_GATE_RESULT]
-    assert (event["gate"], event["verdict"], event["retried"]) == ("observe", "hold", True)
-    assert event["failed_checks"] == ["G5"]
-    assert event["report"] == enforced.report.model_dump()
+    assert (event["gate"], event["verdict"], event["retried"]) == ("observe", "retry", False)
+    assert "G7" in event["failed_checks"]
+    # The whole report enforcing would have returned, every check with its sentence.
+    assert event["report"]["binder"] == "legacy" and event["report"]["verdict"] == "retry"
     assert all(check["detail"] for check in event["report"]["checks"])
 
-    # A clean second read is not swapped in: enforce would have used it, and says so.
-    model = _Model(first=_items(first), second=_items(_run(1)))
-    with _events(EventType.BINDING_GATE_RESULT) as seen:
-        outcome = _bind(tmp_path, scheme, model, gate="observe")
-    assert outcome.report is None
-    assert _pairs(outcome) == _bound_alone(first, scheme)
-    (event,) = seen[EventType.BINDING_GATE_RESULT]
-    assert (event["verdict"], event["retried"]) == ("pass", True)
-    assert event["failed_checks"] == ["G5"]  # of the read that was returned, the first
-    assert all(check["passed"] for check in event["report"]["checks"])  # enforce's: the second
-
-    # Two reads that disagree at paper scope: held under enforce, reported under observe.
-    model = _Model(first=_items(_run(1)), second=_items(_with_texts_rotated(_run(1), 6)))
-    with _events(EventType.BINDING_GATE_RESULT) as seen:
-        outcome = _bind(tmp_path, scheme, model, gate="observe")
-    assert outcome.report is None
-    (event,) = seen[EventType.BINDING_GATE_RESULT]
-    assert (event["verdict"], event["failed_checks"]) == ("hold", ["G9"])
-
-    # What the binder itself decided still applies: its own doubt about 7b_i stays. What
-    # only the gate would add does not: G9 names 2c and 3a, and they are left as bound.
-    model = _Model(first=_items(_run(1)), second=_items(_with_texts_rotated(_run(1), 2)))
-    outcome = _bind(tmp_path, scheme, model, gate="observe")
-    assert [a.question_id for a in outcome.answers if a.binding_status == "unverified"] == ["7b_i"]
-
-
-def test_observe_mode_leaves_nothing_on_the_extraction_to_hold_on(
-    tmp_path: Path, scan: Path, scheme: MarkScheme
-) -> None:
-    first, second = _question_4_unanchored(4), _question_4_unanchored(5)
-    extracted = _extract(
-        tmp_path,
-        scan,
-        scheme,
-        _Model(first=_items(first), second=_items(second)),
-        gate="observe",
-    )
-    assert extracted.binding is None
-    assert "binding" not in extracted.model_fields_set
-    # Leaves with no label still go to a teacher, and writing with no leaf is still kept:
-    # those come from the binder, not from the gate.
-    assert extracted.unbound_question_ids == ["3c", "4a", "4b_i", "4b_ii", "4b_iii"]
-    assert extracted.unbound_answers
-
+    # Nothing downstream has a verdict to act on, before or after marking.
     marker = _Marker()
     with patch.object(
         correction_ai.AICorrector, "mark_question", autospec=True, side_effect=marker
     ):
         result = correct_paper(scheme, extracted, gemini_client=MagicMock())
-    assert result.binding is None  # so the post-marking check (G8) is not observed either
-    dropped = [q.question_id for q in result.questions if q.marker_source == "dropped"]
-    assert dropped == ["3c", "4a", "4b_i", "4b_ii", "4b_iii"]
+    assert result.binding is None
+
+
+@pytest.mark.parametrize("gate", ["observe", "off"])
+def test_the_label_binder_cannot_be_run_without_the_gate(
+    tmp_path: Path, scheme: MarkScheme, gate: str
+) -> None:
+    # Deleted with this: `test_observe_mode_leaves_nothing_on_the_extraction_to_hold_on`
+    # and `test_an_unaligned_leaf_reaches_a_teacher_whatever_the_gate`, which ran the
+    # label binder under observe and off. Those settings no longer exist: under them the
+    # binder's own doubts and its lost items were published with no check over them.
+    with pytest.raises(ValueError, match="binder"):
+        _settings(tmp_path, gate=gate)
+    # And a settings object that reached `run_binding` some other way is refused there.
+    client, _genai = _client(tmp_path)
+    forced = client._settings.model_copy(
+        update={"binding": client._settings.binding.model_copy(update={"gate": gate})}
+    )
+    pages = _pages()
+    with (
+        client.image_uploads([p.png_bytes for p in pages], concurrency=1) as uploads,
+        patch.object(client, "generate_structured", side_effect=_Model(first=_items(_run(1)))),
+        pytest.raises(ValueError, match="enforce"),
+    ):
+        run_binding(client, pages, scheme, uploads=uploads, settings=forced, manifest_key="k")
 
 
 def test_gate_off_leaves_binding_none(tmp_path: Path, scan: Path, scheme: MarkScheme) -> None:
-    first = _without_label(_run(4), "(i)", 9)
-    model = _Model(first=_items(first))
+    # The gate can be off for the legacy binder only (the label binder requires it).
+    shifted = _legacy_reply("full_shift_lite")
+    model = _Model(legacy=shifted)
     with _events(EventType.BINDING_GATE_RESULT) as seen:
-        extracted = _extract(tmp_path, scan, scheme, model, gate="off")
+        extracted = _extract(tmp_path, scan, scheme, model, binder="legacy", gate="off")
 
-    assert model.made() == ["first"]  # one read, whatever `second_read` says
+    assert model.made() == ["legacy"]  # no retry, whatever the answers look like
     assert extracted.binding is None
     assert seen[EventType.BINDING_GATE_RESULT] == []
-    assert _pairs(extracted) == _bound_alone(first, scheme)
-    assert all(a.binding_source == "label" for a in extracted.answers)
-    # Unchecked is not the same as lost: the leaf with no label and the writing with no
-    # leaf are both still on the record.
-    assert extracted.unbound_question_ids == ["4b_i"]
-    assert extracted.unbound_answers
+    assert _pairs(extracted) == [(a["question_id"], a["answer"]) for a in shifted["answers"]]
+    assert all(a.binding_source is None for a in extracted.answers)
+    assert extracted.unbound_question_ids == [] and extracted.unbound_answers == []
 
 
 def test_legacy_binder_output_is_gated_and_retried(

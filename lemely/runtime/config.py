@@ -592,12 +592,18 @@ class BindingSettings(BaseModel):
     model hands out the ids itself, as extraction did before the binder existed.
 
     ``gate`` picks what the checks on a binding do. ``"enforce"``: a paper whose
-    binding cannot be trusted is held. ``"observe"``: the same checks run and are
+    binding cannot be trusted is held. ``"observe"``: the checks run and are
     published in the ``binding_gate_result`` event, and nothing else changes: the
     extraction carries no report, so no paper is held and the check made after
     marking does not run. ``"off"``: no checks and no report.
     With ``binder="legacy"`` and ``gate="off"`` extraction is exactly what it was
     before either existed.
+
+    The label binder requires ``gate="enforce"``; ``"observe"`` and ``"off"`` are
+    for the legacy binder only. The gate's coverage and lost-item checks are part of
+    reading a script safely with the label binder: they are what stops a part whose
+    writing the reader lost, or listed out of place, from being published as a blank
+    or under another question. Observing is for watching the gate on the old path.
 
     ``read_model`` is the label binder's model. It is passed on every call and is not
     ``gemini.extraction_model``: only ``gemini-3.8-flash`` returned a usable list when
@@ -615,6 +621,18 @@ class BindingSettings(BaseModel):
     read_model: str = Field(default="gemini-3.8-flash", min_length=1)
     second_read: bool = True
     retry_model: str = Field(default="gemini-3.8-flash", min_length=1)
+
+    @model_validator(mode="after")
+    def _label_binder_requires_the_gate(self) -> BindingSettings:
+        if self.binder == "label" and self.gate != "enforce":
+            raise ValueError(
+                f'binder="label" cannot run with gate="{self.gate}": the label binder\'s '
+                "coverage and lost-item checks are part of reading a script safely, and "
+                "without them writing the reader lost is published as a blank answer. "
+                'Set gate="enforce", or set binder="legacy" to watch the gate '
+                '(gate="observe") or switch it off (gate="off") on the old path.'
+            )
+        return self
 
 
 @dataclass(frozen=True)

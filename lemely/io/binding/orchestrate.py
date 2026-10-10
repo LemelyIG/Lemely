@@ -20,11 +20,12 @@ With one read (the second switched off, or failed), a paper-scope failure is a h
 The checks see part of what can go wrong: a pass means nothing was found, not that the
 binding is right.
 
-Under ``gate="observe"`` the same is worked out and published in the
-``BINDING_GATE_RESULT`` event, and nothing else changes: the first read is returned
-with no report, so nothing downstream has a verdict to act on, and no call is made
-that only enforcing would make. What the binder itself decides (unbound writing,
-leaves with no label, its own doubts about a leaf) applies in every mode.
+The label binder runs only with the gate enforcing (``BindingSettings`` rejects the
+rest): its checks are part of reading a script safely. ``gate="observe"`` and
+``gate="off"`` belong to the legacy binder. Under observe its answers are checked and
+the result is published in the ``BINDING_GATE_RESULT`` event, and nothing else
+changes: no report is returned, so nothing downstream has a verdict to act on, and no
+call is made that only enforcing would make.
 
 The legacy binder, where the model hands out ids itself, is gated here too
 (``gate_legacy``); its call and the reading of its reply stay with the extractor.
@@ -73,9 +74,9 @@ LOST_ITEM_REASONS = ("malformed_item", "unknown_type")
 class BindingOutcome:
     """What binding a script came to.
 
-    ``answers`` are the chosen read's, one per leaf that has writing. ``report`` is
-    ``None`` unless the gate is enforcing: any verdict on it other than ``pass`` means
-    the paper must not be published, and its failed checks say why. ``unbound`` is the
+    ``answers`` are the chosen read's, one per leaf that has writing. Any verdict on
+    ``report`` other than ``pass`` means the paper must not be published, and its
+    failed checks say why. ``unbound`` is the
     writing no leaf could be given. ``review_only_ids`` are the chosen read's unaligned
     leaves: no label was lined up with them, so whatever was written for them could not
     be bound, and they must go to a teacher without a mark being attempted. ``drops`` is
@@ -83,7 +84,7 @@ class BindingOutcome:
     """
 
     answers: list[ExtractedAnswer]
-    report: BindingReport | None
+    report: BindingReport
     unbound: list[SeenWriting]
     review_only_ids: list[str]
     drops: dict[str, int] = field(default_factory=dict)
@@ -272,17 +273,6 @@ def _with_statuses(
     ]
 
 
-def _ungated(read: BoundRead) -> BindingOutcome:
-    """``read`` as the binder bound it, with no report: the gate is off or only observing."""
-    return BindingOutcome(
-        answers=read.answers,
-        report=None,
-        unbound=[u.writing for u in read.unbound],
-        review_only_ids=list(read.unaligned_ids),
-        drops=dict(read.drops),
-    )
-
-
 def run_binding(
     client: GeminiClient,
     pages: list[RasterisedPage],
@@ -295,10 +285,8 @@ def run_binding(
     """Read ``pages`` with the label binder, check the binding, and choose a read or hold.
 
     Every call uses ``uploads``, the page uploads the caller already has, and
-    ``settings.binding.read_model``. With the gate off there is one read, no checks and
-    no report. Under ``gate="observe"`` both reads and every check run and are
-    published in the ``BINDING_GATE_RESULT`` event; the first read is returned as the
-    binder bound it, with no report.
+    ``settings.binding.read_model``. The gate must be enforcing: the label binder is
+    not run without its checks.
 
     A ``CostCeilingError`` from either read propagates unchanged. So does any error
     from the first read. A second read that fails otherwise is published as
@@ -308,6 +296,10 @@ def run_binding(
     if binding.binder != "label":
         raise ValueError(
             f"run_binding binds by labels; binder={binding.binder!r} is gated by gate_legacy"
+        )
+    if binding.gate != "enforce":
+        raise ValueError(
+            f"the label binder runs only with gate='enforce', not gate={binding.gate!r}"
         )
     binder = LabelBinder(client)
 
@@ -331,13 +323,10 @@ def run_binding(
         return _read(SECOND_READ_TASK_TAG, "|bind2")
 
     second: BoundRead | None = None
-    if binding.gate != "off" and binding.second_read:
+    if binding.second_read:
         first, second = _read_both(_first, _second)
     else:
         first = _first()
-
-    if binding.gate == "off":
-        return _ungated(first)
 
     thresholds = GateThresholds()
     first_checks = _label_checks(first, mark_scheme, thresholds)
@@ -374,22 +363,16 @@ def run_binding(
         retried=retried,
         model=binding.read_model,
     )
-    # Under observe the first read goes on whatever was decided.
-    returned, returned_checks = (
-        (first, first_checks) if binding.gate == "observe" else (chosen, chosen_checks)
-    )
     _publish_result(
         enforced,
         settings=binding,
-        returned_checks=[*returned_checks, *compared],
-        unbound=len(returned.unbound),
-        unaligned=len(returned.unaligned_ids),
-        inferred_numbers=returned.inferred_numbers,
-        drops=returned.drops,
+        returned_checks=checks,
+        unbound=len(chosen.unbound),
+        unaligned=len(chosen.unaligned_ids),
+        inferred_numbers=chosen.inferred_numbers,
+        drops=chosen.drops,
         second_read=second is not None,
     )
-    if binding.gate == "observe":
-        return _ungated(first)
     return BindingOutcome(
         answers=_with_statuses(chosen.answers, _question_scope_ids(checks)),
         report=enforced,
@@ -503,10 +486,13 @@ def binding_status(settings: Settings) -> tuple[bool, str]:
     """Advisory status for ``lemely doctor``: how answers are bound, and at what cost.
 
     Not ok when a second read is configured and would be the first read again: both
-    go to the same model, so only the thinking level (``gemini.thinking_level_for``,
-    tags ``extraction`` and ``binding_second_read``) makes the second a second
-    opinion. A ``thinking_level_for`` table in ``lemely.toml`` replaces the defaults,
-    so one written before the binder existed leaves ``binding_second_read`` out.
+    go to the same model, so only how hard each thinks makes the second a second
+    opinion. For a 3.x model that is ``gemini.thinking_level_for`` (tags
+    ``extraction`` and ``binding_second_read``); a table for it in ``lemely.toml``
+    replaces the defaults, so one written before the binder existed leaves
+    ``binding_second_read`` out. A 2.5 model ignores that table and reads
+    ``gemini.thinking_budget_for`` instead, so the advice names the table the
+    configured model actually reads.
     """
     from lemely.io.gemini import GeminiClient
 
@@ -515,19 +501,23 @@ def binding_status(settings: Settings) -> tuple[bool, str]:
     if binding.binder == "legacy":
         if binding.gate == "off":
             return True, f"{summary}: one extraction call, unchecked"
+        if binding.gate == "observe":
+            return True, f"{summary}: one extraction call, checked and reported, never held"
         return True, f"{summary}: one extraction call, and one retry on {binding.retry_model}"
     model = binding.read_model
     client = GeminiClient(settings, ledger=None)
     first = client.resolved_thinking("extraction", model)
-    if binding.gate == "off" or not binding.second_read:
+    if not binding.second_read:
         return True, f"{summary}: one read on {model} (thinking {first})"
     second = client.resolved_thinking(SECOND_READ_TASK_TAG, model)
     if first == second:
+        # A level is a name (3.x); a budget is a number of tokens (2.5 and earlier).
+        table = "thinking_level_for" if isinstance(first, str) else "thinking_budget_for"
         return (
             False,
             f"{summary}: both reads on {model} resolve to the same thinking ({first}), so the "
-            "second read is the first one again; set a different level for "
-            f"{SECOND_READ_TASK_TAG} in [gemini.thinking_level_for]",
+            "second read is the first one again; set a different value for "
+            f"{SECOND_READ_TASK_TAG} in [gemini.{table}]",
         )
     return (
         True,

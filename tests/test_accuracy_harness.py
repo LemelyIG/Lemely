@@ -1835,10 +1835,10 @@ class RunManifestTests(unittest.TestCase):
     def test_each_binding_setting_moves_the_fingerprint(self) -> None:
         from lemely.runtime.config import BindingSettings
 
+        # The label binder only runs with the gate enforcing (`BindingSettings`
+        # rejects the rest), so `gate` varies with the legacy binder alone.
         variants = [
             {},
-            {"gate": "observe"},
-            {"gate": "off"},
             {"read_model": "gemini-other"},
             {"second_read": False},
             {"binder": "legacy"},

@@ -332,13 +332,40 @@ class TestBindingSettings:
             monkeypatch.delenv(key)
         toml = tmp_path / "lemely.toml"
         toml.write_text(
-            '[binding]\ngate = "observe"\nsecond_read = false\nread_model = "gemini-x"\n',
+            '[binding]\nbinder = "legacy"\ngate = "observe"\nretry_model = "gemini-x"\n',
             encoding="utf-8",
         )
         s = load_settings(toml_path=toml, cwd=tmp_path)
-        assert (s.binding.gate, s.binding.second_read) == ("observe", False)
-        assert s.binding.read_model == "gemini-x"
-        assert s.binding.binder == "label"
+        assert (s.binding.binder, s.binding.gate) == ("legacy", "observe")
+        assert s.binding.retry_model == "gemini-x"
+        assert s.binding.second_read is True
+
+    @pytest.mark.parametrize("gate", ["observe", "off"])
+    def test_the_label_binder_requires_the_gate(self, gate: str) -> None:
+        """The label binder's coverage and lost-item checks are part of reading a
+        script safely: without them a part whose writing the reader lost comes out as
+        a blank. So it cannot be configured with the gate watching or off."""
+        from pydantic import ValidationError
+
+        from lemely.runtime.config import BindingSettings
+
+        with pytest.raises(ValidationError) as raised:
+            BindingSettings(binder="label", gate=gate)  # type: ignore[arg-type]
+        message = str(raised.value)
+        assert f'gate="{gate}"' in message
+        assert 'gate="enforce"' in message and 'binder="legacy"' in message  # what to set
+        # The legacy binder may be watched or left unchecked: it is the old path.
+        assert BindingSettings(binder="legacy", gate=gate).gate == gate  # type: ignore[arg-type]
+
+    def test_switching_the_gate_off_alone_does_not_load(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pydantic import ValidationError
+
+        monkeypatch.delenv("LEMELY_BINDING__BINDER", raising=False)
+        monkeypatch.setenv("LEMELY_BINDING__GATE", "off")
+        with pytest.raises(ValidationError):
+            load_settings(toml_path=None, cwd=tmp_path)
 
 
 class TestSettingsIntegrityWired:

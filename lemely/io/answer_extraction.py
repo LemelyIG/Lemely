@@ -1030,7 +1030,7 @@ class GeminiAnswerExtractor:
         Either way they then go through the same steps: confidence calibration, the
         optional text second reader, crop re-reads, progress events, id
         normalisation. With the gate enforcing the result carries the binding report;
-        with it off or observing it carries none.
+        with it off or observing (the legacy binder only) it carries none.
         """
         manifest_key = build_question_manifest_hash_key(mark_scheme)
 
@@ -1125,8 +1125,7 @@ class GeminiAnswerExtractor:
                 # mark, where a missing answer alone would be an unflagged zero.
                 bound_fields["unbound_question_ids"] = list(outcome.review_only_ids)
                 bound_fields["unbound_answers"] = outcome.unbound
-                if outcome.report is not None:
-                    bound_fields["binding"] = outcome.report
+                bound_fields["binding"] = outcome.report
             else:
                 reply = self._legacy_reply(
                     mark_scheme, page_bytes, uploads, extra_cache_key=manifest_key

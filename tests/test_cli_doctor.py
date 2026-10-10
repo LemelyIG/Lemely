@@ -546,6 +546,15 @@ class DoctorBindingTests(unittest.TestCase):
         self.assertIn("binding_second_read", binding["detail"])
         self.assertIn("same", binding["detail"])
 
+    def test_doctor_advises_the_budget_table_for_a_read_model_that_ignores_levels(self) -> None:
+        # A 2.5 model reads [gemini.thinking_budget_for], not thinking_level_for: both
+        # reads resolve to the same budget, and the level table would change nothing.
+        checks = self._doctor(LEMELY_BINDING__READ_MODEL="gemini-2.5-flash")
+        binding = checks["binding"]
+        self.assertFalse(binding["ok"], msg=binding)
+        self.assertIn("thinking_budget_for", binding["detail"])
+        self.assertNotIn("thinking_level_for", binding["detail"])
+
     def test_doctor_prices_the_binder_model(self) -> None:
         checks = self._doctor(LEMELY_BINDING__READ_MODEL="totally-fake-model-does-not-exist")
         pricing = checks["gemini_fallback_pricing"]
