@@ -304,6 +304,28 @@ describe("outcome copy", () => {
     expect(UNAVAILABLE_COPY).toMatch(/paper/i)
   })
 
+  it("a binding-doubt question does not call the mark confident", () => {
+    expect(evidenceHint(true, true)).toBe(
+      "We weren't sure this answer was matched to the right question. To change a point, say what in your answer earns it.",
+    )
+    expect(evidenceHint(true, true)).not.toMatch(/confident/)
+    expect(evidenceHint(true)).toBe(
+      "The marker was confident here. To challenge a point, say what in your answer earns it.",
+    )
+    expect(evidenceHint(true, false)).toBe(evidenceHint(true))
+    expect(evidenceHint(false, false)).toMatch(/your verdict counts/i)
+    expect(outcomeDetail(revealedPoint(), "kept", true, true)).toBe(
+      "To change this mark you need to give a reason.",
+    )
+    expect(outcomeDetail(revealedPoint(), "kept", true, false)).toBe(
+      "To challenge a confident mark you need to give a reason.",
+    )
+    expect(outcomeDetail(revealedPoint(), "kept", true)).toBe(
+      "To challenge a confident mark you need to give a reason.",
+    )
+    expect(outcomeDetail(revealedPoint(), "kept", false, false)).toBeNull()
+  })
+
   it("names the evidence rule per confidence, and never an integrity flag", () => {
     expect(evidenceHint(true)).toMatch(/confident/)
     expect(evidenceHint(false)).toMatch(/your verdict counts/i)
@@ -316,11 +338,13 @@ describe("outcome copy", () => {
       outcomeDetail(revealedPoint({ evidenceVerdict: "rejected" }), "kept", true),
       outcomeDetail(revealedPoint({ absorbedByGroup: true }), "kept", true),
       outcomeDetail(revealedPoint(), "kept", true),
+      outcomeDetail(revealedPoint(), "kept", true, true),
       outcomeDetail(revealedPoint({ studentEvidence: "x" }), "pending", true),
     ].filter((s): s is string => s !== null)
     const allCopy = [
       evidenceHint(true),
       evidenceHint(false),
+      evidenceHint(true, true),
       UNAVAILABLE_COPY,
       ABSORBED_COPY,
       ...Object.values(OUTCOME_LABEL),

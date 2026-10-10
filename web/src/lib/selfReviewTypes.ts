@@ -58,6 +58,12 @@ interface SelfReviewBase {
    * marker was unsure: the student's verdict counts, reason optional.
    */
   evidenceRequired: boolean
+  /**
+   * True when the system was not sure the answer it read was matched to this
+   * question. `evidenceRequired` is also true then, but the marker was not
+   * "confident"; only the copy differs. Absent on older responses: false.
+   */
+  bindingDoubt?: boolean
 }
 
 export interface SelfReviewPending extends SelfReviewBase {

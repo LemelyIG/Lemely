@@ -251,6 +251,7 @@ export function outcomeDetail(
   point: SelfReviewRevealedPoint,
   outcome: PointOutcome,
   evidenceRequired: boolean,
+  bindingDoubt = false,
 ): string | null {
   switch (outcome) {
     case "agreed":
@@ -264,13 +265,19 @@ export function outcomeDetail(
     case "kept":
       if (point.absorbedByGroup) return ABSORBED_COPY
       if (point.evidenceVerdict === "rejected") return point.judgeReason ?? "Your reason was not accepted."
-      return evidenceRequired ? "To challenge a confident mark you need to give a reason." : null
+      if (!evidenceRequired) return null
+      return bindingDoubt
+        ? "To change this mark you need to give a reason."
+        : "To challenge a confident mark you need to give a reason."
     case "pending":
       return "Your reason could not be checked automatically. A teacher will look at it."
   }
 }
 
-export function evidenceHint(evidenceRequired: boolean): string {
+export function evidenceHint(evidenceRequired: boolean, bindingDoubt = false): string {
+  if (evidenceRequired && bindingDoubt) {
+    return "We weren't sure this answer was matched to the right question. To change a point, say what in your answer earns it."
+  }
   return evidenceRequired
     ? "The marker was confident here. To challenge a point, say what in your answer earns it."
     : "The marker was not sure about this question, so your verdict counts. Adding a reason is optional."
