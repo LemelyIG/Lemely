@@ -316,6 +316,18 @@ def test_the_notes_at_the_top_of_pages_13_and_15(
 
 
 @pytest.mark.parametrize("run", _RUNS)
+def test_no_recorded_run_has_a_listing_suspect(
+    run: int, bound: dict[int, tuple[list[StreamItem], BoundStream]]
+) -> None:
+    # Every run has blocks unbound after a container label (graph notes beside "1" and
+    # "2", a sketch beside 3(b), the arrow-tied sentence after "(b)" in run 1). None of
+    # those runs of leaves ends in a blank one: the reader put labels before writing.
+    items, result = bound[run]
+    assert [u for u in result.unbound if u.reason == "after_container_label"]
+    assert result.listing_suspects == []
+
+
+@pytest.mark.parametrize("run", _RUNS)
 def test_no_writing_is_lost(
     run: int, bound: dict[int, tuple[list[StreamItem], BoundStream]]
 ) -> None:

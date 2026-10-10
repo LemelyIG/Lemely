@@ -109,6 +109,13 @@ class BoundStream:
     leaves, each once: no label was aligned to them, or their label was aligned and
     the writing after it could not be told from a neighbour's. ``unplaced_labels`` are
     the label items no question accounts for.
+
+    ``listing_suspects`` is an observation and changes no binding. Binding rests on the
+    reader listing a label before the writing under it. A reader that lists the writing
+    first leaves one trace: in a run of leaves that follows a container label, the
+    first block falls straight after the container (unbound) and the last leaf of the
+    run is blank. Each such run is named by the id of the question or part whose label
+    opens it; a run that opens before any label, by the first leaf listed in it.
     """
 
     leaves: list[BoundLeaf]
@@ -116,6 +123,7 @@ class BoundStream:
     unaligned_ids: list[str]
     unplaced_labels: list[SeenLabel]
     inferred_numbers: list[str]
+    listing_suspects: list[str]
 
 
 # --------------------------------------------------------------------------------------
@@ -231,6 +239,7 @@ def _labels(items: Sequence[StreamItem]) -> list[_Label]:
 class _Node:
     """One question or part, at its place in paper order."""
 
+    question_id: str
     step: LabelStep | None  # None: an id no label can name
     leaf_id: str | None  # the id a label here binds; None for a container or a doubled id
     path: tuple[int, ...]  # from the question number down to this node
@@ -351,7 +360,7 @@ def _build(mark_scheme: MarkScheme) -> _Paper:
         path = (*above, index)
         binds = draft.step is not None and not draft.container and not draft.doubled
         leaf_id = draft.question_id if binds and draft.question_id not in doubled else None
-        paper.nodes.append(_Node(draft.step, leaf_id, path, draft.container))
+        paper.nodes.append(_Node(draft.question_id, draft.step, leaf_id, path, draft.container))
         if draft.step is not None:
             if above:
                 paper.kids[above[-1], draft.step] = index
@@ -375,19 +384,27 @@ def _fit(
 ) -> list[int] | None:
     """The place of a label under ``path[depth]``, reading forward from where the list is.
 
-    Its first step must be a part of ``path[depth]`` that comes after the part the list
-    is in there, no deeper than ``deepest``; each further step a part of the one before.
+    Each step must be a part of the one before it. A step may name the part the list
+    is already in (a label written with its path: "(b)(ii)" under "(b)"), as long as a
+    later step is new. The first new part must come after the one the list is in at
+    that level, and no deeper than ``deepest``.
     """
-    here = depth + 1
-    out = path[:here]
-    for options in readings:
+    out = path[: depth + 1]
+    new = False
+    for offset, options in enumerate(readings):
         child = next((paper.kids[out[-1], s] for s in options if (out[-1], s) in paper.kids), None)
         if child is None:
             return None
-        if len(out) == here and (here > deepest or (here < len(path) and child <= path[here])):
-            return None
+        here = depth + 1 + offset
+        if not new:
+            if here < len(path) and child < path[here]:
+                return None  # a part already passed
+            if here >= len(path) or child > path[here]:
+                if here > deepest:
+                    return None
+                new = True
         out.append(child)
-    return out
+    return out if new else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,6 +438,10 @@ def _span(
       part whose own label was not seen has begun. Its labels are orphans, up to the
       next label that continues the question at a higher level.
 
+    A label may be written with its path, from the question number ("3(b)(ii)") or
+    from a part ("(b)(ii)"): the steps the list is already in are named again, and the
+    label is followed for the step that is new.
+
     A position in ``stops`` (a number that may open a question with no anchor) also
     ends the question. The label at ``ignore`` is read as a stray: it ends nothing.
     """
@@ -434,14 +455,20 @@ def _span(
         if position in stops:
             return _Span(position, False, frozenset(orphans))
         label = labels[position]
-        if label.number is not None:
-            continue  # a number that is no anchor: a stray, and no part of the question
         first = label.readings[0]
+        deepest = len(path) if closed is None else closed
+        if label.number is not None:
+            # A number that is no anchor is a stray, unless it is this question's own
+            # number at the head of a path that goes on from where the list is.
+            if paper.nodes[root].step in first and len(label.readings) > 1:
+                onward = _fit(paper, path, 0, label.readings[1:], deepest)
+                if onward is not None:
+                    path, closed, loose = onward, None, []
+            continue
         if any((part, step) in paper.kids for part in loose for step in first):
             # The label before had no place; if a part's own label was missed before
             # it, this one sits under it. The question is not followed further.
             return _Span(position, False, frozenset(orphans))
-        deepest = len(path) if closed is None else closed
         placed: list[int] | None = None
         for depth in range(len(path) - 1, -1, -1):
             placed = _fit(paper, path, depth, label.readings, deepest)
@@ -491,9 +518,13 @@ def _solve(
     The score is the number of nodes given a label. A node is matched only under a
     matched parent, each node at most once, in paper order. That makes the state the
     last matched node alone: the next match must hang from it or from one of its
-    ancestors, and come after it. A label with several steps matches a parent-to-child
-    run of nodes, all of them new. Labels in ``skip`` are passed over; ``forbid`` rules
-    out one (label, node) binding.
+    ancestors, and come after it.
+
+    A label with several steps names a parent-to-child run of nodes. The run may begin
+    with nodes already matched, on the path to the last matched node (a label written
+    with its path); they are named again, not matched again, and only the rest of the
+    run scores. Labels in ``skip`` are passed over; ``forbid`` rules out one
+    (label, node) binding.
     """
     nodes = paper.nodes
     table: dict[int, tuple[int, _Trail]] = {start[-1]: (0, None)}
@@ -504,13 +535,20 @@ def _solve(
         if chains:
             before = list(table.items())
             for chain in chains:
-                first, end = chain[0], chain[-1]
-                if first == root or forbid == (position, end):
-                    continue  # the number is the anchor's, and matched once
+                end = chain[-1]
+                if forbid == (position, end):
+                    continue
                 for last, (score, trail) in before:
-                    if first <= last or nodes[first].path[-2] not in nodes[last].path:
+                    path = nodes[last].path
+                    named = 0  # steps that name parts the list is already in
+                    while named < len(chain) and chain[named] in path:
+                        named += 1
+                    if named == len(chain):
+                        continue  # nothing new
+                    new = chain[named]
+                    if new <= last or nodes[new].path[-2] not in path:
                         continue
-                    total = score + len(chain)
+                    total = score + len(chain) - named
                     if end not in table or total > table[end][0]:
                         table[end] = (total, (position, chain, trail))
                         best = max(best, total)
@@ -577,9 +615,10 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
     Candidates are chosen, at most one per question and in paper order, to maximise one
     point per anchor plus the points each question earns between its anchor and the
     next. An anchor is kept when (a) no other candidate for its question comes within
-    ``_ANCHOR_MARGIN`` of the best total; (b) the best total without the question is
-    lower by more than the number alone accounts for; and (c) it is not the last of a
-    run of numbered lines.
+    ``_ANCHOR_MARGIN`` of the best total, unless that candidate is a label of the
+    question's own span, written with its path from the number; (b) the best total
+    without the question is lower by more than the number alone accounts for; and
+    (c) it is not the last of a run of numbered lines.
     """
     cands = _candidates(paper, labels)
     if not cands:
@@ -605,12 +644,14 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
     rank = [order[cand.root] for cand in cands]
     worth = [len(cand.chain) for cand in cands]  # the number, and any parts named with it
     ahead = [0] * size  # best total from candidate i on, i chosen
+    following: list[int | None] = [None] * size  # the next anchor on that best choice
     for i in range(size - 1, -1, -1):
-        most = span(i, count)
+        most, nxt = span(i, count), None
         for j in range(i + 1, size):
-            if rank[j] > rank[i]:
-                most = max(most, span(i, cands[j].position) + ahead[j])
+            if rank[j] > rank[i] and span(i, cands[j].position) + ahead[j] > most:
+                most, nxt = span(i, cands[j].position) + ahead[j], j
         ahead[i] = worth[i] + most
+        following[i] = nxt
     behind = [0] * size  # best total before candidate i, i chosen
     for i in range(size):
         for h in range(i):
@@ -653,13 +694,25 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
         needed = _ANCHOR_MARGIN if paper.nodes[root].container else 1
         if not tops or best - without(order[root]) < needed:
             continue
-        if any(i != tops[0] and through[i] > best - _ANCHOR_MARGIN for i in mine):
-            continue  # two candidates within the margin, a tie among them
-        kept[root] = cands[tops[0]]
+        chosen = cands[tops[0]]
+        rivals = [i for i in mine if i != tops[0] and through[i] > best - _ANCHOR_MARGIN]
+        if rivals:
+            # A paper labelled with full paths ("1(a)(i)", "1(a)(ii)", "1b") gives every
+            # part a label that opens with the number. Those after the first are no
+            # rivals for the anchor: they are determined labels of its own span.
+            nxt = following[tops[0]]
+            hi = cands[nxt].position if nxt is not None else count
+            lo = chosen.position + 1
+            read = _span(paper, root, chosen.chain, labels, lo, hi, frozenset())
+            own = _determined(paper, root, chosen.chain, labels, lo, read.end, read.orphans)
+            if any(cands[i].position not in own for i in rivals):
+                continue  # two places for the number within the margin: neither
+        kept[root] = chosen
 
     # Numbered lines listed as labels ("1.", "2." under one part) are numbers too. An
-    # anchor that comes straight after the number one below it, with nothing written
-    # between them, is the last of such a run when that number is no anchor itself.
+    # anchor that comes straight after the bare number one below it, with nothing
+    # written between them, is the last of such a run when that number is no anchor
+    # itself. ("1b" before "2a" is a part of question 1, not a numbered line.)
     dropped = True
     while dropped:
         dropped = False
@@ -669,7 +722,9 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
             if before < 0 or not labels[cand.position].joined or before in anchors:
                 continue
             number, step = labels[before].number, paper.nodes[root].step
-            if number is not None and step is not None and int(number) + 1 == int(step.token):
+            if number is None or step is None or len(labels[before].readings) > 1:
+                continue
+            if int(number) + 1 == int(step.token):
                 del kept[root]
                 dropped = True
     return kept
@@ -905,12 +960,23 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
     reason: UnboundReason = "before_first_label"
     labelled: set[int] = set()
     written: set[int] = set()
+    # Runs of leaves for ``listing_suspects``: (the container that opens the run, whether
+    # a block fell straight after it, the leaves listed in the run). A block is unbound
+    # for "after_container_label" or "before_first_label" only until the next label,
+    # so the reason alone says that it fell at the opening of the run.
+    runs: list[tuple[int | None, bool, list[int]]] = []
+    opener: int | None = None
+    fell = False
+    listed: list[int] = []
     for index, item in enumerate(items):
         if isinstance(item, SeenLabel):
             if index not in node_at:
                 continue  # not a label: ignored, and no barrier
             labelled.add(item.page)
             node = node_at[index]
+            if node is not None and paper.nodes[node].container:
+                runs.append((opener, fell, listed))
+                opener, fell, listed = node, False, []
             if node is None or not (paper.nodes[node].leaf_id or paper.nodes[node].container):
                 # No question accounts for it, or two leaves share the id it names.
                 target, reason = None, "after_unplaced_label"
@@ -926,6 +992,8 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
                 seen.setdefault(node, item.text)
                 writings.setdefault(node, [])
                 stretch = node
+                if node not in listed:
+                    listed.append(node)
                 if node in doubled:
                     target, reason = None, "neighbour_left_blank"
                 elif node in unreadable:
@@ -942,6 +1010,7 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
             unbound.append(UnboundWriting(writing=item, reason=why))
             if stretch is not None:
                 set_aside.add(stretch)
+            fell = fell or why in ("after_container_label", "before_first_label")
             continue
         writings[target].append(item)
         if first_on_page and item.page not in labelled:
@@ -971,6 +1040,12 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
                 )
             )
     aligned = {leaf.question_id for leaf in leaves}
+    blank_ids = {leaf.question_id for leaf in leaves if not leaf.writings}
+    suspects = [
+        paper.nodes[run[0] if opened_by is None else opened_by].question_id
+        for opened_by, block_fell, run in [*runs, (opener, fell, listed)]
+        if block_fell and run and paper.nodes[run[-1]].leaf_id in blank_ids
+    ]
     inferred_numbers = [
         step.token for root in sorted(inferred) if (step := paper.nodes[root].step) is not None
     ]
@@ -980,4 +1055,5 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
         unaligned_ids=[leaf_id for leaf_id in paper.leaf_ids if leaf_id not in aligned],
         unplaced_labels=unplaced,
         inferred_numbers=inferred_numbers,
+        listing_suspects=list(dict.fromkeys(suspects)),
     )

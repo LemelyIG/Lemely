@@ -218,6 +218,7 @@ def test_a_clean_stream_binds_every_leaf_to_its_own_writing(scheme_41: MarkSchem
     assert bound.unaligned_ids == []
     assert bound.unplaced_labels == []
     assert bound.inferred_numbers == []
+    assert bound.listing_suspects == []
     assert all(not leaf.number_inferred and leaf.doubts == [] for leaf in bound.leaves)
     assert bound.leaves[0].label_seen == "(i)"
 
@@ -278,52 +279,78 @@ def test_a_merged_label_binds_both_of_its_steps(scheme_41: MarkScheme) -> None:
     assert next(leaf for leaf in bound.leaves if leaf.question_id == "2b_i").label_seen == "(b) (i)"
 
 
-def test_a_full_path_label_inside_its_own_question_is_a_second_candidate(
-    scheme_41: MarkScheme,
-) -> None:
+def test_a_full_path_label_in_its_own_place_binds_its_leaf(scheme_41: MarkScheme) -> None:
     # "3(b)(ii)" where "(ii)" stands, after "3" and "(b)" were listed on their own. It
-    # opens with the number 3, so it is a second candidate for question 3, and as an
-    # anchor it scores within two points of the real one. Rule 2 keeps neither; the
-    # label is never split into a "(ii)" for whatever part the list is in.
+    # names the question and the part the list is already in, and one part more: only
+    # that last step is new. It is no second anchor for question 3.
     stream = _clean(scheme_41)
     at = stream.index("=3b_ii") - 1
-    stream[at] = "3(b)(ii)"
-    bound = bind_stream(_items(*stream), scheme_41)
-    _own_or_absent(bound)
-    assert [leaf for leaf in bound.unaligned_ids if leaf.startswith("3")] == [
-        "3a",
-        "3b_i",
-        "3b_ii",
-        "3c",
-    ]
-    assert _unplaced(bound)[:2] == ["3", "(a)"]
-    assert "3(b)(ii)" in _unplaced(bound)
-    assert _on(bound)["4a"] == ["4a"]
+    for text in ("3(b)(ii)", "Q3 b ii", "(b)(ii)", "3bii"):
+        stream[at] = text
+        bound = bind_stream(_items(*stream), scheme_41)
+        assert bound.unaligned_ids == [], text
+        assert bound.unplaced_labels == [], text
+        assert _on(bound)["3b_ii"] == ["3b_ii"], text
+        assert next(leaf for leaf in bound.leaves if leaf.question_id == "3b_ii").label_seen == text
 
 
-def test_a_paper_labelled_with_full_paths_binds_only_what_one_label_names(
-    scheme_41: MarkScheme,
-) -> None:
-    # Every label written with its path. Three labels open with 1 and tie as anchors
-    # for question 1, so it is not aligned. "Q2 a" is the one candidate for question 2
-    # and names 2a whole.
-    scheme = _scheme(scheme_41, {"1": {"1a": {"1a_i": {}, "1a_ii": {}}, "1b": {}}, "2": {"2a": {}}})
-    stream = ["1(a)(i)", "=1a_i", "1(a)(ii)", "=1a_ii", "1 (b)", "=1b", "Q2 a", "=2a"]
+def test_a_paper_labelled_with_full_paths_binds_every_leaf(scheme_41: MarkScheme) -> None:
+    # Answers on separate sheets, every label written with its path.
+    scheme = _scheme(
+        scheme_41,
+        {"1": {"1a": {"1a_i": {}, "1a_ii": {}}, "1b": {}}, "2": {"2a": {}}, "3": {}},
+    )
+    stream = ["1(a)(i)", "=1a_i", "1(a)(ii)", "=1a_ii", "1b", "=1b", "Q2 a", "=2a", "3", "=3"]
     bound = bind_stream(_items(*stream), scheme)
-    _own_or_absent(bound)
-    assert _on(bound) == {"2a": ["2a"]}
-    assert bound.unaligned_ids == ["1a_i", "1a_ii", "1b"]
-    assert next(leaf for leaf in bound.leaves).label_seen == "Q2 a"
+    assert _on(bound) == {leaf: [leaf] for leaf in ("1a_i", "1a_ii", "1b", "2a", "3")}
+    assert bound.unplaced_labels == []
+    assert bound.unbound == []
+    assert [leaf.label_seen for leaf in bound.leaves] == ["1(a)(i)", "1(a)(ii)", "1b", "Q2 a", "3"]
+    # Bare labels after full ones go on from where the full ones left the list.
+    scheme_b = _scheme(
+        scheme_41,
+        {"1": {"1a": {"1a_i": {}, "1a_ii": {}}, "1b": {"1b_i": {}, "1b_ii": {}}}, "2": {"2a": {}}},
+    )
+    for opening in (["1(a)(i)", "=1a_i", "1(a)(ii)"], ["1", "(a)", "(i)", "=1a_i", "(ii)"]):
+        stream = [*opening, "=1a_ii", "1(b)(i)", "=1b_i", "(ii)", "=1b_ii", "2", "(a)", "=2a"]
+        bound = bind_stream(_items(*stream), scheme_b)
+        assert bound.unaligned_ids == [], opening
+        assert _on(bound)["1b_ii"] == ["1b_ii"], opening
+    # With the last part of question 1 left blank, "Q2 a" comes straight after "1b":
+    # a label of question 1, not a numbered line before the number 2.
+    stream = ["1(a)(i)", "=1a_i", "1(a)(ii)", "=1a_ii", "1b", "Q2 a", "=2a", "3", "=3"]
+    bound = bind_stream(_items(*stream), scheme)
+    assert _on(bound) == {"1a_i": ["1a_i"], "1a_ii": ["1a_ii"], "1b": [], "2a": ["2a"], "3": ["3"]}
 
 
-def test_a_part_label_that_repeats_its_parent_is_a_restart(scheme_41: MarkScheme) -> None:
-    # "(a)(i)" then "(a)(ii)": the second names a top-level part the list is already
-    # in. That is a restart; nothing under it is bound.
+def test_a_part_label_may_repeat_the_part_it_sits_under(scheme_41: MarkScheme) -> None:
     scheme = _scheme(scheme_41, {"1": {"1a": {"1a_i": {}, "1a_ii": {}}, "1b": {}}, "2": {"2a": {}}})
     stream = ["1", "(a)(i)", "=1a_i", "(a)(ii)", "=1a_ii", "(b)", "=1b", "2", "(a)", "=2a"]
     bound = bind_stream(_items(*stream), scheme)
+    assert _on(bound) == {leaf: [leaf] for leaf in ("1a_i", "1a_ii", "1b", "2a")}
+    assert bound.unplaced_labels == []
+
+
+def test_a_full_path_label_that_goes_back_binds_nothing(scheme_41: MarkScheme) -> None:
+    # A restated path must still move forward. "1(a)(i)" after "1(a)(ii)" is out of
+    # order; "(a)(i)" after "(a)(ii)" repeats a part already passed, which is a restart.
+    scheme = _scheme(scheme_41, {"1": {"1a": {"1a_i": {}, "1a_ii": {}}, "1b": {}}, "2": {"2a": {}}})
+    for late in ("1(a)(i)", "(a)(i)"):
+        stream = ["1", "(a)", "(ii)", "=1a_ii", late, "=1a_i", "(b)", "=1b", "2", "(a)", "=2a"]
+        bound = bind_stream(_items(*stream), scheme)
+        _own_or_absent(bound)
+        assert "1a_i" in bound.unaligned_ids, late
+        assert ("1a_i", "after_unplaced_label") in _unbound(bound), late
+        assert _on(bound)["2a"] == ["2a"], late
+
+
+def test_two_full_path_labels_for_one_leaf_decide_nothing(scheme_41: MarkScheme) -> None:
+    scheme = _scheme(scheme_41, {"1": {"1a": {"1a_i": {}, "1a_ii": {}}, "1b": {}}, "2": {"2a": {}}})
+    stream = ["1(a)(i)", "=1a_i", "1(a)(i)", "=again", "1(a)(ii)", "=1a_ii", "1b", "=1b"]
+    bound = bind_stream(_items(*stream, "2", "(a)", "=2a"), scheme)
     _own_or_absent(bound)
-    assert {"1a_ii", "1b"} <= set(bound.unaligned_ids)
+    assert "again" not in [answer for answers in _on(bound).values() for answer in answers]
+    assert "1a_i" in bound.unaligned_ids
     assert _on(bound)["2a"] == ["2a"]
 
 
@@ -745,6 +772,33 @@ def test_a_leaf_needs_its_whole_path(scheme_41: MarkScheme) -> None:
     assert _on(bound)["2a_i"] == ["2a_i"]
 
 
+def test_only_the_questions_own_top_level_parts_count_for_a_restart(
+    scheme_41: MarkScheme,
+) -> None:
+    # Question 1 has parts (a), (b), (c). A stray "(e)", and an "(i)" read as "(l)", are
+    # letters, and neither is a part of this question: the "(b)" after them is not "a
+    # letter not greater than one already seen", and the question goes on. (Read
+    # literally, the brief's restart rule would end question 1 at that "(b)".)
+    for stray in ("(e)", "(l)", "(z)"):
+        stream = _cut(_clean(scheme_41), after={"=1a_ii": [stray]})
+        bound = bind_stream(_items(*stream), scheme_41)
+        assert bound.unaligned_ids == [], stray
+        assert _unplaced(bound) == [stray], stray
+        assert _on(bound)["1b"] == ["1b"], stray
+        assert _on(bound)["1c_ii"] == ["1c_ii"], stray
+    # The misread itself: 1a's "(i)" listed as "(l)". It costs its own leaf only.
+    stream = _clean(scheme_41)
+    stream[stream.index("=1a_i") - 1] = "(l)"
+    bound = bind_stream(_items(*stream), scheme_41)
+    assert bound.unaligned_ids == ["1a_i"]
+    assert _on(bound)["1a_ii"] == ["1a_ii"]
+    assert _on(bound)["1b"] == ["1b"]
+    # One of the question's own parts out of order is a restart, as before.
+    stream = _cut(_clean(scheme_41), after={"=1a_ii": ["(c)"]})
+    bound = bind_stream(_items(*stream), scheme_41)
+    assert "1b" in bound.unaligned_ids
+
+
 def test_i_is_a_letter_when_the_paper_says_so(scheme_41: MarkScheme) -> None:
     scheme = _scheme(scheme_41, {"1": {f"1{c}": {} for c in "abcdefghi"}})
     bound = bind_stream(_items(*_clean(scheme)), scheme)
@@ -1101,7 +1155,18 @@ def test_known_limit_a_reader_that_lists_writing_before_its_label_shifts_the_pap
     # see it. What is left to see: the first block of each group falls after a
     # container label, and the last leaf of the group is blank. This test pins the
     # limit; it does not approve of it.
-    clean = _clean(scheme_41)
+    stream = _writing_first(_clean(scheme_41))
+    bound = bind_stream(_items(*stream), scheme_41)
+    on = _on(bound)
+    assert on["1a_i"] == ["1a_ii"]
+    assert on["1a_ii"] == ["1b"]
+    assert on["1b"] == []
+    assert ("1a_i", "after_container_label") in _unbound(bound)
+    assert bound.unplaced_labels == []
+
+
+def _writing_first(clean: list[str]) -> list[str]:
+    """``clean`` as a reader lists it who puts each block before the label it is under."""
     stream: list[str] = []
     at = 0
     while at < len(clean):
@@ -1111,13 +1176,125 @@ def test_known_limit_a_reader_that_lists_writing_before_its_label_shifts_the_pap
         else:
             stream.append(clean[at])
             at += 1
+    return stream
+
+
+def test_listing_suspects_name_every_group_of_the_known_limit_stream(
+    scheme_41: MarkScheme,
+) -> None:
+    # Writing listed before its label: within each run of leaves that follows a
+    # container label, the first block falls after the container and the last leaf is
+    # blank. Every such run is named by the container that opens it.
+    bound = bind_stream(_items(*_writing_first(_clean(scheme_41))), scheme_41)
+    containers = [q.id for q in scheme_41.all_questions_flat() if q.parts]
+    # A container followed straight by another container (1 then 1a) opens no run.
+    opens_a_run = [q.id for q in scheme_41.all_questions_flat() if q.parts and not q.parts[0].parts]
+    assert bound.listing_suspects == opens_a_run
+    assert set(bound.listing_suspects) < set(containers)
+    assert bound.listing_suspects[:5] == ["1a", "1c", "2a", "2b", "3"]
+
+
+def test_listing_suspects_on_a_paper_with_no_parts(scheme_41: MarkScheme) -> None:
+    scheme = _scheme(scheme_41, {str(n): {} for n in range(1, 6)})
+    bound = bind_stream(_items(*_writing_first(_clean(scheme))), scheme)
+    assert _unbound(bound) == [("1", "before_first_label")]
+    assert _on(bound)["5"] == []
+    # The run opens before any label; it is named by the first leaf listed in it.
+    assert bound.listing_suspects == ["1"]
+
+
+def test_a_clean_stream_has_no_listing_suspects(scheme_41: MarkScheme) -> None:
+    assert bind_stream(_items(*_clean(scheme_41)), scheme_41).listing_suspects == []
+    # A blank last leaf alone is no suspect, and neither is a note beside a number.
+    stream = [part for part in _clean(scheme_41) if part not in ("=1c_ii", "=7c")]
+    assert bind_stream(_items(*stream), scheme_41).listing_suspects == []
+    stream = _cut(_clean(scheme_41), after={"2": ["=graph note"], "(c)": ["=stem note"]})
     bound = bind_stream(_items(*stream), scheme_41)
-    on = _on(bound)
-    assert on["1a_i"] == ["1a_ii"]
-    assert on["1a_ii"] == ["1b"]
-    assert on["1b"] == []
-    assert ("1a_i", "after_container_label") in _unbound(bound)
-    assert bound.unplaced_labels == []
+    assert [reason for _, reason in _unbound(bound)] == ["after_container_label"] * 2
+    assert bound.listing_suspects == []
+    # Both at once in one run is the trace: a block after "(c)" and 1c_ii blank.
+    stream = [part for part in stream if part != "=1c_ii"]
+    assert bind_stream(_items(*stream), scheme_41).listing_suspects == ["1c"]
+
+
+def test_listing_suspects_change_no_binding(scheme_41: MarkScheme) -> None:
+    stream = [part for part in _clean(scheme_41) if part != "=1c_ii"]
+    plain = bind_stream(_items(*stream), scheme_41)
+    noted = bind_stream(_items(*_cut(stream, after={"(c)": ["=stem note"]})), scheme_41)
+    assert noted.listing_suspects == ["1c"]
+    assert _on(noted) == _on(plain)
+    assert noted.unaligned_ids == plain.unaligned_ids
+
+
+def test_known_limit_a_label_that_names_the_wrong_part(scheme_41: MarkScheme) -> None:
+    # 9(c)(iii) is read as "(iv)" and the real "(iv)" is missed. The label says (iv) and
+    # two blocks follow it: item for item, a script whose (iii) label was missed with
+    # nothing written under it. The list cannot say otherwise, so 9c_iii's writing is
+    # on 9c_iv. Found by a battery that reads a label as its neighbour (not one of the
+    # brief's fault kinds). This test pins the limit; it does not approve of it.
+    stream = _clean(scheme_41)
+    stream[stream.index("=9c_iii") - 1] = "(iv)"
+    del stream[stream.index("=9c_iv") - 1]
+    assert stream[-5:] == ["(ii)", "=9c_ii", "(iv)", "=9c_iii", "=9c_iv"]
+    bound = bind_stream(_items(*stream), scheme_41)
+    assert _on(bound)["9c_iv"] == ["9c_iii", "9c_iv"]
+    assert ("9c_ii", "next_label_not_seen") in _unbound(bound)
+
+
+def test_known_gap_a_misread_number_wins_the_anchor_when_the_true_question_is_cut_short(
+    scheme_41: MarkScheme,
+) -> None:
+    # Question 5's number is read as 4. Alone, that is safe: two candidates for
+    # question 4 tie and neither is kept. With question 4's own "(b)" missed as well,
+    # the true question earns less than the false one, which wins by the margin, and
+    # question 5's writing lands on question 4's leaves. This is a gap in rule 2, not
+    # a limit of the list: there are two places that look like question 4, and the
+    # rule picks one on points. Reported to the controller; pinned until it is decided.
+    scheme = _scheme(
+        scheme_41,
+        {
+            "4": {
+                "4a": {},
+                "4b": {"4b_i": {}, "4b_ii": {}},
+                "4c": {"4c_i": {}, "4c_ii": {}, "4c_iii": {}},
+            },
+            "5": {
+                "5a": {},
+                "5b": {"5b_i": {}, "5b_ii": {}},
+                "5c": {"5c_i": {}, "5c_ii": {}},
+                "5d": {},
+            },
+            "6": {"6a": {}},
+        },
+    )
+    stream = _clean(scheme)
+    stream[stream.index("5")] = "4"
+    bound = bind_stream(_items(*stream), scheme)
+    assert _on(bound) == {"6a": ["6a"]}  # the misread alone: neither question is bound
+    del stream[stream.index("(b)")]
+    bound = bind_stream(_items(*stream), scheme)
+    assert _on(bound)["4a"] == ["5a"]
+    assert _on(bound)["4b_i"] == ["5b_i"]
+    assert _on(bound)["4c_i"] == ["5c_i"]
+
+
+def test_known_gap_a_later_label_stands_in_for_the_missed_next_one(
+    scheme_41: MarkScheme,
+) -> None:
+    # 6(b) and the whole first label of question 7 are missed ("7(a)" as one label:
+    # one miss takes the number with it). The "(b)" that follows is 7's, and it is
+    # exactly the label the paper prints after 6a, so 6a is bracketed and keeps three
+    # blocks. The "(c)" after it, which question 6 does not have, is the only sign.
+    # Reported to the controller; pinned until it is decided.
+    scheme = _scheme(
+        scheme_41,
+        {"6": {"6a": {}, "6b": {}}, "7": {"7a": {}, "7b": {}, "7c": {}}, "8": {"8a": {}}},
+    )
+    stream = ["6(a)", "=6a", "=6b", "=7a", "(b)", "=7b", "(c)", "=7c", "8(a)", "=8a"]
+    bound = bind_stream(_items(*stream), scheme)
+    assert _on(bound)["6a"] == ["6a", "6b", "7a"]
+    assert _unplaced(bound) == ["(c)"]
+    assert ("7b", "next_label_not_seen") in _unbound(bound)
 
 
 def test_a_missed_label_with_nothing_written_near_it_leaves_a_blank(scheme_41: MarkScheme) -> None:

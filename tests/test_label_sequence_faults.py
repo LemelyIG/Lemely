@@ -137,6 +137,28 @@ class Paper:
             return "Q" + " ".join(tokens)  # Q3 b ii
         return f"Q{tokens[0]} " + " ".join(f"({t})" for t in tokens[1:])  # Q5 (b) (i)
 
+    def full_paths(self, style: int, *, first_only: bool = False) -> list[Entry]:
+        """The paper as a student labels separate sheets: every leaf by its full path.
+
+        No container has a label of its own. With ``first_only`` the first leaf of each
+        question carries its path and the labels after it are the bare ones.
+        """
+        leaves = [j for j in range(len(self.ids)) if self.is_leaf[j]]
+        opening = {self.question(j): j for j in reversed(leaves)}  # question -> its first leaf
+        on_opening_path = {k for j in opening.values() for k in self.path(j)}
+        stream: list[Entry] = []
+        for j, leaf_id in enumerate(self.ids):
+            if not self.is_leaf[j]:
+                if first_only and j not in on_opening_path:
+                    stream.append(_label(self.label(j)))
+                continue
+            whole = self.parent[j] is not None and (
+                not first_only or opening[self.question(j)] == j
+            )
+            stream.append(_label(self.full_path_text(j, style) if whole else self.label(j)))
+            stream.append(_writing(leaf_id))
+        return stream
+
     def perfect(self) -> tuple[list[Entry], list[int]]:
         """The clean stream, and for each node the index of its label in it."""
         stream: list[Entry] = []
@@ -213,6 +235,8 @@ def _check_contract(paper: Paper, items: list[StreamItem], result: BoundStream) 
     assert sorted(placed) == sorted(writings), "writing lost or bound twice"
     labels = {id(i) for i in items if isinstance(i, SeenLabel)}
     assert all(id(label) in labels for label in result.unplaced_labels)
+    assert len(result.listing_suspects) == len(set(result.listing_suspects))
+    assert set(result.listing_suspects) <= set(paper.ids)
     for leaf in result.leaves:
         number = leaf.question_id[
             : len(leaf.question_id) - len(leaf.question_id.lstrip("0123456789"))
@@ -809,6 +833,130 @@ def test_clean_stream_binds_every_unique_leaf_of_every_corpus_scheme() -> None:
             "continues from the previous page"
         }, path.name
     assert with_duplicates == 7
+
+
+@pytest.mark.parametrize("name", _BATTERY_SCHEMES)
+@pytest.mark.parametrize("style", [0, 1, 2], ids=["3(b)(ii)", "Q3 b ii", "Q3 (b) (ii)"])
+def test_a_paper_labelled_with_full_paths_binds_every_leaf(name: str, style: int) -> None:
+    paper = _paper(name)
+    stream = paper.full_paths(style)
+    assert not any(e.text.startswith("(") for e in stream if not e.writing)
+    verdict = judge(paper, stream)
+    assert verdict.wrong == []
+    assert verdict.own == paper.bindable
+    result = bind_stream(_render(stream), paper.scheme)
+    assert result.unbound == []
+    assert result.unplaced_labels == []
+    assert result.listing_suspects == []
+
+
+@pytest.mark.parametrize("name", _BATTERY_SCHEMES)
+@pytest.mark.parametrize("style", [0, 1, 2], ids=["3(b)(ii)", "Q3 b ii", "Q3 (b) (ii)"])
+def test_a_full_path_at_the_first_part_and_bare_labels_after_bind_every_leaf(
+    name: str, style: int
+) -> None:
+    paper = _paper(name)
+    stream = paper.full_paths(style, first_only=True)
+    verdict = judge(paper, stream)
+    assert verdict.wrong == []
+    assert verdict.own == paper.bindable
+    result = bind_stream(_render(stream), paper.scheme)
+    assert result.unbound == []
+    assert result.unplaced_labels == []
+
+
+def full_path_faults(paper: Paper, base: list[Entry]) -> Fault:
+    """The brief's fault kinds on a paper labelled with full paths.
+
+    Every label missed; every label read twice, and seen again after its writing; a
+    stray at every place in the list: two bare part labels, a bare number, a numbered
+    line, and four of the paper's own full-path labels.
+    """
+    labels = [k for k, e in enumerate(base) if not e.writing]
+    for k in labels:
+        yield [*base[:k], *base[k + 1 :]], set(), f"drop {base[k].text}"
+        yield _insert(base, k + 1, base[k]), set(), f"read {base[k].text} twice"
+        if k + 1 < len(base) and base[k + 1].writing:
+            yield _insert(base, k + 2, base[k]), set(), f"{base[k].text} again after its writing"
+    step = max(1, len(labels) // 4)
+    own = [base[k].text for k in labels[::step][:4]]
+    for text in ["(a)", "(i)", "2", "1.", *own]:
+        for p in range(len(base) + 1):
+            yield _insert(base, p, _label(text)), set(), f"stray {text} at item {p}"
+
+
+def _full_path_random(rng: random.Random, base: list[Entry]) -> tuple[list[Entry], str]:
+    stream, what = list(base), []
+    texts = [e.text for e in base if not e.writing]
+    for _ in range(rng.randint(2, 4)):
+        labels = [k for k, e in enumerate(stream) if not e.writing]
+        kind = rng.choice(["drop", "dup", "stray", "lines"])
+        k = rng.choice(labels)
+        if kind == "drop" and len(labels) > 1:
+            stream = [*stream[:k], *stream[k + 1 :]]
+        elif kind == "dup":
+            stream = _insert(stream, k + rng.choice([1, 2]), stream[k])
+        elif kind == "stray":
+            text = rng.choice([*texts, "(a)", "(b)", "(i)", "(ii)", str(rng.randint(1, 12))])
+            stream = _insert(stream, rng.randrange(len(stream) + 1), _label(text))
+        else:
+            lines = [_label(f"{n}.") for n in range(1, rng.randint(2, 4))]
+            stream = _insert(stream, k + rng.choice([1, 2]), *lines)
+        what.append(f"{kind}@{k}")
+    return stream, ", ".join(what)
+
+
+def run_full_path_faults(
+    papers: list[Paper], random_trials: int, styles: tuple[int, ...] = (0, 1)
+) -> list[Tally]:
+    """Tallies for the two ways of labelling: single faults, then random 2 to 4, for each."""
+    tallies = []
+    for first_only in (False, True):
+        labelling = "first part only" if first_only else "every leaf"
+        single = Tally(f"full paths, {labelling}: single fault")
+        mixed = Tally(f"full paths, {labelling}: random 2-4 faults")
+        for paper in papers:
+            for style in styles:
+                base = paper.full_paths(style, first_only=first_only)
+                for stream, may_lose, what in full_path_faults(paper, base):
+                    single.add(paper, stream, may_lose, what)
+            for style in (0, 1):
+                base = paper.full_paths(style, first_only=first_only)
+                rng = random.Random(f"{paper.name}/{style}/{first_only}")
+                for _ in range(random_trials):
+                    stream, what = _full_path_random(rng, base)
+                    mixed.add(paper, stream, set(), what)
+        tallies += [single, mixed]
+    return tallies
+
+
+@cache
+def _full_path_tallies() -> tuple[Tally, ...]:
+    return tuple(run_full_path_faults(_battery_papers(), 60, styles=(0,)))
+
+
+def test_faults_on_full_path_papers_never_put_writing_on_another_leaf() -> None:
+    every_single, every_random, first_single, _ = _full_path_tallies()
+    assert every_single.trials > 3_500
+    assert first_single.trials > 3_500
+    assert every_random.trials == 600
+    assert every_single.examples == []
+    assert every_random.examples == []
+    assert first_single.examples == []
+
+
+def test_known_gap_random_faults_where_the_first_part_carries_the_number() -> None:
+    # Not at zero: 2 of 600. Where the first label of a question is "7(a)", one missed
+    # label takes the number, the container and the part with it, and a second miss in
+    # the question before then lets a later "(b)" stand in for the missed next label.
+    # The same stream goes wrong with bare labels (three misses), and went wrong before
+    # full paths were followed: it is the gap pinned in tests/test_label_sequence.py
+    # (test_known_gap_a_later_label_stands_in_for_the_missed_next_one). The count is
+    # pinned so that a fix has to come and change it.
+    *_, first_random = _full_path_tallies()
+    assert first_random.trials == 600
+    assert first_random.wrong_trials == 2
+    assert all("drop" in example for example in first_random.examples)
 
 
 @pytest.mark.parametrize("case", CRITICAL, ids=[c["name"] for c in CRITICAL])
