@@ -1227,11 +1227,21 @@ def test_listing_suspects_change_no_binding(scheme_41: MarkScheme) -> None:
 
 
 def test_known_limit_a_label_that_names_the_wrong_part(scheme_41: MarkScheme) -> None:
-    # 9(c)(iii) is read as "(iv)" and the real "(iv)" is missed. The label says (iv) and
-    # two blocks follow it: item for item, a script whose (iii) label was missed with
-    # nothing written under it. The list cannot say otherwise, so 9c_iii's writing is
-    # on 9c_iv. Found by a battery that reads a label as its neighbour (not one of the
-    # brief's fault kinds). This test pins the limit; it does not approve of it.
+    """A label read as a different valid label, while the real one is missed.
+
+    9(c)(iii) is read as "(iv)" and the real "(iv)" is missed. The label says (iv) and
+    two blocks follow it: item for item, a script whose (iii) label was missed with
+    nothing written under it. No order-based rule can see it, so 9c_iii's writing is
+    on 9c_iv.
+
+    Measured on the five battery schemes with bare labels: a label read as the label
+    listed beside it, and that label missed, puts writing on a wrong leaf in 226 of
+    526 trials. Each of the two faults alone: 0 of 526. What can still catch it: the
+    marker's check that an answer addresses its question (G8), and a second read that
+    disagrees on the label.
+
+    This test pins the limit; it does not approve of it.
+    """
     stream = _clean(scheme_41)
     stream[stream.index("=9c_iii") - 1] = "(iv)"
     del stream[stream.index("=9c_iv") - 1]
@@ -1241,17 +1251,49 @@ def test_known_limit_a_label_that_names_the_wrong_part(scheme_41: MarkScheme) ->
     assert ("9c_ii", "next_label_not_seen") in _unbound(bound)
 
 
-def test_known_gap_a_misread_number_wins_the_anchor_when_the_true_question_is_cut_short(
+def test_known_limit_a_question_number_that_names_the_wrong_question(
     scheme_41: MarkScheme,
 ) -> None:
-    # Question 5's number is read as 4. Alone, that is safe: two candidates for
-    # question 4 tie and neither is kept. With question 4's own "(b)" missed as well,
-    # the true question earns less than the false one, which wins by the margin, and
-    # question 5's writing lands on question 4's leaves. This is a gap in rule 2, not
-    # a limit of the list: there are two places that look like question 4, and the
-    # rule picks one on points. Reported to the controller; pinned until it is decided.
-    scheme = _scheme(
-        scheme_41,
+    """The same limit on a paper with no parts: 3 read as 2, and the real 2 missed.
+
+    The list reads 1, w, w, 2, w, 4: question 1 answered in two blocks, 2 answered, 3
+    not listed. Question 2's writing is on question 1, and question 3's would be on 2
+    if the unseen 3 did not leave question 2 unbracketed. With parts, a number read as
+    its neighbour while the neighbour's own number is missed goes wrong in 106 of 150
+    trials. This test pins the limit; it does not approve of it.
+    """
+    scheme = _scheme(scheme_41, {str(n): {} for n in range(1, 6)})
+    bound = bind_stream(_items("1", "=1", "=2", "2", "=3", "4", "=4", "5", "=5"), scheme)
+    assert _on(bound) == {"1": ["1", "2"], "4": ["4"], "5": ["5"]}
+    assert ("3", "next_label_not_seen") in _unbound(bound)
+
+
+def test_known_gap_two_labels_for_one_part_and_the_false_one_earns_more(
+    scheme_41: MarkScheme,
+) -> None:
+    """Rule 2's gap one level down, found by the wider battery; not fixed, not ruled on.
+
+    5(b) is read as "(c)", so the list has two (c)s, each followed by "(i)". Alone that
+    is a tie and neither is 5c. With 5c's own "(ii)" read as "(d)" as well, the false
+    (c) is followed by (i) (ii) and the true one by (i) only: the false one aligns one
+    part more, the alignment is unique, and 5b_i's writing is on 5c_i. Rate: 1 of
+    5,000 random trials of two to four faults on bare labels. A fix on the lines of
+    the one for question numbers (two labels that each could open the part: neither)
+    is proposed in the report.
+    """
+    scheme = _questions_4_to_6(scheme_41)
+    stream = _clean(scheme)
+    stream[stream.index("=5b_i") - 2] = "(c)"
+    bound = bind_stream(_items(*stream), scheme)
+    assert not [leaf for leaf in _on(bound) if leaf.startswith(("5b", "5c"))]  # the tie
+    stream[stream.index("=5c_ii") - 1] = "(d)"
+    bound = bind_stream(_items(*stream), scheme)
+    assert _on(bound)["5c_i"] == ["5b_i"]
+
+
+def _questions_4_to_6(template: MarkScheme) -> MarkScheme:
+    return _scheme(
+        template,
         {
             "4": {
                 "4a": {},
@@ -1267,15 +1309,99 @@ def test_known_gap_a_misread_number_wins_the_anchor_when_the_true_question_is_cu
             "6": {"6a": {}},
         },
     )
+
+
+def test_two_numbers_that_each_claim_parts_unanchor_the_question(scheme_41: MarkScheme) -> None:
+    # Question 5's number is read as 4. There are then two 4s, and each is followed by
+    # parts of the right shape. Which earns more says nothing about which is the real
+    # one: with question 4's own "(b)" missed, or a stray "(b)" cutting it short, the
+    # false one earns more, and on points alone question 5's writing would land on
+    # question 4's leaves. Neither is kept, whatever the margin.
+    scheme = _questions_4_to_6(scheme_41)
+    misread = _clean(scheme)
+    misread[misread.index("5")] = "4"
+    missed = list(misread)
+    del missed[missed.index("(b)")]
+    stray = _cut(misread, after={"=4b_i": ["(b)"]})
+    for name, stream in (("misread alone", misread), ("(b) missed", missed), ("stray (b)", stray)):
+        bound = bind_stream(_items(*stream), scheme)
+        _own_or_absent(bound)
+        assert _on(bound) == {"6a": ["6a"]}, name
+        assert [label for label in _unplaced(bound) if label == "4"] == ["4", "4"], name
+
+
+def test_a_true_number_claims_its_parts_however_little_it_earns(scheme_41: MarkScheme) -> None:
+    # Two more streams of the same kind, from the battery. In each the true number is
+    # followed by parts of its own that the false one, further on, cannot reach, and
+    # that is enough to make it a rival.
+    # The last question's number read as 8, and 8's own (a) missed: on points the true
+    # 8 is best aligned to question 9's labels, past the false 8; its own stretch ends
+    # at the false one, and there it still has (b) and (c).
+    scheme = _scheme(
+        scheme_41,
+        {
+            "7": {"7a": {}},
+            "8": {"8a": {"8a_i": {}, "8a_ii": {}, "8a_iii": {}}, "8b": {}, "8c": {}},
+            "9": {"9a": {"9a_i": {}, "9a_ii": {}, "9a_iii": {}}, "9b": {}},
+        },
+    )
     stream = _clean(scheme)
-    stream[stream.index("5")] = "4"
+    stream[stream.index("9")] = "8"
+    del stream[stream.index("=8a_i") - 2]
     bound = bind_stream(_items(*stream), scheme)
-    assert _on(bound) == {"6a": ["6a"]}  # the misread alone: neither question is bound
-    del stream[stream.index("(b)")]
+    _own_or_absent(bound)
+    assert _on(bound) == {}
+    assert [label for label in _unplaced(bound) if label == "8"] == ["8", "8"]
+    # Question 8's number read as 7, and 7's own (a) missed, on a question with a
+    # fourth level: read as it will be, the true 7 is cut short at once (D5) and binds
+    # nothing. Read on, it has parts, and that is what counts for a claim.
+    scheme = _scheme(
+        scheme_41,
+        {
+            "7": {
+                "7a": {"7a_i": {}, "7a_ii": {"7a_ii_a": {}, "7a_ii_b": {}}},
+                "7b": {"7b_i": {}, "7b_ii": {}},
+                "7c": {},
+            },
+            "8": {"8a": {"8a_i": {}, "8a_ii": {}, "8a_iii": {}}, "8b": {}, "8c": {}},
+            "9": {"9a": {}},
+        },
+    )
+    stream = _clean(scheme)
+    stream[stream.index("8")] = "7"
+    del stream[stream.index("=7a_i") - 2]
     bound = bind_stream(_items(*stream), scheme)
-    assert _on(bound)["4a"] == ["5a"]
-    assert _on(bound)["4b_i"] == ["5b_i"]
-    assert _on(bound)["4c_i"] == ["5c_i"]
+    _own_or_absent(bound)
+    assert _on(bound) == {"9a": ["9a"]}
+
+
+def test_a_number_where_its_question_cannot_start_is_no_rival(scheme_41: MarkScheme) -> None:
+    # C1b: a page number 2 at the head of the list, and "(a)" listed before "1". The
+    # stray 2 is followed by a part nobody else binds, but it stands before question
+    # 1's anchor, where question 2 cannot start. The real 2 stands.
+    stream = _clean(scheme_41)
+    stream[0:2] = ["2", "(a)", "1"]
+    bound = bind_stream(_items(*stream), scheme_41)
+    _own_or_absent(bound)
+    assert _unplaced(bound)[:2] == ["2", "(a)"]
+    assert [leaf for leaf in bound.unaligned_ids if leaf.startswith("2")] == []
+    assert _on(bound)["2a_i"] == ["2a_i"]
+
+
+def test_a_number_that_takes_its_parts_from_a_neighbour_claims_nothing(
+    scheme_41: MarkScheme,
+) -> None:
+    # A second candidate counts against the real one only when it earns parts of its
+    # own. A stray 2 straight after 1 can be followed by "(a) (i) (ii) …", but those are
+    # question 1's labels and question 1 loses what the stray gains: it claims nothing,
+    # and the real 2 stands. The same for a numbered line "2." inside question 1.
+    for extra in ({"1": ["2"]}, {"=1a_i": ["2."]}, {"(i)": ["1.", "2."]}):
+        stream = _cut(_clean(scheme_41), after=extra)
+        bound = bind_stream(_items(*stream), scheme_41)
+        _own_or_absent(bound)
+        assert [leaf for leaf in bound.unaligned_ids if leaf.startswith("2")] == [], extra
+        assert _on(bound)["2a_i"] == ["2a_i"], extra
+        assert _on(bound)["2c"] == ["2c"], extra
 
 
 def test_known_gap_a_later_label_stands_in_for_the_missed_next_one(

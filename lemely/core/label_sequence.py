@@ -615,10 +615,10 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
     Candidates are chosen, at most one per question and in paper order, to maximise one
     point per anchor plus the points each question earns between its anchor and the
     next. An anchor is kept when (a) no other candidate for its question comes within
-    ``_ANCHOR_MARGIN`` of the best total, unless that candidate is a label of the
-    question's own span, written with its path from the number; (b) the best total
-    without the question is lower by more than the number alone accounts for; and
-    (c) it is not the last of a run of numbered lines.
+    ``_ANCHOR_MARGIN`` of the best total, and none claims parts of its own, unless
+    that candidate is a label of the question's own span, written with its path from
+    the number; (b) the best total without the question is lower by more than the
+    number alone accounts for; and (c) it is not the last of a run of numbered lines.
     """
     cands = _candidates(paper, labels)
     if not cands:
@@ -653,10 +653,12 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
         ahead[i] = worth[i] + most
         following[i] = nxt
     behind = [0] * size  # best total before candidate i, i chosen
+    preceding: list[int | None] = [None] * size  # the anchor before it on that best choice
     for i in range(size):
         for h in range(i):
-            if rank[h] < rank[i]:
-                behind[i] = max(behind[i], behind[h] + worth[h] + span(h, cands[i].position))
+            total = behind[h] + worth[h] + span(h, cands[i].position)
+            if rank[h] < rank[i] and total > behind[i]:
+                behind[i], preceding[i] = total, h
     through = [behind[i] + ahead[i] for i in range(size)]
     best = max(through)
 
@@ -687,6 +689,48 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
                 total = max(total, behind[i] + worth[i] + span(i, count))
         return total
 
+    def bound_by(i: int, hi: int, *, cut: bool) -> set[int]:
+        """The labels before ``hi`` that candidate i binds as its question's anchor.
+
+        With ``cut`` the question stops where its labels restart, as it will be read;
+        without, it runs on to ``hi``, which is the most the candidate could claim.
+        """
+        cand = cands[i]
+        lo, end, skip = cand.position + 1, hi, frozenset[int]()
+        if cut:
+            read = _span(paper, cand.root, cand.chain, labels, lo, hi, frozenset())
+            end, skip = read.end, read.orphans
+        trail = _solve(paper, cand.root, cand.chain, labels, lo, end, skip)[1]
+        bound = set()
+        while trail is not None:
+            bound.add(trail[0])
+            trail = trail[2]
+        return bound
+
+    bound_on: dict[tuple[int, ...], set[int]] = {}  # per choice of anchors, the labels bound
+
+    def best_choice(i: int) -> tuple[set[int], int, int]:
+        """The best choice of anchors through candidate i.
+
+        Returns every label some question binds on it, and the positions of the
+        anchors on either side of i: another start for i's question has to lie
+        between them.
+        """
+        chain = [i]
+        while (before := preceding[chain[0]]) is not None:
+            chain.insert(0, before)
+        while (after := following[chain[-1]]) is not None:
+            chain.append(after)
+        taken = bound_on.get(tuple(chain))
+        if taken is None:
+            taken = bound_on[tuple(chain)] = {cands[k].position for k in chain}
+            for k, nxt in zip(chain, [*chain[1:], None], strict=True):
+                taken |= bound_by(k, cands[nxt].position if nxt is not None else count, cut=True)
+        at = chain.index(i)
+        left = cands[chain[at - 1]].position if at else -1
+        right = cands[chain[at + 1]].position if at + 1 < len(chain) else count
+        return taken, left, right
+
     kept: dict[int, _Candidate] = {}
     for root in paper.roots:
         mine = [i for i in range(size) if cands[i].root == root]
@@ -695,7 +739,24 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
         if not tops or best - without(order[root]) < needed:
             continue
         chosen = cands[tops[0]]
+        # A rival is another candidate that comes within the margin of the best total,
+        # or that claims parts of its own whatever the margin: it stands where the
+        # question could start (between the anchors of the questions on either side)
+        # and, as the anchor, could be followed by parts that the best choice of
+        # anchors leaves to no question. Two places that each look like the start of the
+        # question are not settled by which earns more. (A stray number that would
+        # only take its parts from a neighbour claims nothing.)
         rivals = [i for i in mine if i != tops[0] and through[i] > best - _ANCHOR_MARGIN]
+        others = [i for i in mine if i != tops[0] and i not in rivals]
+        if others:
+            taken, left, right = best_choice(tops[0])
+            for i in others:
+                # Its own stretch of the list: up to the chosen anchor if that comes
+                # after it, else up to the next question's anchor.
+                at = cands[i].position
+                end = chosen.position if at < chosen.position else right
+                if left < at < right and not bound_by(i, end, cut=False) <= taken:
+                    rivals.append(i)
         if rivals:
             # A paper labelled with full paths ("1(a)(i)", "1(a)(ii)", "1b") gives every
             # part a label that opens with the number. Those after the first are no
@@ -706,7 +767,7 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
             read = _span(paper, root, chosen.chain, labels, lo, hi, frozenset())
             own = _determined(paper, root, chosen.chain, labels, lo, read.end, read.orphans)
             if any(cands[i].position not in own for i in rivals):
-                continue  # two places for the number within the margin: neither
+                continue  # two places for the number: neither
         kept[root] = chosen
 
     # Numbered lines listed as labels ("1.", "2." under one part) are numbers too. An

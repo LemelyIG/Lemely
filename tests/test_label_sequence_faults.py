@@ -56,10 +56,11 @@ class Entry:
 
     text: str
     writing: bool = False
+    node: int | None = None  # for a label as the paper prints it: the node it stands for
 
 
-def _label(text: str) -> Entry:
-    return Entry(text)
+def _label(text: str, node: int | None = None) -> Entry:
+    return Entry(text, node=node)
 
 
 def _writing(leaf: str) -> Entry:
@@ -150,12 +151,12 @@ class Paper:
         for j, leaf_id in enumerate(self.ids):
             if not self.is_leaf[j]:
                 if first_only and j not in on_opening_path:
-                    stream.append(_label(self.label(j)))
+                    stream.append(_label(self.label(j), j))
                 continue
             whole = self.parent[j] is not None and (
                 not first_only or opening[self.question(j)] == j
             )
-            stream.append(_label(self.full_path_text(j, style) if whole else self.label(j)))
+            stream.append(_label(self.full_path_text(j, style) if whole else self.label(j), j))
             stream.append(_writing(leaf_id))
         return stream
 
@@ -165,7 +166,7 @@ class Paper:
         at: list[int] = []
         for j, leaf_id in enumerate(self.ids):
             at.append(len(stream))
-            stream.append(_label(self.label(j)))
+            stream.append(_label(self.label(j), j))
             if self.is_leaf[j]:
                 stream.append(_writing(leaf_id))
         return stream, at
@@ -865,98 +866,190 @@ def test_a_full_path_at_the_first_part_and_bare_labels_after_bind_every_leaf(
     assert result.unplaced_labels == []
 
 
-def full_path_faults(paper: Paper, base: list[Entry]) -> Fault:
-    """The brief's fault kinds on a paper labelled with full paths.
+# --------------------------------------------------------------------------------------
+# The wider battery: papers labelled with full paths, and labels read as other labels.
+#
+# Three ways of labelling one paper: bare labels (the printed paper), every leaf by its
+# full path (separate sheets), and the full path at the first part of each question with
+# bare labels after it. One fault kind beyond the brief's: a label read as a different
+# valid label of the paper (a sibling's, or the label listed beside it).
+# --------------------------------------------------------------------------------------
+LABELLINGS = ("bare labels", "full path on every leaf", "full path on the first part")
 
-    Every label missed; every label read twice, and seen again after its writing; a
-    stray at every place in the list: two bare part labels, a bare number, a numbered
-    line, and four of the paper's own full-path labels.
+
+def labelled(paper: Paper, labelling: str, style: int = 0) -> list[Entry]:
+    if labelling == LABELLINGS[0]:
+        return paper.perfect()[0]
+    return paper.full_paths(style, first_only=labelling == LABELLINGS[2])
+
+
+@dataclass
+class Trial:
+    stream: list[Entry]
+    what: list[str] = field(default_factory=list)
+    # (the node whose label was misread, the label text it was read as)
+    read_as: list[tuple[int, str]] = field(default_factory=list)
+
+    def names_the_wrong_part(self, paper: Paper, base: list[Entry]) -> bool:
+        """The one shape no order-based rule can see, and the battery's one exception.
+
+        A label was read as the text of another label, and the label the paper prints
+        with that text is not in the list as itself: missed, or misread in its turn.
+        "The label with that text" is the one in the misread label's own question, or
+        the only one on the paper when the text names its question ("7(b)", "9").
+        What is left is, item for item, a list a correct reader could have produced
+        from a script on which the misread part's own label was missed.
+        """
+        printed = {e.node: e.text for e in base if e.node is not None}
+        kept = {e.node for e in self.stream if e.node is not None and e.text == printed[e.node]}
+        for node, text in self.read_as:
+            named = [other for other, other_text in printed.items() if other_text == text]
+            if len(named) > 1:
+                named = [n for n in named if paper.question(n) == paper.question(node)]
+            if any(other not in kept for other in named):
+                return True
+        return False
+
+
+def _others_to_read_as(paper: Paper, base: list[Entry], k: int) -> list[int]:
+    """Places in ``base`` whose label the label at ``k`` may be read as: its siblings'
+    labels and the labels listed straight before and after it."""
+    labels = [i for i, e in enumerate(base) if not e.writing]
+    node = base[k].node
+    assert node is not None
+    siblings = {j for j in range(len(paper.ids)) if paper.parent[j] == paper.parent[node]}
+    at = labels.index(k)
+    beside = {labels[i] for i in (at - 1, at + 1) if 0 <= i < len(labels)}
+    out = {i for i in labels if base[i].node in siblings} | beside
+    return sorted(i for i in out if base[i].text != base[k].text)
+
+
+def read_as(trial: Trial, base: list[Entry], k: int, other: int) -> None:
+    """The label at ``k`` of the trial's stream is read as the label ``base[other]``."""
+    node = trial.stream[k].node
+    assert node is not None
+    trial.what.append(f"{trial.stream[k].text} read as {base[other].text}")
+    trial.stream[k] = _label(base[other].text)
+    trial.read_as.append((node, base[other].text))
+
+
+def wider_single_faults(paper: Paper, base: list[Entry]) -> Iterator[Trial]:
+    """One fault at a time.
+
+    Every label missed; every label read twice, and seen again after its writing; every
+    label read as each sibling's label and as the labels beside it; and a stray at every
+    place in the list: two bare part labels, a bare number, a numbered line, and four
+    of the paper's own labels.
     """
     labels = [k for k, e in enumerate(base) if not e.writing]
     for k in labels:
-        yield [*base[:k], *base[k + 1 :]], set(), f"drop {base[k].text}"
-        yield _insert(base, k + 1, base[k]), set(), f"read {base[k].text} twice"
+        yield Trial([*base[:k], *base[k + 1 :]], [f"drop {base[k].text}"])
+        yield Trial(_insert(base, k + 1, base[k]), [f"read {base[k].text} twice"])
         if k + 1 < len(base) and base[k + 1].writing:
-            yield _insert(base, k + 2, base[k]), set(), f"{base[k].text} again after its writing"
-    step = max(1, len(labels) // 4)
-    own = [base[k].text for k in labels[::step][:4]]
+            yield Trial(_insert(base, k + 2, base[k]), [f"{base[k].text} again after its writing"])
+        for other in _others_to_read_as(paper, base, k):
+            trial = Trial(list(base))
+            read_as(trial, base, k, other)
+            yield trial
+    own = [base[k].text for k in labels[:: max(1, len(labels) // 4)][:4]]
     for text in ["(a)", "(i)", "2", "1.", *own]:
         for p in range(len(base) + 1):
-            yield _insert(base, p, _label(text)), set(), f"stray {text} at item {p}"
+            yield Trial(_insert(base, p, _label(text)), [f"stray {text} at item {p}"])
 
 
-def _full_path_random(rng: random.Random, base: list[Entry]) -> tuple[list[Entry], str]:
-    stream, what = list(base), []
+def wider_random_trial(rng: random.Random, paper: Paper, base: list[Entry]) -> Trial:
+    """Two to four faults: miss, read twice, stray, numbered lines, read as another label."""
+    trial = Trial(list(base))
     texts = [e.text for e in base if not e.writing]
     for _ in range(rng.randint(2, 4)):
+        stream = trial.stream
         labels = [k for k, e in enumerate(stream) if not e.writing]
-        kind = rng.choice(["drop", "dup", "stray", "lines"])
+        kind = rng.choice(["drop", "dup", "stray", "lines", "read-as"])
         k = rng.choice(labels)
         if kind == "drop" and len(labels) > 1:
-            stream = [*stream[:k], *stream[k + 1 :]]
+            trial.what.append(f"drop {stream[k].text}")
+            trial.stream = [*stream[:k], *stream[k + 1 :]]
         elif kind == "dup":
-            stream = _insert(stream, k + rng.choice([1, 2]), stream[k])
+            trial.what.append(f"{stream[k].text} twice")
+            trial.stream = _insert(stream, k + rng.choice([1, 2]), stream[k])
         elif kind == "stray":
             text = rng.choice([*texts, "(a)", "(b)", "(i)", "(ii)", str(rng.randint(1, 12))])
-            stream = _insert(stream, rng.randrange(len(stream) + 1), _label(text))
-        else:
+            trial.what.append(f"stray {text}")
+            trial.stream = _insert(stream, rng.randrange(len(stream) + 1), _label(text))
+        elif kind == "lines":
             lines = [_label(f"{n}.") for n in range(1, rng.randint(2, 4))]
-            stream = _insert(stream, k + rng.choice([1, 2]), *lines)
-        what.append(f"{kind}@{k}")
-    return stream, ", ".join(what)
+            trial.what.append(f"{len(lines)} numbered lines")
+            trial.stream = _insert(stream, k + rng.choice([1, 2]), *lines)
+        elif stream[k].node is not None:
+            at = next(i for i, e in enumerate(base) if e.node == stream[k].node and not e.writing)
+            others = _others_to_read_as(paper, base, at)
+            if others:
+                read_as(trial, base, k, rng.choice(others))
+    return trial
 
 
-def run_full_path_faults(
-    papers: list[Paper], random_trials: int, styles: tuple[int, ...] = (0, 1)
-) -> list[Tally]:
-    """Tallies for the two ways of labelling: single faults, then random 2 to 4, for each."""
+@dataclass
+class WiderTally:
+    name: str
+    trials: int = 0
+    wrong: int = 0  # trials with writing on a wrong leaf, outside the one exception
+    excepted: int = 0  # trials of the excepted shape
+    excepted_wrong: int = 0  # ... of which with writing on a wrong leaf
+    examples: list[str] = field(default_factory=list)
+
+    def add(self, paper: Paper, base: list[Entry], trial: Trial) -> None:
+        verdict = judge(paper, trial.stream)
+        self.trials += 1
+        if trial.names_the_wrong_part(paper, base):
+            self.excepted += 1
+            self.excepted_wrong += bool(verdict.wrong)
+        elif verdict.wrong:
+            self.wrong += 1
+            if len(self.examples) < 3:
+                where = " ".join(f"{leaf}<-{text}" for leaf, text in verdict.wrong[:4])
+                texts = " ".join(f"={e.text}" if e.writing else e.text for e in trial.stream[:70])
+                self.examples.append(f"{paper.name}: {', '.join(trial.what)} -> {where} | {texts}")
+
+    def line(self) -> str:
+        return (
+            f"{self.name:<52} trials={self.trials:<6d} wrong={self.wrong:<3d} "
+            f"excepted={self.excepted:<5d} excepted_wrong={self.excepted_wrong}"
+        )
+
+
+def run_wider_battery(
+    papers: list[Paper], random_trials: int, *, every: int = 1, salt: str = ""
+) -> list[WiderTally]:
+    """Per labelling: single faults (every ``every``-th of them), then random ones."""
     tallies = []
-    for first_only in (False, True):
-        labelling = "first part only" if first_only else "every leaf"
-        single = Tally(f"full paths, {labelling}: single fault")
-        mixed = Tally(f"full paths, {labelling}: random 2-4 faults")
+    for labelling in LABELLINGS:
+        single = WiderTally(f"{labelling}: single fault")
+        mixed = WiderTally(f"{labelling}: random 2-4 faults")
         for paper in papers:
-            for style in styles:
-                base = paper.full_paths(style, first_only=first_only)
-                for stream, may_lose, what in full_path_faults(paper, base):
-                    single.add(paper, stream, may_lose, what)
-            for style in (0, 1):
-                base = paper.full_paths(style, first_only=first_only)
-                rng = random.Random(f"{paper.name}/{style}/{first_only}")
-                for _ in range(random_trials):
-                    stream, what = _full_path_random(rng, base)
-                    mixed.add(paper, stream, set(), what)
+            base = labelled(paper, labelling)
+            for n, trial in enumerate(wider_single_faults(paper, base)):
+                if n % every == 0:
+                    single.add(paper, base, trial)
+            rng = random.Random(f"{paper.name}/{labelling}{salt}")
+            for _ in range(random_trials):
+                mixed.add(paper, base, wider_random_trial(rng, paper, base))
         tallies += [single, mixed]
     return tallies
 
 
-@cache
-def _full_path_tallies() -> tuple[Tally, ...]:
-    return tuple(run_full_path_faults(_battery_papers(), 60, styles=(0,)))
+def test_wider_battery_never_puts_writing_on_another_leaf_outside_the_one_exception() -> None:
+    tallies = run_wider_battery(_battery_papers(), 120, every=4)
+    assert [t.examples for t in tallies if t.wrong] == []
+    assert all(t.trials >= 600 for t in tallies), [t.line() for t in tallies]
+    # The exception is counted, not waved through: how many trials had the shape, and
+    # how many of those put writing on a wrong leaf.
+    assert sum(t.excepted for t in tallies) > 0
+    assert [(t.excepted, t.excepted_wrong) for t in tallies] == EXCEPTED
 
 
-def test_faults_on_full_path_papers_never_put_writing_on_another_leaf() -> None:
-    every_single, every_random, first_single, _ = _full_path_tallies()
-    assert every_single.trials > 3_500
-    assert first_single.trials > 3_500
-    assert every_random.trials == 600
-    assert every_single.examples == []
-    assert every_random.examples == []
-    assert first_single.examples == []
-
-
-def test_known_gap_random_faults_where_the_first_part_carries_the_number() -> None:
-    # Not at zero: 2 of 600. Where the first label of a question is "7(a)", one missed
-    # label takes the number, the container and the part with it, and a second miss in
-    # the question before then lets a later "(b)" stand in for the missed next label.
-    # The same stream goes wrong with bare labels (three misses), and went wrong before
-    # full paths were followed: it is the gap pinned in tests/test_label_sequence.py
-    # (test_known_gap_a_later_label_stands_in_for_the_missed_next_one). The count is
-    # pinned so that a fix has to come and change it.
-    *_, first_random = _full_path_tallies()
-    assert first_random.trials == 600
-    assert first_random.wrong_trials == 2
-    assert all("drop" in example for example in first_random.examples)
+# Per labelling, single faults then random ones: (trials of the excepted shape, of which
+# with writing on a wrong leaf). No single fault has the shape: it takes two.
+EXCEPTED = [(0, 0), (6, 0), (0, 0), (5, 1), (0, 0), (11, 7)]
 
 
 @pytest.mark.parametrize("case", CRITICAL, ids=[c["name"] for c in CRITICAL])
