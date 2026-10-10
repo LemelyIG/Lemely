@@ -1685,8 +1685,38 @@ _DROPPED_ANSWER_REVIEW_REASON = (
 )
 
 
-def _build_dropped_corrected(question: Question) -> CorrectedQuestion:
+#: The reason for a question in ``ExtractedAnswers.unbound_question_ids``: the
+#: label binder could bind no answer to it. Distinct from
+#: ``_DROPPED_ANSWER_REVIEW_REASON``, which would be false here: nothing was
+#: discarded as malformed. It names both ways a leaf ends up unbound, because
+#: the binder reports them as one list: its label was not seen, or the label
+#: was seen and the writing by it could not be given to it (it may be a
+#: neighbour's, or its page or text could not be read).
+UNBOUND_QUESTION_REVIEW_REASON = (
+    "binding unverified: this question's label was not found on the scan, or the writing "
+    "by it could not be tied to it, so its answer could not be read"
+)
+
+
+def _unbound_question_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> frozenset[str]:
+    """Question ids the label binder could bind no answer to.
+
+    Only an ``ExtractedAnswers`` can carry them: a plain mapping of typed answers
+    was never bound from a scan.
+    """
+    if isinstance(extracted, ExtractedAnswers):
+        return frozenset(extracted.unbound_question_ids)
+    return frozenset()
+
+
+def _build_dropped_corrected(
+    question: Question, reason: str = _DROPPED_ANSWER_REVIEW_REASON
+) -> CorrectedQuestion:
     """Short-circuit for an answer extracted but DROPPED as malformed.
+
+    Also used, with ``reason=UNBOUND_QUESTION_REVIEW_REASON``, for a question the
+    label binder could bind no answer to: the same zero, the same flag, no marking
+    call, and its own true reason.
 
     US-031 review MUST-FIX 7, stronger fix. No marking call is made --
     ``correct_paper`` never reaches ``ai.mark_question`` for this question
@@ -1736,7 +1766,7 @@ def _build_dropped_corrected(question: Question) -> CorrectedQuestion:
         student_answer=None,
         expected_answer=None,
         topic=question.topic_hint,
-        review_reason=_DROPPED_ANSWER_REVIEW_REASON,
+        review_reason=reason,
         marker_source="dropped",
         extraction_confidence=None,
     )
@@ -2441,6 +2471,12 @@ def correct_paper(
     # Only an id with no surviving answer short-circuits below; both sides are
     # post-`normalize_extracted_answers`, so canonicalised ids meet here.
     dropped_ids = _dropped_question_ids(extracted_answers).difference(answers)
+    # A question the label binder could bind no answer to takes the same path as a
+    # dropped answer -- flagged, a zero nobody is asked to believe, no marking call
+    # -- under its own reason. The same rule applies: only an id with no surviving
+    # answer short-circuits. It does not depend on a binding report: the binder
+    # leaves these whether or not a gate ran over it.
+    unbound_ids = _unbound_question_ids(extracted_answers).difference(answers)
     log = structlog.get_logger().bind(component="correct_paper")
 
     # Validate mark scheme structure; warn but do not abort.
@@ -2490,8 +2526,12 @@ def correct_paper(
         # ai.mark_question with text extraction already discarded as
         # unusable (a paid call to mark an empty string, on top of a mark
         # that would already be wrong).
-        if q.id in dropped_ids:
-            cq = _build_dropped_corrected(q)
+        if q.id in unbound_ids or q.id in dropped_ids:
+            cq = (
+                _build_dropped_corrected(q, UNBOUND_QUESTION_REVIEW_REASON)
+                if q.id in unbound_ids
+                else _build_dropped_corrected(q)
+            )
             corrected.append(cq)
             prior_results_accumulated[q.id] = 0
             corrected_by_id[q.id] = cq

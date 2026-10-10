@@ -324,6 +324,36 @@ class IDNormalizationTests(unittest.TestCase):
         normalized = normalize_extracted_answers(extracted, manifest_ids)
         self.assertEqual(normalized.answers[0].question_id, "1(a)(i)")
 
+    def test_normalize_remaps_unbound_question_ids_like_dropped_ones(self):
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+        from lemely.io.answer_extraction import normalize_extracted_answers
+
+        manifest_ids = ["1(a)(i)", "1(a)(ii)", "2"]
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.pdf",
+            answers=[ExtractedAnswer(question_id="2", answer="X", confidence=0.7)],
+            dropped_question_ids=["1 a i"],
+            unbound_question_ids=["1 a ii", "not a question"],
+        )
+        normalized = normalize_extracted_answers(extracted, manifest_ids)
+        self.assertEqual(normalized.dropped_question_ids, ["1(a)(i)"])
+        self.assertEqual(normalized.unbound_question_ids, ["1(a)(ii)", "not a question"])
+
+    def test_normalize_leaves_the_unbound_list_unset_when_there_is_none(self):
+        """A legacy extraction never had the field; normalising it must not set it."""
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+        from lemely.io.answer_extraction import normalize_extracted_answers
+
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.pdf",
+            answers=[ExtractedAnswer(question_id="1", answer="X", confidence=0.7)],
+        )
+        normalized = normalize_extracted_answers(extracted, ["1"])
+        self.assertEqual(normalized.unbound_question_ids, [])
+        self.assertNotIn("unbound_question_ids", normalized.model_fields_set)
+
     def test_unrecognised_id_is_left_unmatched_not_guessed(self):
         """#37: the positional fallback is DELETED. An unmatched id stays unmatched.
 

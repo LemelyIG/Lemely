@@ -352,6 +352,13 @@ class CorrectedQuestion(StrictModel):
     so the review queue does not conflate "we chose not to mark this" with
     "the model's response for this question could not be used at all".
 
+    ``"dropped"`` is also the value for a question the label binder could
+    bind no answer to (``ExtractedAnswers.unbound_question_ids``): the scan
+    was read, and what was read could not be used for this question. Nothing
+    was discarded as malformed in that case, so ``review_reason`` is what
+    tells the two apart; it is the second half of the sentence above, "could
+    not be used at all", that both share.
+
     COVERAGE LIMIT (review MUST-FIX F1) -- this protection is PARTIAL. It
     reaches only the two drop reasons that leave a usable ``question_id``:
     ``missing_answer`` and ``malformed_answer``. Three do not, because there
@@ -722,6 +729,18 @@ class ExtractedAnswers(StrictModel):
     binding: BindingReport | None = None
     """The binding gate's report for this paper. ``None`` when binding did
     not run (records stored before it existed)."""
+    unbound_question_ids: list[str] = Field(default_factory=list)
+    """Leaf questions the label binder could bind no answer to: their label was
+    not found on the scan, or it was found and the writing by it could not be
+    tied to it (it could as well be a neighbour's, or its page or text could
+    not be read). Whatever the student wrote for them is not in ``answers``;
+    it may be in ``unbound_answers`` or under the answer before. This is not
+    a blank answer and not a dropped one (``dropped_question_ids``):
+    ``correct_paper`` sends each such question to teacher review with no
+    marking call and a reason of its own. Remapped to manifest ids by
+    :func:`~lemely.io.answer_extraction.normalize_extracted_answers`, as
+    ``dropped_question_ids`` is. Empty when every leaf was bound or left
+    blank, and on records stored before the field existed."""
     unbound_answers: list[ReadAnswer] = Field(default_factory=list)
     """Answers read off the page that no question label aligned to, so they
     are held here rather than assigned a ``question_id``. Empty when every

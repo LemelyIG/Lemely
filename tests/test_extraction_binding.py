@@ -323,6 +323,7 @@ def test_clean_first_read_passes_and_carries_a_report(
     assert all(a.binding_source == "label" for a in extracted.answers)
     assert all(a.label_seen for a in extracted.answers)
     assert extracted.dropped_question_ids == []
+    assert extracted.unbound_question_ids == []
 
 
 def test_binder_calls_use_the_configured_read_model_not_the_extraction_default(
@@ -552,7 +553,8 @@ def test_unaligned_leaves_go_to_review_and_are_never_marked_blank(
     extracted = _extract(tmp_path, scan, scheme, model)
 
     assert extracted.binding is not None and extracted.binding.verdict == "pass"
-    assert extracted.dropped_question_ids == ["4b_i"]
+    assert extracted.unbound_question_ids == ["4b_i"]
+    assert extracted.dropped_question_ids == []  # nothing was dropped as malformed
     assert "4b_i" not in {a.question_id for a in extracted.answers}
     # What the student wrote there was read, and is kept as writing with no question.
     assert any("thermal" in w.answer for w in extracted.unbound_answers)
@@ -567,6 +569,10 @@ def test_unaligned_leaves_go_to_review_and_are_never_marked_blank(
     assert "4b_i" not in marker.asked  # no marking call for it
     assert len(marker.asked) > 30  # the marker was asked about the others
     assert row.needs_teacher_review is True
+    assert row.review_reason == (
+        "binding unverified: this question's label was not found on the scan, or the "
+        "writing by it could not be tied to it, so its answer could not be read"
+    )
     assert row.marker_source == "dropped"  # not "blank": a blank is an unflagged zero
     assert row.confidence == ConfidenceBand.LOW and row.confidence_score == 0.0
     assert row.awarded_marks == 0 and row.student_answer is None
@@ -728,7 +734,7 @@ def test_what_the_reader_s_reply_lost_or_had_repaired_stays_on_the_record(
         assert extracted.answer_drops == {"stream_repaired_page": 1}
         assert first[53]["answer"] in [w.answer for w in extracted.unbound_answers]
         assert "5a" not in {a.question_id for a in extracted.answers}
-        assert extracted.dropped_question_ids == ["5a"]  # to a teacher, not a blank zero
+        assert extracted.unbound_question_ids == ["5a"]  # to a teacher, not a blank zero
 
 
 def test_listing_suspects_fail_the_paper(tmp_path: Path, scheme: MarkScheme) -> None:
@@ -810,7 +816,7 @@ def test_observe_mode_leaves_nothing_on_the_extraction_to_hold_on(
     assert "binding" not in extracted.model_fields_set
     # Leaves with no label still go to a teacher, and writing with no leaf is still kept:
     # those come from the binder, not from the gate.
-    assert extracted.dropped_question_ids == ["3c", "4a", "4b_i", "4b_ii", "4b_iii"]
+    assert extracted.unbound_question_ids == ["3c", "4a", "4b_i", "4b_ii", "4b_iii"]
     assert extracted.unbound_answers
 
     marker = _Marker()
@@ -836,7 +842,7 @@ def test_gate_off_leaves_binding_none(tmp_path: Path, scan: Path, scheme: MarkSc
     assert all(a.binding_source == "label" for a in extracted.answers)
     # Unchecked is not the same as lost: the leaf with no label and the writing with no
     # leaf are both still on the record.
-    assert extracted.dropped_question_ids == ["4b_i"]
+    assert extracted.unbound_question_ids == ["4b_i"]
     assert extracted.unbound_answers
 
 
@@ -1031,3 +1037,4 @@ def test_legacy_binder_with_gate_off_is_unchanged(
         assert not {"binding_source", "binding_status", "label_seen"} & answer.model_fields_set
     assert _pairs(extracted) == [(a["question_id"], a["answer"]) for a in aligned["answers"]]
     assert extracted.dropped_question_ids == []
+    assert extracted.unbound_question_ids == []

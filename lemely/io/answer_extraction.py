@@ -315,10 +315,17 @@ def normalize_extracted_answers(
     new_dropped_ids = [
         canonical_map.get(_canonical_id(qid), qid) for qid in extracted.dropped_question_ids
     ]
+    update: dict[str, Any] = {"answers": new_answers, "dropped_question_ids": new_dropped_ids}
+    # ``unbound_question_ids`` (leaves the label binder could bind nothing to) is
+    # matched against manifest ids by ``correct_paper`` just as the dropped ids are,
+    # so it gets the same remap. Left alone when empty, so that a record that never
+    # had the field is not given it here.
+    if extracted.unbound_question_ids:
+        update["unbound_question_ids"] = [
+            canonical_map.get(_canonical_id(qid), qid) for qid in extracted.unbound_question_ids
+        ]
 
-    return extracted.model_copy(
-        update={"answers": new_answers, "dropped_question_ids": new_dropped_ids}
-    )
+    return extracted.model_copy(update=update)
 
 
 # Gemini's self-reported confidence is often miscalibrated — it tends to be
@@ -1108,12 +1115,15 @@ class GeminiAnswerExtractor:
                 }
                 confidence_repairs: dict[str, int] = {}
                 field_repairs: dict[str, int] = {}
+                # The label reader's reply is never converted answer by answer, so
+                # nothing is dropped as a malformed answer on this path.
+                dropped_question_ids: list[str] = []
                 # A leaf no label was lined up with has no answer here, and that is
                 # not a blank: whatever the student wrote for it could not be bound
                 # (it is in `unbound_answers`, or under the leaf before). Listing it
-                # here makes `correct_paper` send it to a teacher without attempting
-                # a mark, where a missing answer alone would be an unflagged zero.
-                dropped_question_ids = list(outcome.review_only_ids)
+                # makes `correct_paper` send it to a teacher without attempting a
+                # mark, where a missing answer alone would be an unflagged zero.
+                bound_fields["unbound_question_ids"] = list(outcome.review_only_ids)
                 bound_fields["unbound_answers"] = outcome.unbound
                 if outcome.report is not None:
                     bound_fields["binding"] = outcome.report

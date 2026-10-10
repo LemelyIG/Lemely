@@ -35,6 +35,11 @@ OFF_TOPIC_REASON = "binding unverified: answer appears to address a different qu
 UNVERIFIED_REASON = (
     "binding unverified: this answer may include writing that belongs to another question"
 )
+UNBOUND_QUESTION_REASON = (
+    "binding unverified: this question's label was not found on the scan, or the writing "
+    "by it could not be tied to it, so its answer could not be read"
+)
+DROPPED_REASON = "extraction dropped this answer as malformed (see ExtractedAnswers.answer_drops)"
 # sha256 of MARKER_SYSTEM_PROMPT at VERSION "5", the text before this check existed.
 VERSION_5_PROMPT_SHA256 = "e1281162f0086b769a6686d38caab22c7bdd56560377f599a50aa624af3cea49"
 SECTION_START = "**Last field: `addresses_question`"
@@ -850,3 +855,87 @@ def test_unverified_binding_never_changes_the_verdict():
         assert _paper_with_statuses(statuses).binding.verdict == "pass"  # type: ignore[union-attr]
         held = _paper_with_statuses(statuses, flags=["no"] * 5)
         assert held.binding is not None and held.binding.verdict == "hold"
+
+
+# --- A question whose answer could not be bound -------------------------------
+
+
+def _marked_with_unbound(
+    answers: dict[str, str],
+    unbound: list[str],
+    *,
+    theory: int = 3,
+    mcq: bool = False,
+    binding: BindingReport | None = GATED,
+    dropped: list[str] | None = None,
+) -> tuple[CorrectionResult, list[str]]:
+    """Mark ``answers`` with ``unbound`` listed as unbound; also the ids the marker was asked."""
+    asked: list[str] = []
+
+    def fake(_self: object, question: Question, *_args: object, **_kwargs: object):
+        asked.append(question.id)
+        return _reply("yes")
+
+    extracted = _extracted(answers, binding=binding, dropped=dropped).model_copy(
+        update={"unbound_question_ids": unbound}
+    )
+    with patch.object(correction_ai.AICorrector, "mark_question", autospec=True, side_effect=fake):
+        result = correct_paper(_scheme(theory, mcq=mcq), extracted, gemini_client=MagicMock())
+    return result, asked
+
+
+@pytest.mark.parametrize("binding", [GATED, None], ids=["gated", "no report"])
+def test_unbound_question_goes_to_review_with_a_true_reason(binding: BindingReport | None):
+    # Question 2's label was not found, so nothing could be bound to it. That comes
+    # from the binder, whether or not a gate ran over it.
+    result, asked = _marked_with_unbound({"1": "one", "3": "three"}, ["2"], binding=binding)
+    row = result.questions[1]
+    assert row.question_id == "2"
+    assert row.needs_teacher_review
+    assert row.review_reason == UNBOUND_QUESTION_REASON
+    assert row.review_reason != DROPPED_REASON  # nothing was dropped as malformed
+    assert asked == ["1", "3"]  # no marking call for it
+    # Not a confident zero, and not a student blank (which is an unflagged zero).
+    assert (row.awarded_marks, row.confidence_score, row.confidence.value) == (0, 0.0, "low")
+    assert row.marker_source == "dropped"
+    assert row.student_answer is None and row.extraction_confidence is None
+    assert result.needs_teacher_review
+    assert (result.awarded_marks, result.maximum_marks) == (2, 3)
+    assert not result.questions[0].needs_teacher_review
+
+
+def test_unbound_multiple_choice_question_is_not_marked_as_a_missing_answer():
+    result, asked = _marked_with_unbound({"1": "one"}, ["2"], theory=1, mcq=True)
+    row = result.questions[1]
+    assert row.marker_source == "dropped" and row.awarded_marks == 0
+    assert row.needs_teacher_review and row.review_reason == UNBOUND_QUESTION_REASON
+    assert asked == ["1"]
+
+
+def test_unbound_listing_does_not_discard_an_answer_that_is_there():
+    # Listed, but an answer for it survived: the answer is marked, as for a dropped entry.
+    result, asked = _marked_with_unbound({"1": "one", "2": "two", "3": "three"}, ["2"])
+    assert asked == ["1", "2", "3"]
+    assert result.questions[1].marker_source == "ai"
+    assert result.questions[1].review_reason is None
+
+
+def test_a_dropped_answer_keeps_its_own_reason():
+    result, _asked = _marked_with_unbound({"1": "one"}, ["2"], dropped=["3"])
+    assert [q.review_reason for q in result.questions] == [
+        None,
+        UNBOUND_QUESTION_REASON,
+        DROPPED_REASON,
+    ]
+
+
+def test_extracted_answers_stored_before_the_field_existed_still_load():
+    stored = {
+        "paper_id": "p",
+        "source_scan": "x.pdf",
+        "answers": [{"question_id": "1", "answer": "one", "confidence": 0.9}],
+        "dropped_question_ids": ["2"],
+    }
+    loaded = ExtractedAnswers.model_validate(stored)
+    assert loaded.unbound_question_ids == []
+    assert "unbound_question_ids" not in loaded.model_fields_set
