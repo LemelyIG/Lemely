@@ -31,7 +31,7 @@ from lemely.core.schemas import AIMarkResponse, ConfidenceBand, ExtractedAnswers
 from lemely.io import correction_ai
 from lemely.io.answer_extraction import GeminiAnswerExtractor
 from lemely.io.binding import parse_stream_items, to_bound_read
-from lemely.io.binding.orchestrate import BindingOutcome, run_binding
+from lemely.io.binding.orchestrate import LOST_ITEM_REASONS, BindingOutcome, run_binding
 from lemely.io.correction_ai import correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.io.rasterise import RasterisedPage
@@ -421,6 +421,12 @@ def test_first_read_missing_a_question_number_and_complete_second_read_uses_the_
     assert _pairs(outcome) == _bound_alone(_run(1), scheme)
     assert len(outcome.answers) == 42
     assert outcome.review_only_ids == []
+    # Everything that goes on is the second read's, its unbound writing included.
+    second_alone = _bind(tmp_path, scheme, _Model(first=_items(_run(1))), second_read=False)
+    first_alone = _bind(tmp_path, scheme, _Model(first=_items(first)), second_read=False)
+    assert outcome.unbound == second_alone.unbound
+    assert outcome.unbound != first_alone.unbound
+    assert outcome.drops == second_alone.drops
     # The report is about the read that was used: the second read's checks, and G9.
     assert _failed(outcome) == []
     (event,) = seen[EventType.BINDING_GATE_RESULT]
@@ -546,6 +552,9 @@ def test_reads_that_disagree_at_paper_scope_hold(tmp_path: Path, scheme: MarkSch
     assert _failed(outcome) == [("G9", "paper")]
     assert len(outcome.report.checks[-1].question_ids) == 6
     assert _pairs(outcome) == _bound_alone(_run(1), scheme)  # the first read's answers
+    # The paper is held as a whole; the six answers are not singled out on top of that.
+    alone = _bind(tmp_path, scheme, _Model(first=_items(_run(1))), second_read=False)
+    assert outcome.answers == alone.answers
 
 
 def test_two_bad_reads_hold(tmp_path: Path, scheme: MarkScheme) -> None:
@@ -558,6 +567,28 @@ def test_two_bad_reads_hold(tmp_path: Path, scheme: MarkScheme) -> None:
     assert [c.id for c in outcome.report.checks][-1] == "G9"
     assert _pairs(outcome) == _bound_alone(first, scheme)
     assert outcome.review_only_ids == ["3c", "4a", "4b_i", "4b_ii", "4b_iii"]
+
+
+def test_question_scope_doubts_are_marked_on_a_held_paper_too(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # Both reads fail at paper scope (question 4 unanchored), and the second also holds
+    # two sentences under each other's leaf: a hold, with what G9 names doubted.
+    first = _question_4_unanchored(4)
+    second = _with_texts_rotated(_question_4_unanchored(5), 2)
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(second)))
+    assert outcome.report.verdict == "hold"
+    g9 = outcome.report.checks[-1]
+    assert (g9.id, g9.passed, g9.scope) == ("G9", False, "question")
+    assert g9.question_ids  # at least one of the two moved sentences is under an aligned leaf
+    status = {a.question_id: a.binding_status for a in outcome.answers}
+    assert all(status[qid] == "unverified" for qid in g9.question_ids)
+    # The paper-scope check's own ids are the leaves with no label: they have no answer
+    # to mark, and no other answer is doubted for the paper's being held.
+    alone = _bind(tmp_path, scheme, _Model(first=_items(first)), second_read=False)
+    doubted_alone = {a.question_id for a in alone.answers if a.binding_status == "unverified"}
+    doubted = {qid for qid, s in status.items() if s == "unverified"}
+    assert doubted == doubted_alone | set(g9.question_ids)
 
 
 def test_failed_second_read_does_not_fail_the_paper(tmp_path: Path, scheme: MarkScheme) -> None:
@@ -916,6 +947,53 @@ def test_the_recorded_replies_show_no_suspect_group(scheme: MarkScheme, number: 
     assert read.listing_suspects == []
 
 
+def _stray_label(text: str) -> dict[str, Any]:
+    return {"type": "label", "page": 0, "box": [10, 10, 30, 40], "text": text, "kind": "printed"}
+
+
+def test_stray_labels_reach_the_coverage_check(tmp_path: Path, scheme: MarkScheme) -> None:
+    # Labels on the cover page that name no question of this paper.
+    strays = [_stray_label(text) for text in ("97", "98", "99")]
+    two = _bind(tmp_path, scheme, _Model(first=_items([*strays[:2], *_run(1)])), second_read=False)
+    assert two.report.verdict == "pass"
+    g5 = next(c for c in two.report.checks if c.id == "G5")
+    assert g5.passed and "2 labels on the page matched no question" in g5.detail
+
+    three = _bind(tmp_path, scheme, _Model(first=_items([*strays, *_run(1)])), second_read=False)
+    assert three.report.verdict == "hold"
+    assert _failed(three) == [("G5", "paper")]
+    g5 = next(c for c in three.report.checks if c.id == "G5")
+    assert "3 labels on the page matched no question" in g5.detail
+
+
+def test_only_items_that_may_have_been_writing_count_as_lost(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    assert LOST_ITEM_REASONS == ("malformed_item", "unknown_type")
+    # Four other things the reader's reply can need: none of them loses writing. An
+    # answer item with no writing in it and a label with no text are dropped; an answer
+    # on a page that is not a page, and one whose text is not text, are kept unbound.
+    last_page = _PAGE_COUNT - 1
+    extras = [
+        {"type": "answer", "page": last_page, "box": [1, 1, 5, 5], "answer": None},
+        {"type": "label", "page": last_page, "box": [1, 1, 5, 5], "text": "  ", "kind": "printed"},
+        {"type": "answer", "page": "nowhere", "box": [1, 1, 5, 5], "answer": "a late note"},
+        {"type": "answer", "page": last_page, "box": [1, 1, 5, 5], "answer": ["not", "text"]},
+    ]
+    outcome = _bind(tmp_path, scheme, _Model(first=_items([*_run(1), *extras])), second_read=False)
+    assert outcome.drops == {
+        "empty_answer": 1,
+        "empty_label": 1,
+        "repaired_page": 1,
+        "unreadable_answer": 1,
+    }
+    g5 = next(c for c in outcome.report.checks if c.id == "G5")
+    assert "could not be read" not in g5.detail
+    assert not any(c.scope == "paper" and not c.passed for c in outcome.report.checks)
+    assert outcome.report.verdict == "pass"
+    assert "a late note" in [w.answer for w in outcome.unbound]
+
+
 def test_listing_suspects_fail_the_paper(tmp_path: Path, scheme: MarkScheme) -> None:
     first = _listed_before_labels(_run(1))
     held = _bind(tmp_path, scheme, _Model(first=_items(first)), second_read=False)
@@ -923,6 +1001,10 @@ def test_listing_suspects_fail_the_paper(tmp_path: Path, scheme: MarkScheme) -> 
     assert ("G5", "paper") in _failed(held)
     g5 = next(c for c in held.report.checks if c.id == "G5")
     assert "2 groups of parts" in g5.detail and "listed before its label" in g5.detail
+    # Held or not, no leaf of either group is taken at face value.
+    status = {a.question_id: a.binding_status for a in held.answers}
+    assert status["1c_i"] == status["9c_i"] == status["9c_ii"] == status["9c_iii"] == "unverified"
+    assert {"1c_ii", "9c_iv"} <= set(held.review_only_ids)
 
     outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(_run(2))))
     assert outcome.report is not None
@@ -1047,6 +1129,45 @@ def test_legacy_binder_output_is_gated_and_retried(
     assert report is not None
     assert (report.verdict, report.retried) == ("pass", False)
     assert report.model == _settings(tmp_path).gemini.model_for("extraction")
+
+
+def test_gated_legacy_answers_are_stamped_and_the_doubted_ones_marked(
+    tmp_path: Path, scan: Path, scheme: MarkScheme
+) -> None:
+    # The model spelt two ids its own way and put each of the two answers under the
+    # other's question. Two is too few to doubt the paper: G7 names them at question
+    # scope, by the mark scheme's spelling.
+    reply = _legacy_reply("aligned")
+    by_id = {answer["question_id"]: answer for answer in reply["answers"]}
+    by_id["1b"]["answer"], by_id["1c_i"]["answer"] = by_id["1c_i"]["answer"], by_id["1b"]["answer"]
+    by_id["1b"]["question_id"], by_id["1c_i"]["question_id"] = "1B", "1C_I"
+    model = _Model(legacy=reply)  # a retry call would find no reply and fail the test
+    extracted = _extract(tmp_path, scan, scheme, model, binder="legacy")
+
+    report = extracted.binding
+    assert report is not None
+    assert (report.binder, report.verdict, report.retried) == ("legacy", "pass", False)
+    assert [(c.id, c.scope, c.question_ids) for c in report.checks if not c.passed] == [
+        ("G7", "question", ["1b", "1c_i"])
+    ]
+    # Every answer says where its id came from; only the two named ones are doubted.
+    assert all(a.binding_source == "legacy" for a in extracted.answers)
+    status = {a.question_id: a.binding_status for a in extracted.answers}
+    assert {qid for qid, s in status.items() if s == "unverified"} == {"1b", "1c_i"}
+    assert all(s is None for qid, s in status.items() if qid not in {"1b", "1c_i"})
+    assert all(a.label_seen is None for a in extracted.answers)
+
+    marker = _Marker()
+    with patch.object(
+        correction_ai.AICorrector, "mark_question", autospec=True, side_effect=marker
+    ):
+        result = correct_paper(scheme, extracted, gemini_client=MagicMock())
+    flagged = [
+        q.question_id
+        for q in result.questions
+        if "may include writing that belongs to another question" in (q.review_reason or "")
+    ]
+    assert flagged == ["1b", "1c_i"]
 
 
 def test_legacy_retry_cost_ceiling_propagates_and_other_failures_hold(
