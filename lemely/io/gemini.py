@@ -1037,6 +1037,87 @@ class GeminiClient:
                     f"cumulative spend is ${ledger_total:.4f} (across all runs)."
                 )
 
+    def _structured_cache_key(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        file_paths: list[Path] | None,
+        image_parts: list[bytes] | None,
+        media_resolution: str | None,
+        response_schema: type[BaseModel],
+        prompt_version: str,
+        model: str | None,
+        extra_cache_key: str,
+        task_tag: str | None,
+    ) -> tuple[str, str]:
+        """The model a structured call resolves to, and the key its reply is cached under.
+
+        The one computation for :meth:`generate_structured`, which reads and writes the
+        entry, and :meth:`forget_structured`, which removes it: the two cannot name
+        different entries for the same call.
+        """
+        g = self._settings.gemini
+        if model is not None:
+            active_model = model
+        elif task_tag is not None:
+            active_model = g.model_for(task_tag)
+        else:
+            active_model = g.model
+        params_fingerprint = self._params_fingerprint(
+            active_model, task_tag, response_schema, media_resolution=media_resolution
+        )
+        cache_key = self._cache_key(
+            active_model,
+            system_prompt,
+            user_prompt,
+            prompt_version,
+            file_paths,
+            extra_cache_key,
+            params_fingerprint,
+            image_parts=image_parts,
+        )
+        return active_model, cache_key
+
+    def forget_structured(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        file_paths: list[Path] | None = None,
+        image_parts: list[bytes] | None = None,
+        media_resolution: str | None = None,
+        response_schema: type[BaseModel],
+        prompt_version: str,
+        model: str | None = None,
+        extra_cache_key: str = "",
+        task_tag: str | None = None,
+    ) -> bool:
+        """Remove the cached reply of the structured call these arguments make.
+
+        Takes the arguments of :meth:`generate_structured` that decide the cache key
+        and returns whether an entry was there. For a caller that has decided a reply
+        must not be reused: the binding step, for a paper it held, so that the next run
+        on the same scan reads it afresh instead of replaying the same hold. With no
+        entry (a bypassed call, or one that failed) it does nothing.
+        """
+        _model, cache_key = self._structured_cache_key(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            file_paths=file_paths,
+            image_parts=image_parts,
+            media_resolution=media_resolution,
+            response_schema=response_schema,
+            prompt_version=prompt_version,
+            model=model,
+            extra_cache_key=extra_cache_key,
+            task_tag=task_tag,
+        )
+        cache_path = self._cache_path(cache_key)
+        existed = cache_path.exists()
+        cache_path.unlink(missing_ok=True)
+        return existed
+
     def generate_structured(
         self,
         *,
@@ -1085,13 +1166,18 @@ class GeminiClient:
             # paper's cache key.
             if not image_uploads.matches(image_parts):
                 raise ValueError("image_uploads must carry the same page images as image_parts")
-        g = self._settings.gemini
-        if model is not None:
-            active_model = model
-        elif task_tag is not None:
-            active_model = g.model_for(task_tag)
-        else:
-            active_model = g.model
+        active_model, cache_key = self._structured_cache_key(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            file_paths=file_paths,
+            image_parts=image_parts,
+            media_resolution=media_resolution,
+            response_schema=response_schema,
+            prompt_version=prompt_version,
+            model=model,
+            extra_cache_key=extra_cache_key,
+            task_tag=task_tag,
+        )
 
         log = structlog.get_logger().bind(
             component="gemini_client",
@@ -1099,19 +1185,6 @@ class GeminiClient:
             task=task_tag or "untagged",
         )
 
-        params_fingerprint = self._params_fingerprint(
-            active_model, task_tag, response_schema, media_resolution=media_resolution
-        )
-        cache_key = self._cache_key(
-            active_model,
-            system_prompt,
-            user_prompt,
-            prompt_version,
-            file_paths,
-            extra_cache_key,
-            params_fingerprint,
-            image_parts=image_parts,
-        )
         cache_path = self._cache_path(cache_key)
 
         # cache_mode="read_write" (default): read-then-write, current behaviour.

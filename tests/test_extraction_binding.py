@@ -944,10 +944,10 @@ def test_run_three_unbound_blocks_are_the_three_drawn_on_notes(
     ("number", "doubted"),
     [
         (1, ["7b_i"]),
-        (2, ["2c"]),
+        (2, ["2c", "6b", "7b_i", "8d"]),
         (3, ["4b_i", "6b", "7b_i", "8d"]),
         (4, ["3c", "4b_i"]),
-        (5, ["3c", "4b_i"]),
+        (5, ["3c", "4b_i", "6b", "7b_i", "8d"]),
     ],
 )
 def test_answers_the_binder_doubts_reach_a_teacher(
@@ -1790,6 +1790,106 @@ def _extract_legacy_observed(tmp: Path, scheme: MarkScheme) -> None:
         model="gemini-legacy-under-test",
         retry=lambda: pytest.fail("observe must not make the retry call"),
     )
+
+
+# --------------------------------------------------------------------------------------
+# The response cache
+# --------------------------------------------------------------------------------------
+def _sdk_reply(body: dict[str, Any]) -> MagicMock:
+    return MagicMock(
+        text=json.dumps(body),
+        candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
+        usage_metadata=MagicMock(prompt_token_count=5, candidates_token_count=30),
+    )
+
+
+def _bind_for_real(client: GeminiClient, scheme: MarkScheme) -> BindingOutcome:
+    """``run_binding`` through the real ``generate_structured`` and its response cache."""
+    pages = _pages()
+    with client.image_uploads([p.png_bytes for p in pages], concurrency=1) as uploads:
+        return run_binding(
+            client, pages, scheme, uploads=uploads, settings=client._settings, manifest_key="k"
+        )
+
+
+def test_a_held_paper_does_not_pin_its_reads_in_the_cache(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # Both reads miss the same labels: a hold. The cache keys of the two reads are fixed
+    # by the page bytes, the scheme and the prompt, so if the replies stayed cached, the
+    # student's "try again" and the teacher's re-run would get the same hold back
+    # without the scan being read at all.
+    client, genai = _client(tmp_path)
+    genai.models.generate_content.return_value = _sdk_reply(_items(_question_4_unanchored(4)))
+    held = _bind_for_real(client, scheme)
+    assert held.report.verdict == "hold"
+    assert genai.models.generate_content.call_count == 2
+
+    # Run again on the same file and scheme: both reads are made afresh. This time the
+    # reader sees every label, and the paper passes.
+    genai.models.generate_content.return_value = _sdk_reply(_items(_run(1)))
+    again = _bind_for_real(client, scheme)
+    assert genai.models.generate_content.call_count == 4
+    assert again.report.verdict == "pass"
+
+
+def test_a_paper_that_passed_is_served_from_the_cache_on_a_re_run(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    client, genai = _client(tmp_path)
+    genai.models.generate_content.return_value = _sdk_reply(_items(_run(1)))
+    first = _bind_for_real(client, scheme)
+    assert first.report.verdict == "pass"
+    assert genai.models.generate_content.call_count == 2
+
+    again = _bind_for_real(client, scheme)
+    assert genai.models.generate_content.call_count == 2  # no model call
+    assert again.answers == first.answers and again.report == first.report
+
+
+def test_a_job_that_failed_on_the_second_read_does_not_pin_the_first(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    client, genai = _client(tmp_path)
+    genai.models.generate_content.return_value = _sdk_reply(_items(_run(1)))
+    real = client.generate_structured
+
+    def second_read_is_down(**kwargs: Any) -> Any:
+        if kwargs.get("task_tag") == "binding_second_read":
+            raise ExternalServiceError("503 from the service")
+        return real(**kwargs)
+
+    with (
+        patch.object(client, "generate_structured", side_effect=second_read_is_down),
+        pytest.raises(ExternalServiceError),
+    ):
+        _bind_for_real(client, scheme)
+    assert genai.models.generate_content.call_count == 1  # the first read was made, and cached
+
+    # The service is back. Nothing of the failed job is reused: both reads are made.
+    outcome = _bind_for_real(client, scheme)
+    assert genai.models.generate_content.call_count == 3
+    assert outcome.report.verdict == "pass"
+
+
+def test_a_held_legacy_paper_does_not_pin_its_call_or_its_retry(
+    tmp_path: Path, scan: Path, scheme: MarkScheme
+) -> None:
+    client, genai = _client(tmp_path, binder="legacy")
+    extractor = GeminiAnswerExtractor(client, max_rereads_per_paper=0)
+    genai.models.generate_content.return_value = _sdk_reply(_legacy_reply("full_shift_lite"))
+    held = extractor(scan_path=scan, mark_scheme=scheme)
+    assert held.binding is not None and held.binding.verdict == "hold"
+    assert genai.models.generate_content.call_count == 2  # the call and its retry
+
+    genai.models.generate_content.return_value = _sdk_reply(_legacy_reply("aligned"))
+    again = extractor(scan_path=scan, mark_scheme=scheme)
+    assert genai.models.generate_content.call_count == 3  # read afresh; it passes, no retry
+    assert again.binding is not None and again.binding.verdict == "pass"
+
+    # And a legacy paper that passed stays cached.
+    extractor(scan_path=scan, mark_scheme=scheme)
+    assert genai.models.generate_content.call_count == 3
 
 
 def test_legacy_binder_with_gate_off_is_unchanged(

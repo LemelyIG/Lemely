@@ -402,6 +402,10 @@ def run_binding(
     ``settings.binding.read_model``. The gate must be enforcing: the label binder is
     not run without its checks.
 
+    A verdict other than ``pass``, or a job that fails in the reads, leaves neither
+    read in the response cache: the next run on the same scan and scheme makes both
+    model calls again. A paper that passed is served from the cache on a re-run.
+
     A ``CostCeilingError`` from either read propagates unchanged. So does any error
     from the first read. A second read that fails otherwise is published as
     ``SECOND_READ_FAILED`` and made once more; if it fails again its error is raised
@@ -440,9 +444,28 @@ def run_binding(
     def _second() -> _Read:
         return _read(SECOND_READ_TASK_TAG, "|bind2")
 
+    def _forget_reads() -> None:
+        """Take both reads out of the response cache: the next run reads the scan afresh."""
+        for task_tag, suffix in (("extraction", "|bind1"), (SECOND_READ_TASK_TAG, "|bind2")):
+            binder.forget(
+                pages,
+                mark_scheme,
+                model=binding.read_model,
+                extra_cache_key=manifest_key + suffix,
+                task_tag=task_tag,
+            )
+
     second_read: _Read | None = None
     if binding.second_read:
-        first_read, second_read = _read_both(_first, _second)
+        try:
+            first_read, second_read = _read_both(_first, _second)
+        except CostCeilingError:
+            raise
+        except Exception:
+            # The job fails with nothing known about the binding. The read that did
+            # come back must not be what the next attempt is handed.
+            _forget_reads()
+            raise
     else:
         first_read = _first()
     first = first_read.bound
@@ -486,6 +509,15 @@ def run_binding(
     else:
         decided, retried = "hold", second is not None
 
+    if decided != "pass":
+        # A held paper has no teacher queue: running it again is the only way on, and
+        # a hold that one unlucky read caused must not be replayed from the cache.
+        # The keys are fixed by the page bytes, the scheme and the prompt, so without
+        # this the same replies would come back until the instance was recycled. The
+        # entries are removed after the fact, and not withheld until a pass, so that
+        # the paper that passes (most of them) is cached by the one mechanism the
+        # client already has.
+        _forget_reads()
     checks = [*chosen_checks, *compared]
     enforced = BindingReport(
         binder="label",

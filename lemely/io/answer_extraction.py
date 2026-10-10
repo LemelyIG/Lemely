@@ -953,6 +953,27 @@ class GeminiAnswerExtractor:
         raw = call() if model is None else call(model=model)
         return _convert_reply(raw.answers, len(page_bytes))
 
+    def _forget_legacy_reply(
+        self,
+        mark_scheme: MarkScheme,
+        page_bytes: list[bytes],
+        *,
+        extra_cache_key: str,
+        model: str | None = None,
+    ) -> None:
+        """Take the reply of the ``_legacy_reply`` call these arguments make out of the cache."""
+        self._client.forget_structured(
+            system_prompt=EXTRACTOR_SYSTEM_PROMPT,
+            user_prompt=build_extractor_user_prompt(mark_scheme, page_count=len(page_bytes)),
+            image_parts=page_bytes,
+            media_resolution=EXTRACTION_MEDIA_RESOLUTION,
+            response_schema=_ExtractorOutput,
+            prompt_version=VERSION,
+            model=model,
+            extra_cache_key=extra_cache_key,
+            task_tag="extraction",
+        )
+
     def _gated_legacy(
         self,
         reply: _LegacyReply,
@@ -1005,6 +1026,16 @@ class GeminiAnswerExtractor:
         )
         if outcome.report is None:
             return reply, None
+        if outcome.report.verdict != "pass":
+            # A held paper must not be replayed from the cache: the next run on the
+            # same scan makes the call, and the retry if it comes to it, afresh.
+            self._forget_legacy_reply(mark_scheme, page_bytes, extra_cache_key=manifest_key)
+            self._forget_legacy_reply(
+                mark_scheme,
+                page_bytes,
+                extra_cache_key=manifest_key + "|retry",
+                model=settings.binding.retry_model,
+            )
         used = retried[0] if outcome.used_retry else reply
 
         def _stamped(answer: ExtractedAnswer) -> ExtractedAnswer:
