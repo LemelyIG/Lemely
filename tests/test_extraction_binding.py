@@ -1602,6 +1602,8 @@ def test_legacy_binder_output_is_gated_and_retried(
     (event,) = seen[EventType.BINDING_GATE_RESULT]
     assert (event["binder"], event["verdict"], event["retried"]) == ("legacy", "hold", True)
     assert (event["unbound"], event["unaligned"], event["inferred_numbers"]) == (0, 0, [])
+    # The legacy binder is here because the settings ask for it, not by the paper's shape.
+    assert event["binder_by_paper_shape"] is False
 
     # Retry, then pass: the repeat call is right, and is the one used.
     aligned = _legacy_reply("aligned")
