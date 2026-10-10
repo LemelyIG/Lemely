@@ -929,6 +929,39 @@ def test_a_dropped_answer_keeps_its_own_reason():
     ]
 
 
+def test_a_question_in_both_lists_is_handled_once_with_the_unbound_reason():
+    result, asked = _marked_with_unbound({"1": "one", "3": "three"}, ["2"], dropped=["2"])
+    assert [q.question_id for q in result.questions] == ["1", "2", "3"]
+    row = result.questions[1]
+    assert row.review_reason == UNBOUND_QUESTION_REASON
+    assert (row.marker_source, row.awarded_marks, row.needs_teacher_review) == ("dropped", 0, True)
+    assert asked == ["1", "3"]
+    assert (result.awarded_marks, result.maximum_marks) == (2, 3)
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        "aligned",
+        "chaotic",
+        "full_shift_38_a",
+        "full_shift_38_b",
+        "full_shift_38_c",
+        "full_shift_lite",
+        "partial_a",
+        "partial_b",
+    ],
+)
+def test_recorded_extractions_from_before_the_field_existed_still_load(fixture: str):
+    path = Path(__file__).parent / "fixtures" / "binding" / "0625_w24_41" / f"{fixture}.json"
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert "unbound_question_ids" not in stored
+    loaded = ExtractedAnswers.model_validate(stored)
+    assert loaded.unbound_question_ids == []
+    assert "unbound_question_ids" not in loaded.model_fields_set
+    assert loaded.model_dump(exclude_unset=True) == stored
+
+
 def test_extracted_answers_stored_before_the_field_existed_still_load():
     stored = {
         "paper_id": "p",

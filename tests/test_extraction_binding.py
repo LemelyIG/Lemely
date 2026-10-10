@@ -583,6 +583,32 @@ def test_unaligned_leaves_go_to_review_and_are_never_marked_blank(
     assert blank.marker_source == "blank" and blank.needs_teacher_review is False
 
 
+@pytest.mark.parametrize("gate", ["enforce", "observe", "off"])
+def test_an_unaligned_leaf_reaches_a_teacher_whatever_the_gate(
+    tmp_path: Path, scan: Path, scheme: MarkScheme, gate: str
+) -> None:
+    # The binder could bind nothing to 4b_i. That does not depend on a gate having run
+    # over the binding, so neither does what becomes of the leaf.
+    first = _without_label(_run(4), "(i)", 9)
+    model = _Model(first=_items(first), second=_items(_run(1)))
+    extracted = _extract(tmp_path, scan, scheme, model, gate=gate)
+    assert (extracted.binding is not None) == (gate == "enforce")
+    assert extracted.unbound_question_ids == ["4b_i"]
+    assert extracted.dropped_question_ids == []
+
+    marker = _Marker()
+    with patch.object(
+        correction_ai.AICorrector, "mark_question", autospec=True, side_effect=marker
+    ):
+        result = correct_paper(scheme, extracted, gemini_client=MagicMock())
+    row = next(q for q in result.questions if q.question_id == "4b_i")
+    assert "4b_i" not in marker.asked
+    assert row.needs_teacher_review is True
+    assert row.review_reason is not None and "label was not found on the scan" in row.review_reason
+    assert row.marker_source != "blank" and row.confidence == ConfidenceBand.LOW
+    assert (result.binding is not None) == (gate == "enforce")
+
+
 @pytest.mark.parametrize("number", [1, 2, 3, 4, 5])
 def test_unbound_writing_travels_on_the_extraction(
     tmp_path: Path, scan: Path, scheme: MarkScheme, number: int
