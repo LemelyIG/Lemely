@@ -1706,12 +1706,14 @@ class PointVerdictPromptTests(unittest.TestCase):
         the published science rules in the user prompt. A fifth, ``"9"`` to
         ``"10"``, is its review: the drawings section and the description
         header go only with an answer the label binder's reader wrote, and
-        every other answer has the system prompt of ``"7"`` again. The
-        I6/I7/I8 bump is still owed at US-018.
+        every other answer has the system prompt of ``"7"`` again. A sixth,
+        ``"10"`` to ``"11"``, is the same review: the default science rule on
+        significant figures has a floor. The I6/I7/I8 bump is still owed at
+        US-018.
         """
         from lemely.io.prompts.correction_ai import VERSION
 
-        self.assertEqual(VERSION, "10")
+        self.assertEqual(VERSION, "11")
 
     def test_mark_question_forwards_equivalence_gate_without_raising(self):
         """The actual regression: before the fix this call raised TypeError
@@ -5794,14 +5796,14 @@ class ECFSubstitutionTests(unittest.TestCase):
     def test_version_pin_shows_i7_has_taken_no_bump_of_its_own(self) -> None:
         """Pins the marker prompt ``VERSION``. D19: I6/I7/I8 share one bump,
         taken later at US-018's funded sweep; I7 itself bumps nothing. The
-        value is ``"10"`` because of prompt changes with bumps of their own (the
+        value is ``"11"`` because of prompt changes with bumps of their own (the
         ``addresses_question`` section, its rewrite, the drawings section, the
-        default science rules, then the drawings section kept to the reader's
-        answers), see
+        default science rules, the drawings section kept to the reader's
+        answers, then the floor in the significant-figures rule), see
         ``PointVerdictPromptTests.test_version_pin_shows_i6_has_taken_no_bump_of_its_own``."""
         from lemely.io.prompts.correction_ai import VERSION
 
-        self.assertEqual(VERSION, "10")
+        self.assertEqual(VERSION, "11")
 
     def test_schema_hash_unchanged(self) -> None:
         """I7 adds no schema field (``PointVerdict.ecf_applied`` and

@@ -221,16 +221,66 @@ def test_the_default_covers_each_published_topic() -> None:
         assert rules.count(topic) == 1, topic
 
 
-def test_the_significant_figures_rule_rounds_the_students_answer_to_the_schemes() -> None:
+def _significant_figures_rule() -> str:
     rules = _squash(SCIENCE_DEFAULT_RULES)
+    return rules[rules.index("- Significant figures:") : rules.index("- Standard form:")]
+
+
+def test_the_significant_figures_rule_rounds_the_students_answer_to_the_schemes() -> None:
+    rule = _significant_figures_rule()
     assert (
-        "round the student's final answer to the number of significant figures in the mark "
-        "scheme's answer; if it then equals the mark scheme's answer, it is correct"
-    ) in rules
+        "count the significant figures the mark scheme's answer shows, round the student's "
+        "final answer to that many, and accept it only if it then equals the mark scheme's "
+        "answer"
+    ) in rule
     # It applies only where the entry is silent, and it is shown refusing as well as accepting.
-    assert "where the mark scheme entry does not say how many significant figures" in rules
-    assert "7.26 J is correct, and 7.2 J and 7 J are not" in rules
-    assert "may not hold for a value the student had to measure" in rules
+    assert "where the mark scheme entry does not say how many significant figures" in rule
+    assert "7.26 J is correct, and 7.2 J and 7 J are not" in rule
+    assert "may not hold for a value the student had to measure" in rule
+
+
+def test_trailing_zeros_are_never_compared_at_one_significant_figure() -> None:
+    """A scheme answer of 20 or 300 read as one figure would accept 24 and 340."""
+    rule = _significant_figures_rule()
+    assert (
+        "Where the mark scheme's answer ends in zeros before the decimal point (20, 300, "
+        "17 000), those zeros may or may not be significant, so the count is ambiguous"
+    ) in rule
+    # The floor, and how to find the count above it.
+    assert (
+        "count the digits up to the last one that is not zero, and compare at that many "
+        "significant figures or at two, whichever is more"
+    ) in rule
+    assert "Never compare with such an answer at one significant figure." in rule
+
+
+def test_the_rule_shows_one_answer_accepted_and_one_refused_at_the_floor() -> None:
+    rule = _significant_figures_rule()
+    assert "Two worked cases, for a mark scheme answer of 600 Pa:" in rule
+    assert "604 Pa is 600 at two significant figures, so it is correct" in rule
+    assert (
+        "640 Pa is 640 at two significant figures, so it is not correct, although it would "
+        "round to 600 at one"
+    ) in rule
+
+
+def test_a_one_figure_answer_is_accepted_only_for_a_one_figure_scheme_answer() -> None:
+    rule = _significant_figures_rule()
+    assert (
+        "A student's answer given to one significant figure is accepted only when the mark "
+        "scheme's answer has one significant figure too"
+    ) in rule
+    # So that the sentence before cannot refuse the scheme's own answer.
+    assert "an answer written exactly as the mark scheme's is always correct" in rule
+
+
+def test_the_significant_figures_rule_never_loosens_an_exact_answer() -> None:
+    """Said in the rule itself, and again for every rule at the end of the block."""
+    rule = _significant_figures_rule()
+    assert (
+        "A mark point that sets its own precision, or that asks for the exact value or says "
+        "cao, is never loosened by this rule."
+    ) in rule
 
 
 def test_a_rule_never_loosens_a_point_that_sets_its_own_precision() -> None:
@@ -292,8 +342,8 @@ def test_the_default_is_pinned_to_the_marker_prompt_version() -> None:
     there is no measurement to redo yet.
     """
     assert (VERSION, hashlib.sha256(SCIENCE_DEFAULT_RULES.encode()).hexdigest()) == (
-        "10",
-        "59069e6f122c7f608abf7dfaf2150ee7a7052818ed6615a9c7e187d294e6be2e",
+        "11",
+        "c023a2963e95d86df764a06b73d1dba0e4a6d920b075c16a66ef4eba21c0aeb2",
     )
 
 
@@ -356,6 +406,32 @@ def test_every_marking_call_on_the_measured_physics_paper_carries_the_default() 
     for prompt in prompts:
         assert prompt.count(SCIENCE_DEFAULT_RULES) == 1
         assert _PRINTED_HEADING not in prompt
+
+
+@pytest.mark.parametrize("name", ["0580_s21_ms_31", "0606_s19_ms_23"])
+def test_a_mathematics_papers_prompts_are_what_they_were_before_the_science_rules(
+    name: str,
+) -> None:
+    """To the byte: the subtree, the answer, the earlier parts' marks, the closing line."""
+    scheme = _scheme(name)
+    leaves = [q for q in scheme.all_questions_flat() if not q.parts and q.type != QuestionType.MCQ]
+    prompts = _prompts_sent(scheme)
+    assert len(prompts) == 3
+    prior = re.compile(
+        r"PRIOR PART RESULTS \(same parent question, corrected before this part\):\n"
+        r"(?:  \S+: \d+ mark\(s\) awarded\n)+"
+        r"Use these when applying ECF / follow-through rules\.\n\n"
+    )
+    for n, (leaf, prompt) in enumerate(zip(leaves, prompts, strict=False)):
+        q_json = leaf.model_dump_json(indent=2, exclude_none=True, exclude_defaults=True)
+        assert prior.sub("", prompt) == (
+            "Mark this CAIE question.\n\n"
+            f"MARK SCHEME SUBTREE (JSON):\n{q_json}\n\n"
+            f"STUDENT ANSWER (verbatim from scan):\ninvented answer {n}\n\n"
+            "Apply the mark scheme above. The maximum_marks for your awarded_marks field is "
+            f"{leaf.marks}. Return JSON matching the AIMarkResponse schema."
+        )
+        assert "significant" not in prior.sub("", prompt).replace(q_json, "")
 
 
 @pytest.mark.parametrize("name", ["0580_s21_ms_31", "0606_s19_ms_23"])

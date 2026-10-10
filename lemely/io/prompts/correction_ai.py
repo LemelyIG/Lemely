@@ -6,7 +6,7 @@ import re
 
 from lemely.core.loose_schemas import MarkSchemeMetadata, Question
 
-VERSION = "10"
+VERSION = "11"
 
 _SYSTEM_PROMPT_HEAD = """
 You are an experienced CAIE examiner marking a single exam question for a Cambridge
@@ -198,6 +198,13 @@ SCIENCE_SYLLABUS_CODES: frozenset[str] = frozenset({"0610", "0620", "0625"})
 #: on the answer line and the marker is not shown the paper. Error carried forward is tied
 #: to a wrong value the marker can see, since it cannot check one it cannot see.
 #:
+#: The rule on significant figures says more than the published sentence, so that it cannot
+#: be read loosely. A mark scheme answer of 20 or 300 shows one figure or several, and a
+#: marker that chose one would accept 24 for 20 and 340 for 300: such an answer is compared
+#: at two figures or more. An answer given to one figure is accepted only for a mark scheme
+#: answer of one figure: the scheme that was read credits a rounded answer only when it is
+#: "expressed to two or more significant figures".
+#:
 #: The closing paragraph is the limit on all of it: a rule here never loosens a mark point
 #: that sets its own precision. This text has not been measured.
 SCIENCE_DEFAULT_RULES = """\
@@ -224,10 +231,20 @@ ignored if they contradict nothing.
   - Calculations: a correct final answer earns full credit for its calculation even with no \
 working or with wrong working, unless the mark scheme entry requires the working.
   - Significant figures: where the mark scheme entry does not say how many significant \
-figures are required, round the student's final answer to the number of significant figures \
-in the mark scheme's answer; if it then equals the mark scheme's answer, it is correct. For \
-a mark scheme answer of 7.3 J, 7.26 J is correct, and 7.2 J and 7 J are not. This may not \
-hold for a value the student had to measure.
+figures are required, count the significant figures the mark scheme's answer shows, round \
+the student's final answer to that many, and accept it only if it then equals the mark \
+scheme's answer. For a mark scheme answer of 7.3 J, 7.26 J is correct, and 7.2 J and 7 J \
+are not. Where the mark scheme's answer ends in zeros before the decimal point (20, 300, \
+17 000), those zeros may or may not be significant, so the count is ambiguous: count the \
+digits up to the last one that is not zero, and compare at that many significant figures or \
+at two, whichever is more. Never compare with such an answer at one significant figure. \
+Two worked cases, for a mark scheme answer of 600 Pa: 604 Pa is 600 at two significant \
+figures, so it is correct; 640 Pa is 640 at two significant figures, so it is not correct, \
+although it would round to 600 at one. A student's answer given to one significant figure \
+is accepted only when the mark scheme's answer has one significant figure too; an answer \
+written exactly as the mark scheme's is always correct. A mark point that sets its own \
+precision, or that asks for the exact value or says cao, is never loosened by this rule. \
+This may not hold for a value the student had to measure.
   - Standard form: an answer in standard form whose coefficient is not between 1 and 10 is \
 still correct if it converts to the mark scheme's answer.
   - Units: a final answer to a calculation given with a wrong unit does not earn the final \
