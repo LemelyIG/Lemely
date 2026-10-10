@@ -2383,6 +2383,16 @@ UNVERIFIED_BINDING_REVIEW_REASON = (
     "or may be missing some of its own"
 )
 
+#: The review reason of an answer that was marked from the read that was not returned
+#: (``lemely.io.binding.orchestrate._from_other_read``): the general sentence above
+#: would not be false for it, and this one says what happened. Keyed by the reason the
+#: extraction carries for the answer's id in ``unbound_question_reasons``.
+MARKED_FROM_OTHER_READ_REVIEW_REASON = (
+    "binding unverified: this answer was found in only one of two readings of the scan "
+    "and is marked from that reading"
+)
+_MARKED_FROM_OTHER_READ = "marked_from_other_read"
+
 _VERDICT_SEVERITY: dict[BindingVerdict, int] = {"pass": 0, "retry": 1, "hold": 2}
 
 
@@ -2401,6 +2411,27 @@ def _sent_to_review(
         else cq
         for cq in questions
     ]
+
+
+def _unverified_sent_to_review(
+    questions: list[CorrectedQuestion], extracted_answers: ExtractedAnswers
+) -> list[CorrectedQuestion]:
+    """``questions`` with each one whose answer is ``unverified`` flagged, under its reason.
+
+    An answer taken from the read that was not returned says so
+    (:data:`MARKED_FROM_OTHER_READ_REVIEW_REASON`); every other unverified answer
+    takes :data:`UNVERIFIED_BINDING_REVIEW_REASON`.
+    """
+    unverified = {
+        a.question_id for a in extracted_answers.answers if a.binding_status == "unverified"
+    }
+    one_read = {
+        qid
+        for qid in unverified
+        if extracted_answers.unbound_question_reasons.get(qid) == _MARKED_FROM_OTHER_READ
+    }
+    questions = _sent_to_review(questions, unverified - one_read, UNVERIFIED_BINDING_REVIEW_REASON)
+    return _sent_to_review(questions, one_read, MARKED_FROM_OTHER_READ_REVIEW_REASON)
 
 
 def _with_off_topic_check(
@@ -2444,9 +2475,11 @@ def _with_off_topic_check(
     The binding's own doubts do not wait for a report. A question whose answer
     carries ``binding_status="unverified"`` was marked as usual and is then
     sent to teacher review with :data:`UNVERIFIED_BINDING_REVIEW_REASON` joined
-    onto its reasons, after G8's when both apply; its marks and the verdict are
-    untouched. That is keyed on the answer, as ``unbound_question_ids`` is keyed
-    on its field: an answer that may hold another question's writing is never
+    onto its reasons (or :data:`MARKED_FROM_OTHER_READ_REVIEW_REASON`, for an answer
+    taken from the read that was not returned), after G8's when both apply; its
+    marks and the verdict are untouched. That is keyed on the answer, as
+    ``unbound_question_ids`` is keyed on its field: an answer that may hold another
+    question's writing is never
     published unflagged because no gate ran over it. Quiz marking and the
     harness's golden answers never set a status, so nothing changes for them.
     """
@@ -2461,9 +2494,7 @@ def _with_off_topic_check(
             return result
         return CorrectionResult(
             metadata=result.metadata,
-            questions=_sent_to_review(
-                result.questions, unverified, UNVERIFIED_BINDING_REVIEW_REASON
-            ),
+            questions=_unverified_sent_to_review(result.questions, extracted_answers),
         )
     check = check_off_topic(result, GateThresholds())
     checks = [*prior.checks, check]
@@ -2480,7 +2511,7 @@ def _with_off_topic_check(
     questions = result.questions
     if not check.passed and check.scope == "question":
         questions = _sent_to_review(questions, set(check.question_ids), OFF_TOPIC_REVIEW_REASON)
-    questions = _sent_to_review(questions, unverified, UNVERIFIED_BINDING_REVIEW_REASON)
+    questions = _unverified_sent_to_review(questions, extracted_answers)
     return CorrectionResult(metadata=result.metadata, questions=questions, binding=report)
 
 

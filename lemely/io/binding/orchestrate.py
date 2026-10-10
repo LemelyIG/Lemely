@@ -70,12 +70,13 @@ from lemely.core.binding_gate import (
 )
 from lemely.core.label_sequence import UnalignedReason, bind_stream
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+from lemely.core.text_agreement import text_agreement
 from lemely.io.binding.label_binder import BoundRead, LabelBinder, to_bound_read
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, LemelyError
 from lemely.runtime.events import EventType, bus
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
 
     from lemely.core.binding import BindingVerdict, SeenWriting
     from lemely.core.loose_schemas import MarkScheme
@@ -93,6 +94,10 @@ ReviewOnlyReason = Literal[
     "answered_in_one_read_only", "listing_suspect", "unaligned_in_other_read"
 ]
 REVIEW_ONLY_REASONS: tuple[ReviewOnlyReason, ...] = get_args(ReviewOnlyReason)
+#: Why an answer is doubted when it was taken from the read that was not returned
+#: (``_from_other_read``). Carried beside the review-only reasons, by id, so that the
+#: review reason a teacher reads can say what happened.
+MARKED_FROM_OTHER_READ = "marked_from_other_read"
 # Reasons in ``StreamRead.drops`` for a reply item that was left out and may have been
 # writing. A part whose block was lost this way looks blank and is not.
 LOST_ITEM_REASONS = ("malformed_item", "unknown_type")
@@ -119,7 +124,9 @@ class BindingOutcome:
     in ``review_only_ids`` is there: the binder's own reason for an unaligned leaf, or
     one of ``REVIEW_ONLY_REASONS``. ``read_cache_keys`` are the response-cache keys of
     the reads that were made, for whoever holds the paper later (the marker's check
-    runs after this) to forget them by.
+    runs after this) to forget them by. ``marked_from_other_read`` are the leaves whose
+    answer in ``answers`` is the other read's (``_from_other_read``): each is
+    ``unverified``, and none is in ``review_only_ids``.
     """
 
     answers: list[ExtractedAnswer]
@@ -129,6 +136,7 @@ class BindingOutcome:
     drops: dict[str, int] = field(default_factory=dict)
     review_reasons: dict[str, UnalignedReason | ReviewOnlyReason] = field(default_factory=dict)
     read_cache_keys: tuple[str, ...] = ()
+    marked_from_other_read: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +295,7 @@ def _publish_result(
     first_read_failed: list[BindingCheck] | None = None,
     review_reasons: Mapping[str, str] | None = None,
     by_paper_shape: bool = False,
+    marked_from_other_read: int = 0,
 ) -> None:
     """Publish and log what the gate decided.
 
@@ -300,7 +309,9 @@ def _publish_result(
     reason) is published as a count per reason, ``unaligned_reasons``: it is what
     tells a mark scheme that lists a question twice from a read that missed labels.
     ``by_paper_shape`` says the binder was chosen by ``binder_for``'s rule and not by
-    the settings, so that the hold rate can be read per path.
+    the settings, so that the hold rate can be read per path. ``marked_from_other_read``
+    counts the leaves whose answer was taken from the read that was not returned; they
+    are not among ``unaligned``.
 
     The event has no subscriber of its own and is never sent to a browser
     (``lemely.web.sse``), so the same fields are written as one ``binding_gate_result``
@@ -322,6 +333,7 @@ def _publish_result(
         "second_read": second_read,
         "unaligned_reasons": dict(Counter((review_reasons or {}).values())),
         "binder_by_paper_shape": by_paper_shape,
+        "marked_from_other_read": marked_from_other_read,
     }
     structlog.get_logger().bind(component="binding_gate").info(
         "binding_gate_result",
@@ -433,6 +445,61 @@ def _with_statuses(
         else answer
         for answer in answers
     ]
+
+
+def _whole_text(answer: ExtractedAnswer) -> str:
+    """An answer's writing, answer and working, with its white space collapsed."""
+    return " ".join(f"{answer.answer} {answer.working_out or ''}".split())
+
+
+def _from_other_read(
+    wanted: Iterable[str],
+    returned: BoundRead,
+    other: BoundRead,
+    other_checks: list[BindingCheck],
+    thresholds: GateThresholds,
+) -> dict[str, ExtractedAnswer]:
+    """The other read's answers for ``wanted`` leaves that can be marked, each ``unverified``.
+
+    ``wanted`` are leaves the returned read has no answer for and that are not blanks:
+    it has nothing under their label where the other read has writing, or it could not
+    align them. Sent to a teacher unmarked, such a leaf is a zero in the total until
+    the teacher acts, although one of two reads bound an answer to it. So the answer
+    the other read bound is marked, and doubted: the mark is provisional and the
+    question is in review, where before it was in review with no mark.
+
+    Only an answer the other read would itself have returned without a flag is taken:
+
+    - the other read passed its own checks at paper scope: a read that failed them is
+      not a witness for any single leaf;
+    - the binder gave the answer no content doubt there, and no question-scope check of
+      that read names the leaf (G5 names every leaf of a group that shows the trace of
+      writing listed before its label, so no leaf of such a group is taken);
+    - the returned read does not hold that same writing on another leaf
+      (``text_agreement`` at the gate's ``agreement_floor``, the test G9 uses for moved
+      text). Where a part was left blank and the other read listed its label one place
+      early, that read holds the neighbour's answer on the blank part with no doubt of
+      its own; the returned read, which has that writing on the neighbour, is what
+      shows it.
+
+    A leaf with writing in neither read is not here at all, and one that fails any of
+    the three stays as it was: with a teacher, unmarked.
+    """
+    if _paper_failed(other_checks):
+        return {}
+    doubted = {*other.review_ids, *_question_scope_ids(other_checks)}
+    held_here = [_whole_text(answer) for answer in returned.answers]
+    wanted_ids = set(wanted)
+    taken: dict[str, ExtractedAnswer] = {}
+    for answer in other.answers:
+        qid = answer.question_id
+        if qid not in wanted_ids or qid in doubted:
+            continue
+        writing = _whole_text(answer)
+        if any(text_agreement(writing, held) >= thresholds.agreement_floor for held in held_here):
+            continue
+        taken[qid] = answer.model_copy(update={"binding_status": "unverified"})
+    return taken
 
 
 def run_binding(
@@ -560,6 +627,7 @@ def run_binding(
         )
 
     chosen, chosen_checks, other = first, first_checks, second_read
+    other_checks = second_checks
     decided: BindingVerdict
     if _paper_failed(compared):
         decided, retried = "hold", True
@@ -567,6 +635,7 @@ def run_binding(
         decided, retried = "pass", False
     elif second is not None and second_checks is not None and not _paper_failed(second_checks):
         chosen, chosen_checks, other = second, second_checks, first_read
+        other_checks = first_checks
         decided, retried = "pass", True
     else:
         decided, retried = "hold", second is not None
@@ -606,10 +675,28 @@ def run_binding(
     # other read's unbound writing is kept, since some of it may be this leaf's.
     missed_elsewhere = [leaf for leaf in unread if leaf not in chosen.unaligned_ids]
     unverified = _question_scope_ids(checks) | (frozenset([*suspect_leaves, *lopsided]) & answered)
+    # A leaf with no answer here that the other read answered without doubt is marked
+    # from that read and doubted, not left as an unmarked zero (``_from_other_read``).
+    # Not on a held paper, whose record stays the returned read's; and not a leaf of a
+    # suspect group of this read, which is trusted in neither direction.
+    from_other: dict[str, ExtractedAnswer] = {}
+    if decided == "pass" and other is not None and other_checks is not None:
+        from_other = _from_other_read(
+            (
+                leaf
+                for leaf in [*chosen.unaligned_ids, *seen_elsewhere]
+                if leaf not in suspect_leaves
+            ),
+            chosen,
+            other.bound,
+            other_checks,
+            thresholds,
+        )
+    seen_elsewhere = [leaf for leaf in seen_elsewhere if leaf not in from_other]
     review_only = _in_paper_order(
         mark_scheme,
         [
-            *chosen.unaligned_ids,
+            *(leaf for leaf in chosen.unaligned_ids if leaf not in from_other),
             *(leaf for leaf in suspect_leaves if leaf not in answered),
             *seen_elsewhere,
             *missed_elsewhere,
@@ -648,15 +735,21 @@ def run_binding(
             else []
         ),
         review_reasons=review_reasons,
+        marked_from_other_read=len(from_other),
     )
+    by_id = {
+        **{a.question_id: a for a in _with_statuses(chosen.answers, unverified)},
+        **from_other,
+    }
     return BindingOutcome(
-        answers=_with_statuses(chosen.answers, unverified),
+        answers=[by_id[qid] for qid in _in_paper_order(mark_scheme, list(by_id))],
         report=enforced,
         unbound=unbound,
         review_only_ids=review_only,
         drops=dict(chosen.drops),
         review_reasons=review_reasons,
         read_cache_keys=read_cache_keys,
+        marked_from_other_read=_in_paper_order(mark_scheme, list(from_other)),
     )
 
 

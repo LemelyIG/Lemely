@@ -533,31 +533,42 @@ def test_an_answer_whose_label_the_other_read_missed_stays_as_bound(
     assert (event["unaligned"], event["failed_checks"]) == (0, [])
 
 
-def test_a_leaf_only_the_other_read_answered_goes_to_review_never_blank(
+def test_a_leaf_only_the_other_read_answered_is_marked_from_that_read_and_flagged(
     tmp_path: Path, scan: Path, scheme: MarkScheme
 ) -> None:
-    # The first read did not report the block under 5(a) ("0.2 m"); the second did. The
-    # first read passes its own checks and is the one used, and in it 5(a) is a label
-    # with nothing after it: a blank. It is not one.
+    # The first read did not report the block under 5(a) ("0.2 m"); the second did, with
+    # no doubt. The first read passes its own checks and is the one used, and in it
+    # 5(a) is a label with nothing after it: a blank. It is not one, and it is not left
+    # as a zero waiting for a teacher either: the answer one read bound is marked.
     first = _without_items(_run(1), 53)
-    with _events(EventType.BINDING_GATE_RESULT) as seen:
+    with (
+        _events(EventType.BINDING_GATE_RESULT) as seen,
+        structlog.testing.capture_logs() as logs,
+    ):
         extracted = _extract(
             tmp_path, scan, scheme, _Model(first=_items(first), second=_items(_run(1)))
         )
     report = extracted.binding
     assert report is not None
     assert (report.verdict, report.retried) == ("pass", False)
-    # The event counts the leaves sent to a teacher, not only those with no label, and
-    # the writing kept with no question, the other read's block included.
-    (event,) = seen[EventType.BINDING_GATE_RESULT]
-    assert (event["unaligned"], event["unbound"]) == (1, 4)
     g9 = report.checks[-1]
     assert (g9.id, g9.passed, g9.scope, g9.question_ids) == ("G9", False, "question", ["5a"])
     assert "answered in one reading of the scan and left blank in the other: 5a" in g9.detail
-    assert "5a" not in {a.question_id for a in extracted.answers}
-    assert extracted.unbound_question_ids == ["5a"]
-    # What the other read saw there is kept, as writing with no question.
-    assert "0.2 m" in [w.answer for w in extracted.unbound_answers]
+    # Every leaf holds what the complete read binds, 5(a) among them, in paper order.
+    assert _pairs(extracted) == _bound_alone(_run(1), scheme)
+    answer = next(a for a in extracted.answers if a.question_id == "5a")
+    assert (answer.answer, answer.binding_status) == ("0.2 m", "unverified")
+    assert (answer.binding_source, answer.label_seen) == ("label", "(a)")
+    # It is an answer now: not a leaf with none, and not writing with no question.
+    assert extracted.unbound_question_ids == []
+    assert "0.2 m" not in [w.answer for w in extracted.unbound_answers]
+    assert extracted.unbound_question_reasons == {"5a": "marked_from_other_read"}
+    # Counted on the event and the log line, apart from the leaves that have no answer.
+    (event,) = seen[EventType.BINDING_GATE_RESULT]
+    assert (event["unaligned"], event["unbound"]) == (0, 3)
+    assert event["marked_from_other_read"] == 1 and event["unaligned_reasons"] == {}
+    (line,) = [entry for entry in logs if entry["event"] == "binding_gate_result"]
+    assert line["marked_from_other_read"] == 1
 
     marker = _Marker()
     with patch.object(
@@ -565,8 +576,186 @@ def test_a_leaf_only_the_other_read_answered_goes_to_review_never_blank(
     ):
         result = correct_paper(scheme, extracted, gemini_client=MagicMock())
     row = next(q for q in result.questions if q.question_id == "5a")
-    assert row.marker_source == "dropped" and row.needs_teacher_review  # not "blank"
-    assert "5a" not in marker.asked
+    assert "5a" in marker.asked and row.marker_source == "ai"
+    assert row.awarded_marks == row.maximum_marks  # the mark is given, and kept
+    assert row.needs_teacher_review
+    # The reason is the true one, under the prefix other code keys on.
+    (reason,) = [r for r in (row.review_reason or "").split(" | ") if "binding" in r]
+    assert reason == (
+        "binding unverified: this answer was found in only one of two readings of the "
+        "scan and is marked from that reading"
+    )
+
+
+def test_a_leaf_unaligned_in_the_returned_read_is_marked_from_the_other_read(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The read that is used missed the label (iii) of 4(b), so 4(b)(iii) has no label
+    # and 4(b)(ii), the leaf before the gap, cannot be closed: both are unaligned. The
+    # other read has every label and binds both with no doubt.
+    first = _without_label(_run(1), "(iii)", 9)
+    alone = _bind(tmp_path / "alone", scheme, _Model(first=_items(first)), second_read=False)
+    assert alone.review_only_ids == ["4b_ii", "4b_iii"]
+
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(_run(1))))
+    assert (outcome.report.verdict, outcome.report.retried) == ("pass", False)
+    assert outcome.review_only_ids == [] and outcome.review_reasons == {}
+    assert outcome.marked_from_other_read == ["4b_ii", "4b_iii"]
+    assert _pairs(outcome) == _bound_alone(_run(1), scheme)
+    status = {a.question_id: a.binding_status for a in outcome.answers}
+    assert status["4b_ii"] == status["4b_iii"] == "unverified"
+    # The returned read's own writing under those labels is still kept with no
+    # question: nothing says it is the same writing.
+    assert len(outcome.unbound) == len(alone.unbound)
+
+
+def test_a_leaf_the_other_read_doubts_is_not_marked_from_it(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # Recorded reply 3 binds 4(b)(i) with a block tied by an arrow, so its answer there
+    # is doubted. The read that is used has nothing under 4(b)(i). A doubted answer from
+    # the read that was not returned is not marked: the leaf goes to a teacher as before.
+    blocks = _blocks_under(_run(3), "(i)", 9)
+    first = _without_items(_run(3), *blocks)
+    other = _bind(tmp_path / "other", scheme, _Model(first=_items(_run(3))), second_read=False)
+    assert {a.question_id: a.binding_status for a in other.answers}["4b_i"] == "unverified"
+
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(_run(3))))
+    assert outcome.report.verdict == "pass"
+    assert "4b_i" not in {a.question_id for a in outcome.answers}
+    assert outcome.review_only_ids == ["4b_i"]
+    assert outcome.review_reasons == {"4b_i": "answered_in_one_read_only"}
+    assert outcome.marked_from_other_read == []
+    kept = [w.answer for w in outcome.unbound]
+    assert all(_run(3)[index]["answer"] in kept for index in blocks)
+
+
+def _with_a_block_after(items: list[Any], index: int, text: str, **fields: Any) -> list[Any]:
+    """``items`` with one more block of writing listed straight after the item at ``index``."""
+    block = {
+        "type": "answer",
+        "page": items[index]["page"],
+        "box": [1, 1, 5, 5],
+        "answer": text,
+        "working_out": None,
+        "confidence": 0.9,
+        "placed_by": "position",
+        **fields,
+    }
+    return [*items[: index + 1], block, *items[index + 1 :]]
+
+
+def _with_label_before_the_writing_above(items: list[Any], text: str, page: int) -> list[Any]:
+    """``items`` with the label ``text`` on ``page`` listed one place early.
+
+    The label then stands before the block of the leaf above it, so that block is read
+    as the labelled leaf's, and the leaf above is left with nothing.
+    """
+    out = list(items)
+    at = next(
+        index
+        for index, item in enumerate(out)
+        if item.get("type") == "label" and item.get("text") == text and item.get("page") == page
+    )
+    assert out[at - 1]["type"] == "answer"
+    out[at - 1], out[at] = out[at], out[at - 1]
+    return out
+
+
+def test_writing_the_returned_read_holds_on_another_leaf_is_not_marked_twice(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The student left 7(c) blank. The other read lists the label (c) before the block
+    # of 7(b)(ii), so there 7(c) holds 7(b)(ii)'s answer, with no doubt, and 7(b)(ii) is
+    # blank. The returned read has it right. Marking 7(c) from the other read would
+    # mark 7(b)(ii)'s answer a second time, on a question the student did not answer.
+    clean = _run(1)
+    second = _with_label_before_the_writing_above(clean, "(c)", 15)
+    other = _bound_alone(second, scheme)
+    answer_7bii = dict(_bound_alone(clean, scheme))["7b_ii"]
+    assert dict(other)["7c"] == answer_7bii and "7b_ii" not in dict(other)
+
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(clean), second=_items(second)))
+    assert outcome.report.verdict == "pass"
+    by_id = {a.question_id: a for a in outcome.answers}
+    assert "7c" not in by_id and outcome.marked_from_other_read == []
+    assert outcome.review_only_ids == ["7c"]
+    assert outcome.review_reasons == {"7c": "answered_in_one_read_only"}
+    assert by_id["7b_ii"].answer == answer_7bii  # where the returned read has it
+
+
+def test_two_leaves_with_the_same_final_answer_are_told_apart_by_their_working(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # 1(b) and 5(a) end in the same value, by different working. The returned read has
+    # nothing under 5(a). What the other read holds there is not the writing the
+    # returned read has on 1(b): the whole of each is compared, not the last line.
+    both = copy.deepcopy(_run(1))
+    both[8].update(answer="0.2 m", working_out="extension = F / k = 2.8 / 14")
+    both[53].update(answer="0.2 m", working_out="wavelength = v / f = 340 / 1700")
+    first = _without_items(both, 53)
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(both)))
+    assert outcome.report.verdict == "pass"
+    assert outcome.marked_from_other_read == ["5a"]
+    taken = next(a for a in outcome.answers if a.question_id == "5a")
+    assert (taken.answer, taken.working_out) == ("0.2 m", "wavelength = v / f = 340 / 1700")
+
+
+def test_a_leaf_in_a_group_the_other_read_lists_out_of_order_is_not_marked_from_it(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The returned read has nothing under either part of 1(c). The other read lists the
+    # two blocks of 1(c) before their labels, which binds 1(c)(ii)'s answer to 1(c)(i):
+    # a group with that trace is never trusted, in whichever read it is.
+    first = _without_items(_run(1), 11, 13)
+    second = _with_1c_listed_first(_run(1))
+    assert dict(_bound_alone(second, scheme))["1c_i"] == _run(1)[13]["answer"]
+
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(second)))
+    assert outcome.report.verdict == "pass"
+    assert "1c_i" not in {a.question_id for a in outcome.answers}
+    assert "1c_i" in outcome.review_only_ids and outcome.marked_from_other_read == []
+
+
+def test_a_leaf_of_a_group_this_read_lists_out_of_order_is_not_marked_from_the_other(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The returned read has a block straight after the label (c) of question 1 and
+    # nothing under 1(c)(ii): the trace of writing listed before its label. The other
+    # read answers 1(c)(ii) with no doubt, and the returned read holds that writing on
+    # no leaf. The group is trusted in neither direction all the same: 1(c)(ii) goes to
+    # a teacher unmarked, as the leaf left with nothing in such a group always has.
+    first = _with_a_block_after(_without_items(_run(1), 13), 9, "a line under the heading")
+    assert first[9]["type"] == "label" and first[9]["text"] == "(c)"
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(_run(1))))
+    assert outcome.report.verdict == "pass"
+    assert outcome.review_reasons == {"1c_ii": "listing_suspect"}
+    assert "1c_ii" not in {a.question_id for a in outcome.answers}
+    assert outcome.marked_from_other_read == []
+
+
+def test_nothing_is_marked_from_a_read_that_failed_its_own_checks(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The first read lost an item of its reply and fails; the second read is returned.
+    # It has nothing under 5(a), where the first read has "0.2 m". A read that failed at
+    # paper scope is not a witness for any single leaf.
+    first = _with_an_item_lost(_run(1), 60)
+    second = _without_items(_run(1), 53)
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(second)))
+    assert (outcome.report.verdict, outcome.report.retried) == ("pass", True)
+    assert "5a" not in {a.question_id for a in outcome.answers}
+    assert outcome.review_only_ids == ["5a"] and outcome.marked_from_other_read == []
+
+
+def test_a_held_paper_takes_nothing_from_the_other_read(tmp_path: Path, scheme: MarkScheme) -> None:
+    # Five leaves answered in one read only hold the paper. Held, its record is the
+    # returned read's: nothing is marked on it, so nothing is taken from the other read.
+    five = _without_items(_run(1), 8, 18, 22, 29, 53)
+    held = _bind(tmp_path, scheme, _Model(first=_items(five), second=_items(_run(1))))
+    assert held.report.verdict == "hold"
+    assert held.review_only_ids == ["1b", "2a_i", "2a_iii", "2c", "5a"]
+    assert held.marked_from_other_read == []
 
 
 def test_a_leaf_only_the_returned_read_answered_is_kept_and_doubted(
@@ -904,9 +1093,10 @@ class _Marker:
 def test_unaligned_leaves_go_to_review_and_are_never_marked_blank(
     tmp_path: Path, scan: Path, scheme: MarkScheme
 ) -> None:
-    # The reader missed the label (i) of 4(b): leaf 4b_i has no label to bind to.
+    # The reader missed the label (i) of 4(b), in both reads: leaf 4b_i has no label to
+    # bind to, and no read holds an answer for it.
     first = _without_label(_run(4), "(i)", 9)
-    model = _Model(first=_items(first), second=_items(_run(1)))
+    model = _Model(first=_items(first), second=_items(first))
     extracted = _extract(tmp_path, scan, scheme, model)
 
     assert extracted.binding is not None and extracted.binding.verdict == "pass"
@@ -1842,6 +2032,7 @@ def test_binding_gate_result_event_fields(tmp_path: Path, scan: Path, scheme: Ma
         "second_read": True,
         "unaligned_reasons": {},
         "binder_by_paper_shape": False,
+        "marked_from_other_read": 0,
         "first_read_failed_checks": [],
         "report": extracted.binding.model_dump() if extracted.binding else None,
     }
@@ -1867,17 +2058,18 @@ def test_why_each_leaf_went_to_review_is_kept_and_counted(
     # Four ways a leaf ends up with a teacher and no answer, in one extraction each.
     base = _run(1)
     cases: dict[str, tuple[list[Any], list[Any], dict[str, str]]] = {
-        # The reader missed the label (i) of 4(b) in the read that is used.
+        # The reader missed the label (i) of 4(b), in both reads.
         "label missed": (
             _without_label(_run(4), "(i)", 9),
-            _run(1),
+            _without_label(_run(4), "(i)", 9),
             {"4b_i": "label_not_seen"},
         ),
-        # The read that is used has nothing under 5(a); the other read has "0.2 m".
+        # The read that is used has nothing under 4(b)(i); the other read has an answer
+        # there that it doubts itself (a block tied by an arrow), so it is not marked.
         "answered in the other read only": (
-            _without_items(base, 53),
-            base,
-            {"5a": "answered_in_one_read_only"},
+            _without_items(_run(3), *_blocks_under(_run(3), "(i)", 9)),
+            _run(3),
+            {"4b_i": "answered_in_one_read_only"},
         ),
         # Both reads list the writing of 1(c) before its labels: 1(c)(ii) is left with none.
         "listed out of order": (
@@ -1971,6 +2163,7 @@ def test_the_gate_result_is_logged_on_the_server_without_any_answer_text(
         "second_read": True,
         "unaligned_reasons": {},
         "binder_by_paper_shape": False,
+        "marked_from_other_read": 0,
     }
     assert not any(answer.answer in str(line) for answer in outcome.answers if answer.answer)
 

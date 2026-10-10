@@ -20,7 +20,13 @@ from pydantic_core import core_schema as pydantic_core_schema
 from lemely.core.binding import BindingReport
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers, SourceBox
-from lemely.io.binding.orchestrate import LegacyRead, binder_for, gate_legacy, run_binding
+from lemely.io.binding.orchestrate import (
+    MARKED_FROM_OTHER_READ,
+    LegacyRead,
+    binder_for,
+    gate_legacy,
+    run_binding,
+)
 
 # The per-field coercion helpers live in ``lemely.io.extraction_coerce`` (the label
 # binder uses them too, and this module calls the binder). They are re-exported here
@@ -1185,7 +1191,13 @@ class GeminiAnswerExtractor:
                 # Why each of them is there, so that the review reason can be true
                 # for its cause (a scheme that lists a question twice is not a scan
                 # whose label was missed).
-                bound_fields["unbound_question_reasons"] = dict(outcome.review_reasons)
+                # ... and, under the same ids-to-reasons record, why an answer that
+                # was taken from the read that was not returned is doubted: it is
+                # what lets its review reason say so (`correct_paper`).
+                bound_fields["unbound_question_reasons"] = {
+                    **outcome.review_reasons,
+                    **dict.fromkeys(outcome.marked_from_other_read, MARKED_FROM_OTHER_READ),
+                }
                 bound_fields["unbound_answers"] = outcome.unbound
                 bound_fields["binding"] = outcome.report
                 read_cache_keys = outcome.read_cache_keys
