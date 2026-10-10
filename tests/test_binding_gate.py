@@ -1019,6 +1019,8 @@ def test_g9_presence_rate_and_minimum_for_paper_scope() -> None:
     assert three.detail.startswith("3 questions were answered in one reading")
     # Above the rate but below the minimum count stays at question scope.
     assert missing(2, total=10).scope == "question"
+    # Three of thirty reaches the minimum and is exactly 10%: at the limit, not above it.
+    assert missing(3, total=30).scope == "question"
     lax = replace(DEFAULTS, second_read_presence_rate=0.5)
     absent = [q for q in _all() if q not in {"1", "2", "3"}]
     assert _g9_presence(_all(), absent, thresholds=lax).scope == "question"
