@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
+
 from lemely.core.loose_schemas import Question
 
-VERSION = "7"
+VERSION = "8"
 
 MARKER_SYSTEM_PROMPT = """
 You are an experienced CAIE examiner marking a single exam question for a Cambridge
@@ -45,9 +47,22 @@ Rules:
   band that best fits. Apply owtte: if the student's phrasing conveys the same meaning as
   a marking point, credit it.
 
-**Diagrams / graphs:**
-- The student's response is given as a text description by an earlier OCR pass. Mark
-  accordingly; set confidence < 0.5 if the description is too vague to judge.
+**Drawings, diagrams and graphs:**
+- You are never shown an image. Text in the response that follows `Drawing:` is not the
+  student's own words: it is a description of what the student drew, written by the reader
+  that looked at the scan. The drawing is on the page; the description is your evidence of it.
+- Judge each mark point against the facts the description states: what was drawn and how
+  many, where lines start and end, which way arrows point, where lines are closer or further
+  apart, labels, values and units, plotted points and the line through them.
+- Do not refuse a mark because no image or diagram is provided, and do not treat the
+  description as a written answer offered in place of a drawing.
+- Do not award a point that needs a detail the description does not state. Silence about a
+  detail is not evidence of it: withhold that point and say in `feedback` which detail was
+  missing. A word of praise in a description ("correct", "accurate") is not a fact and earns
+  nothing.
+- Set confidence < 0.5 if the description is too vague to judge a mark point.
+- A description of a drawing that does not open with `Drawing:` comes from an older reader:
+  mark it by the same rules.
 
 **When WORKING is supplied:**
 - Read the WORKING block carefully before reading the ANSWER. Working may contain:
@@ -122,6 +137,17 @@ Student: "g is approximately 10 N/kg"
    addresses_question="yes"
 """
 
+# The label binder's reader opens its description of a drawing with this word
+# (``lemely.io.prompts.label_binding``). Two blocks bound to one part are joined, so it
+# may come after the student's own writing. Capital D and a colon, with no letter before:
+# a student who writes "my drawing: ..." has not written a description.
+_DRAWING_DESCRIPTION = re.compile(r"(?<![A-Za-z])Drawing:")
+_ANSWER_HEADER = "STUDENT ANSWER (verbatim from scan):"
+_DRAWING_ANSWER_HEADER = (
+    "STUDENT ANSWER (from the scan; the text after `Drawing:` is the reader's description "
+    "of what the student drew, not the student's own words):"
+)
+
 
 def build_marker_user_prompt(
     question: Question,
@@ -195,10 +221,15 @@ def build_marker_user_prompt(
     """
     q_json = question.model_dump_json(indent=2, exclude_none=True, exclude_defaults=True)
     answer_text = student_answer if student_answer.strip() else "(blank — no response written)"
+    # A drawing reaches the marker as the reader's description of it. Calling that
+    # "verbatim" had the marker refuse marks because "no diagram was provided".
+    answer_header = (
+        _DRAWING_ANSWER_HEADER if _DRAWING_DESCRIPTION.search(student_answer) else _ANSWER_HEADER
+    )
     parts = [
         "Mark this CAIE question.\n",
         f"MARK SCHEME SUBTREE (JSON):\n{q_json}\n",
-        f"STUDENT ANSWER (verbatim from scan):\n{answer_text}\n",
+        f"{answer_header}\n{answer_text}\n",
     ]
     if student_working and student_working.strip():
         parts.append(

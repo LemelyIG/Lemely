@@ -47,6 +47,15 @@ SECTION_START = "**Last field: `addresses_question`"
 SECTION_END = "---\n\n## Worked Examples"
 # What each worked reply example gained so the examples show the whole reply.
 EXAMPLE_ADDITION = ',\n   addresses_question="yes"'
+# The section on drawings as it stood at VERSION "5". VERSION "8" replaced it (pinned in
+# tests/test_marker_drawings.py).
+DRAWINGS_SECTION_START = "**Drawings, diagrams and graphs:**"
+DRAWINGS_SECTION_END = "**When WORKING is supplied:**"
+VERSION_5_DRAWINGS_SECTION = (
+    "**Diagrams / graphs:**\n"
+    "- The student's response is given as a text description by an earlier OCR pass. Mark\n"
+    "  accordingly; set confidence < 0.5 if the description is too vague to judge.\n\n"
+)
 
 
 def _scheme(theory: int, *, mcq: bool = False) -> MarkScheme:
@@ -215,8 +224,8 @@ def _fake_client_and_sdk(
 # --- prompt -----------------------------------------------------------------
 
 
-def test_marker_prompt_version_is_7():
-    assert VERSION == "7"
+def test_marker_prompt_version_is_8():
+    assert VERSION == "8"
 
 
 def test_marker_prompt_explains_addresses_question_and_says_it_never_changes_the_mark():
@@ -264,11 +273,19 @@ def test_worked_reply_examples_include_addresses_question():
 
 
 def test_marker_prompt_is_otherwise_unchanged_from_version_5():
+    """Every difference from VERSION "5" is named: this section, the example field, drawings."""
     start = MARKER_SYSTEM_PROMPT.index(SECTION_START)
     end = MARKER_SYSTEM_PROMPT.index(SECTION_END)
     without_section = MARKER_SYSTEM_PROMPT[:start] + MARKER_SYSTEM_PROMPT[end:]
     without_additions = without_section.replace(EXAMPLE_ADDITION, "")
-    assert hashlib.sha256(without_additions.encode()).hexdigest() == VERSION_5_PROMPT_SHA256
+    assert without_additions.count(DRAWINGS_SECTION_START) == 1
+    drawings = without_additions.index(DRAWINGS_SECTION_START)
+    working = without_additions.index(DRAWINGS_SECTION_END)
+    assert drawings < working
+    version_5 = (
+        without_additions[:drawings] + VERSION_5_DRAWINGS_SECTION + without_additions[working:]
+    )
+    assert hashlib.sha256(version_5.encode()).hexdigest() == VERSION_5_PROMPT_SHA256
 
 
 def test_reply_schema_lists_addresses_question_last_with_a_description():

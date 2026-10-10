@@ -70,6 +70,13 @@ _ADDED_TO_SYSTEM = (
     "part's label, never before it.\n\n"
 )
 _ADDED_TO_USER = "A label is always listed before the writing that sits under it, never after it. "
+# The one rule of the measured prompt that this prompt replaces: what to write for a drawing.
+_MEASURED_DRAWING_RULE = (
+    "  - For a drawing, or for marks added to a printed diagram or graph, describe briefly what\n"
+    '    the student drew: "curved line through (2,4) and (5,10)".\n'
+)
+_DRAWING_RULE_START = "  - For a drawing, or for marks added to a printed diagram or graph,"
+_DRAWING_RULE_END = "  - For a ringed or ticked option"
 
 
 def _scheme(name: str = "0625_w24_ms_41") -> MarkScheme:
@@ -326,9 +333,19 @@ def test_system_prompt_says_a_label_precedes_its_writing() -> None:
 
 
 def test_prompts_are_the_measured_prompts_plus_the_listed_additions() -> None:
-    """Every difference from the prompt that was measured is named here, and is an addition."""
+    """Every difference from the prompt that was measured is named here.
+
+    Two additions, and one rule replaced: the rule for a drawing (version "2", pinned in
+    ``tests/test_label_binding_prompt.py``). With the additions taken out and the measured
+    drawing rule put back, the prompt is the measured one to the byte.
+    """
     assert LABEL_BINDING_SYSTEM_PROMPT.count(_ADDED_TO_SYSTEM) == 1
-    measured_system = LABEL_BINDING_SYSTEM_PROMPT.replace(_ADDED_TO_SYSTEM, "")
+    assert LABEL_BINDING_SYSTEM_PROMPT.count(_DRAWING_RULE_START) == 1
+    without_additions = LABEL_BINDING_SYSTEM_PROMPT.replace(_ADDED_TO_SYSTEM, "")
+    start = without_additions.index(_DRAWING_RULE_START)
+    end = without_additions.index(_DRAWING_RULE_END, start)
+    assert without_additions[start:end] != _MEASURED_DRAWING_RULE
+    measured_system = without_additions[:start] + _MEASURED_DRAWING_RULE + without_additions[end:]
     assert hashlib.sha256(measured_system.encode()).hexdigest() == _MEASURED_SYSTEM_SHA
 
     user = build_label_binding_user_prompt(_scheme(), page_count=19)
@@ -940,7 +957,7 @@ def test_the_call_is_an_extraction_call_carrying_every_page(tmp_path: Path) -> N
     _, genai, spy = _read(tmp_path, [_label("1")], page_count=3, scheme=scheme)
     sent = spy.call_args.kwargs
     assert sent["task_tag"] == "extraction"
-    assert sent["prompt_version"] == LABEL_BINDING_PROMPT_VERSION == "1"
+    assert sent["prompt_version"] == LABEL_BINDING_PROMPT_VERSION == "2"
     assert sent["system_prompt"] == LABEL_BINDING_SYSTEM_PROMPT
     assert sent["user_prompt"] == build_label_binding_user_prompt(scheme, page_count=3)
     assert sent["image_parts"] == [b"page-0", b"page-1", b"page-2"]

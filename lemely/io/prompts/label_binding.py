@@ -10,13 +10,21 @@ version "il1" of the measurement harness). They differ from what was measured by
 rule, stated once in each prompt: a label is listed before the writing that sits under
 it. ``bind_stream`` trusts that order and has no way to check it, so a reader that
 lists writing before its label binds the whole paper one part late.
+
+VERSION "2" replaces one rule of the measured prompt, the one for a drawing. The measured
+rule asked for a brief description, and on one script the marker gave the same drawing 0
+to 3 marks out of 3 over nine reads, three times for want of "a diagram". The reader now
+opens such an answer with ``Drawing:`` and states the facts a marker can count, with no
+word on whether the drawing is right: the marker (``lemely.io.prompts.correction_ai``)
+takes what follows ``Drawing:`` as a description and credits only what it states. This
+rule has not been measured.
 """
 
 from __future__ import annotations
 
 from lemely.core.loose_schemas import MarkScheme, Question
 
-VERSION = "1"
+VERSION = "2"
 
 LABEL_BINDING_SYSTEM_PROMPT = """
 You are an expert at reading scanned CAIE (Cambridge IGCSE / O-Level / A-Level) exam scripts.
@@ -106,8 +114,26 @@ One answer item for each block of the student's own handwriting or drawing.
   - Where one part has several printed prompt lines to fill in, keep each printed prompt
     with what the student wrote on it: "colour at start: blue; colour at end:
     colourless". A single answer line ("mass = ........ g") needs only the value.
-  - For a drawing, or for marks added to a printed diagram or graph, describe briefly what
-    the student drew: "curved line through (2,4) and (5,10)".
+  - For a drawing, or for marks added to a printed diagram or graph, `answer` starts with
+    "Drawing:" and then states the facts of what the student drew, so that someone who
+    cannot see the page could count and check them. State each of the following that
+    applies, and only what is visible on the page:
+    - what was drawn and how many of each thing: "4 straight lines", "2 circles";
+    - where each line starts and where it ends, and whether any lines touch or cross;
+    - the direction of every arrow: "an arrowhead on each line, pointing to the right";
+    - where lines are closer together and where they are further apart;
+    - every label, value and unit written on the drawing, copied exactly;
+    - on a graph, the points plotted, read against the printed scales, and the line drawn
+      through them: straight or curved, where it starts and ends, which points it misses.
+    Report what is there, never whether it is right. Do not use a word that judges the
+    drawing ("correct", "accurate", "appropriate", "neat", "well drawn"), and do not claim
+    a property the page does not show: where something is absent or you cannot tell, say
+    that ("no arrowheads", "cannot tell whether the two lines cross").
+    Two examples. "Drawing: 4 straight lines from the left side of the printed box to its
+    right side, evenly spaced, none touching or crossing; an arrowhead on each line,
+    pointing to the right; 'X' written above the top line." "Drawing: 5 crosses plotted at
+    (0, 0), (1, 3), (2, 6), (3, 8), (4, 12); one straight ruled line from (0, 0) to
+    (4, 12); the cross at (3, 8) is below the line."
   - For a ringed or ticked option, give the option chosen.
   - Crossed-out work: `answer` is the final attempt that is not crossed out; an earlier
     crossed-out attempt that is still legible goes in `working_out`.
