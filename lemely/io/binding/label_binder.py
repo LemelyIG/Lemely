@@ -17,7 +17,7 @@ from pydantic import ConfigDict, ValidationError, create_model
 from lemely.core.binding import SeenLabel, SeenWriting, StreamItem, UnboundWriting
 from lemely.core.label_sequence import INFERENCE_DOUBTS, BoundLeaf, BoundStream
 from lemely.core.schemas import ExtractedAnswer, SourceBox
-from lemely.io.answer_extraction import (
+from lemely.io.extraction_coerce import (
     _coerce_answer_text,
     _coerce_box,
     _coerce_confidence,
