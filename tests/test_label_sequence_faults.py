@@ -887,26 +887,28 @@ def labelled(paper: Paper, labelling: str, style: int = 0) -> list[Entry]:
 class Trial:
     stream: list[Entry]
     what: list[str] = field(default_factory=list)
-    # (the node whose label was misread, the label text it was read as)
-    read_as: list[tuple[int, str]] = field(default_factory=list)
+    # (the node whose label was misread, the node whose label it was read as)
+    read_as: list[tuple[int, int]] = field(default_factory=list)
 
     def names_the_wrong_part(self, paper: Paper, base: list[Entry]) -> bool:
         """The one shape no order-based rule can see, and the battery's one exception.
 
-        A label was read as the text of another label, and the label the paper prints
-        with that text is not in the list as itself: missed, or misread in its turn.
-        "The label with that text" is the one in the misread label's own question, or
-        the only one on the paper when the text names its question ("7(b)", "9").
-        What is left is, item for item, a list a correct reader could have produced
-        from a script on which the misread part's own label was missed.
+        A label was read as another label of the paper, and a label the paper prints
+        with that text there is not in the list as itself: missed, or misread in its
+        turn. "There" is the label it was read as (a sibling's, or the one listed
+        beside it), and the label with the same text in the misread label's own
+        question. What is left is, item for item, a list a correct reader could have
+        produced from a script on which a label was missed.
         """
         printed = {e.node: e.text for e in base if e.node is not None}
         kept = {e.node for e in self.stream if e.node is not None and e.text == printed[e.node]}
-        for node, text in self.read_as:
-            named = [other for other, other_text in printed.items() if other_text == text]
-            if len(named) > 1:
-                named = [n for n in named if paper.question(n) == paper.question(node)]
-            if any(other not in kept for other in named):
+        for node, other in self.read_as:
+            same_text = [
+                n
+                for n, text in printed.items()
+                if text == printed[other] and paper.question(n) == paper.question(node)
+            ]
+            if any(n not in kept for n in (other, *same_text)):
                 return True
         return False
 
@@ -926,11 +928,12 @@ def _others_to_read_as(paper: Paper, base: list[Entry], k: int) -> list[int]:
 
 def read_as(trial: Trial, base: list[Entry], k: int, other: int) -> None:
     """The label at ``k`` of the trial's stream is read as the label ``base[other]``."""
-    node = trial.stream[k].node
+    node, as_node = trial.stream[k].node, base[other].node
     assert node is not None
+    assert as_node is not None
     trial.what.append(f"{trial.stream[k].text} read as {base[other].text}")
     trial.stream[k] = _label(base[other].text)
-    trial.read_as.append((node, base[other].text))
+    trial.read_as.append((node, as_node))
 
 
 def wider_single_faults(paper: Paper, base: list[Entry]) -> Iterator[Trial]:

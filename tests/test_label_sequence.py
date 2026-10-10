@@ -1275,7 +1275,7 @@ def test_known_limit_a_question_number_that_names_the_wrong_question(
     The list reads 1, w, w, 2, w, 4: question 1 answered in two blocks, 2 answered, 3
     not listed. Question 2's writing is on question 1, and question 3's would be on 2
     if the unseen 3 did not leave question 2 unbracketed. With parts, a number read as
-    its neighbour while the neighbour's own number is missed goes wrong in 106 of 150
+    its neighbour while the neighbour's own number is missed goes wrong in 90 of 150
     trials. This test pins the limit; it does not approve of it.
     """
     scheme = _scheme(scheme_41, {str(n): {} for n in range(1, 6)})
@@ -1305,6 +1305,38 @@ def test_known_gap_two_labels_for_one_part_and_the_false_one_earns_more(
     stream[stream.index("=5c_ii") - 1] = "(d)"
     bound = bind_stream(_items(*stream), scheme)
     assert _on(bound)["5c_i"] == ["5b_i"]
+
+
+def test_known_gap_a_stray_takes_a_fourth_level_part_and_its_label_fills_a_missed_one(
+    scheme_41: MarkScheme,
+) -> None:
+    """Fourth level only; found by the brief's own random battery on a new seed.
+
+    A stray "(b)" between 7(a)(ii)(a) and its writing, and question 7's top-level
+    "(b)" missed. The stray is taken for 7a_ii_b, and the real 7a_ii_b label, one
+    line on, for the missed top-level (b), whose (i) and (ii) follow it: every label
+    has a place and the alignment is unique. 7a_ii_a's writing is on 7a_ii_b. It has
+    gone wrong since the first commit of this module. Rate: one trial in about
+    800,000 random trials of two to four faults over all the seeds run, on the one
+    battery scheme with a fourth level. Not ruled on.
+    """
+    scheme = _scheme(
+        scheme_41,
+        {
+            "7": {
+                "7a": {"7a_i": {}, "7a_ii": {"7a_ii_a": {}, "7a_ii_b": {}}},
+                "7b": {"7b_i": {}, "7b_ii": {}},
+                "7c": {},
+            },
+            "8": {"8a": {}},
+        },
+    )
+    stream = _clean(scheme)
+    stream[stream.index("=7a_ii_a") : stream.index("=7a_ii_a")] = ["(b)"]
+    del stream[stream.index("=7b_i") - 2]
+    assert stream[5:11] == ["(a)", "(b)", "=7a_ii_a", "(b)", "=7a_ii_b", "(i)"]
+    bound = bind_stream(_items(*stream), scheme)
+    assert _on(bound)["7a_ii_b"] == ["7a_ii_a"]
 
 
 def _questions_4_to_6(template: MarkScheme) -> MarkScheme:
