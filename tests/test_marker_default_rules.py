@@ -292,7 +292,7 @@ def test_the_default_is_pinned_to_the_marker_prompt_version() -> None:
     there is no measurement to redo yet.
     """
     assert (VERSION, hashlib.sha256(SCIENCE_DEFAULT_RULES.encode()).hexdigest()) == (
-        "9",
+        "10",
         "59069e6f122c7f608abf7dfaf2150ee7a7052818ed6615a9c7e187d294e6be2e",
     )
 

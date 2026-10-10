@@ -6,9 +6,9 @@ import re
 
 from lemely.core.loose_schemas import MarkSchemeMetadata, Question
 
-VERSION = "9"
+VERSION = "10"
 
-MARKER_SYSTEM_PROMPT = """
+_SYSTEM_PROMPT_HEAD = """
 You are an experienced CAIE examiner marking a single exam question for a Cambridge
 IGCSE / O-Level / A-Level paper. Apply the mark scheme strictly and consistently.
 
@@ -47,6 +47,24 @@ Rules:
   band that best fits. Apply owtte: if the student's phrasing conveys the same meaning as
   a marking point, credit it.
 
+"""
+
+#: The section on drawings for an answer the label binder's reader did not write: a typed
+#: answer, a plain mapping, a legacy extraction. It is the text every marking call had before
+#: VERSION "8". It names no `Drawing:`, so a student who writes that word has written an
+#: answer and nothing more.
+_DIAGRAMS_SECTION = """\
+**Diagrams / graphs:**
+- The student's response is given as a text description by an earlier OCR pass. Mark
+  accordingly; set confidence < 0.5 if the description is too vague to judge.
+
+"""
+
+#: The section on drawings for an answer the label binder's reader wrote from a scan
+#: (``binding_source == "label"``). That reader opens its description of a drawing with
+#: `Drawing:` (``lemely.io.prompts.label_binding``), and only for its answers is the word
+#: taken as that. Unmeasured.
+_READER_DRAWINGS_SECTION = """\
 **Drawings, diagrams and graphs:**
 - You are never shown an image. Text in the response that follows `Drawing:` is not the
   student's own words: it is a description of what the student drew, written by the reader
@@ -61,9 +79,12 @@ Rules:
   missing. A word of praise in a description ("correct", "accurate") is not a fact and earns
   nothing.
 - Set confidence < 0.5 if the description is too vague to judge a mark point.
-- A description of a drawing that does not open with `Drawing:` comes from an older reader:
-  mark it by the same rules.
+- A description of a drawing that the reader did not open with `Drawing:` is marked by the
+  same rules.
 
+"""
+
+_SYSTEM_PROMPT_TAIL = """\
 **When WORKING is supplied:**
 - Read the WORKING block carefully before reading the ANSWER. Working may contain:
   - Correct intermediate values that earn M or B marks even when the final answer is wrong.
@@ -137,10 +158,19 @@ Student: "g is approximately 10 N/kg"
    addresses_question="yes"
 """
 
+#: The system prompt for every answer the label binder's reader did not write. It is the
+#: text of VERSION "7", from before that reader described drawings.
+MARKER_SYSTEM_PROMPT = _SYSTEM_PROMPT_HEAD + _DIAGRAMS_SECTION + _SYSTEM_PROMPT_TAIL
+
+#: The system prompt for an answer the label binder's reader wrote from a scan. It differs
+#: from ``MARKER_SYSTEM_PROMPT`` in the section on drawings and nowhere else.
+READER_MARKER_SYSTEM_PROMPT = _SYSTEM_PROMPT_HEAD + _READER_DRAWINGS_SECTION + _SYSTEM_PROMPT_TAIL
+
 # The label binder's reader opens its description of a drawing with this word
 # (``lemely.io.prompts.label_binding``). Two blocks bound to one part are joined, so it
 # may come after the student's own writing. Capital D and a colon, with no letter before:
-# a student who writes "my drawing: ..." has not written a description.
+# a student who writes "my drawing: ..." has not written a description. The word is looked
+# for only in an answer that reader wrote: anywhere else the student wrote or typed it.
 _DRAWING_DESCRIPTION = re.compile(r"(?<![A-Za-z])Drawing:")
 _ANSWER_HEADER = "STUDENT ANSWER (verbatim from scan):"
 _DRAWING_ANSWER_HEADER = (
@@ -252,6 +282,18 @@ def default_marking_rules(metadata: MarkSchemeMetadata) -> str | None:
     return SCIENCE_DEFAULT_RULES
 
 
+def marker_system_prompt(*, reader_describes_drawings: bool = False) -> str:
+    """The system prompt for one marking call.
+
+    ``reader_describes_drawings`` is True only for an answer whose text the label binder's
+    reader wrote from a scan. Such a call gets ``READER_MARKER_SYSTEM_PROMPT``, whose
+    section on drawings takes what follows ``Drawing:`` as the reader's description. Every
+    other call (a typed quiz answer, a plain mapping, a legacy extraction) gets
+    ``MARKER_SYSTEM_PROMPT``, which does not name the word.
+    """
+    return READER_MARKER_SYSTEM_PROMPT if reader_describes_drawings else MARKER_SYSTEM_PROMPT
+
+
 def build_marker_user_prompt(
     question: Question,
     student_answer: str,
@@ -262,6 +304,7 @@ def build_marker_user_prompt(
     equivalence_gate: bool = False,
     prior_values: dict[str, str] | None = None,
     default_rules: str | None = None,
+    reader_describes_drawings: bool = False,
 ) -> str:
     """Build the per-question marking prompt embedding the mark scheme subtree + student response.
 
@@ -279,6 +322,14 @@ def build_marker_user_prompt(
     syllabus family with published general rules. It is appended as given, and
     only when ``principles`` is empty: the paper's own text is never sent with a
     default beside it. With None the prompt is byte-identical to before.
+
+    ``reader_describes_drawings`` (defaults False) says the answer's text was
+    written by the label binder's reader from a scan. Only then is ``Drawing:``
+    in the answer taken as the opening of that reader's description of a
+    drawing, and the answer headed as one. With False the word is the student's
+    own, written or typed, and the answer is headed "verbatim from scan" as it
+    always was: the student controls the text, so the text alone cannot say who
+    wrote it. Pass the same value to :func:`marker_system_prompt`.
 
     Injected into the USER prompt, not the system prompt, for two reasons: the
     principles are per-paper rather than per-run, and the cache key is built
@@ -336,7 +387,9 @@ def build_marker_user_prompt(
     # A drawing reaches the marker as the reader's description of it. Calling that
     # "verbatim" had the marker refuse marks because "no diagram was provided".
     answer_header = (
-        _DRAWING_ANSWER_HEADER if _DRAWING_DESCRIPTION.search(student_answer) else _ANSWER_HEADER
+        _DRAWING_ANSWER_HEADER
+        if reader_describes_drawings and _DRAWING_DESCRIPTION.search(student_answer)
+        else _ANSWER_HEADER
     )
     parts = [
         "Mark this CAIE question.\n",

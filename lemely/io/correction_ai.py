@@ -37,10 +37,10 @@ from lemely.core.schemas import (
 )
 from lemely.io.gemini import GeminiClient, thinking_rank
 from lemely.io.prompts.correction_ai import (
-    MARKER_SYSTEM_PROMPT,
     VERSION,
     build_marker_user_prompt,
     default_marking_rules,
+    marker_system_prompt,
     printed_principles,
 )
 from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD
@@ -254,6 +254,22 @@ def _join_reason(existing: str | None, added: str) -> str:
     return f"{existing} | {added}" if existing else added
 
 
+def _reader_answer_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> frozenset[str]:
+    """Question ids whose answer text the label binder's reader wrote from a scan.
+
+    That reader opens its description of a drawing with ``Drawing:``, and the marker
+    is told so for these answers alone. ``binding_source == "label"`` is the fact,
+    carried beside the text: a typed quiz answer and a legacy extraction never have
+    it, and a plain mapping has no such field. The word in the text is no evidence,
+    since the student can write or type it. Where two answers share an id the last
+    one decides, as in :func:`_flatten_answers`.
+    """
+    if not isinstance(extracted, ExtractedAnswers):
+        return frozenset()
+    from_reader = {a.question_id: a.binding_source == "label" for a in extracted.answers}
+    return frozenset(qid for qid, is_reader in from_reader.items() if is_reader)
+
+
 def _dropped_question_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> frozenset[str]:
     """Question ids whose answer was extracted but discarded as malformed.
 
@@ -284,6 +300,7 @@ class AICorrector:
         equivalence_gate: bool = False,
         prior_values: dict[str, str] | None = None,
         default_rules: str | None = None,
+        reader_describes_drawings: bool = False,
     ) -> AIMarkResponse:
         """Mark one question.
 
@@ -298,6 +315,15 @@ class AICorrector:
         a scheme stored without principles of its own. Forwarded to
         :func:`build_marker_user_prompt`, which sends it only when ``principles``
         is empty.
+
+        ``reader_describes_drawings`` (defaults False) is True only for an answer
+        whose text the label binder's reader wrote from a scan
+        (:func:`_reader_answer_ids`). It chooses the system prompt
+        (``prompts.correction_ai.marker_system_prompt``) and is forwarded to
+        :func:`build_marker_user_prompt`: only for such an answer is ``Drawing:``
+        the opening of a description of a drawing. In a typed or legacy answer
+        the word is the student's own, and with False both prompts are what they
+        were before the reader described drawings.
 
         ``equivalence_gate`` (US-013, defaults False): forwarded to
         :func:`build_marker_user_prompt`, which appends the I6 point-verdict
@@ -327,10 +353,12 @@ class AICorrector:
             equivalence_gate=equivalence_gate,
             prior_values=prior_values,
             default_rules=default_rules,
+            reader_describes_drawings=reader_describes_drawings,
         )
+        system_prompt = marker_system_prompt(reader_describes_drawings=reader_describes_drawings)
 
         result = self._client.generate_structured(
-            system_prompt=MARKER_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=user_prompt,
             response_schema=AIMarkResponse,
             prompt_version=VERSION,
@@ -376,7 +404,7 @@ class AICorrector:
                 escalation_model=f"{correction_model} (thinking)",
             )
             result = self._client.generate_structured(
-                system_prompt=MARKER_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 user_prompt=(
                     user_prompt + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
                 ),
@@ -414,7 +442,7 @@ class AICorrector:
                 escalation_model=escalation_model,
             )
             result = self._client.generate_structured(
-                system_prompt=MARKER_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 user_prompt=(
                     user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
                     "Please re-evaluate carefully before responding."
@@ -2030,6 +2058,7 @@ def _maybe_apply_ecf_substitution(
     equivalence_gate: bool,
     principles: list[str] | None,
     default_rules: str | None,
+    reader_describes_drawings: bool,
     sibling_prior: dict[str, int] | None,
     answers: dict[str, _FlatAnswer],
     top_level_leaves: list[Question],
@@ -2202,6 +2231,7 @@ def _maybe_apply_ecf_substitution(
             prior_results=sibling_prior,
             principles=principles,
             default_rules=default_rules,
+            reader_describes_drawings=reader_describes_drawings,
             equivalence_gate=equivalence_gate,
             prior_values=prior_values,
         )
@@ -2661,6 +2691,7 @@ def correct_paper(
     # ones for its syllabus family. Never both.
     principles = printed_principles(scheme.metadata)
     default_rules = default_marking_rules(scheme.metadata)
+    reader_ids = _reader_answer_ids(extracted_answers)
 
     corrected: list[CorrectedQuestion] = []
     # `index` comes from enumerate over `leaves` — the true position in the work
@@ -2779,6 +2810,10 @@ def correct_paper(
                 for qid, marks in prior_results_accumulated.items()
                 if leaf_by_id[qid].parent_id == q.parent_id
             }
+        # `Drawing:` opens a description only in text the label binder's reader wrote.
+        # A crop re-read marked in its place is another reader's text, and that reader
+        # is not asked for the word.
+        reader_describes_drawings = q.id in reader_ids and student_answer == original[q.id].answer
         try:
             mark = ai.mark_question(
                 q,
@@ -2790,6 +2825,7 @@ def correct_paper(
                 # `generic_marking_principles` and it was discarded here.
                 principles=principles,
                 default_rules=default_rules,
+                reader_describes_drawings=reader_describes_drawings,
                 equivalence_gate=equivalence_gate,
             )
         except CostCeilingError:
@@ -2841,6 +2877,7 @@ def correct_paper(
             equivalence_gate=equivalence_gate,
             principles=principles,
             default_rules=default_rules,
+            reader_describes_drawings=reader_describes_drawings,
             sibling_prior=sibling_prior or None,
             answers=answers,
             top_level_leaves=top_level_groups[_top_level_ancestor_id(q.id, all_by_id)],

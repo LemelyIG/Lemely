@@ -28,7 +28,11 @@ from lemely.io.correction_ai import (
     correct_paper,
 )
 from lemely.io.gemini import GeminiClient, _strip_schema
-from lemely.io.prompts.correction_ai import MARKER_SYSTEM_PROMPT, VERSION
+from lemely.io.prompts.correction_ai import (
+    MARKER_SYSTEM_PROMPT,
+    READER_MARKER_SYSTEM_PROMPT,
+    VERSION,
+)
 from lemely.runtime.config import MarkingOptions, PathsSettings, load_settings
 
 OFF_TOPIC_REASON = "binding unverified: answer appears to address a different question"
@@ -47,8 +51,9 @@ SECTION_START = "**Last field: `addresses_question`"
 SECTION_END = "---\n\n## Worked Examples"
 # What each worked reply example gained so the examples show the whole reply.
 EXAMPLE_ADDITION = ',\n   addresses_question="yes"'
-# The section on drawings as it stood at VERSION "5". VERSION "8" replaced it (pinned in
-# tests/test_marker_drawings.py).
+# The section on drawings as it stood at VERSION "5". The default prompt still has it. The
+# prompt for an answer the label binder's reader wrote has another in its place since
+# VERSION "8" (pinned in tests/test_marker_drawings.py).
 DRAWINGS_SECTION_START = "**Drawings, diagrams and graphs:**"
 DRAWINGS_SECTION_END = "**When WORKING is supplied:**"
 VERSION_5_DRAWINGS_SECTION = (
@@ -224,8 +229,8 @@ def _fake_client_and_sdk(
 # --- prompt -----------------------------------------------------------------
 
 
-def test_marker_prompt_version_is_9():
-    assert VERSION == "9"
+def test_marker_prompt_version_is_10():
+    assert VERSION == "10"
 
 
 def test_marker_prompt_explains_addresses_question_and_says_it_never_changes_the_mark():
@@ -273,10 +278,21 @@ def test_worked_reply_examples_include_addresses_question():
 
 
 def test_marker_prompt_is_otherwise_unchanged_from_version_5():
-    """Every difference from VERSION "5" is named: this section, the example field, drawings."""
+    """Every difference from VERSION "5" is named: this section and the example field."""
     start = MARKER_SYSTEM_PROMPT.index(SECTION_START)
     end = MARKER_SYSTEM_PROMPT.index(SECTION_END)
     without_section = MARKER_SYSTEM_PROMPT[:start] + MARKER_SYSTEM_PROMPT[end:]
+    version_5 = without_section.replace(EXAMPLE_ADDITION, "")
+    assert VERSION_5_DRAWINGS_SECTION in version_5
+    assert hashlib.sha256(version_5.encode()).hexdigest() == VERSION_5_PROMPT_SHA256
+
+
+def test_reader_marker_prompt_is_otherwise_unchanged_from_version_5():
+    """For an answer the label binder's reader wrote, one more difference: drawings."""
+    prompt = READER_MARKER_SYSTEM_PROMPT
+    start = prompt.index(SECTION_START)
+    end = prompt.index(SECTION_END)
+    without_section = prompt[:start] + prompt[end:]
     without_additions = without_section.replace(EXAMPLE_ADDITION, "")
     assert without_additions.count(DRAWINGS_SECTION_START) == 1
     drawings = without_additions.index(DRAWINGS_SECTION_START)
