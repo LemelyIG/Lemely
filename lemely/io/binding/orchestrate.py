@@ -56,6 +56,7 @@ import structlog
 from lemely.core.binding import BindingCheck, BindingReport
 from lemely.core.binding_gate import (
     GateThresholds,
+    all_multiple_choice,
     check_duplicate_ids,
     check_label_coverage,
     check_second_read,
@@ -160,6 +161,28 @@ class _Read:
     writings: dict[str, list[SeenWriting]]
 
 
+def binder_for(
+    mark_scheme: MarkScheme, binding: BindingSettings
+) -> tuple[Literal["label", "legacy"], bool]:
+    """Which binder reads this paper, and whether the paper's shape decided it.
+
+    A scheme whose every marked leaf is multiple choice is read by the legacy binder,
+    gated as configured, whatever ``binding.binder`` says. The reason is that it is
+    unmeasured: the label binder has been read live on one theory paper and on no
+    multiple-choice scan (none is on disk to measure), so a paper shape it has never
+    read keeps the behaviour it had before the binder existed. What would lift the rule
+    is a live read of a multiple-choice scan by the label binder that passes. It is a
+    rule in code and not a setting: nothing in ``lemely.toml`` or the environment turns
+    it off. A scheme with at least one leaf that is not multiple choice uses the
+    configured binder.
+
+    "Multiple choice" is the gate's own test (``binding_gate.all_multiple_choice``).
+    """
+    if binding.binder == "label" and all_multiple_choice(mark_scheme):
+        return "legacy", True
+    return binding.binder, False
+
+
 def _as_extracted(answers: list[ExtractedAnswer]) -> ExtractedAnswers:
     """``answers`` in the record the checks take. Only the answers are read."""
     return ExtractedAnswers(paper_id="", source_scan="", answers=answers)
@@ -256,6 +279,7 @@ def _publish_result(
     second_read: bool,
     first_read_failed: list[BindingCheck] | None = None,
     review_reasons: Mapping[str, str] | None = None,
+    by_paper_shape: bool = False,
 ) -> None:
     """Publish and log what the gate decided.
 
@@ -268,6 +292,8 @@ def _publish_result(
     the report (the second read's) does not show. ``review_reasons`` (leaf id to
     reason) is published as a count per reason, ``unaligned_reasons``: it is what
     tells a mark scheme that lists a question twice from a read that missed labels.
+    ``by_paper_shape`` says the binder was chosen by ``binder_for``'s rule and not by
+    the settings, so that the hold rate can be read per path.
 
     The event has no subscriber of its own and is never sent to a browser
     (``lemely.web.sse``), so the same fields are written as one ``binding_gate_result``
@@ -288,6 +314,7 @@ def _publish_result(
         "model": enforced.model,
         "second_read": second_read,
         "unaligned_reasons": dict(Counter((review_reasons or {}).values())),
+        "binder_by_paper_shape": by_paper_shape,
     }
     structlog.get_logger().bind(component="binding_gate").info(
         "binding_gate_result",
@@ -423,6 +450,11 @@ def run_binding(
     if binding.gate != "enforce":
         raise ValueError(
             f"the label binder runs only with gate='enforce', not gate={binding.gate!r}"
+        )
+    if all_multiple_choice(mark_scheme):
+        raise ValueError(
+            "the label binder is not run on a scheme that is all multiple choice: "
+            "binder_for keeps such a paper on the legacy binder"
         )
     binder = LabelBinder(client)
 
@@ -607,6 +639,7 @@ def gate_legacy(
     settings: Settings,
     model: str,
     retry: Callable[[], LegacyRead],
+    by_paper_shape: bool = False,
 ) -> LegacyOutcome:
     """Check the legacy extractor's answers; on a paper-scope failure, try once more.
 
@@ -620,7 +653,8 @@ def gate_legacy(
     Under ``gate="observe"`` the retry is never called: observing must not spend what
     only enforcing spends. A first read that fails at paper scope is published with the
     verdict ``retry``, which is what enforcing would have done next, and no report is
-    returned. Not to be called with the gate off.
+    returned. Not to be called with the gate off. ``by_paper_shape`` is passed on to
+    the log line and event: the legacy binder is here by ``binder_for``'s rule.
     """
     binding = settings.binding
     if binding.gate == "off":
@@ -643,6 +677,7 @@ def gate_legacy(
             inferred_numbers=[],
             drops=first.drops,
             second_read=False,
+            by_paper_shape=by_paper_shape,
         )
         return LegacyOutcome(used_retry=False, report=None, unverified_ids=frozenset())
 
@@ -679,6 +714,7 @@ def gate_legacy(
         inferred_numbers=[],
         drops=chosen.drops,
         second_read=second is not None,
+        by_paper_shape=by_paper_shape,
     )
     return LegacyOutcome(
         used_retry=use_retry, report=report, unverified_ids=_question_scope_ids(checks)
@@ -725,6 +761,8 @@ def binding_status(settings: Settings) -> tuple[bool, str]:
     model = binding.read_model
     client = GeminiClient(settings, ledger=None)
     first = client.resolved_thinking("extraction", model)
+    # ``binder_for``: a paper shape the label binder has never read keeps the old path.
+    summary += " (a scheme that is all multiple choice keeps the legacy binder)"
     if not binding.second_read:
         return True, f"{summary}: one read on {model} (thinking {first})"
     second = client.resolved_thinking(SECOND_READ_TASK_TAG, model)

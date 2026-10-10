@@ -20,7 +20,7 @@ from pydantic_core import core_schema as pydantic_core_schema
 from lemely.core.binding import BindingReport
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers, SourceBox
-from lemely.io.binding.orchestrate import LegacyRead, gate_legacy, run_binding
+from lemely.io.binding.orchestrate import LegacyRead, binder_for, gate_legacy, run_binding
 
 # The per-field coercion helpers live in ``lemely.io.extraction_coerce`` (the label
 # binder uses them too, and this module calls the binder). They are re-exported here
@@ -982,6 +982,8 @@ class GeminiAnswerExtractor:
         uploads: ImageUploads,
         manifest_key: str,
         manifest_ids: list[str],
+        *,
+        by_paper_shape: bool = False,
     ) -> tuple[_LegacyReply, BindingReport | None]:
         """Run the binding gate over the legacy call's answers; return the reply to go on with.
 
@@ -1023,6 +1025,7 @@ class GeminiAnswerExtractor:
             settings=settings,
             model=settings.gemini.model_for("extraction"),
             retry=_retry,
+            by_paper_shape=by_paper_shape,
         )
         if outcome.report is None:
             return reply, None
@@ -1062,7 +1065,9 @@ class GeminiAnswerExtractor:
         """:meth:`__call__`'s work, under its run slot.
 
         ``binding.binder`` decides where the answers come from: the label binder
-        (:func:`~lemely.io.binding.orchestrate.run_binding`) or the legacy call.
+        (:func:`~lemely.io.binding.orchestrate.run_binding`) or the legacy call. One
+        paper shape overrides it: a scheme that is all multiple choice keeps the legacy
+        call (:func:`~lemely.io.binding.orchestrate.binder_for`).
         Either way they then go through the same steps: confidence calibration, the
         optional text second reader, crop re-reads, progress events, id
         normalisation. With the gate enforcing the result carries the binding report;
@@ -1126,7 +1131,10 @@ class GeminiAnswerExtractor:
             # altogether when there is none, so that a legacy extraction with the gate
             # off is the same record it has always been.
             bound_fields: dict[str, Any] = {}
-            if binding.binder == "label":
+            # The configured binder, unless the paper's shape decides: a scheme that
+            # is all multiple choice keeps the legacy binder (see ``binder_for``).
+            binder, by_paper_shape = binder_for(mark_scheme, binding)
+            if binder == "label":
                 # The label binder replaces the primary call: the model lists labels
                 # and writing with no question ids, `bind_stream` binds them, and the
                 # gate says how far the binding can be trusted
@@ -1172,7 +1180,13 @@ class GeminiAnswerExtractor:
                 )
                 if binding.gate != "off":
                     reply, legacy_report = self._gated_legacy(
-                        reply, mark_scheme, page_bytes, uploads, manifest_key, manifest_ids
+                        reply,
+                        mark_scheme,
+                        page_bytes,
+                        uploads,
+                        manifest_key,
+                        manifest_ids,
+                        by_paper_shape=by_paper_shape,
                     )
                     if legacy_report is not None:
                         bound_fields["binding"] = legacy_report

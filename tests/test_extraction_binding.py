@@ -1244,18 +1244,123 @@ def _flat_reply(leaves: list[str], *, name: str | None, blank: set[str]) -> list
     return items
 
 
-def test_one_suspect_trace_on_a_flat_paper_sends_every_answer_to_review(tmp_path: Path) -> None:
-    # A paper of forty multiple-choice questions and no parts. The student wrote a name
-    # above question 1 and left question 40 blank; both reads list everything in order
-    # and every answer is on its own question. But a block before the first label and
-    # the last question blank is exactly what the whole paper listed one out looks
-    # like, and on a paper with no parts the group that trace names is the whole paper.
-    # The cost is accepted: every answer is marked, keeps its marks and is flagged, and
-    # question 40 goes to a teacher. No flat paper has a recorded reply, so how often a
-    # reader reports writing above the first label is not known.
-    flat = MarkScheme.model_validate(
-        json.loads((_ROOT / "corpus" / "mark-schemes" / "0625_m19_ms_12.json").read_text())
+def _flat_scheme(*, written: tuple[str, ...] = ()) -> MarkScheme:
+    """0625/12 March 2019: forty multiple-choice questions, no parts.
+
+    The ids in ``written`` are turned into written questions (not multiple choice).
+    """
+    data = json.loads(
+        (_ROOT / "corpus" / "mark-schemes" / "0625_m19_ms_12.json").read_text(encoding="utf-8")
     )
+    for question in data["questions"]:
+        if question["id"] in written:
+            question.update(type="recall", mcq_answer=None)
+            question["answer_points"] = [{"id": "p1", "marks": 1, "point": "a written answer"}]
+    return MarkScheme.model_validate(data)
+
+
+def test_a_scheme_that_is_all_multiple_choice_keeps_the_legacy_binder(
+    tmp_path: Path, scan: Path
+) -> None:
+    # The label binder has been read live on one theory paper. A paper shape it has never
+    # read keeps the behaviour it had before the binder: the legacy call, gated as
+    # configured. That is a rule in code, whatever `binding.binder` says.
+    flat = _flat_scheme()
+    leaves = [q.id for q in flat.all_questions_flat() if not q.parts]
+    assert len(leaves) == 40
+    letters = {
+        "answers": [
+            {"question_id": leaf, "answer": "ABCD"[i % 4], "confidence": 0.9}
+            for i, leaf in enumerate(leaves)
+        ]
+    }
+    model = _Model(legacy=letters)  # a label read would find no reply and fail the test
+    with (
+        _events(EventType.BINDING_GATE_RESULT) as seen,
+        structlog.testing.capture_logs() as logs,
+    ):
+        extracted = _extract(tmp_path, scan, flat, model)  # default settings: label, enforce
+
+    assert model.made() == ["legacy"]
+    assert BindingSettings().binder == "label"
+    report = extracted.binding
+    assert report is not None
+    assert (report.binder, report.verdict, report.retried) == ("legacy", "pass", False)
+    assert {c.id for c in report.checks} == {"G1", "G2", "G6", "G7"}
+    assert len(extracted.answers) == 40
+    assert all(a.binding_source == "legacy" for a in extracted.answers)
+    # The log line says the binder was chosen by the paper's shape, so that the hold
+    # rate can be read per path.
+    (line,) = [entry for entry in logs if entry["event"] == "binding_gate_result"]
+    assert (line["binder"], line["binder_by_paper_shape"]) == ("legacy", True)
+    (event,) = seen[EventType.BINDING_GATE_RESULT]
+    assert event["binder_by_paper_shape"] is True
+
+    # Gated as configured: an id that is not in the scheme fails G1, the call is made
+    # once more on the retry model, and the paper is held.
+    wrong = {
+        "answers": [*letters["answers"], {"question_id": "41", "answer": "A", "confidence": 0.9}]
+    }
+    model = _Model(legacy=wrong, retry=copy.deepcopy(wrong))
+    held = _extract(tmp_path, scan, flat, model)
+    assert model.made() == ["legacy", "retry"]
+    assert held.binding is not None
+    assert (held.binding.binder, held.binding.verdict, held.binding.retried) == (
+        "legacy",
+        "hold",
+        True,
+    )
+
+
+def test_a_scheme_with_one_written_question_uses_the_label_binder(
+    tmp_path: Path, scan: Path
+) -> None:
+    mixed = _flat_scheme(written=("17",))
+    leaves = [q.id for q in mixed.all_questions_flat() if not q.parts]
+    reply = _flat_reply(leaves, name=None, blank=set())
+    model = _Model(first=_items(reply), second=_items(reply))
+    with structlog.testing.capture_logs() as logs:
+        extracted = _extract(tmp_path, scan, mixed, model)
+    assert model.made() == ["first", "second"]
+    assert extracted.binding is not None and extracted.binding.binder == "label"
+    (line,) = [entry for entry in logs if entry["event"] == "binding_gate_result"]
+    assert (line["binder"], line["binder_by_paper_shape"]) == ("label", False)
+
+
+def test_the_label_binder_is_not_run_on_an_all_multiple_choice_scheme(tmp_path: Path) -> None:
+    # `run_binding` is the label binder. Called for a paper shape the rule keeps on the
+    # legacy path it refuses, so that nothing can take the rule's place by calling it.
+    flat = _flat_scheme()
+    reply = _flat_reply([q.id for q in flat.all_questions_flat()], name=None, blank=set())
+    client, _genai = _client(tmp_path)
+    pages = _pages(6)
+    model = _Model(first=_items(reply), second=_items(reply))
+    with (
+        client.image_uploads([p.png_bytes for p in pages], concurrency=1) as uploads,
+        patch.object(client, "generate_structured", side_effect=model),
+        pytest.raises(ValueError, match="multiple choice"),
+    ):
+        run_binding(
+            client, pages, flat, uploads=uploads, settings=client._settings, manifest_key="m"
+        )
+    assert model.calls == []
+
+
+def test_one_suspect_trace_on_a_flat_paper_sends_every_answer_to_review(tmp_path: Path) -> None:
+    # A paper of forty questions and no parts. The student wrote a name above question 1
+    # and left question 40 blank; both reads list everything in order and every answer
+    # is on its own question. But a block before the first label and the last question
+    # blank is exactly what the whole paper listed one out looks like, and on a paper
+    # with no parts the group that trace names is the whole paper. The cost is accepted:
+    # every answer is marked, keeps its marks and is flagged, and question 40 goes to a
+    # teacher. No flat paper has a recorded reply, so how often a reader reports writing
+    # above the first label is not known.
+    #
+    # One question (17) is a written one here: a scheme that is all multiple choice does
+    # not reach the label binder at all (it keeps the legacy binder), so the same trace
+    # on the real all-multiple-choice scheme is pinned on the gate functions, in
+    # tests/test_binding_gate.py.
+    flat = _flat_scheme(written=("17",))
     leaves = [q.id for q in flat.all_questions_flat() if not q.parts and q.marks > 0]
     assert len(leaves) == 40 and all(q.parent_id is None for q in flat.all_questions_flat())
 
@@ -1637,6 +1742,7 @@ def test_binding_gate_result_event_fields(tmp_path: Path, scan: Path, scheme: Ma
         "model": _READ_MODEL,
         "second_read": True,
         "unaligned_reasons": {},
+        "binder_by_paper_shape": False,
         "first_read_failed_checks": [],
         "report": extracted.binding.model_dump() if extracted.binding else None,
     }
@@ -1765,6 +1871,7 @@ def test_the_gate_result_is_logged_on_the_server_without_any_answer_text(
         "model": _READ_MODEL,
         "second_read": True,
         "unaligned_reasons": {},
+        "binder_by_paper_shape": False,
     }
     assert not any(answer.answer in str(line) for answer in outcome.answers if answer.answer)
 

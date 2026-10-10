@@ -12,6 +12,7 @@ import pytest
 from lemely.core.binding import BindingCheck
 from lemely.core.binding_gate import (
     GateThresholds,
+    all_multiple_choice,
     check_duplicate_ids,
     check_label_coverage,
     check_off_topic,
@@ -415,6 +416,38 @@ def test_g5_a_suspect_group_that_names_no_leaf_fails_the_paper() -> None:
     # One group that does name its leaves stays at question scope beside it.
     both = _g5(_extracted([("18", "5")]), 20, [], listing_suspects=["18", "no such question"])
     assert both.scope == "paper"
+
+
+def test_one_suspect_trace_on_the_all_multiple_choice_scheme_names_every_leaf() -> None:
+    # Moved here from the orchestration tests: a scheme that is all multiple choice
+    # keeps the legacy binder and never reaches `run_binding`, so what one suspect trace
+    # costs on such a paper is pinned on the functions themselves. On 0625/12 (forty
+    # questions, no parts) the group a trace at question 1 names is the whole paper.
+    flat = _corpus_scheme("0625_m19_ms_12")
+    leaves = [q.id for q in flat.all_questions_flat() if not q.parts]
+    assert len(leaves) == 40 and all_multiple_choice(flat)
+    assert suspect_group_leaves(flat, ["1"]) == leaves
+    answered = _extracted([(leaf, "ABCD"[i % 4]) for i, leaf in enumerate(leaves[:-1])])
+    check = check_label_coverage(answered, flat, [], 0, DEFAULTS, listing_suspects=["1"])
+    assert (check.passed, check.scope, check.question_ids) == (False, "question", leaves)
+
+
+def test_all_multiple_choice_uses_the_gate_s_own_test_of_a_multiple_choice_leaf(
+    scheme: MarkScheme,
+) -> None:
+    assert not all_multiple_choice(scheme)  # the theory paper
+    flat = _corpus_scheme("0625_m19_ms_12")
+    assert all_multiple_choice(flat)
+    # One written question among forty is enough.
+    data = flat.model_dump()
+    data["questions"][16].update(type="recall", mcq_answer=None)
+    assert not all_multiple_choice(MarkScheme.model_validate(data))
+    # A leaf typed otherwise that carries a multiple-choice key counts, as it does when
+    # G6 and G7 leave it out.
+    keyed = _scheme([_leaf("1", "5", mcq=True), _leaf("2", None, mcq=True)])
+    assert all_multiple_choice(keyed)
+    # A scheme with no marked leaf is not "all multiple choice".
+    assert not all_multiple_choice(_scheme([]))
 
 
 def test_g5_any_lost_item_fails_the_paper() -> None:

@@ -66,6 +66,16 @@ def _is_mcq(question: Question) -> bool:
     return question.type == QuestionType.MCQ or question.mcq_answer is not None
 
 
+def all_multiple_choice(mark_scheme: MarkScheme) -> bool:
+    """Whether the paper has marked leaves and every one of them is multiple choice.
+
+    The test of a multiple-choice leaf is the one G6, G7 and the text comparison of G9
+    use to leave such leaves out: there is one such test in the gate, and this is it.
+    """
+    leaves = _leaves(mark_scheme)
+    return bool(leaves) and all(_is_mcq(leaf) for leaf in leaves)
+
+
 def _listed(ids: Iterable[str]) -> str:
     ordered = list(ids)
     text = ", ".join(ordered[:_SHOWN_IDS])
