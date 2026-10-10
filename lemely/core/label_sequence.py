@@ -63,6 +63,11 @@ DOUBT_PREVIOUS_PAGE = "continues from the previous page"
 DOUBT_ARROW = "tied by an arrow"
 # Every doubt a leaf can carry, in the order they are listed on it.
 DOUBTS = (DOUBT_NUMBER_NOT_SEEN, DOUBT_NEXT_NUMBER_NOT_SEEN, DOUBT_PREVIOUS_PAGE, DOUBT_ARROW)
+# The two things a doubt can mean. A content doubt: the leaf's own label was seen, and it
+# may hold writing that is someone else's. An inference doubt: the writing follows the
+# leaf's label, and which question that label belongs to was inferred on strong evidence.
+CONTENT_DOUBTS = (DOUBT_NEXT_NUMBER_NOT_SEEN, DOUBT_PREVIOUS_PAGE, DOUBT_ARROW)
+INFERENCE_DOUBTS = (DOUBT_NUMBER_NOT_SEEN,)
 
 # Roman numerals up to xxix: more than any question has parts.
 _ROMAN = re.compile(r"x{0,2}(?:ix|iv|v?i{0,3})")
@@ -798,6 +803,8 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
 class _Alignment:
     placed: dict[int, tuple[int, ...]] = field(default_factory=dict)  # label position -> nodes
     inferred: list[int] = field(default_factory=list)  # questions aligned without a number
+    # question -> the last label in its stretch that is a part of an unseen later question
+    foreign: dict[int, int] = field(default_factory=dict)
 
 
 def _align(paper: _Paper, labels: list[_Label]) -> _Alignment:
@@ -872,6 +879,19 @@ def _align(paper: _Paper, labels: list[_Label]) -> _Alignment:
                 if position in runs_on and runs_on[position][-1] == nodes[-1]
             }
         out.placed.update(own[root])
+
+    # A part label the question does not have, and that a question after it with no
+    # anchor does have, shows that question's labels inside this one's stretch.
+    for k, cand in enumerate(anchored):
+        nxt = anchored[k + 1].root if k + 1 < len(anchored) else len(paper.nodes)
+        unseen = [r for r in paper.roots if cand.root < r < nxt and r not in out.inferred]
+        lo, _, read = spans[cand.root]
+        for position in range(lo, read.end):
+            readings = labels[position].readings
+            if labels[position].number is not None or paper.chains(cand.root, readings):
+                continue
+            if any(paper.chains(other, readings) for other in unseen):
+                out.foreign[cand.root] = position
     return out
 
 
@@ -911,7 +931,10 @@ def _open_leaves(
       that part began before its label, and the leaf before it is not separated;
     * it has writing under it (``written_under``), so it is a part the reader got
       wrong, and the paper has no part between the two for it to be: neither of the
-      two keeps its writing.
+      two keeps its writing;
+    * it is a part the leaf's question does not have and a later question with no
+      anchor does, and it stands after the leaf's next label: that question's labels
+      are in this one's stretch, and the next label may be one of them.
     """
     inferred = set(alignment.inferred)
     order = sorted(alignment.placed)
@@ -930,6 +953,11 @@ def _open_leaves(
         early = not last and any(_names_part_of(paper, labels[p], until) for p in between)
         # After the last leaf of the paper any label at all is one too many.
         missing = bool(skipped) or until <= ends[k] or (last and len(between) > 0)
+        # The next label may be an unseen question's when a part of that question, which
+        # this one does not have, is listed further on in this question's stretch.
+        foreign = alignment.foreign.get(paper.nodes[ends[k]].path[0], -1)
+        if not last and order[k + 1] < foreign:
+            shut.add(ends[k])
         if missing or written or early:
             shut.add(ends[k])
             if skipped and all(paper.nodes[n].step is None for n in skipped):

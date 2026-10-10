@@ -9,6 +9,9 @@ import pytest
 
 from lemely.core.binding import SeenLabel, SeenWriting, StreamItem
 from lemely.core.label_sequence import (
+    CONTENT_DOUBTS,
+    DOUBTS,
+    INFERENCE_DOUBTS,
     BoundStream,
     LabelStep,
     bind_stream,
@@ -221,6 +224,19 @@ def test_a_clean_stream_binds_every_leaf_to_its_own_writing(scheme_41: MarkSchem
     assert bound.listing_suspects == []
     assert all(not leaf.number_inferred and leaf.doubts == [] for leaf in bound.leaves)
     assert bound.leaves[0].label_seen == "(i)"
+
+
+def test_the_doubts_fall_into_two_classes_and_no_doubt_is_in_neither() -> None:
+    # What the gate does with a doubt depends on its class, so the classes are named
+    # here and imported, not spelled again elsewhere.
+    assert CONTENT_DOUBTS == (
+        "next question number not seen",
+        "continues from the previous page",
+        "tied by an arrow",
+    )
+    assert INFERENCE_DOUBTS == ("question number not seen",)
+    assert sorted(CONTENT_DOUBTS + INFERENCE_DOUBTS) == sorted(DOUBTS)
+    assert not set(CONTENT_DOUBTS) & set(INFERENCE_DOUBTS)
 
 
 def test_an_empty_stream_binds_nothing(scheme_41: MarkScheme) -> None:
@@ -1363,7 +1379,7 @@ def test_a_true_number_claims_its_parts_however_little_it_earns(scheme_41: MarkS
                 "7b": {"7b_i": {}, "7b_ii": {}},
                 "7c": {},
             },
-            "8": {"8a": {"8a_i": {}, "8a_ii": {}, "8a_iii": {}}, "8b": {}, "8c": {}},
+            "8": {"8a": {"8a_i": {}, "8a_ii": {}}, "8b": {}, "8c": {}},
             "9": {"9a": {}},
         },
     )
@@ -1404,23 +1420,76 @@ def test_a_number_that_takes_its_parts_from_a_neighbour_claims_nothing(
         assert _on(bound)["2c"] == ["2c"], extra
 
 
-def test_known_gap_a_later_label_stands_in_for_the_missed_next_one(
+def test_a_part_label_the_question_does_not_have_breaks_the_bracket(
     scheme_41: MarkScheme,
 ) -> None:
     # 6(b) and the whole first label of question 7 are missed ("7(a)" as one label:
     # one miss takes the number with it). The "(b)" that follows is 7's, and it is
-    # exactly the label the paper prints after 6a, so 6a is bracketed and keeps three
-    # blocks. The "(c)" after it, which question 6 does not have, is the only sign.
-    # Reported to the controller; pinned until it is decided.
+    # exactly the label the paper prints after 6a. But a "(c)" comes after it: a part
+    # question 6 does not have and question 7, which has no anchor, does. So question
+    # 7's labels are in question 6's stretch of the list, and the "(b)" may be one of
+    # them: 6a is not bracketed by it.
     scheme = _scheme(
         scheme_41,
         {"6": {"6a": {}, "6b": {}}, "7": {"7a": {}, "7b": {}, "7c": {}}, "8": {"8a": {}}},
     )
-    stream = ["6(a)", "=6a", "=6b", "=7a", "(b)", "=7b", "(c)", "=7c", "8(a)", "=8a"]
+    for stream in (
+        ["6(a)", "=6a", "=6b", "=7a", "(b)", "=7b", "(c)", "=7c", "8(a)", "=8a"],
+        ["6", "(a)", "=6a", "=6b", "=7a", "(b)", "=7b", "(c)", "=7c", "8", "(a)", "=8a"],
+    ):
+        bound = bind_stream(_items(*stream), scheme)
+        _own_or_absent(bound)
+        assert _on(bound) == {"8a": ["8a"]}
+        assert _unbound(bound)[0] == ("6a", "next_label_not_seen")
+        assert _unplaced(bound) == ["(c)"]
+    # Roman parts: 7(ii) and "8(a)(i)" missed; the "(ii)" is 8a's, and "(b)" shows it.
+    scheme = _scheme(
+        scheme_41,
+        {
+            "7": {"7i": {}, "7ii": {}},
+            "8": {"8a": {"8a_i": {}, "8a_ii": {}}, "8b": {}},
+            "9": {},
+        },
+    )
+    stream = ["7(i)", "=7i", "=7ii", "=8a_i", "(ii)", "=8a_ii", "(b)", "=8b", "9", "=9"]
     bound = bind_stream(_items(*stream), scheme)
-    assert _on(bound)["6a"] == ["6a", "6b", "7a"]
+    _own_or_absent(bound)
+    assert _on(bound) == {"9": ["9"]}
+
+
+def test_a_stray_part_label_breaks_no_bracket_when_the_next_question_has_its_anchor(
+    scheme_41: MarkScheme,
+) -> None:
+    # The same "(c)" where question 7 has its number: it is no sign of question 7's
+    # labels (they are under the 7), only a label with no place.
+    scheme = _scheme(
+        scheme_41,
+        {"6": {"6a": {}, "6b": {}}, "7": {"7a": {}, "7b": {}, "7c": {}}, "8": {"8a": {}}},
+    )
+    stream = _cut(_clean(scheme), after={"=6a": ["(c)"]})
+    bound = bind_stream(_items(*stream), scheme)
+    assert bound.unaligned_ids == []
+    assert _on(bound)["6a"] == ["6a"]
     assert _unplaced(bound) == ["(c)"]
-    assert ("7b", "next_label_not_seen") in _unbound(bound)
+    # The label that breaks a bracket is one after the leaf's next label. Question 7
+    # is not in the list but for a "(c)" between 6's "(a)" and "(b)": the next label
+    # of 6a and of 6b is past it, and both keep their writing.
+    other = _scheme(
+        scheme_41,
+        {"6": {"6a": {}, "6b": {}, "6d": {}}, "7": {"7a": {}, "7b": {}, "7c": {}}, "8": {"8a": {}}},
+    )
+    stream = ["6", "(a)", "=6a", "(c)", "(b)", "=6b", "(d)", "=6d", "8", "(a)", "=8a"]
+    bound = bind_stream(_items(*stream), other)
+    _own_or_absent(bound)
+    assert _on(bound) == {"6a": ["6a"], "6b": ["6b"], "8a": ["8a"]}
+    assert ("6d", "next_label_not_seen") in _unbound(bound)
+    # And a part label that the unanchored question does not have either says nothing
+    # about it: 7's number missed (inferred from what follows), a stray "(z)" in 6.
+    stream = _cut(_clean(scheme), after={"=6a": ["(z)"]})
+    del stream[stream.index("7")]
+    bound = bind_stream(_items(*stream), scheme)
+    assert _on(bound)["6a"] == ["6a"]
+    assert bound.inferred_numbers == ["7"]
 
 
 def test_a_missed_label_with_nothing_written_near_it_leaves_a_blank(scheme_41: MarkScheme) -> None:
