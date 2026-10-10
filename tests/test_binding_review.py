@@ -23,6 +23,7 @@ from lemely.db.attempt_repo import (
 from lemely.db.models.enums import ReviewReason
 from lemely.db.review_queue_rules import review_reasons_for
 from lemely.io.correction_ai import (
+    MARKED_FROM_OTHER_READ_REVIEW_REASON,
     OFF_TOPIC_REVIEW_REASON,
     UNBOUND_QUESTION_REVIEW_REASON,
     UNVERIFIED_BINDING_REVIEW_REASON,
@@ -37,6 +38,7 @@ _BINDING_REASONS = [
     UNBOUND_QUESTION_REVIEW_REASON,
     OFF_TOPIC_REVIEW_REASON,
     UNVERIFIED_BINDING_REVIEW_REASON,
+    MARKED_FROM_OTHER_READ_REVIEW_REASON,
 ]
 
 

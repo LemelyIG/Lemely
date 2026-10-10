@@ -951,13 +951,13 @@ def test_only_the_next_number_doubt_is_cleared_by_the_other_read(
 
 def test_a_block_is_found_in_a_text_by_the_runs_they_share() -> None:
     found = orchestrate._share_found
-    assert found("total upward force", "total upward force is equal") == 1.0
+    assert found("net sideways drift", "net sideways drift is small") == 1.0
     # What one reader words a little differently from another is still found.
-    assert found("1. total upward forces equal to", "1 total upward force is equal to") >= 0.8
+    assert found("1. net sideways drifts small to", "1 net sideways drift is small to") >= 0.8
     # Letters two texts happen to share, one or two at a time, are not: a block of
     # other writing is not found in a text because both are made of the same alphabet.
     assert found("abcdefgh", "a b c d e f g h") == 0.0
-    assert found("the current falls", "heat is lost to the air") < 0.5
+    assert found("the engine hums", "oil is spent in the tank") < 0.5
     # A short block is found by a run of two, and a block of one by itself.
     assert found("63", "1. 43 cm 2. 63 cm") == 1.0
     assert found("63", "6 and 3") == 0.0
