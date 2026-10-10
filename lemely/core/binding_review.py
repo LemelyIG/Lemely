@@ -39,16 +39,30 @@ def has_binding_doubt(review_reason: str | None) -> bool:
     )
 
 
-def is_unbound_question(review_reason: str | None, student_answer: str | None) -> bool:
-    """Whether a binding-doubt question has no transcription to judge.
+def is_unbound_question(
+    review_reason: str | None,
+    student_answer: str | None = None,
+    marker_source: str = "dropped",
+) -> bool:
+    """Whether a question was left unmarked because no answer could be tied to it.
 
-    An unbound question is one no answer was ever read for: no marking call, so
-    ``student_answer`` is empty. A lenient judge would see only the mark-scheme
-    point and the student's own description of their answer, so the claim is
-    decided by a teacher, never the judge. An unverified answer, which does have
-    a transcription, takes the ordinary evidence-and-judge route.
+    An unbound question is one the binder could give no answer: no marking call
+    was made, so its stored row has ``marker_source`` ``"dropped"``, a binding
+    reason and no answer. That is exact. An empty ``student_answer`` alone is not:
+    a marked answer that is working only (empty final answer, non-empty working)
+    also has none, and it was read and marked, so it is an unverified answer and
+    takes the ordinary evidence-and-judge route. The default ``marker_source``
+    is the unbound one, for callers that hold only the reason.
+
+    A lenient judge would see only the mark-scheme point and the student's own
+    description of an unread answer, so its claims are decided by a teacher, never
+    the judge.
     """
-    return has_binding_doubt(review_reason) and not (student_answer or "").strip()
+    return (
+        has_binding_doubt(review_reason)
+        and marker_source == "dropped"
+        and not (student_answer or "").strip()
+    )
 
 
 def binding_blocks_publication(report: BindingReport | None) -> bool:

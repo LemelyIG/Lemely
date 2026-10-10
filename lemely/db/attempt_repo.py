@@ -674,7 +674,7 @@ def self_review_withheld(qr: QuestionResult) -> bool:
     """
     if qr.is_self_marked or not has_binding_doubt(qr.review_reason):
         return False
-    if is_unbound_question(qr.review_reason, qr.student_answer):
+    if is_unbound_question(qr.review_reason, qr.student_answer, qr.marker_source.value):
         return True
     if not any(
         item.reason is ReviewReason.low_confidence and item.status is ReviewStatus.open
@@ -696,7 +696,10 @@ def self_review_withheld_ids(session: Session, attempt_id: uuid.UUID) -> set[uui
     """
     candidates = session.execute(
         select(
-            QuestionResult.id, QuestionResult.review_reason, QuestionResult.student_answer
+            QuestionResult.id,
+            QuestionResult.review_reason,
+            QuestionResult.student_answer,
+            QuestionResult.marker_source,
         ).where(
             QuestionResult.attempt_id == attempt_id,
             QuestionResult.student_selfmarked_at.is_(None),
@@ -704,12 +707,16 @@ def self_review_withheld_ids(session: Session, attempt_id: uuid.UUID) -> set[uui
         )
     ).all()
     doubted = {
-        rid: (reason, answer) for rid, reason, answer in candidates if has_binding_doubt(reason)
+        rid: (reason, answer, source.value)
+        for rid, reason, answer, source in candidates
+        if has_binding_doubt(reason)
     }
     if not doubted:
         return set()
     never_read = {
-        rid for rid, (reason, answer) in doubted.items() if is_unbound_question(reason, answer)
+        rid
+        for rid, (reason, answer, source) in doubted.items()
+        if is_unbound_question(reason, answer, source)
     }
     open_rows = session.scalars(
         select(ReviewQueueItem.question_result_id).where(

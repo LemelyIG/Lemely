@@ -389,7 +389,9 @@ class SelfReviewService:
             by_point = _verdicts_by_point(verdicts, qr.points)
             low_confidence = grants_self_mark_authority(qr)
             teacher_settled = qr.is_overridden
-            never_read = is_unbound_question(qr.review_reason, qr.student_answer)
+            never_read = is_unbound_question(
+                qr.review_reason, qr.student_answer, qr.marker_source.value
+            )
             judge_requests: dict[str, JudgeRequest] = {}
             for point in qr.points:
                 verdict = by_point[point.mark_point_id]
@@ -447,7 +449,9 @@ class SelfReviewService:
             now = datetime.now(UTC)
             low_confidence = grants_self_mark_authority(qr)
             teacher_settled = qr.is_overridden
-            never_read = is_unbound_question(qr.review_reason, qr.student_answer)
+            never_read = is_unbound_question(
+                qr.review_reason, qr.student_answer, qr.marker_source.value
+            )
             unjudged = False
             passes: list[_PointPass] = []
 

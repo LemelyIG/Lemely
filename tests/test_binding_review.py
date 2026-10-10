@@ -158,6 +158,11 @@ def test_is_unbound_question_table() -> None:
     # A transcription exists: the ordinary evidence-and-judge route applies.
     assert is_unbound_question(UNVERIFIED_BINDING_REVIEW_REASON, "x = 4") is False
     assert is_unbound_question(UNBOUND_QUESTION_REVIEW_REASON, "x = 4") is False
+    # A marked answer with working only has no final answer too, but it was read and
+    # marked: only the unmarked (dropped) row is a question nobody could bind.
+    assert is_unbound_question(UNBOUND_QUESTION_REVIEW_REASON, None, "ai") is False
+    assert is_unbound_question(UNVERIFIED_BINDING_REVIEW_REASON, None, "ai") is False
+    assert is_unbound_question(UNBOUND_QUESTION_REVIEW_REASON, None, "dropped") is True
     # No binding doubt: not this rule's business.
     assert is_unbound_question(None, None) is False
     assert is_unbound_question("value_mismatch", None) is False

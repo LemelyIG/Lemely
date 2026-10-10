@@ -73,7 +73,9 @@ def test_record_refuses_a_paper_whose_verdict_is_not_pass(tmp_path: Path, verdic
 
     assert result.exit_code != 0
     assert "not recorded" in result.output
-    assert verdict in result.output
+    # A failure after marking is reported as hold whatever the extraction said (there is
+    # no retry left at that point), so both inputs end at hold.
+    assert "ended at hold" in result.output
     assert not (tmp_path / "out" / "history").exists()
 
 
