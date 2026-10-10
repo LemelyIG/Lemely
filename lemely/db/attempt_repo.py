@@ -78,6 +78,7 @@ from lemely.db.models.enums import (
     BoundarySource,
     MarkerSource,
     ReviewReason,
+    ReviewStatus,
     RevisionSource,
 )
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
@@ -246,17 +247,21 @@ class AttemptRepository:
         ``(created_at, id)``: rows of one attempt are written in a single
         flush and so usually share ``created_at``, which leaves the row id as
         the tie-break — stable for a given attempt, but not "the first one
-        marked". Empty for an unknown attempt.
+        marked". Empty for an unknown attempt. A question whose self-review is
+        withheld (:func:`self_review_withheld`) is left out, so the frame carries
+        ``questionResultId=None`` and the student is not offered the panel.
         """
         ids: dict[str, uuid.UUID] = {}
         with self._sm() as session:
+            withheld = self_review_withheld_ids(session, attempt_id)
             rows = session.execute(
                 select(QuestionResult.question_id, QuestionResult.id)
                 .where(QuestionResult.attempt_id == attempt_id)
                 .order_by(QuestionResult.created_at, QuestionResult.id)
             ).all()
         for question_id, row_id in rows:
-            ids.setdefault(question_id, row_id)
+            if row_id not in withheld:
+                ids.setdefault(question_id, row_id)
         return ids
 
     def _persist(
@@ -645,6 +650,38 @@ def grants_self_mark_authority(qr: QuestionResult) -> bool:
     return is_marking_low_confidence(qr) and not has_binding_doubt(qr.review_reason)
 
 
+def self_review_withheld(qr: QuestionResult) -> bool:
+    """Whether self-review is withheld from this question until a teacher resolves it.
+
+    True for a question with a binding doubt whose teacher ``low_confidence``
+    row is still open. The self-review panel assumes the marker read the
+    student's answer, which a binding doubt says may be false, so it is not
+    offered at all (and a claim is refused as for any ineligible question). Once
+    a teacher resolves the row the question is ordinary again.
+    """
+    return has_binding_doubt(qr.review_reason) and any(
+        item.reason is ReviewReason.low_confidence and item.status is ReviewStatus.open
+        for item in qr.review_queue_items
+    )
+
+
+def self_review_withheld_ids(session: Session, attempt_id: uuid.UUID) -> set[uuid.UUID]:
+    """The ids of one attempt's questions for which :func:`self_review_withheld` holds.
+
+    One query for the whole attempt, for the callers that list questions.
+    """
+    rows = session.execute(
+        select(QuestionResult.id, QuestionResult.review_reason)
+        .join(ReviewQueueItem, ReviewQueueItem.question_result_id == QuestionResult.id)
+        .where(
+            QuestionResult.attempt_id == attempt_id,
+            ReviewQueueItem.reason == ReviewReason.low_confidence,
+            ReviewQueueItem.status == ReviewStatus.open,
+        )
+    ).all()
+    return {row_id for row_id, reason in rows if has_binding_doubt(reason)}
+
+
 def _source_box_columns(cq: CorrectedQuestion) -> dict[str, int | None]:
     """Map `cq.source_box` onto the five `question_results` columns, or all `None`.
 
@@ -1009,4 +1046,6 @@ __all__ = [
     "fill_correction_topics",
     "grants_self_mark_authority",
     "is_marking_low_confidence",
+    "self_review_withheld",
+    "self_review_withheld_ids",
 ]

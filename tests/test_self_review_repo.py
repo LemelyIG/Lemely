@@ -3004,6 +3004,20 @@ def test_low_confidence_recomputed_in_phase_c_overrides_a_stale_phase_a_judge_pl
     assert qr.student_selfmark_marks == 2
 
 
+@pytest.fixture
+def withholding_bypassed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reach the decision rules behind the withholding, the second line of defence.
+
+    A binding-doubt question is not offered for self-review while its teacher
+    row is open, so the service refuses before any decision rule runs. These
+    tests turn the refusal off to prove the rules would still hold if a claim
+    ever got past it.
+    """
+    from lemely.db import self_review_repo
+
+    monkeypatch.setattr(self_review_repo, "self_review_withheld", lambda _qr: False)
+
+
 # ── binding doubt: the teacher's row stays, the student gets no authority ───
 
 
@@ -3036,7 +3050,7 @@ def _binding_doubt_question(kind: str) -> CorrectedQuestion:
 
 @pytest.mark.parametrize("kind", ["unbound", "unverified"])
 def test_teacher_row_stays_open_after_a_student_self_mark_on_a_binding_doubt_question(
-    pg_sessionmaker: sessionmaker[Session], kind: str
+    withholding_bypassed: None, pg_sessionmaker: sessionmaker[Session], kind: str
 ) -> None:
     student = _seed_user(pg_sessionmaker)
     attempt_id = _seed_attempt(pg_sessionmaker, student, [_binding_doubt_question(kind), _low()])
@@ -3056,7 +3070,7 @@ def test_teacher_row_stays_open_after_a_student_self_mark_on_a_binding_doubt_que
 
 @pytest.mark.parametrize("kind", ["unbound", "unverified"])
 def test_student_is_offered_the_panel_on_a_binding_doubt_question_but_must_bring_evidence(
-    pg_sessionmaker: sessionmaker[Session], kind: str
+    withholding_bypassed: None, pg_sessionmaker: sessionmaker[Session], kind: str
 ) -> None:
     """End to end: the panel is offered, a bare claim changes nothing, and a
     claim with evidence faces the judge (which can say no)."""
@@ -3120,6 +3134,7 @@ def _unbound_question_with_no_answer() -> CorrectedQuestion:
 
 
 def test_unbound_question_with_evidence_is_no_change_and_makes_no_judge_call(
+    withholding_bypassed: None,
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     student = _seed_user(pg_sessionmaker)
@@ -3146,6 +3161,7 @@ def test_unbound_question_with_evidence_is_no_change_and_makes_no_judge_call(
 
 
 def test_unbound_question_claim_is_recorded_as_not_applied(
+    withholding_bypassed: None,
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     student = _seed_user(pg_sessionmaker)
@@ -3169,6 +3185,7 @@ def test_unbound_question_claim_is_recorded_as_not_applied(
 
 
 def test_unverified_answer_with_evidence_goes_to_the_judge_and_the_row_stays_open(
+    withholding_bypassed: None,
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     student = _seed_user(pg_sessionmaker)
@@ -3196,7 +3213,7 @@ def test_unverified_answer_with_evidence_goes_to_the_judge_and_the_row_stays_ope
 
 @pytest.mark.parametrize("kind", ["unbound", "unverified"])
 def test_agreeing_with_the_mark_on_a_binding_doubt_question_leaves_the_row_open(
-    pg_sessionmaker: sessionmaker[Session], kind: str
+    withholding_bypassed: None, pg_sessionmaker: sessionmaker[Session], kind: str
 ) -> None:
     student = _seed_user(pg_sessionmaker)
     cq = _binding_doubt_question(kind)
@@ -3239,50 +3256,6 @@ def _claim(
     )
 
 
-@pytest.mark.parametrize("kind", ["unbound", "unverified"])
-def test_binding_doubt_question_with_an_open_teacher_row_is_pending_teacher(
-    pg_sessionmaker: sessionmaker[Session], kind: str
-) -> None:
-    from lemely.web.routers.student_self_review import _revealed_dto
-
-    student = _seed_user(pg_sessionmaker)
-    cq = _binding_doubt_question(kind).model_copy(
-        update={"student_answer": None} if kind == "unbound" else {}
-    )
-    attempt_id = _seed_attempt(pg_sessionmaker, student, [cq, _low()])
-    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
-
-    # Before any claim: the questions list (place 1).
-    assert _pending_in_list(pg_sessionmaker, student, attempt_id, "1") is True
-
-    view = _claim(pg_sessionmaker, student, attempt_id, qr_id)
-
-    # After the claim: the submit response (place 2), a later get (place 3),
-    # the wire DTO (place 4) and the list again.
-    assert isinstance(view, RevealedSelfReview)
-    assert view.pending_teacher is True and view.state == "revealed"
-    again = _service(pg_sessionmaker).get(student, attempt_id, qr_id)
-    assert isinstance(again, RevealedSelfReview) and again.pending_teacher is True
-    assert _revealed_dto(again).pendingTeacher is True
-    assert _pending_in_list(pg_sessionmaker, student, attempt_id, "1") is True
-
-
-@pytest.mark.parametrize("kind", ["unbound", "unverified"])
-def test_pending_teacher_clears_when_the_teacher_resolves_the_row(
-    pg_sessionmaker: sessionmaker[Session], kind: str
-) -> None:
-    student = _seed_user(pg_sessionmaker)
-    attempt_id = _seed_attempt(pg_sessionmaker, student, [_binding_doubt_question(kind), _low()])
-    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
-    _claim(pg_sessionmaker, student, attempt_id, qr_id)
-
-    _resolve_rows(pg_sessionmaker, qr_id)
-
-    again = _service(pg_sessionmaker).get(student, attempt_id, qr_id)
-    assert isinstance(again, RevealedSelfReview) and again.pending_teacher is False
-    assert _pending_in_list(pg_sessionmaker, student, attempt_id, "1") is False
-
-
 def test_ordinary_low_confidence_question_pending_state_is_unchanged(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
@@ -3297,3 +3270,107 @@ def test_ordinary_low_confidence_question_pending_state_is_unchanged(
     assert isinstance(view, RevealedSelfReview)
     assert view.pending_teacher is False and view.state == "settled"
     assert _pending_in_list(pg_sessionmaker, student, attempt_id, "2") is False
+
+
+# ── a binding-doubt question is not offered until a teacher resolves it ─────
+
+
+def _doubt_question(kind: str) -> CorrectedQuestion:
+    cq = _binding_doubt_question(kind)
+    return cq.model_copy(update={"student_answer": None}) if kind == "unbound" else cq
+
+
+@pytest.mark.parametrize("kind", ["unbound", "unverified"])
+def test_binding_doubt_question_is_not_offered_for_self_review(
+    pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_doubt_question(kind), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    service = _service(pg_sessionmaker)
+
+    # The questions list (and so the route's questionResultId=None).
+    by_id = {q.question_id: q for q in service.list_questions(student, attempt_id)}
+    assert by_id["1"].self_reviewable is False
+    assert by_id["1"].pending_teacher is True  # the teacher's row is still shown as open
+    assert by_id["2"].self_reviewable is True
+    # The completion frame's ids.
+    ids = AttemptRepository(pg_sessionmaker).question_result_ids(attempt_id)
+    assert "1" not in ids and "2" in ids
+    # The view itself.
+    with pytest.raises(SelfReviewNotFoundError):
+        service.get(student, attempt_id, qr_id)
+
+
+@pytest.mark.parametrize("kind", ["unbound", "unverified"])
+def test_claim_on_a_binding_doubt_question_is_refused_and_changes_nothing(
+    pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_doubt_question(kind), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    before = _attempt_row(pg_sessionmaker, attempt_id).awarded_marks
+    judge = _CountingJudge()
+
+    with pytest.raises(SelfReviewNotFoundError):
+        _service(pg_sessionmaker, judge=judge).submit(
+            student, attempt_id, qr_id, _all_earned(["p1", "p2"], evidence="It is on page 3.")
+        )
+
+    assert judge.calls == 0
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.is_self_marked is False
+    assert all(p.student_selfmark is None and p.student_evidence is None for p in qr.points)
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == before
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [(r.reason, r.status) for r in rows] == [
+        (ReviewReason.low_confidence, ReviewStatus.open)
+    ]
+
+
+@pytest.mark.parametrize("kind", ["unbound", "unverified"])
+def test_binding_doubt_question_is_offered_again_once_the_teacher_resolves_it(
+    pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_doubt_question(kind), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    _resolve_rows(pg_sessionmaker, qr_id)
+    service = _service(pg_sessionmaker)
+
+    by_id = {q.question_id: q for q in service.list_questions(student, attempt_id)}
+    assert by_id["1"].self_reviewable is True and by_id["1"].pending_teacher is False
+    assert "1" in AttemptRepository(pg_sessionmaker).question_result_ids(attempt_id)
+    view = service.get(student, attempt_id, qr_id)
+    # Ordinary again, but still no authority: a claim needs evidence and the judge.
+    assert view.evidence_required is True
+
+
+def test_ordinary_questions_are_offered_exactly_as_before(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Marker-low-confidence ("2"), confident, blank and multiple-choice rows are all offered."""
+    student = _seed_user(pg_sessionmaker)
+    first_questions = {
+        "confident": _high(),
+        "blank": _question(
+            "1",
+            matched=[],
+            maximum=2,
+            confidence_score=0.0,
+            marker_source="blank",
+            review_reason="blank",
+        ),
+        "multiple_choice": _question("1", matched=["p1"], maximum=2, marker_source="deterministic"),
+    }
+    service = _service(pg_sessionmaker)
+    for name, first in first_questions.items():
+        attempt_id = _seed_attempt(pg_sessionmaker, student, [first, _low()])
+
+        questions = service.list_questions(student, attempt_id)
+        ids = AttemptRepository(pg_sessionmaker).question_result_ids(attempt_id)
+
+        assert [q.self_reviewable for q in questions] == [True, True], name
+        assert set(ids) == {"1", "2"}, name
+        for question in questions:
+            service.get(student, attempt_id, question.question_result_id)  # no refusal
