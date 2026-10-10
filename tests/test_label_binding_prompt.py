@@ -8,6 +8,7 @@ that needs a live read.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -59,6 +60,20 @@ def _scheme(name: str = "0625_w24_ms_41") -> MarkScheme:
 
 def test_reader_prompt_version_is_2() -> None:
     assert VERSION == "2"
+
+
+def test_the_whole_system_prompt_is_pinned_to_its_version() -> None:
+    """The text at VERSION "2". No part of it is exempt.
+
+    ``tests/test_label_binder.py`` pins the prompt against the measured one with the
+    drawing rule cut out, so an edit inside that rule would pass there. When this goes
+    red: bump ``VERSION`` in ``lemely/io/prompts/label_binding.py`` and re-pin both values.
+    The drawing rule is unmeasured, so there is no measurement to redo yet.
+    """
+    assert (VERSION, hashlib.sha256(LABEL_BINDING_SYSTEM_PROMPT.encode()).hexdigest()) == (
+        "2",
+        "b7830e97c38da46eb998abad9eb9141d127970d59cd2c95a6db2ad6a2bcaa431",
+    )
 
 
 def test_a_drawing_is_reported_after_the_word_drawing() -> None:

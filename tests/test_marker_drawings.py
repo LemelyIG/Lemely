@@ -9,6 +9,7 @@ What a model then does needs live marking calls.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -59,6 +60,19 @@ def _client(captured: list[dict[str, Any]]) -> MagicMock:
 
 
 # --- system prompt ------------------------------------------------------------------
+
+
+def test_the_whole_system_prompt_is_pinned() -> None:
+    """The text as it stands since VERSION "8". No part of it is exempt.
+
+    ``tests/test_correction_off_topic.py`` pins the prompt against VERSION "5" with the
+    drawings section cut out, so an edit inside that section would pass there. When this
+    goes red: bump ``VERSION`` in ``lemely/io/prompts/correction_ai.py`` and re-pin. The
+    drawings section is unmeasured, so there is no measurement to redo yet.
+    """
+    assert hashlib.sha256(MARKER_SYSTEM_PROMPT.encode()).hexdigest() == (
+        "a791253d4c8b7c0154300c16e89b7af1f93aa592dc81d7ae97e47a776f97cb38"
+    )
 
 
 def test_the_old_section_is_replaced() -> None:
