@@ -109,7 +109,8 @@ INFERENCE_DOUBTS = (DOUBT_NUMBER_NOT_SEEN,)
 # A list longer than this is not read: nothing is bound. The largest corpus scheme has
 # 93 questions and parts (155 items when every label and one block per leaf is listed);
 # the recorded replies have 107 to 116 items. Time grows with the square of the number
-# of labels that open with a number: about 0.3 s at this size, 1.7 s at 1,400.
+# of labels that open with a number: the worst list of this size took 0.1 to 0.5 s as
+# measured, depending on the load of the machine, and one of 1,400 items 1 to 3 s.
 MAX_STREAM_ITEMS = 600
 # No paper nests parts deeper than four levels. A scheme deeper than this is not read.
 MAX_SCHEME_DEPTH = 12
