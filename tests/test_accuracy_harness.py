@@ -1817,6 +1817,82 @@ class RunManifestTests(unittest.TestCase):
             self._manifest(legacy_off).params_fingerprint,
         )
 
+    #: ``params_fingerprint`` of a run on default settings at f232b796, the commit
+    #: before the label binder was wired into extraction.
+    _PRE_BINDER_DEFAULT_FINGERPRINT = "2942b7e8a679"
+
+    def _real_settings(self, **binding: object):
+        """A real ``Settings`` built from defaults alone (no environment, no file)."""
+        import os
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from lemely.runtime.config import BindingSettings, load_settings
+
+        with patch.dict(os.environ):
+            for key in [k for k in os.environ if k.startswith("LEMELY_")]:
+                del os.environ[key]
+            settings = load_settings(toml_path=None, cwd=Path(tempfile.mkdtemp()))
+        return settings.model_copy(update={"binding": BindingSettings(**binding)})
+
+    def _with_second_read_level(self, settings, level: str | None):
+        levels = {
+            tag: value
+            for tag, value in settings.gemini.thinking_level_for.items()
+            if tag != "binding_second_read"
+        }
+        if level is not None:
+            levels["binding_second_read"] = level
+        return settings.model_copy(
+            update={"gemini": settings.gemini.model_copy(update={"thinking_level_for": levels})}
+        )
+
+    def test_legacy_ungated_run_on_real_settings_hashes_as_before_the_binder(self) -> None:
+        """A run that cannot make the second read must not be moved by the second
+        read's thinking level. The default thinking table gained a
+        ``binding_second_read`` entry with the binder, and the table is hashed, so on
+        a real ``Settings`` a legacy, ungated run stopped hashing as it had before:
+        the stand-in used by the tests above has no such entry and hid it.
+        """
+        legacy = self._real_settings(binder="legacy", gate="off")
+        self.assertEqual(legacy.gemini.thinking_level_for["binding_second_read"], "medium")
+        as_shipped = self._manifest(legacy).params_fingerprint
+        # The same run with the thinking table as it was before the entry existed.
+        self.assertEqual(
+            as_shipped,
+            self._manifest(self._with_second_read_level(legacy, None)).params_fingerprint,
+        )
+        # And whatever the entry is set to: a legacy run never makes that call.
+        self.assertEqual(
+            as_shipped,
+            self._manifest(self._with_second_read_level(legacy, "high")).params_fingerprint,
+        )
+        # The value this run had on the commit before the binder was wired in
+        # (f232b796, default settings, the cases and prompt versions `_manifest` uses).
+        # A deliberate change to any hashed default re-pins it, as for the stand-in pin.
+        self.assertEqual(as_shipped, self._PRE_BINDER_DEFAULT_FINGERPRINT)
+
+    def test_second_read_level_is_hashed_only_when_the_second_read_can_run(self) -> None:
+        label = self._real_settings()
+        default = self._manifest(label).params_fingerprint
+        self.assertNotEqual(
+            default,
+            self._manifest(self._real_settings(binder="legacy", gate="off")).params_fingerprint,
+        )
+        # With the label binder reading twice, the level decides a call the run makes.
+        self.assertNotEqual(
+            default, self._manifest(self._with_second_read_level(label, "high")).params_fingerprint
+        )
+        # With the second read off, or the legacy binder gated, it decides nothing.
+        for binding in ({"second_read": False}, {"binder": "legacy"}):
+            settings = self._real_settings(**binding)
+            self.assertEqual(
+                self._manifest(settings).params_fingerprint,
+                self._manifest(self._with_second_read_level(settings, "high")).params_fingerprint,
+                binding,
+            )
+
     def test_default_binding_settings_move_the_fingerprint(self) -> None:
         """The label binder is the default and changes what extraction does (which
         calls, on which model), so a run on today's defaults must not archive the

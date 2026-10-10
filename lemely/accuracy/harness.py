@@ -22,6 +22,7 @@ from lemely.eval.manifest import RunManifest, Split
 from lemely.eval.records import Arm, EvalRecord
 from lemely.eval.test_touch import DEFAULT_LEDGER_PATH, authorize_test_split_join
 from lemely.io.answer_extraction import EXTRACTION_MEDIA_RESOLUTION
+from lemely.io.binding.orchestrate import SECOND_READ_TASK_TAG
 from lemely.io.correction_ai import COHERENCE_TRIGGER_MARKER
 from lemely.io.gemini import _MAX_OUTPUT_TOKENS
 from lemely.runtime.config import BindingSettings, log_marking_flags, marking_options_from
@@ -930,7 +931,8 @@ def _binding_settings(settings: object) -> BindingSettings | None:
 
     ``None`` for an untyped or absent settings object (unit tests), and for the
     legacy binder with the gate off, which is extraction as it was before the label
-    binder existed: nothing then distinguishes the run from one made before.
+    binder existed: nothing then distinguishes the run from one made before, and
+    ``_build_run_manifest`` gives it the fingerprint such a run had then.
     """
     binding = getattr(settings, "binding", None)
     if not isinstance(binding, BindingSettings):
@@ -1065,6 +1067,20 @@ def _build_run_manifest(
         # ``thinking_level_for["correction"]`` archived the same
         # params_fingerprint despite issuing genuinely different API calls —
         # exactly the failure this hash exists to prevent.
+        # The second read of the label binder is the only call that reads the
+        # `binding_second_read` thinking level, so the level is hashed only for a
+        # run that can make that call. The default table gained the entry with the
+        # binder; hashing it for every run would move the fingerprint of runs that
+        # never make the call (the legacy binder, the label binder reading once),
+        # and a legacy, ungated run would no longer hash as it did before the binder
+        # existed.
+        binding = _binding_settings(settings)
+        reads_twice = binding is not None and binding.binder == "label" and binding.second_read
+        thinking_levels = {
+            tag: level
+            for tag, level in gemini.thinking_level_for.items()
+            if reads_twice or tag != SECOND_READ_TASK_TAG
+        }
         fingerprint_raw = (
             f"{sorted(models_by_task.items())}"
             f"|{gemini.temperature}|{gemini.top_p}|{gemini.seed}"
@@ -1087,7 +1103,7 @@ def _build_run_manifest(
             f"|{sorted(gemini.top_p_for.items())}"
             f"|{sorted(gemini.seed_for.items())}"
             f"|{sorted(gemini.thinking_budget_for.items())}"
-            f"|{sorted(gemini.thinking_level_for.items())}"
+            f"|{sorted(thinking_levels.items())}"
             f"|{_MAX_OUTPUT_TOKENS}"
             # US-028: escalation_confidence_threshold decides WHICH calls a
             # run issues (whether a low-confidence mark escalates to the
@@ -1131,8 +1147,10 @@ def _build_run_manifest(
         # `retry_model` is inert under the label binder and `read_model` and
         # `second_read` under the legacy one: an over-approximation in the safe
         # direction, as for the per-task dicts above. The second read's thinking
-        # level needs nothing here: it is an entry of `thinking_level_for`.
-        binding = _binding_settings(settings)
+        # level is an entry of `thinking_level_for`, hashed above when the run can
+        # make that read and left out when it cannot. Pinned on a real `Settings`
+        # by tests/test_accuracy_harness.py, against the value the default run had
+        # on the commit before the binder.
         if binding is not None:
             fingerprint_raw += (
                 f"|binder={binding.binder}|gate={binding.gate}"
