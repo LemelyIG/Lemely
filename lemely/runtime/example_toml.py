@@ -120,12 +120,16 @@ def render_example_toml() -> str:
     lines.append("# only; a 2.5-and-earlier model ignores this table entirely. Shipped")
     lines.append('# defaults shown; "minimal" is only honoured on gemini-3.6-flash /')
     lines.append('# gemini-3.5-flash-lite and falls back to "low" on any other 3.x model.')
+    lines.append("# This table REPLACES the defaults: a key left out here falls back to")
+    lines.append('# "low". Leaving out binding_second_read makes the binding step\'s second')
+    lines.append("# read the same call as its first (see [binding]); `lemely doctor` says so.")
     lines.append("[gemini.thinking_level_for]")
+    comments = {
+        "correction_borderline": "  # Step-1 retry before Step-2 escalation",
+        "binding_second_read": "  # the label binder's second read, see [binding]",
+    }
     for tag, level in s.gemini.thinking_level_for.items():
-        comment = (
-            "  # Step-1 retry before Step-2 escalation" if tag == "correction_borderline" else ""
-        )
-        lines.append(f'{tag} = "{level}"{comment}')
+        lines.append(f'{tag} = "{level}"{comments.get(tag, "")}')
     lines.append("")
 
     lines.append("[accuracy_eval]")
@@ -274,6 +278,36 @@ def render_example_toml() -> str:
     lines.append("# teacher-review flag fires on a disagreement whether or not this is on.")
     lines.append("# Deployed, it is set by LEMELY_GRADING__REREAD_SUBSTITUTION; see docs/ci-cd.md.")
     lines.append("# reread_substitution = true")
+    lines.append("")
+
+    lines.append("[binding]")
+    lines.append("# How the answers on a scanned script are tied to questions, and how far")
+    lines.append("# that is checked before marking (lemely.io.binding.orchestrate).")
+    lines.append("#")
+    lines.append('# binder: "label" -- the model lists the question labels and the writing it')
+    lines.append("# sees, with no question ids, and code binds that list to the mark scheme.")
+    lines.append('# "legacy" -- the model hands out the question ids itself, as extraction')
+    lines.append("# did before; kept as a way back, not as an equal choice.")
+    lines.append(f'binder = "{s.binding.binder}"')
+    lines.append('# gate: "enforce" -- a paper whose binding cannot be trusted is held.')
+    lines.append('# "observe" -- the same checks run and are reported (the')
+    lines.append('# binding_gate_result event), and no paper is held for them. "off" -- no')
+    lines.append('# checks and no report. binder = "legacy" with gate = "off" is extraction')
+    lines.append("# exactly as it was before either existed.")
+    lines.append(f'gate = "{s.binding.gate}"')
+    lines.append("# The label binder's model, passed on every one of its calls. It is NOT")
+    lines.append("# gemini.extraction_model: only gemini-3.8-flash returned a usable list when")
+    lines.append("# this was measured, and the extraction default is a cheaper model that did")
+    lines.append("# not. COST: with the label binder every extraction makes its calls on this")
+    lines.append("# model in place of one call on extraction_model.")
+    lines.append(f'read_model = "{s.binding.read_model}"')
+    lines.append("# Read the script a second time on the same model, at the thinking level")
+    lines.append("# [gemini.thinking_level_for] gives binding_second_read, so that the two")
+    lines.append("# reads can be compared and a bad first read replaced. Doubles the cost of")
+    lines.append('# the binding step. Ignored when gate = "off".')
+    lines.append(f"second_read = {str(s.binding.second_read).lower()}")
+    lines.append("# The model the legacy binder's one retry uses, when the gate is on.")
+    lines.append(f'retry_model = "{s.binding.retry_model}"')
     lines.append("")
 
     lines.append("[integrity]")

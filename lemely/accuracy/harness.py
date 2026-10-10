@@ -24,7 +24,7 @@ from lemely.eval.test_touch import DEFAULT_LEDGER_PATH, authorize_test_split_joi
 from lemely.io.answer_extraction import EXTRACTION_MEDIA_RESOLUTION
 from lemely.io.correction_ai import COHERENCE_TRIGGER_MARKER
 from lemely.io.gemini import _MAX_OUTPUT_TOKENS
-from lemely.runtime.config import log_marking_flags, marking_options_from
+from lemely.runtime.config import BindingSettings, log_marking_flags, marking_options_from
 from lemely.runtime.errors import CostCeilingError
 
 log = structlog.get_logger()
@@ -925,6 +925,44 @@ def _corpus_digest(cases: list[GoldenCase]) -> str:
     return h.hexdigest()[:16]
 
 
+def _binding_settings(settings: object) -> BindingSettings | None:
+    """The binding settings that change what extraction does, or ``None``.
+
+    ``None`` for an untyped or absent settings object (unit tests), and for the
+    legacy binder with the gate off, which is extraction as it was before the label
+    binder existed: nothing then distinguishes the run from one made before.
+    """
+    binding = getattr(settings, "binding", None)
+    if not isinstance(binding, BindingSettings):
+        return None
+    if binding.binder == "legacy" and binding.gate == "off":
+        return None
+    return binding
+
+
+def _prompt_versions(settings: object) -> dict[str, str]:
+    """The prompt versions a run on ``settings`` is made with.
+
+    ``"extraction"`` is the legacy extraction prompt. With the label binder the
+    script is read with the label-binding prompt, recorded as ``"label_binding"``,
+    so that two runs that differ only in that prompt are not archived as the same.
+    """
+    from lemely.io.prompts.answer_extraction import VERSION as EXT_VERSION
+    from lemely.io.prompts.correction_ai import VERSION as COR_VERSION
+    from lemely.io.prompts.label_binding import VERSION as LABEL_VERSION
+    from lemely.io.prompts.mark_scheme_parsing import VERSION as MS_VERSION
+
+    versions = {
+        "extraction": EXT_VERSION,
+        "correction": COR_VERSION,
+        "mark_scheme": MS_VERSION,
+    }
+    binding = _binding_settings(settings)
+    if binding is not None and binding.binder == "label":
+        versions["label_binding"] = LABEL_VERSION
+    return versions
+
+
 def _build_run_manifest(
     run_id: str,
     cases: list[GoldenCase],
@@ -1081,6 +1119,26 @@ def _build_run_manifest(
             fingerprint_raw += "|ecf_substitution=True"
         if marking.reread_substitution:
             fingerprint_raw += "|reread_substitution=True"
+        # How answers are bound to questions decides which extraction calls a run
+        # issues and on which model (lemely.io.binding.orchestrate): the label
+        # binder's one or two reads on `read_model`, or the legacy call and, when
+        # gated, its retry on `retry_model`. Two runs that differ in any of it must
+        # not share a fingerprint. The segment is left out for the legacy binder
+        # with the gate off, which is extraction exactly as it was before the
+        # binder existed, so such a run hashes as a run made then and those
+        # baselines stay comparable. A run on today's defaults does not, and should
+        # not. All five settings are hashed whenever any of them is, though
+        # `retry_model` is inert under the label binder and `read_model` and
+        # `second_read` under the legacy one: an over-approximation in the safe
+        # direction, as for the per-task dicts above. The second read's thinking
+        # level needs nothing here: it is an entry of `thinking_level_for`.
+        binding = _binding_settings(settings)
+        if binding is not None:
+            fingerprint_raw += (
+                f"|binder={binding.binder}|gate={binding.gate}"
+                f"|read_model={binding.read_model}|second_read={binding.second_read}"
+                f"|retry_model={binding.retry_model}"
+            )
         if arm is not None:
             fingerprint_raw += f"|arm={arm}"
     else:
@@ -1223,9 +1281,6 @@ def measure_accuracy(
     from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers, marker_scored
     from lemely.io.correction_ai import correct_paper
     from lemely.io.gemini import process_token_totals_by_task
-    from lemely.io.prompts.answer_extraction import VERSION as EXT_VERSION
-    from lemely.io.prompts.correction_ai import VERSION as COR_VERSION
-    from lemely.io.prompts.mark_scheme_parsing import VERSION as MS_VERSION
     from lemely.web.services.grading import extract_answers
 
     all_results: list[QuestionResult] = []
@@ -1432,11 +1487,7 @@ def measure_accuracy(
         else None
     )
 
-    prompt_versions = {
-        "extraction": EXT_VERSION,
-        "correction": COR_VERSION,
-        "mark_scheme": MS_VERSION,
-    }
+    prompt_versions = _prompt_versions(settings)
 
     return AccuracyResult(
         metrics=_metrics_from_eval_records(eval_records, id_match_rate=id_match_rate),

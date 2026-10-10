@@ -1802,6 +1802,77 @@ class RunManifestTests(unittest.TestCase):
                     prints.add(self._manifest(settings).params_fingerprint)
         self.assertEqual(len(prints), 8, "each flag combination must hash differently")
 
+    def test_legacy_binder_with_gate_off_fingerprint_is_unchanged(self) -> None:
+        """Extraction with ``binder="legacy"`` and ``gate="off"`` is exactly what it
+        was before the binder existed, so it hashes exactly as a run made then: a
+        stand-in with no ``binding`` reproduces the old computation.
+        """
+        from lemely.runtime.config import BindingSettings
+
+        without = self._settings_with_models()
+        legacy_off = self._settings_with_models()
+        legacy_off.binding = BindingSettings(binder="legacy", gate="off")
+        self.assertEqual(
+            self._manifest(without).params_fingerprint,
+            self._manifest(legacy_off).params_fingerprint,
+        )
+
+    def test_default_binding_settings_move_the_fingerprint(self) -> None:
+        """The label binder is the default and changes what extraction does (which
+        calls, on which model), so a run on today's defaults must not archive the
+        fingerprint of a run made before it.
+        """
+        from lemely.runtime.config import BindingSettings
+
+        without = self._settings_with_models()
+        default = self._settings_with_models()
+        default.binding = BindingSettings()
+        self.assertNotEqual(
+            self._manifest(without).params_fingerprint,
+            self._manifest(default).params_fingerprint,
+        )
+
+    def test_each_binding_setting_moves_the_fingerprint(self) -> None:
+        from lemely.runtime.config import BindingSettings
+
+        variants = [
+            {},
+            {"gate": "observe"},
+            {"gate": "off"},
+            {"read_model": "gemini-other"},
+            {"second_read": False},
+            {"binder": "legacy"},
+            {"binder": "legacy", "retry_model": "gemini-other"},
+            {"binder": "legacy", "gate": "observe"},
+            {"binder": "legacy", "gate": "off"},
+        ]
+        prints = set()
+        for variant in variants:
+            settings = self._settings_with_models()
+            settings.binding = BindingSettings(**variant)
+            prints.add(self._manifest(settings).params_fingerprint)
+        self.assertEqual(len(prints), len(variants), "each binding setting must hash differently")
+
+    def test_prompt_versions_name_the_label_binding_prompt_when_it_is_the_binder(self) -> None:
+        """With the label binder the prompt that reads the script is the label-binding
+        one, so its version is recorded beside the legacy extraction prompt's."""
+        from lemely.accuracy.harness import _prompt_versions
+        from lemely.io.prompts import LABEL_BINDING_PROMPT_VERSION
+        from lemely.runtime.config import BindingSettings
+
+        base = {"extraction", "correction", "mark_scheme"}
+        self.assertEqual(set(_prompt_versions(None)), base)
+        self.assertEqual(set(_prompt_versions(self._settings_with_models())), base)
+
+        settings = self._settings_with_models()
+        settings.binding = BindingSettings()
+        versions = _prompt_versions(settings)
+        self.assertEqual(set(versions), base | {"label_binding"})
+        self.assertEqual(versions["label_binding"], LABEL_BINDING_PROMPT_VERSION)
+
+        settings.binding = BindingSettings(binder="legacy")
+        self.assertEqual(set(_prompt_versions(settings)), base)
+
     def test_measure_accuracy_passes_marking_options_from_settings(self) -> None:
         """measure_accuracy must forward the settings' marking flags to
         correct_paper as MarkingOptions, not merely read them for the

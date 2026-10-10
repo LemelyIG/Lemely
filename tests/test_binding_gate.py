@@ -221,9 +221,20 @@ def _g5(
     unaligned: list[str],
     markers: int = 0,
     thresholds: GateThresholds = DEFAULTS,
+    *,
+    listing_suspects: int = 0,
+    lost_items: int = 0,
 ) -> BindingCheck:
     scheme = _scheme([_leaf(str(i), "5") for i in range(1, leaves + 1)])
-    return check_label_coverage(extracted, scheme, unaligned, markers, thresholds)
+    return check_label_coverage(
+        extracted,
+        scheme,
+        unaligned,
+        markers,
+        thresholds,
+        listing_suspects=listing_suspects,
+        lost_items=lost_items,
+    )
 
 
 def test_g5_lists_the_leaf_before_an_unaligned_leaf_when_it_is_answered() -> None:
@@ -267,10 +278,82 @@ def test_g5_unaligned_rate_boundary_and_threshold() -> None:
     assert _g5(_extracted([]), 10, ["1"], thresholds=strict).scope == "paper"
 
 
-def test_g5_paper_scope_on_an_unmatched_marker() -> None:
+def test_g5_one_unplaced_label_no_longer_fails_the_paper() -> None:
+    # Was `test_g5_paper_scope_on_an_unmatched_marker`: any label that matched nothing
+    # failed the paper. A stray label or two is ordinary (a cover-page number, a note);
+    # the paper fails only above `unplaced_labels_max`.
     check = _g5(_extracted([]), 20, [], markers=1)
+    assert check.passed and check.scope == "paper"
+    assert "1 label on the page matched no question" in check.detail
+
+
+def test_g5_unplaced_labels_boundary_and_threshold() -> None:
+    assert DEFAULTS.unplaced_labels_max == 2
+    at_limit = _g5(_extracted([]), 20, [], markers=2)
+    assert at_limit.passed
+    assert "2 labels on the page matched no question" in at_limit.detail
+    over = _g5(_extracted([]), 20, [], markers=3)
+    assert not over.passed and over.scope == "paper"
+    assert over.question_ids == []
+    assert "3 labels on the page matched no question" in over.detail
+    strict = replace(DEFAULTS, unplaced_labels_max=0)
+    assert _g5(_extracted([]), 20, [], markers=1, thresholds=strict).scope == "paper"
+    assert not _g5(_extracted([]), 20, [], markers=1, thresholds=strict).passed
+
+
+def test_g5_unplaced_labels_within_the_limit_leave_question_scope_alone() -> None:
+    check = _g5(_extracted([("2", "5")]), 20, ["3"], markers=2)
+    assert not check.passed and check.scope == "question"
+    assert check.question_ids == ["2", "3"]
+
+
+def test_g5_listing_suspects_boundary_and_threshold() -> None:
+    assert DEFAULTS.listing_suspects_min == 2
+    one = _g5(_extracted([]), 20, [], listing_suspects=1)
+    assert one.passed
+    assert "1 group of parts" in one.detail
+    two = _g5(_extracted([]), 20, [], listing_suspects=2)
+    assert not two.passed and two.scope == "paper"
+    assert "2 groups of parts" in two.detail and "listed before its label" in two.detail
+    strict = replace(DEFAULTS, listing_suspects_min=1)
+    assert not _g5(_extracted([]), 20, [], listing_suspects=1, thresholds=strict).passed
+    lax = replace(DEFAULTS, listing_suspects_min=3)
+    assert _g5(_extracted([]), 20, [], listing_suspects=2, thresholds=lax).passed
+
+
+def test_g5_any_lost_item_fails_the_paper() -> None:
+    assert _g5(_extracted([]), 20, [], lost_items=0).passed
+    one = _g5(_extracted([]), 20, [], lost_items=1)
+    assert not one.passed and one.scope == "paper"
+    assert "1 item of the reader's reply" in one.detail
+    assert "3 items of the reader's reply" in _g5(_extracted([]), 20, [], lost_items=3).detail
+
+
+def test_g5_each_paper_scope_condition_has_its_own_sentence() -> None:
+    check = _g5(_extracted([]), 10, ["1", "2"], markers=3, listing_suspects=2, lost_items=1)
     assert not check.passed and check.scope == "paper"
-    assert "1 label" in check.detail
+    assert check.question_ids == ["1", "2"]
+    sentences = check.detail.rstrip(".").split("; ")
+    assert len(sentences) == 4
+    assert sentences[0].startswith("2 of 10 questions could not be lined up")
+    assert sentences[1].startswith("3 labels on the page matched no question")
+    assert sentences[2].startswith("2 groups of parts")
+    assert sentences[3].startswith("1 item of the reader's reply")
+
+
+def test_g5_a_failing_condition_does_not_speak_for_the_ones_that_hold() -> None:
+    check = _g5(_extracted([]), 20, [], markers=1, listing_suspects=1, lost_items=1)
+    assert not check.passed and check.scope == "paper"
+    assert check.detail.startswith("1 item of the reader's reply")
+    assert "matched no question" not in check.detail
+    assert "group of parts" not in check.detail
+
+
+def test_g5_new_parameters_default_to_nothing_seen() -> None:
+    scheme = _scheme([_leaf(str(i), "5") for i in range(1, 21)])
+    check = check_label_coverage(_extracted([]), scheme, [], 0, DEFAULTS)
+    assert check.passed
+    assert check.detail == "Every question lined up with a label on the page."
 
 
 # --- G6 ---------------------------------------------------------------------

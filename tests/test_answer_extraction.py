@@ -23,10 +23,16 @@ from lemely.io.gemini import GeminiClient
 from lemely.io.rasterise import RasterisedPage
 from lemely.io.reread import DEFAULT_CONFIDENCE_THRESHOLD
 from lemely.io.second_read import REREAD_AGREEMENT_THRESHOLD
-from lemely.runtime.config import PathsSettings, load_settings
+from lemely.runtime.config import BindingSettings, PathsSettings, load_settings
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus, current_run_id
 from tests.gemini_fakes import fake_genai_client
+
+# Every test in this file is about the legacy extraction call: one call in which the
+# model hands out question ids, with no binding gate over it. That is no longer the
+# default (the label binder is, see tests/test_extraction_binding.py), so each settings
+# object built here asks for it by name.
+_LEGACY_UNGATED = BindingSettings(binder="legacy", gate="off")
 
 
 def _write_minimal_pdf(path: Path, *, pages: int = 1) -> None:
@@ -144,10 +150,11 @@ def _client_with_response(tmp: str, body: dict, **gemini_overrides: object) -> G
         settings = load_settings(toml_path=None, cwd=Path(tmp))
     settings = settings.model_copy(
         update={
+            "binding": _LEGACY_UNGATED,
             "paths": PathsSettings(
                 cache_dir=Path(tmp) / ".cache",
                 output_dir=Path(tmp) / "outputs",
-            )
+            ),
         }
     )
     if gemini_overrides:
@@ -179,6 +186,7 @@ def _client_with_responses(
         settings = load_settings(toml_path=None, cwd=Path(tmp))
     settings = settings.model_copy(
         update={
+            "binding": _LEGACY_UNGATED,
             "paths": PathsSettings(
                 cache_dir=Path(tmp) / ".cache",
                 output_dir=Path(tmp) / "outputs",
@@ -876,10 +884,11 @@ class MalformedSourceBoxCoordinateTests(unittest.TestCase):
             settings = load_settings(toml_path=None, cwd=Path(self.tmp))
         settings = settings.model_copy(
             update={
+                "binding": _LEGACY_UNGATED,
                 "paths": PathsSettings(
                     cache_dir=Path(self.tmp) / ".cache",
                     output_dir=Path(self.tmp) / "outputs",
-                )
+                ),
             }
         )
         client = GeminiClient(settings, _genai_client=mock_genai)
@@ -959,10 +968,11 @@ class MalformedSourceBoxCoordinateTests(unittest.TestCase):
             settings = load_settings(toml_path=None, cwd=Path(self.tmp))
         settings = settings.model_copy(
             update={
+                "binding": _LEGACY_UNGATED,
                 "paths": PathsSettings(
                     cache_dir=Path(self.tmp) / ".cache",
                     output_dir=Path(self.tmp) / "outputs",
-                )
+                ),
             }
         )
         client = GeminiClient(settings, _genai_client=mock_genai)

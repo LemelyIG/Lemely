@@ -13,7 +13,9 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-BindingSource = Literal["position", "label"]
+# "legacy": the model handed out the question ids itself (the extractor as it was
+# before the label binder), as opposed to "label", bound from the labels it listed.
+BindingSource = Literal["position", "label", "legacy"]
 BindingStatus = Literal["verified", "unverified", "unbound"]
 BindingVerdict = Literal["pass", "retry", "hold"]
 CheckId = Literal["G1", "G2", "G5", "G6", "G7", "G8", "G9"]

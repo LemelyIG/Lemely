@@ -292,11 +292,13 @@ class LabelBinder:
         model: str | None = None,
         media_resolution: str = "high",
         extra_cache_key: str,
+        task_tag: str = "extraction",
     ) -> StreamRead:
         """Read every page in one call and return the list the model gave.
 
-        ``model`` overrides the configured extraction model. A cost-ceiling or service
-        error from the call is not caught here.
+        ``model`` overrides the configured extraction model. ``task_tag`` picks the
+        call's thinking level and the cost bucket it is counted in. A cost-ceiling or
+        service error from the call is not caught here.
         """
         raw = self._client.generate_structured(
             system_prompt=LABEL_BINDING_SYSTEM_PROMPT,
@@ -308,7 +310,7 @@ class LabelBinder:
             prompt_version=VERSION,
             model=model,
             extra_cache_key=extra_cache_key,
-            task_tag="extraction",
+            task_tag=task_tag,
         )
         return parse_stream_items(raw.model_dump()["items"], page_count=len(pages))
 

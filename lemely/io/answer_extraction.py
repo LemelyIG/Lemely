@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import contextvars
+import functools
 import math
 import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -15,8 +17,10 @@ from pydantic import BaseModel, GetJsonSchemaHandler, ValidationError
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema as pydantic_core_schema
 
+from lemely.core.binding import BindingReport
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers, SourceBox
+from lemely.io.binding.orchestrate import LegacyRead, gate_legacy, run_binding
 
 # The per-field coercion helpers live in ``lemely.io.extraction_coerce`` (the label
 # binder uses them too, and this module calls the binder). They are re-exported here
@@ -28,7 +32,7 @@ from lemely.io.extraction_coerce import (
     _coerce_confidence,
     _coerce_page,
 )
-from lemely.io.gemini import GeminiClient
+from lemely.io.gemini import GeminiClient, ImageUploads
 from lemely.io.prompts.answer_extraction import (
     EXTRACTOR_SYSTEM_PROMPT,
     VERSION,
@@ -580,6 +584,153 @@ def _to_extracted_answer(
     return answer, reasons, None
 
 
+@dataclass(frozen=True, slots=True)
+class _LegacyReply:
+    """One reply of the legacy extraction call, converted, with what was dropped on the way.
+
+    ``total`` counts every element of the reply, kept or dropped.
+    """
+
+    answers: list[ExtractedAnswer]
+    total: int
+    source_box_drops: dict[str, int]
+    answer_drops: dict[str, int]
+    confidence_repairs: dict[str, int]
+    field_repairs: dict[str, int]
+    dropped_question_ids: list[str]
+
+
+def _convert_reply(raw_answers: list[Any], num_pages: int) -> _LegacyReply:
+    """Turn the legacy call's ``answers`` into ``ExtractedAnswer``s, counting every drop."""
+    # US-031 review MUST-FIX 6: validate each list element individually
+    # -- a malformed element (a bare string, a positional list, `null`)
+    # must not fail pydantic validation for the whole `answers` list and
+    # lose every other, possibly good, answer with it. An element that
+    # cannot be shaped into a _RawExtractedAnswer at all is folded into
+    # the same "whole answer dropped" bucket _to_extracted_answer's own
+    # unrecoverable question_id/answer case uses, under the
+    # "malformed_answer_shape" reason.
+    converted: list[tuple[ExtractedAnswer | None, dict[str, str], str | None]] = []
+    for raw_answer, shape_reason in _parse_raw_answers(raw_answers):
+        if raw_answer is None:
+            converted.append((None, {"shape": shape_reason or "malformed_answer_shape"}, None))
+            continue
+        converted.append(_to_extracted_answer(raw_answer, num_pages))
+    answers = [a for a, _reasons, _dropped_qid in converted if a is not None]
+
+    # US-031: a bad question_id/answer/list-element shape drops the
+    # whole *answer* here (there is nothing left to key or grade), never
+    # the whole paper -- counted the same way I1 review finding 5
+    # already counts source_box drops, so the loss is visible rather
+    # than a paper silently coming back short.
+    answer_drops: dict[str, int] = {}
+    # I1 review finding 5: an out-of-range page index and a malformed
+    # coordinate are both silently dropped to source_box=None inside
+    # _to_extracted_answer -- surface the count so a later box-hit-rate
+    # metric's denominator shape is visible rather than implicit. Kept
+    # (not just published) below on ExtractedAnswers.source_box_drops
+    # (I1 review round 2, should-fix 4) so the count travels with the
+    # record a box-hit-rate metric actually reads, not only a live event.
+    source_box_drops: dict[str, int] = {}
+    # US-031: confidence can't be dropped to None like source_box (it is
+    # required) -- an unusable value is instead replaced with
+    # _FALLBACK_CONFIDENCE, and that repair is counted here the same
+    # way, so a metric reading ExtractedAnswers can tell "the model gave
+    # a real confidence" from "this run had to fabricate one".
+    confidence_repairs: dict[str, int] = {}
+    # Review NIT A: source_region/working_out are cosmetic (not part of
+    # marking or matching), so a bad value here never drops the answer
+    # -- but it must still be counted, not silently discarded, to keep
+    # the same (value, drop_reason) idiom every other field follows.
+    field_repairs: dict[str, int] = {}
+    # US-031 review MUST-FIX 7 (stronger fix): the subset of dropped
+    # answers whose question_id survived coercion -- i.e. the answer
+    # itself, not its identity, was unusable. correct_paper needs this
+    # to tell "extracted and dropped" apart from "never extracted at
+    # all"; see ExtractedAnswers.dropped_question_ids.
+    dropped_question_ids: list[str] = []
+    for a, reasons, dropped_qid in converted:
+        if a is None:
+            reason = (
+                reasons.get("shape")
+                or reasons.get("question_id")
+                or reasons.get("answer")
+                or "unknown"
+            )
+            answer_drops[reason] = answer_drops.get(reason, 0) + 1
+            if dropped_qid is not None:
+                dropped_question_ids.append(dropped_qid)
+            continue
+        if "confidence" in reasons:
+            reason = reasons["confidence"]
+            confidence_repairs[reason] = confidence_repairs.get(reason, 0) + 1
+        if "source_box" in reasons:
+            reason = reasons["source_box"]
+            source_box_drops[reason] = source_box_drops.get(reason, 0) + 1
+        for field_name in ("source_region", "working_out"):
+            if field_name in reasons:
+                reason = reasons[field_name]
+                field_repairs[reason] = field_repairs.get(reason, 0) + 1
+    return _LegacyReply(
+        answers=answers,
+        total=len(converted),
+        source_box_drops=source_box_drops,
+        answer_drops=answer_drops,
+        confidence_repairs=confidence_repairs,
+        field_repairs=field_repairs,
+        dropped_question_ids=dropped_question_ids,
+    )
+
+
+def _publish_reply_drops(reply: _LegacyReply) -> None:
+    """Publish what converting ``reply`` dropped or repaired, when it did either."""
+    source_box_drops = reply.source_box_drops
+    answer_drops = reply.answer_drops
+    confidence_repairs = reply.confidence_repairs
+    field_repairs = reply.field_repairs
+    if source_box_drops:
+        bus.publish(
+            EventType.SOURCE_BOX_DROPPED,
+            counts=source_box_drops,
+            total_answers=reply.total,
+        )
+    # US-031 review MUST-FIX 7: a comment here previously claimed this
+    # loss was "visible… the same way source_box drops are" while
+    # publishing nothing -- answer_drops/confidence_repairs had zero
+    # consumers anywhere in the tree. Publish for real, the same way
+    # SOURCE_BOX_DROPPED is published immediately above, so the claim is
+    # true. This event is TELEMETRY, not the review gate: the flagging is
+    # wired through `ExtractedAnswers.dropped_question_ids`, which
+    # `correct_paper` short-circuits on before dispatching to the MCQ or
+    # AI path (review MUST-FIX 7, stronger fix). So a dropped answer is
+    # flagged and costs no marking call -- but only for the two reasons
+    # that leave a usable question_id (`missing_answer`,
+    # `malformed_answer`). The other three (`missing_question_id`,
+    # `malformed_question_id`, `malformed_answer_shape`) have no id to
+    # attribute a flag to, and what that costs depends on the leaf. On a
+    # non-MCQ leaf with an AI marker configured the paid call is CERTAIN
+    # (`ai.mark_question` is reached unconditionally) and the confident
+    # unflagged mark is CONTINGENT -- it needs the model's response to
+    # clear all four of `_build_ai_corrected`'s review gates, which it
+    # CAN. An MCQ leaf (or `--mcq-only`/no client) is already flagged at
+    # 0.0 with no call, but only because the absent id looks exactly like a
+    # genuine blank, so review_reason carries that path's blank message
+    # instead of the truth. See `CorrectedQuestion.marker_source`'s
+    # coverage-limit note (review MUST-FIX F1) for the full split.
+    # These counts are also KEPT, not only published: `answer_drops` is a
+    # field on `ExtractedAnswers`, the same reasoning as `source_box_drops`
+    # above, so the per-reason totals travel with the record and this event
+    # is not the only trace of what was dropped.
+    if answer_drops or confidence_repairs or field_repairs:
+        bus.publish(
+            EventType.ANSWER_DROPPED,
+            answer_drops=answer_drops,
+            confidence_repairs=confidence_repairs,
+            field_repairs=field_repairs,
+            total_answers=reply.total,
+        )
+
+
 # Spec 2026-09-26 §5: the tag each `_run_rereads` worker reports for one
 # answer -- "stopped"/"budget" never issue a call; "done"/"failed"/"ceiling"
 # all count as started (see `_run_rereads`'s docstring).
@@ -756,6 +907,95 @@ class GeminiAnswerExtractor:
             )
         return [results.get(i, a) for i, a in enumerate(answers)], started, skipped_by_budget
 
+    def _legacy_reply(
+        self,
+        mark_scheme: MarkScheme,
+        page_bytes: list[bytes],
+        uploads: ImageUploads,
+        *,
+        extra_cache_key: str,
+        model: str | None = None,
+    ) -> _LegacyReply:
+        """The legacy extraction call (the model hands out question ids), converted.
+
+        With no ``model`` this is the call extraction has always made, argument for
+        argument. ``model`` is passed only by the binding gate's one retry.
+        """
+        call = functools.partial(
+            self._client.generate_structured,
+            system_prompt=EXTRACTOR_SYSTEM_PROMPT,
+            user_prompt=build_extractor_user_prompt(mark_scheme, page_count=len(page_bytes)),
+            image_parts=page_bytes,
+            image_uploads=uploads,
+            media_resolution=EXTRACTION_MEDIA_RESOLUTION,
+            response_schema=_ExtractorOutput,
+            prompt_version=VERSION,
+            extra_cache_key=extra_cache_key,
+            task_tag="extraction",
+        )
+        raw = call() if model is None else call(model=model)
+        return _convert_reply(raw.answers, len(page_bytes))
+
+    def _gated_legacy(
+        self,
+        reply: _LegacyReply,
+        mark_scheme: MarkScheme,
+        page_bytes: list[bytes],
+        uploads: ImageUploads,
+        manifest_key: str,
+        manifest_ids: list[str],
+    ) -> tuple[_LegacyReply, BindingReport]:
+        """Run the binding gate over the legacy call's answers; return the reply to go on with.
+
+        The checks compare ids with the mark scheme's, so they see a copy of the
+        answers with ids mapped the way ``normalize_extracted_answers`` maps them at
+        the end; the answers that go on keep the ids the model gave until then, as
+        they always have. The retry is the same call on ``binding.retry_model`` under
+        its own cache key. The reply that goes on has ``binding_source="legacy"`` on
+        every answer and ``binding_status="unverified"`` on those a question-scope
+        check names; the checks passing verifies no single answer, so the rest are
+        left unset.
+        """
+        settings = self._client._settings
+        canonical = {_canonical_id(mid): mid for mid in manifest_ids}
+        retried: list[_LegacyReply] = []
+
+        def _for_gate(converted: _LegacyReply) -> LegacyRead:
+            mapped = normalize_extracted_answers(
+                ExtractedAnswers(paper_id="", source_scan="", answers=converted.answers),
+                manifest_ids,
+            )
+            return LegacyRead(answers=mapped.answers, drops=converted.answer_drops)
+
+        def _retry() -> LegacyRead:
+            again = self._legacy_reply(
+                mark_scheme,
+                page_bytes,
+                uploads,
+                extra_cache_key=manifest_key + "|retry",
+                model=settings.binding.retry_model,
+            )
+            retried.append(again)
+            return _for_gate(again)
+
+        outcome = gate_legacy(
+            _for_gate(reply),
+            mark_scheme,
+            settings=settings,
+            model=settings.gemini.model_for("extraction"),
+            retry=_retry,
+        )
+        used = retried[0] if outcome.used_retry else reply
+
+        def _stamped(answer: ExtractedAnswer) -> ExtractedAnswer:
+            mapped_id = canonical.get(_canonical_id(answer.question_id), answer.question_id)
+            update: dict[str, str] = {"binding_source": "legacy"}
+            if mapped_id in outcome.unverified_ids:
+                update["binding_status"] = "unverified"
+            return answer.model_copy(update=update)
+
+        return replace(used, answers=[_stamped(a) for a in used.answers]), outcome.report
+
     def __call__(self, scan_path: Path, mark_scheme: MarkScheme) -> ExtractedAnswers:
         """Extract ``scan_path``'s answers against ``mark_scheme``, one run at a time.
 
@@ -768,7 +1008,14 @@ class GeminiAnswerExtractor:
             return self._extract(scan_path, mark_scheme)
 
     def _extract(self, scan_path: Path, mark_scheme: MarkScheme) -> ExtractedAnswers:
-        """:meth:`__call__`'s work, under its run slot."""
+        """:meth:`__call__`'s work, under its run slot.
+
+        ``binding.binder`` decides where the answers come from: the label binder
+        (:func:`~lemely.io.binding.orchestrate.run_binding`) or the legacy call.
+        Either way they then go through the same steps: confidence calibration, the
+        optional text second reader, crop re-reads, progress events, id
+        normalisation. Unless the gate is off the result carries the binding report.
+        """
         manifest_key = build_question_manifest_hash_key(mark_scheme)
 
         # I1: rasterise to per-page images rather than uploading the whole
@@ -795,6 +1042,7 @@ class GeminiAnswerExtractor:
             )
 
         g = self._client._settings.gemini
+        binding = self._client._settings.binding
 
         reread_kwargs = (
             {}
@@ -813,135 +1061,63 @@ class GeminiAnswerExtractor:
         # below reuses the same URIs -- and deleted on exit, whatever happens.
         page_bytes = [p.png_bytes for p in pages]
         with self._client.image_uploads(page_bytes, concurrency=g.upload_concurrency) as uploads:
-            raw = self._client.generate_structured(
-                system_prompt=EXTRACTOR_SYSTEM_PROMPT,
-                user_prompt=build_extractor_user_prompt(mark_scheme, page_count=len(pages)),
-                image_parts=page_bytes,
-                image_uploads=uploads,
-                media_resolution=EXTRACTION_MEDIA_RESOLUTION,
-                response_schema=_ExtractorOutput,
-                prompt_version=VERSION,
-                extra_cache_key=manifest_key,
-                task_tag="extraction",
-            )
             # Build a type-hint map from mark scheme for calibration
             type_hint_map: dict[str, str] = {}
             for q in mark_scheme.all_questions_flat():
                 if not q.parts and q.marks > 0:
                     type_hint_map[q.id] = q.type.value
+            manifest_ids = [
+                q.id for q in mark_scheme.all_questions_flat() if q.marks > 0 and not q.parts
+            ]
 
-            # US-031 review MUST-FIX 6: validate each list element individually
-            # -- a malformed element (a bare string, a positional list, `null`)
-            # must not fail pydantic validation for the whole `answers` list and
-            # lose every other, possibly good, answer with it. An element that
-            # cannot be shaped into a _RawExtractedAnswer at all is folded into
-            # the same "whole answer dropped" bucket _to_extracted_answer's own
-            # unrecoverable question_id/answer case uses, under the
-            # "malformed_answer_shape" reason.
-            converted: list[tuple[ExtractedAnswer | None, dict[str, str], str | None]] = []
-            for raw_answer, shape_reason in _parse_raw_answers(raw.answers):
-                if raw_answer is None:
-                    converted.append(
-                        (None, {"shape": shape_reason or "malformed_answer_shape"}, None)
-                    )
-                    continue
-                converted.append(_to_extracted_answer(raw_answer, len(pages)))
-            answers = [a for a, _reasons, _dropped_qid in converted if a is not None]
-
-            # US-031: a bad question_id/answer/list-element shape drops the
-            # whole *answer* here (there is nothing left to key or grade), never
-            # the whole paper -- counted the same way I1 review finding 5
-            # already counts source_box drops, so the loss is visible rather
-            # than a paper silently coming back short.
-            answer_drops: dict[str, int] = {}
-            # I1 review finding 5: an out-of-range page index and a malformed
-            # coordinate are both silently dropped to source_box=None inside
-            # _to_extracted_answer -- surface the count so a later box-hit-rate
-            # metric's denominator shape is visible rather than implicit. Kept
-            # (not just published) below on ExtractedAnswers.source_box_drops
-            # (I1 review round 2, should-fix 4) so the count travels with the
-            # record a box-hit-rate metric actually reads, not only a live event.
-            source_box_drops: dict[str, int] = {}
-            # US-031: confidence can't be dropped to None like source_box (it is
-            # required) -- an unusable value is instead replaced with
-            # _FALLBACK_CONFIDENCE, and that repair is counted here the same
-            # way, so a metric reading ExtractedAnswers can tell "the model gave
-            # a real confidence" from "this run had to fabricate one".
-            confidence_repairs: dict[str, int] = {}
-            # Review NIT A: source_region/working_out are cosmetic (not part of
-            # marking or matching), so a bad value here never drops the answer
-            # -- but it must still be counted, not silently discarded, to keep
-            # the same (value, drop_reason) idiom every other field follows.
-            field_repairs: dict[str, int] = {}
-            # US-031 review MUST-FIX 7 (stronger fix): the subset of dropped
-            # answers whose question_id survived coercion -- i.e. the answer
-            # itself, not its identity, was unusable. correct_paper needs this
-            # to tell "extracted and dropped" apart from "never extracted at
-            # all"; see ExtractedAnswers.dropped_question_ids.
-            dropped_question_ids: list[str] = []
-            for a, reasons, dropped_qid in converted:
-                if a is None:
-                    reason = (
-                        reasons.get("shape")
-                        or reasons.get("question_id")
-                        or reasons.get("answer")
-                        or "unknown"
-                    )
-                    answer_drops[reason] = answer_drops.get(reason, 0) + 1
-                    if dropped_qid is not None:
-                        dropped_question_ids.append(dropped_qid)
-                    continue
-                if "confidence" in reasons:
-                    reason = reasons["confidence"]
-                    confidence_repairs[reason] = confidence_repairs.get(reason, 0) + 1
-                if "source_box" in reasons:
-                    reason = reasons["source_box"]
-                    source_box_drops[reason] = source_box_drops.get(reason, 0) + 1
-                for field_name in ("source_region", "working_out"):
-                    if field_name in reasons:
-                        reason = reasons[field_name]
-                        field_repairs[reason] = field_repairs.get(reason, 0) + 1
-            if source_box_drops:
-                bus.publish(
-                    EventType.SOURCE_BOX_DROPPED,
-                    counts=source_box_drops,
-                    total_answers=len(converted),
+            # What only a bound, gated extraction carries. Left out of the result
+            # altogether when there is none, so that a legacy extraction with the gate
+            # off is the same record it has always been.
+            bound_fields: dict[str, Any] = {}
+            if binding.binder == "label":
+                # The label binder replaces the primary call: the model lists labels
+                # and writing with no question ids, `bind_stream` binds them, and the
+                # gate says how far the binding can be trusted
+                # (lemely.io.binding.orchestrate).
+                outcome = run_binding(
+                    self._client,
+                    pages,
+                    mark_scheme,
+                    uploads=uploads,
+                    settings=self._client._settings,
+                    manifest_key=manifest_key,
                 )
-            # US-031 review MUST-FIX 7: a comment here previously claimed this
-            # loss was "visible… the same way source_box drops are" while
-            # publishing nothing -- answer_drops/confidence_repairs had zero
-            # consumers anywhere in the tree. Publish for real, the same way
-            # SOURCE_BOX_DROPPED is published immediately above, so the claim is
-            # true. This event is TELEMETRY, not the review gate: the flagging is
-            # wired through `ExtractedAnswers.dropped_question_ids`, which
-            # `correct_paper` short-circuits on before dispatching to the MCQ or
-            # AI path (review MUST-FIX 7, stronger fix). So a dropped answer is
-            # flagged and costs no marking call -- but only for the two reasons
-            # that leave a usable question_id (`missing_answer`,
-            # `malformed_answer`). The other three (`missing_question_id`,
-            # `malformed_question_id`, `malformed_answer_shape`) have no id to
-            # attribute a flag to, and what that costs depends on the leaf. On a
-            # non-MCQ leaf with an AI marker configured the paid call is CERTAIN
-            # (`ai.mark_question` is reached unconditionally) and the confident
-            # unflagged mark is CONTINGENT -- it needs the model's response to
-            # clear all four of `_build_ai_corrected`'s review gates, which it
-            # CAN. An MCQ leaf (or `--mcq-only`/no client) is already flagged at
-            # 0.0 with no call, but only because the absent id looks exactly like a
-            # genuine blank, so review_reason carries that path's blank message
-            # instead of the truth. See `CorrectedQuestion.marker_source`'s
-            # coverage-limit note (review MUST-FIX F1) for the full split.
-            # These counts are also KEPT, not only published: `answer_drops` is a
-            # field on `ExtractedAnswers`, the same reasoning as `source_box_drops`
-            # above, so the per-reason totals travel with the record and this event
-            # is not the only trace of what was dropped.
-            if answer_drops or confidence_repairs or field_repairs:
-                bus.publish(
-                    EventType.ANSWER_DROPPED,
-                    answer_drops=answer_drops,
-                    confidence_repairs=confidence_repairs,
-                    field_repairs=field_repairs,
-                    total_answers=len(converted),
+                answers = outcome.answers
+                source_box_drops: dict[str, int] = {}
+                # The label reader's reply items left out or repaired, by reason
+                # (`StreamRead.drops`): kept on the record like the legacy counts are.
+                answer_drops = dict(outcome.drops)
+                confidence_repairs: dict[str, int] = {}
+                field_repairs: dict[str, int] = {}
+                # A leaf no label was lined up with has no answer here, and that is
+                # not a blank: whatever the student wrote for it could not be bound
+                # (it is in `unbound_answers`, or under the leaf before). Listing it
+                # here makes `correct_paper` send it to a teacher without attempting
+                # a mark, where a missing answer alone would be an unflagged zero.
+                dropped_question_ids = list(outcome.review_only_ids)
+                bound_fields["unbound_answers"] = outcome.unbound
+                if outcome.report is not None:
+                    bound_fields["binding"] = outcome.report
+            else:
+                reply = self._legacy_reply(
+                    mark_scheme, page_bytes, uploads, extra_cache_key=manifest_key
                 )
+                if binding.gate != "off":
+                    reply, bound_fields["binding"] = self._gated_legacy(
+                        reply, mark_scheme, page_bytes, uploads, manifest_key, manifest_ids
+                    )
+                _publish_reply_drops(reply)
+                answers = reply.answers
+                source_box_drops = reply.source_box_drops
+                answer_drops = reply.answer_drops
+                confidence_repairs = reply.confidence_repairs
+                field_repairs = reply.field_repairs
+                dropped_question_ids = reply.dropped_question_ids
 
             calibrated: list[ExtractedAnswer] = []
             for a in answers:
@@ -1049,9 +1225,6 @@ class GeminiAnswerExtractor:
                     index=index,
                     total=total_answers,
                 )
-            manifest_ids = [
-                q.id for q in mark_scheme.all_questions_flat() if q.marks > 0 and not q.parts
-            ]
             normalized_result = normalize_extracted_answers(
                 ExtractedAnswers(
                     paper_id=_build_paper_id(mark_scheme),
@@ -1066,6 +1239,7 @@ class GeminiAnswerExtractor:
                     reread_attempts=reread_started,
                     reread_skipped_by_budget=reread_skipped_by_budget,
                     reread_threshold=effective_reread_threshold,
+                    **bound_fields,
                 ),
                 manifest_ids,
             )

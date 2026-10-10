@@ -502,6 +502,67 @@ class US034FallbackPricingVisibilityTests(unittest.TestCase):
             self.assertNotIn(real_model, check["detail"])
 
 
+class DoctorBindingTests(unittest.TestCase):
+    """`lemely doctor` shows how answers are bound and what that costs."""
+
+    def setUp(self) -> None:
+        self.runner = CliRunner()
+
+    def _doctor(self, **extra_env: str) -> dict[str, dict[str, object]]:
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                    **extra_env,
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        self.assertTrue(payload["all_passed"], msg=result.output)
+        return {check["name"]: check for check in payload["checks"]}
+
+    def test_doctor_shows_the_binder_its_model_and_both_reads(self) -> None:
+        checks = self._doctor()
+        self.assertIn("binding_read=gemini-3.8-flash", checks["gemini_model_table"]["detail"])
+        binding = checks["binding"]
+        self.assertTrue(binding["ok"], msg=binding)
+        for expected in ("binder=label", "gate=enforce", "gemini-3.8-flash", "low", "medium"):
+            self.assertIn(expected, binding["detail"])
+
+    def test_doctor_warns_when_the_second_read_is_the_first_one_again(self) -> None:
+        # A [gemini.thinking_level_for] table replaces the defaults, so one written
+        # before the binder existed leaves `binding_second_read` out: both reads then
+        # resolve to the same thinking level on the same model.
+        checks = self._doctor(LEMELY_GEMINI__THINKING_LEVEL_FOR='{"extraction": "minimal"}')
+        binding = checks["binding"]
+        self.assertFalse(binding["ok"], msg=binding)
+        self.assertIn("binding_second_read", binding["detail"])
+        self.assertIn("same", binding["detail"])
+
+    def test_doctor_prices_the_binder_model(self) -> None:
+        checks = self._doctor(LEMELY_BINDING__READ_MODEL="totally-fake-model-does-not-exist")
+        pricing = checks["gemini_fallback_pricing"]
+        self.assertFalse(pricing["ok"], msg=pricing)
+        self.assertIn("binding_read=totally-fake-model-does-not-exist", pricing["detail"])
+
+    def test_doctor_shows_the_legacy_binder_and_its_retry_model(self) -> None:
+        checks = self._doctor(LEMELY_BINDING__BINDER="legacy")
+        self.assertIn("binding_retry=gemini-3.8-flash", checks["gemini_model_table"]["detail"])
+        self.assertNotIn("binding_read=", checks["gemini_model_table"]["detail"])
+        self.assertIn("binder=legacy", checks["binding"]["detail"])
+
+        ungated = self._doctor(LEMELY_BINDING__BINDER="legacy", LEMELY_BINDING__GATE="off")
+        self.assertNotIn("binding_", ungated["gemini_model_table"]["detail"])
+        self.assertIn("gate=off", ungated["binding"]["detail"])
+
+
 class DoctorTestsEnvLeakTests(unittest.TestCase):
     """Regression test for #121: DoctorTests.setUp must not leak env deletions."""
 

@@ -53,6 +53,8 @@ class GateThresholds:
     second_read_min_disagreeing: int = 3
     agreement_floor: float = 0.8
     unaligned_rate: float = 0.10
+    unplaced_labels_max: int = 2
+    listing_suspects_min: int = 2
 
 
 def _leaves(mark_scheme: MarkScheme) -> list[Question]:
@@ -126,11 +128,26 @@ def check_label_coverage(
     unaligned_ids: list[str],
     unmatched_markers: int,
     thresholds: GateThresholds,
+    *,
+    listing_suspects: int = 0,
+    lost_items: int = 0,
 ) -> BindingCheck:
     """G5: fails when question labels on the page could not be lined up with the mark scheme.
 
-    Paper scope when more than ``unaligned_rate`` of the leaves are unaligned or a
-    marker matched no question. Otherwise question scope when any leaf is unaligned.
+    Paper scope on any of four things, each with its own sentence in ``detail``:
+
+    - more than ``unaligned_rate`` of the leaves are unaligned;
+    - more than ``unplaced_labels_max`` labels matched no question
+      (``unmatched_markers``). One or two are ordinary: a number on the cover page, a
+      note the student numbered;
+    - at least ``listing_suspects_min`` groups of parts carry the trace left when
+      writing is listed before its label (``listing_suspects``), which the binding
+      cannot see past;
+    - ``lost_items`` is above zero: items of the reader's reply that could not be read
+      and were left out. Any of them may have been writing, so a part may look blank
+      that is not.
+
+    Otherwise question scope when any leaf is unaligned.
 
     An unaligned leaf cannot carry an answer, because answers attach to aligned
     labels; whatever the student wrote for it was attached to the aligned leaf
@@ -141,16 +158,33 @@ def check_label_coverage(
     leaf_ids = [q.id for q in _leaves(mark_scheme)]
     missing = set(unaligned_ids)
     unaligned = [qid for qid in leaf_ids if qid in missing]
+    unplaced = (
+        f"{_plural(unmatched_markers, 'label')} on the page matched no question in the mark scheme"
+    )
+    suspects = (
+        f"{_plural(listing_suspects, 'group')} of parts "
+        f"{'shows' if listing_suspects == 1 else 'show'} the trace of writing listed before "
+        "its label (a block before the first part's label, the last part left blank)"
+    )
     problems: list[str] = []
+    within: list[str] = []
     if leaf_ids and len(unaligned) / len(leaf_ids) > thresholds.unaligned_rate:
         problems.append(
             f"{len(unaligned)} of {len(leaf_ids)} questions could not be lined up "
             f"with a label on the page: {_listed(unaligned)}"
         )
-    if unmatched_markers > 0:
+    if unmatched_markers > thresholds.unplaced_labels_max:
+        problems.append(unplaced)
+    elif unmatched_markers > 0:
+        within.append(unplaced)
+    if listing_suspects >= thresholds.listing_suspects_min:
+        problems.append(suspects)
+    elif listing_suspects > 0:
+        within.append(suspects)
+    if lost_items > 0:
         problems.append(
-            f"{_plural(unmatched_markers, 'label')} on the page matched no question "
-            "in the mark scheme"
+            f"{_plural(lost_items, 'item')} of the reader's reply could not be read and "
+            f"{'was' if lost_items == 1 else 'were'} left out, so a part may look blank that is not"
         )
     if problems:
         return BindingCheck(
@@ -161,12 +195,10 @@ def check_label_coverage(
             detail="; ".join(problems) + ".",
         )
     if not unaligned:
-        return BindingCheck(
-            id="G5",
-            passed=True,
-            scope="paper",
-            detail="Every question lined up with a label on the page.",
-        )
+        detail = "Every question lined up with a label on the page."
+        if within:
+            detail += " Within the limit: " + "; ".join(within) + "."
+        return BindingCheck(id="G5", passed=True, scope="paper", detail=detail)
     answered = _answers_by_id(extracted)
     listed: set[str] = set(unaligned)
     previous_aligned: str | None = None

@@ -541,8 +541,21 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         "study_plan",
     )
     configured_models = {tag: settings.gemini.model_for(tag) for tag in model_table_tags}
+    # The binding step names its models itself, not through model_for(): the label
+    # binder's reads, or the gated legacy binder's one retry. Listed with the rest
+    # so the table shows every model extraction can call and the pricing checks
+    # below cover them.
+    from lemely.io.binding.orchestrate import binding_models, binding_status
+
+    configured_models.update(binding_models(settings))
     model_table = ", ".join(f"{tag}={model}" for tag, model in configured_models.items())
     record("gemini_model_table", True, detail=model_table)
+
+    # How answers are tied to questions and what that costs per extraction; not
+    # ok when the binding step's second read would be the first read again (same
+    # model, same thinking level), which pays twice for one opinion. Advisory.
+    binding_ok, binding_detail = binding_status(settings)
+    record("binding", binding_ok, detail=binding_detail)
 
     # US-026: the $14 total_usd_ceiling is only as honest as the pricing table
     # it's ledgered against — warn (advisory, never fatal) once the 3.8/3.7/
@@ -662,8 +675,10 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # `lemely ui` needs the [ui] extra, object storage is only reached by
     # the web app's avatar/upload routes, and web push only needs keys once a
     # deployment wants real pushes. All three are reported honestly and none
-    # decides the exit code.
+    # decides the exit code. Nor does `binding`: a second read that repeats the
+    # first wastes a call, it does not break extraction.
     advisory_checks = {
+        "binding",
         "gradio_extra_installed",
         "storage_backend",
         "push_transport",

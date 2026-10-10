@@ -269,6 +269,78 @@ class TestIntegritySettings:
             IntegritySettings(ai_detection_threshold=0.5)  # type: ignore[call-arg]
 
 
+class TestBindingSettings:
+    """How answers are tied to questions: the label binder, gated, is the default."""
+
+    def test_defaults(self) -> None:
+        from lemely.runtime.config import BindingSettings
+
+        s = BindingSettings()
+        assert s.binder == "label"
+        assert s.gate == "enforce"
+        assert s.read_model == "gemini-3.8-flash"
+        assert s.second_read is True
+        assert s.retry_model == "gemini-3.8-flash"
+
+    def test_wired_on_settings(self) -> None:
+        from lemely.runtime.config import BindingSettings
+
+        assert Settings().binding == BindingSettings()
+
+    def test_read_model_is_not_the_extraction_default(self) -> None:
+        """The binder's model is passed on every call. The extraction default is a
+        cheaper model that did not return a usable list when it was measured."""
+        s = Settings()
+        assert s.gemini.model_for("extraction") == "gemini-3.5-flash-lite"
+        assert s.binding.read_model != s.gemini.model_for("extraction")
+
+    def test_second_read_thinks_harder_than_the_first_by_default(self) -> None:
+        levels = GeminiSettings().thinking_level_for
+        assert levels["binding_second_read"] == "medium"
+        assert levels["extraction"] == "minimal"
+
+    @pytest.mark.parametrize(
+        "bad",
+        [{"binder": "position"}, {"gate": "on"}, {"read_model": ""}, {"retry_model": ""}],
+    )
+    def test_rejects_values_it_does_not_know(self, bad: dict[str, str]) -> None:
+        from pydantic import ValidationError
+
+        from lemely.runtime.config import BindingSettings
+
+        with pytest.raises(ValidationError):
+            BindingSettings(**bad)  # type: ignore[arg-type]
+
+    def test_extra_fields_forbidden(self) -> None:
+        from pydantic import ValidationError
+
+        from lemely.runtime.config import BindingSettings
+
+        with pytest.raises(ValidationError):
+            BindingSettings(second_reed=False)  # type: ignore[call-arg]
+
+    def test_the_way_back_is_one_environment_variable_each(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LEMELY_BINDING__BINDER", "legacy")
+        monkeypatch.setenv("LEMELY_BINDING__GATE", "off")
+        s = load_settings(toml_path=None, cwd=tmp_path)
+        assert (s.binding.binder, s.binding.gate) == ("legacy", "off")
+
+    def test_loads_from_toml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        for key in [k for k in os.environ if k.startswith("LEMELY_BINDING__")]:
+            monkeypatch.delenv(key)
+        toml = tmp_path / "lemely.toml"
+        toml.write_text(
+            '[binding]\ngate = "observe"\nsecond_read = false\nread_model = "gemini-x"\n',
+            encoding="utf-8",
+        )
+        s = load_settings(toml_path=toml, cwd=tmp_path)
+        assert (s.binding.gate, s.binding.second_read) == ("observe", False)
+        assert s.binding.read_model == "gemini-x"
+        assert s.binding.binder == "label"
+
+
 class TestSettingsIntegrityWired:
     def test_integrity_section_loads(self) -> None:
         s = Settings()
