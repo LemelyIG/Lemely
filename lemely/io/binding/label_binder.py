@@ -30,8 +30,6 @@ from lemely.io.prompts.label_binding import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from pydantic.json_schema import JsonSchemaValue
 
     from lemely.core.binding import BindingStatus
@@ -104,9 +102,10 @@ _StreamOutput = create_model(
 class StreamRead:
     """The reader's list as stream items, in the order it gave them.
 
-    ``drops`` counts the reply items that were left out, by reason: ``malformed_item``
-    (not an object), ``unknown_type``, ``empty_label``, ``empty_answer`` (no answer text
-    and no working), ``bad_page`` (not the index of a page that was sent).
+    ``drops`` counts, by reason, every reply item that was left out or changed on the
+    way in. Left out: ``malformed_item`` (not an object), ``unknown_type``,
+    ``empty_label``, ``empty_answer`` (the reader reported no writing). Kept and
+    repaired: ``repaired_page``, ``unreadable_answer``.
     """
 
     items: list[StreamItem]
@@ -119,7 +118,8 @@ class BoundRead:
 
     ``answers`` holds one answer per aligned leaf that has writing, in paper order.
     ``review_ids`` are the ids of the answers that may hold someone else's writing.
-    ``unplaced_labels`` is a count. The other fields are ``BoundStream``'s, unchanged.
+    ``unplaced_labels`` is a count. ``drops`` is the ``StreamRead``'s. The other fields
+    are ``BoundStream``'s, unchanged.
     """
 
     answers: list[ExtractedAnswer]
@@ -129,6 +129,7 @@ class BoundRead:
     inferred_numbers: list[str]
     listing_suspects: list[str]
     review_ids: list[str]
+    drops: dict[str, int]
 
 
 def _usable_box(box: object, page: int | None, page_count: int) -> SourceBox | None:
@@ -142,82 +143,136 @@ def _usable_box(box: object, page: int | None, page_count: int) -> SourceBox | N
         return None
 
 
-def _text(value: object) -> str | None:
-    """``value`` as text, or ``None`` when it is blank or not text at all."""
-    text, _ = _coerce_answer_text(value)
-    return text if text is not None and text.strip() else None
+def _read_text(value: object) -> tuple[str | None, bool]:
+    """``value`` as text, and whether it was there but could not be read as text.
 
-
-def _parse_item(raw: object, page_count: int) -> tuple[StreamItem | None, str | None]:
-    """One reply item as a stream item, or ``None`` and the reason it was dropped.
-
-    The item is read by its ``type``. Fields of the other type, and any field the reader
-    added, are not read.
+    ``None`` and a blank string are no text and nothing lost. A list, an object, a
+    boolean, or a number with no finite text is something the reader reported and this
+    code cannot read.
     """
-    if not isinstance(raw, dict):
-        return None, "malformed_item"
-    item_type = raw.get("type")
-    kind = item_type.strip().lower() if isinstance(item_type, str) else None
-    if kind not in ("label", "answer"):
-        return None, "unknown_type"
+    if value is None:
+        return None, False
+    try:
+        text, _ = _coerce_answer_text(value)
+    except ValueError:  # an integer with more digits than Python will print
+        text = None
+    if text is None:
+        return None, True
+    return (text if text.strip() else None), False
 
-    text = answer = working_out = None
-    if kind == "label":
-        text = _text(raw.get("text"))
-        if text is None:
-            return None, "empty_label"
-    else:
-        answer = _text(raw.get("answer"))
-        working_out = _text(raw.get("working_out"))
-        if answer is None and working_out is None:
-            return None, "empty_answer"
 
-    page = _coerce_page(raw.get("page"), page_count)
-    if page is None:
-        return None, "bad_page"
-    # Boxes take no part in binding, so a bad one never costs the item.
-    usable = _usable_box(raw.get("box"), page, page_count)
-    box = usable.box if usable is not None else None
+def _confidence(value: object) -> float:
+    """``value`` as a legibility score from 0 to 1; 0.0 for anything that is not one."""
+    try:
+        return _coerce_confidence(value)[0]
+    except OverflowError:  # an integer too large to be a float
+        return 0.0
 
-    if text is not None:
-        seen_as: Literal["printed", "handwritten"] = (
-            "handwritten" if raw.get("kind") == "handwritten" else "printed"
-        )
-        return SeenLabel(page=page, text=text, kind=seen_as, box=box), None
+
+def _parse_label(
+    raw: dict[object, object], page: int, box: list[int] | None
+) -> tuple[SeenLabel | None, list[str]]:
+    text, _ = _read_text(raw.get("text"))
+    if text is None:
+        return None, ["empty_label"]
+    kind = raw.get("kind")
+    handwritten = isinstance(kind, str) and kind.strip().lower() == "handwritten"
+    return (
+        SeenLabel(
+            page=page,
+            text=text.strip(),
+            kind="handwritten" if handwritten else "printed",
+            box=box,
+        ),
+        [],
+    )
+
+
+def _parse_answer(
+    raw: dict[object, object], page: int, box: list[int] | None, *, page_repaired: bool
+) -> tuple[SeenWriting | None, list[str]]:
+    answer, answer_unread = _read_text(raw.get("answer"))
+    working_out, working_unread = _read_text(raw.get("working_out"))
+    unreadable = answer_unread or working_unread
+    if answer is None and working_out is None and not unreadable:
+        return None, ["empty_answer"]  # the reader reported no writing here
+
     placement = raw.get("placed_by")
     placed_by: Literal["position", "arrow", "uncertain"] = "uncertain"
-    if placement == "position":
-        placed_by = "position"
-    elif placement == "arrow":
-        placed_by = "arrow"
-    confidence, _ = _coerce_confidence(raw.get("confidence"))
+    # Writing that was reported but cannot be read, or whose page is a guess, is kept so
+    # that its part is never taken for one left blank. It is not trusted to a leaf.
+    if not (unreadable or page_repaired):
+        if placement == "position":
+            placed_by = "position"
+        elif placement == "arrow":
+            placed_by = "arrow"
     return (
         SeenWriting(
             page=page,
             answer=answer or "",
             working_out=working_out,
-            confidence=confidence,
+            confidence=_confidence(raw.get("confidence")),
             box=box,
             placed_by=placed_by,
         ),
-        None,
+        ["unreadable_answer"] if unreadable else [],
     )
 
 
-def parse_stream_items(raw_items: Sequence[object], *, page_count: int) -> StreamRead:
+def _parse_item(
+    raw: object, page_count: int, last_page: int
+) -> tuple[StreamItem | None, list[str]]:
+    """One reply item as a stream item, and every reason it was dropped or repaired.
+
+    The item is read by its ``type``. Fields of the other type, and any field the reader
+    added, are not read. An item that is recognisably a label or an answer is kept
+    whatever its ``page``: order is the binding evidence, so a bad page takes
+    ``last_page`` and loses its box, which means nothing on a guessed page.
+    """
+    if not isinstance(raw, dict):
+        return None, ["malformed_item"]
+    item_type = raw.get("type")
+    item_type = item_type.strip().lower() if isinstance(item_type, str) else None
+    if item_type not in ("label", "answer"):
+        return None, ["unknown_type"]
+
+    page = _coerce_page(raw.get("page"), page_count)
+    page_repaired = page is None
+    if page is None:
+        page = last_page
+    # Boxes take no part in binding, so a bad one never costs the item.
+    usable = None if page_repaired else _usable_box(raw.get("box"), page, page_count)
+    box = usable.box if usable is not None else None
+
+    item: StreamItem | None
+    if item_type == "label":
+        item, reasons = _parse_label(raw, page, box)
+    else:
+        item, reasons = _parse_answer(raw, page, box, page_repaired=page_repaired)
+    if item is not None and page_repaired:
+        reasons = ["repaired_page", *reasons]
+    return item, reasons
+
+
+def parse_stream_items(raw_items: list[object], *, page_count: int) -> StreamRead:
     """Turn the reply's ``items`` into stream items, one at a time and in order.
 
-    A malformed item is dropped and counted; the rest of the list survives. Dropping a
+    Writing the reader reported is never left out: an answer item is dropped only when
+    it holds no writing at all. An item that had to be repaired to be kept is counted
+    in ``drops`` like one that was dropped, so nothing is changed silently. Dropping a
     label is the same as the reader missing it, which the binding is built to survive.
-    Dropping an answer loses that writing: ``drops`` is the only record of it.
     """
+    if not isinstance(raw_items, list):
+        raise TypeError(f"the reply's items must be a list, not {type(raw_items).__name__}")
     items: list[StreamItem] = []
     drops: dict[str, int] = {}
+    last_page = 0
     for raw in raw_items:
-        item, reason = _parse_item(raw, page_count)
+        item, reasons = _parse_item(raw, page_count, last_page)
         if item is not None:
             items.append(item)
-        elif reason is not None:
+            last_page = item.page
+        for reason in reasons:
             drops[reason] = drops.get(reason, 0) + 1
     return StreamRead(items=items, drops=drops)
 
@@ -299,7 +354,7 @@ def _to_answer(leaf: BoundLeaf, page_count: int) -> ExtractedAnswer:
     return ExtractedAnswer(
         question_id=leaf.question_id,
         answer=_JOIN_ANSWERS.join(answers),
-        confidence=min(_coerce_confidence(w.confidence)[0] for w in leaf.writings),
+        confidence=min(_confidence(w.confidence) for w in leaf.writings),
         source_box=_source_box(leaf.writings, page_count),
         working_out=_JOIN_WORKINGS.join(workings) if workings else None,
         binding_source="label",
@@ -308,12 +363,13 @@ def _to_answer(leaf: BoundLeaf, page_count: int) -> ExtractedAnswer:
     )
 
 
-def to_bound_read(bound: BoundStream, *, page_count: int) -> BoundRead:
+def to_bound_read(bound: BoundStream, *, page_count: int, drops: dict[str, int]) -> BoundRead:
     """Turn a bound stream into answers. It only converts: no id is assigned here.
 
     An aligned leaf with writing becomes one answer, with the id ``bind_stream`` gave
     the leaf. An aligned leaf with no writing is a blank answer and becomes nothing.
-    Unbound writing stays unbound.
+    Unbound writing stays unbound. ``drops`` is the ``StreamRead.drops`` of the read the
+    stream was bound from, carried along so that it can be reported with the answers.
     """
     answers = [_to_answer(leaf, page_count) for leaf in bound.leaves if leaf.writings]
     return BoundRead(
@@ -324,4 +380,5 @@ def to_bound_read(bound: BoundStream, *, page_count: int) -> BoundRead:
         inferred_numbers=list(bound.inferred_numbers),
         listing_suspects=list(bound.listing_suspects),
         review_ids=[a.question_id for a in answers if a.binding_status == "unverified"],
+        drops=dict(drops),
     )

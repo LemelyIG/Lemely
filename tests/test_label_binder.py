@@ -32,10 +32,17 @@ from lemely.core.label_sequence import (
     BoundLeaf,
     BoundStream,
     bind_stream,
+    parse_label,
 )
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import SourceBox
-from lemely.io.binding import BoundRead, LabelBinder, StreamRead, to_bound_read
+from lemely.io.binding import (
+    BoundRead,
+    LabelBinder,
+    StreamRead,
+    parse_stream_items,
+    to_bound_read,
+)
 from lemely.io.gemini import GeminiClient, _strip_schema
 from lemely.io.prompts import (
     LABEL_BINDING_PROMPT_VERSION,
@@ -44,7 +51,7 @@ from lemely.io.prompts import (
 )
 from lemely.io.rasterise import RasterisedPage
 from lemely.runtime.config import PathsSettings, load_settings
-from lemely.runtime.errors import CostCeilingError, ExternalServiceError
+from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from tests.gemini_fakes import fake_genai_client
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -116,6 +123,7 @@ def _read(
     page_count: int = 4,
     scheme: MarkScheme | None = None,
     model: str | None = None,
+    **read_kwargs: Any,
 ) -> tuple[StreamRead, MagicMock, MagicMock]:
     """Run ``LabelBinder.read`` on a reply; also return the SDK fake and the call spy."""
     client, genai = _client(tmp, {"items": items})
@@ -125,7 +133,12 @@ def _read(
         patch.object(client, "generate_structured", wraps=client.generate_structured) as spy,
     ):
         read = LabelBinder(client).read(
-            pages, scheme or _scheme(), uploads=uploads, model=model, extra_cache_key="scan-1"
+            pages,
+            scheme or _scheme(),
+            uploads=uploads,
+            model=model,
+            extra_cache_key="scan-1",
+            **read_kwargs,
         )
     return read, genai, spy
 
@@ -389,6 +402,99 @@ def test_user_prompt_states_the_page_indices() -> None:
     assert "Paper: 0625/41 Oct/Nov 2024." in prompt
 
 
+def test_user_prompt_for_a_single_page_reads_as_english() -> None:
+    prompt = build_label_binding_user_prompt(_scheme(), page_count=1)
+    assert "You are given 1 page image, index 0. Every `page` value MUST be 0." in prompt
+    assert "1 page images" not in prompt
+    assert "0 to 0" not in prompt
+
+
+@pytest.mark.parametrize("page_count", [0, -1])
+def test_user_prompt_refuses_a_scan_with_no_pages(page_count: int) -> None:
+    with pytest.raises(ValueError, match="page_count"):
+        build_label_binding_user_prompt(_scheme(), page_count=page_count)
+
+
+def test_user_prompt_names_a_specimen_paper() -> None:
+    scheme = _scheme()
+    specimen = scheme.model_copy(
+        update={"metadata": scheme.metadata.model_copy(update={"session_year": None})}
+    )
+    prompt = build_label_binding_user_prompt(specimen, page_count=19)
+    assert "Paper: 0625/41 Oct/Nov Specimen." in prompt
+    assert "None" not in prompt
+
+
+def _label_lines(scheme: MarkScheme) -> list[str]:
+    prompt = build_label_binding_user_prompt(scheme, page_count=19)
+    return [line for line in prompt.splitlines() if line.startswith("- ")]
+
+
+@pytest.mark.parametrize(
+    ("name", "path", "new_id", "lost"),
+    [
+        # A part whose id does not extend its parent's: "2a" under "1".
+        ("0625_w24_ms_41", (0, 1), "2a", ["- 1(b) [2 marks]"]),
+        # A part whose id adds nothing to its parent's.
+        ("0625_w24_ms_41", (0, 1), "1", ["- 1(b) [2 marks]"]),
+        # A part named by something a paper does not print in brackets.
+        ("0625_w24_ms_41", (0, 1), "1B", ["- 1(b) [2 marks]"]),
+        ("0625_w24_ms_41", (0, 1), "1_2", ["- 1(b) [2 marks]"]),
+        # A container whose label cannot be told takes its parts with it.
+        ("0625_w24_ms_41", (0, 0), "1_A", ["- 1(a)(i) [1 mark]", "- 1(a)(ii) [1 mark]"]),
+        ("0625_w24_ms_41", (8,), "Q9", ["- 9(a) [1 mark]", "- 9(c)(iv) [2 marks]"]),
+        # A question with no parts whose id is not a bare number.
+        ("0606_s19_ms_23", (0,), "Q1", ["- 1 [3 marks]"]),
+        ("0606_s19_ms_23", (0,), "01", ["- 1 [3 marks]"]),
+        ("0606_s19_ms_23", (0,), "1a", ["- 1 [3 marks]"]),
+    ],
+)
+def test_a_leaf_whose_printed_label_cannot_be_told_gets_no_line(
+    name: str, path: tuple[int, ...], new_id: str, lost: list[str]
+) -> None:
+    """A wrong label is worse than a missing line: the list is there to say what to look for."""
+    scheme = _scheme(name).model_copy(deep=True)
+    before = _label_lines(scheme)
+    question = scheme.questions[path[0]]
+    for index in path[1:]:
+        question = question.parts[index]
+    question.id = new_id
+
+    after = _label_lines(scheme)
+    assert set(lost) <= set(before)
+    assert not set(lost) & set(after)
+    assert set(after) < set(before)  # nothing new is printed, and nothing is renamed
+    lost_leaves = [q for q in (question, *_under(question)) if not q.parts]
+    assert len(after) == len(before) - len(lost_leaves)
+    for line in after:
+        assert re.fullmatch(r"- [1-9][0-9]*(\([a-z]+\))* \[[0-9]+ marks?\]", line), line
+
+
+def _under(question: Any) -> list[Any]:
+    found = []
+    for part in question.parts:
+        found.append(part)
+        found.extend(_under(part))
+    return found
+
+
+def test_every_printed_label_in_the_corpus_is_one_the_binding_can_read() -> None:
+    """The prompt and ``label_sequence`` split ids by their own rules; this ties them."""
+    schemes = sorted(_SCHEMES.glob("*.json"))
+    assert len(schemes) > 250
+    labels = 0
+    for path in schemes:
+        scheme = MarkScheme.model_validate(json.loads(path.read_text()))
+        lines = _label_lines(scheme)
+        assert len(lines) == len(_leaves(scheme)), path.stem
+        for line in lines:
+            label = line[2 : line.index(" [")]
+            pieces = re.findall(r"[0-9]+|[a-z]+", label)
+            assert [step.token for step in parse_label(label)] == pieces, (path.stem, label)
+            labels += 1
+    assert labels > 10_000
+
+
 # --------------------------------------------------------------------------------------
 # Parsing the reply
 # --------------------------------------------------------------------------------------
@@ -404,10 +510,10 @@ def test_a_malformed_item_is_dropped_and_counted_and_order_is_kept(tmp_path: Pat
         {"page": 0, "box": [1, 2, 3, 4], "text": "(b)"},  # unknown_type
         _label("   "),  # empty_label
         _label(None),  # empty_label
-        _answer(None),  # empty_answer
+        _label(["(b)"]),  # empty_label
+        _answer(None),  # empty_answer: the reader reported no writing
         _answer("  ", working_out=" "),  # empty_answer
-        _answer("lost", page=99),  # bad_page
-        _label("(b)", page="top"),  # bad_page
+        _answer("", working_out=None),  # empty_answer
         _label("(b)", page=1),
         _answer("second", page=1),
         _answer(42, page=2),
@@ -428,11 +534,215 @@ def test_a_malformed_item_is_dropped_and_counted_and_order_is_kept(tmp_path: Pat
     assert read.drops == {
         "malformed_item": 3,
         "unknown_type": 2,
-        "empty_label": 2,
-        "empty_answer": 2,
-        "bad_page": 2,
+        "empty_label": 3,
+        "empty_answer": 3,
     }
     assert [i.page for i in read.items] == [0, 0, 0, 1, 1, 2]
+
+
+# A paper whose first question is read cleanly but for one item, which each test spoils.
+def _question_one(**spoil: Any) -> list[dict[str, Any]]:
+    second = {**_answer("20 cm", page=2), **spoil.get("answer", {})}
+    for missing in spoil.get("answer_without", ()):
+        del second[missing]
+    return [
+        _label("1", page=1),
+        _label("(a)", page=2),
+        _label("(i)", page=2),
+        _answer("43 cm and 63 cm", page=2),
+        {**_label("(ii)", page=2), **spoil.get("label", {})},
+        second,
+        _label("(b)", page=3),
+        _answer("because of the spring", page=3),
+        _label("(c)", page=3),
+        _label("(i)", page=3),
+        _answer("moment", page=3),
+        _label("(ii)", page=3),
+        _answer("12 N", page=3),
+        # The opening of question 2, so that the list shows where question 1 ends.
+        _label("2", page=4),
+        _label("(a)", page=4),
+        _label("(i)", page=4),
+    ]
+
+
+def _bind(read: StreamRead) -> tuple[BoundStream, BoundRead]:
+    bound = bind_stream(read.items, _scheme())
+    return bound, to_bound_read(bound, page_count=19, drops=read.drops)
+
+
+def _blank_leaves(bound: BoundStream) -> list[str]:
+    return [leaf.question_id for leaf in bound.leaves if not leaf.writings]
+
+
+def test_the_clean_first_question_binds_whole(tmp_path: Path) -> None:
+    """The control for the three tests below: unspoiled, every part holds its own answer."""
+    read, _, _ = _read(tmp_path, _question_one(), page_count=19)
+    bound, bound_read = _bind(read)
+    assert read.drops == {}
+    assert {a.question_id: a.answer for a in bound_read.answers} == {
+        "1a_i": "43 cm and 63 cm",
+        "1a_ii": "20 cm",
+        "1b": "because of the spring",
+        "1c_i": "moment",
+        "1c_ii": "12 N",
+    }
+    assert bound_read.unbound == []
+    assert [leaf for leaf in _blank_leaves(bound) if leaf.startswith("1")] == []
+
+
+@pytest.mark.parametrize("page", [454, 19, -1, 1.5, None, "two", True, "absent"])
+def test_an_answer_with_a_bad_page_is_kept_as_uncertain_and_its_leaf_is_not_blank(
+    tmp_path: Path, page: Any
+) -> None:
+    """Writing the reader reported must never come out as an answer left blank."""
+    spoil: dict[str, Any] = (
+        {"answer_without": ("page",)} if page == "absent" else {"answer": {"page": page}}
+    )
+    read, _, _ = _read(tmp_path, _question_one(**spoil), page_count=19)
+
+    assert read.drops == {"repaired_page": 1}
+    assert len(read.items) == 16
+    kept = read.items[5]
+    assert kept == SeenWriting(
+        page=2,  # the page of the item before it
+        answer="20 cm",
+        working_out=None,
+        confidence=0.9,
+        box=None,  # a box means nothing on a guessed page
+        placed_by="uncertain",
+    )
+
+    bound, bound_read = _bind(read)
+    assert [u.writing.answer for u in bound_read.unbound] == ["20 cm"]
+    assert "1a_ii" not in _blank_leaves(bound)
+    assert "1a_ii" not in {a.question_id for a in bound_read.answers}
+    assert "1a_ii" in bound_read.unaligned_ids
+    assert bound_read.drops == {"repaired_page": 1}
+
+
+@pytest.mark.parametrize(
+    ("answer", "working_out", "kept_answer", "kept_working"),
+    [
+        (["20 cm"], None, "", None),
+        ({"value": "20 cm"}, None, "", None),
+        (True, None, "", None),
+        (float("inf"), None, "", None),
+        (["20 cm"], ["s = d / t"], "", None),
+        (None, ["s = d / t"], "", None),
+        # What can be read is kept; the item is still not trusted to a leaf.
+        (["20 cm"], "s = d / t", "", "s = d / t"),
+        ("20 cm", {"step": 1}, "20 cm", None),
+    ],
+)
+def test_an_answer_with_unreadable_text_is_kept_as_uncertain(
+    tmp_path: Path, answer: Any, working_out: Any, kept_answer: str, kept_working: str | None
+) -> None:
+    spoil = {"answer": {"answer": answer, "working_out": working_out}}
+    read, _, _ = _read(tmp_path, _question_one(**spoil), page_count=19)
+
+    assert read.drops == {"unreadable_answer": 1}
+    assert len(read.items) == 16
+    assert read.items[5] == SeenWriting(
+        page=2,
+        answer=kept_answer,
+        working_out=kept_working,
+        confidence=0.9,
+        box=[100, 100, 200, 600],
+        placed_by="uncertain",
+    )
+
+    bound, bound_read = _bind(read)
+    assert "1a_ii" not in _blank_leaves(bound)
+    assert "1a_ii" not in {a.question_id for a in bound_read.answers}
+    assert "1a_ii" in bound_read.unaligned_ids
+    assert [u.writing for u in bound_read.unbound] == [read.items[5]]
+    assert bound_read.drops == {"unreadable_answer": 1}
+
+
+def test_an_answer_with_a_bad_page_and_unreadable_text_is_counted_twice(tmp_path: Path) -> None:
+    spoil = {"answer": {"answer": ["20 cm"], "page": 454}}
+    read, _, _ = _read(tmp_path, _question_one(**spoil), page_count=19)
+    assert read.drops == {"repaired_page": 1, "unreadable_answer": 1}
+    assert read.items[5] == SeenWriting(
+        page=2, answer="", box=None, confidence=0.9, placed_by="uncertain"
+    )
+
+
+@pytest.mark.parametrize("page", [454, None, "two", 1.5])
+def test_a_label_with_a_bad_page_is_kept_in_order(tmp_path: Path, page: Any) -> None:
+    """Order is the binding evidence, not the page: dropping the label would be a missed label."""
+    read, _, _ = _read(tmp_path, _question_one(label={"page": page}), page_count=19)
+
+    assert read.drops == {"repaired_page": 1}
+    assert len(read.items) == 16
+    assert read.items[4] == SeenLabel(page=2, text="(ii)", kind="printed", box=None)
+
+    bound, bound_read = _bind(read)
+    answers = {a.question_id: a.answer for a in bound_read.answers}
+    assert answers["1a_i"] == "43 cm and 63 cm"
+    assert answers["1a_ii"] == "20 cm"
+    assert len(answers) == 5
+    assert [leaf for leaf in _blank_leaves(bound) if leaf.startswith("1")] == []
+    assert bound_read.unbound == []
+
+
+def test_a_bad_page_on_the_first_item_becomes_page_zero(tmp_path: Path) -> None:
+    read, _, _ = _read(tmp_path, [_label("1", page=99), _answer("x", page=None)], page_count=4)
+    assert read.drops == {"repaired_page": 2}
+    assert [(type(i), i.page, i.box) for i in read.items] == [
+        (SeenLabel, 0, None),
+        (SeenWriting, 0, None),
+    ]
+
+
+def test_a_repaired_page_follows_the_last_kept_item_not_a_dropped_one(tmp_path: Path) -> None:
+    items = [_label("1", page=1), _label("  ", page=3), _answer("x", page=77)]
+    read, _, _ = _read(tmp_path, items, page_count=4)
+    assert read.drops == {"empty_label": 1, "repaired_page": 1}
+    assert [i.page for i in read.items] == [1, 1]
+
+
+def test_a_number_too_large_to_handle_costs_no_exception(tmp_path: Path) -> None:
+    read, _, _ = _read(tmp_path, [_label("1"), _answer("x", confidence=10**400)])
+    assert read.drops == {}
+    assert read.items[1] == SeenWriting(
+        page=0, answer="x", confidence=0.0, box=[100, 100, 200, 600], placed_by="position"
+    )
+    # Too many digits for Python to turn into text: unreadable, not an exception.
+    read = parse_stream_items([_label("1"), _answer(10**5000)], page_count=4)
+    assert read.drops == {"unreadable_answer": 1}
+    assert read.items[1] == SeenWriting(
+        page=0, answer="", confidence=0.9, box=[100, 100, 200, 600], placed_by="uncertain"
+    )
+
+
+@pytest.mark.parametrize("not_a_list", [None, "label", {"type": "label"}, 3])
+def test_parse_stream_items_refuses_what_is_not_a_list(not_a_list: Any) -> None:
+    with pytest.raises(TypeError):
+        parse_stream_items(not_a_list, page_count=4)
+
+
+@pytest.mark.parametrize("items", ["none", None, {"type": "label"}, 7])
+def test_a_reply_whose_items_is_not_a_list_is_a_parse_error(tmp_path: Path, items: Any) -> None:
+    """There is nothing to salvage item by item when the list itself is missing."""
+    client, _ = _client(tmp_path, {"items": items})
+    pages = _pages(2)
+    with (
+        client.image_uploads([p.png_bytes for p in pages], concurrency=1) as uploads,
+        pytest.raises(ParseError),
+    ):
+        LabelBinder(client).read(pages, _scheme(), uploads=uploads, extra_cache_key="k")
+
+
+def test_label_text_loses_its_padding_and_answer_text_does_not(tmp_path: Path) -> None:
+    read, _, _ = _read(tmp_path, [_label("  (a) \n"), _answer(" 12 V\n", working_out=" F = m a ")])
+    assert read.drops == {}
+    assert isinstance(read.items[0], SeenLabel)
+    assert read.items[0].text == "(a)"
+    assert isinstance(read.items[1], SeenWriting)
+    assert read.items[1].answer == " 12 V\n"
+    assert read.items[1].working_out == " F = m a "
 
 
 def test_a_clean_reply_has_no_drops(tmp_path: Path) -> None:
@@ -588,6 +898,8 @@ def test_unknown_kind_becomes_printed(tmp_path: Path) -> None:
         _label("(b)", kind="handwritten"),
         missing,
         _label("(d)", kind="printed"),
+        _label("(e)", kind=" Handwritten "),
+        _label("(f)", kind=["handwritten"]),
     ]
     read, _, _ = _read(tmp_path, items)
     assert read.drops == {}
@@ -596,6 +908,8 @@ def test_unknown_kind_becomes_printed(tmp_path: Path) -> None:
         "printed",
         "handwritten",
         "printed",
+        "printed",
+        "handwritten",
         "printed",
     ]
 
@@ -636,6 +950,11 @@ def test_the_call_is_an_extraction_call_carrying_every_page(tmp_path: Path) -> N
     assert genai.models.generate_content.call_count == 1
 
 
+def test_media_resolution_reaches_the_client(tmp_path: Path) -> None:
+    _, _, spy = _read(tmp_path, [_label("1")], media_resolution="medium")
+    assert spy.call_args.kwargs["media_resolution"] == "medium"
+
+
 def test_cost_ceiling_error_propagates() -> None:
     error = CostCeilingError("USD ceiling exceeded")
     client = MagicMock(spec=GeminiClient)
@@ -671,7 +990,10 @@ def recorded(tmp_path_factory: pytest.TempPathFactory) -> dict[int, tuple[Stream
             scheme=scheme,
         )
         bound = bind_stream(read.items, scheme)
-        out[run] = (read, to_bound_read(bound, page_count=record["page_count"]))
+        out[run] = (
+            read,
+            to_bound_read(bound, page_count=record["page_count"], drops=read.drops),
+        )
     return out
 
 
@@ -682,7 +1004,8 @@ def test_recorded_streams_convert_to_the_expected_answers(
     read, bound_read = recorded[run]
     answers = {a.question_id: a for a in bound_read.answers}
 
-    assert read.drops == {}, "a recorded item was dropped"
+    assert read.drops == {}, "a recorded item was dropped or repaired"
+    assert bound_read.drops == {}
     assert len(bound_read.answers) == len(answers) == 42
     assert "7c" not in answers  # left blank by the student
     assert set(answers) == {leaf_id for leaf_id, _ in _leaves(_scheme())} - {"7c"}
@@ -751,7 +1074,7 @@ def test_two_writings_on_one_leaf_join_in_order() -> None:
             _writing("third line", working_out="= 2.0 x 3.0", confidence=0.8),
         )
     )
-    (answer,) = to_bound_read(bound, page_count=2).answers
+    (answer,) = to_bound_read(bound, page_count=2, drops={}).answers
 
     assert answer.question_id == "1a"
     assert answer.answer == "first line; second line; third line"
@@ -764,7 +1087,7 @@ def test_two_writings_on_one_leaf_join_in_order() -> None:
 
 def test_one_writing_is_carried_over_unchanged() -> None:
     bound = _bound(_leaf("1a", _writing("1. copper\n2. zinc", confidence=0.85)))
-    (answer,) = to_bound_read(bound, page_count=2).answers
+    (answer,) = to_bound_read(bound, page_count=2, drops={}).answers
     assert answer.answer == "1. copper\n2. zinc"
     assert answer.working_out is None
     assert answer.confidence == 0.85
@@ -772,7 +1095,7 @@ def test_one_writing_is_carried_over_unchanged() -> None:
 
 def test_a_writing_with_no_answer_text_adds_only_its_working() -> None:
     bound = _bound(_leaf("1a", _writing("", working_out="V = I R"), _writing("12 V")))
-    (answer,) = to_bound_read(bound, page_count=2).answers
+    (answer,) = to_bound_read(bound, page_count=2, drops={}).answers
     assert answer.answer == "12 V"
     assert answer.working_out == "V = I R"
 
@@ -785,7 +1108,7 @@ def test_content_doubt_makes_a_leaf_unverified_and_lists_it_for_review(doubt: st
         _leaf("1c", _writing("z")),
         _leaf("2a", _writing("w"), doubts=(DOUBT_NUMBER_NOT_SEEN, doubt)),
     )
-    bound_read = to_bound_read(bound, page_count=2)
+    bound_read = to_bound_read(bound, page_count=2, drops={})
 
     assert [(a.question_id, a.binding_status) for a in bound_read.answers] == [
         ("1a", "verified"),
@@ -798,7 +1121,7 @@ def test_content_doubt_makes_a_leaf_unverified_and_lists_it_for_review(doubt: st
 
 def test_an_inferred_number_alone_leaves_a_hand_built_leaf_verified() -> None:
     bound = _bound(_leaf("4a", _writing("x"), doubts=(DOUBT_NUMBER_NOT_SEEN,)))
-    bound_read = to_bound_read(bound, page_count=2)
+    bound_read = to_bound_read(bound, page_count=2, drops={})
     assert [a.binding_status for a in bound_read.answers] == ["verified"]
     assert bound_read.review_ids == []
 
@@ -806,7 +1129,7 @@ def test_an_inferred_number_alone_leaves_a_hand_built_leaf_verified() -> None:
 def test_a_doubt_of_neither_class_makes_a_leaf_unverified() -> None:
     """A doubt this module has not been told about must not pass as verified."""
     bound = _bound(_leaf("1a", _writing("x"), doubts=("a doubt added later",)))
-    bound_read = to_bound_read(bound, page_count=2)
+    bound_read = to_bound_read(bound, page_count=2, drops={})
     assert [a.binding_status for a in bound_read.answers] == ["unverified"]
     assert bound_read.review_ids == ["1a"]
 
@@ -826,7 +1149,7 @@ def test_blank_aligned_leaf_produces_no_answer() -> None:
         _leaf("1c", doubts=(DOUBT_NEXT_NUMBER_NOT_SEEN,)),
         _leaf("2a", _writing("y")),
     )
-    bound_read = to_bound_read(bound, page_count=2)
+    bound_read = to_bound_read(bound, page_count=2, drops={})
     assert [a.question_id for a in bound_read.answers] == ["1a", "2a"]
     # Nothing was written on 1c, so there is nothing of anyone's to review.
     assert bound_read.review_ids == []
@@ -856,7 +1179,9 @@ def test_source_box_is_the_union_on_the_first_page_or_none() -> None:
         _leaf("1f", _writing("j", page=7, box=[100, 100, 200, 600])),
         _leaf("1g", _writing("k", page=0, box=[1, 2, 3])),
     )
-    boxes = {a.question_id: a.source_box for a in to_bound_read(bound, page_count=3).answers}
+    boxes = {
+        a.question_id: a.source_box for a in to_bound_read(bound, page_count=3, drops={}).answers
+    }
 
     assert boxes == {
         "1a": SourceBox(page=1, box=[100, 150, 220, 600]),
@@ -867,6 +1192,23 @@ def test_source_box_is_the_union_on_the_first_page_or_none() -> None:
         "1f": None,
         "1g": None,
     }
+
+
+@pytest.mark.parametrize("confidence", [1.7, -0.2, float("nan"), float("inf")])
+def test_a_confidence_out_of_range_on_a_hand_built_writing_becomes_zero(confidence: float) -> None:
+    """``SeenWriting`` does not bound its confidence; an answer's must lie in 0 to 1."""
+    bound = _bound(_leaf("1a", _writing("x", confidence=0.8), _writing("y", confidence=confidence)))
+    (answer,) = to_bound_read(bound, page_count=2, drops={}).answers
+    assert answer.confidence == 0.0
+
+
+def test_drops_travel_with_the_bound_read() -> None:
+    drops = {"repaired_page": 2, "empty_answer": 1}
+    bound_read = to_bound_read(_bound(_leaf("1a", _writing("x"))), page_count=2, drops=drops)
+    assert bound_read.drops == {"repaired_page": 2, "empty_answer": 1}
+    # A copy: the read's own record cannot be changed through the bound read.
+    bound_read.drops["repaired_page"] = 0
+    assert drops == {"repaired_page": 2, "empty_answer": 1}
 
 
 def test_what_was_not_bound_passes_through() -> None:
@@ -883,7 +1225,7 @@ def test_what_was_not_bound_passes_through() -> None:
         inferred_numbers=["4"],
         listing_suspects=["1a", "3"],
     )
-    bound_read = to_bound_read(bound, page_count=2)
+    bound_read = to_bound_read(bound, page_count=2, drops={})
 
     assert bound_read.unbound == [stray]
     assert bound_read.unaligned_ids == ["1b", "2"]
@@ -902,7 +1244,7 @@ def test_conversion_assigns_no_id_of_its_own() -> None:
         _leaf("7a_ii_a", _writing("y")),
         _leaf("3ii", _writing("z")),
     )
-    assert [a.question_id for a in to_bound_read(bound, page_count=2).answers] == [
+    assert [a.question_id for a in to_bound_read(bound, page_count=2, drops={}).answers] == [
         "9c_iv",
         "7a_ii_a",
         "3ii",

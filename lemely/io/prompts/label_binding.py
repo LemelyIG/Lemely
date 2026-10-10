@@ -144,32 +144,49 @@ blank, write nothing for it. Do not invent writing that is not on the page.
 """
 
 
+def _is_question_number(text: str) -> bool:
+    return text.isascii() and text.isdigit() and not text.startswith("0")
+
+
+def _is_part_name(text: str) -> bool:
+    return text.isascii() and text.isalpha() and text.islower()
+
+
 def _printed_labels(mark_scheme: MarkScheme) -> list[tuple[str, int]]:
     """Each leaf's label as the paper prints it ("1(a)(i)") with its marks, in paper order.
 
-    The label comes from the scheme tree, not from the shape of the id: a question's own
-    piece is what its id adds to its parent's id, with the "_" separators dropped. So
-    "1a_i" under "1a" under "1" is "1(a)(i)", "3ii" under "3" is "3(ii)", and "7a_ii_a"
-    under "7a_ii" is "7(a)(ii)(a)". An id that does not extend its parent's is used whole.
+    The label comes from the scheme tree, not from the shape of the id. A top-level id is
+    the question number. A part's own piece is what its id adds to its parent's id, with
+    the "_" separators dropped: "1a_i" under "1a" under "1" is "1(a)(i)", "3ii" under "3"
+    is "3(ii)", and "7a_ii_a" under "7a_ii" is "7(a)(ii)(a)".
+
+    A leaf whose label cannot be told this way is left out, with everything under it: a
+    top-level id that is not a number, a part whose id does not extend its parent's, a
+    piece that is not lower-case letters. A made-up label would send the reader looking
+    for something the paper does not print, and ``bind_stream`` cannot bind such a leaf
+    either. No scheme in the corpus has one.
     """
     labels: list[tuple[str, int]] = []
 
-    def walk(questions: list[Question], parent_id: str, above: str) -> None:
+    def walk(questions: list[Question], parent_id: str | None, above: str) -> None:
         for question in questions:
-            extends = bool(parent_id) and question.id.startswith(parent_id)
-            own = question.id[len(parent_id) :] if extends else question.id
-            pieces = [piece for piece in own.split("_") if piece]
-            if not above and pieces:
-                # A question number is printed bare.
-                label = pieces[0] + "".join(f"({piece})" for piece in pieces[1:])
+            if parent_id is None:
+                if not _is_question_number(question.id):
+                    continue
+                label = question.id
             else:
+                if not question.id.startswith(parent_id):
+                    continue
+                pieces = [p for p in question.id[len(parent_id) :].split("_") if p]
+                if not pieces or not all(_is_part_name(piece) for piece in pieces):
+                    continue
                 label = above + "".join(f"({piece})" for piece in pieces)
             if question.parts:
                 walk(question.parts, question.id, label)
             else:
                 labels.append((label, question.marks))
 
-    walk(mark_scheme.questions, "", "")
+    walk(mark_scheme.questions, None, "")
     return labels
 
 
@@ -178,7 +195,19 @@ def build_label_binding_user_prompt(mark_scheme: MarkScheme, *, page_count: int)
 
     From the mark scheme it carries each leaf's printed label and marks, and nothing
     else: no id, no stem, no mark-scheme point.
+
+    Raises:
+        ValueError: ``page_count`` is less than 1.
     """
+    if page_count < 1:
+        raise ValueError(f"page_count must be at least 1, got {page_count}")
+    if page_count == 1:
+        pages = "You are given 1 page image, index 0. Every `page` value MUST be 0."
+    else:
+        pages = (
+            f"You are given {page_count} page images, indexed 0 to {page_count - 1} in the "
+            "order attached. Every `page` value MUST be one of these indices."
+        )
     meta = mark_scheme.metadata
     year = meta.session_year if meta.session_year is not None else "Specimen"
     label_list = "\n".join(
@@ -188,8 +217,7 @@ def build_label_binding_user_prompt(mark_scheme: MarkScheme, *, page_count: int)
     return (
         "Read the attached scanned paper and write down its question labels and the student's "
         "writing as one list, in reading order.\n\n"
-        f"You are given {page_count} page images, indexed 0 to {page_count - 1} in the order "
-        "attached. Every `page` value MUST be one of these indices.\n\n"
+        f"{pages}\n\n"
         f"Paper: {meta.subject_code}/{meta.paper_number}{meta.paper_variant} "
         f"{meta.session_month.value} {year}.\n\n"
         "For orientation only, these are the questions the printed paper asks, in order, with "
