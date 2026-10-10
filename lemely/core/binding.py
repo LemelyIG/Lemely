@@ -39,20 +39,53 @@ class BindingReport(_StrictModel):
     model: str | None = None
 
 
-class LabelMarker(_StrictModel):
-    """A question label seen on a page, with its vertical position."""
+class SeenLabel(_StrictModel):
+    """A question label the reader saw, in the place it holds in the reading-order list.
+
+    The reader never says which question it is. ``box`` is kept for display only:
+    nothing that binds a label to a question reads it.
+    """
 
     page: int
-    top: int
     text: str
     kind: Literal["printed", "handwritten"]
+    box: list[int] | None = None
 
 
-class ReadAnswer(_StrictModel):
-    """An answer read off the page that has no question assigned yet."""
+class SeenWriting(_StrictModel):
+    """A block of student writing, in the place it holds in the reading-order list."""
 
     page: int
-    box: list[int]
     answer: str
-    working_out: str | None
-    confidence: float
+    working_out: str | None = None
+    confidence: float = 0.0
+    box: list[int] | None = None
+    placed_by: Literal["position", "arrow", "uncertain"] = "position"
+
+
+StreamItem = SeenLabel | SeenWriting
+
+# ``schemas.ExtractedAnswers.unbound_answers`` is typed ``list[ReadAnswer]``: writing
+# that no question could be given. That is a ``SeenWriting``; the old name is kept so
+# that ``schemas.py`` keeps importing it.
+ReadAnswer = SeenWriting
+
+UnboundReason = Literal[
+    "before_first_label",
+    "after_unplaced_label",
+    "after_container_label",
+    "uncertain",
+    # The label the paper prints next was not seen, so this writing may be that
+    # question's and not the one whose label it follows.
+    "next_label_not_seen",
+    # The leaf this writing follows holds two blocks or more and the leaf beside it
+    # holds none: one of the blocks may be the neighbour's, its label listed out of place.
+    "neighbour_left_blank",
+]
+
+
+class UnboundWriting(_StrictModel):
+    """Writing that was not given to a question, and why."""
+
+    writing: SeenWriting
+    reason: UnboundReason

@@ -1,0 +1,1503 @@
+{
+ "model": "gemini-3.8-flash",
+ "prompt_version": "il1",
+ "page_count": 19,
+ "items": [
+  {
+   "type": "label",
+   "page": 1,
+   "box": [
+    94,
+    118,
+    107,
+    131
+   ],
+   "text": "1",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 2,
+   "box": [
+    168,
+    158,
+    192,
+    187
+   ],
+   "answer": "63",
+   "working_out": null,
+   "confidence": 0.85,
+   "placed_by": "uncertain"
+  },
+  {
+   "type": "answer",
+   "page": 2,
+   "box": [
+    347,
+    706,
+    375,
+    757
+   ],
+   "answer": "vertical line from 5.6 N up to curve and horizontal line to reading axis at 63",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 2,
+   "box": [
+    457,
+    169,
+    469,
+    187
+   ],
+   "text": "(a)",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 2,
+   "box": [
+    457,
+    201,
+    469,
+    217
+   ],
+   "text": "(i)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 2,
+   "box": [
+    465,
+    558,
+    517,
+    712
+   ],
+   "answer": "1. 43 cm\n2. 63 cm",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 2,
+   "box": [
+    552,
+    196,
+    564,
+    216
+   ],
+   "text": "(ii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 2,
+   "box": [
+    570,
+    110,
+    686,
+    747
+   ],
+   "answer": "20 cm",
+   "working_out": "reading - original length\n63 - 43",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 2,
+   "box": [
+    705,
+    164,
+    718,
+    186
+   ],
+   "text": "(b)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 2,
+   "box": [
+    722,
+    240,
+    839,
+    810
+   ],
+   "answer": "0.28 N/cm",
+   "working_out": "k = f/x\nk = 5.6/20",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 3,
+   "box": [
+    98,
+    166,
+    110,
+    185
+   ],
+   "text": "(c)",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 3,
+   "box": [
+    126,
+    201,
+    137,
+    216
+   ],
+   "text": "(i)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 3,
+   "box": [
+    158,
+    196,
+    263,
+    792
+   ],
+   "answer": "4.9 N",
+   "working_out": "w = mg\nw = 0.50 * 9.8",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 3,
+   "box": [
+    277,
+    193,
+    289,
+    216
+   ],
+   "text": "(ii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 3,
+   "box": [
+    363,
+    188,
+    599,
+    816
+   ],
+   "answer": "13 m/s^2",
+   "working_out": "f = ma\n6.5 = 0.50 a\na = 6.5 / 0.50",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 4,
+   "box": [
+    92,
+    142,
+    104,
+    155
+   ],
+   "text": "2",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 4,
+   "box": [
+    521,
+    258,
+    535,
+    282
+   ],
+   "answer": "130",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "uncertain"
+  },
+  {
+   "type": "answer",
+   "page": 4,
+   "box": [
+    729,
+    412,
+    759,
+    458
+   ],
+   "answer": "6 6.5",
+   "working_out": null,
+   "confidence": 0.9,
+   "placed_by": "position"
+  },
+  {
+   "type": "answer",
+   "page": 4,
+   "box": [
+    527,
+    423,
+    725,
+    436
+   ],
+   "answer": "vertical line down from peak at 6.5 s",
+   "working_out": null,
+   "confidence": 0.9,
+   "placed_by": "position"
+  },
+  {
+   "type": "answer",
+   "page": 4,
+   "box": [
+    820,
+    442,
+    829,
+    663
+   ],
+   "answer": "underline under 130 m/s at a time of 6.5 s.",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 5,
+   "box": [
+    94,
+    174,
+    106,
+    193
+   ],
+   "text": "(a)",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 5,
+   "box": [
+    94,
+    208,
+    106,
+    224
+   ],
+   "text": "(i)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 5,
+   "box": [
+    112,
+    151,
+    240,
+    881
+   ],
+   "answer": "180 000 kg m/s",
+   "working_out": "m = mass * velocity\nm = 1400 * 130 = 182000",
+   "confidence": 0.9,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 5,
+   "box": [
+    245,
+    203,
+    258,
+    224
+   ],
+   "text": "(ii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 5,
+   "box": [
+    252,
+    319,
+    311,
+    819
+   ],
+   "answer": "area under the graph\nline",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 5,
+   "box": [
+    327,
+    198,
+    339,
+    224
+   ],
+   "text": "(iii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 5,
+   "box": [
+    342,
+    178,
+    461,
+    809
+   ],
+   "answer": "422.5 m",
+   "working_out": "Distance = 1/2 bh\n= 1/2 * 6.5 * 130 = 422.5",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 5,
+   "box": [
+    477,
+    169,
+    490,
+    190
+   ],
+   "text": "(b)",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 5,
+   "box": [
+    534,
+    203,
+    545,
+    218
+   ],
+   "text": "(i)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 5,
+   "box": [
+    542,
+    276,
+    597,
+    814
+   ],
+   "answer": "speed decreases with\nincreasing rate",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 5,
+   "box": [
+    614,
+    197,
+    626,
+    218
+   ],
+   "text": "(ii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 5,
+   "box": [
+    623,
+    273,
+    689,
+    762
+   ],
+   "answer": "the line is curved not a\nstraight line",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 5,
+   "box": [
+    695,
+    166,
+    708,
+    186
+   ],
+   "text": "(c)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 7,
+   "box": [
+    531,
+    307,
+    650,
+    887
+   ],
+   "answer": "so heat is transfered from hot water to colder aliminium dish.",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "arrow"
+  },
+  {
+   "type": "answer",
+   "page": 5,
+   "box": [
+    706,
+    317,
+    810,
+    792
+   ],
+   "answer": "from kinetic energy to\ngravitational potential\ninternal energy",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 6,
+   "box": [
+    98,
+    134,
+    110,
+    146
+   ],
+   "text": "3",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 6,
+   "box": [
+    98,
+    167,
+    110,
+    187
+   ],
+   "text": "(a)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 6,
+   "box": [
+    108,
+    200,
+    233,
+    850
+   ],
+   "answer": "moment is the tuning effect\nof a force around a pivot\nand is defined by moment = force\nx perpindiculer distance. It has\nboth magnitude and direction",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 6,
+   "box": [
+    234,
+    164,
+    246,
+    186
+   ],
+   "text": "(b)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 6,
+   "box": [
+    316,
+    731,
+    355,
+    839
+   ],
+   "answer": "sketch of a 3D block",
+   "working_out": null,
+   "confidence": 0.85,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 6,
+   "box": [
+    499,
+    197,
+    511,
+    212
+   ],
+   "text": "(i)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 6,
+   "box": [
+    465,
+    255,
+    567,
+    888
+   ],
+   "answer": "point where a body's whole weight is considered to act",
+   "working_out": "a body's whole weight",
+   "confidence": 0.9,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 6,
+   "box": [
+    580,
+    193,
+    592,
+    212
+   ],
+   "text": "(ii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 6,
+   "box": [
+    623,
+    212,
+    742,
+    874
+   ],
+   "answer": "44000000 N/m",
+   "working_out": "m = f * perpendicular D\nm = 1.3 * 10^7 * 3.4 = 44200000",
+   "confidence": 0.9,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 7,
+   "box": [
+    94,
+    178,
+    106,
+    199
+   ],
+   "text": "(c)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 7,
+   "box": [
+    132,
+    233,
+    212,
+    903
+   ],
+   "answer": "1. total upward forces equal to total downward forces\n2. total moment clockwise is equal to total moment anti-clockwise",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 8,
+   "box": [
+    90,
+    137,
+    112,
+    164
+   ],
+   "text": "4",
+   "kind": "handwritten"
+  },
+  {
+   "type": "label",
+   "page": 8,
+   "box": [
+    90,
+    179,
+    103,
+    198
+   ],
+   "text": "(a)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 8,
+   "box": [
+    121,
+    200,
+    501,
+    896
+   ],
+   "answer": "using balance, find the mass of the aliminium block. To find the energy multiply power supplied by heater by time taken in seconds. find initial and final temparature by thermomter",
+   "working_out": "Q = mc Delta theta\nQ = P x time\nThermometer heater balance\nblock of aliminium\n0.00\n(Delta theta)",
+   "confidence": 0.9,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 8,
+   "box": [
+    501,
+    172,
+    513,
+    194
+   ],
+   "text": "(b)",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 9,
+   "box": [
+    90,
+    203,
+    103,
+    219
+   ],
+   "text": "(i)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 9,
+   "box": [
+    99,
+    113,
+    229,
+    933
+   ],
+   "answer": "as thermal heat in water is transfered to aliminion by conduton. when water has high temperature, particles have high kinetic energy, so they vibrate hitting neighbouring aliminium particles",
+   "working_out": null,
+   "confidence": 0.9,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 9,
+   "box": [
+    220,
+    194,
+    232,
+    214
+   ],
+   "text": "(ii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 9,
+   "box": [
+    248,
+    226,
+    351,
+    878
+   ],
+   "answer": "Particles gain kinetic energy, so particles vibrate and intermolecular forces become weaker, so they move further apart",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 9,
+   "box": [
+    341,
+    187,
+    353,
+    214
+   ],
+   "text": "(iii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 9,
+   "box": [
+    376,
+    78,
+    482,
+    876
+   ],
+   "answer": "when most energetic water molecules at the surface escape, leaving least energetic particles behind, cooling the water.",
+   "working_out": "with enough energy",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 10,
+   "box": [
+    90,
+    142,
+    103,
+    155
+   ],
+   "text": "5",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 10,
+   "box": [
+    131,
+    174,
+    144,
+    195
+   ],
+   "text": "(a)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 10,
+   "box": [
+    140,
+    201,
+    216,
+    768
+   ],
+   "answer": "0.2 m",
+   "working_out": "0.10 + 0.10\n0.10 0.10\nlambda",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 10,
+   "box": [
+    224,
+    174,
+    237,
+    195
+   ],
+   "text": "(b)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 10,
+   "box": [
+    236,
+    447,
+    273,
+    737
+   ],
+   "answer": "330 m/s",
+   "working_out": "300",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 10,
+   "box": [
+    280,
+    173,
+    293,
+    193
+   ],
+   "text": "(c)",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 10,
+   "box": [
+    280,
+    206,
+    293,
+    223
+   ],
+   "text": "(i)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 10,
+   "box": [
+    303,
+    148,
+    427,
+    796
+   ],
+   "answer": "1700 Hz",
+   "working_out": "s = f * lambda\n330 = f * 0.2\nf = 330 / 0.2 = 1650",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 10,
+   "box": [
+    437,
+    202,
+    450,
+    222
+   ],
+   "text": "(ii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 10,
+   "box": [
+    450,
+    257,
+    563,
+    843
+   ],
+   "answer": "yes, because the range of human ear is from 20 Hz to 20,000 Hz",
+   "working_out": "No\n20,000",
+   "confidence": 0.9,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 11,
+   "box": [
+    98,
+    146,
+    110,
+    168
+   ],
+   "text": "(d)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 11,
+   "box": [
+    422,
+    175,
+    563,
+    856
+   ],
+   "answer": "point J: no, because sound wave won't reach that point\npoint K: yes, because sound wave reached point",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 12,
+   "box": [
+    90,
+    133,
+    102,
+    145
+   ],
+   "text": "6",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 12,
+   "box": [
+    383,
+    166,
+    396,
+    186
+   ],
+   "text": "(a)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 12,
+   "box": [
+    393,
+    199,
+    497,
+    848
+   ],
+   "answer": "work done by a unit charge passing through a component converted from electrical to any form unit is (v)",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 12,
+   "box": [
+    492,
+    160,
+    506,
+    185
+   ],
+   "text": "(b)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 12,
+   "box": [
+    542,
+    381,
+    604,
+    822
+   ],
+   "answer": "E - reading on the voltmeter",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "answer",
+   "page": 13,
+   "box": [
+    49,
+    597,
+    83,
+    709
+   ],
+   "answer": "LDR down",
+   "working_out": null,
+   "confidence": 0.9,
+   "placed_by": "uncertain"
+  },
+  {
+   "type": "label",
+   "page": 13,
+   "box": [
+    121,
+    174,
+    134,
+    194
+   ],
+   "text": "(c)",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 13,
+   "box": [
+    124,
+    199,
+    136,
+    214
+   ],
+   "text": "(i)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 13,
+   "box": [
+    151,
+    499,
+    203,
+    715
+   ],
+   "answer": "intensity of incident light on LDR: increase\ntemperature of thermistor: decrease",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 13,
+   "box": [
+    232,
+    194,
+    245,
+    214
+   ],
+   "text": "(ii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 13,
+   "box": [
+    243,
+    226,
+    521,
+    903
+   ],
+   "answer": "As resistance decrease, voltage decreases, and as resistance of thermistor increase, voltage increase so voltmeter reading is the same as voltage is constant",
+   "working_out": "I = V down / R down\nV = I R down\nI = V down / R down",
+   "confidence": 0.9,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 14,
+   "box": [
+    94,
+    127,
+    107,
+    139
+   ],
+   "text": "7",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 14,
+   "box": [
+    363,
+    164,
+    375,
+    183
+   ],
+   "text": "(a)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 14,
+   "box": [
+    376,
+    459,
+    401,
+    553
+   ],
+   "answer": "iron",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 14,
+   "box": [
+    415,
+    163,
+    428,
+    184
+   ],
+   "text": "(b)",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 14,
+   "box": [
+    444,
+    198,
+    456,
+    213
+   ],
+   "text": "(i)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 14,
+   "box": [
+    496,
+    269,
+    799,
+    762
+   ],
+   "answer": "Diagram showing 6 magnetic field lines surrounding the bar magnet, labeled N on left and S on right, with arrows pointing from N to S",
+   "working_out": "N S",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "answer",
+   "page": 15,
+   "box": [
+    47,
+    588,
+    86,
+    708
+   ],
+   "answer": "V = I down R up",
+   "working_out": null,
+   "confidence": 0.9,
+   "placed_by": "uncertain"
+  },
+  {
+   "type": "label",
+   "page": 15,
+   "box": [
+    94,
+    187,
+    106,
+    207
+   ],
+   "text": "(ii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 15,
+   "box": [
+    146,
+    229,
+    217,
+    933
+   ],
+   "answer": "magnetic field decreases as alternating current decreases . V = I down R up",
+   "working_out": null,
+   "confidence": 0.9,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 15,
+   "box": [
+    264,
+    158,
+    277,
+    178
+   ],
+   "text": "(c)",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 16,
+   "box": [
+    96,
+    136,
+    109,
+    146
+   ],
+   "text": "8",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 16,
+   "box": [
+    126,
+    169,
+    139,
+    189
+   ],
+   "text": "(a)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 16,
+   "box": [
+    168,
+    248,
+    454,
+    591
+   ],
+   "answer": "Diagram showing nucleus with 8 neutrons (o) and 6 protons (•), inner shell with 2 electrons (x) and outer shell with 4 electrons (x)",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 16,
+   "box": [
+    604,
+    166,
+    617,
+    186
+   ],
+   "text": "(b)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 16,
+   "box": [
+    631,
+    206,
+    794,
+    869
+   ],
+   "answer": "nitrogen has one more proton and electron",
+   "working_out": "have different number of protons and electrons, but same number of neutrons",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 17,
+   "box": [
+    94,
+    172,
+    106,
+    192
+   ],
+   "text": "(c)",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 17,
+   "box": [
+    120,
+    208,
+    132,
+    223
+   ],
+   "text": "(i)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 17,
+   "box": [
+    134,
+    513,
+    160,
+    679
+   ],
+   "answer": "electron",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 17,
+   "box": [
+    174,
+    203,
+    187,
+    224
+   ],
+   "text": "(ii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 17,
+   "box": [
+    184,
+    241,
+    250,
+    878
+   ],
+   "answer": "Beta Decay: one neutron is split into a proton and an electron",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 17,
+   "box": [
+    257,
+    172,
+    270,
+    194
+   ],
+   "text": "(d)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 17,
+   "box": [
+    343,
+    85,
+    788,
+    864
+   ],
+   "answer": "17100 years",
+   "working_out": "9.6 x 10^11 / 2 = 4.8 x 10^11 / 2 = 2.4 x 10^11 / 2 = 1.2 x 10^11\n5700\n5700\n5700\n5700 x 3 = 17100\n17000",
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "answer",
+   "page": 18,
+   "box": [
+    30,
+    287,
+    85,
+    846
+   ],
+   "answer": "9.5 x 10^12 * 100 000 = 9.5 x 10^17",
+   "working_out": null,
+   "confidence": 0.9,
+   "placed_by": "uncertain"
+  },
+  {
+   "type": "label",
+   "page": 18,
+   "box": [
+    98,
+    145,
+    111,
+    156
+   ],
+   "text": "9",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 18,
+   "box": [
+    126,
+    178,
+    139,
+    197
+   ],
+   "text": "(a)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 18,
+   "box": [
+    138,
+    258,
+    176,
+    759
+   ],
+   "answer": "group of billions of stars",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 18,
+   "box": [
+    206,
+    180,
+    218,
+    196
+   ],
+   "text": "(b)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 18,
+   "box": [
+    205,
+    93,
+    317,
+    946
+   ],
+   "answer": "9.5 x 10^17 km",
+   "working_out": "1 year = 9.5 x 10^12\nOrbital speed = 2 pi r / t\n100000 years = ?\ns = d / t\n3 x 10^8 = d / 100000 x 365 x 24 x 60 x 60\n9.5 x 10^17",
+   "confidence": 0.85,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 18,
+   "box": [
+    312,
+    174,
+    324,
+    193
+   ],
+   "text": "(c)",
+   "kind": "printed"
+  },
+  {
+   "type": "label",
+   "page": 18,
+   "box": [
+    351,
+    208,
+    363,
+    224
+   ],
+   "text": "(i)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 18,
+   "box": [
+    369,
+    520,
+    404,
+    706
+   ],
+   "answer": "red shift",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 18,
+   "box": [
+    445,
+    204,
+    457,
+    222
+   ],
+   "text": "(ii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 18,
+   "box": [
+    456,
+    377,
+    483,
+    734
+   ],
+   "answer": "Hubbles constant",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 18,
+   "box": [
+    525,
+    202,
+    537,
+    223
+   ],
+   "text": "(iii)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 18,
+   "box": [
+    538,
+    350,
+    569,
+    549
+   ],
+   "answer": "H_0 = v / d",
+   "working_out": null,
+   "confidence": 0.95,
+   "placed_by": "position"
+  },
+  {
+   "type": "label",
+   "page": 18,
+   "box": [
+    604,
+    201,
+    616,
+    224
+   ],
+   "text": "(iv)",
+   "kind": "printed"
+  },
+  {
+   "type": "answer",
+   "page": 18,
+   "box": [
+    654,
+    188,
+    735,
+    785
+   ],
+   "answer": "4.5 x 10^17 s",
+   "working_out": "1 / H_0\n1 / 2.2 x 10^-18",
+   "confidence": 0.95,
+   "placed_by": "position"
+  }
+ ]
+}

@@ -3,7 +3,14 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from lemely.core.binding import BindingCheck, BindingReport, LabelMarker, ReadAnswer
+from lemely.core.binding import (
+    BindingCheck,
+    BindingReport,
+    ReadAnswer,
+    SeenLabel,
+    SeenWriting,
+    UnboundWriting,
+)
 from lemely.core.schemas import AIMarkResponse, ExtractedAnswers
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "binding" / "0625_w24_41"
@@ -41,9 +48,45 @@ def test_binding_report_round_trips_through_json():
     )
     assert BindingReport.model_validate_json(report.model_dump_json()) == report
     assert BindingCheck(id="G2", passed=True, scope="paper", detail="").question_ids == []
-    assert LabelMarker(page=0, top=120, text="(a)", kind="printed").kind == "printed"
+
+
+def test_stream_items_round_trip_and_default_what_a_reader_may_leave_out():
+    label = SeenLabel(page=0, text="(a)", kind="printed")
+    assert label.box is None
+    assert SeenLabel.model_validate_json(label.model_dump_json()) == label
+    with pytest.raises(ValidationError):
+        SeenLabel.model_validate({"page": 0, "text": "(a)", "kind": "typed"})
+    with pytest.raises(ValidationError):
+        SeenLabel.model_validate({"page": 0, "text": "(a)", "kind": "printed", "top": 120})
+
+    bare = SeenWriting(page=1, answer="4")
+    assert (bare.working_out, bare.confidence, bare.box, bare.placed_by) == (
+        None,
+        0.0,
+        None,
+        "position",
+    )
+    full = SeenWriting(
+        page=1, box=[1, 2, 3, 4], answer="4", working_out="2 + 2", confidence=0.9, placed_by="arrow"
+    )
+    assert SeenWriting.model_validate_json(full.model_dump_json()) == full
+    with pytest.raises(ValidationError):
+        SeenWriting.model_validate({"page": 1, "answer": "4", "placed_by": "guess"})
+
+    unbound = UnboundWriting(writing=full, reason="after_container_label")
+    assert UnboundWriting.model_validate_json(unbound.model_dump_json()) == unbound
+    with pytest.raises(ValidationError):
+        UnboundWriting.model_validate({"writing": full.model_dump(), "reason": "lost"})
+
+
+def test_read_answer_is_the_writing_type_under_its_old_name():
+    # schemas.ExtractedAnswers.unbound_answers is typed list[ReadAnswer].
+    assert ReadAnswer is SeenWriting
     read = ReadAnswer(page=1, box=[1, 2, 3, 4], answer="4", working_out=None, confidence=0.9)
-    assert ReadAnswer.model_validate_json(read.model_dump_json()) == read
+    doc = ExtractedAnswers.model_validate_json(
+        (FIXTURE_DIR / "aligned.json").read_text()
+    ).model_copy(update={"unbound_answers": [read]})
+    assert ExtractedAnswers.model_validate_json(doc.model_dump_json()).unbound_answers == [read]
 
 
 def test_check_id_rejects_unknown_ids():
