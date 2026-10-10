@@ -968,17 +968,9 @@ class ReviewService:
         of the caller's classes can be unshared from one and not the other.
         One roster pass builds both.
         """
-        mapping: dict[uuid.UUID, tuple[uuid.UUID, str, str]] = {}
-        student_classes: dict[uuid.UUID, set[uuid.UUID]] = {}
-        rows = self._class_service.list_classes(caller_id, caller_role)
-        if class_id_filter is not None:
-            class_uuid = _as_uuid(class_id_filter)
-            rows = [row for row in rows if row.class_id == class_uuid]
-        for row in rows:
-            for entry in self._class_service.roster(caller_id, caller_role, row.class_id):
-                mapping[entry.student_id] = (row.class_id, row.name, entry.display_name)
-                student_classes.setdefault(entry.student_id, set()).add(row.class_id)
-        return mapping, student_classes
+        return visible_rosters(
+            self._class_service, caller_id, caller_role, class_id_filter=class_id_filter
+        )
 
     def _find_any_item(
         self,
@@ -1077,6 +1069,75 @@ class ReviewService:
     def _boundaries_for(self, attempt: Attempt) -> tuple[dict[str, float], BoundarySource]:
         """Delegates to :func:`boundaries_for`."""
         return boundaries_for(attempt, self._boundaries)
+
+
+def visible_rosters(
+    class_service: ClassService,
+    caller_id: uuid.UUID | str,
+    caller_role: Role | str,
+    *,
+    class_id_filter: uuid.UUID | str | None = None,
+) -> tuple[dict[uuid.UUID, tuple[uuid.UUID, str, str]], dict[uuid.UUID, set[uuid.UUID]]]:
+    """The review queue's visibility rule: which students a caller is shown, and in which classes.
+
+    The one definition; :meth:`ReviewService._visible_rosters` and
+    :func:`attempt_has_reviewer` both call it.
+    """
+    mapping: dict[uuid.UUID, tuple[uuid.UUID, str, str]] = {}
+    student_classes: dict[uuid.UUID, set[uuid.UUID]] = {}
+    rows = class_service.list_classes(caller_id, caller_role)
+    if class_id_filter is not None:
+        class_uuid = _as_uuid(class_id_filter)
+        rows = [row for row in rows if row.class_id == class_uuid]
+    for row in rows:
+        for entry in class_service.roster(caller_id, caller_role, row.class_id):
+            mapping[entry.student_id] = (row.class_id, row.name, entry.display_name)
+            student_classes.setdefault(entry.student_id, set()).add(row.class_id)
+    return mapping, student_classes
+
+
+def attempt_has_reviewer(session: Session, attempt: Attempt) -> bool:
+    """Whether at least one teacher or school admin is shown this attempt's review rows.
+
+    Candidates are the teachers of the student's classes and the school admins
+    of those classes' schools; each is then put through the queue's own rule
+    (:func:`visible_rosters`, and the R8 unshare filter) rather than a copy of
+    it. A student in no class has no candidate, so no one can resolve the row.
+    """
+    # Local imports: these models are only needed here.
+    from sqlalchemy.orm import sessionmaker as _sessionmaker
+
+    from lemely.db.class_repo import ClassService
+    from lemely.db.models import ClassEnrollment, SchoolClass, SchoolMembership
+    from lemely.db.models.enums import MembershipRole
+
+    student = attempt.user_id
+    class_rows = session.execute(
+        select(SchoolClass.teacher_id, SchoolClass.school_id)
+        .join(ClassEnrollment, ClassEnrollment.class_id == SchoolClass.id)
+        .where(ClassEnrollment.student_id == student)
+    ).all()
+    if not class_rows:
+        return False
+    candidates: list[tuple[uuid.UUID, Role]] = [(t, Role.teacher) for t, _ in class_rows]
+    school_ids = {sid for _, sid in class_rows if sid is not None}
+    if school_ids:
+        admins = session.scalars(
+            select(SchoolMembership.user_id).where(
+                SchoolMembership.school_id.in_(school_ids),
+                SchoolMembership.membership_role == MembershipRole.school_admin,
+            )
+        ).all()
+        candidates.extend((a, Role.school_admin) for a in admins)
+    classes = ClassService(_sessionmaker(bind=session.get_bind()))
+    for caller_id, role in dict.fromkeys(candidates):
+        mapping, student_classes = visible_rosters(classes, caller_id, role)
+        if student not in mapping:
+            continue
+        unshared = _unshared_from(session, {student: student_classes[student]})
+        if not student_classes[student] <= unshared.get(attempt.id, set()):
+            return True
+    return False
 
 
 def _unshared_from(

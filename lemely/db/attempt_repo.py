@@ -60,6 +60,7 @@ from typing import TYPE_CHECKING
 import structlog
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import object_session
 
 from lemely.core.binding_review import has_binding_doubt
 from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD, dedupe_point_verdicts
@@ -85,6 +86,7 @@ from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.question_points import derive_point_rows
 from lemely.db.review_queue_rules import low_confidence_review_needed, review_reasons_for
+from lemely.db.review_repo import attempt_has_reviewer
 from lemely.db.session import INCLUDE_DELETED
 from lemely.io.syllabus_topics import get_taxonomy
 
@@ -657,15 +659,28 @@ def self_review_withheld(qr: QuestionResult) -> bool:
     """Whether self-review is withheld from this question until a teacher resolves it.
 
     True for a question with a binding doubt whose teacher ``low_confidence``
-    row is still open. The self-review panel assumes the marker read the
-    student's answer, which a binding doubt says may be false, so it is not
-    offered at all (and a claim is refused as for any ineligible question). Once
-    a teacher resolves the row the question is ordinary again.
+    row is still open, which the student has not already self-marked, and which
+    someone can see and resolve (:func:`~lemely.db.review_repo.attempt_has_reviewer`,
+    the review queue's own visibility rule). The self-review panel assumes the
+    marker read the student's answer, which a binding doubt says may be false,
+    so it is not offered at all (and a claim is refused as for any ineligible
+    question). Once a teacher resolves the row the question is ordinary again.
+    A student no one can see is not withheld: nothing would ever resolve the
+    row, so they are offered it, and the authority rule still sends the claim
+    through evidence and the judge (an unread question stays no change).
     """
-    return has_binding_doubt(qr.review_reason) and any(
+    if qr.is_self_marked or not has_binding_doubt(qr.review_reason):
+        return False
+    if not any(
         item.reason is ReviewReason.low_confidence and item.status is ReviewStatus.open
         for item in qr.review_queue_items
-    )
+    ):
+        return False
+    session = object_session(qr)
+    if session is None:
+        return False  # not persisted: there is no queue row to wait on
+    attempt = session.get(Attempt, qr.attempt_id)
+    return attempt is not None and attempt_has_reviewer(session, attempt)
 
 
 def self_review_withheld_ids(session: Session, attempt_id: uuid.UUID) -> set[uuid.UUID]:
@@ -678,11 +693,18 @@ def self_review_withheld_ids(session: Session, attempt_id: uuid.UUID) -> set[uui
         .join(ReviewQueueItem, ReviewQueueItem.question_result_id == QuestionResult.id)
         .where(
             QuestionResult.attempt_id == attempt_id,
+            QuestionResult.student_selfmarked_at.is_(None),
             ReviewQueueItem.reason == ReviewReason.low_confidence,
             ReviewQueueItem.status == ReviewStatus.open,
         )
     ).all()
-    return {row_id for row_id, reason in rows if has_binding_doubt(reason)}
+    ids = {row_id for row_id, reason in rows if has_binding_doubt(reason)}
+    if not ids:
+        return set()
+    attempt = session.get(Attempt, attempt_id)
+    if attempt is None or not attempt_has_reviewer(session, attempt):
+        return set()
+    return ids
 
 
 def _source_box_columns(cq: CorrectedQuestion) -> dict[str, int | None]:
