@@ -219,6 +219,7 @@ class PendingSelfReview:
     question_id: str
     maximum_marks: int
     evidence_required: bool
+    binding_doubt: bool
     points: list[PendingPoint]
 
 
@@ -239,6 +240,7 @@ class RevealedSelfReview:
     question_id: str
     maximum_marks: int
     evidence_required: bool
+    binding_doubt: bool
     ai_marks: int
     effective_marks: int
     student_marks: int | None
@@ -1052,6 +1054,7 @@ def _to_view(session: Session, qr: QuestionResult) -> PendingSelfReview | Reveal
             question_id=qr.question_id,
             maximum_marks=qr.maximum_marks,
             evidence_required=evidence_required,
+            binding_doubt=has_binding_doubt(qr.review_reason),
             points=[
                 PendingPoint(
                     mark_point_id=p.mark_point_id,
@@ -1088,6 +1091,7 @@ def _revealed_view(
         question_id=qr.question_id,
         maximum_marks=qr.maximum_marks,
         evidence_required=evidence_required,
+        binding_doubt=has_binding_doubt(qr.review_reason),
         ai_marks=qr.awarded_marks,
         effective_marks=qr.effective_marks,
         student_marks=qr.student_selfmark_marks,

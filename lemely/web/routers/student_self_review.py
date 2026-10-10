@@ -142,6 +142,7 @@ def _pending_dto(view: PendingSelfReview) -> SelfReviewPendingDTO:
         questionId=view.question_id,
         maxMarks=view.maximum_marks,
         evidenceRequired=view.evidence_required,
+        bindingDoubt=view.binding_doubt,
         points=[
             SelfReviewPendingPointDTO(
                 markPointId=p.mark_point_id,
@@ -167,6 +168,7 @@ def _revealed_dto(view: RevealedSelfReview) -> SelfReviewRevealedDTO:
         questionId=view.question_id,
         maxMarks=view.maximum_marks,
         evidenceRequired=view.evidence_required,
+        bindingDoubt=view.binding_doubt,
         aiMarks=view.ai_marks,
         effectiveMarks=view.effective_marks,
         studentMarks=view.student_marks,

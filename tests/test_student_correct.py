@@ -1901,8 +1901,8 @@ def test_an_unaligned_leaf_is_persisted_dropped_flagged_queued_and_has_no_panel(
     assert not [f for f in frames if f["type"] == "error"], resp.text
     (complete,) = [f for f in frames if f.get("phase") == "complete"]
     by_id = {q["questionId"]: q for q in complete["questions"]}  # type: ignore[index, union-attr]
-    # No self-review panel while a teacher can see the row; offered to a student in no class.
-    assert (by_id["4b_i"]["questionResultId"] is None) is has_teacher
+    # A question that was never read is never offered, whoever can see the row.
+    assert by_id["4b_i"]["questionResultId"] is None
     assert "4b_i" not in api.marker.asked  # type: ignore[attr-defined]  # no marking call
     assert by_id["1a_i"]["questionResultId"] is not None
     with pg_sessionmaker() as session:

@@ -62,7 +62,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import object_session
 
-from lemely.core.binding_review import has_binding_doubt
+from lemely.core.binding_review import has_binding_doubt, is_unbound_question
 from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD, dedupe_point_verdicts
 from lemely.core.topics import classify, is_writable
 from lemely.db.history_repo import month_to_enum, parse_user_id
@@ -656,21 +656,26 @@ def grants_self_mark_authority(qr: QuestionResult) -> bool:
 
 
 def self_review_withheld(qr: QuestionResult) -> bool:
-    """Whether self-review is withheld from this question until a teacher resolves it.
+    """Whether self-review is not offered on this question.
 
-    True for a question with a binding doubt whose teacher ``low_confidence``
-    row is still open, which the student has not already self-marked, and which
-    someone can see and resolve (:func:`~lemely.db.review_repo.attempt_has_reviewer`,
-    the review queue's own visibility rule). The self-review panel assumes the
-    marker read the student's answer, which a binding doubt says may be false,
-    so it is not offered at all (and a claim is refused as for any ineligible
-    question). Once a teacher resolves the row the question is ordinary again.
-    A student no one can see is not withheld: nothing would ever resolve the
-    row, so they are offered it, and the authority rule still sends the claim
-    through evidence and the judge (an unread question stays no change).
+    Two cases, both skipped once the student has already self-marked (their
+    recorded claim stays readable):
+
+    * A question that was never read (:func:`~lemely.core.binding_review.is_unbound_question`)
+      is never offered, to anyone: no answer was read, so a claim cannot change
+      anything and the panel can only say untrue things about it.
+    * A question with a binding doubt whose teacher ``low_confidence`` row is
+      still open, while someone can see and resolve it
+      (:func:`~lemely.db.review_repo.attempt_has_reviewer`, the review queue's own
+      visibility rule). Once a teacher resolves the row the question is ordinary
+      again. A student no one can see is not withheld there: nothing would ever
+      resolve the row, so they are offered it, and the authority rule still sends
+      the claim through evidence and the judge.
     """
     if qr.is_self_marked or not has_binding_doubt(qr.review_reason):
         return False
+    if is_unbound_question(qr.review_reason, qr.student_answer):
+        return True
     if not any(
         item.reason is ReviewReason.low_confidence and item.status is ReviewStatus.open
         for item in qr.review_queue_items
@@ -686,25 +691,39 @@ def self_review_withheld(qr: QuestionResult) -> bool:
 def self_review_withheld_ids(session: Session, attempt_id: uuid.UUID) -> set[uuid.UUID]:
     """The ids of one attempt's questions for which :func:`self_review_withheld` holds.
 
-    One query for the whole attempt, for the callers that list questions.
+    One query for the whole attempt (plus the visibility rule once), for the callers
+    that list questions.
     """
-    rows = session.execute(
-        select(QuestionResult.id, QuestionResult.review_reason)
-        .join(ReviewQueueItem, ReviewQueueItem.question_result_id == QuestionResult.id)
-        .where(
+    candidates = session.execute(
+        select(
+            QuestionResult.id, QuestionResult.review_reason, QuestionResult.student_answer
+        ).where(
             QuestionResult.attempt_id == attempt_id,
             QuestionResult.student_selfmarked_at.is_(None),
+            QuestionResult.review_reason.is_not(None),
+        )
+    ).all()
+    doubted = {
+        rid: (reason, answer) for rid, reason, answer in candidates if has_binding_doubt(reason)
+    }
+    if not doubted:
+        return set()
+    never_read = {
+        rid for rid, (reason, answer) in doubted.items() if is_unbound_question(reason, answer)
+    }
+    open_rows = session.scalars(
+        select(ReviewQueueItem.question_result_id).where(
+            ReviewQueueItem.question_result_id.in_(list(doubted)),
             ReviewQueueItem.reason == ReviewReason.low_confidence,
             ReviewQueueItem.status == ReviewStatus.open,
         )
     ).all()
-    ids = {row_id for row_id, reason in rows if has_binding_doubt(reason)}
-    if not ids:
-        return set()
-    attempt = session.get(Attempt, attempt_id)
-    if attempt is None or not attempt_has_reviewer(session, attempt):
-        return set()
-    return ids
+    waiting = {rid for rid in open_rows if rid is not None}
+    if waiting:
+        attempt = session.get(Attempt, attempt_id)
+        if attempt is None or not attempt_has_reviewer(session, attempt):
+            waiting = set()
+    return never_read | waiting
 
 
 def _source_box_columns(cq: CorrectedQuestion) -> dict[str, int | None]:
