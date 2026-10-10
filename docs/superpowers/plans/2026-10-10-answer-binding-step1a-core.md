@@ -10,6 +10,8 @@
 
 Spec: `docs/superpowers/specs/2026-10-09-answer-binding-design.md`. Line numbers refer to `develop` at 885724d0.
 
+> **Read the section "Amendments during execution" at the end before any task below.** Tasks 2, 3, 4, 5, 6, 7, 8, 10 and 11 were built to amended rules; where a task's text and the amendments differ, the amendments and the code are right.
+
 ## Scope
 
 Step 1 of the spec holds two subsystems. This plan is **1A**, the binding core. **1B**, the product hold flow (`UploadStatus.held`, `ReviewReason.binding_unverified`, the result API's `state`, the student, teacher and admin screens), gets its own plan.
@@ -438,3 +440,55 @@ Last, on the final tree. A later fix commit voids it.
 | `held` status, review reason, result `state`, screens | plan 1B |
 | `binding_accuracy` harness metric | later plan, with the question-paper corpus; Task 13 measures it by hand |
 | G3, G4, layout, page map, position binder | spec steps 2 and 3 |
+
+---
+
+## Amendments during execution
+
+Recorded on 2026-10-10. Each entry says what changed, why, and where the rule now lives. The per-task briefs that replaced the plan's text are working files outside the repository; the code and its docstrings are the lasting record.
+
+### Why the design moved
+
+Task 2 was the go/no-go measurement of the two-stream read that Tasks 4 and 7 were written for. It failed twice.
+
+- Two streams, bound by position (15 runs): `gemini-3.8-flash` read every label text in order, but reported one to six label boxes in the wrong place in 5 of 10 runs. Binding by position then moved answers to the previous question. `gemini-3.5-flash-lite` dropped question numbers and drifted across pages.
+- One interleaved list, bound by order (5 runs), and one page per call (5 runs): 3 of 5 and 2 of 5 runs met the bar. The order-based failures were one cause: a printed question number the student had ringed was left out.
+
+The owner chose the order-based read with rules that refuse to bind when the evidence is short. Positions take no part in binding. Only `gemini-3.8-flash` reads.
+
+### Task by task
+
+- **File Structure table.** It is stale. Not in it: `lemely/core/binding_review.py` (which questions carry a binding doubt), `lemely/io/binding/orchestrate.py` (two reads, checks, choice of read), `lemely/io/extraction_coerce.py` (field coercion shared by both binders), `lemely/db/binding_audit.py`, `lemely/web/services/grading.py` (the two fail-closed checkpoints). `LabelMarker`, `align` and `bind_by_markers` do not exist; `BindingSource` has a third value, `legacy`.
+- **Task 3.** `AIMarkResponse.addresses_question` moved to Task 8. Two schema-hash pins guard the marker's cache key, so the field, the prompt version and the pins had to land in one commit.
+- **Task 4.** Rewritten. `lemely/core/label_sequence.py` exposes `bind_stream(items, mark_scheme)`: it aligns the labels of one reading-order list with the scheme's label sequence and attaches each piece of writing to the aligned label before it. A first position-based version was rejected in review (130 of 7,955 single-fault trials shifted a leaf). The rules that decide when a leaf stays unbound are in the module's docstring, with a section "Known limits" that gives each limit's measured size and the test that pins it. A label that cannot be read is a barrier. A question number is inferred only when one reading fits. Writing marked uncertain, tied by an arrow, or at the top of a page is never attached silently.
+- **Task 5.** Expected values also come from untyped mark-scheme points that hold one bare value (30% of non-multiple-choice leaves, against 5% under the plan's rule). An answer is read for values only when its shape is a number.
+- **Task 6.** G6 counts only clear shape mismatches and needs a minimum count. G7 looks for runs of answers that match only a neighbour's expected value, per offset. G8 treats only a `yes` as breaking a run. G9 takes the mark scheme, leaves out multiple-choice leaves, and ignores short and shared answers. `answer_matches_only` in `binding_expect.py` serves G7. G5 gained paper-scope conditions in Task 10: more than 10% of leaves unaligned, more than two labels unplaced (the plan said any), two or more listing suspects, any lost item, or a suspect group that names no leaf.
+- **Task 7.** Rewritten. One model call returns `items`, a list of labels and writing in reading order, with no question id. `LabelBinder.read`, then `bind_stream`, then `to_bound_read`. A malformed item is dropped and counted, and the count fails the paper (it may have been writing).
+- **Task 8.** Marker prompt `VERSION` 7. `addresses_question` is required on the wire and lenient in Python. `no` is for a plainly different topic only. G8 is appended only when the extraction carries a binding report, so quizzes and the harness are unchanged.
+- **Task 9.** Defaults after the sweep: `shift_min_matches` 3, `shift_max_gap` 6, `shape_min_count` 3, `shape_mismatch_rate` 0.33.
+- **Task 10.** The retry is a second read by the same model at a different thinking level (task tag `binding_second_read`), not a stronger model: no second model produced a usable list. Both reads run on every paper. Order of choice: the reads disagree at paper scope, hold; the first read is clean, use it; the second is clean, use it; otherwise hold. A leaf with no aligned label goes to teacher review through `unbound_question_ids` and is never marked as a blank zero. A leaf answered in only one of the two reads goes to review. The label binder requires `gate = "enforce"`; `observe` and `off` exist only with `binder = "legacy"`. The gate result is a server-side event and log line and is not streamed to the browser. Decided after the whole-branch review: with the second read on, a paper is never published on one read (a second read that fails twice fails the job with a service error); a verdict other than `pass` does not pin its reads in the response cache, so a re-run reads the scan afresh; a scheme whose leaves are all multiple choice keeps the legacy binder, because no such scan has been read by the label binder; an answered leaf with other writing set aside under it is unverified and goes to review.
+- **Task 11.** Any verdict other than `pass` blocks publication, at two points: after extraction and after marking. It covers the student job, the teacher console job and regrade. Added during review: a question with a binding doubt is not offered for self-review until a teacher resolves it, and a student can neither close the teacher's row nor gain marks on it. For a student whom no teacher can see, the question is offered: an unverified answer needs evidence and the judge, and a question that was never read stays unchanged. The console's stored `report_json` keeps its earlier shape (no `binding`, no `addresses_question`), so a revision rollback can still read it; the gate result is in the server log until plan 1B stores it.
+- **Global constraint on review.** Per-task review used the general reviewer with the superpowers task-review template, by the owner's instruction, in place of `accuracy-reviewer`.
+
+### What the spec's acceptance line cannot mean
+
+The spec asks the gate for 99% detection of misbinding at no more than 2% false holds. The checks that run before marking cannot give that, and the measurements say so:
+
+- a whole-paper shift by one is caught on 314 of 320 schemes that have at least three numeric leaves, and on 330 of 578 over all schemes;
+- over 210 schemes, a shift of three leaves is caught on one scheme and a shift of five leaves on 30;
+- correct papers were held 0 of 12 (real) and 5 of 630 (simulated).
+
+Protection therefore rests first on binding correctly (the binder refuses when evidence is short), then on the second read and the marker's check. The acceptance wording is the owner's to restate.
+
+Two more measurements bear on it. The marker's check (G8) held a whole-paper shift on the recorded extraction (20 of 35 shifted answers judged off topic) and passed both recorded short shifts (four and five answers, every one judged on topic), so a short shift is stopped only by the binder not producing one. And Task 13's band for the total (within 5 marks of the teacher's 66) cannot separate binding from marking: the marker alone, on the correctly bound text, gave 62, 60 and 62 of 80.
+
+### Known limits carried forward
+
+- Separate answer sheets: a skipped part has no label, so the answered leaf before it stays unbound, and the paper is held once more than 10% of leaves are unaligned. Simulated on five schemes with handwritten labels, no reader fault and no wrong binding, the share of papers held was: one part skipped, 3 of 1,000 (bare labels) and 0 of 1,000 (full path on every label); two skipped, 250 and 376; three skipped, 754 and 955; four skipped, 959 and 1,000. Not attempting the last question holds 0625/41. Both reads fail the same way, so the second read does not help. No separate-sheet scan has been measured. The spec makes separate sheets a first-class path; this is the owner's decision before the label binder is trusted for them.
+- Paper shapes read live by the label binder: one theory paper (0625/41), one student's script. Nothing else.
+- A leaf sent to review unbound counts as zero of its marks in the total, the grade and the weakness figures until a teacher resolves it. The spec says "pending, not zero"; that needs plan 1B.
+- Writing that falls after a container label (a question number or part letter that has parts of its own) is set aside with no leaf to carry a doubt. It survives only in `unbound_answers`.
+- A paper held after marking has already streamed each question's marks to the browser as progress frames. Nothing is stored or shown.
+- Wrong bindings the binder cannot see by itself: a label read as a different valid label, several labels missed in a row, a missing or swapped page, writing listed before its label, a continuation block with no label. Sizes are in the "Known limits" section of `lemely/core/label_sequence.py` and in the docstrings of the `test_known_*` tests.
+- The CLI `correct-paper` command and the Gradio app do not apply the verdict.
+- `unbound_answers` is not persisted. The review reason shown for a binding doubt is internal wording. Both belong to plan 1B with the teacher screen.
