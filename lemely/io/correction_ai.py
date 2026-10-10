@@ -2486,7 +2486,10 @@ def _forget_reads_of_a_held_paper(
     that gives a question the same answer text may reuse its marking.
 
     An extraction that carries no keys (built by hand, loaded from a stored record or
-    a file, made with no gate) has nothing to forget, and nothing is called.
+    a file, made with no gate) has nothing to forget, and nothing is called. A client
+    whose cache mode is ``"bypass"`` removes nothing (``GeminiClient.forget_cached``):
+    it leaves the shared cache as it found it. Under ``"read_write"`` a held scan is
+    therefore read afresh on every run, harness sweeps included; that is intended.
     """
     if result.binding is None or result.binding.verdict == "pass":
         return

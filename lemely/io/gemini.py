@@ -1121,7 +1121,18 @@ class GeminiClient:
         paper it held, so that the next run on the same scan reads it afresh instead
         of replaying the same hold. A key with no entry (a bypassed call, or one that
         failed) is passed over.
+
+        Only a client that writes the cache removes from it. When
+        ``default_cache_mode`` is ``"bypass"`` nothing is removed and 0 is returned: a
+        bypassing client leaves the shared cache as it found it, so a measurement run
+        beside a baseline cannot delete the entries another run wrote. Under
+        ``"read_write"`` and ``"refresh"`` the entries go. That means a scan that is
+        held is read afresh on every ``read_write`` run, harness sweeps included, and
+        is paid for each time; that is intended, because a held paper replayed from
+        the cache is held for ever.
         """
+        if self.default_cache_mode not in ("read_write", "refresh"):
+            return 0
         forgotten = 0
         for cache_key in cache_keys:
             cache_path = self._cache_path(cache_key)

@@ -31,6 +31,7 @@ from lemely.core.schemas import AIMarkResponse, ConfidenceBand, ExtractedAnswers
 from lemely.io import correction_ai
 from lemely.io.answer_extraction import GeminiAnswerExtractor
 from lemely.io.binding import parse_stream_items, to_bound_read
+from lemely.io.binding.label_binder import LabelBinder
 from lemely.io.binding.orchestrate import LOST_ITEM_REASONS, BindingOutcome, run_binding
 from lemely.io.correction_ai import correct_paper
 from lemely.io.gemini import GeminiClient
@@ -817,6 +818,48 @@ def test_a_second_read_that_crashes_twice_fails_the_job_with_a_fixed_sentence(
     with pytest.raises(RuntimeError) as raised_first:
         _bind(tmp_path, scheme, _Model(first=crash, second=_items(_run(1))))
     assert raised_first.value is crash
+
+
+def _crashing_after_the_second_read(crashes: list[Exception]) -> Any:
+    """``LabelBinder.read`` that, for the second read, gets the reply and then crashes.
+
+    The reply is in the response cache by then: this is a bug in parsing or binding it.
+    One crash is taken from ``crashes`` per second read, until there are none.
+    """
+    real = LabelBinder.read
+
+    def _read(self: LabelBinder, *args: Any, **kwargs: Any) -> Any:
+        stream = real(self, *args, **kwargs)
+        if kwargs["task_tag"] == "binding_second_read" and crashes:
+            raise crashes.pop(0)
+        return stream
+
+    return patch.object(LabelBinder, "read", _read)
+
+
+def test_a_second_read_that_crashed_is_made_again_by_a_model_call(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The reply the crash came from is cached. "Once more" from the cache would be the
+    # same reply and the same crash: the second attempt has to ask the model.
+    client, genai = _client(tmp_path)
+    genai.models.generate_content.return_value = _sdk_reply(_items(_run(1)))
+    with _crashing_after_the_second_read([RuntimeError("a bug in parsing the reply")]):
+        outcome = _bind_for_real(client, scheme)
+    assert outcome.report.verdict == "pass" and outcome.report.checks[-1].id == "G9"
+    # First read, second read, second read again.
+    assert genai.models.generate_content.call_count == 3
+    cache_dir = client._settings.paths.cache_dir / "gemini"
+    assert sorted(p.stem for p in cache_dir.glob("*.json")) == sorted(outcome.read_cache_keys)
+
+    # The same when it crashes again: three calls, the job fails, nothing stays cached.
+    other, other_genai = _client(tmp_path / "twice")
+    other_genai.models.generate_content.return_value = _sdk_reply(_items(_run(1)))
+    crashes: list[Exception] = [RuntimeError("a bug"), RuntimeError("the same bug")]
+    with _crashing_after_the_second_read(crashes), pytest.raises(ExternalServiceError):
+        _bind_for_real(other, scheme)
+    assert other_genai.models.generate_content.call_count == 3
+    assert list((other._settings.paths.cache_dir / "gemini").glob("*.json")) == []
 
 
 def test_an_interrupt_during_the_second_read_is_not_swallowed(
@@ -2156,6 +2199,58 @@ def test_the_keys_of_the_reads_travel_on_the_extraction_and_are_never_serialised
     # Forgetting says how many entries were there; a key with none is passed over.
     assert client.forget_cached([keys[0], "0" * 16]) == 1
     assert [path.stem for path in cache_dir.glob("*.json")] == [keys[1]]
+
+
+@pytest.mark.parametrize(("mode", "left"), [("bypass", 2), ("refresh", 0), ("read_write", 0)])
+def test_a_hold_after_marking_forgets_reads_only_through_a_client_that_writes_the_cache(
+    tmp_path: Path, scan: Path, scheme: MarkScheme, mode: Any, left: int
+) -> None:
+    # A client in "bypass" mode leaves the shared cache as it found it: that is what
+    # the mode is for (a churn measurement beside a baseline that another run wrote).
+    # So a paper it holds must not cost the other run its two reads.
+    writer, genai = _client(tmp_path)
+    genai.models.generate_content.return_value = _sdk_reply(_items(_run(1)))
+    GeminiAnswerExtractor(writer, max_rereads_per_paper=0)(scan_path=scan, mark_scheme=scheme)
+    cache_dir = writer._settings.paths.cache_dir / "gemini"
+    assert len(list(cache_dir.glob("*.json"))) == 2
+
+    other = GeminiClient(writer._settings, _genai_client=genai, default_cache_mode=mode)
+    extracted = GeminiAnswerExtractor(other, max_rereads_per_paper=0)(
+        scan_path=scan, mark_scheme=scheme
+    )
+    assert len(extracted.read_cache_keys()) == 2
+    assert len(list(cache_dir.glob("*.json"))) == 2
+    held = _marked(other, scheme, extracted, "no")
+    assert held.binding is not None and held.binding.verdict == "hold"
+    assert len(list(cache_dir.glob("*.json"))) == left
+
+
+@pytest.mark.parametrize(("mode", "left"), [("bypass", 2), ("refresh", 0)])
+def test_a_hold_before_marking_forgets_reads_only_through_a_client_that_writes_the_cache(
+    tmp_path: Path, scheme: MarkScheme, mode: Any, left: int
+) -> None:
+    writer, genai = _client(tmp_path)
+    genai.models.generate_content.return_value = _sdk_reply(_items(_run(1)))
+    passed = _bind_for_real(writer, scheme)
+    cache_dir = writer._settings.paths.cache_dir / "gemini"
+    assert sorted(p.stem for p in cache_dir.glob("*.json")) == sorted(passed.read_cache_keys)
+
+    # The same paper through another client: this time the reader misses labels.
+    other = GeminiClient(writer._settings, _genai_client=genai, default_cache_mode=mode)
+    genai.models.generate_content.return_value = _sdk_reply(_items(_question_4_unanchored(4)))
+    held = _bind_for_real(other, scheme)
+    assert held.report.verdict == "hold"
+    assert genai.models.generate_content.call_count == 4
+    assert len(list(cache_dir.glob("*.json"))) == left
+    # Asked directly, the bypassing client says it removed nothing.
+    if mode == "bypass":
+        assert other.forget_cached(passed.read_cache_keys) == 0
+        assert len(list(cache_dir.glob("*.json"))) == 2
+        # A job that fails through it leaves the entries too.
+        genai.models.generate_content.side_effect = ExternalServiceError("down")
+        with pytest.raises(ExternalServiceError):
+            _bind_for_real(other, scheme)
+        assert len(list(cache_dir.glob("*.json"))) == 2
 
 
 def test_the_upload_jobs_read_a_paper_held_after_marking_afresh(

@@ -345,7 +345,12 @@ def _note_failed_second_read(error: Exception) -> None:
     _publish_failed_read(error, SECOND_READ_TASK_TAG)
 
 
-def _read_both(first: Callable[[], _Read], second: Callable[[], _Read]) -> tuple[_Read, _Read]:
+def _read_both(
+    first: Callable[[], _Read],
+    second: Callable[[], _Read],
+    *,
+    forget_second: Callable[[], object] | None = None,
+) -> tuple[_Read, _Read]:
     """Run the two reads at the same time and return both, or raise.
 
     Each read runs under ``contextvars.copy_context().run`` so that its bus events
@@ -357,7 +362,11 @@ def _read_both(first: Callable[[], _Read], second: Callable[[], _Read]) -> tuple
     A paper is never let out on one read when two were asked for: on one read a block
     the reader missed is a blank, and a blank is an unflagged zero. So a second read
     that fails (a service error, a reply that does not parse, or a crash) is published
-    as ``SECOND_READ_FAILED`` and made once more, here, on the calling thread. If it
+    as ``SECOND_READ_FAILED`` and made once more, here, on the calling thread.
+    ``forget_second`` is called before that attempt: it takes the second read's reply
+    out of the response cache, because a crash in parsing or binding a reply comes
+    after the reply was cached, and the same reply back from the cache would crash the
+    same way. With it the second attempt is a model call. If it
     fails again the job fails with that error, exactly as for the first read: nothing
     is known about the binding, so there is no verdict to give. A crash that is not a
     ``LemelyError`` is logged with its traceback and raised as an
@@ -392,6 +401,8 @@ def _read_both(first: Callable[[], _Read], second: Callable[[], _Read]) -> tuple
         return first_read, second_read
     if second_error is not None:
         _note_failed_second_read(second_error)
+    if forget_second is not None:
+        forget_second()
     try:
         return first_read, second()
     except CostCeilingError:
@@ -507,7 +518,9 @@ def run_binding(
     second_read: _Read | None = None
     if binding.second_read:
         try:
-            first_read, second_read = _read_both(_first, _second)
+            first_read, second_read = _read_both(
+                _first, _second, forget_second=lambda: client.forget_cached(read_cache_keys[1:])
+            )
         except CostCeilingError:
             raise
         except Exception:
