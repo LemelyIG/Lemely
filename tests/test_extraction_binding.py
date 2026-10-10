@@ -621,6 +621,37 @@ def test_run_three_unbound_blocks_are_the_three_drawn_on_notes(
     ]
 
 
+@pytest.mark.parametrize(
+    ("number", "doubted"),
+    [
+        (1, ["7b_i"]),
+        (2, ["2c"]),
+        (3, ["4b_i", "6b", "7b_i", "8d"]),
+        (4, ["3c", "4b_i"]),
+        (5, ["3c", "4b_i"]),
+    ],
+)
+def test_answers_the_binder_doubts_reach_a_teacher(
+    tmp_path: Path, scan: Path, scheme: MarkScheme, number: int, doubted: list[str]
+) -> None:
+    extracted = _extract(
+        tmp_path, scan, scheme, _Model(first=_items(_run(number))), second_read=False
+    )
+    assert [a.question_id for a in extracted.answers if a.binding_status == "unverified"] == doubted
+
+    marker = _Marker()
+    with patch.object(
+        correction_ai.AICorrector, "mark_question", autospec=True, side_effect=marker
+    ):
+        result = correct_paper(scheme, extracted, gemini_client=MagicMock())
+    reason = "binding unverified: this answer may include writing that belongs to another question"
+    flagged = [q for q in result.questions if reason in (q.review_reason or "")]
+    assert [q.question_id for q in flagged] == doubted
+    assert all(q.needs_teacher_review for q in flagged)
+    assert all(q.marker_source == "ai" and q.awarded_marks == q.maximum_marks for q in flagged)
+    assert set(doubted) <= set(marker.asked)  # marked as usual, then flagged
+
+
 def test_question_scope_failures_mark_answers_unverified(
     tmp_path: Path, scheme: MarkScheme
 ) -> None:

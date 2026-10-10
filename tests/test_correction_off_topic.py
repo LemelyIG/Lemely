@@ -32,6 +32,9 @@ from lemely.io.prompts.correction_ai import MARKER_SYSTEM_PROMPT, VERSION
 from lemely.runtime.config import MarkingOptions, PathsSettings, load_settings
 
 OFF_TOPIC_REASON = "binding unverified: answer appears to address a different question"
+UNVERIFIED_REASON = (
+    "binding unverified: this answer may include writing that belongs to another question"
+)
 # sha256 of MARKER_SYSTEM_PROMPT at VERSION "5", the text before this check existed.
 VERSION_5_PROMPT_SHA256 = "e1281162f0086b769a6686d38caab22c7bdd56560377f599a50aa624af3cea49"
 SECTION_START = "**Last field: `addresses_question`"
@@ -726,3 +729,124 @@ def test_a_hold_from_extraction_survives_a_clean_g8():
     assert result.binding is not None
     assert _g8(result).passed
     assert result.binding.verdict == "hold"
+
+
+# --- An answer the binding left unverified ------------------------------------
+
+
+def _paper_with_statuses(
+    statuses: list[str | None],
+    *,
+    flags: list[str | None] | None = None,
+    binding: BindingReport | None = GATED,
+    mcq: bool = False,
+    **reply_kwargs: Any,
+) -> CorrectionResult:
+    """One written question per status, answered, with that ``binding_status`` on its answer.
+
+    ``mcq`` adds one multiple-choice question after them, answered correctly, with the
+    last status.
+    """
+    theory = len(statuses) - (1 if mcq else 0)
+    ids = [str(n) for n in range(1, len(statuses) + 1)]
+    flags = flags if flags is not None else ["yes"] * theory
+    extracted = ExtractedAnswers.model_validate(
+        {
+            "paper_id": "p",
+            "source_scan": "x.pdf",
+            "answers": [
+                {
+                    "question_id": qid,
+                    "answer": "A" if mcq and qid == ids[-1] else f"answer {qid}",
+                    "confidence": 0.95,
+                    "binding_source": "label",
+                    "binding_status": status,
+                }
+                for qid, status in zip(ids, statuses, strict=True)
+            ],
+            "binding": binding.model_dump() if binding is not None else None,
+        }
+    )
+    return _mark_with(
+        {qid: _reply(flag, **reply_kwargs) for qid, flag in zip(ids, flags, strict=False)},
+        mark_scheme=_scheme(theory, mcq=mcq),
+        extracted_answers=extracted,
+    )
+
+
+def test_unverified_binding_sends_its_question_to_review_and_keeps_its_marks():
+    result = _paper_with_statuses(["verified", "unverified", "verified", None, "verified"])
+    by_id = {q.question_id: q for q in result.questions}
+    assert by_id["2"].needs_teacher_review
+    assert by_id["2"].review_reason == UNVERIFIED_REASON
+    assert by_id["2"].awarded_marks == 1 and by_id["2"].marker_source == "ai"
+    # A verified answer, and one with no status at all, are not flagged by this.
+    for qid in ("1", "3", "4", "5"):
+        assert not by_id[qid].needs_teacher_review, qid
+        assert by_id[qid].review_reason is None, qid
+    # The paper-level flag and totals are computed from the flagged rows.
+    assert result.needs_teacher_review
+    assert (result.awarded_marks, result.maximum_marks) == (5, 5)
+    # It is a question for a teacher, not a reason to stop the paper.
+    assert result.binding is not None
+    assert result.binding.verdict == "pass"
+    assert [c.id for c in result.binding.checks] == ["G1", "G8"]
+
+
+def test_no_unverified_answer_means_no_flag_from_it():
+    result = _paper_with_statuses(["verified", None, "verified"])
+    assert [q.review_reason for q in result.questions] == [None] * 3
+    assert not result.needs_teacher_review
+
+
+def test_unverified_status_without_a_report_changes_nothing():
+    # Quiz marking, the harness's golden answers, an extraction with the gate off or
+    # only observing: no report, so nothing is flagged even where a status is set.
+    statuses = ["unverified", "verified", "unverified"]
+    baseline = _paper_with_statuses([None] * 3, binding=None)
+    result = _paper_with_statuses(statuses, binding=None)
+    assert result.binding is None
+    assert result.model_dump() == baseline.model_dump()
+    assert [q.review_reason for q in result.questions] == [None] * 3
+    assert not result.needs_teacher_review
+
+
+def test_unverified_reason_is_joined_onto_existing_reasons():
+    result = _paper_with_statuses(["unverified", "verified"], confidence=0.5)
+    low_confidence = "confidence 0.50 below review threshold 0.90"
+    assert result.questions[0].review_reason == f"{low_confidence} | {UNVERIFIED_REASON}"
+    assert result.questions[1].review_reason == low_confidence
+
+    # With the marker's own doubt about the same answer, both are said, G8's first.
+    result = _paper_with_statuses(["unverified", "verified"], flags=["no", "yes"])
+    assert result.questions[0].review_reason == f"{OFF_TOPIC_REASON} | {UNVERIFIED_REASON}"
+    assert result.questions[1].review_reason is None
+
+
+def test_marks_and_totals_are_not_changed_by_an_unverified_binding():
+    def marks(statuses: list[str | None]) -> list[tuple[Any, ...]]:
+        result = _paper_with_statuses(statuses, awarded=1, feedback="credited p1")
+        return [
+            (q.awarded_marks, q.confidence_score, q.matched_point_ids, q.feedback, q.marker_source)
+            for q in result.questions
+        ] + [(result.awarded_marks, result.maximum_marks)]
+
+    baseline = marks([None] * 5)
+    assert baseline[-1] == (5, 5)
+    assert marks(["unverified"] * 5) == baseline
+    assert marks(["verified", "unverified", None, "unverified", "verified"]) == baseline
+
+
+def test_unverified_multiple_choice_answer_is_flagged_and_keeps_its_mark():
+    result = _paper_with_statuses(["verified", "unverified"], mcq=True)
+    mcq = result.questions[-1]
+    assert mcq.marker_source == "deterministic" and mcq.awarded_marks == 1
+    assert mcq.needs_teacher_review and mcq.review_reason == UNVERIFIED_REASON
+    assert not result.questions[0].needs_teacher_review
+
+
+def test_unverified_binding_never_changes_the_verdict():
+    for statuses in (["unverified"] * 5, ["verified"] * 5):
+        assert _paper_with_statuses(statuses).binding.verdict == "pass"  # type: ignore[union-attr]
+        held = _paper_with_statuses(statuses, flags=["no"] * 5)
+        assert held.binding is not None and held.binding.verdict == "hold"

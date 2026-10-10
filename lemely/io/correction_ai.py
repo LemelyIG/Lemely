@@ -2277,7 +2277,33 @@ def _attach_extraction_context(
 #: names (see :func:`_with_off_topic_check`).
 OFF_TOPIC_REVIEW_REASON = "binding unverified: answer appears to address a different question"
 
+#: Appended to ``review_reason`` on each question whose answer the binding left
+#: ``binding_status="unverified"`` (see :func:`_with_off_topic_check`): the binder
+#: bound it but doubts what it holds (writing tied by an arrow, carried over from
+#: the page before, or beside a label that was not seen), or a question-scope
+#: gate check named it.
+UNVERIFIED_BINDING_REVIEW_REASON = (
+    "binding unverified: this answer may include writing that belongs to another question"
+)
+
 _VERDICT_SEVERITY: dict[BindingVerdict, int] = {"pass": 0, "retry": 1, "hold": 2}
+
+
+def _sent_to_review(
+    questions: list[CorrectedQuestion], ids: set[str], reason: str
+) -> list[CorrectedQuestion]:
+    """``questions`` with those in ``ids`` flagged for a teacher, ``reason`` joined on."""
+    return [
+        cq.model_copy(
+            update={
+                "needs_teacher_review": True,
+                "review_reason": _join_reason(cq.review_reason, reason),
+            }
+        )
+        if cq.question_id in ids
+        else cq
+        for cq in questions
+    ]
 
 
 def _with_off_topic_check(
@@ -2316,10 +2342,17 @@ def _with_off_topic_check(
     builders already gave. ``awarded_marks`` is never touched either way. The
     result is REBUILT, not ``model_copy``-ed, so ``calculate_totals`` derives
     the paper-level ``needs_teacher_review`` from the flagged rows.
+
+    The same switch covers the binding's own doubts. With a report, a question
+    whose answer carries ``binding_status="unverified"`` was marked as usual
+    and is then sent to teacher review with
+    :data:`UNVERIFIED_BINDING_REVIEW_REASON` joined onto its reasons, after
+    G8's when both apply. Its marks and the verdict are untouched. Without a
+    report a status changes nothing.
     """
-    prior = extracted_answers.binding if isinstance(extracted_answers, ExtractedAnswers) else None
-    if prior is None:
+    if not isinstance(extracted_answers, ExtractedAnswers) or extracted_answers.binding is None:
         return result
+    prior = extracted_answers.binding
     check = check_off_topic(result, GateThresholds())
     checks = [*prior.checks, check]
     recomputed = verdict(checks, retried=prior.retried)
@@ -2331,18 +2364,11 @@ def _with_off_topic_check(
     )
     questions = result.questions
     if not check.passed and check.scope == "question":
-        off_topic = set(check.question_ids)
-        questions = [
-            cq.model_copy(
-                update={
-                    "needs_teacher_review": True,
-                    "review_reason": _join_reason(cq.review_reason, OFF_TOPIC_REVIEW_REASON),
-                }
-            )
-            if cq.question_id in off_topic
-            else cq
-            for cq in questions
-        ]
+        questions = _sent_to_review(questions, set(check.question_ids), OFF_TOPIC_REVIEW_REASON)
+    unverified = {
+        a.question_id for a in extracted_answers.answers if a.binding_status == "unverified"
+    }
+    questions = _sent_to_review(questions, unverified, UNVERIFIED_BINDING_REVIEW_REASON)
     return CorrectionResult(metadata=result.metadata, questions=questions, binding=report)
 
 
