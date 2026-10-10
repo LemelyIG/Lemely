@@ -287,10 +287,7 @@ class Tally:
 # Each stream entry is (label text, leaf this label truly belongs to or None). A block
 # of writing carrying the leaf's id follows every label that has one. ``binds`` names
 # leaves that must still hold their own writing, so that no case passes by binding
-# nothing at all. The streams are the review's and stop early: the paper goes on after
-# them. Nothing separates the last question a stream reaches from the questions it
-# does not list, so that question is not bound, and ``binds`` names only the ones
-# before it. tests/test_label_sequence.py has each case again on the whole paper.
+# nothing at all.
 # --------------------------------------------------------------------------------------
 CRITICAL = [
     {
@@ -316,7 +313,18 @@ CRITICAL = [
             ("(ii)", "2b_ii"),
             ("(c)", "2c"),
         ],
-        "binds": ["1a_i", "1a_ii", "1b", "1c_i", "1c_ii"],
+        "binds": [
+            "1a_i",
+            "1a_ii",
+            "1b",
+            "1c_i",
+            "1c_ii",
+            "2a_i",
+            "2a_ii",
+            "2a_iii",
+            "2b_i",
+            "2b_ii",
+        ],
     },
     {
         "name": "C2 question number 2 misread as 3",
@@ -360,7 +368,7 @@ CRITICAL = [
             ("(i)", "3i"),
             ("(ii)", "3ii"),
         ],
-        "binds": [],
+        "binds": ["3i"],
     },
     {
         "name": "C4 'Q5 (b)' written inside question 1",
@@ -372,7 +380,7 @@ CRITICAL = [
             ("(ii)", "1a_ii"),
             ("Q5 (b)", "5b"),
         ],
-        "binds": [],
+        "binds": ["1a_i"],
     },
     {
         "name": "C5 2b's (i) missed and number 3 missed",
@@ -426,7 +434,7 @@ VARIANTS = [
             ("(ii)", "2a_ii"),
             ("(iii)", "2a_iii"),
         ],
-        "binds": ["1b", "1c_i", "1c_ii"],
+        "binds": ["1b", "1c_i", "1c_ii", "2a_i", "2a_ii"],
     },
     {
         "name": "C2b 2a's (i) read as (l), and (b) missed",
@@ -479,7 +487,7 @@ VARIANTS = [
             ("(ii)", "3b_ii"),
             ("(c)", "3c"),
         ],
-        "binds": ["2a_i", "2a_ii", "2a_iii", "2b_i"],
+        "binds": ["2a_i", "2a_ii", "2a_iii", "2b_i", "3b_i", "3b_ii"],
     },
 ]
 

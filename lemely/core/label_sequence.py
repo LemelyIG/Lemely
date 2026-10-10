@@ -901,22 +901,12 @@ def _align(paper: _Paper, labels: list[_Label]) -> _Alignment:
             }
         out.placed.update(own[root])
 
-    # Questions after an anchored one that have no anchor and were not inferred may
-    # have their labels inside its stretch of the list. Two signs of that:
-    # * nothing separates the two (no restart and no number ended the anchored
-    #   question): then its last bare part labels that the unseen question also has
-    #   may be that question's, and are not bound;
-    # * a part label the anchored question does not have and the unseen one does.
+    # A part label the question does not have, and that a question after it with no
+    # anchor does have, shows that question's labels inside this one's stretch.
     for k, cand in enumerate(anchored):
         nxt = anchored[k + 1].root if k + 1 < len(anchored) else len(paper.nodes)
         unseen = [r for r in paper.roots if cand.root < r < nxt and r not in out.inferred]
-        lo, hi, read = spans[cand.root]
-        if unseen and read.end == hi:
-            for position in sorted(own[cand.root], reverse=True):
-                label = labels[position]
-                if not any(paper.chains(other, label.readings) for other in unseen):
-                    break  # a label that names its question number is nobody else's
-                del out.placed[position]
+        lo, _, read = spans[cand.root]
         for position in range(lo, read.end):
             readings = labels[position].readings
             if labels[position].number is not None or paper.chains(cand.root, readings):
