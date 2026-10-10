@@ -433,6 +433,99 @@ def test_first_read_missing_a_question_number_and_complete_second_read_uses_the_
     assert (alone.report.verdict, alone.report.retried) == ("hold", False)
 
 
+def _without_items(items: list[Any], *indexes: int) -> list[Any]:
+    """``items`` without the blocks at ``indexes``: writing this read did not report."""
+    for index in indexes:
+        assert items[index]["type"] == "answer"
+    return [item for index, item in enumerate(items) if index not in indexes]
+
+
+def test_a_leaf_only_the_other_read_answered_goes_to_review_never_blank(
+    tmp_path: Path, scan: Path, scheme: MarkScheme
+) -> None:
+    # The first read did not report the block under 5(a) ("0.2 m"); the second did. The
+    # first read passes its own checks and is the one used, and in it 5(a) is a label
+    # with nothing after it: a blank. It is not one.
+    first = _without_items(_run(1), 53)
+    extracted = _extract(
+        tmp_path, scan, scheme, _Model(first=_items(first), second=_items(_run(1)))
+    )
+    report = extracted.binding
+    assert report is not None
+    assert (report.verdict, report.retried) == ("pass", False)
+    g9 = report.checks[-1]
+    assert (g9.id, g9.passed, g9.scope, g9.question_ids) == ("G9", False, "question", ["5a"])
+    assert "answered in one reading of the scan and left blank in the other: 5a" in g9.detail
+    assert "5a" not in {a.question_id for a in extracted.answers}
+    assert extracted.unbound_question_ids == ["5a"]
+    # What the other read saw there is kept, as writing with no question.
+    assert "0.2 m" in [w.answer for w in extracted.unbound_answers]
+
+    marker = _Marker()
+    with patch.object(
+        correction_ai.AICorrector, "mark_question", autospec=True, side_effect=marker
+    ):
+        result = correct_paper(scheme, extracted, gemini_client=MagicMock())
+    row = next(q for q in result.questions if q.question_id == "5a")
+    assert row.marker_source == "dropped" and row.needs_teacher_review  # not "blank"
+    assert "5a" not in marker.asked
+
+
+def test_a_leaf_only_the_returned_read_answered_is_kept_and_doubted(
+    tmp_path: Path, scan: Path, scheme: MarkScheme
+) -> None:
+    # The mirror: the read that is used has "0.2 m" under 5(a), the other saw nothing.
+    second = _without_items(_run(1), 53)
+    extracted = _extract(
+        tmp_path, scan, scheme, _Model(first=_items(_run(1)), second=_items(second))
+    )
+    assert extracted.binding is not None and extracted.binding.verdict == "pass"
+    answer = next(a for a in extracted.answers if a.question_id == "5a")
+    assert (answer.answer, answer.binding_status) == ("0.2 m", "unverified")
+    assert extracted.unbound_question_ids == []
+    assert _pairs(extracted) == _bound_alone(_run(1), scheme)
+
+    marker = _Marker()
+    with patch.object(
+        correction_ai.AICorrector, "mark_question", autospec=True, side_effect=marker
+    ):
+        result = correct_paper(scheme, extracted, gemini_client=MagicMock())
+    row = next(q for q in result.questions if q.question_id == "5a")
+    assert "5a" in marker.asked and row.awarded_marks == row.maximum_marks  # marked, marks kept
+    assert row.needs_teacher_review
+    assert "may include writing that belongs to another question" in (row.review_reason or "")
+
+
+def test_too_many_leaves_answered_in_one_read_only_hold_the_paper(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # Five single-block leaves of 42 answered (11.9%) are above the 10% limit; four
+    # (9.5%) are not.
+    five = _without_items(_run(1), 8, 18, 22, 29, 53)
+    held = _bind(tmp_path, scheme, _Model(first=_items(_run(1)), second=_items(five)))
+    assert held.report is not None
+    assert (held.report.verdict, held.report.retried) == ("hold", True)
+    assert _failed(held) == [("G9", "paper")]
+    assert held.report.checks[-1].question_ids == ["1b", "2a_i", "2a_iii", "2c", "5a"]
+    # Held or not, the five are not trusted where they are.
+    status = {a.question_id: a.binding_status for a in held.answers}
+    assert all(status[qid] == "unverified" for qid in ("1b", "2a_i", "2a_iii", "2c", "5a"))
+
+    four = _without_items(_run(1), 8, 18, 22, 29)
+    passed = _bind(tmp_path, scheme, _Model(first=_items(_run(1)), second=_items(four)))
+    assert passed.report is not None and passed.report.verdict == "pass"
+    assert _failed(passed) == [("G9", "question")]
+
+
+def test_identical_reads_change_nothing(tmp_path: Path, scheme: MarkScheme) -> None:
+    alone = _bind(tmp_path, scheme, _Model(first=_items(_run(1))), second_read=False)
+    both = _bind(tmp_path, scheme, _Model(first=_items(_run(1)), second=_items(_run(1))))
+    assert both.report is not None and all(c.passed for c in both.report.checks)
+    assert both.answers == alone.answers
+    assert both.unbound == alone.unbound
+    assert both.review_only_ids == alone.review_only_ids == []
+
+
 def test_reads_that_disagree_at_paper_scope_hold(tmp_path: Path, scheme: MarkScheme) -> None:
     second = _with_texts_rotated(_run(1), 6)
     # Each read is clean taken alone: only setting them side by side shows the problem.

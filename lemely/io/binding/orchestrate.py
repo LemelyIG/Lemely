@@ -16,6 +16,13 @@ The choice, with two reads (``G9`` compares them):
 3. the second read has none: pass, second read (``retried``);
 4. otherwise: hold, first read.
 
+Whichever read goes on, three kinds of leaf in it are not taken at face value. A leaf
+that has writing in exactly one of the two reads: if the read that goes on has the
+writing it is kept and doubted (``unverified``); if it has none, the leaf is not a
+blank, it goes to a teacher and the other read's writing for it is kept as unbound.
+A leaf in a group whose writing was listed before its labels: doubted if answered,
+to a teacher if not. And every leaf a failed question-scope check names: doubted.
+
 With one read (the second switched off, or failed), a paper-scope failure is a hold.
 The checks see part of what can go wrong: a pass means nothing was found, not that the
 binding is right.
@@ -47,6 +54,7 @@ from lemely.core.binding_gate import (
     check_shape,
     check_shift,
     check_unknown_ids,
+    presence_disagreements,
     suspect_group_leaves,
     verdict,
 )
@@ -81,9 +89,10 @@ class BindingOutcome:
     ``review_only_ids`` are the leaves that have no answer and are not blanks, so they
     must go to a teacher without a mark being attempted: the chosen read's unaligned
     leaves (no label was lined up with them, so whatever was written for them could not
-    be bound), and the leaf left with nothing in a group whose writing was listed
-    before its labels. ``drops`` is the chosen read's count of reply items left out or
-    repaired, by reason.
+    be bound), the leaf left with nothing in a group whose writing was listed before
+    its labels, and a leaf the chosen read left blank that the other read answered
+    (that writing is added to ``unbound``). ``drops`` is the chosen read's count of
+    reply items left out or repaired, by reason.
     """
 
     answers: list[ExtractedAnswer]
@@ -117,6 +126,17 @@ class LegacyOutcome:
     used_retry: bool
     report: BindingReport | None
     unverified_ids: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _Read:
+    """One read of the script: what ``bind_stream`` made of it, as records and as bound.
+
+    ``writings`` is the writing each bound leaf holds, by question id.
+    """
+
+    bound: BoundRead
+    writings: dict[str, list[SeenWriting]]
 
 
 def _as_extracted(answers: list[ExtractedAnswer]) -> ExtractedAnswers:
@@ -223,8 +243,8 @@ def _publish_result(
 
 
 def _read_both(
-    first: Callable[[], BoundRead], second: Callable[[], BoundRead]
-) -> tuple[BoundRead, BoundRead | None]:
+    first: Callable[[], _Read], second: Callable[[], _Read]
+) -> tuple[_Read, _Read | None]:
     """Run the two reads at the same time; the second may come back ``None``.
 
     Each read runs under ``contextvars.copy_context().run`` so that its bus events
@@ -240,7 +260,7 @@ def _read_both(
             pool.submit(contextvars.copy_context().run, first),
             pool.submit(contextvars.copy_context().run, second),
         ]
-        results: list[BoundRead | None] = [None, None]
+        results: list[_Read | None] = [None, None]
         errors: list[Exception | None] = [None, None]
         for position, future in enumerate(futures):
             try:
@@ -313,7 +333,7 @@ def run_binding(
         )
     binder = LabelBinder(client)
 
-    def _read(task_tag: str, suffix: str) -> BoundRead:
+    def _read(task_tag: str, suffix: str) -> _Read:
         stream = binder.read(
             pages,
             mark_scheme,
@@ -322,45 +342,56 @@ def run_binding(
             extra_cache_key=manifest_key + suffix,
             task_tag=task_tag,
         )
-        return to_bound_read(
-            bind_stream(stream.items, mark_scheme), page_count=len(pages), drops=stream.drops
+        bound = bind_stream(stream.items, mark_scheme)
+        return _Read(
+            bound=to_bound_read(bound, page_count=len(pages), drops=stream.drops),
+            writings={leaf.question_id: list(leaf.writings) for leaf in bound.leaves},
         )
 
-    def _first() -> BoundRead:
+    def _first() -> _Read:
         return _read("extraction", "|bind1")
 
-    def _second() -> BoundRead:
+    def _second() -> _Read:
         return _read(SECOND_READ_TASK_TAG, "|bind2")
 
-    second: BoundRead | None = None
+    second_read: _Read | None = None
     if binding.second_read:
-        first, second = _read_both(_first, _second)
+        first_read, second_read = _read_both(_first, _second)
     else:
-        first = _first()
+        first_read = _first()
+    first = first_read.bound
+    second = second_read.bound if second_read is not None else None
 
     thresholds = GateThresholds()
     first_checks = _label_checks(first, mark_scheme, thresholds)
     second_checks: list[BindingCheck] | None = None
     compared: list[BindingCheck] = []
+    lopsided: list[str] = []
     if second is not None:
         second_checks = _label_checks(second, mark_scheme, thresholds)
+        one, two = _as_extracted(first.answers), _as_extracted(second.answers)
         compared = [
             check_second_read(
-                _as_extracted(first.answers),
-                _as_extracted(second.answers),
+                one,
+                two,
                 mark_scheme,
                 thresholds,
+                first_unaligned=first.unaligned_ids,
+                second_unaligned=second.unaligned_ids,
             )
         ]
+        lopsided = presence_disagreements(
+            one, two, mark_scheme, first.unaligned_ids, second.unaligned_ids
+        )
 
-    chosen, chosen_checks = first, first_checks
+    chosen, chosen_checks, other = first, first_checks, second_read
     decided: BindingVerdict
     if _paper_failed(compared):
         decided, retried = "hold", True
     elif not _paper_failed(first_checks):
         decided, retried = "pass", False
     elif second is not None and second_checks is not None and not _paper_failed(second_checks):
-        chosen, chosen_checks = second, second_checks
+        chosen, chosen_checks, other = second, second_checks, first_read
         decided, retried = "pass", True
     else:
         decided, retried = "hold", second is not None
@@ -373,22 +404,35 @@ def run_binding(
         retried=retried,
         model=binding.read_model,
     )
+    answered = {answer.question_id for answer in chosen.answers}
     # A group that shows the trace of writing listed before its label is never
     # trusted, whatever the check's scope came out as: its answers sit one part out.
     # The answered leaves keep their answer, doubted; the blank one is not a blank
     # (its writing went to the leaf before) and goes to a teacher.
-    answered = {answer.question_id for answer in chosen.answers}
     suspect_leaves = suspect_group_leaves(mark_scheme, chosen.listing_suspects)
-    unverified = _question_scope_ids(checks) | (frozenset(suspect_leaves) & answered)
+    # A leaf with writing in one read only is trusted on neither side, held paper or
+    # not. Where this read has the writing it is kept and doubted. Where it has
+    # none the leaf is not a blank: it goes to a teacher, and what the other read
+    # saw there is kept as writing with no question.
+    seen_elsewhere = [leaf for leaf in lopsided if leaf not in answered]
+    unverified = _question_scope_ids(checks) | (frozenset([*suspect_leaves, *lopsided]) & answered)
     review_only = _in_paper_order(
         mark_scheme,
-        [*chosen.unaligned_ids, *(leaf for leaf in suspect_leaves if leaf not in answered)],
+        [
+            *chosen.unaligned_ids,
+            *(leaf for leaf in suspect_leaves if leaf not in answered),
+            *seen_elsewhere,
+        ],
     )
+    unbound = [u.writing for u in chosen.unbound]
+    if other is not None:
+        for leaf in seen_elsewhere:
+            unbound.extend(other.writings.get(leaf, []))
     _publish_result(
         enforced,
         settings=binding,
         returned_checks=checks,
-        unbound=len(chosen.unbound),
+        unbound=len(unbound),
         unaligned=len(review_only),
         inferred_numbers=chosen.inferred_numbers,
         drops=chosen.drops,
@@ -397,7 +441,7 @@ def run_binding(
     return BindingOutcome(
         answers=_with_statuses(chosen.answers, unverified),
         report=enforced,
-        unbound=[u.writing for u in chosen.unbound],
+        unbound=unbound,
         review_only_ids=review_only,
         drops=dict(chosen.drops),
     )

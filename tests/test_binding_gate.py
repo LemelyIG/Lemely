@@ -19,6 +19,7 @@ from lemely.core.binding_gate import (
     check_shape,
     check_shift,
     check_unknown_ids,
+    presence_disagreements,
     suspect_group_leaves,
     verdict,
 )
@@ -930,3 +931,140 @@ def test_g7_reproduction_shared_value_shift_fails_at_paper_scope() -> None:
         [("1", "11"), ("2", "11"), ("3", "22"), ("4", "22"), ("5", "44"), ("6", "55")]
     )
     assert not check_shift(extracted, scheme, DEFAULTS)[0].passed
+
+
+# --- G9: a leaf answered in only one of two reads ---------------------------------
+
+
+def _presence_scheme(count: int = 20) -> MarkScheme:
+    return _scheme([_leaf(str(i), None, prose=True) for i in range(1, count + 1)])
+
+
+def _sentences(ids: list[str]) -> ExtractedAnswers:
+    return _extracted([(qid, f"a full sentence written for question {qid}") for qid in ids])
+
+
+def _all(count: int = 20) -> list[str]:
+    return [str(i) for i in range(1, count + 1)]
+
+
+def _g9_presence(
+    first: list[str],
+    second: list[str],
+    *,
+    first_unaligned: list[str] | None = None,
+    second_unaligned: list[str] | None = None,
+    thresholds: GateThresholds = DEFAULTS,
+    count: int = 20,
+) -> BindingCheck:
+    return check_second_read(
+        _sentences(first),
+        _sentences(second),
+        _presence_scheme(count),
+        thresholds,
+        first_unaligned=first_unaligned or [],
+        second_unaligned=second_unaligned or [],
+    )
+
+
+def test_g9_a_leaf_answered_in_one_read_only_fails_at_question_scope() -> None:
+    check = _g9_presence(_all(), [qid for qid in _all() if qid != "7"])
+    assert (check.passed, check.scope, check.question_ids) == (False, "question", ["7"])
+    assert check.detail == (
+        "1 question was answered in one reading of the scan and left blank in the other: 7."
+    )
+    # Which read has it makes no difference: neither side is trusted.
+    mirror = _g9_presence([qid for qid in _all() if qid != "7"], _all())
+    assert (mirror.passed, mirror.scope, mirror.question_ids) == (False, "question", ["7"])
+
+
+def test_g9_identical_reads_pass_with_alignment_given() -> None:
+    check = _g9_presence(_all(), _all())
+    assert check.passed
+    assert check.detail == "The two reads agree on which question each answer belongs to."
+
+
+def test_g9_presence_counts_only_leaves_both_reads_aligned() -> None:
+    without_7 = [qid for qid in _all() if qid != "7"]
+    # The second read never found a label for 7: it has no answer there because it
+    # could bind none, not because it saw a blank. That is G5's to report, not G9's.
+    assert _g9_presence(_all(), without_7, second_unaligned=["7"]).passed
+    assert _g9_presence(without_7, _all(), first_unaligned=["7"]).passed
+
+
+def test_g9_presence_is_not_judged_without_alignment() -> None:
+    # The legacy extractor reports no labels: a missing answer may be a blank or a
+    # miss, so nothing can be concluded from one read having it and the other not.
+    scheme = _presence_scheme()
+    without_7 = [qid for qid in _all() if qid != "7"]
+    assert check_second_read(_sentences(_all()), _sentences(without_7), scheme, DEFAULTS).passed
+    assert presence_disagreements(_sentences(_all()), _sentences(without_7), scheme, [], []) == [
+        "7"
+    ]
+
+
+def test_g9_presence_rate_and_minimum_for_paper_scope() -> None:
+    assert DEFAULTS.second_read_presence_rate == 0.10
+
+    def missing(count: int, total: int = 20) -> BindingCheck:
+        absent = {str(i) for i in range(1, count + 1)}
+        second = [q for q in _all(total) if q not in absent]
+        return _g9_presence(_all(total), second, count=total)
+
+    # 2 of 20 answered is exactly 10%: not above the limit.
+    assert missing(2).scope == "question"
+    # 3 of 20 is above it and reaches the minimum of three.
+    three = missing(3)
+    assert (three.passed, three.scope, three.question_ids) == (False, "paper", ["1", "2", "3"])
+    assert three.detail.startswith("3 questions were answered in one reading")
+    # Above the rate but below the minimum count stays at question scope.
+    assert missing(2, total=10).scope == "question"
+    lax = replace(DEFAULTS, second_read_presence_rate=0.5)
+    absent = [q for q in _all() if q not in {"1", "2", "3"}]
+    assert _g9_presence(_all(), absent, thresholds=lax).scope == "question"
+
+
+def test_g9_presence_rate_is_over_leaves_answered_in_either_read() -> None:
+    # Ten leaves answered at all, three of them in one read only: 30%, however many
+    # leaves the paper has that both reads left blank.
+    first = [str(i) for i in range(1, 11)]
+    second = [str(i) for i in range(4, 11)]
+    assert _g9_presence(first, second, count=40).scope == "paper"
+
+
+def test_g9_presence_and_moved_text_are_reported_together() -> None:
+    scheme = _presence_scheme(40)
+    texts = {qid: f"a full sentence written for question {qid}" for qid in _all(40)}
+    texts["10"] = "the moon goes round the earth once a month"
+    texts["11"] = "copper is a good conductor of electricity"
+    first = _extracted(list(texts.items()))
+    swapped = {**texts, "10": texts["11"], "11": texts["10"]}
+    second = _extracted([(qid, text) for qid, text in swapped.items() if qid != "7"])
+    check = check_second_read(
+        first, second, scheme, DEFAULTS, first_unaligned=[], second_unaligned=[]
+    )
+    assert (check.passed, check.scope) == (False, "question")
+    assert check.question_ids == ["10", "11", "7"]
+    assert "match another question's answer in the first read: 10, 11." in check.detail
+    assert check.detail.endswith(
+        "1 question was answered in one reading of the scan and left blank in the other: 7."
+    )
+
+
+def test_g9_presence_covers_multiple_choice_and_working_only_answers() -> None:
+    scheme = _scheme([_leaf("1", None, mcq=True), _leaf("2", None, prose=True)])
+    letter = _extracted([("1", "B")])
+    nothing = _extracted([])
+    # A letter one read saw and the other did not is writing all the same.
+    assert presence_disagreements(letter, nothing, scheme, [], []) == ["1"]
+    working_only = ExtractedAnswers.model_validate(
+        {
+            "paper_id": "p",
+            "source_scan": "x.pdf",
+            "answers": [
+                {"question_id": "2", "answer": "", "working_out": "3 x 4 = 12", "confidence": 1.0}
+            ],
+        }
+    )
+    assert presence_disagreements(working_only, nothing, scheme, [], []) == ["2"]
+    assert presence_disagreements(working_only, working_only, scheme, [], []) == []

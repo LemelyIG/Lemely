@@ -51,6 +51,7 @@ class GateThresholds:
     second_read_disagreement_rate: float = 0.10
     second_read_min_chars: int = 4
     second_read_min_disagreeing: int = 3
+    second_read_presence_rate: float = 0.10
     agreement_floor: float = 0.8
     unaligned_rate: float = 0.10
     unplaced_labels_max: int = 2
@@ -490,23 +491,69 @@ def _normalised(answers: dict[str, str]) -> dict[str, str]:
     return {qid: " ".join(text.split()) for qid, text in answers.items()}
 
 
+def _present(extracted: ExtractedAnswers) -> set[str]:
+    """Ids that have writing in ``extracted``: a non-blank answer, or working alone."""
+    return {
+        item.question_id
+        for item in extracted.answers
+        if item.answer.strip() or (item.working_out or "").strip()
+    }
+
+
+def presence_disagreements(
+    first: ExtractedAnswers,
+    second: ExtractedAnswers,
+    mark_scheme: MarkScheme,
+    first_unaligned: Iterable[str],
+    second_unaligned: Iterable[str],
+) -> list[str]:
+    """Leaves that have writing in exactly one of two reads, in paper order.
+
+    Only leaves both reads aligned are compared: a leaf a read found no label for has
+    no answer there because none could be bound, which says nothing about whether the
+    student wrote one. Among the rest, a leaf with writing in one read and none in the
+    other was either missed by one reader or invented by the other, and nothing says
+    which, so it is trusted on neither side. Multiple-choice leaves are included: a
+    letter one read saw and the other did not is writing all the same.
+    """
+    skipped = {*first_unaligned, *second_unaligned}
+    one, two = _present(first), _present(second)
+    return [
+        q.id for q in _leaves(mark_scheme) if q.id not in skipped and (q.id in one) != (q.id in two)
+    ]
+
+
 def check_second_read(
     first: ExtractedAnswers,
     second: ExtractedAnswers,
     mark_scheme: MarkScheme,
     thresholds: GateThresholds,
+    *,
+    first_unaligned: Iterable[str] | None = None,
+    second_unaligned: Iterable[str] | None = None,
 ) -> BindingCheck:
-    """G9: fails when a second read puts an answer's text under a different question.
+    """G9: fails when two reads of one script disagree about where its answers are.
 
-    Multiple-choice leaves are excluded, and an id is compared only when both
-    reads hold at least ``second_read_min_chars`` characters for it after
+    Two comparisons, reported together.
+
+    Moved text. Multiple-choice leaves are excluded, and an id is compared only when
+    both reads hold at least ``second_read_min_chars`` characters for it after
     whitespace is collapsed. An id disagrees when the two reads agree below
     ``agreement_floor`` for it while the second read's text agrees at or above the
     floor with the first read's text for a different id whose first-read text
     itself differs (below the floor) from this id's. Two questions that legitimately
     share an answer are therefore never evidence. Paper scope when disagreeing ids
     exceed ``second_read_disagreement_rate`` of the compared ids and number at least
-    ``second_read_min_disagreeing``; otherwise question scope.
+    ``second_read_min_disagreeing``.
+
+    Presence (``presence_disagreements``), judged only when both ``first_unaligned``
+    and ``second_unaligned`` are given, since without them a missing answer cannot be
+    told from a missed label: a leaf both reads aligned that has writing in exactly
+    one of them. Paper scope when such leaves exceed ``second_read_presence_rate`` of
+    the compared leaves answered in either read and number at least
+    ``second_read_min_disagreeing``.
+
+    Otherwise question scope when either comparison names any id.
     """
     floor = thresholds.agreement_floor
     eligible = {q.id for q in _leaves(mark_scheme) if not _is_mcq(q)}
@@ -531,26 +578,45 @@ def check_second_read(
             for text in one.values()
         )
     ]
-    if not disagreeing:
+    lopsided: list[str] = []
+    answered_in_either = 0
+    if first_unaligned is not None and second_unaligned is not None:
+        skipped = {*first_unaligned, *second_unaligned}
+        lopsided = presence_disagreements(first, second, mark_scheme, skipped, ())
+        answered_in_either = len((_present(first) | _present(second)) - skipped)
+    if not disagreeing and not lopsided:
         return BindingCheck(
             id="G9",
             passed=True,
             scope="paper",
             detail="The two reads agree on which question each answer belongs to.",
         )
-    paper = (
+    paper = bool(disagreeing) and (
         len(disagreeing) / len(compared) > thresholds.second_read_disagreement_rate
         and len(disagreeing) >= thresholds.second_read_min_disagreeing
     )
+    paper = paper or (
+        len(lopsided) >= thresholds.second_read_min_disagreeing
+        and len(lopsided) / answered_in_either > thresholds.second_read_presence_rate
+    )
+    sentences: list[str] = []
+    if disagreeing:
+        sentences.append(
+            f"{len(disagreeing)} of {len(compared)} answers in the second read match another "
+            f"question's answer in the first read: {_listed(disagreeing)}."
+        )
+    if lopsided:
+        sentences.append(
+            f"{_plural(len(lopsided), 'question')} {'was' if len(lopsided) == 1 else 'were'} "
+            "answered in one reading of the scan and left blank in the other: "
+            f"{_listed(lopsided)}."
+        )
     return BindingCheck(
         id="G9",
         passed=False,
         scope="paper" if paper else "question",
-        question_ids=disagreeing,
-        detail=(
-            f"{len(disagreeing)} of {len(compared)} answers in the second read match another "
-            f"question's answer in the first read: {_listed(disagreeing)}."
-        ),
+        question_ids=[*disagreeing, *(qid for qid in lopsided if qid not in disagreeing)],
+        detail=" ".join(sentences),
     )
 
 
