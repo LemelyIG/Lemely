@@ -73,8 +73,17 @@ def test_stream_items_round_trip_and_default_what_a_reader_may_leave_out():
     with pytest.raises(ValidationError):
         SeenWriting.model_validate({"page": 1, "answer": "4", "placed_by": "guess"})
 
-    unbound = UnboundWriting(writing=full, reason="after_container_label")
-    assert UnboundWriting.model_validate_json(unbound.model_dump_json()) == unbound
+    for reason in (
+        "before_first_label",
+        "after_unplaced_label",
+        "after_container_label",
+        "uncertain",
+        "next_label_not_seen",
+        "next_label_unreadable",
+        "neighbour_left_blank",
+    ):
+        unbound = UnboundWriting.model_validate({"writing": full.model_dump(), "reason": reason})
+        assert UnboundWriting.model_validate_json(unbound.model_dump_json()) == unbound
     with pytest.raises(ValidationError):
         UnboundWriting.model_validate({"writing": full.model_dump(), "reason": "lost"})
 

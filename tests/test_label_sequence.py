@@ -1022,17 +1022,24 @@ def test_known_limit_a_label_listed_out_of_place_beside_a_blank_leaf(
     assert _on(bound)["1a_i"] == []
 
 
-def test_a_continuation_after_the_last_question_does_not_cost_the_last_leaf(
+def test_the_last_leaf_of_the_paper_is_bracketed_by_the_end_of_the_list(
     scheme_41: MarkScheme,
 ) -> None:
-    # A handwritten "3", "(c)" and more writing on a sheet after question 9: no label
-    # follows 9c_iv that it would have to rely on, so its own writing stays.
-    bound = bind_stream(_items(*_clean(scheme_41), "3", "(c)", "=more of 3c"), scheme_41)
+    # Nothing is printed after 9c_iv, so nothing has to follow its writing.
+    bound = bind_stream(_items(*_clean(scheme_41), "=a second block"), scheme_41)
+    assert _on(bound)["9c_iv"] == ["9c_iv", "a second block"]
+    # Any label listed after it is one the paper does not have there: a continuation
+    # sheet, a stray. The same rule then applies and 9c_iv's writing is not bound.
+    for extra in (["3", "(c)", "=more of 3c"], ["Q3 (c)", "=more of 3c"], ["(v)"], ["12"]):
+        bound = bind_stream(_items(*_clean(scheme_41), *extra), scheme_41)
+        _own_or_absent(bound)
+        assert bound.unaligned_ids == ["9c_iv"], extra
+        assert _unbound(bound)[0] == ("9c_iv", "next_label_not_seen"), extra
+        assert _on(bound)["9c_iii"] == ["9c_iii"], extra
+        assert _on(bound)["3c"] == ["3c"], extra
+    # Text that is not a label is not a label there either.
+    bound = bind_stream(_items(*_clean(scheme_41), "[2]", "Total"), scheme_41)
     assert bound.unaligned_ids == []
-    assert _on(bound)["9c_iv"] == ["9c_iv"]
-    assert _on(bound)["3c"] == ["3c"]
-    assert _unplaced(bound) == ["3", "(c)"]
-    assert _unbound(bound) == [("more of 3c", "after_unplaced_label")]
 
 
 def test_a_leaf_with_only_a_stray_label_under_it_is_not_reported_blank(
@@ -1177,6 +1184,63 @@ def test_a_duplicated_leaf_id_is_never_bound_and_is_unaligned_once(scheme_41: Ma
     assert _on(bound) == {"1a": ["1a"], "1b": ["1b"], "3a": ["3a"], "3b": ["3b"]}
     assert bound.unaligned_ids == ["2"]
     assert _unbound(bound) == [("2", "after_unplaced_label")]
+
+
+def test_the_leaf_before_an_id_no_label_can_name_says_why_it_is_not_bound(
+    scheme_41: MarkScheme,
+) -> None:
+    # "1B" cannot be decomposed: no label names it, so nothing can show where 1a's
+    # writing ends. 1a is never bound on this scheme, and the reason says which case.
+    scheme = _scheme(scheme_41, {"1": {"1a": {}, "1B": {}, "1c": {}}, "2": {"2a": {}}})
+    stream = ["1", "(a)", "=1a", "(B)", "=1B", "(c)", "=1c", "2", "(a)", "=2a"]
+    bound = bind_stream(_items(*stream), scheme)
+    assert _on(bound) == {"1c": ["1c"], "2a": ["2a"]}
+    assert bound.unaligned_ids == ["1a", "1B"]
+    assert _unbound(bound) == [("1a", "next_label_unreadable"), ("1B", "after_unplaced_label")]
+    # The same when the unreadable id is the last of the paper.
+    scheme = _scheme(scheme_41, {"1": {"1a": {}, "1B": {}}})
+    bound = bind_stream(_items("1", "(a)", "=1a", "(B)", "=1B"), scheme)
+    assert _unbound(bound) == [("1a", "next_label_unreadable"), ("1B", "after_unplaced_label")]
+    # A label that really is missing keeps the other reason.
+    scheme = _scheme(scheme_41, {"1": {"1a": {}, "1b": {}, "1B": {}, "1c": {}}, "2": {"2a": {}}})
+    bound = bind_stream(_items("1", "(a)", "=1a", "(c)", "=1c", "2", "(a)", "=2a"), scheme)
+    assert _unbound(bound) == [("1a", "next_label_not_seen")]
+
+
+def test_a_duplicated_id_does_not_cost_the_leaf_before_it(scheme_41: MarkScheme) -> None:
+    scheme = _scheme(
+        scheme_41,
+        [("1", {"1a": {}, "1b": {}}), ("2", {}), ("2", {}), ("3", {"3a": {}, "3b": {}})],
+    )
+    # One printed label for the doubled id: it is placed, binds nothing, and brackets 1b.
+    stream = ["1", "(a)", "=1a", "(b)", "=1b", "2", "=2", "3", "(a)", "=3a", "(b)", "=3b"]
+    bound = bind_stream(_items(*stream), scheme)
+    assert _on(bound)["1b"] == ["1b"]
+    assert _unplaced(bound) == ["2"]
+    # Two labels for it, with writing between them: neither is the one, so the label
+    # the paper prints after 1b was not seen, and 1b says so.
+    stream = [
+        "1",
+        "(a)",
+        "=1a",
+        "(b)",
+        "=1b",
+        "2",
+        "=2",
+        "2",
+        "=2",
+        "3",
+        "(a)",
+        "=3a",
+        "(b)",
+        "=3b",
+    ]
+    bound = bind_stream(_items(*stream), scheme)
+    _own_or_absent(bound)
+    assert ("1b", "next_label_not_seen") in _unbound(bound)
+    assert _on(bound)["1a"] == ["1a"]
+    assert _on(bound)["3a"] == ["3a"]
+    assert bound.unaligned_ids == ["1b", "2"]
 
 
 def test_an_id_that_cannot_be_decomposed_costs_its_leaf_not_the_paper(

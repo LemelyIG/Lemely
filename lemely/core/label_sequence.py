@@ -773,14 +773,20 @@ def _names_part_of(paper: _Paper, label: _Label, node: int) -> bool:
 
 def _open_leaves(
     paper: _Paper, alignment: _Alignment, labels: list[_Label], written_under: set[int]
-) -> tuple[set[int], set[int]]:
-    """Leaves whose writing the list separates from their neighbours', and those in doubt.
+) -> tuple[set[int], set[int], set[int]]:
+    """Leaves whose writing the list brackets: the open ones, the doubted, the unreadable.
 
     Writing after a leaf's label is that leaf's only if the next placed label is the
-    one the paper prints next. If a label between them was not seen, the writing of the
-    missed part lies in the same stretch of the list. The one label that may be absent
-    is the number of an inferred question: the leaf before it keeps its writing, with a
-    doubt, because anything written beside the unseen number lands there too.
+    one the paper prints next: the next part, the container above the next part, or
+    the next question's number. If a label between them was not seen, the writing of
+    the missed part lies in the same stretch of the list. The one label that may be
+    absent is the number of an inferred question: the leaf before it keeps its
+    writing, with a doubt, because anything written beside the unseen number lands
+    there too. The last leaf of the paper has nothing after it to wait for, and is
+    open as long as no label at all is listed after its own.
+
+    Where the only ids between the two labels are ones no label can name, the leaf is
+    not open either, and is returned as unreadable: the list can never bracket it.
 
     A part label with no place can show that the two placed labels around it are not
     the neighbours they seem:
@@ -794,25 +800,30 @@ def _open_leaves(
     inferred = set(alignment.inferred)
     order = sorted(alignment.placed)
     ends = [alignment.placed[position][-1] for position in order]
-    shut: set[int] = set()  # leaves a neighbouring label with no place has unsettled
+    shut: set[int] = set()
     doubted: set[int] = set()
-    for k in range(len(order) - 1):
-        chain = alignment.placed[order[k + 1]]
-        skipped = [n for n in range(ends[k] + 1, ends[k + 1]) if n not in chain]
-        missing = ends[k + 1] <= ends[k] or any(n not in inferred for n in skipped)
-        between = range(order[k] + 1, order[k + 1])
-        written = any(p in written_under for p in between)
-        early = any(_names_part_of(paper, labels[p], ends[k + 1]) for p in between)
+    unreadable: set[int] = set()
+    for k in range(len(order)):
+        last = k + 1 == len(order)
+        chain = () if last else alignment.placed[order[k + 1]]
+        until = len(paper.nodes) if last else ends[k + 1]
+        gap = [n for n in range(ends[k] + 1, until) if n not in chain]
+        skipped = [n for n in gap if n not in inferred]
+        between = range(order[k] + 1, len(labels) if last else order[k + 1])
+        written = not last and any(p in written_under for p in between)
+        early = not last and any(_names_part_of(paper, labels[p], until) for p in between)
+        # After the last leaf of the paper any label at all is one too many.
+        missing = bool(skipped) or until <= ends[k] or (last and len(between) > 0)
         if missing or written or early:
             shut.add(ends[k])
-        elif skipped:
-            doubted.add(ends[k])
+            if skipped and all(paper.nodes[n].step is None for n in skipped):
+                unreadable.add(ends[k])
+        elif gap:
+            doubted.add(ends[k])  # only an inferred number lies between
         if written and not missing:
             shut.add(ends[k + 1])
-    if ends and ends[-1] + 1 < len(paper.nodes):
-        shut.add(ends[-1])  # the paper goes on and the list does not
     opened = {end for end in ends if paper.nodes[end].leaf_id is not None and end not in shut}
-    return opened, doubted & opened
+    return opened, doubted & opened, unreadable - opened
 
 
 def _beside_a_blank(
@@ -869,7 +880,7 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
         if label.number is None
         and any(isinstance(i, SeenWriting) for i in items[bounds[position] : bounds[position + 1]])
     }
-    opened, doubted = _open_leaves(paper, alignment, labels, written_under)
+    opened, doubted, unreadable = _open_leaves(paper, alignment, labels, written_under)
     inferred = set(alignment.inferred)
 
     node_at: dict[int, int | None] = {}  # item index of a label -> the node it names
@@ -917,6 +928,8 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
                 stretch = node
                 if node in doubled:
                     target, reason = None, "neighbour_left_blank"
+                elif node in unreadable:
+                    target, reason = None, "next_label_unreadable"
                 elif node not in opened:
                     target, reason = None, "next_label_not_seen"
                 else:

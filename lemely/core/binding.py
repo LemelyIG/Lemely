@@ -78,6 +78,9 @@ UnboundReason = Literal[
     # The label the paper prints next was not seen, so this writing may be that
     # question's and not the one whose label it follows.
     "next_label_not_seen",
+    # The same, where the scheme's next id is one no label can name ("1a_i_A"): the
+    # list can never show where this leaf's writing ends.
+    "next_label_unreadable",
     # The leaf this writing follows holds two blocks or more and the leaf beside it
     # holds none: one of the blocks may be the neighbour's, its label listed out of place.
     "neighbour_left_blank",
