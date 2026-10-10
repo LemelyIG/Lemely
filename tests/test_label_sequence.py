@@ -1298,7 +1298,7 @@ def test_known_limit_a_question_number_that_names_the_wrong_question(
     The list reads 1, w, w, 2, w, 4: question 1 answered in two blocks, 2 answered, 3
     not listed. Question 2's writing is on question 1, and question 3's would be on 2
     if the unseen 3 did not leave question 2 unbracketed. With parts, a number read as
-    its neighbour while the neighbour's own number is missed goes wrong in 90 of 150
+    its neighbour while the neighbour's own number is missed goes wrong in 82 of 150
     trials. This test pins the limit; it does not approve of it.
     """
     scheme = _scheme(scheme_41, {str(n): {} for n in range(1, 6)})
