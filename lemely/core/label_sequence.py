@@ -156,6 +156,7 @@ Pure functions: no I/O, no logging.
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, get_args
@@ -169,6 +170,8 @@ if TYPE_CHECKING:
     from lemely.core.loose_schemas import MarkScheme, Question
 
 Level = Literal["number", "letter", "roman"]
+# ``SeenLabel.kind``: the reader's word for who wrote a label.
+LabelKind = Literal["printed", "handwritten"]
 
 DOUBT_NUMBER_NOT_SEEN = "question number not seen"
 DOUBT_NEXT_NUMBER_NOT_SEEN = "next question number not seen"
@@ -316,6 +319,13 @@ class BoundStream:
     ``unaligned_reasons`` gives, for each id in ``unaligned_ids``, one
     ``UnalignedReason``. It is a report and changes no binding.
 
+    ``absent_between`` is a report too. For each unaligned leaf whose label is absent
+    from the list (``label_not_seen``, ``number_not_seen``): the kind of the nearest
+    label with a place before it in paper order, and of the nearest after it; ``None``
+    where no label has a place on that side. A part the student skipped on a sheet
+    stands between handwritten labels; a label missing from between printed ones was
+    missed by the reader (``binding_gate.skipped_parts``).
+
     ``listing_suspects`` is an observation and changes no binding. Binding rests on the
     reader listing a label before the writing under it. A reader that lists the writing
     first leaves one trace: in a run of leaves that follows a container label, the
@@ -331,6 +341,9 @@ class BoundStream:
     inferred_numbers: list[str]
     listing_suspects: list[str]
     unaligned_reasons: dict[str, UnalignedReason] = field(default_factory=dict)
+    absent_between: dict[str, tuple[LabelKind | None, LabelKind | None]] = field(
+        default_factory=dict
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -1570,6 +1583,7 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
         step.token for root in sorted(inferred) if (step := paper.nodes[root].step) is not None
     ]
     unaligned = [leaf_id for leaf_id in paper.leaf_ids if leaf_id not in aligned]
+    reasons = _why_unaligned(paper, labels, view, aside, unaligned)
     return BoundStream(
         leaves=leaves,
         unbound=unbound,
@@ -1577,7 +1591,13 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
         unplaced_labels=unplaced,
         inferred_numbers=inferred_numbers,
         listing_suspects=list(dict.fromkeys(suspects)),
-        unaligned_reasons=_why_unaligned(paper, labels, view, aside, unaligned),
+        unaligned_reasons=reasons,
+        absent_between=_kinds_around(
+            paper,
+            labels,
+            view,
+            [leaf for leaf in unaligned if reasons[leaf] in ("label_not_seen", "number_not_seen")],
+        ),
     )
 
 
@@ -1603,6 +1623,32 @@ def _nothing(
     )
 
 
+def _first_node(paper: _Paper) -> dict[str, int]:
+    """Each id of the scheme -> its first node in paper order."""
+    node_of: dict[str, int] = {}
+    for index, node in enumerate(paper.nodes):
+        node_of.setdefault(node.question_id, index)
+    return node_of
+
+
+def _kinds_around(
+    paper: _Paper, labels: list[_Label], view: _Reading, absent: list[str]
+) -> dict[str, tuple[LabelKind | None, LabelKind | None]]:
+    """For each leaf in ``absent``: the kinds of the placed labels on either side of it."""
+    kind_at: dict[int, LabelKind] = {}
+    for position in sorted(view.placed):
+        kind_at.setdefault(view.placed[position], labels[position].item.kind)
+    named = sorted(kind_at)
+    node_of = _first_node(paper)
+    out: dict[str, tuple[LabelKind | None, LabelKind | None]] = {}
+    for leaf_id in absent:
+        at = bisect_left(named, node_of[leaf_id])
+        before = kind_at[named[at - 1]] if at > 0 else None
+        after = kind_at[named[at]] if at < len(named) else None
+        out[leaf_id] = (before, after)
+    return out
+
+
 def _why_unaligned(
     paper: _Paper,
     labels: list[_Label],
@@ -1611,9 +1657,7 @@ def _why_unaligned(
     unaligned: list[str],
 ) -> dict[str, UnalignedReason]:
     """One ``UnalignedReason`` for each unaligned leaf. A report only."""
-    node_of: dict[str, int] = {}
-    for index, node in enumerate(paper.nodes):
-        node_of.setdefault(node.question_id, index)
+    node_of = _first_node(paper)
     placed = set(view.placed.values())
     # Each question with a settled number: the labels from its first to the next question's.
     first: dict[int, int] = {}

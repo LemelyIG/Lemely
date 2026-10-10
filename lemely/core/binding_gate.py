@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import TYPE_CHECKING
 
 from lemely.core.binding import BindingCheck, BindingVerdict
@@ -27,6 +28,7 @@ from lemely.core.text_agreement import text_agreement
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from lemely.core.label_sequence import BoundStream
     from lemely.core.schemas import CorrectionResult, ExtractedAnswers
 
 _SHOWN_IDS = 6
@@ -54,6 +56,7 @@ class GateThresholds:
     second_read_presence_rate: float = 0.10
     agreement_floor: float = 0.8
     unaligned_rate: float = 0.10
+    skipped_parts_rate: float = 0.33
     unplaced_labels_max: int = 2
     listing_suspects_min: int = 2
 
@@ -192,6 +195,80 @@ def suspect_group_leaves(mark_scheme: MarkScheme, suspects: Iterable[str]) -> li
     return [leaf for leaf in leaf_ids if leaf in grouped]
 
 
+@dataclass(frozen=True, slots=True)
+class SkippedParts:
+    """Unaligned leaves of one read that G5 leaves out of its rate (``skipped_parts``).
+
+    ``skipped``: leaves whose label is absent from both reads of the scan, between
+    handwritten labels: parts the student did not attempt on a separate sheet.
+    ``before``: the answered leaf before each such gap, which ``bind_stream`` unbinds
+    because the list cannot show where its writing ends (D1). Both in paper order.
+    All of them still go to review. Empty means nothing is excused.
+    """
+
+    skipped: tuple[str, ...] = ()
+    before: tuple[str, ...] = ()
+
+
+_ABSENT = ("label_not_seen", "number_not_seen")
+
+
+def skipped_parts(
+    read: BoundStream, other: BoundStream | None, mark_scheme: MarkScheme
+) -> SkippedParts:
+    """The unaligned leaves of ``read`` that are parts the student skipped on a sheet.
+
+    On a sheet the student labels by hand, a part that was not attempted has no label.
+    In one read of the list that is the same as a label the reader missed: the leaf is
+    unaligned (``label_not_seen``, or ``number_not_seen`` for a whole question) and D1
+    unbinds the answered leaf before it. Three such parts put a tenth of a paper over
+    G5's limit with nothing bound wrongly. Two things tell a skipped part from a
+    missed label, and both are asked:
+
+    - ``other``, the other read of the same scan, has the leaf's label absent too. A
+      reader misses a label in one read; a part the student skipped is in neither;
+    - the labels with a place on either side of the gap are handwritten (one side,
+      where the gap is at an end of the list): ``read.absent_between``. Between printed
+      labels a label is missing because the reader missed it, in two reads or not,
+      and a gap with one printed neighbour is not excused either.
+
+    And the list must show nothing else: no label without a place, no group with the
+    trace of writing listed before its label, and no unaligned leaf that is neither
+    absent nor the leaf D1 unbinds straight before an absent one. A list with any
+    other sign of confusion excuses nothing, and G5 counts all of it as before.
+
+    With ``other`` ``None`` (one read) nothing is excused. Measured on generated
+    sheets only (no separate-sheet scan has been read): see the "Known limits" of
+    ``lemely.core.label_sequence``.
+    """
+    if other is None or read.unplaced_labels or read.listing_suspects:
+        return SkippedParts()
+    # Paper order as ``bind_stream`` has it: every part-less question, each id once.
+    order = list(dict.fromkeys(q.id for q in mark_scheme.all_questions_flat() if not q.parts))
+    following = dict(pairwise(order))
+    reasons = read.unaligned_reasons
+    absent = {leaf for leaf in read.unaligned_ids if reasons.get(leaf) in _ABSENT}
+    cut_short = {
+        leaf
+        for leaf in read.unaligned_ids
+        if reasons.get(leaf) == "not_bracketed" and following.get(leaf) in absent
+    }
+    if not absent or any(leaf not in absent | cut_short for leaf in read.unaligned_ids):
+        return SkippedParts()
+
+    def by_hand(leaf: str) -> bool:
+        sides = [kind for kind in read.absent_between.get(leaf, ()) if kind is not None]
+        return bool(sides) and all(kind == "handwritten" for kind in sides)
+
+    skipped = {
+        leaf for leaf in absent if other.unaligned_reasons.get(leaf) in _ABSENT and by_hand(leaf)
+    }
+    return SkippedParts(
+        skipped=tuple(leaf for leaf in order if leaf in skipped),
+        before=tuple(leaf for leaf in order if leaf in cut_short and following[leaf] in skipped),
+    )
+
+
 def check_label_coverage(
     extracted: ExtractedAnswers,
     mark_scheme: MarkScheme,
@@ -201,12 +278,20 @@ def check_label_coverage(
     *,
     listing_suspects: Sequence[str] = (),
     lost_items: int = 0,
+    skipped: SkippedParts | None = None,
 ) -> BindingCheck:
     """G5: fails when question labels on the page could not be lined up with the mark scheme.
 
-    Paper scope on any of four things, each with its own sentence in ``detail``:
+    Paper scope on any of five things, each with its own sentence in ``detail``:
 
-    - more than ``unaligned_rate`` of the leaves are unaligned;
+    - more than ``unaligned_rate`` of the leaves are unaligned, not counting the
+      leaves in ``skipped`` (``skipped_parts``: parts the student skipped on a
+      handwritten sheet, and the answered leaf before each). With ``skipped`` empty or
+      ``None``, the default, every unaligned leaf counts;
+    - more than ``skipped_parts_rate`` of the leaves are in ``skipped.skipped``. A
+      list that stops early has no label for the rest of the paper in either read,
+      and that is not told from a student who stopped early: past this share the
+      paper is held;
     - more than ``unplaced_labels_max`` labels matched no question
       (``unmatched_markers``). One or two are ordinary: a number on the cover page, a
       note the student numbered;
@@ -251,10 +336,28 @@ def check_label_coverage(
     )
     problems: list[str] = []
     within: list[str] = []
-    if leaf_ids and len(unaligned) / len(leaf_ids) > thresholds.unaligned_rate:
+    leave_out = skipped or SkippedParts()
+    absent = [qid for qid in unaligned if qid in set(leave_out.skipped)]
+    excused = {*absent, *leave_out.before}
+    counted = [qid for qid in unaligned if qid not in excused]
+    if leaf_ids and len(counted) / len(leaf_ids) > thresholds.unaligned_rate:
+        left_out = len(unaligned) - len(counted)
         problems.append(
-            f"{len(unaligned)} of {len(leaf_ids)} questions could not be lined up "
-            f"with a label on the page: {_listed(unaligned)}"
+            f"{len(counted)} of {len(leaf_ids)} questions could not be lined up "
+            "with a label on the page"
+            + (
+                f" ({left_out} more are not counted: no label in either reading of the "
+                "scan, between handwritten labels, or the answer before such a gap)"
+                if left_out
+                else ""
+            )
+            + f": {_listed(counted)}"
+        )
+    if leaf_ids and len(absent) / len(leaf_ids) > thresholds.skipped_parts_rate:
+        problems.append(
+            f"{len(absent)} of {len(leaf_ids)} questions have no label in either reading "
+            "of the scan: too many to take for parts the student skipped, since a list "
+            f"that stops early looks the same: {_listed(absent)}"
         )
     if unmatched_markers > thresholds.unplaced_labels_max:
         problems.append(unplaced)
