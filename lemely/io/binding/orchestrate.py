@@ -566,6 +566,17 @@ def _next_number_seen_elsewhere(
     the nine stored read pairs and all 306 ordered pairs of their 18 reads: it clears
     only leaves that hold their own answer whole
     (``.superpowers/sdd/review-volume-analysis.md``).
+
+    One constructed case in which it takes the doubt off a leaf that may hold more than
+    its own answer: a block listed straight after the leaf's answer in both reads, where
+    the returned read lacks the next number and the other read has it and lists the
+    block above it. By the other read's list the block is the leaf's, and the doubt is
+    cleared (25 of 25 generated streams of that shape). The rule adds no trust the
+    product does not already give: with the two reads the other way round the read
+    that has the number is the one returned, and that binding is published with no
+    doubt on one read alone (32 of 32). Where the other read lists the block after the
+    number, or does not list it, the two reads do not hold the same blocks and the
+    doubt stays.
     """
     if _paper_failed(other_checks):
         return frozenset()

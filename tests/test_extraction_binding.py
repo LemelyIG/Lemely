@@ -536,7 +536,8 @@ def test_an_answer_whose_label_the_other_read_missed_stays_as_bound(
 def test_a_leaf_only_the_other_read_answered_is_marked_from_that_read_and_flagged(
     tmp_path: Path, scan: Path, scheme: MarkScheme
 ) -> None:
-    # The first read did not report the block under 5(a) ("0.2 m"); the second did, with
+    # The shape of 3(a) in one stored run, before the reader's slip was repaired at its
+    # cause. The first read did not report the block under 5(a) ("0.2 m"); the second did, with
     # no doubt. The first read passes its own checks and is the one used, and in it
     # 5(a) is a label with nothing after it: a blank. It is not one, and it is not left
     # as a zero waiting for a teacher either: the answer one read bound is marked.
@@ -682,6 +683,27 @@ def test_writing_the_returned_read_holds_on_another_leaf_is_not_marked_twice(
     assert outcome.review_only_ids == ["7c"]
     assert outcome.review_reasons == {"7c": "answered_in_one_read_only"}
     assert by_id["7b_ii"].answer == answer_7bii  # where the returned read has it
+
+
+def test_writing_the_returned_read_could_not_bind_does_not_stop_the_other_read_s_answer(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The shape of 7(b)(ii) in two stored runs. The returned read lists two blocks under
+    # (ii) and nothing under (c), so it binds neither leaf and keeps both blocks as
+    # writing with no question. The other read binds one block to 7(b)(ii) with no
+    # doubt. The returned read holds that writing on no leaf, so nothing says it is
+    # another question's: 7(b)(ii) is marked from the other read. 7(c) has writing in
+    # neither read and stays with a teacher, unmarked.
+    clean = _run(1)
+    first = _with_a_block_after(clean, 82, "V = I R, so the current falls")
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(clean)))
+    assert outcome.report.verdict == "pass"
+    assert outcome.marked_from_other_read == ["7b_ii"]
+    taken = next(a for a in outcome.answers if a.question_id == "7b_ii")
+    assert (taken.answer, taken.binding_status) == (clean[82]["answer"], "unverified")
+    assert clean[82]["answer"] in [w.answer for w in outcome.unbound]  # as this read saw it
+    assert outcome.review_only_ids == ["7c"]
+    assert "7c" not in {a.question_id for a in outcome.answers}
 
 
 def test_two_leaves_with_the_same_final_answer_are_told_apart_by_their_working(
@@ -833,6 +855,36 @@ def test_the_doubt_stays_when_the_other_read_holds_other_blocks_on_the_leaf(
         _Model(first=_items(_run(4)), second=_items(_with_a_block_after(_run(1), 39, line))),
     )
     assert _statuses(mirror)["3c"] == "unverified"
+
+
+def test_a_block_the_other_read_lists_above_the_number_is_trusted_as_it_is_from_one_read(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The one case in which the rule takes a doubt off a leaf that may hold more than
+    # its own answer. Both reads list a second block straight after 3(c)'s answer. One
+    # has the label `4` after it, so by its list the block stands above the number and
+    # is 3(c)'s; the other lacks the label and doubts the leaf.
+    line = "heat capacity is the energy needed to warm the whole object by one degree"
+    without_number = _with_a_block_after(_run(4), 39, line)
+    with_number = _with_a_block_after(_run(1), 39, line)
+    assert with_number[41]["text"] == "4"
+    # Returned from the read that has the number, the binding carries no doubt at all:
+    # that was so before the rule, and one read is all it takes.
+    trusted = _bind(
+        tmp_path / "number-first",
+        scheme,
+        _Model(first=_items(with_number), second=_items(without_number)),
+    )
+    held = next(a for a in trusted.answers if a.question_id == "3c")
+    assert line in held.answer and held.binding_status == "verified"
+    # With the reads the other way round the rule gives the same answer the same trust.
+    cleared = _bind(
+        tmp_path / "number-second",
+        scheme,
+        _Model(first=_items(without_number), second=_items(with_number)),
+    )
+    held = next(a for a in cleared.answers if a.question_id == "3c")
+    assert line in held.answer and held.binding_status == "verified"
 
 
 def test_the_doubt_stays_when_the_other_read_doubts_the_leaf_or_failed_its_checks(
