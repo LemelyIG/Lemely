@@ -953,16 +953,16 @@ class GeminiAnswerExtractor:
         raw = call() if model is None else call(model=model)
         return _convert_reply(raw.answers, len(page_bytes))
 
-    def _forget_legacy_reply(
+    def _legacy_reply_key(
         self,
         mark_scheme: MarkScheme,
         page_bytes: list[bytes],
         *,
         extra_cache_key: str,
         model: str | None = None,
-    ) -> None:
-        """Take the reply of the ``_legacy_reply`` call these arguments make out of the cache."""
-        self._client.forget_structured(
+    ) -> str:
+        """The key the reply of the ``_legacy_reply`` call these arguments make is cached under."""
+        return self._client.structured_cache_key(
             system_prompt=EXTRACTOR_SYSTEM_PROMPT,
             user_prompt=build_extractor_user_prompt(mark_scheme, page_count=len(page_bytes)),
             image_parts=page_bytes,
@@ -984,7 +984,7 @@ class GeminiAnswerExtractor:
         manifest_ids: list[str],
         *,
         by_paper_shape: bool = False,
-    ) -> tuple[_LegacyReply, BindingReport | None]:
+    ) -> tuple[_LegacyReply, BindingReport | None, tuple[str, ...]]:
         """Run the binding gate over the legacy call's answers; return the reply to go on with.
 
         The checks compare ids with the mark scheme's, so they see a copy of the
@@ -996,8 +996,21 @@ class GeminiAnswerExtractor:
         check names; the checks passing verifies no single answer, so the rest are
         left unset. Under ``gate="observe"`` there is no report and the reply comes
         back untouched: the gate has published what it saw and changes nothing.
+
+        The third value is the response-cache keys of the call and of the retry: taken
+        out here for a paper held before marking, and handed on with a report for a
+        paper held after it. Under ``gate="observe"`` there are none.
         """
         settings = self._client._settings
+        read_cache_keys = (
+            self._legacy_reply_key(mark_scheme, page_bytes, extra_cache_key=manifest_key),
+            self._legacy_reply_key(
+                mark_scheme,
+                page_bytes,
+                extra_cache_key=manifest_key + "|retry",
+                model=settings.binding.retry_model,
+            ),
+        )
         canonical = {_canonical_id(mid): mid for mid in manifest_ids}
         retried: list[_LegacyReply] = []
 
@@ -1028,17 +1041,11 @@ class GeminiAnswerExtractor:
             by_paper_shape=by_paper_shape,
         )
         if outcome.report is None:
-            return reply, None
+            return reply, None, ()
         if outcome.report.verdict != "pass":
             # A held paper must not be replayed from the cache: the next run on the
             # same scan makes the call, and the retry if it comes to it, afresh.
-            self._forget_legacy_reply(mark_scheme, page_bytes, extra_cache_key=manifest_key)
-            self._forget_legacy_reply(
-                mark_scheme,
-                page_bytes,
-                extra_cache_key=manifest_key + "|retry",
-                model=settings.binding.retry_model,
-            )
+            self._client.forget_cached(read_cache_keys)
         used = retried[0] if outcome.used_retry else reply
 
         def _stamped(answer: ExtractedAnswer) -> ExtractedAnswer:
@@ -1048,7 +1055,11 @@ class GeminiAnswerExtractor:
                 update["binding_status"] = "unverified"
             return answer.model_copy(update=update)
 
-        return replace(used, answers=[_stamped(a) for a in used.answers]), outcome.report
+        return (
+            replace(used, answers=[_stamped(a) for a in used.answers]),
+            outcome.report,
+            read_cache_keys,
+        )
 
     def __call__(self, scan_path: Path, mark_scheme: MarkScheme) -> ExtractedAnswers:
         """Extract ``scan_path``'s answers against ``mark_scheme``, one run at a time.
@@ -1131,6 +1142,9 @@ class GeminiAnswerExtractor:
             # altogether when there is none, so that a legacy extraction with the gate
             # off is the same record it has always been.
             bound_fields: dict[str, Any] = {}
+            # The cache keys of the reads a gated binding was made from: carried on
+            # the result, outside its fields, for a hold that comes after marking.
+            read_cache_keys: tuple[str, ...] = ()
             # The configured binder, unless the paper's shape decides: a scheme that
             # is all multiple choice keeps the legacy binder (see ``binder_for``).
             binder, by_paper_shape = binder_for(mark_scheme, binding)
@@ -1174,12 +1188,13 @@ class GeminiAnswerExtractor:
                 bound_fields["unbound_question_reasons"] = dict(outcome.review_reasons)
                 bound_fields["unbound_answers"] = outcome.unbound
                 bound_fields["binding"] = outcome.report
+                read_cache_keys = outcome.read_cache_keys
             else:
                 reply = self._legacy_reply(
                     mark_scheme, page_bytes, uploads, extra_cache_key=manifest_key
                 )
                 if binding.gate != "off":
-                    reply, legacy_report = self._gated_legacy(
+                    reply, legacy_report, read_cache_keys = self._gated_legacy(
                         reply,
                         mark_scheme,
                         page_bytes,
@@ -1332,4 +1347,6 @@ class GeminiAnswerExtractor:
                 ),
                 manifest_ids,
             )
+        if read_cache_keys:
+            normalized_result = normalized_result.with_read_cache_keys(read_cache_keys)
         return normalized_result

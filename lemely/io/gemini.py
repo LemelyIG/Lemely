@@ -9,7 +9,7 @@ import json
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -1054,8 +1054,8 @@ class GeminiClient:
         """The model a structured call resolves to, and the key its reply is cached under.
 
         The one computation for :meth:`generate_structured`, which reads and writes the
-        entry, and :meth:`forget_structured`, which removes it: the two cannot name
-        different entries for the same call.
+        entry, and :meth:`structured_cache_key`, which names it for a caller that may
+        have to remove it: the two cannot name different entries for the same call.
         """
         g = self._settings.gemini
         if model is not None:
@@ -1079,7 +1079,7 @@ class GeminiClient:
         )
         return active_model, cache_key
 
-    def forget_structured(
+    def structured_cache_key(
         self,
         *,
         system_prompt: str,
@@ -1092,14 +1092,13 @@ class GeminiClient:
         model: str | None = None,
         extra_cache_key: str = "",
         task_tag: str | None = None,
-    ) -> bool:
-        """Remove the cached reply of the structured call these arguments make.
+    ) -> str:
+        """The key the reply of the structured call these arguments make is cached under.
 
-        Takes the arguments of :meth:`generate_structured` that decide the cache key
-        and returns whether an entry was there. For a caller that has decided a reply
-        must not be reused: the binding step, for a paper it held, so that the next run
-        on the same scan reads it afresh instead of replaying the same hold. With no
-        entry (a bypassed call, or one that failed) it does nothing.
+        Takes the arguments of :meth:`generate_structured` that decide the key. For a
+        caller that may decide the reply must not be reused, perhaps when the pages it
+        was made from are no longer at hand: it keeps this short string, not the
+        images, and gives it to :meth:`forget_cached`.
         """
         _model, cache_key = self._structured_cache_key(
             system_prompt=system_prompt,
@@ -1113,10 +1112,23 @@ class GeminiClient:
             extra_cache_key=extra_cache_key,
             task_tag=task_tag,
         )
-        cache_path = self._cache_path(cache_key)
-        existed = cache_path.exists()
-        cache_path.unlink(missing_ok=True)
-        return existed
+        return cache_key
+
+    def forget_cached(self, cache_keys: Iterable[str]) -> int:
+        """Remove the cached replies under these keys; return how many were there.
+
+        The keys are :meth:`structured_cache_key`'s. The binding step does this for a
+        paper it held, so that the next run on the same scan reads it afresh instead
+        of replaying the same hold. A key with no entry (a bypassed call, or one that
+        failed) is passed over.
+        """
+        forgotten = 0
+        for cache_key in cache_keys:
+            cache_path = self._cache_path(cache_key)
+            if cache_path.exists():
+                forgotten += 1
+            cache_path.unlink(missing_ok=True)
+        return forgotten
 
     def generate_structured(
         self,

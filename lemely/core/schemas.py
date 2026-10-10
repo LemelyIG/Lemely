@@ -10,6 +10,7 @@ from pydantic import (
     ConfigDict,
     Field,
     GetJsonSchemaHandler,
+    PrivateAttr,
     computed_field,
     field_validator,
     model_validator,
@@ -763,6 +764,25 @@ class ExtractedAnswers(StrictModel):
     """Answers read off the page that no question label aligned to, so they
     are held here rather than assigned a ``question_id``. Empty when every
     answer was bound."""
+    _read_cache_keys: tuple[str, ...] = PrivateAttr(default=())
+
+    def read_cache_keys(self) -> tuple[str, ...]:
+        """The response-cache keys of the model reads this extraction was bound from.
+
+        Known only in the process that made the extraction, and only when a binding
+        gate ran over it: they are not a field, so they are never stored, sent or
+        validated, and a record loaded from anywhere has none. They are here so that
+        whoever holds the paper after marking can have those reads forgotten, and the
+        next run on the same scan reads it afresh (``correct_paper``). A copy made
+        with ``model_copy`` keeps them.
+        """
+        return self._read_cache_keys
+
+    def with_read_cache_keys(self, keys: Sequence[str]) -> ExtractedAnswers:
+        """A copy of this extraction that carries ``keys`` as its :meth:`read_cache_keys`."""
+        copy = self.model_copy()
+        copy._read_cache_keys = tuple(keys)
+        return copy
 
 
 class SecondReadAnswer(BaseModel):

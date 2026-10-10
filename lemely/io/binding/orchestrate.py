@@ -97,6 +97,10 @@ REVIEW_ONLY_REASONS: tuple[ReviewOnlyReason, ...] = get_args(ReviewOnlyReason)
 # writing. A part whose block was lost this way looks blank and is not.
 LOST_ITEM_REASONS = ("malformed_item", "unknown_type")
 
+# Each read's task tag and the suffix its cache key takes after the paper's own key.
+_FIRST_READ = ("extraction", "|bind1")
+_SECOND_READ = (SECOND_READ_TASK_TAG, "|bind2")
+
 
 @dataclass(frozen=True, slots=True)
 class BindingOutcome:
@@ -113,7 +117,9 @@ class BindingOutcome:
     (that writing is added to ``unbound``). ``drops`` is the chosen read's count of
     reply items left out or repaired, by reason. ``review_reasons`` says why each id
     in ``review_only_ids`` is there: the binder's own reason for an unaligned leaf, or
-    one of ``REVIEW_ONLY_REASONS``.
+    one of ``REVIEW_ONLY_REASONS``. ``read_cache_keys`` are the response-cache keys of
+    the reads that were made, for whoever holds the paper later (the marker's check
+    runs after this) to forget them by.
     """
 
     answers: list[ExtractedAnswer]
@@ -122,6 +128,7 @@ class BindingOutcome:
     review_only_ids: list[str]
     drops: dict[str, int] = field(default_factory=dict)
     review_reasons: dict[str, UnalignedReason | ReviewOnlyReason] = field(default_factory=dict)
+    read_cache_keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -473,22 +480,29 @@ def run_binding(
             writings={leaf.question_id: list(leaf.writings) for leaf in bound.leaves},
         )
 
+    reads = [_FIRST_READ, _SECOND_READ] if binding.second_read else [_FIRST_READ]
+    # The keys the reads are cached under: taken out here for a paper held before
+    # marking or a job that failed, and handed on for a paper held after marking.
+    read_cache_keys = tuple(
+        binder.cache_key(
+            pages,
+            mark_scheme,
+            model=binding.read_model,
+            extra_cache_key=manifest_key + suffix,
+            task_tag=task_tag,
+        )
+        for task_tag, suffix in reads
+    )
+
     def _first() -> _Read:
-        return _read("extraction", "|bind1")
+        return _read(*_FIRST_READ)
 
     def _second() -> _Read:
-        return _read(SECOND_READ_TASK_TAG, "|bind2")
+        return _read(*_SECOND_READ)
 
     def _forget_reads() -> None:
-        """Take both reads out of the response cache: the next run reads the scan afresh."""
-        for task_tag, suffix in (("extraction", "|bind1"), (SECOND_READ_TASK_TAG, "|bind2")):
-            binder.forget(
-                pages,
-                mark_scheme,
-                model=binding.read_model,
-                extra_cache_key=manifest_key + suffix,
-                task_tag=task_tag,
-            )
+        """Take the reads out of the response cache: the next run reads the scan afresh."""
+        client.forget_cached(read_cache_keys)
 
     second_read: _Read | None = None
     if binding.second_read:
@@ -629,6 +643,7 @@ def run_binding(
         review_only_ids=review_only,
         drops=dict(chosen.drops),
         review_reasons=review_reasons,
+        read_cache_keys=read_cache_keys,
     )
 
 

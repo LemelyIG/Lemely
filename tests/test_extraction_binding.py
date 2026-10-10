@@ -38,6 +38,7 @@ from lemely.io.rasterise import RasterisedPage
 from lemely.runtime.config import BindingSettings, PathsSettings, Settings, load_settings
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus
+from lemely.web.services import grading
 from tests.gemini_fakes import fake_genai_client
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -2057,6 +2058,137 @@ def test_a_held_legacy_paper_does_not_pin_its_call_or_its_retry(
     # And a legacy paper that passed stays cached.
     extractor(scan_path=scan, mark_scheme=scheme)
     assert genai.models.generate_content.call_count == 5
+
+
+class _Judge:
+    """Stands in for ``AICorrector.mark_question``: every answer judged with ``says``."""
+
+    def __init__(self, says: str) -> None:
+        self.says = says
+
+    def __call__(self, _self: object, question: Question, *_a: object, **_k: object) -> Any:
+        return AIMarkResponse.model_validate(
+            {
+                "awarded_marks": 0,
+                "confidence": 0.95,
+                "matched_point_ids": [],
+                "feedback": "fb",
+                "addresses_question": self.says,
+            }
+        )
+
+
+def _marked(client: GeminiClient, scheme: MarkScheme, extracted: ExtractedAnswers, says: str):
+    with patch.object(
+        correction_ai.AICorrector, "mark_question", autospec=True, side_effect=_Judge(says)
+    ):
+        return correct_paper(scheme, extracted, gemini_client=client)
+
+
+@pytest.mark.parametrize("binder", ["label", "legacy"])
+def test_a_paper_held_after_marking_does_not_pin_its_reads_in_the_cache(
+    tmp_path: Path, scan: Path, scheme: MarkScheme, binder: str
+) -> None:
+    # The binding passes its checks before marking; then the marker says answer after
+    # answer does not address its question, and G8 holds the paper. A re-run that got
+    # the same reads back from the cache would get the same marking back too, and the
+    # same hold, for as long as the instance lived.
+    client, genai = _client(tmp_path, binder=binder)
+    body = _items(_run(1)) if binder == "label" else _legacy_reply("aligned")
+    reads = 2 if binder == "label" else 1
+    genai.models.generate_content.return_value = _sdk_reply(body)
+    extractor = GeminiAnswerExtractor(client, max_rereads_per_paper=0)
+
+    extracted = extractor(scan_path=scan, mark_scheme=scheme)
+    assert extracted.binding is not None and extracted.binding.verdict == "pass"
+    assert genai.models.generate_content.call_count == reads
+
+    held = _marked(client, scheme, extracted, "no")
+    assert held.binding is not None and held.binding.verdict == "hold"
+    assert genai.models.generate_content.call_count == reads  # the marker here is a fake
+
+    # Run again on the same scan: it is read afresh.
+    extractor(scan_path=scan, mark_scheme=scheme)
+    assert genai.models.generate_content.call_count == 2 * reads
+
+
+@pytest.mark.parametrize("binder", ["label", "legacy"])
+def test_a_paper_that_passed_marking_too_is_served_from_the_cache_on_a_re_run(
+    tmp_path: Path, scan: Path, scheme: MarkScheme, binder: str
+) -> None:
+    client, genai = _client(tmp_path, binder=binder)
+    body = _items(_run(1)) if binder == "label" else _legacy_reply("aligned")
+    reads = 2 if binder == "label" else 1
+    genai.models.generate_content.return_value = _sdk_reply(body)
+    extractor = GeminiAnswerExtractor(client, max_rereads_per_paper=0)
+
+    extracted = extractor(scan_path=scan, mark_scheme=scheme)
+    passed = _marked(client, scheme, extracted, "yes")
+    assert passed.binding is not None and passed.binding.verdict == "pass"
+
+    again = extractor(scan_path=scan, mark_scheme=scheme)
+    assert genai.models.generate_content.call_count == reads  # no model call
+    assert _pairs(again) == _pairs(extracted)
+
+
+def test_the_keys_of_the_reads_travel_on_the_extraction_and_are_never_serialised(
+    tmp_path: Path, scan: Path, scheme: MarkScheme
+) -> None:
+    client, genai = _client(tmp_path)
+    genai.models.generate_content.return_value = _sdk_reply(_items(_run(1)))
+    extracted = GeminiAnswerExtractor(client, max_rereads_per_paper=0)(
+        scan_path=scan, mark_scheme=scheme
+    )
+    keys = extracted.read_cache_keys()
+    assert len(keys) == 2 and len(set(keys)) == 2
+    cache_dir = client._settings.paths.cache_dir / "gemini"
+    assert sorted(path.stem for path in cache_dir.glob("*.json")) == sorted(keys)
+    # They are for this process only: nothing of them is in what is stored or sent.
+    dumped = json.dumps(extracted.model_dump(mode="json")) + extracted.model_dump_json()
+    assert not any(key in dumped for key in keys) and "cache" not in dumped
+    assert ExtractedAnswers.model_validate(extracted.model_dump()).read_cache_keys() == ()
+    # A copy keeps them; an extraction built by hand has none, and holding it forgets nothing.
+    assert extracted.model_copy(update={"source_scan": "x"}).read_cache_keys() == keys
+    by_hand = ExtractedAnswers.model_validate(extracted.model_dump())
+    held = _marked(client, scheme, by_hand, "no")
+    assert held.binding is not None and held.binding.verdict == "hold"
+    assert len(list(cache_dir.glob("*.json"))) == 2
+    # Forgetting says how many entries were there; a key with none is passed over.
+    assert client.forget_cached([keys[0], "0" * 16]) == 1
+    assert [path.stem for path in cache_dir.glob("*.json")] == [keys[1]]
+
+
+def test_the_upload_jobs_read_a_paper_held_after_marking_afresh(
+    tmp_path: Path, scan: Path, scheme: MarkScheme
+) -> None:
+    # The student's and the teacher's upload job make these three calls, in this
+    # order, with one client: the extraction goes from the first to the last as the
+    # object it is, so the keys of its reads are there when the marking holds it.
+    client, genai = _client(tmp_path)
+    genai.models.generate_content.return_value = _sdk_reply(_items(_run(1)))
+
+    def _job() -> None:
+        extracted = grading.extract_answers(scan, scheme, gemini_client=client)
+        grading.ensure_binding_allows_marking(extracted)
+        grading.grade_paper(
+            scheme,
+            extracted,
+            gemini_client=client,
+            integrity_settings=client._settings.integrity,
+            options=client._settings.grading.marking_options(),
+        )
+
+    with patch.object(
+        correction_ai.AICorrector, "mark_question", autospec=True, side_effect=_Judge("no")
+    ):
+        with pytest.raises(grading.BindingHeldError) as first:
+            _job()
+        assert first.value.stage == "after_marking"
+        assert genai.models.generate_content.call_count == 2
+        with pytest.raises(grading.BindingHeldError) as second:
+            _job()
+        assert second.value.stage == "after_marking"
+        assert genai.models.generate_content.call_count == 4
 
 
 def test_legacy_binder_with_gate_off_is_unchanged(

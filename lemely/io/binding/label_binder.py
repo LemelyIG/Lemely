@@ -324,7 +324,7 @@ class LabelBinder:
         )
         return parse_stream_items(raw.model_dump()["items"], page_count=len(pages))
 
-    def forget(
+    def cache_key(
         self,
         pages: list[RasterisedPage],
         mark_scheme: MarkScheme,
@@ -333,14 +333,16 @@ class LabelBinder:
         media_resolution: str = "high",
         extra_cache_key: str,
         task_tag: str = "extraction",
-    ) -> bool:
-        """Remove the cached reply of the ``read`` these arguments make; say if one was there.
+    ) -> str:
+        """The key the reply of the ``read`` these arguments make is cached under.
 
-        For a read whose paper was held or whose job failed: the next run on the same
-        script must look at it again, not be handed the same list. The arguments that
-        decide the cache key are the same as ``read``'s, in the same form.
+        What a caller keeps of a read it may have to forget (``GeminiClient.forget_cached``):
+        the next run on a script whose paper was held, before or after its answers were
+        marked, or whose job failed, must look at it again and not be handed the same
+        list. The arguments that decide the key are the same as ``read``'s, in the same
+        form.
         """
-        return self._client.forget_structured(
+        return self._client.structured_cache_key(
             system_prompt=LABEL_BINDING_SYSTEM_PROMPT,
             user_prompt=build_label_binding_user_prompt(mark_scheme, page_count=len(pages)),
             image_parts=[page.png_bytes for page in pages],

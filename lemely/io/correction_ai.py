@@ -2469,6 +2469,38 @@ def _with_off_topic_check(
     return CorrectionResult(metadata=result.metadata, questions=questions, binding=report)
 
 
+def _forget_reads_of_a_held_paper(
+    result: CorrectionResult,
+    extracted_answers: ExtractedAnswers | Mapping[str, str],
+    gemini_client: GeminiClient | None,
+) -> None:
+    """Take the reads behind a paper this marking holds out of the response cache.
+
+    A paper whose binding verdict is not ``pass`` is not published, and its owner runs
+    it again. The binding step forgets its reads for a paper it holds itself; a paper
+    held here, by the marker's check, passed there, so its reads are still cached,
+    and a re-run that got them back would get the same marking back too (those
+    replies are cached by answer text) and the same hold, for as long as the cache
+    lived. The extraction carries the keys of its reads for this
+    (``ExtractedAnswers.read_cache_keys``). The marker's replies stay: a fresh read
+    that gives a question the same answer text may reuse its marking.
+
+    An extraction that carries no keys (built by hand, loaded from a stored record or
+    a file, made with no gate) has nothing to forget, and nothing is called.
+    """
+    if result.binding is None or result.binding.verdict == "pass":
+        return
+    if gemini_client is None or not isinstance(extracted_answers, ExtractedAnswers):
+        return
+    keys = extracted_answers.read_cache_keys()
+    if not keys:
+        return
+    forgotten = gemini_client.forget_cached(keys)
+    structlog.get_logger().bind(component="correct_paper").info(
+        "held_paper_reads_forgotten", verdict=result.binding.verdict, forgotten=forgotten
+    )
+
+
 def correct_paper(
     mark_scheme: MarkScheme | str | Mapping[str, object],
     extracted_answers: ExtractedAnswers | Mapping[str, str],
@@ -2785,6 +2817,8 @@ def correct_paper(
     omitted = sum(1 for cq in marked if cq.addresses_question is None)
     if omitted:
         log.warning("marker_omitted_addresses_question", omitted=omitted, marked=len(marked))
-    return _with_off_topic_check(
+    result = _with_off_topic_check(
         CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected), extracted_answers
     )
+    _forget_reads_of_a_held_paper(result, extracted_answers, gemini_client)
+    return result
