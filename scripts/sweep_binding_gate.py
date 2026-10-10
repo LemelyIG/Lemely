@@ -3,9 +3,11 @@
 
 For each setting of the G6 and G7 limits it prints how many golden cases the
 checks wrongly hold, how many simulated correct papers they wrongly hold (per
-student type), and how many whole-paper shifts they catch. Then, at the chosen
-setting, it breaks detection down by how many numeric-answer questions the
-scheme has, for whole-paper shifts, partial shifts, splits and drops.
+student type), how many whole-paper shifts they catch, and how many papers of a
+student who confuses adjacent questions they hold (a sensitivity row, not a limit).
+It then applies the threshold rule, prints the decision narrative against the
+defaults in ``GateThresholds`` at the time it runs, and, at the chosen setting,
+breaks detection down by how many numeric-answer questions the scheme has.
 
 Run with the repository on the path: ``PYTHONPATH=. python scripts/sweep_binding_gate.py``.
 """
@@ -13,6 +15,8 @@ Run with the repository on the path: ``PYTHONPATH=. python scripts/sweep_binding
 from __future__ import annotations
 
 import itertools
+import json
+import re
 import sys
 from collections import defaultdict
 from dataclasses import astuple, dataclass, replace
@@ -26,10 +30,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from lemely.accuracy.harness import load_golden_cases  # noqa: E402
-from lemely.core.binding_gate import GateThresholds  # noqa: E402
+from lemely.core.binding_gate import (  # noqa: E402
+    GateThresholds,
+    check_duplicate_ids,
+    check_shape,
+    check_shift,
+    check_unknown_ids,
+)
+from lemely.core.loose_schemas import MarkScheme as _Scheme  # noqa: E402
+from lemely.core.schemas import ExtractedAnswers  # noqa: E402
 from tests.binding_students import (  # noqa: E402
     STUDENT_TYPES,
     PaperBits,
+    adjacent_students,
     extracted_from,
     load_corpus,
     paper_bits,
@@ -41,17 +54,22 @@ from tests.binding_students import (  # noqa: E402
 )
 
 MATCHES = (2, 3, 4)
-GAPS = (2, 3, 4, 6)
+GAPS = (2, 3, 4, 6, 8, 10, 12)
 COUNTS = (2, 3, 4)
-RATES = (0.20, 0.25, 0.33)
+RATES = (0.20, 0.25, 0.33, 0.40, 0.50)
+ADJACENT_SHARES = (0.10, 0.40)
 SHIFT_GRID = list(itertools.product(MATCHES, GAPS))
 SHAPE_GRID = list(itertools.product(RATES, COUNTS))
 GOLDEN_DIR = REPO_ROOT / "tests" / "golden"
+FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "binding" / "0625_w24_41"
+FIXTURE_SCHEME = REPO_ROOT / "corpus" / "mark-schemes" / "0625_w24_ms_41.json"
 BANDS = (("fewer than 3", 0, 2), ("3-5", 3, 5), ("6-10", 6, 10), ("more than 10", 11, 10_000))
 FALSE_HOLD_OVERALL = 0.02
 FALSE_HOLD_ONE_TYPE = 0.05
 RANKING_MIN_VALUED = 3
 CLOSE_ENOUGH = 0.01
+ADJACENT_COST_LIMIT = 0.02
+ORIGINAL_DEFAULTS = (3, 3, 3, 0.25)  # matches, gap, count, rate before the first sweep
 
 
 @dataclass(frozen=True)
@@ -71,6 +89,19 @@ class Setting:
         )
 
 
+@dataclass(frozen=True)
+class Row:
+    setting: Setting
+    golden_held: int
+    per_type: dict[str, float]
+    overall: float
+    detect_later: float
+    detect_earlier: float
+    detect: float
+    detect_own: float
+    adjacent: dict[float, float]
+
+
 def agreement(a: Setting, b: Setting) -> int:
     """How many of the four limits two settings share (the final tie-break)."""
     return sum(x == y for x, y in zip(astuple(a), astuple(b), strict=True))
@@ -84,16 +115,21 @@ def share(hits: int, total: int) -> float:
     return hits / total if total else 0.0
 
 
-def golden_bits() -> list[tuple[str, PaperBits]]:
-    cases = load_golden_cases(GOLDEN_DIR)
-    out = []
-    for case in cases:
-        answers = {qid: a.student_answer for qid, a in case.ground_truth.items()}
-        name = f"{case.paper_id}_{case.fixture_variant}"
-        out.append(
-            (name, paper_bits(extracted_from(answers), case.mark_scheme, SHAPE_GRID, SHIFT_GRID))
-        )
-    return out
+def rate_of(bits: list[PaperBits], s: Setting) -> float:
+    return share(sum(fails(b, s) for b in bits), len(bits))
+
+
+def head_defaults() -> Setting:
+    d = GateThresholds()
+    return Setting(d.shift_min_matches, d.shift_max_gap, d.shape_min_count, d.shape_mismatch_rate)
+
+
+def bits_of(sc: MarkScheme, answers: dict[str, str]) -> PaperBits:
+    return paper_bits(extracted_from(answers), sc, SHAPE_GRID, SHIFT_GRID)
+
+
+def choose(rows: list[Row], reference: Setting) -> Row:
+    return max(rows, key=lambda r: (r.detect, -r.overall, agreement(r.setting, reference)))
 
 
 def main() -> None:
@@ -102,91 +138,132 @@ def main() -> None:
         f"corpus schemes with a non-MCQ leaf: {len(schemes)}; "
         f"files that did not validate: {len(skipped)}"
     )
-    golden = golden_bits()
-    students = [
-        (kind, paper_bits(extracted_from(a), sc, SHAPE_GRID, SHIFT_GRID))
-        for kind, _n, sc, a in simulated_students(schemes)
-    ]
+    golden = []
+    for case in load_golden_cases(GOLDEN_DIR):
+        answers = {qid: a.student_answer for qid, a in case.ground_truth.items()}
+        golden.append(paper_bits(extracted_from(answers), case.mark_scheme, SHAPE_GRID, SHIFT_GRID))
+    students = [(kind, bits_of(sc, a)) for kind, _n, sc, a in simulated_students(schemes)]
+    adjacent = {
+        p: [bits_of(sc, a) for _n, sc, a in adjacent_students(schemes, p)] for p in ADJACENT_SHARES
+    }
     whole = [
-        (by, valued_leaf_count(sc), paper_bits(extracted_from(a), sc, SHAPE_GRID, SHIFT_GRID))
-        for by, _n, sc, a in whole_paper_shifts(schemes)
+        (by, valued_leaf_count(sc), bits_of(sc, a)) for by, _n, sc, a in whole_paper_shifts(schemes)
     ]
 
-    rows = []
+    rows: list[Row] = []
     for matches, gap, count, rate in itertools.product(MATCHES, GAPS, COUNTS, RATES):
         s = Setting(matches, gap, count, rate)
-        held = sum(fails(b, s) for _, b in golden)
-        per_type = {
-            k: share(
-                sum(fails(b, s) for kk, b in students if kk == k),
-                sum(kk == k for kk, _ in students),
-            )
-            for k in STUDENT_TYPES
-        }
-        overall = share(sum(fails(b, s) for _, b in students), len(students))
-        det = {}
-        for by in (1, -1):
-            pop = [b for d, v, b in whole if d == by and v >= RANKING_MIN_VALUED]
-            det[by] = share(sum(fails(b, s) for b in pop), len(pop))
+        per_type = {k: rate_of([b for kk, b in students if kk == k], s) for k in STUDENT_TYPES}
+        pop_later = [b for d, v, b in whole if d == 1 and v >= RANKING_MIN_VALUED]
+        pop_earlier = [b for d, v, b in whole if d == -1 and v >= RANKING_MIN_VALUED]
         pop_all = [b for _d, v, b in whole if v >= RANKING_MIN_VALUED]
-        det_all = share(sum(fails(b, s) for b in pop_all), len(pop_all))
-        own = [b for _d, v, b in whole if v >= matches]
-        det_own = share(sum(fails(b, s) for b in own), len(own))
-        rows.append((s, held, per_type, overall, det[1], det[-1], det_all, det_own))
+        pop_own = [b for _d, v, b in whole if v >= matches]
+        rows.append(
+            Row(
+                s,
+                sum(fails(b, s) for b in golden),
+                per_type,
+                rate_of([b for _k, b in students], s),
+                rate_of(pop_later, s),
+                rate_of(pop_earlier, s),
+                rate_of(pop_all, s),
+                rate_of(pop_own, s),
+                {p: rate_of(adjacent[p], s) for p in ADJACENT_SHARES},
+            )
+        )
 
     print(f"\nwhole-paper detection ranked on schemes with >= {RANKING_MIN_VALUED} valued leaves")
     print(
         "matches gap count rate | golden_held | false-hold perfect/rand/nearby/all "
-        "| detect later/earlier/both | own-pop"
+        "| detect later/earlier/both | own-pop | adjacent 10%/40% (sensitivity)"
     )
-    for s, held, pt, overall, dl, de, da, own in rows:
+    for r in rows:
+        s = r.setting
         print(
-            f"{s.matches:>3} {s.gap:>3} {s.count:>3} {s.rate:.2f} | {held:>2}/{len(golden)} | "
-            f"{pt['perfect']:.3f}/{pt['weak-random']:.3f}/{pt['weak-nearby']:.3f}/{overall:.3f} | "
-            f"{dl:.3f}/{de:.3f}/{da:.3f} | {own:.3f}"
+            f"{s.matches:>3} {s.gap:>3} {s.count:>3} {s.rate:.2f} | "
+            f"{r.golden_held:>2}/{len(golden)} | "
+            f"{r.per_type['perfect']:.3f}/{r.per_type['weak-random']:.3f}/"
+            f"{r.per_type['weak-nearby']:.3f}/{r.overall:.3f} | "
+            f"{r.detect_later:.3f}/{r.detect_earlier:.3f}/{r.detect:.3f} | {r.detect_own:.3f} | "
+            f"{r.adjacent[0.10]:.3f}/{r.adjacent[0.40]:.3f}"
         )
 
+    chosen = decide(rows)
+    if chosen is not None:
+        report(chosen.setting, schemes, students, adjacent)
+
+
+def decide(rows: list[Row]) -> Row | None:
+    """Apply the threshold rule and print the narrative against the current defaults."""
+    head = head_defaults()
     ok = [
         r
         for r in rows
-        if r[1] == 0 and r[3] <= FALSE_HOLD_OVERALL and max(r[2].values()) <= FALSE_HOLD_ONE_TYPE
+        if r.golden_held == 0
+        and r.overall <= FALSE_HOLD_OVERALL
+        and max(r.per_type.values()) <= FALSE_HOLD_ONE_TYPE
     ]
     print(f"\nsettings meeting the golden and false-hold limits: {len(ok)} of {len(rows)}")
     if not ok:
         print("NO SETTING MEETS THE LIMITS")
-        return
-    default = Setting(
-        GateThresholds().shift_min_matches,
-        GateThresholds().shift_max_gap,
-        GateThresholds().shape_min_count,
-        GateThresholds().shape_mismatch_rate,
-    )
-    best = max(ok, key=lambda r: (r[6], -r[3], agreement(r[0], default)))
-    default_row = next((r for r in ok if r[0] == default), None)
-    print(f"best by the rule: {best[0]} detection {best[6]:.3f} false-hold {best[3]:.3f}")
-    if default_row is None:
-        print("current defaults do not meet the limits")
-        chosen = best
-    elif best[6] - default_row[6] <= CLOSE_ENOUGH:
-        print(f"current defaults {default} within one point ({default_row[6]:.3f}): keep")
-        chosen = default_row
+        return None
+    for label, setting in (
+        ("original defaults", Setting(*ORIGINAL_DEFAULTS)),
+        ("defaults now in GateThresholds", head),
+    ):
+        row = next(r for r in rows if r.setting == setting)
+        verdict = "meets the limits" if row in ok else "does NOT meet the limits"
+        print(
+            f"  {label} {setting}: {verdict}; detection {row.detect:.3f}, false-hold "
+            f"{row.overall:.3f} (nearby {row.per_type['weak-nearby']:.3f})"
+        )
+    candidates = ok
+    best = choose(candidates, head)
+    print(f"best by the rule on the full grid: {best.setting} detection {best.detect:.3f}")
+    while best.setting.gap > head.gap:
+        at_head_gap = next(r for r in rows if r.setting == replace(best.setting, gap=head.gap))
+        cost = best.adjacent[0.10] - at_head_gap.adjacent[0.10]
+        print(
+            f"  adjacent-confusion (10%) holds at gap {best.setting.gap}: "
+            f"{best.adjacent[0.10]:.3f} "
+            f"vs {at_head_gap.adjacent[0.10]:.3f} at gap {head.gap} (+{cost:.3f})"
+        )
+        if cost <= ADJACENT_COST_LIMIT:
+            break
+        print(f"  more than {ADJACENT_COST_LIMIT:.0%} worse: gap capped at {head.gap}")
+        candidates = [r for r in candidates if r.setting.gap <= head.gap]
+        best = choose(candidates, head)
+        print(f"  best with the cap: {best.setting} detection {best.detect:.3f}")
+    head_row = next((r for r in ok if r.setting == head), None)
+    if head_row is not None and best.detect - head_row.detect <= CLOSE_ENOUGH:
+        print(
+            f"defaults now in GateThresholds are eligible and within one point "
+            f"({head_row.detect:.3f} vs {best.detect:.3f}): keep"
+        )
+        chosen = head_row
     else:
+        print("defaults now in GateThresholds are not eligible or more than a point behind: change")
         chosen = best
-    print(f"CHOSEN: {chosen[0]}")
-    report(chosen[0], schemes)
+    print(f"CHOSEN: {chosen.setting}")
+    return chosen
 
 
 def band_of(valued: int) -> str:
     return next(name for name, lo, hi in BANDS if lo <= valued <= hi)
 
 
-def report(s: Setting, schemes: list[tuple[str, MarkScheme]]) -> None:
-    grid_shape, grid_shift = [(s.rate, s.count)], [(s.matches, s.gap)]
+def report(
+    s: Setting,
+    schemes: list[tuple[str, MarkScheme]],
+    students: list[tuple[str, PaperBits]],
+    adjacent: dict[float, list[PaperBits]],
+) -> None:
+    only = ([(s.rate, s.count)], [(s.matches, s.gap)])
 
     def caught(sc: MarkScheme, answers: dict[str, str]) -> bool:
-        return fails(paper_bits(extracted_from(answers), sc, grid_shape, grid_shift), s)
+        return fails(paper_bits(extracted_from(answers), sc, *only), s)
 
-    bands = defaultdict(int)
+    bands: dict[str, int] = defaultdict(int)
     for _n, sc in schemes:
         bands[band_of(valued_leaf_count(sc))] += 1
     print("\nschemes per band of valued leaves:", {name: bands[name] for name, _, _ in BANDS})
@@ -198,8 +275,7 @@ def report(s: Setting, schemes: list[tuple[str, MarkScheme]]) -> None:
             t[1] += 1
             t[0] += caught(sc, answers)
         print(f"\n{title}")
-        keys = sorted({k.split("|")[0] for k in tally}, key=lambda k: (len(k), k))
-        for key in keys:
+        for key in sorted({k.split("|")[0] for k in tally}, key=lambda k: (len(k), k)):
             parts = []
             hit_all = tot_all = 0
             for name, _, _ in BANDS:
@@ -225,11 +301,68 @@ def report(s: Setting, schemes: list[tuple[str, MarkScheme]]) -> None:
         "split / drop at a seeded leaf in the first half",
         [(k, sc, a) for k, _n, sc, a in split_and_drops(schemes)],
     )
-    print("\nfalse holds, simulated correct papers")
-    for kind in STUDENT_TYPES:
-        rows = [(sc, a) for k, _n, sc, a in simulated_students(schemes) if k == kind]
-        h = sum(caught(sc, a) for sc, a in rows)
-        print(f"  {kind:>12}: {h}/{len(rows)} ({share(h, len(rows)):.1%})")
+
+    everything, _ = load_corpus(include_mcq_only=True)
+    shifted = [(sc, a) for _by, _n, sc, a in whole_paper_shifts(everything)]
+    seen = sum(caught(sc, a) for sc, a in shifted)
+    print(
+        f"\nwhole-paper shifts over ALL {len(everything)} validated schemes "
+        f"({len(everything) - len(schemes)} multiple-choice only): caught {seen}/{len(shifted)} "
+        f"({share(seen, len(shifted)):.1%}); pass unnoticed {len(shifted) - seen}/{len(shifted)} "
+        f"({share(len(shifted) - seen, len(shifted)):.1%})"
+    )
+
+    print("\nfalse holds, simulated correct papers, by the check that fired")
+    for kind in (*STUDENT_TYPES, *(f"adjacent-{p:.0%}" for p in ADJACENT_SHARES)):
+        if kind in STUDENT_TYPES:
+            bits = [b for k, b in students if k == kind]
+        else:
+            bits = adjacent[float(kind.split("-")[1].rstrip("%")) / 100]
+        by_check = {
+            "G1/G2": sum(b.ids for b in bits),
+            "G6": sum(b.shape[(s.rate, s.count)] for b in bits),
+            "G7": sum(b.shift[(s.matches, s.gap)] for b in bits),
+        }
+        held = sum(fails(b, s) for b in bits)
+        note = "  (sensitivity, not a limit)" if kind not in STUDENT_TYPES else ""
+        print(
+            f"  {kind:>14}: {held}/{len(bits)} ({share(held, len(bits)):.1%}); "
+            + ", ".join(f"{k} {v}" for k, v in by_check.items())
+            + note
+        )
+
+    print("\nadjacent-confusion holds at every gap (other limits as chosen)")
+    for gap in GAPS:
+        probe = replace(s, gap=gap)
+        print(
+            f"  gap {gap:>2}: "
+            + ", ".join(f"{p:.0%}: {rate_of(adjacent[p], probe):.1%}" for p in ADJACENT_SHARES)
+        )
+
+    fixtures(s)
+
+
+def fixtures(s: Setting) -> None:
+    scheme = _Scheme.model_validate(json.loads(FIXTURE_SCHEME.read_text(encoding="utf-8")))
+    limits = s.thresholds()
+    print(f"\nrecorded fixtures (0625/41) at {s}")
+    for path in sorted(FIXTURE_DIR.glob("*.json")):
+        extracted = ExtractedAnswers.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        checks = {
+            "G1": check_unknown_ids(extracted, scheme),
+            "G2": check_duplicate_ids(extracted),
+            "G6": check_shape(extracted, scheme, limits),
+            "G7": check_shift(extracted, scheme, limits)[0],
+        }
+        failed = [k for k, c in checks.items() if not c.passed]
+        ratio = re.search(r"(\d+) of (\d+)", checks["G6"].detail)
+        runs = [int(n) for n in re.findall(r"(\d+) answers hold", checks["G7"].detail)]
+        print(
+            f"  {path.stem:>16}: fails {', '.join(failed) or 'none'}; "
+            f"G6 wrong-kind {ratio[1] + '/' + ratio[2] if ratio else '-'} "
+            f"(limit > {limits.shape_mismatch_rate:.0%} and >= {limits.shape_min_count}); "
+            f"G7 longest run {max(runs) if runs else 0} (needs {limits.shift_min_matches})"
+        )
 
 
 if __name__ == "__main__":

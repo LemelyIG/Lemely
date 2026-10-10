@@ -76,6 +76,13 @@ def test_shift_split_drop_move_the_expected_answers() -> None:
     }
 
 
+def test_split_and_drop_at_the_last_leaf() -> None:
+    # Splitting the last answer ("a6" into "a" and "6"): the second half has no leaf and falls off.
+    assert split_answer(ANSWERS, ORDER, at=5) == {**ANSWERS, "6": "a"}
+    # Dropping the last answer: nothing after it moves.
+    assert drop_answer(ANSWERS, ORDER, at=5) == {k: v for k, v in ANSWERS.items() if k != "6"}
+
+
 def test_transforms_keep_gaps_and_leave_the_input_alone() -> None:
     answers = {"1": "x", "3": "y"}
     assert shift_answers(answers, ORDER, start=0, by=1) == {"2": "x", "4": "y"}
@@ -98,8 +105,10 @@ def test_gate_holds_no_unshifted_golden_case() -> None:
 
 
 def test_gate_holds_at_most_2_percent_of_simulated_correct_papers() -> None:
-    # Measured with scripts/sweep_binding_gate.py at the default limits over 210 corpus schemes:
-    # perfect 0.5%, weak-random 0.0%, weak-nearby 3.8%, overall 1.4%.
+    # Measured with scripts/sweep_binding_gate.py at the default limits over the 210 corpus
+    # schemes with a non-MCQ leaf (630 papers): perfect 0/210, weak-random 0/210, weak-nearby
+    # 5/210 (2.4%, four G6 and one G7), overall 5/630 (0.8%). The weak-nearby student mostly
+    # exercises G6: two thirds of its picks lie beyond G7's two-position window.
     schemes, skipped = load_corpus()
     assert not skipped and len(schemes) > 100
     papers = simulated_students(schemes)
@@ -107,16 +116,19 @@ def test_gate_holds_at_most_2_percent_of_simulated_correct_papers() -> None:
         kind for kind, _n, scheme, answers in papers if paper_fails(extracted_from(answers), scheme)
     )
     total = Counter(kind for kind, *_ in papers)
+    assert held["perfect"] == 0
     assert sum(held.values()) / len(papers) <= 0.02
     for kind in STUDENT_TYPES:
         assert held[kind] / total[kind] <= 0.05, kind
 
 
 def test_gate_catches_whole_paper_shifts_where_it_can_see() -> None:
-    # Measured over the 160 schemes (of 210) with at least shift_min_matches valued
-    # non-MCQ leaves, both directions: 97.8% caught (later 98.8%, earlier 96.9%).
-    # The floor is that minus 2 points. Schemes with fewer valued leaves are not asserted:
-    # the pre-marking checks cannot see a shift there (see the sweep report).
+    # Measured over the 160 schemes (of 210 with a non-MCQ leaf) that have at least
+    # shift_min_matches valued non-MCQ leaves, both directions: 314/320 = 98.1% caught
+    # (later 98.8%, earlier 97.5%). The floor is that minus 2 points.
+    # This is NOT the share of all shifted papers caught. Over the 210 schemes it is
+    # 330/420 (78.6%); over all 289 validated schemes, 79 of them multiple-choice only
+    # where these checks see nothing, it is 330/578 (57.1%), so 42.9% pass unnoticed.
     schemes, _ = load_corpus()
     minimum = GateThresholds().shift_min_matches
     papers = [
@@ -126,5 +138,5 @@ def test_gate_catches_whole_paper_shifts_where_it_can_see() -> None:
     ]
     assert len(papers) == 320
     caught = sum(paper_fails(extracted_from(answers), scheme) for scheme, answers in papers)
-    assert caught / len(papers) >= 0.958
+    assert caught / len(papers) >= 0.961
     assert caught / len(papers) >= 0.90

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -32,7 +33,9 @@ ROOT = Path(__file__).resolve().parent.parent
 CORPUS_DIR = ROOT / "corpus" / "mark-schemes"
 STUDENT_TYPES = ("perfect", "weak-random", "weak-nearby")
 WEAK_SHARE = 0.4
+Scheme = tuple[str, MarkScheme]
 _GUESS_TEXT = "I am not sure of this one"
+_TRAILING_MARKS = re.compile(r"\s+\d+\s*$")
 
 
 def leaves(scheme: MarkScheme) -> list[Question]:
@@ -49,11 +52,13 @@ def valued_leaf_count(scheme: MarkScheme) -> int:
     return sum(1 for q in leaves(scheme) if not is_mcq(q) and expected_numeric_values(q))
 
 
-def load_corpus() -> tuple[list[tuple[str, MarkScheme]], list[str]]:
+def load_corpus(
+    *, include_mcq_only: bool = False
+) -> tuple[list[tuple[str, MarkScheme]], list[str]]:
     """Corpus schemes that have a non-MCQ leaf (in file-name order), and the files skipped.
 
     A file is skipped when it does not validate; a scheme with no non-MCQ leaf is
-    left out of the list but is not a failure.
+    left out of the list (unless ``include_mcq_only``) but is not a failure.
     """
     schemes: list[tuple[str, MarkScheme]] = []
     skipped: list[str] = []
@@ -63,7 +68,7 @@ def load_corpus() -> tuple[list[tuple[str, MarkScheme]], list[str]]:
         except Exception:
             skipped.append(path.name)
             continue
-        if any(not is_mcq(q) for q in leaves(scheme)):
+        if include_mcq_only or any(not is_mcq(q) for q in leaves(scheme)):
             schemes.append((path.stem, scheme))
     return schemes, skipped
 
@@ -75,7 +80,11 @@ def perfect_answer(question: Question) -> str:
     values = expected_numeric_values(question)
     if values:
         return values[0]
-    return question.answer_points[0].point if question.answer_points else "see working"
+    if not question.answer_points:
+        return "see working"
+    # A mark-scheme bullet ends with its mark count ("Resistors in parallel 1"); a student
+    # does not write that digit. Left in, the gate reads the short prose as a bare number.
+    return _TRAILING_MARKS.sub("", question.answer_points[0].point)
 
 
 def _wrong_answer(question: Question, rng: random.Random) -> str:
@@ -116,6 +125,32 @@ def weak_nearby_student(scheme: MarkScheme, rng: random.Random) -> dict[str, str
         if reachable:
             answers[q.id] = perfect[order[rng.choice(reachable)].id]
     return answers
+
+
+def weak_adjacent_student(scheme: MarkScheme, rng: random.Random, share: float) -> dict[str, str]:
+    """A seeded ``share`` of answers replaced by the answer of a leaf one or two positions away.
+
+    Sensitivity only, never a false-hold limit: a paper whose answers sit on the
+    neighbouring question is, by construction, indistinguishable from a short shift.
+    """
+    perfect = perfect_student(scheme)
+    order = leaves(scheme)
+    answers = dict(perfect)
+    for i, q in enumerate(order):
+        if rng.random() >= share:
+            continue
+        reachable = [j for d in (1, 2) for j in (i - d, i + d) if 0 <= j < len(order)]
+        if reachable:
+            answers[q.id] = perfect[order[rng.choice(reachable)].id]
+    return answers
+
+
+def adjacent_students(
+    schemes: list[Scheme], share: float
+) -> list[tuple[str, MarkScheme, dict[str, str]]]:
+    """(scheme name, scheme, answers) for the weak-adjacent student at ``share``, seeded."""
+    rng = random.Random(SEED)
+    return [(name, sc, weak_adjacent_student(sc, rng, share)) for name, sc in schemes]
 
 
 def student_answers(kind: str, scheme: MarkScheme, rng: random.Random) -> dict[str, str]:
@@ -197,7 +232,6 @@ def paper_bits(
     return PaperBits(ids=ids, shape=shape, shift=shift)
 
 
-Scheme = tuple[str, MarkScheme]
 WINDOWS = (3, 5, 10, 20)
 
 
