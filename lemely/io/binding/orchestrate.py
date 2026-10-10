@@ -49,7 +49,7 @@ import contextvars
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, get_args
 
 import structlog
 
@@ -67,14 +67,14 @@ from lemely.core.binding_gate import (
     unread_in_one_read,
     verdict,
 )
-from lemely.core.label_sequence import bind_stream
+from lemely.core.label_sequence import UnalignedReason, bind_stream
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 from lemely.io.binding.label_binder import BoundRead, LabelBinder, to_bound_read
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, LemelyError
 from lemely.runtime.events import EventType, bus
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from lemely.core.binding import BindingVerdict, SeenWriting
     from lemely.core.loose_schemas import MarkScheme
@@ -88,7 +88,10 @@ SECOND_READ_TASK_TAG = "binding_second_read"
 #: the other read has writing for it and this one has none; it is the part left with
 #: nothing in a group whose writing was listed before its labels; this read has nothing
 #: under its label and the other read placed no label for it.
-REVIEW_ONLY_REASONS = ("answered_in_one_read_only", "listing_suspect", "unaligned_in_other_read")
+ReviewOnlyReason = Literal[
+    "answered_in_one_read_only", "listing_suspect", "unaligned_in_other_read"
+]
+REVIEW_ONLY_REASONS: tuple[ReviewOnlyReason, ...] = get_args(ReviewOnlyReason)
 # Reasons in ``StreamRead.drops`` for a reply item that was left out and may have been
 # writing. A part whose block was lost this way looks blank and is not.
 LOST_ITEM_REASONS = ("malformed_item", "unknown_type")
@@ -117,7 +120,7 @@ class BindingOutcome:
     unbound: list[SeenWriting]
     review_only_ids: list[str]
     drops: dict[str, int] = field(default_factory=dict)
-    review_reasons: dict[str, str] = field(default_factory=dict)
+    review_reasons: dict[str, UnalignedReason | ReviewOnlyReason] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,7 +255,7 @@ def _publish_result(
     drops: dict[str, int],
     second_read: bool,
     first_read_failed: list[BindingCheck] | None = None,
-    review_reasons: dict[str, str] | None = None,
+    review_reasons: Mapping[str, str] | None = None,
 ) -> None:
     """Publish and log what the gate decided.
 
@@ -555,15 +558,16 @@ def run_binding(
     )
     # Why each of them is there. The read's own reason comes first: a leaf it could
     # not align is unaligned whatever else is true of it.
-    review_reasons = {
-        **dict.fromkeys(missed_elsewhere, "unaligned_in_other_read"),
-        **dict.fromkeys(seen_elsewhere, "answered_in_one_read_only"),
-        **dict.fromkeys(
-            (leaf for leaf in suspect_leaves if leaf not in answered), "listing_suspect"
-        ),
-        **{leaf: chosen.unaligned_reasons.get(leaf, "unaligned") for leaf in chosen.unaligned_ids},
+    why: dict[str, UnalignedReason | ReviewOnlyReason] = {}
+    why.update(dict.fromkeys(missed_elsewhere, "unaligned_in_other_read"))
+    why.update(dict.fromkeys(seen_elsewhere, "answered_in_one_read_only"))
+    why.update(
+        dict.fromkeys((leaf for leaf in suspect_leaves if leaf not in answered), "listing_suspect")
+    )
+    why.update(chosen.unaligned_reasons)
+    review_reasons: dict[str, UnalignedReason | ReviewOnlyReason] = {
+        leaf: why[leaf] for leaf in review_only if leaf in why
     }
-    review_reasons = {leaf: review_reasons[leaf] for leaf in review_only}
     unbound = [u.writing for u in chosen.unbound]
     if other is not None:
         for leaf in seen_elsewhere:

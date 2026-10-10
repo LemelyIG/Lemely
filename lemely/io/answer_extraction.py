@@ -1197,7 +1197,13 @@ class GeminiAnswerExtractor:
             # behaviour change). Populates extraction_agreement per answer,
             # matched by question_id; an answer the second read did not return
             # keeps extraction_agreement=None (see compute_agreement).
-            second_reader = build_second_reader(self._client, g)
+            #
+            # A paper the binding gate did not pass will not be marked: the job stops
+            # on its verdict. Neither this read nor the crop re-reads below is made
+            # for it, since each is a paid call on answers nobody will use.
+            report = bound_fields.get("binding")
+            held = report is not None and report.verdict != "pass"
+            second_reader = None if held else build_second_reader(self._client, g)
             if second_reader is not None:
                 try:
                     second_read_texts: dict[str, str] | None = second_reader.read(
@@ -1258,11 +1264,15 @@ class GeminiAnswerExtractor:
                     and a.extraction_agreement < REREAD_AGREEMENT_THRESHOLD
                 )
 
-            eligible_indices = [
-                i
-                for i, a in enumerate(answers)
-                if should_reread(a, **reread_kwargs) or _agreement_triggers_reread(a)
-            ]
+            eligible_indices = (
+                []  # a held paper: see above
+                if held
+                else [
+                    i
+                    for i, a in enumerate(answers)
+                    if should_reread(a, **reread_kwargs) or _agreement_triggers_reread(a)
+                ]
+            )
             to_reread = sorted(eligible_indices, key=lambda i: answers[i].confidence)[
                 : self._max_rereads_per_paper
             ]

@@ -1792,6 +1792,55 @@ def _extract_legacy_observed(tmp: Path, scheme: MarkScheme) -> None:
     )
 
 
+def test_a_held_paper_skips_the_later_extraction_steps(
+    tmp_path: Path, scan: Path, scheme: MarkScheme
+) -> None:
+    # The paper is held: it will not be marked. The optional text second reader and
+    # the crop re-reads would each be a paid call on answers nobody is going to use.
+    from lemely.io.reread import should_reread
+
+    held_reply = copy.deepcopy(_question_4_unanchored(4))
+    for item in held_reply:
+        if item.get("type") == "answer":
+            item["confidence"] = 0.1  # every answer is one a re-read would be spent on
+    settings = _settings(tmp_path)
+    settings = settings.model_copy(
+        update={"gemini": settings.gemini.model_copy(update={"second_reader": "cross_model"})}
+    )
+    client = GeminiClient(settings, _genai_client=fake_genai_client())
+    model = _Model(first=_items(held_reply), second=_items(held_reply))
+    with patch.object(client, "generate_structured", side_effect=model):
+        extracted = GeminiAnswerExtractor(client)(scan_path=scan, mark_scheme=scheme)
+
+    assert extracted.binding is not None and extracted.binding.verdict == "hold"
+    # Nothing but the two reads was asked of the model.
+    assert [(call["task_tag"], call["response_schema"].__name__) for call in model.calls] in (
+        [("extraction", "_StreamOutput"), ("binding_second_read", "_StreamOutput")],
+        [("binding_second_read", "_StreamOutput"), ("extraction", "_StreamOutput")],
+    )
+    assert any(should_reread(answer) for answer in extracted.answers)  # there was work to skip
+    assert (extracted.rereads_eligible, extracted.reread_attempts) == (0, 0)
+    assert all(
+        a.answer_reread is None and a.extraction_agreement is None for a in extracted.answers
+    )
+
+    # The same for a paper the legacy binder's gate holds.
+    shifted = _legacy_reply("full_shift_lite")
+    for answer in shifted["answers"]:
+        answer["confidence"] = 0.1
+    settings = _settings(tmp_path, binder="legacy")
+    settings = settings.model_copy(
+        update={"gemini": settings.gemini.model_copy(update={"second_reader": "cross_model"})}
+    )
+    client = GeminiClient(settings, _genai_client=fake_genai_client())
+    model = _Model(legacy=shifted, retry=copy.deepcopy(shifted))
+    with patch.object(client, "generate_structured", side_effect=model):
+        extracted = GeminiAnswerExtractor(client)(scan_path=scan, mark_scheme=scheme)
+    assert extracted.binding is not None and extracted.binding.verdict == "hold"
+    assert model.made() == ["legacy", "retry"]
+    assert (extracted.rereads_eligible, extracted.reread_attempts) == (0, 0)
+
+
 # --------------------------------------------------------------------------------------
 # The response cache
 # --------------------------------------------------------------------------------------

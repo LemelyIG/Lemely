@@ -20,6 +20,7 @@ from lemely.core.label_sequence import (
     INFERENCE_DOUBTS,
     BoundLeaf,
     BoundStream,
+    UnalignedReason,
 )
 from lemely.core.schemas import ExtractedAnswer, SourceBox
 from lemely.io.extraction_coerce import (
@@ -138,7 +139,7 @@ class BoundRead:
     listing_suspects: list[str]
     review_ids: list[str]
     drops: dict[str, int]
-    unaligned_reasons: dict[str, str] = field(default_factory=dict)
+    unaligned_reasons: dict[str, UnalignedReason] = field(default_factory=dict)
 
 
 def _usable_box(box: object, page: int | None, page_count: int) -> SourceBox | None:
