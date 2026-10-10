@@ -1883,10 +1883,11 @@ def test_an_unaligned_leaf_is_persisted_dropped_flagged_queued_and_has_no_panel(
         cls = classes.create_class(teacher, "Physics 10A")
         assert cls.join_code is not None
         classes.join_by_code(student_id, cls.join_code)
-    # The reader missed the label (i) of 4(b): leaf 4b_i has no label to bind to.
+    # The reader missed the label (i) of 4(b), in both reads: leaf 4b_i has no label to
+    # bind to and no read holds an answer for it.
     api.model.replies = {  # type: ignore[attr-defined]
         "first": _items(_without_label(_run(4), "(i)", 9)),
-        "second": _items(_run(1)),
+        "second": _items(_without_label(_run(4), "(i)", 9)),
     }
     up = api.post(
         "/api/student/uploads",
@@ -1913,6 +1914,55 @@ def test_an_unaligned_leaf_is_persisted_dropped_flagged_queued_and_has_no_panel(
         assert row.needs_teacher_review is True
         assert (row.review_reason or "").startswith("binding unverified:")
         assert row.awarded_marks == 0
+        queue = session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.question_result_id == row.id)
+        ).all()
+        assert [(r.reason.value, r.status.value) for r in queue] == [("low_confidence", "open")]
+
+
+def test_a_leaf_read_in_one_of_two_reads_is_marked_flagged_and_queued(
+    label_client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+    tmp_path: Path,
+) -> None:
+    """One read missed the label, the other bound the answer: marked from it, and in review."""
+    from tests.test_extraction_binding import _items, _run, _without_label
+
+    api, _student_id, _upload_repo = label_client
+    # The first read missed the label (i) of 4(b); the second read has it and binds the
+    # answer with no doubt. The leaf is not a zero waiting for a teacher: the answer one
+    # read bound is marked, and the row says where it came from.
+    api.model.replies = {  # type: ignore[attr-defined]
+        "first": _items(_without_label(_run(4), "(i)", 9)),
+        "second": _items(_run(1)),
+    }
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", _scan_19_pages(tmp_path), "application/pdf")},
+    )
+    assert up.status_code == 200, up.text
+
+    resp = api.post("/api/student/correct", json={"paperId": up.json()["paperId"]})
+
+    assert resp.status_code == 200
+    frames = _frames(resp.text)
+    assert not [f for f in frames if f["type"] == "error"], resp.text
+    (complete,) = [f for f in frames if f.get("phase") == "complete"]
+    by_id = {q["questionId"]: q for q in complete["questions"]}  # type: ignore[index, union-attr]
+    assert "4b_i" in api.marker.asked  # type: ignore[attr-defined]  # a marking call was made
+    assert by_id["4b_i"]["questionResultId"] is not None
+    with pg_sessionmaker() as session:
+        row = session.scalars(
+            select(QuestionResult).where(QuestionResult.question_id == "4b_i")
+        ).one()
+        assert row.marker_source.value == "ai"
+        assert row.awarded_marks == row.maximum_marks > 0  # the stand-in marker gives full marks
+        assert row.needs_teacher_review is True
+        reasons = (row.review_reason or "").split(" | ")
+        assert (
+            "binding unverified: this answer was found in only one of two readings of the "
+            "scan and is marked from that reading"
+        ) in reasons
         queue = session.scalars(
             select(ReviewQueueItem).where(ReviewQueueItem.question_result_id == row.id)
         ).all()
