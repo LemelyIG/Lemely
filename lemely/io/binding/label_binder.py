@@ -9,7 +9,7 @@ into the records the rest of the pipeline uses.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import ConfigDict, ValidationError, create_model
@@ -119,7 +119,10 @@ class BoundRead:
     ``answers`` holds one answer per aligned leaf that has writing, in paper order.
     ``review_ids`` are the ids of the answers that may hold someone else's writing.
     ``unplaced_labels`` is a count. ``drops`` is the ``StreamRead``'s. The other fields
-    are ``BoundStream``'s, unchanged.
+    are ``BoundStream``'s, unchanged: among them ``unaligned_reasons``, why each
+    unaligned leaf was not bound (one of ``label_sequence.UNALIGNED_REASONS`` per id),
+    which is what lets a log line or a review reason tell a fault of the mark scheme
+    from a label the reader missed.
     """
 
     answers: list[ExtractedAnswer]
@@ -130,6 +133,7 @@ class BoundRead:
     listing_suspects: list[str]
     review_ids: list[str]
     drops: dict[str, int]
+    unaligned_reasons: dict[str, str] = field(default_factory=dict)
 
 
 def _usable_box(box: object, page: int | None, page_count: int) -> SourceBox | None:
@@ -383,4 +387,5 @@ def to_bound_read(bound: BoundStream, *, page_count: int, drops: dict[str, int])
         listing_suspects=list(bound.listing_suspects),
         review_ids=[a.question_id for a in answers if a.binding_status == "unverified"],
         drops=dict(drops),
+        unaligned_reasons=dict(bound.unaligned_reasons),
     )

@@ -1249,3 +1249,21 @@ def test_conversion_assigns_no_id_of_its_own() -> None:
         "7a_ii_a",
         "3ii",
     ]
+
+
+def test_bound_read_carries_why_each_leaf_was_not_bound() -> None:
+    # Reply 4 lacks the label `4`; without the `(i)` of 4(b) as well, leaf 4b_i has no
+    # label in the list. `bind_stream` says why for each unaligned leaf, and the record
+    # the rest of the pipeline uses keeps it.
+    data = json.loads((_FIXTURES / "streams" / "A_run4.json").read_text())
+    kept = [
+        item
+        for item in data["items"]
+        if not (item.get("type") == "label" and item.get("text") == "(i)" and item.get("page") == 9)
+    ]
+    stream = parse_stream_items(kept, page_count=data["page_count"])
+    bound = bind_stream(stream.items, _scheme())
+    read = to_bound_read(bound, page_count=data["page_count"], drops=stream.drops)
+    assert read.unaligned_ids == ["4b_i"]
+    assert read.unaligned_reasons == bound.unaligned_reasons == {"4b_i": "label_not_seen"}
+    assert read.unaligned_reasons is not bound.unaligned_reasons  # a copy, like the other fields

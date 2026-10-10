@@ -1688,14 +1688,65 @@ _DROPPED_ANSWER_REVIEW_REASON = (
 #: The reason for a question in ``ExtractedAnswers.unbound_question_ids``: the
 #: label binder could bind no answer to it. Distinct from
 #: ``_DROPPED_ANSWER_REVIEW_REASON``, which would be false here: nothing was
-#: discarded as malformed. It names both ways a leaf ends up unbound, because
-#: the binder reports them as one list: its label was not seen, or the label
-#: was seen and the writing by it could not be given to it (it may be a
-#: neighbour's, or its page or text could not be read).
+#: discarded as malformed. It names both ways a scan leaves a leaf unbound: its
+#: label was not seen, or the label was seen and the writing by it could not be
+#: given to it (it may be a neighbour's, or its page or text could not be read).
+#: It is the general sentence; ``UNBOUND_REASON_SENTENCES`` holds the ones for
+#: causes it would be false for.
 UNBOUND_QUESTION_REVIEW_REASON = (
     "binding unverified: this question's label was not found on the scan, or the writing "
     "by it could not be tied to it, so its answer could not be read"
 )
+
+
+#: A truer sentence for the causes the general one above is false for, keyed by the
+#: reason the extraction carries in ``ExtractedAnswers.unbound_question_reasons``.
+#: Each starts with ``binding unverified:`` (``lemely.core.binding_review`` keys on
+#: that prefix) and none holds ``" | "``, which joins reasons.
+UNBOUND_REASON_SENTENCES: dict[str, str] = {
+    # The mark scheme's fault, not the scan's.
+    "duplicate_id": (
+        "binding unverified: the mark scheme lists this question twice, so its answer "
+        "could not be matched to it"
+    ),
+    "undecomposable_id": (
+        "binding unverified: the mark scheme names this question in a way no label on a "
+        "script can match, so its answer could not be matched to it"
+    ),
+    # Nothing of the script was bound at all.
+    "list_too_long": (
+        "binding unverified: the script could not be read against this mark scheme, so "
+        "no answer could be matched to this question"
+    ),
+    "scheme_too_deep": (
+        "binding unverified: the script could not be read against this mark scheme, so "
+        "no answer could be matched to this question"
+    ),
+    # Sent to review by comparing two reads, or by the order of the list. The label
+    # was found in each of these.
+    "answered_in_one_read_only": (
+        "binding unverified: writing was found for this question in only one of two "
+        "readings of the scan, so its answer was not used"
+    ),
+    "listing_suspect": (
+        "binding unverified: the answers around this question were listed out of order, "
+        "so the writing for it could not be told from the next part's"
+    ),
+    "unaligned_in_other_read": (
+        "binding unverified: one reading of the scan found nothing written for this "
+        "question and the other could not place its label, so it is not known to be blank"
+    ),
+}
+
+
+def _unbound_reason_sentence(why: str | None) -> str:
+    """The review reason for an unbound question whose cause is ``why``.
+
+    The general sentence is true for every reason not listed above: those are a label
+    that was not found, or one that was found with writing that could not be tied to
+    it. It is also what an id with no recorded cause gets.
+    """
+    return UNBOUND_REASON_SENTENCES.get(why or "", UNBOUND_QUESTION_REVIEW_REASON)
 
 
 def _unbound_question_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> frozenset[str]:
@@ -2489,6 +2540,11 @@ def correct_paper(
     # answer short-circuits. It does not depend on a binding report: the binder
     # leaves these whether or not a gate ran over it.
     unbound_ids = _unbound_question_ids(extracted_answers).difference(answers)
+    unbound_reasons = (
+        extracted_answers.unbound_question_reasons
+        if isinstance(extracted_answers, ExtractedAnswers)
+        else {}
+    )
     log = structlog.get_logger().bind(component="correct_paper")
 
     # Validate mark scheme structure; warn but do not abort.
@@ -2540,7 +2596,7 @@ def correct_paper(
         # that would already be wrong).
         if q.id in unbound_ids or q.id in dropped_ids:
             cq = (
-                _build_dropped_corrected(q, UNBOUND_QUESTION_REVIEW_REASON)
+                _build_dropped_corrected(q, _unbound_reason_sentence(unbound_reasons.get(q.id)))
                 if q.id in unbound_ids
                 else _build_dropped_corrected(q)
             )

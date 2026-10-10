@@ -741,6 +741,18 @@ class ExtractedAnswers(StrictModel):
     :func:`~lemely.io.answer_extraction.normalize_extracted_answers`, as
     ``dropped_question_ids`` is. Empty when every leaf was bound or left
     blank, and on records stored before the field existed."""
+    unbound_question_reasons: dict[str, str] = Field(default_factory=dict)
+    """Why each id in ``unbound_question_ids`` has no answer, by id. The value
+    is one of the binder's own reasons
+    (``lemely.core.label_sequence.UNALIGNED_REASONS``: ``"label_not_seen"``,
+    ``"duplicate_id"``, …) or one of the three the orchestration adds when it
+    compares two reads (``lemely.io.binding.orchestrate.REVIEW_ONLY_REASONS``).
+    ``correct_paper`` reads it to give the question a review reason that is
+    true for its cause: a question the mark scheme lists twice is the
+    scheme's fault, not the scan's. It carries ids and reason names, never
+    student text. An id with no entry gets the general sentence. Keys are
+    remapped with ``unbound_question_ids``. Empty on records stored before
+    the field existed. It is not copied onto the marked paper."""
     unbound_answers: list[ReadAnswer] = Field(default_factory=list)
     """Answers read off the page that no question label aligned to, so they
     are held here rather than assigned a ``question_id``. Empty when every

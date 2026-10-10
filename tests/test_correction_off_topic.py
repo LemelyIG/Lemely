@@ -972,8 +972,99 @@ def test_recorded_extractions_from_before_the_field_existed_still_load(fixture: 
     assert "unbound_question_ids" not in stored
     loaded = ExtractedAnswers.model_validate(stored)
     assert loaded.unbound_question_ids == []
+    assert loaded.unbound_question_reasons == {}
     assert "unbound_question_ids" not in loaded.model_fields_set
     assert loaded.model_dump(exclude_unset=True) == stored
+
+
+@pytest.mark.parametrize(
+    ("why", "says", "does_not_say"),
+    [
+        # The scheme's fault, not the scan's.
+        ("duplicate_id", "the mark scheme lists this question twice", "scan"),
+        ("undecomposable_id", "the mark scheme names this question", "was not found on the scan"),
+        # Sent by the comparison of the two reads or by the order of the list: the
+        # label was found.
+        ("answered_in_one_read_only", "in only one of two readings", "label was not found"),
+        ("listing_suspect", "listed out of order", "label was not found"),
+        ("unaligned_in_other_read", "not known to be blank", "label was not found on the scan,"),
+    ],
+)
+def test_unbound_question_reason_is_true_for_its_cause(why: str, says: str, does_not_say: str):
+    extracted = _extracted({"1": "one", "3": "three"}, binding=GATED).model_copy(
+        update={"unbound_question_ids": ["2"], "unbound_question_reasons": {"2": why}}
+    )
+    result = _mark_with(
+        {"1": _reply("yes"), "3": _reply("yes")},
+        mark_scheme=_scheme(3),
+        extracted_answers=extracted,
+    )
+    row = result.questions[1]
+    reason = row.review_reason or ""
+    assert reason.startswith("binding unverified:")  # other code keys on the prefix
+    assert says in reason and does_not_say not in reason
+    # The path is the same whatever the cause: no mark attempted, flagged, not a blank.
+    assert (row.marker_source, row.awarded_marks, row.needs_teacher_review) == ("dropped", 0, True)
+
+
+@pytest.mark.parametrize(
+    "why", ["label_not_seen", "number_not_seen", "not_bracketed", "writing_uncertain", None, "?"]
+)
+def test_unbound_question_keeps_the_label_sentence_where_it_is_true(why: str | None):
+    reasons = {} if why is None else {"2": why}
+    extracted = _extracted({"1": "one", "3": "three"}, binding=GATED).model_copy(
+        update={"unbound_question_ids": ["2"], "unbound_question_reasons": reasons}
+    )
+    result = _mark_with(
+        {"1": _reply("yes"), "3": _reply("yes")},
+        mark_scheme=_scheme(3),
+        extracted_answers=extracted,
+    )
+    assert result.questions[1].review_reason == UNBOUND_QUESTION_REASON
+
+
+def test_every_unbound_reason_sentence_carries_the_binding_prefix():
+    from lemely.core.binding_review import BINDING_REVIEW_PREFIX, is_unbound_question
+
+    sentences = set(correction_ai.UNBOUND_REASON_SENTENCES.values())
+    assert len(sentences) >= 5
+    for sentence in sentences | {correction_ai.UNBOUND_QUESTION_REVIEW_REASON}:
+        assert sentence.startswith(BINDING_REVIEW_PREFIX), sentence
+        assert is_unbound_question(sentence, None)
+        assert " | " not in sentence  # reasons are joined with it
+
+
+def test_the_marked_paper_has_no_field_for_why_a_leaf_was_unbound():
+    # The cause travels on the extraction; what is stored for a marked paper keeps its shape.
+    assert "unbound_question_reasons" in ExtractedAnswers.model_fields
+    assert not {"unbound_question_reasons", "unaligned_reasons"} & set(
+        CorrectionResult.model_fields
+    )
+    extracted = _extracted({"1": "one"}, binding=GATED).model_copy(
+        update={"unbound_question_ids": ["2"], "unbound_question_reasons": {"2": "duplicate_id"}}
+    )
+    result = _mark_with({"1": _reply("yes")}, mark_scheme=_scheme(2), extracted_answers=extracted)
+    assert "duplicate_id" not in json.dumps(result.model_dump(mode="json"))
+
+
+def test_normalising_ids_remaps_the_reasons_with_the_unbound_ids():
+    from lemely.io.answer_extraction import normalize_extracted_answers
+
+    extracted = _extracted({"2": "two"}).model_copy(
+        update={
+            "unbound_question_ids": ["1 a i", "stranger"],
+            "unbound_question_reasons": {"1 a i": "label_not_seen", "stranger": "duplicate_id"},
+        }
+    )
+    normalised = normalize_extracted_answers(extracted, ["1(a)(i)", "2"])
+    assert normalised.unbound_question_ids == ["1(a)(i)", "stranger"]
+    assert normalised.unbound_question_reasons == {
+        "1(a)(i)": "label_not_seen",
+        "stranger": "duplicate_id",
+    }
+    # A record that never had reasons is not given the field.
+    plain = normalize_extracted_answers(_extracted({"2": "two"}), ["2"])
+    assert "unbound_question_reasons" not in plain.model_fields_set
 
 
 def test_extracted_answers_stored_before_the_field_existed_still_load():

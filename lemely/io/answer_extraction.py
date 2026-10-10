@@ -324,6 +324,11 @@ def normalize_extracted_answers(
         update["unbound_question_ids"] = [
             canonical_map.get(_canonical_id(qid), qid) for qid in extracted.unbound_question_ids
         ]
+    if extracted.unbound_question_reasons:
+        update["unbound_question_reasons"] = {
+            canonical_map.get(_canonical_id(qid), qid): reason
+            for qid, reason in extracted.unbound_question_reasons.items()
+        }
 
     return extracted.model_copy(update=update)
 
@@ -1124,6 +1129,10 @@ class GeminiAnswerExtractor:
                 # makes `correct_paper` send it to a teacher without attempting a
                 # mark, where a missing answer alone would be an unflagged zero.
                 bound_fields["unbound_question_ids"] = list(outcome.review_only_ids)
+                # Why each of them is there, so that the review reason can be true
+                # for its cause (a scheme that lists a question twice is not a scan
+                # whose label was missed).
+                bound_fields["unbound_question_reasons"] = dict(outcome.review_reasons)
                 bound_fields["unbound_answers"] = outcome.unbound
                 bound_fields["binding"] = outcome.report
             else:

@@ -163,7 +163,7 @@ def suspect_group_leaves(mark_scheme: MarkScheme, suspects: Iterable[str]) -> li
             up = parent.get(up)
         return chain
 
-    leaf_ids = [q.id for q in _leaves(mark_scheme)]
+    leaf_ids = list(dict.fromkeys(q.id for q in _leaves(mark_scheme)))
     grouped: set[str] = set()
     for suspect in suspects:
         if suspect not in parent:
@@ -217,7 +217,9 @@ def check_label_coverage(
     each the nearest aligned leaf before it in manifest order when that leaf has a
     non-blank answer.
     """
-    leaf_ids = [q.id for q in _leaves(mark_scheme)]
+    # Each id once: a scheme that lists a question twice has one question the binder
+    # could not match, not two, and G5 counts and names it once.
+    leaf_ids = list(dict.fromkeys(q.id for q in _leaves(mark_scheme)))
     missing = set(unaligned_ids)
     unaligned = [qid for qid in leaf_ids if qid in missing]
     groups = list(dict.fromkeys(listing_suspects))

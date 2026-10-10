@@ -1585,6 +1585,7 @@ def test_binding_gate_result_event_fields(tmp_path: Path, scan: Path, scheme: Ma
         "drops": {},
         "model": _READ_MODEL,
         "second_read": True,
+        "unaligned_reasons": {},
         "first_read_failed_checks": [],
         "report": extracted.binding.model_dump() if extracted.binding else None,
     }
@@ -1602,6 +1603,90 @@ def test_binding_gate_result_event_fields(tmp_path: Path, scan: Path, scheme: Ma
     assert event["unbound"] == len(outcome.unbound)
     assert event["drops"] == outcome.drops == {"repaired_page": 1}
     assert event["second_read"] is False
+
+
+def test_why_each_leaf_went_to_review_is_kept_and_counted(
+    tmp_path: Path, scan: Path, scheme: MarkScheme
+) -> None:
+    # Four ways a leaf ends up with a teacher and no answer, in one extraction each.
+    base = _run(1)
+    cases: dict[str, tuple[list[Any], list[Any], dict[str, str]]] = {
+        # The reader missed the label (i) of 4(b) in the read that is used.
+        "label missed": (
+            _without_label(_run(4), "(i)", 9),
+            _run(1),
+            {"4b_i": "label_not_seen"},
+        ),
+        # The read that is used has nothing under 5(a); the other read has "0.2 m".
+        "answered in the other read only": (
+            _without_items(base, 53),
+            base,
+            {"5a": "answered_in_one_read_only"},
+        ),
+        # Both reads list the writing of 1(c) before its labels: 1(c)(ii) is left with none.
+        "listed out of order": (
+            _with_1c_listed_first(base),
+            _with_1c_listed_first(base),
+            {"1c_ii": "listing_suspect"},
+        ),
+        # Nothing under 4(b)(i) in the read that is used; the other read missed its label.
+        "no label in the other read": (
+            _without_items(_run(4), *_blocks_under(_run(4), "(i)", 9)),
+            _without_label(_run(4), "(i)", 9),
+            {"4b_i": "unaligned_in_other_read"},
+        ),
+    }
+    for name, (first, second, expected) in cases.items():
+        with (
+            _events(EventType.BINDING_GATE_RESULT) as seen,
+            structlog.testing.capture_logs() as logs,
+        ):
+            extracted = _extract(
+                tmp_path, scan, scheme, _Model(first=_items(first), second=_items(second))
+            )
+        assert extracted.unbound_question_ids == list(expected), name
+        assert extracted.unbound_question_reasons == expected, name
+        counts = {reason: 1 for reason in expected.values()}
+        (event,) = seen[EventType.BINDING_GATE_RESULT]
+        assert event["unaligned_reasons"] == counts, name
+        (line,) = [entry for entry in logs if entry["event"] == "binding_gate_result"]
+        assert line["unaligned_reasons"] == counts, name
+
+
+def test_a_question_the_mark_scheme_lists_twice_is_said_to_be_the_scheme_s_fault(
+    tmp_path: Path,
+) -> None:
+    # 0625/61 June 2020 has the id 3b_iii twice in the corpus scheme. No label can be
+    # matched to an id that is there twice, however clean the read: the question always
+    # goes to a teacher. The reason must say what is wrong, and it is not the scan.
+    path = _ROOT / "corpus" / "mark-schemes" / "0625_s20_ms_61.json"
+    doubled = MarkScheme.model_validate(json.loads(path.read_text(encoding="utf-8")))
+    leaf_ids = [q.id for q in doubled.all_questions_flat() if not q.parts]
+    assert leaf_ids.count("3b_iii") == 2
+
+    reply = _reply_for(doubled, writing_first_under="no question")
+    client, _genai = _client(tmp_path)
+    pages = _pages(6)
+    with (
+        client.image_uploads([p.png_bytes for p in pages], concurrency=1) as uploads,
+        patch.object(
+            client,
+            "generate_structured",
+            side_effect=_Model(first=_items(reply), second=_items(reply)),
+        ),
+        structlog.testing.capture_logs() as logs,
+    ):
+        outcome = run_binding(
+            client, pages, doubled, uploads=uploads, settings=client._settings, manifest_key="m"
+        )
+    assert outcome.review_reasons["3b_iii"] == "duplicate_id"
+    assert outcome.review_only_ids.count("3b_iii") == 1
+    (line,) = [entry for entry in logs if entry["event"] == "binding_gate_result"]
+    assert line["unaligned_reasons"]["duplicate_id"] == 1
+    # G5 counts and lists the question once.
+    g5 = next(c for c in outcome.report.checks if c.id == "G5")
+    assert g5.question_ids.count("3b_iii") == 1
+    assert "3b_iii, 3b_iii" not in g5.detail
 
 
 def test_the_gate_result_is_logged_on_the_server_without_any_answer_text(
@@ -1628,6 +1713,7 @@ def test_the_gate_result_is_logged_on_the_server_without_any_answer_text(
         "drops": {},
         "model": _READ_MODEL,
         "second_read": True,
+        "unaligned_reasons": {},
     }
     assert not any(answer.answer in str(line) for answer in outcome.answers if answer.answer)
 

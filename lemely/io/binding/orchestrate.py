@@ -44,6 +44,7 @@ The legacy binder, where the model hands out ids itself, is gated here too
 from __future__ import annotations
 
 import contextvars
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -80,6 +81,12 @@ if TYPE_CHECKING:
     from lemely.runtime.config import BindingSettings, Settings
 
 SECOND_READ_TASK_TAG = "binding_second_read"
+#: Why a leaf is sent to a teacher with no answer when it is not one of the read's own
+#: unaligned leaves (those carry a reason from ``label_sequence.UNALIGNED_REASONS``):
+#: the other read has writing for it and this one has none; it is the part left with
+#: nothing in a group whose writing was listed before its labels; this read has nothing
+#: under its label and the other read placed no label for it.
+REVIEW_ONLY_REASONS = ("answered_in_one_read_only", "listing_suspect", "unaligned_in_other_read")
 # Reasons in ``StreamRead.drops`` for a reply item that was left out and may have been
 # writing. A part whose block was lost this way looks blank and is not.
 LOST_ITEM_REASONS = ("malformed_item", "unknown_type")
@@ -98,7 +105,9 @@ class BindingOutcome:
     be bound), the leaf left with nothing in a group whose writing was listed before
     its labels, and a leaf the chosen read left blank that the other read answered
     (that writing is added to ``unbound``). ``drops`` is the chosen read's count of
-    reply items left out or repaired, by reason.
+    reply items left out or repaired, by reason. ``review_reasons`` says why each id
+    in ``review_only_ids`` is there: the binder's own reason for an unaligned leaf, or
+    one of ``REVIEW_ONLY_REASONS``.
     """
 
     answers: list[ExtractedAnswer]
@@ -106,6 +115,7 @@ class BindingOutcome:
     unbound: list[SeenWriting]
     review_only_ids: list[str]
     drops: dict[str, int] = field(default_factory=dict)
+    review_reasons: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +246,7 @@ def _publish_result(
     drops: dict[str, int],
     second_read: bool,
     first_read_failed: list[BindingCheck] | None = None,
+    review_reasons: dict[str, str] | None = None,
 ) -> None:
     """Publish and log what the gate decided.
 
@@ -245,7 +256,9 @@ def _publish_result(
     the read whose answers go on. ``unbound`` counts the writing kept with no question
     and ``unaligned`` the leaves sent to a teacher with no answer. ``first_read_failed``
     is what failed at paper scope on a first read that the second read replaced, which
-    the report (the second read's) does not show.
+    the report (the second read's) does not show. ``review_reasons`` (leaf id to
+    reason) is published as a count per reason, ``unaligned_reasons``: it is what
+    tells a mark scheme that lists a question twice from a read that missed labels.
 
     The event has no subscriber of its own and is never sent to a browser
     (``lemely.web.sse``), so the same fields are written as one ``binding_gate_result``
@@ -265,6 +278,7 @@ def _publish_result(
         "drops": dict(drops),
         "model": enforced.model,
         "second_read": second_read,
+        "unaligned_reasons": dict(Counter((review_reasons or {}).values())),
     }
     structlog.get_logger().bind(component="binding_gate").info(
         "binding_gate_result",
@@ -330,7 +344,7 @@ def _read_both(
 def _in_paper_order(mark_scheme: MarkScheme, ids: list[str]) -> list[str]:
     """``ids`` once each, in the order the paper has its questions; strangers last."""
     wanted = dict.fromkeys(ids)
-    ordered = [q.id for q in mark_scheme.all_questions_flat() if q.id in wanted]
+    ordered = list(dict.fromkeys(q.id for q in mark_scheme.all_questions_flat() if q.id in wanted))
     return [*ordered, *(qid for qid in wanted if qid not in ordered)]
 
 
@@ -478,6 +492,17 @@ def run_binding(
             *missed_elsewhere,
         ],
     )
+    # Why each of them is there. The read's own reason comes first: a leaf it could
+    # not align is unaligned whatever else is true of it.
+    review_reasons = {
+        **dict.fromkeys(missed_elsewhere, "unaligned_in_other_read"),
+        **dict.fromkeys(seen_elsewhere, "answered_in_one_read_only"),
+        **dict.fromkeys(
+            (leaf for leaf in suspect_leaves if leaf not in answered), "listing_suspect"
+        ),
+        **{leaf: chosen.unaligned_reasons.get(leaf, "unaligned") for leaf in chosen.unaligned_ids},
+    }
+    review_reasons = {leaf: review_reasons[leaf] for leaf in review_only}
     unbound = [u.writing for u in chosen.unbound]
     if other is not None:
         for leaf in seen_elsewhere:
@@ -498,6 +523,7 @@ def run_binding(
             if chosen is not first
             else []
         ),
+        review_reasons=review_reasons,
     )
     return BindingOutcome(
         answers=_with_statuses(chosen.answers, unverified),
@@ -505,6 +531,7 @@ def run_binding(
         unbound=unbound,
         review_only_ids=review_only,
         drops=dict(chosen.drops),
+        review_reasons=review_reasons,
     )
 
 
