@@ -911,6 +911,40 @@ def test_a_gate_rule_that_names_a_leaf_wins_over_the_cleared_doubt(
     assert [a.binding_status for a in named] == ["unverified", "verified"]
 
 
+def test_the_gate_is_told_why_each_leaf_is_unaligned(tmp_path: Path, scheme: MarkScheme) -> None:
+    # Two blocks under 7(b)(ii) and nothing under 7(c): the binder cannot tell whose the
+    # second block is and binds neither leaf. Both labels have their place, so no label
+    # was missed and 7(b)(i), the answer before the gap, ends at the label (ii): G5
+    # does not name it, which it can do only when it is given the reasons.
+    two_blocks = _with_a_block_after(_run(1), 82, "V = I R, so the current falls")
+    for name, second in (("alone", None), ("both", two_blocks)):
+        model = _Model(first=_items(two_blocks), second=_items(second or []))
+        outcome = _bind(tmp_path / name, scheme, model, second_read=second is not None)
+        assert outcome.report.verdict == "pass"
+        assert outcome.review_reasons == {
+            "7b_ii": "neighbour_left_blank",
+            "7c": "neighbour_left_blank",
+        }
+        g5 = next(c for c in outcome.report.checks if c.id == "G5")
+        assert (g5.passed, g5.scope, g5.question_ids) == (False, "question", ["7b_ii", "7c"])
+        assert _statuses(outcome)["7b_i"] == _statuses_alone(_run(1), scheme)["7b_i"]
+
+    # Where a label of the gap was missed, the answer before the gap is still named.
+    missed = _without_label(_run(1), "(iii)", 9)
+    outcome = _bind(tmp_path / "missed", scheme, _Model(first=_items(missed)), second_read=False)
+    g5 = next(c for c in outcome.report.checks if c.id == "G5")
+    assert g5.question_ids == ["4b_i", "4b_ii", "4b_iii"]
+    assert _statuses(outcome)["4b_i"] == "unverified"
+
+
+def _statuses_alone(items: list[Any], scheme: MarkScheme) -> dict[str, str | None]:
+    stream = parse_stream_items(items, page_count=_PAGE_COUNT)
+    read = to_bound_read(
+        bind_stream(stream.items, scheme), page_count=_PAGE_COUNT, drops=stream.drops
+    )
+    return {a.question_id: a.binding_status for a in read.answers}
+
+
 def test_a_held_paper_takes_nothing_from_the_other_read(tmp_path: Path, scheme: MarkScheme) -> None:
     # Five leaves answered in one read only hold the paper. Held, its record is the
     # returned read's: nothing is marked on it, so nothing is taken from the other read.

@@ -235,6 +235,9 @@ def _label_checks(
             thresholds,
             listing_suspects=read.listing_suspects,
             lost_items=_lost_items(read.drops),
+            # Why each leaf is unaligned: with it G5 does not name the answer before a
+            # gap in which every label has its place.
+            unaligned_reasons=read.unaligned_reasons,
         ),
         check_shape(extracted, mark_scheme, thresholds),
         *check_shift(extracted, mark_scheme, thresholds),
