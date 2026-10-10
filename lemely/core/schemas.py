@@ -614,10 +614,16 @@ class ExtractedAnswer(StrictModel):
     (``GeminiSettings.second_reader == "none"``, the default) or when the
     second read did not return this ``question_id``."""
     binding_source: BindingSource | None = None
-    """How ``question_id`` was assigned: ``"label"`` when it was matched to a
-    question label seen on the page, ``"position"`` when it came from the
-    answer's place in the list. ``None`` on records stored before binding
-    existed. Unrelated to ``confidence``, which is only legibility."""
+    """How ``question_id`` was assigned. ``"label"``: the reader listed the
+    question labels and the writing it saw, with no ids, and code matched the
+    answer to the label it follows. ``"legacy"``: the model handed out the id
+    itself, as extraction did before the label binder. ``"position"`` is
+    reserved by the spec for an answer tied to a question by the region of
+    the page it sits in; nothing produces it today, and it never means the
+    answer's place in a list, which no code path may bind by. ``None`` on
+    records stored before binding existed, and on legacy extractions made
+    with the gate off. Unrelated to ``confidence``, which is only
+    legibility."""
     binding_status: BindingStatus | None = None
     """Whether the binding gate accepted this answer's ``question_id``:
     ``"verified"`` (checked against the evidence), ``"unverified"`` (assigned

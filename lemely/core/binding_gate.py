@@ -211,11 +211,19 @@ def check_label_coverage(
     suspect group is never trusted, whatever the count: its answers sit one part out,
     so every leaf of it is listed (``suspect_group_leaves``), answered or not.
 
-    An unaligned leaf cannot carry an answer, because answers attach to aligned
-    labels; whatever the student wrote for it was attached to the aligned leaf
-    before it. So the question-scope check lists every unaligned leaf, and for
-    each the nearest aligned leaf before it in manifest order when that leaf has a
-    non-blank answer.
+    An unaligned leaf carries no answer. ``bind_stream`` gives writing to a leaf only
+    when its label is followed by the label the paper prints next, so where a label
+    was missed the leaf just before the gap is unbound as well (its writing cannot be
+    told from the missed part's) and is itself among the unaligned leaves. The
+    question-scope check lists every unaligned leaf and, for each, the nearest aligned
+    leaf before it in manifest order when that leaf has a non-blank answer: the last
+    answer bound before the gap. That leaf is bracketed and is usually right. It is
+    named because where several labels in a row were missed the labels after the gap
+    can stand in for the missed ones, and it is then the answer standing nearest to
+    what was misread.
+
+    ``unmatched_markers`` is the number of labels in the list that no question
+    accounts for (``BoundRead.unplaced_labels``); the name is from an earlier design.
     """
     # Each id once: a scheme that lists a question twice has one question the binder
     # could not match, not two, and G5 counts and names it once.
@@ -326,7 +334,8 @@ def check_shape(
         ):
             contradicting.append(leaf.id)
     if (
-        len(contradicting) >= thresholds.shape_min_count
+        shaped  # with ``shape_min_count`` 0 an empty paper would divide by zero
+        and len(contradicting) >= thresholds.shape_min_count
         and len(contradicting) / shaped > thresholds.shape_mismatch_rate
     ):
         return BindingCheck(
@@ -482,7 +491,10 @@ def check_off_topic(correction: CorrectionResult, thresholds: GateThresholds) ->
     """
     off: list[str] = []
     longest = run = 0
+    judged = 0
     for question in correction.questions:
+        if question.addresses_question is not None:
+            judged += 1
         if question.addresses_question == "no":
             off.append(question.question_id)
             run += 1
@@ -490,9 +502,19 @@ def check_off_topic(correction: CorrectionResult, thresholds: GateThresholds) ->
         elif question.addresses_question == "yes":
             run = 0
     if not off:
-        return BindingCheck(
-            id="G8", passed=True, scope="paper", detail="No answer was judged off topic."
-        )
+        # The sentence gives the number judged: a pass over forty judgements and a
+        # pass over none are different facts, and only the first is evidence.
+        if judged == 0:
+            detail = "The marker judged no answer, so this check had nothing to see."
+        elif judged == 1:
+            detail = "The 1 answer the marker judged was not off topic."
+        else:
+            detail = f"None of the {judged} answers the marker judged was off topic."
+        return BindingCheck(id="G8", passed=True, scope="paper", detail=detail)
+    told = (
+        f"{len(off)} of {_plural(judged, 'answer')} judged "
+        f"{'does not address its' if len(off) == 1 else 'do not address their'} question"
+    )
     if len(off) >= thresholds.off_topic_count or longest >= thresholds.off_topic_run:
         in_a_row = f", {longest} in a row" if longest >= thresholds.off_topic_run else ""
         return BindingCheck(
@@ -500,19 +522,14 @@ def check_off_topic(correction: CorrectionResult, thresholds: GateThresholds) ->
             passed=False,
             scope="paper",
             question_ids=off,
-            detail=(
-                f"{len(off)} answers were judged not to address their question{in_a_row}: "
-                f"{_listed(off)}."
-            ),
+            detail=f"{told}{in_a_row}: {_listed(off)}.",
         )
     return BindingCheck(
         id="G8",
         passed=False,
         scope="question",
         question_ids=off,
-        detail=(
-            f"{_plural(len(off), 'answer')} judged not to address the question: {_listed(off)}."
-        ),
+        detail=f"{told}: {_listed(off)}.",
     )
 
 
@@ -658,7 +675,8 @@ def check_second_read(
         and len(disagreeing) >= thresholds.second_read_min_disagreeing
     )
     paper = paper or (
-        len(lopsided) >= thresholds.second_read_min_disagreeing
+        bool(lopsided)  # with a minimum of 0, no leaf answered would divide by zero
+        and len(lopsided) >= thresholds.second_read_min_disagreeing
         and len(lopsided) / answered_in_either > thresholds.second_read_presence_rate
     )
     sentences: list[str] = []
@@ -688,7 +706,12 @@ def check_second_read(
 
 
 def verdict(checks: list[BindingCheck], *, retried: bool) -> BindingVerdict:
-    """Pass when no paper-scope check failed; otherwise retry once, then hold."""
+    """Pass when no paper-scope check failed; otherwise retry once, then hold.
+
+    For the checks made before marking, where a retry exists. After marking nothing
+    retries: ``correct_paper`` turns a paper-scope failure into ``hold`` whatever
+    ``retried`` was.
+    """
     if not any(c.scope == "paper" and not c.passed for c in checks):
         return "pass"
     return "hold" if retried else "retry"

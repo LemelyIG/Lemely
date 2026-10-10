@@ -139,4 +139,3 @@ def test_gate_catches_whole_paper_shifts_where_it_can_see() -> None:
     assert len(papers) == 320
     caught = sum(paper_fails(extracted_from(answers), scheme) for scheme, answers in papers)
     assert caught / len(papers) >= 0.961
-    assert caught / len(papers) >= 0.90

@@ -2412,10 +2412,11 @@ def _with_off_topic_check(
 
     With a report, the result's ``binding`` is that report with G8 appended.
     Its verdict is the MORE SEVERE of the one the report arrived with and the
-    one recomputed over every check with the report's own ``retried``
-    (``hold`` over ``retry`` over ``pass``): adding G8 can raise a verdict
-    and can never lower it, whether or not the incoming verdict has a
-    failing paper-scope check behind it.
+    one recomputed over every check (``hold`` over ``retry`` over ``pass``):
+    adding G8 can raise a verdict and can never lower it, whether or not the
+    incoming verdict has a failing paper-scope check behind it. The recomputed
+    one is ``pass`` or ``hold``, never ``retry``: nothing retries after
+    marking, so a paper-scope failure found here holds the paper.
 
     Scope decides what else changes. A PAPER-scope failure changes no
     question: the verdict stops the whole paper and the report names the
@@ -2451,7 +2452,10 @@ def _with_off_topic_check(
         )
     check = check_off_topic(result, GateThresholds())
     checks = [*prior.checks, check]
-    recomputed = verdict(checks, retried=prior.retried)
+    # After marking nothing retries, so a paper-scope failure here is a hold: asking
+    # with ``retried=True`` is what says so. ("retry" named a step that does not exist,
+    # for a paper whose first read passed and that then failed G8.)
+    recomputed = verdict(checks, retried=True)
     report = prior.model_copy(
         update={
             "checks": checks,

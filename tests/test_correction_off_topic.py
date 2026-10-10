@@ -659,10 +659,12 @@ def test_quiz_style_extracted_answers_are_never_held():
     assert held.binding.verdict == "hold"
 
 
-@pytest.mark.parametrize(("retried", "expected"), [(False, "retry"), (True, "hold")])
+@pytest.mark.parametrize(("retried", "expected"), [(False, "hold"), (True, "hold")])
 def test_extraction_report_is_kept_with_g8_appended_and_verdict_recomputed(
     retried: bool, expected: str
 ):
+    # A paper-scope failure found after marking is a hold whatever `retried` says:
+    # nothing retries after marking, so "retry" would name a step that does not exist.
     extraction_checks = [
         BindingCheck(id="G1", passed=True, scope="paper", detail="All ids are known."),
         BindingCheck(
@@ -701,11 +703,12 @@ def test_extraction_report_is_kept_with_g8_appended_and_verdict_recomputed(
         ("hold", False, ["yes", "yes", "yes"], "hold"),
         ("retry", False, ["yes", "yes", "yes"], "retry"),
         ("retry", True, ["yes", "yes", "yes"], "retry"),
-        # G8 can raise it: a paper-scope failure after the retry is spent.
+        # G8 can raise it, and what it raises it to is a hold: after marking there is
+        # no retry left to name, whether or not one was spent before.
         ("retry", True, ["no", "no", "no"], "hold"),
-        ("retry", False, ["no", "no", "no"], "retry"),
+        ("retry", False, ["no", "no", "no"], "hold"),
         ("hold", False, ["no", "no", "no"], "hold"),
-        ("pass", False, ["no", "no", "no"], "retry"),
+        ("pass", False, ["no", "no", "no"], "hold"),
         ("pass", True, ["yes", "yes", "yes"], "pass"),
     ],
 )

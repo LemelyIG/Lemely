@@ -848,6 +848,40 @@ def test_g8_run_detail_names_the_run() -> None:
     assert "3 in a row" in check.detail
 
 
+def test_g8_says_how_many_answers_were_judged() -> None:
+    # "No answer was judged off topic" read the same when the marker had judged forty
+    # answers and when it had judged none. A check that saw nothing must say so.
+    judged = check_off_topic(_correction(["yes", "unclear", None, "yes"]), DEFAULTS)
+    assert judged.passed
+    assert judged.detail == "None of the 3 answers the marker judged was off topic."
+    one = check_off_topic(_correction(["yes", None]), DEFAULTS)
+    assert one.detail == "The 1 answer the marker judged was not off topic."
+    for flags in ([None, None, None], []):
+        unjudged = check_off_topic(_correction(flags), DEFAULTS)
+        assert unjudged.passed
+        assert unjudged.detail == "The marker judged no answer, so this check had nothing to see."
+        assert "off topic" not in unjudged.detail
+    # The failing sentences give the number judged too.
+    few = check_off_topic(_correction(["no", "yes", "yes", None]), DEFAULTS)
+    assert few.detail == "1 of 3 answers judged does not address its question: 1."
+    many = check_off_topic(_correction(["no", "no", "no", "yes", None]), DEFAULTS)
+    assert many.detail == (
+        "3 of 4 answers judged do not address their question, 3 in a row: 1, 2, 3."
+    )
+
+
+def test_zero_thresholds_do_not_divide_by_zero_on_an_empty_paper() -> None:
+    # Not reachable from configuration; reachable from a sweep that tries 0.
+    scheme = _scheme([_leaf(str(i), "5") for i in range(1, 5)])
+    nothing = _extracted([])
+    zero = replace(DEFAULTS, shape_min_count=0, second_read_min_disagreeing=0)
+    assert check_shape(nothing, scheme, zero).passed
+    assert check_second_read(nothing, nothing, scheme, zero).passed
+    assert check_second_read(
+        nothing, nothing, scheme, zero, first_unaligned=[], second_unaligned=[]
+    ).passed
+
+
 # --- G9 ---------------------------------------------------------------------
 
 SENTENCES = [

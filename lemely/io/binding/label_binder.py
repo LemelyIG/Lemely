@@ -354,7 +354,18 @@ class LabelBinder:
 
 
 def _source_box(writings: list[SeenWriting], page_count: int) -> SourceBox | None:
-    """The union of the usable boxes on the first writing's page, or ``None``."""
+    """The union of the usable boxes on the first writing's page, or ``None``.
+
+    The reader's boxes are unreliable by measurement (the first go/no-go measurement
+    found one to six label boxes out of place in five of ten runs), which is why they
+    take no part in binding: only the
+    order of the list does. The box that leaves here as ``source_box`` feeds two
+    things and nothing else: the crop re-read of a low-confidence answer, and the crop
+    a teacher is shown. A box that is out of place therefore gives a re-read of the
+    wrong patch of the page (a false "re-read disagrees" flag, or with
+    ``grading.reread_substitution`` on, text chosen by where the box fell) and a
+    wrong crop on the teacher's screen. It cannot move an answer to another question.
+    """
     page = writings[0].page
     boxes = [
         usable.box
