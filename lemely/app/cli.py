@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from lemely.runtime.config import Settings
 
 import click
@@ -848,6 +850,92 @@ def teacher_quiz_cmd(
     weaknesses = WeaknessReport(weak_areas=weak_areas)
     builder = TeacherQuizBuilder(generator)
     _print_result(ctx, builder.build(subject, weaknesses, count=count, topics=list(topics)))
+
+
+@cli.command("audit-bindings")
+@click.option(
+    "--since",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default=None,
+    help="Only attempts recorded on or after this date (YYYY-MM-DD, UTC).",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Audit at most N attempts, newest first.",
+)
+@click.option(
+    "--origin",
+    type=click.Choice(["upload", "any"]),
+    default="upload",
+    show_default=True,
+    help=(
+        "Which attempts to audit. 'upload' keeps past-paper attempts that came from an "
+        "uploaded scan (quizzes are typed answers and cannot be misbound); 'any' audits all."
+    ),
+)
+@click.pass_context
+def audit_bindings_cmd(
+    ctx: click.Context, since: datetime | None, limit: int | None, origin: str
+) -> None:
+    """List stored attempts whose answers look bound to the wrong questions.
+
+    Read-only: reports, never changes a row. Runs two checks on each stored
+    attempt (answers of the wrong kind, and a run of answers holding the value
+    of a neighbouring question) against its mark scheme.
+    """
+    from datetime import UTC
+
+    from lemely.db.binding_audit import audit_attempts, load_attempts
+    from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
+    from lemely.db.session import get_sessionmaker
+
+    settings = _get_settings(ctx)
+    session_factory = get_sessionmaker(settings)
+    corpus = SchemeCorpusRepository(session_factory)
+    since_utc = since.replace(tzinfo=UTC) if since is not None else None
+    session = session_factory()
+    try:
+        attempts = load_attempts(
+            session, since=since_utc, limit=limit, uploaded_only=origin == "upload"
+        )
+        report = audit_attempts(attempts, corpus.find_for)
+    finally:
+        session.close()
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(report.as_json())
+        return
+
+    scope = (
+        "attempts that came from an uploaded scan"
+        if origin == "upload"
+        else "all stored attempts, quizzes included"
+    )
+    click.echo(f"Audited {scope}.")
+    for s in report.suspects:
+        click.echo(
+            f"attempt {s.attempt_id}  user {s.user_id}  {s.paper}  recorded {s.recorded_at}  "
+            f"{s.awarded_marks}/{s.maximum_marks}  failed {', '.join(s.failed_checks)}"
+        )
+        for detail in s.details:
+            click.echo(f"    {detail}")
+    click.echo("")
+    click.echo(f"Suspect attempts: {len(report.suspects)}")
+    click.echo(
+        f"Attempts with only question-level failures (not listed): {report.question_scope_only}"
+    )
+    click.echo(f"Audited: {report.audited}")
+    click.echo(f"Skipped, mark scheme not found: {report.scheme_not_found}")
+    click.echo(
+        "Audited but not judgeable (too few numeric answers for the shift check): "
+        f"{report.not_judgeable}"
+    )
+    click.echo(
+        "Not listed does not mean correctly bound: the checks only see questions with "
+        "numeric expected answers, so short shifts and papers with few of them pass unseen."
+    )
 
 
 @cli.group("question-bank")
