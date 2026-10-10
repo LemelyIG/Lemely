@@ -4998,3 +4998,30 @@ def test_regrade_held_paper_is_failed_with_the_binding_message(
 
     assert teacher._row_kind(row) == "failed"
     assert row.error == _HELD_SENTENCE
+
+
+def test_teacher_console_paper_with_a_pass_verdict_is_graded_as_before(
+    client: TestClient, paper_repo: TeacherPaperRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pass verdict publishes: the paper is graded, with no error on the row."""
+    from lemely.core.binding import BindingCheck, BindingReport
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    plain = _report(needs_review=False, grade="A")
+    passing = BindingReport(
+        binder="label",
+        verdict="pass",
+        checks=[BindingCheck(id="G5", passed=False, scope="question", detail="one leaf")],
+    )
+    report = plain.model_copy(
+        update={"correction": plain.correction.model_copy(update={"binding": passing})}
+    )
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: {"5b": "42"})
+    monkeypatch.setattr(grading_service, "grade_paper", lambda *_a, **_k: report)
+
+    row = _settle(paper_repo, _upload(client))
+
+    assert teacher._row_kind(row) == "graded"
+    assert row.error is None and row.report is not None

@@ -1783,3 +1783,176 @@ def test_paper_with_pass_verdict_and_question_scope_failures_is_published(
     assert _attempt_count(pg_sessionmaker) == 1
     assert any(f.get("phase") == "complete" for f in frames)
     assert published.calls == ["award_xp_safely", "notify_safely", "_alert_teachers_and_parents"]
+
+
+# ---------------------------------------------------------------------------
+# The upload job with a real extraction: label streams in, rows and frames out.
+#
+# The model is a fake that returns recorded label streams
+# (tests/fixtures/binding/0625_w24_41/streams/); the extractor, the binder, the
+# gate, `correct_paper` (marker stubbed), `grade_paper` and `persist_correction`
+# are all real.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def label_client(
+    settings: Settings,
+    pg_sessionmaker: sessionmaker[Session],
+    corpus_repo: SchemeCorpusRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> Iterator[tuple[TestClient, str, StudentUploadRepository]]:
+    import json as _json
+
+    from lemely.io import correction_ai
+    from tests.test_extraction_binding import _client, _Marker, _Model
+
+    scheme = MarkScheme.model_validate(
+        _json.loads(Path("corpus/mark-schemes/0625_w24_ms_41.json").read_text(encoding="utf-8"))
+    )
+    student_id = _seed_user(pg_sessionmaker, Role.student)
+    upload_repo = StudentUploadRepository(pg_sessionmaker)
+    attempt_repo = AttemptRepository(pg_sessionmaker)
+    gemini, _genai = _client(tmp_path)
+    holder = _Model()
+    monkeypatch.setattr(gemini, "generate_structured", holder)
+    marker = _Marker()
+    monkeypatch.setattr(
+        correction_ai.AICorrector,
+        "mark_question",
+        lambda self, question, *a, **k: marker(self, question, *a, **k),
+    )
+    monkeypatch.setattr(student, "resolve_mark_scheme", lambda *a, **k: scheme)
+
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_gemini_client] = lambda: gemini
+    app.dependency_overrides[get_attempt_repo] = lambda: attempt_repo
+    app.dependency_overrides[get_student_upload_repo] = lambda: upload_repo
+    storage_backend = FakeStorageBackend()  # one instance: upload and correct must share it
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    app.dependency_overrides[get_scheme_corpus_repo] = lambda: corpus_repo
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=student_id, role="student"
+    )
+    app.dependency_overrides[get_user_mirror] = lambda: _PgUserMirror(pg_sessionmaker)
+    app.dependency_overrides[get_notification_service] = lambda: NotificationService(
+        pg_sessionmaker, NotificationPreferencesService(pg_sessionmaker)
+    )
+    app.dependency_overrides[get_push_transport] = RecordingPushTransport
+    api = TestClient(app)
+    api.model = holder  # type: ignore[attr-defined]
+    api.marker = marker  # type: ignore[attr-defined]
+    yield api, student_id, upload_repo
+    app.dependency_overrides.clear()
+
+
+def _scan_19_pages(tmp_path: Path) -> bytes:
+    from PIL import Image
+
+    path = tmp_path / "scan19.pdf"
+    images = [Image.new("RGB", (100, 140), color="white") for _ in range(19)]
+    images[0].save(path, "PDF", save_all=True, append_images=images[1:])
+    return path.read_bytes()
+
+
+def _frames(text: str) -> list[dict[str, object]]:
+    return [
+        json.loads(frame.removeprefix("data: "))
+        for frame in text.split("\n\n")
+        if frame.startswith("data: {")
+    ]
+
+
+@pytest.mark.parametrize("has_teacher", [True, False])
+def test_an_unaligned_leaf_is_persisted_dropped_flagged_queued_and_has_no_panel(
+    label_client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+    tmp_path: Path,
+    has_teacher: bool,
+) -> None:
+    """The panel is withheld while a teacher can see the row; a student in no class keeps it."""
+    from lemely.db.class_repo import ClassService
+    from tests.test_extraction_binding import _items, _run, _without_label
+
+    api, student_id, upload_repo = label_client
+    if has_teacher:
+        teacher = _seed_user(pg_sessionmaker, Role.teacher)
+        classes = ClassService(pg_sessionmaker)
+        cls = classes.create_class(teacher, "Physics 10A")
+        assert cls.join_code is not None
+        classes.join_by_code(student_id, cls.join_code)
+    # The reader missed the label (i) of 4(b): leaf 4b_i has no label to bind to.
+    api.model.replies = {  # type: ignore[attr-defined]
+        "first": _items(_without_label(_run(4), "(i)", 9)),
+        "second": _items(_run(1)),
+    }
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", _scan_19_pages(tmp_path), "application/pdf")},
+    )
+    assert up.status_code == 200, up.text
+
+    resp = api.post("/api/student/correct", json={"paperId": up.json()["paperId"]})
+
+    assert resp.status_code == 200
+    frames = _frames(resp.text)
+    assert not [f for f in frames if f["type"] == "error"], resp.text
+    (complete,) = [f for f in frames if f.get("phase") == "complete"]
+    by_id = {q["questionId"]: q for q in complete["questions"]}  # type: ignore[index, union-attr]
+    # No self-review panel while a teacher can see the row; offered to a student in no class.
+    assert (by_id["4b_i"]["questionResultId"] is None) is has_teacher
+    assert "4b_i" not in api.marker.asked  # type: ignore[attr-defined]  # no marking call
+    assert by_id["1a_i"]["questionResultId"] is not None
+    with pg_sessionmaker() as session:
+        row = session.scalars(
+            select(QuestionResult).where(QuestionResult.question_id == "4b_i")
+        ).one()
+        assert row.marker_source.value == "dropped"
+        assert row.needs_teacher_review is True
+        assert (row.review_reason or "").startswith("binding unverified:")
+        assert row.awarded_marks == 0
+        queue = session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.question_result_id == row.id)
+        ).all()
+        assert [(r.reason.value, r.status.value) for r in queue] == [("low_confidence", "open")]
+
+
+def test_a_bare_string_item_in_both_reads_holds_the_paper_and_persists_nothing(
+    label_client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+    tmp_path: Path,
+) -> None:
+    import copy
+
+    from tests.test_extraction_binding import _items, _run
+
+    api, student_id, upload_repo = label_client
+    spoiled = copy.deepcopy(_run(1))
+    spoiled[53] = "a bare string where an item should be"
+    api.model.replies = {  # type: ignore[attr-defined]
+        "first": _items(spoiled),
+        "second": _items(copy.deepcopy(spoiled)),
+    }
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", _scan_19_pages(tmp_path), "application/pdf")},
+    )
+    paper_id = up.json()["paperId"]
+
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+
+    frames = _frames(resp.text)
+    assert [f["message"] for f in frames if f["type"] == "error"] == [_HELD_SENTENCE]
+    assert not any(f.get("phase") == "complete" for f in frames)
+    with pg_sessionmaker() as session:
+        assert session.scalars(select(Attempt)).all() == []
+        assert session.scalars(select(QuestionResult)).all() == []
+    owned = upload_repo.get_owned_upload(user_id=student_id, upload_id=paper_id)
+    assert owned is not None
+    with upload_repo._sm() as session:
+        from lemely.db.models.attempts import Upload
+
+        row = session.get(Upload, owned.id)
+        assert row is not None and row.status == UploadStatus.failed
