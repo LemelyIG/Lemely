@@ -46,6 +46,7 @@ The legacy binder, where the model hands out ids itself, is gated here too
 from __future__ import annotations
 
 import contextvars
+import difflib
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -68,7 +69,12 @@ from lemely.core.binding_gate import (
     unread_in_one_read,
     verdict,
 )
-from lemely.core.label_sequence import UnalignedReason, bind_stream
+from lemely.core.label_sequence import (
+    DOUBT_NEXT_NUMBER_NOT_SEEN,
+    INFERENCE_DOUBTS,
+    UnalignedReason,
+    bind_stream,
+)
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 from lemely.core.text_agreement import text_agreement
 from lemely.io.binding.label_binder import BoundRead, LabelBinder, to_bound_read
@@ -169,11 +175,13 @@ class LegacyOutcome:
 class _Read:
     """One read of the script: what ``bind_stream`` made of it, as records and as bound.
 
-    ``writings`` is the writing each bound leaf holds, by question id.
+    ``writings`` is the writing each bound leaf holds, by question id, and ``doubts``
+    the binder's doubts on each (``label_sequence.DOUBTS``).
     """
 
     bound: BoundRead
     writings: dict[str, list[SeenWriting]]
+    doubts: dict[str, list[str]] = field(default_factory=dict)
 
 
 def binder_for(
@@ -436,15 +444,110 @@ def _in_paper_order(mark_scheme: MarkScheme, ids: list[str]) -> list[str]:
 
 
 def _with_statuses(
-    answers: list[ExtractedAnswer], unverified: frozenset[str]
+    answers: list[ExtractedAnswer],
+    unverified: frozenset[str],
+    cleared: frozenset[str] = frozenset(),
 ) -> list[ExtractedAnswer]:
-    """``answers`` with those in ``unverified`` marked so; the binder's own doubts are kept."""
-    return [
-        answer.model_copy(update={"binding_status": "unverified"})
-        if answer.question_id in unverified
-        else answer
-        for answer in answers
-    ]
+    """``answers`` with those in ``unverified`` marked so; the binder's own doubts are kept.
+
+    ``cleared`` are the answers whose one doubt from the binder the other read
+    answered (``_next_number_seen_elsewhere``): they are ``verified`` unless a gate
+    rule names them, which always wins.
+    """
+    out: list[ExtractedAnswer] = []
+    for answer in answers:
+        if answer.question_id in unverified:
+            answer = answer.model_copy(update={"binding_status": "unverified"})
+        elif answer.question_id in cleared:
+            answer = answer.model_copy(update={"binding_status": "verified"})
+        out.append(answer)
+    return out
+
+
+def _block_text(writing: SeenWriting) -> str:
+    """A block's writing, answer and working, case-folded and with white space collapsed."""
+    return " ".join(f"{writing.answer} {writing.working_out or ''}".casefold().split())
+
+
+def _share_found(block: str, text: str) -> float:
+    """The share of ``block``'s characters that ``text`` holds, in runs the two have in common.
+
+    A run counts from 3 characters (2 for a block shorter than 6, and the whole of a
+    block of one), so that letters two texts share by chance are not counted. 1.0 for
+    a block with no characters.
+    """
+    if not block:
+        return 1.0
+    shortest = 3 if len(block) >= 6 else min(2, len(block))
+    matcher = difflib.SequenceMatcher(None, block, text, autojunk=False)
+    common = sum(run.size for run in matcher.get_matching_blocks() if run.size >= shortest)
+    return common / len(block)
+
+
+def _same_blocks(one: list[SeenWriting], two: list[SeenWriting], floor: float) -> bool:
+    """Every block of each list is found in the other list's writing, at ``floor``."""
+    texts_one, texts_two = [_block_text(w) for w in one], [_block_text(w) for w in two]
+    whole_one, whole_two = " ".join(texts_one), " ".join(texts_two)
+    return all(_share_found(block, whole_two) >= floor for block in texts_one) and all(
+        _share_found(block, whole_one) >= floor for block in texts_two
+    )
+
+
+def _next_number_seen_elsewhere(
+    returned: _Read, other: _Read, other_checks: list[BindingCheck], thresholds: GateThresholds
+) -> frozenset[str]:
+    """Leaves whose doubt "next question number not seen" the other read answers.
+
+    That doubt is on the last answered leaf of a question when the list has no label for
+    the next question's number: nothing closes the leaf's stretch, so writing listed
+    after its label may be the next question's. It is cleared for a leaf when the other
+    read
+
+    - passed its own checks at paper scope,
+    - aligned the leaf and gave what it holds no content doubt (so it has the number:
+      a read without it gives the leaf this same doubt), and
+    - holds the same blocks on the leaf: every block of each read's leaf is found in
+      the other's, at the gate's ``agreement_floor`` of the block's characters.
+
+    Why two reads count for this doubt and for no other. This doubt is about one item
+    the list either has or lacks, the label that closes the leaf. The other read is
+    not asked to agree with a judgement: it supplies the missing item, and with it
+    binds the same writing. The same binding, published with no flag when that read is
+    the one returned, is not made less sure by a second read that lacks the label.
+    The other content doubts are not of that kind, and are never cleared here:
+
+    - tied by an arrow: both reads look at the same arrow. A read that puts the block on
+      the same leaf without the mark has not seen more, it has reported less; on faulted
+      streams that rule took the flag off every block both reads put on the same wrong
+      leaf.
+    - continues from the previous page: a read that binds the block has the same doubt,
+      and one that does not bind it holds other blocks, so there is nothing to compare.
+      Comparing the whole text instead lets one short foreign block through beside a
+      long answer (seen on a stored pair).
+    - some writing set aside: the other read not listing the block does not show the
+      block was not this leaf's, and readers leave such blocks out often (7 to 9 of 18
+      stored reads for each of three notes).
+
+    A leaf that carries any content doubt beside this one keeps its doubt. Measured on
+    the nine stored read pairs and all 306 ordered pairs of their 18 reads: it clears
+    only leaves that hold their own answer whole
+    (``.superpowers/sdd/review-volume-analysis.md``).
+    """
+    if _paper_failed(other_checks):
+        return frozenset()
+    floor = thresholds.agreement_floor
+    cleared: set[str] = set()
+    for leaf, doubts in returned.doubts.items():
+        if [d for d in doubts if d not in INFERENCE_DOUBTS] != [DOUBT_NEXT_NUMBER_NOT_SEEN]:
+            continue
+        mine, theirs = returned.writings.get(leaf, []), other.writings.get(leaf, [])
+        if not mine or not theirs:
+            continue
+        if any(d not in INFERENCE_DOUBTS for d in other.doubts.get(leaf, [])):
+            continue
+        if _same_blocks(mine, theirs, floor):
+            cleared.add(leaf)
+    return frozenset(cleared)
 
 
 def _whole_text(answer: ExtractedAnswer) -> str:
@@ -556,6 +659,7 @@ def run_binding(
         return _Read(
             bound=to_bound_read(bound, page_count=len(pages), drops=stream.drops),
             writings={leaf.question_id: list(leaf.writings) for leaf in bound.leaves},
+            doubts={leaf.question_id: list(leaf.doubts) for leaf in bound.leaves},
         )
 
     reads = [_FIRST_READ, _SECOND_READ] if binding.second_read else [_FIRST_READ]
@@ -627,6 +731,7 @@ def run_binding(
         )
 
     chosen, chosen_checks, other = first, first_checks, second_read
+    chosen_read: _Read | None = first_read
     other_checks = second_checks
     decided: BindingVerdict
     if _paper_failed(compared):
@@ -635,7 +740,7 @@ def run_binding(
         decided, retried = "pass", False
     elif second is not None and second_checks is not None and not _paper_failed(second_checks):
         chosen, chosen_checks, other = second, second_checks, first_read
-        other_checks = first_checks
+        chosen_read, other_checks = second_read, first_checks
         decided, retried = "pass", True
     else:
         decided, retried = "hold", second is not None
@@ -693,6 +798,11 @@ def run_binding(
             thresholds,
         )
     seen_elsewhere = [leaf for leaf in seen_elsewhere if leaf not in from_other]
+    # The one doubt of the binder's that a second read can answer: the next question's
+    # number, where the other read has it (``_next_number_seen_elsewhere``).
+    cleared: frozenset[str] = frozenset()
+    if other is not None and other_checks is not None and chosen_read is not None:
+        cleared = _next_number_seen_elsewhere(chosen_read, other, other_checks, thresholds)
     review_only = _in_paper_order(
         mark_scheme,
         [
@@ -738,7 +848,7 @@ def run_binding(
         marked_from_other_read=len(from_other),
     )
     by_id = {
-        **{a.question_id: a for a in _with_statuses(chosen.answers, unverified)},
+        **{a.question_id: a for a in _with_statuses(chosen.answers, unverified, cleared)},
         **from_other,
     }
     return BindingOutcome(

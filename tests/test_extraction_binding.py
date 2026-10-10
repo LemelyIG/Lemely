@@ -30,7 +30,7 @@ from lemely.core.loose_schemas import MarkScheme, Question
 from lemely.core.schemas import AIMarkResponse, ConfidenceBand, ExtractedAnswers
 from lemely.io import correction_ai
 from lemely.io.answer_extraction import GeminiAnswerExtractor
-from lemely.io.binding import parse_stream_items, to_bound_read
+from lemely.io.binding import orchestrate, parse_stream_items, to_bound_read
 from lemely.io.binding.label_binder import LabelBinder
 from lemely.io.binding.orchestrate import LOST_ITEM_REASONS, BindingOutcome, run_binding
 from lemely.io.correction_ai import correct_paper
@@ -746,6 +746,169 @@ def test_nothing_is_marked_from_a_read_that_failed_its_own_checks(
     assert (outcome.report.verdict, outcome.report.retried) == ("pass", True)
     assert "5a" not in {a.question_id for a in outcome.answers}
     assert outcome.review_only_ids == ["5a"] and outcome.marked_from_other_read == []
+
+
+# --------------------------------------------------------------------------------------
+# A second read that saw the next question's number
+# --------------------------------------------------------------------------------------
+def _statuses(outcome: BindingOutcome | ExtractedAnswers) -> dict[str, str | None]:
+    return {a.question_id: a.binding_status for a in outcome.answers}
+
+
+def _with_arrow(items: list[Any], index: int) -> list[Any]:
+    out = copy.deepcopy(items)
+    assert out[index]["type"] == "answer"
+    out[index]["placed_by"] = "arrow"
+    return out
+
+
+def _uncertain_blocks(items: list[Any]) -> list[int]:
+    return [
+        index
+        for index, item in enumerate(items)
+        if item.get("type") == "answer" and item.get("placed_by") == "uncertain"
+    ]
+
+
+def test_a_second_read_that_saw_the_next_number_clears_that_doubt(
+    tmp_path: Path, scan: Path, scheme: MarkScheme
+) -> None:
+    # Recorded reply 4 lacks the label `4` (the student ringed the printed number), so
+    # nothing in it closes 3(c), the last part of question 3: its answer is doubted.
+    # Recorded reply 1 has the label and binds the same block to 3(c) with no doubt.
+    alone = _bind(tmp_path / "alone", scheme, _Model(first=_items(_run(4))), second_read=False)
+    assert _statuses(alone)["3c"] == "unverified"
+    model = _Model(first=_items(_run(4)), second=_items(_run(1)))
+    extracted = _extract(tmp_path, scan, scheme, model)
+    assert extracted.binding is not None and extracted.binding.verdict == "pass"
+    assert not extracted.binding.retried
+    assert _pairs(extracted) == _pairs(alone)  # the answers are the returned read's
+    after = _statuses(extracted)
+    assert after["3c"] == "verified"
+    # Nothing else moves: the arrow doubt on 4(b)(i) is not this doubt.
+    assert after["4b_i"] == "unverified"
+    assert {q for q in after if after[q] != _statuses(alone)[q]} == {"3c"}
+
+    marker = _Marker()
+    with patch.object(
+        correction_ai.AICorrector, "mark_question", autospec=True, side_effect=marker
+    ):
+        result = correct_paper(scheme, extracted, gemini_client=MagicMock())
+    row = next(q for q in result.questions if q.question_id == "3c")
+    assert "binding unverified" not in (row.review_reason or "")
+
+
+def test_the_doubt_stays_when_neither_read_saw_the_next_number(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # Replies 4 and 5 both lack the label `4`. Two reads that hold the same block and
+    # both lack the label agree on nothing that closes the leaf.
+    plain = _without_items(_run(5), *_uncertain_blocks(_run(5)))
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(_run(4)), second=_items(plain)))
+    assert outcome.report.verdict == "pass"
+    assert _statuses(outcome)["3c"] == "unverified"
+
+
+def test_the_doubt_stays_when_the_other_read_holds_other_blocks_on_the_leaf(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The student wrote a line under the heading of question 4. The read that missed
+    # the label `4` lists it straight after 3(c)'s answer, so 3(c) holds it: the case
+    # the doubt exists for. The read that saw the label lists the line after the label,
+    # so there 3(c) holds its own answer alone. The two reads do not hold the same
+    # blocks on 3(c), and the doubt is not cleared.
+    line = "heat capacity is the energy needed to warm the whole object by one degree"
+    first = _with_a_block_after(_run(4), 39, line)
+    second = _with_a_block_after(_run(1), 40, line)
+    assert first[39]["type"] == "answer" and second[40]["text"] == "4"
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(second)))
+    assert outcome.report.verdict == "pass"
+    held = next(a for a in outcome.answers if a.question_id == "3c")
+    assert line in held.answer and held.binding_status == "unverified"
+
+    # The same when it is the other read that holds more on the leaf than this one.
+    mirror = _bind(
+        tmp_path / "mirror",
+        scheme,
+        _Model(first=_items(_run(4)), second=_items(_with_a_block_after(_run(1), 39, line))),
+    )
+    assert _statuses(mirror)["3c"] == "unverified"
+
+
+def test_the_doubt_stays_when_the_other_read_doubts_the_leaf_or_failed_its_checks(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The other read saw the label `4` and ties 3(c)'s block by an arrow: it doubts
+    # what the leaf holds, so it clears nothing.
+    arrow = _with_arrow(_run(1), 39)
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(_run(4)), second=_items(arrow)))
+    assert _statuses(outcome)["3c"] == "unverified"
+
+    # The other read lost an item of its reply and fails its own checks: it is not a
+    # witness for a single leaf.
+    lost = _with_an_item_lost(_run(1), 60)
+    outcome = _bind(tmp_path / "lost", scheme, _Model(first=_items(_run(4)), second=_items(lost)))
+    assert (outcome.report.verdict, outcome.report.retried) == ("pass", False)
+    assert _statuses(outcome)["3c"] == "unverified"
+
+
+def test_only_the_next_number_doubt_is_cleared_by_the_other_read(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # A leaf that carries another content doubt beside it stays doubted: here 3(c)'s
+    # block is tied by an arrow in the read that missed the label.
+    both = _with_arrow(_run(4), 39)
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(both), second=_items(_run(1))))
+    assert _statuses(outcome)["3c"] == "unverified"
+
+    # And an arrow doubt alone is not cleared by a read that lists the same block
+    # without the mark: that read has not seen more of the arrow, it has reported less.
+    marked = _bind(
+        tmp_path / "arrow-only",
+        scheme,
+        _Model(first=_items(_with_arrow(_run(1), 39)), second=_items(_run(1))),
+    )
+    assert _statuses(marked)["3c"] == "unverified"
+
+    # A gate rule that names the leaf keeps it doubted whatever the other read saw:
+    # here the other read has nothing under 3(c).
+    lopsided = _bind(
+        tmp_path / "one-read",
+        scheme,
+        _Model(first=_items(_run(4)), second=_items(_without_items(_run(1), 39))),
+    )
+    assert _statuses(lopsided)["3c"] == "unverified"
+
+
+def test_a_block_is_found_in_a_text_by_the_runs_they_share() -> None:
+    found = orchestrate._share_found
+    assert found("total upward force", "total upward force is equal") == 1.0
+    # What one reader words a little differently from another is still found.
+    assert found("1. total upward forces equal to", "1 total upward force is equal to") >= 0.8
+    # Letters two texts happen to share, one or two at a time, are not: a block of
+    # other writing is not found in a text because both are made of the same alphabet.
+    assert found("abcdefgh", "a b c d e f g h") == 0.0
+    assert found("the current falls", "heat is lost to the air") < 0.5
+    # A short block is found by a run of two, and a block of one by itself.
+    assert found("63", "1. 43 cm 2. 63 cm") == 1.0
+    assert found("63", "6 and 3") == 0.0
+    assert found("B", "B") == 1.0 and found("", "anything") == 1.0
+
+
+def test_a_gate_rule_that_names_a_leaf_wins_over_the_cleared_doubt(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The two never meet on the recorded replies, so the rule is pinned where it is
+    # applied: an answer both cleared and named by a check stays doubted.
+    alone = _bind(tmp_path, scheme, _Model(first=_items(_run(4))), second_read=False)
+    answers = [a for a in alone.answers if a.question_id in ("3b_ii", "3c")]
+    assert [a.binding_status for a in answers] == ["verified", "unverified"]
+    both = orchestrate._with_statuses(answers, frozenset({"3c"}), frozenset({"3c"}))
+    assert [a.binding_status for a in both] == ["verified", "unverified"]
+    cleared = orchestrate._with_statuses(answers, frozenset(), frozenset({"3c"}))
+    assert [a.binding_status for a in cleared] == ["verified", "verified"]
+    named = orchestrate._with_statuses(answers, frozenset({"3b_ii"}), frozenset({"3c"}))
+    assert [a.binding_status for a in named] == ["unverified", "verified"]
 
 
 def test_a_held_paper_takes_nothing_from_the_other_read(tmp_path: Path, scheme: MarkScheme) -> None:
