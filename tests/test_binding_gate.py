@@ -227,6 +227,7 @@ def _g5(
     *,
     listing_suspects: list[str] | None = None,
     lost_items: int = 0,
+    unaligned_reasons: dict[str, str] | None = None,
 ) -> BindingCheck:
     scheme = _scheme([_leaf(str(i), "5") for i in range(1, leaves + 1)])
     return check_label_coverage(
@@ -237,6 +238,7 @@ def _g5(
         thresholds,
         listing_suspects=listing_suspects or [],
         lost_items=lost_items,
+        unaligned_reasons=unaligned_reasons,
     )
 
 
@@ -257,6 +259,78 @@ def test_g5_predecessor_is_the_nearest_aligned_leaf() -> None:
     # 4 and 5 are unaligned; the nearest aligned leaf before both is 3.
     check = _g5(_extracted([("3", "5"), ("4", "5")]), 30, ["4", "5"])
     assert check.question_ids == ["3", "4", "5"]
+
+
+_LABEL_PLACED = (
+    "neighbour_left_blank",
+    "writing_uncertain",
+    "unplaced_label_follows",
+    "next_label_unreadable",
+)
+_LABEL_NOT_PLACED = (
+    "label_not_seen",
+    "number_not_seen",
+    "number_not_settled",
+    "label_not_settled",
+    "path_not_aligned",
+    "not_bracketed",
+    "duplicate_id",
+    "undecomposable_id",
+    "list_too_long",
+    "scheme_too_deep",
+)
+
+
+def test_the_two_groups_of_reasons_are_every_reason() -> None:
+    from lemely.core.label_sequence import UNALIGNED_REASONS
+
+    assert sorted(_LABEL_PLACED + _LABEL_NOT_PLACED) == sorted(UNALIGNED_REASONS)
+
+
+@pytest.mark.parametrize("reason", _LABEL_PLACED)
+def test_g5_does_not_name_the_leaf_before_a_gap_whose_labels_all_have_their_place(
+    reason: str,
+) -> None:
+    # 3 is unaligned and its own label was placed: no label was missed, and the answer
+    # to 2 ends at that label. Nothing of 3's can sit in it.
+    answers = _extracted([("2", "5"), ("8", "5")])
+    check = _g5(answers, 20, ["3", "9"], unaligned_reasons={"3": reason, "9": reason})
+    assert not check.passed and check.scope == "question"
+    assert check.question_ids == ["3", "9"]
+    # A gap of two such leaves is the same.
+    check = _g5(
+        answers,
+        20,
+        ["3", "4"],
+        unaligned_reasons={"3": reason, "4": "neighbour_left_blank"},
+    )
+    assert check.question_ids == ["3", "4"]
+
+
+@pytest.mark.parametrize("reason", _LABEL_NOT_PLACED)
+def test_g5_still_names_the_leaf_before_a_gap_with_a_label_that_has_no_place(
+    reason: str,
+) -> None:
+    answers = _extracted([("2", "5"), ("8", "5")])
+    check = _g5(answers, 20, ["3", "9"], unaligned_reasons={"3": reason, "9": reason})
+    assert check.question_ids == ["2", "3", "8", "9"]
+    # One such leaf anywhere in the gap is enough: the labels after a missed one can
+    # stand in for it, and the answer before the gap is the one nearest the misreading.
+    for gap in (
+        {"3": "neighbour_left_blank", "4": reason},
+        {"3": reason, "4": "neighbour_left_blank"},
+    ):
+        assert _g5(answers, 20, ["3", "4"], unaligned_reasons=gap).question_ids == ["2", "3", "4"]
+
+
+def test_g5_names_the_leaf_before_every_gap_when_no_reason_is_given() -> None:
+    # Without the reasons the check cannot tell the two kinds of gap apart. A leaf
+    # with no reason in the mapping is treated the same way.
+    answers = _extracted([("2", "5"), ("8", "5")])
+    assert _g5(answers, 20, ["3", "9"]).question_ids == ["2", "3", "8", "9"]
+    assert _g5(answers, 20, ["3", "9"], unaligned_reasons={}).question_ids == ["2", "3", "8", "9"]
+    partly = {"3": "neighbour_left_blank"}
+    assert _g5(answers, 20, ["3", "9"], unaligned_reasons=partly).question_ids == ["3", "8", "9"]
 
 
 def test_g5_first_leaf_unaligned_has_no_predecessor() -> None:

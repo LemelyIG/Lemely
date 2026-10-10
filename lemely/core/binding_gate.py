@@ -26,7 +26,7 @@ from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
 from lemely.core.text_agreement import text_agreement
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from lemely.core.label_sequence import BoundStream
     from lemely.core.schemas import CorrectionResult, ExtractedAnswers
@@ -211,6 +211,15 @@ class SkippedParts:
 
 
 _ABSENT = ("label_not_seen", "number_not_seen")
+# Reasons a leaf is unaligned although its own label has its place in the list.
+_OWN_LABEL_PLACED = frozenset(
+    {
+        "neighbour_left_blank",
+        "writing_uncertain",
+        "unplaced_label_follows",
+        "next_label_unreadable",
+    }
+)
 
 
 def skipped_parts(
@@ -279,6 +288,7 @@ def check_label_coverage(
     listing_suspects: Sequence[str] = (),
     lost_items: int = 0,
     skipped: SkippedParts | None = None,
+    unaligned_reasons: Mapping[str, str] | None = None,
 ) -> BindingCheck:
     """G5: fails when question labels on the page could not be lined up with the mark scheme.
 
@@ -310,12 +320,20 @@ def check_label_coverage(
     when its label is followed by the label the paper prints next, so where a label
     was missed the leaf just before the gap is unbound as well (its writing cannot be
     told from the missed part's) and is itself among the unaligned leaves. The
-    question-scope check lists every unaligned leaf and, for each, the nearest aligned
-    leaf before it in manifest order when that leaf has a non-blank answer: the last
-    answer bound before the gap. That leaf is bracketed and is usually right. It is
-    named because where several labels in a row were missed the labels after the gap
-    can stand in for the missed ones, and it is then the answer standing nearest to
-    what was misread.
+    question-scope check lists every unaligned leaf and, for each run of them, the
+    nearest aligned leaf before it in manifest order when that leaf has a non-blank
+    answer: the last answer bound before the gap. That leaf is bracketed and is
+    usually right. It is named because where several labels in a row were missed the
+    labels after the gap can stand in for the missed ones, and it is then the answer
+    standing nearest to what was misread.
+
+    It is not named when every leaf of the gap has its own label placed
+    (``unaligned_reasons``, the read's ``BoundStream.unaligned_reasons``, says
+    ``neighbour_left_blank``, ``writing_uncertain``, ``unplaced_label_follows`` or
+    ``next_label_unreadable`` for each). No label was missed there: the doubt is about
+    the writing under those labels, and the answer before the gap ends at the first
+    of them. With ``unaligned_reasons`` ``None``, or no reason for a leaf, the leaf
+    before the gap is named as before.
 
     ``unmatched_markers`` is the number of labels in the list that no question
     accounts for (``BoundRead.unplaced_labels``); the name is from an earlier design.
@@ -394,13 +412,18 @@ def check_label_coverage(
         return BindingCheck(id="G5", passed=True, scope="paper", detail=detail)
     answered = _answers_by_id(extracted)
     listed: set[str] = set(unaligned)
+    reasons = unaligned_reasons or {}
     previous_aligned: str | None = None
     for qid in leaf_ids:
-        if qid in missing:
-            if previous_aligned is not None and previous_aligned in answered:
-                listed.add(previous_aligned)
-        else:
+        if qid not in missing:
             previous_aligned = qid
+        elif (
+            # A label of this gap has no place: the answer before the gap is named.
+            reasons.get(qid) not in _OWN_LABEL_PLACED
+            and previous_aligned is not None
+            and previous_aligned in answered
+        ):
+            listed.add(previous_aligned)
     listed.update(suspect_group_leaves(mark_scheme, groups))
     sentences: list[str] = []
     if unaligned:
