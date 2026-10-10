@@ -26,7 +26,9 @@ for which the other read found no label: to a teacher, since the other reader ma
 have seen its writing and had nowhere to put it. And every leaf a failed
 question-scope check names: doubted.
 
-With one read (the second switched off, or failed), a paper-scope failure is a hold.
+With ``second_read`` off there is one read, and a paper-scope failure on it is a hold.
+With it on, a paper is never let out on one read: a second read that fails is made
+once more, and if it fails again the job fails as it does when the first read fails.
 The checks see part of what can go wrong: a pass means nothing was found, not that the
 binding is right.
 
@@ -68,7 +70,7 @@ from lemely.core.binding_gate import (
 from lemely.core.label_sequence import bind_stream
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 from lemely.io.binding.label_binder import BoundRead, LabelBinder, to_bound_read
-from lemely.runtime.errors import CostCeilingError, LemelyError
+from lemely.runtime.errors import CostCeilingError, ExternalServiceError, LemelyError
 from lemely.runtime.events import EventType, bus
 
 if TYPE_CHECKING:
@@ -213,15 +215,19 @@ def _question_scope_ids(checks: list[BindingCheck]) -> frozenset[str]:
     )
 
 
-#: What ``SECOND_READ_FAILED`` says when the second read crashed with something that
-#: is not a ``LemelyError``. The event is streamed to the student's browser
+#: What is said when the second read crashed with something that is not a
+#: ``LemelyError``: on the ``SECOND_READ_FAILED`` event, and as the message of the
+#: error the job fails with if it crashes again. Both reach the student's browser
 #: (``lemely.web.sse``), and the text of an arbitrary exception is internal: it goes
 #: to the server log with its traceback and nowhere else.
 SECOND_READ_CRASH_MESSAGE = "the second read of the script failed unexpectedly"
 
 
 def _publish_failed_read(exc: Exception, stage: str) -> None:
-    """Publish that a second read or a retry failed and the paper goes on without it.
+    """Publish that a second read or the legacy binder's retry failed.
+
+    The label binder's second read is then made once more (``_read_both``); the legacy
+    binder's paper is held on its first read (``gate_legacy``).
 
     A ``LemelyError`` is a service or parsing failure and its message is published, as
     the text second reader's is. Anything else is a bug: a fixed sentence is published
@@ -293,22 +299,36 @@ def _publish_result(
     )
 
 
-def _read_both(
-    first: Callable[[], _Read], second: Callable[[], _Read]
-) -> tuple[_Read, _Read | None]:
-    """Run the two reads at the same time; the second may come back ``None``.
+def _note_failed_second_read(error: Exception) -> None:
+    """Log a crash with its traceback; publish that the second read failed."""
+    if not isinstance(error, LemelyError):
+        structlog.get_logger().bind(component="binding_gate").error(
+            "binding_second_read_crashed", exc_info=error
+        )
+    _publish_failed_read(error, SECOND_READ_TASK_TAG)
+
+
+def _read_both(first: Callable[[], _Read], second: Callable[[], _Read]) -> tuple[_Read, _Read]:
+    """Run the two reads at the same time and return both, or raise.
 
     Each read runs under ``contextvars.copy_context().run`` so that its bus events
     carry the run id. Both are waited for before anything is raised, so that a
     cost-ceiling breach in one is never hidden behind another error in the other: the
     breach stops the run and always wins. Otherwise a failed first read fails the
-    paper, as a failed extraction call always has, and a failed second read only
-    costs the comparison, whatever it failed with: a service error is published as
-    ``SECOND_READ_FAILED``, and so is a crash (a bug in reading or binding the second
-    reply), which is logged with its traceback as well. A good first read is never
-    thrown away for the second. ``KeyboardInterrupt`` and ``SystemExit`` are not
-    caught. Both calls have started by the time either fails, so a breach or a failure
-    in one does not save the cost of the other.
+    paper, as a failed extraction call always has.
+
+    A paper is never let out on one read when two were asked for: on one read a block
+    the reader missed is a blank, and a blank is an unflagged zero. So a second read
+    that fails (a service error, a reply that does not parse, or a crash) is published
+    as ``SECOND_READ_FAILED`` and made once more, here, on the calling thread. If it
+    fails again the job fails with that error, exactly as for the first read: nothing
+    is known about the binding, so there is no verdict to give. A crash that is not a
+    ``LemelyError`` is logged with its traceback and raised as an
+    ``ExternalServiceError`` that carries a fixed sentence, because the text of an
+    arbitrary exception is internal and this error's text reaches the student's
+    stream. ``KeyboardInterrupt`` and ``SystemExit`` are not caught. Both calls have
+    started by the time either fails, so a breach or a failure in one does not save
+    the cost of the other.
     """
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [
@@ -328,17 +348,24 @@ def _read_both(
     first_error, second_error = errors
     if first_error is not None:
         raise first_error
-    first_read = results[0]
+    first_read, second_read = results
     if first_read is None:  # pragma: no cover - a read returns or raises
         raise RuntimeError("the first read gave neither a result nor an error")
-    if second_error is None:
-        return first_read, results[1]
-    if not isinstance(second_error, LemelyError):
+    if second_error is None and second_read is not None:
+        return first_read, second_read
+    if second_error is not None:
+        _note_failed_second_read(second_error)
+    try:
+        return first_read, second()
+    except CostCeilingError:
+        raise
+    except LemelyError:
+        raise
+    except Exception as crash:
         structlog.get_logger().bind(component="binding_gate").error(
-            "binding_second_read_crashed", exc_info=second_error
+            "binding_second_read_crashed", exc_info=crash
         )
-    _publish_failed_read(second_error, SECOND_READ_TASK_TAG)
-    return first_read, None
+        raise ExternalServiceError(SECOND_READ_CRASH_MESSAGE) from crash
 
 
 def _in_paper_order(mark_scheme: MarkScheme, ids: list[str]) -> list[str]:
@@ -377,7 +404,9 @@ def run_binding(
 
     A ``CostCeilingError`` from either read propagates unchanged. So does any error
     from the first read. A second read that fails otherwise is published as
-    ``SECOND_READ_FAILED`` and the paper goes on as if there were none.
+    ``SECOND_READ_FAILED`` and made once more; if it fails again its error is raised
+    and the job fails (``_read_both``). With ``second_read`` on, nothing is returned
+    from one read.
     """
     binding = settings.binding
     if binding.binder != "label":

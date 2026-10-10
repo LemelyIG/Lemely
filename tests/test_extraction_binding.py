@@ -36,7 +36,7 @@ from lemely.io.correction_ai import correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.io.rasterise import RasterisedPage
 from lemely.runtime.config import BindingSettings, PathsSettings, Settings, load_settings
-from lemely.runtime.errors import CostCeilingError, ExternalServiceError
+from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus
 from tests.gemini_fakes import fake_genai_client
 
@@ -185,8 +185,9 @@ class _Model:
 
     ``replies`` is keyed by which call it is: ``"first"`` and ``"second"`` for the label
     binder's two reads, ``"legacy"`` and ``"retry"`` for the legacy extractor's call and
-    its repeat. A reply is the body the model returned, or an exception to raise. The
-    two reads run on separate threads, so the key comes from the call and not its order.
+    its repeat. A reply is the body the model returned, or an exception to raise, or a
+    list of those to be given one per call of that kind. The two reads run on separate
+    threads, so the key comes from the call and not its order.
     """
 
     def __init__(self, **replies: Any) -> None:
@@ -203,7 +204,9 @@ class _Model:
     def __call__(self, **kwargs: Any) -> Any:
         with self._lock:
             self.calls.append(kwargs)
-        reply = self.replies[self.key(kwargs)]
+            reply = self.replies[self.key(kwargs)]
+            if isinstance(reply, list):
+                reply = reply.pop(0)
         if isinstance(reply, BaseException):
             raise reply
         return kwargs["response_schema"].model_validate(reply)
@@ -680,26 +683,63 @@ def test_question_scope_doubts_are_marked_on_a_held_paper_too(
     assert doubted == doubted_alone | set(g9.question_ids)
 
 
-def test_failed_second_read_does_not_fail_the_paper(tmp_path: Path, scheme: MarkScheme) -> None:
-    model = _Model(first=_items(_run(1)), second=ExternalServiceError("503 from the service"))
+def test_a_second_read_that_fails_once_is_read_again(tmp_path: Path, scheme: MarkScheme) -> None:
+    model = _Model(
+        first=_items(_run(1)),
+        second=[ExternalServiceError("503 from the service"), _items(_run(2))],
+    )
     with _events(EventType.SECOND_READ_FAILED, EventType.BINDING_GATE_RESULT) as seen:
         outcome = _bind(tmp_path, scheme, model)
 
-    assert model.made() == ["first", "second"]
-    assert outcome.report is not None
+    assert model.made() == ["first", "second", "second"]
     assert (outcome.report.verdict, outcome.report.retried) == ("pass", False)
-    assert [c.id for c in outcome.report.checks] == ["G1", "G2", "G5", "G6", "G7"]  # no G9
-    assert _pairs(outcome) == _bound_alone(_run(1), scheme)
+    # The two reads were compared after all: the paper did not go on with one.
+    assert [c.id for c in outcome.report.checks] == ["G1", "G2", "G5", "G6", "G7", "G9"]
     (failure,) = seen[EventType.SECOND_READ_FAILED]
     assert failure["error"] == "503 from the service"
     assert failure["error_type"] == "ExternalServiceError"
+    assert failure["stage"] == "binding_second_read"
     (event,) = seen[EventType.BINDING_GATE_RESULT]
-    assert event["second_read"] is False
+    assert event["second_read"] is True
 
-    # With no second read to fall back on, a bad first read is a hold with nothing retried.
-    bad = _Model(first=_items(_question_4_unanchored(4)), second=ExternalServiceError("503"))
-    held = _bind(tmp_path, scheme, bad)
-    assert held.report is not None
+
+@pytest.mark.parametrize(
+    "failure",
+    [ExternalServiceError("503 from the service"), ParseError("the reply did not parse")],
+    ids=["service error", "parse error"],
+)
+def test_a_second_read_that_fails_twice_fails_the_job(
+    tmp_path: Path, scheme: MarkScheme, failure: Exception
+) -> None:
+    # Was `test_failed_second_read_does_not_fail_the_paper`, which pinned the opposite:
+    # the paper went on with the first read alone. On one read a block the reader missed
+    # is a blank, and a blank is an unflagged zero; with the second read asked for, a
+    # paper is never published on one.
+    again = type(failure)("and again")
+    model = _Model(first=_items(_without_items(_run(1), 53)), second=[failure, again])
+    with (
+        _events(EventType.SECOND_READ_FAILED, EventType.BINDING_GATE_RESULT) as seen,
+        pytest.raises(type(failure)) as raised,
+    ):
+        _bind(tmp_path, scheme, model)
+    # The job fails as it does when the first read fails: with the service's own error,
+    # not with a verdict. Nothing is known about the binding.
+    assert raised.value is again
+    assert model.made() == ["first", "second", "second"]
+    assert seen[EventType.BINDING_GATE_RESULT] == []
+    assert len(seen[EventType.SECOND_READ_FAILED]) == 1  # the first failure; the second is raised
+
+
+def test_with_the_second_read_switched_off_one_read_is_used_as_before(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    model = _Model(first=_items(_run(1)))  # a second read would find no reply and fail
+    outcome = _bind(tmp_path, scheme, model, second_read=False)
+    assert model.made() == ["first"]
+    assert (outcome.report.verdict, outcome.report.retried) == ("pass", False)
+    held = _bind(
+        tmp_path, scheme, _Model(first=_items(_question_4_unanchored(4))), second_read=False
+    )
     assert (held.report.verdict, held.report.retried) == ("hold", False)
 
 
@@ -711,6 +751,8 @@ def test_failed_second_read_does_not_fail_the_paper(tmp_path: Path, scheme: Mark
         ("ceiling", "ceiling"),
         # The ceiling stops the run whatever else went wrong beside it.
         ("service error", "ceiling"),
+        # And when it is reached on the second attempt at the second read.
+        ("reply", "service error, then ceiling"),
     ],
 )
 def test_cost_ceiling_in_either_read_propagates(
@@ -721,6 +763,7 @@ def test_cost_ceiling_in_either_read_propagates(
         "ceiling": ceiling,
         "reply": _items(_run(1)),
         "service error": ExternalServiceError("503"),
+        "service error, then ceiling": [ExternalServiceError("503"), ceiling],
     }
     model = _Model(first=replies[first], second=replies[second])
     with (
@@ -729,42 +772,50 @@ def test_cost_ceiling_in_either_read_propagates(
     ):
         _bind(tmp_path, scheme, model)
     assert raised.value is ceiling  # unchanged, not wrapped
-    assert seen[EventType.SECOND_READ_FAILED] == []  # a breach is not a failed second read
+    # A breach is not a failed second read: only the service error before it is one.
+    assert len(seen[EventType.SECOND_READ_FAILED]) == (1 if "then" in second else 0)
     assert seen[EventType.BINDING_GATE_RESULT] == []
 
 
-def test_a_second_read_that_crashes_does_not_fail_a_good_paper(
+def test_a_second_read_that_crashes_twice_fails_the_job_with_a_fixed_sentence(
     tmp_path: Path, scheme: MarkScheme
 ) -> None:
-    # Not a service error: a bug somewhere in reading or binding the second reply. The
-    # first read is good, and the second read is an enhancement on it.
-    crash = RuntimeError("a bug in the second read")
-    model = _Model(first=_items(_run(1)), second=crash)
+    # Was `test_a_second_read_that_crashes_does_not_fail_a_good_paper`: a bug in reading
+    # or binding the second reply let the paper out on the first read alone. It is tried
+    # once more, and then the job fails. What reaches the student's stream is a fixed
+    # sentence: the text of an arbitrary exception is internal.
+    crash, again = RuntimeError("a bug in the second read"), RuntimeError("the same bug")
+    model = _Model(first=_items(_run(1)), second=[crash, again])
     with (
-        _events(EventType.SECOND_READ_FAILED) as seen,
+        _events(EventType.SECOND_READ_FAILED, EventType.BINDING_GATE_RESULT) as seen,
         structlog.testing.capture_logs() as logs,
+        pytest.raises(ExternalServiceError) as raised,
     ):
-        outcome = _bind(tmp_path, scheme, model)
-
-    assert (outcome.report.verdict, outcome.report.retried) == ("pass", False)
-    assert _pairs(outcome) == _bound_alone(_run(1), scheme)
+        _bind(tmp_path, scheme, model)
+    assert str(raised.value) == "the second read of the script failed unexpectedly"
+    assert raised.value.__cause__ is again  # the crash itself is kept for the server
+    assert "bug" not in str(raised.value)
+    assert seen[EventType.BINDING_GATE_RESULT] == []
     (failure,) = seen[EventType.SECOND_READ_FAILED]
     assert failure["error_type"] == "RuntimeError"
     assert failure["stage"] == "binding_second_read"
-    # This event is streamed to the student's browser, and the text of an arbitrary
-    # exception is internal: a fixed sentence goes out, the text stays in the log.
     assert failure["error"] == "the second read of the script failed unexpectedly"
     assert "a bug in the second read" not in str(failure)
-    # It is a bug, so it is logged with its traceback, not only published.
-    (logged,) = [entry for entry in logs if entry["event"] == "binding_second_read_crashed"]
-    assert logged["log_level"] == "error"
-    assert logged["exc_info"] is crash
+    # Both crashes are logged with their tracebacks.
+    logged = [entry for entry in logs if entry["event"] == "binding_second_read_crashed"]
+    assert [entry["exc_info"] for entry in logged] == [crash, again]
+    assert all(entry["log_level"] == "error" for entry in logged)
+
+    # A crash that does not come back on the second attempt costs nothing.
+    model = _Model(first=_items(_run(1)), second=[RuntimeError("once"), _items(_run(1))])
+    outcome = _bind(tmp_path, scheme, model)
+    assert outcome.report.verdict == "pass" and outcome.report.checks[-1].id == "G9"
 
     # A crash in the first read is still a crash: there is no paper without it.
     crash = RuntimeError("a bug in the first read")
-    with pytest.raises(RuntimeError) as raised:
+    with pytest.raises(RuntimeError) as raised_first:
         _bind(tmp_path, scheme, _Model(first=crash, second=_items(_run(1))))
-    assert raised.value is crash
+    assert raised_first.value is crash
 
 
 def test_an_interrupt_during_the_second_read_is_not_swallowed(

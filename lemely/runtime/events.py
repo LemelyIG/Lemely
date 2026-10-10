@@ -66,9 +66,10 @@ class EventType(StrEnum):
     REREAD_FAILED = "reread_failed"
     # Spec 2026-09-26 §8 (#3): the optional I3 second read failed; extraction
     # continued on the primary answers with extraction_agreement unset. Also
-    # published, with `stage="binding_second_read"` or `"binding_retry"`, when the
-    # binding step's second read or the legacy binder's retry fails: the paper
-    # goes on with the first read alone.
+    # published with a `stage`: `"binding_second_read"` when the label binder's
+    # second read fails, which is then made once more (a second failure fails the
+    # job: nothing is published on one read); `"binding_retry"` when the legacy
+    # binder's retry fails, which holds the paper on its first read.
     SECOND_READ_FAILED = "second_read_failed"
     # What the binding gate concluded about one extraction (lemely.io.binding.
     # orchestrate), published once per extraction unless the gate is off: `binder`,
