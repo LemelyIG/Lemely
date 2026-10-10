@@ -34,12 +34,17 @@ _SHOWN_IDS = 6
 
 @dataclass(frozen=True)
 class GateThresholds:
-    """Provisional limits; a later measurement replaces the defaults."""
+    """Limits for the gate checks.
 
-    shape_mismatch_rate: float = 0.25
+    The G6 and G7 defaults come from ``scripts/sweep_binding_gate.py``: the setting with
+    the most whole-paper shifts caught that holds no golden case and keeps false holds
+    on simulated correct papers within limits. The rest are still provisional.
+    """
+
+    shape_mismatch_rate: float = 0.33
     shape_min_count: int = 3
     shift_min_matches: int = 3
-    shift_max_gap: int = 3
+    shift_max_gap: int = 6
     shift_max_offset: int = 2
     off_topic_count: int = 4
     off_topic_run: int = 3

@@ -433,7 +433,8 @@ def test_g7_gap_larger_than_shift_max_gap_splits_a_run() -> None:
     extracted = _extracted(
         [("1", "11"), ("2", "11"), ("3", "22"), ("7", "66"), ("8", "77")]
     )  # 4, 5, 6 absent: the pointing leaves 3 and 7 are four apart
-    assert check_shift(extracted, scheme, DEFAULTS)[0].passed
+    narrow = replace(DEFAULTS, shift_max_gap=3)
+    assert check_shift(extracted, scheme, narrow)[0].passed
     wide = replace(DEFAULTS, shift_max_gap=4)
     joined = check_shift(extracted, scheme, wide)[0]
     assert not joined.passed and joined.question_ids == ["2", "3", "7", "8"]
