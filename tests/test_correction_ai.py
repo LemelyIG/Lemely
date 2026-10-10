@@ -1701,12 +1701,14 @@ class PointVerdictPromptTests(unittest.TestCase):
         with a tie-break) and the worked reply examples gained the field. A
         third move, ``"7"`` to ``"8"``, is the mark-gap work: the section on
         drawings was rewritten and an answer holding the reader's ``Drawing:``
-        is no longer headed "verbatim". The I6/I7/I8 bump is still owed at
-        US-018.
+        is no longer headed "verbatim". A fourth, ``"8"`` to ``"9"``, is the
+        same work: a science scheme stored without printed principles sends
+        the published science rules in the user prompt. The I6/I7/I8 bump is
+        still owed at US-018.
         """
         from lemely.io.prompts.correction_ai import VERSION
 
-        self.assertEqual(VERSION, "8")
+        self.assertEqual(VERSION, "9")
 
     def test_mark_question_forwards_equivalence_gate_without_raising(self):
         """The actual regression: before the fix this call raised TypeError
@@ -5789,12 +5791,13 @@ class ECFSubstitutionTests(unittest.TestCase):
     def test_version_pin_shows_i7_has_taken_no_bump_of_its_own(self) -> None:
         """Pins the marker prompt ``VERSION``. D19: I6/I7/I8 share one bump,
         taken later at US-018's funded sweep; I7 itself bumps nothing. The
-        value is ``"8"`` because of prompt changes with bumps of their own (the
-        ``addresses_question`` section, its rewrite, then the drawings section), see
+        value is ``"9"`` because of prompt changes with bumps of their own (the
+        ``addresses_question`` section, its rewrite, the drawings section, then the
+        default science rules), see
         ``PointVerdictPromptTests.test_version_pin_shows_i6_has_taken_no_bump_of_its_own``."""
         from lemely.io.prompts.correction_ai import VERSION
 
-        self.assertEqual(VERSION, "8")
+        self.assertEqual(VERSION, "9")
 
     def test_schema_hash_unchanged(self) -> None:
         """I7 adds no schema field (``PointVerdict.ecf_applied`` and

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import re
 
-from lemely.core.loose_schemas import Question
+from lemely.core.loose_schemas import MarkSchemeMetadata, Question
 
-VERSION = "8"
+VERSION = "9"
 
 MARKER_SYSTEM_PROMPT = """
 You are an experienced CAIE examiner marking a single exam question for a Cambridge
@@ -148,6 +148,109 @@ _DRAWING_ANSWER_HEADER = (
     "of what the student drew, not the student's own words):"
 )
 
+#: The syllabuses whose schemes get ``SCIENCE_DEFAULT_RULES`` when they print none of their
+#: own: Cambridge IGCSE Biology, Chemistry and Physics. One published scheme was read
+#: (0625/41, Oct/Nov 2024). Its "Science-Specific Marking Principles" are common text: a
+#: physics scheme that gives rules for chemical equations and takes its spelling examples
+#: from chemistry and biology. No other syllabus is listed because no scheme of another was
+#: read. Mathematics prints different rules and must never be added here.
+SCIENCE_SYLLABUS_CODES: frozenset[str] = frozenset({"0610", "0620", "0625"})
+
+#: The marking rules Cambridge publishes for its science papers, restated in this project's
+#: own words from the "Science-Specific Marking Principles" of the scheme named above. Sent
+#: only for a science scheme stored without principles of its own
+#: (:func:`default_marking_rules`): the deterministic parser stored none for any of the 289
+#: corpus schemes, and the marker then made up a rule on significant figures that is the
+#: reverse of the printed one.
+#:
+#: Two departures from the published text, both on purpose. A missing unit is left alone:
+#: the published rule withholds the final mark for it, but the paper often prints the unit
+#: on the answer line and the marker is not shown the paper. Error carried forward is tied
+#: to a wrong value the marker can see, since it cannot check one it cannot see.
+#:
+#: The closing paragraph is the limit on all of it: a rule here never loosens a mark point
+#: that sets its own precision. This text has not been measured.
+SCIENCE_DEFAULT_RULES = """\
+GENERAL MARKING RULES FOR CAMBRIDGE SCIENCE PAPERS (this mark scheme was stored without its \
+printed marking principles; these are the rules Cambridge publishes for its science papers, \
+restated, and they are not text from this paper):
+  - Keywords: credit a scientific term only where it is used correctly in its context. A \
+keyword that is present but misused earns nothing.
+  - Contradictions: do not choose between contradictory statements in the same question \
+part, and give no credit for a correct statement that the same part contradicts. Wrong \
+science that is irrelevant to the question is ignored.
+  - Spelling: spelling need not be correct, but a syllabus term must be clear enough that it \
+cannot be taken for a different syllabus term.
+  - Error carried forward: a wrong answer from an earlier part that is then used in a \
+scientifically correct way earns the later marking points. Apply this only where the \
+student's working, or an earlier-part value supplied below, shows the wrong value being \
+used; never assume it.
+  - Lists: where a set number of responses is asked for, read the whole response as \
+continuous prose. A response the mark scheme says to ignore does not count towards the \
+number. A wrong response earns nothing and does count towards it. Give no credit for a \
+response that is contradicted elsewhere in the answer; two responses that contradict each \
+other count as one wrong response. Further responses beyond the number asked for may be \
+ignored if they contradict nothing.
+  - Calculations: a correct final answer earns full credit for its calculation even with no \
+working or with wrong working, unless the mark scheme entry requires the working.
+  - Significant figures: where the mark scheme entry does not say how many significant \
+figures are required, round the student's final answer to the number of significant figures \
+in the mark scheme's answer; if it then equals the mark scheme's answer, it is correct. For \
+a mark scheme answer of 7.3 J, 7.26 J is correct, and 7.2 J and 7 J are not. This may not \
+hold for a value the student had to measure.
+  - Standard form: an answer in standard form whose coefficient is not between 1 and 10 is \
+still correct if it converts to the mark scheme's answer.
+  - Units: a final answer to a calculation given with a wrong unit does not earn the final \
+answer mark, unless the mark scheme gives the unit a mark of its own or shows it as \
+optional. You are not shown the question paper, which often prints the unit on the answer \
+line: these rules say nothing about an answer written with no unit, so treat that case \
+exactly as you would without them.
+  - Chemical equations: multiples and fractions of the balancing numbers are acceptable, and \
+state symbols are ignored, unless the mark scheme entry says otherwise.
+The MARK SCHEME SUBTREE above always wins. Where an entry sets its own precision or says an \
+exact value is required (a stated number of significant figures or decimal places, a \
+tolerance or a range, cao, "exact", or accept / reject / ignore forms), apply the entry as \
+written: none of these rules loosens it. These rules take precedence over the general \
+guidance in the system prompt only where the two differ. Apart from the rule on \
+calculations, they say nothing about whether an A mark depends on an M mark: no Generic \
+Marking Principles are supplied for this paper, so the system prompt's fallback for that \
+still applies.
+"""
+
+
+def printed_principles(metadata: MarkSchemeMetadata) -> list[str] | None:
+    """The marking principles the scheme itself carries, generic first, or None.
+
+    Both lists: ``generic_marking_principles`` and ``subject_specific_principles``. The
+    second is where a scheme's own rules on significant figures, units and error carried
+    forward are stored, and it used to be left out. An entry of whitespace is not a
+    principle.
+    """
+    printed = [
+        principle
+        for principle in (
+            *metadata.generic_marking_principles,
+            *metadata.subject_specific_principles,
+        )
+        if principle.strip()
+    ]
+    return printed or None
+
+
+def default_marking_rules(metadata: MarkSchemeMetadata) -> str | None:
+    """``SCIENCE_DEFAULT_RULES`` for a science scheme that carries no principles, else None.
+
+    A scheme that carries any principle of its own gets no default: its own text is what
+    the marker is given, and a default beside it would be a second voice. A syllabus
+    outside ``SCIENCE_SYLLABUS_CODES`` gets none either, so a mathematics paper is marked
+    exactly as before unless its scheme carries its own principles.
+    """
+    if printed_principles(metadata) is not None:
+        return None
+    if metadata.subject_code not in SCIENCE_SYLLABUS_CODES:
+        return None
+    return SCIENCE_DEFAULT_RULES
+
 
 def build_marker_user_prompt(
     question: Question,
@@ -158,15 +261,24 @@ def build_marker_user_prompt(
     *,
     equivalence_gate: bool = False,
     prior_values: dict[str, str] | None = None,
+    default_rules: str | None = None,
 ) -> str:
     """Build the per-question marking prompt embedding the mark scheme subtree + student response.
 
-    ``principles`` is the paper's own ``metadata.generic_marking_principles``,
-    already extracted by :func:`lemely.io.det.gmp.extract_gmp` and, until #41,
-    discarded. Ruling A13 makes them the **authority** on the A-mark dependency
+    ``principles`` is the paper's own printed principles (:func:`printed_principles`:
+    ``metadata.generic_marking_principles``, which
+    :func:`lemely.io.det.gmp.extract_gmp` fills and which was discarded until #41,
+    followed by ``metadata.subject_specific_principles``). Ruling A13 makes them
+    the **authority** on the A-mark dependency
     rather than the hard-coded rule in the system prompt, so they are injected
     with an explicit precedence statement — printing them without saying they
     govern would leave the model following the generic text.
+
+    ``default_rules`` (:func:`default_marking_rules`, defaults None) is the block
+    sent for a scheme that carries no principles of its own and belongs to a
+    syllabus family with published general rules. It is appended as given, and
+    only when ``principles`` is empty: the paper's own text is never sent with a
+    default beside it. With None the prompt is byte-identical to before.
 
     Injected into the USER prompt, not the system prompt, for two reasons: the
     principles are per-paper rather than per-run, and the cache key is built
@@ -244,6 +356,8 @@ def build_marker_user_prompt(
             "guidance in the system prompt wherever the two differ — including the M/A "
             "dependency rule.\n"
         )
+    elif default_rules:
+        parts.append(default_rules)
     if prior_results:
         prior_lines = "\n".join(
             f"  {qid}: {marks} mark(s) awarded" for qid, marks in prior_results.items()

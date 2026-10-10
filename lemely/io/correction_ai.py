@@ -40,6 +40,8 @@ from lemely.io.prompts.correction_ai import (
     MARKER_SYSTEM_PROMPT,
     VERSION,
     build_marker_user_prompt,
+    default_marking_rules,
+    printed_principles,
 )
 from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD
 from lemely.io.validation import validate_mark_scheme
@@ -281,13 +283,21 @@ class AICorrector:
         *,
         equivalence_gate: bool = False,
         prior_values: dict[str, str] | None = None,
+        default_rules: str | None = None,
     ) -> AIMarkResponse:
         """Mark one question.
 
-        ``principles`` is the paper's own ``metadata.generic_marking_principles``
-        (#41 / ruling A13). They are the authority on the M/A dependency; the
+        ``principles`` is the paper's own printed principles
+        (``prompts.correction_ai.printed_principles``; #41 / ruling A13). They are
+        the authority on the M/A dependency; the
         system prompt's strict rule is the fallback for papers that do not print
         them or whose GMP pages could not be parsed.
+
+        ``default_rules`` (``prompts.correction_ai.default_marking_rules``,
+        defaults None) is the published rules of the paper's syllabus family, for
+        a scheme stored without principles of its own. Forwarded to
+        :func:`build_marker_user_prompt`, which sends it only when ``principles``
+        is empty.
 
         ``equivalence_gate`` (US-013, defaults False): forwarded to
         :func:`build_marker_user_prompt`, which appends the I6 point-verdict
@@ -316,6 +326,7 @@ class AICorrector:
             principles,
             equivalence_gate=equivalence_gate,
             prior_values=prior_values,
+            default_rules=default_rules,
         )
 
         result = self._client.generate_structured(
@@ -2018,6 +2029,7 @@ def _maybe_apply_ecf_substitution(
     ecf_substitution: bool,
     equivalence_gate: bool,
     principles: list[str] | None,
+    default_rules: str | None,
     sibling_prior: dict[str, int] | None,
     answers: dict[str, _FlatAnswer],
     top_level_leaves: list[Question],
@@ -2189,6 +2201,7 @@ def _maybe_apply_ecf_substitution(
             student_working,
             prior_results=sibling_prior,
             principles=principles,
+            default_rules=default_rules,
             equivalence_gate=equivalence_gate,
             prior_values=prior_values,
         )
@@ -2612,6 +2625,11 @@ def correct_paper(
         )
 
     ai = AICorrector(gemini_client) if (gemini_client and not mcq_only) else None
+    # The marking rules every AI marking call on this paper is given: the scheme's own
+    # printed principles, or, for a science scheme stored without any, the published
+    # ones for its syllabus family. Never both.
+    principles = printed_principles(scheme.metadata)
+    default_rules = default_marking_rules(scheme.metadata)
 
     corrected: list[CorrectedQuestion] = []
     # `index` comes from enumerate over `leaves` — the true position in the work
@@ -2737,9 +2755,10 @@ def correct_paper(
                 student_working,
                 prior_results=sibling_prior or None,
                 # #41 / A13: the paper's OWN printed principles govern the M/A
-                # dependency. `extract_gmp` has always populated this field and
-                # it was discarded here.
-                principles=scheme.metadata.generic_marking_principles or None,
+                # dependency. `extract_gmp` has always populated
+                # `generic_marking_principles` and it was discarded here.
+                principles=principles,
+                default_rules=default_rules,
                 equivalence_gate=equivalence_gate,
             )
         except CostCeilingError:
@@ -2789,7 +2808,8 @@ def correct_paper(
             ai=ai,
             ecf_substitution=ecf_substitution,
             equivalence_gate=equivalence_gate,
-            principles=scheme.metadata.generic_marking_principles or None,
+            principles=principles,
+            default_rules=default_rules,
             sibling_prior=sibling_prior or None,
             answers=answers,
             top_level_leaves=top_level_groups[_top_level_ancestor_id(q.id, all_by_id)],
