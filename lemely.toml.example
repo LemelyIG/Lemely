@@ -236,10 +236,11 @@ ecf_substitution = false
 # did before; kept as a way back, not as an equal choice.
 binder = "label"
 # gate: "enforce" -- a paper whose binding cannot be trusted is held.
-# "observe" -- the same checks run and are reported (the
-# binding_gate_result event), and no paper is held for them. "off" -- no
-# checks and no report. binder = "legacy" with gate = "off" is extraction
-# exactly as it was before either existed.
+# "observe" -- the same checks run and are published (the
+# binding_gate_result event) and nothing else changes: no paper is held,
+# and the check made after marking does not run. "off" -- no checks and
+# no report. binder = "legacy" with gate = "off" is extraction exactly as
+# it was before either existed.
 gate = "enforce"
 # The label binder's model, passed on every one of its calls. It is NOT
 # gemini.extraction_model: only gemini-3.8-flash returned a usable list when

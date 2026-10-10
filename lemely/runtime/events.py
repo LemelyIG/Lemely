@@ -73,9 +73,11 @@ class EventType(StrEnum):
     # What the binding gate concluded about one extraction (lemely.io.binding.
     # orchestrate), published once per extraction unless the gate is off: `binder`,
     # `gate`, `verdict`, `retried`, `failed_checks` (check ids), `unbound` and
-    # `unaligned` (counts), `inferred_numbers`, `drops`, `model`, and `second_read`
-    # (whether a second read came back). Under `gate="observe"` the verdict here is
-    # the one that would have been enforced; the report on the extraction says pass.
+    # `unaligned` (counts), `inferred_numbers`, `drops`, `model`, `second_read`
+    # (whether a second read came back) and `report` (the whole report an enforcing
+    # gate returns, every check with its sentence). Under `gate="observe"` the
+    # verdict and report here are what would have been enforced, and this event is
+    # the only place they go: the extraction itself carries no report.
     BINDING_GATE_RESULT = "binding_gate_result"
     REREAD_CAP_REACHED = "reread_cap_reached"
     # Spec 2026-09-26 §5: the re-read stage's wall-clock budget ran out;

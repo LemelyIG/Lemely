@@ -593,7 +593,9 @@ class BindingSettings(BaseModel):
 
     ``gate`` picks what the checks on a binding do. ``"enforce"``: a paper whose
     binding cannot be trusted is held. ``"observe"``: the same checks run and are
-    reported, and no paper is held for them. ``"off"``: no checks and no report.
+    published in the ``binding_gate_result`` event, and nothing else changes: the
+    extraction carries no report, so no paper is held and the check made after
+    marking does not run. ``"off"``: no checks and no report.
     With ``binder="legacy"`` and ``gate="off"`` extraction is exactly what it was
     before either existed.
 

@@ -731,6 +731,11 @@ def _publish_reply_drops(reply: _LegacyReply) -> None:
         )
 
 
+#: What the label reader's drop reasons are stored under in
+#: ``ExtractedAnswers.answer_drops`` (``stream_repaired_page``, ``stream_unknown_type``,
+#: ...), beside the legacy extractor's own reasons.
+STREAM_DROP_PREFIX = "stream_"
+
 # Spec 2026-09-26 §5: the tag each `_run_rereads` worker reports for one
 # answer -- "stopped"/"budget" never issue a call; "done"/"failed"/"ceiling"
 # all count as started (see `_run_rereads`'s docstring).
@@ -944,7 +949,7 @@ class GeminiAnswerExtractor:
         uploads: ImageUploads,
         manifest_key: str,
         manifest_ids: list[str],
-    ) -> tuple[_LegacyReply, BindingReport]:
+    ) -> tuple[_LegacyReply, BindingReport | None]:
         """Run the binding gate over the legacy call's answers; return the reply to go on with.
 
         The checks compare ids with the mark scheme's, so they see a copy of the
@@ -954,7 +959,8 @@ class GeminiAnswerExtractor:
         its own cache key. The reply that goes on has ``binding_source="legacy"`` on
         every answer and ``binding_status="unverified"`` on those a question-scope
         check names; the checks passing verifies no single answer, so the rest are
-        left unset.
+        left unset. Under ``gate="observe"`` there is no report and the reply comes
+        back untouched: the gate has published what it saw and changes nothing.
         """
         settings = self._client._settings
         canonical = {_canonical_id(mid): mid for mid in manifest_ids}
@@ -985,6 +991,8 @@ class GeminiAnswerExtractor:
             model=settings.gemini.model_for("extraction"),
             retry=_retry,
         )
+        if outcome.report is None:
+            return reply, None
         used = retried[0] if outcome.used_retry else reply
 
         def _stamped(answer: ExtractedAnswer) -> ExtractedAnswer:
@@ -1014,7 +1022,8 @@ class GeminiAnswerExtractor:
         (:func:`~lemely.io.binding.orchestrate.run_binding`) or the legacy call.
         Either way they then go through the same steps: confidence calibration, the
         optional text second reader, crop re-reads, progress events, id
-        normalisation. Unless the gate is off the result carries the binding report.
+        normalisation. With the gate enforcing the result carries the binding report;
+        with it off or observing it carries none.
         """
         manifest_key = build_question_manifest_hash_key(mark_scheme)
 
@@ -1090,8 +1099,13 @@ class GeminiAnswerExtractor:
                 answers = outcome.answers
                 source_box_drops: dict[str, int] = {}
                 # The label reader's reply items left out or repaired, by reason
-                # (`StreamRead.drops`): kept on the record like the legacy counts are.
-                answer_drops = dict(outcome.drops)
+                # (`StreamRead.drops`): kept on the record like the legacy counts
+                # are, each under a `stream_` prefix so that none can be taken for
+                # one of the legacy extractor's whole-answer reasons.
+                answer_drops = {
+                    f"{STREAM_DROP_PREFIX}{reason}": count
+                    for reason, count in outcome.drops.items()
+                }
                 confidence_repairs: dict[str, int] = {}
                 field_repairs: dict[str, int] = {}
                 # A leaf no label was lined up with has no answer here, and that is
@@ -1108,9 +1122,11 @@ class GeminiAnswerExtractor:
                     mark_scheme, page_bytes, uploads, extra_cache_key=manifest_key
                 )
                 if binding.gate != "off":
-                    reply, bound_fields["binding"] = self._gated_legacy(
+                    reply, legacy_report = self._gated_legacy(
                         reply, mark_scheme, page_bytes, uploads, manifest_key, manifest_ids
                     )
+                    if legacy_report is not None:
+                        bound_fields["binding"] = legacy_report
                 _publish_reply_drops(reply)
                 answers = reply.answers
                 source_box_drops = reply.source_box_drops

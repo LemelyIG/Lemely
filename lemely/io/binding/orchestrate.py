@@ -20,6 +20,12 @@ With one read (the second switched off, or failed), a paper-scope failure is a h
 The checks see part of what can go wrong: a pass means nothing was found, not that the
 binding is right.
 
+Under ``gate="observe"`` the same is worked out and published in the
+``BINDING_GATE_RESULT`` event, and nothing else changes: the first read is returned
+with no report, so nothing downstream has a verdict to act on, and no call is made
+that only enforcing would make. What the binder itself decides (unbound writing,
+leaves with no label, its own doubts about a leaf) applies in every mode.
+
 The legacy binder, where the model hands out ids itself, is gated here too
 (``gate_legacy``); its call and the reading of its reply stay with the extractor.
 """
@@ -51,7 +57,7 @@ from lemely.runtime.events import EventType, bus
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from lemely.core.binding import BindingSource, BindingVerdict, SeenWriting
+    from lemely.core.binding import BindingVerdict, SeenWriting
     from lemely.core.loose_schemas import MarkScheme
     from lemely.io.gemini import GeminiClient, ImageUploads
     from lemely.io.rasterise import RasterisedPage
@@ -68,11 +74,12 @@ class BindingOutcome:
     """What binding a script came to.
 
     ``answers`` are the chosen read's, one per leaf that has writing. ``report`` is
-    ``None`` only when the gate is off. ``unbound`` is the writing no leaf could be
-    given. ``review_only_ids`` are the chosen read's unaligned leaves: no label was
-    lined up with them, so whatever was written for them could not be bound, and they
-    must go to a teacher without a mark being attempted. ``drops`` is the chosen read's
-    count of reply items left out or repaired, by reason.
+    ``None`` unless the gate is enforcing: any verdict on it other than ``pass`` means
+    the paper must not be published, and its failed checks say why. ``unbound`` is the
+    writing no leaf could be given. ``review_only_ids`` are the chosen read's unaligned
+    leaves: no label was lined up with them, so whatever was written for them could not
+    be bound, and they must go to a teacher without a mark being attempted. ``drops`` is
+    the chosen read's count of reply items left out or repaired, by reason.
     """
 
     answers: list[ExtractedAnswer]
@@ -97,12 +104,14 @@ class LegacyRead:
 class LegacyOutcome:
     """What gating the legacy extractor's answers came to.
 
-    ``used_retry`` says which read the caller goes on with. ``unverified_ids`` are the
-    ids a failed question-scope check of that read names.
+    ``used_retry`` says which read the caller goes on with. ``report`` is ``None``
+    under ``gate="observe"``: the caller then goes on with the first read exactly as
+    it is. Otherwise ``unverified_ids`` are the ids a failed question-scope check of
+    the read used names.
     """
 
     used_retry: bool
-    report: BindingReport
+    report: BindingReport | None
     unverified_ids: frozenset[str]
 
 
@@ -174,33 +183,38 @@ def _publish_failed_read(exc: LemelyError, stage: str) -> None:
 
 
 def _publish_result(
+    enforced: BindingReport,
     *,
-    binder: BindingSource,
     settings: BindingSettings,
-    decided: BindingVerdict,
-    retried: bool,
-    checks: list[BindingCheck],
+    returned_checks: list[BindingCheck],
     unbound: int,
     unaligned: int,
     inferred_numbers: list[str],
     drops: dict[str, int],
-    model: str,
     second_read: bool,
 ) -> None:
-    """Publish what the gate decided. ``checks`` are those of the read that goes on."""
+    """Publish what the gate decided.
+
+    ``enforced`` is the report an enforcing gate returns: its verdict, ``retried`` and
+    model are published as fields, and the whole of it as ``report``, which under
+    ``gate="observe"`` is the only place it goes. ``returned_checks`` are the checks of
+    the read whose answers go on (the first read, under observe), and the counts are
+    that read's.
+    """
     bus.publish(
         EventType.BINDING_GATE_RESULT,
-        binder=binder,
+        binder=enforced.binder,
         gate=settings.gate,
-        verdict=decided,
-        retried=retried,
-        failed_checks=list(dict.fromkeys(c.id for c in checks if not c.passed)),
+        verdict=enforced.verdict,
+        retried=enforced.retried,
+        failed_checks=list(dict.fromkeys(c.id for c in returned_checks if not c.passed)),
         unbound=unbound,
         unaligned=unaligned,
         inferred_numbers=list(inferred_numbers),
         drops=dict(drops),
-        model=model,
+        model=enforced.model,
         second_read=second_read,
+        report=enforced.model_dump(),
     )
 
 
@@ -258,6 +272,17 @@ def _with_statuses(
     ]
 
 
+def _ungated(read: BoundRead) -> BindingOutcome:
+    """``read`` as the binder bound it, with no report: the gate is off or only observing."""
+    return BindingOutcome(
+        answers=read.answers,
+        report=None,
+        unbound=[u.writing for u in read.unbound],
+        review_only_ids=list(read.unaligned_ids),
+        drops=dict(read.drops),
+    )
+
+
 def run_binding(
     client: GeminiClient,
     pages: list[RasterisedPage],
@@ -271,9 +296,9 @@ def run_binding(
 
     Every call uses ``uploads``, the page uploads the caller already has, and
     ``settings.binding.read_model``. With the gate off there is one read, no checks and
-    no report. Under ``gate="observe"`` everything runs and is reported in the
-    ``BINDING_GATE_RESULT`` event, the first read is always the one returned, and the
-    report's verdict is ``pass``.
+    no report. Under ``gate="observe"`` both reads and every check run and are
+    published in the ``BINDING_GATE_RESULT`` event; the first read is returned as the
+    binder bound it, with no report.
 
     A ``CostCeilingError`` from either read propagates unchanged. So does any error
     from the first read. A second read that fails otherwise is published as
@@ -312,13 +337,7 @@ def run_binding(
         first = _first()
 
     if binding.gate == "off":
-        return BindingOutcome(
-            answers=first.answers,
-            report=None,
-            unbound=[u.writing for u in first.unbound],
-            review_only_ids=list(first.unaligned_ids),
-            drops=dict(first.drops),
-        )
+        return _ungated(first)
 
     thresholds = GateThresholds()
     first_checks = _label_checks(first, mark_scheme, thresholds)
@@ -347,32 +366,33 @@ def run_binding(
     else:
         decided, retried = "hold", second is not None
 
-    observing = binding.gate == "observe"
-    if observing:
-        chosen, chosen_checks = first, first_checks
     checks = [*chosen_checks, *compared]
-    _publish_result(
+    enforced = BindingReport(
         binder="label",
-        settings=binding,
-        decided=decided,
-        retried=retried,
         checks=checks,
-        unbound=len(chosen.unbound),
-        unaligned=len(chosen.unaligned_ids),
-        inferred_numbers=chosen.inferred_numbers,
-        drops=chosen.drops,
+        verdict=decided,
+        retried=retried,
         model=binding.read_model,
+    )
+    # Under observe the first read goes on whatever was decided.
+    returned, returned_checks = (
+        (first, first_checks) if binding.gate == "observe" else (chosen, chosen_checks)
+    )
+    _publish_result(
+        enforced,
+        settings=binding,
+        returned_checks=[*returned_checks, *compared],
+        unbound=len(returned.unbound),
+        unaligned=len(returned.unaligned_ids),
+        inferred_numbers=returned.inferred_numbers,
+        drops=returned.drops,
         second_read=second is not None,
     )
+    if binding.gate == "observe":
+        return _ungated(first)
     return BindingOutcome(
         answers=_with_statuses(chosen.answers, _question_scope_ids(checks)),
-        report=BindingReport(
-            binder="label",
-            checks=checks,
-            verdict="pass" if observing else decided,
-            retried=False if observing else retried,
-            model=binding.read_model,
-        ),
+        report=enforced,
         unbound=[u.writing for u in chosen.unbound],
         review_only_ids=list(chosen.unaligned_ids),
         drops=dict(chosen.drops),
@@ -394,20 +414,42 @@ def gate_legacy(
     fails at paper scope. The retry is used when it passes; otherwise the paper is held
     on the first read. A ``CostCeilingError`` from the retry propagates unchanged; a
     retry that fails otherwise is published as ``SECOND_READ_FAILED`` and the paper is
-    held with nothing retried.
+    held on the first read, its one retry spent.
 
-    Under ``gate="observe"`` the retry still runs, so that the event says what would
-    have been decided; the first read is the one used and the report's verdict is
-    ``pass``. Not to be called with the gate off.
+    Under ``gate="observe"`` the retry is never called: observing must not spend what
+    only enforcing spends. A first read that fails at paper scope is published with the
+    verdict ``retry``, which is what enforcing would have done next, and no report is
+    returned. Not to be called with the gate off.
     """
     binding = settings.binding
     if binding.gate == "off":
         raise ValueError("gate_legacy runs the gate; with gate='off' there is nothing to run")
     thresholds = GateThresholds()
     first_checks = _legacy_checks(first.answers, mark_scheme, thresholds)
+    if binding.gate == "observe":
+        _publish_result(
+            BindingReport(
+                binder="legacy",
+                checks=first_checks,
+                verdict=verdict(first_checks, retried=False),
+                retried=False,
+                model=model,
+            ),
+            settings=binding,
+            returned_checks=first_checks,
+            unbound=0,
+            unaligned=0,
+            inferred_numbers=[],
+            drops=first.drops,
+            second_read=False,
+        )
+        return LegacyOutcome(used_retry=False, report=None, unverified_ids=frozenset())
+
     second: LegacyRead | None = None
     second_checks: list[BindingCheck] = []
+    retried = False
     if _paper_failed(first_checks):
+        retried = True
         try:
             second = retry()
         except CostCeilingError:
@@ -417,45 +459,28 @@ def gate_legacy(
         else:
             second_checks = _legacy_checks(second.answers, mark_scheme, thresholds)
 
-    decided: BindingVerdict
-    use_retry = False
-    if not _paper_failed(first_checks):
-        decided, retried = "pass", False
-    elif second is not None and not _paper_failed(second_checks):
-        use_retry = True
-        decided, retried = "pass", True
-    else:
-        decided, retried = "hold", second is not None
-
-    observing = binding.gate == "observe"
-    if observing:
-        use_retry = False
+    use_retry = second is not None and not _paper_failed(second_checks)
     chosen = second if use_retry and second is not None else first
     checks = second_checks if use_retry else first_checks
-    used_model = binding.retry_model if use_retry else model
-    _publish_result(
+    report = BindingReport(
         binder="legacy",
-        settings=binding,
-        decided=decided,
-        retried=retried,
         checks=checks,
+        verdict="hold" if _paper_failed(checks) else "pass",
+        retried=retried,
+        model=binding.retry_model if use_retry else model,
+    )
+    _publish_result(
+        report,
+        settings=binding,
+        returned_checks=checks,
         unbound=0,
         unaligned=0,
         inferred_numbers=[],
         drops=chosen.drops,
-        model=used_model,
         second_read=second is not None,
     )
     return LegacyOutcome(
-        used_retry=use_retry,
-        report=BindingReport(
-            binder="legacy",
-            checks=checks,
-            verdict="pass" if observing else decided,
-            retried=False if observing else retried,
-            model=used_model,
-        ),
-        unverified_ids=_question_scope_ids(checks),
+        used_retry=use_retry, report=report, unverified_ids=_question_scope_ids(checks)
     )
 
 

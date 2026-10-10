@@ -646,7 +646,14 @@ class ExtractedAnswers(StrictModel):
     not be shaped into an answer at all). Unlike ``source_box``,
     ``question_id``/``answer`` have no safe fallback -- an answer that
     cannot be identified or has no text at all is dropped in full, never the
-    rest of the paper with it. Empty when nothing was dropped."""
+    rest of the paper with it. Empty when nothing was dropped.
+
+    When the label binder read the script, the keys are instead its reader's
+    reply items left out or repaired (``lemely.io.binding.StreamRead.drops``),
+    each under a ``stream_`` prefix (``"stream_malformed_item"``,
+    ``"stream_unknown_type"``, ``"stream_empty_label"``,
+    ``"stream_empty_answer"``, ``"stream_repaired_page"``,
+    ``"stream_unreadable_answer"``). The last two count items that were kept."""
     confidence_repairs: dict[str, int] = Field(default_factory=dict)
     """Count of ``confidence`` values repaired during extraction (US-031),
     by reason (``"missing"`` / ``"non_finite"`` / ``"out_of_range"`` /
