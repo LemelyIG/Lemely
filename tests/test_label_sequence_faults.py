@@ -189,15 +189,18 @@ def _battery_papers() -> list[Paper]:
     return [_paper(name) for name in _BATTERY_SCHEMES]
 
 
-def _render(stream: list[Entry]) -> list[StreamItem]:
-    """Stream items, 14 to a page, so that page breaks fall everywhere over a battery."""
+def _render(stream: list[Entry], kind: str = "printed") -> list[StreamItem]:
+    """Stream items, 14 to a page, so that page breaks fall everywhere over a battery.
+
+    Labels are printed unless ``kind`` says the reader reported them as handwritten.
+    """
     items: list[StreamItem] = []
     for k, entry in enumerate(stream):
         page = 1 + k // 14
         if entry.writing:
             items.append(SeenWriting(page=page, answer=entry.text, confidence=0.9))
         else:
-            items.append(SeenLabel(page=page, text=entry.text, kind="printed"))
+            items.append(SeenLabel.model_validate({"page": page, "text": entry.text, "kind": kind}))
     return items
 
 
@@ -210,8 +213,8 @@ class Verdict:
     own: set[str]  # leaves holding their own writing
 
 
-def judge(paper: Paper, stream: list[Entry]) -> Verdict:
-    items = _render(stream)
+def judge(paper: Paper, stream: list[Entry], kind: str = "printed") -> Verdict:
+    items = _render(stream, kind)
     result = bind_stream(items, paper.scheme)
     _check_contract(paper, items, result)
     wrong = [
@@ -297,7 +300,11 @@ class Tally:
 # Each stream entry is (label text, leaf this label truly belongs to or None). A block
 # of writing carrying the leaf's id follows every label that has one. ``binds`` names
 # leaves that must still hold their own writing, so that no case passes by binding
-# nothing at all.
+# nothing at all. The streams are the review's and stop early: the paper goes on after
+# them. On printed labels nothing separates the last question a stream reaches from
+# the questions it does not list, so its labels that those questions share have no
+# place (class C, the tail), and ``binds_printed`` names what is left. With the labels
+# reported as handwritten the rule does not run and ``binds`` holds.
 # --------------------------------------------------------------------------------------
 CRITICAL = [
     {
@@ -335,6 +342,7 @@ CRITICAL = [
             "2b_i",
             "2b_ii",
         ],
+        "binds_printed": ["1a_i", "1a_ii", "1b", "1c_i", "1c_ii"],
     },
     {
         "name": "C2 question number 2 misread as 3",
@@ -381,6 +389,7 @@ CRITICAL = [
             ("(ii)", "3ii"),
         ],
         "binds": ["3i"],
+        "binds_printed": [],
     },
     {
         "name": "C4 'Q5 (b)' written inside question 1",
@@ -393,6 +402,7 @@ CRITICAL = [
             ("Q5 (b)", "5b"),
         ],
         "binds": ["1a_i"],
+        "binds_printed": [],
     },
     {
         "name": "C5 2b's (i) missed and number 3 missed",
@@ -447,6 +457,7 @@ VARIANTS = [
             ("(iii)", "2a_iii"),
         ],
         "binds": ["1b", "1c_i", "1c_ii", "2a_i", "2a_ii"],
+        "binds_printed": ["1b", "1c_i", "1c_ii"],
     },
     {
         "name": "C2b 2a's (i) read as (l), and (b) missed",
@@ -500,6 +511,7 @@ VARIANTS = [
             ("(c)", "3c"),
         ],
         "binds": ["2a_i", "2a_ii", "2a_iii", "2b_i", "3b_i", "3b_ii"],
+        "binds_printed": ["2a_i", "2a_ii", "2a_iii", "2b_i"],
     },
 ]
 
@@ -900,6 +912,67 @@ def test_a_printed_paper_with_one_part_left_blank_binds_all_the_others(name: str
             _assert_printed_paper_binds(paper, {leaf_id})
 
 
+def _leaves_lost_to_a_gap(shape: str, labelling: str, kind: str) -> tuple[int, int, int]:
+    """Trials, trials with writing on a wrong leaf, answered leaves left unbound."""
+    trials = wrong = lost = 0
+    for paper in _battery_papers():
+        base = labelled(paper, labelling)
+        roots = [j for j in range(len(paper.ids)) if paper.parent[j] is None]
+        for root in roots:
+            if shape == "absent":  # every label and block of one question
+                mine = paper.subtree_leaves(root)
+                stream = [
+                    e
+                    for e in base
+                    if not (e.writing and e.text in mine)
+                    and not (
+                        not e.writing and e.node is not None and paper.question(e.node) == root
+                    )
+                ]
+            elif root == roots[-1]:
+                continue
+            else:  # the list stops after this question
+                later = {leaf for r in roots if r > root for leaf in paper.subtree_leaves(r)}
+                stream = base[
+                    : min(
+                        i
+                        for i, e in enumerate(base)
+                        if (e.writing and e.text in later)
+                        or (not e.writing and e.node is not None and paper.question(e.node) > root)
+                    )
+                ]
+            verdict = judge(paper, stream, kind)
+            trials += 1
+            wrong += bool(verdict.wrong)
+            lost += len((paper.bindable & {e.text for e in stream if e.writing}) - verdict.own)
+    return trials, wrong, lost
+
+
+@pytest.mark.parametrize(
+    ("shape", "labelling", "by_hand", "printed"),
+    [
+        ("absent", "bare labels", 75, 109),
+        ("absent", "full path on every leaf", 75, 75),
+        ("absent", "full path on the first part", 75, 109),
+        ("stops", "bare labels", 75, 149),
+        ("stops", "full path on every leaf", 75, 75),
+        ("stops", "full path on the first part", 75, 149),
+    ],
+)
+def test_a_question_with_no_label_costs_one_leaf_by_hand_and_more_in_print(
+    shape: str, labelling: str, by_hand: int, printed: int
+) -> None:
+    # A question wholly absent from the list, and a list that stops after a question,
+    # over the five battery schemes. On labels reported as handwritten that is a
+    # skipped question or an unfinished paper: one leaf each, the one before the gap
+    # (D1). The tail rule of class C does not run there. On printed labels it is a
+    # question the reader missed, and the labels before the gap that the missed
+    # question shares are given no place. Nothing is bound wrongly either way.
+    trials = 80 if shape == "absent" else 75
+    assert _leaves_lost_to_a_gap(shape, labelling, "handwritten") == (trials, 0, by_hand)
+    assert _leaves_lost_to_a_gap(shape, labelling, "printed") == (trials, 0, printed)
+
+
 @pytest.mark.parametrize("name", _BATTERY_SCHEMES)
 @pytest.mark.parametrize("style", [0, 1, 2, 3], ids=["3(b)(ii)", "Q3 b ii", "Q3 (b) (ii)", "3bii"])
 def test_a_paper_labelled_with_full_paths_binds_every_leaf(name: str, style: int) -> None:
@@ -1123,12 +1196,18 @@ EXCEPTED = [(0, 0), (6, 0), (0, 0), (5, 1), (0, 0), (11, 7)]
 def test_the_five_critical_reproductions_bind_nothing_wrongly(case: dict) -> None:
     verdict = judge(_paper(case["scheme"]), _literal(case))
     assert verdict.wrong == []
+    assert set(case.get("binds_printed", case["binds"])) <= verdict.own
+    verdict = judge(_paper(case["scheme"]), _literal(case), "handwritten")
+    assert verdict.wrong == []
     assert set(case["binds"]) <= verdict.own
 
 
 @pytest.mark.parametrize("case", VARIANTS, ids=[c["name"] for c in VARIANTS])
 def test_the_six_variants_bind_nothing_wrongly(case: dict) -> None:
     verdict = judge(_paper(case["scheme"]), _literal(case))
+    assert verdict.wrong == []
+    assert set(case.get("binds_printed", case["binds"])) <= verdict.own
+    verdict = judge(_paper(case["scheme"]), _literal(case), "handwritten")
     assert verdict.wrong == []
     assert set(case["binds"]) <= verdict.own
 

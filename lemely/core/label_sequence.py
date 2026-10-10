@@ -48,6 +48,8 @@ comments and the task report use.
      the next placed label (D9);
    - a part label the question does not have and a later question with no anchor
      does, listed after the leaf's next label (class C, first form);
+   - on printed labels, the last labels of a question that an unseen question after
+     it also has, where nothing separates the two (class C, the tail);
    - two blocks beside a blank leaf (D10).
    A leaf with something listed under it that was not bound is not reported blank
    (D3). Each unaligned leaf is given one reason (``UNALIGNED_REASONS``).
@@ -55,7 +57,7 @@ comments and the task report use.
 The rules are not independent, and most of them do not "only unbind". A rule that
 ends a span earlier, drops an anchor or orphans a label changes what the rules after
 it see, and a shorter span can have one alignment where a longer one had a tie. D1,
-D3, D7, D8, D9, D10 and the first form of class C never add a binding; D4, D5, D6,
+D3, D7, D8, D9, D10 and both forms of class C never add a binding; D4, D5, D6,
 class B and class D can. What the module is held to is the outcome: no writing on a
 leaf that is not its own, in the fault batteries of
 ``tests/test_label_sequence_faults.py``.
@@ -69,7 +71,8 @@ What the list cannot show, and no rule here catches (the tests whose names begin
   move that leaves no trace puts writing on the neighbouring leaf;
 - a label read as another valid label while that label's own occurrence is missed;
 - several labels missed in a row, a page missing, or pages listed out of order: the
-  labels after the gap can stand in for the missed ones;
+  labels after the gap can stand in for the missed ones (on printed labels the tail
+  of class C stops this where the gap takes a question number with it);
 - a block continued from elsewhere whose own label was not listed.
 
 Only a check on what the writing says can catch these.
@@ -132,7 +135,7 @@ UNALIGNED_REASONS = (
     # The part, in a question whose number is settled: no label in the question's
     # stretch of the list names it; or one does, but the label of a part above it has
     # no place; or one does, and the readings of the list do not agree that it is this
-    # part's (a tie, class D, D4, D5, D7).
+    # part's (a tie, class D, D4, D5, D7, the tail of class C).
     "label_not_seen",
     "path_not_aligned",
     "label_not_settled",
@@ -1040,13 +1043,38 @@ def _align(
             }
         out.placed.update(own[root])
 
-    # Class C, first form. A part label the question does not have, and that a question
-    # after it with no anchor does have, shows that question's labels inside this one's
-    # stretch (``_open_leaves`` then breaks the bracket of the leaves before it).
+    # Class C. Questions after an anchored one that have no anchor and were not inferred
+    # may have their labels inside its stretch of the list. Two signs of that.
+    #
+    # The tail, on printed labels only. Nothing separates the two questions (no restart
+    # and no number ended the anchored one), so its last labels that an unseen question
+    # also has may be that question's: they are given no place. On a printed paper
+    # every label is printed, so a question with no label at all means the reader
+    # missed labels. On separate sheets it means the student skipped the question,
+    # which is ordinary, and the rule would cost the question before it for nothing.
+    # So the rule looks only at printed labels, and only where the label that ends the
+    # stretch is printed too (or the list ends). ``kind`` is the reader's word: a
+    # printed label reported as handwritten switches the rule off there, which is what
+    # the module does without it; a handwritten label reported as printed makes it
+    # unbind what it would on a printed paper.
+    #
+    # The first form, on any labels. A part label the question does not have, and that
+    # a question after it with no anchor does have, shows that question's labels inside
+    # this one's stretch (``_open_leaves`` then breaks the bracket of the leaves before
+    # it).
     for k, cand in enumerate(anchored):
         nxt = anchored[k + 1].root if k + 1 < len(anchored) else len(paper.nodes)
         unseen = [r for r in paper.roots if cand.root < r < nxt and r not in out.inferred]
-        lo, _, read = spans[cand.root]
+        lo, hi, read = spans[cand.root]
+        printed_after = hi == len(labels) or labels[hi].item.kind == "printed"
+        if unseen and read.end == hi and printed_after:
+            for position in sorted(own[cand.root], reverse=True):
+                label = labels[position]
+                if label.item.kind != "printed" or not any(
+                    paper.chains(other, label.readings) for other in unseen
+                ):
+                    break  # a label that names its question number is nobody else's
+                del out.placed[position]
         for position in range(lo, read.end):
             readings = labels[position].readings
             if labels[position].number is not None or paper.chains(cand.root, readings):

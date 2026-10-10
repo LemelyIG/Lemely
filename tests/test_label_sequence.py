@@ -69,6 +69,14 @@ def _items(*parts: str | StreamItem, page: int = 1) -> list[StreamItem]:
     return out
 
 
+def _by_hand(items: list[StreamItem]) -> list[StreamItem]:
+    """The same list with every label reported as handwritten."""
+    return [
+        item.model_copy(update={"kind": "handwritten"}) if isinstance(item, SeenLabel) else item
+        for item in items
+    ]
+
+
 def _clean(scheme: MarkScheme) -> list[str]:
     """The paper as a perfect reader lists it: every label, and ``=id`` after each leaf."""
     out: list[str] = []
@@ -714,12 +722,13 @@ def test_a_leaf_must_be_open_in_both_readings_of_a_number_with_no_anchor(
         },
     )
     stream = ["5", "(a)", "=5a", "(b)", "=5b", "7", "(c)", "=6c", "7", "(a)", "=7a", "8", "=8"]
-    bound = bind_stream(_items(*stream), scheme)
+    # (Labels by hand, so that the tail of class C takes no part.)
+    bound = bind_stream(_by_hand(_items(*stream)), scheme)
     assert _on(bound) == {"8": ["8"]}
     assert bound.unaligned_reasons["5a"] == "not_bracketed"
     # With one "7" the question has its anchor and there is one reading.
     stream = ["5", "(a)", "=5a", "(b)", "=5b", "7", "(a)", "=7a", "8", "=8"]
-    bound = bind_stream(_items(*stream), scheme)
+    bound = bind_stream(_by_hand(_items(*stream)), scheme)
     assert _on(bound) == {"5a": ["5a"], "7a": ["7a"], "8": ["8"]}
 
 
@@ -757,10 +766,16 @@ def test_a_stray_number_is_no_anchor_for_a_question_that_was_not_listed(
         },
     )
     stream = ["4", "(a)", "=4a", "5", "(b)", "=4b", "(c)", "=4c", "6", "(a)", "=6a"]
-    bound = bind_stream(_items(*stream), scheme)
+    bound = bind_stream(_by_hand(_items(*stream)), scheme)
     _own_or_absent(bound)
     assert _on(bound) == {"6a": ["6a"]}
     assert _unplaced(bound) == ["5", "(b)", "(c)"]
+    # On printed labels the "(a)" has no place either: question 5 has an "(a)" too
+    # and nothing separates the two questions (class C, the tail).
+    bound = bind_stream(_items(*stream), scheme)
+    _own_or_absent(bound)
+    assert _on(bound) == {"6a": ["6a"]}
+    assert _unplaced(bound) == ["(a)", "5", "(b)", "(c)"]
 
 
 def test_an_anchor_must_earn_more_than_it_takes_from_its_neighbour(scheme_41: MarkScheme) -> None:
@@ -1535,10 +1550,12 @@ def test_known_limit_three_labels_in_a_row_missed(scheme_41: MarkScheme) -> None
     writing under it looks like on any script.
 
     Rate, on the independent review's generator over five schemes: k labels in a row
-    missed and the writing kept, k from 1 to 6, puts writing on a wrong leaf in 100 of
-    5,112 trials (bare labels 38 of 1,539; first part carries the number 41 of 1,251;
-    mixed 21 of 1,203; full path on every leaf 0 of 1,119). None for one label; with
-    bare labels none for two. It was 63 while the tail rule of class C was in.
+    missed and the writing kept, k from 1 to 6. On printed labels, where the tail of
+    class C stops the gaps that take a question number with them, writing reaches a
+    wrong leaf in 63 of 5,112 trials (bare labels 26 of 1,539; first part carries the
+    number 20 of 1,251; mixed 17 of 1,203; full path on every leaf 0 of 1,119). On
+    labels reported as handwritten, 100 (38, 41, 21, 0). None for one label; with bare
+    labels none for two.
 
     What can still see it: the marker's check that an answer addresses its question
     (G8); a second read that lists the labels (G9); the unaligned 2b leaves (G5).
@@ -1559,8 +1576,9 @@ def test_known_limit_three_labels_in_a_row_missed(scheme_41: MarkScheme) -> None
 def test_known_limit_a_region_of_the_page_not_read(scheme_41: MarkScheme) -> None:
     """The same gap with the writing gone too: 2(a)'s parts and "(b)" are not in the list.
 
-    Rate, same generator: 48 of 5,112 trials (bare labels 24, first part carries the
-    number 20, mixed 4, full path on every leaf 0). What can still see it: as above.
+    Rate, same generator: on printed labels 24 of 5,112 trials (bare labels 14, first
+    part carries the number 6, mixed 4, full path on every leaf 0); on labels reported
+    as handwritten 48 (24, 20, 4, 0). What can still see it: as above.
     """
     scheme = _scheme(scheme_41, _GAP_SCHEME)
     stream = ["1", "(a)", "=1a", "2", "(a)"]
@@ -1587,8 +1605,9 @@ def test_known_limit_a_page_missing(scheme_41: MarkScheme) -> None:
     list reads as question 4 with its (b) answered, and 4b_i holds 4c_i's writing.
 
     Rate, on the review's generator (pages of 5, 8, 12 and 17 items, each page in
-    turn, ten labellings, five schemes): 18 of 2,129 trials with no doubt on the leaf,
-    15 with one. None where every leaf carries its full path.
+    turn, ten labellings, five schemes): on printed labels 11 of 2,129 trials with no
+    doubt on the leaf and 8 with one; on labels reported as handwritten 18 and 15.
+    None where every leaf carries its full path.
 
     What can still see it: the page count of the reply against the scan (a page with
     no item); G8; G9.
@@ -1607,9 +1626,9 @@ def test_known_limit_two_pages_listed_in_the_other_order(scheme_41: MarkScheme) 
     parts, and 4b_i holds 4c_i's writing. The page listed early does no harm here:
     its writing is unbound.
 
-    Rate, same generator, each pair of neighbouring pages in turn: 17 of 1,929 trials
-    with no doubt on the leaf, 282 with one. None silent where every leaf carries its
-    full path.
+    Rate, same generator, each pair of neighbouring pages in turn: on printed labels
+    13 of 1,929 trials with no doubt on the leaf and 282 with one; on labels reported
+    as handwritten 17 and 282. None silent where every leaf carries its full path.
 
     What can still see it: page numbers out of order in the reply; G8; G9.
     """
@@ -1636,9 +1655,10 @@ def test_known_limit_two_labels_missed_where_the_first_part_carries_the_number(
     form of class C does not run. 1c_i holds three blocks, two of them not its own,
     and carries no doubt.
 
-    Rate, given two labels in a row missed (the review's generator): 2 of 216 trials
-    where the first part carries the number, 5 of 208 on mixed labels, 0 of 264 on
-    bare labels. The random battery, which seldom draws two misses side by side, put
+    Rate, given two labels in a row missed (the review's generator): on printed
+    labels 1 of 216 trials where the first part carries the number and 4 of 208 on
+    mixed labels; on labels reported as handwritten 2 and 5; 0 of 264 on bare labels
+    either way. The random battery, which seldom draws two misses side by side, put
     it at 2 of 15,000.
 
     What can still see it: G8; G9; three blocks on one leaf where one is expected.
@@ -1921,11 +1941,17 @@ def test_a_part_label_the_question_does_not_have_breaks_the_bracket(
         ["6(a)", "=6a", "=6b", "=7a", "(b)", "=7b", "(c)", "=7c", "8(a)", "=8a"],
         ["6", "(a)", "=6a", "=6b", "=7a", "(b)", "=7b", "(c)", "=7c", "8", "(a)", "=8a"],
     ):
-        bound = bind_stream(_items(*stream), scheme)
+        # Labels by hand: this rule alone (the tail of class C is for printed labels).
+        bound = bind_stream(_by_hand(_items(*stream)), scheme)
         _own_or_absent(bound)
         assert _on(bound) == {"8a": ["8a"]}
         assert _unbound(bound)[0] == ("6a", "next_label_not_seen")
         assert _unplaced(bound) == ["(c)"]
+        # Printed: the tail rule gives the "(b)" no place as well.
+        bound = bind_stream(_items(*stream), scheme)
+        _own_or_absent(bound)
+        assert _on(bound) == {"8a": ["8a"]}
+        assert _unplaced(bound)[-2:] == ["(b)", "(c)"]
     # Roman parts: 7(ii) and "8(a)(i)" missed; the "(ii)" is 8a's, and "(b)" shows it.
     scheme = _scheme(
         scheme_41,
@@ -1936,38 +1962,128 @@ def test_a_part_label_the_question_does_not_have_breaks_the_bracket(
         },
     )
     stream = ["7(i)", "=7i", "=7ii", "=8a_i", "(ii)", "=8a_ii", "(b)", "=8b", "9", "=9"]
-    bound = bind_stream(_items(*stream), scheme)
-    _own_or_absent(bound)
-    assert _on(bound) == {"9": ["9"]}
+    for items in (_items(*stream), _by_hand(_items(*stream))):
+        bound = bind_stream(items, scheme)
+        _own_or_absent(bound)
+        assert _on(bound) == {"9": ["9"]}
 
 
-def test_known_gap_a_later_label_stands_in_and_no_foreign_label_follows(
+_TAIL_SCHEME = {
+    "5": {"5a": {"5a_i": {}, "5a_ii": {}, "5a_iii": {}}, "5b": {}},
+    "6": {"6a": {}, "6b": {}},
+    "7": {"7a": {}},
+}
+
+
+def test_on_printed_labels_the_tail_before_an_unseen_question_is_not_bound(
     scheme_41: MarkScheme,
 ) -> None:
-    """What is left of class C after the foreign-label rule; not ruled on.
+    # 5(b), the number 6 and 6(a) are missed (two misses where the label is "6(a)").
+    # The "(b)" that follows is 6's and is the label the paper prints after 5a_iii.
+    # Question 6 has no part that question 5 lacks, so no foreign label follows. What
+    # the list does show: question 6 has no anchor, and no restart and no number
+    # separates question 5 from it. On a printed paper a question with no label at
+    # all was not skipped, it was missed: the last labels of question 5's stretch
+    # that question 6 also has may be question 6's, and are given no place.
+    scheme = _scheme(scheme_41, _TAIL_SCHEME)
+    rest = ["(ii)", "=5a_ii", "(iii)", "=5a_iii", "=5b", "=6a", "(b)", "=6b"]
+    for stream in (
+        ["5(a)(i)", "=5a_i", *rest, "7(a)"],
+        ["5", "(a)", "(i)", "=5a_i", *rest, "7", "(a)"],
+    ):
+        bound = bind_stream(_items(*stream, "=7a"), scheme)
+        _own_or_absent(bound)
+        assert _on(bound) == {"5a_i": ["5a_i"], "5a_ii": ["5a_ii"], "7a": ["7a"]}
+        assert _unplaced(bound) == ["(b)"]
+        assert ("5a_iii", "next_label_not_seen") in _unbound(bound)
+    # The cost, where the reader missed a whole question of a printed paper and
+    # nothing else: question 5's "(b)" is one question 6 also has, so 5b is not bound
+    # either, and 5a_iii with it. (A question the student skipped still has its
+    # printed labels in the list, and costs nothing.)
+    whole = ["5", "(a)", "(i)", "=5a_i", "(ii)", "=5a_ii", "(iii)", "=5a_iii", "(b)", "=5b"]
+    bound = bind_stream(_items(*whole, "7", "(a)", "=7a"), scheme)
+    _own_or_absent(bound)
+    assert _on(bound) == {"5a_i": ["5a_i"], "5a_ii": ["5a_ii"], "7a": ["7a"]}
+    assert bound.unaligned_reasons["5b"] == "label_not_settled"
+    # A label that names its question is nobody else's: with full paths the missed
+    # question costs only the last leaf before it.
+    full = ["5(a)(i)", "=5a_i", "5(a)(ii)", "=5a_ii", "5(a)(iii)", "=5a_iii", "5(b)", "=5b"]
+    bound = bind_stream(_items(*full, "7(a)", "=7a"), scheme)
+    assert _on(bound) == {leaf: [leaf] for leaf in ("5a_i", "5a_ii", "5a_iii", "7a")}
+    # Where the unseen question's labels restart, the restart separates the two, and
+    # the question before keeps its tail (here question 6 is then inferred).
+    bound = bind_stream(_items(*whole, "(a)", "=6a", "(b)", "=6b", "7", "(a)", "=7a"), scheme)
+    assert bound.inferred_numbers == ["6"]
+    assert _on(bound)["5a_iii"] == ["5a_iii"]
+    assert _on(bound)["5b"] == ["5b"]
+    # The list ends there: the same holds for the last question it reached.
+    bound = bind_stream(_items(*whole), scheme)
+    assert _on(bound) == {"5a_i": ["5a_i"], "5a_ii": ["5a_ii"]}
 
-    5(b), the number 6 and 6(a) are missed (two misses where the label is "6(a)").
-    The "(b)" that follows is 6's and is the label the paper prints after 5a_iii.
-    Question 6 has no part that question 5 lacks, so no foreign label follows, and
-    5a_iii keeps three blocks. What the list still shows: question 6 has no anchor
-    and nothing separates question 5 from it. Rate: 2 of 15,000 random trials on
-    the labelling where the first part carries the number; none on the other two.
-    That battery seldom draws two misses side by side, and the gap is wider than
-    this one stream: ``test_known_limit_two_labels_missed_where_the_first_part_carries_the_number``
-    has the case where the unseen question is inferred, with its rate.
-    """
+
+def test_the_tail_rule_is_for_printed_labels_only(scheme_41: MarkScheme) -> None:
+    # On separate sheets a question with no label is a question the student skipped.
+    # It costs the leaf before it (D1) and no more, and so does a list that ends early.
+    scheme = _scheme(scheme_41, _TAIL_SCHEME)
+    whole = ["5", "(a)", "(i)", "=5a_i", "(ii)", "=5a_ii", "(iii)", "=5a_iii", "(b)", "=5b"]
+    kept = {leaf: [leaf] for leaf in ("5a_i", "5a_ii", "5a_iii")}
+    bound = bind_stream(_by_hand(_items(*whole, "7", "(a)", "=7a")), scheme)
+    assert _on(bound) == {**kept, "7a": ["7a"]}
+    assert _unbound(bound) == [("5b", "next_label_not_seen")]
+    assert _on(bind_stream(_by_hand(_items(*whole)), scheme)) == kept
+    # What is seen decides, label by label. The stretch is printed and the label that
+    # ends it is by hand (printed pages, then separate sheets on which question 6 was
+    # skipped): the rule does not run.
+    items = [*_items(*whole), *_by_hand(_items("7", "(a)", "=7a"))]
+    assert _on(bind_stream(items, scheme)) == {**kept, "7a": ["7a"]}
+    # The last label of the stretch is by hand: the rule stops at it at once.
+    items = [*_items(*whole[:-2]), *_by_hand(_items("(b)")), *_items("=5b", "7", "(a)", "=7a")]
+    assert _on(bind_stream(items, scheme)) == {**kept, "7a": ["7a"]}
+    # Only the last label is printed: it has no place, and the rule stops at the one
+    # by hand before it.
+    items = [*_by_hand(_items(*whole[:-2])), *_items("(b)", "=5b", "7", "(a)", "=7a")]
+    bound = bind_stream(items, scheme)
+    assert _on(bound) == {"5a_i": ["5a_i"], "5a_ii": ["5a_ii"], "7a": ["7a"]}
+    assert _unplaced(bound) == ["(b)"]
+    # A label by hand in the middle of the stretch is where the rule stops: it does
+    # not pass over it to the printed labels before.
     scheme = _scheme(
         scheme_41,
         {
-            "5": {"5a": {"5a_i": {}, "5a_ii": {}, "5a_iii": {}}, "5b": {}},
-            "6": {"6a": {}, "6b": {}},
+            "5": {"5a": {}, "5b": {}, "5c": {}},
+            "6": {"6a": {}, "6b": {}, "6c": {}},
             "7": {"7a": {}},
         },
     )
+    items = _items("5", "(a)", "=5a", "(b)", "=5b", "(c)", "=5c", "7", "(a)", "=7a")
+    items[3] = _by_hand([items[3]])[0]
+    bound = bind_stream(items, scheme)
+    assert _on(bound) == {"5a": ["5a"], "7a": ["7a"]}
+    assert _unplaced(bound) == ["(c)"]
+
+
+def test_known_gap_on_handwritten_labels_a_later_label_stands_in(scheme_41: MarkScheme) -> None:
+    """What is left of class C on labels reported as handwritten; not ruled on.
+
+    The stream of the test above on separate sheets: 5(b), the number 6 and 6(a) are
+    missed, and the "(b)" that follows is 6's. The tail rule does not run on
+    handwritten labels (there a question with no label is a skipped question), so
+    5a_iii keeps three blocks. The same happens on a printed paper wherever the reader
+    reports the stand-in label as handwritten. Rate, on the review's generator with
+    the tail rule off (as it is for handwritten labels): two labels in a row missed, 2
+    of 216 trials where the first part carries the number, 5 of 208 mixed, 0 of 264
+    bare; the gap is wider than this one stream, see
+    ``test_known_limit_two_labels_missed_where_the_first_part_carries_the_number``.
+    """
+    scheme = _scheme(scheme_41, _TAIL_SCHEME)
     stream = ["5(a)(i)", "=5a_i", "(ii)", "=5a_ii", "(iii)", "=5a_iii", "=5b", "=6a", "(b)", "=6b"]
-    bound = bind_stream(_items(*stream, "7(a)", "=7a"), scheme)
+    bound = bind_stream(_by_hand(_items(*stream, "7(a)", "=7a")), scheme)
     assert _on(bound)["5a_iii"] == ["5a_iii", "5b", "6a"]
     assert ("6b", "next_label_not_seen") in _unbound(bound)
+    # One label reported as handwritten is enough: the stand-in "(b)" itself.
+    items = _items(*stream, "7(a)", "=7a")
+    items[stream.index("(b)")] = _by_hand(_items("(b)"))[0]
+    assert _on(bind_stream(items, scheme))["5a_iii"] == ["5a_iii", "5b", "6a"]
 
 
 def test_a_stray_part_label_breaks_no_bracket_when_the_next_question_has_its_anchor(
@@ -2038,10 +2154,22 @@ def test_a_leaf_whose_only_writing_is_unbound_is_not_reported_blank(scheme_41: M
 def test_the_last_leaf_keeps_its_writing_only_when_the_paper_ends_there(
     scheme_41: MarkScheme,
 ) -> None:
-    bound = bind_stream(_items(*_Q1, *_Q2), scheme_41)
+    # Labels by hand: the list ends after question 2 and the paper goes on. The last
+    # leaf listed is not bracketed, and that is all.
+    bound = bind_stream(_by_hand(_items(*_Q1, *_Q2)), scheme_41)
     _own_or_absent(bound)
     assert _on(bound)["2b_ii"] == ["2b_ii"]
     assert ("2c", "next_label_not_seen") in _unbound(bound)
+    # Printed labels: nothing separates question 2 from the seven questions that were
+    # not listed, and every label it has is one of theirs too (class C, the tail).
+    # None of question 2 is bound. Question 1, closed by the number 2, is whole.
+    bound = bind_stream(_items(*_Q1, *_Q2), scheme_41)
+    _own_or_absent(bound)
+    assert _on(bound) == {leaf: [leaf] for leaf in ("1a_i", "1a_ii", "1b", "1c_i", "1c_ii")}
+    assert [reason for _, reason in _unbound(bound)] == ["after_unplaced_label"] * 6
+    # A paper that ends where the list ends keeps its last leaf.
+    bound = bind_stream(_items(*_clean(scheme_41)), scheme_41)
+    assert _on(bound)["9c_iv"] == ["9c_iv"]
 
 
 def test_every_writing_item_is_accounted_for_once(scheme_41: MarkScheme) -> None:
