@@ -237,7 +237,12 @@ def skipped_parts(
     - ``other``, the other read of the same scan, has the leaf's label absent too, and
       is a witness for the gap: it aligned at least one leaf that comes after the leaf
       in paper order. A list that stops early has every later label absent, and says
-      nothing about what lies past its end, so it excuses nothing there. The premise is
+      nothing about what lies past its end, so it excuses nothing there. For a gap
+      that runs to the end of the paper no leaf can follow it, so the other read is a
+      witness when it read at least as far as this read did (its last aligned leaf is
+      the one just before the gap, or later). Both reads ending at the same place
+      cannot tell a question not attempted from final pages missing from the scan; the
+      leaves go to review either way and the share cap bounds it. The premise is
       that a reader misses a label in one read and a part the student skipped is in
       neither. The two reads are not independent witnesses: in nine stored pairs of
       live reads the number of one question was missing from at least one read in 7
@@ -283,10 +288,21 @@ def skipped_parts(
         sides = [kind for kind in read.absent_between.get(leaf, ()) if kind is not None]
         return bool(sides) and all(kind == "handwritten" for kind in sides)
 
+    # The tail of the list with no aligned leaf in this read: a gap that runs to the end.
+    tail = len(order)
+    while tail > 0 and order[tail - 1] in read.unaligned_ids:
+        tail -= 1
+    aligned_there = [i for i, leaf in enumerate(order) if leaf not in other.unaligned_ids]
+    reached = aligned_there[-1] if aligned_there else -1
+
     def witnessed(leaf: str) -> bool:
         # A list that stops early has every later label absent: it is a witness for a
-        # gap only if it aligned a leaf that comes after it in paper order.
-        return any(later not in other.unaligned_ids for later in order[order.index(leaf) + 1 :])
+        # gap in the middle only if it aligned a leaf after it in paper order, and for
+        # a gap at the end only if it read at least as far as this read did.
+        at = order.index(leaf)
+        if at >= tail:
+            return tail >= 1 and reached >= tail - 1
+        return any(later not in other.unaligned_ids for later in order[at + 1 :])
 
     skipped = {
         leaf
