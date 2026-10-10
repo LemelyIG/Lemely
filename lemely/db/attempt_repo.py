@@ -644,8 +644,11 @@ def grants_self_mark_authority(qr: QuestionResult) -> bool:
     granted), and this binding doubt, which only the authority side withholds.
 
     The queue side is untouched: :func:`is_marking_low_confidence` still opens
-    the teacher's row for such a question, and that row stays open after a
-    self-mark (``self_review_repo._resolve_low_confidence_rows``).
+    the teacher's row for such a question. While that row is open the question
+    is not offered for self-review at all (:func:`self_review_withheld`), so
+    this rule is the second line of defence if that refusal is ever bypassed;
+    it applies in practice once a teacher has resolved the row and the question
+    is offered again, where a claim then needs evidence and the judge.
     """
     return is_marking_low_confidence(qr) and not has_binding_doubt(qr.review_reason)
 

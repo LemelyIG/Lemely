@@ -1259,7 +1259,9 @@ def _resolve_low_confidence_rows(
     Only that reason. An integrity row on the same question is a teacher's
     to dismiss and is never touched here. Nor is the row of a question with a
     binding doubt: the student's word cannot vouch for a transcription that may
-    not be theirs, so it stays open until a teacher resolves it.
+    not be theirs, so it stays open until a teacher resolves it. A question in
+    that state is refused before it gets here (:func:`self_review_withheld`);
+    this guard is the second line of defence if the refusal is ever bypassed.
     """
     if has_binding_doubt(qr.review_reason):
         return
