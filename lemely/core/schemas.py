@@ -759,7 +759,13 @@ class ExtractedAnswers(StrictModel):
     scheme's fault, not the scan's. It carries ids and reason names, never
     student text. An id with no entry gets the general sentence. Keys are
     remapped with ``unbound_question_ids``. Empty on records stored before
-    the field existed. It is not copied onto the marked paper."""
+    the field existed. It is not copied onto the marked paper.
+
+    It also carries ``"marked_from_other_read"`` for an answered id whose
+    answer was taken from the read that was not returned
+    (``lemely.io.binding.orchestrate.MARKED_FROM_OTHER_READ``): that id is not
+    in ``unbound_question_ids``, its answer is ``unverified``, and the entry
+    is what lets its review reason say it was found in one of two readings."""
     unbound_answers: list[ReadAnswer] = Field(default_factory=list)
     """Answers read off the page that no question label aligned to, so they
     are held here rather than assigned a ``question_id``. Empty when every
