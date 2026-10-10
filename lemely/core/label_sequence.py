@@ -11,31 +11,68 @@ writing with no leaf, are safe outcomes. Writing on another question's leaf is t
 this module exists to prevent, so wherever two readings of the list do equally well,
 neither is taken.
 
-How a list is bound (``bind_stream``):
+How a list is bound (``bind_stream``). The names in brackets are the ones the code
+comments and the task report use.
 
-1. Labels become steps (``parse_label``). A label with several steps is one chain,
-   parent to child, or it is nothing. The same label twice in a row is one label.
-2. Question numbers are chosen as anchors so that the paper as a whole aligns best. An
-   anchor is kept only when it beats every other candidate for its question by two
-   points, and beats leaving the question out by more than the number itself is worth.
-3. Between an anchor and the next, the question's parts are aligned in order, parent
-   before child. A restart of the question's top-level labels ends the question: what
-   follows is an orphan segment and is never absorbed. A restart lower down ends the
-   part. A leaf is bound to a label only when every best alignment binds it there,
-   and only when the readings in which the restart is a stray label bind it there too.
-4. A question whose number was not seen is aligned from an orphan segment only when it
-   sits between two anchored neighbours and every label of the segment is its own.
-5. Writing is given to the leaf whose label it follows. A container label, an unplaced
-   label and an "uncertain" flag all leave it unbound. So does a label the paper prints
-   next and the reader did not list: the writing of the missed part sits in the same
-   place, and nothing in the list separates the two.
+1. Labels. Every item typed as a label is a label. Its text becomes steps
+   (``parse_label``); a label with several steps is one chain, parent to child, or it
+   is nothing. A label whose text names no step has no place: it is a barrier, and the
+   writing after it is nobody's. Two equal labels side by side are two labels.
+2. Question numbers. Numbers are chosen as anchors so that the paper as a whole aligns
+   best. An anchor is kept only when
+   - it beats every other candidate for its question by two points (the margin), and
+     no other candidate claims parts of its own (class B), unless that candidate is a
+     label of the anchor's own span written with its path (restating);
+   - it beats leaving its question out by more than the number itself is worth (D6);
+   - it is not the last of a run of numbered lines (D8).
+3. Parts. Between an anchor and the next, the question's parts are aligned in order,
+   parent before child. A label may name again the parts it sits under (restating).
+   - A restart of the question's top-level labels ends the question (the restart
+     cut); a restart lower down ends the part, and what follows is an orphan (D5).
+   - A leaf is bound to a label only when every best alignment binds it there
+     (uniqueness), and when the readings in which the label at a cut is a stray bind
+     it there too (D4).
+   - Two labels that could each be one part, each with sub-parts of its own, bind
+     neither (class D).
+   - A number that names a question with no anchor is read twice, as the end of the
+     question before it and as a stray; only what both readings bind is kept (D7).
+4. The inferred number. A question whose number was not seen is aligned from an
+   orphan segment only when it sits between two anchored neighbours and every label
+   of the segment is its own. Its leaves carry a doubt, and so does the leaf before
+   it (D2).
+5. Writing. Writing is given to the leaf whose label it follows. A container label, a
+   label with no place and an "uncertain" flag all leave it unbound. So does:
+   - a label the paper prints next that the reader did not list: the writing of the
+     missed part sits in the same place (D1, the bracket);
+   - a part label with no place that has writing under it, or that names a part of
+     the next placed label (D9);
+   - a part label the question does not have and a later question with no anchor
+     does, listed after the leaf's next label (class C, first form);
+   - two blocks beside a blank leaf (D10).
+   A leaf with something listed under it that was not bound is not reported blank
+   (D3). Each unaligned leaf is given one reason (``UNALIGNED_REASONS``).
 
-What the list cannot show: a label listed after the writing it belongs to, or before
-the writing of the part above it. The labels are then in paper order and each is
-followed by writing, exactly as on a clean script. The one trace such a move leaves is
-handled (a leaf with two blocks beside a leaf with none); a move that leaves no trace
-puts writing on the neighbouring leaf, and only a check on what the writing says can
-catch it.
+The rules are not independent, and most of them do not "only unbind". A rule that
+ends a span earlier, drops an anchor or orphans a label changes what the rules after
+it see, and a shorter span can have one alignment where a longer one had a tie. D1,
+D3, D7, D8, D9, D10 and the first form of class C never add a binding; D4, D5, D6,
+class B and class D can. What the module is held to is the outcome: no writing on a
+leaf that is not its own, in the fault batteries of
+``tests/test_label_sequence_faults.py``.
+
+What the list cannot show, and no rule here catches (the tests whose names begin
+``test_known_``):
+
+- a label listed after the writing it belongs to, or before the writing of the part
+  above it. The labels are then in paper order and each is followed by writing,
+  exactly as on a clean script. The one trace such a move leaves is handled (D10); a
+  move that leaves no trace puts writing on the neighbouring leaf;
+- a label read as another valid label while that label's own occurrence is missed;
+- several labels missed in a row, a page missing, or pages listed out of order: the
+  labels after the gap can stand in for the missed ones;
+- a block continued from elsewhere whose own label was not listed.
+
+Only a check on what the writing says can catch these.
 
 Pure functions: no I/O, no logging.
 """
@@ -69,10 +106,52 @@ DOUBTS = (DOUBT_NUMBER_NOT_SEEN, DOUBT_NEXT_NUMBER_NOT_SEEN, DOUBT_PREVIOUS_PAGE
 CONTENT_DOUBTS = (DOUBT_NEXT_NUMBER_NOT_SEEN, DOUBT_PREVIOUS_PAGE, DOUBT_ARROW)
 INFERENCE_DOUBTS = (DOUBT_NUMBER_NOT_SEEN,)
 
+# A list longer than this is not read: nothing is bound. The largest corpus scheme has
+# 93 questions and parts (155 items when every label and one block per leaf is listed);
+# the recorded replies have 107 to 116 items. Time grows with the square of the number
+# of labels that open with a number: about 0.3 s at this size, 1.7 s at 1,400.
+MAX_STREAM_ITEMS = 600
+# No paper nests parts deeper than four levels. A scheme deeper than this is not read.
+MAX_SCHEME_DEPTH = 12
+
+# Why a leaf is in ``BoundStream.unaligned_ids``: one of these for each such leaf.
+UNALIGNED_REASONS = (
+    # Nothing was read: see ``MAX_STREAM_ITEMS`` and ``MAX_SCHEME_DEPTH``.
+    "list_too_long",
+    "scheme_too_deep",
+    # The scheme: the id is there twice (or shares its printed label with another id);
+    # or no label can name it ("1a_i_A", or a part of such an id).
+    "duplicate_id",
+    "undecomposable_id",
+    # The question: no label in the list names its number, and it was not inferred;
+    # or a label does, and the list does not settle that it opens the question (the
+    # margin, class B, D6, D8).
+    "number_not_seen",
+    "number_not_settled",
+    # The part, in a question whose number is settled: no label in the question's
+    # stretch of the list names it; or one does, but the label of a part above it has
+    # no place; or one does, and the readings of the list do not agree that it is this
+    # part's (a tie, class D, D4, D5, D7).
+    "label_not_seen",
+    "path_not_aligned",
+    "label_not_settled",
+    # The leaf's label has its place and the writing after it could not be given to
+    # it: the next label is not the paper's next (D1, D9, class C); the paper's next
+    # id is one no label can name; two blocks stand beside a blank leaf (D10); the
+    # reader marked the writing uncertain; a label with no place stands under it.
+    "not_bracketed",
+    "next_label_unreadable",
+    "neighbour_left_blank",
+    "writing_uncertain",
+    "unplaced_label_follows",
+)
+
 # Roman numerals up to xxix: more than any question has parts.
 _ROMAN = re.compile(r"x{0,2}(?:ix|iv|v?i{0,3})")
-# A leading "Q" or "Question" only counts as a prefix when a number follows it.
-_PREFIX = re.compile(r"\s*(?:question|qn|q)\s*\.?\s*(?=[0-9])", re.IGNORECASE)
+# A leading "Q", "Question" or "No." only counts as a prefix when a number follows it.
+_PREFIX = re.compile(r"\s*(?:question|qn|q|no)\s*\.?\s*(?=[0-9])", re.IGNORECASE)
+# One comma after a label ("3b,") is the writer's punctuation, not part of it.
+_TRAILING_COMMA = re.compile(r"\s*,\s*\Z")
 _TOKEN = re.compile(r"[0-9]+|[A-Za-z]+")
 _PUNCTUATION = re.compile(r"[\s().:\-]*")
 # Single characters that are both a roman numeral and a letter.
@@ -115,6 +194,9 @@ class BoundStream:
     the writing after it could not be told from a neighbour's. ``unplaced_labels`` are
     the label items no question accounts for.
 
+    ``unaligned_reasons`` gives, for each id in ``unaligned_ids``, one string from
+    ``UNALIGNED_REASONS``. It is a report and changes no binding.
+
     ``listing_suspects`` is an observation and changes no binding. Binding rests on the
     reader listing a label before the writing under it. A reader that lists the writing
     first leaves one trace: in a run of leaves that follows a container label, the
@@ -129,6 +211,7 @@ class BoundStream:
     unplaced_labels: list[SeenLabel]
     inferred_numbers: list[str]
     listing_suspects: list[str]
+    unaligned_reasons: dict[str, str] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------------------
@@ -148,8 +231,12 @@ def _single(char: str) -> frozenset[LabelStep]:
     return frozenset({letter})
 
 
-def _letters(run: str) -> list[frozenset[LabelStep]] | None:
-    """Every reading of a run of letters: "a", "ii", or "bii" as (b)(ii)."""
+def _letters(run: str, *, after_number: bool) -> list[frozenset[LabelStep]] | None:
+    """Every reading of a run of letters: "a", "ii", or "bii" as (b)(ii).
+
+    Straight after a question number a run may go one level further: "aiia" in
+    "7aiia" is (a)(ii)(a). On its own such a run is a word ("did", "fig").
+    """
     low = run.lower()
     if len(run) == 1:
         return [_single(run)]
@@ -159,6 +246,12 @@ def _letters(run: str) -> list[frozenset[LabelStep]] | None:
         rest = run[1:]
         tail = _single(rest) if len(rest) == 1 else frozenset({LabelStep("roman", rest)})
         return [frozenset({LabelStep("letter", run[0])}), tail]
+    if after_number and len(run) > 2 and _is_roman(low[1:-1]):
+        return [
+            frozenset({LabelStep("letter", run[0])}),
+            frozenset({LabelStep("roman", run[1:-1])}),
+            frozenset({LabelStep("letter", run[-1])}),
+        ]
     return None  # a word
 
 
@@ -170,17 +263,18 @@ def _readings(text: str) -> _Readings | None:
     """
     if len(text) > _MAX_LABEL_CHARS:
         return None
-    body = _PREFIX.sub("", text, count=1)
+    body = _TRAILING_COMMA.sub("", _PREFIX.sub("", text, count=1), count=1)
     if _PUNCTUATION.fullmatch(_TOKEN.sub("", body)) is None:
         return None  # brackets, commas, other scripts around the label
     steps: list[frozenset[LabelStep]] = []
-    for position, token in enumerate(_TOKEN.findall(body)):
+    tokens = _TOKEN.findall(body)
+    for position, token in enumerate(tokens):
         if token.isdigit():
             if position != 0 or len(token) > 2 or token.startswith("0"):
                 return None  # "Fig. 1.2", "130", "0", "007"
             steps.append(frozenset({LabelStep("number", token)}))
             continue
-        run = _letters(token)
+        run = _letters(token, after_number=position == 1 and tokens[0].isdigit())
         if run is None:
             return None
         steps.extend(run)
@@ -203,19 +297,25 @@ def parse_label(text: str) -> list[LabelStep]:
 
 @dataclass(frozen=True, slots=True)
 class _Label:
-    """A label item that parsed, with the items after it that repeat it."""
+    """A label item whose text names steps."""
 
     index: int
     item: SeenLabel
     readings: _Readings
     number: str | None  # the question number it opens with, if any
-    repeats: tuple[int, ...]
     joined: bool  # nothing was written between the label before it and this one
 
 
 def _labels(items: Sequence[StreamItem]) -> list[_Label]:
+    """The label items that can be aligned, each on its own.
+
+    Two equal labels side by side are two labels: a part left blank puts its label
+    next to an equal one of another part ("(b)" of 7(a)(ii) and "(b)" of 7), and a
+    label read twice is not told from that by its text. The rules below decide. A
+    label item whose text names no step is not in this list: ``bind_stream`` treats
+    it as a label with no place.
+    """
     out: list[_Label] = []
-    previous: int | None = None  # index of the last label item, when it parsed
     joined = False
     for index, item in enumerate(items):
         if not isinstance(item, SeenLabel):
@@ -224,15 +324,8 @@ def _labels(items: Sequence[StreamItem]) -> list[_Label]:
         readings = _readings(item.text)
         if readings is None:
             continue
-        if out and previous == index - 1 and out[-1].readings == readings:
-            # The same label twice with nothing between: one label, read twice.
-            last = out[-1]
-            repeats = (*last.repeats, index)
-            out[-1] = _Label(last.index, last.item, readings, last.number, repeats, last.joined)
-        else:
-            number = next((s.token for s in readings[0] if s.level == "number"), None)
-            out.append(_Label(index, item, readings, number, (), joined and bool(out)))
-        previous = index
+        number = next((s.token for s in readings[0] if s.level == "number"), None)
+        out.append(_Label(index, item, readings, number, joined and bool(out)))
         joined = True
     return out
 
@@ -249,6 +342,7 @@ class _Node:
     leaf_id: str | None  # the id a label here binds; None for a container or a doubled id
     path: tuple[int, ...]  # from the question number down to this node
     container: bool
+    doubled: bool  # the id is in the scheme twice, or shares its label with another id
 
 
 @dataclass(slots=True)
@@ -294,7 +388,25 @@ class _Paper:
 
 
 def _leaf_ids(mark_scheme: MarkScheme) -> list[str]:
-    return [q.id for q in mark_scheme.all_questions_flat() if not q.parts]
+    """Every leaf id in paper order. No recursion: a scheme may be nested without end."""
+    out: list[str] = []
+    stack = list(reversed(mark_scheme.questions))
+    while stack:
+        question = stack.pop()
+        if question.parts:
+            stack.extend(reversed(question.parts))
+        else:
+            out.append(question.id)
+    return out
+
+
+def _too_deep(mark_scheme: MarkScheme) -> bool:
+    level = list(mark_scheme.questions)
+    for _ in range(MAX_SCHEME_DEPTH):
+        level = [part for question in level for part in question.parts]
+        if not level:
+            return False
+    return True
 
 
 def duplicate_leaf_ids(mark_scheme: MarkScheme) -> list[str]:
@@ -340,13 +452,15 @@ def _grow(questions: list[Question], parent: _Draft | None, into: dict[str, _Dra
     for question in questions:
         draft = into.get(question.id)
         if draft is None:
+            collided = False
             step = _own_step(question, parent, list(into.values()))
             for sibling in into.values():
                 if step is not None and sibling.step == step:
                     # Two ids, one printed label: neither can be told from the other.
                     sibling.doubled = True
                     step = None
-            draft = into[question.id] = _Draft(question.id, step)
+                    collided = True
+            draft = into[question.id] = _Draft(question.id, step, doubled=collided)
         else:
             # The id again: one printed label as far as the page goes.
             draft.doubled = True
@@ -365,7 +479,10 @@ def _build(mark_scheme: MarkScheme) -> _Paper:
         path = (*above, index)
         binds = draft.step is not None and not draft.container and not draft.doubled
         leaf_id = draft.question_id if binds and draft.question_id not in doubled else None
-        paper.nodes.append(_Node(draft.question_id, draft.step, leaf_id, path, draft.container))
+        twice = draft.doubled or draft.question_id in doubled
+        paper.nodes.append(
+            _Node(draft.question_id, draft.step, leaf_id, path, draft.container, twice)
+        )
         if draft.step is not None:
             if above:
                 paper.kids[above[-1], draft.step] = index
@@ -402,6 +519,7 @@ def _fit(
             return None
         here = depth + 1 + offset
         if not new:
+            # Restating: a step may name the part the list is already in.
             if here < len(path) and child < path[here]:
                 return None  # a part already passed
             if here >= len(path) or child > path[here]:
@@ -458,7 +576,7 @@ def _span(
         if position == ignore:
             continue
         if position in stops:
-            return _Span(position, False, frozenset(orphans))
+            return _Span(position, False, frozenset(orphans))  # D7, the first reading
         label = labels[position]
         first = label.readings[0]
         deepest = len(path) if closed is None else closed
@@ -471,8 +589,9 @@ def _span(
                     path, closed, loose = onward, None, []
             continue
         if any((part, step) in paper.kids for part in loose for step in first):
-            # The label before had no place; if a part's own label was missed before
-            # it, this one sits under it. The question is not followed further.
+            # D5, deeper reading after a label with no place: if a part's own label
+            # was missed before that label, this one sits under it. The question is
+            # not followed further.
             return _Span(position, False, frozenset(orphans))
         placed: list[int] | None = None
         for depth in range(len(path) - 1, -1, -1):
@@ -489,8 +608,8 @@ def _span(
             part = next((paper.kids[key] for key in options if key in paper.kids), None)
             if part is not None and part <= path[depth + 1]:
                 if depth == 0:
-                    return _Span(position, True, frozenset(orphans))
-                closed, path = depth, path[: depth + 1]
+                    return _Span(position, True, frozenset(orphans))  # the restart cut
+                closed, path = depth, path[: depth + 1]  # D5: a restart lower down
                 break
         if closed is not None:
             orphans.add(position)
@@ -545,7 +664,7 @@ def _solve(
                     continue
                 for last, (score, trail) in before:
                     path = nodes[last].path
-                    named = 0  # steps that name parts the list is already in
+                    named = 0  # restating: steps that name parts the list is already in
                     while named < len(chain) and chain[named] in path:
                         named += 1
                     if named == len(chain):
@@ -599,7 +718,8 @@ def _determined(
         part = chain[-1]
         without, other = _solve(paper, root, start, labels, lo, hi, skip, (position, part))
         if without[-1] < scores[-1]:
-            kept[position] = chain
+            kept[position] = chain  # uniqueness: every best alignment binds it
+        # Class D: rival labels for one part.
         if any(
             p not in best and part in paper.nodes[nodes[-1]].path[:-1]
             for p, nodes in _bindings(other).items()
@@ -757,14 +877,33 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
         right = cands[chain[at + 1]].position if at + 1 < len(chain) else count
         return taken, left, right
 
+    def twin(i: int, j: int) -> bool:
+        """The same number label twice with nothing between: one place for the number.
+
+        Whichever of the two opens the question, the same labels and the same writing
+        follow it, so they are no rivals. (Two equal part labels side by side are
+        another matter: they may be two parts, and are never taken for one.)
+        """
+        low, high = sorted((cands[i].position, cands[j].position))
+        return all(
+            labels[p].readings == labels[low].readings
+            and labels[p].index == labels[low].index + p - low
+            for p in range(low + 1, high + 1)
+        )
+
     kept: dict[int, _Candidate] = {}
     for root in paper.roots:
         mine = [i for i in range(size) if cands[i].root == root]
         tops = [i for i in mine if through[i] == best]
         needed = _ANCHOR_MARGIN if paper.nodes[root].container else 1
         if not tops or best - without(order[root]) < needed:
-            continue
-        chosen = cands[tops[0]]
+            continue  # D6: the anchor must beat leaving its question out
+        # The first of several equal candidates is not a tie broken by order: every
+        # other one is a rival below, and only a candidate that comes before its
+        # rivals can have them as labels of its own span. Of twins, the last opens
+        # the question: nothing stands between it and what follows.
+        lead = max((i for i in tops if twin(i, tops[0])), key=lambda i: cands[i].position)
+        chosen = cands[lead]
         # A rival is another candidate that comes within the margin of the best total,
         # or that claims parts of its own whatever the margin: it stands where the
         # question could start (between the anchors of the questions on either side)
@@ -772,10 +911,11 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
         # anchors leaves to no question. Two places that each look like the start of the
         # question are not settled by which earns more. (A stray number that would
         # only take its parts from a neighbour claims nothing.)
-        rivals = [i for i in mine if i != tops[0] and through[i] > best - _ANCHOR_MARGIN]
-        others = [i for i in mine if i != tops[0] and i not in rivals]
-        if others:
-            taken, left, right = best_choice(tops[0])
+        apart = [i for i in mine if not twin(i, lead)]
+        rivals = [i for i in apart if through[i] > best - _ANCHOR_MARGIN]
+        others = [i for i in apart if i not in rivals]
+        if others:  # class B: rival question numbers that claim parts of their own
+            taken, left, right = best_choice(lead)
             for i in others:
                 # Its own stretch of the list: up to the chosen anchor if that comes
                 # after it, else up to the next question's anchor.
@@ -784,10 +924,10 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
                 if left < at < right and not bound_by(i, end, cut=False) <= taken:
                     rivals.append(i)
         if rivals:
-            # A paper labelled with full paths ("1(a)(i)", "1(a)(ii)", "1b") gives every
-            # part a label that opens with the number. Those after the first are no
-            # rivals for the anchor: they are determined labels of its own span.
-            nxt = following[tops[0]]
+            # Restating: a paper labelled with full paths ("1(a)(i)", "1(a)(ii)", "1b")
+            # gives every part a label that opens with the number. Those after the first
+            # are no rivals for the anchor: they are determined labels of its own span.
+            nxt = following[lead]
             hi = cands[nxt].position if nxt is not None else count
             lo = chosen.position + 1
             read = _span(paper, root, chosen.chain, labels, lo, hi, frozenset())
@@ -796,7 +936,7 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
                 continue  # two places for the number: neither
         kept[root] = chosen
 
-    # Numbered lines listed as labels ("1.", "2." under one part) are numbers too. An
+    # D8. Numbered lines listed as labels ("1.", "2." under one part) are numbers too. An
     # anchor that comes straight after the bare number one below it, with nothing
     # written between them, is the last of such a run when that number is no anchor
     # itself. ("1b" before "2a" is a part of question 1, not a numbered line.)
@@ -828,14 +968,11 @@ class _Alignment:
     foreign: dict[int, int] = field(default_factory=dict)
 
 
-def _align(paper: _Paper, labels: list[_Label]) -> _Alignment:
-    kept = _anchors(paper, labels)
+def _align(
+    paper: _Paper, labels: list[_Label], kept: dict[int, _Candidate], stops: frozenset[int]
+) -> _Alignment:
+    """Every question against its stretch of the list; a question ends at a ``stops``."""
     out = _Alignment()
-    # A number that names a question with no anchor may be that question's number:
-    # the question before it ends there.
-    stops = frozenset(
-        position for position, label in enumerate(labels) if _opens_unanchored(paper, label, kept)
-    )
     anchored = sorted(kept.values(), key=lambda cand: cand.position)
     spans: dict[int, tuple[int, int, _Span]] = {}  # question -> first label, next anchor, span
     own: dict[int, dict[int, tuple[int, ...]]] = {}
@@ -849,7 +986,8 @@ def _align(paper: _Paper, labels: list[_Label]) -> _Alignment:
         )
         out.placed[cand.position] = cand.chain
 
-    # Rule 4: a question between two anchored neighbours, its number not seen.
+    # The inferred number (rule 4): a question between two anchored neighbours, its
+    # number not seen.
     explained: set[int] = set()  # questions whose restart is the next question's start
     for k in range(1, len(paper.roots) - 1):
         root, before, after = paper.roots[k], paper.roots[k - 1], paper.roots[k + 1]
@@ -872,9 +1010,9 @@ def _align(paper: _Paper, labels: list[_Label]) -> _Alignment:
         out.inferred.append(root)
         explained.add(before)
 
-    # A cut is one reading of the list. The other is that a label near it is a stray
-    # and the question (or the part) runs on. A binding stands only when the rival
-    # readings make it too:
+    # D4, rival readings of a cut. A cut is one reading of the list. The other is that a
+    # label near it is a stray and the question (or the part) runs on. A binding stands
+    # only when the rival readings make it too:
     # * with orphans in the span: no part began unseen, and they are the question's own;
     # * the label at the cut is a stray: the question runs on up to and including the
     #   label that would cut it next;
@@ -901,8 +1039,9 @@ def _align(paper: _Paper, labels: list[_Label]) -> _Alignment:
             }
         out.placed.update(own[root])
 
-    # A part label the question does not have, and that a question after it with no
-    # anchor does have, shows that question's labels inside this one's stretch.
+    # Class C, first form. A part label the question does not have, and that a question
+    # after it with no anchor does have, shows that question's labels inside this one's
+    # stretch (``_open_leaves`` then breaks the bracket of the leaves before it).
     for k, cand in enumerate(anchored):
         nxt = anchored[k + 1].root if k + 1 < len(anchored) else len(paper.nodes)
         unseen = [r for r in paper.roots if cand.root < r < nxt and r not in out.inferred]
@@ -972,36 +1111,38 @@ def _open_leaves(
         between = range(order[k] + 1, len(labels) if last else order[k + 1])
         written = not last and any(p in written_under for p in between)
         early = not last and any(_names_part_of(paper, labels[p], until) for p in between)
-        # After the last leaf of the paper any label at all is one too many.
+        # D1, the bracket: the next placed label must be the paper's next. After the
+        # last leaf of the paper any label at all is one too many.
         missing = bool(skipped) or until <= ends[k] or (last and len(between) > 0)
-        # The next label may be an unseen question's when a part of that question, which
-        # this one does not have, is listed further on in this question's stretch.
+        # Class C, first form: the next label may be an unseen question's when a part of
+        # that question, which this one does not have, is listed further on in this
+        # question's stretch.
         foreign = alignment.foreign.get(paper.nodes[ends[k]].path[0], -1)
         if not last and order[k + 1] < foreign:
             shut.add(ends[k])
-        if missing or written or early:
+        if missing or written or early:  # D1; D9 (written, early)
             shut.add(ends[k])
             if skipped and all(paper.nodes[n].step is None for n in skipped):
                 unreadable.add(ends[k])
         elif gap:
-            doubted.add(ends[k])  # only an inferred number lies between
+            doubted.add(ends[k])  # D2: only an inferred number lies between
         if written and not missing:
-            shut.add(ends[k + 1])
+            shut.add(ends[k + 1])  # D9: the leaf after the label keeps nothing either
     opened = {end for end in ends if paper.nodes[end].leaf_id is not None and end not in shut}
     return opened, doubted & opened, unreadable - opened
 
 
 def _beside_a_blank(
-    paper: _Paper, items: Sequence[StreamItem], node_at: dict[int, int | None], repeats: set[int]
+    paper: _Paper, items: Sequence[StreamItem], node_at: dict[int, int | None]
 ) -> tuple[set[int], set[int]]:
-    """Leaves holding two blocks or more next to a label holding none, and those neighbours.
+    """D10: leaves holding two blocks or more next to a label holding none, and the latter.
 
     "(i) (ii) writing writing" and "(i) writing writing (ii)" are what a list looks like
     when a label is listed a little before or after its place: one block is the blank
     neighbour's. Nothing in the list says which, so neither leaf is given writing. The
     blank neighbour may be a label no question accounts for (a misread "(i)").
     """
-    events = [index for index in sorted(node_at) if index not in repeats]
+    events = sorted(node_at)
     bounds = [*events, len(items)]
     blocks = [
         sum(isinstance(item, SeenWriting) for item in items[bounds[k] : bounds[k + 1]])
@@ -1027,42 +1168,128 @@ def _beside_a_blank(
     return doubled, blank
 
 
-def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundStream:
-    """Decide which question each label is and which leaf each block of writing answers.
+@dataclass(frozen=True, slots=True)
+class _Reading:
+    """What one reading of the list determines."""
 
-    Never raises: an id the scheme spells in a way no label can name costs that leaf,
-    and a list that makes no sense binds nothing.
-    """
-    paper = _build(mark_scheme)
-    labels = _labels(items)
-    alignment = _align(paper, labels)
-    bounds = [*(label.index for label in labels), len(items)]
-    # Part labels with writing under them. A label that opens with a number is left out:
-    # a numbered line or a continuation label says nothing about the parts around it.
+    placed: dict[int, int]  # label position -> the node it names
+    inferred: frozenset[int]  # questions aligned without a number
+    opened: frozenset[int]  # leaves that keep the writing after their label
+    doubted: frozenset[int]
+    unreadable: frozenset[int]
+    doubled: frozenset[int]  # leaves with two blocks beside a blank one ...
+    blank: frozenset[int]  # ... and those blank neighbours
+
+
+def _read(
+    paper: _Paper,
+    items: Sequence[StreamItem],
+    labels: list[_Label],
+    kept: dict[int, _Candidate],
+    stops: frozenset[int],
+) -> _Reading:
+    alignment = _align(paper, labels, kept, stops)
+    # Part labels with writing straight under them. A label that opens with a number is
+    # left out: a numbered line or a continuation label says nothing about the parts
+    # around it.
     written_under = {
         position
         for position, label in enumerate(labels)
         if label.number is None
-        and any(isinstance(i, SeenWriting) for i in items[bounds[position] : bounds[position + 1]])
+        and label.index + 1 < len(items)
+        and isinstance(items[label.index + 1], SeenWriting)
     }
     opened, doubted, unreadable = _open_leaves(paper, alignment, labels, written_under)
-    inferred = set(alignment.inferred)
+    placed = {position: chain[-1] for position, chain in alignment.placed.items()}
+    doubled, blank = _beside_a_blank(paper, items, _node_at(items, labels, placed))
+    return _Reading(
+        placed,
+        frozenset(alignment.inferred),
+        frozenset(opened),
+        frozenset(doubted),
+        frozenset(unreadable),
+        frozenset(doubled),
+        frozenset(blank),
+    )
 
-    node_at: dict[int, int | None] = {}  # item index of a label -> the node it names
-    repeats: set[int] = set()  # a label read twice is reported once
+
+def _node_at(
+    items: Sequence[StreamItem], labels: list[_Label], placed: dict[int, int]
+) -> dict[int, int | None]:
+    """Item index of every label item -> the node it names.
+
+    An item typed as a label is a label whatever its text: one that names no step has
+    no place, like a label that names a part the paper does not have.
+    """
+    out: dict[int, int | None] = {
+        index: None for index, item in enumerate(items) if isinstance(item, SeenLabel)
+    }
     for position, label in enumerate(labels):
-        chain = alignment.placed.get(position)
-        repeats.update(label.repeats)
-        for index in (label.index, *label.repeats):
-            node_at[index] = chain[-1] if chain is not None else None
+        out[label.index] = placed.get(position)
+    return out
 
-    doubled, blank = _beside_a_blank(paper, items, node_at, repeats)
+
+def _agreed(readings: list[_Reading]) -> _Reading:
+    """What every reading makes: a label's place, and a leaf's hold on its writing.
+
+    Writing reaches a leaf only where each reading puts the label before it on that
+    leaf and leaves the leaf open. So nothing is bound that any one reading would not
+    bind.
+    """
+    first, *rest = readings
+    placed = {
+        position: node
+        for position, node in first.placed.items()
+        if all(other.placed.get(position) == node for other in rest)
+    }
+    opened = frozenset.intersection(*(r.opened for r in readings))
+    return _Reading(
+        placed,
+        frozenset.intersection(*(r.inferred for r in readings)),
+        opened,
+        frozenset().union(*(r.doubted for r in readings)) & opened,
+        frozenset().union(*(r.unreadable for r in readings)) - opened,
+        frozenset().union(*(r.doubled for r in readings)),
+        frozenset().union(*(r.blank for r in readings)),
+    )
+
+
+def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundStream:
+    """Decide which question each label is and which leaf each block of writing answers.
+
+    Never raises: an id the scheme spells in a way no label can name costs that leaf,
+    and a list that makes no sense binds nothing. Never runs long: a list of more than
+    ``MAX_STREAM_ITEMS`` items, or a scheme nested deeper than ``MAX_SCHEME_DEPTH``, is
+    not read, and every block comes back unbound with the reason.
+    """
+    if _too_deep(mark_scheme):
+        return _nothing(items, _leaf_ids(mark_scheme), "scheme_too_deep")
+    if len(items) > MAX_STREAM_ITEMS:
+        return _nothing(items, _leaf_ids(mark_scheme), "list_too_long")
+    paper = _build(mark_scheme)
+    labels = _labels(items)
+    kept = _anchors(paper, labels)
+    # D7. A number that names a question with no anchor may be that question's number,
+    # and the question before it ends there; or it is a stray, and the question runs
+    # on. Ending the question there hides the labels after the number, and a tie among
+    # them with it. So both readings are made, and only what both bind is kept.
+    stops = frozenset(
+        position for position, label in enumerate(labels) if _opens_unanchored(paper, label, kept)
+    )
+    readings = [_read(paper, items, labels, kept, stops)]
+    if stops:
+        readings.append(_read(paper, items, labels, kept, frozenset()))
+    view = _agreed(readings)
+    opened, doubted, unreadable = view.opened, view.doubted, view.unreadable
+    inferred, doubled, blank = view.inferred, view.doubled, view.blank
+    node_at = _node_at(items, labels, view.placed)
     writings: dict[int, list[SeenWriting]] = {}
     doubts: dict[int, set[str]] = {}
     seen: dict[int, str] = {}
-    # Leaves with something in their stretch that was not bound (writing, or a label
+    # D3. Leaves with something in their stretch that was not bound (writing, or a label
     # with no place): they are not blank answers.
     set_aside: set[int] = set(blank)
+    aside: dict[int, str] = {}  # ... and, where the leaf is open, what was set aside first
     unbound: list[UnboundWriting] = []
     unplaced: list[SeenLabel] = []
     target: int | None = None
@@ -1080,8 +1307,6 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
     listed: list[int] = []
     for index, item in enumerate(items):
         if isinstance(item, SeenLabel):
-            if index not in node_at:
-                continue  # not a label: ignored, and no barrier
             labelled.add(item.page)
             node = node_at[index]
             if node is not None and paper.nodes[node].container:
@@ -1090,12 +1315,12 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
             if node is None or not (paper.nodes[node].leaf_id or paper.nodes[node].container):
                 # No question accounts for it, or two leaves share the id it names.
                 target, reason = None, "after_unplaced_label"
-                if stretch is not None:
-                    set_aside.add(stretch)  # something was listed under the leaf
                 if node is not None:
-                    stretch = None
-                if index not in repeats:
-                    unplaced.append(item)
+                    stretch = None  # the paper's next label: the leaf before it has ended
+                elif stretch is not None:
+                    set_aside.add(stretch)  # something was listed under the leaf
+                    aside.setdefault(stretch, "unplaced_label_follows")
+                unplaced.append(item)
             elif paper.nodes[node].container:
                 target, stretch, reason = None, None, "after_container_label"
             else:
@@ -1120,6 +1345,9 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
             unbound.append(UnboundWriting(writing=item, reason=why))
             if stretch is not None:
                 set_aside.add(stretch)
+                aside.setdefault(
+                    stretch, "writing_uncertain" if target is not None else "unplaced_label_follows"
+                )
             fell = fell or why in ("after_container_label", "before_first_label")
             continue
         writings[target].append(item)
@@ -1159,11 +1387,83 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
     inferred_numbers = [
         step.token for root in sorted(inferred) if (step := paper.nodes[root].step) is not None
     ]
+    unaligned = [leaf_id for leaf_id in paper.leaf_ids if leaf_id not in aligned]
     return BoundStream(
         leaves=leaves,
         unbound=unbound,
-        unaligned_ids=[leaf_id for leaf_id in paper.leaf_ids if leaf_id not in aligned],
+        unaligned_ids=unaligned,
         unplaced_labels=unplaced,
         inferred_numbers=inferred_numbers,
         listing_suspects=list(dict.fromkeys(suspects)),
+        unaligned_reasons=_why_unaligned(paper, labels, view, aside, unaligned),
     )
+
+
+def _nothing(
+    items: Sequence[StreamItem], leaf_ids: list[str], reason: UnboundReason
+) -> BoundStream:
+    """The list or the scheme is not read: every block unbound, every label without a place."""
+    unaligned = list(dict.fromkeys(leaf_ids))
+    return BoundStream(
+        leaves=[],
+        unbound=[
+            UnboundWriting(writing=item, reason=reason)
+            for item in items
+            if isinstance(item, SeenWriting)
+        ],
+        unaligned_ids=unaligned,
+        unplaced_labels=[item for item in items if isinstance(item, SeenLabel)],
+        inferred_numbers=[],
+        listing_suspects=[],
+        unaligned_reasons=dict.fromkeys(unaligned, reason),
+    )
+
+
+def _why_unaligned(
+    paper: _Paper, labels: list[_Label], view: _Reading, aside: dict[int, str], unaligned: list[str]
+) -> dict[str, str]:
+    """One reason from ``UNALIGNED_REASONS`` for each unaligned leaf. A report only."""
+    node_of: dict[str, int] = {}
+    for index, node in enumerate(paper.nodes):
+        node_of.setdefault(node.question_id, index)
+    placed = set(view.placed.values())
+    # Each question with a settled number: the labels from its first to the next question's.
+    first: dict[int, int] = {}
+    for position in sorted(view.placed):
+        first.setdefault(paper.nodes[view.placed[position]].path[0], position)
+    starts = sorted(first.values())
+    numbers = {label.number for label in labels}
+
+    def why(index: int) -> str:
+        node = paper.nodes[index]
+        if node.doubled:
+            return "duplicate_id"
+        if node.step is None:
+            return "undecomposable_id"
+        if index in placed:
+            if index in view.doubled or index in view.blank:
+                return "neighbour_left_blank"
+            if index in view.unreadable:
+                return "next_label_unreadable"
+            if index not in view.opened:
+                return "not_bracketed"
+            return aside.get(index, "unplaced_label_follows")
+        root = node.path[0]
+        if root not in first:
+            step = paper.nodes[root].step
+            named = step is not None and step.token in numbers
+            return "number_not_settled" if named else "number_not_seen"
+        lo = first[root]
+        hi = next((start for start in starts if start > lo), len(labels))
+        if not any(
+            chain[-1] == index
+            for position in range(lo, hi)
+            if position not in view.placed  # a label with a place is another part's
+            for chain in paper.chains(root, labels[position].readings)
+        ):
+            return "label_not_seen"
+        if any(part not in placed for part in node.path[1:-1]):
+            return "path_not_aligned"
+        return "label_not_settled"
+
+    return {leaf_id: why(node_of[leaf_id]) for leaf_id in unaligned}

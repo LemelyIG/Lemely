@@ -33,7 +33,13 @@ from pathlib import Path
 import pytest
 
 from lemely.core.binding import SeenLabel, SeenWriting, StreamItem
-from lemely.core.label_sequence import BoundStream, bind_stream, duplicate_leaf_ids
+from lemely.core.label_sequence import (
+    MAX_STREAM_ITEMS,
+    UNALIGNED_REASONS,
+    BoundStream,
+    bind_stream,
+    duplicate_leaf_ids,
+)
 from lemely.core.loose_schemas import MarkScheme
 
 _CORPUS = Path(__file__).resolve().parent.parent / "corpus" / "mark-schemes"
@@ -136,6 +142,8 @@ class Paper:
             return tokens[0] + "".join(f"({t})" for t in tokens[1:])  # 3(b)(ii)
         if style == 1:
             return "Q" + " ".join(tokens)  # Q3 b ii
+        if style == 3:
+            return "".join(tokens)  # 3bii, 7aiia
         return f"Q{tokens[0]} " + " ".join(f"({t})" for t in tokens[1:])  # Q5 (b) (i)
 
     def full_paths(self, style: int, *, first_only: bool = False) -> list[Entry]:
@@ -230,6 +238,8 @@ def _check_contract(paper: Paper, items: list[StreamItem], result: BoundStream) 
     assert len(result.unaligned_ids) == len(set(result.unaligned_ids))
     assert set(bound_ids) | set(result.unaligned_ids) == set(leaf_ids)
     assert not set(bound_ids) & set(result.unaligned_ids)
+    assert list(result.unaligned_reasons) == result.unaligned_ids, "one reason for each"
+    assert set(result.unaligned_reasons.values()) <= set(UNALIGNED_REASONS)
     writings = [id(i) for i in items if isinstance(i, SeenWriting)]
     placed = [id(w) for leaf in result.leaves for w in leaf.writings]
     placed += [id(u.writing) for u in result.unbound]
@@ -354,7 +364,9 @@ CRITICAL = [
             ("(ii)", "3b_ii"),
             ("(c)", "3c"),
         ],
-        "binds": ["1a_i", "1a_ii", "1b", "1c_i"],
+        # The first "3" is read as the end of question 1 and as a stray (D7); under the
+        # second reading question 2's labels are rivals for 1(a) and 1(c)'s parts.
+        "binds": ["1b"],
     },
     {
         "name": "C3 numbered answer lines under a childless question",
@@ -836,8 +848,60 @@ def test_clean_stream_binds_every_unique_leaf_of_every_corpus_scheme() -> None:
     assert with_duplicates == 7
 
 
+def _assert_printed_paper_binds(paper: Paper, blank: set[str]) -> None:
+    """Every label present, the leaves in ``blank`` unanswered: nothing is lost."""
+    stream = [e for e in paper.perfect()[0] if not (e.writing and e.text in blank)]
+    items = _render(stream)
+    result = bind_stream(items, paper.scheme)
+    _check_contract(paper, items, result)
+    held = {leaf.question_id: [w.answer for w in leaf.writings] for leaf in result.leaves}
+    bindable = sorted(paper.bindable, key=paper.ids.index)
+    assert held == {leaf: [] if leaf in blank else [leaf] for leaf in bindable}, (
+        paper.name,
+        sorted(blank),
+    )
+    doubled = duplicate_leaf_ids(paper.scheme)
+    assert result.unaligned_ids == doubled, (paper.name, sorted(blank))
+    assert sorted(u.writing.answer for u in result.unbound) == sorted(set(doubled) - blank), (
+        paper.name,
+        sorted(blank),
+    )
+    # The one label with no place is the label of an id the scheme has twice.
+    assert [label.text for label in result.unplaced_labels] == [
+        paper.label(paper.ids.index(leaf)) for leaf in doubled
+    ], (paper.name, sorted(blank))
+    assert result.inferred_numbers == [], (paper.name, sorted(blank))
+
+
+def test_a_printed_paper_with_parts_left_blank_binds_every_answered_leaf() -> None:
+    # The printed paper carries every label whether or not the part was answered, so a
+    # blank part costs nothing: on every corpus scheme, for seeded random sets of blank
+    # leaves, every answered leaf holds its writing and no writing is unbound. A blank
+    # part can put two equal labels side by side ("(b)" of 7(a)(ii) and "(b)" of 7).
+    paths = sorted(_CORPUS.rglob("*.json"))
+    assert len(paths) == 289
+    trials = 0
+    for path in paths:
+        paper = Paper.load(path.name)
+        leaves = [i for i, leaf in zip(paper.ids, paper.is_leaf, strict=True) if leaf]
+        rng = random.Random(f"blank/{path.name}")
+        for share in (0.1, 0.3, 0.6):
+            _assert_printed_paper_binds(paper, {i for i in leaves if rng.random() < share})
+            trials += 1
+    assert trials == 867
+
+
 @pytest.mark.parametrize("name", _BATTERY_SCHEMES)
-@pytest.mark.parametrize("style", [0, 1, 2], ids=["3(b)(ii)", "Q3 b ii", "Q3 (b) (ii)"])
+def test_a_printed_paper_with_one_part_left_blank_binds_all_the_others(name: str) -> None:
+    paper = _paper(name)
+    _assert_printed_paper_binds(paper, set())
+    for j, leaf_id in enumerate(paper.ids):
+        if paper.is_leaf[j]:
+            _assert_printed_paper_binds(paper, {leaf_id})
+
+
+@pytest.mark.parametrize("name", _BATTERY_SCHEMES)
+@pytest.mark.parametrize("style", [0, 1, 2, 3], ids=["3(b)(ii)", "Q3 b ii", "Q3 (b) (ii)", "3bii"])
 def test_a_paper_labelled_with_full_paths_binds_every_leaf(name: str, style: int) -> None:
     paper = _paper(name)
     stream = paper.full_paths(style)
@@ -1161,26 +1225,48 @@ def test_bind_stream_never_raises() -> None:
 
 
 def test_bind_stream_is_fast_enough() -> None:
-    """The largest scheme, read with four stray labels after every true one."""
+    """The largest scheme: stray labels after every true one, and the worst list at the cap."""
     paths = sorted(_CORPUS.rglob("*.json"))
     sizes = {path.name: len(Paper.load(path.name).scheme.all_questions_flat()) for path in paths}
     assert max(sizes, key=lambda name: sizes[name]) == _LARGEST_SCHEME
     paper = _paper(_LARGEST_SCHEME)
+    clean = paper.perfect()[0]
+    assert len(clean) == 155
     noise = ["(a)", "(b)", "(i)", "(ii)", "(iii)", "1.", "2.", "3", "(c)", "(v)"]
-    worst = 0.0
-    for factor in (1, 5, 30):
-        rng = random.Random(7)
-        stream: list[Entry] = []
-        for entry in paper.perfect()[0]:
-            stream.append(entry)
-            if not entry.writing:
-                stream.extend(_label(rng.choice(noise)) for _ in range(factor - 1))
+
+    def timed(stream: list[Entry]) -> tuple[float, BoundStream]:
         items = _render(stream)
         start = time.perf_counter()
         result = bind_stream(items, paper.scheme)
         elapsed = time.perf_counter() - start
         _check_contract(paper, items, result)
-        if factor <= 5:
-            worst = max(worst, elapsed)
-        assert elapsed < 5.0, f"{factor}x: {elapsed:.2f} s"
-    assert worst < 1.0, f"{worst:.2f} s"
+        return elapsed, result
+
+    for factor in (1, 3):
+        rng = random.Random(7)
+        stream: list[Entry] = []
+        for entry in clean:
+            stream.append(entry)
+            if not entry.writing:
+                stream.extend(_label(rng.choice(noise)) for _ in range(factor - 1))
+        assert len(stream) <= MAX_STREAM_ITEMS
+        elapsed, _ = timed(stream)
+        assert elapsed < 1.0, f"{factor}x: {elapsed:.2f} s"
+    # Time grows fastest with labels that open with a number. The worst list the cap
+    # lets through: question numbers after every block, up to the cap.
+    numbers = [paper.tokens[j] for j in range(len(paper.ids)) if paper.parent[j] is None]
+    rng = random.Random(7)
+    stream = []
+    for entry in clean:
+        stream.append(entry)
+        if entry.writing:
+            stream.extend(_label(rng.choice(numbers)) for _ in range(8))
+    stream = stream[:MAX_STREAM_ITEMS]
+    assert len(stream) == MAX_STREAM_ITEMS
+    elapsed, result = timed(stream)
+    assert elapsed < 3.0, f"at the cap: {elapsed:.2f} s"
+    assert "list_too_long" not in result.unaligned_reasons.values()
+    # One item more is not read, and costs no time.
+    elapsed, result = timed([*stream, _label("1")])
+    assert elapsed < 0.2, f"over the cap: {elapsed:.2f} s"
+    assert set(result.unaligned_reasons.values()) == {"list_too_long"}

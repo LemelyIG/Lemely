@@ -7,6 +7,7 @@ reference is ``aligned.json``: one run in which every answer sits on its own que
 from __future__ import annotations
 
 import difflib
+import itertools
 import json
 import re
 from pathlib import Path
@@ -16,7 +17,7 @@ import pytest
 from pydantic import ValidationError
 
 from lemely.core.binding import SeenLabel, SeenWriting, StreamItem
-from lemely.core.label_sequence import BoundLeaf, BoundStream, bind_stream
+from lemely.core.label_sequence import BoundLeaf, BoundStream, bind_stream, parse_label
 from lemely.core.loose_schemas import MarkScheme
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -337,3 +338,17 @@ def test_no_writing_is_lost(
     set_aside = [id(u.writing) for u in result.unbound]
     assert sorted(on_leaves + set_aside) == sorted(id(w) for w in writings)
     assert len(set(on_leaves + set_aside)) == len(writings)
+
+
+@pytest.mark.parametrize("run", _RUNS)
+def test_every_label_item_of_a_recorded_run_has_a_place(
+    run: int, bound: dict[int, tuple[list[StreamItem], BoundStream]]
+) -> None:
+    # No recorded item typed as a label has text that names no step, and no two equal
+    # labels stand side by side: neither rule about such labels moves a recorded run.
+    items, result = bound[run]
+    labels = [item for item in items if isinstance(item, SeenLabel)]
+    assert all(parse_label(label.text) for label in labels)
+    assert all(a.text != b.text for a, b in itertools.pairwise(labels))
+    assert result.unplaced_labels == []
+    assert result.unaligned_reasons == {}

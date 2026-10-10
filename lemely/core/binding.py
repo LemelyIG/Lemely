@@ -86,6 +86,11 @@ UnboundReason = Literal[
     # The leaf this writing follows holds two blocks or more and the leaf beside it
     # holds none: one of the blocks may be the neighbour's, its label listed out of place.
     "neighbour_left_blank",
+    # Nothing was bound at all: the list has more items than ``bind_stream`` reads
+    # (``label_sequence.MAX_STREAM_ITEMS``), or the scheme is nested deeper than any
+    # paper is (``label_sequence.MAX_SCHEME_DEPTH``).
+    "list_too_long",
+    "scheme_too_deep",
 ]
 
 

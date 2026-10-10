@@ -81,6 +81,8 @@ def test_stream_items_round_trip_and_default_what_a_reader_may_leave_out():
         "next_label_not_seen",
         "next_label_unreadable",
         "neighbour_left_blank",
+        "list_too_long",
+        "scheme_too_deep",
     ):
         unbound = UnboundWriting.model_validate({"writing": full.model_dump(), "reason": reason})
         assert UnboundWriting.model_validate_json(unbound.model_dump_json()) == unbound
