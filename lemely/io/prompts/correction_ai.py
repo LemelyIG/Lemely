@@ -6,7 +6,7 @@ import re
 
 from lemely.core.loose_schemas import MarkSchemeMetadata, Question
 
-VERSION = "11"
+VERSION = "12"
 
 _SYSTEM_PROMPT_HEAD = """
 You are an experienced CAIE examiner marking a single exam question for a Cambridge
@@ -193,7 +193,10 @@ SCIENCE_SYLLABUS_CODES: frozenset[str] = frozenset({"0610", "0620", "0625"})
 #: corpus schemes, and the marker then made up a rule on significant figures that is the
 #: reverse of the printed one.
 #:
-#: Two departures from the published text, both on purpose. A missing unit is left alone:
+#: Three departures from the published text, all on purpose. Contradictions and lists are
+#: softer than printed, by the owner's decision of 2026-10-11: a correct statement loses its
+#: credit only to a statement that directly opposes it, not to an extra wrong one (one live
+#: run withheld a mark a teacher gave for an added, unopposed wrong item). A missing unit is left alone:
 #: the published rule withholds the final mark for it, but the paper often prints the unit
 #: on the answer line and the marker is not shown the paper. Error carried forward is tied
 #: to a wrong value the marker can see, since it cannot check one it cannot see.
@@ -206,7 +209,8 @@ SCIENCE_SYLLABUS_CODES: frozenset[str] = frozenset({"0610", "0620", "0625"})
 #: "expressed to two or more significant figures".
 #:
 #: The closing paragraph is the limit on all of it: a rule here never loosens a mark point
-#: that sets its own precision. This text has not been measured.
+#: that sets its own precision. It also says the student need not have rounded: one live
+#: run rounded 422.5 to the scheme's 420 and then withheld the mark as "not rounded".
 SCIENCE_DEFAULT_RULES = """\
 GENERAL MARKING RULES FOR CAMBRIDGE SCIENCE PAPERS (this mark scheme was stored without its \
 printed marking principles; these are the rules Cambridge publishes for its science papers, \
@@ -214,8 +218,11 @@ restated, and they are not text from this paper):
   - Keywords: credit a scientific term only where it is used correctly in its context. A \
 keyword that is present but misused earns nothing.
   - Contradictions: do not choose between contradictory statements in the same question \
-part, and give no credit for a correct statement that the same part contradicts. Wrong \
-science that is irrelevant to the question is ignored.
+part, and give no credit for a correct statement that the same part directly opposes (the \
+student also asserts the opposite of it, or gives two answers that cannot both be true where \
+one was asked for). An extra statement that is wrong but does not oppose the correct one \
+does not cancel its credit: ignore it. Wrong science that is irrelevant to the question is \
+ignored.
   - Spelling: spelling need not be correct, but a syllabus term must be clear enough that it \
 cannot be taken for a different syllabus term.
   - Error carried forward: a wrong answer from an earlier part that is then used in a \
@@ -224,10 +231,10 @@ student's working, or an earlier-part value supplied below, shows the wrong valu
 used; never assume it.
   - Lists: where a set number of responses is asked for, read the whole response as \
 continuous prose. A response the mark scheme says to ignore does not count towards the \
-number. A wrong response earns nothing and does count towards it. Give no credit for a \
-response that is contradicted elsewhere in the answer; two responses that contradict each \
-other count as one wrong response. Further responses beyond the number asked for may be \
-ignored if they contradict nothing.
+number. A wrong response earns nothing. Give no credit for a response that another \
+response in the answer directly opposes; two responses that oppose each other count as one \
+wrong response. A further wrong response that opposes nothing does not cancel a correct \
+one, and further responses beyond the number asked for are ignored if they oppose nothing.
   - Calculations: a correct final answer earns full credit for its calculation even with no \
 working or with wrong working, unless the mark scheme entry requires the working.
   - Significant figures: where the mark scheme entry does not say how many significant \
@@ -240,7 +247,10 @@ digits up to the last one that is not zero, and compare at that many significant
 at two, whichever is more. Never compare with such an answer at one significant figure. \
 Two worked cases, for a mark scheme answer of 600 Pa: 604 Pa is 600 at two significant \
 figures, so it is correct; 640 Pa is 640 at two significant figures, so it is not correct, \
-although it would round to 600 at one. A student's answer given to one significant figure \
+although it would round to 600 at one. The student does not have to have rounded the \
+answer: you do the rounding, and a longer unrounded answer that rounds to the mark scheme's \
+answer is correct. For a mark scheme answer of 350 m, 348.7 m is correct. A student's answer \
+given to one significant figure \
 is accepted only when the mark scheme's answer has one significant figure too; an answer \
 written exactly as the mark scheme's is always correct. A mark point that sets its own \
 precision, or that asks for the exact value or says cao, is never loosened by this rule. \

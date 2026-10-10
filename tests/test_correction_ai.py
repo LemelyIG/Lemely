@@ -1713,7 +1713,7 @@ class PointVerdictPromptTests(unittest.TestCase):
         """
         from lemely.io.prompts.correction_ai import VERSION
 
-        self.assertEqual(VERSION, "11")
+        self.assertEqual(VERSION, "12")
 
     def test_mark_question_forwards_equivalence_gate_without_raising(self):
         """The actual regression: before the fix this call raised TypeError
@@ -5796,14 +5796,15 @@ class ECFSubstitutionTests(unittest.TestCase):
     def test_version_pin_shows_i7_has_taken_no_bump_of_its_own(self) -> None:
         """Pins the marker prompt ``VERSION``. D19: I6/I7/I8 share one bump,
         taken later at US-018's funded sweep; I7 itself bumps nothing. The
-        value is ``"11"`` because of prompt changes with bumps of their own (the
+        value is ``"12"`` because of prompt changes with bumps of their own (the
         ``addresses_question`` section, its rewrite, the drawings section, the
         default science rules, the drawings section kept to the reader's
-        answers, then the floor in the significant-figures rule), see
+        answers, the floor in the significant-figures rule, then the rounding
+        sentence and the softer contradiction rule), see
         ``PointVerdictPromptTests.test_version_pin_shows_i6_has_taken_no_bump_of_its_own``."""
         from lemely.io.prompts.correction_ai import VERSION
 
-        self.assertEqual(VERSION, "11")
+        self.assertEqual(VERSION, "12")
 
     def test_schema_hash_unchanged(self) -> None:
         """I7 adds no schema field (``PointVerdict.ecf_applied`` and

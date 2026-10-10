@@ -229,8 +229,8 @@ def _fake_client_and_sdk(
 # --- prompt -----------------------------------------------------------------
 
 
-def test_marker_prompt_version_is_11():
-    assert VERSION == "11"
+def test_marker_prompt_version_is_12():
+    assert VERSION == "12"
 
 
 def test_marker_prompt_explains_addresses_question_and_says_it_never_changes_the_mark():
