@@ -1706,8 +1706,8 @@ UNBOUND_QUESTION_REVIEW_REASON = (
 UNBOUND_REASON_SENTENCES: dict[str, str] = {
     # The mark scheme's fault, not the scan's.
     "duplicate_id": (
-        "binding unverified: the mark scheme lists this question twice, so its answer "
-        "could not be matched to it"
+        "binding unverified: the mark scheme has more than one question under this "
+        "label, so the answer could not be matched to one"
     ),
     "undecomposable_id": (
         "binding unverified: the mark scheme names this question in a way no label on a "
@@ -2362,10 +2362,12 @@ OFF_TOPIC_REVIEW_REASON = "binding unverified: answer appears to address a diffe
 #: ``binding_status="unverified"``, with or without a binding report on the
 #: extraction (see :func:`_with_off_topic_check`): the binder
 #: bound it but doubts what it holds (writing tied by an arrow, carried over from
-#: the page before, or beside a label that was not seen), or a question-scope
-#: gate check named it.
+#: the page before, or beside a label that was not seen; or writing beside it that
+#: was set aside, so the answer may be short of it), or a question-scope gate check
+#: named it. One sentence for all of them, true whichever way the doubt points.
 UNVERIFIED_BINDING_REVIEW_REASON = (
-    "binding unverified: this answer may include writing that belongs to another question"
+    "binding unverified: this answer may include writing that belongs to another question, "
+    "or may be missing some of its own"
 )
 
 _VERDICT_SEVERITY: dict[BindingVerdict, int] = {"pass": 0, "retry": 1, "hold": 2}

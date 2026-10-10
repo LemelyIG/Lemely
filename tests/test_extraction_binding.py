@@ -1007,7 +1007,10 @@ def test_answers_the_binder_doubts_reach_a_teacher(
         correction_ai.AICorrector, "mark_question", autospec=True, side_effect=marker
     ):
         result = correct_paper(scheme, extracted, gemini_client=MagicMock())
-    reason = "binding unverified: this answer may include writing that belongs to another question"
+    reason = (
+        "binding unverified: this answer may include writing that belongs to another "
+        "question, or may be missing some of its own"
+    )
     flagged = [q for q in result.questions if reason in (q.review_reason or "")]
     assert [q.question_id for q in flagged] == doubted
     assert all(q.needs_teacher_review for q in flagged)

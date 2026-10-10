@@ -33,7 +33,8 @@ from lemely.runtime.config import MarkingOptions, PathsSettings, load_settings
 
 OFF_TOPIC_REASON = "binding unverified: answer appears to address a different question"
 UNVERIFIED_REASON = (
-    "binding unverified: this answer may include writing that belongs to another question"
+    "binding unverified: this answer may include writing that belongs to another question, "
+    "or may be missing some of its own"
 )
 UNBOUND_QUESTION_REASON = (
     "binding unverified: this question's label was not found on the scan, or the writing "
@@ -984,7 +985,11 @@ def test_recorded_extractions_from_before_the_field_existed_still_load(fixture: 
     ("why", "says", "does_not_say"),
     [
         # The scheme's fault, not the scan's.
-        ("duplicate_id", "the mark scheme lists this question twice", "scan"),
+        # Given for a question listed twice and for two questions that share one
+        # printed label: the sentence is true for both, so it says neither "twice"
+        # nor "this question" of the scheme's side.
+        ("duplicate_id", "the mark scheme has more than one question under this label", "scan"),
+        ("duplicate_id", "could not be matched to one", "twice"),
         ("undecomposable_id", "the mark scheme names this question", "was not found on the scan"),
         # Sent by the comparison of the two reads or by the order of the list: the
         # label was found.
