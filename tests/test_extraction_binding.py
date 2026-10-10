@@ -21,6 +21,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import structlog
 from PIL import Image
 
 from lemely.core.binding import SeenWriting
@@ -424,6 +425,12 @@ def test_first_read_missing_a_question_number_and_complete_second_read_uses_the_
     assert _failed(outcome) == []
     (event,) = seen[EventType.BINDING_GATE_RESULT]
     assert (event["verdict"], event["retried"], event["second_read"]) == ("pass", True, True)
+    # The report is the second read's and is clean; why the first was set aside is
+    # recorded beside it.
+    assert event["failed_checks"] == []
+    (set_aside,) = event["first_read_failed_checks"]
+    assert (set_aside["id"], set_aside["scope"], set_aside["passed"]) == ("G5", "paper", False)
+    assert set_aside["question_ids"] == ["3c", "4a", "4b_i", "4b_ii", "4b_iii"]
 
     # Alone, the first read is a paper nobody should publish: five leaves have no label.
     alone = _bind(tmp_path, scheme, _Model(first=_items(first)), second_read=False)
@@ -604,6 +611,43 @@ def test_cost_ceiling_in_either_read_propagates(
     assert raised.value is ceiling  # unchanged, not wrapped
     assert seen[EventType.SECOND_READ_FAILED] == []  # a breach is not a failed second read
     assert seen[EventType.BINDING_GATE_RESULT] == []
+
+
+def test_a_second_read_that_crashes_does_not_fail_a_good_paper(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # Not a service error: a bug somewhere in reading or binding the second reply. The
+    # first read is good, and the second read is an enhancement on it.
+    model = _Model(first=_items(_run(1)), second=RuntimeError("a bug in the second read"))
+    with (
+        _events(EventType.SECOND_READ_FAILED) as seen,
+        structlog.testing.capture_logs() as logs,
+    ):
+        outcome = _bind(tmp_path, scheme, model)
+
+    assert (outcome.report.verdict, outcome.report.retried) == ("pass", False)
+    assert _pairs(outcome) == _bound_alone(_run(1), scheme)
+    (failure,) = seen[EventType.SECOND_READ_FAILED]
+    assert failure["error_type"] == "RuntimeError"
+    assert failure["stage"] == "binding_second_read"
+    # It is a bug, so it is logged with its traceback, not only published.
+    (logged,) = [entry for entry in logs if entry["event"] == "binding_second_read_crashed"]
+    assert logged["log_level"] == "error"
+    assert isinstance(logged["exc_info"], RuntimeError)
+
+    # A crash in the first read is still a crash: there is no paper without it.
+    crash = RuntimeError("a bug in the first read")
+    with pytest.raises(RuntimeError) as raised:
+        _bind(tmp_path, scheme, _Model(first=crash, second=_items(_run(1))))
+    assert raised.value is crash
+
+
+def test_an_interrupt_during_the_second_read_is_not_swallowed(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    model = _Model(first=_items(_run(1)), second=KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        _bind(tmp_path, scheme, model)
 
 
 def test_a_failed_first_read_fails_the_paper_as_extraction_always_has(
@@ -1083,6 +1127,7 @@ def test_binding_gate_result_event_fields(tmp_path: Path, scan: Path, scheme: Ma
         "drops": {},
         "model": _READ_MODEL,
         "second_read": True,
+        "first_read_failed_checks": [],
         "report": extracted.binding.model_dump() if extracted.binding else None,
     }
     assert extracted.binding is not None
@@ -1099,6 +1144,57 @@ def test_binding_gate_result_event_fields(tmp_path: Path, scan: Path, scheme: Ma
     assert event["unbound"] == len(outcome.unbound)
     assert event["drops"] == outcome.drops == {"repaired_page": 1}
     assert event["second_read"] is False
+
+
+def test_the_gate_result_is_logged_on_the_server_without_any_answer_text(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The event has no subscriber of its own; the log line is the server's record.
+    first = _question_4_unanchored(4)
+    with structlog.testing.capture_logs() as logs:
+        outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(_run(1))))
+    (line,) = [entry for entry in logs if entry["event"] == "binding_gate_result"]
+    assert line == {
+        "event": "binding_gate_result",
+        "log_level": "info",
+        "component": "binding_gate",
+        "binder": "label",
+        "gate": "enforce",
+        "verdict": "pass",
+        "retried": True,
+        "failed_checks": [],
+        "first_read_failed_checks": ["G5"],
+        "unbound": len(outcome.unbound),
+        "unaligned": 0,
+        "inferred_numbers": [],
+        "drops": {},
+        "model": _READ_MODEL,
+        "second_read": True,
+    }
+    assert not any(answer.answer in str(line) for answer in outcome.answers if answer.answer)
+
+    # The legacy binder's gate is logged the same way, held or observed.
+    with structlog.testing.capture_logs() as logs:
+        _extract_legacy_observed(tmp_path, scheme)
+    (line,) = [entry for entry in logs if entry["event"] == "binding_gate_result"]
+    assert (line["binder"], line["gate"], line["verdict"]) == ("legacy", "observe", "retry")
+    assert line["first_read_failed_checks"] == []
+
+
+def _extract_legacy_observed(tmp: Path, scheme: MarkScheme) -> None:
+    """Gate the shifted legacy reply under observe, with no extraction around it."""
+    from lemely.io.binding.orchestrate import LegacyRead, gate_legacy
+
+    shifted = ExtractedAnswers.model_validate(
+        json.loads((_FIXTURES / "full_shift_lite.json").read_text(encoding="utf-8"))
+    )
+    gate_legacy(
+        LegacyRead(answers=shifted.answers, drops={}),
+        scheme,
+        settings=_settings(tmp, binder="legacy", gate="observe"),
+        model="gemini-legacy-under-test",
+        retry=lambda: pytest.fail("observe must not make the retry call"),
+    )
 
 
 def test_legacy_binder_with_gate_off_is_unchanged(

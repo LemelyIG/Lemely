@@ -60,6 +60,14 @@ from lemely.runtime.events import Event, EventType, bus, current_run_id
 # a blank line, terminated by a literal ``[DONE]`` payload.
 _DONE_FRAME = "data: [DONE]\n\n"
 
+#: Bus events that are for the server and are never streamed to a browser. The
+#: relay below forwards everything else a run publishes, verbatim. The binding
+#: gate's result carries the whole binding report (check ids, counts, question ids,
+#: the gate's sentences about the script): it is written to the server log where it
+#: is published (``lemely.io.binding.orchestrate``) and is not for the student
+#: whose paper it is about.
+SERVER_ONLY_EVENTS: frozenset[EventType] = frozenset({EventType.BINDING_GATE_RESULT})
+
 # Sentinels distinguishing "stream finished" and "poll timed out" from a real event.
 _DONE: object = object()
 _EMPTY: object = object()
@@ -111,8 +119,9 @@ async def bus_event_stream(
 
     Subscribes to a queue scoped to ``run_id`` (or a freshly minted one) *before*
     starting ``run`` so no early events are missed, then yields one SSE frame per
-    published event until the ``None`` sentinel (``publish_done``) arrives,
-    finishing with a ``[DONE]`` frame. ``current_run_id`` is set to the same
+    published event (bar those in :data:`SERVER_ONLY_EVENTS`, which never leave the
+    server) until the ``None`` sentinel (``publish_done``) arrives, finishing with a
+    ``[DONE]`` frame. ``current_run_id`` is set to the same
     scope at the top of the background thread, for the lifetime of ``run`` —
     see the module docstring for what that does and does not cover.
 
@@ -162,6 +171,8 @@ async def bus_event_stream(
                 if not worker.is_alive():
                     break
                 continue
+            if event.type in SERVER_ONLY_EVENTS:  # type: ignore[attr-defined]
+                continue
             yield _format_frame(event)  # type: ignore[arg-type]
         # Drain anything queued between the last poll and the end of the loop
         # above — either the real sentinel, or (the liveness path) whatever the
@@ -172,6 +183,8 @@ async def bus_event_stream(
             trailing = await anyio.to_thread.run_sync(_drain_nowait, q)
             if trailing is None:
                 break
+            if trailing.type in SERVER_ONLY_EVENTS:
+                continue
             yield _format_frame(trailing)
         yield _DONE_FRAME
     finally:

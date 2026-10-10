@@ -45,6 +45,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import structlog
+
 from lemely.core.binding import BindingCheck, BindingReport
 from lemely.core.binding_gate import (
     GateThresholds,
@@ -197,7 +199,7 @@ def _question_scope_ids(checks: list[BindingCheck]) -> frozenset[str]:
     )
 
 
-def _publish_failed_read(exc: LemelyError, stage: str) -> None:
+def _publish_failed_read(exc: Exception, stage: str) -> None:
     bus.publish(
         EventType.SECOND_READ_FAILED,
         error=str(exc),
@@ -216,28 +218,46 @@ def _publish_result(
     inferred_numbers: list[str],
     drops: dict[str, int],
     second_read: bool,
+    first_read_failed: list[BindingCheck] | None = None,
 ) -> None:
-    """Publish what the gate decided.
+    """Publish and log what the gate decided.
 
     ``enforced`` is the report an enforcing gate returns: its verdict, ``retried`` and
     model are published as fields, and the whole of it as ``report``, which under
     ``gate="observe"`` is the only place it goes. ``returned_checks`` are the checks of
-    the read whose answers go on (the first read, under observe), and the counts are
-    that read's.
+    the read whose answers go on. ``unbound`` counts the writing kept with no question
+    and ``unaligned`` the leaves sent to a teacher with no answer. ``first_read_failed``
+    is what failed at paper scope on a first read that the second read replaced, which
+    the report (the second read's) does not show.
+
+    The event has no subscriber of its own and is never sent to a browser
+    (``lemely.web.sse``), so the same fields are written as one ``binding_gate_result``
+    log line: the server's record of the decision. The line carries check ids and
+    counts, never a check's sentence or any answer text.
     """
+    set_aside = list(first_read_failed or [])
+    fields: dict[str, object] = {
+        "binder": enforced.binder,
+        "gate": settings.gate,
+        "verdict": enforced.verdict,
+        "retried": enforced.retried,
+        "failed_checks": list(dict.fromkeys(c.id for c in returned_checks if not c.passed)),
+        "unbound": unbound,
+        "unaligned": unaligned,
+        "inferred_numbers": list(inferred_numbers),
+        "drops": dict(drops),
+        "model": enforced.model,
+        "second_read": second_read,
+    }
+    structlog.get_logger().bind(component="binding_gate").info(
+        "binding_gate_result",
+        **fields,
+        first_read_failed_checks=list(dict.fromkeys(c.id for c in set_aside)),
+    )
     bus.publish(
         EventType.BINDING_GATE_RESULT,
-        binder=enforced.binder,
-        gate=settings.gate,
-        verdict=enforced.verdict,
-        retried=enforced.retried,
-        failed_checks=list(dict.fromkeys(c.id for c in returned_checks if not c.passed)),
-        unbound=unbound,
-        unaligned=unaligned,
-        inferred_numbers=list(inferred_numbers),
-        drops=dict(drops),
-        model=enforced.model,
-        second_read=second_read,
+        **fields,
+        first_read_failed_checks=[c.model_dump() for c in set_aside],
         report=enforced.model_dump(),
     )
 
@@ -251,9 +271,13 @@ def _read_both(
     carry the run id. Both are waited for before anything is raised, so that a
     cost-ceiling breach in one is never hidden behind another error in the other: the
     breach stops the run and always wins. Otherwise a failed first read fails the
-    paper, as a failed extraction call always has, and a failed second read (any
-    ``LemelyError``) only costs the comparison. Both calls have started by the time
-    either fails, so a breach or a failure in one does not save the cost of the other.
+    paper, as a failed extraction call always has, and a failed second read only
+    costs the comparison, whatever it failed with: a service error is published as
+    ``SECOND_READ_FAILED``, and so is a crash (a bug in reading or binding the second
+    reply), which is logged with its traceback as well. A good first read is never
+    thrown away for the second. ``KeyboardInterrupt`` and ``SystemExit`` are not
+    caught. Both calls have started by the time either fails, so a breach or a failure
+    in one does not save the cost of the other.
     """
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [
@@ -279,7 +303,9 @@ def _read_both(
     if second_error is None:
         return first_read, results[1]
     if not isinstance(second_error, LemelyError):
-        raise second_error
+        structlog.get_logger().bind(component="binding_gate").error(
+            "binding_second_read_crashed", exc_info=second_error
+        )
     _publish_failed_read(second_error, SECOND_READ_TASK_TAG)
     return first_read, None
 
@@ -437,6 +463,11 @@ def run_binding(
         inferred_numbers=chosen.inferred_numbers,
         drops=chosen.drops,
         second_read=second is not None,
+        first_read_failed=(
+            [c for c in first_checks if not c.passed and c.scope == "paper"]
+            if chosen is not first
+            else []
+        ),
     )
     return BindingOutcome(
         answers=_with_statuses(chosen.answers, unverified),
