@@ -1489,6 +1489,32 @@ def test_a_part_label_the_question_does_not_have_breaks_the_bracket(
     assert _on(bound) == {"9": ["9"]}
 
 
+def test_known_gap_a_later_label_stands_in_and_no_foreign_label_follows(
+    scheme_41: MarkScheme,
+) -> None:
+    """What is left of class C after the foreign-label rule; not ruled on.
+
+    5(b), the number 6 and 6(a) are missed (two misses where the label is "6(a)").
+    The "(b)" that follows is 6's and is the label the paper prints after 5a_iii.
+    Question 6 has no part that question 5 lacks, so no foreign label follows, and
+    5a_iii keeps three blocks. What the list still shows: question 6 has no anchor
+    and nothing separates question 5 from it. Rate: 2 of 15,000 random trials on
+    the labelling where the first part carries the number; none on the other two.
+    """
+    scheme = _scheme(
+        scheme_41,
+        {
+            "5": {"5a": {"5a_i": {}, "5a_ii": {}, "5a_iii": {}}, "5b": {}},
+            "6": {"6a": {}, "6b": {}},
+            "7": {"7a": {}},
+        },
+    )
+    stream = ["5(a)(i)", "=5a_i", "(ii)", "=5a_ii", "(iii)", "=5a_iii", "=5b", "=6a", "(b)", "=6b"]
+    bound = bind_stream(_items(*stream, "7(a)", "=7a"), scheme)
+    assert _on(bound)["5a_iii"] == ["5a_iii", "5b", "6a"]
+    assert ("6b", "next_label_not_seen") in _unbound(bound)
+
+
 def test_a_stray_part_label_breaks_no_bracket_when_the_next_question_has_its_anchor(
     scheme_41: MarkScheme,
 ) -> None:
