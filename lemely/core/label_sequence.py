@@ -1162,7 +1162,12 @@ def _open_leaves(
 
 
 def _beside_a_blank(
-    paper: _Paper, items: Sequence[StreamItem], node_at: dict[int, int | None]
+    paper: _Paper,
+    items: Sequence[StreamItem],
+    events: list[int],
+    nodes: list[int | None],
+    *,
+    late: bool = True,
 ) -> tuple[set[int], set[int]]:
     """D10: leaves holding two blocks or more next to a label holding none, and the latter.
 
@@ -1170,8 +1175,12 @@ def _beside_a_blank(
     when a label is listed a little before or after its place: one block is the blank
     neighbour's. Nothing in the list says which, so neither leaf is given writing. The
     blank neighbour may be a label no question accounts for (a misread "(i)").
+
+    ``events`` are the item indexes of the labels the blocks are counted between, and
+    ``nodes`` what each names. ``_read`` counts twice: between all label items, and
+    between the labels that name steps only. Without ``late`` only a label listed
+    before its place is looked for: the blank label first, then the two blocks.
     """
-    events = sorted(node_at)
     bounds = [*events, len(items)]
     blocks = [
         sum(isinstance(item, SeenWriting) for item in items[bounds[k] : bounds[k + 1]])
@@ -1181,7 +1190,7 @@ def _beside_a_blank(
     doubled: set[int] = set()
     blank: set[int] = set()
     for k in range(len(events) - 1):
-        first, second = node_at[events[k]], node_at[events[k + 1]]
+        first, second = nodes[k], nodes[k + 1]
         if second is None or first == second or paper.nodes[second].leaf_id is None:
             continue
         if first is None:
@@ -1191,7 +1200,7 @@ def _beside_a_blank(
             if blocks[k] == 0 and blocks[k + 1] >= 2:
                 blank.add(first)
                 doubled.add(second)
-            elif blocks[k] >= 2 and blocks[k + 1] == 0:
+            elif late and blocks[k] >= 2 and blocks[k + 1] == 0:
                 doubled.add(first)
                 blank.add(second)
     return doubled, blank
@@ -1230,7 +1239,24 @@ def _read(
     }
     opened, doubted, unreadable = _open_leaves(paper, alignment, labels, written_under)
     placed = {position: chain[-1] for position, chain in alignment.placed.items()}
-    doubled, blank = _beside_a_blank(paper, items, _node_at(items, labels, placed))
+    # D10, counted twice. A label whose text names no step is a label like any other
+    # with no place (it may be the blank neighbour). It is also a barrier that may
+    # stand where a true label came out unreadable. "(i) (ii) writing [unreadable]
+    # writing" is then "(i) (ii) writing writing" with the true "(ii)" in the middle:
+    # the first block is 1(a)(i)'s, under a label listed before its place. So blocks
+    # are counted between all label items, and again between the labels that name
+    # steps, where writing under an unreadable label counts with the leaf before it.
+    # The second count looks only for that shape, the blank label first: where the
+    # blank label comes after ("(i) writing [unreadable] writing (ii)"), the barrier
+    # already keeps the second block off 1(a)(i), and nothing is bound wrongly.
+    node_at = _node_at(items, labels, placed)
+    every = sorted(node_at)
+    doubled, blank = _beside_a_blank(paper, items, every, [node_at[index] for index in every])
+    named = [label.index for label in labels]
+    again = _beside_a_blank(
+        paper, items, named, [placed.get(k) for k in range(len(labels))], late=False
+    )
+    doubled, blank = doubled | again[0], blank | again[1]
     return _Reading(
         placed,
         frozenset(alignment.inferred),

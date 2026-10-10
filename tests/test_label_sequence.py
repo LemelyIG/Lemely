@@ -1314,6 +1314,69 @@ def test_writing_under_a_label_with_no_place_unsettles_the_leaf_before(
     assert _on(bound)["1a_i"] == ["1a_i"]
 
 
+def test_writing_under_an_unreadable_label_counts_with_the_leaf_before_it_for_d10(
+    scheme_41: MarkScheme,
+) -> None:
+    # "(ii)" is listed before 1(a)(i)'s writing, and where "(ii)" really stands the
+    # reader lists something unreadable, "ii/". With that label simply missed the two
+    # blocks sit together under "(ii)" beside a blank "(i)", and D10 binds neither. The
+    # unreadable label is a barrier between them, but it must not hide the second
+    # block from D10: what stands under it is counted with the leaf before it.
+    stream = _clean(scheme_41)
+    at = stream.index("=1a_i")
+    stream[at : at + 3] = ["(ii)", "=1a_i", "ii/", "=1a_ii"]
+    assert stream[:8] == ["1", "(a)", "(i)", "(ii)", "=1a_i", "ii/", "=1a_ii", "(b)"]
+    assert parse_label("ii/") == []
+    for items in (_items(*stream), _by_hand(_items(*stream))):
+        bound = bind_stream(items, scheme_41)
+        _own_or_absent(bound)
+        assert not _on(bound).get("1a_ii")
+        assert _unbound(bound) == [
+            ("1a_i", "neighbour_left_blank"),
+            ("1a_ii", "after_unplaced_label"),
+        ]
+        assert bound.unaligned_reasons == {
+            "1a_i": "neighbour_left_blank",
+            "1a_ii": "neighbour_left_blank",
+        }
+        assert _on(bound)["1b"] == ["1b"]
+    # The price, where the unreadable label is a heading and no label is out of place:
+    # 2(a)(i) left blank, and a block continued from elsewhere under 2(a)(ii). The
+    # list has the same shape, and 2(a)(ii) is not bound.
+    stream = [part for part in _clean(scheme_41) if part != "=2a_i"]
+    stream = _cut(stream, after={"=2a_ii": ["continued", "=more"]})
+    bound = bind_stream(_items(*stream), scheme_41)
+    assert _unbound(bound) == [
+        ("2a_ii", "neighbour_left_blank"),
+        ("more", "after_unplaced_label"),
+    ]
+    # The other way round costs nothing: the heading under 2(a)(i), and 2(a)(ii) blank.
+    # The barrier keeps the second block off 2(a)(i), and no block is on a wrong side.
+    stream = [part for part in _clean(scheme_41) if part != "=2a_ii"]
+    stream = _cut(stream, after={"=2a_i": ["continued", "=more"]})
+    bound = bind_stream(_items(*stream), scheme_41)
+    assert _unbound(bound) == [("more", "after_unplaced_label")]
+    assert _on(bound)["2a_i"] == ["2a_i"]
+    assert _on(bound)["2a_ii"] == []
+    # The first count still stands: an unreadable label with nothing under it is a
+    # blank neighbour. Here it is the true "(i)", and its writing is listed after "(ii)".
+    stream = _clean(scheme_41)
+    at = stream.index("=1a_i")
+    stream[at - 1 : at + 2] = ["i/", "(ii)", "=1a_i"]
+    assert stream[:7] == ["1", "(a)", "i/", "(ii)", "=1a_i", "=1a_ii", "(b)"]
+    bound = bind_stream(_items(*stream), scheme_41)
+    _own_or_absent(bound)
+    assert [u for u in _unbound(bound) if u[1] == "neighbour_left_blank"] == [
+        ("1a_i", "neighbour_left_blank"),
+        ("1a_ii", "neighbour_left_blank"),
+    ]
+    # With 2(a)(ii) answered the heading costs only what is written under it.
+    stream = _cut(_clean(scheme_41), after={"=2a_i": ["continued", "=more"]})
+    bound = bind_stream(_items(*stream), scheme_41)
+    assert _unbound(bound) == [("more", "after_unplaced_label")]
+    assert bound.unaligned_ids == []
+
+
 def test_known_limit_a_label_listed_out_of_place_beside_a_blank_leaf(
     scheme_41: MarkScheme,
 ) -> None:
@@ -1518,8 +1581,10 @@ def test_known_limit_a_question_number_that_names_the_wrong_question(
     The list reads 1, w, w, 2, w, 4: question 1 answered in two blocks, 2 answered, 3
     not listed. Question 2's writing is on question 1, and question 3's would be on 2
     if the unseen 3 did not leave question 2 unbracketed. With parts, a number read as
-    its neighbour while the neighbour's own number is missed goes wrong in 90 of 150
-    trials. This test pins the limit; it does not approve of it.
+    its neighbour while the neighbour's own number is missed goes wrong in 82 of 150
+    trials on printed labels and in 90 of 150 on labels reported as handwritten (the
+    tail of class C stops eight of them). This test pins the limit; it does not
+    approve of it.
     """
     scheme = _scheme(scheme_41, {str(n): {} for n in range(1, 6)})
     bound = bind_stream(_items("1", "=1", "=2", "2", "=3", "4", "=4", "5", "=5"), scheme)
