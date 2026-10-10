@@ -1186,6 +1186,56 @@ def test_only_items_that_may_have_been_writing_count_as_lost(
     assert "a late note" in [w.answer for w in outcome.unbound]
 
 
+def _with_writing_under_text(items: list[Any], *indexes: int) -> list[Any]:
+    """``items`` with the answer items at ``indexes`` returned the way the reader slips.
+
+    The writing is under ``text`` and there is no ``answer``: the shape of 8 answer
+    items in 6 of 18 stored readings of this script.
+    """
+    out = copy.deepcopy(items)
+    for index in indexes:
+        assert out[index]["type"] == "answer" and out[index]["answer"].strip()
+        out[index]["text"] = out[index].pop("answer")
+    return out
+
+
+def test_writing_the_reader_put_under_text_binds_and_costs_the_paper_nothing(
+    tmp_path: Path, scan: Path, scheme: MarkScheme
+) -> None:
+    # In the stored runs this slip cost 3(a) in one (the item was dropped, so the leaf
+    # had writing in one read only and went to review unmarked) and the body of
+    # 4(b)(i) in another (the leaf was marked on its last sentence alone).
+    clean = _run(1)
+    (at_3a,) = _blocks_under(clean, "(a)", 6)
+    (body_4bi,) = _blocks_under(clean, "(i)", 9)
+    slipped = _with_writing_under_text(clean, at_3a, body_4bi)
+    model = _Model(first=_items(slipped), second=_items(clean))
+    with _events(EventType.BINDING_GATE_RESULT) as seen:
+        extracted = _extract(tmp_path, scan, scheme, model)
+
+    both_clean = _Model(first=_items(clean), second=_items(clean))
+    reference = _extract(tmp_path / "ref", scan, scheme, both_clean)
+    assert extracted.binding is not None and extracted.binding.verdict == "pass"
+    assert not extracted.binding.retried  # the first read is the one returned
+    # Every leaf holds what it holds when the reader makes no slip: 3(a) is bound and
+    # marked, and 4(b)(i) is whole.
+    assert _pairs(extracted) == _pairs(reference)
+    by_id = {a.question_id: a for a in extracted.answers}
+    assert by_id["3a"].answer == clean[at_3a]["answer"]
+    assert clean[body_4bi]["answer"] in by_id["4b_i"].answer
+    assert extracted.unbound_question_ids == reference.unbound_question_ids == []
+    assert [a.question_id for a in extracted.answers if a.binding_status == "unverified"] == [
+        a.question_id for a in reference.answers if a.binding_status == "unverified"
+    ]
+    # The repair is on the record and on the log line, and is not a lost item.
+    assert extracted.answer_drops == {"stream_answer_under_text": 2}
+    (event,) = seen[EventType.BINDING_GATE_RESULT]
+    assert event["drops"] == {"answer_under_text": 2}
+    assert "answer_under_text" not in LOST_ITEM_REASONS
+    g5 = next(c for c in extracted.binding.checks if c.id == "G5")
+    assert g5.passed
+
+
 def _with_1c_listed_first(items: list[Any]) -> list[Any]:
     """Recorded reply 1 with the two blocks of 1(c) listed before their labels."""
     out = list(items)

@@ -583,6 +583,11 @@ def _question_one(**spoil: Any) -> list[dict[str, Any]]:
     ]
 
 
+def read_item_keys(spoil: dict[str, Any]) -> set[str]:
+    """The fields the spoiled answer item of ``_question_one`` is sent with."""
+    return set(_question_one(**spoil)[5])
+
+
 def _bind(read: StreamRead) -> tuple[BoundStream, BoundRead]:
     bound = bind_stream(read.items, _scheme())
     return bound, to_bound_read(bound, page_count=19, drops=read.drops)
@@ -590,6 +595,98 @@ def _bind(read: StreamRead) -> tuple[BoundStream, BoundRead]:
 
 def _blank_leaves(bound: BoundStream) -> list[str]:
     return [leaf.question_id for leaf in bound.leaves if not leaf.writings]
+
+
+def _under_text(writing: Any, **extra: Any) -> dict[str, Any]:
+    """What spoils 1(a)(ii)'s answer item the way the reader sometimes returns one.
+
+    The shape is that of the stored replies: every field of an answer but ``answer``,
+    and ``text``, the field a label uses, holding what the student wrote.
+    """
+    return {"answer": {"text": writing, **extra}, "answer_without": ("answer",)}
+
+
+@pytest.mark.parametrize("answer", ["absent", None, "", "   "])
+def test_an_answer_item_with_its_writing_under_text_is_read_as_that_answer(
+    tmp_path: Path, answer: Any
+) -> None:
+    # The reply schema is flat, so ``text`` is a valid field on an answer item, and the
+    # reader now and then fills it and leaves ``answer`` empty. That is writing it saw.
+    slipped = _under_text("20 cm")
+    if answer != "absent":
+        slipped = {"answer": {"text": "20 cm", "answer": answer}}
+    read, _, _ = _read(tmp_path, _question_one(**slipped), page_count=19)
+    assert ("answer" in read_item_keys(slipped)) == (answer != "absent")
+
+    assert read.drops == {"answer_under_text": 1}  # counted, so the rate stays visible
+    assert len(read.items) == 16
+    assert read.items[5] == SeenWriting(
+        page=2,
+        answer="20 cm",
+        working_out=None,
+        confidence=0.9,
+        box=[100, 100, 200, 600],
+        placed_by="position",  # as the reader placed it: the repair costs it nothing
+    )
+    bound, bound_read = _bind(read)
+    assert {a.question_id: a.answer for a in bound_read.answers}["1a_ii"] == "20 cm"
+    assert bound_read.unbound == [] and bound_read.unaligned_ids[:1] != ["1a_ii"]
+    assert bound_read.drops == {"answer_under_text": 1}
+
+
+def test_writing_under_text_keeps_the_working_and_the_placement_beside_it(tmp_path: Path) -> None:
+    slipped = _under_text("20 cm", working_out="63 - 43", placed_by="arrow", confidence=0.7)
+    read, _, _ = _read(tmp_path, _question_one(**slipped), page_count=19)
+    assert read.drops == {"answer_under_text": 1}
+    assert read.items[5] == SeenWriting(
+        page=2,
+        answer="20 cm",
+        working_out="63 - 43",
+        confidence=0.7,
+        box=[100, 100, 200, 600],
+        placed_by="arrow",
+    )
+
+
+def test_text_on_an_answer_item_that_has_an_answer_is_not_read(tmp_path: Path) -> None:
+    # Some replies carry the other type's fields on every item. ``answer`` is the
+    # answer; ``text`` beside it is not added to it and nothing is counted.
+    both = {**_answer("20 cm", page=2), "text": "(ii)", "kind": "printed"}
+    read, _, _ = _read(tmp_path, _question_one(answer=both), page_count=19)
+    assert read.drops == {}
+    assert read.items[5] == _writing("20 cm", page=2, box=[100, 100, 200, 600])
+    # Working alone is writing too: ``text`` is read only when there is no answer, and
+    # then it is the answer and the working stays the working.
+    working_only = {**_answer(None, page=2, working_out="63 - 43"), "text": "  "}
+    read, _, _ = _read(tmp_path / "working", _question_one(answer=working_only), page_count=19)
+    assert read.drops == {}
+    assert (read.items[5].answer, read.items[5].working_out) == ("", "63 - 43")
+
+
+def test_text_that_is_not_text_on_an_empty_answer_item_is_kept_as_uncertain(
+    tmp_path: Path,
+) -> None:
+    # The reader reported something there. It cannot be read, so it is trusted to no
+    # leaf, and the leaf is not taken for one left blank.
+    read, _, _ = _read(tmp_path, _question_one(**_under_text(["20", "cm"])), page_count=19)
+    assert read.drops == {"unreadable_answer": 1}
+    assert read.items[5].placed_by == "uncertain" and read.items[5].answer == ""
+    _bound, bound_read = _bind(read)
+    assert "1a_ii" not in {a.question_id for a in bound_read.answers}
+    assert "1a_ii" in bound_read.unaligned_ids
+
+
+def test_a_label_item_is_read_as_before_whatever_else_it_carries(tmp_path: Path) -> None:
+    # A label with an ``answer`` beside its ``text`` is still that label, and a label
+    # with no ``text`` is still dropped: its ``answer`` is not taken for its text.
+    with_answer = {"label": {"answer": "20 cm", "working_out": "x", "placed_by": "position"}}
+    read, _, _ = _read(tmp_path, _question_one(**with_answer), page_count=19)
+    assert read.drops == {}
+    assert read.items[4] == SeenLabel(page=2, text="(ii)", kind="printed", box=[10, 10, 30, 40])
+    no_text = {"label": {"text": None, "answer": "(ii)"}}
+    read, _, _ = _read(tmp_path / "no-text", _question_one(**no_text), page_count=19)
+    assert read.drops == {"empty_label": 1}
+    assert len(read.items) == 15
 
 
 def test_the_clean_first_question_binds_whole(tmp_path: Path) -> None:

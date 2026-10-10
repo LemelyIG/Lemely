@@ -111,7 +111,8 @@ class StreamRead:
     ``drops`` counts, by reason, every reply item that was left out or changed on the
     way in. Left out: ``malformed_item`` (not an object), ``unknown_type``,
     ``empty_label``, ``empty_answer`` (the reader reported no writing). Kept and
-    repaired: ``repaired_page``, ``unreadable_answer``.
+    repaired: ``repaired_page``, ``unreadable_answer``, ``answer_under_text`` (an
+    answer item whose writing came under ``text``; see ``_parse_answer``).
     """
 
     items: list[StreamItem]
@@ -201,8 +202,23 @@ def _parse_label(
 def _parse_answer(
     raw: dict[object, object], page: int, box: list[int] | None, *, page_repaired: bool
 ) -> tuple[SeenWriting | None, list[str]]:
+    """An answer item as a block of writing, or ``None`` when it reports no writing.
+
+    The reply's item schema is flat: ``text``, the field a label's text goes in, is a
+    valid field on an answer item too, and the reader now and then puts an answer's
+    writing there and leaves ``answer`` empty (8 answer items in 6 of 18 stored
+    readings of one script). That is writing the reader saw, so an answer item with no
+    ``answer`` takes its ``text`` as the answer, placed as the reader placed it, and is
+    counted as ``answer_under_text``: a repair, not an item lost, so it fails no paper.
+    ``text`` beside an ``answer`` is not read: some replies carry both types' fields on
+    every item, and the answer is then in ``answer``.
+    """
     answer, answer_unread = _read_text(raw.get("answer"))
     working_out, working_unread = _read_text(raw.get("working_out"))
+    under_text = False
+    if answer is None and not answer_unread:
+        answer, answer_unread = _read_text(raw.get("text"))
+        under_text = answer is not None
     unreadable = answer_unread or working_unread
     if answer is None and working_out is None and not unreadable:
         return None, ["empty_answer"]  # the reader reported no writing here
@@ -225,7 +241,10 @@ def _parse_answer(
             box=box,
             placed_by=placed_by,
         ),
-        ["unreadable_answer"] if unreadable else [],
+        [
+            *(["unreadable_answer"] if unreadable else []),
+            *(["answer_under_text"] if under_text else []),
+        ],
     )
 
 
@@ -235,7 +254,8 @@ def _parse_item(
     """One reply item as a stream item, and every reason it was dropped or repaired.
 
     The item is read by its ``type``. Fields of the other type, and any field the reader
-    added, are not read. An item that is recognisably a label or an answer is kept
+    added, are not read, with one exception: the ``text`` of an answer item that has no
+    ``answer`` (``_parse_answer``). An item that is recognisably a label or an answer is kept
     whatever its ``page``: order is the binding evidence, so a bad page takes
     ``last_page`` and loses its box, which means nothing on a guessed page.
     """
