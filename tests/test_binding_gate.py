@@ -992,6 +992,27 @@ def test_g9_presence_counts_only_leaves_both_reads_aligned() -> None:
     assert _g9_presence(without_7, _all(), first_unaligned=["7"]).passed
 
 
+def test_g9_a_leaf_blank_in_one_read_and_unaligned_in_the_other_is_named() -> None:
+    without_7 = [qid for qid in _all() if qid != "7"]
+    # Neither read has an answer for 7: one saw its label with nothing under it, the
+    # other found no label for it and so could bind nothing to it. That is not two
+    # reads agreeing on a blank.
+    for unaligned in ({"first_unaligned": ["7"]}, {"second_unaligned": ["7"]}):
+        check = _g9_presence(without_7, without_7, **unaligned)
+        assert (check.passed, check.scope, check.question_ids) == (False, "question", ["7"])
+        assert check.detail == (
+            "1 question had no writing in one reading of the scan and no label lined up "
+            "in the other: 7."
+        )
+    # Unaligned in both: neither read saw it at all, and G5 reports that for each.
+    assert _g9_presence(without_7, without_7, first_unaligned=["7"], second_unaligned=["7"]).passed
+    # It never holds a paper by itself, however many there are.
+    many = [qid for qid in _all() if qid not in {"1", "2", "3", "4", "5", "6"}]
+    check = _g9_presence(many, many, second_unaligned=["1", "2", "3", "4", "5", "6"])
+    assert (check.passed, check.scope) == (False, "question")
+    assert check.question_ids == ["1", "2", "3", "4", "5", "6"]
+
+
 def test_g9_presence_is_not_judged_without_alignment() -> None:
     # The legacy extractor reports no labels: a missing answer may be a blank or a
     # miss, so nothing can be concluded from one read having it and the other not.

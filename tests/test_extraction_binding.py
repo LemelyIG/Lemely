@@ -453,6 +453,81 @@ def _without_items(items: list[Any], *indexes: int) -> list[Any]:
     return [item for index, item in enumerate(items) if index not in indexes]
 
 
+def _blocks_under(items: list[Any], text: str, page: int) -> list[int]:
+    """Indexes of the writing listed after the label ``text`` on ``page``, up to the next label."""
+    start = next(
+        index
+        for index, item in enumerate(items)
+        if item.get("type") == "label" and item.get("text") == text and item.get("page") == page
+    )
+    found: list[int] = []
+    for index in range(start + 1, len(items)):
+        if items[index].get("type") == "label":
+            break
+        found.append(index)
+    assert found, f"nothing is listed under {text!r} on page {page}"
+    return found
+
+
+@pytest.mark.parametrize("returned", ["the read that saw the label", "the read that missed it"])
+def test_a_leaf_blank_in_one_read_and_unbound_in_the_other_goes_to_review(
+    tmp_path: Path, scan: Path, scheme: MarkScheme, returned: str
+) -> None:
+    # Two different misses on 4(b)(i). One read lists its label and reports nothing
+    # under it. The other reports the writing and misses the label, so it can bind the
+    # writing to no leaf. Neither read has an answer for it, and it is not a blank.
+    base = _run(4)
+    label_seen_nothing_under = _without_items(base, *_blocks_under(base, "(i)", 9))
+    writing_seen_label_missed = _without_label(base, "(i)", 9)
+    reads = [label_seen_nothing_under, writing_seen_label_missed]
+    if returned == "the read that missed it":
+        reads.reverse()
+    with _events(EventType.BINDING_GATE_RESULT) as seen:
+        extracted = _extract(
+            tmp_path, scan, scheme, _Model(first=_items(reads[0]), second=_items(reads[1]))
+        )
+
+    report = extracted.binding
+    assert report is not None and (report.verdict, report.retried) == ("pass", False)
+    assert "4b_i" not in {a.question_id for a in extracted.answers}
+    assert extracted.unbound_question_ids == ["4b_i"]
+    # Why it was sent is on the report: G9 names it, whichever read is the one used.
+    g9 = report.checks[-1]
+    assert (g9.id, g9.passed, g9.scope) == ("G9", False, "question")
+    assert "4b_i" in g9.question_ids
+    assert "no writing in one reading of the scan and no label lined up in the other" in g9.detail
+    # What the student wrote there is kept, as writing with no question.
+    assert any("thermal" in w.answer for w in extracted.unbound_answers)
+    (event,) = seen[EventType.BINDING_GATE_RESULT]
+    assert event["unaligned"] == 1 and event["unbound"] == len(extracted.unbound_answers)
+
+    marker = _Marker()
+    with patch.object(
+        correction_ai.AICorrector, "mark_question", autospec=True, side_effect=marker
+    ):
+        result = correct_paper(scheme, extracted, gemini_client=MagicMock())
+    row = next(q for q in result.questions if q.question_id == "4b_i")
+    assert row.marker_source == "dropped" and row.needs_teacher_review  # not "blank"
+    assert "4b_i" not in marker.asked
+
+
+def test_an_answer_whose_label_the_other_read_missed_stays_as_bound(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The read that is used has 5(a) answered under its label. The other read missed
+    # that label: it could bind nothing to 5(a), which says nothing against the answer.
+    second = _without_label(_run(1), "(a)", 10)
+    with _events(EventType.BINDING_GATE_RESULT) as seen:
+        outcome = _bind(tmp_path, scheme, _Model(first=_items(_run(1)), second=_items(second)))
+    alone = _bind(tmp_path, scheme, _Model(first=_items(_run(1))), second_read=False)
+    assert outcome.report.verdict == "pass" and outcome.report.checks[-1].passed
+    assert outcome.answers == alone.answers
+    assert next(a for a in outcome.answers if a.question_id == "5a").binding_status == "verified"
+    assert outcome.review_only_ids == [] and outcome.unbound == alone.unbound
+    (event,) = seen[EventType.BINDING_GATE_RESULT]
+    assert (event["unaligned"], event["failed_checks"]) == (0, [])
+
+
 def test_a_leaf_only_the_other_read_answered_goes_to_review_never_blank(
     tmp_path: Path, scan: Path, scheme: MarkScheme
 ) -> None:

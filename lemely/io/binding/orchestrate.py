@@ -21,7 +21,10 @@ that has writing in exactly one of the two reads: if the read that goes on has t
 writing it is kept and doubted (``unverified``); if it has none, the leaf is not a
 blank, it goes to a teacher and the other read's writing for it is kept as unbound.
 A leaf in a group whose writing was listed before its labels: doubted if answered,
-to a teacher if not. And every leaf a failed question-scope check names: doubted.
+to a teacher if not. A leaf with nothing under its label in the read that goes on,
+for which the other read found no label: to a teacher, since the other reader may
+have seen its writing and had nowhere to put it. And every leaf a failed
+question-scope check names: doubted.
 
 With one read (the second switched off, or failed), a paper-scope failure is a hold.
 The checks see part of what can go wrong: a pass means nothing was found, not that the
@@ -58,6 +61,7 @@ from lemely.core.binding_gate import (
     check_unknown_ids,
     presence_disagreements,
     suspect_group_leaves,
+    unread_in_one_read,
     verdict,
 )
 from lemely.core.label_sequence import bind_stream
@@ -199,10 +203,23 @@ def _question_scope_ids(checks: list[BindingCheck]) -> frozenset[str]:
     )
 
 
+#: What ``SECOND_READ_FAILED`` says when the second read crashed with something that
+#: is not a ``LemelyError``. The event is streamed to the student's browser
+#: (``lemely.web.sse``), and the text of an arbitrary exception is internal: it goes
+#: to the server log with its traceback and nowhere else.
+SECOND_READ_CRASH_MESSAGE = "the second read of the script failed unexpectedly"
+
+
 def _publish_failed_read(exc: Exception, stage: str) -> None:
+    """Publish that a second read or a retry failed and the paper goes on without it.
+
+    A ``LemelyError`` is a service or parsing failure and its message is published, as
+    the text second reader's is. Anything else is a bug: a fixed sentence is published
+    in place of its text.
+    """
     bus.publish(
         EventType.SECOND_READ_FAILED,
-        error=str(exc),
+        error=str(exc) if isinstance(exc, LemelyError) else SECOND_READ_CRASH_MESSAGE,
         error_type=type(exc).__name__,
         stage=stage,
     )
@@ -393,6 +410,7 @@ def run_binding(
     second_checks: list[BindingCheck] | None = None
     compared: list[BindingCheck] = []
     lopsided: list[str] = []
+    unread: list[str] = []
     if second is not None:
         second_checks = _label_checks(second, mark_scheme, thresholds)
         one, two = _as_extracted(first.answers), _as_extracted(second.answers)
@@ -407,6 +425,9 @@ def run_binding(
             )
         ]
         lopsided = presence_disagreements(
+            one, two, mark_scheme, first.unaligned_ids, second.unaligned_ids
+        )
+        unread = unread_in_one_read(
             one, two, mark_scheme, first.unaligned_ids, second.unaligned_ids
         )
 
@@ -441,6 +462,12 @@ def run_binding(
     # none the leaf is not a blank: it goes to a teacher, and what the other read
     # saw there is kept as writing with no question.
     seen_elsewhere = [leaf for leaf in lopsided if leaf not in answered]
+    # A leaf with nothing under its label here, for which the other read found no
+    # label, is not known to be blank either: that reader may have seen the writing
+    # and could bind it to nothing. (Where it is this read that found no label, the
+    # leaf is already among its unaligned ones.) It goes to a teacher too, and the
+    # other read's unbound writing is kept, since some of it may be this leaf's.
+    missed_elsewhere = [leaf for leaf in unread if leaf not in chosen.unaligned_ids]
     unverified = _question_scope_ids(checks) | (frozenset([*suspect_leaves, *lopsided]) & answered)
     review_only = _in_paper_order(
         mark_scheme,
@@ -448,12 +475,15 @@ def run_binding(
             *chosen.unaligned_ids,
             *(leaf for leaf in suspect_leaves if leaf not in answered),
             *seen_elsewhere,
+            *missed_elsewhere,
         ],
     )
     unbound = [u.writing for u in chosen.unbound]
     if other is not None:
         for leaf in seen_elsewhere:
             unbound.extend(other.writings.get(leaf, []))
+        if missed_elsewhere:
+            unbound.extend(u.writing for u in other.bound.unbound if u.writing not in unbound)
     _publish_result(
         enforced,
         settings=binding,

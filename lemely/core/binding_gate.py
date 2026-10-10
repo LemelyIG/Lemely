@@ -133,6 +133,16 @@ def suspect_group_leaves(mark_scheme: MarkScheme, suspects: Iterable[str]) -> li
     the leaf itself), and then each following leaf for as long as reaching it opens no
     such label, which is as long as all of its ancestors are ancestors of the named id.
     An id the scheme does not have names nothing.
+
+    What this costs on a flat paper. On a scheme with no parts there is no label
+    that ends a run, so a group named by its first leaf is every leaf from there to
+    the end: with the trace at question 1, the whole paper. One block of writing
+    above the first label (a name, say) together with one genuinely blank last
+    question is that trace, and it sends every answer on such a paper to review
+    (marked, marks kept, flagged). That is accepted: the same trace is exactly what a
+    whole flat paper listed one out looks like, and nothing in the list tells the two
+    apart. No flat paper has a recorded reply, so how often a reader reports writing
+    above the first label is not known.
     """
     questions = mark_scheme.all_questions_flat()
     parent = {q.id: q.parent_id for q in questions}
@@ -523,6 +533,32 @@ def presence_disagreements(
     ]
 
 
+def unread_in_one_read(
+    first: ExtractedAnswers,
+    second: ExtractedAnswers,
+    mark_scheme: MarkScheme,
+    first_unaligned: Iterable[str],
+    second_unaligned: Iterable[str],
+) -> list[str]:
+    """Leaves with no writing in one read and no label lined up in the other, in paper order.
+
+    One read aligned the leaf and reported nothing under its label; the other found no
+    label for it and so could bind nothing to it, whatever it saw. Neither read holds
+    an answer for the leaf, and that is not two reads agreeing on a blank: the second
+    reader may have seen the writing and had nowhere to put it. A leaf unaligned in
+    both reads is not listed (G5 reports it for each), nor is one that has writing in
+    the read that aligned it.
+    """
+    one_missed, two_missed = set(first_unaligned), set(second_unaligned)
+    one, two = _present(first), _present(second)
+    return [
+        q.id
+        for q in _leaves(mark_scheme)
+        if (q.id in one_missed and q.id not in two_missed and q.id not in two)
+        or (q.id in two_missed and q.id not in one_missed and q.id not in one)
+    ]
+
+
 def check_second_read(
     first: ExtractedAnswers,
     second: ExtractedAnswers,
@@ -553,7 +589,11 @@ def check_second_read(
     the compared leaves answered in either read and number at least
     ``second_read_min_disagreeing``.
 
-    Otherwise question scope when either comparison names any id.
+    With the same two arguments, a leaf that has no writing in one read and no label
+    lined up in the other (``unread_in_one_read``) is named at question scope: it is
+    not known to be blank. This never fails the paper by itself.
+
+    Otherwise question scope when any comparison names any id.
     """
     floor = thresholds.agreement_floor
     eligible = {q.id for q in _leaves(mark_scheme) if not _is_mcq(q)}
@@ -579,12 +619,15 @@ def check_second_read(
         )
     ]
     lopsided: list[str] = []
+    unread: list[str] = []
     answered_in_either = 0
     if first_unaligned is not None and second_unaligned is not None:
-        skipped = {*first_unaligned, *second_unaligned}
+        one_missed, two_missed = list(first_unaligned), list(second_unaligned)
+        skipped = {*one_missed, *two_missed}
         lopsided = presence_disagreements(first, second, mark_scheme, skipped, ())
+        unread = unread_in_one_read(first, second, mark_scheme, one_missed, two_missed)
         answered_in_either = len((_present(first) | _present(second)) - skipped)
-    if not disagreeing and not lopsided:
+    if not disagreeing and not lopsided and not unread:
         return BindingCheck(
             id="G9",
             passed=True,
@@ -611,11 +654,16 @@ def check_second_read(
             "answered in one reading of the scan and left blank in the other: "
             f"{_listed(lopsided)}."
         )
+    if unread:
+        sentences.append(
+            f"{_plural(len(unread), 'question')} had no writing in one reading of the scan "
+            f"and no label lined up in the other: {_listed(unread)}."
+        )
     return BindingCheck(
         id="G9",
         passed=False,
         scope="paper" if paper else "question",
-        question_ids=[*disagreeing, *(qid for qid in lopsided if qid not in disagreeing)],
+        question_ids=list(dict.fromkeys([*disagreeing, *lopsided, *unread])),
         detail=" ".join(sentences),
     )
 
