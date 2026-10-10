@@ -67,6 +67,9 @@ def _attempt(
     subject_code: str | None = "0625",
     paper_number: int | None = 4,
     paper_variant: int | None = 1,
+    session_year: int | None = 2024,
+    session_month: SessionMonth | None = SessionMonth.oct_nov,
+    rows: list[SimpleNamespace] | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
@@ -74,12 +77,12 @@ def _attempt(
         subject_code=subject_code,
         paper_number=paper_number,
         paper_variant=paper_variant,
-        session_month=SessionMonth.oct_nov,
-        session_year=2024,
+        session_month=session_month,
+        session_year=session_year,
         awarded_marks=2,
         maximum_marks=80,
         recorded_at=datetime(2026, 10, 1, 9, 30, tzinfo=UTC),
-        question_results=_rows(name),
+        question_results=rows if rows is not None else _rows(name),
     )
 
 
@@ -128,7 +131,8 @@ def test_audit_skips_attempts_whose_scheme_cannot_be_resolved_and_counts_them(
 
     report = audit_attempts(attempts, find)
     assert report.audited == 2
-    assert report.scheme_not_found == 2
+    assert report.scheme_not_found == 1
+    assert report.no_paper_identity == 1
     assert len(report.suspects) == 1
     assert report.suspects[0].attempt_id == str(attempts[0].id)
 
@@ -142,7 +146,8 @@ def test_audit_counts_attempts_the_checks_cannot_judge() -> None:
 
     thin = MarkScheme.model_construct(questions=[leaf("1", "5"), leaf("2", "Explain in words")])
     assert not is_judgeable(thin)
-    attempts = [_attempt("aligned"), _attempt("aligned")]
+    rows = [SimpleNamespace(question_id="1", student_answer="5")]
+    attempts = [_attempt("aligned", rows=rows), _attempt("aligned", rows=rows)]
     report = audit_attempts(attempts, lambda _meta: thin)
     assert (report.audited, report.not_judgeable) == (2, 2)
 
@@ -151,17 +156,6 @@ def test_a_judgeable_scheme_is_not_counted(scheme: MarkScheme) -> None:
     assert is_judgeable(scheme)
     report = audit_attempts([_attempt("aligned")], lambda _meta: scheme)
     assert (report.audited, report.not_judgeable) == (1, 0)
-
-
-def test_question_scope_only_attempts_are_counted_not_listed(scheme: MarkScheme) -> None:
-    # partial_a shifts three answers or fewer: nothing at paper scope, so it is counted
-    # separately when the checks see a short run.
-    attempt = _attempt("partial_a")
-    report = audit_attempts([attempt], lambda _meta: scheme)
-    checks = audit_attempt(attempt.question_results, scheme)
-    only_minor = not is_suspect(checks) and any(not c.passed for c in checks)
-    assert report.question_scope_only == (1 if only_minor else 0)
-    assert len(report.suspects) == (1 if is_suspect(checks) else 0)
 
 
 def test_exam_metadata_maps_the_stored_columns() -> None:
@@ -252,6 +246,10 @@ def test_audit_command_json_output(monkeypatch: pytest.MonkeyPatch, scheme: Mark
         "audited",
         "not_judgeable",
         "scheme_not_found",
+        "unreadable_identity",
+        "no_paper_identity",
+        "scheme_mismatch",
+        "year_assumed",
     }
     assert (payload["audited"], payload["scheme_not_found"], payload["not_judgeable"]) == (2, 1, 0)
     assert payload["question_scope_only"] == 0
@@ -408,3 +406,180 @@ def test_audit_changes_nothing_in_a_real_database(
         report = audit_attempts(load_attempts(session), lambda _meta: scheme)
     assert len(report.suspects) == 1
     assert writes == []
+
+
+# --- review fixes -----------------------------------------------------------------
+
+
+def _numeric_scheme(count: int = 8) -> MarkScheme:
+    leaves = [
+        Question.model_validate(
+            {
+                "id": str(i + 1),
+                "marks": 1,
+                "type": "recall",
+                "answer_points": [{"id": "p1", "marks": 1, "point": str((i + 1) * 11)}],
+            }
+        )
+        for i in range(count)
+    ]
+    return MarkScheme.model_construct(questions=leaves)
+
+
+def _numeric_rows(answers: dict[str, str]) -> list[SimpleNamespace]:
+    return [SimpleNamespace(question_id=q, student_answer=a) for q, a in answers.items()]
+
+
+def test_question_scope_only_attempts_are_counted_not_listed() -> None:
+    answers = {str(i): str(i * 11) for i in range(1, 9)}
+    answers["4"] = "33"  # two neighbouring answers hold the previous question's value
+    answers["5"] = "44"
+    attempt = _attempt("aligned", rows=_numeric_rows(answers))
+    scheme = _numeric_scheme()
+    checks = audit_attempt(attempt.question_results, scheme)
+    assert not is_suspect(checks)
+    assert any(c.scope == "question" and not c.passed for c in checks)
+    report = audit_attempts([attempt], lambda _meta: scheme)
+    assert report.question_scope_only == 1
+    assert report.suspects == []
+    assert report.audited == 1
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [{"paper_number": 0}, {"subject_code": "abc"}, {"session_year": 1999}],
+)
+def test_an_unreadable_identity_is_counted_and_the_run_continues(
+    bad: dict[str, Any], scheme: MarkScheme
+) -> None:
+    attempts = [_attempt("aligned", **bad), _attempt("full_shift_lite")]
+    report = audit_attempts(attempts, lambda _meta: scheme)
+    assert report.unreadable_identity == 1
+    assert report.audited == 1
+    assert len(report.suspects) == 1
+
+
+def test_a_failing_scheme_lookup_is_counted_and_the_run_continues(scheme: MarkScheme) -> None:
+    def find(meta: Any) -> MarkScheme | None:
+        if meta.paper_variant == 2:
+            raise ValueError("stored payload no longer validates")
+        return scheme
+
+    attempts = [_attempt("aligned", paper_variant=2), _attempt("full_shift_lite")]
+    report = audit_attempts(attempts, find)
+    assert report.scheme_not_found == 1
+    assert report.audited == 1
+    assert len(report.suspects) == 1
+
+
+def test_a_database_error_in_the_lookup_is_not_swallowed(scheme: MarkScheme) -> None:
+    def find(_meta: Any) -> MarkScheme | None:
+        raise OperationalError("select", {}, Exception("connection refused"))
+
+    with pytest.raises(OperationalError):
+        audit_attempts([_attempt("aligned")], find)
+
+
+def test_an_attempt_with_no_paper_identity_is_counted_apart(scheme: MarkScheme) -> None:
+    attempts = [_attempt("aligned", subject_code=None, session_month=None)]
+    report = audit_attempts(attempts, lambda _meta: scheme)
+    assert report.no_paper_identity == 1
+    assert report.scheme_not_found == 0
+    assert report.audited == 0
+
+
+def test_ids_that_do_not_match_the_scheme_are_not_judged(scheme: MarkScheme) -> None:
+    rows = [
+        SimpleNamespace(question_id="zz_" + r.question_id, student_answer=r.student_answer)
+        for r in _rows("full_shift_lite")
+    ]
+    report = audit_attempts([_attempt("aligned", rows=rows)], lambda _meta: scheme)
+    assert report.scheme_mismatch == 1
+    assert report.audited == 0
+    assert report.suspects == []
+    assert report.not_judgeable == 0
+
+
+def test_a_few_unknown_ids_do_not_stop_the_audit(scheme: MarkScheme) -> None:
+    rows = _rows("full_shift_lite")
+    rows.append(SimpleNamespace(question_id="99z", student_answer="1"))
+    report = audit_attempts([_attempt("aligned", rows=rows)], lambda _meta: scheme)
+    assert report.scheme_mismatch == 0
+    assert len(report.suspects) == 1
+
+
+def test_a_missing_session_year_is_counted_as_assumed(scheme: MarkScheme) -> None:
+    attempts = [_attempt("aligned", session_year=None), _attempt("aligned")]
+    report = audit_attempts(attempts, lambda _meta: scheme)
+    assert report.year_assumed == 1
+    assert report.audited == 2
+
+
+def test_the_json_carries_every_new_counter(
+    monkeypatch: pytest.MonkeyPatch, scheme: MarkScheme
+) -> None:
+    session = _SpySession([_attempt("aligned", paper_number=0)])
+    _patch(monkeypatch, session, scheme)
+    payload = json.loads(CliRunner().invoke(cli, ["--json", "audit-bindings"]).stdout)
+    for key in ("unreadable_identity", "scheme_mismatch", "year_assumed", "no_paper_identity"):
+        assert key in payload
+    assert payload["unreadable_identity"] == 1
+
+
+def test_the_text_output_says_what_it_could_not_judge(
+    monkeypatch: pytest.MonkeyPatch, scheme: MarkScheme
+) -> None:
+    session = _SpySession([_attempt("aligned", session_year=None)])
+    _patch(monkeypatch, session, scheme)
+    out = CliRunner().invoke(cli, ["audit-bindings"]).output
+    assert "Skipped, stored paper identity unreadable: 0" in out
+    assert "Skipped, stored question ids do not match the mark scheme: 0" in out
+    assert "Audited with the newest session year assumed (no year stored): 1" in out
+    assert "scheme the corpus holds for that paper today" in out
+
+
+def test_an_unreachable_database_is_a_one_line_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse() -> None:
+        raise OperationalError("connect", {}, Exception("connection refused"))
+
+    monkeypatch.setattr("lemely.db.session.get_sessionmaker", lambda _settings: refuse)
+    monkeypatch.setattr(
+        "lemely.db.scheme_corpus_repo.SchemeCorpusRepository.__init__", lambda self, _sm: None
+    )
+    result = CliRunner().invoke(cli, ["audit-bindings"])
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "database" in result.output.lower()
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_help_names_the_rows_the_default_filter_leaves_out() -> None:
+    out = CliRunner().invoke(cli, ["audit-bindings", "--help"]).output
+    text = " ".join(out.split())
+    assert "without an upload link" in text
+    assert "Pass 'any'" in text
+
+
+class _Frozen:
+    """A stand-in row that rejects any attribute assignment after construction."""
+
+    def __init__(self, **fields: Any) -> None:
+        for name, value in fields.items():
+            object.__setattr__(self, name, value)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AssertionError(f"the audit assigned {name}")
+
+
+def test_the_audit_assigns_nothing_and_calls_no_write(
+    monkeypatch: pytest.MonkeyPatch, scheme: MarkScheme
+) -> None:
+    def freeze(attempt: SimpleNamespace) -> _Frozen:
+        rows = tuple(_Frozen(**vars(r)) for r in attempt.question_results)
+        return _Frozen(**{**vars(attempt), "question_results": rows})
+
+    session = _SpySession([freeze(_attempt("full_shift_lite")), freeze(_attempt("aligned"))])
+    _patch(monkeypatch, session, scheme)
+    result = CliRunner().invoke(cli, ["audit-bindings"])
+    assert result.exit_code == 0, result.output
+    assert session.calls == ["scalars", "close"]

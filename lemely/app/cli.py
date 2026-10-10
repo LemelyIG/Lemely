@@ -38,7 +38,7 @@ from lemely.core.schemas import (
     WeaknessReport,
 )
 from lemely.io.mark_schemes import index_source_library, process_mark_scheme_batch
-from lemely.runtime.errors import LemelyError, ParseError
+from lemely.runtime.errors import ExternalServiceError, LemelyError, ParseError
 from lemely.runtime.logging import configure_logging
 
 
@@ -872,7 +872,9 @@ def teacher_quiz_cmd(
     show_default=True,
     help=(
         "Which attempts to audit. 'upload' keeps past-paper attempts that came from an "
-        "uploaded scan (quizzes are typed answers and cannot be misbound); 'any' audits all."
+        "uploaded scan (quizzes are typed answers and cannot be misbound). That leaves out "
+        "past-paper attempts stored without an upload link. Pass 'any' to audit those too, "
+        "and quizzes."
     ),
 )
 @click.pass_context
@@ -887,6 +889,8 @@ def audit_bindings_cmd(
     """
     from datetime import UTC
 
+    from sqlalchemy.exc import InterfaceError, OperationalError
+
     from lemely.db.binding_audit import audit_attempts, load_attempts
     from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
     from lemely.db.session import get_sessionmaker
@@ -895,14 +899,21 @@ def audit_bindings_cmd(
     session_factory = get_sessionmaker(settings)
     corpus = SchemeCorpusRepository(session_factory)
     since_utc = since.replace(tzinfo=UTC) if since is not None else None
-    session = session_factory()
     try:
-        attempts = load_attempts(
-            session, since=since_utc, limit=limit, uploaded_only=origin == "upload"
+        session = session_factory()
+        try:
+            attempts = load_attempts(
+                session, since=since_utc, limit=limit, uploaded_only=origin == "upload"
+            )
+            report = audit_attempts(attempts, corpus.find_for)
+        finally:
+            session.close()
+    except (OperationalError, InterfaceError) as exc:
+        click.echo(
+            f"Cannot read the database: {exc.__class__.__name__}. Check the database settings.",
+            err=True,
         )
-        report = audit_attempts(attempts, corpus.find_for)
-    finally:
-        session.close()
+        raise click.exceptions.Exit(ExternalServiceError.exit_code) from exc
 
     if ctx.obj.get("json_output", False):
         _dump_json(report.as_json())
@@ -928,9 +939,23 @@ def audit_bindings_cmd(
     )
     click.echo(f"Audited: {report.audited}")
     click.echo(f"Skipped, mark scheme not found: {report.scheme_not_found}")
+    click.echo(f"Skipped, stored paper identity unreadable: {report.unreadable_identity}")
+    click.echo(f"Skipped, no paper identity stored: {report.no_paper_identity}")
+    click.echo(
+        f"Skipped, stored question ids do not match the mark scheme: {report.scheme_mismatch}"
+    )
+    click.echo(
+        f"Audited with the newest session year assumed (no year stored): {report.year_assumed}"
+    )
     click.echo(
         "Audited but not judgeable (too few numeric answers for the shift check): "
         f"{report.not_judgeable}"
+    )
+    click.echo(
+        "Each attempt is checked against the scheme the corpus holds for that paper today, "
+        "which can differ from the one used at marking time (a scheme the student supplied, "
+        "or one re-parsed since). With no session year stored, the lookup takes the newest "
+        "year's scheme for that paper."
     )
     click.echo(
         "Not listed does not mean correctly bound: the checks only see questions with "

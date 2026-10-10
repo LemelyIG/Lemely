@@ -24,7 +24,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import structlog
+from pydantic import ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.orm import selectinload
 
 from lemely.core.binding_expect import expected_numeric_values
@@ -44,7 +47,10 @@ if TYPE_CHECKING:
     from lemely.core.loose_schemas import MarkScheme, Question
     from lemely.db.models.attempts import QuestionResult
 
+log = structlog.get_logger(__name__)
+
 _THRESHOLDS = GateThresholds()
+_MISMATCH_SHARE = 0.25
 _AUDIT_PAPER = "audit"
 _AUDIT_SOURCE = "stored-attempt"
 
@@ -77,13 +83,21 @@ class Suspect:
 
 @dataclass
 class AuditReport:
-    """What an audit found. ``audited`` counts attempts whose scheme was found."""
+    """What an audit found.
+
+    ``audited`` counts attempts judged against a scheme. The other counters are
+    attempts that were not judged, each for its own reason.
+    """
 
     suspects: list[Suspect] = field(default_factory=list)
     question_scope_only: int = 0
     audited: int = 0
     not_judgeable: int = 0
     scheme_not_found: int = 0
+    unreadable_identity: int = 0
+    no_paper_identity: int = 0
+    scheme_mismatch: int = 0
+    year_assumed: int = 0
 
     def as_json(self) -> dict[str, object]:
         return {
@@ -92,6 +106,10 @@ class AuditReport:
             "audited": self.audited,
             "not_judgeable": self.not_judgeable,
             "scheme_not_found": self.scheme_not_found,
+            "unreadable_identity": self.unreadable_identity,
+            "no_paper_identity": self.no_paper_identity,
+            "scheme_mismatch": self.scheme_mismatch,
+            "year_assumed": self.year_assumed,
         }
 
 
@@ -171,26 +189,58 @@ def _paper_label(attempt: Attempt) -> str:
     return " ".join(parts)
 
 
+def _leaf_ids(mark_scheme: MarkScheme) -> set[str]:
+    return {q.id for q in mark_scheme.all_questions_flat() if not q.parts and q.marks > 0}
+
+
+def _ids_do_not_match(attempt: Attempt, mark_scheme: MarkScheme) -> bool:
+    """True when over a quarter of the answered rows carry an id the scheme lacks."""
+    known = _leaf_ids(mark_scheme)
+    answered = [r.question_id for r in attempt.question_results if (r.student_answer or "").strip()]
+    unknown = sum(1 for qid in answered if qid not in known)
+    return bool(answered) and unknown / len(answered) > _MISMATCH_SHARE
+
+
 def audit_attempts(
     attempts: Iterable[Attempt],
     find_scheme: Callable[[ExamMetadata], MarkScheme | None],
 ) -> AuditReport:
-    """Audit each attempt; one whose scheme cannot be resolved is counted and skipped."""
+    """Audit each attempt; one that cannot be judged is counted under its own reason.
+
+    A database that cannot be reached still raises: only a row or a stored scheme
+    that is itself unreadable is counted and skipped.
+    """
     report = AuditReport()
     schemes: dict[str, MarkScheme | None] = {}
     for attempt in attempts:
-        metadata = exam_metadata(attempt)
+        try:
+            metadata = exam_metadata(attempt)
+        except ValidationError as exc:
+            log.warning("audit_unreadable_identity", attempt_id=str(attempt.id), error=str(exc))
+            report.unreadable_identity += 1
+            continue
         if metadata is None:
-            report.scheme_not_found += 1
+            report.no_paper_identity += 1
             continue
         key = metadata.model_dump_json()
         if key not in schemes:
-            schemes[key] = find_scheme(metadata)
+            try:
+                schemes[key] = find_scheme(metadata)
+            except (OperationalError, InterfaceError):
+                raise
+            except Exception as exc:
+                log.warning("audit_scheme_lookup_failed", paper=key, error=str(exc))
+                schemes[key] = None
         scheme = schemes[key]
         if scheme is None:
             report.scheme_not_found += 1
             continue
+        if _ids_do_not_match(attempt, scheme):
+            report.scheme_mismatch += 1
+            continue
         report.audited += 1
+        if metadata.session_year is None:
+            report.year_assumed += 1
         if not is_judgeable(scheme):
             report.not_judgeable += 1
         checks = audit_attempt(attempt.question_results, scheme)
