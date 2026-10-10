@@ -82,7 +82,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 import structlog
 from sqlalchemy import func, select
 
-from lemely.core.binding_review import has_binding_doubt
+from lemely.core.binding_review import has_binding_doubt, is_unbound_question
 from lemely.core.point_groups import group_capped_points_total
 from lemely.core.self_review import (
     JudgeRequest,
@@ -383,6 +383,7 @@ class SelfReviewService:
             by_point = _verdicts_by_point(verdicts, qr.points)
             low_confidence = grants_self_mark_authority(qr)
             teacher_settled = qr.is_overridden
+            never_read = is_unbound_question(qr.review_reason, qr.student_answer)
             judge_requests: dict[str, JudgeRequest] = {}
             for point in qr.points:
                 verdict = by_point[point.mark_point_id]
@@ -393,6 +394,7 @@ class SelfReviewService:
                     low_confidence=low_confidence,
                     has_evidence=evidence is not None,
                     teacher_settled=teacher_settled,
+                    never_read=never_read,
                 )
                 if decision is PointDecision.JUDGE:
                     judge_requests[point.mark_point_id] = JudgeRequest(
@@ -439,6 +441,7 @@ class SelfReviewService:
             now = datetime.now(UTC)
             low_confidence = grants_self_mark_authority(qr)
             teacher_settled = qr.is_overridden
+            never_read = is_unbound_question(qr.review_reason, qr.student_answer)
             unjudged = False
             passes: list[_PointPass] = []
 
@@ -461,6 +464,7 @@ class SelfReviewService:
                     low_confidence=low_confidence,
                     has_evidence=evidence is not None,
                     teacher_settled=teacher_settled,
+                    never_read=never_read,
                 )
 
                 if decision is PointDecision.GRANT:
@@ -720,8 +724,12 @@ def _decide_with_precedence(
     low_confidence: bool,
     has_evidence: bool,
     teacher_settled: bool,
+    never_read: bool = False,
 ) -> PointDecision:
-    """:func:`decide_point` plus the teacher-override downgrade.
+    """:func:`decide_point` plus the teacher-override and never-read downgrades.
+
+    ``never_read``: no answer was ever read for this question (an unbound one),
+    so there is nothing for a judge to weigh and the claim is only recorded.
 
     Pulled out so Phase A's plan and Phase C's apply (:meth:`SelfReviewService.submit`)
     compute this identically, from whatever state each actually reads.
@@ -732,7 +740,7 @@ def _decide_with_precedence(
         low_confidence=low_confidence,
         has_evidence=has_evidence,
     )
-    if teacher_settled and decision is not PointDecision.AGREE:
+    if (teacher_settled or never_read) and decision is not PointDecision.AGREE:
         # Precedence already settles this question; the self-mark is recorded
         # for its learning signal and nothing moves, so a judge call could
         # not change any outcome.

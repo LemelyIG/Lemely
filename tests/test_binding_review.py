@@ -147,3 +147,17 @@ def test_student_self_mark_on_a_binding_doubt_question_goes_to_evidence_and_judg
 
         assert no_evidence is PointDecision.NO_CHANGE
         assert with_evidence is PointDecision.JUDGE
+
+
+def test_is_unbound_question_table() -> None:
+    from lemely.core.binding_review import is_unbound_question
+
+    assert is_unbound_question(UNBOUND_QUESTION_REVIEW_REASON, None) is True
+    assert is_unbound_question(UNBOUND_QUESTION_REVIEW_REASON, "") is True
+    assert is_unbound_question(UNBOUND_QUESTION_REVIEW_REASON, "  ") is True
+    # A transcription exists: the ordinary evidence-and-judge route applies.
+    assert is_unbound_question(UNVERIFIED_BINDING_REVIEW_REASON, "x = 4") is False
+    assert is_unbound_question(UNBOUND_QUESTION_REVIEW_REASON, "x = 4") is False
+    # No binding doubt: not this rule's business.
+    assert is_unbound_question(None, None) is False
+    assert is_unbound_question("value_mismatch", None) is False

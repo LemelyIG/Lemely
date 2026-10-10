@@ -3099,3 +3099,111 @@ def test_marker_low_confidence_row_is_still_resolved_by_a_self_mark(
 
     assert view.student_marks == 3
     assert [r.status for r in _queue_rows(pg_sessionmaker, qr_id)] == [ReviewStatus.resolved]
+
+
+# ── a question nobody read is decided by a teacher, not the judge ───────────
+
+
+class _CountingJudge:
+    """Accepts every claim and records how often it was asked."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        self.calls += 1
+        return JudgeVerdict(accepted=True, reason="Accepted.")
+
+
+def _unbound_question_with_no_answer() -> CorrectedQuestion:
+    return _binding_doubt_question("unbound").model_copy(update={"student_answer": None})
+
+
+def test_unbound_question_with_evidence_is_no_change_and_makes_no_judge_call(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(
+        pg_sessionmaker, student, [_unbound_question_with_no_answer(), _low()]
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = _CountingJudge()
+
+    view = _service(pg_sessionmaker, judge=judge).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [
+            PointVerdict("p1", True, evidence="I wrote the unit, N."),
+            PointVerdict("p2", True, evidence="I showed the working."),
+        ],
+    )
+
+    assert judge.calls == 0
+    assert view.student_marks is None
+    assert view.effective_marks == view.ai_marks
+    assert all(p.mark_changed is False and p.evidence_verdict is None for p in view.points)
+
+
+def test_unbound_question_claim_is_recorded_as_not_applied(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(
+        pg_sessionmaker, student, [_unbound_question_with_no_answer(), _low()]
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _all_earned(["p1", "p2"], evidence="It is on page 3.")
+    )
+
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.is_self_marked is True
+    assert all(
+        p.student_selfmark is True and p.student_evidence == "It is on page 3." for p in qr.points
+    )
+    assert qr.awarded_marks == 0 and qr.student_selfmark_marks in (None, 0)
+    # The teacher's row stays open.
+    assert [r.status for r in _queue_rows(pg_sessionmaker, qr_id)] == [ReviewStatus.open]
+
+
+def test_unverified_answer_with_evidence_goes_to_the_judge_and_the_row_stays_open(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(
+        pg_sessionmaker, student, [_binding_doubt_question("unverified"), _low()]
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = _CountingJudge()
+
+    view = _service(pg_sessionmaker, judge=judge).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote the unit, N.")],
+    )
+
+    assert judge.calls == 1
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.evidence_verdict == "accepted" and p2.mark_changed is True
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [(r.reason, r.status) for r in rows] == [
+        (ReviewReason.low_confidence, ReviewStatus.open)
+    ]
+
+
+@pytest.mark.parametrize("kind", ["unbound", "unverified"])
+def test_agreeing_with_the_mark_on_a_binding_doubt_question_leaves_the_row_open(
+    pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    cq = _binding_doubt_question(kind)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [cq, _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    agree = [PointVerdict("p1", kind == "unverified"), PointVerdict("p2", False)]
+
+    _service(pg_sessionmaker).submit(student, attempt_id, qr_id, agree)
+
+    assert [r.status for r in _queue_rows(pg_sessionmaker, qr_id)] == [ReviewStatus.open]

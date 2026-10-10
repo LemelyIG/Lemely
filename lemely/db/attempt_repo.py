@@ -527,7 +527,13 @@ def _integrity_flagged(qr: QuestionResult) -> bool:
     needs the fact persisted somehow:
 
     * **Derive it from ``review_reason``'s segments.** Prose parsing — the exact
-      defect task #36 removed from this predicate. It would delete one instance
+      defect task #36 removed from this predicate. (Binding doubt IS now read
+      from the reason's ``binding unverified:`` prefix, on purpose: it is a
+      fixed prefix owned by one module, ``lemely.core.binding_review``, with a
+      test pinning every writer to it, and no column or queue reason exists for
+      it yet. A dedicated column or queue reason is planned with the hold flow
+      and should replace the prefix then. The plagiarism signal stays on queue
+      rows for the reasons below.) It would delete one instance
       and add another, on a field ``correct_paper``'s AI-failure branch rewrites
       outright and ``web.schemas.student_safe_review_reason`` strips per
       audience.
