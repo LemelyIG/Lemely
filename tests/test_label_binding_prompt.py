@@ -2,6 +2,10 @@
 
 The marker is never shown the page. For a drawing it has only what the reader wrote, and
 it takes that on trust, so a reader that writes "correctly drawn" awards the marks itself.
+So does one that writes "evenly spaced, none crossing" without having looked: the rule
+asks for what can be seen and counted, a fault as plainly as anything else, and no word
+that sums the drawing up.
+
 These tests pin what the reader is asked for. They cannot show what a model then writes:
 that needs a live read.
 """
@@ -38,6 +42,22 @@ _VERDICT_WORDS = (
     "good",
     "right shape",
 )
+# Words that sum up how regular a drawing is. The same holds for them.
+_REGULARITY_WORDS = (
+    "evenly",
+    "even spac",
+    "equally",
+    "regular",
+    "symmetr",
+    "smooth",
+    "to scale",
+    "uniform",
+    "consistent",
+    "parallel",
+)
+_FORBIDDEN_LISTS = re.compile(
+    r"a word that judges it \(([^)]*)\) or a word that sums up how regular it is \(([^)]*)\)"
+)
 
 
 def _squash(text: str) -> str:
@@ -58,12 +78,20 @@ def _scheme(name: str = "0625_w24_ms_41") -> MarkScheme:
     return MarkScheme.model_validate(json.loads((_SCHEMES / f"{name}.json").read_text()))
 
 
-def test_reader_prompt_version_is_2() -> None:
-    assert VERSION == "2"
+def _outside_the_forbidden_lists() -> str:
+    """The rule, lower-cased, without the clause that names the words it forbids."""
+    rule = _squash(_rule())
+    forbidden = _FORBIDDEN_LISTS.search(rule)
+    assert forbidden is not None
+    return rule.replace(forbidden.group(0), "").lower()
+
+
+def test_reader_prompt_version_is_3() -> None:
+    assert VERSION == "3"
 
 
 def test_the_whole_system_prompt_is_pinned_to_its_version() -> None:
-    """The text at VERSION "2". No part of it is exempt.
+    """The text at VERSION "3". No part of it is exempt.
 
     ``tests/test_label_binder.py`` pins the prompt against the measured one with the
     drawing rule cut out, so an edit inside that rule would pass there. When this goes
@@ -71,8 +99,8 @@ def test_the_whole_system_prompt_is_pinned_to_its_version() -> None:
     The drawing rule is unmeasured, so there is no measurement to redo yet.
     """
     assert (VERSION, hashlib.sha256(LABEL_BINDING_SYSTEM_PROMPT.encode()).hexdigest()) == (
-        "2",
-        "b7830e97c38da46eb998abad9eb9141d127970d59cd2c95a6db2ad6a2bcaa431",
+        "3",
+        "7d8287d789083a78b38e8b7bdfd5cb712548b349689f051b6c4587021cf400cc",
     )
 
 
@@ -90,55 +118,123 @@ def test_a_drawing_is_reported_after_the_word_drawing() -> None:
     assert system.index("## answer items") < system.index(_RULE_START)
 
 
-def test_the_rule_asks_for_each_fact_a_marker_can_count_and_check() -> None:
+def test_the_rule_asks_for_what_any_drawing_is_made_of() -> None:
+    """The facts are of lines, arrowheads, meetings, points and labels, not of one question."""
     rule = _squash(_rule())
     for fact in (
-        "what was drawn and how many of each thing",
-        "where each line starts and where it ends",
-        "whether any lines touch or cross",
-        "the direction of every arrow",
-        "where lines are closer together and where they are further apart",
-        "every label, value and unit written on the drawing, copied exactly",
-        "the points plotted",
-        "the line drawn through them",
+        "What was drawn, by kind, and how many of each",
+        "For each line or curve: where it starts, where it ends and what it passes through",
+        "placed against the printed diagram, grid or scale where there is one",
+        "whether it is straight or curved",
+        "For each arrowhead: the line it is on and the way it points.",
+        "Where a line has no arrowhead, say so of that line.",
+        "Where things meet: which lines touch, cross or join, and where",
+        "which stop short of what they run towards, leaving a gap",
+        "For each plotted point: where it is actually plotted, read against the printed scales.",
+        "For a line or curve drawn through points: each point it misses, and on which side",
+        "Every label, symbol, value and unit the student wrote on the drawing, copied exactly",
     ):
         assert fact in rule, fact
 
 
-def test_the_rule_asks_only_for_what_is_visible() -> None:
+def test_the_rule_holds_for_every_kind_of_drawing() -> None:
     rule = _squash(_rule())
-    assert "only what is visible on the page" in rule
-    assert "do not claim a property the page does not show" in rule
-    # Absence and doubt are stated, not left out: a silent description reads as "fine".
-    assert "where something is absent or you cannot tell, say that" in rule
+    assert (
+        "This holds for every kind of drawing: a graph, a diagram of rays, a circuit, lines "
+        "that show a direction, a labelled sketch."
+    ) in rule
+    # The reader is shown no mark scheme, so it cannot pick the details that earn marks.
+    assert (
+        "You are not told what the question asks for, so you cannot know which details matter"
+    ) in rule
 
 
-def test_the_rule_forbids_a_verdict() -> None:
+def test_the_rule_asks_only_for_what_can_be_seen_and_counted() -> None:
     rule = _squash(_rule())
-    assert "Report what is there, never whether it is right." in rule
-    assert "Do not use a word that judges the drawing" in rule
+    assert "State only what you can see and count." in rule
+    assert "Do not claim a property the page does not show" in rule
+    assert 'where you cannot tell, say that ("cannot tell whether the two curves touch")' in rule
 
 
-def test_the_old_one_line_rule_is_gone() -> None:
-    assert "describe briefly" not in LABEL_BINDING_SYSTEM_PROMPT
+def test_a_fault_is_stated_as_plainly_as_anything_else() -> None:
+    """A description that tidies the drawing up awards marks the drawing did not earn."""
+    rule = _squash(_rule())
+    assert "Leave nothing out because it looks like a slip." in rule
+    for fault in (
+        "Lines that cross or touch",
+        "an arrowhead that is missing or points the other way from the others",
+        "a point that sits away from the line or from the run of the other points",
+        "a line that misses points or stops short",
+    ):
+        assert fault in rule, fault
+    assert "state each as plainly as everything else" in rule
 
 
-def test_the_examples_open_with_drawing_and_carry_no_verdict() -> None:
+def test_none_is_written_only_of_things_counted() -> None:
+    """A claim about all of several things is the easiest to make without looking."""
+    rule = _squash(_rule())
+    assert "Say of each thing what you see of it." in rule
+    assert (
+        "Write that none of several things has a property only after looking at every one of "
+        'them, and give the number you looked at ("none of the 3 lines has an arrowhead").'
+    ) in rule
+
+
+def test_the_rule_forbids_a_verdict_and_a_summing_up() -> None:
+    rule = _squash(_rule())
+    assert "Report what is there, never whether it is right, and do not sum the drawing up." in rule
+    forbidden = _FORBIDDEN_LISTS.search(rule)
+    assert forbidden is not None
+    assert forbidden.group(1) == '"correct", "accurate", "appropriate", "neat", "well drawn"'
+    assert forbidden.group(2) == '"evenly spaced", "symmetrical", "smooth", "to scale"'
+    assert "give the places and the counts" in rule
+
+
+def test_the_old_rules_are_gone() -> None:
+    system = _squash(LABEL_BINDING_SYSTEM_PROMPT)
+    assert "describe briefly" not in system
+    # The phrasing of VERSION "2" that a reader could copy without looking.
+    assert "none touching or crossing" not in system
+    assert "evenly spaced," not in system
+    assert "ruled" not in system
+    # The fact that was one question's mark point with the noun taken out.
+    assert "closer together" not in system
+    assert "further apart" not in system
+
+
+def test_the_examples_open_with_drawing_and_carry_no_verdict_or_summing_up() -> None:
     examples = _examples()
     assert len(examples) == 2
     for example in examples:
         lowered = example.lower()
         assert [word for word in _VERDICT_WORDS if word in lowered] == [], example
+        assert [word for word in _REGULARITY_WORDS if word in lowered] == [], example
         # A countable fact in each: at least one number.
         assert re.search(r"\d", example), example
+        # Nothing is said of all of several things at once.
+        assert not re.search(r"\b(none|no|all|every|each of)\b", lowered), example
 
 
-def test_verdict_words_appear_in_the_rule_only_where_they_are_forbidden() -> None:
-    rule = _squash(_rule())
-    forbidden = re.search(r"Do not use a word that judges the drawing \(([^)]*)\)", rule)
-    assert forbidden is not None
-    outside = rule.replace(forbidden.group(0), "").lower()
+def test_each_example_states_a_fault_and_one_admits_doubt() -> None:
+    graph, circuit = _examples()
+    assert "the cross at (3, 8) is below the line" in graph
+    assert "stops short of the circle, leaving a gap" in circuit
+    assert "cannot tell which end of the cell has the longer stroke" in circuit
+
+
+def test_the_examples_are_of_other_kinds_of_drawing_than_the_measured_papers() -> None:
+    """A plotted graph and a circuit. The measured paper's drawing is lines with arrows."""
+    graph, circuit = _examples()
+    assert "crosses plotted at" in graph
+    assert "loop of wire" in circuit
+    for example in (graph, circuit):
+        assert "arrow" not in example.lower()
+
+
+def test_judging_words_appear_in_the_rule_only_where_they_are_forbidden() -> None:
+    outside = _outside_the_forbidden_lists()
     assert [word for word in _VERDICT_WORDS if word in outside] == []
+    assert [word for word in _REGULARITY_WORDS if word in outside] == []
 
 
 def test_the_rule_is_not_about_the_recorded_script_or_its_mark_scheme() -> None:
@@ -154,6 +250,8 @@ def test_the_rule_is_not_about_the_recorded_script_or_its_mark_scheme() -> None:
         "electron",
         "orbit",
         "n to s",
+        "closer",
+        "further apart",
     ):
         assert word not in rule, word
     scheme = _scheme()

@@ -335,7 +335,7 @@ def test_system_prompt_says_a_label_precedes_its_writing() -> None:
 def test_prompts_are_the_measured_prompts_plus_the_listed_additions() -> None:
     """Every difference from the prompt that was measured is named here.
 
-    Two additions, and one rule replaced: the rule for a drawing (version "2", pinned in
+    Two additions, and one rule replaced: the rule for a drawing (version "3", pinned in
     ``tests/test_label_binding_prompt.py``). With the additions taken out and the measured
     drawing rule put back, the prompt is the measured one to the byte.
     """
@@ -1054,7 +1054,7 @@ def test_the_call_is_an_extraction_call_carrying_every_page(tmp_path: Path) -> N
     _, genai, spy = _read(tmp_path, [_label("1")], page_count=3, scheme=scheme)
     sent = spy.call_args.kwargs
     assert sent["task_tag"] == "extraction"
-    assert sent["prompt_version"] == LABEL_BINDING_PROMPT_VERSION == "2"
+    assert sent["prompt_version"] == LABEL_BINDING_PROMPT_VERSION == "3"
     assert sent["system_prompt"] == LABEL_BINDING_SYSTEM_PROMPT
     assert sent["user_prompt"] == build_label_binding_user_prompt(scheme, page_count=3)
     assert sent["image_parts"] == [b"page-0", b"page-1", b"page-2"]

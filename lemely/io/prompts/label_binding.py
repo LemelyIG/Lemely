@@ -16,15 +16,23 @@ rule asked for a brief description, and on one script the marker gave the same d
 to 3 marks out of 3 over nine reads, three times for want of "a diagram". The reader now
 opens such an answer with ``Drawing:`` and states the facts a marker can count, with no
 word on whether the drawing is right: the marker (``lemely.io.prompts.correction_ai``)
-takes what follows ``Drawing:`` as a description and credits only what it states. This
-rule has not been measured.
+takes what follows ``Drawing:`` in this reader's answers as a description and credits only
+what it states.
+
+VERSION "3" rewrites that rule after review. Its list of facts had the shape of one
+question's mark points, and its first example said "evenly spaced, none touching or
+crossing", which a reader can copy without looking. The list is now of what any drawing
+is made of (lines, arrowheads, meetings, plotted points, labels), a fault is stated as
+plainly as anything else, a word that sums up how regular the drawing is is forbidden
+with the words that judge it, and "none" is written only of things counted. Neither
+version of the rule has been measured.
 """
 
 from __future__ import annotations
 
 from lemely.core.loose_schemas import MarkScheme, Question
 
-VERSION = "2"
+VERSION = "3"
 
 LABEL_BINDING_SYSTEM_PROMPT = """
 You are an expert at reading scanned CAIE (Cambridge IGCSE / O-Level / A-Level) exam scripts.
@@ -115,25 +123,46 @@ One answer item for each block of the student's own handwriting or drawing.
     with what the student wrote on it: "colour at start: blue; colour at end:
     colourless". A single answer line ("mass = ........ g") needs only the value.
   - For a drawing, or for marks added to a printed diagram or graph, `answer` starts with
-    "Drawing:" and then states the facts of what the student drew, so that someone who
-    cannot see the page could count and check them. State each of the following that
-    applies, and only what is visible on the page:
-    - what was drawn and how many of each thing: "4 straight lines", "2 circles";
-    - where each line starts and where it ends, and whether any lines touch or cross;
-    - the direction of every arrow: "an arrowhead on each line, pointing to the right";
-    - where lines are closer together and where they are further apart;
-    - every label, value and unit written on the drawing, copied exactly;
-    - on a graph, the points plotted, read against the printed scales, and the line drawn
-      through them: straight or curved, where it starts and ends, which points it misses.
-    Report what is there, never whether it is right. Do not use a word that judges the
-    drawing ("correct", "accurate", "appropriate", "neat", "well drawn"), and do not claim
-    a property the page does not show: where something is absent or you cannot tell, say
-    that ("no arrowheads", "cannot tell whether the two lines cross").
-    Two examples. "Drawing: 4 straight lines from the left side of the printed box to its
-    right side, evenly spaced, none touching or crossing; an arrowhead on each line,
-    pointing to the right; 'X' written above the top line." "Drawing: 5 crosses plotted at
-    (0, 0), (1, 3), (2, 6), (3, 8), (4, 12); one straight ruled line from (0, 0) to
-    (4, 12); the cross at (3, 8) is below the line."
+    "Drawing:" and then states what the student drew, for someone who cannot see the page.
+    State only what you can see and count. You are not told what the question asks for, so
+    you cannot know which details matter: go over the drawing one thing at a time and
+    state each of these that applies.
+    - What was drawn, by kind, and how many of each: lines, curves, arrows, plotted points,
+      shapes, symbols.
+    - For each line or curve: where it starts, where it ends and what it passes through,
+      placed against the printed diagram, grid or scale where there is one, and whether it
+      is straight or curved.
+    - For each arrowhead: the line it is on and the way it points. Where a line has no
+      arrowhead, say so of that line.
+    - Where things meet: which lines touch, cross or join, and where; which stop short of
+      what they run towards, leaving a gap.
+    - For each plotted point: where it is actually plotted, read against the printed
+      scales. For a line or curve drawn through points: each point it misses, and on which
+      side of it that point lies.
+    - Every label, symbol, value and unit the student wrote on the drawing, copied exactly,
+      with what it is written beside.
+    This holds for every kind of drawing: a graph, a diagram of rays, a circuit, lines that
+    show a direction, a labelled sketch.
+    Leave nothing out because it looks like a slip. Lines that cross or touch, an arrowhead
+    that is missing or points the other way from the others, a point that sits away from
+    the line or from the run of the other points, a line that misses points or stops
+    short: state each as plainly as everything else.
+    Report what is there, never whether it is right, and do not sum the drawing up. Do not
+    use a word that judges it ("correct", "accurate", "appropriate", "neat", "well drawn")
+    or a word that sums up how regular it is ("evenly spaced", "symmetrical", "smooth",
+    "to scale"): give the places and the counts, and leave the summing up to whoever reads
+    them.
+    Say of each thing what you see of it. Write that none of several things has a property
+    only after looking at every one of them, and give the number you looked at ("none of
+    the 3 lines has an arrowhead"). Do not claim a property the page does not show: where
+    you cannot tell, say that ("cannot tell whether the two curves touch").
+    Two examples. "Drawing: 5 crosses plotted at (0, 0), (1, 3), (2, 6), (3, 8), (4, 12);
+    one straight line from (0, 0) to (4, 12), passing through the crosses at (1, 3) and
+    (2, 6); the cross at (3, 8) is below the line." "Drawing: one loop of wire with 4
+    symbols on it, in order going round: a cell, a switch drawn open, a lamp, a circle
+    with 'A' in it; a circle with 'V' in it is joined by 2 wires to the loop, one on each
+    side of the lamp; the wire from the lamp to the circle with 'A' stops short of the
+    circle, leaving a gap; cannot tell which end of the cell has the longer stroke."
   - For a ringed or ticked option, give the option chosen.
   - Crossed-out work: `answer` is the final attempt that is not crossed out; an earlier
     crossed-out attempt that is still legible goes in `working_out`.
