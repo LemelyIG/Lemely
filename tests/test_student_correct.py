@@ -27,6 +27,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
+from lemely.core.binding import BindingCheck, BindingReport
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import (
     AccuracyReport,
@@ -1583,3 +1584,202 @@ def test_set_status_leaves_a_deleted_upload_alone(
         )
     upload_repo.set_status(owned.id, UploadStatus.failed)
     assert status() is UploadStatus.processing
+
+
+# ---------------------------------------------------------------------------
+# Fail closed: a paper the binding gate rejected is never published.
+# ---------------------------------------------------------------------------
+
+_HELD_SENTENCE = (
+    "We could not match some answers to their questions, so this paper has not been marked. "
+    "Please check every page is included and in order, then upload it again."
+)
+
+
+def _binding(verdict: str, *, paper_check_failed: bool = True) -> BindingReport:
+    return BindingReport(
+        binder="label",
+        verdict=verdict,  # type: ignore[arg-type]
+        checks=[
+            BindingCheck(
+                id="G1",
+                passed=not paper_check_failed,
+                scope="paper",
+                detail="DISTINCTIVE reason naming question 2.",
+            ),
+            BindingCheck(
+                id="G5",
+                passed=False,
+                scope="question",
+                question_ids=["2"],
+                detail="Question 2 has no label.",
+            ),
+        ],
+    )
+
+
+class _Published:
+    """Spies on everything a successful correction would publish, store or announce."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.calls: list[str] = []
+        for name in ("award_xp_safely", "notify_safely", "_alert_teachers_and_parents"):
+            monkeypatch.setattr(student, name, lambda *_a, _n=name, **_k: self.calls.append(_n))
+
+
+def _correct(
+    client: tuple[TestClient, str, StudentUploadRepository],
+) -> tuple[list[dict[str, object]], UploadStatus, str]:
+    """Upload, run /correct, and return its frames, the upload's final status, and its id."""
+    api, student_id, upload_repo = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    paper_id = up.json()["paperId"]
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert resp.status_code == 200
+    frames = [
+        json.loads(frame.removeprefix("data: "))
+        for frame in resp.text.split("\n\n")
+        if frame.startswith("data: {")
+    ]
+    owned = upload_repo.get_owned_upload(user_id=student_id, upload_id=paper_id)
+    assert owned is not None
+    with upload_repo._sm() as session:
+        from lemely.db.models.attempts import Upload
+
+        row = session.get(Upload, owned.id)
+        assert row is not None
+        return frames, row.status, str(owned.id)
+
+
+def _attempt_count(pg_sessionmaker: sessionmaker[Session]) -> int:
+    with pg_sessionmaker() as session:
+        return len(session.scalars(select(Attempt)).all())
+
+
+def _extracted_with(binding: BindingReport | None) -> ExtractedAnswers:
+    return _extracted().model_copy(update={"binding": binding})
+
+
+def _hold_after_marking(monkeypatch: pytest.MonkeyPatch, binding: BindingReport) -> None:
+    """Real marking, with the correction coming back carrying ``binding``."""
+    from lemely.io.correction_ai import correct_paper as real_correct_paper
+    from lemely.web.services import grading as grading_service
+
+    def _correct_with_report(**kwargs: object) -> CorrectionResult:
+        return real_correct_paper(**kwargs).model_copy(update={"binding": binding})  # type: ignore[arg-type]
+
+    monkeypatch.setattr(grading_service, "correct_paper", _correct_with_report)
+
+
+def test_student_upload_held_before_marking_makes_no_marking_call(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marked: list[object] = []
+    monkeypatch.setattr(
+        student, "extract_answers", lambda *a, **k: _extracted_with(_binding("hold"))
+    )
+    monkeypatch.setattr(student, "grade_paper", lambda *a, **k: marked.append(a))
+
+    with structlog.testing.capture_logs() as logs:
+        frames, status, upload_id = _correct(client)
+
+    assert marked == []
+    assert status == UploadStatus.failed
+    assert [f["message"] for f in frames if f["type"] == "error"] == [_HELD_SENTENCE]
+    (held,) = [e for e in logs if e["event"] == "binding_held"]
+    assert held["upload_id"] == upload_id
+    assert held["verdict"] == "hold"
+    assert held["stage"] == "before_marking"
+    assert held["failed_checks"] == ["G1", "G5"]
+
+
+def test_student_upload_held_after_marking_persists_nothing(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``retry`` after marking is blocked exactly like ``hold``: there is no retry left."""
+    _hold_after_marking(monkeypatch, _binding("retry"))
+
+    with structlog.testing.capture_logs() as logs:
+        frames, status, _ = _correct(client)
+
+    assert _attempt_count(pg_sessionmaker) == 0
+    assert status == UploadStatus.failed
+    assert not any(f.get("phase") == "complete" for f in frames)
+    (held,) = [e for e in logs if e["event"] == "binding_held"]
+    assert held["verdict"] == "retry"
+    assert held["stage"] == "after_marking"
+
+
+def test_student_upload_held_sets_failed_and_sends_the_binding_message(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _hold_after_marking(monkeypatch, _binding("hold"))
+
+    frames, status, _ = _correct(client)
+
+    assert status == UploadStatus.failed
+    assert [f["message"] for f in frames if f["type"] == "error"] == [_HELD_SENTENCE]
+    # The gate's reasons can quote question ids; they never reach the student.
+    assert "DISTINCTIVE" not in json.dumps(frames)
+
+
+@pytest.mark.parametrize("stage", ["before_marking", "after_marking"])
+def test_held_paper_awards_no_xp_and_sends_no_grade_ready(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+) -> None:
+    published = _Published(monkeypatch)
+    if stage == "before_marking":
+        monkeypatch.setattr(
+            student, "extract_answers", lambda *a, **k: _extracted_with(_binding("hold"))
+        )
+    else:
+        _hold_after_marking(monkeypatch, _binding("hold"))
+
+    _correct(client)
+
+    # No XP, no "your paper is marked" notification, no at-risk alert.
+    assert published.calls == []
+
+
+def test_paper_with_no_report_is_published_as_before(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    published = _Published(monkeypatch)
+    monkeypatch.setattr(student, "extract_answers", lambda *a, **k: _extracted_with(None))
+
+    frames, status, _ = _correct(client)
+
+    assert status == UploadStatus.complete
+    assert _attempt_count(pg_sessionmaker) == 1
+    assert any(f.get("phase") == "complete" for f in frames)
+    assert published.calls == ["award_xp_safely", "notify_safely", "_alert_teachers_and_parents"]
+
+
+def test_paper_with_pass_verdict_and_question_scope_failures_is_published(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``pass`` verdict publishes even when single questions failed their checks."""
+    published = _Published(monkeypatch)
+    passing = _binding("pass", paper_check_failed=False)
+    monkeypatch.setattr(student, "extract_answers", lambda *a, **k: _extracted_with(passing))
+    _hold_after_marking(monkeypatch, passing)
+
+    frames, status, _ = _correct(client)
+
+    assert status == UploadStatus.complete
+    assert _attempt_count(pg_sessionmaker) == 1
+    assert any(f.get("phase") == "complete" for f in frames)
+    assert published.calls == ["award_xp_safely", "notify_safely", "_alert_teachers_and_parents"]

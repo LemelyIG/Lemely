@@ -15,8 +15,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Literal
 
 from lemely.core.analytics import predict_grade, summarize_weaknesses
+from lemely.core.binding import BindingReport
 from lemely.core.history import HistoryStoreProtocol, PaperRecord, now_iso
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import (
@@ -31,6 +33,59 @@ from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.integrity import apply_integrity_checks
 from lemely.runtime.config import IntegritySettings, MarkingOptions
+from lemely.runtime.errors import LemelyError
+
+BINDING_HELD_MESSAGE = (
+    "We could not match some answers to their questions, so this paper has not been marked. "
+    "Please check every page is included and in order, then upload it again."
+)
+"""What the uploader is told when the binding gate rejects a paper.
+
+Fixed on purpose: the gate's own reasons can quote question ids and counts, and
+those go to the log, not to the student or the console.
+"""
+
+
+class BindingHeldError(LemelyError):
+    """A paper the binding gate rejected must not be published.
+
+    ``str()`` is the fixed uploader-facing sentence, never the reasons.
+    ``reasons`` is the ``detail`` of every failed paper-scope check, for the log.
+    """
+
+    def __init__(
+        self, report: BindingReport, stage: Literal["before_marking", "after_marking"]
+    ) -> None:
+        super().__init__(BINDING_HELD_MESSAGE)
+        self.verdict = report.verdict
+        self.stage = stage
+        failed = [c for c in report.checks if not c.passed]
+        self.failed_check_ids = [c.id for c in failed]
+        self.reasons = [c.detail for c in failed if c.scope == "paper"]
+
+
+def binding_blocks_publication(report: BindingReport | None) -> bool:
+    """Whether a binding report forbids publishing the paper.
+
+    ``None`` means no verdict exists (not a scan, or the gate is off or only
+    observing), which never blocks. Any verdict but ``pass`` blocks, and
+    ``retry`` after marking is treated like ``hold`` because there is no retry
+    left at that point.
+    """
+    return report is not None and report.verdict != "pass"
+
+
+def ensure_binding_allows_marking(extracted: ExtractedAnswers | Mapping[str, str]) -> None:
+    """Raise :class:`BindingHeldError` before marking a paper that would be thrown away.
+
+    A plain mapping of answers (which :func:`grade_paper` also accepts) carries
+    no report, so it is never held.
+    """
+    if not isinstance(extracted, ExtractedAnswers):
+        return
+    report = extracted.binding
+    if report is not None and binding_blocks_publication(report):
+        raise BindingHeldError(report, "before_marking")
 
 
 def extract_answers(
@@ -92,6 +147,10 @@ def grade_paper(
 
     Returns:
         The assembled accuracy report.
+
+    Raises:
+        BindingHeldError: The correction's binding report blocks publication.
+            Raised before any history record is written.
     """
     correction: CorrectionResult = correct_paper(
         mark_scheme=mark_scheme,
@@ -100,6 +159,8 @@ def grade_paper(
         mcq_only=mcq_only,
         options=options,
     )
+    if correction.binding is not None and binding_blocks_publication(correction.binding):
+        raise BindingHeldError(correction.binding, "after_marking")
     correction = apply_integrity_checks(
         correction,
         mark_scheme,
