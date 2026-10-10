@@ -85,8 +85,11 @@ class Suspect:
 class AuditReport:
     """What an audit found.
 
-    ``audited`` counts attempts judged against a scheme. The other counters are
-    attempts that were not judged, each for its own reason.
+    ``selected`` is every attempt looked at. It equals ``audited`` plus the
+    counters of attempts that were not judged, each for its own reason
+    (``scheme_not_found``, ``unreadable_identity``, ``no_paper_identity``,
+    ``scheme_mismatch``, ``no_answers``). ``not_judgeable``, ``year_assumed`` and
+    ``question_scope_only`` are counted within ``audited``.
     """
 
     suspects: list[Suspect] = field(default_factory=list)
@@ -97,7 +100,9 @@ class AuditReport:
     unreadable_identity: int = 0
     no_paper_identity: int = 0
     scheme_mismatch: int = 0
+    no_answers: int = 0
     year_assumed: int = 0
+    selected: int = 0
 
     def as_json(self) -> dict[str, object]:
         return {
@@ -109,7 +114,9 @@ class AuditReport:
             "unreadable_identity": self.unreadable_identity,
             "no_paper_identity": self.no_paper_identity,
             "scheme_mismatch": self.scheme_mismatch,
+            "no_answers": self.no_answers,
             "year_assumed": self.year_assumed,
+            "selected": self.selected,
         }
 
 
@@ -213,6 +220,7 @@ def audit_attempts(
     report = AuditReport()
     schemes: dict[str, MarkScheme | None] = {}
     for attempt in attempts:
+        report.selected += 1
         try:
             metadata = exam_metadata(attempt)
         except ValidationError as exc:
@@ -237,6 +245,9 @@ def audit_attempts(
             continue
         if _ids_do_not_match(attempt, scheme):
             report.scheme_mismatch += 1
+            continue
+        if not any((r.student_answer or "").strip() for r in attempt.question_results):
+            report.no_answers += 1
             continue
         report.audited += 1
         if metadata.session_year is None:

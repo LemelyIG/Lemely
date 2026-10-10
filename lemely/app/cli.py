@@ -952,9 +952,11 @@ def audit_bindings_cmd(
     click.echo(
         f"Attempts with only question-level failures (not listed): {report.question_scope_only}"
     )
+    click.echo(f"Selected: {report.selected}")
     click.echo(f"Audited: {report.audited}")
     click.echo(f"Skipped, mark scheme not found: {report.scheme_not_found}")
     click.echo(f"Skipped, stored paper identity unreadable: {report.unreadable_identity}")
+    click.echo(f"Skipped, nothing answered: {report.no_answers}")
     click.echo(f"Skipped, no paper identity stored: {report.no_paper_identity}")
     click.echo(
         f"Skipped, stored question ids do not match the mark scheme: {report.scheme_mismatch}"

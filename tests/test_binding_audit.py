@@ -250,6 +250,8 @@ def test_audit_command_json_output(monkeypatch: pytest.MonkeyPatch, scheme: Mark
         "no_paper_identity",
         "scheme_mismatch",
         "year_assumed",
+        "no_answers",
+        "selected",
     }
     assert (payload["audited"], payload["scheme_not_found"], payload["not_judgeable"]) == (2, 1, 0)
     assert payload["question_scope_only"] == 0
@@ -583,3 +585,49 @@ def test_the_audit_assigns_nothing_and_calls_no_write(
     result = CliRunner().invoke(cli, ["audit-bindings"])
     assert result.exit_code == 0, result.output
     assert session.calls == ["scalars", "close"]
+
+
+def test_an_attempt_with_nothing_answered_is_unjudged_not_audited(scheme: MarkScheme) -> None:
+    blank = [SimpleNamespace(question_id="1a_i", student_answer="  ")]
+    attempts = [_attempt("aligned", rows=[]), _attempt("aligned", rows=blank), _attempt("aligned")]
+    report = audit_attempts(attempts, lambda _meta: scheme)
+    assert report.no_answers == 2
+    assert report.audited == 1
+    assert report.suspects == []
+
+
+def test_the_buckets_add_up_to_the_number_selected(scheme: MarkScheme) -> None:
+    attempts = [
+        _attempt("full_shift_lite"),
+        _attempt("aligned"),
+        _attempt("aligned", rows=[]),
+        _attempt("aligned", paper_variant=2),
+        _attempt("aligned", paper_number=0),
+        _attempt("aligned", subject_code=None, session_month=None),
+        _attempt(
+            "aligned",
+            rows=[SimpleNamespace(question_id="zz", student_answer="1")],
+        ),
+    ]
+    report = audit_attempts(attempts, lambda m: scheme if m.paper_variant == 1 else None)
+    assert report.selected == 7
+    assert report.selected == (
+        report.audited
+        + report.no_answers
+        + report.scheme_not_found
+        + report.unreadable_identity
+        + report.no_paper_identity
+        + report.scheme_mismatch
+    )
+
+
+def test_the_command_prints_and_returns_the_number_selected(
+    monkeypatch: pytest.MonkeyPatch, scheme: MarkScheme
+) -> None:
+    session = _SpySession([_attempt("aligned"), _attempt("aligned", rows=[])])
+    _patch(monkeypatch, session, scheme)
+    out = CliRunner().invoke(cli, ["audit-bindings"]).output
+    assert "Selected: 2" in out
+    assert "Skipped, nothing answered: 1" in out
+    payload = json.loads(CliRunner().invoke(cli, ["--json", "audit-bindings"]).stdout)
+    assert (payload["selected"], payload["no_answers"], payload["audited"]) == (2, 1, 1)
