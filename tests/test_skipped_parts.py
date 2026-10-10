@@ -226,6 +226,18 @@ def test_a_list_that_shows_anything_else_excuses_nothing(scheme_41: MarkScheme) 
     assert read.unplaced_labels == []
     assert "neighbour_left_blank" in read.unaligned_reasons.values()
     assert skipped_parts(read, read, scheme_41) == SkippedParts()
+    # A group with the trace of writing listed before its label: in question 6 the
+    # answers to (a) and (b) each stand before their label. No leaf is unaligned by
+    # it, and the list is still not one that shows absent labels and nothing else.
+    shifted = list(clean)
+    at = next(i for i, item in enumerate(shifted) if getattr(item, "answer", "").endswith(" 6a"))
+    shifted[at - 1], shifted[at] = shifted[at], shifted[at - 1]
+    shifted[at + 1], shifted[at + 2] = shifted[at + 2], shifted[at + 1]
+    read = bind_stream(shifted, scheme_41)
+    assert read.listing_suspects == ["6"]
+    assert read.unplaced_labels == []
+    assert set(read.unaligned_reasons) == {"2a_i", "5a", "5b", "7b_i", "7b_ii"}
+    assert skipped_parts(read, read, scheme_41) == SkippedParts()
 
 
 def test_a_question_not_attempted_is_excused_and_too_many_hold_the_paper(
