@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import threading
 from collections.abc import Generator
 from pathlib import Path
@@ -20,6 +19,14 @@ def _render_questions_md(report_dict: dict[str, Any], ms: Any = None) -> str:
     """Return a Markdown string summarising per-question correction results."""
     lines = ["### Per-question results\n"]
     source_badge = {"deterministic": "🔢", "ai": "🤖", "missing": "❓", "dropped": "🗑️"}
+    binding = report_dict.get("correction", {}).get("binding")
+    if binding is not None:
+        verdict = binding.get("verdict", "?")
+        lines.append(
+            f"**Binding check: {verdict}**"
+            + ("" if verdict == "pass" else " (this result cannot be saved)")
+            + "\n"
+        )
     for q in report_dict.get("correction", {}).get("questions", []):
         qid = q.get("question_id", "?")
         awarded = q.get("awarded_marks", 0)
@@ -161,13 +168,16 @@ def build_app(settings: Any = None) -> Any:
         raise RuntimeError("gradio is not installed. Run: pip install 'lemely[ui]'") from exc
 
     from lemely.app.gradio_callbacks import (
+        binding_summary,
         build_history_trend_markdown,
         build_library_table_rows,
         build_mark_scheme_dropdown_choices,
         build_subject_session_choices,
         extracted_to_table_rows,
+        held_reason,
         history_to_table_rows,
         load_papers_for_subject_session,
+        overlay_edited_answers,
         parse_mark_scheme_path_from_label,
         rows_to_reviewed_answers_json,
         save_correction_artifacts,
@@ -223,6 +233,7 @@ def build_app(settings: Any = None) -> Any:
                 result = extractor(scan_path=Path(scan_file), mark_scheme=ms)
                 result_holder["rows"] = extracted_to_table_rows(result)
                 result_holder["json"] = result.model_dump_json(indent=2)
+                result_holder["binding"] = binding_summary(result)
             except Exception as exc:
                 error_holder["err"] = exc
             finally:
@@ -243,10 +254,12 @@ def build_app(settings: Any = None) -> Any:
         if "err" in error_holder:
             yield empty, "", f"ERROR: {error_holder['err']}", _token_text()
             return
+        summary = result_holder.get("binding", "")
+        log = f"{summary}\n{buf.current_text()}" if summary else buf.current_text()
         yield (
             result_holder.get("rows", empty),
             result_holder.get("json", ""),
-            buf.current_text(),
+            log,
             _token_text(),
         )
 
@@ -268,7 +281,7 @@ def build_app(settings: Any = None) -> Any:
 
                 ms_path = parse_mark_scheme_path_from_label(ms_label)
                 ms = MarkScheme.model_validate_json(ms_path.read_text(encoding="utf-8"))
-                reviewed = json.loads(rows_to_reviewed_answers_json(table_data))
+                reviewed = overlay_edited_answers(extracted_json, table_data)
                 client = None if mcq_only else GeminiClient(settings)
                 correction = hybrid_correct_paper(
                     mark_scheme=ms,
@@ -325,6 +338,9 @@ def build_app(settings: Any = None) -> Any:
     ) -> str:
         if not report:
             return "Grade the paper before saving."
+        held = held_reason(report)
+        if held is not None:
+            return held
         reviewed_json = rows_to_reviewed_answers_json(table_data)
         session_dir = save_correction_artifacts(
             output_dir=settings.paths.output_dir,

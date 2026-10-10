@@ -19,6 +19,7 @@ from typing import Literal
 
 from lemely.core.analytics import predict_grade, summarize_weaknesses
 from lemely.core.binding import BindingReport
+from lemely.core.binding_review import binding_blocks_publication
 from lemely.core.history import HistoryStoreProtocol, PaperRecord, now_iso
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import (
@@ -62,17 +63,6 @@ class BindingHeldError(LemelyError):
         failed = [c for c in report.checks if not c.passed]
         self.failed_check_ids = [c.id for c in failed]
         self.reasons = [c.detail for c in failed if c.scope == "paper"]
-
-
-def binding_blocks_publication(report: BindingReport | None) -> bool:
-    """Whether a binding report forbids publishing the paper.
-
-    ``None`` means no verdict exists (not a scan, or the gate is off or only
-    observing), which never blocks. Any verdict but ``pass`` blocks, and
-    ``retry`` after marking is treated like ``hold`` because there is no retry
-    left at that point.
-    """
-    return report is not None and report.verdict != "pass"
 
 
 def ensure_binding_allows_marking(extracted: ExtractedAnswers | Mapping[str, str]) -> None:

@@ -18,6 +18,11 @@ Pure: no imports from ``lemely.io`` or ``lemely.db``.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lemely.core.binding import BindingReport
+
 BINDING_REVIEW_PREFIX = "binding unverified:"
 
 #: ``apply_integrity_checks`` and ``correction_ai._join_reason`` join segments with this.
@@ -46,4 +51,21 @@ def is_unbound_question(review_reason: str | None, student_answer: str | None) -
     return has_binding_doubt(review_reason) and not (student_answer or "").strip()
 
 
-__all__ = ["BINDING_REVIEW_PREFIX", "has_binding_doubt", "is_unbound_question"]
+def binding_blocks_publication(report: BindingReport | None) -> bool:
+    """Whether a binding report forbids publishing the paper.
+
+    ``None`` means no verdict exists (not a scan, or the gate is off or only
+    observing), which never blocks. Any verdict but ``pass`` blocks, and
+    ``retry`` after marking is treated like ``hold`` because there is no retry
+    left at that point. The one rule: the web jobs, the Gradio app and the CLI
+    all call it.
+    """
+    return report is not None and report.verdict != "pass"
+
+
+__all__ = [
+    "BINDING_REVIEW_PREFIX",
+    "binding_blocks_publication",
+    "has_binding_doubt",
+    "is_unbound_question",
+]

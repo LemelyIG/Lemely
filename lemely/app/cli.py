@@ -378,6 +378,13 @@ def correct_paper_cmd(
     if record:
         if not student_id:
             raise click.UsageError("--student-id is required when --record is set.")
+        from lemely.core.binding_review import binding_blocks_publication
+
+        if correction.binding is not None and binding_blocks_publication(correction.binding):
+            raise click.ClickException(
+                f"not recorded: the binding check ended at {correction.binding.verdict}, so some "
+                "answers may sit on the wrong questions; run without --record to see the result"
+            )
         import datetime
 
         from lemely.core.history import PaperRecord
