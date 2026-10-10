@@ -101,12 +101,26 @@ DOUBT_NUMBER_NOT_SEEN = "question number not seen"
 DOUBT_NEXT_NUMBER_NOT_SEEN = "next question number not seen"
 DOUBT_PREVIOUS_PAGE = "continues from the previous page"
 DOUBT_ARROW = "tied by an arrow"
+DOUBT_SET_ASIDE = "some writing under this label was set aside"
 # Every doubt a leaf can carry, in the order they are listed on it.
-DOUBTS = (DOUBT_NUMBER_NOT_SEEN, DOUBT_NEXT_NUMBER_NOT_SEEN, DOUBT_PREVIOUS_PAGE, DOUBT_ARROW)
-# The two things a doubt can mean. A content doubt: the leaf's own label was seen, and it
-# may hold writing that is someone else's. An inference doubt: the writing follows the
-# leaf's label, and which question that label belongs to was inferred on strong evidence.
-CONTENT_DOUBTS = (DOUBT_NEXT_NUMBER_NOT_SEEN, DOUBT_PREVIOUS_PAGE, DOUBT_ARROW)
+DOUBTS = (
+    DOUBT_NUMBER_NOT_SEEN,
+    DOUBT_NEXT_NUMBER_NOT_SEEN,
+    DOUBT_PREVIOUS_PAGE,
+    DOUBT_ARROW,
+    DOUBT_SET_ASIDE,
+)
+# The two things a doubt can mean. A content doubt: the leaf's own label was seen, and
+# what it holds may not be the student's whole answer to it and no more: it may hold
+# writing that is someone else's, or a block that sat under its label was not given to
+# it. An inference doubt: the writing follows the leaf's label, and which question that
+# label belongs to was inferred on strong evidence.
+CONTENT_DOUBTS = (
+    DOUBT_NEXT_NUMBER_NOT_SEEN,
+    DOUBT_PREVIOUS_PAGE,
+    DOUBT_ARROW,
+    DOUBT_SET_ASIDE,
+)
 INFERENCE_DOUBTS = (DOUBT_NUMBER_NOT_SEEN,)
 
 # A list longer than this is not read: nothing is bound. The largest corpus scheme has
@@ -1345,6 +1359,7 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
     # with no place): they are not blank answers.
     set_aside: set[int] = set(blank)
     aside: dict[int, str] = {}  # ... and, where the leaf is open, what was set aside first
+    withheld: set[int] = set()  # leaves with a block under their label that is unbound
     unbound: list[UnboundWriting] = []
     unplaced: list[SeenLabel] = []
     target: int | None = None
@@ -1400,6 +1415,7 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
             unbound.append(UnboundWriting(writing=item, reason=why))
             if stretch is not None:
                 set_aside.add(stretch)
+                withheld.add(stretch)
                 aside.setdefault(
                     stretch, "writing_uncertain" if target is not None else "unplaced_label_follows"
                 )
@@ -1421,6 +1437,10 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
             mine.add(DOUBT_NUMBER_NOT_SEEN)
         if node in doubted:
             mine.add(DOUBT_NEXT_NUMBER_NOT_SEEN)
+        if node in withheld:
+            # The leaf is marked on the writing it holds, and a block that sat under
+            # its label is not part of it: the marker sees less than was written.
+            mine.add(DOUBT_SET_ASIDE)
         leaf_id = paper.nodes[node].leaf_id
         if leaf_id is not None:
             leaves.append(

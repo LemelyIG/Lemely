@@ -352,3 +352,26 @@ def test_every_label_item_of_a_recorded_run_has_a_place(
     assert all(a.text != b.text for a, b in itertools.pairwise(labels))
     assert result.unplaced_labels == []
     assert result.unaligned_reasons == {}
+
+
+# Leaves that are answered and had a block under their label set aside, per run. Runs 2
+# and 5: a block the reader marked "uncertain" under 6(b), 7(b)(i) and 8(d) (for 8(d)
+# it is the working of the answer); run 5 also under 3(c), which already carries a
+# doubt for the unseen number 4. Runs 1, 3 and 4 have none: their unbound blocks all
+# fell straight after a container label, where no leaf has been opened (in run 1 that is
+# the last sentence of 4(b)(i), listed after "(b)"). That case is a known limit.
+_SET_ASIDE = {1: [], 2: ["6b", "7b_i", "8d"], 3: [], 4: [], 5: ["3c", "6b", "7b_i", "8d"]}
+
+
+@pytest.mark.parametrize("run", _RUNS)
+def test_an_answered_leaf_with_writing_set_aside_carries_the_doubt(
+    run: int, bound: dict[int, tuple[list[StreamItem], BoundStream]]
+) -> None:
+    items, result = bound[run]
+    doubt = "some writing under this label was set aside"
+    assert [leaf.question_id for leaf in result.leaves if doubt in leaf.doubts] == _SET_ASIDE[run]
+    # Each such leaf is marked on what it holds, and every block that was set aside
+    # for the reader's "uncertain" stands under one of them or under a container label.
+    assert all(leaf.writings for leaf in result.leaves if doubt in leaf.doubts)
+    uncertain = sum(u.reason == "uncertain" for u in result.unbound)
+    assert (uncertain > 0) == bool(_SET_ASIDE[run])

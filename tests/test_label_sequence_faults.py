@@ -34,6 +34,7 @@ import pytest
 
 from lemely.core.binding import SeenLabel, SeenWriting, StreamItem
 from lemely.core.label_sequence import (
+    DOUBT_SET_ASIDE,
     MAX_STREAM_ITEMS,
     UNALIGNED_REASONS,
     BoundStream,
@@ -858,6 +859,21 @@ def test_clean_stream_binds_every_unique_leaf_of_every_corpus_scheme() -> None:
             "continues from the previous page"
         }, path.name
     assert with_duplicates == 7
+
+
+def test_no_clean_stream_sets_writing_aside() -> None:
+    # The doubt for writing set aside under an answered leaf is raised by no clean
+    # stream: every corpus scheme, labels printed and labels by hand.
+    streams = 0
+    for path in sorted(_CORPUS.rglob("*.json")):
+        paper = Paper.load(path.name)
+        for kind in ("printed", "handwritten"):
+            result = bind_stream(_render(paper.perfect()[0], kind), paper.scheme)
+            assert not [
+                leaf.question_id for leaf in result.leaves if DOUBT_SET_ASIDE in leaf.doubts
+            ]
+            streams += 1
+    assert streams == 578
 
 
 def _assert_printed_paper_binds(paper: Paper, blank: set[str]) -> None:

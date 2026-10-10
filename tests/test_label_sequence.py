@@ -255,6 +255,48 @@ def test_a_clean_stream_binds_every_leaf_to_its_own_writing(scheme_41: MarkSchem
     assert bound.leaves[0].label_seen == "(i)"
 
 
+def _doubts(bound: BoundStream) -> dict[str, list[str]]:
+    return {leaf.question_id: leaf.doubts for leaf in bound.leaves if leaf.doubts}
+
+
+def test_an_answered_leaf_with_writing_set_aside_under_it_carries_a_doubt(
+    scheme_41: MarkScheme,
+) -> None:
+    # The leaf is bound and marked on what it holds, and a block that sat under its
+    # label was not given to it. The marker sees less than the student wrote there, so
+    # the leaf says so. A leaf left with no writing at all is not emitted (D3).
+    aside = "some writing under this label was set aside"
+    clean = _clean(scheme_41)
+    # A block the reader marked uncertain, after one it did not.
+    items = _items(*clean)
+    items.insert(clean.index("=1b") + 1, _w("working", placed_by="uncertain"))
+    bound = bind_stream(items, scheme_41)
+    assert _on(bound)["1b"] == ["1b"]
+    assert _unbound(bound) == [("working", "uncertain")]
+    assert _doubts(bound) == {"1b": [aside]}
+    # A block under a label with no place that stands under the leaf.
+    bound = bind_stream(_items(*_cut(clean, after={"=5d": ["continued", "=more"]})), scheme_41)
+    assert _on(bound)["5d"] == ["5d"]
+    assert _doubts(bound) == {"5d": [aside]}
+    # A label with no place and nothing written under it sets no writing aside.
+    bound = bind_stream(_items(*_cut(clean, after={"=5d": ["continued"]})), scheme_41)
+    assert _doubts(bound) == {}
+    # The only block of the leaf set aside: the leaf is not emitted at all.
+    items = _items(*clean)
+    items[clean.index("=1b")] = _w("1b", placed_by="uncertain")
+    bound = bind_stream(items, scheme_41)
+    assert "1b" not in _on(bound)
+    assert _doubts(bound) == {}
+    # A block that falls straight after a container label sat under no leaf: no leaf
+    # carries the doubt, and the block is reported unbound only (a known limit).
+    bound = bind_stream(_items(*_cut(clean, after={"2": ["=stem"]})), scheme_41)
+    assert _unbound(bound) == [("stem", "after_container_label")]
+    assert _doubts(bound) == {}
+    # A clean paper has no such doubt, whoever wrote the labels.
+    assert _doubts(bind_stream(_items(*clean), scheme_41)) == {}
+    assert _doubts(bind_stream(_by_hand(_items(*clean)), scheme_41)) == {}
+
+
 def test_the_doubts_fall_into_two_classes_and_no_doubt_is_in_neither() -> None:
     # What the gate does with a doubt depends on its class, so the classes are named
     # here and imported, not spelled again elsewhere.
@@ -262,6 +304,7 @@ def test_the_doubts_fall_into_two_classes_and_no_doubt_is_in_neither() -> None:
         "next question number not seen",
         "continues from the previous page",
         "tied by an arrow",
+        "some writing under this label was set aside",
     )
     assert INFERENCE_DOUBTS == ("question number not seen",)
     assert sorted(CONTENT_DOUBTS + INFERENCE_DOUBTS) == sorted(DOUBTS)
