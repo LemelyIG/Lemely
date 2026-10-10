@@ -117,14 +117,21 @@ Writing on a wrong leaf:
   figures. [scratch: the review's generator, run again] The two page figures were
   not measured again on the review's trials.
 - The same gap on a separate sheet, where both reads of the scan have it (the scan
-  is at fault, not one read). The gate does not count a label that is absent from
-  both reads between handwritten labels (``binding_gate.skipped_parts``), so such a
+  is at fault, not one read). The two reads are not independent witnesses: in nine
+  stored pairs of live reads the number of one question was missing from at least
+  one read in 7 pairs and from both reads in 5 of those 7. "Absent in both reads"
+  can be a miss the two reads share, not a part the student skipped. The gate does not count a label that is
+  absent from both reads between handwritten labels (``binding_gate.skipped_parts``), so such a
   paper is published where it was held. Of 5,112, 5,112 and 824 generated papers
   (labels missed, a region not read, a page missing) 92, 44 and 7 are published
   with a wrong binding, where 43, 17 and 4 were. In 17, 11 and 1 of them a wrong
   leaf was sent to review by nothing; with the doubt for an unseen question, in
   none. Where one read alone has the gap, what is published is what was published
   before, each with every wrong leaf in review. [scratch]
+  Two rows are worse under the rule. With two parts also skipped, papers published
+  with a wrong binding (all flagged) rise from 6 to 104 of 4,854 generated papers
+  with a fault both reads share. And one generated row has 2 papers of 6,000 holding
+  an unflagged wrong leaf where there was 1; that row was not traced. [scratch]
   ``test_past_an_unseen_tail_handwritten_labels_keep_their_writing_with_a_doubt``.
 - Two labels in a row missed where the first part of a question carries its number
   (class C, what is left of it): 1 of 216 trials, and 2 of 216; on mixed labels 4 of

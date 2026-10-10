@@ -254,6 +254,12 @@ def skipped_parts(
     absent nor the leaf D1 unbinds straight before an absent one. A list with any
     other sign of confusion excuses nothing, and G5 counts all of it as before.
 
+    "Where one read alone has the gap, what is published is what was published
+    before" holds only when nothing else is skipped: with two parts also skipped,
+    papers published with a wrong binding (all flagged) rise from 6 to 104 of 4,854
+    generated papers with a fault both reads share, and one generated row has 2
+    papers of 6,000 with an unflagged wrong leaf where there was 1 (not traced).
+
     With ``other`` ``None`` (one read) nothing is excused. Measured on generated
     sheets only (no separate-sheet scan has been read): see the "Known limits" of
     ``lemely.core.label_sequence``.
