@@ -220,7 +220,7 @@ Behaviour:
   - `test_g2_fires_on_duplicate_ids` (`chaotic`, `partial_a`)
   - `test_every_misbound_fixture_fails_at_least_one_check`
   - `test_aligned_fixture_passes_g1_g2_g6_g7`
-  
+
   Then unit tests on small hand-built inputs: `test_g6_ignores_unknown_shapes`; `test_g7_needs_more_shifted_than_self_matching_leaves`; `test_g7_is_silent_when_a_student_is_simply_wrong`; `test_g8_counts_a_run_of_three`; `test_g9_detects_text_agreeing_under_a_different_id`; `test_verdict_pass_retry_hold`; `test_question_scope_failures_do_not_hold_the_paper`.
 - [ ] **Step 2: Run.** `pytest tests/test_binding_gate.py -q`. Expected: import error.
 - [ ] **Step 3: Implement.** Pure functions. Each `BindingCheck.detail` names the evidence in one sentence, for example `"7 answers equal the previous question's expected value: 1b, 1c_i, 1c_ii, 2a_ii, …"`.
