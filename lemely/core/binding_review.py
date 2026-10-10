@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from lemely.core.schemas import marker_scored
+
 if TYPE_CHECKING:
     from lemely.core.binding import BindingReport
 
@@ -47,8 +49,9 @@ def is_unbound_question(
     """Whether a question was left unmarked because no answer could be tied to it.
 
     An unbound question is one the binder could give no answer: no marking call
-    was made, so its stored row has ``marker_source`` ``"dropped"``, a binding
-    reason and no answer. That is exact. An empty ``student_answer`` alone is not:
+    was made, so its stored row has an unscored ``marker_source`` (``"dropped"``;
+    asked through :func:`lemely.core.schemas.marker_scored`, the one formulation),
+    a binding reason and no answer. That is exact. An empty ``student_answer`` alone is not:
     a marked answer that is working only (empty final answer, non-empty working)
     also has none, and it was read and marked, so it is an unverified answer and
     takes the ordinary evidence-and-judge route. The default ``marker_source``
@@ -60,7 +63,7 @@ def is_unbound_question(
     """
     return (
         has_binding_doubt(review_reason)
-        and marker_source == "dropped"
+        and not marker_scored(marker_source)
         and not (student_answer or "").strip()
     )
 
