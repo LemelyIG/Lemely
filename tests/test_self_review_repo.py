@@ -3207,3 +3207,93 @@ def test_agreeing_with_the_mark_on_a_binding_doubt_question_leaves_the_row_open(
     _service(pg_sessionmaker).submit(student, attempt_id, qr_id, agree)
 
     assert [r.status for r in _queue_rows(pg_sessionmaker, qr_id)] == [ReviewStatus.open]
+
+
+# ── pending_teacher is true while a binding-doubt teacher row is open ───────
+
+
+def _pending_in_list(
+    sm: sessionmaker[Session], student: uuid.UUID, attempt_id: uuid.UUID, qid: str
+) -> bool:
+    questions = _service(sm).list_questions(student, attempt_id)
+    return next(q for q in questions if q.question_id == qid).pending_teacher
+
+
+def _resolve_rows(sm: sessionmaker[Session], qr_id: uuid.UUID) -> None:
+    with sm() as session, session.begin():
+        for row in session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.question_result_id == qr_id)
+        ).all():
+            row.status = ReviewStatus.resolved
+
+
+def _claim(
+    sm: sessionmaker[Session],
+    student: uuid.UUID,
+    attempt_id: uuid.UUID,
+    qr_id: uuid.UUID,
+    points: tuple[str, ...] = ("p1", "p2"),
+) -> object:
+    return _service(sm, judge=_CountingJudge()).submit(
+        student, attempt_id, qr_id, _all_earned(list(points), evidence="It is on page 3.")
+    )
+
+
+@pytest.mark.parametrize("kind", ["unbound", "unverified"])
+def test_binding_doubt_question_with_an_open_teacher_row_is_pending_teacher(
+    pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    from lemely.web.routers.student_self_review import _revealed_dto
+
+    student = _seed_user(pg_sessionmaker)
+    cq = _binding_doubt_question(kind).model_copy(
+        update={"student_answer": None} if kind == "unbound" else {}
+    )
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [cq, _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    # Before any claim: the questions list (place 1).
+    assert _pending_in_list(pg_sessionmaker, student, attempt_id, "1") is True
+
+    view = _claim(pg_sessionmaker, student, attempt_id, qr_id)
+
+    # After the claim: the submit response (place 2), a later get (place 3),
+    # the wire DTO (place 4) and the list again.
+    assert isinstance(view, RevealedSelfReview)
+    assert view.pending_teacher is True and view.state == "revealed"
+    again = _service(pg_sessionmaker).get(student, attempt_id, qr_id)
+    assert isinstance(again, RevealedSelfReview) and again.pending_teacher is True
+    assert _revealed_dto(again).pendingTeacher is True
+    assert _pending_in_list(pg_sessionmaker, student, attempt_id, "1") is True
+
+
+@pytest.mark.parametrize("kind", ["unbound", "unverified"])
+def test_pending_teacher_clears_when_the_teacher_resolves_the_row(
+    pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_binding_doubt_question(kind), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    _claim(pg_sessionmaker, student, attempt_id, qr_id)
+
+    _resolve_rows(pg_sessionmaker, qr_id)
+
+    again = _service(pg_sessionmaker).get(student, attempt_id, qr_id)
+    assert isinstance(again, RevealedSelfReview) and again.pending_teacher is False
+    assert _pending_in_list(pg_sessionmaker, student, attempt_id, "1") is False
+
+
+def test_ordinary_low_confidence_question_pending_state_is_unchanged(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+    assert _pending_in_list(pg_sessionmaker, student, attempt_id, "2") is True
+
+    view = _claim(pg_sessionmaker, student, attempt_id, qr_id, ("p1", "p2", "p3"))
+
+    # The self-mark resolved the marker-doubt row: no teacher is pending.
+    assert isinstance(view, RevealedSelfReview)
+    assert view.pending_teacher is False and view.state == "settled"
+    assert _pending_in_list(pg_sessionmaker, student, attempt_id, "2") is False

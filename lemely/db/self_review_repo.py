@@ -1061,7 +1061,12 @@ def _revealed_view(
     session: Session, qr: QuestionResult, *, evidence_required: bool
 ) -> RevealedSelfReview:
     entries = _selfmark_snapshot(session, qr)
-    pending_teacher = _has_open_unjudged_row(session, qr)
+    # Display state only; it decides nothing. A binding-doubt question is
+    # pending a teacher for as long as its teacher row is open, because the
+    # student's self-mark cannot settle it.
+    pending_teacher = _has_open_unjudged_row(session, qr) or _has_open_binding_doubt_row(
+        session, qr
+    )
     # Defensive and unreachable today: the only caller (_to_view) enters this
     # branch when qr.is_self_marked is true, which is precisely
     # student_selfmarked_at is not None.
@@ -1164,6 +1169,22 @@ def _has_open_unjudged_row(session: Session, qr: QuestionResult) -> bool:
         .where(
             ReviewQueueItem.question_result_id == qr.id,
             ReviewQueueItem.reason == ReviewReason.student_evidence_unjudged,
+            ReviewQueueItem.status == ReviewStatus.open,
+        )
+    )
+    return (count or 0) > 0
+
+
+def _has_open_binding_doubt_row(session: Session, qr: QuestionResult) -> bool:
+    """Whether a binding-doubt question still has its teacher's ``low_confidence`` row open."""
+    if not has_binding_doubt(qr.review_reason):
+        return False
+    count = session.scalar(
+        select(func.count())
+        .select_from(ReviewQueueItem)
+        .where(
+            ReviewQueueItem.question_result_id == qr.id,
+            ReviewQueueItem.reason == ReviewReason.low_confidence,
             ReviewQueueItem.status == ReviewStatus.open,
         )
     )
