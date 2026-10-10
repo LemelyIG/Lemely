@@ -57,6 +57,7 @@ import structlog
 from lemely.core.binding import BindingCheck, BindingReport
 from lemely.core.binding_gate import (
     GateThresholds,
+    SkippedParts,
     all_multiple_choice,
     check_duplicate_ids,
     check_label_coverage,
@@ -65,6 +66,7 @@ from lemely.core.binding_gate import (
     check_shift,
     check_unknown_ids,
     presence_disagreements,
+    skipped_parts,
     suspect_group_leaves,
     unread_in_one_read,
     verdict,
@@ -85,6 +87,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
     from lemely.core.binding import BindingVerdict, SeenWriting
+    from lemely.core.label_sequence import BoundStream
     from lemely.core.loose_schemas import MarkScheme
     from lemely.io.gemini import GeminiClient, ImageUploads
     from lemely.io.rasterise import RasterisedPage
@@ -176,12 +179,15 @@ class _Read:
     """One read of the script: what ``bind_stream`` made of it, as records and as bound.
 
     ``writings`` is the writing each bound leaf holds, by question id, and ``doubts``
-    the binder's doubts on each (``label_sequence.DOUBTS``).
+    the binder's doubts on each (``label_sequence.DOUBTS``). ``stream`` is the bound
+    stream itself, which is what says where a missing label lies between labels written
+    by hand (``binding_gate.skipped_parts``).
     """
 
     bound: BoundRead
     writings: dict[str, list[SeenWriting]]
     doubts: dict[str, list[str]] = field(default_factory=dict)
+    stream: BoundStream | None = None
 
 
 def binder_for(
@@ -220,9 +226,16 @@ def _lost_items(drops: dict[str, int]) -> int:
 
 
 def _label_checks(
-    read: BoundRead, mark_scheme: MarkScheme, thresholds: GateThresholds
+    read: BoundRead,
+    mark_scheme: MarkScheme,
+    thresholds: GateThresholds,
+    skipped: SkippedParts | None = None,
 ) -> list[BindingCheck]:
-    """G1, G2, G5, G6 and G7 over one bound read."""
+    """G1, G2, G5, G6 and G7 over one bound read.
+
+    ``skipped`` are the read's unaligned leaves that G5 leaves out of its rate: parts
+    the student skipped on a sheet labelled by hand (``_skipped``).
+    """
     extracted = _as_extracted(read.answers)
     return [
         check_unknown_ids(extracted, mark_scheme),
@@ -238,10 +251,23 @@ def _label_checks(
             # Why each leaf is unaligned: with it G5 does not name the answer before a
             # gap in which every label has its place.
             unaligned_reasons=read.unaligned_reasons,
+            skipped=skipped,
         ),
         check_shape(extracted, mark_scheme, thresholds),
         *check_shift(extracted, mark_scheme, thresholds),
     ]
+
+
+def _skipped(read: _Read | None, other: _Read | None, mark_scheme: MarkScheme) -> SkippedParts:
+    """The parts of ``read`` that both reads show the student skipped on a handwritten sheet.
+
+    ``binding_gate.skipped_parts`` decides, from the two bound streams: a leaf whose
+    label is absent from both reads, between labels written by hand, and the answered
+    leaf before each such gap. With one read nothing is excused.
+    """
+    if read is None or other is None or read.stream is None or other.stream is None:
+        return SkippedParts()
+    return skipped_parts(read.stream, other.stream, mark_scheme)
 
 
 def _legacy_checks(
@@ -307,6 +333,7 @@ def _publish_result(
     review_reasons: Mapping[str, str] | None = None,
     by_paper_shape: bool = False,
     marked_from_other_read: int = 0,
+    skipped_parts_count: int = 0,
 ) -> None:
     """Publish and log what the gate decided.
 
@@ -322,7 +349,10 @@ def _publish_result(
     ``by_paper_shape`` says the binder was chosen by ``binder_for``'s rule and not by
     the settings, so that the hold rate can be read per path. ``marked_from_other_read``
     counts the leaves whose answer was taken from the read that was not returned; they
-    are not among ``unaligned``.
+    are not among ``unaligned``. ``skipped_parts_count`` is the number of leaves of the
+    returned read that G5 left out of its rate as parts the student skipped on a
+    handwritten sheet (the answered leaf before each is not counted here); they are
+    among ``unaligned``, since they still go to a teacher.
 
     The event has no subscriber of its own and is never sent to a browser
     (``lemely.web.sse``), so the same fields are written as one ``binding_gate_result``
@@ -345,6 +375,7 @@ def _publish_result(
         "unaligned_reasons": dict(Counter((review_reasons or {}).values())),
         "binder_by_paper_shape": by_paper_shape,
         "marked_from_other_read": marked_from_other_read,
+        "skipped_parts": skipped_parts_count,
     }
     structlog.get_logger().bind(component="binding_gate").info(
         "binding_gate_result",
@@ -663,6 +694,7 @@ def run_binding(
             bound=to_bound_read(bound, page_count=len(pages), drops=stream.drops),
             writings={leaf.question_id: list(leaf.writings) for leaf in bound.leaves},
             doubts={leaf.question_id: list(leaf.doubts) for leaf in bound.leaves},
+            stream=bound,
         )
 
     reads = [_FIRST_READ, _SECOND_READ] if binding.second_read else [_FIRST_READ]
@@ -708,13 +740,18 @@ def run_binding(
     second = second_read.bound if second_read is not None else None
 
     thresholds = GateThresholds()
-    first_checks = _label_checks(first, mark_scheme, thresholds)
+    # Each read is checked with what the pair shows of it: a part with no label in
+    # either read, between handwritten labels, is one the student skipped.
+    first_skipped = _skipped(first_read, second_read, mark_scheme)
+    second_skipped = SkippedParts()
+    first_checks = _label_checks(first, mark_scheme, thresholds, first_skipped)
     second_checks: list[BindingCheck] | None = None
     compared: list[BindingCheck] = []
     lopsided: list[str] = []
     unread: list[str] = []
     if second is not None:
-        second_checks = _label_checks(second, mark_scheme, thresholds)
+        second_skipped = _skipped(second_read, first_read, mark_scheme)
+        second_checks = _label_checks(second, mark_scheme, thresholds, second_skipped)
         one, two = _as_extracted(first.answers), _as_extracted(second.answers)
         compared = [
             check_second_read(
@@ -735,6 +772,7 @@ def run_binding(
 
     chosen, chosen_checks, other = first, first_checks, second_read
     chosen_read: _Read | None = first_read
+    chosen_skipped = first_skipped
     other_checks = second_checks
     decided: BindingVerdict
     if _paper_failed(compared):
@@ -744,6 +782,7 @@ def run_binding(
     elif second is not None and second_checks is not None and not _paper_failed(second_checks):
         chosen, chosen_checks, other = second, second_checks, first_read
         chosen_read, other_checks = second_read, first_checks
+        chosen_skipped = second_skipped
         decided, retried = "pass", True
     else:
         decided, retried = "hold", second is not None
@@ -849,6 +888,7 @@ def run_binding(
         ),
         review_reasons=review_reasons,
         marked_from_other_read=len(from_other),
+        skipped_parts_count=len(chosen_skipped.skipped),
     )
     by_id = {
         **{a.question_id: a for a in _with_statuses(chosen.answers, unverified, cleared)},

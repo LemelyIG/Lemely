@@ -945,6 +945,120 @@ def _statuses_alone(items: list[Any], scheme: MarkScheme) -> dict[str, str | Non
     return {a.question_id: a.binding_status for a in read.answers}
 
 
+# --------------------------------------------------------------------------------------
+# Parts a student skipped on a handwritten sheet
+# --------------------------------------------------------------------------------------
+def _as_a_sheet(
+    items: list[Any], *skipped: tuple[str, int], kind: str = "handwritten"
+) -> list[Any]:
+    """``items`` as a sheet the student labelled by ``kind``, without the ``skipped`` parts.
+
+    A skipped part is named by its label and page; its label and the writing under it
+    are left out, as when the student did not attempt it and wrote no label for it.
+    """
+    out: list[Any] = []
+    leaving_out = False
+    for item in copy.deepcopy(items):
+        if item["type"] == "label":
+            item["kind"] = kind
+            leaving_out = (item["text"], item["page"]) in skipped
+        if not leaving_out:
+            out.append(item)
+    return out
+
+
+_THREE_PARTS = (("(b)", 2), ("(b)", 10), ("(b)", 12))  # 1(b), 5(b), 6(b)
+_SIX_LEAVES = {
+    "1a_ii": "not_bracketed",
+    "1b": "label_not_seen",
+    "5a": "not_bracketed",
+    "5b": "label_not_seen",
+    "6a": "not_bracketed",
+    "6b": "label_not_seen",
+}
+
+
+def test_parts_skipped_on_a_handwritten_sheet_do_not_hold_the_paper(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # Three parts with no label in either read, between labels written by hand. Each
+    # costs its own leaf and the answered leaf before it: six of 43, over G5's limit of
+    # a tenth, with nothing bound wrongly. The gate is given both reads, so it can tell
+    # these from labels a reader missed, and leaves them out of the rate.
+    sheet = _as_a_sheet(_run(1), *_THREE_PARTS)
+    with (
+        _events(EventType.BINDING_GATE_RESULT) as seen,
+        structlog.testing.capture_logs() as logs,
+    ):
+        outcome = _bind(tmp_path, scheme, _Model(first=_items(sheet), second=_items(sheet)))
+    assert (outcome.report.verdict, outcome.report.retried) == ("pass", False)
+    g5 = next(c for c in outcome.report.checks if c.id == "G5")
+    assert (g5.passed, g5.scope) == (False, "question")
+    # All six still go to a teacher, each with its reason, and none is marked.
+    assert outcome.review_reasons == _SIX_LEAVES
+    assert not set(_SIX_LEAVES) & {a.question_id for a in outcome.answers}
+    assert outcome.marked_from_other_read == []
+    # The count of parts left out of the rate is on the event and on the log line.
+    (event,) = seen[EventType.BINDING_GATE_RESULT]
+    (line,) = [entry for entry in logs if entry["event"] == "binding_gate_result"]
+    assert event["skipped_parts"] == line["skipped_parts"] == 3
+    assert (event["unaligned"], line["unaligned"]) == (6, 6)
+
+
+def test_with_one_read_or_printed_labels_the_same_gaps_hold_the_paper(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    sheet = _as_a_sheet(_run(1), *_THREE_PARTS)
+    # One read cannot tell a skipped part from a missed label: nothing is left out.
+    alone = _bind(tmp_path / "alone", scheme, _Model(first=_items(sheet)), second_read=False)
+    assert alone.report.verdict == "hold" and _failed(alone) == [("G5", "paper")]
+    # Between printed labels a label is missing because the reader missed it.
+    printed = _as_a_sheet(_run(1), *_THREE_PARTS, kind="printed")
+    with _events(EventType.BINDING_GATE_RESULT) as seen:
+        held = _bind(
+            tmp_path / "printed", scheme, _Model(first=_items(printed), second=_items(printed))
+        )
+    assert held.report.verdict == "hold" and ("G5", "paper") in _failed(held)
+    assert seen[EventType.BINDING_GATE_RESULT][0]["skipped_parts"] == 0
+
+
+def test_the_second_read_is_excused_its_skipped_parts_too(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The first read lost an item of its reply and fails. The second read is the same
+    # sheet with nothing lost: it passes only because its three skipped parts, which the
+    # first read lacks too, are left out of its rate as well.
+    sheet = _as_a_sheet(_run(1), *_THREE_PARTS)
+    # The first read also lists a label no question accounts for: a list that shows
+    # anything beside absent labels is excused nothing, so its own count is 0.
+    stray = {"type": "label", "page": 18, "box": [1, 1, 5, 5], "text": "(q)", "kind": "handwritten"}
+    lost = [*sheet[:40], "not an item", *sheet[40:], stray]
+    with _events(EventType.BINDING_GATE_RESULT) as seen:
+        outcome = _bind(tmp_path, scheme, _Model(first=_items(lost), second=_items(sheet)))
+    assert (outcome.report.verdict, outcome.report.retried) == ("pass", True)
+    assert outcome.review_reasons == _SIX_LEAVES
+    # The count published is the returned read's.
+    (event,) = seen[EventType.BINDING_GATE_RESULT]
+    assert event["skipped_parts"] == 3
+
+
+def test_a_label_the_other_read_saw_is_not_a_skipped_part(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The first read has no label for four parts; the second read has every one of
+    # them. They are labels the first reader missed, so the first read is over the
+    # limit and fails, and the complete second read is the one returned.
+    four = (*_THREE_PARTS, ("(b)", 18))
+    first, second = _as_a_sheet(_run(1), *four), _as_a_sheet(_run(1))
+    with _events(EventType.BINDING_GATE_RESULT) as seen:
+        outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(second)))
+    assert (outcome.report.verdict, outcome.report.retried) == ("pass", True)
+    (event,) = seen[EventType.BINDING_GATE_RESULT]
+    assert event["skipped_parts"] == 0
+    assert [c["id"] for c in event["first_read_failed_checks"]] == ["G5"]
+    assert _pairs(outcome) == _bound_alone(second, scheme)
+
+
 def test_a_held_paper_takes_nothing_from_the_other_read(tmp_path: Path, scheme: MarkScheme) -> None:
     # Five leaves answered in one read only hold the paper. Held, its record is the
     # returned read's: nothing is marked on it, so nothing is taken from the other read.
@@ -2230,6 +2344,7 @@ def test_binding_gate_result_event_fields(tmp_path: Path, scan: Path, scheme: Ma
         "unaligned_reasons": {},
         "binder_by_paper_shape": False,
         "marked_from_other_read": 0,
+        "skipped_parts": 0,
         "first_read_failed_checks": [],
         "report": extracted.binding.model_dump() if extracted.binding else None,
     }
@@ -2361,6 +2476,7 @@ def test_the_gate_result_is_logged_on_the_server_without_any_answer_text(
         "unaligned_reasons": {},
         "binder_by_paper_shape": False,
         "marked_from_other_read": 0,
+        "skipped_parts": 0,
     }
     assert not any(answer.answer in str(line) for answer in outcome.answers if answer.answer)
 
