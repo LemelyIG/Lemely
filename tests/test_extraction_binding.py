@@ -1931,14 +1931,23 @@ def test_a_held_legacy_paper_does_not_pin_its_call_or_its_retry(
     assert held.binding is not None and held.binding.verdict == "hold"
     assert genai.models.generate_content.call_count == 2  # the call and its retry
 
+    # Run again while the reader still shifts the paper: the call AND its retry are made
+    # afresh, neither is replayed.
+    held_again = extractor(scan_path=scan, mark_scheme=scheme)
+    assert held_again.binding is not None and held_again.binding.verdict == "hold"
+    assert genai.models.generate_content.call_count == 4
+
+    # Run once more, and this time the reader has it right: the first call is fresh, it
+    # passes, and no retry is needed.
     genai.models.generate_content.return_value = _sdk_reply(_legacy_reply("aligned"))
-    again = extractor(scan_path=scan, mark_scheme=scheme)
-    assert genai.models.generate_content.call_count == 3  # read afresh; it passes, no retry
-    assert again.binding is not None and again.binding.verdict == "pass"
+    passed = extractor(scan_path=scan, mark_scheme=scheme)
+    assert genai.models.generate_content.call_count == 5
+    assert passed.binding is not None
+    assert (passed.binding.verdict, passed.binding.retried) == ("pass", False)
 
     # And a legacy paper that passed stays cached.
     extractor(scan_path=scan, mark_scheme=scheme)
-    assert genai.models.generate_content.call_count == 3
+    assert genai.models.generate_content.call_count == 5
 
 
 def test_legacy_binder_with_gate_off_is_unchanged(

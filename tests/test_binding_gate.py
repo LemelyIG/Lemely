@@ -880,6 +880,12 @@ def test_zero_thresholds_do_not_divide_by_zero_on_an_empty_paper() -> None:
     assert check_second_read(
         nothing, nothing, scheme, zero, first_unaligned=[], second_unaligned=[]
     ).passed
+    # No answer in either read, and one leaf the second read found no label for: the
+    # check has something to say (that leaf), and nothing answered to take a rate over.
+    unread = check_second_read(
+        nothing, nothing, scheme, zero, first_unaligned=[], second_unaligned=["2"]
+    )
+    assert (unread.passed, unread.scope, unread.question_ids) == (False, "question", ["2"])
 
 
 # --- G9 ---------------------------------------------------------------------
