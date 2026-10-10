@@ -562,6 +562,14 @@ def _solve(
     return scores, winner[1]
 
 
+def _bindings(trail: _Trail) -> dict[int, tuple[int, ...]]:
+    out: dict[int, tuple[int, ...]] = {}
+    while trail is not None:
+        out[trail[0]] = trail[1]
+        trail = trail[2]
+    return out
+
+
 def _determined(
     paper: _Paper,
     root: int,
@@ -575,15 +583,33 @@ def _determined(
 
     A binding is kept only when forbidding it lowers the best score. Where another
     label does as well, nothing says which is the part's label, and neither is taken.
+
+    A part with sub-parts is held to more. If, with its label forbidden, the next best
+    alignment binds under the part a label that the best alignment leaves unbound, the
+    part is on another label there (a sub-part is matched only under a matched part),
+    and there are two places that each look like that part, each with sub-parts of its
+    own. Which aligns more does not say which is the real one: the part and everything
+    under it are not bound.
     """
     scores, trail = _solve(paper, root, start, labels, lo, hi, skip)
+    best = _bindings(trail)
     kept: dict[int, tuple[int, ...]] = {}
-    while trail is not None:
-        position, chain, trail = trail
-        without = _solve(paper, root, start, labels, lo, hi, skip, (position, chain[-1]))[0]
+    rivalled: set[int] = set()  # parts with two places
+    for position, chain in best.items():
+        part = chain[-1]
+        without, other = _solve(paper, root, start, labels, lo, hi, skip, (position, part))
         if without[-1] < scores[-1]:
             kept[position] = chain
-    return kept
+        if any(
+            p not in best and part in paper.nodes[nodes[-1]].path[:-1]
+            for p, nodes in _bindings(other).items()
+        ):
+            rivalled.add(part)
+    return {
+        position: chain
+        for position, chain in kept.items()
+        if not rivalled.intersection(paper.nodes[chain[-1]].path)
+    }
 
 
 # --------------------------------------------------------------------------------------
@@ -705,12 +731,7 @@ def _anchors(paper: _Paper, labels: list[_Label]) -> dict[int, _Candidate]:
         if cut:
             read = _span(paper, cand.root, cand.chain, labels, lo, hi, frozenset())
             end, skip = read.end, read.orphans
-        trail = _solve(paper, cand.root, cand.chain, labels, lo, end, skip)[1]
-        bound = set()
-        while trail is not None:
-            bound.add(trail[0])
-            trail = trail[2]
-        return bound
+        return set(_bindings(_solve(paper, cand.root, cand.chain, labels, lo, end, skip)[1]))
 
     bound_on: dict[tuple[int, ...], set[int]] = {}  # per choice of anchors, the labels bound
 
@@ -880,12 +901,22 @@ def _align(paper: _Paper, labels: list[_Label]) -> _Alignment:
             }
         out.placed.update(own[root])
 
-    # A part label the question does not have, and that a question after it with no
-    # anchor does have, shows that question's labels inside this one's stretch.
+    # Questions after an anchored one that have no anchor and were not inferred may
+    # have their labels inside its stretch of the list. Two signs of that:
+    # * nothing separates the two (no restart and no number ended the anchored
+    #   question): then its last bare part labels that the unseen question also has
+    #   may be that question's, and are not bound;
+    # * a part label the anchored question does not have and the unseen one does.
     for k, cand in enumerate(anchored):
         nxt = anchored[k + 1].root if k + 1 < len(anchored) else len(paper.nodes)
         unseen = [r for r in paper.roots if cand.root < r < nxt and r not in out.inferred]
-        lo, _, read = spans[cand.root]
+        lo, hi, read = spans[cand.root]
+        if unseen and read.end == hi:
+            for position in sorted(own[cand.root], reverse=True):
+                label = labels[position]
+                if not any(paper.chains(other, label.readings) for other in unseen):
+                    break  # a label that names its question number is nobody else's
+                del out.placed[position]
         for position in range(lo, read.end):
             readings = labels[position].readings
             if labels[position].number is not None or paper.chains(cand.root, readings):

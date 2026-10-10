@@ -934,6 +934,29 @@ def test_an_inferred_question_missing_its_first_part_does_not_feed_the_leaf_befo
     assert ("3c", "next_label_not_seen") in _unbound(bound)
 
 
+def test_an_inferred_question_is_not_an_unseen_one(scheme_41: MarkScheme) -> None:
+    # Question 4's number is missed and its (a) (b) (c) are all there, so 4 is
+    # inferred. A stray "(c)" in question 3, which has no (c), is then not a label of
+    # an unseen question standing in question 3's stretch: it costs the leaf whose
+    # writing follows it and no other.
+    scheme = _scheme(
+        scheme_41,
+        {
+            "2": {},
+            "3": {"3a": {}, "3b": {}},
+            "4": {"4a": {}, "4b": {}, "4c": {}},
+            "5": {"5a": {}},
+        },
+    )
+    stream = ["2", "=2", "3", "(a)", "=3a", "(b)", "(c)", "=3b"]
+    stream += ["(a)", "=4a", "(b)", "=4b", "(c)", "=4c", "5", "(a)", "=5a"]
+    bound = bind_stream(_items(*stream), scheme)
+    _own_or_absent(bound)
+    assert bound.inferred_numbers == ["4"]
+    assert _on(bound)["3a"] == ["3a"]
+    assert ("3b", "after_unplaced_label") in _unbound(bound)
+
+
 # --------------------------------------------------------------------------------------
 # Rule 5: attachment
 # --------------------------------------------------------------------------------------
@@ -1284,19 +1307,13 @@ def test_known_limit_a_question_number_that_names_the_wrong_question(
     assert ("3", "next_label_not_seen") in _unbound(bound)
 
 
-def test_known_gap_two_labels_for_one_part_and_the_false_one_earns_more(
-    scheme_41: MarkScheme,
-) -> None:
-    """Rule 2's gap one level down, found by the wider battery; not fixed, not ruled on.
-
-    5(b) is read as "(c)", so the list has two (c)s, each followed by "(i)". Alone that
-    is a tie and neither is 5c. With 5c's own "(ii)" read as "(d)" as well, the false
-    (c) is followed by (i) (ii) and the true one by (i) only: the false one aligns one
-    part more, the alignment is unique, and 5b_i's writing is on 5c_i. Rate: 1 of
-    5,000 random trials of two to four faults on bare labels. A fix on the lines of
-    the one for question numbers (two labels that each could open the part: neither)
-    is proposed in the report.
-    """
+def test_two_labels_that_each_claim_sub_parts_unbind_the_part(scheme_41: MarkScheme) -> None:
+    # 5(b) is read as "(c)", so the list has two (c)s, each followed by "(i)". Alone
+    # that is a tie and neither is 5c. With 5c's own "(ii)" read as "(d)" as well, the
+    # false (c) is followed by (i) (ii) and the true one by (i) only: the false one
+    # aligns one part more. That does not say which is the real (c). The true one has
+    # an "(i)" of its own that the best alignment leaves unbound, so there are two
+    # places for part (c), and none of it is bound.
     scheme = _questions_4_to_6(scheme_41)
     stream = _clean(scheme)
     stream[stream.index("=5b_i") - 2] = "(c)"
@@ -1304,7 +1321,29 @@ def test_known_gap_two_labels_for_one_part_and_the_false_one_earns_more(
     assert not [leaf for leaf in _on(bound) if leaf.startswith(("5b", "5c"))]  # the tie
     stream[stream.index("=5c_ii") - 1] = "(d)"
     bound = bind_stream(_items(*stream), scheme)
-    assert _on(bound)["5c_i"] == ["5b_i"]
+    _own_or_absent(bound)
+    assert not [leaf for leaf in _on(bound) if leaf.startswith(("5b", "5c"))]
+    assert _on(bound)["4c_iii"] == ["4c_iii"]
+    assert _on(bound)["6a"] == ["6a"]
+
+
+def test_a_second_label_for_a_part_that_claims_nothing_unbinds_nothing(
+    scheme_41: MarkScheme,
+) -> None:
+    # A plain repeat, and strays that earn nothing of their own, cost what they cost
+    # before and no more: the part and its sub-parts stay bound.
+    scheme = _questions_4_to_6(scheme_41)
+    clean = _clean(scheme)
+    # "(c)" of question 4 seen again after its last sub-part: nothing follows it.
+    bound = bind_stream(_items(*_cut(clean, after={"=4c_iii": ["(c)"]})), scheme)
+    assert _on(bound)["4c_i"] == ["4c_i"]
+    assert _on(bound)["4c_ii"] == ["4c_ii"]
+    # A second "(b)" in question 4 after 4c's parts: it is a restart, and question 4
+    # keeps what it had before it.
+    bound = bind_stream(_items(*_cut(clean, after={"=4c_ii": ["(b)"]})), scheme)
+    _own_or_absent(bound)
+    assert _on(bound)["4b_i"] == ["4b_i"]
+    assert _on(bound)["4b_ii"] == ["4b_ii"]
 
 
 def test_known_gap_a_stray_takes_a_fourth_level_part_and_its_label_fills_a_missed_one(
@@ -1472,8 +1511,8 @@ def test_a_part_label_the_question_does_not_have_breaks_the_bracket(
         bound = bind_stream(_items(*stream), scheme)
         _own_or_absent(bound)
         assert _on(bound) == {"8a": ["8a"]}
-        assert _unbound(bound)[0] == ("6a", "next_label_not_seen")
-        assert _unplaced(bound) == ["(c)"]
+        assert _unbound(bound)[0][0] == "6a"
+        assert _unplaced(bound)[-2:] == ["(b)", "(c)"]
     # Roman parts: 7(ii) and "8(a)(i)" missed; the "(ii)" is 8a's, and "(b)" shows it.
     scheme = _scheme(
         scheme_41,
@@ -1489,18 +1528,15 @@ def test_a_part_label_the_question_does_not_have_breaks_the_bracket(
     assert _on(bound) == {"9": ["9"]}
 
 
-def test_known_gap_a_later_label_stands_in_and_no_foreign_label_follows(
+def test_the_tail_of_a_question_is_not_bound_when_nothing_separates_it_from_an_unseen_one(
     scheme_41: MarkScheme,
 ) -> None:
-    """What is left of class C after the foreign-label rule; not ruled on.
-
-    5(b), the number 6 and 6(a) are missed (two misses where the label is "6(a)").
-    The "(b)" that follows is 6's and is the label the paper prints after 5a_iii.
-    Question 6 has no part that question 5 lacks, so no foreign label follows, and
-    5a_iii keeps three blocks. What the list still shows: question 6 has no anchor
-    and nothing separates question 5 from it. Rate: 2 of 15,000 random trials on
-    the labelling where the first part carries the number; none on the other two.
-    """
+    # 5(b), the number 6 and 6(a) are missed (two misses where the label is "6(a)").
+    # The "(b)" that follows is 6's and is the label the paper prints after 5a_iii.
+    # Question 6 has no part that question 5 lacks, so no foreign label follows. What
+    # the list does show: question 6 has no anchor, and no restart and no number
+    # separates question 5 from it. So the last bare labels of question 5's stretch
+    # that question 6 also has may be question 6's, and are not bound.
     scheme = _scheme(
         scheme_41,
         {
@@ -1509,10 +1545,34 @@ def test_known_gap_a_later_label_stands_in_and_no_foreign_label_follows(
             "7": {"7a": {}},
         },
     )
-    stream = ["5(a)(i)", "=5a_i", "(ii)", "=5a_ii", "(iii)", "=5a_iii", "=5b", "=6a", "(b)", "=6b"]
+    rest = ["(ii)", "=5a_ii", "(iii)", "=5a_iii", "=5b", "=6a", "(b)", "=6b"]
+    for stream in (
+        ["5(a)(i)", "=5a_i", *rest, "7(a)"],
+        ["5", "(a)", "(i)", "=5a_i", *rest, "7", "(a)"],
+    ):
+        bound = bind_stream(_items(*stream, "=7a"), scheme)
+        _own_or_absent(bound)
+        assert _on(bound) == {"5a_i": ["5a_i"], "5a_ii": ["5a_ii"], "7a": ["7a"]}
+        assert _unplaced(bound) == ["(b)"]
+        assert ("5a_iii", "next_label_not_seen") in _unbound(bound)
+    # The accepted cost: question 6 is not in the list at all (skipped). Question 5's
+    # "(b)" is one question 6 also has, so 5b is not bound either, and 5a_iii with it.
+    stream = ["5", "(a)", "(i)", "=5a_i", "(ii)", "=5a_ii", "(iii)", "=5a_iii", "(b)", "=5b"]
+    bound = bind_stream(_items(*stream, "7", "(a)", "=7a"), scheme)
+    _own_or_absent(bound)
+    assert _on(bound) == {"5a_i": ["5a_i"], "5a_ii": ["5a_ii"], "7a": ["7a"]}
+    # A label that names its question is nobody else's: with full paths the skipped
+    # question costs only the last leaf before it, as before.
+    stream = ["5(a)(i)", "=5a_i", "5(a)(ii)", "=5a_ii", "5(a)(iii)", "=5a_iii", "5(b)", "=5b"]
     bound = bind_stream(_items(*stream, "7(a)", "=7a"), scheme)
-    assert _on(bound)["5a_iii"] == ["5a_iii", "5b", "6a"]
-    assert ("6b", "next_label_not_seen") in _unbound(bound)
+    assert _on(bound) == {leaf: [leaf] for leaf in ("5a_i", "5a_ii", "5a_iii", "7a")}
+    # Where the unseen question's labels restart, the restart separates the two, and
+    # the question before keeps its tail (here question 6 is then inferred).
+    stream = ["5", "(a)", "(i)", "=5a_i", "(ii)", "=5a_ii", "(iii)", "=5a_iii", "(b)", "=5b"]
+    bound = bind_stream(_items(*stream, "(a)", "=6a", "(b)", "=6b", "7", "(a)", "=7a"), scheme)
+    assert bound.inferred_numbers == ["6"]
+    assert _on(bound)["5a_iii"] == ["5a_iii"]
+    assert _on(bound)["5b"] == ["5b"]
 
 
 def test_a_stray_part_label_breaks_no_bracket_when_the_next_question_has_its_anchor(
@@ -1580,13 +1640,20 @@ def test_a_leaf_whose_only_writing_is_unbound_is_not_reported_blank(scheme_41: M
     assert _unbound(bound) == [("1b", "uncertain")]
 
 
-def test_the_last_leaf_keeps_its_writing_only_when_the_paper_ends_there(
+def test_a_list_that_stops_early_binds_nothing_of_the_last_question_it_reached(
     scheme_41: MarkScheme,
 ) -> None:
+    # The list ends after question 2 and the paper goes on. Nothing separates question
+    # 2 from the seven questions that were not listed, and every label it has is one
+    # of theirs too: none of question 2 is bound. Question 1, closed by the number 2,
+    # is whole.
     bound = bind_stream(_items(*_Q1, *_Q2), scheme_41)
     _own_or_absent(bound)
-    assert _on(bound)["2b_ii"] == ["2b_ii"]
-    assert ("2c", "next_label_not_seen") in _unbound(bound)
+    assert _on(bound) == {leaf: [leaf] for leaf in ("1a_i", "1a_ii", "1b", "1c_i", "1c_ii")}
+    assert [reason for _, reason in _unbound(bound)] == ["after_unplaced_label"] * 6
+    # A paper that ends where the list ends keeps its last leaf.
+    bound = bind_stream(_items(*_clean(scheme_41)), scheme_41)
+    assert _on(bound)["9c_iv"] == ["9c_iv"]
 
 
 def test_every_writing_item_is_accounted_for_once(scheme_41: MarkScheme) -> None:
