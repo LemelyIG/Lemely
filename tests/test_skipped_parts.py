@@ -149,6 +149,23 @@ def test_a_label_the_other_read_saw_is_a_missed_label_not_a_skipped_part(
     )
 
 
+def test_a_read_that_stopped_before_the_gap_is_no_witness_for_it(scheme_41: MarkScheme) -> None:
+    # The other read's list ends after 5(a)'s answer: every label after that is absent
+    # from it, the gap's labels with the rest. A list that stops early says nothing
+    # about what lies past its end, so it excuses nothing there.
+    read = bind_stream(_sheet(scheme_41, skipped=_SKIPPED), scheme_41)
+    sheet = _sheet(scheme_41)
+    at = next(i for i, item in enumerate(sheet) if getattr(item, "answer", "").endswith(" 5a"))
+    stopped = bind_stream(sheet[: at + 1], scheme_41)
+    assert stopped.unaligned_reasons["5b"] == "label_not_seen"
+    assert skipped_parts(read, stopped, scheme_41) == SkippedParts()
+    held = _g5(scheme_41, read, skipped_parts(read, stopped, scheme_41))
+    assert (held.passed, held.scope) == (False, "paper")
+    # Complete in the same parts as this read, with the last label past the gap: excused.
+    honest = bind_stream(_sheet(scheme_41, skipped=_SKIPPED), scheme_41)
+    assert skipped_parts(read, honest, scheme_41) == SkippedParts(skipped=_SKIPPED, before=_BEFORE)
+
+
 def test_the_rate_counts_what_is_not_excused(scheme_41: MarkScheme) -> None:
     # Six absent leaves and the five leaves before them: 11 of 43. The other read has
     # two of them absent, so nine leaves still count, and the paper is held on those.
@@ -201,12 +218,11 @@ def test_a_gap_is_excused_only_between_handwritten_labels(scheme_41: MarkScheme)
     five = ("5a", "5b", "5c_i", "5c_ii", "5d")
     assert edge.absent_between == dict.fromkeys(five, ("printed", "handwritten"))
     assert skipped_parts(edge, edge, scheme_41) == SkippedParts()
-    # At the end of the list there is one side only.
+    # At the end of the list there is one side only, and no read can be a witness past
+    # the end: nothing there is excused.
     last = bind_stream(_sheet(scheme_41, skipped=("9c_iv",)), scheme_41)
     assert last.absent_between == {"9c_iv": ("handwritten", None)}
-    assert skipped_parts(last, last, scheme_41) == SkippedParts(
-        skipped=("9c_iv",), before=("9c_iii",)
-    )
+    assert skipped_parts(last, last, scheme_41) == SkippedParts()
 
 
 def test_a_list_that_shows_anything_else_excuses_nothing(scheme_41: MarkScheme) -> None:
@@ -243,20 +259,25 @@ def test_a_list_that_shows_anything_else_excuses_nothing(scheme_41: MarkScheme) 
 def test_a_question_not_attempted_is_excused_and_too_many_hold_the_paper(
     scheme_41: MarkScheme,
 ) -> None:
-    # The last question not attempted: 6 of 43 leaves, their number absent. Today that
-    # holds the paper (7 with the leaf before); excused, it does not.
-    read = bind_stream(_sheet(scheme_41, not_attempted=("9",)), scheme_41)
-    nine = ("9a", "9b", "9c_i", "9c_ii", "9c_iii", "9c_iv")
-    assert read.unaligned_reasons == {"8d": "not_bracketed"} | dict.fromkeys(
-        nine, "number_not_seen"
-    )
+    # A question in the middle not attempted: 4 of 43 leaves, their number absent. Today
+    # that holds the paper (5 with the leaf before); excused, it does not.
+    read = bind_stream(_sheet(scheme_41, not_attempted=("6",)), scheme_41)
+    six = ("6a", "6b", "6c_i", "6c_ii")
+    assert read.unaligned_reasons == {"5d": "not_bracketed"} | dict.fromkeys(six, "number_not_seen")
     assert _g5(scheme_41, read).scope == "paper"
     excused = skipped_parts(read, read, scheme_41)
-    assert excused == SkippedParts(skipped=nine, before=("8d",))
+    assert excused == SkippedParts(skipped=six, before=("5d",))
     assert _g5(scheme_41, read, excused).scope == "question"
-    # The last three: 15 of 43 leaves have no label in either read. That is over a
-    # third of the paper, and a list that stops early looks the same: the paper is held.
-    read = bind_stream(_sheet(scheme_41, not_attempted=("7", "8", "9")), scheme_41)
+    # The last question not attempted lies at the end of the list, where no read has a
+    # leaf after the gap: it is not told from a list that stops early, and excused by none.
+    tail = bind_stream(_sheet(scheme_41, not_attempted=("9",)), scheme_41)
+    assert skipped_parts(tail, tail, scheme_41) == SkippedParts()
+    assert _g5(scheme_41, tail).scope == "paper"
+    # Questions 4 to 6 and three parts: 15 of 43 leaves have no label in either read.
+    # That is over a third of the paper: the paper is held.
+    read = bind_stream(
+        _sheet(scheme_41, not_attempted=("4", "5", "6"), skipped=_SKIPPED), scheme_41
+    )
     excused = skipped_parts(read, read, scheme_41)
     assert len(excused.skipped) == 15
     assert DEFAULTS.skipped_parts_rate == 0.33
@@ -267,8 +288,10 @@ def test_a_question_not_attempted_is_excused_and_too_many_hold_the_paper(
         "take for parts the student skipped" in check.detail
     )
     assert "could not be lined up" not in check.detail
-    # Fourteen are within the limit: the last two questions (11 leaves) and three parts.
-    read = bind_stream(_sheet(scheme_41, not_attempted=("8", "9"), skipped=_SKIPPED), scheme_41)
+    # Fourteen are within the limit: questions 5 to 7 and three parts.
+    read = bind_stream(
+        _sheet(scheme_41, not_attempted=("5", "6", "7"), skipped=_SKIPPED), scheme_41
+    )
     excused = skipped_parts(read, read, scheme_41)
     assert len(excused.skipped) == 14
     assert _g5(scheme_41, read, excused).scope == "question"

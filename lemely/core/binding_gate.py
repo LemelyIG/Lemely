@@ -234,8 +234,16 @@ def skipped_parts(
     G5's limit with nothing bound wrongly. Two things tell a skipped part from a
     missed label, and both are asked:
 
-    - ``other``, the other read of the same scan, has the leaf's label absent too. A
-      reader misses a label in one read; a part the student skipped is in neither;
+    - ``other``, the other read of the same scan, has the leaf's label absent too, and
+      is a witness for the gap: it aligned at least one leaf that comes after the leaf
+      in paper order. A list that stops early has every later label absent, and says
+      nothing about what lies past its end, so it excuses nothing there. The premise is
+      that a reader misses a label in one read and a part the student skipped is in
+      neither. The two reads are not independent witnesses: in nine stored pairs of
+      live reads the number of one question was missing from at least one read in 7
+      and from both in 5 of those 7. "Absent in both reads" can be a miss they share,
+      not a skipped part; the safety of this rule rests on the doubt P2 puts on the
+      answer before the gap and on G5 still naming the leaves, not on the two-read test;
     - the labels with a place on either side of the gap are handwritten (one side,
       where the gap is at an end of the list): ``read.absent_between``. Between printed
       labels a label is missing because the reader missed it, in two reads or not,
@@ -269,8 +277,15 @@ def skipped_parts(
         sides = [kind for kind in read.absent_between.get(leaf, ()) if kind is not None]
         return bool(sides) and all(kind == "handwritten" for kind in sides)
 
+    def witnessed(leaf: str) -> bool:
+        # A list that stops early has every later label absent: it is a witness for a
+        # gap only if it aligned a leaf that comes after it in paper order.
+        return any(later not in other.unaligned_ids for later in order[order.index(leaf) + 1 :])
+
     skipped = {
-        leaf for leaf in absent if other.unaligned_reasons.get(leaf) in _ABSENT and by_hand(leaf)
+        leaf
+        for leaf in absent
+        if other.unaligned_reasons.get(leaf) in _ABSENT and by_hand(leaf) and witnessed(leaf)
     }
     return SkippedParts(
         skipped=tuple(leaf for leaf in order if leaf in skipped),
