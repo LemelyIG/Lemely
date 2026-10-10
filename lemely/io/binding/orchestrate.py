@@ -519,12 +519,38 @@ def _share_found(block: str, text: str) -> float:
 
 
 def _same_blocks(one: list[SeenWriting], two: list[SeenWriting], floor: float) -> bool:
-    """Every block of each list is found in the other list's writing, at ``floor``."""
+    """The lists hold the same blocks: each block of one is found in its own block of the other.
+
+    Block against block, and one for one: the lists have as many blocks, and each block
+    of one list is paired with a different block of the other that holds ``floor`` of
+    its characters, and the other way round. Against the other list's whole text, or
+    with two blocks sharing one partner, a short block would be found in the characters
+    of a long answer that the other read holds without it.
+    """
     texts_one, texts_two = [_block_text(w) for w in one], [_block_text(w) for w in two]
-    whole_one, whole_two = " ".join(texts_one), " ".join(texts_two)
-    return all(_share_found(block, whole_two) >= floor for block in texts_one) and all(
-        _share_found(block, whole_one) >= floor for block in texts_two
-    )
+    if len(texts_one) != len(texts_two):
+        return False
+    partners = [
+        [
+            j
+            for j, other in enumerate(texts_two)
+            if _share_found(block, other) >= floor and _share_found(other, block) >= floor
+        ]
+        for block in texts_one
+    ]
+    paired: dict[int, int] = {}
+
+    def place(i: int, tried: set[int]) -> bool:
+        for j in partners[i]:
+            if j in tried:
+                continue
+            tried.add(j)
+            if j not in paired or place(paired[j], tried):
+                paired[j] = i
+                return True
+        return False
+
+    return all(place(i, set()) for i in range(len(texts_one)))
 
 
 def _next_number_seen_elsewhere(
@@ -540,8 +566,9 @@ def _next_number_seen_elsewhere(
     - passed its own checks at paper scope,
     - aligned the leaf and gave what it holds no content doubt (so it has the number:
       a read without it gives the leaf this same doubt), and
-    - holds the same blocks on the leaf: every block of each read's leaf is found in
-      the other's, at the gate's ``agreement_floor`` of the block's characters.
+    - holds the same blocks on the leaf: each block of each read's leaf is paired with a
+      different block of the other's that holds the gate's ``agreement_floor`` of its
+      characters (``_same_blocks``).
 
     Why two reads count for this doubt and for no other. This doubt is about one item
     the list either has or lacks, the label that closes the leaf. The other read is

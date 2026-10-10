@@ -857,6 +857,23 @@ def test_the_doubt_stays_when_the_other_read_holds_other_blocks_on_the_leaf(
     assert _statuses(mirror)["3c"] == "unverified"
 
 
+def test_the_doubt_stays_when_the_extra_block_is_a_short_run_of_the_leafs_own_answer(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    # The read that missed the label `4` holds one more block on 3(c), a few characters
+    # taken from the middle of 3(c)'s own answer. The other read does not hold that
+    # block on the leaf. Found among the characters of the long answer it would pass;
+    # block against block it is not in the other read's leaf, and the doubt stays.
+    own = _run(4)[39]["answer"]
+    middle = len(own) // 2
+    stray = own[middle - 2 : middle + 3]
+    assert len(stray) == 5 and stray.strip()
+    first = _with_a_block_after(_run(4), 39, stray)
+    outcome = _bind(tmp_path, scheme, _Model(first=_items(first), second=_items(_run(1))))
+    assert outcome.report.verdict == "pass"
+    assert _statuses(outcome)["3c"] == "unverified"
+
+
 def test_a_block_the_other_read_lists_above_the_number_is_trusted_as_it_is_from_one_read(
     tmp_path: Path, scheme: MarkScheme
 ) -> None:
