@@ -578,9 +578,10 @@ unmarked zero, flagged for the teacher.
 | `LEMELY_BINDING__RETRY_MODEL` | `gemini-3.8-flash` | The model of the legacy binder's one retry. |
 
 **What changes on first start.** Nothing needs migrating, and the defaults are the new
-behaviour: every scanned paper, of every type, goes through the label binder, with
-two reads of the script on `gemini-3.8-flash`, and every marker cache entry is cold
-once (the marker prompt changed). The cost and time that were measured: one pilot
+behaviour: every scanned paper except one that is all multiple choice (next
+paragraph) goes through the label binder, with two reads of the script on
+`gemini-3.8-flash`, and every marker cache entry is cold once (the marker prompt
+changed). The cost and time that were measured: one pilot
 paper (a 19-page theory script) ran the whole sequence (extraction with both reads,
 the checks, marking) in 572 s for $0.197, and used 157,824 tokens
 (`.superpowers/sdd/task-13-report.md`). That is one paper; there is no distribution
@@ -588,6 +589,19 @@ behind it. The paper shapes read live so far are **one theory paper**: other
 subjects, multiple-choice papers and handwriting styles have not been read with the
 label binder against a real scan, so watch the hold rate (below) after the first
 real traffic.
+
+**A paper that is all multiple choice keeps the legacy binder.** When every marked
+question of the mark scheme is multiple choice, the paper is read by the legacy
+binder under the configured gate (one read, and one retry on
+`LEMELY_BINDING__RETRY_MODEL` if the checks fail), whatever `LEMELY_BINDING__BINDER`
+says. The reason is that the label binder is unmeasured on that shape: it has been
+read live on one theory paper and on no multiple-choice scan, so the shape keeps the
+behaviour it had before. Such a paper's `binding_gate_result` line carries
+`binder="legacy"` and `binder_by_paper_shape=true` (the field is `false` when
+`legacy` is what was configured). The rule is in code
+(`lemely/io/binding/orchestrate.py`, `binder_for`), not a setting; what lifts it is a
+live read of a multiple-choice scan by the label binder that passes, followed by a
+code change.
 
 **The way back is configuration, not a revision rollback.** Set
 `LEMELY_BINDING__BINDER=legacy` and `LEMELY_BINDING__GATE=off` and restart: extraction
@@ -617,7 +631,10 @@ says so), or that the reader is failing on a paper shape it has not been measure
 on. Group by `failed_checks` first: a single check dominating points at one cause.
 If the rate stays high on ordinary scans, switch to the legacy binder by
 configuration while it is investigated. A held paper has no queue yet (that is plan
-1B): the student uploads again, the teacher re-runs or uploads again.
+1B): the student uploads again, the teacher re-runs or uploads again. A held paper,
+whether it was held before marking or after, is read afresh on a re-run: its reads
+are removed from the response cache when it is held, so the same reads cannot bring
+the same hold back (the marker's cached replies are kept).
 
 ---
 
