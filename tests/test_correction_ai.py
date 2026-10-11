@@ -1689,13 +1689,31 @@ class PointVerdictPromptTests(unittest.TestCase):
         self.assertLess(evidence_pos, verdict_pos)
         self.assertLess(verdict_pos, total_pos)
 
-    def test_version_not_bumped(self):
-        """D19: I6/I7/I8 share one VERSION bump at US-018's funded sweep.
-        Asserted against the module constant, not retyped, so a later edit
-        cannot slip a bump in unnoticed."""
+    def test_version_pin_shows_i6_has_taken_no_bump_of_its_own(self):
+        """Pins the marker prompt ``VERSION``, read off the module constant.
+
+        D19: I6/I7/I8 share one VERSION bump at US-018's funded sweep, and
+        this pin is how a bump slipped in by one of those stories would show.
+        The value has moved twice since, both times for a prompt change of
+        its own in the answer-binding work, never for I6: ``"5"`` to ``"6"``
+        when the system prompt gained the ``addresses_question`` section, and
+        ``"6"`` to ``"7"`` when that section was rewritten (a narrower ``no``
+        with a tie-break) and the worked reply examples gained the field. A
+        third move, ``"7"`` to ``"8"``, is the mark-gap work: the section on
+        drawings was rewritten and an answer holding the reader's ``Drawing:``
+        is no longer headed "verbatim". A fourth, ``"8"`` to ``"9"``, is the
+        same work: a science scheme stored without printed principles sends
+        the published science rules in the user prompt. A fifth, ``"9"`` to
+        ``"10"``, is its review: the drawings section and the description
+        header go only with an answer the label binder's reader wrote, and
+        every other answer has the system prompt of ``"7"`` again. A sixth,
+        ``"10"`` to ``"11"``, is the same review: the default science rule on
+        significant figures has a floor. The I6/I7/I8 bump is still owed at
+        US-018.
+        """
         from lemely.io.prompts.correction_ai import VERSION
 
-        self.assertEqual(VERSION, "5")
+        self.assertEqual(VERSION, "12")
 
     def test_mark_question_forwards_equivalence_gate_without_raising(self):
         """The actual regression: before the fix this call raised TypeError
@@ -5775,12 +5793,18 @@ class ECFSubstitutionTests(unittest.TestCase):
                 options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
             )
 
-    def test_no_version_bump(self) -> None:
-        """D19: I6/I7/I8 share one VERSION bump, taken later at US-018's
-        funded sweep -- this story bumps nothing."""
+    def test_version_pin_shows_i7_has_taken_no_bump_of_its_own(self) -> None:
+        """Pins the marker prompt ``VERSION``. D19: I6/I7/I8 share one bump,
+        taken later at US-018's funded sweep; I7 itself bumps nothing. The
+        value is ``"12"`` because of prompt changes with bumps of their own (the
+        ``addresses_question`` section, its rewrite, the drawings section, the
+        default science rules, the drawings section kept to the reader's
+        answers, the floor in the significant-figures rule, then the rounding
+        sentence and the softer contradiction rule), see
+        ``PointVerdictPromptTests.test_version_pin_shows_i6_has_taken_no_bump_of_its_own``."""
         from lemely.io.prompts.correction_ai import VERSION
 
-        self.assertEqual(VERSION, "5")
+        self.assertEqual(VERSION, "12")
 
     def test_schema_hash_unchanged(self) -> None:
         """I7 adds no schema field (``PointVerdict.ecf_applied`` and
@@ -5809,6 +5833,19 @@ class ECFSubstitutionTests(unittest.TestCase):
         and would now fail validation on read, so the key MUST move rather
         than stay pinned -- moving it is the mechanism that orphans those
         stale entries instead of misparsing them.
+
+        Re-pinned to ``6b4f47f8b44a`` by the answer-binding G8 commit: the
+        reply schema gained ``addresses_question`` (prompt ``VERSION`` 6, same
+        commit), a field the marker is now asked to fill on every call, so
+        the key has to move with it. I7 and the marking flags still add no
+        field: the schema is one class whatever ``MarkingOptions`` says.
+
+        Re-pinned to ``5ab323e940ae`` by the G8 review-fix commit (prompt
+        ``VERSION`` 7): ``addresses_question`` moved into the schema's
+        ``required`` list, because a model that may leave it out switches
+        the check off without a trace. A reply cached under the old key was
+        produced by a request that did not require the field, so the key
+        has to move again.
         """
         import hashlib
         import json as json_module
@@ -5817,7 +5854,7 @@ class ECFSubstitutionTests(unittest.TestCase):
 
         schema_json = json_module.dumps(AIMarkResponse.model_json_schema(), sort_keys=True)
         actual = hashlib.sha256(schema_json.encode()).hexdigest()[:12]
-        self.assertEqual(actual, "b41db5c1bbd5")
+        self.assertEqual(actual, "5ab323e940ae")
 
 
 class MarkingSchemaHashStableAcrossPythonOptimizeTests(unittest.TestCase):
@@ -5912,8 +5949,16 @@ class MarkingSchemaHashStableAcrossPythonOptimizeTests(unittest.TestCase):
 
         self.assertEqual(normal["hash"], optimized["hash"])
         # Re-pinned alongside test_schema_hash_unchanged above (2026-09-24
-        # production-readiness Task 1, evidence_box deletion).
-        self.assertEqual(normal["hash"], "b41db5c1bbd5")
+        # production-readiness Task 1, evidence_box deletion), and again to
+        # ``6b4f47f8b44a`` by the answer-binding G8 commit: the reply schema
+        # gained ``addresses_question`` (prompt VERSION 6). That field is the
+        # first here to carry a ``description``. Re-pinned once more to
+        # ``5ab323e940ae`` by the G8 review-fix commit (VERSION 7), which
+        # made the field required on the wire. Its description is now
+        # hard-coded in ``AIMarkResponse.__get_pydantic_json_schema__``, the
+        # US-036 pattern, not taken from a docstring, so the equality above
+        # still holds.
+        self.assertEqual(normal["hash"], "5ab323e940ae")
 
 
 _GOLDEN_DIR = Path(__file__).parent / "golden"

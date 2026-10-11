@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from lemely.core.binding import BindingCheck, BindingReport
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.plagiarism import PlagiarismChecker
 from lemely.core.schemas import ConfidenceBand, CorrectedQuestion, CorrectionResult, ExamMetadata
@@ -253,6 +254,54 @@ class TestApplyIntegrityChecks:
         assert "confidence 0.50 below review threshold 0.90" in q.review_reason
         assert "plagiarism" in q.review_reason
         assert q.review_reason.startswith("confidence 0.50")
+
+    def test_binding_report_is_kept_verdict_included(self) -> None:
+        report = BindingReport(
+            binder="label",
+            checks=[
+                BindingCheck(
+                    id="G8",
+                    passed=False,
+                    scope="paper",
+                    question_ids=["1"],
+                    detail="4 answers were judged not to address their question.",
+                )
+            ],
+            verdict="hold",
+            retried=True,
+            model="gemini-test",
+        )
+        for question in (_question(), _question(student_answer="Something else entirely.")):
+            correction = CorrectionResult(
+                metadata=_metadata(), questions=[question], binding=report
+            )
+            result = apply_integrity_checks(
+                correction,
+                _mark_scheme(),
+                gemini_client=None,
+                settings=IntegritySettings(),
+            )
+            assert result.binding == report
+            assert result.binding is not None
+            assert result.binding.verdict == "hold"
+        # The first of the two was flagged, so the rebuild path is the one covered.
+        flagged = apply_integrity_checks(
+            CorrectionResult(metadata=_metadata(), questions=[_question()], binding=report),
+            _mark_scheme(),
+            gemini_client=None,
+            settings=IntegritySettings(),
+        )
+        assert flagged.questions[0].plagiarism_flagged is True
+        assert flagged.binding == report
+
+    def test_a_correction_without_a_binding_report_stays_without_one(self) -> None:
+        result = apply_integrity_checks(
+            CorrectionResult(metadata=_metadata(), questions=[_question()]),
+            _mark_scheme(),
+            gemini_client=None,
+            settings=IntegritySettings(),
+        )
+        assert result.binding is None
 
     def test_plagiarism_disabled_skips_check(self) -> None:
         correction = CorrectionResult(metadata=_metadata(), questions=[_question()])

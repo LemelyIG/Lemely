@@ -540,7 +540,13 @@ def _run_grading_job(
     cannot mix progress counters with this one.
     """
     from lemely.web.routers.student import resolve_mark_scheme
-    from lemely.web.services.grading import extract_answers, grade_paper
+    from lemely.web.services.grading import (
+        TEACHER_BINDING_HELD_MESSAGE,
+        BindingHeldError,
+        ensure_binding_allows_marking,
+        extract_answers,
+        grade_paper,
+    )
 
     run_id_token = current_run_id.set(f"teacher:{paper_id}")
     progress_queue = bus.subscribe_queue(f"teacher:{paper_id}")
@@ -602,6 +608,7 @@ def _run_grading_job(
 
             repo.set_stage(paper_id, "extract")
             extracted = extract_answers(scan_path, scheme, gemini_client=gemini_client)
+            ensure_binding_allows_marking(extracted)
 
             repo.set_stage(paper_id, "mark")
             # `student_id=None`/`history_store=None`: a console upload is never
@@ -625,6 +632,19 @@ def _run_grading_job(
         # on the row, and `fail` would be a no-op on it anyway: this is an
         # outcome, not a grading failure.
         log.info("teacher_grade_paper_deleted", paper_id=str(paper_id))
+    except BindingHeldError as exc:
+        # The binding gate rejected this paper: it fails closed with the fixed
+        # sentence, without the "Grading failed:" prefix. The reasons stay in
+        # the log.
+        log.warning(
+            "binding_held",
+            paper_id=str(paper_id),
+            verdict=exc.verdict,
+            stage=exc.stage,
+            failed_checks=exc.failed_check_ids,
+            reasons=exc.reasons,
+        )
+        repo.fail(paper_id, TEACHER_BINDING_HELD_MESSAGE)
     except Exception as exc:
         # Marking is a long Gemini/parser call chain and can genuinely fail.
         # Recording it as a terminal state with the reason attached is the

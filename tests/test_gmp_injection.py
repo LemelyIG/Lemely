@@ -114,10 +114,60 @@ class PrinciplesAreThreadedFromTheMarkSchemeTests(unittest.TestCase):
 
     def test_correct_paper_reads_them_off_the_mark_scheme_metadata(self) -> None:
         # The field the det parser already fills. If this ever stops being
-        # read, #41 silently reverts to the hard-coded rule.
-        import inspect
+        # read, #41 silently reverts to the hard-coded rule. Asserted on the
+        # prompt sent, not on the source text: the read moved into
+        # `prompts.correction_ai.printed_principles`, and a word left in a
+        # comment would have kept a source search green.
+        from unittest.mock import MagicMock
 
-        from lemely.io import correction_ai
+        from lemely.core.loose_schemas import MarkScheme
+        from lemely.core.schemas import AIMarkResponse, ExtractedAnswer, ExtractedAnswers
+        from lemely.io.correction_ai import correct_paper
 
-        src = inspect.getsource(correction_ai)
-        self.assertIn("generic_marking_principles", src)
+        scheme = MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Mathematics",
+                    "subject_code": "0580",
+                    "paper_number": 2,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2023,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 1,
+                    "scheme_format": "point_based",
+                    "generic_marking_principles": ["Marks must be awarded positively."],
+                },
+                "questions": [
+                    {
+                        "id": "1",
+                        "marks": 1,
+                        "type": "calculation",
+                        "answer_points": [{"id": "p1", "point": "x = 4", "marks": 1}],
+                    }
+                ],
+            }
+        )
+        extracted = ExtractedAnswers(
+            paper_id="p",
+            source_scan="s.pdf",
+            answers=[ExtractedAnswer(question_id="1", answer="x = 4", confidence=0.9)],
+        )
+        sent: list[str] = []
+        client = MagicMock()
+        client._settings.gemini.escalation_confidence_threshold = 0.0
+        client._settings.gemini.escalation_model = None
+        client._settings.gemini.model_for.return_value = "m"
+        client.resolved_thinking.return_value = 0
+
+        def _capture(**kwargs: object) -> AIMarkResponse:
+            sent.append(str(kwargs["user_prompt"]))
+            return AIMarkResponse(
+                awarded_marks=1, confidence=1.0, matched_point_ids=[], feedback=""
+            )
+
+        client.generate_structured.side_effect = _capture
+        correct_paper(scheme, extracted, gemini_client=client)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("THIS PAPER'S PRINTED GENERIC MARKING PRINCIPLES", sent[0])
+        self.assertIn("  - Marks must be awarded positively.", sent[0])

@@ -79,12 +79,16 @@ mark_scheme = 8000
 # only; a 2.5-and-earlier model ignores this table entirely. Shipped
 # defaults shown; "minimal" is only honoured on gemini-3.6-flash /
 # gemini-3.5-flash-lite and falls back to "low" on any other 3.x model.
+# This table REPLACES the defaults: a key left out here falls back to
+# "low". Leaving out binding_second_read makes the binding step's second
+# read the same call as its first (see [binding]); `lemely doctor` says so.
 [gemini.thinking_level_for]
 correction = "low"
 correction_borderline = "high"  # Step-1 retry before Step-2 escalation
 escalation = "high"
 extraction = "minimal"
 generation = "low"
+binding_second_read = "medium"  # the label binder's second read, see [binding]
 
 [accuracy_eval]
 mark_accuracy_target = 0.95
@@ -221,6 +225,39 @@ ecf_substitution = false
 # teacher-review flag fires on a disagreement whether or not this is on.
 # Deployed, it is set by LEMELY_GRADING__REREAD_SUBSTITUTION; see docs/ci-cd.md.
 # reread_substitution = true
+
+[binding]
+# How the answers on a scanned script are tied to questions, and how far
+# that is checked before marking (lemely.io.binding.orchestrate).
+#
+# binder: "label" -- the model lists the question labels and the writing it
+# sees, with no question ids, and code binds that list to the mark scheme.
+# "legacy" -- the model hands out the question ids itself, as extraction
+# did before; kept as a way back, not as an equal choice.
+binder = "label"
+# gate: "enforce" -- a paper whose binding cannot be trusted is held.
+# The label binder REQUIRES "enforce": its checks are part of reading a
+# script safely, and config does not load with any other value beside it.
+# "observe" and "off" are for binder = "legacy" only. "observe" -- the
+# legacy answers are checked and the result is published (the
+# binding_gate_result event); the answers go on as they are, no paper is
+# held, and the check made after marking does not run. "off" -- no
+# checks and no report: binder = "legacy" with gate = "off" is extraction
+# exactly as it was before either existed.
+gate = "enforce"
+# The label binder's model, passed on every one of its calls. It is NOT
+# gemini.extraction_model: only gemini-3.8-flash returned a usable list when
+# this was measured, and the extraction default is a cheaper model that did
+# not. COST: with the label binder every extraction makes its calls on this
+# model in place of one call on extraction_model.
+read_model = "gemini-3.8-flash"
+# Read the script a second time on the same model, at the thinking level
+# [gemini.thinking_level_for] gives binding_second_read, so that the two
+# reads can be compared and a bad first read replaced. Doubles the cost of
+# the binding step. Read by the label binder only.
+second_read = true
+# The model the legacy binder's one retry uses, when the gate is on.
+retry_model = "gemini-3.8-flash"
 
 [integrity]
 # Plagiarism detection needs no Gemini key (stdlib difflib only). F4 removed

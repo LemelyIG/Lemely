@@ -358,3 +358,71 @@ def check_cases(
     report = MetamorphicReport(outcomes=tuple(outcomes))
     log.info("metamorphic_run_complete", **report.counts())
     return report
+
+
+# ---------------------------------------------------------------------------
+# Misbinding transforms
+#
+# Each takes the answers of a correctly bound paper (question id -> text) and
+# the leaf ids in paper order, and returns the answers as a reader that lost
+# its place would have bound them. They manufacture the input the binding gate
+# must catch; they never touch the mark scheme.
+# ---------------------------------------------------------------------------
+
+
+def _by_position(answers: Mapping[str, str], order: Sequence[str]) -> list[str | None]:
+    return [answers.get(qid) for qid in order]
+
+
+def _by_id(slots: Sequence[str | None], order: Sequence[str]) -> dict[str, str]:
+    return {qid: text for qid, text in zip(order, slots, strict=True) if text is not None}
+
+
+def shift_answers(
+    answers: Mapping[str, str],
+    order: Sequence[str],
+    *,
+    start: int,
+    by: int,
+    length: int | None = None,
+) -> dict[str, str]:
+    """Move each answer from ``start`` on ``by`` leaves later (earlier when negative).
+
+    ``length`` limits the shift to the window ``order[start:start + length]``
+    (default: to the end of the paper). An answer pushed out of the window is
+    lost and the leaves the shift vacates are left without an answer.
+    """
+    slots = _by_position(answers, order)
+    end = len(order) if length is None else min(len(order), start + length)
+    moved = list(slots)
+    for i in range(start, end):
+        moved[i] = None
+    for i in range(start, end):
+        if start <= i + by < end:
+            moved[i + by] = slots[i]
+    return _by_id(moved, order)
+
+
+def split_answer(answers: Mapping[str, str], order: Sequence[str], *, at: int) -> dict[str, str]:
+    """Cut the answer at ``at`` in two; the rest moves one leaf later, the last falls off."""
+    slots = _by_position(answers, order)
+    text = slots[at]
+    if text is None:
+        first, second = None, None
+    else:
+        words = text.split()
+        if len(words) > 1:
+            cut = (len(words) + 1) // 2
+            first, second = " ".join(words[:cut]), " ".join(words[cut:])
+        else:
+            cut = (len(text) + 1) // 2
+            first, second = text[:cut], text[cut:] or None
+    moved = [*slots[:at], first, second, *slots[at + 1 :]][: len(slots)]
+    return _by_id(moved, order)
+
+
+def drop_answer(answers: Mapping[str, str], order: Sequence[str], *, at: int) -> dict[str, str]:
+    """Lose the answer at ``at``; the rest moves one leaf earlier."""
+    slots = _by_position(answers, order)
+    moved = [*slots[:at], *slots[at + 1 :], None]
+    return _by_id(moved, order)

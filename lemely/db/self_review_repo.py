@@ -13,9 +13,12 @@ after ``student_selfmarked_at`` is set. A client cannot read a field the
 payload does not contain.
 
 **Authority** is :func:`lemely.core.self_review.decide_point`, fed by
-:func:`lemely.db.attempt_repo.is_marking_low_confidence` — the same function
-that opened the ``low_confidence`` review-queue row at correction time, so
-"the marker was unsure" means one thing across both paths. Integrity flags
+:func:`lemely.db.attempt_repo.grants_self_mark_authority`. It starts from the
+function that opened the ``low_confidence`` review-queue row at correction time
+(``is_marking_low_confidence``), so "the marker was unsure" means one thing
+across both paths, and then withholds authority in two deliberate cases the
+queue still counts: the US-039 blank, and a binding doubt (the transcription
+itself may belong to another question, or was never read). Integrity flags
 never reach the rule.
 
 **One transaction — but not the judge.** ``submit`` is three phases (Task
@@ -79,6 +82,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 import structlog
 from sqlalchemy import func, select
 
+from lemely.core.binding_review import has_binding_doubt, is_unbound_question
 from lemely.core.point_groups import group_capped_points_total
 from lemely.core.self_review import (
     JudgeRequest,
@@ -86,7 +90,11 @@ from lemely.core.self_review import (
     PointDecision,
     decide_point,
 )
-from lemely.db.attempt_repo import is_marking_low_confidence
+from lemely.db.attempt_repo import (
+    grants_self_mark_authority,
+    self_review_withheld,
+    self_review_withheld_ids,
+)
 from lemely.db.models.attempts import (
     Attempt,
     QuestionResult,
@@ -211,6 +219,7 @@ class PendingSelfReview:
     question_id: str
     maximum_marks: int
     evidence_required: bool
+    binding_doubt: bool
     points: list[PendingPoint]
 
 
@@ -231,6 +240,7 @@ class RevealedSelfReview:
     question_id: str
     maximum_marks: int
     evidence_required: bool
+    binding_doubt: bool
     ai_marks: int
     effective_marks: int
     student_marks: int | None
@@ -377,8 +387,11 @@ class SelfReviewService:
                     f"Question {qr.id} has already been self-marked"
                 )
             by_point = _verdicts_by_point(verdicts, qr.points)
-            low_confidence = is_marking_low_confidence(qr)
+            low_confidence = grants_self_mark_authority(qr)
             teacher_settled = qr.is_overridden
+            never_read = is_unbound_question(
+                qr.review_reason, qr.student_answer, qr.marker_source.value
+            )
             judge_requests: dict[str, JudgeRequest] = {}
             for point in qr.points:
                 verdict = by_point[point.mark_point_id]
@@ -389,6 +402,7 @@ class SelfReviewService:
                     low_confidence=low_confidence,
                     has_evidence=evidence is not None,
                     teacher_settled=teacher_settled,
+                    never_read=never_read,
                 )
                 if decision is PointDecision.JUDGE:
                     judge_requests[point.mark_point_id] = JudgeRequest(
@@ -433,8 +447,11 @@ class SelfReviewService:
             by_point = _verdicts_by_point(verdicts, qr.points)
 
             now = datetime.now(UTC)
-            low_confidence = is_marking_low_confidence(qr)
+            low_confidence = grants_self_mark_authority(qr)
             teacher_settled = qr.is_overridden
+            never_read = is_unbound_question(
+                qr.review_reason, qr.student_answer, qr.marker_source.value
+            )
             unjudged = False
             passes: list[_PointPass] = []
 
@@ -457,6 +474,7 @@ class SelfReviewService:
                     low_confidence=low_confidence,
                     has_evidence=evidence is not None,
                     teacher_settled=teacher_settled,
+                    never_read=never_read,
                 )
 
                 if decision is PointDecision.GRANT:
@@ -641,6 +659,7 @@ class SelfReviewService:
                 ).all()
                 if qr_id is not None
             }
+            withheld = self_review_withheld_ids(session, attempt.id)
             return [
                 AttemptQuestion(
                     question_result_id=qr.id,
@@ -655,7 +674,8 @@ class SelfReviewService:
                     topic=qr.topic,
                     matched_point_ids=list(qr.matched_point_ids),
                     self_reviewable=bool(group_flags.get(qr.id))
-                    and points_are_settleable(group_flags[qr.id]),
+                    and points_are_settleable(group_flags[qr.id])
+                    and qr.id not in withheld,
                     pending_teacher=qr.id in open_review_ids,
                 )
                 for qr in results
@@ -716,8 +736,12 @@ def _decide_with_precedence(
     low_confidence: bool,
     has_evidence: bool,
     teacher_settled: bool,
+    never_read: bool = False,
 ) -> PointDecision:
-    """:func:`decide_point` plus the teacher-override downgrade.
+    """:func:`decide_point` plus the teacher-override and never-read downgrades.
+
+    ``never_read``: no answer was ever read for this question (an unbound one),
+    so there is nothing for a judge to weigh and the claim is only recorded.
 
     Pulled out so Phase A's plan and Phase C's apply (:meth:`SelfReviewService.submit`)
     compute this identically, from whatever state each actually reads.
@@ -728,7 +752,7 @@ def _decide_with_precedence(
         low_confidence=low_confidence,
         has_evidence=has_evidence,
     )
-    if teacher_settled and decision is not PointDecision.AGREE:
+    if (teacher_settled or never_read) and decision is not PointDecision.AGREE:
         # Precedence already settles this question; the self-mark is recorded
         # for its learning signal and nothing moves, so a judge call could
         # not change any outcome.
@@ -1014,11 +1038,18 @@ def _owned_question(
         raise SelfReviewNotFoundError(
             f"Question {qr_uuid} has mark points written before the group columns existed"
         )
+    if self_review_withheld(qr):
+        # A binding doubt with the teacher's row still open: the panel is not
+        # offered (see :func:`self_review_withheld`), so a claim made anyway is
+        # refused like any ineligible question and changes nothing.
+        raise SelfReviewNotFoundError(
+            f"Question {qr_uuid} awaits a teacher and is not open for self-review"
+        )
     return attempt, qr
 
 
 def _to_view(session: Session, qr: QuestionResult) -> PendingSelfReview | RevealedSelfReview:
-    evidence_required = not is_marking_low_confidence(qr)
+    evidence_required = not grants_self_mark_authority(qr)
     if not qr.is_self_marked:
         return PendingSelfReview(
             state="not_started",
@@ -1027,6 +1058,7 @@ def _to_view(session: Session, qr: QuestionResult) -> PendingSelfReview | Reveal
             question_id=qr.question_id,
             maximum_marks=qr.maximum_marks,
             evidence_required=evidence_required,
+            binding_doubt=has_binding_doubt(qr.review_reason),
             points=[
                 PendingPoint(
                     mark_point_id=p.mark_point_id,
@@ -1063,6 +1095,7 @@ def _revealed_view(
         question_id=qr.question_id,
         maximum_marks=qr.maximum_marks,
         evidence_required=evidence_required,
+        binding_doubt=has_binding_doubt(qr.review_reason),
         ai_marks=qr.awarded_marks,
         effective_marks=qr.effective_marks,
         student_marks=qr.student_selfmark_marks,
@@ -1232,8 +1265,14 @@ def _resolve_low_confidence_rows(
     """D4: close the open ``low_confidence`` row(s) with the student as resolver.
 
     Only that reason. An integrity row on the same question is a teacher's
-    to dismiss and is never touched here.
+    to dismiss and is never touched here. Nor is the row of a question with a
+    binding doubt: the student's word cannot vouch for a transcription that may
+    not be theirs, so it stays open until a teacher resolves it. A question in
+    that state is refused before it gets here (:func:`self_review_withheld`);
+    this guard is the second line of defence if the refusal is ever bypassed.
     """
+    if has_binding_doubt(qr.review_reason):
+        return
     rows = session.scalars(
         select(ReviewQueueItem).where(
             ReviewQueueItem.question_result_id == qr.id,

@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from lemely.runtime.config import Settings
 
 import click
@@ -36,7 +38,7 @@ from lemely.core.schemas import (
     WeaknessReport,
 )
 from lemely.io.mark_schemes import index_source_library, process_mark_scheme_batch
-from lemely.runtime.errors import LemelyError, ParseError
+from lemely.runtime.errors import ExternalServiceError, LemelyError, ParseError
 from lemely.runtime.logging import configure_logging
 
 
@@ -376,6 +378,13 @@ def correct_paper_cmd(
     if record:
         if not student_id:
             raise click.UsageError("--student-id is required when --record is set.")
+        from lemely.core.binding_review import binding_blocks_publication
+
+        if correction.binding is not None and binding_blocks_publication(correction.binding):
+            raise click.ClickException(
+                f"not recorded: the binding check ended at {correction.binding.verdict}, so some "
+                "answers may sit on the wrong questions; run without --record to see the result"
+            )
         import datetime
 
         from lemely.core.history import PaperRecord
@@ -539,8 +548,21 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         "study_plan",
     )
     configured_models = {tag: settings.gemini.model_for(tag) for tag in model_table_tags}
+    # The binding step names its models itself, not through model_for(): the label
+    # binder's reads, or the gated legacy binder's one retry. Listed with the rest
+    # so the table shows every model extraction can call and the pricing checks
+    # below cover them.
+    from lemely.io.binding.orchestrate import binding_models, binding_status
+
+    configured_models.update(binding_models(settings))
     model_table = ", ".join(f"{tag}={model}" for tag, model in configured_models.items())
     record("gemini_model_table", True, detail=model_table)
+
+    # How answers are tied to questions and what that costs per extraction; not
+    # ok when the binding step's second read would be the first read again (same
+    # model, same thinking level), which pays twice for one opinion. Advisory.
+    binding_ok, binding_detail = binding_status(settings)
+    record("binding", binding_ok, detail=binding_detail)
 
     # US-026: the $14 total_usd_ceiling is only as honest as the pricing table
     # it's ledgered against — warn (advisory, never fatal) once the 3.8/3.7/
@@ -660,8 +682,10 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # `lemely ui` needs the [ui] extra, object storage is only reached by
     # the web app's avatar/upload routes, and web push only needs keys once a
     # deployment wants real pushes. All three are reported honestly and none
-    # decides the exit code.
+    # decides the exit code. Nor does `binding`: a second read that repeats the
+    # first wastes a call, it does not break extraction.
     advisory_checks = {
+        "binding",
         "gradio_extra_installed",
         "storage_backend",
         "push_transport",
@@ -848,6 +872,119 @@ def teacher_quiz_cmd(
     weaknesses = WeaknessReport(weak_areas=weak_areas)
     builder = TeacherQuizBuilder(generator)
     _print_result(ctx, builder.build(subject, weaknesses, count=count, topics=list(topics)))
+
+
+@cli.command("audit-bindings")
+@click.option(
+    "--since",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default=None,
+    help="Only attempts recorded on or after this date (YYYY-MM-DD, UTC).",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Audit at most N attempts, newest first.",
+)
+@click.option(
+    "--origin",
+    type=click.Choice(["upload", "any"]),
+    default="upload",
+    show_default=True,
+    help=(
+        "Which attempts to audit. 'upload' keeps past-paper attempts that came from an "
+        "uploaded scan (quizzes are typed answers and cannot be misbound). That leaves out "
+        "past-paper attempts stored without an upload link. Pass 'any' to audit those too, "
+        "and quizzes."
+    ),
+)
+@click.pass_context
+def audit_bindings_cmd(
+    ctx: click.Context, since: datetime | None, limit: int | None, origin: str
+) -> None:
+    """List stored attempts whose answers look bound to the wrong questions.
+
+    Read-only: reports, never changes a row. Runs two checks on each stored
+    attempt (answers of the wrong kind, and a run of answers holding the value
+    of a neighbouring question) against its mark scheme.
+    """
+    from datetime import UTC
+
+    from sqlalchemy.exc import InterfaceError, OperationalError
+
+    from lemely.db.binding_audit import audit_attempts, load_attempts
+    from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
+    from lemely.db.session import get_sessionmaker
+
+    settings = _get_settings(ctx)
+    session_factory = get_sessionmaker(settings)
+    corpus = SchemeCorpusRepository(session_factory)
+    since_utc = since.replace(tzinfo=UTC) if since is not None else None
+    try:
+        session = session_factory()
+        try:
+            attempts = load_attempts(
+                session, since=since_utc, limit=limit, uploaded_only=origin == "upload"
+            )
+            report = audit_attempts(attempts, corpus.find_for)
+        finally:
+            session.close()
+    except (OperationalError, InterfaceError) as exc:
+        click.echo(
+            f"Cannot read the database: {exc.__class__.__name__}. Check the database settings.",
+            err=True,
+        )
+        raise click.exceptions.Exit(ExternalServiceError.exit_code) from exc
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(report.as_json())
+        return
+
+    scope = (
+        "attempts that came from an uploaded scan"
+        if origin == "upload"
+        else "all stored attempts, quizzes included"
+    )
+    click.echo(f"Audited {scope}.")
+    for s in report.suspects:
+        click.echo(
+            f"attempt {s.attempt_id}  user {s.user_id}  {s.paper}  recorded {s.recorded_at}  "
+            f"{s.awarded_marks}/{s.maximum_marks}  failed {', '.join(s.failed_checks)}"
+        )
+        for detail in s.details:
+            click.echo(f"    {detail}")
+    click.echo("")
+    click.echo(f"Suspect attempts: {len(report.suspects)}")
+    click.echo(
+        f"Attempts with only question-level failures (not listed): {report.question_scope_only}"
+    )
+    click.echo(f"Selected: {report.selected}")
+    click.echo(f"Audited: {report.audited}")
+    click.echo(f"Skipped, mark scheme not found: {report.scheme_not_found}")
+    click.echo(f"Skipped, stored paper identity unreadable: {report.unreadable_identity}")
+    click.echo(f"Skipped, nothing answered: {report.no_answers}")
+    click.echo(f"Skipped, no paper identity stored: {report.no_paper_identity}")
+    click.echo(
+        f"Skipped, stored question ids do not match the mark scheme: {report.scheme_mismatch}"
+    )
+    click.echo(
+        f"Audited with the newest session year assumed (no year stored): {report.year_assumed}"
+    )
+    click.echo(
+        "Audited but not judgeable (too few numeric answers for the shift check): "
+        f"{report.not_judgeable}"
+    )
+    click.echo(
+        "Each attempt is checked against the scheme the corpus holds for that paper today, "
+        "which can differ from the one used at marking time (a scheme the student supplied, "
+        "or one re-parsed since). With no session year stored, the lookup takes the newest "
+        "year's scheme for that paper."
+    )
+    click.echo(
+        "Not listed does not mean correctly bound: the checks only see questions with "
+        "numeric expected answers, so short shifts and papers with few of them pass unseen."
+    )
 
 
 @cli.group("question-bank")

@@ -60,7 +60,9 @@ from typing import TYPE_CHECKING
 import structlog
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import object_session
 
+from lemely.core.binding_review import has_binding_doubt, is_unbound_question
 from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD, dedupe_point_verdicts
 from lemely.core.topics import classify, is_writable
 from lemely.db.history_repo import month_to_enum, parse_user_id
@@ -77,12 +79,14 @@ from lemely.db.models.enums import (
     BoundarySource,
     MarkerSource,
     ReviewReason,
+    ReviewStatus,
     RevisionSource,
 )
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.question_points import derive_point_rows
 from lemely.db.review_queue_rules import low_confidence_review_needed, review_reasons_for
+from lemely.db.review_repo import attempt_has_reviewer
 from lemely.db.session import INCLUDE_DELETED
 from lemely.io.syllabus_topics import get_taxonomy
 
@@ -245,17 +249,21 @@ class AttemptRepository:
         ``(created_at, id)``: rows of one attempt are written in a single
         flush and so usually share ``created_at``, which leaves the row id as
         the tie-break — stable for a given attempt, but not "the first one
-        marked". Empty for an unknown attempt.
+        marked". Empty for an unknown attempt. A question whose self-review is
+        withheld (:func:`self_review_withheld`) is left out, so the frame carries
+        ``questionResultId=None`` and the student is not offered the panel.
         """
         ids: dict[str, uuid.UUID] = {}
         with self._sm() as session:
+            withheld = self_review_withheld_ids(session, attempt_id)
             rows = session.execute(
                 select(QuestionResult.question_id, QuestionResult.id)
                 .where(QuestionResult.attempt_id == attempt_id)
                 .order_by(QuestionResult.created_at, QuestionResult.id)
             ).all()
         for question_id, row_id in rows:
-            ids.setdefault(question_id, row_id)
+            if row_id not in withheld:
+                ids.setdefault(question_id, row_id)
         return ids
 
     def _persist(
@@ -526,7 +534,13 @@ def _integrity_flagged(qr: QuestionResult) -> bool:
     needs the fact persisted somehow:
 
     * **Derive it from ``review_reason``'s segments.** Prose parsing — the exact
-      defect task #36 removed from this predicate. It would delete one instance
+      defect task #36 removed from this predicate. (Binding doubt IS now read
+      from the reason's ``binding unverified:`` prefix, on purpose: it is a
+      fixed prefix owned by one module, ``lemely.core.binding_review``, with a
+      test pinning every writer to it, and no column or queue reason exists for
+      it yet. A dedicated column or queue reason is planned with the hold flow
+      and should replace the prefix then. The plagiarism signal stays on queue
+      rows for the reasons below.) It would delete one instance
       and add another, on a field ``correct_paper``'s AI-failure branch rewrites
       outright and ``web.schemas.student_safe_review_reason`` strips per
       audience.
@@ -569,8 +583,10 @@ def is_marking_low_confidence(qr: QuestionResult) -> bool:
     :meth:`AttemptRepository._persist` opens a ``low_confidence`` review-queue
     row, and also the condition under which a student's self-mark carries
     authority (self-review spec, "Authority"). Both read the same
-    :func:`~lemely.db.review_queue_rules.low_confidence_review_needed`, so the
-    two can never draw the line differently: a question flagged purely
+    :func:`~lemely.db.review_queue_rules.low_confidence_review_needed`. That is
+    the QUEUE question; the authority question is :func:`grants_self_mark_authority`,
+    which narrows it on purpose in two places (the US-039 blank below, and a
+    binding doubt). A question flagged purely
     ``plagiarism_flag`` is *not* low-confidence — integrity flags grant no
     authority and are never shown to a student.
 
@@ -612,6 +628,109 @@ def is_marking_low_confidence(qr: QuestionResult) -> bool:
         confidence_score=qr.confidence_score,
         plagiarism_flagged=_integrity_flagged(qr),
     )
+
+
+def grants_self_mark_authority(qr: QuestionResult) -> bool:
+    """Whether a student's self-mark on this question is applied without evidence.
+
+    The AUTHORITY rule, which is :func:`is_marking_low_confidence` (the marker
+    doubted its own mark, so the student gets the benefit of the doubt) minus a
+    binding doubt. When the transcription itself is in doubt (the answer may
+    belong to another question, or was never read) the marker's confidence says
+    nothing about what the student wrote, so a claim goes the ordinary way:
+    evidence and the judge, or no change. That holds whatever else is true of
+    the row: a low marker confidence plus a binding doubt grants nothing.
+
+    Two deliberate exceptions to "authority is what the queue rule says": the
+    US-039 blank, which the shared verdict already exempts (neither queued nor
+    granted), and this binding doubt, which only the authority side withholds.
+
+    The queue side is untouched: :func:`is_marking_low_confidence` still opens
+    the teacher's row for such a question. While that row is open the question
+    is not offered for self-review at all (:func:`self_review_withheld`), so
+    this rule is the second line of defence if that refusal is ever bypassed;
+    it applies in practice once a teacher has resolved the row and the question
+    is offered again, where a claim then needs evidence and the judge.
+    """
+    return is_marking_low_confidence(qr) and not has_binding_doubt(qr.review_reason)
+
+
+def self_review_withheld(qr: QuestionResult) -> bool:
+    """Whether self-review is not offered on this question.
+
+    Two cases, both skipped once the student has already self-marked (their
+    recorded claim stays readable):
+
+    * A question that was never read (:func:`~lemely.core.binding_review.is_unbound_question`)
+      is never offered, to anyone: no answer was read, so a claim cannot change
+      anything and the panel can only say untrue things about it.
+    * A question with a binding doubt whose teacher ``low_confidence`` row is
+      still open, while someone can see and resolve it
+      (:func:`~lemely.db.review_repo.attempt_has_reviewer`, the review queue's own
+      visibility rule). Once a teacher resolves the row the question is ordinary
+      again. A student no one can see is not withheld there: nothing would ever
+      resolve the row, so they are offered it, and the authority rule still sends
+      the claim through evidence and the judge.
+    """
+    if qr.is_self_marked or not has_binding_doubt(qr.review_reason):
+        return False
+    if is_unbound_question(qr.review_reason, qr.student_answer, qr.marker_source.value):
+        return True
+    if not any(
+        item.reason is ReviewReason.low_confidence and item.status is ReviewStatus.open
+        for item in qr.review_queue_items
+    ):
+        return False
+    session = object_session(qr)
+    if session is None:
+        return False  # not persisted: there is no queue row to wait on
+    attempt = session.get(Attempt, qr.attempt_id)
+    return attempt is not None and attempt_has_reviewer(session, attempt)
+
+
+def self_review_withheld_ids(session: Session, attempt_id: uuid.UUID) -> set[uuid.UUID]:
+    """The ids of one attempt's questions for which :func:`self_review_withheld` holds.
+
+    One query for the whole attempt (plus the visibility rule once), for the callers
+    that list questions.
+    """
+    candidates = session.execute(
+        select(
+            QuestionResult.id,
+            QuestionResult.review_reason,
+            QuestionResult.student_answer,
+            QuestionResult.marker_source,
+        ).where(
+            QuestionResult.attempt_id == attempt_id,
+            QuestionResult.student_selfmarked_at.is_(None),
+            QuestionResult.review_reason.is_not(None),
+        )
+    ).all()
+    doubted = {
+        rid: (reason, answer, source.value)
+        for rid, reason, answer, source in candidates
+        if has_binding_doubt(reason)
+    }
+    if not doubted:
+        return set()
+    never_read = {
+        rid
+        for rid, (reason, answer, source) in doubted.items()
+        if is_unbound_question(reason, answer, source)
+    }
+    open_rows = session.scalars(
+        select(ReviewQueueItem.question_result_id).where(
+            ReviewQueueItem.question_result_id.in_(list(doubted)),
+            ReviewQueueItem.reason == ReviewReason.low_confidence,
+            ReviewQueueItem.status == ReviewStatus.open,
+        )
+    ).all()
+    waiting = {rid for rid in open_rows if rid is not None}
+    if waiting:
+        attempt = session.get(Attempt, attempt_id)
+        if attempt is None or not attempt_has_reviewer(session, attempt):
+            waiting = set()
+    return never_read | waiting
 
 
 def _source_box_columns(cq: CorrectedQuestion) -> dict[str, int | None]:
@@ -976,5 +1095,8 @@ __all__ = [
     "AttemptRepository",
     "UploadDeletedError",
     "fill_correction_topics",
+    "grants_self_mark_authority",
     "is_marking_low_confidence",
+    "self_review_withheld",
+    "self_review_withheld_ids",
 ]

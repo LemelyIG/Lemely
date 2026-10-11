@@ -391,6 +391,7 @@ def test_get_before_submission_is_pending_and_carries_no_verdict(
         "question_id",
         "maximum_marks",
         "evidence_required",
+        "binding_doubt",
         "points",
     }
 
@@ -3002,3 +3003,709 @@ def test_low_confidence_recomputed_in_phase_c_overrides_a_stale_phase_a_judge_pl
     assert p2.mark_changed is True
     qr = _load_qr(pg_sessionmaker, qr_id)
     assert qr.student_selfmark_marks == 2
+
+
+@pytest.fixture
+def withholding_bypassed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reach the decision rules behind the withholding, the second line of defence.
+
+    A binding-doubt question is not offered for self-review while its teacher
+    row is open, so the service refuses before any decision rule runs. These
+    tests turn the refusal off to prove the rules would still hold if a claim
+    ever got past it.
+    """
+    from lemely.db import self_review_repo
+
+    monkeypatch.setattr(self_review_repo, "self_review_withheld", lambda _qr: False)
+
+
+# ── binding doubt: the teacher's row stays, the student gets no authority ───
+
+
+def _binding_doubt_question(kind: str) -> CorrectedQuestion:
+    from lemely.io.correction_ai import (
+        UNBOUND_QUESTION_REVIEW_REASON,
+        UNVERIFIED_BINDING_REVIEW_REASON,
+    )
+
+    if kind == "unbound":
+        # No marking call was made: dropped, score 0.0, flagged.
+        return _question(
+            "1",
+            matched=[],
+            maximum=2,
+            confidence_score=0.0,
+            needs_review=True,
+            marker_source="dropped",
+            review_reason=UNBOUND_QUESTION_REVIEW_REASON,
+        )
+    # Marked as usual with a confident score, then flagged by the binding gate.
+    return _question(
+        "1",
+        matched=["p1"],
+        maximum=2,
+        needs_review=True,
+        review_reason=UNVERIFIED_BINDING_REVIEW_REASON,
+    )
+
+
+@pytest.mark.parametrize("kind", ["unbound", "unverified"])
+def test_teacher_row_stays_open_after_a_student_self_mark_on_a_binding_doubt_question(
+    withholding_bypassed: None, pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_binding_doubt_question(kind), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    before = _attempt_row(pg_sessionmaker, attempt_id).awarded_marks
+
+    view = _service(pg_sessionmaker).submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+
+    # No evidence and no judge: nothing moves, and the teacher's row is untouched.
+    assert view.student_marks is None
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == before
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [r.reason for r in rows] == [ReviewReason.low_confidence]
+    assert rows[0].status is ReviewStatus.open
+    assert rows[0].resolved_by is None and rows[0].resolved_at is None
+
+
+@pytest.mark.parametrize("kind", ["unbound", "unverified"])
+def test_rules_behind_the_refusal_need_evidence_and_the_judge_on_a_binding_doubt(
+    withholding_bypassed: None, pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    """Second line of defence, refusal bypassed: the view needs evidence, a
+    claim with evidence faces the judge, and a rejection changes nothing."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_binding_doubt_question(kind), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    service = _service(
+        pg_sessionmaker, judge=_StubJudge(JudgeVerdict(accepted=False, reason="Not shown."))
+    )
+
+    pending = service.get(student, attempt_id, qr_id)
+    assert pending.evidence_required is True
+
+    view = service.submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote it on page 3.")],
+    )
+
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.evidence_verdict == "rejected"
+    assert p2.mark_changed is False
+    assert view.student_marks is None
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [r.status for r in rows] == [ReviewStatus.open]
+
+
+def test_marker_low_confidence_row_is_still_resolved_by_a_self_mark(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Unchanged behaviour: the existing authority and auto-resolve still hold."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _all_earned(["p1", "p2", "p3"])
+    )
+
+    assert view.student_marks == 3
+    assert [r.status for r in _queue_rows(pg_sessionmaker, qr_id)] == [ReviewStatus.resolved]
+
+
+# ── a question nobody read is decided by a teacher, not the judge ───────────
+
+
+class _CountingJudge:
+    """Accepts every claim and records how often it was asked."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        self.calls += 1
+        return JudgeVerdict(accepted=True, reason="Accepted.")
+
+
+def _unbound_question_with_no_answer() -> CorrectedQuestion:
+    return _binding_doubt_question("unbound").model_copy(update={"student_answer": None})
+
+
+def test_unbound_question_with_evidence_is_no_change_and_makes_no_judge_call(
+    withholding_bypassed: None,
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(
+        pg_sessionmaker, student, [_unbound_question_with_no_answer(), _low()]
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = _CountingJudge()
+
+    view = _service(pg_sessionmaker, judge=judge).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [
+            PointVerdict("p1", True, evidence="I wrote the unit, N."),
+            PointVerdict("p2", True, evidence="I showed the working."),
+        ],
+    )
+
+    assert judge.calls == 0
+    assert view.student_marks is None
+    assert view.effective_marks == view.ai_marks
+    assert all(p.mark_changed is False and p.evidence_verdict is None for p in view.points)
+
+
+def test_unbound_question_claim_is_recorded_as_not_applied(
+    withholding_bypassed: None,
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(
+        pg_sessionmaker, student, [_unbound_question_with_no_answer(), _low()]
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _all_earned(["p1", "p2"], evidence="It is on page 3.")
+    )
+
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.is_self_marked is True
+    assert all(
+        p.student_selfmark is True and p.student_evidence == "It is on page 3." for p in qr.points
+    )
+    assert qr.awarded_marks == 0 and qr.student_selfmark_marks in (None, 0)
+    # The teacher's row stays open.
+    assert [r.status for r in _queue_rows(pg_sessionmaker, qr_id)] == [ReviewStatus.open]
+
+
+def test_unverified_answer_with_evidence_goes_to_the_judge_and_the_row_stays_open(
+    withholding_bypassed: None,
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(
+        pg_sessionmaker, student, [_binding_doubt_question("unverified"), _low()]
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = _CountingJudge()
+
+    view = _service(pg_sessionmaker, judge=judge).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote the unit, N.")],
+    )
+
+    assert judge.calls == 1
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.evidence_verdict == "accepted" and p2.mark_changed is True
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [(r.reason, r.status) for r in rows] == [
+        (ReviewReason.low_confidence, ReviewStatus.open)
+    ]
+
+
+@pytest.mark.parametrize("kind", ["unbound", "unverified"])
+def test_agreeing_with_the_mark_on_a_binding_doubt_question_leaves_the_row_open(
+    withholding_bypassed: None, pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    cq = _binding_doubt_question(kind)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [cq, _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    agree = [PointVerdict("p1", kind == "unverified"), PointVerdict("p2", False)]
+
+    _service(pg_sessionmaker).submit(student, attempt_id, qr_id, agree)
+
+    assert [r.status for r in _queue_rows(pg_sessionmaker, qr_id)] == [ReviewStatus.open]
+
+
+# ── pending_teacher is true while a binding-doubt teacher row is open ───────
+
+
+def _pending_in_list(
+    sm: sessionmaker[Session], student: uuid.UUID, attempt_id: uuid.UUID, qid: str
+) -> bool:
+    questions = _service(sm).list_questions(student, attempt_id)
+    return next(q for q in questions if q.question_id == qid).pending_teacher
+
+
+def _resolve_rows(sm: sessionmaker[Session], qr_id: uuid.UUID) -> None:
+    with sm() as session, session.begin():
+        for row in session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.question_result_id == qr_id)
+        ).all():
+            row.status = ReviewStatus.resolved
+
+
+def _claim(
+    sm: sessionmaker[Session],
+    student: uuid.UUID,
+    attempt_id: uuid.UUID,
+    qr_id: uuid.UUID,
+    points: tuple[str, ...] = ("p1", "p2"),
+) -> object:
+    return _service(sm, judge=_CountingJudge()).submit(
+        student, attempt_id, qr_id, _all_earned(list(points), evidence="It is on page 3.")
+    )
+
+
+def test_ordinary_low_confidence_question_pending_state_is_unchanged(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+    assert _pending_in_list(pg_sessionmaker, student, attempt_id, "2") is True
+
+    view = _claim(pg_sessionmaker, student, attempt_id, qr_id, ("p1", "p2", "p3"))
+
+    # The self-mark resolved the marker-doubt row: no teacher is pending.
+    assert isinstance(view, RevealedSelfReview)
+    assert view.pending_teacher is False and view.state == "settled"
+    assert _pending_in_list(pg_sessionmaker, student, attempt_id, "2") is False
+
+
+# ── a binding-doubt question is not offered until a teacher resolves it ─────
+
+
+def _doubt_question(kind: str) -> CorrectedQuestion:
+    cq = _binding_doubt_question(kind)
+    return cq.model_copy(update={"student_answer": None}) if kind == "unbound" else cq
+
+
+@pytest.mark.parametrize("kind", ["unbound", "unverified"])
+def test_binding_doubt_question_is_not_offered_for_self_review(
+    pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _enrol_with_teacher(pg_sessionmaker, student)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_doubt_question(kind), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    service = _service(pg_sessionmaker)
+
+    # The questions list (and so the route's questionResultId=None).
+    by_id = {q.question_id: q for q in service.list_questions(student, attempt_id)}
+    assert by_id["1"].self_reviewable is False
+    assert by_id["1"].pending_teacher is True  # the teacher's row is still shown as open
+    assert by_id["2"].self_reviewable is True
+    # The completion frame's ids.
+    ids = AttemptRepository(pg_sessionmaker).question_result_ids(attempt_id)
+    assert "1" not in ids and "2" in ids
+    # The view itself.
+    with pytest.raises(SelfReviewNotFoundError):
+        service.get(student, attempt_id, qr_id)
+
+
+@pytest.mark.parametrize("kind", ["unbound", "unverified"])
+def test_claim_on_a_binding_doubt_question_is_refused_and_changes_nothing(
+    pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _enrol_with_teacher(pg_sessionmaker, student)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_doubt_question(kind), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    before = _attempt_row(pg_sessionmaker, attempt_id).awarded_marks
+    judge = _CountingJudge()
+
+    with pytest.raises(SelfReviewNotFoundError):
+        _service(pg_sessionmaker, judge=judge).submit(
+            student, attempt_id, qr_id, _all_earned(["p1", "p2"], evidence="It is on page 3.")
+        )
+
+    assert judge.calls == 0
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.is_self_marked is False
+    assert all(p.student_selfmark is None and p.student_evidence is None for p in qr.points)
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == before
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [(r.reason, r.status) for r in rows] == [
+        (ReviewReason.low_confidence, ReviewStatus.open)
+    ]
+
+
+@pytest.mark.parametrize("kind", ["unverified"])
+def test_binding_doubt_question_is_offered_again_once_the_teacher_resolves_it(
+    pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _enrol_with_teacher(pg_sessionmaker, student)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_doubt_question(kind), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    _resolve_rows(pg_sessionmaker, qr_id)
+    service = _service(pg_sessionmaker)
+
+    by_id = {q.question_id: q for q in service.list_questions(student, attempt_id)}
+    assert by_id["1"].self_reviewable is True and by_id["1"].pending_teacher is False
+    assert "1" in AttemptRepository(pg_sessionmaker).question_result_ids(attempt_id)
+    view = service.get(student, attempt_id, qr_id)
+    # Ordinary again, but still no authority: a claim needs evidence and the judge.
+    assert view.evidence_required is True
+
+
+def test_ordinary_questions_are_offered_exactly_as_before(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Marker-low-confidence ("2"), confident, blank and multiple-choice rows are all offered."""
+    student = _seed_user(pg_sessionmaker)
+    first_questions = {
+        "confident": _high(),
+        "blank": _question(
+            "1",
+            matched=[],
+            maximum=2,
+            confidence_score=0.0,
+            marker_source="blank",
+            review_reason="blank",
+        ),
+        "multiple_choice": _question("1", matched=["p1"], maximum=2, marker_source="deterministic"),
+    }
+    service = _service(pg_sessionmaker)
+    for name, first in first_questions.items():
+        attempt_id = _seed_attempt(pg_sessionmaker, student, [first, _low()])
+
+        questions = service.list_questions(student, attempt_id)
+        ids = AttemptRepository(pg_sessionmaker).question_result_ids(attempt_id)
+
+        assert [q.self_reviewable for q in questions] == [True, True], name
+        assert set(ids) == {"1", "2"}, name
+        for question in questions:
+            service.get(student, attempt_id, question.question_result_id)  # no refusal
+
+
+# ── the real path: the teacher resolves the row, then the student claims ────
+
+
+def _enrol_with_teacher(sm: sessionmaker[Session], student: uuid.UUID) -> uuid.UUID:
+    """Put the student in a class with a teacher, so the teacher's queue shows their rows."""
+    from lemely.db.class_repo import ClassService
+
+    teacher = _seed_user(sm, Role.teacher)
+    classes = ClassService(sm)
+    cls = classes.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    classes.join_by_code(student, cls.join_code)
+    return teacher
+
+
+def _teacher_resolves(sm: sessionmaker[Session], student: uuid.UUID, qr_id: uuid.UUID) -> None:
+    """Resolve the question's open teacher row through ``ReviewService.resolve``."""
+    from lemely.db.class_repo import ClassService
+    from lemely.db.review_repo import ReviewService
+
+    classes = ClassService(sm)
+    (teacher,) = classes.teachers_for_student(student)
+    (item,) = [r for r in _queue_rows(sm, qr_id) if r.status is ReviewStatus.open]
+    ReviewService(sm, classes).resolve(teacher, Role.teacher, item.id, note="checked")
+
+
+def _seed_doubt(sm: sessionmaker[Session], kind: str) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    student = _seed_user(sm)
+    _enrol_with_teacher(sm, student)
+    attempt_id = _seed_attempt(sm, student, [_doubt_question(kind), _low()])
+    return student, attempt_id, _qr_id(sm, attempt_id, "1")
+
+
+def test_unverified_claim_is_refused_while_open_then_follows_evidence_after_resolution(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student, attempt_id, qr_id = _seed_doubt(pg_sessionmaker, "unverified")
+    service = _service(pg_sessionmaker, judge=_CountingJudge())
+    with pytest.raises(SelfReviewNotFoundError):
+        service.submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+
+    _teacher_resolves(pg_sessionmaker, student, qr_id)
+
+    questions = {q.question_id: q for q in service.list_questions(student, attempt_id)}
+    assert questions["1"].self_reviewable is True
+    # A claim without evidence is not granted: no authority on a binding doubt.
+    view = service.submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+    assert view.student_marks is None and view.effective_marks == view.ai_marks
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.mark_changed is False and p2.evidence_verdict is None
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+def test_unverified_claim_with_evidence_after_resolution_reaches_the_judge(
+    pg_sessionmaker: sessionmaker[Session], accepted: bool
+) -> None:
+    student, attempt_id, qr_id = _seed_doubt(pg_sessionmaker, "unverified")
+    _teacher_resolves(pg_sessionmaker, student, qr_id)
+    judge = _StubJudge(JudgeVerdict(accepted=accepted, reason="Because."))
+    counting = _CountingJudge()
+
+    class _Both:
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            counting.judge(request)
+            return judge.judge(request)
+
+    view = _service(pg_sessionmaker, judge=_Both()).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote the unit, N.")],
+    )
+
+    assert counting.calls == 1
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.mark_changed is accepted
+    assert p2.evidence_verdict == ("accepted" if accepted else "rejected")
+
+
+def test_per_attempt_withheld_ids_agree_with_the_per_row_check(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    from lemely.db.attempt_repo import self_review_withheld, self_review_withheld_ids
+
+    student = _seed_user(pg_sessionmaker)
+    _enrol_with_teacher(pg_sessionmaker, student)
+    attempt_id = _seed_attempt(
+        pg_sessionmaker,
+        student,
+        [
+            _binding_doubt_question("unverified").model_copy(update={"question_id": "1"}),
+            _binding_doubt_question("unverified").model_copy(update={"question_id": "2"}),
+            _low("3"),
+            _high("4"),
+        ],
+        with_scheme=False,
+    )
+    _resolve_rows(pg_sessionmaker, _qr_id(pg_sessionmaker, attempt_id, "2"))
+
+    with pg_sessionmaker() as session:
+        per_attempt = self_review_withheld_ids(session, attempt_id)
+        results = session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
+        ).all()
+        per_row = {qr.id for qr in results if self_review_withheld(qr)}
+        by_question = {qr.question_id: qr.id for qr in results}
+
+    assert per_attempt == per_row == {by_question["1"]}
+
+
+# ── a student no teacher can see is offered self-review on a binding doubt ──
+
+
+def _seed_unseen(sm: sessionmaker[Session], kind: str) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    """A binding-doubt question for a student who is in no class."""
+    student = _seed_user(sm)
+    attempt_id = _seed_attempt(sm, student, [_doubt_question(kind), _low()])
+    return student, attempt_id, _qr_id(sm, attempt_id, "1")
+
+
+@pytest.mark.parametrize("kind", ["unverified"])
+def test_student_in_no_class_is_offered_a_binding_doubt_question(
+    pg_sessionmaker: sessionmaker[Session], kind: str
+) -> None:
+    student, attempt_id, qr_id = _seed_unseen(pg_sessionmaker, kind)
+    service = _service(pg_sessionmaker)
+
+    questions = {q.question_id: q for q in service.list_questions(student, attempt_id)}
+    assert questions["1"].self_reviewable is True
+    assert "1" in AttemptRepository(pg_sessionmaker).question_result_ids(attempt_id)
+    view = service.get(student, attempt_id, qr_id)
+    # Still no authority: evidence and the judge, never a free grant.
+    assert view.evidence_required is True
+
+
+def test_unseen_student_unverified_claim_needs_evidence_and_goes_to_the_judge(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student, attempt_id, qr_id = _seed_unseen(pg_sessionmaker, "unverified")
+    bare = _service(pg_sessionmaker).submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+    assert bare.student_marks is None and bare.effective_marks == bare.ai_marks
+
+    other_student, other_attempt, other_qr = _seed_unseen(pg_sessionmaker, "unverified")
+    judge = _CountingJudge()
+    view = _service(pg_sessionmaker, judge=judge).submit(
+        other_student,
+        other_attempt,
+        other_qr,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote the unit, N.")],
+    )
+    assert judge.calls == 1
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.evidence_verdict == "accepted" and p2.mark_changed is True
+    # The guard that stops a student closing a teacher's row stays.
+    assert [r.status for r in _queue_rows(pg_sessionmaker, other_qr)] == [ReviewStatus.open]
+
+
+def test_student_in_a_class_with_a_teacher_is_still_withheld(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student, attempt_id, qr_id = _seed_unseen(pg_sessionmaker, "unverified")
+    _enrol_with_teacher(pg_sessionmaker, student)
+
+    with pytest.raises(SelfReviewNotFoundError):
+        _service(pg_sessionmaker).get(student, attempt_id, qr_id)
+    by_id = {
+        q.question_id: q for q in _service(pg_sessionmaker).list_questions(student, attempt_id)
+    }
+    assert by_id["1"].self_reviewable is False
+
+
+def test_student_who_joins_a_class_after_claiming_keeps_the_result_and_the_teacher_sees_the_row(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    from lemely.db.class_repo import ClassService
+    from lemely.db.review_repo import ReviewService
+
+    student, attempt_id, qr_id = _seed_unseen(pg_sessionmaker, "unverified")
+    service = _service(pg_sessionmaker)
+    service.submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+
+    teacher = _enrol_with_teacher(pg_sessionmaker, student)
+
+    # The claim made while no one could see the question is not taken away.
+    again = service.get(student, attempt_id, qr_id)
+    assert isinstance(again, RevealedSelfReview)
+    # The row stayed open, and the new teacher now sees it.
+    classes = ClassService(pg_sessionmaker)
+    page = ReviewService(pg_sessionmaker, classes).list_queue(teacher, Role.teacher)
+    assert qr_id in {row.question_result_id for row in page.rows}
+
+
+# ── a question that was never read is never offered, to anyone ──────────────
+
+
+@pytest.mark.parametrize("has_teacher", [True, False])
+def test_never_read_question_is_never_offered_whether_or_not_someone_can_see_it(
+    pg_sessionmaker: sessionmaker[Session], has_teacher: bool
+) -> None:
+    from lemely.db.class_repo import ClassService  # noqa: F401  (documents the setup)
+
+    student = _seed_user(pg_sessionmaker)
+    if has_teacher:
+        _enrol_with_teacher(pg_sessionmaker, student)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_doubt_question("unbound"), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    service = _service(pg_sessionmaker, judge=_CountingJudge())
+
+    by_id = {q.question_id: q for q in service.list_questions(student, attempt_id)}
+    assert by_id["1"].self_reviewable is False and by_id["2"].self_reviewable is True
+    ids = AttemptRepository(pg_sessionmaker).question_result_ids(attempt_id)
+    assert "1" not in ids and "2" in ids
+    with pytest.raises(SelfReviewNotFoundError):
+        service.get(student, attempt_id, qr_id)
+    with pytest.raises(SelfReviewNotFoundError):
+        service.submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"], evidence="Page 3."))
+    assert _load_qr(pg_sessionmaker, qr_id).is_self_marked is False
+
+
+def test_never_read_question_stays_withheld_after_the_teacher_resolves_it(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student, attempt_id, qr_id = _seed_doubt(pg_sessionmaker, "unbound")
+    _teacher_resolves(pg_sessionmaker, student, qr_id)
+
+    by_id = {
+        q.question_id: q for q in _service(pg_sessionmaker).list_questions(student, attempt_id)
+    }
+
+    assert by_id["1"].self_reviewable is False
+
+
+# ── the view says when a question is a binding doubt ────────────────────────
+
+
+def test_binding_doubt_flag_is_true_exactly_for_a_binding_doubt_question(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)  # in no class, so the doubt question is offered
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_doubt_question("unverified"), _low()])
+    service = _service(pg_sessionmaker)
+
+    doubt = service.get(student, attempt_id, _qr_id(pg_sessionmaker, attempt_id, "1"))
+    ordinary = service.get(student, attempt_id, _qr_id(pg_sessionmaker, attempt_id, "2"))
+    assert doubt.binding_doubt is True
+    assert ordinary.binding_doubt is False  # marker low confidence, no binding doubt
+
+    confident_attempt = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    confident = service.get(
+        student, confident_attempt, _qr_id(pg_sessionmaker, confident_attempt, "1")
+    )
+    assert confident.binding_doubt is False
+
+    # The revealed view and the submit result repeat it.
+    revealed = service.submit(
+        student,
+        attempt_id,
+        _qr_id(pg_sessionmaker, attempt_id, "1"),
+        _all_earned(["p1", "p2"]),
+    )
+    assert revealed.binding_doubt is True
+    assert service.get(student, attempt_id, _qr_id(pg_sessionmaker, attempt_id, "1")).binding_doubt
+
+
+# ── a working-only answer was read and marked: it is an unverified answer ───
+
+
+def _working_only_unverified() -> CorrectedQuestion:
+    """Marked by the AI, then flagged; the final answer is empty (working only)."""
+    return _binding_doubt_question("unverified").model_copy(update={"student_answer": None})
+
+
+def test_working_only_unverified_answer_is_offered_and_needs_evidence_and_the_judge(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)  # in no class: nothing withholds it
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_working_only_unverified(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = _CountingJudge()
+    service = _service(pg_sessionmaker, judge=judge)
+
+    by_id = {q.question_id: q for q in service.list_questions(student, attempt_id)}
+    assert by_id["1"].self_reviewable is True
+    assert "1" in AttemptRepository(pg_sessionmaker).question_result_ids(attempt_id)
+    view = service.get(student, attempt_id, qr_id)
+    assert view.evidence_required is True and view.binding_doubt is True
+
+    revealed = service.submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote the unit, N.")],
+    )
+    assert judge.calls == 1  # it reaches the judge, unlike a never-read question
+    p2 = next(p for p in revealed.points if p.mark_point_id == "p2")
+    assert p2.evidence_verdict == "accepted"
+
+
+def test_working_only_unverified_answer_claim_without_evidence_is_not_granted(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_working_only_unverified(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    view = _service(pg_sessionmaker).submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+
+    assert view.student_marks is None and view.effective_marks == view.ai_marks
+
+
+def test_a_truly_unbound_question_is_still_never_offered_and_no_change(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_doubt_question("unbound"), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    service = _service(pg_sessionmaker, judge=_CountingJudge())
+    with pytest.raises(SelfReviewNotFoundError):
+        service.get(student, attempt_id, qr_id)
+
+    # Second line of defence, with the refusal bypassed: no change, no judge call.
+    from lemely.db import self_review_repo
+
+    monkeypatch.setattr(self_review_repo, "self_review_withheld", lambda _qr: False)
+    judge = _CountingJudge()
+    view = _service(pg_sessionmaker, judge=judge).submit(
+        student, attempt_id, qr_id, _all_earned(["p1", "p2"], evidence="Page 3.")
+    )
+    assert judge.calls == 0 and view.student_marks is None

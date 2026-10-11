@@ -160,6 +160,22 @@ def _review_items_for(paper_id: uuid.UUID, report: AccuracyReport) -> Iterator[R
             )
 
 
+#: What `report_json` leaves out so code from before the answer-binding branch can
+#: still load it: the pre-branch models forbid unknown keys, and a Cloud Run
+#: revision rollback would otherwise fail `GET /papers` for every teacher who had
+#: marked a paper in between. The gate result is in the server log (`binding_gate_result`,
+#: `binding_held`); plan 1B stores it properly, with its own migration. Nothing reads
+#: either key back from a stored report.
+_NOT_STORED = {
+    "correction": {"binding": True, "questions": {"__all__": {"addresses_question": True}}}
+}
+
+
+def _stored_report(report: AccuracyReport) -> dict[str, object]:
+    """``report`` as stored in ``report_json``: the pre-branch shape, without the binding fields."""
+    return report.model_dump(mode="json", exclude=_NOT_STORED)  # type: ignore[arg-type]  # nested exclude
+
+
 def teacher_paper_visible(viewer_id: uuid.UUID, viewer_role: Role) -> ColumnElement[bool]:
     """The DS11 visibility predicate for :class:`TeacherPaper`, as a WHERE clause.
 
@@ -354,7 +370,7 @@ class TeacherPaperRepository:
                 .where(TeacherPaper.id == paper_id)
                 .values(
                     status=UploadStatus.complete,
-                    report_json=report.model_dump(mode="json"),
+                    report_json=_stored_report(report),
                     error=None,
                     progress_index=None,
                     progress_total=None,

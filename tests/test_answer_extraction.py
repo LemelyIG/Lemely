@@ -23,10 +23,16 @@ from lemely.io.gemini import GeminiClient
 from lemely.io.rasterise import RasterisedPage
 from lemely.io.reread import DEFAULT_CONFIDENCE_THRESHOLD
 from lemely.io.second_read import REREAD_AGREEMENT_THRESHOLD
-from lemely.runtime.config import PathsSettings, load_settings
+from lemely.runtime.config import BindingSettings, PathsSettings, load_settings
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus, current_run_id
 from tests.gemini_fakes import fake_genai_client
+
+# Every test in this file is about the legacy extraction call: one call in which the
+# model hands out question ids, with no binding gate over it. That is no longer the
+# default (the label binder is, see tests/test_extraction_binding.py), so each settings
+# object built here asks for it by name.
+_LEGACY_UNGATED = BindingSettings(binder="legacy", gate="off")
 
 
 def _write_minimal_pdf(path: Path, *, pages: int = 1) -> None:
@@ -144,10 +150,11 @@ def _client_with_response(tmp: str, body: dict, **gemini_overrides: object) -> G
         settings = load_settings(toml_path=None, cwd=Path(tmp))
     settings = settings.model_copy(
         update={
+            "binding": _LEGACY_UNGATED,
             "paths": PathsSettings(
                 cache_dir=Path(tmp) / ".cache",
                 output_dir=Path(tmp) / "outputs",
-            )
+            ),
         }
     )
     if gemini_overrides:
@@ -179,6 +186,7 @@ def _client_with_responses(
         settings = load_settings(toml_path=None, cwd=Path(tmp))
     settings = settings.model_copy(
         update={
+            "binding": _LEGACY_UNGATED,
             "paths": PathsSettings(
                 cache_dir=Path(tmp) / ".cache",
                 output_dir=Path(tmp) / "outputs",
@@ -315,6 +323,36 @@ class IDNormalizationTests(unittest.TestCase):
         )
         normalized = normalize_extracted_answers(extracted, manifest_ids)
         self.assertEqual(normalized.answers[0].question_id, "1(a)(i)")
+
+    def test_normalize_remaps_unbound_question_ids_like_dropped_ones(self):
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+        from lemely.io.answer_extraction import normalize_extracted_answers
+
+        manifest_ids = ["1(a)(i)", "1(a)(ii)", "2"]
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.pdf",
+            answers=[ExtractedAnswer(question_id="2", answer="X", confidence=0.7)],
+            dropped_question_ids=["1 a i"],
+            unbound_question_ids=["1 a ii", "not a question"],
+        )
+        normalized = normalize_extracted_answers(extracted, manifest_ids)
+        self.assertEqual(normalized.dropped_question_ids, ["1(a)(i)"])
+        self.assertEqual(normalized.unbound_question_ids, ["1(a)(ii)", "not a question"])
+
+    def test_normalize_leaves_the_unbound_list_unset_when_there_is_none(self):
+        """A legacy extraction never had the field; normalising it must not set it."""
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+        from lemely.io.answer_extraction import normalize_extracted_answers
+
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.pdf",
+            answers=[ExtractedAnswer(question_id="1", answer="X", confidence=0.7)],
+        )
+        normalized = normalize_extracted_answers(extracted, ["1"])
+        self.assertEqual(normalized.unbound_question_ids, [])
+        self.assertNotIn("unbound_question_ids", normalized.model_fields_set)
 
     def test_unrecognised_id_is_left_unmatched_not_guessed(self):
         """#37: the positional fallback is DELETED. An unmatched id stays unmatched.
@@ -876,10 +914,11 @@ class MalformedSourceBoxCoordinateTests(unittest.TestCase):
             settings = load_settings(toml_path=None, cwd=Path(self.tmp))
         settings = settings.model_copy(
             update={
+                "binding": _LEGACY_UNGATED,
                 "paths": PathsSettings(
                     cache_dir=Path(self.tmp) / ".cache",
                     output_dir=Path(self.tmp) / "outputs",
-                )
+                ),
             }
         )
         client = GeminiClient(settings, _genai_client=mock_genai)
@@ -959,10 +998,11 @@ class MalformedSourceBoxCoordinateTests(unittest.TestCase):
             settings = load_settings(toml_path=None, cwd=Path(self.tmp))
         settings = settings.model_copy(
             update={
+                "binding": _LEGACY_UNGATED,
                 "paths": PathsSettings(
                     cache_dir=Path(self.tmp) / ".cache",
                     output_dir=Path(self.tmp) / "outputs",
-                )
+                ),
             }
         )
         client = GeminiClient(settings, _genai_client=mock_genai)

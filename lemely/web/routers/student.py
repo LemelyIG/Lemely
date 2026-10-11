@@ -135,7 +135,12 @@ from lemely.web.schemas_student import (
     VizColor,
     WeakThreadDTO,
 )
-from lemely.web.services.grading import extract_answers, grade_paper
+from lemely.web.services.grading import (
+    BindingHeldError,
+    ensure_binding_allows_marking,
+    extract_answers,
+    grade_paper,
+)
 from lemely.web.upload_utils import check_scan_geometry, check_upload_cap, safe_upload_name
 from lemely.web.xp_awards import award_xp_safely
 
@@ -1065,6 +1070,7 @@ def student_correct(
                     return
 
                 extracted = extract_answers(scan_path, mark_scheme, gemini_client=gemini_client)
+                ensure_binding_allows_marking(extracted)
                 report = grade_paper(
                     mark_scheme,
                     extracted,
@@ -1235,6 +1241,20 @@ def student_correct(
             # gone, and nothing may be written to it. The copy is the repo's
             # generic sentence, never a reason.
             bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))
+        except BindingHeldError as exc:
+            # The binding gate rejected this paper: nothing was stored, awarded
+            # or announced. The student gets the fixed sentence; the reasons
+            # (which can quote question ids) stay in the log.
+            log.warning(
+                "binding_held",
+                upload_id=str(owned.id),
+                verdict=exc.verdict,
+                stage=exc.stage,
+                failed_checks=exc.failed_check_ids,
+                reasons=exc.reasons,
+            )
+            bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))
+            upload_repo.set_status(owned.id, UploadStatus.failed)
         except Exception as exc:
             bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))
             upload_repo.set_status(owned.id, UploadStatus.failed)

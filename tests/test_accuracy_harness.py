@@ -8,7 +8,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 class LoadGoldenCasesTests(unittest.TestCase):
@@ -572,6 +572,87 @@ class MeasureAccuracyTests(unittest.TestCase):
         self.assertIsNone(result.metrics.id_match_rate)
         self.assertEqual(len(result.question_results), 1)
         self.assertTrue(result.question_results[0].is_correct)
+
+    def test_oracle_arm_corrections_are_never_gated_on_addresses_question(self):
+        """The correction-only arm marks golden answer text that was never
+        read off a scan, so the binding gate's off-topic check (G8) does not
+        apply: the correction ``measure_accuracy`` gets back carries no
+        binding report and no "binding unverified" review reason, even when
+        the marker judges every answer to be about something else."""
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.core.loose_schemas import MarkScheme
+        from lemely.core.schemas import AIMarkResponse
+        from lemely.io import correction_ai
+
+        ids = ["1", "2", "3", "4"]
+        scheme = MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Biology",
+                    "subject_code": "0610",
+                    "paper_number": 4,
+                    "paper_variant": 1,
+                    "session_month": "May/June",
+                    "session_year": 2021,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": len(ids),
+                    "scheme_format": "point_based",
+                },
+                "questions": [
+                    {
+                        "id": qid,
+                        "marks": 1,
+                        "type": "explanation",
+                        "answer_points": [{"id": "p1", "point": f"point {qid}", "marks": 1}],
+                    }
+                    for qid in ids
+                ],
+            }
+        )
+        case = GoldenCase(
+            paper_id="p1",
+            mark_scheme=scheme,
+            ground_truth={
+                qid: GoldenAnswer(student_answer=f"answer {qid}", awarded_marks=1) for qid in ids
+            },
+            scan_path=None,
+        )
+        off_topic_reply = AIMarkResponse.model_validate(
+            {
+                "awarded_marks": 1,
+                "confidence": 0.95,
+                "matched_point_ids": ["p1"],
+                "feedback": "ok",
+                "addresses_question": "no",
+            }
+        )
+        corrections = []
+        real_correct_paper = correction_ai.correct_paper
+
+        def _spy(*args: object, **kwargs: object) -> object:
+            corrections.append(real_correct_paper(*args, **kwargs))  # type: ignore[arg-type]
+            return corrections[-1]
+
+        with (
+            patch.object(correction_ai.AICorrector, "mark_question", return_value=off_topic_reply),
+            patch("lemely.io.correction_ai.correct_paper", side_effect=_spy),
+        ):
+            # A stand-in client: marking is patched above, and the run manifest
+            # only reads the cache mode off it.
+            client = MagicMock(default_cache_mode="read_write")
+            result = measure_accuracy([case], gemini_client=client, settings=None)
+
+        (correction,) = corrections
+        # The marker ran and its judgement was recorded; it just gates nothing here.
+        self.assertEqual(
+            [(q.marker_source, q.addresses_question) for q in correction.questions],
+            [("ai", "no")] * 4,
+        )
+        self.assertIsNone(correction.binding)
+        for question in correction.questions:
+            self.assertNotIn("binding unverified", question.review_reason or "")
+            self.assertFalse(question.needs_teacher_review)
+        self.assertEqual([r.review_reason for r in result.question_results], [None] * 4)
 
     def test_arm_override_forces_oracle_mark_even_with_scan_path(self):
         """#28/M0.4: passing arm="oracle+mark" explicitly must bypass
@@ -1720,6 +1801,153 @@ class RunManifestTests(unittest.TestCase):
                     )
                     prints.add(self._manifest(settings).params_fingerprint)
         self.assertEqual(len(prints), 8, "each flag combination must hash differently")
+
+    def test_legacy_binder_with_gate_off_fingerprint_is_unchanged(self) -> None:
+        """Extraction with ``binder="legacy"`` and ``gate="off"`` is exactly what it
+        was before the binder existed, so it hashes exactly as a run made then: a
+        stand-in with no ``binding`` reproduces the old computation.
+        """
+        from lemely.runtime.config import BindingSettings
+
+        without = self._settings_with_models()
+        legacy_off = self._settings_with_models()
+        legacy_off.binding = BindingSettings(binder="legacy", gate="off")
+        self.assertEqual(
+            self._manifest(without).params_fingerprint,
+            self._manifest(legacy_off).params_fingerprint,
+        )
+
+    #: ``params_fingerprint`` of a run on default settings at f232b796, the commit
+    #: before the label binder was wired into extraction.
+    _PRE_BINDER_DEFAULT_FINGERPRINT = "2942b7e8a679"
+
+    def _real_settings(self, **binding: object):
+        """A real ``Settings`` built from defaults alone (no environment, no file)."""
+        import os
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from lemely.runtime.config import BindingSettings, load_settings
+
+        with patch.dict(os.environ):
+            for key in [k for k in os.environ if k.startswith("LEMELY_")]:
+                del os.environ[key]
+            settings = load_settings(toml_path=None, cwd=Path(tempfile.mkdtemp()))
+        return settings.model_copy(update={"binding": BindingSettings(**binding)})
+
+    def _with_second_read_level(self, settings, level: str | None):
+        levels = {
+            tag: value
+            for tag, value in settings.gemini.thinking_level_for.items()
+            if tag != "binding_second_read"
+        }
+        if level is not None:
+            levels["binding_second_read"] = level
+        return settings.model_copy(
+            update={"gemini": settings.gemini.model_copy(update={"thinking_level_for": levels})}
+        )
+
+    def test_legacy_ungated_run_on_real_settings_hashes_as_before_the_binder(self) -> None:
+        """A run that cannot make the second read must not be moved by the second
+        read's thinking level. The default thinking table gained a
+        ``binding_second_read`` entry with the binder, and the table is hashed, so on
+        a real ``Settings`` a legacy, ungated run stopped hashing as it had before:
+        the stand-in used by the tests above has no such entry and hid it.
+        """
+        legacy = self._real_settings(binder="legacy", gate="off")
+        self.assertEqual(legacy.gemini.thinking_level_for["binding_second_read"], "medium")
+        as_shipped = self._manifest(legacy).params_fingerprint
+        # The same run with the thinking table as it was before the entry existed.
+        self.assertEqual(
+            as_shipped,
+            self._manifest(self._with_second_read_level(legacy, None)).params_fingerprint,
+        )
+        # And whatever the entry is set to: a legacy run never makes that call.
+        self.assertEqual(
+            as_shipped,
+            self._manifest(self._with_second_read_level(legacy, "high")).params_fingerprint,
+        )
+        # The value this run had on the commit before the binder was wired in
+        # (f232b796, default settings, the cases and prompt versions `_manifest` uses).
+        # A deliberate change to any hashed default re-pins it, as for the stand-in pin.
+        self.assertEqual(as_shipped, self._PRE_BINDER_DEFAULT_FINGERPRINT)
+
+    def test_second_read_level_is_hashed_only_when_the_second_read_can_run(self) -> None:
+        label = self._real_settings()
+        default = self._manifest(label).params_fingerprint
+        self.assertNotEqual(
+            default,
+            self._manifest(self._real_settings(binder="legacy", gate="off")).params_fingerprint,
+        )
+        # With the label binder reading twice, the level decides a call the run makes.
+        self.assertNotEqual(
+            default, self._manifest(self._with_second_read_level(label, "high")).params_fingerprint
+        )
+        # With the second read off, or the legacy binder gated, it decides nothing.
+        for binding in ({"second_read": False}, {"binder": "legacy"}):
+            settings = self._real_settings(**binding)
+            self.assertEqual(
+                self._manifest(settings).params_fingerprint,
+                self._manifest(self._with_second_read_level(settings, "high")).params_fingerprint,
+                binding,
+            )
+
+    def test_default_binding_settings_move_the_fingerprint(self) -> None:
+        """The label binder is the default and changes what extraction does (which
+        calls, on which model), so a run on today's defaults must not archive the
+        fingerprint of a run made before it.
+        """
+        from lemely.runtime.config import BindingSettings
+
+        without = self._settings_with_models()
+        default = self._settings_with_models()
+        default.binding = BindingSettings()
+        self.assertNotEqual(
+            self._manifest(without).params_fingerprint,
+            self._manifest(default).params_fingerprint,
+        )
+
+    def test_each_binding_setting_moves_the_fingerprint(self) -> None:
+        from lemely.runtime.config import BindingSettings
+
+        # The label binder only runs with the gate enforcing (`BindingSettings`
+        # rejects the rest), so `gate` varies with the legacy binder alone.
+        variants = [
+            {},
+            {"read_model": "gemini-other"},
+            {"second_read": False},
+            {"binder": "legacy"},
+            {"binder": "legacy", "retry_model": "gemini-other"},
+            {"binder": "legacy", "gate": "observe"},
+            {"binder": "legacy", "gate": "off"},
+        ]
+        prints = set()
+        for variant in variants:
+            settings = self._settings_with_models()
+            settings.binding = BindingSettings(**variant)
+            prints.add(self._manifest(settings).params_fingerprint)
+        self.assertEqual(len(prints), len(variants), "each binding setting must hash differently")
+
+    def test_prompt_versions_name_the_label_binding_prompt_when_it_is_the_binder(self) -> None:
+        """With the label binder the prompt that reads the script is the label-binding
+        one, so its version is recorded beside the legacy extraction prompt's."""
+        from lemely.accuracy.harness import _prompt_versions
+        from lemely.io.prompts import LABEL_BINDING_PROMPT_VERSION
+        from lemely.runtime.config import BindingSettings
+
+        base = {"extraction", "correction", "mark_scheme"}
+        self.assertEqual(set(_prompt_versions(None)), base)
+        self.assertEqual(set(_prompt_versions(self._settings_with_models())), base)
+
+        settings = self._settings_with_models()
+        settings.binding = BindingSettings()
+        versions = _prompt_versions(settings)
+        self.assertEqual(set(versions), base | {"label_binding"})
+        self.assertEqual(versions["label_binding"], LABEL_BINDING_PROMPT_VERSION)
+
+        settings.binding = BindingSettings(binder="legacy")
+        self.assertEqual(set(_prompt_versions(settings)), base)
 
     def test_measure_accuracy_passes_marking_options_from_settings(self) -> None:
         """measure_accuracy must forward the settings' marking flags to

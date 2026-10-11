@@ -497,3 +497,113 @@ def test_a_report_stored_before_the_ai_detection_removal_still_lists(
     row = repo.get_visible(pid, viewer_id=owner, viewer_role=Role.teacher)
     assert row is not None and row.report is not None
     assert "ai_detection_flagged" not in row.report.correction.questions[0].model_dump()
+
+
+# ---------------------------------------------------------------------------
+# The stored console report keeps its pre-branch shape (a revision rollback).
+#
+# Code from before the answer-binding branch forbids unknown keys, so a
+# `report_json` holding `CorrectionResult.binding` or
+# `CorrectedQuestion.addresses_question` would make `GET /papers` fail for every
+# teacher after a rollback. The gate's result is in the server log; plan 1B
+# stores it properly, with its own migration.
+# ---------------------------------------------------------------------------
+
+#: The fields of each stored model at 885724d0, the commit before the branch.
+_PRE_BRANCH_FIELDS = {
+    "report": {"correction", "grade_prediction", "weaknesses"},
+    "correction": {
+        "awarded_marks",
+        "maximum_marks",
+        "metadata",
+        "needs_teacher_review",
+        "questions",
+    },
+    "question": {
+        "awarded_marks",
+        "confidence",
+        "confidence_score",
+        "expected_answer",
+        "extraction_confidence",
+        "feedback",
+        "marker_source",
+        "matched_point_ids",
+        "maximum_marks",
+        "needs_teacher_review",
+        "plagiarism_flagged",
+        "point_notes",
+        "point_verdicts",
+        "question_id",
+        "rationale",
+        "review_reason",
+        "source_box",
+        "student_answer",
+        "topic",
+    },
+}
+
+
+def _keys_at_every_depth(value: object) -> set[str]:
+    if isinstance(value, dict):
+        return set(value) | {k for v in value.values() for k in _keys_at_every_depth(v)}
+    if isinstance(value, list):
+        return {k for v in value for k in _keys_at_every_depth(v)}
+    return set()
+
+
+def test_a_report_marked_with_a_binding_report_is_stored_in_the_pre_branch_shape(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    from lemely.core.binding import BindingCheck, BindingReport
+
+    repo = _repo(pg_sessionmaker)
+    owner = _user(pg_sessionmaker, Role.teacher)
+    pid = _paper(repo, owner)
+    repo.claim_run(pid)
+    plain = _report()
+    binding = BindingReport(
+        binder="label",
+        verdict="pass",
+        checks=[BindingCheck(id="G5", passed=False, scope="question", detail="one leaf")],
+    )
+    question = plain.correction.questions[0].model_copy(update={"addresses_question": "yes"})
+    marked = plain.model_copy(
+        update={
+            "correction": plain.correction.model_copy(
+                update={"binding": binding, "questions": [question]}
+            )
+        }
+    )
+    assert marked.correction.binding is not None  # the report really carries both new keys
+
+    repo.finish(pid, marked)
+
+    with pg_sessionmaker() as s:
+        stored = s.scalars(sa.select(TeacherPaper.report_json).where(TeacherPaper.id == pid)).one()
+    assert stored is not None
+    # Neither new key is stored, at any depth.
+    assert {"binding", "addresses_question"}.isdisjoint(_keys_at_every_depth(stored))
+    # And every stored model has exactly keys a pre-branch (extra="forbid") model knows.
+    assert set(stored) <= _PRE_BRANCH_FIELDS["report"]
+    assert set(stored["correction"]) <= _PRE_BRANCH_FIELDS["correction"]
+    for q in stored["correction"]["questions"]:
+        assert set(q) <= _PRE_BRANCH_FIELDS["question"]
+    # It still reads back as a report.
+    row = repo.get_visible(pid, viewer_id=owner, viewer_role=Role.teacher)
+    assert row is not None and row.report is not None
+    assert row.report.correction.binding is None
+
+
+def test_a_report_stored_before_the_branch_still_loads(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    repo = _repo(pg_sessionmaker)
+    owner = _user(pg_sessionmaker, Role.teacher)
+    pid = _paper(repo, owner)
+    repo.claim_run(pid)
+    repo.finish(pid, _report())
+
+    row = repo.get_visible(pid, viewer_id=owner, viewer_role=Role.teacher)
+
+    assert row is not None and row.report is not None
+    assert row.report.correction.questions[0].addresses_question is None

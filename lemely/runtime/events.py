@@ -65,8 +65,22 @@ class EventType(StrEnum):
     DUPLICATE_QUESTION_ID = "duplicate_question_id"
     REREAD_FAILED = "reread_failed"
     # Spec 2026-09-26 §8 (#3): the optional I3 second read failed; extraction
-    # continued on the primary answers with extraction_agreement unset.
+    # continued on the primary answers with extraction_agreement unset. Also
+    # published with a `stage`: `"binding_second_read"` when the label binder's
+    # second read fails, which is then made once more (a second failure fails the
+    # job: nothing is published on one read); `"binding_retry"` when the legacy
+    # binder's retry fails, which holds the paper on its first read.
     SECOND_READ_FAILED = "second_read_failed"
+    # What the binding gate concluded about one extraction (lemely.io.binding.
+    # orchestrate), published once per extraction unless the gate is off: `binder`,
+    # `gate`, `verdict`, `retried`, `failed_checks` (check ids), `unbound` and
+    # `unaligned` (counts), `inferred_numbers`, `drops`, `model`, `second_read`
+    # (whether a second read came back) and `report` (the whole report an enforcing
+    # gate returns, every check with its sentence). Under `gate="observe"` (the
+    # legacy binder only) the verdict and report here are what would have been
+    # enforced, and this event is the only place they go: the extraction itself
+    # carries no report. Server-side only: lemely.web.sse never forwards it.
+    BINDING_GATE_RESULT = "binding_gate_result"
     REREAD_CAP_REACHED = "reread_cap_reached"
     # Spec 2026-09-26 §5: the re-read stage's wall-clock budget ran out;
     # `started` re-reads were issued, `skipped` answers kept their first read.

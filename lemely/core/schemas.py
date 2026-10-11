@@ -5,7 +5,18 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    GetJsonSchemaHandler,
+    PrivateAttr,
+    computed_field,
+    field_validator,
+    model_validator,
+)
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import core_schema as pydantic_core_schema
 
 # F1 (Gemini 3.x migration): 3.x models reject the JSON-Schema `pattern`
 # keyword outright (brief #15/B7), so the subject_code shape check that used
@@ -26,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 # schemas.py and broke that contract; importing it the other way round does
 # not, since question_papers.py already imports StrictModel from here with
 # no cycle either way.
+from lemely.core.binding import BindingReport, BindingSource, BindingStatus, ReadAnswer
 from lemely.core.loose_schemas import _SUBJECT_CODE_RE as _SUBJECT_CODE_RE
 
 
@@ -310,6 +322,14 @@ class CorrectedQuestion(StrictModel):
     confidence_score: float = Field(..., ge=0.0, le=1.0)
     needs_teacher_review: bool
     student_answer: str | None = None
+    addresses_question: Literal["yes", "no", "unclear"] | None = None
+    """The marker's judgement of whether the response is an attempt at this
+    question at all: check G8's input
+    (``lemely.core.binding_gate.check_off_topic``). ``None`` means NOT
+    JUDGED: no marker was called for this row (MCQ, blank, dropped, missing,
+    marking failed), or the marker's reply left the field out. ``"unclear"``
+    is only ever the marker's own explicit answer. Never an input to
+    ``awarded_marks``."""
     expected_answer: str | None = None
     topic: str | None = None
     review_reason: str | None = None
@@ -332,6 +352,13 @@ class CorrectedQuestion(StrictModel):
     which covers ``--mcq-only``/no AI client (nothing was ever attempted),
     so the review queue does not conflate "we chose not to mark this" with
     "the model's response for this question could not be used at all".
+
+    ``"dropped"`` is also the value for a question the label binder could
+    bind no answer to (``ExtractedAnswers.unbound_question_ids``): the scan
+    was read, and what was read could not be used for this question. Nothing
+    was discarded as malformed in that case, so ``review_reason`` is what
+    tells the two apart; it is the second half of the sentence above, "could
+    not be used at all", that both share.
 
     COVERAGE LIMIT (review MUST-FIX F1) -- this protection is PARTIAL. It
     reaches only the two drop reasons that leave a usable ``question_id``:
@@ -472,6 +499,7 @@ class CorrectionResult(StrictModel):
     awarded_marks: int = 0
     maximum_marks: int = 0
     needs_teacher_review: bool = False
+    binding: BindingReport | None = None
 
     @model_validator(mode="after")
     def calculate_totals(self) -> CorrectionResult:
@@ -586,6 +614,28 @@ class ExtractedAnswer(StrictModel):
     paper. ``None`` when no second reader is configured
     (``GeminiSettings.second_reader == "none"``, the default) or when the
     second read did not return this ``question_id``."""
+    binding_source: BindingSource | None = None
+    """How ``question_id`` was assigned. ``"label"``: the reader listed the
+    question labels and the writing it saw, with no ids, and code matched the
+    answer to the label it follows. ``"legacy"``: the model handed out the id
+    itself, as extraction did before the label binder. ``"position"`` is
+    reserved by the spec for an answer tied to a question by the region of
+    the page it sits in; nothing produces it today, and it never means the
+    answer's place in a list, which no code path may bind by. ``None`` on
+    records stored before binding existed, and on legacy extractions made
+    with the gate off. Unrelated to ``confidence``, which is only
+    legibility."""
+    binding_status: BindingStatus | None = None
+    """Whether the binding gate accepted this answer's ``question_id``:
+    ``"verified"`` (checked against the evidence), ``"unverified"`` (assigned
+    but not checked) or ``"unbound"`` (no label aligned, so no question was
+    assigned). ``None`` on records stored before binding existed. Unrelated
+    to ``confidence``, which is only legibility."""
+    label_seen: str | None = None
+    """The question label read on the page next to this answer, as written
+    (e.g. ``"(b)(ii)"``), kept as evidence for the binding. ``None`` when no
+    label was seen or binding did not run. Unrelated to ``confidence``,
+    which is only legibility."""
 
 
 class ExtractedAnswers(StrictModel):
@@ -610,7 +660,14 @@ class ExtractedAnswers(StrictModel):
     not be shaped into an answer at all). Unlike ``source_box``,
     ``question_id``/``answer`` have no safe fallback -- an answer that
     cannot be identified or has no text at all is dropped in full, never the
-    rest of the paper with it. Empty when nothing was dropped."""
+    rest of the paper with it. Empty when nothing was dropped.
+
+    When the label binder read the script, the keys are instead its reader's
+    reply items left out or repaired (``lemely.io.binding.StreamRead.drops``),
+    each under a ``stream_`` prefix (``"stream_malformed_item"``,
+    ``"stream_unknown_type"``, ``"stream_empty_label"``,
+    ``"stream_empty_answer"``, ``"stream_repaired_page"``,
+    ``"stream_unreadable_answer"``). The last two count items that were kept."""
     confidence_repairs: dict[str, int] = Field(default_factory=dict)
     """Count of ``confidence`` values repaired during extraction (US-031),
     by reason (``"missing"`` / ``"non_finite"`` / ``"out_of_range"`` /
@@ -676,6 +733,62 @@ class ExtractedAnswers(StrictModel):
     """The confidence threshold that gated which answers were eligible for
     a re-read on this run. ``None`` only when this ``ExtractedAnswers`` was
     not produced by the crop-and-re-read-aware extraction path at all."""
+    binding: BindingReport | None = None
+    """The binding gate's report for this paper. ``None`` when binding did
+    not run (records stored before it existed)."""
+    unbound_question_ids: list[str] = Field(default_factory=list)
+    """Leaf questions the label binder could bind no answer to: their label was
+    not found on the scan, or it was found and the writing by it could not be
+    tied to it (it could as well be a neighbour's, or its page or text could
+    not be read). Whatever the student wrote for them is not in ``answers``;
+    it may be in ``unbound_answers`` or under the answer before. This is not
+    a blank answer and not a dropped one (``dropped_question_ids``):
+    ``correct_paper`` sends each such question to teacher review with no
+    marking call and a reason of its own. Remapped to manifest ids by
+    :func:`~lemely.io.answer_extraction.normalize_extracted_answers`, as
+    ``dropped_question_ids`` is. Empty when every leaf was bound or left
+    blank, and on records stored before the field existed."""
+    unbound_question_reasons: dict[str, str] = Field(default_factory=dict)
+    """Why each id in ``unbound_question_ids`` has no answer, by id. The value
+    is one of the binder's own reasons
+    (``lemely.core.label_sequence.UNALIGNED_REASONS``: ``"label_not_seen"``,
+    ``"duplicate_id"``, …) or one of the three the orchestration adds when it
+    compares two reads (``lemely.io.binding.orchestrate.REVIEW_ONLY_REASONS``).
+    ``correct_paper`` reads it to give the question a review reason that is
+    true for its cause: a question the mark scheme lists twice is the
+    scheme's fault, not the scan's. It carries ids and reason names, never
+    student text. An id with no entry gets the general sentence. Keys are
+    remapped with ``unbound_question_ids``. Empty on records stored before
+    the field existed. It is not copied onto the marked paper.
+
+    It also carries ``"marked_from_other_read"`` for an answered id whose
+    answer was taken from the read that was not returned
+    (``lemely.io.binding.orchestrate.MARKED_FROM_OTHER_READ``): that id is not
+    in ``unbound_question_ids``, its answer is ``unverified``, and the entry
+    is what lets its review reason say it was found in one of two readings."""
+    unbound_answers: list[ReadAnswer] = Field(default_factory=list)
+    """Answers read off the page that no question label aligned to, so they
+    are held here rather than assigned a ``question_id``. Empty when every
+    answer was bound."""
+    _read_cache_keys: tuple[str, ...] = PrivateAttr(default=())
+
+    def read_cache_keys(self) -> tuple[str, ...]:
+        """The response-cache keys of the model reads this extraction was bound from.
+
+        Known only in the process that made the extraction, and only when a binding
+        gate ran over it: they are not a field, so they are never stored, sent or
+        validated, and a record loaded from anywhere has none. They are here so that
+        whoever holds the paper after marking can have those reads forgotten, and the
+        next run on the same scan reads it afresh (``correct_paper``). A copy made
+        with ``model_copy`` keeps them.
+        """
+        return self._read_cache_keys
+
+    def with_read_cache_keys(self, keys: Sequence[str]) -> ExtractedAnswers:
+        """A copy of this extraction that carries ``keys`` as its :meth:`read_cache_keys`."""
+        copy = self.model_copy()
+        copy._read_cache_keys = tuple(keys)
+        return copy
 
 
 class SecondReadAnswer(BaseModel):
@@ -722,6 +835,46 @@ class AIMarkResponse(StrictModel):
     function's docstring for the flag-off/empty-list fallback to the legacy
     ``awarded_marks``/``matched_point_ids`` fields above, which remain the
     source of truth until I6 is enabled (US-018)."""
+    addresses_question: Literal["yes", "no", "unclear"] = "unclear"
+    """Check G8's input (``lemely.core.binding_gate.check_off_topic``):
+    whether the response is an attempt at the question this mark scheme entry
+    belongs to. Declared LAST so the reply's marking fields come first.
+
+    REQUIRED on the wire, lenient here -- the split
+    ``lemely.io.answer_extraction``'s reply models use. The schema sent to
+    the model lists it under ``required`` (see
+    ``__get_pydantic_json_schema__`` below), so the model is asked for it on
+    every call; the Python default exists only so that a reply which leaves
+    it out anyway still parses instead of failing the whole marking call. A
+    reply that left it out is NOT a judgement of ``"unclear"``: read this
+    field through ``model_fields_set`` (``lemely.io.correction_ai`` does),
+    which tells an omitted field from an explicit one."""
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls,
+        core_schema: pydantic_core_schema.CoreSchema,
+        handler: GetJsonSchemaHandler,
+    ) -> JsonSchemaValue:
+        """The schema sent to the model: ``addresses_question`` required and described."""
+        # The Python-side default above is for lenient PARSING only. Left to
+        # pydantic, a field with a default is absent from ``required``, and a
+        # model that follows the schema may then never send it -- which reads
+        # as "no answer was off topic" and silently switches check G8 off.
+        # What is sent must say the field is required.
+        json_schema = handler(core_schema)
+        reply_schema = handler.resolve_ref_schema(json_schema)
+        reply_schema["required"] = [*reply_schema.get("required", []), "addresses_question"]
+        # Hard-coded here, never taken from a docstring: this text is part of
+        # ``model_json_schema()``, which ``GeminiClient._params_fingerprint``
+        # hashes into the cache key, and ``-O``/``-OO`` strips docstrings (see
+        # the Critical B note above ``PointVerdictWire``). Pinned by
+        # ``MarkingSchemaHashStableAcrossPythonOptimizeTests``.
+        reply_schema["properties"]["addresses_question"]["description"] = (
+            "Whether the student's response is an attempt at the question this mark scheme "
+            "entry belongs to: yes, no or unclear. Never changes the marks or the feedback."
+        )
+        return json_schema
 
 
 class SubjectResult(StrictModel):

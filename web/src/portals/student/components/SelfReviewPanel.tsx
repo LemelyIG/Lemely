@@ -297,7 +297,7 @@ function PendingForm({
       <div className="flex flex-col gap-1">
         <h3 className="text-label text-ink">Mark your own answer first</h3>
         <p className="max-w-[56ch] text-pretty text-body-sm text-ink-muted">
-          {evidenceHint(view.evidenceRequired)} The marker's verdict is revealed once you submit,
+          {evidenceHint(view.evidenceRequired, view.bindingDoubt ?? false)} The marker's verdict is revealed once you submit,
           and you can only do this once.
         </p>
       </div>
@@ -385,7 +385,7 @@ function RevealedOutcome({ view }: { view: SelfReviewRevealed }) {
               <div className="flex flex-col gap-1.5">
                 {group.points.map((point) => {
                   const outcome = pointOutcome(point, view)
-                  const detail = outcomeDetail(point, outcome, view.evidenceRequired)
+                  const detail = outcomeDetail(point, outcome, view.evidenceRequired, view.bindingDoubt ?? false)
                   return (
                     <div key={point.markPointId} className="flex flex-col gap-1.5">
                       <div className="flex flex-wrap items-center justify-between gap-2">

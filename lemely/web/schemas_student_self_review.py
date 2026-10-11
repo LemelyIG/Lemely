@@ -82,6 +82,8 @@ class SelfReviewPendingDTO(ApiModel):
     questionId: str
     maxMarks: int
     evidenceRequired: bool
+    bindingDoubt: bool = False
+    """The question's answer may belong to another question, or was never read."""
     points: list[SelfReviewPendingPointDTO]
 
 
@@ -94,6 +96,7 @@ class SelfReviewRevealedDTO(ApiModel):
     questionId: str
     maxMarks: int
     evidenceRequired: bool
+    bindingDoubt: bool = False
     aiMarks: int
     effectiveMarks: int
     studentMarks: int | None

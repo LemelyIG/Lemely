@@ -9,6 +9,8 @@ from typing import Literal, NamedTuple
 
 import structlog
 
+from lemely.core.binding import BindingVerdict
+from lemely.core.binding_gate import GateThresholds, check_off_topic, verdict
 from lemely.core.correction import _exam_metadata, _load_mark_scheme
 from lemely.core.equivalence import Verdict, VerdictKind, equivalent
 from lemely.core.loose_schemas import (
@@ -35,9 +37,11 @@ from lemely.core.schemas import (
 )
 from lemely.io.gemini import GeminiClient, thinking_rank
 from lemely.io.prompts.correction_ai import (
-    MARKER_SYSTEM_PROMPT,
     VERSION,
     build_marker_user_prompt,
+    default_marking_rules,
+    marker_system_prompt,
+    printed_principles,
 )
 from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD
 from lemely.io.validation import validate_mark_scheme
@@ -250,6 +254,22 @@ def _join_reason(existing: str | None, added: str) -> str:
     return f"{existing} | {added}" if existing else added
 
 
+def _reader_answer_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> frozenset[str]:
+    """Question ids whose answer text the label binder's reader wrote from a scan.
+
+    That reader opens its description of a drawing with ``Drawing:``, and the marker
+    is told so for these answers alone. ``binding_source == "label"`` is the fact,
+    carried beside the text: a typed quiz answer and a legacy extraction never have
+    it, and a plain mapping has no such field. The word in the text is no evidence,
+    since the student can write or type it. Where two answers share an id the last
+    one decides, as in :func:`_flatten_answers`.
+    """
+    if not isinstance(extracted, ExtractedAnswers):
+        return frozenset()
+    from_reader = {a.question_id: a.binding_source == "label" for a in extracted.answers}
+    return frozenset(qid for qid, is_reader in from_reader.items() if is_reader)
+
+
 def _dropped_question_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> frozenset[str]:
     """Question ids whose answer was extracted but discarded as malformed.
 
@@ -279,13 +299,31 @@ class AICorrector:
         *,
         equivalence_gate: bool = False,
         prior_values: dict[str, str] | None = None,
+        default_rules: str | None = None,
+        reader_describes_drawings: bool = False,
     ) -> AIMarkResponse:
         """Mark one question.
 
-        ``principles`` is the paper's own ``metadata.generic_marking_principles``
-        (#41 / ruling A13). They are the authority on the M/A dependency; the
+        ``principles`` is the paper's own printed principles
+        (``prompts.correction_ai.printed_principles``; #41 / ruling A13). They are
+        the authority on the M/A dependency; the
         system prompt's strict rule is the fallback for papers that do not print
         them or whose GMP pages could not be parsed.
+
+        ``default_rules`` (``prompts.correction_ai.default_marking_rules``,
+        defaults None) is the published rules of the paper's syllabus family, for
+        a scheme stored without principles of its own. Forwarded to
+        :func:`build_marker_user_prompt`, which sends it only when ``principles``
+        is empty.
+
+        ``reader_describes_drawings`` (defaults False) is True only for an answer
+        whose text the label binder's reader wrote from a scan
+        (:func:`_reader_answer_ids`). It chooses the system prompt
+        (``prompts.correction_ai.marker_system_prompt``) and is forwarded to
+        :func:`build_marker_user_prompt`: only for such an answer is ``Drawing:``
+        the opening of a description of a drawing. In a typed or legacy answer
+        the word is the student's own, and with False both prompts are what they
+        were before the reader described drawings.
 
         ``equivalence_gate`` (US-013, defaults False): forwarded to
         :func:`build_marker_user_prompt`, which appends the I6 point-verdict
@@ -314,10 +352,13 @@ class AICorrector:
             principles,
             equivalence_gate=equivalence_gate,
             prior_values=prior_values,
+            default_rules=default_rules,
+            reader_describes_drawings=reader_describes_drawings,
         )
+        system_prompt = marker_system_prompt(reader_describes_drawings=reader_describes_drawings)
 
         result = self._client.generate_structured(
-            system_prompt=MARKER_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=user_prompt,
             response_schema=AIMarkResponse,
             prompt_version=VERSION,
@@ -363,7 +404,7 @@ class AICorrector:
                 escalation_model=f"{correction_model} (thinking)",
             )
             result = self._client.generate_structured(
-                system_prompt=MARKER_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 user_prompt=(
                     user_prompt + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
                 ),
@@ -401,7 +442,7 @@ class AICorrector:
                 escalation_model=escalation_model,
             )
             result = self._client.generate_structured(
-                system_prompt=MARKER_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 user_prompt=(
                     user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
                     "Please re-evaluate carefully before responding."
@@ -1188,6 +1229,18 @@ def _maybe_add_no_method_span_note(
     return feedback + _NO_METHOD_SPAN_NOTE
 
 
+def _addresses_judgement(mark: AIMarkResponse) -> Literal["yes", "no", "unclear"] | None:
+    """The marker's ``addresses_question``, or ``None`` when the reply left it out.
+
+    ``AIMarkResponse`` defaults the field to ``"unclear"`` so a reply without
+    it still parses, but an omitted field is not a judgement and must not be
+    stored as one. ``model_fields_set`` holds only the fields the reply
+    actually carried; it survives the cache (which stores the raw reply text
+    and re-validates it) and ``model_copy``.
+    """
+    return mark.addresses_question if "addresses_question" in mark.model_fields_set else None
+
+
 def _build_ai_corrected_from_verdicts(
     question: Question,
     student_answer: str,
@@ -1364,6 +1417,7 @@ def _build_ai_corrected_from_verdicts(
         matched_point_ids=matched_point_ids,
         point_verdicts=point_verdicts,
         extraction_confidence=extraction_confidence,
+        addresses_question=_addresses_judgement(mark),
     )
 
 
@@ -1541,6 +1595,7 @@ def _build_ai_corrected(
         feedback=mark.feedback,
         matched_point_ids=matched_point_ids,
         extraction_confidence=extraction_confidence,
+        addresses_question=_addresses_judgement(mark),
     )
 
 
@@ -1669,8 +1724,89 @@ _DROPPED_ANSWER_REVIEW_REASON = (
 )
 
 
-def _build_dropped_corrected(question: Question) -> CorrectedQuestion:
+#: The reason for a question in ``ExtractedAnswers.unbound_question_ids``: the
+#: label binder could bind no answer to it. Distinct from
+#: ``_DROPPED_ANSWER_REVIEW_REASON``, which would be false here: nothing was
+#: discarded as malformed. It names both ways a scan leaves a leaf unbound: its
+#: label was not seen, or the label was seen and the writing by it could not be
+#: given to it (it may be a neighbour's, or its page or text could not be read).
+#: It is the general sentence; ``UNBOUND_REASON_SENTENCES`` holds the ones for
+#: causes it would be false for.
+UNBOUND_QUESTION_REVIEW_REASON = (
+    "binding unverified: this question's label was not found on the scan, or the writing "
+    "by it could not be tied to it, so its answer could not be read"
+)
+
+
+#: A truer sentence for the causes the general one above is false for, keyed by the
+#: reason the extraction carries in ``ExtractedAnswers.unbound_question_reasons``.
+#: Each starts with ``binding unverified:`` (``lemely.core.binding_review`` keys on
+#: that prefix) and none holds ``" | "``, which joins reasons.
+UNBOUND_REASON_SENTENCES: dict[str, str] = {
+    # The mark scheme's fault, not the scan's.
+    "duplicate_id": (
+        "binding unverified: the mark scheme has more than one question under this "
+        "label, so the answer could not be matched to one"
+    ),
+    "undecomposable_id": (
+        "binding unverified: the mark scheme names this question in a way no label on a "
+        "script can match, so its answer could not be matched to it"
+    ),
+    # Nothing of the script was bound at all.
+    "list_too_long": (
+        "binding unverified: the script could not be read against this mark scheme, so "
+        "no answer could be matched to this question"
+    ),
+    "scheme_too_deep": (
+        "binding unverified: the script could not be read against this mark scheme, so "
+        "no answer could be matched to this question"
+    ),
+    # Sent to review by comparing two reads, or by the order of the list. The label
+    # was found in each of these.
+    "answered_in_one_read_only": (
+        "binding unverified: writing was found for this question in only one of two "
+        "readings of the scan, so its answer was not used"
+    ),
+    "listing_suspect": (
+        "binding unverified: the answers around this question were listed out of order, "
+        "so the writing for it could not be told from the next part's"
+    ),
+    "unaligned_in_other_read": (
+        "binding unverified: one reading of the scan found nothing written for this "
+        "question and the other could not place its label, so it is not known to be blank"
+    ),
+}
+
+
+def _unbound_reason_sentence(why: str | None) -> str:
+    """The review reason for an unbound question whose cause is ``why``.
+
+    The general sentence is true for every reason not listed above: those are a label
+    that was not found, or one that was found with writing that could not be tied to
+    it. It is also what an id with no recorded cause gets.
+    """
+    return UNBOUND_REASON_SENTENCES.get(why or "", UNBOUND_QUESTION_REVIEW_REASON)
+
+
+def _unbound_question_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> frozenset[str]:
+    """Question ids the label binder could bind no answer to.
+
+    Only an ``ExtractedAnswers`` can carry them: a plain mapping of typed answers
+    was never bound from a scan.
+    """
+    if isinstance(extracted, ExtractedAnswers):
+        return frozenset(extracted.unbound_question_ids)
+    return frozenset()
+
+
+def _build_dropped_corrected(
+    question: Question, reason: str = _DROPPED_ANSWER_REVIEW_REASON
+) -> CorrectedQuestion:
     """Short-circuit for an answer extracted but DROPPED as malformed.
+
+    Also used, with ``reason=UNBOUND_QUESTION_REVIEW_REASON``, for a question the
+    label binder could bind no answer to: the same zero, the same flag, no marking
+    call, and its own true reason.
 
     US-031 review MUST-FIX 7, stronger fix. No marking call is made --
     ``correct_paper`` never reaches ``ai.mark_question`` for this question
@@ -1720,7 +1856,7 @@ def _build_dropped_corrected(question: Question) -> CorrectedQuestion:
         student_answer=None,
         expected_answer=None,
         topic=question.topic_hint,
-        review_reason=_DROPPED_ANSWER_REVIEW_REASON,
+        review_reason=reason,
         marker_source="dropped",
         extraction_confidence=None,
     )
@@ -1921,6 +2057,8 @@ def _maybe_apply_ecf_substitution(
     ecf_substitution: bool,
     equivalence_gate: bool,
     principles: list[str] | None,
+    default_rules: str | None,
+    reader_describes_drawings: bool,
     sibling_prior: dict[str, int] | None,
     answers: dict[str, _FlatAnswer],
     top_level_leaves: list[Question],
@@ -2092,6 +2230,8 @@ def _maybe_apply_ecf_substitution(
             student_working,
             prior_results=sibling_prior,
             principles=principles,
+            default_rules=default_rules,
+            reader_describes_drawings=reader_describes_drawings,
             equivalence_gate=equivalence_gate,
             prior_values=prior_values,
         )
@@ -2167,6 +2307,11 @@ def _maybe_apply_ecf_substitution(
             "awarded_marks": mark2.awarded_marks,
         }
     )
+    # G8: the re-mark's feedback and claimed marks are the ones kept above, so
+    # its judgement of whether the answer addresses the question is kept with
+    # them rather than the first pass's. Set on the built row, not through
+    # `merged_mark`: a `model_copy` update would mark the field as set even
+    # when the re-mark left it out, turning "no judgement" into "unclear".
     return _build_ai_corrected(
         question,
         student_answer,
@@ -2174,7 +2319,7 @@ def _maybe_apply_ecf_substitution(
         student_working,
         extraction_confidence,
         equivalence_gate=equivalence_gate,
-    )
+    ).model_copy(update={"addresses_question": _addresses_judgement(mark2)})
 
 
 def _attach_extraction_context(
@@ -2252,6 +2397,189 @@ def _attach_extraction_context(
     return cq.model_copy(update=update)
 
 
+#: Appended to ``review_reason`` on each question a question-scope G8 failure
+#: names (see :func:`_with_off_topic_check`).
+OFF_TOPIC_REVIEW_REASON = "binding unverified: answer appears to address a different question"
+
+#: Appended to ``review_reason`` on each question whose answer the binding left
+#: ``binding_status="unverified"``, with or without a binding report on the
+#: extraction (see :func:`_with_off_topic_check`): the binder
+#: bound it but doubts what it holds (writing tied by an arrow, carried over from
+#: the page before, or beside a label that was not seen; or writing beside it that
+#: was set aside, so the answer may be short of it), or a question-scope gate check
+#: named it. One sentence for all of them, true whichever way the doubt points.
+UNVERIFIED_BINDING_REVIEW_REASON = (
+    "binding unverified: this answer may include writing that belongs to another question, "
+    "or may be missing some of its own"
+)
+
+#: The review reason of an answer that was marked from the read that was not returned
+#: (``lemely.io.binding.orchestrate._from_other_read``): the general sentence above
+#: would not be false for it, and this one says what happened. Keyed by the reason the
+#: extraction carries for the answer's id in ``unbound_question_reasons``.
+MARKED_FROM_OTHER_READ_REVIEW_REASON = (
+    "binding unverified: this answer was found in only one of two readings of the scan "
+    "and is marked from that reading"
+)
+_MARKED_FROM_OTHER_READ = "marked_from_other_read"
+
+_VERDICT_SEVERITY: dict[BindingVerdict, int] = {"pass": 0, "retry": 1, "hold": 2}
+
+
+def _sent_to_review(
+    questions: list[CorrectedQuestion], ids: set[str], reason: str
+) -> list[CorrectedQuestion]:
+    """``questions`` with those in ``ids`` flagged for a teacher, ``reason`` joined on."""
+    return [
+        cq.model_copy(
+            update={
+                "needs_teacher_review": True,
+                "review_reason": _join_reason(cq.review_reason, reason),
+            }
+        )
+        if cq.question_id in ids
+        else cq
+        for cq in questions
+    ]
+
+
+def _unverified_sent_to_review(
+    questions: list[CorrectedQuestion], extracted_answers: ExtractedAnswers
+) -> list[CorrectedQuestion]:
+    """``questions`` with each one whose answer is ``unverified`` flagged, under its reason.
+
+    An answer taken from the read that was not returned says so
+    (:data:`MARKED_FROM_OTHER_READ_REVIEW_REASON`); every other unverified answer
+    takes :data:`UNVERIFIED_BINDING_REVIEW_REASON`.
+    """
+    unverified = {
+        a.question_id for a in extracted_answers.answers if a.binding_status == "unverified"
+    }
+    one_read = {
+        qid
+        for qid in unverified
+        if extracted_answers.unbound_question_reasons.get(qid) == _MARKED_FROM_OTHER_READ
+    }
+    questions = _sent_to_review(questions, unverified - one_read, UNVERIFIED_BINDING_REVIEW_REASON)
+    return _sent_to_review(questions, one_read, MARKED_FROM_OTHER_READ_REVIEW_REASON)
+
+
+def _with_off_topic_check(
+    result: CorrectionResult, extracted_answers: ExtractedAnswers | Mapping[str, str]
+) -> CorrectionResult:
+    """Run check G8 over the marked paper and attach the binding report.
+
+    G8 (:func:`lemely.core.binding_gate.check_off_topic`) counts the answers
+    the MARKER judged not to address their question -- the one binding check
+    that can only run after marking, and the main one for prose answers,
+    which the checks run at extraction cannot see. ``result.questions`` is in
+    mark-scheme order (``correct_paper`` builds it by walking ``leaves``),
+    which is the order a run of ``"no"`` verdicts is counted in.
+
+    The extraction's own report is the switch. G8 applies only when
+    ``extracted_answers`` is an ``ExtractedAnswers`` that carries one, which
+    is what the gated extractor attaches to answers it read off a scan.
+    Everything else comes back untouched, ``binding=None``, whatever the
+    marker said: a plain mapping (typed answers, CLI JSON), and an
+    ``ExtractedAnswers`` with no report (quiz marking, the accuracy harness's
+    golden answers, an extraction made with the gate off). Those answers were
+    never bound to a question by reading a page, or the gate was not asked,
+    so there is no binding to doubt and no report is invented for them.
+
+    With a report, the result's ``binding`` is that report with G8 appended.
+    Its verdict is the MORE SEVERE of the one the report arrived with and the
+    one recomputed over every check (``hold`` over ``retry`` over ``pass``):
+    adding G8 can raise a verdict and can never lower it, whether or not the
+    incoming verdict has a failing paper-scope check behind it. The recomputed
+    one is ``pass`` or ``hold``, never ``retry``: nothing retries after
+    marking, so a paper-scope failure found here holds the paper.
+
+    Scope decides what else changes. A PAPER-scope failure changes no
+    question: the verdict stops the whole paper and the report names the
+    answers. A QUESTION-scope failure (too few to doubt the paper's binding)
+    sends just those questions to teacher review, joined onto any reason the
+    builders already gave. ``awarded_marks`` is never touched either way. The
+    result is REBUILT, not ``model_copy``-ed, so ``calculate_totals`` derives
+    the paper-level ``needs_teacher_review`` from the flagged rows.
+
+    The binding's own doubts do not wait for a report. A question whose answer
+    carries ``binding_status="unverified"`` was marked as usual and is then
+    sent to teacher review with :data:`UNVERIFIED_BINDING_REVIEW_REASON` joined
+    onto its reasons (or :data:`MARKED_FROM_OTHER_READ_REVIEW_REASON`, for an answer
+    taken from the read that was not returned), after G8's when both apply; its
+    marks and the verdict are untouched. That is keyed on the answer, as
+    ``unbound_question_ids`` is keyed on its field: an answer that may hold another
+    question's writing is never
+    published unflagged because no gate ran over it. Quiz marking and the
+    harness's golden answers never set a status, so nothing changes for them.
+    """
+    if not isinstance(extracted_answers, ExtractedAnswers):
+        return result
+    unverified = {
+        a.question_id for a in extracted_answers.answers if a.binding_status == "unverified"
+    }
+    prior = extracted_answers.binding
+    if prior is None:
+        if not unverified:
+            return result
+        return CorrectionResult(
+            metadata=result.metadata,
+            questions=_unverified_sent_to_review(result.questions, extracted_answers),
+        )
+    check = check_off_topic(result, GateThresholds())
+    checks = [*prior.checks, check]
+    # After marking nothing retries, so a paper-scope failure here is a hold: asking
+    # with ``retried=True`` is what says so. ("retry" named a step that does not exist,
+    # for a paper whose first read passed and that then failed G8.)
+    recomputed = verdict(checks, retried=True)
+    report = prior.model_copy(
+        update={
+            "checks": checks,
+            "verdict": max(prior.verdict, recomputed, key=_VERDICT_SEVERITY.__getitem__),
+        }
+    )
+    questions = result.questions
+    if not check.passed and check.scope == "question":
+        questions = _sent_to_review(questions, set(check.question_ids), OFF_TOPIC_REVIEW_REASON)
+    questions = _unverified_sent_to_review(questions, extracted_answers)
+    return CorrectionResult(metadata=result.metadata, questions=questions, binding=report)
+
+
+def _forget_reads_of_a_held_paper(
+    result: CorrectionResult,
+    extracted_answers: ExtractedAnswers | Mapping[str, str],
+    gemini_client: GeminiClient | None,
+) -> None:
+    """Take the reads behind a paper this marking holds out of the response cache.
+
+    A paper whose binding verdict is not ``pass`` is not published, and its owner runs
+    it again. The binding step forgets its reads for a paper it holds itself; a paper
+    held here, by the marker's check, passed there, so its reads are still cached,
+    and a re-run that got them back would get the same marking back too (those
+    replies are cached by answer text) and the same hold, for as long as the cache
+    lived. The extraction carries the keys of its reads for this
+    (``ExtractedAnswers.read_cache_keys``). The marker's replies stay: a fresh read
+    that gives a question the same answer text may reuse its marking.
+
+    An extraction that carries no keys (built by hand, loaded from a stored record or
+    a file, made with no gate) has nothing to forget, and nothing is called. A client
+    whose cache mode is ``"bypass"`` removes nothing (``GeminiClient.forget_cached``):
+    it leaves the shared cache as it found it. Under ``"read_write"`` a held scan is
+    therefore read afresh on every run, harness sweeps included; that is intended.
+    """
+    if result.binding is None or result.binding.verdict == "pass":
+        return
+    if gemini_client is None or not isinstance(extracted_answers, ExtractedAnswers):
+        return
+    keys = extracted_answers.read_cache_keys()
+    if not keys:
+        return
+    forgotten = gemini_client.forget_cached(keys)
+    structlog.get_logger().bind(component="correct_paper").info(
+        "held_paper_reads_forgotten", verdict=result.binding.verdict, forgotten=forgotten
+    )
+
+
 def correct_paper(
     mark_scheme: MarkScheme | str | Mapping[str, object],
     extracted_answers: ExtractedAnswers | Mapping[str, str],
@@ -2276,6 +2604,12 @@ def correct_paper(
             :func:`_maybe_apply_ecf_substitution` for the gate/chain rules and
             the measured activation ceiling (0 on the committed corpus by
             construction). Defaults to both off.
+
+    Returns:
+        The marked paper. When ``extracted_answers`` carries a binding
+        report, the result's ``binding`` is that report with check G8
+        (answers the marker judged off topic) appended; otherwise it is
+        ``None`` -- see :func:`_with_off_topic_check`.
 
     Raises:
         ConfigError: paper has non-MCQ questions, mcq_only=False, and gemini_client is None.
@@ -2315,6 +2649,17 @@ def correct_paper(
     # Only an id with no surviving answer short-circuits below; both sides are
     # post-`normalize_extracted_answers`, so canonicalised ids meet here.
     dropped_ids = _dropped_question_ids(extracted_answers).difference(answers)
+    # A question the label binder could bind no answer to takes the same path as a
+    # dropped answer -- flagged, a zero nobody is asked to believe, no marking call
+    # -- under its own reason. The same rule applies: only an id with no surviving
+    # answer short-circuits. It does not depend on a binding report: the binder
+    # leaves these whether or not a gate ran over it.
+    unbound_ids = _unbound_question_ids(extracted_answers).difference(answers)
+    unbound_reasons = (
+        extracted_answers.unbound_question_reasons
+        if isinstance(extracted_answers, ExtractedAnswers)
+        else {}
+    )
     log = structlog.get_logger().bind(component="correct_paper")
 
     # Validate mark scheme structure; warn but do not abort.
@@ -2341,6 +2686,12 @@ def correct_paper(
         )
 
     ai = AICorrector(gemini_client) if (gemini_client and not mcq_only) else None
+    # The marking rules every AI marking call on this paper is given: the scheme's own
+    # printed principles, or, for a science scheme stored without any, the published
+    # ones for its syllabus family. Never both.
+    principles = printed_principles(scheme.metadata)
+    default_rules = default_marking_rules(scheme.metadata)
+    reader_ids = _reader_answer_ids(extracted_answers)
 
     corrected: list[CorrectedQuestion] = []
     # `index` comes from enumerate over `leaves` — the true position in the work
@@ -2364,8 +2715,12 @@ def correct_paper(
         # ai.mark_question with text extraction already discarded as
         # unusable (a paid call to mark an empty string, on top of a mark
         # that would already be wrong).
-        if q.id in dropped_ids:
-            cq = _build_dropped_corrected(q)
+        if q.id in unbound_ids or q.id in dropped_ids:
+            cq = (
+                _build_dropped_corrected(q, _unbound_reason_sentence(unbound_reasons.get(q.id)))
+                if q.id in unbound_ids
+                else _build_dropped_corrected(q)
+            )
             corrected.append(cq)
             prior_results_accumulated[q.id] = 0
             corrected_by_id[q.id] = cq
@@ -2455,6 +2810,10 @@ def correct_paper(
                 for qid, marks in prior_results_accumulated.items()
                 if leaf_by_id[qid].parent_id == q.parent_id
             }
+        # `Drawing:` opens a description only in text the label binder's reader wrote.
+        # A crop re-read marked in its place is another reader's text, and that reader
+        # is not asked for the word.
+        reader_describes_drawings = q.id in reader_ids and student_answer == original[q.id].answer
         try:
             mark = ai.mark_question(
                 q,
@@ -2462,9 +2821,11 @@ def correct_paper(
                 student_working,
                 prior_results=sibling_prior or None,
                 # #41 / A13: the paper's OWN printed principles govern the M/A
-                # dependency. `extract_gmp` has always populated this field and
-                # it was discarded here.
-                principles=scheme.metadata.generic_marking_principles or None,
+                # dependency. `extract_gmp` has always populated
+                # `generic_marking_principles` and it was discarded here.
+                principles=principles,
+                default_rules=default_rules,
+                reader_describes_drawings=reader_describes_drawings,
                 equivalence_gate=equivalence_gate,
             )
         except CostCeilingError:
@@ -2514,7 +2875,9 @@ def correct_paper(
             ai=ai,
             ecf_substitution=ecf_substitution,
             equivalence_gate=equivalence_gate,
-            principles=scheme.metadata.generic_marking_principles or None,
+            principles=principles,
+            default_rules=default_rules,
+            reader_describes_drawings=reader_describes_drawings,
             sibling_prior=sibling_prior or None,
             answers=answers,
             top_level_leaves=top_level_groups[_top_level_ancestor_id(q.id, all_by_id)],
@@ -2538,4 +2901,17 @@ def correct_paper(
     corrected = [
         _attach_extraction_context(cq, answers, original, options, leaf_by_id) for cq in corrected
     ]
-    return CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected)
+    # G8 counts only explicit judgements, so a marker that leaves
+    # `addresses_question` out makes the check pass on no evidence. One line
+    # per paper says how many kept replies did (an "ai" row with no judgement
+    # is exactly that), so a check that never fires can be told from a model
+    # that never answers. Logged with or without a binding report.
+    marked = [cq for cq in corrected if cq.marker_source == "ai"]
+    omitted = sum(1 for cq in marked if cq.addresses_question is None)
+    if omitted:
+        log.warning("marker_omitted_addresses_question", omitted=omitted, marked=len(marked))
+    result = _with_off_topic_check(
+        CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected), extracted_answers
+    )
+    _forget_reads_of_a_held_paper(result, extracted_answers, gemini_client)
+    return result

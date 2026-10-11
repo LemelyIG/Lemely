@@ -41,6 +41,7 @@ from lemely.core.schemas import (
     CorrectedQuestion,
     CorrectionResult,
     ExamMetadata,
+    ExtractedAnswers,
     GradePrediction,
     WeakArea,
     WeaknessReport,
@@ -4900,3 +4901,127 @@ def test_acknowledgement_is_per_teacher_not_global(
     assert any(s["displayName"] == "Ziad" for s in unacked["students"])
     acked = client.get("/api/teacher/at-risk?acknowledged=true").json()
     assert all(s["displayName"] != "Ziad" for s in acked["students"])
+
+
+# ---------------------------------------------------------------------------
+# Fail closed: a paper the binding gate rejected is never published.
+# ---------------------------------------------------------------------------
+
+_HELD_SENTENCE = (
+    "We could not match some answers to their questions, so this paper has not been marked. "
+    "Please check every page is included and in order, then run it again or upload it again."
+)
+
+
+def _held_extraction() -> ExtractedAnswers:
+    from lemely.core.binding import BindingCheck, BindingReport
+
+    return ExtractedAnswers(
+        paper_id="p",
+        source_scan="scan.pdf",
+        answers=[],
+        binding=BindingReport(
+            binder="label",
+            verdict="hold",
+            checks=[
+                BindingCheck(
+                    id="G1", passed=False, scope="paper", detail="DISTINCTIVE reason, question 2."
+                )
+            ],
+        ),
+    )
+
+
+def test_teacher_console_held_paper_is_failed_with_the_binding_message_and_no_prefix(
+    client: TestClient, paper_repo: TeacherPaperRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    marked: list[object] = []
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: _held_extraction())
+    monkeypatch.setattr(grading_service, "grade_paper", lambda *_a, **_k: marked.append(1))
+
+    with structlog.testing.capture_logs() as logs:
+        row = _settle(paper_repo, _upload(client))
+
+    assert marked == []
+    assert teacher._row_kind(row) == "failed"
+    assert row.error == _HELD_SENTENCE
+    assert row.report is None
+    (held,) = [e for e in logs if e["event"] == "binding_held"]
+    assert held["paper_id"] == str(row.id)
+    assert held["verdict"] == "hold"
+    assert held["stage"] == "before_marking"
+    assert held["failed_checks"] == ["G1"]
+
+
+def test_teacher_console_paper_held_after_marking_is_failed_and_stores_no_report(
+    client: TestClient, paper_repo: TeacherPaperRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    def _held_by_marking(*_a: object, **_k: object) -> None:
+        raise grading_service.BindingHeldError(_held_extraction().binding, "after_marking")  # type: ignore[arg-type]
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: {"5b": "42"})
+    monkeypatch.setattr(grading_service, "grade_paper", _held_by_marking)
+
+    row = _settle(paper_repo, _upload(client))
+
+    assert teacher._row_kind(row) == "failed"
+    assert row.error == _HELD_SENTENCE
+    assert row.report is None
+
+
+def test_regrade_held_paper_is_failed_with_the_binding_message(
+    client: TestClient, paper_repo: TeacherPaperRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``regrade_paper`` queues the very same job, so a regrade is held the same way."""
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    report = _report(needs_review=False, grade="A")
+    extractions = iter([{"5b": "42"}, _held_extraction()])
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: next(extractions))
+    monkeypatch.setattr(grading_service, "grade_paper", lambda *_a, **_k: report)
+
+    paper_id = _upload(client)
+    assert teacher._row_kind(_settle(paper_repo, paper_id)) == "graded"
+
+    assert client.post(f"/api/papers/{paper_id}/regrade").status_code == 202
+    row = _settle(paper_repo, paper_id)
+
+    assert teacher._row_kind(row) == "failed"
+    assert row.error == _HELD_SENTENCE
+
+
+def test_teacher_console_paper_with_a_pass_verdict_is_graded_as_before(
+    client: TestClient, paper_repo: TeacherPaperRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pass verdict publishes: the paper is graded, with no error on the row."""
+    from lemely.core.binding import BindingCheck, BindingReport
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    plain = _report(needs_review=False, grade="A")
+    passing = BindingReport(
+        binder="label",
+        verdict="pass",
+        checks=[BindingCheck(id="G5", passed=False, scope="question", detail="one leaf")],
+    )
+    report = plain.model_copy(
+        update={"correction": plain.correction.model_copy(update={"binding": passing})}
+    )
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: {"5b": "42"})
+    monkeypatch.setattr(grading_service, "grade_paper", lambda *_a, **_k: report)
+
+    row = _settle(paper_repo, _upload(client))
+
+    assert teacher._row_kind(row) == "graded"
+    assert row.error is None and row.report is not None

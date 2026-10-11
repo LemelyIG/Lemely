@@ -9,7 +9,7 @@ import json
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -1037,6 +1037,110 @@ class GeminiClient:
                     f"cumulative spend is ${ledger_total:.4f} (across all runs)."
                 )
 
+    def _structured_cache_key(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        file_paths: list[Path] | None,
+        image_parts: list[bytes] | None,
+        media_resolution: str | None,
+        response_schema: type[BaseModel],
+        prompt_version: str,
+        model: str | None,
+        extra_cache_key: str,
+        task_tag: str | None,
+    ) -> tuple[str, str]:
+        """The model a structured call resolves to, and the key its reply is cached under.
+
+        The one computation for :meth:`generate_structured`, which reads and writes the
+        entry, and :meth:`structured_cache_key`, which names it for a caller that may
+        have to remove it: the two cannot name different entries for the same call.
+        """
+        g = self._settings.gemini
+        if model is not None:
+            active_model = model
+        elif task_tag is not None:
+            active_model = g.model_for(task_tag)
+        else:
+            active_model = g.model
+        params_fingerprint = self._params_fingerprint(
+            active_model, task_tag, response_schema, media_resolution=media_resolution
+        )
+        cache_key = self._cache_key(
+            active_model,
+            system_prompt,
+            user_prompt,
+            prompt_version,
+            file_paths,
+            extra_cache_key,
+            params_fingerprint,
+            image_parts=image_parts,
+        )
+        return active_model, cache_key
+
+    def structured_cache_key(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        file_paths: list[Path] | None = None,
+        image_parts: list[bytes] | None = None,
+        media_resolution: str | None = None,
+        response_schema: type[BaseModel],
+        prompt_version: str,
+        model: str | None = None,
+        extra_cache_key: str = "",
+        task_tag: str | None = None,
+    ) -> str:
+        """The key the reply of the structured call these arguments make is cached under.
+
+        Takes the arguments of :meth:`generate_structured` that decide the key. For a
+        caller that may decide the reply must not be reused, perhaps when the pages it
+        was made from are no longer at hand: it keeps this short string, not the
+        images, and gives it to :meth:`forget_cached`.
+        """
+        _model, cache_key = self._structured_cache_key(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            file_paths=file_paths,
+            image_parts=image_parts,
+            media_resolution=media_resolution,
+            response_schema=response_schema,
+            prompt_version=prompt_version,
+            model=model,
+            extra_cache_key=extra_cache_key,
+            task_tag=task_tag,
+        )
+        return cache_key
+
+    def forget_cached(self, cache_keys: Iterable[str]) -> int:
+        """Remove the cached replies under these keys; return how many were there.
+
+        The keys are :meth:`structured_cache_key`'s. The binding step does this for a
+        paper it held, so that the next run on the same scan reads it afresh instead
+        of replaying the same hold. A key with no entry (a bypassed call, or one that
+        failed) is passed over.
+
+        Only a client that writes the cache removes from it. When
+        ``default_cache_mode`` is ``"bypass"`` nothing is removed and 0 is returned: a
+        bypassing client leaves the shared cache as it found it, so a measurement run
+        beside a baseline cannot delete the entries another run wrote. Under
+        ``"read_write"`` and ``"refresh"`` the entries go. That means a scan that is
+        held is read afresh on every ``read_write`` run, harness sweeps included, and
+        is paid for each time; that is intended, because a held paper replayed from
+        the cache is held for ever.
+        """
+        if self.default_cache_mode not in ("read_write", "refresh"):
+            return 0
+        forgotten = 0
+        for cache_key in cache_keys:
+            cache_path = self._cache_path(cache_key)
+            if cache_path.exists():
+                forgotten += 1
+            cache_path.unlink(missing_ok=True)
+        return forgotten
+
     def generate_structured(
         self,
         *,
@@ -1085,13 +1189,18 @@ class GeminiClient:
             # paper's cache key.
             if not image_uploads.matches(image_parts):
                 raise ValueError("image_uploads must carry the same page images as image_parts")
-        g = self._settings.gemini
-        if model is not None:
-            active_model = model
-        elif task_tag is not None:
-            active_model = g.model_for(task_tag)
-        else:
-            active_model = g.model
+        active_model, cache_key = self._structured_cache_key(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            file_paths=file_paths,
+            image_parts=image_parts,
+            media_resolution=media_resolution,
+            response_schema=response_schema,
+            prompt_version=prompt_version,
+            model=model,
+            extra_cache_key=extra_cache_key,
+            task_tag=task_tag,
+        )
 
         log = structlog.get_logger().bind(
             component="gemini_client",
@@ -1099,19 +1208,6 @@ class GeminiClient:
             task=task_tag or "untagged",
         )
 
-        params_fingerprint = self._params_fingerprint(
-            active_model, task_tag, response_schema, media_resolution=media_resolution
-        )
-        cache_key = self._cache_key(
-            active_model,
-            system_prompt,
-            user_prompt,
-            prompt_version,
-            file_paths,
-            extra_cache_key,
-            params_fingerprint,
-            image_parts=image_parts,
-        )
         cache_path = self._cache_path(cache_key)
 
         # cache_mode="read_write" (default): read-then-write, current behaviour.

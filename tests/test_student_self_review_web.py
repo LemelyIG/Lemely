@@ -196,6 +196,7 @@ def test_pending_dto_has_exactly_the_allowlisted_fields() -> None:
         "questionId",
         "maxMarks",
         "evidenceRequired",
+        "bindingDoubt",
         "points",
     }
 
@@ -221,6 +222,7 @@ def test_get_before_submission_withholds_the_verdict_entirely(
         "questionId",
         "maxMarks",
         "evidenceRequired",
+        "bindingDoubt",
         "points",
     }
     assert body["state"] == "not_started"
@@ -229,6 +231,7 @@ def test_get_before_submission_withholds_the_verdict_entirely(
     assert body["questionId"] == "1a"
     assert body["maxMarks"] == 3
     assert body["evidenceRequired"] is False
+    assert body["bindingDoubt"] is False
     assert [p["markPointId"] for p in body["points"]] == ["p1", "p2", "p3"]
     assert body["points"][0] == {
         "markPointId": "p1",
