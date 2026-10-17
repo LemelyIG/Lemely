@@ -54,6 +54,8 @@ EXPECTED_TABLES = {
     "uploads",
     "attempts",
     "question_results",
+    "question_result_points",
+    "question_result_revisions",
     "weakness_records",
     "review_queue",
     "announcements",
@@ -83,7 +85,28 @@ EXPECTED_TABLES = {
     "push_subscriptions",
     "auth_tokens",
     "invites",
+    "teacher_papers",
+    "otp_challenges",
+    "auth_cooldowns",
+    "syllabus_papers",
+    "subject_topics",
+    "component_thresholds",
+    "option_thresholds",
+    "class_paper_exclusions",
 }
+
+# Tables deliberately excluded from `test_every_model_has_timestamps` below.
+# ``otp_challenges`` (spec §4.4, D7.7) is not a durable record: a row lives
+# seconds to minutes, is replaced wholesale on reissue, and is deleted
+# outright on success, expiry or lockout — ``issued_at`` already answers "when
+# was this created" for the one case (the resend cooldown) that needs it, so a
+# redundant created_at/updated_at pair would track nothing a caller ever
+# reads. See ``lemely/db/models/otp_challenges.py``'s module docstring.
+# ``auth_cooldowns`` is the same shape for the same reason: a row is
+# overwritten wholesale on every stamp and ``stamped_at`` already answers
+# "when was this last touched" — see
+# ``lemely/db/models/auth_cooldowns.py``'s module docstring.
+TABLES_WITHOUT_TIMESTAMPS = {"otp_challenges", "auth_cooldowns"}
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +136,8 @@ def test_naming_convention_applied() -> None:
 
 def test_every_model_has_timestamps() -> None:
     for name, table in Base.metadata.tables.items():
+        if name in TABLES_WITHOUT_TIMESTAMPS:
+            continue
         assert "created_at" in table.c, f"{name} missing created_at"
         assert "updated_at" in table.c, f"{name} missing updated_at"
 
@@ -177,6 +202,52 @@ def test_notification_type_enum_matches_preference_columns() -> None:
     }
     toggle_columns = {c.name for c in table.columns} - non_toggle_columns
     assert toggle_columns == {member.value for member in NotificationType}
+
+
+def test_migrations_have_a_single_head() -> None:
+    """Guard against a repeat of the ``0034`` split-head incident.
+
+    Two PRs each branched a ``0034_*`` migration off the same
+    ``0033_announcement_notified_at`` parent without seeing each other's
+    revision id, leaving Alembic with two heads and ``alembic upgrade head``
+    refusing to run once both merged to ``develop``. ``0035_merge_heads``
+    (``lemely/db/migrations/versions/0035_merge_parent_invites_review.py``)
+    joins them back into one; this test is what makes the next such collision
+    fail in CI instead of only at deploy time. Hermetic: it only inspects the
+    script directory's revision graph, no database required.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    cfg = Config("alembic.ini")
+    script_dir = ScriptDirectory.from_config(cfg)
+    heads = script_dir.get_heads()
+    assert len(heads) == 1, (
+        f"expected exactly one Alembic head, found {len(heads)}: {heads}. "
+        "Two migrations were branched from the same down_revision — add a "
+        "merge migration (see 0035_merge_parent_invites_review.py)."
+    )
+
+
+def test_0043_merge_heads_joins_the_develop_and_branch_chains() -> None:
+    """Triage F3 (2026-09-29): ``feat/ai-improvements`` consumed
+    ``0038_point_group_key`` with ``0039_merge_heads`` while develop grew
+    ``0039_paper_soft_delete`` on the same parent, so the merged tree had two
+    heads. ``0043_merge_heads`` is the pure no-op join (``0035`` precedent):
+    ``0039_paper_soft_delete`` only ADDs enum values, columns and a table, and
+    no branch migration touches ``reviewstatus``/``notificationtype``, so the
+    two chains are order-independent.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
+    revision = script_dir.get_revision("0043_merge_heads")
+    assert set(revision.down_revision) == {
+        "0042_question_result_source_box",
+        "0039_paper_soft_delete",
+    }
+    assert script_dir.get_heads() == ["0043_merge_heads"]
 
 
 def test_every_enum_column_binds_its_value_not_its_member_name() -> None:
@@ -887,3 +958,172 @@ def test_invite_requires_a_target(pg_engine: sa.Engine) -> None:
         session.add(Invite(code="TARGETLESS", role=InviteRole.student, created_by=admin.id))
         with pytest.raises(sa.exc.IntegrityError):
             session.commit()
+
+
+def test_invite_supports_parent_target_and_reusable_flag(pg_engine: sa.Engine) -> None:
+    """Parent invites (spec §3): `child_id`/`reusable` widen the invite shape.
+
+    A parent invite targets a child rather than a school or a class, and
+    `reusable` distinguishes the rotatable short code from the single-use
+    link — both sharing this table per the spec's "two invite kinds, one
+    table" rule.
+    """
+    inspector = sa.inspect(pg_engine)
+    columns = {c["name"]: c for c in inspector.get_columns("invites")}
+    assert columns["child_id"]["nullable"] is True
+    assert columns["reusable"]["nullable"] is False
+
+    fk_by_column = {
+        fk["constrained_columns"][0]: fk for fk in inspector.get_foreign_keys("invites")
+    }
+    child_fk = fk_by_column["child_id"]
+    assert child_fk["referred_table"] == "users"
+    assert child_fk["referred_columns"] == ["id"]
+    assert child_fk["options"].get("ondelete") == "CASCADE"
+
+    index_names = {ix["name"] for ix in inspector.get_indexes("invites")}
+    assert "ix_invites_child_id" in index_names
+
+    with pg_engine.connect() as conn:
+        labels = (
+            conn.execute(
+                sa.text(
+                    "SELECT e.enumlabel FROM pg_enum e "
+                    "JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = 'inviterole'"
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert "parent" in labels
+
+
+def test_invites_reusable_child_unique_only_when_reusable(pg_engine: sa.Engine) -> None:
+    """``uq_invites_reusable_child`` is a *partial* unique index (review round 3,
+    Important C): three rounds of application-level lock ordering in
+    :class:`~lemely.db.invite_repo.InviteService` each closed one race only to
+    reopen or leave another, so "a student has at most one reusable row at a
+    time" is now a fact the database enforces directly, not one derived from
+    getting every writer's lock order right.
+
+    Two reusable rows for the same child collide; two single-use links
+    (``reusable=false``) for that same child must not, since the index's
+    ``WHERE reusable`` excludes them - a student can hold many pending
+    single-use links at once (:meth:`~lemely.db.invite_repo.InviteService.list_parent_invites`),
+    just never more than one reusable code.
+    """
+    from lemely.db.models import Invite, User
+    from lemely.db.models.enums import InviteRole, Role
+
+    inspector = sa.inspect(pg_engine)
+    index_by_name = {ix["name"]: ix for ix in inspector.get_indexes("invites")}
+    reusable_index = index_by_name["uq_invites_reusable_child"]
+    assert reusable_index["unique"] is True
+    assert reusable_index["column_names"] == ["child_id"]
+    assert reusable_index["dialect_options"]["postgresql_where"] == "reusable"
+
+    def _reusable_row(child_id: uuid.UUID, code: str, *, reusable: bool) -> Invite:
+        return Invite(
+            code=code,
+            role=InviteRole.parent,
+            child_id=child_id,
+            created_by=child_id,
+            reusable=reusable,
+        )
+
+    with Session(pg_engine) as session:
+        student = User(id=uuid.uuid4(), email="reusable-index@example.com", role=Role.student)
+        session.add(student)
+        session.flush()
+        student_id = student.id
+
+        session.add(_reusable_row(student_id, "FIRSTCODE1", reusable=True))
+        session.commit()
+
+    with Session(pg_engine) as session, pytest.raises(IntegrityError):
+        session.add(_reusable_row(student_id, "SECONDCODE", reusable=True))
+        session.commit()
+
+    # Two single-use links for the same child: the partial index only fires
+    # when `reusable` is true, so this must not collide even though both
+    # rows share `child_id`.
+    with Session(pg_engine) as session:
+        session.add(_reusable_row(student_id, "LINKCODE01", reusable=False))
+        session.add(_reusable_row(student_id, "LINKCODE02", reusable=False))
+        session.commit()
+
+    with Session(pg_engine) as session:
+        student = User(id=uuid.uuid4(), email="parent-invite-child@example.com", role=Role.student)
+        session.add(student)
+        session.flush()
+
+        parent_invite = Invite(
+            code="PARENTCODE",
+            role=InviteRole.parent,
+            child_id=student.id,
+            created_by=student.id,
+        )
+        session.add(parent_invite)
+        session.commit()
+        session.refresh(parent_invite)
+
+        assert parent_invite.child_id == student.id
+        assert parent_invite.school_id is None
+        assert parent_invite.class_id is None
+        assert parent_invite.reusable is False  # server_default false
+
+
+def test_teacher_paper_row_defaults(pg_engine: sa.Engine) -> None:
+    """Spec §4.2: a fresh row is pending, unstaged, and reuses the uploadstatus enum."""
+    from lemely.db.models import TeacherPaper, User
+    from lemely.db.models.enums import Role, UploadStatus
+
+    with Session(pg_engine) as session:
+        teacher = User(id=uuid.uuid4(), email="tp@example.com", role=Role.teacher)
+        session.add(teacher)
+        session.flush()
+        paper = TeacherPaper(
+            uploaded_by=teacher.id,
+            storage_path=f"teacher/{teacher.id}/{uuid.uuid4().hex}/scan.pdf",
+        )
+        session.add(paper)
+        session.commit()
+        session.refresh(paper)
+        assert paper.status is UploadStatus.pending
+        assert paper.stage is None
+        assert paper.report_json is None
+        assert paper.run_started_at is None
+        enum_name = session.execute(
+            sa.text(
+                "SELECT udt_name FROM information_schema.columns "
+                "WHERE table_name = 'teacher_papers' AND column_name = 'status'"
+            )
+        ).scalar_one()
+        assert enum_name == "uploadstatus"
+
+
+def test_otp_challenge_row_round_trip(pg_engine: sa.Engine) -> None:
+    """Spec §4.4/D7.7: a channel-keyed row round-trips and stores only hashes."""
+    from datetime import UTC, datetime, timedelta
+
+    from lemely.auth.otp import OtpChannel
+    from lemely.db.models import OtpChallenge
+
+    now = datetime.now(UTC)
+    with Session(pg_engine) as session:
+        challenge = OtpChallenge(
+            channel=OtpChannel.email,
+            address_hash="a" * 64,
+            code_hash="b" * 64,
+            expires_at=now + timedelta(minutes=10),
+            issued_at=now,
+        )
+        session.add(challenge)
+        session.commit()
+
+        session.refresh(challenge)
+        assert challenge.channel is OtpChannel.email
+        assert challenge.address_hash == "a" * 64
+        assert challenge.code_hash == "b" * 64
+        assert challenge.attempts == 0  # server_default 0

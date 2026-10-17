@@ -54,6 +54,13 @@ class PaperRecord(StrictModel):
     every persisted history file loads unchanged. Read it through
     :func:`is_grade_bearing` rather than comparing to a literal at call sites.
     """
+    attempt_id: str | None = None
+    """``attempts.id`` when the record was loaded from the relational store;
+    ``None`` from the JSON file store, which has no attempts table. The
+    student self-review routes (spec 2026-09-17) are addressed by attempt id,
+    so a result screen needs this to reach them after a refresh. Optional and
+    defaulted so every persisted history file loads unchanged.
+    """
 
 
 def is_paper(record: PaperRecord) -> bool:

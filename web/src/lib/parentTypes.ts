@@ -18,14 +18,55 @@
 
 // ── Parent links (shared with the student-side invite routes) ───────────────
 
+/**
+ * A parent linked to the current student. `email` is the parent-invites
+ * design's addition (superseding D3.11): a parent is an ordinary email/
+ * password account now, so this is always present, unlike `phone`, which
+ * stays nullable — kept, unused by any live signup path, per D3.11's own
+ * scope note in the design spec ("kept untouched for a possible future paid
+ * SMS channel").
+ */
 export interface LinkedParent {
   parentId: string
   displayName: string
+  email: string
   phone: string | null
 }
 
 export interface ParentLinkList {
   parents: LinkedParent[]
+}
+
+// ── Student-side parent invites (design spec §4, superseding D3.11) ────────
+
+/**
+ * The student's single reusable parent code, always present — `invite_repo.
+ * py`'s `get_or_create_parent_code` mints one lazily the first time it is
+ * asked for, the same "a class always has a join code" rule `classes.
+ * join_code` already follows. `url` is the ready-to-share `/join/<code>`
+ * link, built server-side from `settings.email.app_base_url` — never
+ * assembled client-side, so this screen carries no opinion about the
+ * product's own origin.
+ */
+export interface ParentInviteCode {
+  code: string
+  url: string
+}
+
+/** One single-use, 7-day link the student has minted and not yet spent,
+ * revoked, or expired. */
+export interface ParentInviteLink {
+  code: string
+  url: string
+  expiresAt: string
+}
+
+/** `GET /api/student/parent-invites` — the whole of what `Parents.tsx`
+ * (student) needs to render the "Your parent code" card and the pending
+ * one-time-link list in a single request. */
+export interface ParentInvites {
+  code: ParentInviteCode
+  links: ParentInviteLink[]
 }
 
 // ── P-01: parent home / children ────────────────────────────────────────────

@@ -47,11 +47,23 @@ export interface FileDropProps {
   label: string
   /** Short qualifier beside the label, e.g. "required" or "optional". */
   labelNote?: string
-  /** `accept` for the underlying input, e.g. "application/pdf,image/*". */
+  /** `accept` for the underlying input, e.g. `SCAN_ACCEPT` from `@/lib/scanAccept`. */
   accept?: string
   /** The currently chosen file, or null. This component is controlled. */
   file: File | null
   onFileChange: (file: File | null) => void
+  /**
+   * Task 8 (B5b) · when true, both the native input and the drop handler
+   * accept more than one file and report every one of them through
+   * `onFilesChange` instead of `onFileChange`. `file`/`onFileChange` stay
+   * wired for single-file mode (the mark-scheme field, and every other
+   * caller): a component that silently changed its own contract based on
+   * how many files a reader happened to drop would be the harder bug to
+   * find, not the multi-file support itself.
+   */
+  multiple?: boolean
+  /** Called with every file chosen/dropped when `multiple` is true. */
+  onFilesChange?: (files: File[]) => void
   /** Helper text under the control, shown when there is no error. */
   hint?: ReactNode
   /** Inline, field-adjacent error (§12). Replaces `hint` while set. */
@@ -90,6 +102,8 @@ export function FileDrop({
   accept,
   file,
   onFileChange,
+  multiple = false,
+  onFilesChange,
   hint,
   error,
   disabled = false,
@@ -137,10 +151,15 @@ export function FileDrop({
       if (locked) return
       event.preventDefault()
       setDragging(false)
-      const dropped = event.dataTransfer?.files?.[0]
-      if (dropped) onFileChange(dropped)
+      const dropped = event.dataTransfer?.files
+      if (!dropped || dropped.length === 0) return
+      if (multiple) {
+        onFilesChange?.(Array.from(dropped))
+      } else {
+        onFileChange(dropped[0])
+      }
     },
-    [locked, onFileChange],
+    [locked, multiple, onFileChange, onFilesChange],
   )
 
   return (
@@ -183,11 +202,19 @@ export function FileDrop({
           id={inputId}
           type="file"
           accept={accept}
+          multiple={multiple}
           disabled={locked}
           aria-describedby={hint || error ? describedById : undefined}
           aria-invalid={hasError || undefined}
           className="peer sr-only"
-          onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
+          onChange={(event) => {
+            const chosen = event.target.files
+            if (multiple) {
+              onFilesChange?.(chosen ? Array.from(chosen) : [])
+            } else {
+              onFileChange(chosen?.[0] ?? null)
+            }
+          }}
         />
 
         <label

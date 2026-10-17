@@ -11209,6 +11209,44 @@ stands uncorrected. But any future authorised sweep over fresh (or newly
 question-identity-linked) data will now compute and print the number, which
 was not true before this correction.
 
+## DA10a — Amendment: #272 superseded DA10 Decision 3's global range (fix/marking-accuracy)
+
+**What changed.** DA10 stays as written above for the historical record. This
+amendment supersedes only its Decision 3. The legacy coherence path
+(`equivalence_gate` off) no longer computes the global
+`implied_min = sum(primary) + max(non-additive)` and
+`implied_max = sum(primary) + sum(non-additive)` range. Since #272 (owner
+decision D3 in `docs/superpowers/specs/2026-10-01-marking-accuracy-design.md`),
+both callers of `_check_coherence` (`lemely/io/correction_ai.py`) pass the
+per-point `(group_key, cap)` list from `lemely.core.point_groups.group_points`,
+and the range is the **grouped interval**:
+
+- a point with no group adds its own tariff to both ends;
+- each matched group adds at least `min(cap, its largest matched tariff)` and
+  at most `min(cap, sum of its matched tariffs)`;
+- both ends are then clamped at `question.marks` (triage F6).
+
+As before, only an `awarded_marks` outside the interval is flagged, and the
+message names the interval. The verdict path already used this rule, so the
+two paths now share one rule.
+
+**Why.** The global rule had no group identity. It flagged an either/or pair
+matched both ways, a det-shaped scheme whose independent tariffs exceed the
+question, and an alternative that outweighs its sibling. It also missed an
+over-award on a stated `select_count` pool.
+
+**What it moves.** Only `needs_teacher_review` and `review_reason`, never
+`awarded_marks`. The flag is computed on the marker's raw claim, before
+`_verify_calculated_answers`, and does not feed the award. The non-regression
+evidence is `BUILD/accuracy-runs/coherence-272-2026-10-01/`: 0 flag flips
+either way, and 78/78 records have identical `predicted_marks` and `outcome`
+between the pre-#272 and #272 trees replaying one cache. Every new flag the
+grouped rule can raise is an award above the group rule's value. The five
+shapes are named in that report's shape split: `stated_pool_over_award`,
+`unequal_tariff_either_or_summed`, `unstated_pool_leftover_cap_binds`,
+`pool_capped_at_0` and `later_stated_pool_no_room`. In the last one, pools
+consume room in scheme order, which is the verdict path's existing rule.
+
 ## DA11 — the ledger file is authoritative for spend, and the header is a programme-wide SUM
 
 **Decided 2026-08-25**, discharging inbox item 7 of the 2026-08-25T17:36:27
@@ -14223,3 +14261,256 @@ security benefit; each route gets its own keyspace by construction (two stores, 
 `deps.py`) so the three abuse shapes cannot bleed into each other. *Real per-IP rate limiting* —
 explicitly out of scope, same reasoning `D1.7` already recorded: it needs infrastructure this
 build does not have and would fake behind a proxy that owns the real client address.
+
+### D7.13 — Uploads on GCS and the instance pin lifted
+
+**What.** Every upload this app keeps now lives in Google Cloud Storage, not the container
+filesystem or a third-party HTTP client, and every piece of state that previously forced the
+backend to a single instance is off process memory except one cache. `lemely/io/storage.py`'s
+`StorageBackend` Protocol gained a second real implementation — `GcsStorageBackend`
+(`lemely/io/storage_gcs.py`), the official `google-cloud-storage` SDK, built lazily — alongside
+`LocalFileStorageBackend` for dev/Compose/CI; `lemely/web/deps.py::get_storage_backend` selects
+between them on `settings.storage.backend`, and the Supabase Storage client is deleted outright.
+The teacher paper (`teacher_papers`, migration `0024`), the parsed scheme corpus (the existing
+`papers`/`mark_schemes` tables), the parent phone-OTP challenge and the new email-code challenge
+(`otp_challenges`, migration `0025`), and the auth cooldown store (`auth_cooldowns`, migration
+`0026`) all moved off process-local state — an in-memory dict for the two auth stores, a directory
+scan for the scheme corpus — onto Postgres rows any instance can read. The event bus
+(`lemely/runtime/events.py`) gained per-run channels carried in a `contextvars.ContextVar`, so
+concurrent streams on one instance stop cross-talking. The web process's Gemini spend cap is
+retired — `GeminiClient` takes a `ledger` keyword and `deps.get_gemini_client` passes
+`ledger=None` — in favour of a Google Cloud billing budget on the shared project; the admin
+overview's spend panel and `SpendDTO` are deleted with it. `scripts/gcp-bootstrap.sh` now
+provisions, per environment, the upload bucket, a runtime service account scoped to that
+bucket only, and — when `BILLING_ACCOUNT_ID`/`BUDGET_USD` are set — that budget.
+
+Fifteen decisions were put to the owner and answered before any of this was built, recorded as
+DS1–DS15 in `docs/superpowers/specs/2026-09-03-gcs-uploads-and-cloud-run-scale-out-design.md` §3.
+Not restated here — that table is the record, and duplicating it into a second prose form is how
+the two drift. This entry exists to give the design its one line in the decision log a reader of
+this file would otherwise never find, and to state the two trades it accepted without pretending
+either one closes cleanly.
+
+**Budget-not-cap (DS3).** The web process enforces no USD ceiling on Gemini spend of its own —
+`_check_cost_ceiling`'s USD branch runs only `if self._ledger is not None`, and `ledger=None` is
+exactly what `deps.get_gemini_client` passes, so neither that check nor a `BUDGET_WARNING`/
+`BUDGET_EXCEEDED` publish ever fires there. The billing budget `gcp-bootstrap.sh` creates is the
+only guard left, and a budget is an alert, not a stop: spend can cross it before anyone reads
+the mail. Accepted because the alternative — a per-instance file ledger — was never a real cap
+either (it reset on every cold start; DS3's own reasoning is that N instances would have made
+it N independent, resettable caps, which is worse than one honest alert). The CLI keeps its
+file ledger and its `$8.00` ceiling unchanged; only the web surface loses the enforcement.
+
+**Queued-per-instance (DS13).** The teacher grading pool stays one worker per instance
+(`routers/teacher.py::_grading_pool`), and Cloud Tasks was declined as the alternative. Run state
+now lives on the `teacher_papers` row rather than the pool, so every instance answers `GET
+/papers/{id}` correctly regardless of which one is running the job — but a paper submitted to a
+busy instance queues there even if another instance is idle. Accepted at three instances
+(`max-instances=3`, DS6): a queue, its IAM, a second request path and local emulation cost more
+than the scheduling gap they would close at this scale.
+
+**What this decision does not claim.** `.github/workflows/deploy.yml` now deploys at
+`--max-instances=3`, the last step of this work. But the branch has never been deployed: the spec
+rolls the unpin out last precisely so every earlier stage can be verified on staging first, and
+that verification has not happened. This entry records what the code allows and what the pipeline
+will ask for on its next run — not behaviour anyone has observed. Spec §8's checklist is the
+list of things still to exercise.
+
+**Tests.** Each piece above shipped with its own hermetic and Postgres-backed coverage on its own
+commit — the storage seam (`tests/test_storage_local.py`, `tests/test_storage_gcs.py`,
+`tests/storage_fakes.py`), the teacher-paper repository's concurrent-claim and visibility tests
+(`test_exactly_one_of_two_concurrent_claims_wins`, `test_visibility_matrix` in
+`tests/test_teacher_paper_repo.py`), the auth-store parity tests run against both the in-memory and
+Postgres implementations of the same Protocol (`tests/test_otp_store_parity.py`,
+`tests/test_cooldown_store_parity.py`), the bus-scoping test
+`test_two_concurrent_streams_are_isolated` (`tests/test_web_app.py`), and
+`test_ledgerless_client_neither_checks_nor_records`, asserting no ceiling check and no budget event
+with `ledger=None` (`tests/test_gemini_client.py`). No single test file covers this entry as a
+whole, by design — it is fifteen decisions, not one.
+
+**Alternatives rejected.** *Migrate the Supabase Storage buckets' existing contents into GCS* — no
+real uploads exist in either Supabase project to migrate (DS8); buckets start empty. *Redis or
+another shared cache for the auth stores* — Postgres was already the durable store every other
+piece of session-relevant state in this app uses; adding a second infrastructure dependency for
+three small, low-write tables would cost more than it returns. *A hand-written GCS HTTP client*,
+matching the existing Supabase Storage precedent — declined for the official SDK's managed retries
+and checksums (DS12); the cold-start cost is paid back by not re-implementing what the SDK already
+gets right. *Raise `max-instances` in the same change that retires the last blocking state* —
+declined; the rollout order (spec §6) merges and verifies each stage on staging before the next,
+and the unpin is deliberately the last step precisely because it is the one that makes every
+earlier gap visible.
+
+## D-2026-09-08 — Parent identity is email + password via child-issued invites; SMS retired, seams kept
+
+**Context.** `D1.4` gave the parent portal its own login path because GoTrue's native phone OTP
+needs a real SMS gateway and the MISSION mandated a mock now with "one config switch to a real
+provider later." `D3.11` then had the *student* invite a parent by phone number, but only into an
+account that had already proven control of that number by completing OTP verification — the
+gate against a bored student mass-creating parent rows for arbitrary numbers. `D3.16` added the
+developer affordance that shows the OTP code on screen, gated on `SmsProvider.delivers_out_of_band`
+rather than an environment string. No real SMS gateway has ever been wired: every deployment of
+this code runs `MockSmsProvider` unconditionally (`lemely/web/deps.py`), and
+`web/src/routes.tsx` has carried a comment recording that fact since it was written. Every SMS
+API is metered and billed per message; retiring the phone-first path costs nothing in
+infrastructure that was ever actually spending money, and removes the last surface where
+shipping a real provider was a standing, unbudgeted line item.
+
+**The decision.** A parent is now an ordinary GoTrue email/password user with `role=parent`, no
+different in kind from a student or teacher account. There is no independent parent sign-up: a
+parent gets an identity only by redeeming a child-issued invite. The student mints either a
+single-use link (7-day expiry, revocable) or holds one reusable short code (rotatable); both live
+in the existing `invites` table (migration `0034_parent_invites` adds `child_id`, `reusable`, and
+extends `ck_invites_target`; `inviterole` gains `parent` by the additive `ALTER TYPE ... ADD
+VALUE` pattern `D1.2`/migration `0019` already established) and both resolve at the existing
+`/join/:code` screen. Redeeming as a new parent is one server call: the parent supplies an email,
+proves it with a six-digit code, sets a password, and the account is created with the email
+already marked verified, linked to the child, and signed in — no separate "prove the phone,
+then get invited" ordering `D3.11` required, because the proof now happens inside the signup
+call itself rather than as a precondition. A parent who already has an account accepts a second
+child's invite while signed in, or signs in first from the invite page and returns to it after.
+`/login/parent`, the two `/api/auth/otp/*` routes, `ParentLogin.tsx`, and `POST
+/api/student/parent-links` (link by phone) are deleted.
+
+**The reusable-code exception.** Every other invite in this table is single-use by construction —
+a seat invite (`D7.3`) and a class invite are both consumed on redemption. The parent invite adds
+a second kind that is never consumed: `reusable=true`, `expires_at NULL`, and redemption only
+inserts a `parent_child_links` row rather than marking `redeemed_by`/`redeemed_at`. This is a
+deliberate, named exception, not an oversight — a parent code behaves like `classes.join_code`
+(D7.3's "a class always has a join code" precedent) precisely because a family shares one code
+across occasions (a second parent, a re-installed phone) the way a class shares one join code
+across a term, and forcing a fresh single-use link for each occasion would just move the
+friction from "ask your child's school" (the outcome `D3.11` explicitly wanted to avoid) to "ask
+your child to mint another link." A student holds at most one reusable row at a time
+(`get_or_create_parent_code` mints lazily, `rotate_parent_code` deletes and re-mints); the
+single-use link kind sits alongside it for the "here, right now" sharing case and still expires
+in 7 days like every other time-boxed invite in the product.
+
+**The honest gap, stated rather than hidden.** `POST /api/auth/parent/signup` creates the GoTrue
+account and then calls `invite_service.redeem` to write the `parent_child_links` row — two writes,
+not one database transaction, the same non-atomic shape every route in this codebase that creates
+an auth account and then writes an application-side row already accepts (there is no two-phase
+commit between GoTrue and Postgres). A failure between the two leaves a parent account that
+exists but is not linked to any child. The route does not fail the request over it: `parent_signup`
+catches `InviteError`, logs a warning, and still returns a working `TokenResponseDTO`, because by
+that point the GoTrue account genuinely exists and no failure status would be true — reporting one
+would tell a parent whose signup in fact succeeded that it had not. The invite code is not marked
+redeemed unless the link write succeeds, so the same code still resolves, and re-presenting it at
+`/join/:code` while signed in tries the link again — but **no UI currently tells the parent this
+happened**; the closest cue today is the child's own P-01 "no parent yet" empty state, which reads
+as signup instructions rather than recovery instructions for a parent who already has an account.
+That gap is recorded, not fixed, here — see `CHANGELOG.md`'s "Known limitations" for the same
+wording. This is why `redeemed_by`/`redeemed_at` are stamped only after `link_in_session` succeeds
+inside the same transaction as the redemption marking, not before it.
+
+**Alternatives rejected.** *Keep phone OTP and wire a real SMS gateway* — rejected on cost alone;
+no gateway was ever budgeted for a channel with a working, free alternative. *Let the invite call
+mint the parent account directly from a student-supplied email, with no code back to that
+address* — rejected for the same reason `D3.11` gated the phone path on proof-of-control: an
+account a stranger's email address could be silently attached to is a worse privacy posture than
+the phone version it would replace, not a better one. *A second table for parent codes, separate
+from `invites`* — rejected; `D1.2`'s additive-only rule and `D7.3`'s "one box for every invite
+kind" already established that a new invite shape is a new nullable target column and a new role
+value, not a new table.
+
+**Supersedes.** `D3.11`'s phone-proof-then-link direction is retired in full — parents are linked
+exclusively through invite redemption now, and no route requires a parent to have completed a
+separate verification before a link can be created. Of `D1.4`, only the parts that wired
+`SmsProvider` into a live login route (`AuthService.request_otp`/`verify_otp` called from
+`/login/parent`) are retired — no route reaches them anymore; `D1.4`'s GoTrue email/password
+split is exactly what parent accounts now use, unchanged. Token issuance is untouched by this
+decision and was never phone-specific to begin with: `D1.5` already revised `D1.4` to make the
+backend self-sign every access token it hands out, for email/password login and phone OTP alike,
+and a parent's email/password login runs on that same universal HS256 path unchanged — there is
+nothing in it for this decision to retire. `D3.16` itself is not retired either: its
+capability-gated-not-environment-gated `devCode` rule is reapplied unchanged to the email
+channel's `devCode`/`devLink` (`lemely/auth/email.py::EmailProvider.send_signup_code`, mirroring
+`D7.6`'s `EmailProvider` seam); only the phone route it originally described is now unreachable.
+
+**Seams kept, nothing deleted from under them.** `SmsProvider`, `MockSmsProvider`,
+`OtpChannel.phone`, `AuthService.request_otp`/`verify_otp` and their unit tests, `users.phone`,
+the JWT `phone` claim, `UserMirror.get_by_phone`, `_phone_placeholder_email`,
+`AuthSettings.otp_*`, the disabled `[auth.sms.twilio]` block in `supabase/config.toml`, and
+`SignupRequestDTO.phone` all remain in the tree, exercised by their existing tests, reachable by
+nothing a user can click. They stay for the same reason `D1.4` built the `SmsProvider` seam in
+the first place: "one config switch to a real provider later" is still true, and a paid SMS
+channel remains a config switch away rather than a rewrite, should the product ever want a phone
+option beside email rather than instead of it.
+
+**Tests.** `tests/test_invite_repo.py` covers both invite kinds (mint, expiry, reusable-never-
+consumed, single-use-consumed, revoke ownership, rotate, role mismatch, and that `preview` never
+leaks the child's email or id); `tests/test_auth_router.py` covers the three new parent routes
+(happy path, wrong code, expired proof token, an email that already has an account, a dead
+invite, and the cooldown); the deleted OTP route tests are removed with the routes. The phone
+seam's own tests (`AuthService.request_otp`/`verify_otp`) are untouched — they still exercise a
+real code path, just not one any router calls.
+
+### D7.14 — The review queue takes a second source rather than a fake student
+
+**What.** `review_queue` now hangs a row off **either** an `attempts.id` or a `teacher_papers.id`
+(migration `0034`: `attempt_id` nullable, `teacher_paper_id` + `question_id` added, with
+`ck_review_queue_one_source` enforcing exactly one). `TeacherPaperRepository.finish` writes the
+flagged questions of a console-graded paper in the same transaction as its report, and
+`ReviewService` lists, resolves, dismisses and bulk-approves them alongside student items.
+
+**Why.** A paper uploaded through the grading console showed `REVIEW` on its card while
+`/teacher/review` said "Nothing waiting for review". The console derives that badge from
+`teacher_papers.report_json` (`_paper_kind`); the queue lists `review_queue` rows, whose only
+writer was `AttemptRepository.persist_correction` — the *student* submission path. A console
+upload is never attributed to a student (D1.12), so it creates no `Attempt` and could therefore
+never create a queue row. This was not a missed call site; the queue could not represent the thing
+at all.
+
+**The rejected fix: mint an `Attempt` for console papers.** It would have needed a `user_id`, and
+the only candidates are a fabricated student or the teacher themselves. Either one puts a paper
+nobody submitted into `attempts` — the table `DbHistoryStore`, every `PaperRecord`, the class
+heatmap and the at-risk assessment all read — so a teacher's own bulk marking would surface as a
+student's performance. D1.12 dropped the caller-supplied `student_id` for a security reason and
+this would have re-introduced the same fiction through the back door. The queue was widened
+instead, because "a review item is not always about a student" is the truth the data already had.
+
+**Two tenancy rules, deliberately.** Student items stay scoped by the caller's roster union
+(D3.1). Console items are scoped by `teacher_paper_visible` — lifted out of
+`TeacherPaperRepository._visible` to a module-level function so the console and the queue cannot
+drift apart on what "visible paper" means. They could not share one rule: a console paper has no
+student and no class for the roster rule to reach.
+
+**`platform_admin` is excluded from the console half explicitly.** `teacher_paper_visible` grants
+it every paper (DS11, the console's rule), but this queue has no super-role bypass at all
+(D1.6/D1.10) — inheriting DS11 here would have handed the one deliberately empty-scoped role a
+view of every teacher's marking as a side effect of a bug fix. Widening an endpoint is not fixing
+it.
+
+**No backfill, and no re-marking.** Papers graded before `0034` get no rows retroactively: marks a
+teacher has already looked at in the console should not reappear as unreviewed work weeks later.
+And a console item can be accepted as-is or dismissed but **never re-marked** — its per-question
+marks live inside `report_json` with no `QuestionResult` for `0005_review_overrides` to record a
+correction on, so `resolve` refuses `override_marks` with a 422 rather than accepting a re-mark it
+would have to drop. Changing a console paper's marks means re-running it from the console. Stated
+as a limit rather than papered over with a control that silently does nothing.
+
+## D-2026-09-21 — Accuracy-programme AUROC reports must name their similarity metric
+
+### D8.1 — `extraction_agreement`'s similarity metric is not fixed yet, so anything measuring it must say which one it used
+
+**What.** US-010 (`lemely/io/second_read.py`) computes `extraction_agreement` with
+`difflib.SequenceMatcher` (Ratcliff/Obershelp) instead of the plan's specified `rapidfuzz`
+normalised-Levenshtein, because `rapidfuzz` is not yet a project dependency (`pyproject.toml`
+ownership sits with another lane; tracked as US-041). `REREAD_AGREEMENT_THRESHOLD = 0.8` was
+copied verbatim from the plan's I3 spec, which calibrated that number against the rapidfuzz
+metric, not the difflib one now producing the values it gates.
+
+**Why this matters for US-008.** Ratcliff/Obershelp and normalised Levenshtein are different
+algorithms that score the same string pair differently -- Ratcliff/Obershelp weights the longest
+common contiguous run more heavily, Levenshtein counts raw edit operations. Any future AUROC
+report under US-008 that selects a `second_reader` variant (or re-derives the 0.8 threshold)
+against Phase-A labels is implicitly a report about *one specific similarity metric's* separating
+power. A report that says "cross_model beat structural, AUROC 0.91" without saying which metric
+produced the `extraction_agreement` values it measured is not reproducible, and a later metric
+swap (difflib -> rapidfuzz, when US-041 lands) silently invalidates that selection without the
+report showing any sign of it.
+
+**The rule.** Any AUROC or threshold-selection report produced under US-008 must name the
+similarity metric (and its normalisation, per I2) that produced the `extraction_agreement` values
+it measured. This is what makes a metric swap detectable rather than a silent invalidation of a
+prior decision. `REREAD_AGREEMENT_THRESHOLD` stays at the plan's `0.8` until then -- see the
+comment on it in `lemely/io/second_read.py` -- it is not re-derived on a guess.

@@ -77,6 +77,12 @@ _UNTARGETED_MIX: tuple[float, float, float] = (0.20, 0.60, 0.20)
 
 _BANDS: tuple[Band, Band, Band] = ("foundation", "standard", "challenge")
 
+#: Public name for the band vocabulary, for callers outside this module.
+#: `_BANDS` stays as the internal spelling used throughout the arithmetic
+#: below; this alias exists so `/api/reference` does not have to reach past
+#: the underscore and quietly couple itself to a private symbol.
+DIFFICULTY_BANDS: tuple[Band, Band, Band] = _BANDS
+
 #: Tie-break order for :func:`allocate_difficulty`'s largest-remainder step,
 #: lowest value wins ties. ``standard`` sorts first per the documented rule
 #: ("ties broken toward standard" — ``docs/quiz-model.md`` §3.1): the middle
