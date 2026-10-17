@@ -60,6 +60,17 @@ jobs:
       - name: Mypy
         run: mypy lemely
 
+      # Task #42: mypy's pydantic plugin type-checks a BaseModel(...) call's
+      # keyword arity but not each field's declared type against the value
+      # passed (e.g. a plain `str` fed into a `Literal[...]` field) — pyright
+      # catches this class of wire-boundary defect and mypy structurally
+      # cannot (see sdd/briefs/type-gate-gap-report.md). Scoped to `lemely`,
+      # same as mypy above; residual noise (third-party stub gaps and a
+      # handful of pre-existing, out-of-scope findings) is excluded per-file
+      # per-rule with a named reason in pyproject.toml's [tool.pyright].
+      - name: Pyright
+        run: pyright lemely
+
       - name: Import-linter
         run: lint-imports
 
@@ -139,8 +150,41 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Lint (oxlint)
+      # A8 review fix (BLOCKING): this job previously ran typecheck/lint/
+      # build only — `npm test` (`"test": "vitest run"`, package.json) was
+      # never invoked anywhere in CI, on any job, so `tests/unit/
+      # nativeMechanics.test.ts` and every other unit test in this repo were
+      # enforced nowhere. `check:native` (below) is a second, independent
+      # encoding of a subset of those same rules for exactly this gap, but
+      # it is not a substitute for the real suite.
+      - name: Unit tests
+        run: npm test
+
+      # `npm run lint` now also runs `check:native` (packet A8) — see
+      # web/package.json's own comment on that script.
+      - name: Lint (oxlint + native invariants)
         run: npm run lint
 
+      # C4 (Task 11): `npm run check:copy` (scripts/check_copy.mjs) enforces
+      # the no-em-dash, copy-friendly-tone rule on user-facing strings — run
+      # locally/on demand only until now, so a violation could land on this
+      # branch and never fail CI. Already 0 findings on this branch; this
+      # step keeps it that way going forward.
+      - name: Copy gate
+        run: npm run check:copy
+
+      # `npm run build` runs `vite build` via the `build` script, so npm's
+      # `postbuild` convention fires `check:bundle` automatically once
+      # `dist/` exists (packet A8) — no separate step needed here.
       - name: Build
         run: npm run build
+
+      # B7 (Task 12): no Playwright/e2e job exists anywhere in this repo's
+      # CI today — `native-feel.spec.ts` and the rest of `web/e2e/` run
+      # locally/on demand only (`npm run test:e2e`), against the real
+      # backend + seeded local Supabase stack that CI does not stand up.
+      # `check:installable` needs only a production build + a headless
+      # Chrome, both already present in this job, so it runs here rather
+      # than waiting on an e2e job that doesn't exist.
+      - name: Installability check
+        run: npm run check:installable

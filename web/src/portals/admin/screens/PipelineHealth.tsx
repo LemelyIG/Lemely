@@ -3,8 +3,8 @@ import { Card, CardBody } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Eyebrow, Meter } from "@/components/ui/primitives"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
-import { ErrorState } from "@/components/ui/state-views"
 import { CardGridSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { adminLoadFailureMessage } from "@/lib/adminOutcome"
 import { usePipelineHealth } from "@/lib/hooks/useAdminApi"
 import type { PipelineHealth as PipelineHealthData } from "@/lib/adminTypes"
@@ -38,7 +38,7 @@ import type { PipelineHealth as PipelineHealthData } from "@/lib/adminTypes"
  * screen prints it.
  */
 export function PipelineHealth() {
-  const { data, isPending, isError, error } = usePipelineHealth()
+  const query = usePipelineHealth()
 
   return (
     <div className="flex flex-col gap-6">
@@ -50,25 +50,25 @@ export function PipelineHealth() {
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <CardGridSkeleton count={3} />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't read the pipeline's figures"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : (
-        <>
-          <BoundaryPanel health={data} />
-          <CorpusPanel health={data} />
-          <IngestionPanel health={data} />
-          <AccuracyPanel note={data.markingAccuracyNote} />
-        </>
-      )}
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <CardGridSkeleton count={3} />
+          </>
+        }
+        error={{ heading: "We couldn't read the pipeline's figures", body: adminLoadFailureMessage }}
+      >
+        {(data) => (
+          <>
+            <BoundaryPanel health={data} />
+            <CorpusPanel health={data} />
+            <IngestionPanel health={data} />
+            <AccuracyPanel note={data.markingAccuracyNote} />
+          </>
+        )}
+      </QueryState>
     </div>
   )
 }

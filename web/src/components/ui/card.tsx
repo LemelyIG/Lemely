@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H3 E4 S5 R4 V3 */
-import type { HTMLAttributes } from "react"
+import type { ComponentProps, HTMLAttributes } from "react"
 import { cn } from "@/lib/utils"
 
 /**
@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils"
  * 12px is what §6 specifies for a card. The comment had outlived the file it
  * cited and was describing a radius this component has never rendered.
  */
-export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function Card({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       className={cn(

@@ -1,20 +1,31 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import type { ReactNode } from "react"
-import { useLocation, useNavigate, useParams } from "react-router-dom"
-import { Check, Minus, Warning } from "@phosphor-icons/react"
+import { useState, type ReactNode } from "react"
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { Check, Minus, ShareNetwork, Trash, Warning } from "@phosphor-icons/react"
+import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { PaperIdentity } from "@/components/ui/paper-identity"
 import { MarkDisplay } from "@/components/ui/mark-display"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { BoundaryBar, type GradeBoundary } from "@/components/ui/boundary-bar"
 import { ConfidenceIndicatorSummary } from "@/components/ui/confidence-indicator"
-import { QuestionRow, type MarkState } from "@/components/ui/question-row"
+import { QuestionRow } from "@/components/ui/question-row"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { ListSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
+import { Tabs, TabsList } from "@/components/ui/tabs"
+import { useToast } from "@/components/ui/toast"
+import { SelfReviewPanel } from "@/portals/student/components/SelfReviewPanel"
 import { ApiError } from "@/lib/api"
-import { confidenceSummaryOf, confidenceTierFor } from "@/lib/markingConfidence"
+import { confidenceSummaryOf, confidenceTierFor, markerScored } from "@/lib/markingConfidence"
+import { deletionRefusal, isDeletionRefusal } from "@/lib/paperDeletion"
+import { filterQuestions, markState, type QuestionFilter } from "@/lib/questionFilter"
+import { shareResult } from "@/lib/share"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
+import { useAttemptQuestions } from "@/lib/hooks/useSelfReviewApi"
+import { useDeletePaper } from "@/lib/hooks/usePaperDeletionApi"
 import { useResult } from "@/lib/hooks/useStudentApi"
 import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
 
@@ -25,9 +36,11 @@ import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
  *     `/student/correct` run completes - carries a real `questions` array, so
  *     the flat per-question list renders.
  *   - history: `GET /student/result/{paperId}` (useResult) when there's no
- *     live state (browsing from `Subject`'s paper-history table) - no
- *     per-question detail is stored for history records, so an honest note
- *     replaces the list instead of an empty or fabricated one.
+ *     live state (browsing from `Subject`'s paper-history table), for the
+ *     header - plus `GET /student/attempts/{attemptId}/questions`
+ *     (useAttemptQuestions) for the per-question rows, when the record
+ *     carries an attempt id. A file-store record has none, so an honest
+ *     note replaces the list instead of an empty or fabricated one.
  * The shared header (marks/percentage/grade, boundary bar, integrity +
  * provenance sidebar) renders from whichever source is active.
  *
@@ -79,12 +92,35 @@ const NO_QUESTION_DETAIL = {
   body: "Per-question detail is only available right after correcting a paper.",
 }
 
-/** correct = full marks, wrong = zero, partial = anything between. */
-function markState(q: QuestionResult): MarkState {
-  if (q.maxMarks <= 0) return q.awardedMarks > 0 ? "correct" : "wrong"
-  if (q.awardedMarks >= q.maxMarks) return "correct"
-  if (q.awardedMarks <= 0) return "wrong"
-  return "partial"
+/**
+ * Display label for `QuestionResult.markerSource`.
+ *
+ * US-038: migration `0038_marker_source_dropped` lets a student-attempt
+ * question now round-trip as `"dropped"` where it previously always arrived
+ * as `"missing"` — the model returned an answer for this question, but
+ * extraction discarded it as malformed before marking ever saw it. The raw
+ * token reads as an internal/technical word a student would not recognise,
+ * so it is mapped to student-facing copy here rather than shipped verbatim.
+ *
+ * `"missing"` gets the same "not marked" label (second independent review of
+ * the US-039 blank-exemption fix): the docstring here used to claim
+ * `"missing"` "at least names a marking method", which stopped being true
+ * once `_build_blank_corrected` started using `marker_source="missing"` for
+ * a genuine blank the AI never saw at all (US-039) — no method ran, so the
+ * raw token is exactly as misleading as `"dropped"` was.
+ *
+ * `"blank"` (task #36) joins them by asking `markerScored`, which is the one
+ * statement of that set. Deliberately the SAME copy, not new copy for the new
+ * value: this label still does not invent wording that implies the answer was
+ * marked, nor explain WHY nothing was marked (a genuine blank vs.
+ * `--mcq-only`/no client vs. a false-blank extraction miss, US-042, all render
+ * identically). The backend can now tell those apart, but what a student
+ * should be TOLD about each is a product decision and remains unmade —
+ * distinguishing them here would be this fix inventing it.
+ * `"deterministic"`/`"ai"` are left as the existing raw pass-through.
+ */
+export function markerSourceLabel(source: QuestionResult["markerSource"]): string {
+  return markerScored(source) ? source : "not marked"
 }
 
 function IntegrityMark({ row }: { row: IntegrityRow }) {
@@ -130,14 +166,147 @@ function ResultScreen({
   )
 }
 
-function ResultHeader({ res, reveal = false }: { res: Result; reveal?: boolean }) {
+/**
+ * The delete control (spec 2026-09-22, Task 14). Lives on the result
+ * screen only, never in a list row — design §8's "no pre-signalling" rule
+ * means this button is identical for every paper, including one the server
+ * will refuse: there is no disabled state, no greyed-out variant, nothing
+ * that would tell a reader which papers are held before they try. The
+ * refusal (if any) is discovered on the request and rendered as copy inside
+ * the confirm dialog, via `deletionRefusal` — never a reason more specific
+ * than that.
+ *
+ * `attemptId` is required here, not optional: the caller only mounts this
+ * when `res.attemptId` is a real id, since a file-store record (the DTO's
+ * nullable case) has nothing this route can address.
+ */
+function DeletePaperControl({
+  attemptId,
+  subjectCode,
+}: {
+  attemptId: string
+  subjectCode: string
+}) {
+  const navigate = useNavigate()
+  const deletePaper = useDeletePaper()
+  const [open, setOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleConfirm() {
+    setError(null)
+    try {
+      await deletePaper.mutateAsync({ attemptId })
+      // Waits for `useDeletePaper`'s own `onSuccess` (the overview/subject
+      // invalidation) to settle before navigating away — `mutateAsync`
+      // resolves only once that promise does. Navigating on the DELETE's own
+      // 204 alone would land on the subject page with the same stale,
+      // pre-delete list this whole flow exists to avoid trusting.
+      navigate(`/student/subject/${subjectCode}`)
+    } catch (err) {
+      // `err.body` (the whole parsed JSON), not `err.detail` (just that
+      // one key's value): the deletion hold's 409 is a FLAT body —
+      // `{"detail": "...", "deletableFrom": "..."}` — so `deletableFrom`
+      // is a sibling of `detail`, never nested inside it. Narrowed through
+      // `isDeletionRefusal` rather than cast, so a 409 the guard doesn't
+      // recognise falls through to the generic message below instead of
+      // rendering `undefined` (Task 14 review, Critical 1).
+      if (err instanceof ApiError && err.status === 409 && isDeletionRefusal(err.body)) {
+        setError(deletionRefusal(err.body))
+      } else if (err instanceof ApiError && err.status === 404) {
+        setError("This paper isn't here anymore.")
+      } else {
+        setError(studentLoadFailureMessage(err))
+      }
+    }
+  }
+
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        data-print="hide"
+        onClick={() => {
+          setError(null)
+          setOpen(true)
+        }}
+      >
+        <Trash size={16} weight="bold" />
+        Delete
+      </Button>
+      <ConfirmModal
+        open={open}
+        title="Delete this paper?"
+        consequence="It moves to Recently deleted, where you can restore it for a while."
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        pending={deletePaper.isPending}
+        error={error}
+        onConfirm={handleConfirm}
+        onCancel={() => {
+          setOpen(false)
+          setError(null)
+        }}
+      />
+    </>
+  )
+}
+
+function ResultHeader({
+  res,
+  reveal = false,
+  paperId,
+}: {
+  res: Result
+  reveal?: boolean
+  /**
+   * `paperId` is passed only from the history-sourced branch below — the
+   * live branch (fresh off `/student/correct`) never carries one, and that
+   * absence is exactly how the Share button stays hidden there, per the
+   * spec's "when paperId is present and not live".
+   */
+  paperId?: string
+}) {
+  const { toast } = useToast()
   return (
     <Card className="overflow-hidden">
       <div className="grid grid-result-cols max-tablet:grid-cols-1">
         <div className="px-7 py-6">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <PaperIdentity code={res.code} session={res.session} paperLabel={res.paper} />
-            {res.markerLabel ? <Chip tone="neutral">{res.markerLabel}</Chip> : null}
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <PaperIdentity code={res.code} session={res.session} paperLabel={res.paper} />
+              {res.markerLabel ? <Chip tone="neutral">{res.markerLabel}</Chip> : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {paperId ? (
+                // C4 (Task 11): an interactive action, not paper content — a
+                // printed sheet has no click target for it.
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-print="hide"
+                  onClick={() =>
+                    void shareResult(
+                      {
+                        url: `${location.origin}/student/result/${paperId}`,
+                        title: `${res.code} ${res.paper} result`,
+                        text: `${res.awarded}/${res.max}, ${res.grade}`,
+                      },
+                      { toast: (msg) => toast({ title: msg }) },
+                    )
+                  }
+                >
+                  <ShareNetwork size={16} weight="bold" />
+                  Share
+                </Button>
+              ) : null}
+              {/* No file-store record can be addressed by this route (the
+                  DTO's `attemptId` is null there), so the control simply does
+                  not render for one — never a disabled version of itself. */}
+              {res.attemptId ? (
+                <DeletePaperControl attemptId={res.attemptId} subjectCode={res.code.split("/")[0]} />
+              ) : null}
+            </div>
           </div>
           {res.headline ? (
             <h1 className="mt-2.5 text-display-md text-ink">{res.headline}</h1>
@@ -228,19 +397,76 @@ function ResultHeader({ res, reveal = false }: { res: Result; reveal?: boolean }
 }
 
 /**
+ * C3a (Task 6): copy for the two ways a *filtered* list can come up empty.
+ * Distinct from `NO_QUESTION_DETAIL` above, which is the "this paper has no
+ * per-question detail at all" case — these fire only when real questions
+ * exist but none of them match the selected tab (a perfect paper filtered to
+ * "Lost", say).
+ */
+const FILTER_EMPTY_COPY: Record<
+  Exclude<QuestionFilter, "all">,
+  { heading: string; body: string; marginalia: string }
+> = {
+  lost: {
+    heading: "Every question here is correct",
+    body: "No marks were dropped on this paper.",
+    marginalia: "Nothing lost here",
+  },
+  flagged: {
+    heading: "Nothing needs a second look",
+    body: "No question was flagged for review or came back below the confidence floor.",
+    marginalia: "Nothing flagged",
+  },
+}
+
+/**
  * S-16's full question list (C-6 `QuestionRow` per row), expandable in place
  * for the marker-source/feedback/review-reason detail S-17 calls for — the
  * app has no separate question-detail route, so the expand affordance is
  * where that content actually lives.
  *
- * Deliberately drops the old per-question "Plagiarism flagged" / "AI-detection
- * flagged" pills that used to render here: QUALITY-BAR.md is explicit that
- * integrity flags are teacher-only and must never read as an accusation on a
- * student-facing screen. `plagiarismFlagged`/`aiDetectionFlagged` stay on the
- * DTO (no data-flow change) but are no longer rendered to the student. Noted
- * in the P2.5.3 report as a deliberate deviation.
+ * Deliberately drops the old per-question "Plagiarism flagged" pill that used
+ * to render here: QUALITY-BAR.md is explicit that integrity flags are
+ * teacher-only and must never read as an accusation on a student-facing
+ * screen. `plagiarismFlagged` stays on the DTO (no data-flow change) but is
+ * no longer rendered to the student. Noted in the P2.5.3 report as a
+ * deliberate deviation. (F4 removed the sibling AI-generated-answer flag
+ * this comment used to also name.)
+ *
+ * C3a adds the All / Lost / Flagged tabs above the row list, reading
+ * `filterQuestions` — the tabs themselves only render when there is a real
+ * list to filter (`questions.length > 0`); the "no per-question detail for
+ * this paper" state above stays exactly as it was.
  */
-function QuestionList({ questions }: { questions: QuestionResult[] }) {
+function QuestionList({
+  questions,
+  subjectCode,
+  onShare,
+  filter,
+  onFilterChange,
+  attemptId,
+}: {
+  questions: QuestionResult[]
+  /** The paper's subject code (`res.code.split("/")[0]`), used to build
+   * each row's `practiceHref`. */
+  subjectCode: string
+  /** Task 6 (B4b): shared by every row's long-press "Share" item — the same
+   * action `ResultHeader`'s own Share button offers, just reachable from
+   * any question row too. Unlike that button (gated on a real `paperId`),
+   * this is wired from both call sites: a live result has no `paperId` yet
+   * to build a permalink from, so its share falls back to the current URL
+   * rather than losing the affordance entirely. */
+  onShare?: () => void
+  filter: QuestionFilter
+  onFilterChange: (filter: QuestionFilter) => void
+  /**
+   * Self-review (spec 2026-09-17): when the result knows its attempt and a
+   * row knows its `question_results` id, the row's expanded slot carries the
+   * self-mark panel. Both come from the backend, never guessed here, so a
+   * history record from before either existed simply renders no panel.
+   */
+  attemptId?: string | null
+}) {
   if (questions.length === 0) {
     // Inside a Card, like the populated list it stands in for. Bare, it
     // floated in the middle of the page with nothing to say which region was
@@ -251,36 +477,165 @@ function QuestionList({ questions }: { questions: QuestionResult[] }) {
       </Card>
     )
   }
+
+  const lostCount = filterQuestions(questions, "lost").length
+  const flaggedCount = filterQuestions(questions, "flagged").length
+  // `filterQuestions` is typed against `./types`' base `QuestionResult`
+  // (shared with non-self-review call sites), which lacks `questionResultId`.
+  // It filters `questions` in place without rebuilding rows, so the objects
+  // coming back are still the full `QuestionResult`s passed in — the cast
+  // just restores what filtering already preserves at runtime.
+  const visible = filterQuestions(questions, filter) as QuestionResult[]
+
   return (
     <Card className="px-3">
-      {questions.map((q) => (
-        <QuestionRow
-          key={q.questionId}
-          number={q.questionId}
-          awarded={q.awardedMarks}
-          available={q.maxMarks}
-          state={markState(q)}
-          confidence={confidenceTierFor(q)}
-          topic={q.topic}
-        >
-          <div className="flex flex-col gap-2.5">
-            <Chip tone="neutral" className="w-fit">
-              {q.markerSource}
-            </Chip>
-            {q.feedback ? (
-              <div className="rounded-md bg-paper-sunk px-3.5 py-3 text-pretty text-body-md text-ink-muted">
-                {q.feedback}
-              </div>
-            ) : null}
-            {q.reviewReason ? (
-              <div className="text-body-md leading-snug text-warn">
-                Needs review: {q.reviewReason}
-              </div>
-            ) : null}
-          </div>
-        </QuestionRow>
-      ))}
+      <Tabs
+        value={filter}
+        onValueChange={(next) => onFilterChange(next as QuestionFilter)}
+        className="px-0.5 pt-1"
+      >
+        <TabsList
+          label="Filter questions"
+          tabs={[
+            { value: "all", label: `All (${questions.length})` },
+            { value: "lost", label: `Lost (${lostCount})` },
+            { value: "flagged", label: `Flagged (${flaggedCount})` },
+          ]}
+        />
+      </Tabs>
+      {visible.length === 0 && filter !== "all" ? (
+        <EmptyState
+          heading={FILTER_EMPTY_COPY[filter].heading}
+          body={FILTER_EMPTY_COPY[filter].body}
+          marginalia={FILTER_EMPTY_COPY[filter].marginalia}
+        />
+      ) : (
+        visible.map((q) => (
+          <QuestionRow
+            key={q.questionId}
+            number={q.questionId}
+            awarded={q.awardedMarks}
+            available={q.maxMarks}
+            state={markState(q)}
+            confidence={confidenceTierFor(q)}
+            topic={q.topic}
+            practiceHref={
+              q.topic
+                ? `/student/practice/${subjectCode}?topic=${encodeURIComponent(q.topic)}`
+                : undefined
+            }
+            onShare={onShare}
+            register={markState(q) === "wrong" ? "red-pen" : "plain"}
+          >
+            <div className="flex flex-col gap-2.5">
+              <Chip tone="neutral" className="w-fit">
+                {markerSourceLabel(q.markerSource)}
+              </Chip>
+              {q.feedback ? (
+                <div className="rounded-md bg-paper-sunk px-3.5 py-3 text-pretty text-body-md text-ink-muted">
+                  {q.feedback}
+                </div>
+              ) : null}
+              {/* US-039 MUST-FIX 2 (independent review, blocking 674f309d): a set
+                  `reviewReason` alone used to mean "needs review" for every
+                  case except `_build_blank_corrected`'s unflagged blank,
+                  which sets a `reviewReason` message purely so the review
+                  queue/DB can distinguish it from every other blank-shaped
+                  state, while deliberately leaving `needsTeacherReview`
+                  false. Gated the same way as `markingConfidence.ts` and
+                  `questionFilter.ts` so this warn-coloured, student-facing
+                  line doesn't render for a question the backend explicitly
+                  decided needs no review. `undefined` (every other
+                  `reviewReason`) preserves today's behaviour. */}
+              {q.reviewReason && q.needsTeacherReview !== false ? (
+                <div className="text-body-md leading-snug text-warn">
+                  Needs review: {q.reviewReason}
+                </div>
+              ) : null}
+              {attemptId && q.questionResultId ? (
+                <SelfReviewPanel attemptId={attemptId} questionResultId={q.questionResultId} />
+              ) : null}
+            </div>
+          </QuestionRow>
+        ))
+      )}
     </Card>
+  )
+}
+
+/** `?q=` values that map onto a real `QuestionFilter`; anything else (absent,
+ * malformed, stale) reads as the default `"all"`. */
+function filterFromParams(searchParams: URLSearchParams): QuestionFilter {
+  const raw = searchParams.get("q")
+  return raw === "lost" || raw === "flagged" ? raw : "all"
+}
+
+/**
+ * The history-sourced question list. A separate component so the hook is
+ * called unconditionally inside `QueryState`'s render prop. `result.attemptId`
+ * is `null` for a file-store record, which leaves the query disabled and the
+ * list empty — the same honest state this screen always had for those. A
+ * fetched 404 reads the same way (see the comment on that branch below); any
+ * other failure renders its own `ErrorState` rather than the honest-empty
+ * list, so a broken request is never mistaken for a paper with no detail.
+ */
+function HistoryQuestions({
+  result,
+  filter,
+  onFilterChange,
+  onShare,
+}: {
+  result: Result
+  filter: QuestionFilter
+  onFilterChange: (filter: QuestionFilter) => void
+  onShare?: () => void
+}) {
+  const questions = useAttemptQuestions(result.attemptId)
+  if (result.attemptId && questions.isPending) {
+    return <ListSkeleton rows={5} />
+  }
+  /*
+   * A 404 here is an expected answer, not a failure: the new server-side
+   * gate (`routers/student.py`) withholds a paper whose stored mark points
+   * predate the group columns, deliberately, rather than serving detail it
+   * cannot stand behind. That is the same "there is no per-question detail
+   * for this paper" state `QuestionList`'s own empty branch already renders
+   * for a file-store record with no `attemptId` at all — so a gated 404
+   * falls through to `rows = []` below rather than into the error branch.
+   * Anything else (a 500, a dropped connection) is a real failure the
+   * honest-empty state must not be confused with, so it gets its own
+   * `ErrorState` instead of silently reading as "this paper has none."
+   */
+  if (questions.isError && !(questions.error instanceof ApiError && questions.error.status === 404)) {
+    return (
+      <ErrorState
+        compact
+        heading="We couldn't load your questions"
+        body={studentLoadFailureMessage(questions.error)}
+        action={{ label: "Try again", onClick: () => void questions.refetch() }}
+      />
+    )
+  }
+  const rows = questions.data ?? []
+  const summary = confidenceSummaryOf(rows)
+  return (
+    <>
+      {rows.length > 0 ? (
+        <ConfidenceIndicatorSummary
+          confident={summary.confident}
+          uncertain={summary.uncertain}
+          needsReview={summary.needsReview}
+        />
+      ) : null}
+      <QuestionList
+        questions={rows}
+        subjectCode={result.code.split("/")[0]}
+        onShare={onShare}
+        filter={filter}
+        onFilterChange={onFilterChange}
+        attemptId={result.attemptId}
+      />
+    </>
   )
 }
 
@@ -288,9 +643,49 @@ export function PaperResult() {
   const { paperId } = useParams<{ paperId: string }>()
   const location = useLocation()
   const navigate = useNavigate()
+  const { toast } = useToast()
   const live = isLiveResult(location.state) ? location.state : null
 
-  const { data, isPending, isError, error, refetch } = useResult(live ? "" : (paperId ?? ""))
+  const query = useResult(live ? "" : (paperId ?? ""))
+
+  // C3a (Task 6): the All/Lost/Flagged filter lives in `?q=`, not local
+  // component state, so it survives a round trip through a practice-topic
+  // link and back (the router restores search params on a POP navigation;
+  // local state does not). `replace: true` keeps a tab switch from stacking
+  // a browser-history entry per tap — the URL still carries the current
+  // filter whenever the reader lands here from elsewhere.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const filter = filterFromParams(searchParams)
+  function setFilter(next: QuestionFilter) {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev)
+        if (next === "all") params.delete("q")
+        else params.set("q", next)
+        return params
+      },
+      { replace: true },
+    )
+  }
+
+  // Task 6 (B4b): the same share action `ResultHeader`'s own Share button
+  // builds, reused for every question row's long-press "Share" item. A
+  // live result has no `paperId` yet (fresh off `/student/correct`, not
+  // persisted to a `/student/result/:paperId` address) — `location.href`
+  // is what that student actually has open, honest even if not a permalink.
+  function shareHandler(res: Result, forPaperId?: string): () => void {
+    return () =>
+      void shareResult(
+        {
+          url: forPaperId
+            ? `${window.location.origin}/student/result/${forPaperId}`
+            : window.location.href,
+          title: `${res.code} ${res.paper} result`,
+          text: `${res.awarded}/${res.max}, ${res.grade}`,
+        },
+        { toast: (msg) => toast({ title: msg }) },
+      )
+  }
 
   if (live) {
     const summary = confidenceSummaryOf(live.questions)
@@ -302,49 +697,67 @@ export function PaperResult() {
             confident={summary.confident}
             uncertain={summary.uncertain}
             needsReview={summary.needsReview}
+            notMarked={summary.notMarked}
           />
         ) : null}
-        <QuestionList questions={live.questions} />
+        <QuestionList
+          questions={live.questions}
+          subjectCode={live.code.split("/")[0]}
+          onShare={shareHandler(live)}
+          filter={filter}
+          onFilterChange={setFilter}
+          attemptId={live.attemptId}
+        />
       </ResultScreen>
     )
   }
 
   /*
-   * P4.2: this was a single line reading "Loading result…" where a full paper
-   * result arrives — a header card with a hero mark, a grade badge, a boundary
-   * bar and a sidebar, then a question list. One text row standing in for all
-   * of that is the layout shift DESIGN.md §12 names, and it is at its worst
-   * here: this screen is what a student lands on straight after watching the
-   * marking finish, so the jump happens at the exact moment they are looking
-   * for their score.
+   * The 404 case stays its own branch ahead of `<QueryState>` rather than
+   * living in its `error` slot: it renders `EmptyState`, not `ErrorState`,
+   * with two actions, and a heading that says what actually
+   * happened ("no paper recorded here") rather than the generic "we couldn't
+   * load this". `useResult`'s `enabled: !!code` only ever goes false on the
+   * `live ? "" : …` branch above, which has already returned by this point —
+   * so `query` below is always enabled and never parks at `fetchStatus:
+   * "idle"`; no `idle` prop is needed.
    */
-  if (isPending) {
+  if (query.isError && query.error instanceof ApiError && query.error.status === 404) {
     return (
       <ResultScreen srHeading="Paper result">
-        <PanelSkeleton bodyClassName="h-40" />
-        <ListSkeleton rows={5} />
+        <EmptyState
+          heading="No paper recorded at this address"
+          body="We don't have a result stored under this link. It may have been removed, or the address may be wrong."
+          marginalia="Nothing filed here"
+          action={{ label: "Correct a paper", onClick: () => navigate("/student/correct") }}
+          secondaryAction={{ label: "Back to overview", onClick: () => navigate("/student") }}
+        />
       </ResultScreen>
     )
   }
 
-  if (isError) {
-    if (error instanceof ApiError && error.status === 404) {
-      return (
-        <ResultScreen srHeading="Paper result">
-          <EmptyState
-            heading="No paper recorded at this address"
-            body="We don't have a result stored under this link. It may have been removed, or the address may be wrong."
-            marginalia="Nothing filed here"
-            action={{ label: "Correct a paper", onClick: () => navigate("/student/correct") }}
-            secondaryAction={{ label: "Back to overview", onClick: () => navigate("/student") }}
-          />
-        </ResultScreen>
-      )
-    }
-    return (
-      <ResultScreen srHeading="Paper result">
-        <ErrorState
-          heading="We couldn't load this result"
+  return (
+    <ResultScreen>
+      <QueryState
+        query={query}
+        srHeading="Paper result"
+        /*
+         * P4.2: this was a single line reading "Loading result…" where a full
+         * paper result arrives — a header card with a hero mark, a grade
+         * badge, a boundary bar and a sidebar, then a question list. One text
+         * row standing in for all of that is the layout shift DESIGN.md §12
+         * names, and it is at its worst here: this screen is what a student
+         * lands on straight after watching the marking finish, so the jump
+         * happens at the exact moment they are looking for their score.
+         */
+        skeleton={
+          <>
+            <PanelSkeleton bodyClassName="h-40" />
+            <ListSkeleton rows={5} />
+          </>
+        }
+        error={{
+          heading: "We couldn't load this result",
           /* P6.2. This rendered `error.message`, which on a dropped connection
              is the browser's "Failed to fetch" and on a 500 is the status line.
              The 404 above is handled properly and was doing the work of hiding
@@ -356,19 +769,43 @@ export function PaperResult() {
              sentence here worth keeping, which is the exact evidence
              `studentOutcome.ts` was written on. `correctionOutcome.ts` is the
              detail-first one and belongs to the marking stream, not to this
-             GET. */
-          body={studentLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => refetch() }}
-          secondaryAction={{ label: "Back to overview", onClick: () => navigate("/student") }}
-        />
-      </ResultScreen>
-    )
-  }
-
-  return (
-    <ResultScreen>
-      <ResultHeader res={data} />
-      <QuestionList questions={[]} />
+             GET.
+ */
+          body: studentLoadFailureMessage,
+          /* The second button is the same one this branch always had. A
+             result that will not load is often a result that will not load
+             on the fourth try either, and a student stuck on it needs a way
+             back to their overview more than a fourth retry. */
+          secondaryAction: { label: "Back to overview", onClick: () => navigate("/student") },
+        }}
+      >
+        {(data) => (
+          <>
+            <ResultHeader res={data} paperId={paperId} />
+            {/*
+             * `data.theory` is never the source for this list: it's the
+             * wrong shape (`TheoryQuestionDTO`'s pre-bucketed
+             * `conf`/`confColor`/`points`/`markOk`, not `QuestionResult`'s
+             * raw `confidence`/`awardedMarks`/`reviewReason`) and every
+             * `GET /student/result/{paper_id}` response still builds it as
+             * `[]` unconditionally (`routers/student.py::student_result`).
+             * The real rows come from a second endpoint keyed on the
+             * attempt instead: `GET /student/attempts/{attemptId}/questions`
+             * (`useAttemptQuestions`, `HistoryQuestions` below). A
+             * file-store record has no `attemptId`, which disables that
+             * query and leaves `QuestionList`'s own honest "No per-question
+             * detail for this paper" empty state — the true state of that
+             * one record, not a stand-in for data that could exist.
+             */}
+            <HistoryQuestions
+              result={data}
+              filter={filter}
+              onFilterChange={setFilter}
+              onShare={paperId ? shareHandler(data, paperId) : undefined}
+            />
+          </>
+        )}
+      </QueryState>
     </ResultScreen>
   )
 }

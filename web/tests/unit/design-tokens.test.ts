@@ -96,6 +96,151 @@ describe("lib/utils.ts and index.css agree in both directions", () => {
   })
 })
 
+/*
+ * Task C5a (Phase C, dark ladder). `index.css` now carries a second token
+ * block, `:root[data-theme="dark"]`, redefining every literal-value colour
+ * token the light `:root` block declares. `cssBlock` bounds a selector to its
+ * own braces (depth-matched, not "up to the next `}`") so parsing one block
+ * never picks up the other's declarations — the two blocks share every
+ * property NAME, so an unscoped regex would silently prefer whichever
+ * occurrence its match order landed on.
+ */
+const LIGHT_SELECTOR = ":root {"
+const DARK_SELECTOR = ':root[data-theme="dark"] {'
+
+function cssBlock(selector: string): string {
+  const start = css.indexOf(selector)
+  if (start === -1) throw new Error(`${selector} not found in index.css`)
+  const bodyStart = css.indexOf("{", start) + 1
+  let depth = 1
+  let i = bodyStart
+  while (depth > 0) {
+    if (css[i] === "{") depth++
+    else if (css[i] === "}") depth--
+    i++
+  }
+  return css.slice(bodyStart, i - 1)
+}
+
+/*
+ * Packet A3 (audit-dossier remediation). `--info` and `--info-wash` were
+ * pinned at hue 240/235 — identical to `--pastel-sky-ink`'s hue (240) and
+ * `--focus-ring`'s hue (240), and `--info-wash` literally identical to
+ * `--pastel-sky` (both `oklch(0.94 0.03 235)`). §3.8 reserves subject hues for
+ * subject identity ("a student should find Physics by colour before
+ * reading") and §3.9 reserves its hue for "the browser is listening" — a
+ * notice banner painted in either is a false subject/focus cue. Hue-only
+ * check: lightness/chroma already carry the measured AA contrast
+ * (`tests/test_design_tokens.py`), which a hue change alone does not disturb.
+ *
+ * Task C5a: run against both the light AND dark blocks, so the guarantee
+ * carries over to the theme swap instead of being proven for light only.
+ */
+describe.each([
+  ["light", LIGHT_SELECTOR],
+  ["dark", DARK_SELECTOR],
+] as const)("--info does not collide with a subject pastel or --focus-ring (%s)", (theme, selector) => {
+  const HUE_TOKENS = [
+    "pastel-rose",
+    "pastel-rose-ink",
+    "pastel-amber",
+    "pastel-amber-ink",
+    "pastel-sage",
+    "pastel-sage-ink",
+    "pastel-sky",
+    "pastel-sky-ink",
+    "pastel-lilac",
+    "pastel-lilac-ink",
+    "pastel-clay",
+    "pastel-clay-ink",
+    "focus-ring",
+  ]
+
+  const block = cssBlock(selector)
+
+  function hueOf(name: string): number {
+    const match = block.match(new RegExp(`--${name}:\\s*oklch\\(\\s*[\\d.]+\\s+[\\d.]+\\s+([\\d.]+)\\s*\\)`))
+    if (!match) throw new Error(`--${name} not found in the ${theme} block of index.css`)
+    return Number(match[1])
+  }
+
+  it(`[${theme}] finds --info in index.css`, () => {
+    expect(() => hueOf("info")).not.toThrow()
+  })
+
+  it(`[${theme}] --info's hue is not identical to any subject pastel or --focus-ring`, () => {
+    const infoHue = hueOf("info")
+    for (const name of HUE_TOKENS) {
+      expect(hueOf(name), `[${theme}] --info hue ${infoHue} collides with --${name}`).not.toBe(infoHue)
+    }
+  })
+
+  it(`[${theme}] --info-wash's hue is not identical to any subject pastel`, () => {
+    const washHue = hueOf("info-wash")
+    for (const name of HUE_TOKENS) {
+      expect(hueOf(name), `[${theme}] --info-wash hue ${washHue} collides with --${name}`).not.toBe(washHue)
+    }
+  })
+})
+
+/*
+ * Task C5a: the dark block is a token swap, not a partial one. Every
+ * literal-value colour token declared as a plain 3-component `oklch(L C H)`
+ * triple (which excludes the `var()`-aliasing tokens like
+ * `--grade-*`/`--mark-*` on both sides equally, AND excludes `--scrim`,
+ * whose light-only `oklch(L C H / alpha)` form is deliberately not part of
+ * this ladder — see the note above `:root[data-theme="dark"]` in index.css)
+ * the light block declares must reappear in the dark block, and vice versa.
+ * Same shape as `tests/test_design_tokens.py::css_root_tokens`'s regex, so
+ * the two languages' notions of "a token" agree.
+ */
+describe("the dark ladder declares the same oklch() token names as light", () => {
+  function declaredOklchNames(block: string): Set<string> {
+    return new Set(
+      [...block.matchAll(/--([a-z0-9-]+):\s*oklch\(\s*[\d.]+\s+[\d.]+\s+[\d.]+\s*\)\s*;/g)].map((m) => m[1]),
+    )
+  }
+
+  it("light and dark token-name sets are identical", () => {
+    const light = declaredOklchNames(cssBlock(LIGHT_SELECTOR))
+    const dark = declaredOklchNames(cssBlock(DARK_SELECTOR))
+    const missingFromDark = [...light].filter((name) => !dark.has(name)).sort()
+    const extraInDark = [...dark].filter((name) => !light.has(name)).sort()
+    expect(missingFromDark, `declared in light but not redefined in dark: ${missingFromDark.join(", ")}`).toEqual([])
+    expect(extraInDark, `declared in dark but not present in light: ${extraInDark.join(", ")}`).toEqual([])
+  })
+})
+
+describe("--fs-field platform floor", () => {
+  it("is defined at 16px", () => {
+    expect(css).toContain("--fs-field: 16px")
+  })
+
+  it("is a registered font-size class, not a display/body/data type rung", () => {
+    expect(registered).toContain("field")
+  })
+})
+
+/*
+ * Packet B3 (Task 4). Three tokens, all consumed by nav-shells.tsx's own
+ * `SIDEBAR_WIDTH`/`SIDEBAR_BREAKPOINT`/`BOTTOM_NAV_HEIGHT` constants
+ * (`navShells.test.ts` pins that side) — this side pins index.css actually
+ * declares the values those constants assert against.
+ */
+describe("sidebar/bottom-nav tokens (B3)", () => {
+  it("--breakpoint-sidebar is 820px", () => {
+    expect(css).toContain("--breakpoint-sidebar: 820px")
+  })
+
+  it("--sidebar-width is 252px", () => {
+    expect(css).toContain("--sidebar-width: 252px")
+  })
+
+  it("--bottom-nav-height is 56px", () => {
+    expect(css).toContain("--bottom-nav-height: 56px")
+  })
+})
+
 describe("no arbitrary literals in the retrofitted portals", () => {
   // `portals/student/` is deliberately absent: only its shell (index.tsx) was
   // retrofitted in P3.10 chunk c. Its screens still carry ~120 literals, which

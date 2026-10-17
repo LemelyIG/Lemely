@@ -1,11 +1,23 @@
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { RouterProvider } from "react-router-dom"
-import { QueryClientProvider } from "@tanstack/react-query"
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client"
 import { queryClient } from "./lib/queryClient"
+import { persister } from "./lib/offline/queryPersister"
+import { shouldPersistQuery } from "./lib/offline/persistAllowlist"
 import { AuthProvider } from "./lib/auth/AuthContext"
 import { router } from "./App"
 import { registerPushClientBridge } from "./lib/push/pushClientBridge"
+import { currentBuildId, reportClientError } from "./lib/clientErrors"
+import { installStaleChunkReload, StaleChunkGuard } from "./lib/staleChunk"
+import { installFileHandlerBridge } from "./lib/sharedScan"
+import { registerWidgetClientBridge } from "./lib/widget/widgetClientBridge"
+import { PushAutoEnable } from "./components/push-auto-enable"
+import { RecoveryEffects } from "./components/recovery-effects"
+import { ThemeSync } from "./components/theme-sync"
+import { TimezoneSync } from "./components/timezone-sync"
+import { UpdateToast } from "./components/UpdateToast"
+import { ToastProvider } from "./components/ui/toast"
 import "./index.css"
 
 // The page half of the push handshake (D5.15 §2). Registered once at startup,
@@ -15,12 +27,128 @@ import "./index.css"
 // notification even with the app open.
 registerPushClientBridge()
 
+// The page half of the widget handshake — same "call once, before the app
+// renders" shape as registerPushClientBridge above, for the same reason: the
+// widget host can ask this worker to render at any moment a tab is open, and
+// a listener installed inside a screen would only answer while that screen
+// happened to be mounted. See lib/widget/widgetClientBridge.ts and
+// sw/widgetBridge.ts for the full handshake and its known freshness limit.
+registerWidgetClientBridge()
+
+// A6 review fix (MEDIUM 4): was registered inside CorrectPaper.tsx, which
+// unmounts on navigation and orphans the launchQueue consumer for any
+// repeat OS "open with" launch after that. See
+// `installFileHandlerBridge`'s own doc (src/lib/sharedScan.ts) for the
+// full reasoning — same "call once, before the app renders" shape as
+// `registerPushClientBridge`/`installStaleChunkReload` above and below.
+installFileHandlerBridge()
+
+/*
+ * PR 1B (client error reporting): the two failure classes `ErrorBoundary`
+ * cannot see. Same reasoning as `registerPushClientBridge` above — a listener
+ * installed inside a screen only answers while that screen happens to be
+ * mounted, and both of these can fire from code with no screen mounted at
+ * all (a query's background refetch, a timer, a rejected promise nobody
+ * awaited). Installed once, before the app renders, so nothing in the first
+ * paint can throw ahead of these being armed.
+ *
+ * `event.error` is `null` for a small set of browsers/cases (notably a
+ * cross-origin script error reported as "Script error." with no detail);
+ * falling back to `event.message` keeps that case from reporting a message
+ * of `"null"`. `event.message` can itself be `""` (an `ErrorEvent` fired by
+ * hand with no message, say), so the final fallback is the literal
+ * "Unknown error" rather than letting an empty string through —
+ * `describeThrown` in `clientErrors.ts` does the same mapping for a caught
+ * value with no message of its own, for the same reason: the backend's DTO
+ * requires at least one character on `message`.
+ */
+window.addEventListener("error", (event) => {
+  reportClientError({
+    error: event.error ?? (event.message || "Unknown error"),
+    kind: "unhandled",
+  })
+})
+window.addEventListener("unhandledrejection", (event) => {
+  reportClientError({ error: event.reason, kind: "rejection" })
+})
+
+/*
+ * PR 2 part C (stale-chunk recovery): every portal screen is a lazy
+ * `import()` (see the `P6.1b` notes in `portals/*\/index.tsx`), so a deploy
+ * that lands while this tab still has the previous build open leaves this
+ * tab's chunk URLs pointing at assets the CDN no longer serves. Installed
+ * here, next to the error listeners above, for the same reason they are:
+ * `vite:preloadError` can fire before any screen has mounted. See
+ * `lib/staleChunk.ts` for the reload-at-most-once-per-build guard this
+ * wires up, and `components/recovery-effects.tsx` for the "Updated to the
+ * latest version" toast that announces a reload this guard caused.
+ */
+installStaleChunkReload({
+  guard: new StaleChunkGuard(window.localStorage, { perTab: window.sessionStorage }),
+  buildId: currentBuildId(),
+  reload: () => window.location.reload(),
+})
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
+    {/*
+     * Task 10 (B6b): `PersistQueryClientProvider` wraps the same
+     * `queryClient` `QueryClientProvider` used, and behaves identically to
+     * it for every reader — the persisted-cache machinery only activates on
+     * `restoreClient`'s hydrate-then-drop-stale-data behaviour. `maxAge`
+     * (24h) matches `uploadQueue.ts`'s own abandon window, so nothing
+     * persisted here outlives the point the offline queue itself would give
+     * up. `buster: currentBuildId()` means a deploy invalidates the whole
+     * persisted cache rather than rehydrating a shape an older build wrote —
+     * the same build-id guard `lib/staleChunk.ts` already uses for chunk
+     * URLs. `shouldDehydrateQuery` (`shouldPersistQuery`, `lib/offline/
+     * persistAllowlist.ts` — its own header has the full reasoning,
+     * including the status-check fix this needed) is the one line that
+     * matters most: an allowlist AND a "finished successfully" check, so
+     * grades, an active marking run and the review queue are never written
+     * to IndexedDB at all, not merely excluded on read, and a query still
+     * mid-fetch when a persist fires never corrupts the next restore.
+     */}
+    <PersistQueryClientProvider
+      client={queryClient}
+      persistOptions={{
+        persister,
+        maxAge: 24 * 60 * 60 * 1000,
+        buster: currentBuildId(),
+        dehydrateOptions: {
+          shouldDehydrateQuery: shouldPersistQuery,
+        },
+      }}
+    >
       <AuthProvider>
-        <RouterProvider router={router} />
+        <ToastProvider>
+          {/* Mounted once, above the router, so both of its effects (the
+              offline→online query refetch + "Reconnected" toast, and the
+              post-reload "Updated" toast) run for the app's whole lifetime
+              rather than only while some particular screen is mounted. */}
+          <RecoveryEffects />
+          {/* Applies the resolved theme (and keeps "System" tracking the OS
+              live) for the app's whole lifetime, not only while the settings
+              screen that also calls `useTheme()` happens to be mounted. See
+              the component for the full reasoning. */}
+          <ThemeSync />
+          {/* Sends the device zone once per session, so every civil-date
+              calculation for this reader runs where they actually are. See
+              the component for why it lives here and not in a screen. */}
+          <TimezoneSync />
+          {/* Asks for notification permission once per signed-in browser.
+              Push was previously reachable only from one settings screen, so
+              a reader who never opened it was never asked and never received
+              a push. Mounted here rather than in a screen for the same reason
+              `TimezoneSync` is: it must run wherever the reader lands. */}
+          <PushAutoEnable />
+          {/* Packet A7: same "renders nothing, fires a toast" shape as the
+              three effects above — mounted here so a service-worker update
+              is noticed and offered regardless of which screen is open. */}
+          <UpdateToast />
+          <RouterProvider router={router} />
+        </ToastProvider>
       </AuthProvider>
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   </StrictMode>,
 )

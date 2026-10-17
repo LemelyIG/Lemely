@@ -31,9 +31,9 @@ import {
  * `:role` segment, so whichever of the two Task 19 mounts this element on is
  * already the single source of truth for which variant is which
  * (`<SignupDetails role="student" />` / `<SignupDetails role="teacher" />`,
- * the same "same element, two RouteObjects" shape `/login` and
- * `/login/parent` already use, and that `VerifyEmail.tsx`'s own docstring
- * names as the pattern for `/verify-email` vs `/verify-email/:token`).
+ * the same "same element, two RouteObjects" shape `VerifyEmail.tsx`'s own
+ * docstring names as the pattern for `/verify-email` vs
+ * `/verify-email/:token`).
  *
  * ── Binding requirement 1 — no school field on the teacher variant (D7.2) ──
  *
@@ -175,9 +175,13 @@ const ROLE_COPY: Record<SelfServiceRole, { heading: string; subheading: string }
 }
 
 /** Matches `SignupRoleSelect.tsx`'s own link recipe exactly, so every link on
- * the signed-out signup surface looks and behaves like the same control. */
+ * the signed-out signup surface looks and behaves like the same control.
+ * Shares `Login.tsx`'s `pointer-coarse:inline-flex pointer-coarse:items-center
+ * pointer-coarse:min-h-11` tap-target gating (packet A2 review fix,
+ * `login-links-under-44px-tap-target`) — see that file's own docstring for
+ * why it's gated to touch/coarse pointers rather than unconditional. */
 const LINK_CLASS =
-  "rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+  "pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
 
 export function SignupDetails({ role }: SignupDetailsProps) {
   const { signup } = useAuth()
@@ -293,6 +297,8 @@ export function SignupDetails({ role }: SignupDetailsProps) {
         <Input
           label="Name"
           autoComplete="name"
+          autoCapitalize="words"
+          autoCorrect="off"
           required
           disabled={busy}
           value={values.name}

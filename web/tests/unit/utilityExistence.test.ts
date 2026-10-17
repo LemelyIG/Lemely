@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { stripComments } from "./support/jsxSource"
+import { relativeTo, sourceFiles, stripComments } from "./support/jsxSource"
 
 /**
  * The resolves-to-nothing gate.
@@ -47,7 +47,7 @@ import { stripComments } from "./support/jsxSource"
  * which is exactly the condition all three real defects met.
  */
 
-const SCANNED_FILES = [
+const SCANNED_FILES_CURATED = [
   // Phase 4, surface 10 — 404 / misc, and the settings lane no surface owned.
   "src/portals/student/screens/Subject.tsx",
   "src/portals/student/screens/Parents.tsx",
@@ -75,10 +75,9 @@ const SCANNED_FILES = [
   "src/portals/admin/screens/PipelineHealth.tsx",
   "src/lib/settingsOutcome.ts",
   "src/portals/misc/NotFound.tsx",
-  // Phase 4, surface 9 — the marketing lane, and the Reveal it needed.
-  "src/portals/marketing/index.tsx",
-  "src/portals/marketing/Landing.tsx",
-  "src/portals/marketing/DataHandling.tsx",
+  // Phase 4, surface 9 — the Reveal component the marketing lane needed.
+  // The marketing lane itself is globbed below (MARKETING_FILES), not listed
+  // here by hand.
   "src/components/ui/reveal.tsx",
   "dev-previews/Directions.tsx",
   "src/routes.tsx",
@@ -143,8 +142,24 @@ const SCANNED_FILES = [
   "src/lib/authOutcome.ts",
   "src/portals/auth/Login.tsx",
   "src/portals/auth/DeviceLimitNotice.tsx",
-  "src/portals/auth/ParentLogin.tsx",
+  // `ParentLogin.tsx` was deleted by the parent-invites design (task 7),
+  // superseding D3.11 — `SignupParent.tsx` and `CodeInput.tsx` replace it.
+  "src/portals/auth/SignupParent.tsx",
+  "src/components/auth/CodeInput.tsx",
 ]
+
+/*
+ * Review finding B (Task 2 fixes): `src/portals/marketing/**` is fully
+ * migrated, unlike most of the rest of this hand-maintained list, so it is
+ * globbed rather than hand-listed — `HeroExampleCard.tsx` (Task 2) landed in
+ * no gate list here, and Task 3 adds more marketing components. A glob covers
+ * a new file the moment it exists.
+ */
+const MARKETING_FILES = sourceFiles(join(process.cwd(), "src/portals/marketing")).map((f) =>
+  relativeTo(process.cwd(), f),
+)
+
+const SCANNED_FILES = [...new Set([...SCANNED_FILES_CURATED, ...MARKETING_FILES])]
 
 const CSS_PATH = "src/index.css"
 
@@ -160,8 +175,19 @@ function literalClasses(css: string): Set<string> {
   // exists in the stylesheet only as `.lm-scroll::-webkit-scrollbar`. Without
   // this the `lm-` family check below would report a class that demonstrably
   // does emit rules.
-  for (const match of css.matchAll(/\.([a-z0-9][a-z0-9-]*)\s*(?:,|\{|:)/gi)) {
-    found.add(match[1])
+  //
+  // `(?:[a-z0-9-]|\\.)+` — a name character on its own is the common case,
+  // but CSS requires a literal `.` inside a class selector to be escaped
+  // (`.lm-app-header-pt-2\.5`), which the plain character class can't match:
+  // it stops at the `\`, the terminator check then fails on that same `\`,
+  // and the whole match backtracks to nothing, silently dropping a class that
+  // is genuinely defined. `\\.` accepts that escape as part of the name.
+  for (const match of css.matchAll(/\.((?:[a-z0-9-]|\\.)+)\s*(?:,|\{|:)/gi)) {
+    // The capture still holds the raw `\.` from the selector; unescape it so
+    // it matches the plain `"lm-app-header-pt-2.5"` string a className
+    // attribute carries (Tailwind's own dotted utilities, e.g. `pb-2.5`,
+    // are unescaped there too).
+    found.add(match[1].replace(/\\(.)/g, "$1"))
   }
   return found
 }
@@ -360,6 +386,20 @@ describe("design-system utilities resolve", () => {
     for (const name of ["lm-read", "lm-prose", "lm-screen", "lm-scroll", "lm-pop"]) {
       expect(resolves(name), name).toBe(true)
     }
+  })
+
+  /**
+   * `.lm-app-header-pt-2\.5` is valid CSS: a literal `.` inside a class name
+   * must be escaped in the selector, but the `className="lm-app-header-pt-2.5"`
+   * string in the TSX source carries the dot unescaped, same as every other
+   * Tailwind dotted utility (`pb-2.5`). `literalClasses` has to normalize the
+   * escape away or a real, defined `lm-` class reads as one that resolves to
+   * nothing — the false-positive twin of the defect this whole gate exists
+   * to catch.
+   */
+  it("accepts an lm- class whose CSS selector escapes a literal dot", () => {
+    expect(resolves("lm-app-header-pt-4")).toBe(true)
+    expect(resolves("lm-app-header-pt-2.5")).toBe(true)
   })
 
   it("accepts the names the design system does define", () => {

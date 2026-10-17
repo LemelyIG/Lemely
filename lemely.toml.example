@@ -22,23 +22,30 @@ format = "auto"
 model = "gemini-2.5-flash"
 
 # Per-task model overrides (omit a key to use the global `model` above).
-# mark_scheme_model = "gemini-2.5-pro"   # one-off parse; accuracy matters
-# extraction_model  = "gemini-2.5-flash" # vision-heavy, per paper
-# correction_model  = "gemini-2.5-flash" # per question; highest call volume
+# F1 (Gemini 3.x migration, 2026-09-17): these are the shipped defaults, so
+# they are commented out here purely as documentation of what you are
+# overriding if you uncomment one. correction/escalation default to
+# gemini-3.8-flash; extraction/generation/scan_metadata default to
+# gemini-3.5-flash-lite; mark_scheme stays on gemini-2.5-flash (its chunked
+# parser and thinking_budget tuning predate the 3.x migration, D20). Run
+# `lemely doctor` to see what model_for() actually resolves for every tag.
+# mark_scheme_model    = "gemini-2.5-flash"
+# extraction_model     = "gemini-3.5-flash-lite"
+# correction_model     = "gemini-3.8-flash"
+# generation_model     = "gemini-3.5-flash-lite"
+# scan_metadata_model  = "gemini-3.5-flash-lite"
 
-# Escalation: re-mark with a stronger model when confidence < threshold.
-# escalation_model = "gemini-2.5-pro"
+# Escalation: re-mark with a stronger/thinking-harder model when confidence <
+# threshold. Reachable even when escalation_model == correction_model (F1):
+# the gate compares (model, thinking) tuples, not model names alone.
+# escalation_model = "gemini-3.8-flash"
 # escalation_confidence_threshold = 0.8
-
-# Thinking budget per task (tokens; 0 = disabled).
-[gemini.thinking_budget_for]
-mark_scheme = 8000
-# correction_borderline = 2000  # retry borderline marks before Pro escalation
 
 max_retries = 3
 backoff_seconds = 2.0
-# Persistent cumulative-USD hard cap (survives process restarts).
-# total_usd_ceiling = 8.0
+# Persistent cumulative-USD hard cap (survives process restarts). $14 is the
+# shipped default (raised from $8 by the user 2026-09-17, F1/D4).
+# total_usd_ceiling = 14.0
 # usd_warning_thresholds = [4.0, 6.0]
 # Budgets one RUN — every sweep that run drives, not each sweep separately.
 # A golden sweep is ~70 calls / ~115k tokens, so 200000 (the old example value)
@@ -46,8 +53,42 @@ backoff_seconds = 2.0
 # for the whole run; the accuracy programme uses 2000000 (~17 sweeps).
 # per_run_token_ceiling = 2000000
 
+# I1 crop-and-re-read stage (spec 2026-09-26 §4-5): per-paper cap on the
+# zoomed re-read calls (0 disables the stage), worker threads for the stage,
+# and its wall-clock budget in seconds -- no re-read STARTS after the budget.
+max_rereads_per_paper = 15
+reread_concurrency = 4
+reread_budget_seconds = 45.0
+# Parallel Files API uploads of page images before the extraction call
+# (spec 2026-09-26 §7).
+upload_concurrency = 4
+
 # gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.
 # gemini_api_key = "sk-..."
+
+# Thinking budget per task (tokens; 0 = disabled) — 2.5-and-earlier models
+# only. 3.x models read [gemini.thinking_level_for] instead (see below). NOTE:
+# TOML table headers stay open until the next one, so every scalar [gemini]
+# key must come before this point in the file — [gemini] cannot be reopened
+# after a subtable like this one starts.
+[gemini.thinking_budget_for]
+mark_scheme = 8000
+# correction_borderline = 2000  # retry borderline marks before Pro escalation
+
+# Thinking level per task ("minimal"/"low"/"medium"/"high") — 3.x models
+# only; a 2.5-and-earlier model ignores this table entirely. Shipped
+# defaults shown; "minimal" is only honoured on gemini-3.6-flash /
+# gemini-3.5-flash-lite and falls back to "low" on any other 3.x model.
+# This table REPLACES the defaults: a key left out here falls back to
+# "low". Leaving out binding_second_read makes the binding step's second
+# read the same call as its first (see [binding]); `lemely doctor` says so.
+[gemini.thinking_level_for]
+correction = "low"
+correction_borderline = "high"  # Step-1 retry before Step-2 escalation
+escalation = "high"
+extraction = "minimal"
+generation = "low"
+binding_second_read = "medium"  # the label binder's second read, see [binding]
 
 [accuracy_eval]
 mark_accuracy_target = 0.95
@@ -70,6 +111,11 @@ echo = false
 pool_size = 5
 max_overflow = 10
 pool_pre_ping = true
+# Bound how long a connect may block. libpq's own connect_timeout default is
+# unlimited, which lets a dropped-packet outage (firewall/security-group
+# change) hang every request instead of failing them.
+connect_timeout_seconds = 5
+pool_timeout_seconds = 5
 
 [supabase]
 # Local Supabase Auth (GoTrue). Defaults are the well-known local-dev
@@ -80,6 +126,53 @@ jwt_audience = "authenticated"
 # jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"
 # anon_key = "..."
 # service_role_key = "..."
+
+[storage]
+# Object storage for self-mark uploads (P2.5) and profile pictures.
+# "local" (the default) writes under `paths.output_dir/storage` — right for
+# dev, Compose and CI, and needs no credentials. "gcs" uses Google Cloud
+# Storage via Application Default Credentials; no key belongs in this file
+# for that path. See docs/deployment.md and scripts/gcp-bootstrap.sh.
+#
+# There is no Supabase Storage backend — DS7 removed it.
+#
+# Note that signed URLs (avatar downloads) need a real service-account
+# credential (a JSON key, or an attached/workload-identity service account)
+# — plain user ADC from `gcloud auth application-default login` can
+# upload/download but cannot sign a URL at all. For local signing, add
+# `--impersonate-service-account=<runtime SA>` to that login command. The
+# "local" backend sidesteps this: it returns the bytes inline instead.
+#
+# GCS bucket names are ONE GLOBAL namespace across all of Google Cloud, so
+# these defaults carry a project-ish prefix. The deployed pipeline overrides
+# both per environment (see .github/workflows/deploy.yml), so staging and
+# production never share a bucket; `scripts/gcp-bootstrap.sh` creates them.
+backend = "local"
+bucket = "lemely-uploads"
+# Profile pictures live in their own bucket: different retention and access
+# shape from scans, and no reason to share a namespace.
+avatar_bucket = "lemely-avatars"
+signed_url_ttl_seconds = 3600
+avatar_max_bytes = 5242880  # 5 MiB
+# gcs_project = "my-gcp-project"  # only if ADC can't infer one
+
+[push]
+# Web push (VAPID, RFC 8292). All three absent is a SUPPORTED state (D5.9 §4):
+# the transport reports itself unavailable, the notification inbox keeps
+# working, and every developer machine and CI run is in that state.
+#
+# Generate a pair with `lemely push-keygen` (prints, writes nothing). The
+# public key is handed to every browser and is not a secret; the private key
+# is. Deployed, both arrive from GitHub Actions (a repository variable and a
+# repository secret) as LEMELY_PUSH__VAPID_PUBLIC_KEY / __VAPID_PRIVATE_KEY.
+# ROTATING THE PAIR INVALIDATES EVERY STORED SUBSCRIPTION - the public key is
+# baked into each one, so every browser must re-subscribe. See
+# docs/push-notifications.md before changing it.
+# vapid_public_key = "BASE64URL-65-BYTE-POINT"
+# vapid_private_key = "BASE64URL-32-BYTE-SCALAR"
+# vapid_subject = "mailto:support@lemelyig.com"
+ttl_seconds = 86400
+timeout_seconds = 10.0
 
 [auth]
 # How long a minted access token is accepted for. Short on purpose: it is a
@@ -93,8 +186,131 @@ access_token_ttl_seconds = 3600
 # out from the device list, or evicting it past the 3-device cap, kills it
 # immediately.
 refresh_token_ttl_seconds = 2592000  # 30 days
-# Parent phone-OTP challenge lifecycle.
+# OTP challenge lifecycle, shared by channel. The phone channel backs a
+# kept-but-unused seam (BUILD/DECISIONS.md D-2026-09-08) for a possible future
+# paid SMS channel; no route mints a phone code today.
 otp_ttl_seconds = 300
 otp_max_attempts = 5
 otp_length = 6
 otp_min_resend_seconds = 30
+# Email-channel OTP challenge lifecycle (spec §4.4). This is the channel that
+# ships: parent sign-up codes and email verification codes both use it.
+# Longer-lived than the phone lifecycle above; length, attempt cap and resend
+# cooldown are shared.
+email_otp_ttl_seconds = 600
+
+[grading]
+# A teacher_papers row stuck in `processing` past this many seconds is a
+# dead run (its instance died) and may be reclaimed by the next regrade.
+stale_run_after_seconds = 900
+
+# US-005b's marking gate (US-040, closed by `08df9302`): read by every
+# marking path -- the CLI, student paper uploads, the teacher grading job,
+# quiz marking, the accuracy harness and Gradio. Enabling it CHANGES HOW
+# PAPERS ARE MARKED, on every one of those paths at once. This branch ships
+# no accuracy evidence that the verdict path marks better than the legacy
+# path -- that evidence needs a label campaign that has not started. Not a
+# safe default to flip; leave commented out until that evidence exists.
+# Deployed, it is set by LEMELY_GRADING__EQUIVALENCE_GATE; see docs/ci-cd.md.
+# equivalence_gate = true
+# Error-carried-forward by substitution (I7/US-013). Threaded independently
+# of `equivalence_gate` above -- neither flag implies the other -- but it has
+# no observable effect unless `equivalence_gate` is ALSO true. Deployed, it
+# is set by LEMELY_GRADING__ECF_SUBSTITUTION.
+ecf_substitution = false
+# Crop re-read substitution (spec 2026-09-26 §4): when on, an answer whose
+# zoomed re-read disagrees with the first read is marked on the re-read text.
+# It CHANGES HOW PAPERS ARE MARKED on every path and there is no accuracy
+# evidence yet that the re-read is the better reading, so leave it off. The
+# teacher-review flag fires on a disagreement whether or not this is on.
+# Deployed, it is set by LEMELY_GRADING__REREAD_SUBSTITUTION; see docs/ci-cd.md.
+# reread_substitution = true
+
+[binding]
+# How the answers on a scanned script are tied to questions, and how far
+# that is checked before marking (lemely.io.binding.orchestrate).
+#
+# binder: "label" -- the model lists the question labels and the writing it
+# sees, with no question ids, and code binds that list to the mark scheme.
+# "legacy" -- the model hands out the question ids itself, as extraction
+# did before; kept as a way back, not as an equal choice.
+binder = "label"
+# gate: "enforce" -- a paper whose binding cannot be trusted is held.
+# The label binder REQUIRES "enforce": its checks are part of reading a
+# script safely, and config does not load with any other value beside it.
+# "observe" and "off" are for binder = "legacy" only. "observe" -- the
+# legacy answers are checked and the result is published (the
+# binding_gate_result event); the answers go on as they are, no paper is
+# held, and the check made after marking does not run. "off" -- no
+# checks and no report: binder = "legacy" with gate = "off" is extraction
+# exactly as it was before either existed.
+gate = "enforce"
+# The label binder's model, passed on every one of its calls. It is NOT
+# gemini.extraction_model: only gemini-3.8-flash returned a usable list when
+# this was measured, and the extraction default is a cheaper model that did
+# not. COST: with the label binder every extraction makes its calls on this
+# model in place of one call on extraction_model.
+read_model = "gemini-3.8-flash"
+# Read the script a second time on the same model, at the thinking level
+# [gemini.thinking_level_for] gives binding_second_read, so that the two
+# reads can be compared and a bad first read replaced. Doubles the cost of
+# the binding step. Read by the label binder only.
+second_read = true
+# The model the legacy binder's one retry uses, when the gate is on.
+retry_model = "gemini-3.8-flash"
+
+[integrity]
+# Plagiarism detection needs no Gemini key (stdlib difflib only). F4 removed
+# the AI-generated-answer detector that used to live here — no evidence base,
+# JCQ guidance says a detector must never be sole evidence.
+plagiarism_enabled = true
+plagiarism_threshold = 0.85
+
+[email]
+# Transactional mail for account verification and password reset (D7.7).
+#
+# Leave `api_key` unset and lemely.web.deps wires MockEmailProvider: the link
+# is logged to the `lemely.auth.email` logger instead of sent, and the auth
+# routes keep returning it so a local signup completes with no mail service at
+# all. That is the supported default for development and CI, not a broken
+# state. Setting a key flips both halves at once — mail is really sent, and the
+# routes stop returning the live link, because a real sender makes the inbox
+# the only place a bearer credential belongs.
+#
+# NEVER put the key in this file. `lemely.toml` is gitignored, but the key still
+# does not belong on disk. Deployed, it is the `RESEND_API_KEY` GitHub Actions
+# environment secret, which `deploy.yml` passes to Cloud Run as
+# LEMELY_EMAIL__API_KEY. Locally, export LEMELY_EMAIL__API_KEY in your shell.
+# api_key = "re_..."
+#
+# The origin emailed links are built on. AuthService mints links as frontend
+# routes (`/verify-email/<token>`), which the SPA can navigate to but an inbox
+# cannot resolve — a mail client with no base turns that into
+# `http:///verify-email/<token>`. A real provider joins this origin on first.
+# deploy.yml sets it per environment; this default is the production site.
+app_base_url = "https://lemelyig.com"
+#
+# Must be on a domain verified with the provider AND carrying that sender's
+# SPF/DKIM records in the Cloudflare DNS zone — see docs/email-delivery.md.
+from_address = "noreply@lemelyig.com"
+from_name = "Lemely"
+# Where replies go. Unset means they return to `from_address`, an unattended
+# mailbox; point it at a real inbox once one exists.
+# reply_to = "support@lemelyig.com"
+# Short on purpose: verification mail is a best-effort side effect of an
+# already-created account and must never make a signup hang.
+timeout_seconds = 10.0
+
+[notifications]
+# The in-process sweeper that publishes scheduled announcements and sends the
+# two daily engagement notifications (streak_warning at streak_warning_hour,
+# study_plan_reminder at study_plan_reminder_hour) in each recipient's OWN
+# time zone. It runs inside the API process, started by create_app's lifespan;
+# there is no separate worker to deploy. On Cloud Run, timely delivery needs
+# --min-instances=1: at zero instances nothing is running to sweep, and a
+# 19:00 warning may be missed for that day entirely. See docs/deployment.md.
+# The test suite sets LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=0.
+sweeper_enabled = true
+sweep_poll_seconds = 60
+streak_warning_hour = 19
+study_plan_reminder_hour = 8
