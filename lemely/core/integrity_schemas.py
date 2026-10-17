@@ -1,4 +1,8 @@
-"""Schemas for integrity checks (plagiarism and AI-generated detection)."""
+"""Schemas for integrity checks (plagiarism).
+
+F4 removed the AI-generated-answer detector (``ai_generated`` used to be the
+other ``IntegrityFinding.kind`` value); ``plagiarism`` is the only kind left.
+"""
 
 from __future__ import annotations
 
@@ -11,9 +15,9 @@ from lemely.core.schemas import StrictModel
 
 class IntegrityFinding(StrictModel):
     question_id: str
-    kind: Literal["plagiarism", "ai_generated"]
+    kind: Literal["plagiarism"]
     flagged: bool
-    score: float = Field(..., ge=0.0, le=1.0)  # difflib ratio or classifier confidence
+    score: float = Field(..., ge=0.0, le=1.0)  # difflib ratio
     rationale: str
 
 
