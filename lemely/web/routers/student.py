@@ -22,15 +22,18 @@ converter docstring calls out which fields are data-backed vs structurally empty
 
 from __future__ import annotations
 
+import re
 import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, TypedDict
+from typing import Annotated, NoReturn, TypedDict
 
+import anyio
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import SQLAlchemyError
 
 # WeaknessReport and HistoryStoreProtocol stay as runtime imports (noqa: TC001):
 # FastAPI dependency injection and the response converters resolve their
@@ -48,19 +51,29 @@ from lemely.core.history import (
 )
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExamMetadata, WeaknessReport
-from lemely.db.attempt_repo import AttemptRepository
+from lemely.db.attempt_repo import AttemptRepository, UploadDeletedError
 from lemely.db.class_repo import ClassService, JoinCodeError
+from lemely.db.invite_repo import (
+    MAX_LIVE_PARENT_LINKS,
+    InviteError,
+    InviteLimitReachedError,
+    InviteNotFoundError,
+    InviteService,
+)
+from lemely.db.models import Invite
 from lemely.db.models.enums import NotificationType, Role, UploadStatus, XpSource
 from lemely.db.notification_repo import NotificationService
-from lemely.db.parent_repo import ParentLinkService, ParentUserNotFoundError
+from lemely.db.parent_repo import ParentLinkService
+from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.student_profile_repo import StudentProfileService, SubjectEnrolmentRow
-from lemely.db.upload_repo import StudentUploadRepository, UploadRun
-from lemely.db.xp_repo import DEFAULT_ZONE, XpService, civil_date_in_zone
+from lemely.db.upload_repo import IDEMPOTENCY_KEY_WINDOW, StudentUploadRepository, UploadRun
+from lemely.db.xp_repo import UserZoneReader, XpService, civil_date_in_zone
 from lemely.io.det.profiles import get_profile
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
 from lemely.io.scan_metadata import ScanMetadataExtractor
+from lemely.io.scheme_parse import WorkerSchemeParser
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.runtime.config import Settings
 from lemely.web.deps import (
@@ -69,14 +82,17 @@ from lemely.web.deps import (
     get_class_service,
     get_gemini_client,
     get_history_store,
+    get_invite_service,
     get_notification_service,
     get_parent_link_service,
     get_push_transport,
+    get_scheme_corpus_repo,
     get_settings,
     get_storage_backend,
     get_student_profile_service,
     get_student_upload_repo,
     get_user_mirror,
+    get_user_zone_reader,
     get_xp_service,
     require_role,
     require_verified_email,
@@ -91,7 +107,13 @@ from lemely.web.notify import notify_safely
 from lemely.web.push import NotificationTransport
 from lemely.web.schemas import question_to_dto
 from lemely.web.schemas_classes import JoinClassRequestDTO, JoinClassResponseDTO
-from lemely.web.schemas_parent import LinkedParentDTO, LinkParentRequestDTO, ParentLinkListDTO
+from lemely.web.schemas_parent import (
+    LinkedParentDTO,
+    ParentCodeDTO,
+    ParentInviteLinkDTO,
+    ParentInvitesDTO,
+    ParentLinkListDTO,
+)
 from lemely.web.schemas_student import (
     CorrectRequest,
     IntegrityRowDTO,
@@ -113,8 +135,13 @@ from lemely.web.schemas_student import (
     VizColor,
     WeakThreadDTO,
 )
-from lemely.web.services.grading import extract_answers, grade_paper
-from lemely.web.upload_utils import check_upload_cap, safe_upload_name
+from lemely.web.services.grading import (
+    BindingHeldError,
+    ensure_binding_allows_marking,
+    extract_answers,
+    grade_paper,
+)
+from lemely.web.upload_utils import check_scan_geometry, check_upload_cap, safe_upload_name
 from lemely.web.xp_awards import award_xp_safely
 
 router = APIRouter(prefix="/api")
@@ -234,10 +261,18 @@ def _subjects(
     marks the boundaries were never drawn for. A subject the student has only
     quizzed produces no row, which is honest: they have no standing in it yet.
     """
-    boundary_store = GradeBoundaryStore()
     by_code: dict[str, list[PaperRecord]] = {}
     for record in grade_bearing(history.records):
         by_code.setdefault(record.metadata.subject_code, []).append(record)
+
+    # Built after the grouping, and only when the grouping found something.
+    # `GradeBoundaryStore()` reads `component_thresholds` eagerly and raises
+    # `EmptyGradeBoundaryStoreError` against an un-ingested table, so building
+    # it first made a student with no papers — who resolves no grade at all —
+    # depend on a table their screen never reads.
+    if not by_code:
+        return []
+    boundary_store = GradeBoundaryStore()
 
     rows: list[SubjectRowDTO] = []
     for code, records in sorted(by_code.items()):
@@ -530,9 +565,14 @@ def student_result(
     boundary rail (rail position from percentage; ``railFoot`` from the resolved
     A-boundary). **Structurally empty:** ``theory`` and ``integrity`` — history
     records persist totals, weak-areas and metadata only, not the per-question
-    answers/mark-scheme points that theory marking and plagiarism/AI-content
-    checks require. Those lists are populated by the ``/correct`` SSE flow which
+    answers/mark-scheme points that theory marking and the plagiarism check
+    require. Those lists are populated by the ``/correct`` SSE flow which
     holds a live :class:`CorrectionResult`; they are empty here by construction.
+
+    ``attemptId`` is data-backed but nullable by store: the Postgres-backed
+    store carries the attempt's id, and the JSON file store has no attempts
+    table to point at, so it is ``None`` there. A null is what tells the
+    frontend there is no per-question detail to fetch for this record.
     """
     history = history_store.load(auth.user_id)
     try:
@@ -565,16 +605,17 @@ def student_result(
         theory=[],
         integrity=_integrity_summary(record),
         provenance=record.metadata.source_document or "",
+        attemptId=record.attempt_id,
     )
 
 
 def _integrity_summary(record: PaperRecord) -> list[IntegrityRowDTO]:
     """Integrity rows derivable from a history record (data-backed subset).
 
-    A history record has no per-question answers, so plagiarism / AI-content
-    detection cannot run here — those run in the live ``/correct`` flow. The one
-    row we *can* assert from the record is grade-boundary provenance, so the
-    student sees a real, non-fabricated integrity line rather than mock copy.
+    A history record has no per-question answers, so the plagiarism check
+    cannot run here — it runs in the live ``/correct`` flow. The one row we
+    *can* assert from the record is grade-boundary provenance, so the student
+    sees a real, non-fabricated integrity line rather than mock copy.
     """
     _, source = GradeBoundaryStore().resolve(record.metadata)
     detail = {
@@ -595,6 +636,10 @@ def _integrity_summary(record: PaperRecord) -> list[IntegrityRowDTO]:
 
 # ── Upload a scan (self-mark ingest) ──────────────────────────────────────────
 
+#: Client-generated, per-attempt dedupe token (D-style: this is the shape a
+#: UUID or similar opaque token already takes; wide enough to admit either).
+_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9._-]{8,128}$")
+
 
 @router.post("/student/uploads", response_model=StudentUploadResponse)
 async def student_upload(
@@ -604,44 +649,95 @@ async def student_upload(
     storage_backend: Annotated[StorageBackend, Depends(get_storage_backend)],
     scan: Annotated[UploadFile, File()],
     mark_scheme: Annotated[UploadFile | None, File()] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> StudentUploadResponse:
     """Persist a student's scanned paper (+ optional mark scheme) and register it.
 
-    The scan is uploaded to Supabase Storage under
+    The scan is uploaded to object storage (:mod:`lemely.io.storage`) under
     ``uploads/{user_id}/{paperId}/{filename}`` — the object key is namespaced by
     both the authenticated user id and a server-generated ``paperId`` (the
     :class:`Upload` row's id), and the client filename is sanitised to a
     basename. The returned ``paperId`` is passed back to ``POST
     /api/student/correct`` to run the self-mark pipeline over this scan.
+
+    ``Idempotency-Key`` is optional but, when sent, dedupes retries of the
+    *same* upload attempt (double-tap, or the offline queue replaying a
+    request that in fact already reached the server, Task 10) for 24h per
+    user: a hit returns the original ``paperId`` with this same 200 shape and
+    never re-reads or re-uploads the scan. See migration 0036 for the race
+    this closes.
     """
+    if idempotency_key is not None and not _IDEMPOTENCY_KEY_RE.fullmatch(idempotency_key):
+        raise HTTPException(status_code=422, detail="Malformed Idempotency-Key header")
+
+    if idempotency_key is not None:
+        since = datetime.now(UTC) - IDEMPOTENCY_KEY_WINDOW
+        existing = upload_repo.find_by_idempotency_key(
+            user_id=auth.user_id, key=idempotency_key, since=since
+        )
+        if existing is not None:
+            return StudentUploadResponse(paperId=str(existing.id))
+
     paper_id = uuid.uuid4()
     object_prefix = f"uploads/{auth.user_id}/{paper_id.hex}"
 
     scan_bytes = await scan.read()
-    check_upload_cap(scan_bytes)
+    check_upload_cap(scan_bytes, content_type=scan.content_type)
+    await anyio.to_thread.run_sync(check_scan_geometry, scan_bytes, scan.content_type)
     object_path = f"{object_prefix}/{safe_upload_name(scan.filename, 'scan.pdf')}"
-    storage_backend.upload(settings.storage.bucket, object_path, scan_bytes, scan.content_type)
+    # Off the event loop: this is ``async def``, and a blocking network call
+    # made inline here would freeze every other request in the process for as
+    # long as it took (the same shape decision D6.13 removed from the teacher
+    # upload route).
+    await anyio.to_thread.run_sync(
+        storage_backend.upload, settings.storage.bucket, object_path, scan_bytes, scan.content_type
+    )
 
     if mark_scheme is not None:
         # Fixed name so ``resolve_mark_scheme`` can find the sibling scheme object.
         scheme_bytes = await mark_scheme.read()
-        check_upload_cap(scheme_bytes)
-        storage_backend.upload(
+        check_upload_cap(scheme_bytes, content_type=mark_scheme.content_type)
+        await anyio.to_thread.run_sync(
+            storage_backend.upload,
             settings.storage.bucket,
             f"{object_prefix}/mark_scheme.pdf",
             scheme_bytes,
             mark_scheme.content_type,
         )
 
-    upload_repo.create_upload(
+    new_id = upload_repo.create_upload(
         user_id=auth.user_id,
         storage_path=object_path,
         original_filename=scan.filename,
         content_type=scan.content_type,
         byte_size=len(scan_bytes),
         upload_id=paper_id,
+        idempotency_key=idempotency_key,
     )
-    return StudentUploadResponse(paperId=str(paper_id))
+    if new_id != paper_id:
+        # A concurrent request holding the same idempotency key won the
+        # race inside `create_upload` (see its docstring): the DB row this
+        # request would have owned was never created, so the object(s) just
+        # written above are referenced by nothing and must not be left
+        # orphaned in storage.
+        # Best-effort: the winner's row already exists and this request's
+        # scan already succeeded under it, so a cleanup failure here (a
+        # transient storage hiccup) must not turn that success into a 500
+        # for a client that did nothing wrong. An orphaned object left
+        # behind on the rare failure is an accepted cost, not a new bug.
+        try:
+            await anyio.to_thread.run_sync(
+                storage_backend.delete, settings.storage.bucket, object_path
+            )
+            if mark_scheme is not None:
+                await anyio.to_thread.run_sync(
+                    storage_backend.delete,
+                    settings.storage.bucket,
+                    f"{object_prefix}/mark_scheme.pdf",
+                )
+        except Exception:
+            log.exception("orphaned_upload_cleanup_failed", paper_id=str(new_id))
+    return StudentUploadResponse(paperId=str(new_id))
 
 
 # ── Reading a run that outlived its browser tab ───────────────────────────────
@@ -728,71 +824,47 @@ def student_upload_run(
 # ── Correct a paper (SSE self-mark) ───────────────────────────────────────────
 
 
-def _metadata_matches(scheme_meta: object, detected: ExamMetadata) -> bool:
-    """Return True when a stored scheme's metadata matches the detected paper.
-
-    Compares subject_code / paper_number / paper_variant always, and the session
-    (month + year) only when the scan detected one — a scan without a resolved
-    session should still match a scheme for the same paper.
-    """
-    if getattr(scheme_meta, "subject_code", None) != detected.subject_code:
-        return False
-    if getattr(scheme_meta, "paper_number", None) != detected.paper_number:
-        return False
-    if getattr(scheme_meta, "paper_variant", None) != detected.paper_variant:
-        return False
-    if detected.session_year is not None:
-        return bool(getattr(scheme_meta, "session_year", None) == detected.session_year)
-    return True
-
-
 def resolve_mark_scheme(
-    scan_path: Path,
+    sibling_scheme: Path | None,
+    corpus: SchemeCorpusRepository,
     settings: Settings,
     gemini_client: GeminiClient,
     *,
-    metadata: ExamMetadata | None = None,
+    metadata: ExamMetadata | None,
 ) -> MarkScheme | None:
-    """Resolve a mark scheme for a scan: sibling PDF first, then scheme corpus.
+    """Resolve a mark scheme: sibling PDF first, then the corpus by detected metadata.
 
-    Preference order:
+    Preference order (spec §4.3 — shared by both portals):
 
-    1. A ``mark_scheme.pdf`` sitting next to the scan (uploaded with it) — parsed
-       via the deterministic parser with a Gemini fallback.
-    2. When ``metadata`` was detected, a parsed scheme JSON in
-       ``output_dir/schemes`` whose metadata matches the detected paper.
+    1. ``sibling_scheme``, when given: a mark-scheme PDF uploaded alongside the
+       scan, parsed via :class:`ChainedMarkSchemeParser` (deterministic first,
+       in the extraction worker, then Gemini on a ``ParseError``; a worker
+       failure raises :class:`~lemely.io.scheme_parse.SchemeReadFailedError`,
+       whose text is fixed, and calls no Gemini). A scheme handed to this call
+       explicitly always wins over the corpus, whatever the corpus holds for
+       the same paper.
+    2. Otherwise, when ``metadata`` was detected, the parsed scheme corpus
+       (:meth:`SchemeCorpusRepository.find_for`) — a query keyed on the exact
+       detected paper identity, never a free-text/fuzzy match, so a near-miss
+       returns ``None`` rather than a different paper's scheme.
 
     Returns ``None`` when neither source yields a scheme (the caller then warns
     and marks the upload failed rather than inventing marks).
     """
-    sibling = scan_path.parent / "mark_scheme.pdf"
-    if sibling.exists():
-        from lemely.io.det import DeterministicMarkSchemeParser
-
+    if sibling_scheme is not None:
+        # The deterministic parse runs in the extraction worker (#260): the
+        # PDF is the user's, and pdfplumber inflates whatever its content
+        # streams hold. A worker failure is a `SchemeReadFailedError` with a
+        # fixed text, not a `ParseError`, so it fails the run without reaching
+        # Gemini.
         parser = ChainedMarkSchemeParser(
-            DeterministicMarkSchemeParser(cfg=settings.det_parser),
+            WorkerSchemeParser(settings.det_parser),
             GeminiMarkSchemeParser(gemini_client),
         )
-        return parser(sibling)
-
+        return parser(sibling_scheme)
     if metadata is None:
         return None
-
-    import json
-
-    from pydantic import ValidationError
-
-    schemes_dir = settings.paths.output_dir / "schemes"
-    if not schemes_dir.exists():
-        return None
-    for path in sorted(schemes_dir.glob("*.json")):
-        try:
-            scheme = MarkScheme.model_validate(json.loads(path.read_text(encoding="utf-8")))
-        except (ValidationError, json.JSONDecodeError, OSError):
-            continue
-        if _metadata_matches(scheme.metadata, metadata):
-            return scheme
-    return None
+    return corpus.find_for(metadata)
 
 
 def _alert_teachers_and_parents(
@@ -803,6 +875,7 @@ def _alert_teachers_and_parents(
     profile_service: StudentProfileService,
     class_service: ClassService,
     parent_service: ParentLinkService,
+    zones: UserZoneReader,
     student_id: str,
 ) -> None:
     """Raise ``at_risk_alert`` for a freshly corrected student's staff (D5.11).
@@ -814,18 +887,20 @@ def _alert_teachers_and_parents(
 
     **Rule 3 (≥14 days inactive) cannot fire at this seam and that is not an
     oversight.** A student who has just uploaded a paper is, by definition,
-    active. Rule 3 is time-triggered and joins ``streak_warning`` and
-    ``study_plan_reminder`` in D5.9 §5's no-scheduler limitation — which means
-    the reason most likely to matter for a disengaging student is the one this
-    build cannot deliver. Stated in D5.11 §2 and carried to the Phase-5
-    limitations rather than left to be discovered.
+    active. Rule 3 is time-triggered and is the one notification the sweeper
+    in :mod:`lemely.web.scheduled_notifications` does **not** run:
+    ``streak_warning`` and ``study_plan_reminder`` — which this docstring
+    used to list beside it under D5.9 §5's no-scheduler limitation — now do
+    fire on a timer, and rule 3 alone is still carried as a limitation rather
+    than delivered.
 
-    The dedupe key is ``(student, reason, Cairo civil date)`` (D5.11 §3):
-    at-risk is a state, not an event, so an upload-keyed alert would send a
-    teacher of thirty students one notification per upload. The day boundary is
-    :func:`~lemely.db.xp_repo.civil_date_in_zone`, the same one D5.1 §4 fixed
-    for streaks — Cairo is UTC+3 in summer, so a hardcoded offset is wrong for
-    half the year.
+    The dedupe key is ``(student, reason, the student's own civil date)``
+    (D5.11 §3, per-user since the push-delivery spec §3): at-risk is a state,
+    not an event, so an upload-keyed alert would send a teacher of thirty
+    students one notification per upload. The day boundary is
+    :func:`~lemely.db.xp_repo.civil_date_in_zone` in the *assessed student's*
+    zone — it windows that student's own work — never the recipient's and
+    never a hardcoded offset.
 
     Every recipient's row is gated by **their own** preferences, which
     :func:`notify_safely` does for free by reading the recipient's row
@@ -849,7 +924,7 @@ def _alert_teachers_and_parents(
         if not recipients:
             return
 
-        today = civil_date_in_zone(datetime.now(UTC), zone=DEFAULT_ZONE)
+        today = civil_date_in_zone(datetime.now(UTC), zone=zones.zone_for(student_id))
         for flag in assessment.flags:
             for recipient in recipients:
                 notify_safely(
@@ -886,6 +961,7 @@ def student_correct(
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     settings: Annotated[Settings, Depends(get_settings)],
     storage_backend: Annotated[StorageBackend, Depends(get_storage_backend)],
+    corpus: Annotated[SchemeCorpusRepository, Depends(get_scheme_corpus_repo)],
     xp_service: Annotated[XpService, Depends(get_xp_service)],
     notification_service: Annotated[NotificationService, Depends(get_notification_service)],
     push_transport: Annotated[NotificationTransport, Depends(get_push_transport)],
@@ -893,6 +969,7 @@ def student_correct(
     profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
     class_service: Annotated[ClassService, Depends(get_class_service)],
     parent_service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
+    zones: Annotated[UserZoneReader, Depends(get_user_zone_reader)],
 ) -> StreamingResponse:
     """Stream the real self-mark pipeline for an uploaded paper over SSE.
 
@@ -912,7 +989,9 @@ def student_correct(
     The stream emits ``marking_progress`` frames and ends with a ``complete``
     summary frame plus the ``[DONE]`` sentinel; on any failure the upload is
     marked failed and a ``warning``/``error`` frame is emitted (never a
-    traceback).
+    traceback). The one exception is a paper the student deleted mid-run:
+    persist refuses it (:class:`UploadDeletedError`), the error frame says so
+    generically, and the deleted upload's status is left alone.
     """
     from lemely.runtime.events import EventType, bus
     from lemely.web.sse import bus_event_stream
@@ -956,6 +1035,7 @@ def student_correct(
                 # A sibling mark_scheme.pdf, if the student uploaded one, lives
                 # next to the scan under the same object-key prefix.
                 scheme_object_path = f"{Path(owned.storage_path).parent.as_posix()}/mark_scheme.pdf"
+                sibling_scheme: Path | None = None
                 try:
                     scheme_bytes = storage_backend.download(
                         settings.storage.bucket, scheme_object_path
@@ -963,7 +1043,8 @@ def student_correct(
                 except StorageObjectNotFoundError:
                     pass
                 else:
-                    (tmp_path / "mark_scheme.pdf").write_bytes(scheme_bytes)
+                    sibling_scheme = tmp_path / "mark_scheme.pdf"
+                    sibling_scheme.write_bytes(scheme_bytes)
 
                 metadata: ExamMetadata | None = None
                 if settings.gemini_api_key is not None:
@@ -977,7 +1058,7 @@ def student_correct(
                         )
 
                 mark_scheme = resolve_mark_scheme(
-                    scan_path, settings, gemini_client, metadata=metadata
+                    sibling_scheme, corpus, settings, gemini_client, metadata=metadata
                 )
                 if mark_scheme is None:
                     bus.publish(
@@ -989,17 +1070,43 @@ def student_correct(
                     return
 
                 extracted = extract_answers(scan_path, mark_scheme, gemini_client=gemini_client)
+                ensure_binding_allows_marking(extracted)
                 report = grade_paper(
                     mark_scheme,
                     extracted,
                     gemini_client=gemini_client,
                     student_id=None,
                     integrity_settings=settings.integrity,
+                    options=settings.grading.marking_options(),
                 )
                 attempt_id = attempt_repo.persist_correction(
-                    user_id=auth.user_id, report=report, upload_id=owned.id
+                    user_id=auth.user_id,
+                    report=report,
+                    upload_id=owned.id,
+                    mark_scheme=mark_scheme,
                 )
                 upload_repo.set_status(owned.id, UploadStatus.complete)
+                # The self-review routes address a question by its
+                # question_results row id, which only exists once persisted.
+                # Ordered *after* set_status and swallowed on failure for the
+                # same reason the XP call below is: the paper is marked and
+                # stored by this point, and a database blip on a
+                # presentation-only lookup must not fall into the handler at
+                # the bottom of this function, which would set the upload to
+                # `failed` and send an error frame for a correction that
+                # succeeded. Without the ids the frame simply carries
+                # questionResultId=None and the student sees their marks
+                # without the self-review affordance.
+                try:
+                    result_ids = attempt_repo.question_result_ids(attempt_id)
+                except SQLAlchemyError:
+                    log.warning(
+                        "question_result_ids_failed",
+                        attempt_id=str(attempt_id),
+                        paper_id=payload.paperId,
+                        exc_info=True,
+                    )
+                    result_ids = {}
                 # P5.2 chunk B, D5.1: XP for the *act* of correcting a paper,
                 # never for how well it was corrected — no mark/score/grade
                 # is read here or passed to XpService.award. The attempt is
@@ -1073,6 +1180,7 @@ def student_correct(
                     profile_service=profile_service,
                     class_service=class_service,
                     parent_service=parent_service,
+                    zones=zones,
                     student_id=auth.user_id,
                 )
                 # ``report.correction.metadata`` (an ``ExamMetadata``, derived from
@@ -1100,7 +1208,19 @@ def student_correct(
                     confidence=report.grade_prediction.confidence.value,
                     needs_review=report.correction.needs_teacher_review,
                     questions=[
-                        question_to_dto(q).model_dump(by_alias=True)
+                        question_to_dto(
+                            q,
+                            question_result_id=(
+                                str(result_ids[q.question_id])
+                                if q.question_id in result_ids
+                                else None
+                            ),
+                            # Student-facing frame: integrity findings are
+                            # teacher-only (QUALITY-BAR.md), and they travel in
+                            # review_reason's free text as well as in the two
+                            # booleans.
+                            for_student=True,
+                        ).model_dump(by_alias=True)
                         for q in report.correction.questions
                     ],
                     # SSE frames are raw kwargs forwarded snake_case (bypassing the
@@ -1114,13 +1234,36 @@ def student_correct(
                     rail_foot=header["railFoot"],
                     pct=round(report.grade_prediction.percentage),
                 )
+        except UploadDeletedError as exc:
+            # The student deleted this paper while it was being marked, and
+            # persist refused to write onto the deleted upload. The same error
+            # frame as any other failure, but no `failed` status: the upload is
+            # gone, and nothing may be written to it. The copy is the repo's
+            # generic sentence, never a reason.
+            bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))
+        except BindingHeldError as exc:
+            # The binding gate rejected this paper: nothing was stored, awarded
+            # or announced. The student gets the fixed sentence; the reasons
+            # (which can quote question ids) stay in the log.
+            log.warning(
+                "binding_held",
+                upload_id=str(owned.id),
+                verdict=exc.verdict,
+                stage=exc.stage,
+                failed_checks=exc.failed_check_ids,
+                reasons=exc.reasons,
+            )
+            bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))
+            upload_repo.set_status(owned.id, UploadStatus.failed)
         except Exception as exc:
             bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))
             upload_repo.set_status(owned.id, UploadStatus.failed)
         finally:
             bus.publish_done()
 
-    return StreamingResponse(bus_event_stream(run), media_type="text/event-stream")
+    return StreamingResponse(
+        bus_event_stream(run, run_id=f"student:{payload.paperId}"), media_type="text/event-stream"
+    )
 
 
 # ── Standings ─────────────────────────────────────────────────────────────────
@@ -1196,7 +1339,13 @@ def student_join_class(
     return JoinClassResponseDTO(classId=str(row.class_id), className=row.name)
 
 
-# ── Parent links (invite/list/revoke) ───────────────────────────────────────
+# ── Parent links (list/revoke) ──────────────────────────────────────────────
+#
+# Linking itself now happens only through a child-issued invite redeemed at
+# ``POST /api/invites/{code}/redeem`` (spec §4) — there is no
+# student-initiated "invite by phone" route any more (retired alongside
+# ``ParentLinkService.link``, D3.11's phone-OTP direction). These two routes
+# are what is left: reading and revoking the links that redemption created.
 
 
 @router.get("/student/parent-links", response_model=ParentLinkListDTO)
@@ -1212,37 +1361,14 @@ def student_list_parent_links(
     parents = service.list_parents(auth.user_id)
     return ParentLinkListDTO(
         parents=[
-            LinkedParentDTO(parentId=str(p.parent_id), displayName=p.display_name, phone=p.phone)
+            LinkedParentDTO(
+                parentId=str(p.parent_id),
+                displayName=p.display_name,
+                email=p.email,
+                phone=p.phone,
+            )
             for p in parents
         ]
-    )
-
-
-@router.post("/student/parent-links", response_model=LinkedParentDTO)
-def student_link_parent(
-    payload: LinkParentRequestDTO,
-    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
-    service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
-) -> LinkedParentDTO:
-    """Invite an existing parent (by phone) to link to the authenticated student.
-
-    Resolves ``phone`` to an *existing* ``role=parent`` user only (D3.11) —
-    this never creates an account from a student-supplied phone (a stranger's
-    mistyped or spoofed number could otherwise be handed this student's
-    grades). No matching parent account is a clean 404: the parent must
-    OTP-login at least once (which auto-creates their ``role=parent`` user,
-    ``AuthService.verify_otp``) before this student can invite them again.
-    Idempotent: inviting an already-linked parent again is a no-op success,
-    not an error.
-    """
-    try:
-        parent = service.link(auth.user_id, payload.phone)
-    except ParentUserNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return LinkedParentDTO(
-        parentId=str(parent.parent_id), displayName=parent.display_name, phone=parent.phone
     )
 
 
@@ -1261,3 +1387,196 @@ def student_unlink_parent(
         service.unlink(auth.user_id, parent_id)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# ── Parent invites (child-issued, spec §4) ──────────────────────────────────
+
+
+def _parent_invite_url(code: str, settings: Settings) -> str:
+    """Build the ``/join/:code`` link a parent invite resolves to (spec §4).
+
+    ``settings.email.app_base_url`` is the same origin
+    ``ResendEmailProvider._absolute`` already joins every mailed link onto —
+    reused here rather than re-derived, so a parent invite's link and an
+    email-verification link always point at the same deployment.
+    """
+    return f"{settings.email.app_base_url}/join/{code}"
+
+
+def _invite_link_to_dto(invite: Invite, settings: Settings) -> ParentInviteLinkDTO:
+    """Convert a single-use parent-invite row to its wire DTO.
+
+    ``expires_at`` is guaranteed set on every row this converts:
+    :meth:`~lemely.db.invite_repo.InviteService.mint_parent_invite` is only
+    ever called here with ``reusable=False``, and ``list_parent_invites``
+    deals only in single-use links — both always carry the 7-day expiry
+    (spec §3). The reusable code, whose ``expires_at`` is ``NULL``, is
+    surfaced separately (:class:`~lemely.web.schemas_parent.ParentCodeDTO`)
+    and never passed to this converter.
+
+    Raises:
+        ValueError: ``invite.expires_at`` is ``None`` — the invariant above
+            does not hold for this row. An explicit raise rather than an
+            ``assert``: an assert vanishes under ``python -O``, turning a
+            documented invariant into a bare ``AttributeError`` on the
+            ``.isoformat()`` call below instead of a clear, intentional
+            failure.
+    """
+    if invite.expires_at is None:
+        raise ValueError(f"Single-use parent invite {invite.code!r} has no expiry")
+    return ParentInviteLinkDTO(
+        code=invite.code,
+        url=_parent_invite_url(invite.code, settings),
+        expiresAt=invite.expires_at.isoformat(),
+    )
+
+
+def _raise_for_invite_error(exc: InviteError) -> NoReturn:
+    """Map a bare :class:`~lemely.db.invite_repo.InviteError` to an HTTP failure.
+
+    :meth:`~lemely.db.invite_repo.InviteService.get_or_create_parent_code`,
+    :meth:`~lemely.db.invite_repo.InviteService.mint_parent_invite` and
+    :meth:`~lemely.db.invite_repo.InviteService.rotate_parent_code` all raise
+    this one type for two different conditions, distinguished only by
+    message — the service module defines no dedicated subclass for either,
+    and this router does not own that module (D1.10-style layering) so it
+    cannot add one:
+
+    - "Unknown user" (the authenticated caller's own ``users`` row is gone).
+      Unreachable in practice — every caller here is ``auth.user_id`` from a
+      validated token — but a definite **404** rather than a fault if it
+      ever is reached.
+    - Everything else: a code-collision search exhausted after
+      ``_INVITE_CODE_MAX_ATTEMPTS`` attempts, or the rare reusable-code race
+      ``uq_invites_reusable_child`` itself catches. Both are retry-worthy,
+      mapped to **503** rather than a bare fault the client has no cue to
+      act on.
+    """
+    if str(exc).startswith("Unknown user:"):
+        raise HTTPException(status_code=404, detail="Unknown user.") from exc
+    raise HTTPException(
+        status_code=503, detail="Could not mint an invite code right now. Please try again."
+    ) from exc
+
+
+_SMALL_NUMBER_WORDS = {
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+    10: "ten",
+}
+
+
+def _spelled_out(n: int) -> str:
+    """Spell a small integer out in prose, falling back to the digit past ten.
+
+    Used only for :data:`~lemely.db.invite_repo.MAX_LIVE_PARENT_LINKS` in the
+    409 detail below, so that constant's cap can change without also hunting
+    down a hard-coded English word for it — the failure mode a literal
+    ``"five"`` in the f-string would otherwise reintroduce.
+    """
+    return _SMALL_NUMBER_WORDS.get(n, str(n))
+
+
+@router.get("/student/parent-invites", response_model=ParentInvitesDTO)
+def student_parent_invites(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[InviteService, Depends(get_invite_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ParentInvitesDTO:
+    """Return the authenticated student's reusable parent code and pending links.
+
+    The reusable code is minted lazily
+    (:meth:`~lemely.db.invite_repo.InviteService.get_or_create_parent_code`)
+    so this screen never shows an empty state for it, mirroring the
+    "a class always has a join code" rule that method's own docstring cites.
+    ``links`` lists only live, unredeemed single-use links, oldest first.
+    """
+    try:
+        code_invite = service.get_or_create_parent_code(auth.user_id)
+    except InviteError as exc:
+        _raise_for_invite_error(exc)
+    links = service.list_parent_invites(auth.user_id)
+    return ParentInvitesDTO(
+        code=ParentCodeDTO(
+            code=code_invite.code, url=_parent_invite_url(code_invite.code, settings)
+        ),
+        links=[_invite_link_to_dto(link, settings) for link in links],
+    )
+
+
+@router.post("/student/parent-invites", response_model=ParentInviteLinkDTO)
+def student_mint_parent_invite(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[InviteService, Depends(get_invite_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ParentInviteLinkDTO:
+    """Mint a fresh single-use parent invite link (7-day expiry, spec §3).
+
+    Identity is always the authenticated caller (``auth.user_id``), never a
+    caller-supplied id (D1.6's IDOR discipline, matching every other route on
+    this router). Capped at
+    :data:`~lemely.db.invite_repo.MAX_LIVE_PARENT_LINKS` live, unredeemed
+    links at a time (final review I-6) — each is independently revocable, so
+    a student who hits the cap can free a slot by revoking one rather than
+    waiting out an expiry.
+    """
+    try:
+        invite = service.mint_parent_invite(auth.user_id, reusable=False)
+    except InviteLimitReachedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"You already have {_spelled_out(MAX_LIVE_PARENT_LINKS)} unused links. "
+                "Revoke one or wait for it to expire."
+            ),
+        ) from exc
+    except InviteError as exc:
+        _raise_for_invite_error(exc)
+    return _invite_link_to_dto(invite, settings)
+
+
+@router.delete("/student/parent-invites/{code}", status_code=204)
+def student_revoke_parent_invite(
+    code: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[InviteService, Depends(get_invite_service)],
+) -> None:
+    """Revoke a single-use parent invite link belonging to the authenticated student.
+
+    An unknown code, another student's code, and the reusable code all map to
+    the identical 404 —
+    :meth:`~lemely.db.invite_repo.InviteService.revoke_parent_invite`'s own
+    disclosure discipline: a student learns nothing about a code they do not
+    own.
+    """
+    try:
+        service.revoke_parent_invite(auth.user_id, code)
+    except InviteNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/student/parent-invites/code/rotate", response_model=ParentCodeDTO)
+def student_rotate_parent_code(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[InviteService, Depends(get_invite_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ParentCodeDTO:
+    """Replace the authenticated student's reusable parent code with a fresh one.
+
+    The old code stops resolving the instant this returns
+    (:meth:`~lemely.db.invite_repo.InviteService.rotate_parent_code` deletes
+    it in the same transaction the new one is inserted in) — a parent still
+    holding it must be given the new one directly, there is no grace period.
+    """
+    try:
+        invite = service.rotate_parent_code(auth.user_id)
+    except InviteError as exc:
+        _raise_for_invite_error(exc)
+    return ParentCodeDTO(code=invite.code, url=_parent_invite_url(invite.code, settings))
