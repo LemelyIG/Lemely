@@ -1,0 +1,422 @@
+{
+  "manifest": {
+    "before": {
+      "run_id": "run-7b21a32dc3b8",
+      "git_sha": "ddec7f22",
+      "params_fingerprint": "2942b7e8a679",
+      "cache_mode": "read_write",
+      "split": "dev",
+      "corpus_digest": "76989782d6fda9fc",
+      "n_cases": 12
+    },
+    "after": {
+      "run_id": "run-7ac18bc25336",
+      "git_sha": "ddec7f22",
+      "params_fingerprint": "2942b7e8a679",
+      "cache_mode": "read_write",
+      "split": "dev",
+      "corpus_digest": "76989782d6fda9fc",
+      "n_cases": 12
+    },
+    "corpus_digest_equal": true,
+    "params_fingerprint_equal": true
+  },
+  "review_rate": {
+    "before": {
+      "n": 31,
+      "review_rate_signal": 0.0,
+      "review_rate_total": 0.0,
+      "per_paper_p95": 0.0,
+      "coherence_trigger_rate": 0.0,
+      "n_flagged_leaves": 0,
+      "n_coherence_flagged_leaves": 0,
+      "wilson95_review_rate_total": [
+        0.0,
+        0.11025900073475385
+      ],
+      "wilson95_coherence_trigger_rate": [
+        0.0,
+        0.11025900073475385
+      ]
+    },
+    "after": {
+      "n": 31,
+      "review_rate_signal": 0.0,
+      "review_rate_total": 0.0,
+      "per_paper_p95": 0.0,
+      "coherence_trigger_rate": 0.0,
+      "n_flagged_leaves": 0,
+      "n_coherence_flagged_leaves": 0,
+      "wilson95_review_rate_total": [
+        0.0,
+        0.11025900073475385
+      ],
+      "wilson95_coherence_trigger_rate": [
+        0.0,
+        0.11025900073475385
+      ]
+    }
+  },
+  "funnel": {
+    "before": {
+      "records_total": 78,
+      "question_level_records": 78,
+      "point_level_records_dropped": 0,
+      "distinct_leaves": 31,
+      "excluded_leaves_dropped_from_denominator": 0,
+      "scored_leaves_denominator": 31,
+      "by_parse_path": {
+        "det": {
+          "leaves": 8,
+          "correct": 8,
+          "over": 0,
+          "under": 0,
+          "abstain": 0,
+          "unmatched": 0,
+          "excluded": 0,
+          "scored_leaves": 8,
+          "correct_rate": 1.0,
+          "wilson95_correct_rate": [
+            0.6755843804891231,
+            1.0
+          ]
+        },
+        "gemini": {
+          "leaves": 23,
+          "correct": 17,
+          "over": 1,
+          "under": 5,
+          "abstain": 0,
+          "unmatched": 0,
+          "excluded": 0,
+          "scored_leaves": 23,
+          "correct_rate": 0.7391304347826086,
+          "wilson95_correct_rate": [
+            0.5352960945624944,
+            0.8745155411075104
+          ]
+        }
+      },
+      "abstain_leaves": 0
+    },
+    "after": {
+      "records_total": 78,
+      "question_level_records": 78,
+      "point_level_records_dropped": 0,
+      "distinct_leaves": 31,
+      "excluded_leaves_dropped_from_denominator": 0,
+      "scored_leaves_denominator": 31,
+      "by_parse_path": {
+        "det": {
+          "leaves": 8,
+          "correct": 8,
+          "over": 0,
+          "under": 0,
+          "abstain": 0,
+          "unmatched": 0,
+          "excluded": 0,
+          "scored_leaves": 8,
+          "correct_rate": 1.0,
+          "wilson95_correct_rate": [
+            0.6755843804891231,
+            1.0
+          ]
+        },
+        "gemini": {
+          "leaves": 23,
+          "correct": 17,
+          "over": 1,
+          "under": 5,
+          "abstain": 0,
+          "unmatched": 0,
+          "excluded": 0,
+          "scored_leaves": 23,
+          "correct_rate": 0.7391304347826086,
+          "wilson95_correct_rate": [
+            0.5352960945624944,
+            0.8745155411075104
+          ]
+        }
+      },
+      "abstain_leaves": 0
+    }
+  },
+  "flips": {
+    "generic": {
+      "leaves_in_both": 31,
+      "leaves_only_before": [],
+      "leaves_only_after": [],
+      "flagged_both": 0,
+      "flagged_neither": 31,
+      "disappeared": [],
+      "appeared": [],
+      "n_disappeared": 0,
+      "n_appeared": 0,
+      "net_change_in_flagged_leaves": 0,
+      "mcnemar_exact_p_two_sided": 1.0
+    },
+    "coherence": {
+      "leaves_in_both": 31,
+      "leaves_only_before": [],
+      "leaves_only_after": [],
+      "flagged_both": 0,
+      "flagged_neither": 31,
+      "disappeared": [],
+      "appeared": [],
+      "n_disappeared": 0,
+      "n_appeared": 0,
+      "net_change_in_flagged_leaves": 0,
+      "mcnemar_exact_p_two_sided": 1.0
+    },
+    "by_parse_path_generic": {
+      "det": {
+        "leaves": 8,
+        "flagged_before": 0,
+        "flagged_after": 0,
+        "disappeared": 0,
+        "appeared": 0
+      },
+      "gemini": {
+        "leaves": 23,
+        "flagged_before": 0,
+        "flagged_after": 0,
+        "disappeared": 0,
+        "appeared": 0
+      },
+      "other": {
+        "leaves": 0,
+        "flagged_before": 0,
+        "flagged_after": 0,
+        "disappeared": 0,
+        "appeared": 0
+      }
+    },
+    "by_parse_path_coherence": {
+      "det": {
+        "leaves": 8,
+        "flagged_before": 0,
+        "flagged_after": 0,
+        "disappeared": 0,
+        "appeared": 0
+      },
+      "gemini": {
+        "leaves": 23,
+        "flagged_before": 0,
+        "flagged_after": 0,
+        "disappeared": 0,
+        "appeared": 0
+      },
+      "other": {
+        "leaves": 0,
+        "flagged_before": 0,
+        "flagged_after": 0,
+        "disappeared": 0,
+        "appeared": 0
+      }
+    },
+    "by_scheme_shape_coherence": {
+      "disappeared": {
+        "counts": {
+          "stated_pool_over_award": 0,
+          "unequal_tariff_either_or_summed": 0,
+          "unstated_pool_leftover_cap_binds": 0,
+          "pool_capped_at_0": 0,
+          "later_stated_pool_no_room": 0,
+          "equal_tariff_either_or_matched_both_ways": 0,
+          "unclassified": 0,
+          "multiple_shapes": 0
+        },
+        "leaves": []
+      },
+      "appeared": {
+        "counts": {
+          "stated_pool_over_award": 0,
+          "unequal_tariff_either_or_summed": 0,
+          "unstated_pool_leftover_cap_binds": 0,
+          "pool_capped_at_0": 0,
+          "later_stated_pool_no_room": 0,
+          "equal_tariff_either_or_matched_both_ways": 0,
+          "unclassified": 0,
+          "multiple_shapes": 0
+        },
+        "leaves": []
+      }
+    },
+    "by_scheme_shape_generic": {
+      "disappeared": {
+        "counts": {
+          "stated_pool_over_award": 0,
+          "unequal_tariff_either_or_summed": 0,
+          "unstated_pool_leftover_cap_binds": 0,
+          "pool_capped_at_0": 0,
+          "later_stated_pool_no_room": 0,
+          "equal_tariff_either_or_matched_both_ways": 0,
+          "unclassified": 0,
+          "multiple_shapes": 0
+        },
+        "leaves": []
+      },
+      "appeared": {
+        "counts": {
+          "stated_pool_over_award": 0,
+          "unequal_tariff_either_or_summed": 0,
+          "unstated_pool_leftover_cap_binds": 0,
+          "pool_capped_at_0": 0,
+          "later_stated_pool_no_room": 0,
+          "equal_tariff_either_or_matched_both_ways": 0,
+          "unclassified": 0,
+          "multiple_shapes": 0
+        },
+        "leaves": []
+      }
+    }
+  },
+  "scheme_shape_exposure_after_run": {
+    "scored_leaves": 31,
+    "leaves_with_shape": {
+      "stated_pool_over_award": 0,
+      "unequal_tariff_either_or_summed": 0,
+      "unstated_pool_leftover_cap_binds": 0,
+      "pool_capped_at_0": 0,
+      "later_stated_pool_no_room": 0,
+      "equal_tariff_either_or_matched_both_ways": 2,
+      "no_candidate_shape": 29,
+      "question_not_found": 0
+    },
+    "no_shape_reasons": {
+      "no non-additive group in the scheme": 29
+    }
+  },
+  "mark_metrics": {
+    "before": {
+      "mark_accuracy": 0.8974358974358975,
+      "mark_accuracy_theory": 0.8857142857142857,
+      "id_match_rate": 1.0,
+      "flag_precision_high": 0.8974358974358975,
+      "flag_recall": 0.0
+    },
+    "after": {
+      "mark_accuracy": 0.8974358974358975,
+      "mark_accuracy_theory": 0.8857142857142857,
+      "id_match_rate": 1.0,
+      "flag_precision_high": 0.8974358974358975,
+      "flag_recall": 0.0
+    },
+    "mark_accuracy_equal": true,
+    "mark_accuracy_theory_equal": true
+  },
+  "per_parse_path_correct_equal": true,
+  "record_identity": {
+    "records_before": 78,
+    "records_after": 78,
+    "keys_in_both": 78,
+    "keys_only_before": [],
+    "keys_only_after": [],
+    "predicted_marks_and_outcome_identical_on_every_shared_key": true,
+    "differences": []
+  },
+  "baseline_comparison": {
+    "committed_baseline": {
+      "git_sha": "f7be062",
+      "computed_at": "2026-08-22",
+      "corpus_digest": "e982c884f7f30cd7",
+      "run_id": "run-9d48a94771f7",
+      "review_rate": {
+        "n": 31,
+        "review_rate_signal": 0.2903225806451613,
+        "review_rate_total": 0.2903225806451613,
+        "per_paper_p95": 0.8333333333333334
+      }
+    },
+    "before_run": {
+      "n": 31,
+      "corpus_digest": "76989782d6fda9fc"
+    },
+    "n_matches": true,
+    "corpus_digest_matches": false,
+    "reading": "MISMATCH: before-vs-baseline difference is corpus/code drift since the baseline's git_sha, not #272"
+  },
+  "meta": {
+    "T1_SHA": "9130d7142b914fa1d23c0e0d7f2f91127535cb8c",
+    "BASE_SHA": "282607deeeea857ae0c947628df8de50e01c686c",
+    "measured_trees": {
+      "before": "detached worktree at 282607de, on PYTHONPATH",
+      "after": "detached worktree at 9130d714, on PYTHONPATH",
+      "note": "The manifest git_sha in both result files (and so in after-results.json, the baseline's former source_run) is ddec7f22: save_result and the manifest read the cwd HEAD, which was this worktree. The measured trees were 282607de and 9130d714."
+    },
+    "cache_mode": "read_write",
+    "cache_files": {
+      "N0_start": 134,
+      "N1_after_before_run": 207,
+      "before_run_added": 73,
+      "N2_after_after_run": 207,
+      "after_run_added": 0,
+      "in_process_count_before": 207,
+      "in_process_count_after": 207,
+      "in_process_count_added": 0
+    },
+    "before_draw_cache_hits": {
+      "gemini_cache_hit_events": 9,
+      "by_task": {
+        "correction": 8,
+        "extraction": 1
+      },
+      "provenance_checked_here": "None of the 9 cache keys exists in the main checkout's .lemely-cache/gemini (134 files), and the scratch files for those keys carry mtimes inside the before run (16:08-16:13 local), so the 9 hits were served from entries the before run itself wrote a moment earlier (fixture variants sharing an identical prompt), not from the seeded cache. The coordinator's reading, that 8 were correction replies from the main checkout's cache, was not reproduced. Either way the before draw contains 9 calls whose reply was reused rather than freshly drawn.",
+      "consequence": "The before draw is one marker draw per distinct prompt, not one per call."
+    },
+    "exit_codes": {
+      "before": "0 observed; carries no information",
+      "after": "0 observed; carries no information",
+      "note": "Exit status 0 observed; it carries no information. lemely.app.cli.main() calls cli.main(args=argv, standalone_mode=False, ...) and then returns 0 (lemely/app/cli.py:1485-1486). In non-standalone mode Click 8.4.2 returns the Exit(1) raised after 'Targets missed' (cli.py:1363) as a value instead of raising it, and main() discards that value, so the CLI process itself exits 0; the 'except click.exceptions.Exit' at cli.py:1490 is unreachable for it. Reproduced without an API call by registering a command on lemely.app.cli.cli that raises click.exceptions.Exit(1): cli.main(standalone_mode=False) returns 1 and lemely.app.cli.main([...]) returns 0 (whole-branch review B, I1). The shell and tee are not the cause. cli.py is outside this branch's file set; the fix is a follow-up issue."
+    },
+    "out_of_range_residual": {
+      "run_id": "run-7651050596ed",
+      "question_results": 78,
+      "review_reason_starting_with_marker_returned": 0,
+      "list": [],
+      "source_file": "count-out-of-range.json"
+    },
+    "spend": {
+      "before_run_live_usd_per_ledger": 0.1852,
+      "after_run_live_usd": 0.0,
+      "in_process_replay_usd": 0.0,
+      "total_usd_per_ledger": 0.1852,
+      "caveat": "The ledger is the spend: it comes from the lemely/io/gemini.py pricing table at GA rates and bills thinking tokens as output tokens (M0.2/#26 landed before this branch), with gemini-3.8-flash at the promotional rate through 2026-12-31. The after run and the in-process replay were launched WITHOUT the API key, so a miss could not have gone live."
+    },
+    "evidence_files": {
+      "before_results": "before-results.json (the before run's saved results, run-7b21a32dc3b8; originally results-before/2026-10-05-ddec7f22.json in the job scratch directory, copied unchanged except the trailing newline end-of-file-fixer adds)",
+      "after_results": "after-results.json (run-7ac18bc25336)",
+      "out_of_range_count": "count-out-of-range.json (the --count-out-of-range replay's JSON object, run-7651050596ed; the structlog cache-hit lines that preceded it in the captured output were stripped)",
+      "compare_invocation": "From the repository root, with PYTHONPATH pinned to the tree under test: PYTHONPATH=$PWD .venv/bin/python BUILD/accuracy-runs/coherence-272-2026-10-01/compare.py --before BUILD/accuracy-runs/coherence-272-2026-10-01/before-results.json --after BUILD/accuracy-runs/coherence-272-2026-10-01/after-results.json --baseline BUILD/review-rate-baseline.json --golden tests/golden --out <out.json>",
+      "compare_invocation_note": "BUILD/review-rate-baseline.json is byte-identical to its a1563b4f content. Re-run at fix/marking-accuracy (after 839c32fb): exit 0, and manifest, review_rate, funnel, flips, scheme_shape_exposure_after_run, mark_metrics, per_parse_path_correct_equal, record_identity and baseline_comparison equal this report's sections exactly. meta, baseline_decision and task7_leaf_finding are added by hand, not by compare.py. The --count-out-of-range mode needs the job's scratch cache and config, which are not committed, so count-out-of-range.json is its recorded output."
+    }
+  },
+  "baseline_decision": {
+    "refreshed": false,
+    "decision": "BUILD/review-rate-baseline.json is NOT refreshed; it is restored byte-for-byte to its a1563b4f content.",
+    "decided_by": "owner",
+    "decided_on": "2026-10-05",
+    "reasons": [
+      "The move from 0.2903 to 0.0 is drift measured on ONE replayed draw of a nondeterministic marker.",
+      "Task 7's same-day fresh draw at 62c7c61a fails the p95 limb (0.2857 > 0.15) on the same corpus size (n = 31).",
+      "DA33 rules a single draw unusable as a comparator."
+    ],
+    "what_this_run_is": "non-regression evidence for #272 only: 0 flips either way, 78/78 predicted_marks and outcome records identical between the pre-#272 and #272 trees replaying one cache. It is not a review-rate measurement of either tree.",
+    "follow_up": "A follow-up issue will re-baseline review_rate from repeated cache_mode=bypass runs.",
+    "after_results_json_note": "after-results.json is kept as the replay's evidence. It is no longer any baseline's source_run."
+  },
+  "task7_leaf_finding": {
+    "source": "Re-derived from BUILD/accuracy-runs/cost-201-2026-10-01/results.json (Task 7's live run at 62c7c61a, fresh draw, n = 31): eval_records triggers and predicted_marks, compared key by key with after-results.json.",
+    "0580_s23_qp_22_theory_Q14": {
+      "variant_outcome": "partial",
+      "scheme": "a single 2-mark point, no group (so the grouped interval equals the old global interval for it)",
+      "coherence_flag_cause": "a fresh marker reply awarding 1 of 2; #272 cannot cause this flag"
+    },
+    "0580_s23_qp_22_theory_Q2": {
+      "variant_outcome": "whitespace",
+      "triggers": "needs_teacher_review only, no coherence trigger"
+    },
+    "marks_between_the_two_draws": "three records differ in predicted_marks between Task 7's draw and this before/after draw (0580_s23_qp_22_theory correct Q2, 0580_s23_qp_22_theory partial Q14, 0625_s20_qp_31_theory correct Q11b); that is marker sampling noise, not a #272 effect (the before and after trees here agree on all 78 records)",
+    "reading": "the 0.032 coherence rate and 0.065 signal in Task 7 versus 0.000 here is draw-to-draw variation at n = 31, not the coherence unification."
+  }
+}

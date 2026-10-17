@@ -33,7 +33,10 @@ or session dependency resolves, so this file needs no database.
 
 from __future__ import annotations
 
+import re
 import uuid
+from collections import Counter
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -48,7 +51,6 @@ from lemely.web.deps import AuthContext, get_auth_context, get_settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
     from fastapi import FastAPI
     from fastapi.dependencies.models import Dependant
@@ -111,7 +113,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/admin/schools"): PLATFORM_ADMIN,
     ("PATCH", "/api/admin/schools/{school_id}"): PLATFORM_ADMIN,
     ("POST", "/api/admin/schools/{school_id}/admins"): PLATFORM_ADMIN,
-    # ── TEACHER_OR_SCHOOL_ADMIN (4) ────────────────────
+    # ── TEACHER_OR_SCHOOL_ADMIN (7) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("DELETE", "/api/teacher/announcements/{announcement_id}"): TEACHER_OR_SCHOOL_ADMIN,
@@ -120,15 +122,31 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # the two roles that may manage a class's roster (D3.1) - platform_admin
     # cannot reach this route, mirroring every other class-mutating route.
     ("POST", "/api/school/classes/{class_id}/invite-code"): TEACHER_OR_SCHOOL_ADMIN,
+    # D9 (design §5): unshare/reshare one paper from one class. Router-level
+    # guard is the STAFF triple; narrowed per-route to the two roles that
+    # manage a class, like the invite code above - platform_admin has no class
+    # scope to act in. Row-level: the class scope check, then the attempt must
+    # belong to a student on that class's roster (else 404).
+    ("POST", "/api/classes/{class_id}/papers/{attempt_id}/unshare"): TEACHER_OR_SCHOOL_ADMIN,
+    ("DELETE", "/api/classes/{class_id}/papers/{attempt_id}/unshare"): TEACHER_OR_SCHOOL_ADMIN,
+    # Controller addition (Task 13's review): the minimal read that makes
+    # unshared state visible again. Same guard, same reasoning — the two
+    # roles that manage a class, never platform_admin.
+    ("GET", "/api/classes/{class_id}/papers"): TEACHER_OR_SCHOOL_ADMIN,
     # ── PARENT (4) ────────────────────
     ("GET", "/api/parent/children"): PARENT,
     ("GET", "/api/parent/children/{child_id}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/subjects/{code}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/weaknesses"): PARENT,
-    # ── PUBLIC (10) ────────────────────
+    # ── PUBLIC (12) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
-    ("POST", "/api/auth/otp/request"): PUBLIC,
-    ("POST", "/api/auth/otp/verify"): PUBLIC,
+    # spec §4: the child-issued parent signup, replacing the retired
+    # `/api/auth/otp/*` pair. Public by the same necessity as `/auth/signup`
+    # itself — there is no caller identity yet, only an invite code and (from
+    # step two on) a proof token that the email step minted.
+    ("POST", "/api/auth/parent/request-code"): PUBLIC,
+    ("POST", "/api/auth/parent/verify-code"): PUBLIC,
+    ("POST", "/api/auth/parent/signup"): PUBLIC,
     # Unauthenticated by necessity: it exists to replace an access token that
     # has already expired, so gating it behind one would make it unreachable at
     # exactly the moment it is needed. The refresh token in the body is the
@@ -147,18 +165,28 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/auth/password-reset/request"): PUBLIC,
     ("POST", "/api/auth/password-reset/confirm"): PUBLIC,
     ("GET", "/api/health"): PUBLIC,
+    # PR 1 chunk C: the browser error-report sink. Deliberately unauthenticated
+    # — a signed-out login-page crash must still be reportable, and the route
+    # is rate-limited + size-capped instead (see its own module docstring).
+    ("POST", "/api/client-errors"): PUBLIC,
     # D7.3/spec §1.2: G-08's pre-account preview. Public and unauthenticated
     # by design - a visitor sees what a code joins *before* creating an
     # account, and `InviteService.preview` is written to be paranoid about
     # disclosure precisely because this route carries no bearer token at all
     # (see its own docstring for the "no id, no roster, no count" rule).
     ("GET", "/api/invites/{code}"): PUBLIC,
-    # ── AUTH_ANY (14) ────────────────────
+    # ── AUTH_ANY (19) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
     ("GET", "/api/me/notification-preferences"): AUTH_ANY,
     ("PUT", "/api/me/notification-preferences"): AUTH_ANY,
     ("GET", "/api/me/profile"): AUTH_ANY,
+    ("PUT", "/api/me/timezone"): AUTH_ANY,
+    # Profile picture set/clear: any authenticated role, same as the profile
+    # GET above -- a student and a teacher both have exactly one avatar to
+    # manage, gated only by `get_auth_context` (never a caller-supplied id).
+    ("POST", "/api/me/avatar"): AUTH_ANY,
+    ("DELETE", "/api/me/avatar"): AUTH_ANY,
     ("GET", "/api/notifications"): AUTH_ANY,
     ("GET", "/api/notifications/counts"): AUTH_ANY,
     ("GET", "/api/notifications/push/config"): AUTH_ANY,
@@ -166,6 +194,11 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/notifications/push/unsubscribe"): AUTH_ANY,
     ("POST", "/api/notifications/read-all"): AUTH_ANY,
     ("POST", "/api/notifications/{notification_id}/read"): AUTH_ANY,
+    # The subject catalogue and UI enumerations: authenticated for any role
+    # (see the router's own docstring) since onboarding is a student flow but
+    # the screens resolving a syllabus code to a display name span the
+    # student portal, and the payload carries nothing user-specific.
+    ("GET", "/api/reference"): AUTH_ANY,
     # D7.3/spec §1.2: redeem is authenticated but role-agnostic - an invite's
     # own `role` decides what redeeming it does, not the caller's platform
     # role, so this is `get_auth_context` alone (no `require_role`), the same
@@ -177,9 +210,25 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # `get_auth_context` alone, the same AUTH_ANY shape as the invite-redeem
     # route above, not a `require_role` guard.
     ("POST", "/api/auth/verify-email/resend"): AUTH_ANY,
-    # ── STAFF (40) ────────────────────
+    # spec §4.4/DS15: the code half of the link-and-code pair. Authenticated
+    # (any signed-in role) because the address is read from the caller's own
+    # session, never a body field — the same AUTH_ANY shape as
+    # `verify-email/resend` above, not a `require_role` guard. Not PUBLIC like
+    # `/verify-email` (the link route): a six-digit code is a much weaker
+    # bearer credential than the link's opaque token, so it is scoped to the
+    # caller's own session rather than redeemable by anyone who has it.
+    ("POST", "/api/auth/verify-email/code"): AUTH_ANY,
+    # ── STAFF (44) ────────────────────
     ("GET", "/api/classes/{class_id}"): STAFF,
     ("GET", "/api/classes/{class_id}/analytics"): STAFF,
+    # Console paper deletion (Task 17, R2). Row-level: only the uploader may
+    # delete/restore their own paper — another teacher's, or a school_admin
+    # looking at it, gets the same fixed 404
+    # (``TeacherPaperDeletionService``'s own docstring). No integrity hold, so
+    # there is no 409 branch to gate further than the router's own STAFF.
+    ("DELETE", "/api/papers/{paper_id}"): STAFF,
+    ("POST", "/api/papers/{paper_id}/restore"): STAFF,
+    ("GET", "/api/papers/deleted"): STAFF,
     ("POST", "/api/classes/{class_id}/enroll"): STAFF,
     ("GET", "/api/classes/{class_id}/roster"): STAFF,
     ("DELETE", "/api/classes/{class_id}/students/{student_id}"): STAFF,
@@ -190,9 +239,11 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # Renders page 1 of a stored scan. Staff-only for the same reason the paper
     # detail is: it is a student's answer sheet.
     ("GET", "/api/papers/{paper_id}/preview"): STAFF,
-    ("POST", "/api/papers/{paper_id}/extract"): STAFF,
-    ("POST", "/api/papers/{paper_id}/grade"): STAFF,
     # Queues the same marking run without the stream (the console's retry).
+    # ``POST /papers/{id}/extract`` and ``POST /papers/{id}/grade`` are
+    # deleted (DS14): marking now starts at upload and runs in the
+    # background against the repository, so there is no separate SSE
+    # extract/grade step to gate here.
     ("POST", "/api/papers/{paper_id}/regrade"): STAFF,
     ("POST", "/api/quizzes/generate"): STAFF,
     ("GET", "/api/quizzes/pools"): STAFF,
@@ -220,10 +271,19 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/teacher/review"): STAFF,
     ("POST", "/api/teacher/review/bulk-approve"): STAFF,
     ("GET", "/api/teacher/review/{item_id}"): STAFF,
+    # The staff triple is the router-level guard only. This route serves an
+    # image of a student's script, so the guard that matters is the row-level
+    # one inside `ReviewService.get_item_crop_source` — the review item's own
+    # roster-union visibility rule, under which `platform_admin` sees no
+    # classes and therefore no scan. Proven in
+    # `tests/test_web_review.py::test_crop_route_refuses_a_caller_who_cannot_see_the_student`,
+    # which this table's role sweep cannot reach (it never gets past
+    # `require_role`).
+    ("GET", "/api/teacher/review/{item_id}/crop"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,
-    # ── STUDENT (51) ────────────────────
+    # ── STUDENT (63) ────────────────────
     ("GET", "/api/me/student-profile"): STUDENT,
     ("PATCH", "/api/me/student-profile"): STUDENT,
     ("POST", "/api/me/student-profile/complete-onboarding"): STUDENT,
@@ -251,10 +311,30 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("DELETE", "/api/student/friends/{friendship_id}"): STUDENT,
     ("POST", "/api/student/friends/{friendship_id}/accept"): STUDENT,
     ("GET", "/api/student/leaderboard"): STUDENT,
+    # Student self-review (spec 2026-09-17): both verbs on the one path.
+    (
+        "GET",
+        "/api/student/attempts/{attempt_id}/questions/{question_result_id}/self-review",
+    ): STUDENT,
+    (
+        "POST",
+        "/api/student/attempts/{attempt_id}/questions/{question_result_id}/self-review",
+    ): STUDENT,
+    ("GET", "/api/student/attempts/{attempt_id}/questions"): STUDENT,
+    # Student paper deletion (design 2026-09-22-paper-deletion-design.md, §8).
+    ("DELETE", "/api/student/attempts/{attempt_id}"): STUDENT,
+    ("POST", "/api/student/attempts/{attempt_id}/restore"): STUDENT,
+    ("GET", "/api/student/attempts/deleted"): STUDENT,
     ("GET", "/api/student/overview"): STUDENT,
     ("GET", "/api/student/parent-links"): STUDENT,
-    ("POST", "/api/student/parent-links"): STUDENT,
     ("DELETE", "/api/student/parent-links/{parent_id}"): STUDENT,
+    # spec §4: the child-issued parent-invite surface (P3.6a's "Your parent
+    # code" / "Send a one-time link" cards). Replaces the retired
+    # `POST /api/student/parent-links` (invite an existing parent by phone).
+    ("GET", "/api/student/parent-invites"): STUDENT,
+    ("POST", "/api/student/parent-invites"): STUDENT,
+    ("DELETE", "/api/student/parent-invites/{code}"): STUDENT,
+    ("POST", "/api/student/parent-invites/code/rotate"): STUDENT,
     ("POST", "/api/student/placement"): STUDENT,
     ("GET", "/api/student/placement/{assignment_id}/result"): STUDENT,
     ("GET", "/api/student/placement/{subject_code}/availability"): STUDENT,
@@ -276,6 +356,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/student/uploads"): STUDENT,
     ("GET", "/api/student/uploads/active"): STUDENT,
     ("GET", "/api/student/uploads/{paper_id}"): STUDENT,
+    ("GET", "/api/student/widget"): STUDENT,
     ("GET", "/api/student/xp"): STUDENT,
 }
 
@@ -473,10 +554,37 @@ def test_a_malformed_credential_is_401_not_a_pass(app: FastAPI, header: str) -> 
 def test_the_sweeps_actually_cover_the_surface() -> None:
     """Guard against a silently empty parametrization (P6.2's decoration lesson)."""
     assert len(ROUTES) == len(EXPECTED)
-    # 8 auth entrypoints (the original 5 + issue #10's verify-email,
-    # password-reset/request, password-reset/confirm) + /api/health + invite
-    # preview.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 10
+    # 9 auth entrypoints (the original 5, minus the two retired
+    # `/api/auth/otp/*` routes, plus spec §4's three `/api/auth/parent/*`
+    # routes, plus issue #10's verify-email, password-reset/request,
+    # password-reset/confirm) + /api/health + invite preview + PR 1 chunk C's
+    # client-error sink.
+    assert len(_NON_PUBLIC) == len(ROUTES) - 12
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 6
     assert len(_REAL_TOKEN_CASES) >= 20
+
+
+def test_the_section_counts_in_this_file_match_what_it_registers() -> None:
+    """The "── STUDENT (60) ──" headings are checked, not decorative.
+
+    They were wrong: STUDENT read 57 against 60 entries and AUTH_ANY 18
+    against 19, because nothing compared them. A count nobody verifies drifts
+    silently, and this file is the registry a reviewer reads to answer "is the
+    new route covered?". Parsing the headings out of the source keeps the
+    numbers honest without duplicating them as literals in an assertion.
+    """
+    source = Path(__file__).read_text(encoding="utf-8")
+    headings = re.findall(r"#\s*\u2500+\s*([A-Z_]+)\s*\((\d+)\)", source)
+    assert headings, "section headings are the thing under test; none were found"
+
+    names = globals()
+    actual = Counter(
+        str(sorted(role)) if isinstance(role, frozenset) else role for role in EXPECTED.values()
+    )
+    for name, written in headings:
+        role = names[name]
+        key = str(sorted(role)) if isinstance(role, frozenset) else role
+        assert actual[key] == int(written), (
+            f"section {name} says {written}, EXPECTED holds {actual[key]}"
+        )

@@ -19,7 +19,7 @@ and onboarding on ``/api/me/student-profile*``, each tested in its own module.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -36,20 +36,26 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from lemely.db.upload_repo import StudentUploadRepository
+
 from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.base import Base
+from lemely.db.class_repo import ClassService
+from lemely.db.invite_repo import MAX_LIVE_PARENT_LINKS, InviteService
 from lemely.db.models import User
 from lemely.db.models.enums import QualificationLevel, Role
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.history_store import HistoryStore
-from lemely.runtime.config import DatabaseSettings
+from lemely.runtime.config import DatabaseSettings, Settings
+from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
     get_history_store,
+    get_invite_service,
     get_parent_link_service,
     get_student_profile_service,
     get_user_mirror,
@@ -173,7 +179,19 @@ def client(seeded_store: HistoryStore, profile_service: MagicMock) -> TestClient
 
 
 def test_overview_subjects_are_aggregated_from_history(client: TestClient) -> None:
-    """Overview subject rows aggregate marks per subject with a weighted mean."""
+    """Overview subject rows aggregate marks per subject with a weighted mean.
+
+    `physics["grade"]` is resolved (`_grade_for`) against the most recent
+    record's real, ingested CAIE boundaries for 0625 paper 1 -- "Multiple
+    Choice (Core)" (`syllabus_papers.tier="core"`). Cambridge caps Core at
+    grade C: its component thresholds publish C-G only, no A/B, because Core
+    exists for candidates targeting C or below. So an 89% average on this
+    paper is correctly awarded a C, not the A it would be worth on an
+    Extended paper -- the old "A" expectation predated the reference-data
+    migration and awarded a grade Cambridge's own Core-tier papers cannot
+    give. See `test_result_is_data_backed_with_empty_theory` (seeds an
+    Extended paper instead) for this same reference data's A-boundary path.
+    """
     body = client.get("/api/student/overview").json()
 
     # `STUDENT_ID` ("maya") is this file's friendly string id for the
@@ -190,7 +208,10 @@ def test_overview_subjects_are_aggregated_from_history(client: TestClient) -> No
     # (33 + 38) / (40 + 40) = 88.75 → 89
     assert physics["pct"] == 89
     assert physics["papers"] == 2
-    assert physics["grade"] == "A"
+    # Core-tier cap (see docstring): 89% clears every published boundary
+    # (C:58.79 D:51.21 E:45.21 F:38.33 G:32.29) but Core publishes no A/B,
+    # so the highest awardable grade on this paper is C.
+    assert physics["grade"] == "C"
     assert physics["barColor"] == "ok"
     # trend = round(95.0 - 82.5) = round(12.5) = 12 (banker's rounding) → improving
     assert physics["trend"] == "+12"
@@ -336,6 +357,62 @@ def test_overview_empty_history_is_neutral(tmp_path: Path) -> None:
     assert body["subjects"] == []
     assert body["weakGlobal"] == []
     assert body["momentum"]["points"] == []
+
+
+def test_overview_with_no_papers_never_builds_the_boundary_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A student with nothing to grade must not need grade boundaries at all.
+
+    Regression test for the staging outage: ``_subjects`` built
+    :class:`~lemely.io.grade_boundaries.GradeBoundaryStore` before it looked at
+    the history, and that constructor raises
+    :class:`~lemely.runtime.errors.EmptyGradeBoundaryStoreError` against an
+    un-ingested ``component_thresholds``. So a freshly deployed environment
+    500'd the *first* screen a new student ever sees — the getting-started view,
+    which resolves no grade whatsoever.
+
+    The store is replaced with something that raises on construction rather than
+    asserting on a call count, because the module-level reference cache in
+    ``lemely.io.grade_boundaries`` makes a real construction succeed or fail
+    depending on which tests ran before this one.
+    """
+
+    def _refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("built the boundary store with nothing to grade")
+
+    monkeypatch.setattr("lemely.web.routers.student.GradeBoundaryStore", _refuse)
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: HistoryStore(tmp_path / "empty")
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id="nobody", role="student"
+    )
+    response = TestClient(app).get("/api/student/overview")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["subjects"] == []
+
+
+def test_overview_reports_an_un_ingested_boundary_store_as_503(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An un-ingested threshold table is unavailability, not a bug in the request.
+
+    A student *with* papers genuinely cannot be graded until
+    ``scripts/ingest_thresholds.py`` has run, so refusing is correct (that is
+    what the store's own error is for). Returning a bare 500 told an operator
+    only "something threw"; 503 plus a detail naming the ingest is the same
+    refusal with the cause attached.
+    """
+
+    def _empty(*_args: object, **_kwargs: object) -> None:
+        raise EmptyGradeBoundaryStoreError("component_thresholds has no verified rows")
+
+    monkeypatch.setattr("lemely.web.routers.student.GradeBoundaryStore", _empty)
+    response = client.get("/api/student/overview")
+
+    assert response.status_code == 503, response.text
+    assert "ingest_thresholds" in response.json()["detail"]
 
 
 def test_overview_malformed_id_returns_200_not_500(
@@ -551,19 +628,52 @@ def test_subject_history_id_addresses_full_history_not_filtered_subset(
 # ── Paper result (flagship) ───────────────────────────────────────────────────
 
 
-def test_result_is_data_backed_with_empty_theory(client: TestClient) -> None:
-    """Result totals/grade/rail are data-backed; theory is structurally empty."""
-    body = client.get("/api/student/result/1").json()  # 2nd record: 38/40
+def test_result_is_data_backed_with_empty_theory(tmp_path: Path) -> None:
+    """Result totals/grade/rail are data-backed; theory is structurally empty.
+
+    Deliberately does NOT reuse the module's shared `client`/`seeded_store`
+    fixtures: both of their 0625 records are paper 1 ("Multiple Choice
+    (Core)", `syllabus_papers.tier="core"`), which `test_subject_breakdown_and_history`
+    relies on ("both papers share paper_number 1"). Cambridge caps Core at
+    grade C -- its real ingested thresholds carry no A boundary at all -- so
+    a Core record can never exercise `railFoot`'s "A boundary sat at ..."
+    line; see `test_overview_subjects_are_aggregated_from_history` for that
+    same Core-cap consequence on the aggregation path. This test seeds its
+    own one-record store on 0625 paper 2 ("Multiple Choice (Extended)",
+    `tier="extended"`) instead, to keep the A-boundary rail-foot format under
+    real, data-backed coverage rather than losing it to an empty-string
+    assertion.
+    """
+    store = HistoryStore(tmp_path / "history")
+    store.append(
+        STUDENT_ID,
+        _record(
+            paper_number=2,
+            awarded=38,
+            maximum=40,
+            percentage=95.0,
+            grade="A",
+            recorded_at="2020-06-01T10:00:00+00:00",
+            source_document="0625_m20_qp_22.pdf",
+        ),
+    )
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=STUDENT_ID, role="student"
+    )
+    body = TestClient(app).get("/api/student/result/0").json()
 
     assert body["awarded"] == 38
     assert body["max"] == 40
     assert body["pct"] == 95
     assert body["grade"] == "A"
     assert body["railLeft"] == 95
-    # The A boundary resolves to a real mark line (subject-default for 0625).
+    # 0625 paper 2 (Extended) publishes a real A boundary (subject-default,
+    # no exact-variant data for this session).
     assert body["railFoot"].startswith("A boundary sat at")
     assert body["boundaryYear"] == "2020"
-    assert body["provenance"] == "0625_m20_qp_12.pdf"
+    assert body["provenance"] == "0625_m20_qp_22.pdf"
 
     # Structurally empty: history records persist no per-question detail.
     assert body["theory"] == []
@@ -573,6 +683,54 @@ def test_result_is_data_backed_with_empty_theory(client: TestClient) -> None:
     assert len(body["integrity"]) == 1
     assert body["integrity"][0]["label"] == "Grade boundary resolved"
     assert body["integrity"][0]["mark"] == "dash"
+
+
+def test_result_attempt_id_is_null_for_file_store_records(client: TestClient) -> None:
+    """The file-backed store has no attempts; the field is present and null,
+    never fabricated -- the frontend renders no self-review panel for it."""
+    body = client.get("/api/student/result/0").json()
+    assert "attemptId" in body
+    assert body["attemptId"] is None
+
+
+def test_result_attempt_id_is_the_records_own_attempt_for_a_db_backed_store(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A Postgres-backed result carries *its* attempt id, on the wire.
+
+    The sibling test above pins only the file store, where ``None`` is also
+    what a dropped ``attemptId=`` wiring would produce -- the two are
+    indistinguishable there, and production runs the DB store
+    (``lemely/web/deps.py``). Two records with different grades are seeded so
+    the assertion also fails on an id that belongs to the *other* attempt,
+    not merely on a null.
+    """
+    from lemely.db.history_repo import DbHistoryStore
+    from lemely.db.models.attempts import Attempt
+
+    uid = _seed_pg_user(pg_sessionmaker, Role.student)
+    store = DbHistoryStore(pg_sessionmaker)
+    store.append(str(uid), _record(grade="C", recorded_at="2020-06-01T10:00:00+00:00"))
+    store.append(str(uid), _record(grade="B", recorded_at="2020-06-02T10:00:00+00:00"))
+
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(uid), role=Role.student.value
+    )
+    local = TestClient(app)
+
+    bodies = [local.get(f"/api/student/result/{index}").json() for index in (0, 1)]
+
+    with pg_sessionmaker() as session:
+        attempts = session.scalars(sa.select(Attempt).where(Attempt.user_id == uid)).all()
+    by_grade = {attempt.grade: str(attempt.id) for attempt in attempts}
+    assert set(by_grade) == {"B", "C"}, "fixture must seed two distinguishable attempts"
+    assert [body["attemptId"] for body in bodies] == [
+        by_grade[bodies[0]["grade"]],
+        by_grade[bodies[1]["grade"]],
+    ]
+    assert bodies[0]["attemptId"] != bodies[1]["attemptId"]
 
 
 def test_result_unknown_id_is_404(client: TestClient) -> None:
@@ -710,6 +868,428 @@ def test_upload_is_not_gated_by_verification(seeded_store: HistoryStore) -> None
     assert resp.json()["paperId"]
     upload_repo.create_upload.assert_called_once()
     app.dependency_overrides.clear()
+
+
+# ── Idempotency-Key (B6a) ────────────────────────────────────────────────────
+#
+# Postgres-backed (mirrors `test_correct_succeeds_once_verified`'s wiring):
+# the dedupe window is enforced by `StudentUploadRepository` against a real
+# unique index (migration 0036), which a mocked repo cannot exercise.
+
+
+def test_upload_same_idempotency_key_twice_dedupes(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A retried upload (double-tap, or an offline-queue replay of a request
+    that in fact reached the server) with the same key returns the original
+    `paperId` and never touches storage a second time."""
+    from lemely.db.upload_repo import StudentUploadRepository
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    storage_backend = FakeStorageBackend()
+
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: StudentUploadRepository(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    headers = {"Idempotency-Key": "retry-key-00001"}
+    resp1 = api.post(
+        "/api/student/uploads",
+        headers=headers,
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    resp2 = api.post(
+        "/api/student/uploads",
+        headers=headers,
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp1.status_code == 200, resp1.text
+    assert resp2.status_code == 200, resp2.text
+    assert resp1.json()["paperId"] == resp2.json()["paperId"]
+    assert len(storage_backend._objects) == 1
+    app.dependency_overrides.clear()
+
+
+def test_upload_different_idempotency_keys_create_two_rows(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    from lemely.db.upload_repo import StudentUploadRepository
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    storage_backend = FakeStorageBackend()
+
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: StudentUploadRepository(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp1 = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": "key-aaaaaaaa"},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    resp2 = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": "key-bbbbbbbb"},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp1.status_code == 200, resp1.text
+    assert resp2.status_code == 200, resp2.text
+    assert resp1.json()["paperId"] != resp2.json()["paperId"]
+    assert len(storage_backend._objects) == 2
+    app.dependency_overrides.clear()
+
+
+def test_upload_malformed_idempotency_key_is_422(seeded_store: HistoryStore) -> None:
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+
+    upload_repo = MagicMock()
+    storage_backend = MagicMock()
+    student_id = uuid.uuid4()
+
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: seeded_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: upload_repo
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": "short"},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp.status_code == 422, resp.text
+    upload_repo.create_upload.assert_not_called()
+    storage_backend.upload.assert_not_called()
+    app.dependency_overrides.clear()
+
+
+def test_upload_idempotency_key_older_than_window_creates_new_row(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A key last used more than 24h ago no longer dedupes: the retry gets its
+    own new row and the stale row's key is released rather than blocking the
+    insert (the unique index has no time bound of its own, migration 0036)."""
+    import sqlalchemy as sa
+
+    from lemely.db.models.attempts import Upload
+    from lemely.db.upload_repo import StudentUploadRepository
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    old_upload_id = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Upload(
+                id=old_upload_id,
+                user_id=student_id,
+                storage_path=f"uploads/{student_id}/{old_upload_id.hex}/scan.pdf",
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=10,
+                idempotency_key="stale-key-00001",
+            )
+        )
+    stale = datetime.now(UTC) - timedelta(hours=25)
+    with pg_sessionmaker() as session:
+        session.execute(
+            sa.text("UPDATE uploads SET created_at = :ts WHERE id = :id"),
+            {"ts": stale, "id": old_upload_id},
+        )
+        session.commit()
+
+    storage_backend = FakeStorageBackend()
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: StudentUploadRepository(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": "stale-key-00001"},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp.status_code == 200, resp.text
+    new_paper_id = resp.json()["paperId"]
+    assert new_paper_id != str(old_upload_id)
+
+    with pg_sessionmaker() as session:
+        count = session.execute(
+            sa.text("SELECT COUNT(*) FROM uploads WHERE user_id = :uid"), {"uid": student_id}
+        ).scalar_one()
+    assert count == 2
+    app.dependency_overrides.clear()
+
+
+def _make_race_injecting_repo(
+    session_factory: sessionmaker[Session], *, student_id: uuid.UUID, race_key: str
+) -> StudentUploadRepository:
+    """Simulates a second request's insert winning the race.
+
+    Injects a competing row holding ``race_key`` immediately before
+    delegating to the real ``create_upload`` — so *this* call's own insert
+    loses the unique-index race deterministically, without real threads.
+    Shared by the two orphaned-storage-cleanup tests below, which differ
+    only in the storage backend they wire in.
+    """
+    from lemely.db.models.attempts import Upload
+    from lemely.db.upload_repo import StudentUploadRepository
+
+    class _RaceInjectingRepo(StudentUploadRepository):
+        def __init__(self, sm: sessionmaker[Session]) -> None:
+            super().__init__(sm)
+            self.winner_id = uuid.uuid4()
+            self._injected = False
+
+        def create_upload(self, **kwargs: object) -> uuid.UUID:
+            if not self._injected and kwargs.get("idempotency_key") == race_key:
+                self._injected = True
+                with self._sm.begin() as session:
+                    session.add(
+                        Upload(
+                            id=self.winner_id,
+                            user_id=student_id,
+                            storage_path=f"uploads/{student_id}/{self.winner_id.hex}/scan.pdf",
+                            original_filename="scan.pdf",
+                            content_type="application/pdf",
+                            byte_size=5,
+                            idempotency_key=race_key,
+                        )
+                    )
+            return super().create_upload(**kwargs)  # type: ignore[arg-type]
+
+    return _RaceInjectingRepo(session_factory)
+
+
+def test_upload_orphaned_storage_cleaned_up_on_idempotency_race(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A genuine concurrent race — two requests with the same key both miss
+    the router's pre-check — must not leak the losing request's storage
+    object. `create_upload` hands back the *winner's* row id when its own
+    insert loses the unique-index race; the router must then delete the
+    object it just wrote for *this* request before returning that id, or the
+    blob sits in storage forever, referenced by nothing."""
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    race_key = "concurrent-race-00001"
+    repo = _make_race_injecting_repo(pg_sessionmaker, student_id=student_id, race_key=race_key)
+    storage_backend = FakeStorageBackend()
+
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: repo
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": race_key},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["paperId"] == str(repo.winner_id)
+    assert storage_backend._objects == {}, "losing request's storage object was not cleaned up"
+    app.dependency_overrides.clear()
+
+
+def test_upload_orphaned_storage_delete_failure_still_returns_winner_paperid(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The losing side of an idempotency race cleans up its own orphaned
+    storage object as a courtesy, not as a condition of success: the
+    client's scan already succeeded, just under the winner's row. If the
+    cleanup ``delete`` call itself fails (a transient GCS hiccup), that must
+    not turn this already-successful request into a 500 — the caller did
+    nothing wrong and has nothing to retry."""
+    from lemely.runtime.errors import ExternalServiceError
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    race_key = "concurrent-race-delete-fails-00001"
+
+    class _DeleteFailsStorageBackend(FakeStorageBackend):
+        def delete(self, bucket: str, object_path: str) -> None:
+            raise ExternalServiceError("simulated transient GCS delete failure")
+
+    repo = _make_race_injecting_repo(pg_sessionmaker, student_id=student_id, race_key=race_key)
+    storage_backend = _DeleteFailsStorageBackend()
+
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: repo
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": race_key},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["paperId"] == str(repo.winner_id)
+    app.dependency_overrides.clear()
+
+
+def test_create_upload_second_integrity_error_on_stale_retry_resolves(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Two concurrent requests racing the *same stale* idempotency key: the
+    first releases the key and inserts its new row; the second's retry
+    insert then collides with that freshly-inserted row and must resolve to
+    its id rather than escape as an uncaught ``IntegrityError`` (-> 500)."""
+    from lemely.db.models.attempts import Upload
+    from lemely.db.upload_repo import StudentUploadRepository
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    stale_id = uuid.uuid4()
+    key = "stale-concurrent-race"
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Upload(
+                id=stale_id,
+                user_id=student_id,
+                storage_path=f"uploads/{student_id}/{stale_id.hex}/scan.pdf",
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=5,
+                idempotency_key=key,
+            )
+        )
+    with pg_sessionmaker() as session:
+        session.execute(
+            sa.text("UPDATE uploads SET created_at = :ts WHERE id = :id"),
+            {"ts": datetime.now(UTC) - timedelta(hours=25), "id": stale_id},
+        )
+        session.commit()
+
+    class _StaleRaceRepo(StudentUploadRepository):
+        """Injects a concurrent winner between releasing the stale key and
+        this call's own retry insert, so the retry collides deterministically."""
+
+        def __init__(self, session_factory: sessionmaker[Session]) -> None:
+            super().__init__(session_factory)
+            self.winner_id = uuid.uuid4()
+            self._injected = False
+
+        def _retry_after_releasing_stale_key(self, **kwargs: object) -> uuid.UUID:
+            if not self._injected:
+                self._injected = True
+                with self._sm.begin() as session:
+                    # Mirrors what the concurrent request's own call does:
+                    # release the stale row's key first (or this insert
+                    # would itself collide with the still-live stale row),
+                    # then land its own new row under the released key —
+                    # simulating that request completing its entire
+                    # null-and-retry cycle first.
+                    session.execute(
+                        sa.text(
+                            "UPDATE uploads SET idempotency_key = NULL "
+                            "WHERE user_id = :uid AND idempotency_key = :key"
+                        ),
+                        {"uid": str(student_id), "key": key},
+                    )
+                    session.add(
+                        Upload(
+                            id=self.winner_id,
+                            user_id=student_id,
+                            storage_path=f"uploads/{student_id}/{self.winner_id.hex}/scan.pdf",
+                            original_filename="scan.pdf",
+                            content_type="application/pdf",
+                            byte_size=5,
+                            idempotency_key=key,
+                        )
+                    )
+            return super()._retry_after_releasing_stale_key(**kwargs)  # type: ignore[arg-type]
+
+    repo = _StaleRaceRepo(pg_sessionmaker)
+    new_upload_id = uuid.uuid4()
+
+    returned_id = repo.create_upload(
+        user_id=str(student_id),
+        storage_path=f"uploads/{student_id}/{new_upload_id.hex}/scan.pdf",
+        original_filename="scan.pdf",
+        content_type="application/pdf",
+        byte_size=5,
+        upload_id=new_upload_id,
+        idempotency_key=key,
+    )
+
+    assert returned_id == repo.winner_id
+
+
+def test_create_upload_reraises_unrelated_integrity_error(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """An ``IntegrityError`` that has nothing to do with the idempotency key
+    (e.g. a primary-key collision on ``upload_id``) must surface as-is, not
+    be swallowed by the null-and-retry logic meant for a stale-key race."""
+    from lemely.db.models.attempts import Upload
+    from lemely.db.upload_repo import StudentUploadRepository
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    dup_id = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Upload(
+                id=dup_id,
+                user_id=student_id,
+                storage_path=f"uploads/{student_id}/{dup_id.hex}/scan.pdf",
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=5,
+            )
+        )
+
+    repo = StudentUploadRepository(pg_sessionmaker)
+
+    with pytest.raises(sa.exc.IntegrityError):
+        repo.create_upload(
+            user_id=str(student_id),
+            storage_path=f"uploads/{student_id}/{dup_id.hex}/scan2.pdf",
+            original_filename="scan2.pdf",
+            content_type="application/pdf",
+            byte_size=5,
+            upload_id=dup_id,
+            idempotency_key="brand-new-key-no-existing-row",
+        )
 
 
 def test_correct_succeeds_once_verified(
@@ -883,9 +1463,26 @@ def parent_link_service(pg_sessionmaker: sessionmaker[Session]) -> ParentLinkSer
 
 
 @pytest.fixture
-def parent_links_client(parent_link_service: ParentLinkService) -> Iterator[TestClient]:
+def invite_service(
+    pg_sessionmaker: sessionmaker[Session], parent_link_service: ParentLinkService
+) -> InviteService:
+    """Postgres-backed ``InviteService``, wired the same way ``deps.get_invite_service``
+    wires its production singleton — the same ``ParentLinkService`` this
+    fixture module already builds, so a redemption through
+    ``/api/student/parent-invites``' sibling route (``/api/invites/{code}/redeem``)
+    and a direct ``parent_link_service.link_in_session`` call in a test are
+    both writing through the identical service.
+    """
+    return InviteService(pg_sessionmaker, ClassService(pg_sessionmaker), parent_link_service)
+
+
+@pytest.fixture
+def parent_links_client(
+    parent_link_service: ParentLinkService, invite_service: InviteService
+) -> Iterator[TestClient]:
     app = create_app()
     app.dependency_overrides[get_parent_link_service] = lambda: parent_link_service
+    app.dependency_overrides[get_invite_service] = lambda: invite_service
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -928,56 +1525,39 @@ def test_student_lists_no_parents_when_none_linked(
     assert parent_links_client.get("/api/student/parent-links").json() == {"parents": []}
 
 
-def test_student_links_a_parent_by_phone_then_lists_it(
-    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+def test_list_parents_carries_email(
+    parent_links_client: TestClient,
+    parent_link_service: ParentLinkService,
+    pg_sessionmaker: sessionmaker[Session],
 ) -> None:
+    """Linking is now child-issued-invite-only (spec §4); this list route's own
+    contract change — ``LinkedParentDTO`` gaining ``email`` — is proven directly
+    against the model, not through the now-removed phone-invite route."""
     student = _seed_pg_user(pg_sessionmaker, Role.student)
-    parent = _seed_pg_user(pg_sessionmaker, Role.parent, display_name="Mum", phone="+15551230000")
+    parent = _seed_pg_user(pg_sessionmaker, Role.parent, display_name="Mum")
+    with pg_sessionmaker.begin() as session:
+        parent_link_service.link_in_session(session, parent, student)
     _auth_as_pg(parent_links_client, student, Role.student)
-
-    resp = parent_links_client.post("/api/student/parent-links", json={"phone": "+15551230000"})
-    assert resp.status_code == 200
-    assert resp.json() == {"parentId": str(parent), "displayName": "Mum", "phone": "+15551230000"}
 
     listing = parent_links_client.get("/api/student/parent-links").json()
-    assert listing["parents"] == [
-        {"parentId": str(parent), "displayName": "Mum", "phone": "+15551230000"}
-    ]
 
-
-def test_student_link_unknown_phone_is_a_clean_404(
-    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
-) -> None:
-    """No existing ``role=parent`` account for this phone — never auto-created (D3.11)."""
-    student = _seed_pg_user(pg_sessionmaker, Role.student)
-    _auth_as_pg(parent_links_client, student, Role.student)
-
-    resp = parent_links_client.post("/api/student/parent-links", json={"phone": "+15559999999"})
-    assert resp.status_code == 404
-
-
-def test_student_link_is_idempotent_over_http(
-    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
-) -> None:
-    student = _seed_pg_user(pg_sessionmaker, Role.student)
-    _seed_pg_user(pg_sessionmaker, Role.parent, phone="+15550001234")
-    _auth_as_pg(parent_links_client, student, Role.student)
-
-    first = parent_links_client.post("/api/student/parent-links", json={"phone": "+15550001234"})
-    second = parent_links_client.post("/api/student/parent-links", json={"phone": "+15550001234"})
-
-    assert first.status_code == second.status_code == 200
-    assert first.json() == second.json()
-    assert len(parent_links_client.get("/api/student/parent-links").json()["parents"]) == 1
+    assert len(listing["parents"]) == 1
+    row = listing["parents"][0]
+    assert row["parentId"] == str(parent)
+    assert row["displayName"] == "Mum"
+    assert row["email"] == f"{parent}@example.com"
 
 
 def test_student_unlink_then_list_shows_the_parent_gone(
-    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+    parent_links_client: TestClient,
+    parent_link_service: ParentLinkService,
+    pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     student = _seed_pg_user(pg_sessionmaker, Role.student)
-    parent = _seed_pg_user(pg_sessionmaker, Role.parent, phone="+15550005678")
+    parent = _seed_pg_user(pg_sessionmaker, Role.parent)
+    with pg_sessionmaker.begin() as session:
+        parent_link_service.link_in_session(session, parent, student)
     _auth_as_pg(parent_links_client, student, Role.student)
-    parent_links_client.post("/api/student/parent-links", json={"phone": "+15550005678"})
 
     resp = parent_links_client.delete(f"/api/student/parent-links/{parent}")
 
@@ -1005,3 +1585,127 @@ def test_student_unlink_malformed_parent_id_is_422(
     resp = parent_links_client.delete("/api/student/parent-links/not-a-uuid")
 
     assert resp.status_code == 422
+
+
+# ── Parent invites (child-issued, spec §4) ──────────────────────────────────
+
+
+def _join_url(code: str) -> str:
+    return f"{Settings().email.app_base_url}/join/{code}"
+
+
+def test_student_parent_invites_get_mints_code_lazily(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """The reusable code appears on first read with no separate mint step
+    (mirrors ``classes.join_code``'s "a class always has a join code" rule)."""
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    body = parent_links_client.get("/api/student/parent-invites").json()
+
+    assert body["links"] == []
+    assert body["code"]["code"]
+    assert body["code"]["url"] == _join_url(body["code"]["code"])
+
+    # Reading again returns the identical code - lazy minting is not re-minting.
+    again = parent_links_client.get("/api/student/parent-invites").json()
+    assert again["code"]["code"] == body["code"]["code"]
+
+
+def test_student_mints_and_revokes_a_link(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    minted = parent_links_client.post("/api/student/parent-invites")
+    assert minted.status_code == 200, minted.text
+    body = minted.json()
+    assert body["code"]
+    assert body["url"] == _join_url(body["code"])
+    assert body["expiresAt"]
+
+    listed = parent_links_client.get("/api/student/parent-invites").json()
+    assert [link["code"] for link in listed["links"]] == [body["code"]]
+
+    revoke = parent_links_client.delete(f"/api/student/parent-invites/{body['code']}")
+    assert revoke.status_code == 204
+
+    after = parent_links_client.get("/api/student/parent-invites").json()
+    assert after["links"] == []
+
+
+def test_student_minting_past_the_cap_is_409(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Final review I-6: the sixth live single-use link is refused with a 409
+    a student can act on, rather than an unbounded mint loop.
+
+    The detail's spelled-out count is asserted via
+    ``student_router_module._spelled_out(MAX_LIVE_PARENT_LINKS)`` rather than
+    a hard-coded ``"five"`` — final re-review nit: a hard-coded word cannot
+    track a future change to the cap.
+    """
+    from lemely.web.routers import student as student_router_module
+
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+    for _ in range(MAX_LIVE_PARENT_LINKS):
+        minted = parent_links_client.post("/api/student/parent-invites")
+        assert minted.status_code == 200, minted.text
+
+    resp = parent_links_client.post("/api/student/parent-invites")
+
+    assert resp.status_code == 409, resp.text
+    expected_count = student_router_module._spelled_out(MAX_LIVE_PARENT_LINKS)
+    assert expected_count in resp.json()["detail"].lower()
+
+
+def test_student_revoking_an_unknown_code_is_404(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    resp = parent_links_client.delete("/api/student/parent-invites/NOSUCHCODE")
+
+    assert resp.status_code == 404
+
+
+def test_student_cannot_revoke_another_students_link(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    owner = _seed_pg_user(pg_sessionmaker, Role.student)
+    stranger = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, owner, Role.student)
+    minted = parent_links_client.post("/api/student/parent-invites").json()
+
+    _auth_as_pg(parent_links_client, stranger, Role.student)
+    resp = parent_links_client.delete(f"/api/student/parent-invites/{minted['code']}")
+
+    assert resp.status_code == 404
+
+    # The owner's own link survives the stranger's refused attempt.
+    _auth_as_pg(parent_links_client, owner, Role.student)
+    still_listed = parent_links_client.get("/api/student/parent-invites").json()
+    assert [link["code"] for link in still_listed["links"]] == [minted["code"]]
+
+
+def test_student_rotate_code_changes_it(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+    original = parent_links_client.get("/api/student/parent-invites").json()["code"]["code"]
+
+    rotated = parent_links_client.post("/api/student/parent-invites/code/rotate")
+
+    assert rotated.status_code == 200, rotated.text
+    body = rotated.json()
+    assert body["code"] != original
+    assert body["url"] == _join_url(body["code"])
+
+    # The old code is gone; the new one is what a fresh read now returns.
+    after = parent_links_client.get("/api/student/parent-invites").json()
+    assert after["code"]["code"] == body["code"]

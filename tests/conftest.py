@@ -16,16 +16,114 @@ shell's exported vars (if any) still apply, exactly as in CI.
 
 from __future__ import annotations
 
+import logging
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+import structlog
 
 import lemely.runtime.config as config_module
+from lemely.core.loose_schemas import (
+    AnswerPoint,
+    MarkScheme,
+    MarkSchemeMetadata,
+    MathMarkType,
+    PaperType,
+    SchemeFormat,
+)
+from lemely.core.loose_schemas import Question as SchemeQuestion
+from lemely.core.loose_schemas import QuestionType as SchemeQuestionType
+from lemely.core.loose_schemas import SessionMonth as LooseSessionMonth
 from lemely.runtime.config import Settings
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
+
+    from sqlalchemy.orm import Session, sessionmaker
+
+
+# US-036: `sys.flags.optimize != 0` (CPython `-O`/`-OO`, or `PYTHONOPTIMIZE`
+# set in the environment) strips every bare `assert` statement in the
+# process running this hook. A pytest test file built on bare `assert`s (the
+# convention this whole suite uses; pytest's own assertion-rewriting import
+# hook is what lets `assert x == y` still produce a readable failure -- but
+# rewriting only applies to files pytest itself imports as test modules, not
+# to arbitrary `assert`s a fixture or the code under test executes) then
+# "passes" having asserted nothing. This is not hypothetical on this branch:
+# `impl-us038`'s very first run of this suite reported a clean PASSED with
+# zero real assertions, because this session exports `PYTHONOPTIMIZE=2` on
+# shell entry -- an ambient setting outside the repo (not in
+# ~/.claude/settings.json, not in pyproject.toml, not in any shell profile
+# under version control here) that no per-agent warning can reliably survive.
+#
+# `env -u PYTHONOPTIMIZE .venv/bin/python -m pytest ...` is the correct
+# invocation and is documented everywhere in this repo that runs tests, but
+# a human or agent forgetting the flag must not get a silent, meaningless
+# PASSED -- they must get a loud, immediate refusal instead. Hence this hook,
+# not a fixture: `pytest_configure` runs before collection, so the whole
+# session is refused before a single (possibly vacuous) test executes,
+# rather than after some tests have already reported false confidence.
+#
+# No escape hatch: nothing in this suite legitimately needs the *pytest
+# process itself* to run under `-O`/`-OO`. The one place this branch
+# deliberately exercises `-OO` behaviour
+# (`tests/test_answer_extraction.py::WireSchemaSurvivesPythonOptimizeTests`)
+# does so by spawning `sys.executable -OO -c ...` as a SEPARATE subprocess --
+# that subprocess's optimize level is independent of this (the parent pytest
+# process's) `sys.flags.optimize`, so this guard and that test do not
+# conflict at any optimize level the parent process might be run under.
+def pytest_configure(config: pytest.Config) -> None:
+    if sys.flags.optimize != 0:
+        raise pytest.UsageError(
+            f"Refusing to run: sys.flags.optimize == {sys.flags.optimize} "
+            "(PYTHONOPTIMIZE is set, or python was launched with -O/-OO). "
+            "CPython strips every bare `assert` statement under -O/-OO, and "
+            "this suite's tests are ordinary `assert`-based pytest tests -- "
+            "so a run under this flag can report PASSED having checked "
+            "nothing, which already happened once on this branch. Re-run as: "
+            "  env -u PYTHONOPTIMIZE .venv/bin/python -m pytest ...\n"
+            "Do not add PYTHONDONTWRITEBYTECODE alongside it -- combined "
+            "with -O that forces a sympy recompile per subprocess and has "
+            "already broken a timeout-bounded test on this branch."
+        )
+
+
+def _scheme() -> MarkScheme:
+    """A one-question scheme with three points: p1 (M, 1), p2 (A, 1), p3 (B, 1).
+
+    Shared by ``tests/test_question_points.py`` and ``tests/test_attempt_repo.py``
+    (moved here so neither imports a private helper out of the other's test
+    module). Field names here are verified against the real schema, not
+    guessed: ``Question`` takes ``type=`` (not ``question_type=``), every enum
+    member is UPPERCASE, and ``MarkSchemeMetadata`` requires ``subject`` and
+    ``maximum_mark`` as well as the obvious fields.
+    """
+    question = SchemeQuestion(
+        id="1a",
+        marks=3,
+        type=SchemeQuestionType.CALCULATION,
+        answer_points=[
+            AnswerPoint(id="p1", point="Correct method", marks=1, math_mark_type=MathMarkType.M),
+            AnswerPoint(id="p2", point="Answer to 3sf", marks=1, math_mark_type=MathMarkType.A),
+            AnswerPoint(id="p3", point="Units stated", marks=1, math_mark_type=MathMarkType.B),
+        ],
+    )
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Mathematics",
+            subject_code="0580",
+            paper_number=2,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2024,
+            paper_type=PaperType.THEORY_EXTENDED,
+            maximum_mark=3,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[question],
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -36,6 +134,68 @@ def _disable_dotenv_file() -> Iterator[None]:
         yield
     finally:
         Settings.model_config["env_file"] = original
+
+
+@pytest.fixture(autouse=True)
+def _reset_structlog_config() -> Iterator[None]:
+    """Undo any real ``configure_logging()`` call so ``capture_logs()`` stays reliable.
+
+    ``lemely.runtime.logging.configure_logging`` — invoked for real by every
+    CLI test via ``CliRunner().invoke(cli, ...)`` — sets
+    ``cache_logger_on_first_use=True`` and hands structlog a brand-new
+    ``processors`` list on each call. The codebase's convention is a
+    module-level ``log = structlog.get_logger(__name__)``; the first time such
+    a logger is used, it freezes onto whichever processors list is current at
+    that moment. If a *later* real ``configure_logging()`` call swaps in a new
+    list before some other test enters ``structlog.testing.capture_logs()``,
+    that already-frozen logger keeps writing through the stale list —
+    ``capture_logs()`` relies on mutating the *current* list in place, so it
+    captures nothing. This is what made
+    ``tests/test_teacher_paper_deletion.py``'s purge log assertions fail only
+    in full-suite runs, never alone: resetting after every test keeps
+    ``cache_logger_on_first_use`` false for everyone except the one test that
+    turned it on, so no other test's module logger ever freezes onto a
+    soon-to-be-stale list.
+    """
+    yield
+    structlog.reset_defaults()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _shut_down_sandbox_workers() -> Iterator[None]:
+    """Stop both scan-render children once the session ends (#260).
+
+    A test that renders or checks a scan without a sandbox fixture (the
+    upload and grading routes, the extractor) starts a real worker child
+    and leaves it for the next test. The fixtures in
+    ``tests/sandbox_fixtures.py`` shut the workers down around their own
+    tests; this stops whatever is left at the end, so no child outlives the
+    run.
+    """
+    yield
+    from lemely.runtime import sandbox
+
+    sandbox.EXTRACTION_WORKER.shutdown()
+    sandbox.INTERACTIVE_WORKER.shutdown()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _disable_notification_sweeper() -> Iterator[None]:
+    """Never race a background task under test (push-delivery spec §4).
+
+    ``create_app`` starts the notification sweeper from its lifespan when
+    ``settings.notifications.sweeper_enabled`` is true, which is the shipped
+    default. The env var wins over every other settings source, so setting it
+    once here covers every ``TestClient`` in the suite; the one test that
+    needs the sweeper on sets the var back itself and clears the settings
+    singleton.
+    """
+    patch = pytest.MonkeyPatch()
+    patch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "0")
+    try:
+        yield
+    finally:
+        patch.undo()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -231,3 +391,360 @@ def _disable_ambient_toml() -> Iterator[None]:
         yield
     finally:
         config_module._discover_toml = original  # type: ignore[assignment]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _seed_ambient_grade_boundaries() -> Iterator[None]:
+    """Seed `component_thresholds` on the *ambient* database (once, session-wide).
+
+    `GradeBoundaryStore()` (no sessionmaker argument -- used all over the web
+    layer: `review_repo.py`, `student.py`, `parent.py`, `web/services/grading.py`,
+    `app/cli.py`, `web/deps.py`) always resolves against `get_sessionmaker()`,
+    the ambient database from `DatabaseSettings().url` -- never a test's own
+    throwaway `pg_sessionmaker`/`migrated_sessionmaker` database. In CI (and any
+    freshly migrated Postgres) that database's `component_thresholds` starts
+    empty: `python scripts/ingest_thresholds.py` (docs/deployment.md §3.5) is a
+    live scrape against ciegt.pooruli.com plus the official Cambridge PDFs,
+    deliberately NOT run by a migration and unsuitable to run in CI (network
+    dependency, "politeness" pacing, three parallel matrix jobs hammering one
+    small site). Without *something* seeding that database, every code path
+    above raises `EmptyGradeBoundaryStoreError` on its very first call, in any
+    fresh environment -- which is exactly what broke CI on
+    feature/backend-served-reference-data (component_thresholds' own migration)
+    and every branch built on develop since.
+
+    The rows below are clearly-fake fixture data (`example.invalid` source
+    URLs) standing in for that ingest, mirroring facts already documented
+    elsewhere in this codebase so behaviour that depends on them stays correct:
+
+    - 0625 paper 1 is Core-tier only (C-G, no A/B) on every recent session --
+      see `lemely.io.grade_boundaries._load`'s own docstring and
+      `test_web_parent.py::test_a_core_paper_has_no_reachable_grade_above_its_own_ceiling`.
+    - 0625 paper 2's subject-default carries an A boundary (Extended, examined
+      every session) -- what `test_student_correct.py::_mcq_scheme_extended`
+      needs (paper 1, Core, is capped at C and has no A boundary at all -- see
+      that fixture's own docstring), and what
+      `test_web_parent.py::test_subject_detail_reports_the_distance_to_the_next_grade_up`
+      needs a B boundary from. Deliberately seeded at a *different*
+      session/variant than either test's default query (May/June 2020, paper
+      variant 2) so both resolve via `subject_default`, not `exact` --
+      `test_web_student.py::test_result_is_data_backed_with_empty_theory`
+      pins that its own May/June 2020 paper-2 query has no exact-match row
+      and reports the neutral "dash" provenance, not a fabricated "check".
+    - `component_thresholds` never carries A* -- see
+      `lemely.db.models.thresholds.ComponentThreshold`'s docstring ("Grade A*
+      does not exist at this level").
+
+    A third, otherwise-unused subject code carries a full A-G range so the
+    global-default rung (every code path that resolves a subject/paper this
+    fixture does not know about) has more than a Core-only vocabulary to draw
+    on.
+
+    Reachability is checked the same way `pg_sessionmaker` fixtures already do
+    across the router test files: unreachable Postgres means every one of
+    those tests already skips on its own, so this fixture just returns without
+    seeding rather than failing collection for the whole session.
+    """
+    import sqlalchemy as sa
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import OperationalError
+
+    from lemely.db.models.enums import SessionMonth
+    from lemely.db.models.thresholds import ComponentThreshold
+    from lemely.db.session import get_sessionmaker
+    from lemely.io.grade_boundaries import invalidate_reference_cache
+    from lemely.runtime.config import DatabaseSettings
+
+    base_url = DatabaseSettings().url
+    server_url = make_url(base_url).set(database="postgres")
+    try:
+        probe = create_engine(server_url)
+        with probe.connect():
+            pass
+        probe.dispose()
+    except OperationalError:
+        yield
+        return
+
+    sm = get_sessionmaker()
+    seeded_ids: list[object] = []
+    try:
+        with sm() as session:
+            rows = [
+                ComponentThreshold(
+                    subject_code="0625",
+                    session_month=SessionMonth.may_june,
+                    session_year=2023,
+                    paper_number=1,
+                    paper_variant=1,
+                    max_mark=40,
+                    thresholds={"C": 25, "D": 22, "E": 19, "F": 16, "G": 13},
+                    verified=True,
+                    source_url="https://example.invalid/test-fixture/0625_s23_p11.pdf",
+                ),
+                ComponentThreshold(
+                    subject_code="0625",
+                    session_month=SessionMonth.may_june,
+                    session_year=2024,
+                    paper_number=1,
+                    paper_variant=1,
+                    max_mark=40,
+                    thresholds={"C": 26, "D": 23, "E": 20, "F": 17, "G": 14},
+                    verified=True,
+                    source_url="https://example.invalid/test-fixture/0625_s24_p11.pdf",
+                ),
+                ComponentThreshold(
+                    subject_code="0625",
+                    session_month=SessionMonth.may_june,
+                    session_year=2019,
+                    paper_number=2,
+                    paper_variant=1,
+                    max_mark=50,
+                    thresholds={"A": 35, "B": 29, "C": 25, "D": 21, "E": 17, "F": 13, "G": 9},
+                    verified=True,
+                    source_url="https://example.invalid/test-fixture/0625_s19_p21.pdf",
+                ),
+                ComponentThreshold(
+                    subject_code="0000",
+                    session_month=SessionMonth.may_june,
+                    session_year=2024,
+                    paper_number=1,
+                    paper_variant=1,
+                    max_mark=100,
+                    thresholds={"A": 80, "B": 70, "C": 60, "D": 50, "E": 40, "F": 30, "G": 20},
+                    verified=True,
+                    source_url="https://example.invalid/test-fixture/0000_s24_p11.pdf",
+                ),
+            ]
+            session.add_all(rows)
+            session.commit()
+            seeded_ids = [row.id for row in rows]
+    except sa.exc.SQLAlchemyError:
+        # `component_thresholds` not migrated yet, or some other setup gap --
+        # leave the ambient database untouched and let downstream tests fail
+        # or skip on their own, as they did before this fixture existed.
+        yield
+        return
+
+    invalidate_reference_cache()
+    try:
+        yield
+    finally:
+        try:
+            with sm() as session:
+                session.execute(
+                    sa.delete(ComponentThreshold).where(ComponentThreshold.id.in_(seeded_ids))
+                )
+                session.commit()
+        except sa.exc.SQLAlchemyError:
+            pass
+        invalidate_reference_cache()
+
+
+@pytest.fixture(autouse=True)
+def _reset_structlog_after_each_test() -> Iterator[None]:
+    """Undo any process-wide structlog configuration a test performs.
+
+    `lemely.runtime.logging.configure_logging()` calls `structlog.configure(...,
+    cache_logger_on_first_use=True)` and installs a bridge handler on the
+    stdlib root logger. It is invoked for real (not mocked) by a lot more of
+    this suite than its own tests: every CLI test that drives
+    `lemely.app.cli.main` reaches the `cli()` click group's callback, which
+    calls `configure_logging()` on *every single invocation*
+    (`lemely/app/cli.py:184`) -- and that is dozens of test functions across
+    `test_cli*.py`, `test_accuracy_harness.py`, `test_question_generation.py`,
+    `test_vapid_keygen.py`, and `tests/eval/test_labeller_cli.py`.
+    `tests/test_runtime_logging.py` and `tests/test_web_entrypoint.py` call it
+    directly too.
+
+    Once `cache_logger_on_first_use=True` is set, it is never reset by
+    anyone -- and every subsequent real `configure_logging()` call builds a
+    brand new `processors` list and replaces `structlog`'s global one with it
+    (`structlog.configure(processors=[...])`, a *new* list object each time,
+    not a mutation of the old one). Any module-level logger
+    (`log = structlog.get_logger(__name__)`, e.g. `lemely/db/review_repo.py`)
+    that has already been bound -- which happens the first time it is used
+    while caching is on -- keeps a permanent reference to whichever processors
+    list was live *at that moment*. A later, unrelated `configure_logging()`
+    call elsewhere in the suite orphans that reference for good: the logger
+    goes on using the old list forever, while
+    `structlog.testing.capture_logs()` (used by this suite's `capture_logs()`
+    tests) works by mutating *the current* global list in place. Once a
+    logger's cached reference and the current global list are different
+    objects, `capture_logs()` can mutate all it wants and that logger's output
+    will never show up in the captured entries -- reproduced in isolation as:
+    `configure_logging(); log.info(...)` (caches); `configure_logging()` again
+    (orphans it); `with capture_logs(): log.info(...)` yields `[]`.
+
+    This is exactly why `tests/test_web_review.py`'s crop-route tests
+    (`test_crop_route_404s_for_an_item_whose_attempt_has_no_upload` and
+    siblings) saw an empty captured-log list only when the full suite ran, and
+    passed every time the file ran alone: alphabetically-earlier CLI tests (and
+    `test_runtime_logging.py`/`test_web_entrypoint.py`) are what call
+    `configure_logging()` for real before `lemely.db.review_repo`'s logger
+    ever gets used, and it is *that* accumulated pollution -- not
+    `test_web_entrypoint.py` alone -- that orphans it. Fixing only
+    `test_web_entrypoint.py`'s own tests would leave the CLI tests free to
+    keep doing the same thing to the next logger some other test's
+    `capture_logs()` depends on. Resetting `structlog`'s global defaults after
+    *every* test, regardless of which one touched them, is the only fix that
+    covers all of these call sites at once without having to find, and keep
+    finding, every place that calls `configure_logging()` for real.
+
+    Restoring the stdlib root logger's handlers/level the same way
+    `test_web_entrypoint.py`'s own `pristine_root_logger` fixture already does
+    covers the other half of what `configure_logging()` mutates (it clears
+    root's handlers and installs its own bridge handler), so nothing here is
+    redundant with that fixture -- this one just makes the guarantee
+    suite-wide instead of local to one file.
+    """
+    root = logging.getLogger()
+    saved_handlers = list(root.handlers)
+    saved_level = root.level
+    try:
+        yield
+    finally:
+        structlog.reset_defaults()
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+        for handler in saved_handlers:
+            root.addHandler(handler)
+        root.setLevel(saved_level)
+
+
+@pytest.fixture
+def migrated_sessionmaker() -> Iterator[sessionmaker[Session]]:
+    """A throwaway Postgres database with `alembic upgrade head` applied.
+
+    Distinct from the `pg_sessionmaker` fixtures in the router tests, which use
+    `Base.metadata.create_all` and therefore never execute a migration's data
+    steps. Anything asserting what a migration *inserted* needs this one.
+    """
+    import os as _os
+    import uuid as _uuid
+
+    import sqlalchemy as sa
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.orm import sessionmaker
+
+    from lemely.runtime.config import DatabaseSettings
+
+    base_url = DatabaseSettings().url
+    server_url = make_url(base_url).set(database="postgres")
+    try:
+        probe = create_engine(server_url)
+        with probe.connect():
+            pass
+        probe.dispose()
+    except OperationalError:
+        pytest.skip("local Postgres not reachable")
+
+    admin = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    dbname = f"lemely_mig_{_uuid.uuid4().hex[:12]}"
+    with admin.connect() as conn:
+        conn.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+    url = make_url(base_url).set(database=dbname)
+
+    cfg = Config("alembic.ini")
+    rendered_url = url.render_as_string(hide_password=False)
+    cfg.set_main_option("sqlalchemy.url", rendered_url)
+    # `lemely/db/migrations/env.py` deliberately re-derives the URL from
+    # `load_settings().database.url` rather than trusting whatever
+    # `alembic.ini`/the Config object carries, so that migrations run with the
+    # same env > .env > lemely.toml > default precedence as the app
+    # (`env.py`'s own docstring). That means the `sqlalchemy.url` set above is
+    # never actually read — `command.upgrade` would silently migrate the real
+    # dev database instead of this throwaway one. Route through the same
+    # env-var Settings reads (`LEMELY_DATABASE__URL`) so `load_settings()`
+    # resolves to the throwaway database too.
+    previous_db_url = _os.environ.get("LEMELY_DATABASE__URL")
+    _os.environ["LEMELY_DATABASE__URL"] = rendered_url
+    try:
+        command.upgrade(cfg, "head")
+    finally:
+        if previous_db_url is None:
+            _os.environ.pop("LEMELY_DATABASE__URL", None)
+        else:
+            _os.environ["LEMELY_DATABASE__URL"] = previous_db_url
+
+    engine = create_engine(url)
+    try:
+        yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+        admin.dispose()
+
+
+@pytest.fixture
+def migrated_sessionmaker_with_downgrade() -> Iterator[
+    tuple[sessionmaker[Session], Callable[[str], None]]
+]:
+    """Like `migrated_sessionmaker`, but also yields a callable to downgrade.
+
+    For proving what a migration's `downgrade()` does to *data*, not just
+    schema — `migrated_sessionmaker` alone has no way to seed rows before a
+    downgrade runs. The callable takes a target revision (e.g. the previous
+    migration's id) and runs `alembic downgrade` against the same throwaway
+    database `migrated_sessionmaker` already migrated to head.
+    """
+    import os as _os
+    import uuid as _uuid
+
+    import sqlalchemy as sa
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.orm import sessionmaker
+
+    from lemely.runtime.config import DatabaseSettings
+
+    base_url = DatabaseSettings().url
+    server_url = make_url(base_url).set(database="postgres")
+    try:
+        probe = create_engine(server_url)
+        with probe.connect():
+            pass
+        probe.dispose()
+    except OperationalError:
+        pytest.skip("local Postgres not reachable")
+
+    admin = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    dbname = f"lemely_mig_{_uuid.uuid4().hex[:12]}"
+    with admin.connect() as conn:
+        conn.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+    url = make_url(base_url).set(database=dbname)
+
+    cfg = Config("alembic.ini")
+    rendered_url = url.render_as_string(hide_password=False)
+    cfg.set_main_option("sqlalchemy.url", rendered_url)
+
+    previous_db_url = _os.environ.get("LEMELY_DATABASE__URL")
+    _os.environ["LEMELY_DATABASE__URL"] = rendered_url
+    try:
+        command.upgrade(cfg, "head")
+
+        def downgrade_to(revision: str) -> None:
+            command.downgrade(cfg, revision)
+
+        engine = create_engine(url)
+        try:
+            yield sessionmaker(bind=engine, expire_on_commit=False, future=True), downgrade_to
+        finally:
+            engine.dispose()
+    finally:
+        if previous_db_url is None:
+            _os.environ.pop("LEMELY_DATABASE__URL", None)
+        else:
+            _os.environ["LEMELY_DATABASE__URL"] = previous_db_url
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+        admin.dispose()

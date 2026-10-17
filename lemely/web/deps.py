@@ -10,20 +10,19 @@ wrappers make these injectable into routers and overridable in tests via
 from __future__ import annotations
 
 import random
+import time
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from lemely.auth.cooldown import CooldownStore
-from lemely.auth.email import MockEmailProvider
+from lemely.auth.email import EmailProvider, MockEmailProvider, ResendEmailProvider
 from lemely.auth.gotrue import HttpGoTrueBackend
 from lemely.auth.mirror import DbUserMirror, UserMirror
-from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
@@ -32,7 +31,11 @@ from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.auth_token_repo import AuthTokenService
+from lemely.db.catalogue_repo import CatalogueService
+from lemely.db.class_exclusion_repo import ClassExclusionRepository
 from lemely.db.class_repo import ClassService
+from lemely.db.cooldown_repo import DbCooldownStore
+from lemely.db.deletion_repo import PaperDeletionService, TeacherPaperDeletionService
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.exam_calendar_repo import ExamCalendarService
 from lemely.db.flashcard_repo import FlashcardService
@@ -43,6 +46,7 @@ from lemely.db.leaderboard_repo import LeaderboardService
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.notification_repo import NotificationService
+from lemely.db.otp_repo import DbOtpStore
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.placement_repo import PlacementService
 from lemely.db.practice_repo import PracticeService
@@ -52,26 +56,38 @@ from lemely.db.quiz_repo import QuizService
 from lemely.db.quiz_results_repo import QuizResultsService
 from lemely.db.quiz_taking_repo import QuizTakingService
 from lemely.db.review_repo import ReviewService
+from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.school_admin_repo import SchoolAdminService
 from lemely.db.school_provisioning_repo import SchoolProvisioningService
 from lemely.db.seat_repo import SeatService
+from lemely.db.self_review_repo import SelfReviewService
 from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import StudyPlanService
+from lemely.db.teacher_paper_repo import TeacherPaperRepository
+from lemely.db.threshold_repo import ThresholdService
 from lemely.db.upload_repo import StudentUploadRepository
-from lemely.db.xp_repo import XpService
+from lemely.db.xp_repo import UserZoneReader, XpService
+from lemely.io.evidence_judge import GeminiEvidenceJudge
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
-from lemely.io.storage import HttpStorageBackend, StorageBackend
+from lemely.io.storage import StorageBackend
+from lemely.io.storage_gcs import GcsStorageBackend
+from lemely.io.storage_local import LocalFileStorageBackend
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
 from lemely.web.push import NotificationTransport, VapidPushTransport
+from lemely.web.ratelimit import SlidingWindowLimiter
+from lemely.web.scheduled_notifications import Sweeper
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from lemely.auth.cooldown import CooldownStoreProtocol
     from lemely.core.history import HistoryStoreProtocol
+    from lemely.core.self_review import EvidenceJudge
+    from lemely.io.storage import StorageBackend
 
 
 @lru_cache(maxsize=1)
@@ -92,9 +108,31 @@ def get_history_store() -> HistoryStoreProtocol:
 
 
 @lru_cache(maxsize=1)
+def get_catalogue_service() -> CatalogueService:
+    """The syllabus catalogue reader, bound to the process sessionmaker."""
+    return CatalogueService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_threshold_service() -> ThresholdService:
+    """The grade-threshold reader, bound to the process sessionmaker.
+
+    Derives `/api/reference`'s `targetGradeVocabularies` from the ingested
+    `option_thresholds` rows (see `ThresholdService.target_vocabularies`).
+    """
+    return ThresholdService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
 def get_gemini_client() -> GeminiClient:
-    """Return the process-wide :class:`GeminiClient` singleton."""
-    return GeminiClient(get_settings())
+    """Return the process-wide :class:`GeminiClient` singleton.
+
+    ``ledger=None`` (DS3): the web process enforces no USD ceiling and writes
+    no ``gemini_spend.json`` — the shared Google Cloud billing budget is the
+    only spend guard in production. The CLI/Gradio/eval path is untouched;
+    it keeps the default file ledger.
+    """
+    return GeminiClient(get_settings(), ledger=None)
 
 
 @lru_cache(maxsize=1)
@@ -119,13 +157,40 @@ def get_student_upload_repo() -> StudentUploadRepository:
 
 
 @lru_cache(maxsize=1)
-def get_storage_backend() -> StorageBackend:
-    """Return the process-wide :class:`StorageBackend` singleton (P2.5).
+def get_teacher_paper_repo() -> TeacherPaperRepository:
+    """Return the process-wide :class:`TeacherPaperRepository` singleton (spec §4.2)."""
+    settings = get_settings()
+    return TeacherPaperRepository(
+        get_sessionmaker(settings),
+        stale_after=timedelta(seconds=settings.grading.stale_run_after_seconds),
+    )
 
-    Wired with the real HTTP client against Supabase Storage. Tests override
-    this with an in-memory ``FakeStorageBackend`` double (``tests/storage_fakes.py``).
+
+@lru_cache(maxsize=1)
+def get_scheme_corpus_repo() -> SchemeCorpusRepository:
+    """Return the process-wide :class:`SchemeCorpusRepository` singleton (spec §4.3)."""
+    return SchemeCorpusRepository(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_storage_backend() -> StorageBackend:
+    """Return the process-wide :class:`StorageBackend` singleton.
+
+    Selected on ``settings.storage.backend`` (DS7/DS12): ``gcs`` in staging and
+    production, ``local`` everywhere else. There is no Supabase backend —
+    DS7 removed it, and #220's ``provider = "supabase"`` path came off with it.
+    Tests override this with the in-memory ``FakeStorageBackend``
+    (``tests/storage_fakes.py``).
+
+    Neither backend touches the network or resolves a credential in its
+    constructor, so this getter stays safe to call on a machine with no
+    Google Application Default Credentials — the failure, if any, surfaces at
+    the first storage operation rather than at import or startup.
     """
-    return HttpStorageBackend(get_settings())
+    settings = get_settings()
+    if settings.storage.backend == "gcs":
+        return GcsStorageBackend(project=settings.storage.gcs_project)
+    return LocalFileStorageBackend(settings.paths.output_dir / "storage")
 
 
 @lru_cache(maxsize=1)
@@ -155,7 +220,7 @@ def get_auth_token_service() -> AuthTokenService:
 
 
 @lru_cache(maxsize=1)
-def get_signup_and_reset_cooldown_store() -> CooldownStore:
+def get_signup_and_reset_cooldown_store() -> CooldownStoreProtocol:
     """Return the process-wide per-email signup/password-reset cooldown (D7.12).
 
     Shared by ``POST /auth/signup`` and ``POST /auth/password-reset/request`` —
@@ -163,23 +228,37 @@ def get_signup_and_reset_cooldown_store() -> CooldownStore:
     serves both. Enforced in ``lemely.web.routers.auth``, not inside
     :class:`AuthService`: a cooldown is a router-level throttle on a caller's
     *request rate*, not a fact about an identity the service owns.
+
+    Postgres-backed (spec §4.4) so the cooldown holds across Cloud Run
+    instances, not just within one worker — the return type is the
+    structural :class:`~lemely.auth.cooldown.CooldownStoreProtocol` so tests
+    can override this with the in-memory
+    :class:`~lemely.auth.cooldown.CooldownStore` without touching Postgres.
     """
-    return CooldownStore(
+    return DbCooldownStore(
+        get_sessionmaker(get_settings()),
         clock=lambda: datetime.now(UTC),
+        purpose="signup_and_reset",
         min_seconds=get_settings().auth.signup_and_reset_cooldown_seconds,
     )
 
 
 @lru_cache(maxsize=1)
-def get_resend_verification_cooldown_store() -> CooldownStore:
+def get_resend_verification_cooldown_store() -> CooldownStoreProtocol:
     """Return the process-wide per-user verification-resend cooldown (D7.12).
 
     Backs ``POST /auth/verify-email/resend`` alone, keyed by the caller's own
     ``user_id`` (never an address) — see
     ``AuthSettings.resend_verification_cooldown_seconds``.
+
+    Postgres-backed (spec §4.4), same reasoning as
+    :func:`get_signup_and_reset_cooldown_store` — a distinct ``purpose`` so
+    the two never contend over the same key (``test_purposes_do_not_interfere``).
     """
-    return CooldownStore(
+    return DbCooldownStore(
+        get_sessionmaker(get_settings()),
         clock=lambda: datetime.now(UTC),
+        purpose="resend_verification",
         min_seconds=get_settings().auth.resend_verification_cooldown_seconds,
     )
 
@@ -189,9 +268,11 @@ def get_auth_service() -> AuthService:
     """Return the process-wide :class:`AuthService` singleton.
 
     Wired with the real GoTrue HTTP backend, the DB-backed user mirror, the mock
-    SMS provider, an OTP store using a wall-clock and the default RNG, the
-    device registry that enforces the 3-device limit (D1.11), the mock email
-    provider (D7.6 — nothing in this deployment sends a real mail; see
+    SMS provider, a Postgres-backed :class:`~lemely.db.otp_repo.DbOtpStore`
+    (spec §4.4) using a wall-clock and the default RNG — so a code one Cloud
+    Run instance issues can be verified by another — the device registry that
+    enforces the 3-device limit (D1.11), the mock email provider (D7.6 —
+    nothing in this deployment sends a real mail; see
     :mod:`lemely.auth.email`'s module docstring for the honesty rule that
     follows from wiring it unconditionally), and the Postgres-backed
     :class:`AuthTokenService` (D7.7) that mints and redeems verification/reset
@@ -199,10 +280,12 @@ def get_auth_service() -> AuthService:
     seams.
     """
     settings = get_settings()
-    otp_store = OtpStore(
+    otp_store = DbOtpStore(
+        get_sessionmaker(settings),
         clock=lambda: datetime.now(UTC),
         rng=random.SystemRandom(),
         ttl_seconds=settings.auth.otp_ttl_seconds,
+        email_ttl_seconds=settings.auth.email_otp_ttl_seconds,
         max_attempts=settings.auth.otp_max_attempts,
         code_length=settings.auth.otp_length,
         min_resend_seconds=settings.auth.otp_min_resend_seconds,
@@ -214,9 +297,28 @@ def get_auth_service() -> AuthService:
         otp_store=otp_store,
         settings=settings,
         device_registry=get_device_registry(),
-        email=MockEmailProvider(),
+        email=_build_email_provider(settings),
         tokens=get_auth_token_service(),
     )
+
+
+def _build_email_provider(settings: Settings) -> EmailProvider:
+    """Return the real email provider when one is configured, else the mock.
+
+    The choice is made by the *presence of a credential*, never by an
+    environment name — the same rule ``lemely.web.push`` applies to VAPID keys.
+    A machine with no ``[email] api_key`` (every developer checkout, every CI
+    run) gets :class:`~lemely.auth.email.MockEmailProvider`, which logs the link
+    and reports ``delivers_out_of_band = False``, so the auth routes keep
+    surfacing the dev link and signup still completes end to end offline.
+
+    Configuring a key flips both halves of that at once: mail is really sent,
+    and ``delivers_out_of_band = True`` stops the routes returning the live link
+    through the API. That coupling is the point — the two must never disagree.
+    """
+    if settings.email.api_key is None:
+        return MockEmailProvider()
+    return ResendEmailProvider(settings.email)
 
 
 class AuthServiceStudentCreator:
@@ -272,10 +374,11 @@ def get_platform_admin_service() -> PlatformAdminService:
 def get_boundary_store() -> GradeBoundaryStore:
     """Return the process-wide :class:`GradeBoundaryStore` singleton.
 
-    Cached because construction parses the bundled JSON, and X-03 reads only its
-    two key counts. Other routers construct their own inline (``student.py``,
-    ``parent.py``) because they resolve boundaries per request against
-    per-request metadata; those call sites are deliberately left alone.
+    Cached because construction queries every row of ``component_thresholds``,
+    and X-03 reads only its two key counts. Other routers construct their own
+    inline (``student.py``, ``parent.py``) because they resolve boundaries per
+    request against per-request metadata; those call sites are deliberately
+    left alone.
     """
     return GradeBoundaryStore()
 
@@ -331,6 +434,18 @@ def get_class_service() -> ClassService:
 
 
 @lru_cache(maxsize=1)
+def get_class_exclusion_repository() -> ClassExclusionRepository:
+    """Return the process-wide :class:`ClassExclusionRepository` singleton.
+
+    Read-only in Task 12 (:class:`~lemely.db.class_history.ClassScopedHistoryStore`'s
+    one caller); Task 13 adds the unshare/reshare writes onto the same table.
+    Tests override this dependency with a repo bound to a throwaway Postgres
+    database, never the ambient dev sessionmaker.
+    """
+    return ClassExclusionRepository(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
 def get_review_service() -> ReviewService:
     """Return the process-wide :class:`ReviewService` singleton (P3.4).
 
@@ -342,6 +457,49 @@ def get_review_service() -> ReviewService:
     service built on a throwaway Postgres database.
     """
     return ReviewService(get_sessionmaker(get_settings()), get_class_service())
+
+
+def build_self_review_judge(
+    settings: Settings, gemini_client: GeminiClient
+) -> EvidenceJudge | None:
+    """The lenient judge, or ``None`` when no Gemini key is configured.
+
+    ``None`` is a first-class state for :class:`SelfReviewService`: every
+    evidence-backed challenge becomes a ``student_evidence_unjudged`` queue
+    row for a teacher. Constructing a client that would fail on first use
+    instead would surface the same gap as a judge failure per call — noisier,
+    and no more honest.
+    """
+    if not settings.gemini_api_key or not settings.gemini_api_key.get_secret_value():
+        return None
+    return GeminiEvidenceJudge(gemini_client)
+
+
+@lru_cache(maxsize=1)
+def get_self_review_service() -> SelfReviewService:
+    """Return the process-wide :class:`SelfReviewService` singleton.
+
+    The judge is :func:`build_self_review_judge` over the shared
+    :func:`get_gemini_client` (``ledger=None``, DS3 — one call per challenged
+    point is the only budget; the cloud billing budget is the guard).
+    """
+    settings = get_settings()
+    return SelfReviewService(
+        get_sessionmaker(settings),
+        judge=build_self_review_judge(settings, get_gemini_client()),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_paper_deletion_service() -> PaperDeletionService:
+    """Return the process-wide :class:`PaperDeletionService` singleton."""
+    return PaperDeletionService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_teacher_paper_deletion_service() -> TeacherPaperDeletionService:
+    """Return the process-wide :class:`TeacherPaperDeletionService` singleton (R2)."""
+    return TeacherPaperDeletionService(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)
@@ -417,8 +575,14 @@ def get_quiz_marking_service() -> QuizMarkingService:
     with a service built on a throwaway Postgres database and a stubbed
     Gemini client (never a live call — the budget is hard-capped).
     """
+    settings = get_settings()
     return QuizMarkingService(
-        get_sessionmaker(get_settings()), get_attempt_repo(), get_gemini_client()
+        get_sessionmaker(settings),
+        get_attempt_repo(),
+        get_gemini_client(),
+        marking_options=settings.grading.marking_options(),
+        # #259: the operator's [integrity], not QuizMarkingService's default.
+        integrity_settings=settings.integrity,
     )
 
 
@@ -480,20 +644,34 @@ def get_flashcard_service() -> FlashcardService:
 
 
 @lru_cache(maxsize=1)
+def get_user_zone_reader() -> UserZoneReader:
+    """Return the process-wide :class:`UserZoneReader` singleton (push-delivery spec §3).
+
+    One reader, shared by :func:`get_xp_service`, :func:`get_notification_service`
+    and the at-risk seam, so every personal civil-date calculation in one
+    process resolves a user's zone the same way and ``PUT /api/me/timezone``
+    has exactly one memo to invalidate. Tests override this with a reader
+    bound to a throwaway Postgres database.
+    """
+    return UserZoneReader(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
 def get_xp_service() -> XpService:
     """Return the process-wide :class:`XpService` singleton (P5.2 chunk B).
 
     Wired with the DB session factory alone, mirroring
     :func:`get_study_plan_service`/:func:`get_placement_service` — the clock
-    and streak-day zone are left at their defaults (real UTC now,
-    ``Africa/Cairo``); tests override this dependency with a service built on
+    is left at its default (real UTC now) and streak days are computed in each
+    student's own zone through :func:`get_user_zone_reader`, falling back to
+    ``Africa/Cairo``; tests override this dependency with a service built on
     an injected fake clock and a throwaway Postgres database. Composed with
     each of the four award call sites only through
     :func:`~lemely.web.xp_awards.award_xp_safely`, never called directly from
     a repo service (D5.1: awarding is a router-layer concern, not nested
     inside another service's own transaction).
     """
-    return XpService(get_sessionmaker(get_settings()))
+    return XpService(get_sessionmaker(get_settings()), zones=get_user_zone_reader())
 
 
 @lru_cache(maxsize=1)
@@ -578,13 +756,15 @@ def get_notification_service() -> NotificationService:
     constructing its own preferences service, so the gate that decides whether
     a notification row is written and the endpoint that lets a user change
     that preference cannot disagree about what the user asked for (D5.9 §2).
-    The clock and quiet-hours zone are left at their defaults (real UTC now,
-    ``Africa/Cairo``); tests override this dependency with a service built on
-    an injected fake clock and a throwaway Postgres database.
+    The clock is left at its default (real UTC now) and quiet hours are
+    evaluated in the recipient's own zone through :func:`get_user_zone_reader`,
+    falling back to ``Africa/Cairo``; tests override this dependency with a
+    service built on an injected fake clock and a throwaway Postgres database.
     """
     return NotificationService(
         get_sessionmaker(get_settings()),
         get_notification_prefs_service(),
+        zones=get_user_zone_reader(),
     )
 
 
@@ -605,6 +785,30 @@ def get_push_transport() -> NotificationTransport:
     headless push mock MISSION §4's Phase-5 acceptance asks for.
     """
     return VapidPushTransport(get_settings().push)
+
+
+@lru_cache(maxsize=1)
+def get_sweeper() -> Sweeper:
+    """Return the process-wide notification :class:`Sweeper` (push-delivery spec §4).
+
+    Composed from the same singletons the routers use — announcements,
+    notifications, the push transport, the session factory — so a scheduled
+    announcement is delivered through exactly the code an immediate one is.
+    Built even when ``settings.notifications.sweeper_enabled`` is false;
+    ``create_app``'s lifespan decides whether to *run* it. Constructing it
+    opens no connection (the engine is lazy), and neither does the storage
+    backend it carries for the purge job.
+    """
+    settings = get_settings()
+    return Sweeper(
+        sessionmaker=get_sessionmaker(settings),
+        announcements=get_announcement_service(),
+        notifications=get_notification_service(),
+        transport=get_push_transport(),
+        settings=settings.notifications,
+        storage=get_storage_backend(),
+        bucket=settings.storage.bucket,
+    )
 
 
 @lru_cache(maxsize=1)
@@ -868,19 +1072,95 @@ def get_invite_service() -> InviteService:
     independently-derived enrolment path. Unlike :func:`get_seat_service`,
     this needs no account-creation seam: redemption always attaches an
     *existing* account (its route is authenticated), never creates one.
-    Tests override this dependency with a service built on a throwaway
-    Postgres database.
+    It is also wired with the same :class:`~lemely.db.parent_repo.ParentLinkService`
+    singleton :func:`get_parent_link_service` returns, since a parent
+    invite's redemption links an existing parent account to a child rather
+    than creating either one. Tests override this dependency with a service
+    built on a throwaway Postgres database.
     """
-    return InviteService(get_sessionmaker(get_settings()), get_class_service())
+    return InviteService(
+        get_sessionmaker(get_settings()), get_class_service(), get_parent_link_service()
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ClientErrorLimiters:
+    """The two :class:`SlidingWindowLimiter` instances guarding ``POST /api/client-errors``.
+
+    That route is anonymous (see its own module docstring for why): ``per_client``
+    throttles a single caller, keyed by IP, and ``global_`` caps the endpoint's
+    aggregate volume regardless of caller.
+
+    **``per_client`` only binds a caller that arrived through the Cloudflare
+    Worker.** ``docs/ci-cd.md`` ("Known gaps this setup doesn't close")
+    records, as a known live gap, that the Cloud Run service behind this app
+    is reachable directly (``--allow-unauthenticated``), bypassing the
+    Worker that would otherwise stamp a trustworthy ``X-Forwarded-For``. A
+    caller hitting the ``*.run.app`` URL directly can send a fresh,
+    unverified ``X-Forwarded-For`` on every request and get a fresh
+    ``per_client`` bucket each time — for that caller, ``global_`` is the
+    only thing that binds anything: at most 300 accepted reports per minute,
+    each at most about 19 000 characters. Making ``per_client`` honest against a
+    direct caller needs the shared-secret header ``docs/ci-cd.md`` proposes
+    there (the Worker stamps it, a small FastAPI middleware checks it) —
+    infrastructure work out of scope for this PR. See
+    ``lemely.web.routers.client_errors``'s own module docstring for the full
+    reasoning.
+    """
+
+    per_client: SlidingWindowLimiter
+    global_: SlidingWindowLimiter
+
+
+# Client-error reports (PR 1 chunk C): 10 per caller per minute, 300 across
+# every caller per minute. Both numbers are a first cut, sized to comfortably
+# absorb a genuine crash storm (one bad deploy tripping the same
+# `ErrorBoundary` for every visitor at once) while still bounding the log
+# volume — and Cloud Logging bill — an anonymous, unauthenticated caller can
+# generate. See `lemely.web.routers.client_errors`'s module docstring for the
+# full reasoning.
+_CLIENT_ERROR_PER_CLIENT_LIMIT = 10
+_CLIENT_ERROR_PER_CLIENT_WINDOW_SECONDS = 60.0
+_CLIENT_ERROR_GLOBAL_LIMIT = 300
+_CLIENT_ERROR_GLOBAL_WINDOW_SECONDS = 60.0
+
+
+@lru_cache(maxsize=1)
+def get_client_error_limiters() -> ClientErrorLimiters:
+    """Return the process-wide rate limiters guarding ``POST /api/client-errors``.
+
+    Wired with the real monotonic clock (``time.monotonic`` — immune to a
+    system clock adjustment, and fine here since nothing compares this clock's
+    value across a process restart, unlike the cooldown stores' wall-clock
+    ``datetime.now(UTC)``). Tests override this dependency with limiters built
+    on an injected fake clock, so no test sleeps out a 60-second window.
+    """
+    return ClientErrorLimiters(
+        per_client=SlidingWindowLimiter(
+            limit=_CLIENT_ERROR_PER_CLIENT_LIMIT,
+            window_seconds=_CLIENT_ERROR_PER_CLIENT_WINDOW_SECONDS,
+            clock=time.monotonic,
+        ),
+        global_=SlidingWindowLimiter(
+            limit=_CLIENT_ERROR_GLOBAL_LIMIT,
+            window_seconds=_CLIENT_ERROR_GLOBAL_WINDOW_SECONDS,
+            clock=time.monotonic,
+        ),
+    )
 
 
 def reset_singletons() -> None:
     """Clear all cached singletons. Intended for tests that swap settings."""
     get_settings.cache_clear()
+    get_boundary_store.cache_clear()
     get_history_store.cache_clear()
+    get_catalogue_service.cache_clear()
+    get_threshold_service.cache_clear()
     get_gemini_client.cache_clear()
     get_attempt_repo.cache_clear()
     get_student_upload_repo.cache_clear()
+    get_teacher_paper_repo.cache_clear()
+    get_scheme_corpus_repo.cache_clear()
     get_storage_backend.cache_clear()
     get_device_registry.cache_clear()
     get_auth_service.cache_clear()
@@ -890,6 +1170,7 @@ def reset_singletons() -> None:
     get_notification_prefs_service.cache_clear()
     get_user_mirror.cache_clear()
     get_review_service.cache_clear()
+    get_self_review_service.cache_clear()
     get_at_risk_ack_service.cache_clear()
     get_question_bank_service.cache_clear()
     get_quiz_service.cache_clear()
@@ -898,11 +1179,13 @@ def reset_singletons() -> None:
     get_announcement_service.cache_clear()
     get_student_profile_service.cache_clear()
     get_xp_service.cache_clear()
+    get_user_zone_reader.cache_clear()
     get_leaderboard_service.cache_clear()
     get_friend_service.cache_clear()
     get_exam_calendar_service.cache_clear()
     get_notification_service.cache_clear()
     get_push_transport.cache_clear()
+    get_sweeper.cache_clear()
     # The three admin-surface singletons. `get_platform_admin_service` and
     # `get_school_admin_service` were absent here before issue #10 — an
     # omission, not a policy: this function's docstring promises to clear
@@ -919,3 +1202,6 @@ def reset_singletons() -> None:
     get_auth_token_service.cache_clear()
     get_signup_and_reset_cooldown_store.cache_clear()
     get_resend_verification_cooldown_store.cache_clear()
+    # PR 1 chunk C: the client-error rate limiters — same reasoning as the two
+    # comments above, the promise is *all* cached singletons.
+    get_client_error_limiters.cache_clear()

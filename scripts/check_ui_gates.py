@@ -22,7 +22,8 @@ checks" — P3.10 chunk b makes the latter two real gates instead of numbers
 only ever read by a human):
   - zero serious or critical axe violations, per route
   - Lighthouse accessibility score >= 95, per route
-  - Lighthouse performance score >= 80, **student routes only**
+  - Lighthouse performance score >= 80, on the student subtree plus a named
+    set of gated teacher routes (``PERF_GATED_TEACHER_SLUGS``, C4/Task 11)
   - zero console errors, across the whole run
   - zero horizontal-scroll violations, across the whole run
 
@@ -35,11 +36,17 @@ green.
 
 Scoped to the student portal because that is exactly how MISSION §11 words the
 floor ("performance >= 80 on the student routes"); it has never claimed one for
-teacher or parent routes. Their scores are reported in the phase report and
-DELIVERY.md rather than gated, which is the honest reading — inventing a floor
-MISSION does not state would be as wrong as ignoring the one it does. A route
-counts as a student route by ``path`` (the ``/student`` subtree), not by slug
-prefix, so a future student screen slugged off-convention cannot escape it.
+the whole teacher or parent portals. A route counts as a student route by
+``path`` (the ``/student`` subtree), not by slug prefix, so a future student
+screen slugged off-convention cannot escape it.
+
+C4 (Task 11) raises that floor a small, deliberate step further: two named
+teacher routes (``PERF_GATED_TEACHER_SLUGS`` — the class analytics dashboard
+and the review queue, its heaviest-traffic screens) are gated by slug, not by
+a blanket ``/teacher`` prefix — this is a floor-raising change, not a full
+teacher-route audit. Every other teacher and parent route's score is still
+reported in the phase report and DELIVERY.md rather than gated; inventing a
+floor MISSION does not state would be as wrong as ignoring the one it does.
 """
 
 from __future__ import annotations
@@ -48,6 +55,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import cast
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # Keep this default byte-identical to audit.mjs's, or the gate reads a
@@ -65,8 +73,14 @@ ACCESSIBILITY_FLOOR = 95
 PERFORMANCE_FLOOR = 80
 STUDENT_PATH_PREFIX = "/student"
 
+# C4 (Task 11): a small, deliberate floor-raising extension of the
+# performance gate onto teacher routes — not a full teacher-route audit. The
+# two routes chosen are the teacher portal's own heaviest-traffic screens:
+# the class analytics dashboard (charts, tables) and the review queue.
+PERF_GATED_TEACHER_SLUGS = ("teacher-class-analytics", "teacher-review")
 
-def is_student_route(route: dict) -> bool:
+
+def is_student_route(route: dict[str, object]) -> bool:
     """True for rows in the ``/student`` portal subtree.
 
     ``path`` is written by ``web/scripts/audit.mjs`` from P6.1 onward. Report
@@ -77,8 +91,21 @@ def is_student_route(route: dict) -> bool:
     """
     path = route.get("path")
     if path is not None:
+        path = cast("str", path)
         return path == STUDENT_PATH_PREFIX or path.startswith(STUDENT_PATH_PREFIX + "/")
-    return route["slug"].startswith("student-")
+    return cast("str", route["slug"]).startswith("student-")
+
+
+def is_perf_gated_route(route: dict[str, object]) -> bool:
+    """True for any row the performance floor (``PERFORMANCE_FLOOR``) applies to.
+
+    That is: the whole ``/student`` subtree (``is_student_route``), OR a slug
+    in ``PERF_GATED_TEACHER_SLUGS`` (C4). Slug membership, not a path prefix,
+    for the teacher half — unlike the student subtree there is no single
+    ``/teacher`` prefix this floor applies to as a whole, only the named
+    routes.
+    """
+    return is_student_route(route) or route["slug"] in PERF_GATED_TEACHER_SLUGS
 
 
 def main() -> int:
@@ -108,14 +135,14 @@ def main() -> int:
                 f"lighthouse: {route['slug']} accessibility score {score} < "
                 f"{ACCESSIBILITY_FLOOR} — see {REPORT_DIR}/lighthouse/{route['slug']}.json"
             )
-        if not is_student_route(route):
+        if not is_perf_gated_route(route):
             continue
         performance = route["scores"].get("performance")
         if performance is None or performance < PERFORMANCE_FLOOR:
             failures.append(
                 f"lighthouse: {route['slug']} performance score {performance} < "
-                f"{PERFORMANCE_FLOOR} (MISSION §11 floor, student routes) — "
-                f"see {REPORT_DIR}/lighthouse/{route['slug']}.json"
+                f"{PERFORMANCE_FLOOR} (MISSION §11 floor, student routes + "
+                f"gated teacher routes) — see {REPORT_DIR}/lighthouse/{route['slug']}.json"
             )
 
     # console-errors.json/responsive-summary.json predate this gate in some
@@ -173,12 +200,16 @@ def main() -> int:
         return 1
 
     student_routes = [r for r in lighthouse if is_student_route(r)]
+    gated_teacher_routes = [
+        r for r in lighthouse if is_perf_gated_route(r) and not is_student_route(r)
+    ]
     print(
         f"UI gates clean: {len(axe)} route(s) zero serious/critical axe, "
         f"Lighthouse accessibility >= {ACCESSIBILITY_FLOOR} on all "
         f"({len(lighthouse)} route report(s)), performance >= {PERFORMANCE_FLOOR} on "
-        f"{len(student_routes)} student route(s), zero console errors, "
-        f"zero horizontal-scroll violations, zero routes that died mid-run."
+        f"{len(student_routes)} student route(s) + {len(gated_teacher_routes)} teacher "
+        f"route(s), zero console errors, zero horizontal-scroll violations, "
+        f"zero routes that died mid-run."
     )
     return 0
 

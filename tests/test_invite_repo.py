@@ -31,6 +31,7 @@ route is authenticated) — there is no GoTrue seam to fake.
 from __future__ import annotations
 
 import dataclasses
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -45,15 +46,21 @@ from sqlalchemy.orm import Session, sessionmaker
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
 from lemely.db.invite_repo import (
+    MAX_LIVE_PARENT_LINKS,
+    PARENT_INVITE_TTL,
     InviteAlreadyRedeemedError,
+    InviteError,
+    InviteLimitReachedError,
     InviteNotFoundError,
     InviteOwnershipError,
     InviteQuotaExceededError,
+    InviteRoleMismatchError,
     InviteService,
 )
 from lemely.db.models import (
     ClassEnrollment,
     Invite,
+    ParentChildLink,
     School,
     SchoolClass,
     SchoolMembership,
@@ -61,6 +68,7 @@ from lemely.db.models import (
     User,
 )
 from lemely.db.models.enums import InviteRole, MembershipRole, Role, SeatStatus
+from lemely.db.parent_repo import ParentLinkService
 from lemely.runtime.config import DatabaseSettings
 
 if TYPE_CHECKING:
@@ -148,7 +156,7 @@ def _seed_class(
 
 
 def _service(sm: sessionmaker[Session]) -> InviteService:
-    return InviteService(sm, ClassService(sm))
+    return InviteService(sm, ClassService(sm), ParentLinkService(sm))
 
 
 # ── preview: dual resolution ────────────────────────────────────────────────
@@ -239,7 +247,7 @@ def test_preview_does_not_leak_member_identities(pg_sessionmaker: sessionmaker[S
     preview = service.preview(invite.code)
 
     dumped = dataclasses.asdict(preview)
-    assert set(dumped) == {"role", "school_name", "class_name", "teacher_name"}
+    assert set(dumped) == {"role", "school_name", "class_name", "teacher_name", "child_name"}
     rendered = repr(dumped)
     assert "Secret Student" not in rendered
     assert str(student) not in rendered
@@ -510,3 +518,647 @@ def test_redeem_of_a_minted_class_invite_enrols_via_join_by_code(
     other_student = _seed_user(pg_sessionmaker, Role.student)
     with pytest.raises(InviteAlreadyRedeemedError):
         service.redeem(other_student, code)
+
+
+# ── mint_parent_invite / get_or_create_parent_code / rotate_parent_code ────
+
+
+def test_mint_parent_link_sets_child_created_by_and_seven_day_expiry(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    assert invite.role is InviteRole.parent
+    assert invite.child_id == student
+    assert invite.created_by == student
+    assert invite.reusable is False
+    assert invite.redeemed_by is None
+    assert invite.expires_at is not None
+    expected = datetime.now(UTC) + PARENT_INVITE_TTL
+    assert abs((invite.expires_at - expected).total_seconds()) < 5
+
+
+def test_get_or_create_parent_code_is_lazy_and_stable(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    with pg_sessionmaker() as session:
+        existing = session.scalars(sa.select(Invite).where(Invite.child_id == student)).first()
+        assert existing is None, "no row until first request - lazy"
+
+    first = service.get_or_create_parent_code(student)
+    second = service.get_or_create_parent_code(student)
+
+    assert first.id == second.id
+    assert first.code == second.code
+    assert first.reusable is True
+    assert first.expires_at is None
+    with pg_sessionmaker() as session:
+        rows = list(
+            session.scalars(
+                sa.select(Invite).where(Invite.child_id == student, Invite.reusable.is_(True))
+            )
+        )
+        assert len(rows) == 1
+
+
+def test_rotate_parent_code_replaces_the_row(pg_sessionmaker: sessionmaker[Session]) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    original = service.get_or_create_parent_code(student)
+
+    rotated = service.rotate_parent_code(student)
+
+    assert rotated.id != original.id
+    assert rotated.code != original.code
+    assert rotated.reusable is True
+    with pg_sessionmaker() as session:
+        assert session.get(Invite, original.id) is None
+        assert session.get(Invite, rotated.id) is not None
+        rows = list(
+            session.scalars(
+                sa.select(Invite).where(Invite.child_id == student, Invite.reusable.is_(True))
+            )
+        )
+        assert len(rows) == 1
+
+
+def test_mint_parent_invite_caps_live_single_use_links(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Final review I-6: every other mint path is bounded (a seat invite by
+    the school's seat quota, the reusable code to one live row per child by
+    database index) — the single-use link had no cap at all before this.
+    """
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    for _ in range(MAX_LIVE_PARENT_LINKS):
+        service.mint_parent_invite(student, reusable=False)
+
+    with pytest.raises(InviteLimitReachedError):
+        service.mint_parent_invite(student, reusable=False)
+
+    # The reusable code is a separate, unbounded-by-this-cap kind (spec §3's
+    # documented exception to "single-use") and must still mint cleanly.
+    service.mint_parent_invite(student, reusable=True)
+
+
+def test_mint_parent_invite_cap_counts_only_live_links(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A redeemed, expired, or revoked link frees its slot — the cap is on
+    *live* links, not on how many a child has ever minted.
+    """
+    student = _seed_user(pg_sessionmaker, Role.student)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    redeemed = service.mint_parent_invite(student, reusable=False)
+    service.redeem(parent, redeemed.code, caller_role=Role.parent)
+    revoked = service.mint_parent_invite(student, reusable=False)
+    service.revoke_parent_invite(student, revoked.code)
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Invite(
+                code="EXPIREDCAPTST",
+                role=InviteRole.parent,
+                child_id=student,
+                created_by=student,
+                expires_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+
+    # Three slots are "used up" (redeemed, revoked, expired) but none is
+    # live, so the full cap is still available.
+    for _ in range(MAX_LIVE_PARENT_LINKS):
+        service.mint_parent_invite(student, reusable=False)
+
+    with pytest.raises(InviteLimitReachedError):
+        service.mint_parent_invite(student, reusable=False)
+
+
+# ── list_parent_invites / revoke_parent_invite ──────────────────────────────
+
+
+def test_list_parent_invites_excludes_expired_redeemed_and_reusable(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    first_live = service.mint_parent_invite(student, reusable=False)
+    second_live = service.mint_parent_invite(student, reusable=False)
+    service.mint_parent_invite(student, reusable=True)  # the reusable code - excluded
+    redeemed = service.mint_parent_invite(student, reusable=False)
+    service.redeem(parent, redeemed.code, caller_role=Role.parent)
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Invite(
+                code="EXPIREDPARENT",
+                role=InviteRole.parent,
+                child_id=student,
+                created_by=student,
+                expires_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+
+    invites = service.list_parent_invites(student)
+
+    assert [i.id for i in invites] == [first_live.id, second_live.id]
+
+
+def test_revoke_parent_invite_refuses_another_students_code(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    other_student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    with pytest.raises(InviteNotFoundError):
+        service.revoke_parent_invite(other_student, invite.code)
+    with pg_sessionmaker() as session:
+        assert session.get(Invite, invite.id) is not None
+
+    # Owner can revoke it.
+    service.revoke_parent_invite(student, invite.code)
+    with pg_sessionmaker() as session:
+        assert session.get(Invite, invite.id) is None
+
+    # The reusable code is never revocable through this method.
+    code_row = service.get_or_create_parent_code(student)
+    with pytest.raises(InviteNotFoundError):
+        service.revoke_parent_invite(student, code_row.code)
+
+    with pytest.raises(InviteNotFoundError):
+        service.revoke_parent_invite(student, "NOSUCHCODE")
+
+
+# ── preview: parent invite names the child ──────────────────────────────────
+
+
+def test_preview_parent_invite_names_child_never_email_or_id(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    named_student = _seed_user(pg_sessionmaker, Role.student, display_name="Amira")
+    blank_student = _seed_user(pg_sessionmaker, Role.student, display_name=None)
+    service = _service(pg_sessionmaker)
+    named_invite = service.mint_parent_invite(named_student, reusable=False)
+    blank_invite = service.mint_parent_invite(blank_student, reusable=False)
+
+    named_preview = service.preview(named_invite.code)
+    blank_preview = service.preview(blank_invite.code)
+
+    assert named_preview.role is InviteRole.parent
+    assert named_preview.child_name == "Amira"
+    assert blank_preview.role is InviteRole.parent
+    assert blank_preview.child_name == "your child"
+    for preview, student in ((named_preview, named_student), (blank_preview, blank_student)):
+        assert preview.school_name is None
+        assert preview.class_name is None
+        assert preview.teacher_name is None
+        dumped = dataclasses.asdict(preview)
+        rendered = repr(dumped)
+        assert str(student) not in rendered
+        with pg_sessionmaker() as session:
+            email = session.get(User, student).email  # type: ignore[union-attr]
+        assert email not in rendered
+
+
+# ── redeem: parent invite links, role mismatch, idempotency ────────────────
+
+
+def test_redeem_parent_link_links_and_consumes(pg_sessionmaker: sessionmaker[Session]) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    result = service.redeem(parent, invite.code, caller_role=Role.parent)
+
+    assert result.role is InviteRole.parent
+    assert result.child_id == student
+    assert result.school_id is None
+    assert result.class_id is None
+    with pg_sessionmaker() as session:
+        redeemed = session.get(Invite, invite.id)
+        assert redeemed is not None
+        assert redeemed.redeemed_by == parent
+        assert redeemed.redeemed_at is not None
+        link = session.scalars(
+            sa.select(ParentChildLink).where(
+                ParentChildLink.parent_id == parent, ParentChildLink.child_id == student
+            )
+        ).first()
+        assert link is not None
+
+    # Single-use, like every other invites row: a second parent is refused.
+    other_parent = _seed_user(pg_sessionmaker, Role.parent)
+    with pytest.raises(InviteAlreadyRedeemedError):
+        service.redeem(other_parent, invite.code, caller_role=Role.parent)
+
+
+def test_redeem_parent_code_links_without_consuming_so_a_second_parent_can_use_it(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    first_parent = _seed_user(pg_sessionmaker, Role.parent)
+    second_parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    code_invite = service.get_or_create_parent_code(student)
+
+    first_result = service.redeem(first_parent, code_invite.code, caller_role=Role.parent)
+    second_result = service.redeem(second_parent, code_invite.code, caller_role=Role.parent)
+
+    assert first_result.child_id == student
+    assert second_result.child_id == student
+    with pg_sessionmaker() as session:
+        redeemed = session.get(Invite, code_invite.id)
+        assert redeemed is not None
+        assert redeemed.redeemed_by is None
+        assert redeemed.redeemed_at is None
+        links = list(
+            session.scalars(sa.select(ParentChildLink).where(ParentChildLink.child_id == student))
+        )
+        assert {link.parent_id for link in links} == {first_parent, second_parent}
+
+
+def test_redeem_parent_invite_by_student_is_role_mismatch(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    other_student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    with pytest.raises(InviteRoleMismatchError):
+        service.redeem(other_student, invite.code, caller_role=Role.student)
+
+    with pg_sessionmaker() as session:
+        redeemed = session.get(Invite, invite.id)
+        assert redeemed is not None
+        assert redeemed.redeemed_by is None
+        link = session.scalars(
+            sa.select(ParentChildLink).where(ParentChildLink.child_id == student)
+        ).first()
+        assert link is None
+
+
+def test_redeem_class_invite_by_parent_is_role_mismatch(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    class_id = _seed_class(pg_sessionmaker, teacher_id=teacher)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    invite = service.mint_class_invite(teacher, Role.teacher, class_id)
+
+    with pytest.raises(InviteRoleMismatchError):
+        service.redeem(parent, invite.code, caller_role=Role.parent)
+
+    with pg_sessionmaker() as session:
+        redeemed = session.get(Invite, invite.id)
+        assert redeemed is not None
+        assert redeemed.redeemed_by is None
+
+
+def test_redeem_parent_invite_twice_by_same_parent_is_idempotent(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    first = service.redeem(parent, invite.code, caller_role=Role.parent)
+    second = service.redeem(parent, invite.code, caller_role=Role.parent)
+
+    assert first == second
+    with pg_sessionmaker() as session:
+        links = list(
+            session.scalars(
+                sa.select(ParentChildLink).where(
+                    ParentChildLink.parent_id == parent, ParentChildLink.child_id == student
+                )
+            )
+        )
+        assert len(links) == 1
+
+
+# ── review round 1 fixes: concurrency, cross-child isolation, join-code role ─
+
+
+def test_get_or_create_parent_code_survives_concurrent_calls(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The second caller, racing the first, must be serialised behind the
+    first's still-open transaction rather than reading "no row yet" and
+    minting a second one - the failure mode review round 1's Important 1
+    described (an unstable code, since ``_find_reusable_parent_code`` has no
+    ``ORDER BY`` and would return either row on different calls).
+
+    A bare two-thread race can pass by luck even on unfixed code (the OS
+    may simply run the threads one after the other), so this deliberately
+    controls the interleaving: a holder thread opens a transaction, inserts
+    a reusable row and *does not commit*, proving via ``Event`` that it has
+    done so; only then does a second thread call the real
+    ``get_or_create_parent_code``. Without the fix that second call reads
+    "no row" (the holder's insert is uncommitted, invisible under read
+    committed) and inserts its own - a duplicate - and returns immediately.
+    With the fix it blocks on the same row lock the holder took, so this
+    also asserts it is still running half a second later, before the holder
+    releases it.
+    """
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    holder_locked = threading.Event()
+    release_holder = threading.Event()
+    held: dict[str, uuid.UUID] = {}
+
+    def hold_first_transaction() -> None:
+        with pg_sessionmaker() as session, session.begin():
+            session.get(User, student, with_for_update=True)
+            invite = Invite(
+                code="HELDCODE1",
+                role=InviteRole.parent,
+                child_id=student,
+                created_by=student,
+                reusable=True,
+            )
+            session.add(invite)
+            session.flush()
+            held["id"] = invite.id
+            holder_locked.set()
+            assert release_holder.wait(timeout=5), "test setup failed to signal release in time"
+        # `session.begin()` commits here, on clean context-manager exit.
+
+    holder = threading.Thread(target=hold_first_transaction)
+    holder.start()
+    assert holder_locked.wait(timeout=5), "holder thread failed to insert+lock in time"
+
+    second_result: dict[str, Invite] = {}
+
+    def call_second() -> None:
+        second_result["invite"] = service.get_or_create_parent_code(student)
+
+    second = threading.Thread(target=call_second)
+    second.start()
+    second.join(timeout=0.5)
+    assert second.is_alive(), (
+        "get_or_create_parent_code must block behind the holder's row lock, "
+        "not race ahead and insert a second reusable row"
+    )
+
+    release_holder.set()
+    holder.join(timeout=5)
+    second.join(timeout=5)
+
+    assert second_result["invite"].id == held["id"]
+    with pg_sessionmaker() as session:
+        rows = list(
+            session.scalars(
+                sa.select(Invite).where(Invite.child_id == student, Invite.reusable.is_(True))
+            )
+        )
+        assert len(rows) == 1, "a race must not leave two reusable rows for one child"
+
+
+def test_get_or_create_parent_code_is_isolated_per_student(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``_find_reusable_parent_code`` filters on ``child_id`` - prove it does
+    not hand one student a sibling's reusable row (review round 1, Minor 6)."""
+    first_student = _seed_user(pg_sessionmaker, Role.student)
+    second_student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+
+    first_code = service.get_or_create_parent_code(first_student)
+    second_code = service.get_or_create_parent_code(second_student)
+
+    assert first_code.id != second_code.id
+    assert first_code.code != second_code.code
+    assert service.get_or_create_parent_code(first_student).id == first_code.id
+    assert service.get_or_create_parent_code(second_student).id == second_code.id
+
+
+def test_redeem_class_join_code_by_parent_is_role_mismatch(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The role-mismatch guard must also cover the bare ``classes.join_code``
+    fall-through, not just an ``invites`` row - otherwise a parent handed (or
+    guessing) a class join code is silently enrolled as a student (review
+    round 1, Important 2)."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    class_id = _seed_class(pg_sessionmaker, teacher_id=teacher, join_code="PARENTJOIN")
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+
+    with pytest.raises(InviteRoleMismatchError):
+        service.redeem(parent, "PARENTJOIN", caller_role=Role.parent)
+
+    with pg_sessionmaker() as session:
+        enrolled = session.scalars(
+            sa.select(ClassEnrollment).where(ClassEnrollment.class_id == class_id)
+        ).first()
+        assert enrolled is None, "a parent must not be enrolled as a student via a join code"
+
+
+# ── review round 2 fixes: unknown code, unknown student, rotation order ────
+
+
+def test_redeem_unknown_code_by_parent_is_not_found(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A parent who simply mistypes their invite code must get the ordinary
+    ``InviteNotFoundError`` - the same thing anyone else redeeming an
+    unknown code gets - not a confident, false claim that the code they
+    typed is a class join code (review round 2, Important B). The role
+    guard on the bare-join-code fall-through must only fire once the code
+    is confirmed to actually resolve to a class."""
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+
+    with pytest.raises(InviteNotFoundError):
+        service.redeem(parent, "NOSUCHCODEATALL", caller_role=Role.parent)
+
+
+def test_get_or_create_parent_code_for_unknown_student_raises_invite_error(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A ``student_id`` naming no real user must fail clearly - not silently
+    take no lock, hit the ``child_id`` foreign key on insert, and get
+    misreported by :meth:`InviteService._insert_invite`'s retry loop as an
+    exhausted *code*-collision search (review round 2, Minor 2)."""
+    service = _service(pg_sessionmaker)
+
+    with pytest.raises(InviteError, match="Unknown user"):
+        service.get_or_create_parent_code(uuid.uuid4())
+
+
+def test_rotate_parent_code_for_unknown_student_raises_invite_error(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Same clear-error requirement as ``get_or_create_parent_code``, for
+    the other newly-locked writer (review round 2, Minor 2)."""
+    service = _service(pg_sessionmaker)
+
+    with pytest.raises(InviteError, match="Unknown user"):
+        service.rotate_parent_code(uuid.uuid4())
+
+
+def test_rotate_parent_code_then_redeem_links_the_new_code(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Regression check for reordering ``rotate_parent_code``'s lock/delete
+    steps to close the deadlock cycle with ``redeem`` (review round 2,
+    Important A): the method must still do exactly what it always did -
+    delete the old row, mint a new one - and the new code must still be
+    fully redeemable afterwards."""
+    student = _seed_user(pg_sessionmaker, Role.student)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    original = service.get_or_create_parent_code(student)
+
+    rotated = service.rotate_parent_code(student)
+    result = service.redeem(parent, rotated.code, caller_role=Role.parent)
+
+    assert result.child_id == student
+    with pg_sessionmaker() as session:
+        assert session.get(Invite, original.id) is None
+        link = session.scalars(
+            sa.select(ParentChildLink).where(
+                ParentChildLink.parent_id == parent, ParentChildLink.child_id == student
+            )
+        ).first()
+        assert link is not None
+
+
+# ── review round 3 fix: rotate's re-issued DELETE closes the reopened race ──
+
+
+def test_rotate_parent_code_race_leaves_exactly_one_reusable_row(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Reproduces review round 3's Important C exactly: under READ COMMITTED
+    a ``DELETE`` only sees rows committed as of its own start, so a rotation
+    whose first ``DELETE`` ran *before* a rival transaction committed a new
+    reusable row, then blocked on the ``users`` lock that rival held, must
+    not skip straight to inserting once it wakes up - it has to look again.
+
+    Simulates the rival ("T1") by hand, with the identical delete-then-lock
+    order the real method uses, holding its transaction open until this
+    test has proven the real :meth:`InviteService.rotate_parent_code` call
+    ("T2") is genuinely blocked behind it (not merely fast) before letting
+    T1 commit a fresh reusable row. Without the fix in
+    ``rotate_parent_code`` (re-running the ``DELETE`` after the lock), T2
+    would insert its own row without ever seeing T1's, leaving two live
+    reusable rows for one child - the exact instability review round 1's
+    Important 1 first described.
+    """
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    original = service.get_or_create_parent_code(student)
+
+    t1_holds_lock = threading.Event()
+    release_t1 = threading.Event()
+    rival_row: dict[str, uuid.UUID] = {}
+
+    def rival_rotation() -> None:
+        """Stands in for a concurrent ``rotate_parent_code``/
+        ``get_or_create_parent_code`` call: deletes the existing reusable
+        row (locking it, as ``DELETE`` always does), takes the child's
+        ``users`` lock, mints a fresh reusable row, and holds everything
+        open until told to commit."""
+        with pg_sessionmaker() as session, session.begin():
+            session.execute(
+                sa.delete(Invite).where(Invite.child_id == student, Invite.reusable.is_(True))
+            )
+            session.get(User, student, with_for_update=True)
+            rival = Invite(
+                code="RIVALCODE1",
+                role=InviteRole.parent,
+                child_id=student,
+                created_by=student,
+                reusable=True,
+            )
+            session.add(rival)
+            session.flush()
+            rival_row["id"] = rival.id
+            t1_holds_lock.set()
+            assert release_t1.wait(timeout=5), "test setup failed to signal release in time"
+        # `session.begin()` commits here, making the rival row visible.
+
+    t1 = threading.Thread(target=rival_rotation)
+    t1.start()
+    assert t1_holds_lock.wait(timeout=5), "rival thread failed to take its locks in time"
+
+    t2_result: dict[str, Invite] = {}
+
+    def call_rotate() -> None:
+        t2_result["invite"] = service.rotate_parent_code(student)
+
+    t2 = threading.Thread(target=call_rotate)
+    t2.start()
+    # T2's own first DELETE targets the same row the rival is deleting
+    # (still uncommitted), so it must block on that row's lock - prove it
+    # is genuinely stuck, not just slow, before releasing the rival.
+    t2.join(timeout=0.5)
+    assert t2.is_alive(), (
+        "rotate_parent_code's first DELETE must block behind the rival's "
+        "uncommitted delete of the same row"
+    )
+
+    release_t1.set()
+    t1.join(timeout=5)
+    t2.join(timeout=5)
+
+    with pg_sessionmaker() as session:
+        rows = list(
+            session.scalars(
+                sa.select(Invite).where(Invite.child_id == student, Invite.reusable.is_(True))
+            )
+        )
+        assert len(rows) == 1, "a rotation racing a rival must not leave two reusable rows"
+        assert rows[0].id == t2_result["invite"].id
+        assert session.get(Invite, original.id) is None
+        assert session.get(Invite, rival_row["id"]) is None, (
+            "the rival's row must have been deleted by rotate's re-issued DELETE"
+        )
+
+
+# ── review round 3 (cont'd): preview must not show a redeemed link as live ─
+
+
+def test_preview_of_a_redeemed_single_use_link_is_not_found(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Spec §3: a single-use link is dead once redeemed, expired, or revoked.
+    ``_find_live_invite`` only filters on ``expires_at`` (deliberately -
+    ``redeem`` relies on it finding an already-redeemed row to stay
+    idempotent), so ``preview`` is where "already redeemed" must turn into
+    the identical ``InviteNotFoundError`` an unknown code raises - a holder
+    of a used-up link must not see a preview of something they can no
+    longer claim, and must not learn "this code once worked" either.
+
+    A reusable code is the documented exception: it is never marked
+    redeemed, so it must keep previewing after every redemption.
+    """
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Nadia")
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    link = service.mint_parent_invite(student, reusable=False)
+    reusable = service.get_or_create_parent_code(student)
+
+    service.redeem(parent, link.code, caller_role=Role.parent)
+    service.redeem(parent, reusable.code, caller_role=Role.parent)
+
+    with pytest.raises(InviteNotFoundError):
+        service.preview(link.code)
+
+    # The reusable code is never marked redeemed, so it must keep previewing.
+    preview = service.preview(reusable.code)
+    assert preview.role is InviteRole.parent
+    assert preview.child_name == "Nadia"

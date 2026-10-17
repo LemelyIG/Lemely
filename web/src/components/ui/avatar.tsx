@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import type { HTMLAttributes } from "react"
 import { User } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -70,6 +70,13 @@ export interface AvatarProps extends Omit<HTMLAttributes<HTMLDivElement>, "child
 
 export function Avatar({ name, src, size = "md", status, className, ...props }: AvatarProps) {
   const [imageFailed, setImageFailed] = useState(false)
+  // A new `src` deserves a fresh attempt: without this, a caller that swaps
+  // in a different (working) URL after one image failed to load stays pinned
+  // on the initials fallback forever, since `imageFailed` never had a reason
+  // to go back to false.
+  useEffect(() => {
+    setImageFailed(false)
+  }, [src])
   const showImage = Boolean(src) && !imageFailed
   const initials = name ? initialsOf(name).slice(0, 2).toUpperCase() : null
 

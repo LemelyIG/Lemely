@@ -39,12 +39,19 @@ scenario the Playwright/Puppeteer harnesses need across all 5 roles:
 * a standalone **student** (``correctedPaper``, not enrolled in the class)
   with one persisted past-paper attempt, so grade/percentage surfaces on the
   student portal are non-empty without entangling the at-risk assertions.
-* a **parent**, OTP-verified and linked to the ``declining`` student. Linking
-  is student-initiated by phone (D3.11): the parent OTP-logs-in first (which
-  auto-creates their ``role=parent`` user, per
-  :meth:`~lemely.auth.service.AuthService.verify_otp`), then
-  :meth:`~lemely.db.parent_repo.ParentLinkService.link` is called exactly as
-  the student-facing router calls it.
+* a **parent**, an ordinary email/password account
+  (:meth:`~lemely.auth.service.AuthService.signup` with ``role=Role.parent``,
+  ``email_verified=True`` — a real invite redemption verifies the parent's
+  address before the account exists at all, spec §2, so this seed's account
+  matches that shape rather than the unverified default every other role
+  here signs up with) linked to the ``declining`` student through
+  :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session` — the same
+  method a redeemed invite's server call uses (spec §3), called here inside
+  this script's own single-purpose transaction since there is no invite
+  redemption in the loop to piggyback on. The ``declining`` student's reusable
+  parent code (:meth:`~lemely.db.invite_repo.InviteService.get_or_create_parent_code`)
+  is minted and emitted too, so ``web/e2e/parent-journey.spec.ts`` can drive
+  the real join-by-code flow rather than starting from an already-linked pair.
 * a **school_admin**, minted directly via :meth:`AuthService.signup` (self-
   service signup is student-only; teacher/school_admin only ever come from a
   direct service call — this is what P3.7 chunk d did).
@@ -55,6 +62,20 @@ scenario the Playwright/Puppeteer harnesses need across all 5 roles:
   :meth:`~lemely.db.attempt_repo.AttemptRepository._persist`'s real fan-out
   queue it for review, through the same single writer every attempt in this
   script goes through. Never a hand-inserted ``review_queue`` row.
+* (task #67) a SECOND review-queue item, on its own dedicated student/class,
+  carrying a mark scheme but neither a verdict nor a rationale on any point —
+  the legacy shape ``MarkerVerdicts``' section-suppression guard exists to
+  hide (``web/src/portals/teacher/screens/ReviewItem.tsx``), and the only
+  shape production sees today. See ``legacy_review_scheme()`` and
+  ``reviewItem.legacyItemId``/``legacyAttemptId`` below.
+* (final review) a THIRD review-queue item, on its own dedicated
+  student/class, carrying a mark scheme and a marker's ``rationale``
+  (``point_notes``) but no ``verdict`` on any point — the shape production
+  ships whenever a marker writes a note without ``equivalence_gate`` on, and
+  the shape ``MarkerVerdicts``' guard was widened
+  (``p.verdict !== null || p.rationale``) to keep visible. See
+  ``rationale_only_review_scheme()`` and
+  ``reviewItem.rationaleOnlyItemId``/``rationaleOnlyAttemptId`` below.
 * (P3.10 chunk e1) a **quiz** (T-09/T-10): 5 MCQ ``question_bank`` rows
   (:func:`build_quiz_bank_questions`, D3.7's empty-bank workaround), built
   into a quiz, assigned to the seeded class, and submitted — every answer
@@ -66,9 +87,8 @@ scenario the Playwright/Puppeteer harnesses need across all 5 roles:
   calls" below.
 * (P3.10 chunk e1) two **genuinely empty** accounts for the ``empty``-state
   screenshot captures: a second teacher with no classes at all, and a second
-  parent (its own OTP challenge, on a phone namespaced to avoid the linked
-  parent's own 30s cooldown — see :func:`build_empty_parent_phone`) never
-  linked to any child.
+  parent (its own email/password signup, exactly like the linked parent
+  above) never linked to any child.
 
 Every scenario/corrected-paper attempt is persisted as ``origin=past_paper``
 (D3.9): every grade/percentage/paper claim in this codebase filters on
@@ -82,26 +102,17 @@ mark, 2 at-risk).
 
 **Zero Gemini calls, by construction.** Every seeded question is MCQ, so
 :func:`~lemely.core.correction.correct_paper` never builds an ``AICorrector``
-call, and the default :class:`~lemely.runtime.config.IntegritySettings`
-(``ai_detection_enabled=False``) means ``apply_integrity_checks`` never
-constructs an ``AIContentDetector`` either — the Gemini client's lazy
-``_client`` property is never touched, so no API key is required and no
-request reaches the network. Verified against the live stack's real cost
-ledger before/after a seed run, not merely asserted (see the P3.10 chunk e1
-report).
+call, and ``apply_integrity_checks``'s only remaining check (plagiarism,
+since F4 removed the Gemini-backed AI-generated-answer detector) runs pure
+``difflib`` — the Gemini client's lazy ``_client`` property is never touched,
+so no API key is required and no request reaches the network. Verified
+against the live stack's real cost ledger before/after a seed run, not
+merely asserted (see the P3.10 chunk e1 report).
 
-Idempotent-friendly: every email and the parent phone number are namespaced
-under a per-run ``runTag`` (default: 12 random hex chars), so repeated runs
-never collide. Reruns do not delete previous runs' rows — there is no
-teardown here, by design (this is a seed script, not a fixture cleaner).
-
-The OTP resend cooldown (``otp_min_resend_seconds``, default 30s) is
-per-phone. This script requests exactly one challenge per phone (the linked
-parent's, and separately the empty parent's — see
-:func:`build_empty_parent_phone`) and returns the access token that verifying
-it already produced — a consumer (Playwright, ``audit.mjs``) must reuse that
-token rather than starting a second OTP challenge for the same phone, or it
-will hit the cooldown.
+Idempotent-friendly: every email (including both parents') is namespaced under
+a per-run ``runTag`` (default: 12 random hex chars), so repeated runs never
+collide. Reruns do not delete previous runs' rows — there is no teardown
+here, by design (this is a seed script, not a fixture cleaner).
 
 Output contract
 ----------------
@@ -120,7 +131,8 @@ path::
       "students": {
         "declining": {"userId": "...", "email": "...", "password": "...",
                       "displayName": "...", "accessToken": "...",
-                      "expectedAtRiskReasons": ["declining_trend"]},
+                      "expectedAtRiskReasons": ["declining_trend"],
+                      "parentInviteCode": "ABC123"},
         "inactive":  {..., "expectedAtRiskReasons": ["inactive"]},
         "control":   {..., "expectedAtRiskReasons": []},
         "correctedPaper": {..., "expectedAtRiskReasons": [],
@@ -130,15 +142,19 @@ path::
                         "positionsBelow": 3,
                         "classId": "...", "className": "..."}
       },
-      "parent": {"userId": "...", "phone": "+20...", "accessToken": "...",
-                 "linkedStudent": "declining"},
+      "parent": {"userId": "...", "email": "...", "password": "...",
+                 "accessToken": "...", "linkedStudent": "declining"},
       "reviewItem": {"itemId": "<review_queue.id>", "attemptId": "<attempt uuid>",
-                     "studentKey": "inactive"},
+                     "studentKey": "inactive",
+                     "legacyItemId": "<review_queue.id>", "legacyAttemptId": "<attempt uuid>",
+                     "rationaleOnlyItemId": "<review_queue.id>",
+                     "rationaleOnlyAttemptId": "<attempt uuid>"},
       "quiz": {"quizId": "...", "assignmentId": "...", "submissionId": "...",
                "submittedBy": "control", "status": "marked"},
       "emptyTeacher": {"userId": "...", "email": "...", "password": "...",
                         "displayName": "...", "accessToken": "..."},
-      "emptyParent": {"userId": "...", "phone": "+20...", "accessToken": "..."},
+      "emptyParent": {"userId": "...", "email": "...", "password": "...",
+                      "accessToken": "..."},
       "placement": {
         "subjectCode": "0625",
         "paperNumber": 2,
@@ -294,8 +310,19 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete as sa_delete
 
+from lemely.core.analytics import summarize_weaknesses
 from lemely.core.at_risk import AtRiskReason
 from lemely.core.history import PaperRecord
+from lemely.core.loose_schemas import (
+    AnswerPoint,
+    MarkScheme,
+    MarkSchemeMetadata,
+    PaperType,
+    SchemeFormat,
+)
+from lemely.core.loose_schemas import Question as SchemeQuestion
+from lemely.core.loose_schemas import QuestionType as SchemeQuestionType
+from lemely.core.loose_schemas import SessionMonth as LooseSessionMonth
 from lemely.core.schemas import (
     AccuracyReport,
     ConfidenceBand,
@@ -303,14 +330,18 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExamMetadata,
     GradePrediction,
+    PointVerdict,
+    SourceBox,
     WeaknessReport,
 )
+from lemely.db.models.attempts import Upload
 from lemely.db.models.engagement import XpEvent
 from lemely.db.models.enums import (
     DifficultySource,
     QuestionSource,
     QuizQuestionStatus,
     Role,
+    UploadStatus,
     XpSource,
 )
 from lemely.db.models.flashcards import DeckOrigin, ReviewGrade
@@ -398,6 +429,341 @@ EMAIL_DOMAIN = "e2e.lemely.local"
 #: see a 4th enrolled student or a 4th grade-bearing attempt.
 REVIEW_ITEM_CONFIDENCE_SCORE = 0.55
 
+#: Task #66: `matched_point_ids` for the review-queue item's own question,
+#: paired with `review_item_point_verdicts()` below -- only `p1`'s verdict is
+#: `"awarded"`, so this is the one list both `derive_point_rows`'s `awarded`
+#: column and `_awarded_from_verdicts`'s real-pipeline invariant agree on
+#: (`derive_point_rows`'s `awarded` comes from `matched_point_ids`, never from
+#: `verdict`, so the two are supplied separately here and must be kept in
+#: step by hand).
+REVIEW_ITEM_MATCHED_POINT_IDS = ["p1"]
+
+#: Task #72: the review-queue item's own question also carries a persisted
+#: `source_box`, so `web/e2e/teacher-review.spec.ts` has a real crop to load.
+#: `[ymin, xmin, ymax, xmax]`, 0-1000 scale (`SourceBox`'s own doc) -- well
+#: inside a single page, not near an edge, so `crop_and_upscale`'s 8% padding
+#: never clips against the page bounds.
+REVIEW_ITEM_SOURCE_BOX = SourceBox(page=0, box=[100, 100, 400, 400])
+
+
+#: Box fill colour per `review_item_source_scan` variant, drawn EXACTLY
+#: box-aligned to `REVIEW_ITEM_SOURCE_BOX` (never a whole-page fill -- see
+#: that function's own doc for why a whole-page fill cannot prove the crop
+#: route cropped the right region at all). Two boxed items (the `inactive`
+#: student's, and the rationale-only student's, both below) need to be
+#: tellable apart by their rendered crop alone, for the C1 navigation test
+#: (`web/e2e/teacher-review.spec.ts`): open boxed item A, boxed item B, back
+#: to A, assert the crop shown is A's colour, never B's.
+_REVIEW_ITEM_SCAN_BOX_FILL: dict[str, tuple[int, int, int]] = {
+    "a": (255, 0, 0),  # red
+    "b": (0, 200, 0),  # green
+}
+
+#: A scheme similar to `tests/test_web_review.py`'s `_synthetic_scan`, not the
+#: same one (that test draws a small rectangle well outside the box; this seed
+#: fills the whole page background): a colour OUTSIDE the box, distinct from
+#: either variant's box colour, so a crop of the wrong region (or the whole
+#: uncropped page) reads as neither pure red nor pure green -- it is a mix of
+#: this and the box colour, or this alone.
+_REVIEW_ITEM_SCAN_OUTSIDE_FILL: tuple[int, int, int] = (0, 0, 255)  # blue
+
+
+def _fill(rgb: tuple[int, int, int]) -> list[float]:
+    """`draw_rect(fill=...)` wants 0-1 floats; `rgb` is documented in 0-255."""
+    return [channel / 255 for channel in rgb]
+
+
+def review_item_source_scan(variant: str = "a") -> bytes:
+    """A one-page PDF standing in for a boxed review item's scan.
+
+    Only `GET /teacher/review/{itemId}/crop` (task #71) ever opens this file:
+    it renders page 0 with PyMuPDF and crops `REVIEW_ITEM_SOURCE_BOX` out of
+    it. A whole-page-uniform fill (this function's first version) cannot
+    prove that happened correctly: `naturalWidth > 0` passes identically for
+    the right region, the wrong region, the wrong page, and a blank image of
+    the right size, since every one of those renders SOME PNG the browser can
+    decode. So the fill is box-ALIGNED, not page-uniform: a colour EXACTLY at
+    `REVIEW_ITEM_SOURCE_BOX`'s coordinates (`_REVIEW_ITEM_SCAN_BOX_FILL`),
+    a DIFFERENT colour everywhere else (`_REVIEW_ITEM_SCAN_OUTSIDE_FILL`) --
+    the same scheme `tests/test_web_review.py`'s `_synthetic_scan` already
+    uses for exactly this reason. A correctly-cropped, correctly-padded
+    region samples as the box colour at its centre; the wrong region, the
+    whole page, or a blank image do not.
+
+    The label text sits at the bottom of the page (`y=800` on an 842pt-tall
+    page), well clear of `REVIEW_ITEM_SOURCE_BOX`'s `[100, 100, 400, 400]`
+    (0-1000 scale, so roughly the page's own top-left third) -- it labels the
+    page for anyone opening the PDF directly, and must never fall inside the
+    box itself, which needs to stay a pure, unbroken fill for the pixel
+    sample above to be deterministic.
+
+    **This repository is public and this is the seed everyone runs.** The
+    page is generated colour blocks plus machine-set label text, not a
+    render of anything resembling handwriting on a real script -- no
+    scanned-paper texture, no simulated ruled lines, nothing a screenshot of
+    this fixture could be mistaken for a student's actual work. Team-lead
+    review of task #72's seed extension named this explicitly: synthetic
+    shapes are fine, anything incidentally script-like is not.
+    """
+    import pymupdf
+
+    doc = pymupdf.open()
+    try:
+        page = doc.new_page(width=595, height=842)  # A4 at 72 dpi
+        page.draw_rect(page.rect, color=None, fill=_fill(_REVIEW_ITEM_SCAN_OUTSIDE_FILL))
+        ymin, xmin, ymax, xmax = REVIEW_ITEM_SOURCE_BOX.box
+        page.draw_rect(
+            pymupdf.Rect(
+                xmin / 1000 * page.rect.width,
+                ymin / 1000 * page.rect.height,
+                xmax / 1000 * page.rect.width,
+                ymax / 1000 * page.rect.height,
+            ),
+            color=None,
+            fill=_fill(_REVIEW_ITEM_SCAN_BOX_FILL[variant]),
+        )
+        page.insert_text(
+            (40, 800),
+            f"SEED FIXTURE {variant.upper()} -- NOT A REAL SCAN",
+            fontsize=14,
+            color=(1, 1, 1),
+        )
+        return doc.tobytes()
+    finally:
+        doc.close()
+
+
+def review_item_scheme() -> MarkScheme:
+    """The point-based scheme behind the review-queue item's own question (T-08).
+
+    Three independent points, one mark each -- deliberately not the same
+    scheme object as :func:`self_review_scheme` (a different question, a
+    different student's attempt, and a different paper number): confusing
+    the two would mean a Playwright spec against ``/teacher/review`` and one
+    against the self-review panel could pass against each other's fixture by
+    accident.
+    """
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code=SUBJECT_CODE,
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2024,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=3,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="1",
+                marks=3,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="Correct method shown", marks=1),
+                    AnswerPoint(id="p2", point="Correct substitution", marks=1),
+                    AnswerPoint(id="p3", point="Final answer to correct precision", marks=1),
+                ],
+            ),
+        ],
+    )
+
+
+def review_item_point_verdicts() -> list[PointVerdict]:
+    """All three I6 verdicts (US-013) on the review-queue item's one question.
+
+    Exactly what T-08's review-queue row needed and never had before task
+    #66: a first Playwright spec against ``/teacher/review`` (task #7) can
+    now assert the "Marker's per-point verdicts" section renders one chip per
+    verdict, a quoted evidence span on ``p1``, and an ECF chip on ``p3``
+    (``web/src/portals/teacher/screens/ReviewItem.tsx``'s ``POINT_VERDICT_LABEL``).
+    """
+    return [
+        PointVerdict(
+            point_id="p1",
+            verdict="awarded",
+            evidence_span="a = (v - u) / t = (20 - 0) / 4 = 5 m/s^2",
+        ),
+        PointVerdict(
+            point_id="p2",
+            verdict="withheld",
+            note="No substitution shown",
+        ),
+        PointVerdict(
+            point_id="p3",
+            verdict="unverifiable",
+            note="Carried forward from p2's substituted value; final figure illegible",
+            ecf_applied=True,
+        ),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Task #67: a SECOND review-queue row, deliberately carrying NEITHER a verdict
+# NOR a rationale on any point -- the legacy shape `MarkerVerdicts`' section
+# guard exists to suppress (`web/src/portals/teacher/screens/ReviewItem.tsx`),
+# and the ONLY shape production sees today (`equivalence_gate` defaults off).
+# `review_item_scheme()`/`review_item_point_verdicts()` above cannot stand in
+# for this: every point there carries a verdict. This is a separate student,
+# in a separate (THIRD) class of the same teacher's -- never the roster class
+# (`class_row`, whose 3-student/69%-average/2-at-risk figures
+# `teacher-journey.spec.ts` hardcodes) and never the below-target class
+# (`below_target_class_row`, whose own single-purpose docstring this would
+# muddy) -- so this addition cannot move a number any existing spec asserts.
+# ---------------------------------------------------------------------------
+
+#: A recent, unremarkable single attempt -- recent so it can never fire the
+#: inactive rule (>=14 days), and the student's only attempt so it can never
+#: fire the declining-trend rule (needs 3). No target grade is ever set for
+#: this student, so the below-target rule has nothing to evaluate either.
+#: This account is intentionally NOT exposed under the contract's `students`
+#: key -- nothing needs to log in as it, only to read the review-queue row
+#: its attempt produced.
+LEGACY_REVIEW_SCORE: tuple[float, str] = (60.0, "C")
+LEGACY_REVIEW_DAYS_AGO = 1
+
+#: Below `REVIEW_CONFIDENCE_THRESHOLD` (0.90), same as `REVIEW_ITEM_CONFIDENCE_SCORE`
+#: -- the one thing that makes this attempt's real fan-out queue it for review.
+LEGACY_REVIEW_CONFIDENCE_SCORE = 0.5
+
+
+def legacy_review_scheme() -> MarkScheme:
+    """A second, independent point-based scheme for the legacy review row.
+
+    Deliberately its own question text -- distinct from `review_item_scheme()`
+    -- so a Playwright spec that opened the wrong item id could never pass by
+    accident against the other row's fixture. `accuracy_report_for_score` is
+    called for this row with neither `matched_point_ids` nor `point_verdicts`
+    (both default to empty) and no `point_notes` either, so
+    `derive_point_rows` leaves every point's `verdict` AND `rationale` `None`
+    -- an ordinary legacy shape (the marker returning no per-point
+    commentary), not a contrived one.
+    """
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code=SUBJECT_CODE,
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2024,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=2,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="1",
+                marks=2,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="States the correct formula", marks=1),
+                    AnswerPoint(id="p2", point="Gives the answer to the correct unit", marks=1),
+                ],
+            ),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Final-review coverage gap: a THIRD review-queue row, carrying a marker's
+# per-point `rationale` (`point_notes`) but no `verdict` on any point --
+# exactly the shape production ships today whenever a marker writes a note
+# without `equivalence_gate` on. Neither `review_item_scheme()` (every point
+# has a verdict) nor `legacy_review_scheme()` (no point has anything) can
+# stand in for this: `MarkerVerdicts`' section guard
+# (`web/src/portals/teacher/screens/ReviewItem.tsx`) was widened to
+# `p.verdict !== null || p.rationale` specifically so a rationale-only point
+# still renders, and that widening had no seeded row to prove it against
+# until now. A separate (FOURTH) class of the same teacher's, like
+# `legacy_review_class_row` -- never the roster class, the below-target
+# class, or the legacy-review class -- so this addition cannot move a number
+# any existing spec asserts.
+# ---------------------------------------------------------------------------
+
+#: A recent, unremarkable single attempt -- same reasoning as
+#: `LEGACY_REVIEW_SCORE`: recent so the inactive rule can never fire, and the
+#: student's only attempt so the declining-trend rule can never fire either.
+RATIONALE_ONLY_REVIEW_SCORE: tuple[float, str] = (58.0, "D")
+RATIONALE_ONLY_REVIEW_DAYS_AGO = 2
+
+#: Below `REVIEW_CONFIDENCE_THRESHOLD` (0.90), same reasoning as
+#: `REVIEW_ITEM_CONFIDENCE_SCORE`/`LEGACY_REVIEW_CONFIDENCE_SCORE` -- the one
+#: thing that makes this attempt's real fan-out queue it for review.
+RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE = 0.6
+
+#: The marker's per-point note on `p1` only -- `p2` gets none, so this
+#: fixture cannot be confused with one where every point carries commentary.
+#: Hardcoded, verbatim, in `web/e2e/teacher-review.spec.ts` too (the two are
+#: kept in lockstep by hand, same as every other seeded string this suite
+#: asserts on).
+RATIONALE_ONLY_REVIEW_NOTE = (
+    "Working shown but the final line is illegible; benefit of the doubt given."
+)
+
+
+def rationale_only_review_recorded_at(now: datetime) -> datetime:
+    """The single, deliberately RECENT timestamp for the rationale-only-review student.
+
+    Recent, and this student's only attempt, so neither the inactive rule
+    (>=14 days) nor the declining-trend rule (needs 3 records) can ever fire
+    on it -- this account carries no `expectedAtRiskReasons` at all and is
+    not exposed under the contract's `students` key, exactly like
+    `legacy_review_recorded_at`'s account.
+    """
+    return now - timedelta(days=RATIONALE_ONLY_REVIEW_DAYS_AGO)
+
+
+def rationale_only_review_scheme() -> MarkScheme:
+    """A third, independent point-based scheme for the rationale-only review row.
+
+    Deliberately its own question text -- distinct from `review_item_scheme()`
+    and `legacy_review_scheme()` -- so a Playwright spec that opened the wrong
+    item id could never pass by accident against another row's fixture.
+    """
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code=SUBJECT_CODE,
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2024,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=2,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="1",
+                marks=2,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="Shows the correct working", marks=1),
+                    AnswerPoint(
+                        id="p2", point="States the final answer with correct unit", marks=1
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def rationale_only_review_point_notes() -> dict[str, str]:
+    """`point_notes` for the rationale-only review row.
+
+    Passed to `accuracy_report_for_score` with neither `matched_point_ids`
+    nor `point_verdicts` -- the whole point of this row is the legacy path
+    (`equivalence_gate` off) where a marker's per-point note is the only
+    thing ever recorded: `derive_point_rows` leaves `verdict` `None` on every
+    point and falls back to `point_notes` for `rationale` (see that
+    function's own docstring, the `pv is None` branch), exactly the shape
+    `MarkerVerdicts`' widened guard exists to keep visible.
+    """
+    return {"p1": RATIONALE_ONLY_REVIEW_NOTE}
+
+
 #: `allocate_difficulty(None, 5)` (`lemely.core.difficulty`) for an untargeted
 #: quiz, worked out by hand: the balanced (0.2, 0.6, 0.2) mix * 5 questions =
 #: (1.0, 3.0, 1.0) exactly, no remainder to break a tie over. If either of
@@ -430,13 +796,14 @@ _MCQ_LETTERS: tuple[str, ...] = ("A", "B", "C", "D")
 # ---------------------------------------------------------------------------
 
 #: Same subject as the at-risk roster (:data:`SUBJECT_CODE`) — reused rather
-#: than restated, since both need a bank that already has a bundled syllabus
-#: taxonomy (:mod:`lemely.io.syllabus_topics`) and a transcribed paper timing
-#: entry (:mod:`lemely.io.paper_timing`).
+#: than restated, since both need a bank that already has a syllabus taxonomy
+#: (:mod:`lemely.io.syllabus_topics`, backed by ``subject_topics``) and a
+#: transcribed paper timing entry (:mod:`lemely.io.paper_timing`, backed by
+#: ``syllabus_papers``).
 PLACEMENT_SUBJECT_CODE = SUBJECT_CODE
 
-#: 0625's real top-level syllabus labels (``lemely/data/syllabus_topics.json``),
-#: the exact "<code> <name>" vocabulary D4.2's classifier writes — copied from
+#: 0625's real top-level syllabus labels (the ``subject_topics`` table), the
+#: exact "<code> <name>" vocabulary D4.2's classifier writes — copied from
 #: ``tests/test_placement_repo.py``'s viable-0625-bank fixture (its
 #: ``_PHYSICS_TOPICS``) rather than invented, per this chunk's brief.
 PLACEMENT_TOPICS: list[str] = [
@@ -447,7 +814,7 @@ PLACEMENT_TOPICS: list[str] = [
 ]
 
 #: 0625 Paper 2 (Multiple Choice, Extended) — a real, non-practical paper
-#: carried in ``lemely/data/paper_timing.json`` (45 min / 40 marks; Papers 5/6
+#: carried in the ``syllabus_papers`` table (45 min / 40 marks; Papers 5/6
 #: are practical and excluded from placement by
 #: :func:`~lemely.io.paper_timing.get_paper_timings`'s default).
 #:
@@ -492,9 +859,10 @@ def build_placement_paper_stem(run_tag: str) -> str:
 
     **Why this is a function of ``run_tag`` rather than a constant.** A *fixed*
     stem would put every run's rows on one ``papers`` row; hashing ``run_tag``
-    into the session-year digits (mirrors :func:`build_phone`'s per-character
-    hashing) usually mints a distinct one per run. The resulting year is
-    filename shape only, never a claim about a real CAIE sitting — see
+    into the session-year digits (each character's ordinal mod 10, the same
+    technique the retired phone-based fixtures used) usually mints a distinct
+    one per run. The resulting year is filename shape only, never a claim
+    about a real CAIE sitting — see
     :func:`build_placement_bank_questions` for why the question text itself is
     honestly synthetic regardless.
 
@@ -613,20 +981,6 @@ def build_password(run_tag: str) -> str:
     return f"Seed-{run_tag}-Aa1!"
 
 
-def build_phone(run_tag: str) -> str:
-    """Derive a per-run-unique phone number from ``run_tag``.
-
-    Pure function of ``run_tag`` (no randomness of its own) so it is
-    trivially unit-testable: every character's ordinal maps to one decimal
-    digit (mod 10), giving a stable 10-digit national number behind a ``+20``
-    country code — shape only, never validated by the backend (``OtpRequestDTO
-    .phone`` is an unconstrained ``str``). Works for any ``run_tag`` string,
-    not just the default hex tag — ``--run-tag`` accepts arbitrary text.
-    """
-    digits = "".join(str(ord(ch) % 10) for ch in run_tag)
-    return "+20" + digits[:10].ljust(10, "0")
-
-
 def declining_recorded_ats(now: datetime) -> list[datetime]:
     """Oldest-first timestamps for the declining student's 3 attempts."""
     return [now - timedelta(days=d) for d in DECLINING_DAYS_AGO]
@@ -656,6 +1010,17 @@ def below_target_recorded_at(now: datetime) -> datetime:
     ``?reason=inactive`` list, which is exhaustive.
     """
     return now - timedelta(days=BELOW_TARGET_DAYS_AGO)
+
+
+def legacy_review_recorded_at(now: datetime) -> datetime:
+    """The single, deliberately RECENT timestamp for the legacy-review student.
+
+    Recent, and this student's only attempt, so neither the inactive rule
+    (>=14 days) nor the declining-trend rule (needs 3 records) can ever fire
+    on it -- this account carries no `expectedAtRiskReasons` at all and is
+    not exposed under the contract's `students` key.
+    """
+    return now - timedelta(days=LEGACY_REVIEW_DAYS_AGO)
 
 
 def paper_record_for_scenario(
@@ -699,6 +1064,11 @@ def accuracy_report_for_score(
     confidence: ConfidenceBand = ConfidenceBand.HIGH,
     confidence_score: float = 0.95,
     needs_teacher_review: bool = False,
+    matched_point_ids: list[str] | None = None,
+    point_verdicts: list[PointVerdict] | None = None,
+    point_notes: dict[str, str] | None = None,
+    source_box: SourceBox | None = None,
+    plagiarism_flagged: bool = False,
 ) -> AccuracyReport:
     """Build a minimal, valid :class:`AccuracyReport` carrying ``score``.
 
@@ -719,6 +1089,32 @@ def accuracy_report_for_score(
     fan-out (never a hand-inserted ``review_queue`` row) — see
     ``REVIEW_ITEM_CONFIDENCE_SCORE``'s docstring for why the score/date/subject
     stay untouched.
+
+    ``matched_point_ids``/``point_verdicts``/``point_notes`` default to empty
+    (``None`` for the last, exactly like :class:`CorrectedQuestion`'s own
+    field), and every original caller is unaffected. Task #66 passes the
+    first two, alongside ``mark_scheme=`` at the ``persist_correction`` call
+    site, so the review-queue item's own question (still ``question_id="1"``)
+    gets a real per-point verdict ledger through
+    :func:`~lemely.db.question_points.derive_point_rows`, the same as
+    :func:`self_review_report`. ``marker_source`` becomes ``"ai"`` whenever
+    verdicts are attached — I6 verdicts are an AI-marking concept, and a seed
+    row claiming ``"deterministic"`` marking while carrying them would be a
+    lie the real pipeline never tells. ``point_notes`` alone (no verdicts) is
+    the legacy path instead — :func:`rationale_only_review_point_notes` uses
+    it to seed a row with a marker's ``rationale`` but no ``verdict`` on any
+    point, and ``marker_source`` correctly stays ``"deterministic"`` for it.
+
+    ``source_box`` (task #72) defaults to ``None``, same as
+    :class:`CorrectedQuestion`'s own field -- every original caller is
+    unaffected. Set only for the ``inactive`` student's attempt, alongside a
+    real ``upload_id`` (see ``seed()``): a box with no upload behind it is a
+    box the crop route is certain to 404 on, which would test nothing.
+
+    ``plagiarism_flagged`` (Task 18 e2e) is the same kind of override, for the
+    D8 integrity hold: ``AttemptRepository._persist``'s real fan-out queues a
+    genuine ``plagiarism_flag`` review item off this one flag, never a
+    hand-inserted row — see the paper-deletion student's own seeding below.
     """
     percentage, grade = score
     awarded = round(percentage)
@@ -738,7 +1134,12 @@ def accuracy_report_for_score(
         student_answer="seeded",
         expected_answer="seeded",
         topic="Seed topic",
-        marker_source="deterministic",
+        marker_source="deterministic" if point_verdicts is None else "ai",
+        matched_point_ids=matched_point_ids or [],
+        point_verdicts=point_verdicts or [],
+        point_notes=point_notes,
+        source_box=source_box,
+        plagiarism_flagged=plagiarism_flagged,
     )
     correction = CorrectionResult(metadata=_exam_metadata(paper_number), questions=[question])
     weaknesses = WeaknessReport(weak_areas=[])
@@ -754,21 +1155,139 @@ def accuracy_report_for_score(
     return AccuracyReport(correction=correction, weaknesses=weaknesses, grade_prediction=prediction)
 
 
-def build_empty_parent_phone(run_tag: str) -> str:
-    """A second, distinct phone for the genuinely-empty parent account.
+#: Below ``REVIEW_CONFIDENCE_THRESHOLD`` (0.90): question "2" of the
+#: self-review paper is genuinely low-confidence, so the student's verdict
+#: carries authority there (self-review spec D2) with no judge and no key.
+SELF_REVIEW_LOW_CONFIDENCE_SCORE = 0.55
 
-    **The trap this avoids:** :func:`build_phone` only reads a string's
-    *first 10 characters* (then pads/truncates to a national number). The
-    default ``run_tag`` is a 12-hex-char string, so a same-tag *suffix*
-    (``f"{run_tag}-empty"``) would leave those first 10 characters completely
-    unchanged and produce a phone number IDENTICAL to :func:`build_phone`'s —
-    silently colliding with the linked parent's own number and tripping the
-    30s per-phone OTP resend cooldown (module docstring) on this run's second
-    :meth:`~lemely.auth.service.AuthService.request_otp` call. Prefixing
-    instead of suffixing changes the leading characters and sidesteps this
-    for any ``run_tag`` (default or custom, any length).
+
+def self_review_scheme() -> MarkScheme:
+    """The point-based scheme the self-review student's paper was marked against.
+
+    Two questions, five marks, every point tariff 1 — small enough to assert
+    on by eye in ``web/e2e/self-review.spec.ts``.
     """
-    return build_phone(f"empty-{run_tag}")
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code=SUBJECT_CODE,
+            paper_number=3,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2023,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=5,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="1",
+                marks=2,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="States that speed is distance over time", marks=1),
+                    AnswerPoint(id="p2", point="Gives the unit m/s", marks=1),
+                ],
+            ),
+            SchemeQuestion(
+                id="2",
+                marks=3,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="Correct method", marks=1),
+                    AnswerPoint(id="p2", point="Correct substitution", marks=1),
+                    AnswerPoint(id="p3", point="Answer to 2 significant figures", marks=1),
+                ],
+            ),
+        ],
+    )
+
+
+def self_review_report() -> AccuracyReport:
+    """A 3/5 paper: "1" fully earned and confident; "2" 1/3 and low-confidence.
+
+    Task #66: "2"'s three points carry all three I6 verdicts (``p1``
+    ``"awarded"``, ``p2`` ``"withheld"``, ``p3`` ``"unverifiable"``), matching
+    its existing ``matched_point_ids=["p1"]`` exactly (only ``p1``'s verdict
+    is ``"awarded"``) so the "1 to 3 out of 3" self-mark story
+    ``web/e2e/self-review.spec.ts`` already tells stays true. Before this, the
+    verdict column was NULL for every seeded row and the spec's post-reveal
+    verdict-chip assertion could not be written.
+    """
+    questions = [
+        CorrectedQuestion(
+            question_id="1",
+            awarded_marks=2,
+            maximum_marks=2,
+            confidence=ConfidenceBand.HIGH,
+            confidence_score=0.97,
+            needs_teacher_review=False,
+            student_answer="speed = distance / time = 10 / 2 = 5 m/s",
+            expected_answer="5 m/s",
+            topic="Motion",
+            marker_source="ai",
+            matched_point_ids=["p1", "p2"],
+        ),
+        CorrectedQuestion(
+            question_id="2",
+            awarded_marks=1,
+            maximum_marks=3,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=SELF_REVIEW_LOW_CONFIDENCE_SCORE,
+            needs_teacher_review=True,
+            student_answer="F = ma = 2 x 6 = 12",
+            expected_answer="12 N",
+            topic="Forces",
+            marker_source="ai",
+            review_reason="Working hard to read",
+            feedback="Method shown, but the substitution and rounding were not clear.",
+            matched_point_ids=["p1"],
+            point_verdicts=[
+                PointVerdict(
+                    point_id="p1",
+                    verdict="awarded",
+                    evidence_span="F = ma = 2 x 6 = 12",
+                ),
+                PointVerdict(
+                    point_id="p2",
+                    verdict="withheld",
+                    note="Substitution not shown",
+                ),
+                PointVerdict(
+                    point_id="p3",
+                    verdict="unverifiable",
+                    note=(
+                        "Carried forward from p2's substituted value; "
+                        "rounding to 2 s.f. not confirmed"
+                    ),
+                    ecf_applied=True,
+                ),
+            ],
+        ),
+    ]
+    correction = CorrectionResult(
+        metadata=ExamMetadata(
+            subject_code=SUBJECT_CODE,
+            paper_number=3,
+            paper_variant=1,
+            session_month="May/June",
+            session_year=2023,
+        ),
+        questions=questions,
+    )
+    return AccuracyReport(
+        correction=correction,
+        weaknesses=summarize_weaknesses(correction),
+        grade_prediction=GradePrediction(
+            awarded_marks=3,
+            maximum_marks=5,
+            percentage=60.0,
+            grade="C",
+            confidence=ConfidenceBand.LOW,
+            needs_teacher_review=True,
+            boundary_source="subject_default",
+        ),
+    )
 
 
 def build_quiz_bank_questions(teacher_id: uuid.UUID) -> list[NewBankQuestion]:
@@ -955,6 +1474,7 @@ def build_result_payload(
     practice: dict[str, Any],
     study_plan: dict[str, Any],
     engagement: dict[str, Any],
+    deletion: dict[str, Any],
 ) -> dict[str, Any]:
     """Assemble the documented output contract from already-computed pieces.
 
@@ -969,7 +1489,10 @@ def build_result_payload(
     (issue #10, Task 23 e2e) — the pre-existing ``schoolAdmin`` above has no
     ``SchoolMembership`` (spec §1.1's own finding), so it cannot mint a seat
     invite; this is a second, real school_admin who administers a real school
-    with a real quota, via `_provision_school_with_admin`.
+    with a real quota, via `_provision_school_with_admin`. ``deletion`` is
+    additive on top of ``engagement`` (Task 18 e2e) — the paper-deletion
+    class and its three dedicated students back `paper-deletion.spec.ts`'s
+    eight design scenarios plus R7.
     """
     return {
         "runTag": run_tag,
@@ -988,6 +1511,7 @@ def build_result_payload(
         "practice": practice,
         "studyPlan": study_plan,
         "engagement": engagement,
+        "deletion": deletion,
     }
 
 
@@ -1001,13 +1525,27 @@ def _log(message: str) -> None:
     print(message, file=sys.stderr)
 
 
-def _signup_account(role_label: str, role: Role, run_tag: str) -> dict[str, Any]:
+def _signup_account(
+    role_label: str, role: Role, run_tag: str, *, email_verified: bool = False
+) -> dict[str, Any]:
+    """Sign up one seed account.
+
+    ``email_verified`` mirrors a real invite redemption's shape for a parent
+    (the parent proves control of the address by verifying a code before the
+    account exists at all, spec §2) — every other role here defaults to
+    unverified, same as the real self-service signup flow those roles
+    actually go through.
+    """
     auth_service = deps.get_auth_service()
     email = build_email(role_label, run_tag)
     password = build_password(run_tag)
     _log(f"Signing up {role.value} account: {email}")
     result: AuthResult = auth_service.signup(
-        email, password, role, display_name=f"Seed {role_label.replace('-', ' ').title()}"
+        email,
+        password,
+        role,
+        display_name=f"Seed {role_label.replace('-', ' ').title()}",
+        email_verified=email_verified,
     )
     return {
         "userId": str(result.user_id),
@@ -1128,7 +1666,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
 
     class_service = deps.get_class_service()
     parent_link_service = deps.get_parent_link_service()
-    auth_service = deps.get_auth_service()
+    invite_service = deps.get_invite_service()
     attempt_repo = deps.get_attempt_repo()
     review_service = deps.get_review_service()
     question_bank_service = deps.get_question_bank_service()
@@ -1153,18 +1691,10 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
 
     _log("Signing up the empty teacher (no classes) and empty parent (no linked children)")
     empty_teacher = _signup_account("empty-teacher", Role.teacher, run_tag)
-    empty_parent_phone = build_empty_parent_phone(run_tag)
-    _log(f"Requesting one OTP challenge for the empty parent's phone {empty_parent_phone}")
-    empty_dev_code = auth_service.request_otp(empty_parent_phone)
-    if empty_dev_code is None:
-        raise RuntimeError(
-            "AuthService.request_otp returned no code for the empty parent — the "
-            "configured SMS provider delivers out of band, so this script cannot "
-            "recover it to verify."
-        )
-    empty_parent_result = auth_service.verify_otp(empty_parent_phone, empty_dev_code)
-    # Deliberately no ParentLinkService.link call — this account must stay
-    # genuinely childless for the `empty` parent-portal screenshot capture.
+    empty_parent = _signup_account("empty-parent", Role.parent, run_tag, email_verified=True)
+    # Deliberately no ParentLinkService.link_in_session call — this account
+    # must stay genuinely childless for the `empty` parent-portal screenshot
+    # capture.
 
     _log("Creating class and enrolling the at-risk roster")
     class_row = class_service.create_class(
@@ -1204,44 +1734,116 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     _persist_attempts(below_target["userId"], [BELOW_TARGET_SCORE], [below_target_recorded_at(now)])
 
     _log("Persisting the declining-trend run (single subject, 3 papers)")
+    student_profile_service.mark_onboarding_complete(declining["userId"])
     _persist_attempts(declining["userId"], DECLINING_SCORES, declining_recorded_ats(now))
 
     _log(
         "Persisting the >=14-day-inactive attempt (deliberately LOW-confidence: T-08's "
-        "real review-queue item, same score/date as always)"
+        "real review-queue item, same score/date as always, now with a per-point "
+        "verdict ledger — task #66)"
     )
+    # "inactive" describes this account's last-activity gap (>=14 days), not its
+    # onboarding state — it must be onboarded like the others so any /student/*
+    # spec driving it doesn't get bounced to /student/onboard.
+    student_profile_service.mark_onboarding_complete(inactive["userId"])
+    _log(
+        "Storing a real scan behind the inactive attempt (task #72), so its "
+        "review item's source_box resolves to an actual crop"
+    )
+    inactive_uuid = uuid.UUID(inactive["userId"])
+    inactive_upload_id = uuid.uuid4()
+    inactive_scan_object_path = f"students/{inactive_uuid}/{inactive_upload_id.hex}/scan.pdf"
+    inactive_scan_bytes = review_item_source_scan("a")
+    with get_sessionmaker()() as upload_session, upload_session.begin():
+        upload_session.add(
+            Upload(
+                id=inactive_upload_id,
+                user_id=inactive_uuid,
+                storage_path=inactive_scan_object_path,
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=len(inactive_scan_bytes),
+                # This attempt is already fully marked by the time this row is
+                # written -- `pending` (the server default) would misstate a
+                # fixture that never goes through the real extract/grade
+                # pipeline this status otherwise tracks.
+                status=UploadStatus.complete,
+            )
+        )
+    # The same backend `lemely.web.deps.get_storage_backend` hands the running
+    # app (`local` by default -- `StorageSettings`'s own doc), so a crop
+    # request against this item during an e2e run finds a real object, not a
+    # 404 from a box with nothing behind it.
+    deps.get_storage_backend().upload(
+        deps.get_settings().storage.bucket,
+        inactive_scan_object_path,
+        inactive_scan_bytes,
+        "application/pdf",
+    )
+
     inactive_report = accuracy_report_for_score(
         INACTIVE_SCORE,
         paper_number=1,
         confidence=ConfidenceBand.LOW,
         confidence_score=REVIEW_ITEM_CONFIDENCE_SCORE,
         needs_teacher_review=True,
+        matched_point_ids=REVIEW_ITEM_MATCHED_POINT_IDS,
+        point_verdicts=review_item_point_verdicts(),
+        source_box=REVIEW_ITEM_SOURCE_BOX,
     )
     inactive_attempt_id = attempt_repo.persist_correction(
         user_id=inactive["userId"],
         report=inactive_report,
+        upload_id=inactive_upload_id,
         recorded_at=inactive_recorded_at(now).isoformat(),
+        mark_scheme=review_item_scheme(),
     )
 
     _log("Persisting the healthy control's improving run")
+    student_profile_service.mark_onboarding_complete(control["userId"])
     _persist_attempts(control["userId"], CONTROL_SCORES, control_recorded_ats(now))
 
     _log("Persisting the standalone corrected paper")
+    student_profile_service.mark_onboarding_complete(corrected["userId"])
     corrected_attempt_ids = _persist_attempts(
         corrected["userId"], [CORRECTED_SCORE], [corrected_recorded_at(now)]
     )
 
-    parent_phone = build_phone(run_tag)
-    _log(f"Requesting one OTP challenge for parent phone {parent_phone}")
-    dev_code = auth_service.request_otp(parent_phone)
-    if dev_code is None:
-        raise RuntimeError(
-            "AuthService.request_otp returned no code — the configured SMS provider "
-            "delivers out of band, so this script cannot recover it to verify."
-        )
-    parent_result = auth_service.verify_otp(parent_phone, dev_code)
-    _log(f"Linking parent {parent_result.user_id} to the declining student")
-    parent_link_service.link(student_id=uuid.UUID(declining["userId"]), phone=parent_phone)
+    self_review = _signup_account("self-review", Role.student, run_tag)
+    self_review_uuid = uuid.UUID(self_review["userId"])
+    # Onboarding-complete, same as `below_target`/the placement/practice
+    # accounts below: `StudentLayout`'s gate (`studentOnboardingRedirect` in
+    # `web/src/portals/student/index.tsx`) sends ANY route under `/student`
+    # to `/student/onboard` once `GET /me/student-profile` has created a
+    # profile row with `onboarding_completed_at` still NULL — which a first
+    # `GET` does unconditionally. Skipping this call left `self-review.spec.ts`
+    # bounced to onboarding on its very first navigation to
+    # `/student/result/0`; a student revisiting a marked paper has plainly
+    # been through onboarding already.
+    student_profile_service.mark_onboarding_complete(self_review_uuid)
+    _log("Persisting the self-review student's point-based, low-confidence paper")
+    self_review_attempt_id = attempt_repo.persist_correction(
+        user_id=self_review["userId"],
+        report=self_review_report(),
+        recorded_at=corrected_recorded_at(now).isoformat(),
+        mark_scheme=self_review_scheme(),
+    )
+
+    parent_account = _signup_account("parent", Role.parent, run_tag, email_verified=True)
+    declining_uuid = uuid.UUID(declining["userId"])
+    parent_uuid = uuid.UUID(parent_account["userId"])
+    _log(f"Linking parent {parent_uuid} to the declining student")
+    # `link_in_session` takes an already-open session because its one
+    # production caller, `InviteService.redeem`, needs the link and the
+    # invite's redemption committed in one transaction. This script has no
+    # invite to redeem here (the invite it mints below is deliberately
+    # reusable and left unredeemed, for `parent-journey.spec.ts` to redeem
+    # itself), so it opens and commits a single-purpose transaction of its own.
+    with get_sessionmaker()() as link_session, link_session.begin():
+        parent_link_service.link_in_session(link_session, parent_uuid, declining_uuid)
+
+    _log("Minting the declining student's reusable parent invite code")
+    declining_parent_invite = invite_service.get_or_create_parent_code(declining_uuid)
 
     _log("Locating the review-queue row the inactive attempt's fan-out created (T-08)")
     review_rows = review_service.list_queue(
@@ -1249,7 +1851,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         Role.teacher,
         class_id=class_row.class_id,
         reason="low_confidence",
-    )
+    ).rows
     review_rows = [r for r in review_rows if r.attempt_id == inactive_attempt_id]
     if len(review_rows) != 1:
         raise RuntimeError(
@@ -1258,6 +1860,147 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
             "may no longer be below REVIEW_CONFIDENCE_THRESHOLD."
         )
     review_item_row = review_rows[0]
+
+    _log(
+        "Signing up a legacy-review student and persisting a SECOND, deliberately "
+        "verdict-free and rationale-free low-confidence attempt (task #67's other "
+        "T-08 review-queue row -- the shape every row has in production today, "
+        "since equivalence_gate defaults off)"
+    )
+    legacy_review = _signup_account("legacy-review", Role.student, run_tag)
+    # A dedicated THIRD class -- never the roster class (`class_row`, whose
+    # 3-student/69%-average/2-at-risk figures `teacher-journey.spec.ts`
+    # hardcodes) and never the below-target class (`below_target_class_row`,
+    # a different rule's own single-purpose fixture) -- so this student's
+    # presence can never move a number an existing spec already asserts.
+    legacy_review_class_row = class_service.create_class(
+        uuid.UUID(teacher["userId"]), f"P67 Legacy Review Class {run_tag}"
+    )
+    assert legacy_review_class_row.join_code is not None  # noqa: S101 - always generated, see create_class
+    class_service.join_by_code(
+        uuid.UUID(legacy_review["userId"]), legacy_review_class_row.join_code
+    )
+    legacy_review_report = accuracy_report_for_score(
+        LEGACY_REVIEW_SCORE,
+        paper_number=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=LEGACY_REVIEW_CONFIDENCE_SCORE,
+        needs_teacher_review=True,
+        # Deliberately NEITHER matched_point_ids NOR point_verdicts: the
+        # legacy shape this row exists to seed has neither, so
+        # derive_point_rows leaves every point's verdict AND rationale None.
+    )
+    legacy_review_attempt_id = attempt_repo.persist_correction(
+        user_id=legacy_review["userId"],
+        report=legacy_review_report,
+        recorded_at=legacy_review_recorded_at(now).isoformat(),
+        mark_scheme=legacy_review_scheme(),
+    )
+
+    _log("Locating the review-queue row the legacy-review attempt's fan-out created (task #67)")
+    legacy_review_rows = review_service.list_queue(
+        uuid.UUID(teacher["userId"]),
+        Role.teacher,
+        class_id=legacy_review_class_row.class_id,
+        reason="low_confidence",
+    ).rows
+    legacy_review_rows = [r for r in legacy_review_rows if r.attempt_id == legacy_review_attempt_id]
+    if len(legacy_review_rows) != 1:
+        raise RuntimeError(
+            f"Expected exactly 1 low_confidence review-queue row for attempt "
+            f"{legacy_review_attempt_id}, found {len(legacy_review_rows)} — "
+            "LEGACY_REVIEW_CONFIDENCE_SCORE may no longer be below REVIEW_CONFIDENCE_THRESHOLD."
+        )
+    legacy_review_item_row = legacy_review_rows[0]
+
+    _log(
+        "Signing up a rationale-only-review student and persisting a THIRD low-confidence "
+        "attempt whose one point carries a marker's rationale (point_notes) but no verdict "
+        "-- the shape production ships whenever a marker writes a note without "
+        "equivalence_gate on, and the shape MarkerVerdicts' widened guard exists to render"
+    )
+    rationale_only_review = _signup_account("rationale-only-review", Role.student, run_tag)
+    # A dedicated FOURTH class -- never the roster class, the below-target
+    # class, or the legacy-review class -- so this student's presence can
+    # never move a number an existing spec already asserts.
+    rationale_only_review_class_row = class_service.create_class(
+        uuid.UUID(teacher["userId"]), f"Rationale Only Review Class {run_tag}"
+    )
+    assert rationale_only_review_class_row.join_code is not None  # noqa: S101 - always generated, see create_class
+    class_service.join_by_code(
+        uuid.UUID(rationale_only_review["userId"]), rationale_only_review_class_row.join_code
+    )
+    _log(
+        "Storing a second, visually distinct scan behind the rationale-only "
+        "attempt (C1 review of task #72), so the navigation test has two "
+        "boxed items whose crops are tellable apart"
+    )
+    rationale_only_upload_id = uuid.uuid4()
+    rationale_only_uuid = uuid.UUID(rationale_only_review["userId"])
+    rationale_only_scan_object_path = (
+        f"students/{rationale_only_uuid}/{rationale_only_upload_id.hex}/scan.pdf"
+    )
+    rationale_only_scan_bytes = review_item_source_scan("b")
+    with (
+        get_sessionmaker()() as rationale_only_upload_session,
+        rationale_only_upload_session.begin(),
+    ):
+        rationale_only_upload_session.add(
+            Upload(
+                id=rationale_only_upload_id,
+                user_id=rationale_only_uuid,
+                storage_path=rationale_only_scan_object_path,
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=len(rationale_only_scan_bytes),
+                # See the `inactive` upload's own comment above -- same reason.
+                status=UploadStatus.complete,
+            )
+        )
+    deps.get_storage_backend().upload(
+        deps.get_settings().storage.bucket,
+        rationale_only_scan_object_path,
+        rationale_only_scan_bytes,
+        "application/pdf",
+    )
+
+    rationale_only_review_report = accuracy_report_for_score(
+        RATIONALE_ONLY_REVIEW_SCORE,
+        paper_number=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE,
+        needs_teacher_review=True,
+        point_notes=rationale_only_review_point_notes(),
+        # Deliberately no matched_point_ids/point_verdicts -- see
+        # rationale_only_review_point_notes()'s own docstring.
+        source_box=REVIEW_ITEM_SOURCE_BOX,
+    )
+    rationale_only_review_attempt_id = attempt_repo.persist_correction(
+        user_id=rationale_only_review["userId"],
+        report=rationale_only_review_report,
+        upload_id=rationale_only_upload_id,
+        recorded_at=rationale_only_review_recorded_at(now).isoformat(),
+        mark_scheme=rationale_only_review_scheme(),
+    )
+
+    _log("Locating the review-queue row the rationale-only-review attempt's fan-out created")
+    rationale_only_review_rows = review_service.list_queue(
+        uuid.UUID(teacher["userId"]),
+        Role.teacher,
+        class_id=rationale_only_review_class_row.class_id,
+        reason="low_confidence",
+    ).rows
+    rationale_only_review_rows = [
+        r for r in rationale_only_review_rows if r.attempt_id == rationale_only_review_attempt_id
+    ]
+    if len(rationale_only_review_rows) != 1:
+        raise RuntimeError(
+            f"Expected exactly 1 low_confidence review-queue row for attempt "
+            f"{rationale_only_review_attempt_id}, found {len(rationale_only_review_rows)} — "
+            "RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE may no longer be below "
+            "REVIEW_CONFIDENCE_THRESHOLD."
+        )
+    rationale_only_review_item_row = rationale_only_review_rows[0]
 
     _log("Seeding the quiz's question bank (generated rows, paper_id=None — D3.7)")
     teacher_uuid = uuid.UUID(teacher["userId"])
@@ -1441,6 +2184,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         "declining": {
             **declining,
             "expectedAtRiskReasons": [AtRiskReason.DECLINING_TREND.value],
+            "parentInviteCode": declining_parent_invite.code,
         },
         "inactive": {
             **inactive,
@@ -1455,6 +2199,11 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
             "expectedAtRiskReasons": [],
             "correctedPaperId": str(corrected_attempt_ids[0]),
         },
+        "selfReview": {
+            **self_review,
+            "expectedAtRiskReasons": [],
+            "selfReviewAttemptId": str(self_review_attempt_id),
+        },
         "belowTarget": {
             **below_target,
             "expectedAtRiskReasons": [AtRiskReason.BELOW_TARGET.value],
@@ -1467,12 +2216,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
             "className": below_target_class_row.name,
         },
     }
-    parent = {
-        "userId": str(parent_result.user_id),
-        "phone": parent_phone,
-        "accessToken": parent_result.access_token,
-        "linkedStudent": "declining",
-    }
+    parent = {**parent_account, "linkedStudent": "declining"}
     class_dict = {
         "classId": str(class_row.class_id),
         "name": class_row.name,
@@ -1482,6 +2226,19 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         "itemId": str(review_item_row.item_id),
         "attemptId": str(review_item_row.attempt_id),
         "studentKey": "inactive",
+        # Task #67: a SECOND review-queue row whose one question carries no
+        # verdict and no rationale on any point -- the legacy shape
+        # `MarkerVerdicts`' section guard exists to suppress. Not tied to a
+        # `students` entry -- the account behind it exists only to own this
+        # attempt, and no spec needs to log in as it.
+        "legacyItemId": str(legacy_review_item_row.item_id),
+        "legacyAttemptId": str(legacy_review_attempt_id),
+        # A THIRD review-queue row whose one question carries a marker's
+        # rationale (point_notes) but no verdict on any point -- the shape
+        # `MarkerVerdicts`' guard was widened to render. Not tied to a
+        # `students` entry, same as `legacyItemId` above.
+        "rationaleOnlyItemId": str(rationale_only_review_item_row.item_id),
+        "rationaleOnlyAttemptId": str(rationale_only_review_attempt_id),
     }
     quiz = {
         "quizId": str(quiz_row.quiz_id),
@@ -1489,11 +2246,6 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         "submissionId": str(submit_result.submission_id),
         "submittedBy": "control",
         "status": mark_result.status.value,
-    }
-    empty_parent_dict = {
-        "userId": str(empty_parent_result.user_id),
-        "phone": empty_parent_phone,
-        "accessToken": empty_parent_result.access_token,
     }
     placement_dict = {
         "subjectCode": PLACEMENT_SUBJECT_CODE,
@@ -1897,6 +2649,192 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         },
     }
 
+    # -- Paper deletion (Task 18 e2e, spec 2026-09-22) -------------------------
+    # A dedicated class plus three students backing the eight scenarios plus
+    # R7, kept off the P3.10 roster/below-target classes so none of their
+    # pinned numbers (teacher-journey.spec.ts's 3 students/69%/2 at-risk,
+    # at-risk-flags.spec.ts's exact reason lists) move.
+    _log("Creating the paper-deletion class and its three dedicated students")
+    deletion_class_row = class_service.create_class(teacher_uuid, f"P8 Deletion Class {run_tag}")
+    assert deletion_class_row.join_code is not None  # noqa: S101 - see create_class
+
+    deletion_student = _signup_account("deletion", Role.student, run_tag)
+    deletion_integrity_student = _signup_account("deletion-integrity", Role.student, run_tag)
+    deletion_remark_student = _signup_account("deletion-remark", Role.student, run_tag)
+    deletion_uuid = uuid.UUID(deletion_student["userId"])
+    deletion_integrity_uuid = uuid.UUID(deletion_integrity_student["userId"])
+    deletion_remark_uuid = uuid.UUID(deletion_remark_student["userId"])
+    # Only the two students whose papers a teacher must see (the review item,
+    # the class-papers/unshare surfaces) are enrolled — the re-mark student's
+    # own scenario (R7) never involves a teacher at all.
+    class_service.join_by_code(deletion_uuid, deletion_class_row.join_code)
+    class_service.join_by_code(deletion_integrity_uuid, deletion_class_row.join_code)
+    student_profile_service.mark_onboarding_complete(deletion_uuid)
+    student_profile_service.mark_onboarding_complete(deletion_integrity_uuid)
+    student_profile_service.mark_onboarding_complete(deletion_remark_uuid)
+
+    _log(
+        "Persisting the paper-deletion student's four distinct papers (paper_number "
+        "1..4, oldest to newest) — the last (latest) one deliberately low-confidence, "
+        "T-07's real review-queue fan-out, for the unshare/reshare scenarios (R3, and "
+        "R9's 'seed the unshared paper as the latest')"
+    )
+    deletion_scores: list[tuple[float, str]] = [(60.0, "D"), (68.0, "C"), (74.0, "B"), (81.0, "B")]
+    deletion_attempt_ids: list[uuid.UUID] = []
+    deletion_upload_repo = deps.get_student_upload_repo()
+    for offset, score in enumerate(deletion_scores):
+        recorded_at = now - timedelta(days=4 - offset)
+        is_latest = offset == len(deletion_scores) - 1
+        report = accuracy_report_for_score(
+            score,
+            paper_number=offset + 1,
+            confidence=ConfidenceBand.LOW if is_latest else ConfidenceBand.HIGH,
+            confidence_score=REVIEW_ITEM_CONFIDENCE_SCORE if is_latest else 0.95,
+            needs_teacher_review=is_latest,
+        )
+        # A real `uploads` row per paper — `PaperDeletionService.delete`
+        # refuses an attempt with no `upload_id` at all ("Only uploaded
+        # papers can be deleted."), the same refusal a quiz/file-store record
+        # gets, so a deletable paper needs one.
+        deletion_upload_id = deletion_upload_repo.create_upload(
+            user_id=deletion_student["userId"],
+            storage_path=f"e2e/{deletion_uuid}/paper-{offset + 1}/scan.pdf",
+            original_filename=f"e2e-deletion-paper-{offset + 1}.pdf",
+            content_type="application/pdf",
+            byte_size=1024,
+        )
+        deletion_attempt_ids.append(
+            attempt_repo.persist_correction(
+                user_id=deletion_student["userId"],
+                report=report,
+                upload_id=deletion_upload_id,
+                recorded_at=recorded_at.isoformat(),
+            )
+        )
+
+    _log("Locating the paper-deletion student's low_confidence review-queue row (R3/R9)")
+    deletion_review_rows = [
+        r
+        for r in review_service.list_queue(
+            teacher_uuid,
+            Role.teacher,
+            class_id=deletion_class_row.class_id,
+            reason="low_confidence",
+        ).rows
+        if r.attempt_id == deletion_attempt_ids[-1]
+    ]
+    if len(deletion_review_rows) != 1:
+        raise RuntimeError(
+            "Expected exactly 1 low_confidence review-queue row for the paper-deletion "
+            f"student's latest attempt, found {len(deletion_review_rows)}."
+        )
+    deletion_review_item = deletion_review_rows[0]
+
+    _log(
+        "Persisting the integrity-flagged paper (D8's hold): plagiarism_flagged on its "
+        "one question, real fan-out queues a genuine plagiarism_flag review item"
+    )
+    deletion_integrity_upload_id = deletion_upload_repo.create_upload(
+        user_id=deletion_integrity_student["userId"],
+        storage_path=f"e2e/{deletion_integrity_uuid}/paper-1/scan.pdf",
+        original_filename="e2e-deletion-integrity-paper-1.pdf",
+        content_type="application/pdf",
+        byte_size=1024,
+    )
+    deletion_integrity_attempt_id = attempt_repo.persist_correction(
+        user_id=deletion_integrity_student["userId"],
+        report=accuracy_report_for_score((66.0, "C"), paper_number=1, plagiarism_flagged=True),
+        upload_id=deletion_integrity_upload_id,
+        # Recent, so `integrity_hold_until(recorded_at)` (recorded_at +
+        # RETENTION_DAYS) is still in the future — a live hold to refuse
+        # against, with a real `deletableFrom` date in the 409 body.
+        recorded_at=now.isoformat(),
+    )
+    integrity_review_rows = [
+        r
+        for r in review_service.list_queue(
+            teacher_uuid,
+            Role.teacher,
+            class_id=deletion_class_row.class_id,
+            reason="plagiarism_flag",
+        ).rows
+        if r.attempt_id == deletion_integrity_attempt_id
+    ]
+    if len(integrity_review_rows) != 1:
+        raise RuntimeError(
+            "Expected exactly 1 plagiarism_flag review-queue row for the integrity "
+            f"student's attempt, found {len(integrity_review_rows)}."
+        )
+    deletion_integrity_review_item = integrity_review_rows[0]
+
+    _log(
+        "Persisting the re-mark student's shared upload (R7): the same scan marked "
+        "twice, two attempts sharing one upload_id — deleting either must take both"
+    )
+    deletion_remark_upload_id = deps.get_student_upload_repo().create_upload(
+        user_id=deletion_remark_student["userId"],
+        storage_path=f"e2e/{deletion_remark_uuid}/remark/scan.pdf",
+        original_filename="e2e-remark-scan.pdf",
+        content_type="application/pdf",
+        byte_size=2048,
+    )
+    deletion_remark_attempt_ids = [
+        attempt_repo.persist_correction(
+            user_id=deletion_remark_student["userId"],
+            report=accuracy_report_for_score((70.0, "C"), paper_number=1),
+            upload_id=deletion_remark_upload_id,
+            recorded_at=(now - timedelta(days=2)).isoformat(),
+        ),
+        attempt_repo.persist_correction(
+            user_id=deletion_remark_student["userId"],
+            report=accuracy_report_for_score((73.0, "B"), paper_number=1),
+            upload_id=deletion_remark_upload_id,
+            recorded_at=(now - timedelta(days=1)).isoformat(),
+        ),
+    ]
+
+    _log("Uploading one teacher-console paper for the R2 console-deletion scenario")
+    deletion_console_repo = deps.get_teacher_paper_repo()
+    deletion_console_paper_id = uuid.uuid4()
+    deletion_console_repo.create(
+        paper_id=deletion_console_paper_id,
+        uploaded_by=teacher_uuid,
+        storage_path=f"teacher/{teacher_uuid}/{deletion_console_paper_id.hex}/scan.pdf",
+        scheme_storage_path=None,
+        original_filename="e2e-console-scan.pdf",
+        content_type="application/pdf",
+        byte_size=4096,
+    )
+    # paper_number=9: distinct from every paper_number used above/elsewhere in
+    # this module, purely so a human skimming a screenshot of this console
+    # paper can tell it apart from the student-side fixtures; never read by
+    # any assertion.
+    deletion_console_repo.finish(
+        deletion_console_paper_id, accuracy_report_for_score((72.0, "C"), paper_number=9)
+    )
+
+    deletion_dict = {
+        "classId": str(deletion_class_row.class_id),
+        "className": deletion_class_row.name,
+        "student": {
+            **deletion_student,
+            "subjectCode": SUBJECT_CODE,
+            "attemptIds": [str(a) for a in deletion_attempt_ids],
+        },
+        "integrityStudent": {
+            **deletion_integrity_student,
+            "subjectCode": SUBJECT_CODE,
+            "attemptId": str(deletion_integrity_attempt_id),
+            "reviewItemId": str(deletion_integrity_review_item.item_id),
+        },
+        "remarkStudent": {
+            **deletion_remark_student,
+            "attemptIds": [str(a) for a in deletion_remark_attempt_ids],
+        },
+        "reviewItemId": str(deletion_review_item.item_id),
+        "consolePaperId": str(deletion_console_paper_id),
+    }
+
     _log("Seeding complete")
     return build_result_payload(
         run_tag=run_tag,
@@ -1910,11 +2848,12 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         review_item=review_item,
         quiz=quiz,
         empty_teacher=empty_teacher,
-        empty_parent=empty_parent_dict,
+        empty_parent=empty_parent,
         placement=placement_dict,
         practice=practice_dict,
         study_plan=study_plan_dict,
         engagement=engagement_dict,
+        deletion=deletion_dict,
     )
 
 

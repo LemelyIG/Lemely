@@ -13,8 +13,11 @@ from __future__ import annotations
 # regardless of whether the caller has already triggered the lazy imports.
 from lemely.db.models.academic import ExamDate, MarkScheme, Paper, Subject
 from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
+from lemely.db.models.auth_cooldowns import AuthCooldown
 from lemely.db.models.auth_tokens import AuthToken
 from lemely.db.models.billing import PlanTier, Subscription
+from lemely.db.models.catalogue import SubjectTopic, SyllabusPaper
+from lemely.db.models.deletion import ClassPaperExclusion
 from lemely.db.models.engagement import Streak, XpEvent
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
@@ -29,6 +32,7 @@ from lemely.db.models.enums import (
     MarkerSource,
     MembershipRole,
     NotificationType,
+    PaperTier,
     PlanInterval,
     QualificationLevel,
     QuestionDifficulty,
@@ -82,6 +86,8 @@ from lemely.db.models.quizzes import (
 from lemely.db.models.study_plan import StudyPlan as StudyPlanTable
 from lemely.db.models.study_plan import StudyPlanActivityType
 from lemely.db.models.study_plan import StudyPlanSession as StudyPlanSessionTable
+from lemely.db.models.teacher_papers import TeacherPaper
+from lemely.db.models.thresholds import ComponentThreshold, OptionThreshold
 from lemely.db.models.users import Device, Friendship, ParentChildLink, User
 
 
@@ -96,19 +102,40 @@ def import_all_models() -> None:
     from lemely.db.models import (  # noqa: F401
         academic,
         attempts,
+        auth_cooldowns,
         auth_tokens,
         billing,
+        catalogue,
+        deletion,
         engagement,
         flashcards,
         invites,
         ops,
         orgs,
+        otp_challenges,
         profiles,
         quizzes,
         study_plan,
+        teacher_papers,
+        thresholds,
         users,
     )
 
+
+# Deliberately *not* in the alphabetised re-export block above, and imported
+# here rather than there. `lemely.auth` eagerly imports `lemely.db.models`
+# (``lemely/auth/__init__.py`` -> ``lemely.auth.mirror`` ->
+# ``from lemely.db.models import User``), and ``otp_challenges`` needs
+# ``lemely.auth.otp.OtpChannel``. Importing it anywhere in that block — before
+# this module has finished binding every name in it, ``User`` included — would
+# recreate exactly that cycle: ``lemely.db.models`` (mid-init) -> otp_challenges
+# -> lemely.auth -> lemely.auth.mirror -> ``lemely.db.models`` (for ``User``,
+# not yet bound) -> ImportError. Placed after this module's own top-level
+# imports are done, `User` already exists by the time this runs. A ruff/isort
+# autofix would otherwise happily sort this back up into that block (verified:
+# it does), which is why it lives here instead, past the point isort will move
+# imports to.
+from lemely.db.models.otp_challenges import OtpChallenge  # noqa: E402
 
 __all__ = [
     "SESSION_MONTH_LABELS",
@@ -119,11 +146,14 @@ __all__ = [
     "Attempt",
     # Enums and mixins
     "AttemptOrigin",
+    "AuthCooldown",
     "AuthToken",
     "AuthTokenPurpose",
     "BoundarySource",
     "CardSource",
     "ClassEnrollment",
+    "ClassPaperExclusion",
+    "ComponentThreshold",
     "ConfidenceBand",
     "DeckOrigin",
     "Device",
@@ -144,7 +174,10 @@ __all__ = [
     "Notification",
     "NotificationPreference",
     "NotificationType",
+    "OptionThreshold",
+    "OtpChallenge",
     "Paper",
+    "PaperTier",
     "ParentChildLink",
     "PlanInterval",
     "PlanTier",
@@ -181,8 +214,11 @@ __all__ = [
     "StudyPlanSessionTable",
     "StudyPlanTable",
     "Subject",
+    "SubjectTopic",
     "Subscription",
     "SubscriptionStatus",
+    "SyllabusPaper",
+    "TeacherPaper",
     "TimestampMixin",
     "Upload",
     "UploadStatus",
