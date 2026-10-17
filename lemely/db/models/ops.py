@@ -24,26 +24,63 @@ from lemely.db.models.enums import (
 
 
 class ReviewQueueItem(TimestampMixin, Base):
-    """A question result that requires teacher review."""
+    """A marked question that requires teacher review, from either source.
+
+    A row hangs off **exactly one** of two sources (``ck_review_queue_one_source``,
+    migration ``0034``):
+
+    * ``attempt_id`` — a student submission, written by
+      ``AttemptRepository.persist_correction``. Its question is a real
+      ``question_results`` row (``question_result_id``), which is where a
+      teacher's mark override is persisted.
+    * ``teacher_paper_id`` — a scan uploaded through the grading console,
+      written by ``TeacherPaperRepository.finish``. A console paper is never
+      attributed to a student (``teacher_papers.student_id`` is always NULL,
+      D1.12) so it has no ``Attempt`` and no ``question_results`` rows at all;
+      its per-question marks live inside ``teacher_papers.report_json`` and the
+      flagged question is named by the mark scheme's own ``question_id``.
+
+    The two FKs are the discriminator — there is no separate "source" column
+    that could disagree with them.
+    """
 
     __tablename__ = "review_queue"
-    __table_args__ = (sa.Index("ix_review_queue_status", "status"),)
+    __table_args__ = (
+        sa.Index("ix_review_queue_status", "status"),
+        sa.Index(
+            "ix_review_queue_teacher_paper",
+            "teacher_paper_id",
+            postgresql_where=sa.text("teacher_paper_id IS NOT NULL"),
+        ),
+        sa.CheckConstraint(
+            "(attempt_id IS NOT NULL) <> (teacher_paper_id IS NOT NULL)",
+            name="one_source",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
         server_default=sa.text("gen_random_uuid()"),
     )
-    attempt_id: Mapped[uuid.UUID] = mapped_column(
+    attempt_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         sa.ForeignKey("attempts.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+    )
+    teacher_paper_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("teacher_papers.id", ondelete="CASCADE"),
+        nullable=True,
     )
     question_result_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         sa.ForeignKey("question_results.id"),
         nullable=True,
     )
+    #: The mark scheme's question id, for a console-sourced row only — there is
+    #: no ``question_results`` row to point ``question_result_id`` at.
+    question_id: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     reason: Mapped[ReviewReason] = mapped_column(
         sa.Enum(ReviewReason, name="reviewreason"),
         nullable=False,
@@ -65,6 +102,24 @@ class ReviewQueueItem(TimestampMixin, Base):
     )
     resolution_note: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    #: Migration ``0037`` (F4/N2): True when this row exists for random-audit
+    #: sampling (``ReviewReason.random_audit``) rather than a marking or
+    #: integrity signal. Added alongside F4's enum rebuild so N2 does not
+    #: need a second Alembic head; N2 itself (the sampler that sets it) is
+    #: not implemented here. Defaults False on every existing row.
+    #: ``default=False`` alongside ``server_default`` so an unflushed,
+    #: freshly-constructed :class:`ReviewQueueItem` also reads ``False``
+    #: rather than ``None`` before it ever reaches the database.
+    is_audit: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    withdrawn_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    """Set with ``status = withdrawn`` when the attempt was soft-deleted.
+
+    Holds **exactly** the attempt's ``deleted_at``, which is what lets restore
+    reopen precisely the items that deletion withdrew and no others
+    (design 2026-09-22 §6).
+    """
 
     question_result: Mapped[object] = relationship(
         "QuestionResult", back_populates="review_queue_items"
@@ -72,9 +127,26 @@ class ReviewQueueItem(TimestampMixin, Base):
 
 
 class Announcement(TimestampMixin, Base):
-    """An announcement published by a teacher or school admin."""
+    """An announcement published by a teacher or school admin.
+
+    ``notified_at`` (migration ``0030``, push-delivery spec §1) is when the
+    notification fan-out for this row **completed**; ``NULL`` means it has not.
+    The composer stamps it right after an immediate fan-out; the sweeper in
+    :mod:`lemely.web.scheduled_notifications` claims unstamped rows whose
+    ``publish_at`` has passed, fans out, and stamps **after** the send — so a
+    crash between the two re-runs the row, and migration ``0018``'s unique
+    index on ``notifications`` makes that re-run harmless. The partial index is
+    the only shape the sweeper's claim needs.
+    """
 
     __tablename__ = "announcements"
+    __table_args__ = (
+        sa.Index(
+            "ix_announcements_due_unnotified",
+            "publish_at",
+            postgresql_where=sa.text("notified_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -99,6 +171,7 @@ class Announcement(TimestampMixin, Base):
     title: Mapped[str] = mapped_column(sa.String, nullable=False)
     body: Mapped[str] = mapped_column(sa.Text, nullable=False)
     publish_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    notified_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
 
 
 class AnnouncementRead(TimestampMixin, Base):
@@ -405,6 +478,9 @@ class NotificationPreference(TimestampMixin, Base):
         sa.Boolean, nullable=False, server_default=sa.true()
     )
     at_risk_alert: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.true()
+    )
+    review_withdrawn: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, server_default=sa.true()
     )
     quiet_hours_start: Mapped[time | None] = mapped_column(sa.Time(), nullable=True)

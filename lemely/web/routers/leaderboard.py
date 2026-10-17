@@ -26,7 +26,7 @@ P4.5's practice-generator refusal shape) — this route returns it as a normal
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -82,11 +82,38 @@ def _viewer_to_dto(
     )
 
 
+def _status(value: str) -> Literal["ok", "unavailable"]:
+    """Narrow :attr:`LeaderboardResult.status` onto :attr:`LeaderboardDTO.status`'s wire literal.
+
+    ``LeaderboardResult.status`` (``leaderboard_repo.py``) is a plain ``str``
+    -- the service builds it from a hardcoded string literal rather than an
+    enum, so nothing there enforces the two-value contract at the type
+    level. ``LeaderboardDTO.status`` is ``Literal["ok", "unavailable"]``, so
+    a ``str`` reaching it unchecked would defeat that check (mypy's pydantic
+    plugin checks a constructor call's keyword arity, not each field's
+    declared type). An explicit ``if``/``elif`` chain, not a
+    ``cast``/``# type: ignore``, so mypy proves the return really is one of
+    the two literal values.
+
+    Checked, not assumed: ``LeaderboardService.board`` has exactly two
+    ``LeaderboardResult(...)`` call sites, and both pass a hardcoded string
+    literal -- ``status="unavailable"`` (no school in scope) and
+    ``status="ok"`` (every other path). So today the ``ValueError`` branch
+    is unreachable in production: it would only fire if a future call site
+    passed a third value.
+    """
+    if value == "ok":
+        return "ok"
+    if value == "unavailable":
+        return "unavailable"
+    raise ValueError(f"Unknown leaderboard status: {value!r}")  # pragma: no cover
+
+
 def _result_to_dto(
     result: LeaderboardResult, names: dict[uuid.UUID, str], streaks: dict[uuid.UUID, int]
 ) -> LeaderboardDTO:
     return LeaderboardDTO(
-        status=result.status,
+        status=_status(result.status),
         unavailableReason=result.unavailable_reason.value if result.unavailable_reason else None,
         weekStart=result.week_start,
         weekEnd=result.week_end,

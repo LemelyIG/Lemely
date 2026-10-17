@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest"
 
 import { navGroups, crumbs, resolveCrumb, resolveCrumbTrail } from "@/portals/student/data"
-import { navItems, resolveTrail } from "@/portals/teacher/data"
-import { studentRoute } from "@/portals/student"
-import { teacherRoute } from "@/portals/teacher"
+import { navItems, resolveTrail, classesItemActive } from "@/portals/teacher/data"
+import { studentRoute, STUDENT_BOTTOM_TABS } from "@/portals/student"
+import { teacherRoute, TEACHER_BOTTOM_TABS } from "@/portals/teacher"
 import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
 import { platformNavItems, resolveAdminTrail, schoolNavItems } from "@/portals/admin/data"
-import { appRoutes } from "@/routes"
+import { appRoutes, flattenRoutes } from "@/routes"
 
 /*
  * P3.1 · the IA restructure (DECISION D1.1-5), pinned.
@@ -25,10 +25,19 @@ import { appRoutes } from "@/routes"
  * rather than a link in production.
  */
 
-/** Route paths the student portal actually mounts, as absolute pathnames. */
-const studentRoutePaths = (studentRoute.children ?? []).map((child) =>
-  child.index ? "/student" : `/student/${(child as { path: string }).path}`,
-)
+/**
+ * Route paths the student portal actually mounts, as absolute pathnames.
+ * Flattened one level for nested children, matching `teacherRoutePaths`
+ * below — the student `settings` route grew `devices`/`notifications`
+ * children the same shape as the teacher portal's `classes/:classId` one.
+ */
+const studentRoutePaths = (studentRoute.children ?? []).flatMap((child) => {
+  const base = child.index ? "/student" : `/student/${(child as { path: string }).path}`
+  const nested = (child.children ?? []).map((grand) =>
+    grand.index ? base : `/student/${(child as { path: string }).path}/${(grand as { path: string }).path}`,
+  )
+  return [base, ...nested]
+})
 
 /** Same for the teacher portal, flattened one level for nested children. */
 const teacherRoutePaths = (teacherRoute.children ?? []).flatMap((child) => {
@@ -234,6 +243,32 @@ describe("resolveCrumbTrail — the student portal's back affordance", () => {
   })
 })
 
+/*
+ * Packet B3 (Task 4) · BottomNav's tab targets are the one place this task
+ * introduces new navigation destinations (the CTA bar and edge-swipe reuse
+ * existing routes), so they get the same "points at a mounted route" check
+ * every other nav list in this file already gets.
+ */
+describe("BottomNav tabs — B3", () => {
+  it("every student tab points at a mounted student route", () => {
+    for (const tab of STUDENT_BOTTOM_TABS) {
+      expect(
+        matchesSomeRoute(tab.to, studentRoutePaths),
+        `${tab.to} is not a mounted student route`,
+      ).toBe(true)
+    }
+  })
+
+  it("every teacher tab points at a mounted teacher route", () => {
+    for (const tab of TEACHER_BOTTOM_TABS) {
+      expect(
+        matchesSomeRoute(tab.to, teacherRoutePaths),
+        `${tab.to} is not a mounted teacher route`,
+      ).toBe(true)
+    }
+  })
+})
+
 describe("teacher nav — D1.2", () => {
   it("gives the confidence-review queue a persistent nav entry", () => {
     expect(navItems.map((item) => item.to)).toContain("/teacher/review")
@@ -313,6 +348,49 @@ describe("admin nav — P4.7", () => {
     expect(school.some((to) => platform.includes(to))).toBe(false)
     expect(school.every((to) => to.startsWith("/school"))).toBe(true)
     expect(platform.every((to) => to.startsWith("/platform"))).toBe(true)
+  })
+})
+
+/*
+ * The Classes nav row's active-state override. "Your classes" caps at 5
+ * rows, and this is the fallback for the sixth-and-later class: with no row
+ * of its own to highlight, the sidebar previously highlighted nothing at all
+ * while that class's screen was open. The product owner's requirement is
+ * equally explicit in the other direction — Classes must NOT read as active
+ * while a *visible* class row is the current page, since that row already
+ * carries the marker.
+ */
+describe("classesItemActive — the Classes row's fallback highlight", () => {
+  const visibleIds = ["c1", "c2", "c3", "c4", "c5"]
+
+  it("is active on the exact classes listing path", () => {
+    expect(classesItemActive("/teacher/classes", visibleIds)).toBe(true)
+  })
+
+  it("is active for a class beyond the visible cap", () => {
+    expect(classesItemActive("/teacher/classes/c9", visibleIds)).toBe(true)
+  })
+
+  it("is active for an out-of-cap class's analytics screen too", () => {
+    expect(classesItemActive("/teacher/classes/c9/analytics", visibleIds)).toBe(true)
+  })
+
+  it("is NOT active for a class that IS one of the visible rows", () => {
+    expect(classesItemActive("/teacher/classes/c1", visibleIds)).toBe(false)
+    expect(classesItemActive("/teacher/classes/c1/analytics", visibleIds)).toBe(false)
+  })
+
+  it("is not active for an unrelated teacher route", () => {
+    expect(classesItemActive("/teacher/grading", visibleIds)).toBe(false)
+    expect(classesItemActive("/teacher", visibleIds)).toBe(false)
+  })
+
+  it("treats an empty visible list as everyone being out-of-cap", () => {
+    expect(classesItemActive("/teacher/classes/c1", [])).toBe(true)
+  })
+
+  it("tolerates a trailing slash", () => {
+    expect(classesItemActive("/teacher/classes/c9/", visibleIds)).toBe(true)
   })
 })
 
@@ -486,7 +564,9 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
   }
 
   it.each(NEW_PATHS)("registers %s at the top level", (path) => {
-    expect(appRoutes.some((r) => r.path === path), `${path} is not mounted`).toBe(true)
+    expect(flattenRoutes(appRoutes).some((r) => r.path === path), `${path} is not mounted`).toBe(
+      true,
+    )
   })
 
   it("covers all nine, so this suite cannot pass by naming fewer than the spec does", () => {
@@ -497,7 +577,7 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
   it.each(WRAPPED)(
     "wraps %s in LoginRoute, bouncing a signed-in visitor to their own portal",
     (path) => {
-      const route = appRoutes.find((r) => r.path === path)
+      const route = flattenRoutes(appRoutes).find((r) => r.path === path)
       expect(route, `${path} is not mounted`).toBeDefined()
       expect(containsComponent(route!.element, "LoginRoute"), `${path} is not wrapped`).toBe(true)
     },
@@ -521,7 +601,7 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
   it.each(UNWRAPPED)(
     "does NOT wrap %s in LoginRoute, so it stays reachable with a signed-in session",
     (path) => {
-      const route = appRoutes.find((r) => r.path === path)
+      const route = flattenRoutes(appRoutes).find((r) => r.path === path)
       expect(route, `${path} is not mounted`).toBeDefined()
       expect(containsComponent(route!.element, "LoginRoute"), `${path} is wrapped`).toBe(false)
     },
@@ -532,7 +612,7 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
   // signed-OUT visitor rather than a signed-in one — must appear on none of
   // them, wrapped or not.
   it.each(NEW_PATHS)("does not put %s behind RequireAuth", (path) => {
-    const route = appRoutes.find((r) => r.path === path)
+    const route = flattenRoutes(appRoutes).find((r) => r.path === path)
     expect(route, `${path} is not mounted`).toBeDefined()
     expect(containsComponent(route!.element, "RequireAuth"), `${path} is behind RequireAuth`).toBe(
       false,

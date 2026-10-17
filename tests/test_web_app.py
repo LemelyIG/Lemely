@@ -6,9 +6,19 @@ publisher — no live Gemini), and one core→DTO conversion round-trip.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import threading
+import time
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
 from lemely.core.schemas import (
     ConfidenceBand,
@@ -16,9 +26,14 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExamMetadata,
 )
+from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.runtime.events import EventType, bus
 from lemely.web import create_app
-from lemely.web.schemas import correction_to_dto, question_to_dto
+from lemely.web.routers import meta
+from lemely.web.schemas import (
+    question_to_dto,
+    student_safe_review_reason,
+)
 from lemely.web.sse import bus_event_stream
 
 
@@ -32,6 +47,161 @@ def test_health_returns_ok() -> None:
     assert body["status"] == "ok"
     assert "apiKeyConfigured" in body
     assert isinstance(body["apiKeyConfigured"], bool)
+
+
+def test_health_reports_the_serving_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cloud Run sets K_REVISION in every container; health echoes it.
+
+    The deploy pipeline compares this against the revision it just rolled out,
+    through the public domain, to prove the frontend's proxy target is the
+    revision that is serving (incident 2026-10-06: a stale tag URL was handed
+    to the Worker and the public site proxied to old code).
+    """
+    monkeypatch.setenv("K_REVISION", "lemely-backend-staging-00042-abc")
+
+    body = TestClient(create_app()).get("/api/health").json()
+
+    assert body["revision"] == "lemely-backend-staging-00042-abc"
+
+
+def test_health_revision_is_null_outside_cloud_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No K_REVISION (local, docker-compose, CI) reports ``null``, not ``""``."""
+    monkeypatch.delenv("K_REVISION", raising=False)
+
+    body = TestClient(create_app()).get("/api/health").json()
+
+    assert "revision" in body
+    assert body["revision"] is None
+
+
+def test_health_revision_treats_an_empty_value_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("K_REVISION", "")
+
+    assert TestClient(create_app()).get("/api/health").json()["revision"] is None
+
+
+def test_health_survives_an_unreachable_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A database failure reports gradeBoundariesLoaded=false, not a 500.
+
+    ``gradeBoundariesLoaded`` is computed by reading ``component_thresholds``,
+    so the endpoint gained a database dependency it did not have before. A
+    health check that 500s when the database is down tells an operator only
+    "something is wrong"; the flag names which half is broken.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", False)
+    monkeypatch.setattr(
+        "lemely.web.routers.meta.get_boundary_store",
+        lambda: (_ for _ in ()).throw(OperationalError("SELECT 1", {}, Exception("down"))),
+    )
+    response = TestClient(create_app()).get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["gradeBoundariesLoaded"] is False
+
+
+def test_health_survives_a_corrupt_threshold_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-SQLAlchemy failure inside the store must degrade, not 500.
+
+    ``_percentages`` raises ``ValueError`` on a non-positive ``max_mark`` and
+    would raise ``TypeError`` on a non-numeric value inside the ``thresholds``
+    JSONB. Neither is a ``SQLAlchemyError``, and a corrupt row must not be able
+    to take the health endpoint down.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", False)
+    monkeypatch.setattr(
+        "lemely.web.routers.meta.get_boundary_store",
+        lambda: (_ for _ in ()).throw(ValueError("max_mark must be positive")),
+    )
+    response = TestClient(create_app()).get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["gradeBoundariesLoaded"] is False
+
+
+def _failing_health_client(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> TestClient:
+    monkeypatch.setattr(
+        "lemely.web.routers.meta.get_boundary_store",
+        lambda: (_ for _ in ()).throw(exc),
+    )
+    return TestClient(create_app())
+
+
+def test_health_logs_one_traceback_per_outage_but_a_line_every_poll(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Health is probe traffic, so the traceback must not repeat per poll.
+
+    But the one-line warning must, because `docs/deployment.md` tells an
+    operator to look for that line to tell "database unreachable" apart from
+    "ingest never ran". Suppressing it entirely would delete the signal the
+    docs point at for anyone who starts reading logs mid-outage.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", False)
+    client = _failing_health_client(monkeypatch, OperationalError("SELECT 1", {}, Exception()))
+
+    with caplog.at_level(logging.WARNING, logger="lemely.web.routers.meta"):
+        for _ in range(4):
+            assert client.get("/api/health").json()["gradeBoundariesLoaded"] is False
+
+    unreadable = [r for r in caplog.records if "could not read grade boundaries" in r.message]
+    assert len(unreadable) == 4, "the discriminating log line must appear on every failing poll"
+    with_traceback = [r for r in unreadable if r.exc_info is not None]
+    assert len(with_traceback) == 1, "the traceback must be logged once per outage, not per poll"
+
+
+def test_health_clears_the_failure_flag_when_the_database_answers_but_is_unseeded(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An `EmptyGradeBoundaryStoreError` is a *successful* read.
+
+    The database answered; it just has no verified rows. If that path does not
+    clear the failure flag, an outage that recovers into a not-yet-ingested
+    database leaves the flag stuck `True` -- and a later, genuinely different
+    failure is then never logged at all. The operator sees
+    `gradeBoundariesLoaded: false` with no log line and, following the docs,
+    concludes "ingest never ran" while the database is in fact unreadable.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", True)
+    empty = EmptyGradeBoundaryStoreError("no verified rows")
+    assert _failing_health_client(monkeypatch, empty).get("/api/health").status_code == 200
+    assert meta._boundary_read_failing is False
+
+    # ...so a different failure arriving afterwards is still reported *with its
+    # traceback*. Asserting merely that the line appears would not discriminate:
+    # the per-poll warning emits that same line whether or not the flag is stuck.
+    # Only the `exc_info` record is unique to the transition.
+    with caplog.at_level(logging.WARNING, logger="lemely.web.routers.meta"):
+        client = _failing_health_client(monkeypatch, ValueError("corrupt max_mark"))
+        assert client.get("/api/health").json()["gradeBoundariesLoaded"] is False
+
+    assert [r for r in caplog.records if r.exc_info is not None]
+
+
+def test_health_failure_log_names_the_exception_in_the_message_itself(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The exception type must survive into the rendered message.
+
+    `lemely.runtime.logging` bridges stdlib records into structlog with
+    `structlog.get_logger(...).log(levelno, record.getMessage())` -- it drops
+    `record.exc_info` entirely. So a bare `logger.exception` reaches a deployed
+    log as a bare string, and an operator cannot tell an `OperationalError`
+    (database unreachable) from a `TypeError` (corrupt thresholds JSONB). That
+    distinction is the whole reason this record exists, so the repr goes in the
+    message. Asserting on `caplog`'s `exc_info` would bypass the bridge and
+    pass while production stayed empty; this asserts on the rendered text.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", False)
+    client = _failing_health_client(monkeypatch, ValueError("corrupt max_mark"))
+
+    with caplog.at_level(logging.WARNING, logger="lemely.web.routers.meta"):
+        client.get("/api/health")
+
+    rendered = [r.getMessage() for r in caplog.records]
+    assert any("ValueError" in m and "corrupt max_mark" in m for m in rendered), rendered
 
 
 def test_stub_routers_are_mounted() -> None:
@@ -89,58 +259,48 @@ def test_sse_stream_ends_with_done() -> None:
     assert '"type": "marking_progress"' in payload_frames[1]
 
 
-def test_correction_to_dto_round_trip() -> None:
-    """A core CorrectionResult converts to the camelCase GradeResult DTO."""
-    correction = CorrectionResult(
-        metadata=ExamMetadata(
-            subject_code="0625",
-            paper_number=1,
-            paper_variant=2,
-            session_month="May/June",
-            session_year=2020,
-        ),
-        questions=[
-            CorrectedQuestion(
-                question_id="1a",
-                awarded_marks=2,
-                maximum_marks=3,
-                confidence=ConfidenceBand.HIGH,
-                confidence_score=0.95,
-                needs_teacher_review=False,
-                marker_source="ai",
-                feedback="Good working shown.",
-                matched_point_ids=["mp1", "mp2"],
-            ),
-        ],
-    )
+def test_two_concurrent_streams_are_isolated() -> None:
+    """Two runs at once: each stream sees only its frames and ends only with its own sentinel."""
+    app = FastAPI()
 
-    dto = correction_to_dto(correction)
+    def _publisher(tag: str, delay: float):
+        def run() -> None:
+            try:
+                time.sleep(delay)
+                bus.publish(
+                    EventType.MARKING_PROGRESS,
+                    question_id=tag,
+                    marker_source="deterministic",
+                    confidence=1.0,
+                )
+            finally:
+                bus.publish_done()
 
-    assert dto.awardedMarks == 2
-    assert dto.maxMarks == 3
-    assert dto.needsTeacherReview is False
-    assert len(dto.questions) == 1
+        return run
 
-    q = dto.questions[0]
-    assert q.questionId == "1a"
-    assert q.awardedMarks == 2
-    assert q.maxMarks == 3
-    assert q.markerSource == "ai"
-    assert q.confidence == 0.95
-    assert q.feedback == "Good working shown."
-    assert q.matchedPointIds == ["mp1", "mp2"]
-    # Advisory integrity signals default to unflagged.
-    assert q.plagiarismFlagged is False
-    assert q.aiDetectionFlagged is False
+    @app.get("/s/{tag}")
+    async def stream(tag: str) -> StreamingResponse:  # pyright: ignore[reportUnusedFunction]
+        delay = 0.05 if tag == "fast" else 0.4
+        return StreamingResponse(
+            bus_event_stream(_publisher(tag, delay), poll_seconds=0.02, run_id=tag),
+            media_type="text/event-stream",
+        )
 
-    # camelCase keys survive JSON serialisation for the frontend contract.
-    dumped = dto.model_dump()
-    assert "awardedMarks" in dumped
-    assert "needsTeacherReview" in dumped
+    client = TestClient(app)
+    with ThreadPoolExecutor(2) as pool:
+        fast, slow = pool.map(lambda t: client.get(f"/s/{t}").text, ["fast", "slow"])
+
+    assert '"question_id": "fast"' in fast and '"slow"' not in fast
+    assert '"question_id": "slow"' in slow and '"fast"' not in slow
+    assert fast.count("[DONE]") == 1 and slow.count("[DONE]") == 1
+    # `_format_frame` never puts the scoping id on the wire — the wire contract
+    # is unchanged even though delivery is now scoped underneath it.
+    assert "run_id" not in fast
+    assert "run_id" not in slow
 
 
 def test_question_to_dto_surfaces_integrity_flags() -> None:
-    """Plagiarism/AI-detection advisory flags round-trip into the DTO's camelCase fields."""
+    """The plagiarism advisory flag round-trips into the DTO's camelCase field."""
     question = CorrectedQuestion(
         question_id="2",
         awarded_marks=1,
@@ -149,19 +309,107 @@ def test_question_to_dto_surfaces_integrity_flags() -> None:
         confidence_score=0.99,
         needs_teacher_review=True,
         marker_source="deterministic",
-        review_reason="plagiarism (score 0.95) | ai_detection (score 0.90)",
+        review_reason="plagiarism (score 0.95)",
         plagiarism_flagged=True,
-        ai_detection_flagged=True,
     )
 
     dto = question_to_dto(question)
 
     assert dto.plagiarismFlagged is True
-    assert dto.aiDetectionFlagged is True
-    assert dto.reviewReason == "plagiarism (score 0.95) | ai_detection (score 0.90)"
+    assert dto.reviewReason == "plagiarism (score 0.95)"
     dumped = dto.model_dump()
     assert dumped["plagiarismFlagged"] is True
-    assert dumped["aiDetectionFlagged"] is True
+
+
+def test_question_to_dto_for_a_student_drops_every_integrity_signal() -> None:
+    """The same question, bound for a student, carries no integrity trace at all.
+
+    Not just the two booleans -- ``review_reason`` is where ``lemely/io/integrity.py``
+    writes "plagiarism (score 0.95)", and ``PaperResult`` renders that string
+    verbatim as "Needs review: ...". QUALITY-BAR.md: integrity flags are
+    teacher-only, so a student surface must carry neither form.
+    """
+    question = CorrectedQuestion(
+        question_id="2",
+        awarded_marks=1,
+        maximum_marks=1,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.99,
+        needs_teacher_review=True,
+        marker_source="deterministic",
+        review_reason="plagiarism (score 0.95) | low confidence | ai_detection (score 0.90)",
+        plagiarism_flagged=True,
+    )
+
+    dto = question_to_dto(question, for_student=True)
+
+    assert dto.plagiarismFlagged is False
+    # The ordinary marking reason survives; only the integrity segments go.
+    assert dto.reviewReason == "low confidence"
+    # The pre-F4 "ai_detection (score 0.90)" segment above is deliberate, not
+    # leftover: F4 deleted the detector and the `ai_detection_flagged` boolean,
+    # but `0037_remove_ai_detection` does NOT rewrite
+    # `teacher_papers.report_json`, so that text can still arrive on a
+    # console-graded paper snapshot. `_INTEGRITY_REASON_PREFIXES` keeps the
+    # prefix for exactly this, and this assertion is what stops it being
+    # "tidied" away.
+    # Values only: the field *name* is plagiarismFlagged, so a whole-payload
+    # substring check would pass on the key alone.
+    serialised_values = json.dumps(
+        [value for value in dto.model_dump(by_alias=True).values() if isinstance(value, str)]
+    )
+    assert "plagiarism" not in serialised_values
+    assert "ai_detection" not in serialised_values
+
+
+def test_question_to_dto_for_a_student_drops_the_per_point_verdict() -> None:
+    """``matchedPointIds`` is the marker's per-point verdict, so a student never sees it.
+
+    ``QuestionResultPoint.awarded`` is ``point.id in matched_point_ids``
+    (``lemely/db/question_points.py``), so this list *is* ``awarded``, one id per
+    point the marker credited. The same DTO carries ``questionResultId``, which
+    is what the self-review panel renders on — shipping both would put the
+    answer next to the question the student is asked to commit against, before
+    the reveal.
+
+    The teacher console reads this same converter (``routers/teacher.py``), and
+    the field is exactly what a teacher is there to see, so the gate is per call
+    site like the integrity ones — asserted here in both directions.
+    """
+    question = CorrectedQuestion(
+        question_id="3b",
+        awarded_marks=1,
+        maximum_marks=2,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.55,
+        needs_teacher_review=True,
+        marker_source="ai",
+        matched_point_ids=["p_unit"],
+    )
+
+    assert question_to_dto(question).matchedPointIds == ["p_unit"]
+
+    student_dto = question_to_dto(question, question_result_id="qr-123", for_student=True)
+    assert student_dto.matchedPointIds is None
+    assert student_dto.questionResultId == "qr-123"
+    assert "p_unit" not in json.dumps(student_dto.model_dump(by_alias=True))
+
+
+def test_student_safe_review_reason_table() -> None:
+    """Every shape the joined reason takes, including all-integrity and empty."""
+    assert student_safe_review_reason(None) is None
+    assert student_safe_review_reason("") is None
+    assert student_safe_review_reason("plagiarism (score 0.95)") is None
+    assert student_safe_review_reason("ai_detection (score 0.90)") is None
+    assert student_safe_review_reason("plagiarism (score 0.95) | ai_detection (score 0.90)") is None
+    assert student_safe_review_reason("low confidence") == "low confidence"
+    assert (
+        student_safe_review_reason("low confidence | plagiarism (score 0.95)") == "low confidence"
+    )
+    assert (
+        student_safe_review_reason("plagiarism (score 0.95) | low confidence | missing answer")
+        == "low confidence | missing answer"
+    )
 
 
 def test_question_to_dto_surfaces_topic() -> None:
@@ -195,3 +443,366 @@ def test_question_to_dto_surfaces_topic() -> None:
         )
     )
     assert untopic.topic is None
+
+
+def test_question_to_dto_surfaces_per_question_needs_teacher_review() -> None:
+    """US-039 MUST-FIX 2 (independent review, blocking 674f309d).
+
+    ``GradeResultDTO.needsTeacherReview`` is paper-level only; the frontend's
+    per-question review signal is ``QuestionResultDTO.reviewReason``, which
+    used to mean "any non-null reviewReason needs a human" -- true for every
+    case except US-039's unflagged blank, which sets a `review_reason`
+    message precisely so the queue/DB can tell a genuine blank apart from
+    every other blank-shaped state, while deliberately leaving
+    `needs_teacher_review=False`. Without this field on the DTO the frontend
+    has no way to see that distinction and renders "Needs review: <blank
+    message>" for every unattempted question -- exactly the bug MUST-FIX 1
+    fixed on the review-queue side. Both a genuinely-flagged blank-shaped
+    message and the unflagged one must round-trip their own boolean, not a
+    single hardcoded value.
+    """
+    flagged = question_to_dto(
+        CorrectedQuestion(
+            question_id="5",
+            awarded_marks=0,
+            maximum_marks=1,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=0.0,
+            needs_teacher_review=True,
+            marker_source="missing",
+            review_reason="non-MCQ question not marked (--mcq-only or no AI client)",
+        )
+    )
+    assert flagged.needsTeacherReview is True
+
+    unflagged_blank = question_to_dto(
+        CorrectedQuestion(
+            question_id="6",
+            awarded_marks=0,
+            maximum_marks=1,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=0.0,
+            needs_teacher_review=False,
+            marker_source="blank",
+            review_reason="student left this question blank (0 awarded, no AI call made)",
+        )
+    )
+    assert unflagged_blank.needsTeacherReview is False
+    assert unflagged_blank.model_dump()["needsTeacherReview"] is False
+
+
+def test_grading_queue_excludes_the_us039_unflagged_blank() -> None:
+    """MUST-FIX (added scope, second independent review of ``4166e535``).
+
+    ``GET /grading/queue`` (``lemely.web.routers.teacher.grading_queue``) is a
+    THIRD site applying the review-queue predicate, alongside
+    ``AttemptRepository.persist_correction`` and
+    ``TeacherPaperRepository._review_items_for`` -- and it does not go
+    through ``ReviewQueueItem`` at all: it recomputes
+    ``needs_teacher_review or confidence_score < REVIEW_CONFIDENCE_THRESHOLD``
+    straight off ``report_json``. Worse than the other two: the response is
+    sorted ascending by confidence, and a genuine US-039 blank has
+    ``confidence_score == 0.0``, so it used to sort to the very top -- a paper
+    with several unattempted parts put every one of them as the first rows a
+    teacher sees on the most visible surface in the grading console, with no
+    ``ReviewQueueItem`` row involved to exempt.
+
+    This exercises the real route function (not a re-derivation of its
+    predicate) against a fake repo, asserting on the ``GradingQueueDTO`` it
+    returns -- exactly the payload FastAPI serialises as the response body
+    for ``response_model=GradingQueueDTO``. A full HTTP round-trip through
+    ``TestClient`` against a real Postgres-backed app (the pattern
+    ``tests/test_web_teacher.py::test_grading_queue_flags_low_confidence``
+    uses) was not built here because that fixture stack
+    (``client``/``paper_repo``/``storage_backend``/``teacher_user``) lives in
+    a file this fix is not authorised to edit; see the accompanying report
+    for that trade-off.
+    """
+    import uuid
+    from datetime import UTC, datetime
+
+    from lemely.core.analytics import summarize_weaknesses
+    from lemely.core.schemas import AccuracyReport, GradePrediction
+    from lemely.db.models.enums import Role, UploadStatus
+    from lemely.db.teacher_paper_repo import TeacherPaperRow
+    from lemely.web.deps import AuthContext
+    from lemely.web.routers.teacher import grading_queue
+
+    def _report(questions: list[CorrectedQuestion]) -> AccuracyReport:
+        correction = CorrectionResult(
+            metadata=ExamMetadata(
+                subject_code="0625",
+                paper_number=4,
+                paper_variant=1,
+                session_month="May/June",
+                session_year=2020,
+            ),
+            questions=questions,
+        )
+        return AccuracyReport(
+            correction=correction,
+            weaknesses=summarize_weaknesses(correction),
+            grade_prediction=GradePrediction(
+                awarded_marks=correction.awarded_marks,
+                maximum_marks=correction.maximum_marks,
+                percentage=0.0,
+                grade="U",
+                confidence=ConfidenceBand.LOW,
+                needs_teacher_review=correction.needs_teacher_review,
+            ),
+        )
+
+    now = datetime.now(UTC)
+
+    def _paper_row(paper_id: uuid.UUID, questions: list[CorrectedQuestion]) -> TeacherPaperRow:
+        return TeacherPaperRow(
+            id=paper_id,
+            uploaded_by=uuid.uuid4(),
+            student_id=None,
+            storage_path="teacher/scan.pdf",
+            scheme_storage_path=None,
+            original_filename="scan.pdf",
+            content_type="application/pdf",
+            status=UploadStatus.complete,
+            stage=None,
+            progress=None,
+            metadata=None,
+            mark_scheme=None,
+            report=_report(questions),
+            error=None,
+            run_started_at=now,
+            created_at=now,
+            updated_at=now,
+            stale=False,
+        )
+
+    genuinely_low_confidence = CorrectedQuestion(
+        question_id="5b",
+        awarded_marks=0,
+        maximum_marks=2,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.2,
+        needs_teacher_review=True,
+        marker_source="ai",
+        topic="Moments",
+    )
+    blank = CorrectedQuestion(
+        question_id="3",
+        awarded_marks=0,
+        maximum_marks=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.0,
+        needs_teacher_review=False,
+        marker_source="blank",
+        review_reason="student left this question blank (0 awarded, no AI call made)",
+    )
+    paper_id = uuid.uuid4()
+    row = _paper_row(paper_id, [genuinely_low_confidence, blank])
+
+    class _FakeRepo:
+        def list_visible(self, *, viewer_id: uuid.UUID, viewer_role: Role) -> list[TeacherPaperRow]:
+            del viewer_id, viewer_role
+            return [row]
+
+    auth = AuthContext(user_id=str(uuid.uuid4()), role=Role.teacher.value)
+
+    dto = grading_queue(auth, _FakeRepo())  # type: ignore[arg-type]
+
+    body = dto.model_dump()
+    question_ids = {r["questionId"] for r in body["rows"]}
+    # Question "5b" (genuinely low-confidence) still queues; the unflagged
+    # blank ("3") must NOT.
+    assert question_ids == {"5b"}
+
+
+# -- The notification sweeper's lifespan (push-delivery spec §4) ---------------
+
+
+@pytest.fixture
+def _fresh_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Clear the settings singleton around a test that changes the env."""
+    from lemely.web import deps
+
+    deps.reset_singletons()
+    try:
+        yield
+    finally:
+        deps.reset_singletons()
+
+
+def _capture_sweeper(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """Stand in for ``run_sweeper`` and record how the lifespan drove it."""
+    from lemely.web import app as app_module
+
+    seen: dict[str, object] = {"started": 0, "poll_seconds": None, "stopped": False}
+
+    async def fake_run_sweeper(
+        sweeper: object, *, poll_seconds: float, stop: asyncio.Event
+    ) -> None:
+        seen["started"] = int(seen["started"]) + 1  # type: ignore[call-overload]
+        seen["poll_seconds"] = poll_seconds
+        await stop.wait()
+        seen["stopped"] = True
+
+    monkeypatch.setattr(app_module, "run_sweeper", fake_run_sweeper)
+    return seen
+
+
+@pytest.mark.usefixtures("_fresh_settings")
+def test_the_sweeper_is_not_started_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The suite-wide default (``tests/conftest.py``): no background task races a test."""
+    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "0")
+    seen = _capture_sweeper(monkeypatch)
+
+    with TestClient(create_app()) as client:
+        assert client.get("/api/health").status_code == 200
+
+    assert seen["started"] == 0
+
+
+@pytest.mark.usefixtures("_fresh_settings")
+def test_the_sweeper_is_started_on_startup_and_stopped_on_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "1")
+    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEP_POLL_SECONDS", "7")
+    seen = _capture_sweeper(monkeypatch)
+
+    with TestClient(create_app()) as client:
+        assert client.get("/api/health").status_code == 200
+        assert seen["started"] == 1
+        assert seen["poll_seconds"] == 7
+        assert seen["stopped"] is False
+
+    assert seen["stopped"] is True
+
+
+@pytest.mark.usefixtures("_fresh_settings")
+def test_startup_logs_the_marking_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every revision records which marking mode it runs, in its own logs."""
+    from structlog.testing import capture_logs
+
+    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "0")
+    monkeypatch.setenv("LEMELY_GRADING__ECF_SUBSTITUTION", "true")
+
+    with capture_logs() as logs, TestClient(create_app()) as client:
+        assert client.get("/api/health").status_code == 200
+
+    flags = [e for e in logs if e["event"] == "marking_flags"]
+    assert len(flags) == 1
+    assert flags[0]["log_level"] == "warning"
+    assert flags[0]["equivalence_gate"] is False
+    assert flags[0]["ecf_substitution"] is True
+    assert flags[0]["ecf_inert"] is True
+
+
+def test_a_client_without_the_context_manager_never_starts_a_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every pre-existing test builds ``TestClient(create_app())`` without a
+    ``with``; Starlette runs the lifespan only inside one, so those tests are
+    unaffected whatever the setting says."""
+    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "1")
+    seen = _capture_sweeper(monkeypatch)
+
+    TestClient(create_app()).get("/api/health")
+
+    assert seen["started"] == 0
+
+
+def test_health_reports_storage_backend_without_touching_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DS12: the health route names the backend and bucket from settings only,
+    and is structurally forbidden from ever building a storage backend to do
+    it — Task 19's deploy smoke test relies on health never making a network
+    call. Guarded two ways because each covers a hole the other leaves:
+
+    - ``app.dependency_overrides`` (this repo's own convention for this exact
+      dependency — see ``tests/test_web_student.py``): FastAPI resolves
+      ``Depends(...)`` by the callable's identity at *request* time, so this
+      catches a regression shaped like ``student.py``'s own
+      ``Annotated[StorageBackend, Depends(get_storage_backend)]`` — even
+      though that ``Depends(...)`` would have captured the callable back when
+      ``lemely.web.routers.meta`` was first imported, long before this test
+      runs. A same-module-attribute patch (e.g.
+      ``monkeypatch.setattr("lemely.web.deps.get_storage_backend", ...)``)
+      does NOT catch this shape: proven by a live regression injection during
+      review (see the task report).
+    - Patching both backend constructors (``GcsStorageBackend.__init__``,
+      ``LocalFileStorageBackend.__init__``) to raise: catches a direct call
+      through a from-imported name, which dependency_overrides cannot see
+      since that path never goes through FastAPI's ``Depends`` resolution.
+    """
+    monkeypatch.setenv("LEMELY_STORAGE__BACKEND", "gcs")
+    monkeypatch.setenv("LEMELY_STORAGE__BUCKET", "proj-uploads-staging")
+    from lemely.web.deps import get_storage_backend, reset_singletons
+
+    reset_singletons()  # a warm cache would return an instance without constructing one
+
+    def _dependency_must_not_be_called() -> None:
+        raise AssertionError("health must not build a storage backend")
+
+    def _ctor_must_not_be_called(self: object, *args: object, **kwargs: object) -> None:
+        raise AssertionError("health must not construct a storage backend")
+
+    monkeypatch.setattr(
+        "lemely.io.storage_gcs.GcsStorageBackend.__init__", _ctor_must_not_be_called
+    )
+    monkeypatch.setattr(
+        "lemely.io.storage_local.LocalFileStorageBackend.__init__", _ctor_must_not_be_called
+    )
+
+    app = create_app()
+    app.dependency_overrides[get_storage_backend] = _dependency_must_not_be_called
+    body = TestClient(app).get("/api/health").json()
+    app.dependency_overrides.clear()
+    monkeypatch.undo()  # restore the real constructors so cache_clear() below works
+
+    assert body["storage"] == {"backend": "gcs", "bucket": "proj-uploads-staging"}
+    reset_singletons()
+
+
+def test_stream_ends_when_the_worker_dies_without_a_sentinel() -> None:
+    """The liveness guard: a run that never publishes its sentinel must not hang.
+
+    Scoping made this reachable. `EventBus.publish_done` delivers only to
+    queues whose scope matches the *current* run id, so a sentinel published
+    from the wrong context — or never published at all, because `run` died
+    before its `finally` — leaves this scoped queue waiting on something that
+    will never arrive. The drain loop treats an empty poll as "keep waiting",
+    so without the guard it spins for the life of the connection, pinning a
+    Cloud Run instance that this plan is about to make one of only three.
+
+    Bounded by a daemon thread and an explicit join rather than left to run:
+    if the guard regresses, this fails in ten seconds instead of hanging the
+    suite, and the leaked thread cannot block interpreter exit.
+    """
+    app = FastAPI()
+
+    @app.get("/orphan")
+    async def stream() -> StreamingResponse:
+        def run() -> None:
+            bus.publish(EventType.WARNING, message="orphan-event")
+            # Deliberately no `bus.publish_done()` — the failure under test.
+
+        return StreamingResponse(
+            bus_event_stream(run, poll_seconds=0.02, run_id="orphan-run"),
+            media_type="text/event-stream",
+        )
+
+    client = TestClient(app)
+    body: list[str] = []
+    reader = threading.Thread(target=lambda: body.append(client.get("/orphan").text), daemon=True)
+    reader.start()
+    reader.join(timeout=10.0)
+
+    assert not reader.is_alive(), (
+        "the stream never ended: bus_event_stream kept polling after its worker exited "
+        "without publishing a sentinel, which is exactly the hang the liveness guard exists "
+        "to prevent"
+    )
+    # The event published before the worker exited is still delivered, not
+    # dropped by the shortcut out of the loop.
+    assert '"message": "orphan-event"' in body[0]
+    assert body[0].count("[DONE]") == 1
