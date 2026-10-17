@@ -1,0 +1,824 @@
+{
+  "paper_id": "0625_OctNov_2024_p41",
+  "source_scan": "0625_w24_41_student_scan.pdf",
+  "answers": [
+    {
+      "question_id": "1a_i",
+      "answer": "43 cm",
+      "confidence": 0.98,
+      "source_region": "page 2, q1(a)(i) line 1",
+      "source_box": {
+        "page": 2,
+        "box": [
+          462,
+          558,
+          492,
+          707
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "1a_ii",
+      "answer": "63 cm",
+      "confidence": 0.98,
+      "source_region": "page 2, q1(a)(i) line 2",
+      "source_box": {
+        "page": 2,
+        "box": [
+          488,
+          584,
+          521,
+          709
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "1b",
+      "answer": "20 cm",
+      "confidence": 1.0,
+      "source_region": "page 2, q1(a)(ii) answer line",
+      "source_box": {
+        "page": 2,
+        "box": [
+          655,
+          607,
+          686,
+          742
+        ]
+      },
+      "working_out": "reading - original length\n63 - 43",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "1c_i",
+      "answer": "0.28 N/cm",
+      "confidence": 1.0,
+      "source_region": "page 2, q1(b) answer line",
+      "source_box": {
+        "page": 2,
+        "box": [
+          808,
+          594,
+          842,
+          804
+        ]
+      },
+      "working_out": "k = f / x\nk = 5.6 / 20",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "1c_ii",
+      "answer": "4.9 N",
+      "confidence": 1.0,
+      "source_region": "page 3, q1(c)(i) answer line",
+      "source_box": {
+        "page": 3,
+        "box": [
+          230,
+          630,
+          269,
+          789
+        ]
+      },
+      "working_out": "w = mg\nw = 0.50 x 9.8",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "2a_i",
+      "answer": "13 m/s²",
+      "confidence": 1.0,
+      "source_region": "page 3, q1(c)(ii) answer line",
+      "source_box": {
+        "page": 3,
+        "box": [
+          471,
+          622,
+          521,
+          815
+        ]
+      },
+      "working_out": "f = m.a\n6.5 = 0.50 a\na = 6.5 / 0.50",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "2a_ii",
+      "answer": "180000 kg m/s",
+      "confidence": 0.9800000000000001,
+      "source_region": "page 5, q2(a)(i) answer line",
+      "source_box": {
+        "page": 5,
+        "box": [
+          188,
+          617,
+          238,
+          878
+        ]
+      },
+      "working_out": "m = mass x velocity\nm = 1400 x 130 = 182000",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "2a_iii",
+      "answer": "area under the graph line",
+      "confidence": 0.98,
+      "source_region": "page 5, q2(a)(ii) answer line",
+      "source_box": {
+        "page": 5,
+        "box": [
+          257,
+          318,
+          317,
+          814
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "2b_i",
+      "answer": "422.5 m",
+      "confidence": 1.0,
+      "source_region": "page 5, q2(a)(iii) answer line",
+      "source_box": {
+        "page": 5,
+        "box": [
+          431,
+          630,
+          462,
+          806
+        ]
+      },
+      "working_out": "Distance = 1/2 b h\n= 1/2 x 6.5 x 130 = 422.5",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "2b_ii",
+      "answer": "speed decreases with increasing rate",
+      "confidence": 0.98,
+      "source_region": "page 5, q2(b)(i) answer lines",
+      "source_box": {
+        "page": 5,
+        "box": [
+          540,
+          276,
+          597,
+          808
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "2c",
+      "answer": "The line is curved not a straight line",
+      "confidence": 0.98,
+      "source_region": "page 5, q2(b)(ii) answer lines",
+      "source_box": {
+        "page": 5,
+        "box": [
+          623,
+          271,
+          683,
+          762
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "3a",
+      "answer": "from kinetic energy to gravitational potential internal energy",
+      "confidence": 0.93,
+      "source_region": "page 5, q2(c) answer lines",
+      "source_box": {
+        "page": 5,
+        "box": [
+          706,
+          317,
+          796,
+          791
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "3b_i",
+      "answer": "moment is the turning effect of a force around a pivot and is defined by moment = force x perpendicular distance. It has both magnitude and direction",
+      "confidence": 0.98,
+      "source_region": "page 6, q3(a) answer lines",
+      "source_box": {
+        "page": 6,
+        "box": [
+          108,
+          199,
+          245,
+          846
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "3b_ii",
+      "answer": "point where whole body's whole weight is considered to act",
+      "confidence": 0.93,
+      "source_region": "page 6, q3(b)(i) answer lines",
+      "source_box": {
+        "page": 6,
+        "box": [
+          471,
+          256,
+          568,
+          882
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "3c",
+      "answer": "44000000 N/m",
+      "confidence": 0.9800000000000001,
+      "source_region": "page 6, q3(b)(ii) answer line",
+      "source_box": {
+        "page": 6,
+        "box": [
+          708,
+          567,
+          746,
+          873
+        ]
+      },
+      "working_out": "m = f x ⊥D\nm = 1.3 x 10^7 x 3.4 = 44200000",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "4a",
+      "answer": "1. total upward forces equal to total downward forces\n2. total moment clockwise is equal to total moment anti-clockwise",
+      "confidence": 0.98,
+      "source_region": "page 7, q3(c) lines 1 and 2",
+      "source_box": {
+        "page": 7,
+        "box": [
+          133,
+          235,
+          212,
+          907
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "4b_i",
+      "answer": "Using balance, find the mass of the aliminium block. To find the energy multiply power supplied by heater by time taken in seconds. find initial and final temperature (Δθ) by thermometer",
+      "confidence": 0.9800000000000001,
+      "source_region": "page 8, q4(a) answer lines",
+      "source_box": {
+        "page": 8,
+        "box": [
+          363,
+          199,
+          509,
+          843
+        ]
+      },
+      "working_out": "Q = m c Δθ\nQ = P x time\nDiagram showing block of aluminium, thermometer, heater, balance",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "4b_ii",
+      "answer": "as thermal heat in water is transferred to aliminium by conduction. when water has high temperature, particles have high kinetic energy, so they vibrate, hitting neighbouring aliminium particles. so heat is transferred from hot water to colder aliminium dish.",
+      "confidence": 0.93,
+      "source_region": "page 9, q4(b)(i) lines and text below",
+      "source_box": {
+        "page": 9,
+        "box": [
+          103,
+          114,
+          649,
+          932
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "4b_iii",
+      "answer": "Particles gain kinetic energy, so particles vibrate and intermolecular forces become weaker, so they move further appart",
+      "confidence": 0.98,
+      "source_region": "page 9, q4(b)(ii) answer lines",
+      "source_box": {
+        "page": 9,
+        "box": [
+          248,
+          226,
+          351,
+          874
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "5a",
+      "answer": "when most energetic water moleculs with enough energy at the surface escape, leaving least energetic particles behind, cooling the water.",
+      "confidence": 0.93,
+      "source_region": "page 9, q4(b)(iii) answer lines",
+      "source_box": {
+        "page": 9,
+        "box": [
+          380,
+          77,
+          483,
+          878
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "5b",
+      "answer": "0.2 m",
+      "confidence": 1.0,
+      "source_region": "page 10, q5(a) answer line",
+      "source_box": {
+        "page": 10,
+        "box": [
+          188,
+          653,
+          219,
+          765
+        ]
+      },
+      "working_out": "0.10 + 0.10",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "5c_i",
+      "answer": "330 m/s",
+      "confidence": 0.98,
+      "source_region": "page 10, q5(b) answer line",
+      "source_box": {
+        "page": 10,
+        "box": [
+          234,
+          584,
+          274,
+          737
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "5c_ii",
+      "answer": "1700 Hz",
+      "confidence": 1.0,
+      "source_region": "page 10, q5(c)(i) answer line",
+      "source_box": {
+        "page": 10,
+        "box": [
+          390,
+          614,
+          423,
+          794
+        ]
+      },
+      "working_out": "s = f.λ\n330 = f . 0.2\nf = 330 / 0.2 = 1650",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "5d",
+      "answer": "yes, because the range of human ear is from 20 Hz to 20,000 Hz",
+      "confidence": 0.98,
+      "source_region": "page 10, q5(c)(ii) answer lines",
+      "source_box": {
+        "page": 10,
+        "box": [
+          452,
+          259,
+          560,
+          845
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "6a",
+      "answer": "point J: no because sound wave won't reach that point\npoint K: yes, because sound wave reached point",
+      "confidence": 0.98,
+      "source_region": "page 11, q5(d) answer lines",
+      "source_box": {
+        "page": 11,
+        "box": [
+          426,
+          203,
+          561,
+          872
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "6b",
+      "answer": "Work done by a unit charge passing through a component converted from electrical to any form (unit is C)",
+      "confidence": 0.93,
+      "source_region": "page 12, q6(a) answer lines",
+      "source_box": {
+        "page": 12,
+        "box": [
+          393,
+          199,
+          497,
+          846
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "6c_i",
+      "answer": "E - reading on the voltmeter",
+      "confidence": 0.98,
+      "source_region": "page 12, q6(b) answer lines",
+      "source_box": {
+        "page": 12,
+        "box": [
+          545,
+          381,
+          606,
+          815
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "6c_ii",
+      "answer": "intensity of incident light on LDR: increase\ntemperature of thermistor: decrease",
+      "confidence": 0.98,
+      "source_region": "page 13, q6(c)(i) answer lines",
+      "source_box": {
+        "page": 13,
+        "box": [
+          151,
+          501,
+          204,
+          710
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "7a",
+      "answer": "As resistance decrease, voltage decreases, I = V/R, and as resistance of thermistor increase, voltage increase, I = V/R, so voltmeter reading is the same",
+      "confidence": 0.9800000000000001,
+      "source_region": "page 13, q6(c)(ii) answer lines",
+      "source_box": {
+        "page": 13,
+        "box": [
+          243,
+          226,
+          447,
+          887
+        ]
+      },
+      "working_out": "V = I R\nI = V / R",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "7b_i",
+      "answer": "iron",
+      "confidence": 1.0,
+      "source_region": "page 14, q7(a) answer line",
+      "source_box": {
+        "page": 14,
+        "box": [
+          376,
+          466,
+          405,
+          549
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "7b_ii",
+      "answer": "Diagram of magnetic field lines around bar magnet: 6 lines drawn with arrows pointing from N to S",
+      "confidence": 0.93,
+      "source_region": "page 14, q7(b)(i) diagram",
+      "source_box": {
+        "page": 14,
+        "box": [
+          488,
+          268,
+          804,
+          764
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "7c",
+      "answer": "magnetic field decreases as current decreases, V = I R",
+      "confidence": 0.9800000000000001,
+      "source_region": "page 15, q7(b)(ii) answer lines",
+      "source_box": {
+        "page": 15,
+        "box": [
+          146,
+          237,
+          214,
+          930
+        ]
+      },
+      "working_out": "V = I R",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "8a",
+      "answer": "",
+      "confidence": 0.3,
+      "source_region": "page 15, q7(c) answer lines",
+      "source_box": null,
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "8b",
+      "answer": "Diagram of carbon-14 atom showing nucleus with 6 protons and 8 neutrons, and two electron shells with 2 and 4 electrons (crosses)",
+      "confidence": 0.98,
+      "source_region": "page 16, q8(a) diagram",
+      "source_box": {
+        "page": 16,
+        "box": [
+          174,
+          248,
+          452,
+          590
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "8c_i",
+      "answer": "nitrogen has one more proton and electron",
+      "confidence": 1.0,
+      "source_region": "page 16, q8(b) answer lines",
+      "source_box": {
+        "page": 16,
+        "box": [
+          630,
+          206,
+          797,
+          868
+        ]
+      },
+      "working_out": "Crossed-out: have different number of protons and electrons, but same number of neutrons",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "8c_ii",
+      "answer": "electron",
+      "confidence": 1.0,
+      "source_region": "page 17, q8(c)(i) answer line",
+      "source_box": {
+        "page": 17,
+        "box": [
+          134,
+          513,
+          159,
+          678
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "8d",
+      "answer": "Beta decay: one neutron is split into a proton and an electron",
+      "confidence": 0.98,
+      "source_region": "page 17, q8(c)(ii) answer lines",
+      "source_box": {
+        "page": 17,
+        "box": [
+          183,
+          249,
+          248,
+          874
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "9a",
+      "answer": "17100 years",
+      "confidence": 1.0,
+      "source_region": "page 17, q8(d) answer line",
+      "source_box": {
+        "page": 17,
+        "box": [
+          412,
+          597,
+          489,
+          863
+        ]
+      },
+      "working_out": "9.6 x 10^11 / 2 -> 4.8 x 10^11 / 2 -> 2.4 x 10^11 / 2 -> 1.2 x 10^11\n5700 x 3 = 17100",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "9b",
+      "answer": "group of billions of stars",
+      "confidence": 0.98,
+      "source_region": "page 18, q9(a) answer line",
+      "source_box": {
+        "page": 18,
+        "box": [
+          136,
+          257,
+          175,
+          762
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "9c_i",
+      "answer": "9.5 x 10^17 km",
+      "confidence": 0.93,
+      "source_region": "page 18, q9(b) answer line",
+      "source_box": {
+        "page": 18,
+        "box": [
+          267,
+          590,
+          319,
+          864
+        ]
+      },
+      "working_out": "9.5 x 10^12 x 100000 = 9.5 x 10^17\ns = d/t\n3 x 10^8 = d / (10000 x 365 x 24 x 60 x 60)",
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "9c_ii",
+      "answer": "red shift",
+      "confidence": 0.98,
+      "source_region": "page 18, q9(c)(i) answer line",
+      "source_box": {
+        "page": 18,
+        "box": [
+          371,
+          520,
+          404,
+          715
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "9c_iii",
+      "answer": "Hubbles constant",
+      "confidence": 0.98,
+      "source_region": "page 18, q9(c)(ii) answer line",
+      "source_box": {
+        "page": 18,
+        "box": [
+          457,
+          375,
+          483,
+          734
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    },
+    {
+      "question_id": "9c_iv",
+      "answer": "v = H0 d",
+      "confidence": 0.88,
+      "source_region": "page 18, q9(c)(iii) answer line",
+      "source_box": {
+        "page": 18,
+        "box": [
+          538,
+          348,
+          578,
+          545
+        ]
+      },
+      "working_out": null,
+      "answer_reread": null,
+      "reread_agreement": null,
+      "extraction_agreement": null
+    }
+  ],
+  "source_box_drops": {},
+  "answer_drops": {},
+  "confidence_repairs": {},
+  "field_repairs": {},
+  "dropped_question_ids": [],
+  "rereads_eligible": 0,
+  "reread_attempts": 0,
+  "reread_skipped_by_budget": 0,
+  "reread_threshold": 0.6
+}

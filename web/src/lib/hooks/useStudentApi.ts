@@ -5,8 +5,10 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query"
-import { request, streamActivity } from "@/lib/api"
-import type { LinkedParent, ParentLinkList } from "@/lib/parentTypes"
+import { request, streamActivity, uploadWithProgress, type UploadProgress } from "@/lib/api"
+import { CLASSES_KEY } from "@/lib/hooks/useLeaderboardApi"
+import type { JoinClassResponse } from "@/lib/leaderboardTypes"
+import type { ParentInviteCode, ParentInviteLink, ParentInvites, ParentLinkList } from "@/lib/parentTypes"
 import type {
   CorrectRequest,
   Overview,
@@ -64,33 +66,29 @@ export function useResult(paperId: string): UseQueryResult<Result, Error> {
  */
 
 /*
- * Parent links (D3.11). The student is the initiator on both ends — a link row
- * IS the grant, there is no pending state and no approval step — so all three
- * of these live on the student side. The parent portal has no mutation for
- * them and must not grow one.
+ * Parent links and invites. The student is the initiator on both ends — a
+ * link row IS the grant, there is no pending state and no approval step — so
+ * every one of these lives on the student side. The parent portal has no
+ * mutation for any of them and must not grow one.
  *
  * The DTO mirrors are in `lib/parentTypes.ts` beside the parent-facing ones:
  * these are the two ends of one relationship, not two unrelated features.
+ *
+ * The mutation D3.11's "add a parent by phone number" used is gone: the
+ * parent-invites design (superseding D3.11, docs/superpowers/specs/2026-09-
+ * 08-parent-invites-design.md) replaced "the student types a phone number
+ * for an account that already exists" with "the student issues an invite,
+ * the parent redeems it" — a link is now only ever created by
+ * `InviteService.redeem`'s own parent branch, server-side, never by a
+ * student-supplied identifier reaching this file directly. `useParentLinks`/
+ * `useUnlinkParent` are unaffected: reading and revoking an existing link is
+ * the same operation regardless of how the link was made.
  */
 
 export function useParentLinks(): UseQueryResult<ParentLinkList, Error> {
   return useQuery({
     queryKey: ["student", "parent-links"],
     queryFn: () => request<ParentLinkList>("/student/parent-links"),
-  })
-}
-
-export function useLinkParent(): UseMutationResult<LinkedParent, Error, { phone: string }> {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: ({ phone }: { phone: string }) =>
-      request<LinkedParent>("/student/parent-links", {
-        method: "POST",
-        body: JSON.stringify({ phone }),
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["student", "parent-links"] })
-    },
   })
 }
 
@@ -105,10 +103,102 @@ export function useUnlinkParent(): UseMutationResult<void, Error, { parentId: st
   })
 }
 
+/**
+ * `GET /api/student/parent-invites` — the reusable code and the pending
+ * one-time links in one request, exactly what `Parents.tsx` needs to render
+ * both cards without a second round trip.
+ */
+export function useParentInvites(): UseQueryResult<ParentInvites, Error> {
+  return useQuery({
+    queryKey: ["student", "parent-invites"],
+    queryFn: () => request<ParentInvites>("/student/parent-invites"),
+  })
+}
+
+/**
+ * `POST /api/student/parent-invites` — mint a new single-use, 7-day link.
+ * Every mint produces a genuinely new, independent link (no dedup, no
+ * reuse-the-last-one concept, the same shape `useMintClassInviteCode`
+ * documents for the teacher side's own one-time invite), so a student
+ * minting several links for several devices just calls this again.
+ */
+export function useMintParentLink(): UseMutationResult<ParentInviteLink, Error, void> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => request<ParentInviteLink>("/student/parent-invites", { method: "POST" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["student", "parent-invites"] })
+    },
+  })
+}
+
+/** `DELETE /api/student/parent-invites/{code}` — revoke a pending one-time
+ * link before it is used. 404s (already spent, already revoked, or never the
+ * caller's own) if `code` does not name a live link owned by this student —
+ * `InviteService.revoke_parent_invite`'s own binding rule, so a student
+ * learns nothing about another student's codes from this route's errors. */
+export function useRevokeParentLink(): UseMutationResult<void, Error, { code: string }> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ code }: { code: string }) =>
+      request<void>(`/student/parent-invites/${encodeURIComponent(code)}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["student", "parent-invites"] })
+    },
+  })
+}
+
+/** `POST /api/student/parent-invites/code/rotate` — replace the reusable
+ * code with a fresh one, invalidating whatever the old one was shared with.
+ * Unlike the one-time links, there is only ever one reusable code per
+ * student, so rotating needs no `code` argument to say which one. */
+export function useRotateParentCode(): UseMutationResult<ParentInviteCode, Error, void> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      request<ParentInviteCode>("/student/parent-invites/code/rotate", { method: "POST" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["student", "parent-invites"] })
+    },
+  })
+}
+
 export function useStandings(): UseQueryResult<Standings, Error> {
   return useQuery({
     queryKey: ["student", "standings"],
     queryFn: () => request<Standings>("/student/standings"),
+  })
+}
+
+/**
+ * `POST /student/classes/join` — self-enrol via a teacher's join code
+ * (`student_join_class`, `routers/student.py`). Idempotent on the backend:
+ * re-joining an already-enrolled class is a no-op success, not an error.
+ *
+ * Three invalidations on success, not one, because a join changes three
+ * screens at once: `useMyClasses()`'s own list (`CLASSES_KEY`, shared with
+ * `useLeaderboardApi.ts` so the two cannot key-drift), the Overview subject
+ * ledger (a new class can carry a subject the student had no papers in yet),
+ * and the announcements feed (a class's own announcements only become
+ * visible once its student is enrolled).
+ */
+export function useJoinClass(): UseMutationResult<
+  JoinClassResponse,
+  Error,
+  { joinCode: string }
+> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ joinCode }: { joinCode: string }) =>
+      request<JoinClassResponse>("/student/classes/join", {
+        method: "POST",
+        body: JSON.stringify({ joinCode }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: CLASSES_KEY })
+      queryClient.invalidateQueries({ queryKey: ["student", "overview"] })
+      queryClient.invalidateQueries({ queryKey: ["student", "announcements"] })
+    },
   })
 }
 
@@ -119,20 +209,40 @@ export function useStandings(): UseQueryResult<Standings, Error> {
  *
  * Builds multipart `FormData` with the exact field names FastAPI's
  * `student_upload` expects (`scan`, `mark_scheme` — the Python parameter
- * names). Goes through `request()`, which now skips the JSON content-type
- * for a `FormData` body (see `lib/api.ts::authHeaders`) so the browser can
- * set its own multipart boundary.
+ * names). Goes through `uploadWithProgress()` (PR 4 of the loading/error
+ * programme), not `request()` — `fetch` cannot report upload progress, and a
+ * phone photo of a paper can be several megabytes on a bad connection, so
+ * `CorrectPaper` needs `onProgress` to show the transfer moving instead of
+ * sitting on "Marking…" with nothing on screen changing until it lands.
+ * `uploadWithProgress` reproduces every other behaviour `request()` has —
+ * auth header, pre-emptive refresh, one-shot 401 replay, `detail`
+ * extraction, `Retry-After` — see its own doc comment in `lib/api.ts`.
+ *
+ * `idempotencyKey` (Task 10, B6b): sent as the `Idempotency-Key` header
+ * `lemely/web/routers/student.py::student_upload` reads — optional, since an
+ * ordinary first attempt from the form has nothing to dedupe against yet.
+ * The offline queue's replay (`lib/offline/uploadQueue.ts`'s `upload` dep,
+ * wired from `useUploadQueue.ts`) always passes one, so a request that in
+ * fact already reached the server before the connection dropped is never
+ * double-uploaded or double-charged against Gemini when the queue retries
+ * it.
  */
 export async function uploadScan(
   scan: File,
   markScheme?: File,
+  options?: {
+    onProgress?: (progress: UploadProgress) => void
+    signal?: AbortSignal
+    idempotencyKey?: string
+  },
 ): Promise<StudentUploadResponse> {
   const form = new FormData()
   form.append("scan", scan)
   if (markScheme) form.append("mark_scheme", markScheme)
-  return request<StudentUploadResponse>("/student/uploads", {
-    method: "POST",
-    body: form,
+  const { idempotencyKey, ...rest } = options ?? {}
+  return uploadWithProgress<StudentUploadResponse>("/student/uploads", form, {
+    ...rest,
+    headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
   })
 }
 

@@ -50,6 +50,58 @@ def test_write_label_manifest_writes_correct_identity_attribution(tmp_path: Path
     assert on_disk["labeller_id"] == "labeller-Z"
 
 
+def test_manifest_write_leaves_no_temp_file_behind(tmp_path: Path) -> None:
+    """The atomic write must not litter the label directory.
+
+    ``mkstemp`` creates a real file next to the destination; if the replace
+    step ever stopped consuming it, the directory would slowly fill with
+    dot-prefixed debris that nothing cleans up. Asserting the directory holds
+    exactly the manifest is the cheapest way to keep that honest.
+    """
+    from lemely.labelling.manifest_io import write_label_manifest
+    from lemely.labelling.paths import manifest_path
+
+    write_label_manifest("RUN02", split="dev", labeller_id="labeller-B", eval_root=tmp_path)
+    path = manifest_path("RUN02", "labeller-B", eval_root=tmp_path)
+
+    assert [entry.name for entry in path.parent.iterdir()] == [path.name]
+
+
+def test_a_failed_manifest_write_leaves_the_previous_manifest_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A write that dies at the replace step must not damage what is already there.
+
+    This is the property that makes the write atomic, as distinct from merely
+    ordered: the destination path is only ever touched by ``os.replace``, so a
+    failure anywhere before it leaves the previous manifest complete and
+    parseable rather than truncated. Simulating the failure at ``os.replace``
+    is what pins that — a plain ``write_text`` implementation would already
+    have clobbered the file by this point and this test would fail.
+    """
+    import os
+
+    from lemely.labelling.manifest_io import write_label_manifest
+    from lemely.labelling.paths import manifest_path
+
+    write_label_manifest("RUN03", split="train", labeller_id="labeller-C", eval_root=tmp_path)
+    path = manifest_path("RUN03", "labeller-C", eval_root=tmp_path)
+    before = path.read_text(encoding="utf-8")
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("simulated failure at the atomic step")
+
+    monkeypatch.setattr(os, "replace", _boom)
+    with pytest.raises(OSError, match="simulated failure at the atomic step"):
+        write_label_manifest("RUN03", split="dev", labeller_id="labeller-C", eval_root=tmp_path)
+    monkeypatch.undo()
+
+    assert path.read_text(encoding="utf-8") == before
+    assert json.loads(path.read_text(encoding="utf-8"))["split"] == "train"
+    # The temp file is cleaned up on the failure path, not left for the next run.
+    assert [entry.name for entry in path.parent.iterdir()] == [path.name]
+
+
 def test_run_labeller_writes_the_manifest_before_serving(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

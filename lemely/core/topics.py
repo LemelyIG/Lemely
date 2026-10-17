@@ -63,6 +63,25 @@ from lemely.core.schemas import ConfidenceBand, StrictModel
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+
+def topic_sort_key(code: str) -> tuple[tuple[int, str], ...]:
+    """Sort key putting syllabus codes in syllabus order.
+
+    ``"2"`` before ``"10"``, and ``"1.2"`` before ``"1.10"``. Each dotted
+    segment becomes ``(0, n)`` when numeric and ``(1, text)`` otherwise, so a
+    non-numeric segment sorts after every number at that depth instead of
+    raising a TypeError on a mixed comparison.
+    """
+    parts: list[tuple[int, str]] = []
+    for segment in code.split("."):
+        if segment.isdigit():
+            # Zero-pad so the tuple compares numerically without int/str mixing.
+            parts.append((0, f"{int(segment):09d}"))
+        else:
+            parts.append((1, segment))
+    return tuple(parts)
+
+
 # A `strong` term is a phrase distinctive enough that one hit alone is
 # meaningful evidence ("half-life", "cumulative frequency"). A `keyword` is
 # suggestive but shared across topics ("energy", "graph", "angle"), so it takes
@@ -310,3 +329,14 @@ def _best(scored: Iterable[tuple[int, str, TopicNode]]) -> tuple[int, str, Topic
         if item[0] > 0 and (best is None or item[0] > best[0]):
             best = item
     return best
+
+
+__all__ = [
+    "WRITABLE_BANDS",
+    "SyllabusTaxonomy",
+    "TopicMatch",
+    "TopicNode",
+    "classify",
+    "is_writable",
+    "topic_sort_key",
+]

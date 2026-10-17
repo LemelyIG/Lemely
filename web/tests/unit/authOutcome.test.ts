@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import { ApiError } from "@/lib/api"
 import {
   AUTH_BAD_CREDENTIALS,
+  AUTH_CODE_REJECTED,
   AUTH_COOLDOWN_ACTIVE,
   AUTH_EMAIL_UNVERIFIED,
   AUTH_INVITE_ALREADY_USED,
@@ -16,6 +17,7 @@ import {
   resetFailureMessage,
   signInFailureMessage,
   signUpFailureMessage,
+  verificationCodeFailureMessage,
   verificationFailureMessage,
 } from "@/lib/authOutcome"
 
@@ -125,33 +127,81 @@ describe("otpVerifyFailureMessage", () => {
     expect(otpVerifyFailureMessage(new ApiError(0, "x"))).toBe(AUTH_NETWORK_FAILURE)
     expect(otpVerifyFailureMessage(new ApiError(503, "x"))).toBe(AUTH_SERVICE_FAILURE)
   })
+
+  /**
+   * Design spec §4's parent-invites signup code step
+   * (`useParentSignupApi.ts`'s `useVerifyParentCode`) hits the identical
+   * `AuthError` shape as the phone-OTP verify this function was written for,
+   * just under `AuthService.verify_parent_signup_code`'s own prefix. Same
+   * four members, same function, same sentences — not a second table.
+   */
+  it("maps 'Email verification failed: <member>' to the identical sentences as the OTP prefix", () => {
+    const EMAIL_CODE_DETAILS = [
+      "Email verification failed: wrong_code",
+      "Email verification failed: expired",
+      "Email verification failed: locked_out",
+      "Email verification failed: no_challenge",
+    ]
+    for (const [i, detail] of EMAIL_CODE_DETAILS.entries()) {
+      const emailMessage = otpVerifyFailureMessage(new ApiError(401, detail, detail))
+      const otpMessage = otpVerifyFailureMessage(new ApiError(401, OTP_DETAILS[i], OTP_DETAILS[i]))
+      expect(emailMessage, detail).toBe(otpMessage)
+      expect(emailMessage, detail).not.toContain("Email verification failed")
+      expect(emailMessage, detail).not.toMatch(/wrong_code|no_challenge|locked_out/)
+    }
+  })
+
+  /** The genericised wording (this task's own fix): the shared table used to
+   * say "text" and "that number", which is a false claim from the email-code
+   * caller — nobody was texted anything. */
+  it("never claims a text message was sent, from either prefix", () => {
+    const detail = "Email verification failed: expired"
+    const message = otpVerifyFailureMessage(new ApiError(401, detail, detail))
+    expect(message).not.toMatch(/text|phone|number/i)
+  })
 })
 
 describe("otpRequestFailureMessage", () => {
   /**
-   * The other half of the judgement. `OtpRateLimitError` says "OTP already
-   * sent; retry in 12s." — a real sentence with a real number, written by a
-   * human for a human. Replacing it would lose the seconds, which is the only
-   * fact the reader wants.
+   * Final review I-4: this function's only production caller left is the
+   * parent-invites email-code request (`parentRequestCodeFailure`,
+   * `signupParentLogic.ts`) — the phone-OTP route it was written for is
+   * retired. `OtpRateLimitError` still says "OTP already sent; retry in
+   * 12s." (`lemely/auth/otp.py:112`), but showing the word "OTP" to a parent
+   * typing an email address is exactly the machine-text-as-copy defect this
+   * module otherwise exists to prevent, so only the seconds — the one fact
+   * the reader wants — are kept, wrapped in a sentence for this reader.
    */
-  it("keeps the 429's own wording, because a human wrote it", () => {
+  it("extracts the seconds from the 429 detail rather than showing it verbatim", () => {
     const detail = "OTP already sent; retry in 12s."
-    expect(otpRequestFailureMessage(new ApiError(429, detail, detail))).toBe(detail)
+    const message = otpRequestFailureMessage(new ApiError(429, detail, detail))
+    expect(message).not.toContain("OTP")
+    expect(message).toContain("12")
   })
 
-  it("does not keep a 429 with an empty detail", () => {
-    const message = otpRequestFailureMessage(new ApiError(429, "429 Too Many Requests", ""))
-    expect(message).not.toContain("429")
-    expect(message).toMatch(/code/i)
+  it("falls back to a numberless sentence when the 429 detail is empty or unparsable", () => {
+    for (const detail of ["", "429 Too Many Requests"]) {
+      const message = otpRequestFailureMessage(new ApiError(429, "429 Too Many Requests", detail))
+      expect(message, JSON.stringify(detail)).not.toContain("OTP")
+      expect(message, JSON.stringify(detail)).toMatch(/code/i)
+    }
   })
 
-  it("writes its own sentence for a rejected number", () => {
+  /**
+   * The 400/422 sentence used to be phone copy ("check the digits and the
+   * country") reaching a parent typing an email address — M22/I-4. A 400 on
+   * the real route is intercepted upstream as `hasAccount`
+   * (`parentRequestCodeFailure`), but a 422 falls through to this function,
+   * so both statuses are asserted here the way the phone-number test used to.
+   */
+  it("writes its own sentence for a rejected email address, not phone copy", () => {
     for (const status of [400, 422]) {
       const message = otpRequestFailureMessage(
-        new ApiError(status, "e", "value is not a valid phone number"),
+        new ApiError(status, "e", "value is not a valid email address"),
       )
-      expect(message, String(status)).not.toContain("valid phone number")
-      expect(message, String(status)).toMatch(/country/i)
+      expect(message, String(status)).not.toContain("valid email address")
+      expect(message, String(status)).not.toMatch(/country|digits|phone|number/i)
+      expect(message, String(status)).toMatch(/email/i)
     }
   })
 
@@ -296,6 +346,51 @@ describe("verificationFailureMessage", () => {
       expect(message, detailStrings[i]).not.toContain("Token")
     }
     expect(new Set(messages).size).toBe(1)
+  })
+
+  /*
+   * DS15's typed code is a different credential from the link, so its failure
+   * must not borrow the link's sentence. `verify_email_code` collapses wrong,
+   * expired and locked-out into one non-revealing 400
+   * (`lemely/web/routers/auth.py`), so the three still produce one identical
+   * message — but it is the code's message, and it never says "link".
+   */
+  it("tells a code failure it was the code, not a link", () => {
+    const detailStrings = [
+      "Email verification failed: wrong_code",
+      "Email verification failed: expired",
+      "Email verification failed: locked_out",
+    ]
+    const messages = detailStrings.map((d) =>
+      verificationCodeFailureMessage(new ApiError(400, d, d)),
+    )
+    for (const [i, message] of messages.entries()) {
+      expect(message, detailStrings[i]).toBe(AUTH_CODE_REJECTED)
+      // The bug this guards: a typed code reported as an expired *link*.
+      expect(message, detailStrings[i]).not.toContain("link")
+      expect(message, detailStrings[i]).not.toBe(AUTH_LINK_EXPIRED)
+      // No raw backend identifier reaches the reader. Only the snake_case
+      // tokens are forbidden — "expired" is ordinary English and belongs in
+      // the sentence; it is `wrong_code` as a literal that must never show.
+      expect(message, detailStrings[i]).not.toMatch(/wrong_code|locked_out/)
+      expect(message, detailStrings[i]).not.toContain("Email verification failed")
+    }
+    expect(new Set(messages).size).toBe(1)
+  })
+
+  it("maps a code failure's other statuses exactly as the link route does", () => {
+    expect(verificationCodeFailureMessage(new ApiError(0, "Failed to fetch"))).toBe(
+      AUTH_NETWORK_FAILURE,
+    )
+    expect(verificationCodeFailureMessage(new TypeError("Failed to fetch"))).toBe(
+      AUTH_NETWORK_FAILURE,
+    )
+    expect(verificationCodeFailureMessage(new ApiError(429, "Slow down"))).toBe(
+      AUTH_COOLDOWN_ACTIVE,
+    )
+    expect(verificationCodeFailureMessage(new ApiError(503, "Service Unavailable"))).toBe(
+      AUTH_SERVICE_FAILURE,
+    )
   })
 
   it("says the link may have expired, and offers a new one", () => {

@@ -709,8 +709,14 @@ def test_subject_detail_reports_the_distance_to_the_next_grade_up(
 ) -> None:
     """P-03's "3 marks from a B", computed from the resolved boundary table.
 
-    0625's subject-default B boundary is 53.38%, so 43 of 80 marks is the B
-    threshold; a 40/80 paper is exactly 3 marks short. The arithmetic is
+    This must be an Extended paper, not a Core one: 0625 paper 1 (Multiple
+    Choice) is Core on every session in the corpus except 2014-2015, and Core
+    publishes no B at all, so a Core paper's ``subject_default`` correctly
+    omits "B" — there being no B for a Core candidate to move towards is not a
+    missing feature, it's the point of P4's "only offer a grade the paper can
+    award" rule. Paper 2 (Multiple Choice, Extended) is examined every year on
+    record and its subject-default B boundary is 57.82%, so 47 of 80 marks is
+    the B threshold; a 44/80 paper is exactly 3 marks short. The arithmetic is
     asserted rather than merely the shape, so a change to the rounding
     (``ceil``, not ``round`` — a parent must never be told they are closer to
     the grade than they are) fails here.
@@ -719,7 +725,15 @@ def test_subject_detail_reports_the_distance_to_the_next_grade_up(
     student = _seed_user(pg_sessionmaker, Role.student)
     _link(pg_sessionmaker, parent_id=parent, child_id=student)
     history_store.append(
-        str(student), _paper(student_id=student, percentage=50.0, grade="C", awarded=40, maximum=80)
+        str(student),
+        _paper(
+            student_id=student,
+            paper_number=2,
+            percentage=55.0,
+            grade="C",
+            awarded=44,
+            maximum=80,
+        ),
     )
 
     _auth_as(client, parent, Role.parent)
@@ -730,6 +744,33 @@ def test_subject_detail_reports_the_distance_to_the_next_grade_up(
         "marksNeeded": 3,
         "summary": "3 marks from a B",
     }
+
+
+def test_a_core_paper_has_no_reachable_grade_above_its_own_ceiling(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], history_store: HistoryStore
+) -> None:
+    """0625 paper 1 (Multiple Choice, Core) publishes C-G on every recent
+    session; its subject-default fallback carries no B. A Core candidate at C
+    genuinely has no higher grade to be "N marks from" — reporting one would
+    be exactly the fabrication P4's threshold-table rewrite exists to remove
+    (Cambridge itself states A does not exist at Core component level), so
+    the honest answer is the same ``null`` the "nothing to report" cases use,
+    not a fabricated distance to a grade this paper cannot award.
+    """
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    student = _seed_user(pg_sessionmaker, Role.student)
+    _link(pg_sessionmaker, parent_id=parent, child_id=student)
+    history_store.append(
+        str(student),
+        _paper(
+            student_id=student, paper_number=1, percentage=50.0, grade="C", awarded=40, maximum=80
+        ),
+    )
+
+    _auth_as(client, parent, Role.parent)
+    body = client.get(f"/api/parent/children/{student}/subjects/0625").json()
+
+    assert body["boundaryDistance"] is None
 
 
 @pytest.mark.parametrize(

@@ -120,14 +120,14 @@ export function CreateFirstClass() {
 
   if (created) {
     return (
-      <div className="lm-screen flex flex-col gap-5 min-w-0 max-w-[680px]">
+      <div className="flex flex-col gap-5 min-w-0 max-w-[680px]">
         <CreatedClassPanel created={created} />
       </div>
     )
   }
 
   return (
-    <div className="lm-screen flex flex-col gap-5 min-w-0 max-w-[680px]">
+    <div className="flex flex-col gap-5 min-w-0 max-w-[680px]">
       <div>
         <div className="text-eyebrow text-ink-faint">One quick step</div>
         <h1 className="text-display-md mt-1.5">Create your first class</h1>

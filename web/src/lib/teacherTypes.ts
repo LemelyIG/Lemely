@@ -34,8 +34,10 @@
  * `GenerateQuizQuestionsResponse`, `CreateQuizAssignmentRequest`,
  * `QuizAssignment`, `QuizAssignmentList`, `QuizPoolCount`. Deliberately
  * excludes the T-10 results family (`QuizAssignmentResultsDTO` and its
- * nested DTOs) — that is a later phase's screen to build. Announcement
- * endpoints remain a later P3.8 chunk's to add.
+ * nested DTOs) — that is a later phase's screen to build.
+ *
+ * The T-12 announcement family (`AnnouncementCreateRequest`, `Announcement`,
+ * `AnnouncementList`) sits at the bottom of this file.
  *
  * This module is intentionally self-contained — it does not import from
  * `web/src/portals/teacher/data.ts` (the mock shapes these DTOs were modeled
@@ -43,7 +45,7 @@
  * are free to drift or be deleted once screens move off stub data.
  */
 
-import type { MarkerSource, QuestionResult as BaseQuestionResult, WeakArea } from "./types"
+import type { QuestionResult as BaseQuestionResult, WeakArea } from "./types"
 
 /**
  * Kind of a tracked paper, driving the grading-grid card variant (mirrors
@@ -129,6 +131,10 @@ export interface PaperSummary {
   needsReview: boolean
   pageCount: number | null
   error: string | null
+  /** True only for the paper's uploader (mirrors `PaperSummaryDTO.canDelete`).
+   * A school/platform admin viewing another teacher's paper gets `false` —
+   * the grading grid must not offer a delete control that would 404. */
+  canDelete: boolean
 }
 
 /** Response for `GET /papers` (mirrors `PaperListDTO`). */
@@ -140,13 +146,12 @@ export interface PaperList {
 /**
  * Per-question grading result carried in `PaperDetailDTO.questions` (mirrors
  * `QuestionResultDTO` in `lemely/web/schemas.py`). `types.ts` already
- * declares a `QuestionResult` missing the two flag fields the DTO carries, so
+ * declares a `QuestionResult` missing the flag field the DTO carries, so
  * this extends it rather than duplicating it — same approach `studentTypes.ts`
  * uses for `StudentCorrectFrame`'s `questions` field.
  */
 export interface QuestionResult extends BaseQuestionResult {
   plagiarismFlagged: boolean
-  aiDetectionFlagged: boolean
 }
 
 /**
@@ -598,7 +603,7 @@ export interface AtRiskListEntry {
  * Response for `GET /teacher/at-risk` (mirrors `AtRiskListDTO`, T-06).
  * **Already sorted server-side by severity** before this ever reaches the
  * client — `_at_risk_severity_key` in `lemely/web/routers/teacher.py`: flag
- * count descending, then worst (furthest-down-`GRADE_ORDER`) grade first.
+ * count descending, then worst (furthest-down-the-grade-ladder) grade first.
  * The screen mirrors this identical two-key ordering client-side only so its
  * "Severity" column stays re-sortable after a teacher sorts by something
  * else and clicks back — it is a UI convention matching the backend's own
@@ -624,8 +629,8 @@ export interface AcknowledgeAtRiskRequest {
 
 /**
  * One T-07 queue row (mirrors `ReviewQueueItemDTO`). `reason` is a
- * `ReviewReason` value (`low_confidence` / `plagiarism_flag` /
- * `ai_detection_flag` / `manual`) and `status` a `ReviewStatus` value
+ * `ReviewReason` value (`low_confidence` / `plagiarism_flag` / `manual` /
+ * `random_audit`) and `status` a `ReviewStatus` value
  * (`open` / `resolved` / `dismissed`) — both plain strings on the wire, not
  * union-typed here, matching every other enum-backed string field elsewhere
  * in this file (e.g. `AtRiskFlag.reason`). `questionResultId`/`questionId`
@@ -635,15 +640,31 @@ export interface AcknowledgeAtRiskRequest {
  * `paperVariant`/`sessionMonth`/`sessionYear` are all `null` together for a
  * quiz-originated item (a quiz `Attempt` carries no paper identity) — render
  * as "Quiz question", never a blank paper-identity line.
+ *
+ * `source` says which half of the queue the row came from, and is the field
+ * to branch on — never "is `studentId` null":
+ *
+ * - `student_attempt` — a student submission. `attemptId` and the
+ *   `studentId`/`classId`/`className` trio are set; `paperId` is `null`.
+ * - `console_paper` — a scan the teacher uploaded through the grading console
+ *   (migration `0034`). `paperId` is set and `attemptId` is `null`. A console
+ *   upload is never attributed to a student (D1.12), so the student and class
+ *   fields are `null` rather than filled with a guess, and
+ *   `studentDisplayName` carries the paper's own label — the same one its
+ *   card shows in the grading console. Such an item can be accepted as-is or
+ *   dismissed, but **not re-marked**: there is no `QuestionResult` to record
+ *   an override on, and `resolve` with `overrideMarks` is a 422.
  */
 export interface ReviewQueueItem {
   itemId: string
-  attemptId: string
+  source: string
+  attemptId: string | null
+  paperId: string | null
   questionResultId: string | null
-  studentId: string
+  studentId: string | null
   studentDisplayName: string
-  classId: string
-  className: string
+  classId: string | null
+  className: string | null
   subjectCode: string | null
   paperNumber: number | null
   paperVariant: number | null
@@ -662,9 +683,21 @@ export interface ReviewQueueItem {
 /** Response for `GET /teacher/review` (mirrors `ReviewQueueListDTO`). Already
  * ordered oldest-first by the backend (`ReviewQueueItem.created_at` asc) —
  * the longest-waiting item is the highest priority, so T-07 renders this
- * order directly rather than re-sorting client-side. */
+ * order directly rather than re-sorting client-side.
+ *
+ * `nextCursor` (Task 9) is an opaque keyset token to echo back as `cursor` on
+ * the next `useReviewQueue` call to continue this page; `null` once the
+ * caller's whole queue (under the current filters) fits on this page —
+ * `Review.tsx`'s "Load more" button (Task 11, B6c) is gated on it.
+ *
+ * `total` (C3d) is the count of every item matching the request's filters,
+ * ignoring `limit`/`cursor` — the same tenant scope as `items`. Powers the
+ * sidebar/bottom-nav Review badge (`useReviewQueueCount`) and the "Item N of
+ * total" queue strip on `ReviewItem.tsx`. */
 export interface ReviewQueueList {
   items: ReviewQueueItem[]
+  nextCursor: string | null
+  total: number
 }
 
 /**
@@ -681,6 +714,66 @@ export interface ReviewBreakdown {
 }
 
 /**
+ * One mark point's self-review state (mirrors `ReviewItemPointDTO`, S2
+ * part2+3 final review I-2). What a teacher deciding a
+ * `student_evidence_unjudged` item needs to see: the marker's own verdict,
+ * the student's claim, and — because a `student_evidence_unjudged` row
+ * exists precisely when the automatic judge never ran or never returned
+ * — usually `evidenceVerdict: null`, the sentence the row exists to have a
+ * human read instead.
+ *
+ * `studentEvidence` is text a student wrote, rendered on a teacher's
+ * screen: never sanitised for content (this is the teacher console, not a
+ * student-facing surface — QUALITY-BAR's integrity sanitising is per call
+ * site and does not apply here), but always rendered as plain text, never
+ * interpreted as markup.
+ *
+ * `verdict`/`evidenceSpan`/`ecfApplied` are I6/I7 (US-013)'s marker verdict —
+ * populated regardless of `studentSelfmark`, because they answer a different
+ * question than the self-review fields above. `awarded` only ever says
+ * "earned the mark or not"; `verdict` is what tells a teacher, when it
+ * can't, *why* a point reads `awarded: false` — the marker judged it
+ * genuinely absent (`"withheld"`) versus could not confirm it either way
+ * (`"unverifiable"`), a distinction `awarded` alone collapses. `null` means
+ * either a legacy (non-verdict) point, or a DB value the backend could not
+ * narrow to one of the three members — the two are deliberately
+ * indistinguishable here (`lemely.db.review_repo._narrow_point_verdict`):
+ * an unrecognised value must render exactly like a legacy point, never as
+ * one of the three real verdicts. It must NOT render as an absence of
+ * information, either: `awarded` is still populated and still the marker's
+ * own verdict on both paths (`derive_point_rows` never wrote anything
+ * richer before I6), so a renderer's `verdict === null` branch should fall
+ * back to `awarded`, not to a bare "no verdict recorded" denial.
+ */
+/**
+ * The three verdicts a marker can reach on one mark-scheme point (I6, US-013).
+ * Mirrors `lemely.core.schemas.PointVerdictWire`, the single Python alias every
+ * wire boundary narrows back to. Declared once here for the same reason it is
+ * declared once there: this project spent migration `0040` curing eight
+ * formulations of one concept, and an inline union repeated per use site is how
+ * that starts.
+ */
+export type PointVerdictWire = "awarded" | "withheld" | "unverifiable"
+
+export interface ReviewItemPoint {
+  markPointId: string
+  pointText: string
+  awarded: boolean
+  studentSelfmark: boolean | null
+  studentEvidence: string | null
+  evidenceVerdict: string | null
+  verdict: PointVerdictWire | null
+  evidenceSpan: string
+  ecfApplied: boolean
+  /**
+   * The marker's own reasoning for this point. Present on BOTH marking paths
+   * (`PointVerdict.note` on the verdict path, `point_notes` on the legacy one),
+   * so unlike `verdict` this is populated today with `equivalence_gate` off.
+   */
+  rationale: string | null
+}
+
+/**
  * Response for `GET /teacher/review/{itemId}` (mirrors `ReviewItemDetailDTO`,
  * T-08). Extends `ReviewQueueItem` with the question content, AI marking
  * evidence, and any recorded teacher override.
@@ -688,12 +781,33 @@ export interface ReviewBreakdown {
  * **`studentAnswer` is Lemely's transcription of the student's handwriting,
  * not the scan image; `expectedAnswer`/`matchedPointIds` are the mark
  * scheme's expected answer and the identifiers of the points the AI matched
- * — not the scheme's prose.** Neither the original scan crop nor the mark
- * scheme's extract text is persisted anywhere in this product (D3.14 §1,
- * `ReviewItemDetailDTO`'s own docstring) — T-08 must label these as exactly
- * what they are and say plainly that the scan/scheme extract don't exist,
- * never render a placeholder image or reconstruct scheme prose from the
- * point ids (inventing precision, UI-spec §1.4).
+ * — not the scheme's prose.** The mark scheme's extract text is still not
+ * persisted anywhere in this product (D3.14 §1, `ReviewItemDetailDTO`'s own
+ * docstring) — T-08 must label `expectedAnswer`/`matchedPointIds` as exactly
+ * what they are, never reconstruct scheme prose from the point ids
+ * (inventing precision, UI-spec §1.4). That gap is real and stays real: it
+ * is not what the paragraph below narrows. A scan crop is a different
+ * matter, but `hasSourceBox: true` is not itself a guarantee of one: it means
+ * all five `source_box_*` columns are set AND the attempt has an upload, so a
+ * crop MAY exist, fetched on demand from the crop route rather than persisted
+ * here. `GET /teacher/review/{itemId}/crop` can still fail (404 when the
+ * stored object has expired, 422 when the scan cannot be rendered), so a
+ * client must render any failure as absence, never as an error (see
+ * `useReviewItemCrop` in `lib/hooks/useTeacherApi.ts`). When a crop
+ * does render, it is QUESTION-level — where the answer was read from on the
+ * page — never per mark point, so it must not be read as showing which
+ * pixels justify any one awarded mark.
+ *
+ * Where `points` (`ReviewItemPoint`) carries a real per-point `verdict` and
+ * quoted evidence span (I6, US-013 — an attempt-backed row with a mark
+ * scheme, once the marker actually returns verdicts), it is strictly richer
+ * marking evidence than a bare matched-point identifier, so a bare
+ * `matchedPointIds` chip list is demoted beneath the real per-point verdicts
+ * on this screen. On a `"console_paper"` row and on a no-scheme question (a
+ * quiz), `points` is `[]` and `matchedPointIds` is the only marking evidence
+ * this backend has. On a legacy row `points` still carries each point's
+ * snapshotted scheme text and `awarded` flag — richer than a bare identifier
+ * — but no `verdict`, so the withheld/unverifiable distinction is absent.
  */
 export interface ReviewItemDetail extends ReviewQueueItem {
   studentAnswer: string | null
@@ -712,6 +826,19 @@ export interface ReviewItemDetail extends ReviewQueueItem {
   resolutionNote: string | null
   resolvedBy: string | null
   resolvedAt: string | null
+  points: ReviewItemPoint[]
+  /**
+   * True when all five `source_box_*` columns are set server-side AND the
+   * attempt has an upload, so a crop MAY exist. Fetch it from the crop route;
+   * this DTO never carries coordinates (see `ReviewItemDetailDTO.hasSourceBox`).
+   * `true` does NOT guarantee a crop: `GET /teacher/review/{itemId}/crop` can
+   * still fail (404 when the stored object has expired, 422 when the scan
+   * cannot be rendered), and a client must render any failure as absence,
+   * never as an error. Always `false` for
+   * a `"console_paper"` row, even when its question has a box, because the
+   * crop route serves only attempt-backed items.
+   */
+  hasSourceBox: boolean
 }
 
 /**
@@ -736,8 +863,8 @@ export interface ResolveReviewRequest {
  * `DismissReviewRequestDTO`). Dismisses an integrity flag; `note` is an
  * internal record only. Never touches the underlying `QuestionResult` — no
  * student-visible record survives a dismissal (see `ReviewService.dismiss`'s
- * docstring). Restricted server-side to `plagiarism_flag`/`ai_detection_flag`
- * items — a 422 otherwise. */
+ * docstring). Restricted server-side to `plagiarism_flag` items — a 422
+ * otherwise. */
 export interface DismissReviewRequest {
   note?: string | null
 }
@@ -778,7 +905,7 @@ export interface BulkApproveResponse {
  * included ones as the quiz, removed ones only in a separate "removed"
  * list, never silently drop them from existence and never present them as
  * part of the live quiz either. `difficulty` is a `Band` value
- * (`"foundation"` / `"standard"` / `"challenge"`) — a plain string on the
+ * (`foundation` / `standard` / `challenge`) — a plain string on the
  * wire like every other enum-backed field in this file.
  */
 export interface QuizQuestion {
@@ -1071,8 +1198,10 @@ export interface QuizAssignmentResults {
  * required whenever `schoolWide` is true (a school_admin can administer
  * several schools, so the flag alone does not say which).
  *
- * `publishAt` is **stored but never read** — no scheduler exists and delivery
- * is Phase 5's. Label it honestly; never imply it will fire.
+ * `publishAt` is an absolute instant that both **gates visibility** (a dated
+ * announcement is hidden from students until then) and **schedules the
+ * notification** (the sweeper fans out to the audience at that moment). Null
+ * means visible and notified immediately. Word it as exactly that.
  */
 export interface AnnouncementCreateRequest {
   title: string
@@ -1109,98 +1238,44 @@ export interface AnnouncementList {
   announcements: Announcement[]
 }
 
-// ── POST /papers/{id}/extract, /grade SSE frames ─────────────────────────
+// ── Console paper deletion (spec 2026-09-22, Task 17, R2) ─────────────────
 
 /**
- * SSE frames emitted by `POST /papers/{id}/extract` and
- * `POST /papers/{id}/grade` over the shared event bus
- * (`lemely/runtime/events.py`), published from the `run()` closures in
- * `lemely/web/routers/teacher.py::extract_paper` /
- * `grade_paper_endpoint` and, transitively, from
- * `lemely/web/services/grading.py::extract_answers`/`grade_paper` — which
- * fan out into `lemely/io/answer_extraction.py`, `lemely/io/correction_ai.py`,
- * and `lemely/io/gemini.py`. (`lemely/io/integrity.py`'s
- * `apply_integrity_checks`, also on the grade path, never publishes.)
- *
- * Unlike the DTOs above, this payload is **not** a Pydantic `ApiModel`:
- * `EventBus.publish()` forwards whatever kwargs the publisher passed
- * verbatim (see `lemely/web/sse.py::_event_to_payload`), so these fields are
- * **snake_case** on the wire, not camelCase — same caveat as
- * `StudentCorrectFrame` in `studentTypes.ts`.
- *
- * Frame types actually observed across both endpoints' call graphs:
- * `extraction_progress` (per answer, extract endpoint and the extract-then-grade
- * path of the grade endpoint), `marking_progress` (per question — two distinct
- * shapes, see below), `gemini_call_start`, `gemini_call_end`, `gemini_cache_hit`,
- * `gemini_retry`, `gemini_escalate`, `budget_warning`, `budget_exceeded`,
- * `warning`, `error`. Neither endpoint publishes a terminal "complete"
- * summary frame (unlike the student `/correct` pipeline) — the stream simply
- * ends at the `[DONE]` sentinel `streamActivity()` already stops on.
- *
- * `marking_progress` shape differs by path: the live `correct_paper` marking
- * loop (`correction_ai.py`) publishes `question_id`/`marker_source`/
- * `confidence`/`awarded`/`max_marks` (no `paper_id`); the cached-report
- * replay branch in `grade_paper_endpoint` (no mark scheme attached, reusing an
- * already-graded `AccuracyReport`) publishes `paper_id`/`question_id`/
- * `marker_source`/`confidence` only (no `awarded`/`max_marks`). Both shapes
- * are covered by the all-optional fields below.
- *
- * `warning` shape also differs by source: `extract_paper`'s and
- * `grade_paper_endpoint`'s own fallback branches (missing mark
- * scheme/scan/report) publish `paper_id` + `message`; the mark-scheme
- * validation warning inside `correct_paper` publishes `message` only.
+ * One row of `GET /papers/deleted` (mirrors `DeletedPaper` in
+ * `studentTypes.ts`, less `attemptId`/`subjectCode`: a console paper is not
+ * an attempt and carries no subject field of its own).
  */
-export interface TeacherPipelineFrame {
-  type:
-    | "extraction_progress"
-    | "marking_progress"
-    | "gemini_call_start"
-    | "gemini_call_end"
-    | "gemini_cache_hit"
-    | "gemini_retry"
-    | "gemini_escalate"
-    | "budget_warning"
-    | "budget_exceeded"
-    | "warning"
-    | "error"
-    | (string & {})
-  // warning (own fallback branches only — see interface doc)
-  paper_id?: string
-  message?: string
-  // extraction_progress (answer_extraction.py)
-  question_id?: string
-  confidence?: number
-  has_working?: boolean
-  // extraction_progress (answer_extraction.py) and the live marking loop
-  // (correction_ai.py): `index` is this question's 1-based position in the
-  // stage's work list, `total` is that list's length — the real "Question 7 of
-  // 21" counter behind C-10's per-stage progress. Both publishers derive
-  // `index` from `enumerate` over the source list rather than counting frames
-  // already emitted, so a question that fails and reports an `error` instead
-  // does not shift the indices after it. Not published by the cached-report
-  // replay branch in `grade_paper_endpoint`, which iterates an already-graded
-  // `AccuracyReport` — frames from that path carry no counter at all and the
-  // UI must render the stage without one rather than invent a denominator.
-  index?: number
-  total?: number
-  // marking_progress (correction_ai.py live loop and/or the cached-report replay)
-  marker_source?: MarkerSource
-  awarded?: number
-  max_marks?: number
-  // gemini_call_start / gemini_call_end / gemini_cache_hit / gemini_retry / gemini_escalate
-  task?: string
-  model?: string
-  cache_key?: string
-  attempt?: number
-  error?: string
-  input_tokens?: number
-  output_tokens?: number
-  usd_cost?: number
-  latency_ms?: number
-  escalation_model?: string
-  // budget_warning / budget_exceeded (gemini.py)
-  threshold?: number
-  total_usd?: number
-  ceiling?: number
-  [key: string]: unknown
+export interface DeletedTeacherPaper {
+  paperId: string
+  label: string
+  deletedAt: string
+  restoreDeadline: string
+}
+
+/** Payload for `GET /papers/deleted`. */
+export interface DeletedTeacherPapers {
+  papers: DeletedTeacherPaper[]
+  retentionDays: number
+}
+
+// ── Class-scoped paper visibility (controller addition, Task 13's review) ─
+
+/** One rostered student's paper as seen from a class (mirrors `ClassPaperRowDTO`). */
+export interface ClassPaperRow {
+  attemptId: string
+  studentId: string
+  studentName: string
+  subjectCode: string
+  paperNumber: number
+  paperVariant: number
+  /** e.g. "May/June" — already human-readable, no lookup table needed. */
+  sessionMonth: string
+  sessionYear: number | null
+  recordedAt: string
+  unshared: boolean
+}
+
+/** Payload for `GET /classes/{classId}/papers`. */
+export interface ClassPapers {
+  papers: ClassPaperRow[]
 }

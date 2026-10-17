@@ -1,13 +1,15 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useState, type FormEvent } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
-import { portalPathForRole } from "@/lib/auth/RequireAuth"
+import { postLoginTarget } from "@/lib/auth/postLoginTarget"
+import { BrandLockup } from "@/components/ui/brand-lockup"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ApiError } from "@/lib/api"
 import { isDeviceLimitChallenge, type DeviceLimitChallenge } from "@/lib/deviceTypes"
 import { takeSessionExpired } from "@/lib/auth/storage"
+import { safeNextPath } from "@/lib/nextPath"
 import { signInFailureMessage } from "@/lib/authOutcome"
 import { cn } from "@/lib/utils"
 import { DeviceLimitNotice } from "./DeviceLimitNotice"
@@ -88,14 +90,9 @@ export function AuthFrame({
   return (
     <main
       data-portal={dataPortal}
-      className="paper-grain flex min-h-screen flex-col items-center justify-start gap-6 bg-paper px-4 pt-20 pb-12 sm:pt-28"
+      className="paper-grain flex min-h-dvh flex-col items-center justify-start gap-6 bg-paper px-4 pt-20 pb-12 sm:pt-28"
     >
-      {/* `alt=""` and `aria-hidden`: the wordmark beside it already says
-          "Lemely", so describing the mark too announces the brand twice. */}
-      <div className="flex items-center gap-2.5">
-        <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-7 w-7 shrink-0" />
-        <span className="text-display-md text-ink">Lemely</span>
-      </div>
+      <BrandLockup size="md" />
       {children}
       {footer}
     </main>
@@ -105,30 +102,54 @@ export function AuthFrame({
 /**
  * Matches `SignupRoleSelect.tsx` and `SignupDetails.tsx`'s own link recipe
  * exactly, so every text link on a signed-out auth screen looks and behaves
- * like the same control. Extracted here (Task 19) now that this file uses it
- * three times over rather than once: the existing parent link below, plus the
- * two G-04 spec names this screen as missing, "Sign up" and forgot-password.
+ * like the same control. `pointer-coarse:inline-flex pointer-coarse:items-center
+ * pointer-coarse:min-h-11` (packet A2, `login-links-under-44px-tap-target`;
+ * the same recipe `SubjectDetail.tsx:182` already uses) gives every link a
+ * real 44px tap target on touch/coarse-pointer devices only. Gated, not
+ * unconditional: a mouse user's link keeps its ordinary inline flow, and
+ * none of these links — two of which sit inline inside a sentence ("New to
+ * Lemely? Create an account") — become an unwrappable flex item that could
+ * overflow at 200% text zoom (WCAG 1.4.4/1.4.10). Extracted here (Task 19)
+ * now that this file uses it three times over rather than once: the
+ * existing parent link below, plus the two G-04 spec names this screen as
+ * missing, "Sign up" and forgot-password.
  */
 const LINK_CLASS =
-  "rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+  "pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
 
 export function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams] = useSearchParams()
+  // PR 2 part A2: where a dead session (`RequireAuth`) or `/session-ended`'s
+  // own "Sign in again" link carried the reader from. Re-validated here with
+  // the same allowlist those two apply — a `?next=` is exactly as untrusted
+  // arriving at this component as anywhere else it is read from a URL.
+  const next = safeNextPath(searchParams.get("next"))
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [challenge, setChallenge] = useState<DeviceLimitChallenge | null>(null)
   // Read once, on mount, and cleared by the read: landing here after a session
   // expired should say so. Being silently returned to a login screen reads as
   // the app having lost your work, which is the impression the old behaviour
-  // gave once it stopped showing raw 401 text.
+  // gave once it stopped showing raw 401 text. `SessionEnded` reads the same
+  // flag the same way, so whichever of the two screens a reader actually
+  // reaches shows the notice — never both, since the read consumes it.
   const [expired] = useState(() => takeSessionExpired())
 
-  const signIn = (confirmDeviceEviction: boolean) => {
+  const signIn = (confirmDeviceEviction: boolean, deviceToSignOut?: string) => {
     login.mutate(
-      { email, password, confirmDeviceEviction },
+      { email, password, confirmDeviceEviction, deviceToSignOut },
       {
-        onSuccess: (result) => navigate(portalPathForRole(result.role), { replace: true }),
+        // Packet B2a: `postLoginTarget` prefers `next` (present whenever the
+        // reader was bounced off a specific page); failing that, `from` —
+        // `RequireAuth`'s own `state.from` — is honoured only inside the
+        // signed-in role's portal; otherwise the role's own portal home.
+        onSuccess: (result) =>
+          navigate(postLoginTarget({ next, from: location.state?.from, role: result.role }), {
+            replace: true,
+          }),
         // A 409 is not a failed login: the password was right and nothing has
         // been signed out yet. Anything else stays an ordinary error message.
         onError: (error) => {
@@ -154,7 +175,7 @@ export function Login() {
           challenge={challenge}
           isPending={login.isPending}
           error={failedConfirm ? signInFailureMessage(login.error) : null}
-          onConfirm={() => signIn(true)}
+          onConfirm={(deviceId) => signIn(true, deviceId)}
           onCancel={() => {
             setChallenge(null)
             login.reset()
@@ -182,12 +203,20 @@ export function Login() {
               Create an account
             </Link>
           </p>
-          {/* UI spec §G-04: "Parent → G-05 (parents authenticate by phone)".
-             Parents have no password to type here — this is the only way in. */}
+          {/*
+           * UI spec §G-04's parent link, retargeted by the parent-invites
+           * design (superseding D3.11): a parent is an ordinary email/
+           * password account now, so a returning parent uses the form above
+           * like everyone else. This link is for a parent who does not have
+           * an account yet — that always starts from a child-issued invite,
+           * never from this screen, so it points at `/join`, the screen
+           * built for "I have a code" (`JoinWithCode.tsx`), not at a form
+           * this product has no way to let a parent reach on their own.
+           */}
           <p className="text-body-sm text-ink-muted">
             Are you a parent?{" "}
-            <Link to="/login/parent" className={LINK_CLASS}>
-              Sign in with your phone
+            <Link to="/join" className={LINK_CLASS}>
+              Use the invite from your child
             </Link>
           </p>
         </div>
@@ -225,6 +254,7 @@ export function Login() {
           type="password"
           required
           autoComplete="current-password"
+          enterKeyHint="go"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
         />
