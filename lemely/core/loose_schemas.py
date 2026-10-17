@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import re
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Any
 
 from pydantic import (
     BaseModel,
@@ -10,6 +11,26 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+# F1 (Gemini 3.x migration): 3.x models reject the JSON-Schema `pattern`
+# keyword outright, so the subject_code shape check moves to a plain Pydantic
+# validator (see MarkSchemeMetadata.validate_subject_code below).
+#
+# F1 review FIX 7 (2026-09-17): defined HERE, not in lemely.core.schemas, and
+# re-exported from there — this module is the LOWER one in the import-linter
+# layering (it imports nothing from lemely), while lemely.labelling (which is
+# contract-forbidden from depending on schemas.py, the correction pipeline)
+# already imports this module directly. Defining it in schemas.py and
+# importing it here (the shape this shipped with originally) made this
+# module transitively depend on schemas.py and broke that contract.
+#
+# FIX 6 (2026-09-17): no `$`/`^` anchors — paired with `.fullmatch()` at each
+# call site, not `.match()`. Python's `re.match` only anchors the START; `$`
+# matches immediately before a trailing "\n" as well as at the true end of
+# string, so `.match()` against `"^\d{4}$"` let "1234\n" through even though
+# Pydantic's Rust-backed `Field(pattern=...)` (this replaced) rejected it.
+# `.fullmatch()` has no such trailing-newline exception.
+_SUBJECT_CODE_RE = re.compile(r"\d{4}")
 
 # ---------------------------------------------------------------------------
 # Shared enumerations
@@ -125,45 +146,45 @@ class CalculatedAnswer(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     value: float | None = Field(
-        None,
+        default=None,
         description="Numerical value of the answer (exact, not rounded).",
     )
     unit: str | None = Field(
-        None,
+        default=None,
         description="Unit string as written in the mark scheme, e.g. 'N', 'kg m/s', '°C'.",
     )
     standard_form: str | None = Field(
-        None,
+        default=None,
         description="Standard form representation exactly as written, e.g. '1.6 × 10⁵'. "
         "Null if the mark scheme does not express it in standard form.",
     )
     sig_figs: int | None = Field(
-        None,
+        default=None,
         ge=1,
         description="Number of significant figures required by the mark scheme. "
         "Null if not specified.",
     )
     dp: int | None = Field(
-        None,
+        default=None,
         ge=0,
         description="Decimal places required. Null if not specified.",
     )
     unit_required: bool = Field(
-        False,
+        default=False,
         description="True if the mark is withheld when the unit is absent.",
     )
     unit_penalised: bool = Field(
-        False,
+        default=False,
         description="True if the mark is lost when the unit is wrong "
         "(common in structured theory papers).",
     )
     accept_equivalent_forms: bool = Field(
-        False,
+        default=False,
         description="True when mark scheme says 'oe' — fractions, decimals, and "
         "standard form are all accepted.",
     )
     tolerance: str | None = Field(
-        None,
+        default=None,
         description="Measurement tolerance as a string, e.g. '± 0.2'. "
         "Used in Biology ATP and Geography fieldwork questions.",
     )
@@ -192,7 +213,7 @@ class AnswerPoint(BaseModel):
         description="Marks awarded for this point. Zero for tickbox distractors.",
     )
     marks_defaulted: bool = Field(
-        False,
+        default=False,
         description="True when `marks` was NOT read from the source — the marks cell "
         "was absent or unparseable and the 1-mark default was minted instead (#38, "
         "M1.3). Provenance only: it never changes the value, it records that the "
@@ -201,26 +222,26 @@ class AnswerPoint(BaseModel):
         "dropping provenance.",
     )
     math_mark_type: MathMarkType | None = Field(
-        None,
+        default=None,
         description="Mathematics mark code (Part 3B). Null for non-maths questions.",
     )
     is_alternative: bool = Field(
-        False,
+        default=False,
         description="True if this point is an OR/EITHER…OR alternative to the previous "
         "point — marks are not additive.",
     )
     is_optional: bool = Field(
-        False,
+        default=False,
         description="True if this point is one of a pool ('any N from') — "
         "candidates earn marks for selecting any N of these.",
     )
     owtte: bool = Field(
-        False,
+        default=False,
         description="True if the mark scheme says 'owtte' (or words to that effect) "
         "or 'AW' (alternative wording) for this point.",
     )
     avp: bool = Field(
-        False,
+        default=False,
         description="True if the mark scheme says 'AVP' (alternative valid point) — "
         "used in Biology mark schemes.",
     )
@@ -229,7 +250,7 @@ class AnswerPoint(BaseModel):
         description="Explicitly stated alternative phrasings that earn this mark.",
     )
     required_with: str | None = Field(
-        None,
+        default=None,
         description="ID of the AnswerPoint this point depends on. Used for A marks in "
         "Maths (dep on M mark) and chained science marks.",
     )
@@ -239,22 +260,22 @@ class AnswerPoint(BaseModel):
         "underlined in the original mark scheme.",
     )
     tolerance: str | None = Field(
-        None,
+        default=None,
         description="Point-level tolerance string for non-numerical marks, "
         "e.g. '± half a small square'.",
     )
     condition: str | None = Field(
-        None,
+        default=None,
         description="Conditional note for special-case marks, e.g. "
         "'Only if candidate has not earned M1'.",
     )
     is_correct: bool | None = Field(
-        None,
+        default=None,
         description="Tickbox questions only: True = correct option, False = distractor. "
         "Null for all other question types.",
     )
     calculated_answer: CalculatedAnswer | None = Field(
-        None,
+        default=None,
         description="Present when this mark point carries a specific numerical result.",
     )
 
@@ -287,21 +308,21 @@ class DrawingCriterion(BaseModel):
 class PlotRequirement(BaseModel):
     """Part 8 — a single required data point for graph_draw questions."""
 
-    x_value: float | None = Field(None, description="X-axis value to be plotted.")
-    y_value: float | None = Field(None, description="Y-axis value to be plotted.")
+    x_value: float | None = Field(default=None, description="X-axis value to be plotted.")
+    y_value: float | None = Field(default=None, description="Y-axis value to be plotted.")
     unit: str | None = Field(
-        None,
+        default=None,
         description="Combined units description, e.g. 'm / cm'.",
     )
     tolerance: str | None = Field(
-        None,
+        default=None,
         description="Acceptable plotting tolerance, e.g. '± half a small square'.",
     )
     ecf: bool = Field(
-        False,
+        default=False,
         description="True if error-carried-forward applies to this plot point.",
     )
-    notes: str | None = Field(None, description="Additional guidance for this plot.")
+    notes: str | None = Field(default=None, description="Additional guidance for this plot.")
 
 
 class PenaltyRule(BaseModel):
@@ -318,7 +339,7 @@ class PenaltyRule(BaseModel):
         description="Maximum marks that can be awarded when n_selected options are ticked.",
     )
     description: str | None = Field(
-        None,
+        default=None,
         description="Human-readable summary, e.g. '4 ticked → max 2 marks'.",
     )
 
@@ -362,12 +383,12 @@ class LevelDescriptor(BaseModel):
         "or 'general' for non-AO-split descriptors.",
     )
     one_sided_threshold: bool | None = Field(
-        None,
+        default=None,
         description="History only: True if this level requires a one-sided argument, "
         "False if two-sided is needed. Null for non-History schemes.",
     )
     min_explanations: int | None = Field(
-        None,
+        default=None,
         ge=0,
         description="History only: minimum number of explanations required at this level.",
     )
@@ -410,7 +431,7 @@ class IndicativeContentPoint(BaseModel):
         description="The content point the candidate may include for credit.",
     )
     strand: IndicativeContentStrand = Field(
-        IndicativeContentStrand.READING,
+        default=IndicativeContentStrand.READING,
         description="Whether this point earns reading or writing marks.",
     )
 
@@ -498,7 +519,7 @@ class MarkSchemeMetadata(BaseModel):
         description="Full subject name as printed on the mark scheme, "
         "e.g. 'Physics', 'First Language English'.",
     )
-    subject_code: Annotated[str, Field(pattern=r"^\d{4}$")] = Field(
+    subject_code: str = Field(
         ...,
         description="Four-digit CAIE syllabus code, e.g. '0625', '0580', '0500'.",
     )
@@ -521,7 +542,7 @@ class MarkSchemeMetadata(BaseModel):
         description="Examination session as a standardised string.",
     )
     session_year: int | None = Field(
-        None,
+        default=None,
         ge=2000,
         le=2100,
         description="Four-digit year. Null for Specimen papers.",
@@ -531,7 +552,7 @@ class MarkSchemeMetadata(BaseModel):
         description="Standardised paper type derived from the document title.",
     )
     tier: Tier | None = Field(
-        None,
+        default=None,
         description="Core or Extended tier. Null when not determinable from the header.",
     )
     maximum_mark: int = Field(
@@ -566,29 +587,39 @@ class MarkSchemeMetadata(BaseModel):
         "award decisions such as marking contradictory responses.",
     )
     examiner_instructions: str | None = Field(
-        None,
+        default=None,
         description="Verbatim assessor/examiner instruction block from the cover page, "
         "if present (e.g. 'Examiners should mark according to the mark scheme…').",
     )
     notation_key_text: str | None = Field(
-        None,
+        default=None,
         description="Verbatim text of the mark-scheme abbreviations/key page, "
         "if a dedicated key page is present in the PDF.",
     )
     paper_structure_summary: str | None = Field(
-        None,
+        default=None,
         description="Brief prose description of the paper structure as stated on the cover "
         "or introductory pages (e.g. 'Section A: 40 marks MCQ; Section B: 60 marks structured').",
     )
     published: bool = Field(
-        True,
+        default=True,
         description="True if the mark scheme is marked 'Published'. "
         "False for pre-standardisation or confidential versions.",
     )
     source_document: str | None = Field(
-        None,
+        default=None,
         description="Filename or URL of the source PDF, if known.",
     )
+
+    @field_validator("subject_code")
+    @classmethod
+    def validate_subject_code(cls, v: str) -> str:
+        # F1: moved off `Field(pattern=...)` — see lemely.core.schemas._SUBJECT_CODE_RE.
+        # 3.x models reject the JSON-Schema `pattern` keyword outright, so the
+        # shape check now lives here instead of in `model_json_schema()`.
+        if not _SUBJECT_CODE_RE.fullmatch(v):
+            raise ValueError(f"subject_code must be a four-digit CAIE syllabus code, got {v!r}.")
+        return v
 
     @model_validator(mode="after")
     def specimen_year_is_null(self) -> MarkSchemeMetadata:
@@ -629,7 +660,7 @@ class Question(BaseModel):
         "'1', '2a', '1a_i', '1a_i_A'.",
     )
     parent_id: str | None = Field(
-        None,
+        default=None,
         description="ID of the parent question. Null for top-level questions.",
     )
 
@@ -648,7 +679,7 @@ class Question(BaseModel):
         description="Question type from the Part 3A taxonomy.",
     )
     question_command: str | None = Field(
-        None,
+        default=None,
         description="The command word(s) as they appear in the question, "
         "e.g. 'explain why', 'calculate', 'describe', 'tick three'.",
     )
@@ -658,12 +689,12 @@ class Question(BaseModel):
         "e.g. ['AO1', 'AO2'] or ['R1', 'R5'].",
     )
     topic_hint: str | None = Field(
-        None,
+        default=None,
         description="Inferred syllabus topic. Set only when unambiguous from context. "
         "Null otherwise.",
     )
     scheme_format: SchemeFormat | None = Field(
-        None,
+        default=None,
         description="Format of this specific question's marking. May differ from the "
         "paper-level format in mixed papers.",
     )
@@ -678,13 +709,13 @@ class Question(BaseModel):
         "pure indicative_content questions.",
     )
     select_count: int | None = Field(
-        None,
+        default=None,
         ge=1,
         description="For 'list' and 'tickbox' types: how many options the "
         "candidate must select / how many can be credited.",
     )
     penalty_rules: list[PenaltyRule] | None = Field(
-        None,
+        default=None,
         description="Tickbox only: graduated penalty rules for over-ticking.",
     )
 
@@ -693,7 +724,7 @@ class Question(BaseModel):
     # ------------------------------------------------------------------
 
     mcq_answer: MCQAnswer | None = Field(
-        None,
+        default=None,
         description="Correct answer letter for MCQ questions. Null for all others.",
     )
 
@@ -702,17 +733,17 @@ class Question(BaseModel):
     # ------------------------------------------------------------------
 
     level_descriptors: list[LevelDescriptor] | None = Field(
-        None,
+        default=None,
         description="Ordered list of level descriptors (highest level first is "
         "conventional but not enforced). Required for levels_based type.",
     )
     reserved_marks: list[ReservedMark] | None = Field(
-        None,
+        default=None,
         description="History/Geography only: reserved marks for specific conclusions "
         "(HA, XHA, ^HA annotations).",
     )
     marking_guidance: str | None = Field(
-        None,
+        default=None,
         description="Prose guidance printed in the mark scheme for holistic judgement, "
         "e.g. 'Award the highest mark if the response convincingly meets "
         "the level descriptor.'",
@@ -723,41 +754,41 @@ class Question(BaseModel):
     # ------------------------------------------------------------------
 
     indicative_content: list[IndicativeContentPoint] | None = Field(
-        None,
+        default=None,
         description="Numbered content points from which candidates draw credit. "
         "Not exhaustive — examiners credit valid alternatives.",
     )
     reading_criteria: list[BandedCriterion] | None = Field(
-        None,
+        default=None,
         description="Table A (Reading): banded criteria used to mark reading quality.",
     )
     writing_criteria: list[BandedCriterion] | None = Field(
-        None,
+        default=None,
         description="Table B (Writing): banded criteria used to mark writing quality.",
     )
     content_marks: int | None = Field(
-        None,
+        default=None,
         ge=0,
         description="Indicative content questions: marks available for content/reading.",
     )
     writing_marks: int | None = Field(
-        None,
+        default=None,
         ge=0,
         description="Indicative content questions: marks available for writing quality.",
     )
     word_limit: int | None = Field(
-        None,
+        default=None,
         ge=1,
         description="Maximum word count the candidate's response must not exceed. "
         "Null if no limit is stated.",
     )
     own_words_required: bool | None = Field(
-        None,
+        default=None,
         description="True if the mark scheme explicitly requires candidates to use "
         "their own words (common in English Language summary tasks).",
     )
     verbatim_lift_policy: str | None = Field(
-        None,
+        default=None,
         description="The mark scheme's stated policy on verbatim copying from the "
         "source text, e.g. 'Answers entirely in the words of the text "
         "should not be credited'.",
@@ -768,7 +799,7 @@ class Question(BaseModel):
     # ------------------------------------------------------------------
 
     drawing_criteria: list[DrawingCriterion] | None = Field(
-        None,
+        default=None,
         description="Ordered list of assessable drawing criteria for diagram questions.",
     )
 
@@ -777,7 +808,7 @@ class Question(BaseModel):
     # ------------------------------------------------------------------
 
     plot_requirements: list[PlotRequirement] | None = Field(
-        None,
+        default=None,
         description="Required data points/trends for graph_draw questions.",
     )
 
@@ -801,7 +832,7 @@ class Question(BaseModel):
     # ------------------------------------------------------------------
 
     notes: str | None = Field(
-        None,
+        default=None,
         description="Expanded examiner guidance: includes ecf conditions, guidance "
         "column content (Biology ATP), misread rules (Mathematics), and "
         "any other special conditions. Abbreviations expanded here.",

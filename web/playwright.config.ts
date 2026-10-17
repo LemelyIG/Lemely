@@ -130,6 +130,30 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
+      testIgnore: /native-feel\.spec\.ts/,
+    },
+    // B7 (Task 12): native-feel.spec.ts runs only under real device
+    // emulation — a desktop viewport can't exercise the 16px input /
+    // 44px tap-target / safe-area assertions honestly. Playwright 1.62's
+    // `devices["iPhone 15"]` profile is WebKit-based; this sandbox has no
+    // WebKit build installed (`npx playwright install webkit` fails —
+    // missing host deps, `libicu74`/`libxml2`/`libflite1`, and installing
+    // them needs sudo this environment doesn't grant) so it falls back to
+    // the plan's own documented fallback: the same device metrics
+    // (viewport, DPR, touch) under Chromium instead of WebKit. Record of
+    // that fallback lives here and in the Task 12 commit body — re-check
+    // `npx playwright install --dry-run webkit` next time this file is
+    // touched and switch back to the real device profile once WebKit is
+    // available.
+    {
+      name: "iphone-15",
+      use: { ...devices["iPhone 15"], defaultBrowserType: "chromium" },
+      testMatch: /native-feel\.spec\.ts/,
+    },
+    {
+      name: "pixel-7",
+      use: { ...devices["Pixel 7"] },
+      testMatch: /native-feel\.spec\.ts/,
     },
   ],
   webServer: [

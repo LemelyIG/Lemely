@@ -192,6 +192,13 @@ export function lastStreakMilestone(days: number): number | null {
 /* ── Environment ────────────────────────────────────────────────────────── */
 
 /**
+ * The minimal shape this decision needs from `window.matchMedia` — enough to
+ * inject a fake in a unit test, without pulling in jsdom (this repo's
+ * `vitest.config.ts` runs `environment: "node"`, D3.20).
+ */
+export type MatchMediaLike = (query: string) => { matches: boolean }
+
+/**
  * `prefers-reduced-motion: reduce`, read at call time rather than cached.
  *
  * Not cached because the setting can change while the tab is open, and a
@@ -199,10 +206,25 @@ export function lastStreakMilestone(days: number): number | null {
  * mid-session — the one person most likely to have done so deliberately.
  * Returns `true` when `matchMedia` is unavailable: the safe default for a
  * motion decision is not to move.
+ *
+ * `matchMedia` is an injectable dependency (C4/Task 11) purely so this
+ * decision is unit-testable without a browser: the default parameter falls
+ * back to `window.matchMedia`, so every production call site (`useCountUp`,
+ * `Flourish` in `components/ui/celebration.tsx`) keeps calling this with no
+ * argument and behaves exactly as before.
  */
-export function prefersReducedMotion(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+export function prefersReducedMotion(
+  matchMedia: MatchMediaLike | undefined = typeof window === "undefined" ||
+  typeof window.matchMedia !== "function"
+    ? undefined
+    // Wrapped, not a bare `window.matchMedia` reference: `matchMedia` is a
+    // Web API that requires `this === window` to run, so an unbound
+    // reference called as a plain function throws "Illegal invocation" in a
+    // real browser.
+    : (query: string) => window.matchMedia(query),
+): boolean {
+  if (typeof matchMedia !== "function") {
     return true
   }
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  return matchMedia("(prefers-reduced-motion: reduce)").matches
 }

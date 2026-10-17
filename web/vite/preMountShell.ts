@@ -1,0 +1,336 @@
+import type { Plugin } from "vite"
+import { readFileSync } from "node:fs"
+import { MARK_MIRROR, MARK_OUTLINE, MARK_TILT } from "../src/lib/brandMark.ts"
+import { INDEX_CSS, tokenHex } from "./brandTokens.ts"
+
+/*
+ * Substitutes the pre-mount shell's colour and duration placeholders in
+ * `index.html` (PR 2 part B).
+ *
+ * ── What the shell is, and why it cannot use CSS custom properties ─────────
+ *
+ * DESIGN.md §12's loading tiers apply in two places: inside the app
+ * (`RouteFallback`, driven by `index.css`'s tokens and classes) and BEFORE the
+ * app exists at all, as static markup inside `<div id="root">` that
+ * `createRoot(...).render()` throws away the instant React's first commit
+ * lands. That second copy paints before `index.css` has been requested, so it
+ * cannot reach `var(--paper)` or `var(--loading-tier-slow)` — same shape of
+ * problem `themeColor.ts` solves for `<meta name="theme-color">`, one more
+ * consumer that is not the CSS cascade.
+ *
+ * So `index.html` carries six colour placeholders (`%LEMELY_COLOR_PAPER%`
+ * and six siblings), two duration placeholders
+ * (`%LEMELY_LOADING_TIER_SKELETON%` / `%LEMELY_LOADING_TIER_SLOW%`), and, as
+ * of Packet B3 (Task 4), two size placeholders (`%LEMELY_SIDEBAR_WIDTH%` /
+ * `%LEMELY_SIDEBAR_BREAKPOINT%`), and this plugin is the one place that
+ * resolves all eleven, at build time, from the same two sources of truth
+ * everything else in this repo already answers to:
+ * `tokenHex` (`brandTokens.ts`, the OKLCH → hex path `themeColor.ts` also
+ * uses) for colour, and a direct read of `index.css`'s `--loading-tier-*`
+ * declarations for duration. Duplicating `200ms` and `5000ms` as literals here
+ * instead would be exactly the drift `brandTokens.ts`'s own header describes:
+ * a transcription that is correct on the day it is written and silently wrong
+ * the first time someone tunes a tier on the DESIGN.md/index.css side and
+ * never thinks to grep index.html for a second copy.
+ *
+ * ── Why it throws on a missing placeholder ──────────────────────────────────
+ *
+ * Same reasoning as `themeColor.ts` and `fontPreload.ts`: a placeholder
+ * removed by an unrelated edit (someone rewrites the shell markup, a merge
+ * drops a line) would leave `%LEMELY_COLOR_PAPER%` or a raw `ms` value sitting
+ * in the shipped HTML, or — worse, if the regex were looser — silently stop
+ * substituting while the build still succeeds. The failure has to be loud at
+ * build time, because nothing that renders this file (a browser painting
+ * before any JS has run) is in a position to report it.
+ *
+ * `fillPreMountShell` also asserts, as its last step, that no
+ * `%LEMELY_COLOR_..._%` or `%LEMELY_LOADING_TIER_..._%`-shaped placeholder
+ * (this plugin's two families) survives the substitutions above — the
+ * mirror-image failure to the one this section describes: a NEW placeholder
+ * typed into index.html with no corresponding entry added to
+ * `COLOR_PLACEHOLDERS`/`DURATION_PLACEHOLDERS` here would otherwise pass
+ * every per-placeholder check (there is nothing to find it missing) and ship
+ * as literal text in the page. Scoped to those two prefixes rather than every
+ * `%LEMELY_..._%` in the document, so it does not misreport
+ * `themeColor.ts`'s own `%LEMELY_THEME_COLOR%` (resolved by a separate
+ * plugin) as this one's failure to resolve.
+ */
+
+const COLOR_PLACEHOLDERS: Readonly<Record<string, string>> = {
+  "%LEMELY_COLOR_PAPER%": "paper",
+  "%LEMELY_COLOR_PAPER_SUNK%": "paper-sunk",
+  "%LEMELY_COLOR_PAPER_RAISED%": "paper-raised",
+  "%LEMELY_COLOR_RULE%": "rule",
+  "%LEMELY_COLOR_INK%": "ink",
+  "%LEMELY_COLOR_INK_MUTED%": "ink-muted",
+  // No `%LEMELY_COLOR_ACCENT%`. The accent's only use in the shell was the
+  // mark's tick, and the mark is now injected whole by `markOutlineMarkup`,
+  // which resolves its own colours through `tokenHex` — the same guarantee by
+  // a shorter route. A placeholder kept here for a string index.html no longer
+  // contains would make this plugin throw on every build.
+}
+
+/**
+ * Task 13 (C5b): the dark counterpart of `COLOR_PLACEHOLDERS` above, one
+ * `%LEMELY_COLOR_DARK_*%` per light placeholder, resolved from the dark
+ * `--paper`/`--ink`/etc. ladder (`tokenHex(name, "dark")` — index.css's
+ * `:root[data-theme="dark"]` block, Task 12). The shell cannot reach
+ * `var(...)` in either theme (see this file's header), so it needs its own
+ * literal dark values the same way it needs its own literal light ones —
+ * these are what the `[data-theme="dark"] ...` override block in
+ * `index.html`'s inline `<style>` resolves against, guarded by the
+ * `data-theme` attribute `shell-init.js` sets on `<html>` before this markup
+ * is even parsed.
+ */
+const COLOR_PLACEHOLDERS_DARK: Readonly<Record<string, string>> = {
+  "%LEMELY_COLOR_DARK_PAPER%": "paper",
+  "%LEMELY_COLOR_DARK_PAPER_SUNK%": "paper-sunk",
+  "%LEMELY_COLOR_DARK_PAPER_RAISED%": "paper-raised",
+  "%LEMELY_COLOR_DARK_RULE%": "rule",
+  "%LEMELY_COLOR_DARK_INK%": "ink",
+  "%LEMELY_COLOR_DARK_INK_MUTED%": "ink-muted",
+}
+
+/**
+ * The two places the pre-mount shell draws the brand mark: the skeleton
+ * sidebar's lockup (static, 24px) and the slow-load screen's (drawing itself).
+ *
+ * They are injected rather than written into `index.html` because they were the
+ * last hand-transcription of the mark in the repo. The shell carried its own
+ * copy of the PREVIOUS mark's three paths, and when the mark was redesigned as
+ * an open notebook that copy kept drawing a logo nothing else in the product
+ * had any more — on the one screen no test that renders the real app ever
+ * exercises, which is exactly the class of drift the colour placeholders above
+ * exist to prevent. Same mechanism, same reason.
+ *
+ * `MARK_OUTLINE` is the mark's silhouette, not the whole drawing: this markup
+ * sits inline in the critical path, and twenty-six paths is real weight for a
+ * difference nobody can see at 24px.
+ */
+const MARK_PLACEHOLDERS: Readonly<Record<string, { animated: boolean }>> = {
+  "%LEMELY_MARK_STATIC%": { animated: false },
+  "%LEMELY_MARK_DRAWN%": { animated: true },
+}
+
+/**
+ * The mark's silhouette as SVG markup, for inlining into the shell.
+ *
+ * `pathLength="1"` on every path, so the shell's `stroke-dashoffset` keyframes
+ * need no length: 1 is the whole path whatever its real length. The version
+ * this replaced hardcoded 36, 24 and 42 in both `index.html` and
+ * `components/ui/mark.tsx`, six numbers describing three curves.
+ */
+export function markOutlineMarkup(animated: boolean): string {
+  const groups = MARK_OUTLINE.map(({ step, paths, stroke, width, mirrored }) => {
+    const drawn = paths
+      .map(
+        (d) =>
+          `<path${animated ? ` class="lm-shell-${step}"` : ""} d="${d.replace(/\s+/g, " ").trim()}" ` +
+          `pathLength="1" stroke="${tokenHex(stroke)}" stroke-width="${width}" ` +
+          `stroke-linecap="round" stroke-linejoin="round" />`,
+      )
+      .join("")
+    return mirrored ? `<g transform="${MARK_MIRROR}">${drawn}</g>` : drawn
+  }).join("")
+  return `<g transform="${MARK_TILT}">${groups}</g>`
+}
+
+/** Placeholder -> the `--token-name` `index.css` declares it under. */
+const DURATION_PLACEHOLDERS: Readonly<Record<string, string>> = {
+  "%LEMELY_LOADING_TIER_SKELETON%": "loading-tier-skeleton",
+  "%LEMELY_LOADING_TIER_SLOW%": "loading-tier-slow",
+}
+
+/**
+ * Placeholder -> the `--token-name` `index.css` declares it under (Packet B3,
+ * Task 4). The pre-mount shell's portal-chrome skeleton used to hardcode its
+ * sidebar column width and the `min-width` breakpoint it appears at as bare
+ * `246px`/`820px` literals — the same "cannot reach `var(...)`" constraint
+ * `COLOR_PLACEHOLDERS` and `DURATION_PLACEHOLDERS` solve for colour and
+ * duration applies here too, so this is the third placeholder family for the
+ * same reason.
+ */
+const SIZE_PLACEHOLDERS: Readonly<Record<string, string>> = {
+  "%LEMELY_SIDEBAR_WIDTH%": "sidebar-width",
+  "%LEMELY_SIDEBAR_BREAKPOINT%": "breakpoint-sidebar",
+}
+
+/**
+ * Reads `--loading-tier-skeleton` and `--loading-tier-slow` off a copy of
+ * `index.css`'s source text, so the pre-mount shell's two duration
+ * placeholders resolve to whatever `index.css` actually declares rather than a
+ * value re-typed here.
+ *
+ * A plain regex per token, not `parseRootTokens` from `brandTokens.ts`: that
+ * parser is scoped to `oklch(...)` colour declarations specifically (see its
+ * own doc comment), and these two tokens are plain `<time>` values.
+ *
+ * Exported so `tests/unit/preMountShell.test.ts` can exercise the parsing (and
+ * the throw on a missing token) without going through a full plugin run.
+ */
+export function readLoadingTierDurations(css: string): Record<string, string> {
+  const durations: Record<string, string> = {}
+  for (const [placeholder, tokenName] of Object.entries(DURATION_PLACEHOLDERS)) {
+    const pattern = new RegExp(`--${tokenName}:\\s*([\\d.]+m?s)\\s*;`)
+    const match = css.match(pattern)
+    if (!match) {
+      throw new Error(
+        `preMountShell: no \`--${tokenName}\` declaration found in ${INDEX_CSS}. The ` +
+          "pre-mount shell reads its two tier durations from there so it cannot drift from " +
+          "RouteFallback's; if the token was renamed, update DURATION_PLACEHOLDERS in " +
+          "web/vite/preMountShell.ts to match.",
+      )
+    }
+    durations[placeholder] = match[1]
+  }
+  return durations
+}
+
+/**
+ * Reads `--sidebar-width` and `--breakpoint-sidebar` off a copy of
+ * `index.css`'s source text (Packet B3, Task 4) — the same pattern as
+ * `readLoadingTierDurations` above, for the same reason: the pre-mount
+ * shell's sidebar column/breakpoint must never drift from `nav-shells.tsx`'s
+ * `SIDEBAR_WIDTH`/`SIDEBAR_BREAKPOINT` constants, which read the same two
+ * `index.css` tokens.
+ *
+ * Exported so `tests/unit/preMountShell.test.ts` can exercise the parsing
+ * (and the throw on a missing token) without going through a full plugin run.
+ */
+export function readSidebarTokens(css: string): Record<string, string> {
+  const sizes: Record<string, string> = {}
+  for (const [placeholder, tokenName] of Object.entries(SIZE_PLACEHOLDERS)) {
+    const pattern = new RegExp(`--${tokenName}:\\s*([\\d.]+px)\\s*;`)
+    const match = css.match(pattern)
+    if (!match) {
+      throw new Error(
+        `preMountShell: no \`--${tokenName}\` declaration found in ${INDEX_CSS}. The ` +
+          "pre-mount shell reads its sidebar width/breakpoint from there so it cannot drift " +
+          "from nav-shells.tsx's SIDEBAR_WIDTH/SIDEBAR_BREAKPOINT; if the token was renamed, " +
+          "update SIZE_PLACEHOLDERS in web/vite/preMountShell.ts to match.",
+      )
+    }
+    sizes[placeholder] = match[1]
+  }
+  return sizes
+}
+
+/**
+ * Replaces every colour and duration placeholder in the pre-mount shell's
+ * markup. Exported separately from the plugin so the test suite can run it
+ * over the real `index.html` source with no Vite build in the loop.
+ */
+export function fillPreMountShell(html: string): string {
+  let out = html
+
+  for (const [placeholder, tokenName] of Object.entries(COLOR_PLACEHOLDERS)) {
+    if (!out.includes(placeholder)) {
+      throw new Error(
+        `preMountShell: index.html no longer contains ${placeholder}. The pre-mount shell's ` +
+          "colours are injected from design tokens at build time, never written as literal " +
+          "hex — a hardcoded value there would be unreachable by every gate in this repo, " +
+          "the same failure themeColor.ts exists to prevent for the theme-color meta tag.",
+      )
+    }
+    out = out.replaceAll(placeholder, tokenHex(tokenName))
+  }
+
+  for (const [placeholder, tokenName] of Object.entries(COLOR_PLACEHOLDERS_DARK)) {
+    if (!out.includes(placeholder)) {
+      throw new Error(
+        `preMountShell: index.html no longer contains ${placeholder}. The pre-mount shell's ` +
+          "dark override colours are injected from the dark token ladder at build time, the " +
+          "same way the light ones are (see COLOR_PLACEHOLDERS above) — never written as " +
+          "literal hex.",
+      )
+    }
+    out = out.replaceAll(placeholder, tokenHex(tokenName, "dark"))
+  }
+
+  for (const [placeholder, { animated }] of Object.entries(MARK_PLACEHOLDERS)) {
+    if (!out.includes(placeholder)) {
+      throw new Error(
+        `preMountShell: index.html no longer contains ${placeholder}. The pre-mount shell's ` +
+          "brand mark is injected from src/lib/brandMark.ts at build time, never transcribed " +
+          "— a copy of the geometry there kept drawing the previous logo after the mark was " +
+          "redesigned, on the one screen nothing renders in a test.",
+      )
+    }
+    out = out.replaceAll(placeholder, markOutlineMarkup(animated))
+  }
+
+  const durations = readLoadingTierDurations(readFileSync(INDEX_CSS, "utf8"))
+  for (const [placeholder, value] of Object.entries(durations)) {
+    if (!out.includes(placeholder)) {
+      throw new Error(
+        `preMountShell: index.html no longer contains ${placeholder}. The pre-mount shell's ` +
+          "tier durations are read from index.css at build time so they cannot drift from " +
+          "RouteFallback's.",
+      )
+    }
+    out = out.replaceAll(placeholder, value)
+  }
+
+  const sizes = readSidebarTokens(readFileSync(INDEX_CSS, "utf8"))
+  for (const [placeholder, value] of Object.entries(sizes)) {
+    if (!out.includes(placeholder)) {
+      throw new Error(
+        `preMountShell: index.html no longer contains ${placeholder}. The pre-mount shell's ` +
+          "sidebar width/breakpoint are read from index.css at build time so they cannot " +
+          "drift from nav-shells.tsx's SIDEBAR_WIDTH/SIDEBAR_BREAKPOINT.",
+      )
+    }
+    out = out.replaceAll(placeholder, value)
+  }
+
+  // Every KNOWN placeholder above is checked for presence before it is
+  // replaced, which catches one gone missing. It does not catch the mirror
+  // failure: a NEW `%LEMELY_COLOR_..._%` or `%LEMELY_LOADING_TIER_..._%`
+  // placeholder added to index.html's markup with no matching entry in
+  // COLOR_PLACEHOLDERS/DURATION_PLACEHOLDERS above, which would sail through
+  // every check above untouched and ship as literal text in the rendered
+  // page — a browser painting `%LEMELY_COLOR_FOO%` where a colour belongs, on
+  // the one screen no test that renders the real app ever exercises. This is
+  // the backstop: after every known substitution has run, nothing shaped
+  // like one of THIS plugin's three placeholder families may remain.
+  //
+  // Scoped to those prefixes, not every `%LEMELY_..._%` in the document:
+  // `themeColor.ts` owns two further placeholders, `%LEMELY_THEME_COLOR%`
+  // and `%LEMELY_THEME_COLOR_DARK%`, on the same `<meta name="theme-color">`
+  // line, resolved by its own plugin in its own build step — a bare
+  // `%LEMELY_[A-Z_]+%` sweep here would misreport those as this plugin's
+  // failure to resolve.
+  //
+  // Task 13 (C5b): `%LEMELY_COLOR_DARK_*%` (COLOR_PLACEHOLDERS_DARK above)
+  // needs no separate entry in this sweep — `COLOR_DARK_PAPER`, etc. already
+  // matches the `COLOR` branch's `[A-Z_]+` tail below, so a dark placeholder
+  // left unresolved is caught the same way a light one is.
+  const leftover = out.match(/%LEMELY_(?:COLOR|LOADING_TIER|MARK|SIDEBAR)_[A-Z_]+%/g)
+  if (leftover) {
+    throw new Error(
+      `preMountShell: index.html still contains unresolved placeholder(s) after every known ` +
+        `substitution ran: ${[...new Set(leftover)].join(", ")}. Add an entry to ` +
+        "COLOR_PLACEHOLDERS or DURATION_PLACEHOLDERS in web/vite/preMountShell.ts, or remove " +
+        "the placeholder from index.html if it is no longer needed.",
+    )
+  }
+
+  return out
+}
+
+/** Build and dev alike: unlike `fontPreload` this needs no hashed asset name,
+ * so the pre-mount shell renders correctly under `vite dev` too — useful,
+ * since that is the fastest way to eyeball a tier while working on it. */
+export function preMountShell(): Plugin {
+  return {
+    name: "lemely-pre-mount-shell",
+    transformIndexHtml: {
+      // `pre`, like `themeColor`: plain text substitution on the authored
+      // HTML, with no interest in the bundle.
+      order: "pre",
+      handler(html) {
+        return fillPreMountShell(html)
+      },
+    },
+  }
+}
