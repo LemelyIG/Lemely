@@ -3,12 +3,16 @@ import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { DownloadSimple } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
-import { ErrorState, EmptyState } from "@/components/ui/state-views"
+import { SectionHead } from "@/components/ui/section-head"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { ChartFrame } from "@/components/ui/chart-frame"
 import { LineChart } from "@/components/ui/line-chart"
 import { BarChart } from "@/components/ui/bar-chart"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { gradeBand } from "@/components/ui/grade-badge"
+import { topGradeCount } from "@/lib/gradeSummary"
 import { useNivoTheme } from "@/lib/nivoTheme"
 import { cn, downloadCsv } from "@/lib/utils"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
@@ -87,7 +91,7 @@ const GRADE_BAND_TOKEN: Record<string, string> = {
  * Grade distribution (`gradeDistribution`), as a horizontal bar per grade.
  *
  * **The empty test is "every count is zero", not "no rows".** `grade_distribution`
- * returns *every* rung of `GRADE_ORDER` with zero counts included, precisely so
+ * returns *every* rung of the subject's grade ladder with zero counts included, precisely so
  * a frontend never has to infer "nobody on a B" from a missing key — which
  * means `length === 0` is unreachable and a class with nothing marked yet drew
  * a full ladder of empty tracks with a 0 beside each. That is a blank chart
@@ -105,11 +109,22 @@ function GradeDistributionPanel({
 }) {
   const { tokens } = useNivoTheme()
   const total = buckets.reduce((sum, b) => sum + b.count, 0)
+  // Task 9 (C3d): the headline count this panel was missing — "how many are
+  // already doing well" beside "how many need help" (the heatmap/weakness
+  // panels' whole focus). Omitted (not "0 students on A*, A or B") when nobody
+  // is in the top band yet, rather than a clause that reads as a claim about
+  // an empty class. Copy matches gradeBand's "top" band (A*/A/B, grade-badge.tsx)
+  // exactly, not just A*/A — undercounting the label would misstate the count.
+  const topCount = topGradeCount(buckets)
+  const subtitle =
+    topCount > 0
+      ? `${topCount} student${topCount === 1 ? "" : "s"} on A*, A or B · Students by their latest paper grade`
+      : "Students by their latest paper grade"
 
   return (
     <ChartFrame
       title="Grade distribution"
-      subtitle="Students by their latest paper grade"
+      subtitle={subtitle}
       isEmpty={total === 0}
       emptyMarginalia="No grades yet"
       emptyBody="Every student on this class ladder appears here once they have a marked paper. Nobody in this class has one so far."
@@ -117,7 +132,7 @@ function GradeDistributionPanel({
       <BarChart
         /*
          * Reversed, because Nivo lays a horizontal bar chart out from the
-         * bottom up and `GRADE_ORDER` runs highest-first. Unreversed, the
+         * bottom up and the served ladder runs highest-first. Unreversed, the
          * ladder rendered with A* at the floor and U at the ceiling — upside
          * down against every other place a teacher meets these grades, and
          * against the way the ladder is spoken.
@@ -230,46 +245,40 @@ function CohortTrendPanel({
         </div>
       ) : null}
       <div
-        className="-mx-1 max-h-[180px] overflow-y-auto border-t border-rule pt-2"
+        className="-mx-1 max-h-48 overflow-y-auto border-t border-rule pt-2"
         tabIndex={0}
         role="region"
         aria-label="Cohort mean percentage over time, scrollable"
       >
-        <table className="w-full border-collapse">
+        <Table density="operate">
           <caption className="sr-only">Cohort mean percentage over time</caption>
-          <thead>
-            <tr className="text-ink-faint">
-              <th scope="col" className="px-1 py-1 text-start text-eyebrow">
-                Date
-              </th>
-              <th scope="col" className="px-1 py-1 text-end text-eyebrow">
-                Mean
-              </th>
-              <th scope="col" className="px-1 py-1 text-end text-eyebrow">
-                Students
-              </th>
-            </tr>
-          </thead>
-          <tbody>
+          <THead>
+            <TR>
+              <TH>Date</TH>
+              <TH numeric>Mean</TH>
+              <TH numeric>Students</TH>
+            </TR>
+          </THead>
+          <TBody>
             {trend.map((p) => (
-              <tr key={p.timestamp} className="border-t border-rule">
-                <td className="px-1 py-1 text-body-sm text-ink-muted">
+              <TR key={p.timestamp}>
+                <TD className="text-body-sm text-ink-muted">
                   {new Date(p.timestamp).toLocaleDateString(undefined, {
                     year: "numeric",
                     month: "short",
                     day: "numeric",
                   })}
-                </td>
-                <td className="px-1 py-1 text-end text-data-sm text-ink">
+                </TD>
+                <TD numeric className="text-data-sm text-ink">
                   {Math.round(p.meanPercentage)}%
-                </td>
-                <td className="px-1 py-1 text-end text-data-sm text-ink-faint">
+                </TD>
+                <TD numeric className="text-data-sm text-ink-faint">
                   {p.sampleSize}
-                </td>
-              </tr>
+                </TD>
+              </TR>
             ))}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
     </ChartFrame>
   )
@@ -334,276 +343,305 @@ export function ClassAnalytics() {
     [classDetail.students],
   )
 
-  if (analyticsQuery.isPending) {
-    return (
-      <div className="flex flex-col gap-6 min-w-0">
-        <h2 className="sr-only">Analytics</h2>
-        {/* Five panels are about to appear, so five panel shapes reserve the
-            space rather than one line of text collapsing the page to a row.
-            §12: the loading state matches the layout it replaces. */}
-        <PanelSkeleton />
-        <PanelSkeleton />
-        <PanelSkeleton />
-      </div>
-    )
-  }
-
-  if (analyticsQuery.isError) {
-    return (
-      <div className="flex flex-col gap-6 min-w-0">
-        <h2 className="sr-only">Analytics</h2>
-        <ErrorState
-          heading="Couldn't load analytics for this class"
-          body={teacherLoadFailureMessage(analyticsQuery.error)}
-          action={{ label: "Retry", onClick: () => analyticsQuery.refetch() }}
-        />
-      </div>
-    )
-  }
-
-  const data = analyticsQuery.data
-  const students = classDetail.students.map((s) => ({ studentId: s.studentId, name: s.name }))
-  const cellMap = new Map<string, number | null>(
-    data.heatmap.map((c) => [`${c.topic}\u0000${c.studentId}`, c.accuracy]),
-  )
-  const selected = data.topicWeaknesses.find((t) => t.topic === selectedTopic) ?? null
-
   return (
     <div className="flex flex-col gap-8 min-w-0">
+      {/*
+       * A tab panel nested under `ClassDetail.tsx`'s own route, not a whole
+       * screen — that parent already renders the page's one visible `<h1>`
+       * (the class name), so this stays the plain `h2` it always was rather
+       * than taking `QueryState`'s `srHeading` (which always renders an
+       * `h1`, per that recipe step's own note that a panel gets no
+       * `srHeading`). Kept outside `<QueryState>` so it announces in every
+       * state — pending, idle, error, and loaded — the way it did before.
+       */}
       <h2 className="sr-only">Analytics</h2>
+      <QueryState
+        query={analyticsQuery}
+        skeleton={
+          // Five panels are about to appear, so three panel shapes reserve
+          // meaningful space rather than one line of text collapsing the
+          // page to a row. §12: the loading state matches the layout it
+          // replaces.
+          <>
+            <PanelSkeleton />
+            <PanelSkeleton />
+            <PanelSkeleton />
+          </>
+        }
+        /*
+         * `useClassAnalytics` disables itself (`enabled: !!classId`), but
+         * this screen only ever mounts nested under `ClassDetail.tsx`'s
+         * route, which supplies a real `classDetail.id` through context
+         * before rendering it — so `idle` is unreachable in practice.
+         * Included anyway per the hook's own contract rather than assuming
+         * the parent route always will.
+         */
+        idle={
+          <EmptyState heading="No class selected" body="Open a class to see its analytics." />
+        }
+        error={{
+          heading: "Couldn't load analytics for this class",
+          body: teacherLoadFailureMessage,
+        }}
+      >
+        {(data) => {
+          const students = classDetail.students.map((s) => ({ studentId: s.studentId, name: s.name }))
+          const cellMap = new Map<string, number | null>(
+            data.heatmap.map((c) => [`${c.topic}\u0000${c.studentId}`, c.accuracy]),
+          )
+          const selected = data.topicWeaknesses.find((t) => t.topic === selectedTopic) ?? null
 
-      {/* Centrepiece: topic x student weakness heatmap */}
-      <section className="flex flex-col gap-3 min-w-0">
-        <div className="flex items-end justify-between gap-3 flex-wrap gap-y-2">
-          <div>
-            <div className="text-display-md text-ink">Topic weakness heatmap</div>
-            <div className="text-eyebrow text-ink-faint mt-1">
-              Ranked by class-wide marks lost, so you can see what to teach next week
-            </div>
-          </div>
-          {data.topicWeaknesses.length > 0 ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => downloadHeatmapCsv(classDetail.label, data.topicWeaknesses, students, cellMap)}
-            >
-              <DownloadSimple size={14} aria-hidden />
-              Export CSV
-            </Button>
-          ) : null}
-        </div>
-
-        {data.topicWeaknesses.length === 0 ? (
-          <EmptyState
-            heading="No weakness data yet"
-            body="Once students submit graded papers or quizzes, topics they lose marks on will rank here."
-          />
-        ) : (
-          <div
-            className="bg-paper-raised border border-rule rounded-lg p-3 overflow-x-auto min-w-0"
-            tabIndex={0}
-            role="region"
-            aria-label="Topic weakness heatmap, scrollable horizontally"
-          >
-            <table className="border-collapse">
-              <caption className="sr-only">
-                Topic accuracy by student. Blank cells with a dash mean no recorded attempt, not a
-                zero score.
-              </caption>
-              <thead>
-                <tr>
-                  <th scope="col" className="sticky start-0 bg-paper-raised px-2 py-1.5 text-start align-bottom">
-                    <span className="sr-only">Topic</span>
-                  </th>
-                  {students.map((s) => (
-                    <th
-                      key={s.studentId}
-                      scope="col"
-                      className="px-0.5 py-1.5 align-bottom"
-                      title={s.name}
-                    >
-                      <span
-                        className="block w-11 text-data-sm text-ink-faint truncate"
-                        style={{ writingMode: "vertical-rl" }}
+          return (
+            <>
+              {/* Centrepiece: topic x student weakness heatmap */}
+              <section className="flex flex-col gap-3 min-w-0">
+                <SectionHead
+                  title="Topic weakness heatmap"
+                  kicker="Ranked by class-wide marks lost, so you can see what to teach next week"
+                  rung="display-md"
+                  className="flex-wrap gap-y-2"
+                  action={
+                    data.topicWeaknesses.length > 0 ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => downloadHeatmapCsv(classDetail.label, data.topicWeaknesses, students, cellMap)}
                       >
-                        {s.name}
-                      </span>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.topicWeaknesses.map((t) => (
-                  <tr key={t.topic}>
-                    <th
-                      scope="row"
-                      className="sticky start-0 bg-paper-raised px-2 py-1 text-start text-body-sm font-normal whitespace-nowrap max-w-[180px] truncate"
-                      title={t.topic}
-                    >
-                      {t.topic}
-                    </th>
-                    {students.map((s) => (
-                      <HeatmapCellView
-                        key={s.studentId}
-                        cell={data.heatmap.find(
-                          (c) => c.topic === t.topic && c.studentId === s.studentId,
-                        )}
+                        <DownloadSimple size={14} aria-hidden />
+                        Export CSV
+                      </Button>
+                    ) : undefined
+                  }
+                />
+
+                {data.topicWeaknesses.length === 0 ? (
+                  <EmptyState
+                    heading="No weakness data yet"
+                    body="Once students submit graded papers or quizzes, topics they lose marks on will rank here."
+                  />
+                ) : (
+                  <Table density="operate"
+                    className="p-3"
+                    tabIndex={0}
+                    role="region"
+                    aria-label="Topic weakness heatmap, scrollable horizontally"
+                  >
+                    <caption className="sr-only">
+                      Topic accuracy by student. Blank cells with a dash mean no recorded attempt, not a
+                      zero score.
+                    </caption>
+                    {/*
+                     * `THead sticky={false}`: this table already carries its own
+                     * hand-rolled sticky *left* column (the `sticky start-0`
+                     * topic/corner cells below — there is no primitive for that
+                     * shape yet), and it has no vertical scroll region of its own
+                     * (only the horizontal `overflow-x-auto` `Table` already gives
+                     * it) — unlike the trend panel's own table just above, which
+                     * sits inside a real `max-h-48 overflow-y-auto` region a
+                     * sticky *top* header can correctly stick within. Turning on
+                     * `THead`'s default top-sticky here would fight the left
+                     * column's own background/z-index at the shared corner cell
+                     * for no scrolling benefit this container doesn't already
+                     * provide. The one deliberate opt-out in this migration.
+                     */}
+                    <THead sticky={false}>
+                      <TR>
+                        {/*
+                         * Plain `<th>`, not the `TH` primitive, for every header
+                         * cell in this table: `TH`'s `text-eyebrow` face is
+                         * `text-transform: uppercase` at a CSS-layer specificity a
+                         * Tailwind utility on a child cannot undo (see
+                         * `index.css`'s own note on why `.text-label-sm` exists),
+                         * and every cell here carries a free-text proper name — a
+                         * student's, a topic's — that must render in the case it
+                         * was typed in, not shouted. Same category of documented
+                         * exception this file already logs for the heatmap's
+                         * Nivo opt-out, above.
+                         */}
+                        <th scope="col" className="sticky start-0 bg-paper-raised px-2 py-1.5 text-start align-bottom">
+                          <span className="sr-only">Topic</span>
+                        </th>
+                        {students.map((s) => (
+                          <th
+                            key={s.studentId}
+                            scope="col"
+                            className="px-0.5 py-1.5 align-bottom"
+                            title={s.name}
+                          >
+                            <span
+                              className="block w-11 text-data-sm text-ink-faint truncate"
+                              style={{ writingMode: "vertical-rl" }}
+                            >
+                              {s.name}
+                            </span>
+                          </th>
+                        ))}
+                      </TR>
+                    </THead>
+                    <TBody>
+                      {data.topicWeaknesses.map((t) => (
+                        <TR key={t.topic}>
+                          <th
+                            scope="row"
+                            className="sticky start-0 bg-paper-raised px-2 py-1 text-start text-body-sm font-normal whitespace-nowrap max-w-[180px] truncate"
+                            title={t.topic}
+                          >
+                            {t.topic}
+                          </th>
+                          {students.map((s) => (
+                            <HeatmapCellView
+                              key={s.studentId}
+                              cell={data.heatmap.find(
+                                (c) => c.topic === t.topic && c.studentId === s.studentId,
+                              )}
+                            />
+                          ))}
+                        </TR>
+                      ))}
+                    </TBody>
+                  </Table>
+                )}
+
+                {/* Ranked topic list — click to drill into affected students (-> T-05) */}
+                {data.topicWeaknesses.length > 0 ? (
+                  <div className="flex flex-col gap-2 mt-1">
+                    {data.topicWeaknesses.map((t) => (
+                      <WeaknessChip
+                        key={t.topic}
+                        variant="list"
+                        topic={t.topic}
+                        severity={TONE_TO_SEVERITY[accuracyTone(t.accuracy)]}
+                        meta={`${t.lostMarks}/${t.maximumMarks} marks lost across the class · ${Math.round(t.accuracy * 100)}% accuracy`}
+                        onClick={() => setSelectedTopic((cur) => (cur === t.topic ? null : t.topic))}
+                        aria-expanded={selectedTopic === t.topic}
                       />
                     ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                  </div>
+                ) : null}
 
-        {/* Ranked topic list — click to drill into affected students (-> T-05) */}
-        {data.topicWeaknesses.length > 0 ? (
-          <div className="flex flex-col gap-2 mt-1">
-            {data.topicWeaknesses.map((t) => (
-              <WeaknessChip
-                key={t.topic}
-                variant="list"
-                topic={t.topic}
-                severity={TONE_TO_SEVERITY[accuracyTone(t.accuracy)]}
-                meta={`${t.lostMarks}/${t.maximumMarks} marks lost across the class · ${Math.round(t.accuracy * 100)}% accuracy`}
-                onClick={() => setSelectedTopic((cur) => (cur === t.topic ? null : t.topic))}
-                aria-expanded={selectedTopic === t.topic}
-              />
-            ))}
-          </div>
-        ) : null}
+                {selected ? (
+                  <div className="bg-paper-sunk border border-rule rounded-lg p-4 flex flex-col gap-2.5">
+                    <div className="text-body-lg font-medium text-ink">
+                      Students affected by "{selected.topic}"
+                    </div>
+                    {selected.studentIds.length === 0 ? (
+                      <div className="text-body-sm text-ink-muted">No individual students identified.</div>
+                    ) : (
+                      <ul className="flex flex-wrap gap-2 list-none p-0 m-0">
+                        {selected.studentIds.map((id) => (
+                          <li key={id}>
+                            <Link
+                              to={`/teacher/students/${id}`}
+                              className="inline-flex items-center border border-rule bg-paper-raised rounded-md px-3 py-1 text-body-sm text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                            >
+                              {studentsById.get(id) ?? id}
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ) : null}
+              </section>
 
-        {selected ? (
-          <div className="bg-paper-sunk border border-rule rounded-lg p-4 flex flex-col gap-2.5">
-            <div className="text-body-lg font-medium text-ink">
-              Students affected by "{selected.topic}"
-            </div>
-            {selected.studentIds.length === 0 ? (
-              <div className="text-body-sm text-ink-muted">No individual students identified.</div>
-            ) : (
-              <ul className="flex flex-wrap gap-2 list-none p-0 m-0">
-                {selected.studentIds.map((id) => (
-                  <li key={id}>
-                    <Link
-                      to={`/teacher/students/${id}`}
-                      className="inline-flex items-center border border-rule bg-paper-raised rounded-md px-3 py-1 text-body-sm text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                    >
-                      {studentsById.get(id) ?? id}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        ) : null}
-      </section>
+              <GradeDistributionPanel buckets={data.gradeDistribution} />
 
-      <GradeDistributionPanel buckets={data.gradeDistribution} />
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 min-w-0">
+                <CohortTrendPanel trend={data.trend} />
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 min-w-0">
-        <CohortTrendPanel trend={data.trend} />
+                {/* Engagement */}
+                <section className="flex flex-col gap-3 min-w-0">
+                  <SectionHead title="Engagement" rung="display-md" />
+                  <div className="bg-paper-raised border border-rule rounded-lg p-6 grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-eyebrow text-ink-faint">
+                        Submissions, 7 days
+                      </div>
+                      <div className="text-data-lg text-ink mt-1">{data.engagement.submissionsLast7Days}</div>
+                    </div>
+                    <div>
+                      <div className="text-eyebrow text-ink-faint">
+                        Submissions, 30 days
+                      </div>
+                      <div className="text-data-lg text-ink mt-1">{data.engagement.submissionsLast30Days}</div>
+                    </div>
+                    <div>
+                      <div className="text-eyebrow text-ink-faint">
+                        Active students, 7 days
+                      </div>
+                      <div className="text-data-lg text-ink mt-1">{data.engagement.activeStudentsLast7Days}</div>
+                    </div>
+                    <div>
+                      <div className="text-eyebrow text-ink-faint">
+                        Active students, 30 days
+                      </div>
+                      <div className="text-data-lg text-ink mt-1">{data.engagement.activeStudentsLast30Days}</div>
+                    </div>
+                    <div>
+                      <div className="text-eyebrow text-ink-faint">
+                        Never active
+                      </div>
+                      <div className="text-data-lg text-ink mt-1">{data.engagement.neverActiveCount}</div>
+                    </div>
+                    <div>
+                      <div className="text-eyebrow text-ink-faint">
+                        Median days since last submission
+                      </div>
+                      <div className="text-data-lg text-ink mt-1">
+                        {data.engagement.medianDaysSinceLastSubmission != null
+                          ? Math.round(data.engagement.medianDaysSinceLastSubmission)
+                          : "—"}
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </div>
 
-        {/* Engagement */}
-        <section className="flex flex-col gap-3 min-w-0">
-          <div className="text-display-md text-ink">Engagement</div>
-          <div className="bg-paper-raised border border-rule rounded-lg p-6 grid grid-cols-2 gap-4">
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Submissions, 7 days
-              </div>
-              <div className="text-data-lg text-ink mt-1">{data.engagement.submissionsLast7Days}</div>
-            </div>
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Submissions, 30 days
-              </div>
-              <div className="text-data-lg text-ink mt-1">{data.engagement.submissionsLast30Days}</div>
-            </div>
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Active students, 7 days
-              </div>
-              <div className="text-data-lg text-ink mt-1">{data.engagement.activeStudentsLast7Days}</div>
-            </div>
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Active students, 30 days
-              </div>
-              <div className="text-data-lg text-ink mt-1">{data.engagement.activeStudentsLast30Days}</div>
-            </div>
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Never active
-              </div>
-              <div className="text-data-lg text-ink mt-1">{data.engagement.neverActiveCount}</div>
-            </div>
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Median days since last submission
-              </div>
-              <div className="text-data-lg text-ink mt-1">
-                {data.engagement.medianDaysSinceLastSubmission != null
-                  ? Math.round(data.engagement.medianDaysSinceLastSubmission)
-                  : "—"}
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      {/* Per-paper comparison */}
-      <section className="flex flex-col gap-3 min-w-0">
-        <div className="text-display-md text-ink">Per-paper comparison</div>
-        {data.paperComparison.length === 0 ? (
-          <div className="text-body-md text-ink-muted">No papers recorded for this class yet.</div>
-        ) : (
-          <div
-            className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
-            tabIndex={0}
-            role="region"
-            aria-label="Per-paper comparison, scrollable horizontally"
-          >
-            <table className="w-full text-body-md border-collapse">
-              <caption className="sr-only">Cohort stats per paper</caption>
-              <thead>
-                <tr className="bg-paper-sunk border-b border-rule">
-                  <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Paper
-                  </th>
-                  <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Mean
-                  </th>
-                  <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Attempts
-                  </th>
-                  <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Students
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.paperComparison.map((p) => (
-                  <tr key={p.paperId} className="border-b border-rule last:border-b-0">
-                    <td className="px-4 py-2.5 text-data-sm text-ink">
-                      {p.subjectCode} · Paper {p.paperNumber} Variant {p.paperVariant}
-                    </td>
-                    <td className="px-4 py-2.5 text-end text-data-sm text-ink">
-                      {Math.round(p.meanPercentage)}%
-                    </td>
-                    <td className="px-4 py-2.5 text-end text-data-sm text-ink">
-                      {p.attemptCount}
-                    </td>
-                    <td className="px-4 py-2.5 text-end text-data-sm text-ink">
-                      {p.studentCount}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+              {/* Per-paper comparison */}
+              <section className="flex flex-col gap-3 min-w-0">
+                <SectionHead title="Per-paper comparison" rung="display-md" />
+                {data.paperComparison.length === 0 ? (
+                  <div className="text-body-md text-ink-muted">No papers recorded for this class yet.</div>
+                ) : (
+                  <Table density="operate"
+                    tabIndex={0}
+                    role="region"
+                    aria-label="Per-paper comparison, scrollable horizontally"
+                  >
+                    <caption className="sr-only">Cohort stats per paper</caption>
+                    <THead>
+                      <TR>
+                        <TH>Paper</TH>
+                        <TH numeric>Mean</TH>
+                        <TH numeric>Attempts</TH>
+                        <TH numeric>Students</TH>
+                      </TR>
+                    </THead>
+                    <TBody>
+                      {data.paperComparison.map((p) => (
+                        <TR key={p.paperId}>
+                          <TD className="text-data-sm text-ink">
+                            {p.subjectCode} · Paper {p.paperNumber} Variant {p.paperVariant}
+                          </TD>
+                          <TD numeric className="text-data-sm text-ink">
+                            {Math.round(p.meanPercentage)}%
+                          </TD>
+                          <TD numeric className="text-data-sm text-ink">
+                            {p.attemptCount}
+                          </TD>
+                          <TD numeric className="text-data-sm text-ink">
+                            {p.studentCount}
+                          </TD>
+                        </TR>
+                      ))}
+                    </TBody>
+                  </Table>
+                )}
+              </section>
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

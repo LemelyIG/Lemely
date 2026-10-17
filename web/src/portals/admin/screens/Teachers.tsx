@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Eyebrow } from "@/components/ui/primitives"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { Modal } from "@/components/ui/modal"
 import {
   adminLoadFailureMessage,
@@ -46,7 +47,7 @@ import type { SchoolTeacher, SchoolTeacherGroup } from "@/lib/schoolTypes"
  * inverse of the usual honesty failure and just as wrong.
  */
 export function Teachers() {
-  const { data, isPending, isError, error } = useSchoolTeachers()
+  const query = useSchoolTeachers()
 
   return (
     <div className="flex flex-col gap-6">
@@ -58,25 +59,25 @@ export function Teachers() {
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <ListSkeleton rows={4} avatar />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't load your staff list"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : data.schools.length === 0 ? (
-        <EmptyState
-          heading="No school is assigned to you"
-          body="This account holds no school membership, so there is no staff list to show."
-        />
-      ) : (
-        data.schools.map((group) => <SchoolStaff key={group.schoolId} group={group} />)
-      )}
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={4} avatar />
+          </>
+        }
+        error={{ heading: "We couldn't load your staff list", body: adminLoadFailureMessage }}
+        isEmpty={(data) => data.schools.length === 0}
+        empty={
+          <EmptyState
+            heading="No school is assigned to you"
+            body="This account holds no school membership, so there is no staff list to show."
+          />
+        }
+      >
+        {(data) => data.schools.map((group) => <SchoolStaff key={group.schoolId} group={group} />)}
+      </QueryState>
     </div>
   )
 }
