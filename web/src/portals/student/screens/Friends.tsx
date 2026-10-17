@@ -5,8 +5,9 @@ import { Chip } from "@/components/ui/chip"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Eyebrow } from "@/components/ui/primitives"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { Fire, Lightning } from "@phosphor-icons/react"
 import {
   useAcceptFriendRequest,
@@ -325,131 +326,129 @@ function AddFriend({ friendCode }: { friendCode: string }) {
 /* ── Screen ─────────────────────────────────────────────────────────────── */
 
 export function Friends() {
-  const { data, isPending, isError, refetch } = useFriends()
+  const query = useFriends()
   const accept = useAcceptFriendRequest()
   const remove = useRemoveFriend()
-
-  if (isPending) {
-    return (
-      <div className="flex flex-col gap-8">
-        {/* Shaped like what replaces it: a header, the friend-code card, and
-            the list. It was one line of text, so the page grew by its whole
-            height the moment the read landed. */}
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={2} />
-        <ListSkeleton rows={4} />
-      </div>
-    )
-  }
-
-  if (isError || !data) {
-    return (
-      <div className="flex flex-col gap-8">
-        <ErrorState
-          heading="Your friends could not be loaded"
-          body="This is a connection problem, not an empty list."
-          action={{ label: "Try again", onClick: () => void refetch() }}
-        />
-      </div>
-    )
-  }
 
   const busy = accept.isPending || remove.isPending
 
   return (
     <div className="flex flex-col gap-8">
-      <header className="flex flex-col gap-1">
-        <Eyebrow>Friends</Eyebrow>
-        {/* `text-display` was the class here and it resolves to nothing — see
-            the note in `Profile.tsx`. */}
-        <h1 className="text-display-lg text-ink">Who you are studying with</h1>
-        <p className="lm-prose text-body-lg text-ink-muted">
-          Friends see your display name, XP and streak. They never see your
-          marks, your grades or which papers you have corrected.
-        </p>
-      </header>
+      <QueryState
+        query={query}
+        srHeading="Friends"
+        // Shaped like what replaces it: a header, the friend-code card, and
+        // the list. It was one line of text, so the page grew by its whole
+        // height the moment the read landed.
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={2} />
+            <ListSkeleton rows={4} />
+          </>
+        }
+        error={{
+          heading: "Your friends could not be loaded",
+          body: "This is a connection problem, not an empty list.",
+        }}
+      >
+        {(data) => (
+          <>
+            <header className="flex flex-col gap-1">
+              <Eyebrow>Friends</Eyebrow>
+              {/* `text-display` was the class here and it resolves to nothing
+                  — see the note in `Profile.tsx`. */}
+              <h1 className="text-display-lg text-ink">Who you are studying with</h1>
+              <p className="lm-prose text-body-lg text-ink-muted">
+                Friends see your display name, XP and streak. They never see
+                your marks, your grades or which papers you have corrected.
+              </p>
+            </header>
 
-      <AddFriend friendCode={data.friendCode} />
+            <AddFriend friendCode={data.friendCode} />
 
-      {data.incoming.length > 0 ? (
-        <section className="flex flex-col gap-3" aria-labelledby="s30-incoming">
-          <h2 id="s30-incoming" className="text-display-sm text-ink">
-            Wants to be your friend
-          </h2>
-          <Card>
-            <CardBody className="divide-y divide-rule py-0">
-              {data.incoming.map((request) => (
-                <RequestRow
-                  key={request.friendshipId}
-                  request={request}
-                  direction="incoming"
-                  onAccept={(id) => accept.mutate(id)}
-                  onRemove={(id) => remove.mutate(id)}
-                  busy={busy}
-                />
-              ))}
-            </CardBody>
-          </Card>
-          {/* Accepting can only happen from this list, so its failure belongs
-              here rather than at the foot of the page. */}
-          {accept.isError ? <ActionError error={accept.error} /> : null}
-        </section>
-      ) : null}
+            {data.incoming.length > 0 ? (
+              <section className="flex flex-col gap-3" aria-labelledby="s30-incoming">
+                <h2 id="s30-incoming" className="text-display-sm text-ink">
+                  Wants to be your friend
+                </h2>
+                <Card>
+                  <CardBody className="divide-y divide-rule py-0">
+                    {data.incoming.map((request) => (
+                      <RequestRow
+                        key={request.friendshipId}
+                        request={request}
+                        direction="incoming"
+                        onAccept={(id) => accept.mutate(id)}
+                        onRemove={(id) => remove.mutate(id)}
+                        busy={busy}
+                      />
+                    ))}
+                  </CardBody>
+                </Card>
+                {/* Accepting can only happen from this list, so its failure
+                    belongs here rather than at the foot of the page. */}
+                {accept.isError ? <ActionError error={accept.error} /> : null}
+              </section>
+            ) : null}
 
-      <section className="flex flex-col gap-3" aria-labelledby="s30-friends">
-        <h2 id="s30-friends" className="text-display-sm text-ink">
-          Your friends
-        </h2>
-        <Card>
-          <CardBody className={data.friends.length > 0 ? "divide-y divide-rule py-0" : ""}>
-            {data.friends.length === 0 ? (
-              <EmptyState
-                marginalia="Your code is above"
-                heading="No friends yet"
-                body="Share your friend code above, or paste someone else's. Friends show up on your friends leaderboard."
-              />
-            ) : (
-              data.friends.map((friend) => (
-                <FriendRow
-                  key={friend.friendshipId}
-                  friend={friend}
-                  onRemove={(id) => remove.mutate(id)}
-                  removing={busy}
-                />
-              ))
-            )}
-          </CardBody>
-        </Card>
-        {/* `remove` is the endpoint behind Remove, Decline and Cancel alike
-            (D5.6 §3), so its failure is reported under each of the three lists
-            that can call it rather than once at the bottom. Repeating the
-            message is the point: the student sees it beside the row they were
-            working on. */}
-        {remove.isError ? <ActionError error={remove.error} /> : null}
-      </section>
+            <section className="flex flex-col gap-3" aria-labelledby="s30-friends">
+              <h2 id="s30-friends" className="text-display-sm text-ink">
+                Your friends
+              </h2>
+              <Card>
+                <CardBody className={data.friends.length > 0 ? "divide-y divide-rule py-0" : ""}>
+                  {data.friends.length === 0 ? (
+                    <EmptyState
+                      marginalia="Your code is above"
+                      heading="No friends yet"
+                      body="Share your friend code above, or paste someone else's. Friends show up on your friends leaderboard."
+                    />
+                  ) : (
+                    data.friends.map((friend) => (
+                      <FriendRow
+                        key={friend.friendshipId}
+                        friend={friend}
+                        onRemove={(id) => remove.mutate(id)}
+                        removing={busy}
+                      />
+                    ))
+                  )}
+                </CardBody>
+              </Card>
+              {/* `remove` is the endpoint behind Remove, Decline and Cancel
+                  alike (D5.6 §3), so its failure is reported under each of the
+                  three lists that can call it rather than once at the bottom.
+                  Repeating the message is the point: the student sees it
+                  beside the row they were working on. */}
+              {remove.isError ? <ActionError error={remove.error} /> : null}
+            </section>
 
-      {data.outgoing.length > 0 ? (
-        <section className="flex flex-col gap-3" aria-labelledby="s30-outgoing">
-          <h2 id="s30-outgoing" className="text-display-sm text-ink">
-            Waiting on them
-          </h2>
-          <Card>
-            <CardBody className="divide-y divide-rule py-0">
-              {data.outgoing.map((request) => (
-                <RequestRow
-                  key={request.friendshipId}
-                  request={request}
-                  direction="outgoing"
-                  onAccept={(id) => accept.mutate(id)}
-                  onRemove={(id) => remove.mutate(id)}
-                  busy={busy}
-                />
-              ))}
-            </CardBody>
-          </Card>
-          {remove.isError ? <ActionError error={remove.error} /> : null}
-        </section>
-      ) : null}
+            {data.outgoing.length > 0 ? (
+              <section className="flex flex-col gap-3" aria-labelledby="s30-outgoing">
+                <h2 id="s30-outgoing" className="text-display-sm text-ink">
+                  Waiting on them
+                </h2>
+                <Card>
+                  <CardBody className="divide-y divide-rule py-0">
+                    {data.outgoing.map((request) => (
+                      <RequestRow
+                        key={request.friendshipId}
+                        request={request}
+                        direction="outgoing"
+                        onAccept={(id) => accept.mutate(id)}
+                        onRemove={(id) => remove.mutate(id)}
+                        busy={busy}
+                      />
+                    ))}
+                  </CardBody>
+                </Card>
+                {remove.isError ? <ActionError error={remove.error} /> : null}
+              </section>
+            ) : null}
+          </>
+        )}
+      </QueryState>
     </div>
   )
 }

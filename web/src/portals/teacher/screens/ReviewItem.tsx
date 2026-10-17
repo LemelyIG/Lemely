@@ -1,31 +1,53 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
-import { useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Flag } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
-import { ErrorState } from "@/components/ui/state-views"
+import { Input } from "@/components/ui/input"
+import { Kbd } from "@/components/ui/kbd"
+import { Textarea } from "@/components/ui/textarea"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { relativeTime } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import {
   useDismissReviewItem,
   useResolveReviewItem,
   useReviewItem,
+  useReviewItemCrop,
   useReviewQueue,
 } from "@/lib/hooks/useTeacherApi"
-import type { ReviewBreakdown, ReviewItemDetail } from "@/lib/teacherTypes"
+import type {
+  PointVerdictWire,
+  ReviewBreakdown,
+  ReviewItemDetail,
+  ReviewItemPoint,
+} from "@/lib/teacherTypes"
+import { queuePosition } from "@/lib/queuePosition"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import {
   teacherLoadFailureMessage,
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
-import { confidenceTone, isIntegrityReason, paperIdentityLabel, reasonLabel } from "./Review"
+import {
+  confidenceTone,
+  isConsolePaperItem,
+  isIntegrityReason,
+  paperIdentityLabel,
+  reasonLabel,
+} from "./Review"
 import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Review item — remark (T-08). `GET /teacher/review/{itemId}`
- * (`useReviewItem()`) is the single fetch every panel below projects
- * directly.
+ * (`useReviewItem()`) is the main fetch this screen is built around, but
+ * NOT the only one: `useReviewItemCrop` (task #72) issues a second request,
+ * `GET /teacher/review/{itemId}/crop`, whenever `hasSourceBox` is true, and
+ * the crop card below is a panel projecting from that second fetch. The
+ * whole "a 404 renders as absence" contract lives in that second call, not
+ * in `useReviewItem()` -- a reader chasing crop behaviour who stops at this
+ * paragraph will not find it.
  *
  * **Route, not a pane beside the queue** (`/teacher/review/:itemId`). T-07's
  * filter querystring (`class_id`/`reason`/`min_age_hours`) is carried
@@ -36,25 +58,48 @@ import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
  * (2) the item is independently deep-linkable/bookmarkable/back-button-able
  * like every other drill-down route in this portal (T-03→T-05, T-06→T-05),
  * rather than a mode of the list that a page refresh or a shared link loses.
- * The filtered queue fetch usually costs nothing extra — same query key as
+ * The filtered queue fetch usually costs nothing extra -- same query key as
  * `Review.tsx` just used to get here, so react-query serves it from cache.
+ * That same cache behaviour -- react-query's 5-minute default `gcTime`, not
+ * overridden by `queryClient.ts` -- is exactly what makes a stale
+ * `useReviewItemCrop` render reachable when a teacher revisits a boxed item
+ * within that window (see `useReviewItemCrop`'s own doc for the fix).
  *
  * **D3.14 §1 drives the whole evidence layout.** The spec asks for "the
- * student's actual scan crop, side by side with the mark scheme extract" —
- * neither is persisted anywhere in this product (`ReviewItemDetailDTO`'s own
- * docstring). What's rendered instead, explicitly labelled as such, with a
- * banner stating the scan/scheme extract don't exist rather than a
+ * student's actual scan crop, side by side with the mark scheme extract".
+ * Task #72 renders the first half -- a crop, question-level and never per
+ * mark point, guarded on `hasSourceBox` AND a 2xx from the crop route (a
+ * `true` flag alone does not guarantee bytes; see `useReviewItemCrop`'s
+ * doc) -- but the second half, a side-by-side extract of the mark scheme's
+ * own wording, is still not rendered here: that text is not persisted
+ * anywhere in this product (`ReviewItemDetailDTO`'s own docstring,
+ * `schemas_review.py`, documents `hasSourceBox` and the crop route, not an
+ * absent extract -- it is no longer the citation for this clause). What's
+ * rendered as an honest substitute for THAT still-missing half, with no
  * placeholder image or skeleton frame standing in for a missing asset:
- *  - `studentAnswer` -> "Lemely's transcription of the student's answer —
- *    not the scan."
+ *  - the crop card, when `hasSourceBox` is true and the route answers 2xx --
+ *    the region of the scan the answer was read from, captioned as exactly
+ *    that.
+ *  - `studentAnswer` -> "Lemely's transcription of the student's answer,
+ *    not the scan" -- the banner above it states plainly whether the crop
+ *    card is also showing a region of the scan on this particular render.
  *  - `expectedAnswer` -> "Expected answer" (the mark scheme's target, not
  *    its full prose).
  *  - `matchedPointIds` -> rendered as bare identifier chips, labelled
- *    "identifiers only — the scheme's own wording isn't stored" — never
- *    reconstructed into scheme-sounding prose (UI-spec §1.4: never invent
- *    precision the data doesn't support).
+ *    "Matched mark-scheme point identifiers" -- never reconstructed into
+ *    scheme-sounding prose (UI-spec §1.4: never invent precision the data
+ *    doesn't support). Demoted below `MarkerVerdicts` (I6, US-013): a bare
+ *    id is no longer this backend's best marking evidence, only a fallback
+ *    for a legacy item with no `question_result_points` rows at all.
  *
- * **Integrity items (`plagiarism_flag`/`ai_detection_flag`) get dismiss
+ * **`MarkerVerdicts` renders I6/I7's marker verdict for every point**,
+ * unlike `SelfReviewPoints` beside it, which stays filtered to what the
+ * student self-marked (a different question, and merging the two lists
+ * loses the ability to tell them apart). `withheld` and `unverifiable` both
+ * collapse to `awarded: false`, so they get distinct tones AND distinct
+ * labels, not just one or the other.
+ *
+ * **Integrity items (`plagiarism_flag`) get dismiss
  * only on this screen; accept/adjust-marks controls render for every other
  * reason instead, never both on the same item.** The backend's `resolve`
  * endpoint has no reason restriction, so a teacher *could* also
@@ -100,6 +145,167 @@ import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
  * lifting that form's whole state up.
  */
 
+const EVIDENCE_VERDICT_LABEL: Record<string, string> = {
+  accepted: "The automatic judge accepted this reason",
+  rejected: "The automatic judge rejected this reason",
+  not_required: "No reason was required for this point",
+}
+
+/*
+ * I6/I7 (US-013) marker verdicts. `withheld` and `unverifiable` both collapse
+ * to `awarded: false` on the same point, and that collapse is the whole
+ * distinction I6 exists to carry: a teacher seeing "not awarded" cannot tell
+ * "the marker judged this absent" from "the marker could not verify it".
+ * Distinct tones AND distinct labels, not just one or the other, so the
+ * difference survives someone scanning tone alone or reading text alone.
+ */
+const POINT_VERDICT_LABEL: Record<PointVerdictWire, string> = {
+  awarded: "Awarded",
+  withheld: "Withheld, judged absent",
+  unverifiable: "Unverifiable, could not confirm",
+}
+
+const POINT_VERDICT_TONE: Record<PointVerdictWire, "ok" | "neutral" | "warn"> = {
+  awarded: "ok",
+  withheld: "neutral",
+  unverifiable: "warn",
+}
+
+/**
+ * The student's self-review of one mark point, for a teacher deciding a
+ * `student_evidence_unjudged` item (S2 part2+3 final review, I-2). Without
+ * this the row said "a teacher will look at this" and gave the teacher
+ * nothing to look at — no way to see what the student claimed or wrote.
+ *
+ * Only points the student actually self-marked render here
+ * (`studentSelfmark !== null`); a question can carry points the student
+ * never touched (they only had to explain the ones they claimed upward —
+ * `selfReview.ts`'s `missingEvidence`), and those have nothing to show.
+ *
+ * `studentEvidence` is student-authored text landing on a teacher's screen.
+ * This is the teacher console: QUALITY-BAR's integrity sanitising is a
+ * per-surface rule for student-facing views and does not apply here, so
+ * nothing is withheld. It is still rendered as plain JSX text content, the
+ * same as every other student-authored field on this screen
+ * (`studentAnswer` above) — never interpreted as markup.
+ */
+function SelfReviewPoints({ points }: { points: ReviewItemPoint[] }) {
+  const reviewed = points.filter((p) => p.studentSelfmark !== null)
+  if (reviewed.length === 0) return null
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="text-display-sm">Student's self-review</div>
+      <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
+        {reviewed.map((point, index) => (
+          <div
+            key={point.markPointId}
+            className={
+              index === 0 ? "flex flex-col gap-2" : "flex flex-col gap-2 border-t border-rule pt-4"
+            }
+          >
+            <div className="text-eyebrow text-ink-faint">{point.markPointId}</div>
+            <p className="text-body-md text-ink m-0 text-pretty">{point.pointText}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip tone="neutral">
+                Student claims: {point.studentSelfmark ? "earned" : "not earned"}
+              </Chip>
+              {point.evidenceVerdict ? (
+                <Chip tone={point.evidenceVerdict === "accepted" ? "ok" : "warn"}>
+                  {EVIDENCE_VERDICT_LABEL[point.evidenceVerdict] ?? point.evidenceVerdict}
+                </Chip>
+              ) : (
+                <Chip tone="warn">Not yet judged</Chip>
+              )}
+            </div>
+            {point.studentEvidence ? (
+              <p className="text-body-md text-ink-muted leading-[1.5] m-0 text-pretty whitespace-pre-wrap">
+                "{point.studentEvidence}"
+              </p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * I6/I7 (US-013) marker verdicts, for every point, not filtered by
+ * `studentSelfmark`. `SelfReviewPoints` above answers "what did the student
+ * claim", and its `studentSelfmark !== null` filter is correct for that
+ * question, but it meant a point the marker verdicted and the student never
+ * touched rendered nowhere on this screen at all. This is that point's own
+ * surface.
+ *
+ * `verdict === null` covers two indistinguishable cases on purpose
+ * (`ReviewItemPoint`'s doc comment in `teacherTypes.ts`): a legacy
+ * (non-verdict) point, or a raw DB value the backend could not narrow to one
+ * of the three real members. It does NOT mean nothing is known about the
+ * point: `awarded` is the marker's own verdict on every path, including the
+ * legacy one, and `derive_point_rows` never wrote anything else before I6 —
+ * so `null` falls back to rendering `awarded`, never to a bare denial that a
+ * verdict exists. It is still never guessed into one of the three richer
+ * verdicts; that stays reserved for a real `verdict` value.
+ */
+function MarkerVerdicts({ points }: { points: ReviewItemPoint[] }) {
+  // Section-level suppression. With `equivalence_gate` off every `verdict` is
+  // null, so without this the screen shows a section whose every row repeats
+  // the `awarded` boolean the matched-point chips already implied. A per-point
+  // filter would instead re-create the invisible-point defect this component
+  // exists to fix -- a reviewer demonstrated that a guard inside the map
+  // callback passes every unit assertion with a clean tsc.
+  //
+  // `|| p.rationale` matters on its own: with the gate off, `verdict` is
+  // always null, so a `verdict !== null`-only guard suppresses this section
+  // even when a point carries a marker's `rationale` -- the one thing this
+  // component exists to surface today. Testing both keeps the section
+  // suppressed when it would only restate the headline, while still letting
+  // a real rationale through.
+  if (points.length === 0 || !points.some((p) => p.verdict !== null || p.rationale)) return null
+  return (
+    <section className="flex flex-col gap-3" role="region" aria-label="Marker's per-point verdicts">
+      <div className="text-display-sm">Marker's per-point verdicts</div>
+      <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
+        {points.map((point, index) => (
+          <div
+            key={point.markPointId}
+            data-testid="marker-verdict-row"
+            className={
+              index === 0 ? "flex flex-col gap-2" : "flex flex-col gap-2 border-t border-rule pt-4"
+            }
+          >
+            <div className="text-eyebrow text-ink-faint">{point.markPointId}</div>
+            <p className="text-body-md text-ink m-0 text-pretty">{point.pointText}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              {point.verdict ? (
+                <Chip tone={POINT_VERDICT_TONE[point.verdict]}>{POINT_VERDICT_LABEL[point.verdict]}</Chip>
+              ) : (
+                <Chip tone={point.awarded ? "ok" : "neutral"}>
+                  Marker: {point.awarded ? "awarded" : "not awarded"} (no richer verdict recorded)
+                </Chip>
+              )}
+              {point.ecfApplied ? <Chip tone="info">Carried forward from a prior point (ECF)</Chip> : null}
+            </div>
+            {point.evidenceSpan ? (
+              <p className="text-body-md text-ink-muted leading-[1.5] m-0 text-pretty whitespace-pre-wrap">
+                "{point.evidenceSpan}"
+              </p>
+            ) : null}
+            {point.rationale ? (
+              <p
+                className="text-body-sm text-ink-faint leading-[1.5] m-0 text-pretty line-clamp-3"
+                title={point.rationale}
+              >
+                {point.rationale}
+              </p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function AwardedMarks({ detail }: { detail: ReviewItemDetail }) {
   return (
     <div className="text-display-md">
@@ -121,15 +327,13 @@ function DismissForm({ itemId, onDone }: { itemId: string; onDone: () => void })
       }}
       className="flex flex-col gap-2.5"
     >
-      <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-        Internal note (optional, visible only to you, never the student)
-        <textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          rows={2}
-          className="border border-rule bg-paper-raised rounded-md px-2.5 py-2 text-body-sm text-ink resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-        />
-      </label>
+      <Textarea
+        label="Internal note (optional, visible only to you, never the student)"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        rows={2}
+        className="resize-none"
+      />
       <div>
         <Button type="submit" variant="ink" disabled={dismiss.isPending}>
           {dismiss.isPending ? "Dismissing…" : "Dismiss flag"}
@@ -166,7 +370,17 @@ function ResolveControls({
   const [studentNote, setStudentNote] = useState("")
   const [validationError, setValidationError] = useState<string | null>(null)
 
+  /* Adjusting a mark needs a `QuestionResult` to write it to — that is where
+     `0005_review_overrides` persists a teacher correction. Two different
+     reasons it can be missing, and the button says which rather than giving
+     one generic excuse: a console-uploaded paper stores its marking inside
+     the paper's own report and has no per-question row at all (D1.12), so the
+     backend answers `overrideMarks` with a 422; any other item without one
+     simply carries no mark data to adjust. */
   const canAdjust = detail.questionResultId != null
+  const cannotAdjustReason = isConsolePaperItem(detail)
+    ? "Papers marked in the grading console store no per-question result to record a new mark on. Accept as-is, or re-run the paper from the console."
+    : "No mark data on this item to adjust"
 
   const handleAccept = useCallback(() => {
     resolve.mutate({ note: acceptNote.trim() || undefined }, { onSuccess: onDone })
@@ -209,15 +423,13 @@ function ResolveControls({
       <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
         {mode === "accept" ? (
           <>
-            <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-              Internal note (optional, visible only to you and other teachers, not the student)
-              <textarea
-                value={acceptNote}
-                onChange={(e) => setAcceptNote(e.target.value)}
-                rows={2}
-                className="border border-rule bg-paper-raised rounded-md px-2.5 py-2 text-body-sm text-ink resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-              />
-            </label>
+            <Textarea
+              label="Internal note (optional, visible only to you and other teachers, not the student)"
+              value={acceptNote}
+              onChange={(e) => setAcceptNote(e.target.value)}
+              rows={2}
+              className="resize-none"
+            />
             <div className="flex items-center gap-2.5 flex-wrap">
               <Button type="button" variant="ink" disabled={resolve.isPending} onClick={handleAccept}>
                 {resolve.isPending ? "Saving…" : "Accept as-is"}
@@ -226,7 +438,7 @@ function ResolveControls({
                 type="button"
                 variant="secondary"
                 disabled={!canAdjust}
-                title={canAdjust ? undefined : "No mark data on this item to adjust"}
+                title={canAdjust ? undefined : cannotAdjustReason}
                 onClick={() => setMode("adjust")}
               >
                 Adjust marks instead
@@ -236,66 +448,54 @@ function ResolveControls({
         ) : (
           <form onSubmit={handleSaveCorrection} className="flex flex-col gap-3">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                Marks to award
-                <input
-                  type="number"
-                  min={0}
-                  max={detail.maximumMarks ?? undefined}
-                  value={overrideMarks}
-                  onChange={(e) => setOverrideMarks(e.target.value)}
-                  className="border border-rule bg-paper-raised rounded-md px-2.5 py-1.5 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                Method
-                <input
-                  type="number"
-                  min={0}
-                  value={methodMarks}
-                  onChange={(e) => setMethodMarks(e.target.value)}
-                  className="border border-rule bg-paper-raised rounded-md px-2.5 py-1.5 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                Accuracy
-                <input
-                  type="number"
-                  min={0}
-                  value={accuracyMarks}
-                  onChange={(e) => setAccuracyMarks(e.target.value)}
-                  className="border border-rule bg-paper-raised rounded-md px-2.5 py-1.5 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                Other
-                <input
-                  type="number"
-                  min={0}
-                  value={otherMarks}
-                  onChange={(e) => setOtherMarks(e.target.value)}
-                  className="border border-rule bg-paper-raised rounded-md px-2.5 py-1.5 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                />
-              </label>
+              <Input
+                label="Marks to award"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={detail.maximumMarks ?? undefined}
+                value={overrideMarks}
+                onChange={(e) => setOverrideMarks(e.target.value)}
+              />
+              <Input
+                label="Method"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={methodMarks}
+                onChange={(e) => setMethodMarks(e.target.value)}
+              />
+              <Input
+                label="Accuracy"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={accuracyMarks}
+                onChange={(e) => setAccuracyMarks(e.target.value)}
+              />
+              <Input
+                label="Other"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={otherMarks}
+                onChange={(e) => setOtherMarks(e.target.value)}
+              />
             </div>
-            <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-              Breakdown notes (internal: how you split the marks)
-              <textarea
-                value={breakdownNotes}
-                onChange={(e) => setBreakdownNotes(e.target.value)}
-                rows={2}
-                className="border border-rule bg-paper-raised rounded-md px-2.5 py-2 text-body-sm text-ink resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-              />
-            </label>
-            <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-              Note to the student, saved on their corrected result as the reason for the change
-              <textarea
-                value={studentNote}
-                onChange={(e) => setStudentNote(e.target.value)}
-                rows={2}
-                className="border border-rule bg-paper-raised rounded-md px-2.5 py-2 text-body-sm text-ink resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-              />
-            </label>
+            <Textarea
+              label="Breakdown notes (internal: how you split the marks)"
+              value={breakdownNotes}
+              onChange={(e) => setBreakdownNotes(e.target.value)}
+              rows={2}
+              className="resize-none"
+            />
+            <Textarea
+              label="Note to the student, saved on their corrected result as the reason for the change"
+              value={studentNote}
+              onChange={(e) => setStudentNote(e.target.value)}
+              rows={2}
+              className="resize-none"
+            />
             {validationError ? (
               <div role="alert" className="text-body-sm text-err">
                 {validationError}
@@ -321,6 +521,55 @@ function ResolveControls({
   )
 }
 
+/**
+ * Task 9 (C3d) · "Item N of total" under the page header, with Prev/Next
+ * links carrying the same filter querystring the teacher was triaging
+ * under. Built from `queuePosition` over `ReviewItem`'s own already-fetched
+ * `queueIds` — no second fetch, and the identical "am I even still in this
+ * filtered queue" question the existing `nextItemId` logic below already
+ * answers (a resolved/dismissed item, or one that no longer matches the
+ * filters, falls out of `queueIds` and `queuePosition` returns `null`); the
+ * strip renders nothing rather than a stale or misleading position.
+ */
+function QueueStrip({
+  position,
+  total,
+  filterQs,
+}: {
+  position: { index: number; total: number; prevId: string | null; nextId: string | null }
+  total: number
+  filterQs: string
+}) {
+  const suffix = filterQs ? `?${filterQs}` : ""
+  return (
+    <div className="flex items-center justify-between gap-3 text-body-sm text-ink-faint">
+      <span>
+        Item {position.index + 1} of {total}
+      </span>
+      <div className="flex items-center gap-3">
+        {position.prevId ? (
+          <Link
+            to={`/teacher/review/${position.prevId}${suffix}`}
+            viewTransition
+            className="flex items-center gap-1 text-ink-muted transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          >
+            <BackArrow /> Prev
+          </Link>
+        ) : null}
+        {position.nextId ? (
+          <Link
+            to={`/teacher/review/${position.nextId}${suffix}`}
+            viewTransition
+            className="flex items-center gap-1 text-ink-muted transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          >
+            Next <ForwardArrow />
+          </Link>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 export function ReviewItem() {
   const { itemId } = useParams<{ itemId: string }>()
   const navigate = useNavigate()
@@ -334,6 +583,15 @@ export function ReviewItem() {
 
   const detailQuery = useReviewItem(itemId)
   const queueQuery = useReviewQueue({ classId, reason: filterReason, minAgeHours })
+  // Called here, at the top level, rather than inside the `<QueryState>`
+  // render prop below: `detailQuery.data` is already available at this
+  // point, and a hook called inside that render prop would belong to
+  // `QueryState`'s own fiber, not this component's — see every other hook
+  // in this file, all called up here for the same reason.
+  const { url: cropUrl, onDecodeError: onCropDecodeError } = useReviewItemCrop(
+    itemId,
+    detailQuery.data?.hasSourceBox ?? false,
+  )
 
   const acceptHandlerRef = useRef<(() => void) | null>(null)
   const registerAccept = useCallback((fn: (() => void) | null) => {
@@ -343,6 +601,10 @@ export function ReviewItem() {
   const queueIds = queueQuery.data?.items.map((i) => i.itemId) ?? []
   const currentIndex = itemId ? queueIds.indexOf(itemId) : -1
   const nextItemId = currentIndex >= 0 ? queueIds[currentIndex + 1] : undefined
+  // Task 9 (C3d): the `QueueStrip`'s data — same `queueIds` as the "next"
+  // logic just above, so "falls out of the filtered queue" is one answer,
+  // not two that could disagree.
+  const position = itemId ? queuePosition(queueIds, itemId) : null
 
   const goToQueue = useCallback(() => {
     navigate(`/teacher/review${filterQs ? `?${filterQs}` : ""}`)
@@ -379,228 +641,324 @@ export function ReviewItem() {
     return () => window.removeEventListener("keydown", handler)
   }, [goToQueue, goNext])
 
-  if (detailQuery.isPending) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Review item</h1>
-        <PanelSkeleton />
-        <PanelSkeleton />
-      </div>
-    )
-  }
-
-  if (detailQuery.isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Review item</h1>
-        <ErrorState
-          heading="Couldn't load this review item"
-          body={teacherLoadFailureMessage(detailQuery.error)}
-          action={{ label: "Retry", onClick: () => detailQuery.refetch() }}
-          secondaryAction={{ label: "Back to queue", onClick: goToQueue }}
-        />
-      </div>
-    )
-  }
-
-  const detail = detailQuery.data
-  const integrity = isIntegrityReason(detail.reason)
-
   return (
-    <div className="lm-screen flex flex-col gap-6 min-w-0">
-      <div className="flex flex-col gap-1">
-        <button
-          type="button"
-          onClick={goToQueue}
-          className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-        >
-          <BackArrow /> Back to queue
-        </button>
-        <div className="flex items-start gap-3.5 flex-wrap gap-y-2 mt-1">
-          <Avatar name={detail.studentDisplayName} size="md" />
-          <div className="min-w-0">
-            <h1 className="text-display-sm text-pretty">
-              {detail.studentDisplayName}
-            </h1>
-            <div className="text-body-sm text-ink-muted mt-0.5">
-              {detail.className} · {paperIdentityLabel(detail)}
-              {detail.questionId ? ` · Q${detail.questionId}` : ""}
-            </div>
-          </div>
-          <div className="flex-1" />
-          <div className="flex items-center gap-2 flex-none">
-            {detail.status !== "open" ? (
-              <Chip tone={detail.status === "dismissed" ? "neutral" : "ok"}>
-                {detail.status === "dismissed" ? "Dismissed" : "Resolved"}
-              </Chip>
-            ) : null}
-            <Chip tone={integrity ? "warn" : "neutral"}>{reasonLabel(detail.reason)}</Chip>
-          </div>
-        </div>
-      </div>
+    <div className="flex flex-col gap-6 min-w-0">
+      <QueryState
+        query={detailQuery}
+        srHeading="Review item"
+        skeleton={
+          <>
+            <PanelSkeleton />
+            <PanelSkeleton />
+          </>
+        }
+        /*
+         * `useReviewItem` disables itself (`enabled: !!itemId`), which
+         * react-query parks at `status: "pending", fetchStatus: "idle"`
+         * forever rather than fetching — no route in `routes.tsx` reaches
+         * this screen without an `:itemId` today, but `useParams` still types
+         * it optional, so the case is representable. `idle` names it plainly
+         * (with a way back to the queue) rather than showing a skeleton for a
+         * fetch that will never run.
+         */
+        idle={
+          <EmptyState
+            heading="No review item selected"
+            body="Open an item from the review queue to see it here."
+            action={{ label: "Back to queue", onClick: goToQueue }}
+          />
+        }
+        error={{
+          heading: "Couldn't load this review item",
+          /* `Review.tsx`'s own list failure ("Couldn't load the review
+             queue") and this detail failure share the same body — both defer
+             to `teacherLoadFailureMessage`, this pair's shared failure
+             vocabulary, per the brief's list/detail consistency rule. The
+             "Back to queue" secondary action carries over too, via
+             `secondaryAction` — a detail route reached with a stale or
+             malformed item id retries into the same failure forever, so the
+             way out has to be a link elsewhere, not a fourth "Try again". */
+          body: teacherLoadFailureMessage,
+          secondaryAction: { label: "Back to queue", onClick: goToQueue },
+        }}
+      >
+        {(detail) => {
+          const integrity = isIntegrityReason(detail.reason)
+          // `detail.hasSourceBox` alone is not enough to claim the scan is
+          // shown (D3.14 §1 / task #71's docstring): the flag means a box and
+          // an upload exist, not that the crop route actually has bytes to serve --
+          // `cropUrl` is `null` for both "no box" and "box, but the route
+          // failed (404 or 422)". Carrying the URL itself, not a derived
+          // boolean, is what lets the banner and the image below share ONE
+          // condition instead of two that could drift: TypeScript narrows `scanCropUrl` to
+          // `string` wherever it's checked truthy, so there is no second
+          // `&& cropUrl` needed at the render site the way a boolean would
+          // have required.
+          const scanCropUrl = detail.hasSourceBox ? cropUrl : null
 
-      <div className="flex items-center justify-between gap-3 flex-wrap border-y border-rule py-2.5">
-        <div className="flex items-center gap-4 flex-wrap text-data-sm text-ink-faint">
-          <span className="flex items-center gap-1.5">
-            <kbd className="px-1.5 py-0.5 rounded border border-rule bg-paper-sunk text-ink-muted">A</kbd>
-            accept as-is
-          </span>
-          <span className="flex items-center gap-1.5">
-            <kbd className="px-1.5 py-0.5 rounded border border-rule bg-paper-sunk text-ink-muted">N</kbd>
-            next item
-          </span>
-          <span className="flex items-center gap-1.5">
-            <kbd className="px-1.5 py-0.5 rounded border border-rule bg-paper-sunk text-ink-muted">Esc</kbd>
-            back to queue
-          </span>
-        </div>
-        <Button type="button" variant="secondary" size="sm" onClick={goNext}>
-          <>{nextItemId ? "Next item" : "Back to queue"} <ForwardArrow /></>
-        </Button>
-      </div>
-
-      {/* Evidence: honest substitutes for the scan crop / mark-scheme extract (D3.14 §1) */}
-      <section className="flex flex-col gap-3">
-        <div className="text-display-sm">What Lemely saw</div>
-        <div className="text-body-sm text-ink-muted bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
-          The original scan image and the mark scheme's own wording aren't stored anywhere in
-          this product. What's below is the closest honest record: Lemely's own transcription
-          of the student's answer, and the identifiers of the mark-scheme points it matched.
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
-            <div className="text-eyebrow text-ink-faint">
-              Lemely's transcription of the student's answer, not the scan
-            </div>
-            {detail.studentAnswer ? (
-              <p className="text-body-lg leading-[1.55] text-pretty whitespace-pre-wrap m-0">
-                {detail.studentAnswer}
-              </p>
-            ) : (
-              <p className="text-body-md text-ink-faint m-0">No transcription recorded for this question.</p>
-            )}
-          </div>
-          <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3 min-w-0">
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Expected answer
-              </div>
-              {detail.expectedAnswer ? (
-                <p className="text-body-lg leading-[1.55] text-pretty whitespace-pre-wrap mt-1 mb-0">
-                  {detail.expectedAnswer}
-                </p>
-              ) : (
-                <p className="text-body-md text-ink-faint mt-1 mb-0">No expected answer recorded.</p>
-              )}
-            </div>
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Matched mark-scheme points, identifiers only. The scheme's own wording isn't
-                stored
-              </div>
-              {detail.matchedPointIds.length > 0 ? (
-                <div className="flex flex-wrap gap-1.5 mt-1.5">
-                  {detail.matchedPointIds.map((id) => (
-                    <Chip key={id} tone="neutral">
-                      {id}
-                    </Chip>
-                  ))}
+          return (
+            <>
+              <div className="flex flex-col gap-1">
+                <button
+                  type="button"
+                  onClick={goToQueue}
+                  className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                >
+                  <BackArrow /> Back to queue
+                </button>
+                <div className="flex items-start gap-3.5 flex-wrap gap-y-2 mt-1">
+                  {/* A console-uploaded paper has no student behind it
+                      (D1.12), so it gets no avatar and no class in its
+                      subtitle — "Grading console" is the honest answer to
+                      where this mark came from. See `isConsolePaperItem`. */}
+                  {isConsolePaperItem(detail) ? null : (
+                    <Avatar name={detail.studentDisplayName} size="md" />
+                  )}
+                  <div className="min-w-0">
+                    <h1 className="text-display-sm text-pretty">
+                      {detail.studentDisplayName}
+                    </h1>
+                    <div className="text-body-sm text-ink-muted mt-0.5">
+                      {isConsolePaperItem(detail) ? "Grading console" : detail.className} ·{" "}
+                      {paperIdentityLabel(detail)}
+                      {detail.questionId ? ` · Q${detail.questionId}` : ""}
+                    </div>
+                  </div>
+                  <div className="flex-1" />
+                  <div className="flex items-center gap-2 flex-none">
+                    {detail.status !== "open" ? (
+                      <Chip tone={detail.status === "dismissed" ? "neutral" : "ok"}>
+                        {detail.status === "dismissed" ? "Dismissed" : "Resolved"}
+                      </Chip>
+                    ) : null}
+                    <Chip tone={integrity ? "warn" : "neutral"}>{reasonLabel(detail.reason)}</Chip>
+                  </div>
                 </div>
-              ) : (
-                <p className="text-body-md text-ink-faint mt-1 mb-0">No points matched.</p>
-              )}
-            </div>
-          </div>
-        </div>
-        {detail.topic ? <div className="text-body-sm text-ink-faint">Topic: {detail.topic}</div> : null}
-      </section>
-
-      {/* What Lemely awarded, and why this needs a look */}
-      <section className="flex flex-col gap-3">
-        <div className="text-display-sm">What Lemely awarded</div>
-        <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
-          <div className="flex items-center gap-4 flex-wrap">
-            <AwardedMarks detail={detail} />
-            {detail.confidenceScore != null ? (
-              <Chip tone={confidenceTone(detail.confidenceScore)}>
-                {Math.round(detail.confidenceScore * 100)}% confidence
-              </Chip>
-            ) : (
-              <Chip tone="neutral">Confidence unavailable</Chip>
-            )}
-          </div>
-          {detail.reviewReason ? (
-            <div className="border-t border-rule pt-3">
-              <div className="text-eyebrow text-ink-faint">
-                Why this needs review
               </div>
-              <p className="text-body-md text-ink-muted leading-[1.5] mt-1.5 mb-0 text-pretty">
-                {detail.reviewReason}
-              </p>
-            </div>
-          ) : null}
-          {detail.feedback ? (
-            <div className="border-t border-rule pt-3">
-              <div className="text-eyebrow text-ink-faint">
-                Lemely's feedback
+
+              {position ? (
+                <QueueStrip
+                  position={position}
+                  total={queueQuery.data?.total ?? position.total}
+                  filterQs={filterQs}
+                />
+              ) : null}
+
+              <div className="flex items-center justify-between gap-3 flex-wrap border-y border-rule py-2.5">
+                <div className="flex items-center gap-4 flex-wrap text-data-sm text-ink-faint">
+                  <span className="flex items-center gap-1.5">
+                    <Kbd>A</Kbd>
+                    accept as-is
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <Kbd>N</Kbd>
+                    next item
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <Kbd>Esc</Kbd>
+                    back to queue
+                  </span>
+                </div>
+                <Button type="button" variant="secondary" size="sm" onClick={goNext}>
+                  <>{nextItemId ? "Next item" : "Back to queue"} <ForwardArrow /></>
+                </Button>
               </div>
-              <p className="text-body-md text-ink-muted leading-[1.5] mt-1.5 mb-0 text-pretty">
-                {detail.feedback}
-              </p>
-            </div>
-          ) : null}
-        </div>
-      </section>
 
-      {/* Integrity flag: distinct, non-inflammatory, dismiss-only on this item */}
-      {integrity ? (
-        <section className="border border-warn rounded-lg p-[18px] bg-warn-wash flex flex-col gap-3">
-          <div className="flex items-center gap-2.5">
-            <Flag weight="fill" className="w-[18px] h-[18px] text-warn flex-none" aria-hidden />
-            <div className="font-medium text-body-md text-ink">Flagged: {reasonLabel(detail.reason)}</div>
-          </div>
-          <p className="text-body-sm text-ink-muted leading-[1.5] m-0 text-pretty">
-            This is a signal for you to look at, not a conclusion about the student. If you
-            dismiss it, nothing about this flag reaches the student: dismissing never touches
-            their mark or their result.
-          </p>
-          {detail.status === "open" ? (
-            <DismissForm itemId={detail.itemId} onDone={goNext} />
-          ) : (
-            <div className="text-body-sm text-ink-faint">
-              {detail.status === "dismissed" ? "Dismissed" : "Resolved"}
-              {detail.resolutionNote ? `: "${detail.resolutionNote}"` : "."}
-            </div>
-          )}
-        </section>
-      ) : null}
+              {/* Evidence: the scan crop when one is available (D3.14 §1's
+                  first half), Lemely's own transcription and the mark
+                  scheme's target as honest substitutes for its second half
+                  (a side-by-side extract of the scheme's own wording, which
+                  is not persisted anywhere in this product -- see the module
+                  doc above). The crop card renders FIRST, ahead of the
+                  transcription/expected-answer grid: it is the source the
+                  transcription was read from, and derived text reading ahead
+                  of its own source is backwards. */}
+              <section className="flex flex-col gap-3">
+                <div className="text-display-sm">What Lemely saw</div>
+                <div className="text-body-sm text-ink-muted bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
+                  {scanCropUrl
+                    ? "This screen shows the region of the student's scan this answer was read from, alongside Lemely's own transcription of it."
+                    : "This screen does not display the original scan. What's below is Lemely's own transcription of the student's answer."}
+                </div>
+                {/* Question-level, not per mark point (D3.14 §1 / task #71):
+                    marking is text-only, so nothing here attributes this
+                    region to any one awarded mark -- the caption says only
+                    where the answer was read from.
+                    `max-h-[420px] w-auto max-w-full object-contain`: the
+                    rendered crop is upscaled 2x (`crop_and_upscale`) and can
+                    run over a thousand pixels tall for a normally-proportioned
+                    box, which at card width would push "What Lemely awarded"
+                    below the fold -- bounded by height, not just width, the
+                    same way `Grading.tsx`'s own scan thumbnail is.
+                    `onError={onCropDecodeError}`: a 2xx response is not proof
+                    the bytes decode (see `useReviewItemCrop`'s own doc) --
+                    without this, a decode failure would sit here as a
+                    bordered card around a broken-image icon, exactly the
+                    fallback-image affordance this task was told never to add. */}
+                {scanCropUrl ? (
+                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
+                    <img
+                      src={scanCropUrl}
+                      alt="The region of the student's scan this question's answer was read from"
+                      className="rounded-md border border-rule max-h-[420px] w-auto max-w-full object-contain"
+                      decoding="async"
+                      onError={onCropDecodeError}
+                    />
+                    <div className="text-body-sm text-ink-faint">
+                      The region of the student's scan this answer was read from
+                    </div>
+                  </div>
+                ) : null}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
+                    <div className="text-eyebrow text-ink-faint">
+                      Lemely's transcription of the student's answer, not the scan
+                    </div>
+                    {detail.studentAnswer ? (
+                      <p className="text-body-lg leading-[1.55] text-pretty whitespace-pre-wrap m-0">
+                        {detail.studentAnswer}
+                      </p>
+                    ) : (
+                      <p className="text-body-md text-ink-faint m-0">No transcription recorded for this question.</p>
+                    )}
+                  </div>
+                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] min-w-0">
+                    <div className="text-eyebrow text-ink-faint">
+                      Expected answer
+                    </div>
+                    {detail.expectedAnswer ? (
+                      <p className="text-body-lg leading-[1.55] text-pretty whitespace-pre-wrap mt-1 mb-0">
+                        {detail.expectedAnswer}
+                      </p>
+                    ) : (
+                      <p className="text-body-md text-ink-faint mt-1 mb-0">No expected answer recorded.</p>
+                    )}
+                  </div>
+                </div>
+                {detail.topic ? <div className="text-body-sm text-ink-faint">Topic: {detail.topic}</div> : null}
+              </section>
 
-      {/* Accept / adjust marks — non-integrity items only, open only */}
-      {!integrity && detail.status === "open" ? (
-        <ResolveControls detail={detail} onDone={goNext} registerAccept={registerAccept} />
-      ) : null}
+              {/* What Lemely awarded, and why this needs a look */}
+              <section className="flex flex-col gap-3">
+                <div className="text-display-sm">What Lemely awarded</div>
+                <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <AwardedMarks detail={detail} />
+                    {detail.confidenceScore != null ? (
+                      <Chip tone={confidenceTone(detail.confidenceScore)}>
+                        {Math.round(detail.confidenceScore * 100)}% confidence
+                      </Chip>
+                    ) : (
+                      <Chip tone="neutral">Confidence unavailable</Chip>
+                    )}
+                  </div>
+                  {detail.reviewReason ? (
+                    <div className="border-t border-rule pt-3">
+                      <div className="text-eyebrow text-ink-faint">
+                        Why this needs review
+                      </div>
+                      <p className="text-body-md text-ink-muted leading-[1.5] mt-1.5 mb-0 text-pretty">
+                        {detail.reviewReason}
+                      </p>
+                    </div>
+                  ) : null}
+                  {detail.feedback ? (
+                    <div className="border-t border-rule pt-3">
+                      <div className="text-eyebrow text-ink-faint">
+                        Lemely's feedback
+                      </div>
+                      <p className="text-body-md text-ink-muted leading-[1.5] mt-1.5 mb-0 text-pretty">
+                        {detail.feedback}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
 
-      {!integrity && detail.status !== "open" && detail.resolutionNote ? (
-        <div className="text-body-sm text-ink-muted">Resolution note: "{detail.resolutionNote}"</div>
-      ) : null}
+              <MarkerVerdicts points={detail.points} />
 
-      {detail.isOverridden ? (
-        <section className="flex flex-col gap-3">
-          <div className="text-display-sm">Teacher correction on record</div>
-          <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2">
-            <div className="text-display-sm">
-              {detail.teacherAwardedMarks}
-              <span className="text-body-md text-ink-muted">/{detail.maximumMarks ?? "—"}</span>
-            </div>
-            {detail.teacherNote ? (
-              <p className="text-body-md text-ink-muted m-0 text-pretty">"{detail.teacherNote}"</p>
-            ) : null}
-            {detail.overriddenAt ? (
-              <div className="text-body-sm text-ink-faint">{relativeTime(detail.overriddenAt)}</div>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
+              {/* Demoted beneath the real per-point verdicts above (I6, US-013):
+                  a bare identifier is what this backend had before it could
+                  actually say what happened to each point. Kept, not removed,
+                  because a legacy item with no `question_result_points` rows
+                  at all still has `matchedPointIds` and nothing else. */}
+              {detail.matchedPointIds.length > 0 ? (
+                <section className="flex flex-col gap-1.5">
+                  <div className="text-eyebrow text-ink-faint">
+                    Matched mark-scheme point identifiers
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {detail.matchedPointIds.map((id) => (
+                      <Chip key={id} tone="neutral">
+                        {id}
+                      </Chip>
+                    ))}
+                  </div>
+                </section>
+              ) : detail.points.length === 0 ? (
+                <section className="flex flex-col gap-1.5">
+                  <div className="text-eyebrow text-ink-faint">
+                    Matched mark-scheme point identifiers
+                  </div>
+                  <p className="text-body-md text-ink-faint m-0">No points matched.</p>
+                </section>
+              ) : null}
+
+              <SelfReviewPoints points={detail.points} />
+
+              {/* Integrity flag: distinct, non-inflammatory, dismiss-only on this item */}
+              {integrity ? (
+                <section className="border border-warn rounded-lg p-[18px] bg-warn-wash flex flex-col gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <Flag weight="fill" className="w-[18px] h-[18px] text-warn flex-none" aria-hidden />
+                    <div className="font-medium text-body-md text-ink">Flagged: {reasonLabel(detail.reason)}</div>
+                  </div>
+                  <p className="text-body-sm text-ink-muted leading-[1.5] m-0 text-pretty">
+                    This is a signal for you to look at, not a conclusion about the student. If you
+                    dismiss it, nothing about this flag reaches the student: dismissing never touches
+                    their mark or their result.
+                  </p>
+                  {detail.status === "open" ? (
+                    <DismissForm itemId={detail.itemId} onDone={goNext} />
+                  ) : (
+                    <div className="text-body-sm text-ink-faint">
+                      {detail.status === "dismissed" ? "Dismissed" : "Resolved"}
+                      {detail.resolutionNote ? `: "${detail.resolutionNote}"` : "."}
+                    </div>
+                  )}
+                </section>
+              ) : null}
+
+              {/* Accept / adjust marks — non-integrity items only, open only */}
+              {!integrity && detail.status === "open" ? (
+                <ResolveControls detail={detail} onDone={goNext} registerAccept={registerAccept} />
+              ) : null}
+
+              {!integrity && detail.status !== "open" && detail.resolutionNote ? (
+                <div className="text-body-sm text-ink-muted">Resolution note: "{detail.resolutionNote}"</div>
+              ) : null}
+
+              {detail.isOverridden ? (
+                <section className="flex flex-col gap-3">
+                  <div className="text-display-sm">Teacher correction on record</div>
+                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2">
+                    <div className="text-display-sm">
+                      {detail.teacherAwardedMarks}
+                      <span className="text-body-md text-ink-muted">/{detail.maximumMarks ?? "—"}</span>
+                    </div>
+                    {detail.teacherNote ? (
+                      <p className="text-body-md text-ink-muted m-0 text-pretty">"{detail.teacherNote}"</p>
+                    ) : null}
+                    {detail.overriddenAt ? (
+                      <div className="text-body-sm text-ink-faint">{relativeTime(detail.overriddenAt)}</div>
+                    ) : null}
+                  </div>
+                </section>
+              ) : null}
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

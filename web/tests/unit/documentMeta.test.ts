@@ -3,7 +3,7 @@ import fs from "node:fs"
 import path from "node:path"
 import type { RouteObject } from "react-router-dom"
 
-import { appRoutes } from "@/routes"
+import { appRoutes, flattenRoutes } from "@/routes"
 import {
   DEFAULT_DESCRIPTION,
   DEFAULT_TITLE,
@@ -111,25 +111,30 @@ describe("every route names itself", () => {
 })
 
 /*
- * Task 19 (spec §4.4) · the nine signup/verify/reset/join routes' metadata.
+ * Task 19 (spec §4.4) · the signup/verify/reset/join routes' metadata.
  *
- * These nine join `/`, `/landing`, `/data`, `/login` and `/login/parent` as
- * the only routes in the product a signed-out reader can reach, so — unlike
- * every authenticated screen this file's other tests only require a title
- * from — each of the nine must carry a real `description` too (P6.5, above).
- * And because `deps.py` wires `MockEmailProvider` unconditionally, the same
- * finding `routes.tsx` already records for `MockSmsProvider` on
- * `/login/parent`, not one of the nine may claim a mail or a text was sent.
- * The banned-claim assertion below is deliberately literal, matching
- * `marketing.test.ts`'s own approach to the identical kind of risk: the
- * failure mode is not a wrong word, it is a plausible sentence about a
- * delivery nothing in this codebase performs.
+ * These join `/`, `/landing`, `/data` and `/login` as the only routes in the
+ * product a signed-out reader can reach, so — unlike every authenticated
+ * screen this file's other tests only require a title from — each of them
+ * must carry a real `description` too (P6.5, above). And because `deps.py`
+ * wires `MockEmailProvider` unconditionally, not one of them may claim a
+ * mail or a text was sent. The banned-claim assertion below is deliberately
+ * literal, matching `marketing.test.ts`'s own approach to the identical kind
+ * of risk: the failure mode is not a wrong word, it is a plausible sentence
+ * about a delivery nothing in this codebase performs.
+ *
+ * Originally nine, and `/login/parent` sat beside them in this same list
+ * (the phone-OTP parent login, its own `MockSmsProvider` finding recorded
+ * where that route used to be defined in `routes.tsx`). The parent-invites
+ * design (superseding D3.11) retired that route and added a tenth here in
+ * its place: `/signup/parent`, the child-issued invite's own signup screen.
  */
-describe("the nine signup/verify/reset/join routes carry honest metadata — Task 19", () => {
+describe("the signup/verify/reset/join routes carry honest metadata — Task 19", () => {
   const NEW_PATHS = [
     "/signup",
     "/signup/student",
     "/signup/teacher",
+    "/signup/parent",
     "/verify-email",
     "/verify-email/:token",
     "/reset",
@@ -138,29 +143,31 @@ describe("the nine signup/verify/reset/join routes carry honest metadata — Tas
     "/join/:code",
   ]
 
-  /** Each of the nine, resolved to its `PageMeta`. Throws rather than
+  /** Each of the ten, resolved to its `PageMeta`. Throws rather than
    * returning `undefined` for a missing route, so a route that Task 19
    * failed to register fails every test below with a clear cause instead of
    * a downstream `Cannot read properties of undefined`. */
   const metaFor = (path: string): { title: string; description?: string } => {
-    const route = appRoutes.find((r) => r.path === path)
+    const route = flattenRoutes(appRoutes).find((r) => r.path === path)
     if (!route) throw new Error(`${path} is not mounted`)
     const handle = route.handle
     if (!isPageMeta(handle)) throw new Error(`${path} has no valid PageMeta handle`)
     return handle
   }
 
-  it("mounts all nine as leaf routes with a valid PageMeta handle", () => {
+  it("mounts all ten as leaf routes with a valid PageMeta handle", () => {
     const found = leafRoutes()
       .filter(({ path }) => NEW_PATHS.includes(path))
       .map(({ path }) => path)
     expect(found.sort()).toEqual([...NEW_PATHS].sort())
     for (const path of NEW_PATHS) {
-      expect(isPageMeta(appRoutes.find((r) => r.path === path)?.handle), path).toBe(true)
+      expect(isPageMeta(flattenRoutes(appRoutes).find((r) => r.path === path)?.handle), path).toBe(
+        true,
+      )
     }
   })
 
-  it("gives every one of the nine a non-empty description", () => {
+  it("gives every one of the ten a non-empty description", () => {
     for (const path of NEW_PATHS) {
       const { description } = metaFor(path)
       expect(typeof description, `${path} has no description`).toBe("string")
@@ -183,7 +190,7 @@ describe("the nine signup/verify/reset/join routes carry honest metadata — Tas
     }
   })
 
-  it("writes no em-dash into any of the nine titles or descriptions", () => {
+  it("writes no em-dash into any of the ten titles or descriptions", () => {
     for (const path of NEW_PATHS) {
       const { title, description } = metaFor(path)
       expect(title, `${path} title`).not.toMatch(/[—–]/)
@@ -191,16 +198,16 @@ describe("the nine signup/verify/reset/join routes carry honest metadata — Tas
     }
   })
 
-  it("gives each of the nine a title distinct from the other eight", () => {
+  it("gives each of the ten a title distinct from the other nine", () => {
     const titles = NEW_PATHS.map((path) => metaFor(path).title)
     expect(new Set(titles).size).toBe(titles.length)
   })
 
   /*
    * The other direction, and the reason this describe block is not just five
-   * assertions about nine strings: a description is exactly as much a claim
+   * assertions about ten strings: a description is exactly as much a claim
    * of "this route is signed-out-reachable" as its absence is a claim of
-   * "this one is not", and only testing the nine additions would let a
+   * "this one is not", and only testing the ten additions would let a
    * tenth, accidental description slip onto an authenticated screen with
    * every test above still green. Pinned against the full leaf-route walk,
    * not a hand-picked list of "the other ones I remembered" — a route this
@@ -212,7 +219,6 @@ describe("the nine signup/verify/reset/join routes carry honest metadata — Tas
       "/landing",
       "/data",
       "/login",
-      "/login/parent",
       ...NEW_PATHS,
       "*",
     ])

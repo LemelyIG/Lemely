@@ -251,6 +251,9 @@ class ResultDTO(ApiModel):
     theory: list[TheoryQuestionDTO]
     integrity: list[IntegrityRowDTO]
     provenance: str
+    attemptId: str | None = None
+    """``attempts.id`` for a relationally-stored result; ``None`` for a
+    file-store record. Addresses the self-review routes."""
 
 
 # ── Upload + correct (self-mark) ──────────────────────────────────────────────

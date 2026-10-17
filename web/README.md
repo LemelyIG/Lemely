@@ -10,7 +10,7 @@ match the Claude Design mocks in `../design/project/`.
 - **Tailwind CSS v4** via `@tailwindcss/vite`, tokens in `src/index.css`
 - **shadcn-style owned primitives** in `src/components/ui`
 - **React Router** (`src/App.tsx`) + **TanStack Query** (`src/main.tsx`)
-- Fonts: Instrument Serif (display) · Work Sans (body) · JetBrains Mono (data)
+- Fonts: Newsreader (display) · Geist (UI + body) · JetBrains Mono (data) · Caveat (marginalia)
 - Icons: `@phosphor-icons/react`
 
 ## Run

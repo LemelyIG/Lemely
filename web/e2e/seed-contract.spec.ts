@@ -58,9 +58,11 @@ const SHAPE: Record<string, "string" | "number"> = {
   "class.joinCode": "string",
 
   ...account("students.declining"),
+  "students.declining.parentInviteCode": "string",
   ...account("students.inactive"),
   ...account("students.control"),
   ...account("students.correctedPaper"),
+  ...account("students.selfReview"),
   ...account("students.belowTarget"),
   "students.belowTarget.targetGrade": "string",
   "students.belowTarget.predictedGrade": "string",
@@ -72,20 +74,24 @@ const SHAPE: Record<string, "string" | "number"> = {
   // `expectedAtRiskReasons` is an array on all five — both are checked
   // separately below, since neither is a primitive leaf.
 
-  "parent.userId": "string",
-  "parent.phone": "string",
-  "parent.accessToken": "string",
+  ...account("parent"),
   "parent.linkedStudent": "string",
 
   // Deliberately no `emptyParent.linkedStudent` — the empty parent has no
   // linked child, and asserting one here would demand the seed fabricate it.
-  "emptyParent.userId": "string",
-  "emptyParent.phone": "string",
-  "emptyParent.accessToken": "string",
+  ...account("emptyParent"),
 
   "reviewItem.itemId": "string",
   "reviewItem.attemptId": "string",
   "reviewItem.studentKey": "string",
+  // Task #67: the second, verdict-free review-queue row. Not tied to a
+  // `students` entry, so no `account(...)` spread accompanies these two.
+  "reviewItem.legacyItemId": "string",
+  "reviewItem.legacyAttemptId": "string",
+  // Final-review coverage gap: a THIRD review-queue row carrying a marker's
+  // rationale but no verdict. Not tied to a `students` entry either.
+  "reviewItem.rationaleOnlyItemId": "string",
+  "reviewItem.rationaleOnlyAttemptId": "string",
 
   "quiz.quizId": "string",
   "quiz.assignmentId": "string",
@@ -134,9 +140,25 @@ const SHAPE: Record<string, "string" | "number"> = {
   // `weeklyXpByStudentKey` and `expectedOrderByStudentKey` are not primitive
   // leaves, and "is an object" is exactly the resolution at which an empty
   // board still looks correct. They get their own test below.
+
+  "deletion.classId": "string",
+  "deletion.className": "string",
+  ...account("deletion.student"),
+  "deletion.student.subjectCode": "string",
+  // `deletion.student.attemptIds` (an array) is not a primitive leaf — its
+  // own test below.
+  ...account("deletion.integrityStudent"),
+  "deletion.integrityStudent.subjectCode": "string",
+  "deletion.integrityStudent.attemptId": "string",
+  "deletion.integrityStudent.reviewItemId": "string",
+  ...account("deletion.remarkStudent"),
+  // `deletion.remarkStudent.attemptIds` (an array) is not a primitive leaf —
+  // its own test below.
+  "deletion.reviewItemId": "string",
+  "deletion.consolePaperId": "string",
 }
 
-/** The 16 keys `build_result_payload` returns (scripts/seed_e2e.py). */
+/** The 17 keys `build_result_payload` returns (scripts/seed_e2e.py). */
 const TOP_LEVEL_KEYS = [
   "runTag",
   "generatedAt",
@@ -154,6 +176,7 @@ const TOP_LEVEL_KEYS = [
   "practice",
   "studyPlan",
   "engagement",
+  "deletion",
 ] as const
 
 function resolve(root: unknown, dotted: string): unknown {
@@ -236,6 +259,9 @@ test("the at-risk reason arrays and the corrected-paper id keep their shapes", (
   expect(typeof resolve(seed, "students.correctedPaper.correctedPaperId")).toBe("string")
   expect(resolve(seed, "students.declining.correctedPaperId")).toBeUndefined()
 
+  expect(typeof resolve(seed, "students.selfReview.selfReviewAttemptId")).toBe("string")
+  expect(resolve(seed, "students.selfReview.expectedAtRiskReasons")).toEqual([])
+
   // The below-target student is in its OWN class, not the seeded roster class —
   // the whole reason a second class exists (see `seed.ts`). If these ever
   // become equal, `teacher-journey.spec.ts`'s roster figures are about to move.
@@ -297,4 +323,31 @@ test("the engagement group can actually carry a leaderboard-ordering assertion",
   // Three full slots is what makes the next login from any fresh browser take
   // the G-10 challenge; MAX_DEVICES is 3 (device_repo.py).
   expect(resolve(seed, "engagement.deviceLimit.deviceCount")).toBe(3)
+})
+
+test("the deletion group's attemptId arrays keep their shapes (Task 18 e2e)", () => {
+  const seed = readSeedRaw()
+
+  // `deletion.student`: four distinct papers (paper_number 1..4, oldest to
+  // newest) — `paper-deletion.spec.ts`'s P1..P4 index into this array
+  // positionally.
+  const studentAttemptIds = resolve(seed, "deletion.student.attemptIds")
+  expect(Array.isArray(studentAttemptIds), "deletion.student.attemptIds").toBe(true)
+  expect((studentAttemptIds as unknown[]).length).toBe(4)
+  for (const id of studentAttemptIds as unknown[]) {
+    expect(typeof id, "deletion.student.attemptIds entry").toBe("string")
+  }
+
+  // `deletion.remarkStudent`: one scan marked twice (R7) — two attempts
+  // sharing one `upload_id`.
+  const remarkAttemptIds = resolve(seed, "deletion.remarkStudent.attemptIds")
+  expect(Array.isArray(remarkAttemptIds), "deletion.remarkStudent.attemptIds").toBe(true)
+  expect((remarkAttemptIds as unknown[]).length).toBe(2)
+  for (const id of remarkAttemptIds as unknown[]) {
+    expect(typeof id, "deletion.remarkStudent.attemptIds entry").toBe("string")
+  }
+
+  // Kept off every other class/roster in this seed — see `seed.ts`'s own
+  // `deletion` docstring.
+  expect(resolve(seed, "deletion.classId")).not.toEqual(resolve(seed, "class.classId"))
 })

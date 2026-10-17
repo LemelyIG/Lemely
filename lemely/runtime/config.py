@@ -3,11 +3,29 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+import structlog
+from dotenv import dotenv_values
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    SecretStr,
+    model_validator,
+)
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 
 def _blank_to_none(value: object) -> object:
@@ -42,6 +60,32 @@ OptionalSecret = Annotated[SecretStr | None, BeforeValidator(_blank_to_none)]
 OptionalCredential = Annotated[str | None, BeforeValidator(_blank_to_none)]
 
 
+def _absolute_origin(value: object) -> object:
+    """Require a fully-qualified ``http(s)://host`` origin, trailing slash trimmed.
+
+    A missing scheme or host is the whole reason this validator exists. An
+    origin of ``""`` joined onto the frontend route ``/verify-email/<token>``
+    yields ``http:///verify-email/<token>`` — syntactically a URL, with an
+    empty host, and unreachable. That reached a real inbox once. Rejecting it
+    at settings-load time turns a silently broken link, discoverable only by a
+    recipient clicking it, into a startup failure naming the bad value.
+    """
+    if not isinstance(value, str):
+        return value
+    trimmed = value.strip().rstrip("/")
+    parsed = urlsplit(trimmed)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(
+            "must be an absolute origin like https://lemelyig.com "
+            f"(scheme and host both required), got {value!r}"
+        )
+    return trimmed
+
+
+#: An origin that links can be safely joined onto — see :func:`_absolute_origin`.
+AbsoluteOrigin = Annotated[str, BeforeValidator(_absolute_origin)]
+
+
 class GradioSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     host: str = "127.0.0.1"
@@ -62,17 +106,60 @@ class LoggingSettings(BaseModel):
     format: Literal["auto", "json", "console"] = "auto"
 
 
+# F1 review FIX 3 (2026-09-17): a bare ``str`` accepted a typo like "hgih"
+# silently — Pydantic's plain-string validator has no coercion error to
+# raise, ``types.ThinkingLevel`` is a case-insensitive str-enum so the SDK
+# call itself wouldn't reject it either, and the ordered gate in
+# ``lemely.io.gemini.thinking_rank`` ranks any unrecognised string as 0 (same
+# as "minimal") — so a typo would silently degrade every correction call to
+# the weakest thinking level with no error anywhere. A ``Literal`` here makes
+# config load reject it instead.
+ThinkingLevel = Literal["minimal", "low", "medium", "high"]
+
+# Typed separately from the inline dict literal below: a bare `dict[str, str]`
+# literal loses the `Literal` member type on assignment, so mypy strict
+# rejects `default_factory=lambda: {...}` inline — this annotation is what
+# lets the literal below actually type-check as `dict[str, ThinkingLevel]`.
+_THINKING_LEVEL_FOR_DEFAULTS: dict[str, ThinkingLevel] = {
+    "correction": "low",
+    "correction_borderline": "high",
+    "escalation": "high",
+    "extraction": "minimal",
+    "generation": "low",
+    # The label binder's second read of a script (lemely.io.binding.orchestrate). It
+    # runs on the same model as the first read, which goes out under "extraction"; a
+    # different thinking level here is what makes it a second opinion and not the
+    # same call again.
+    "binding_second_read": "medium",
+}
+
+
 class GeminiSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str = "gemini-2.5-flash"
     # Per-task model overrides — each falls back to `model` when unset.
-    mark_scheme_model: str | None = None
-    extraction_model: str | None = None
-    correction_model: str | None = None
-    generation_model: str | None = None
+    # F1 (Gemini 3.x migration): correction/escalation move to 3.8-flash;
+    # extraction/generation/scan_metadata move to 3.5-flash-lite (thinking_level
+    # replaces thinking_budget on these tags, see thinking_level_for below);
+    # mark_scheme_model stays on 2.5-flash (thinking_budget, D20) — its chunked
+    # parser tuning predates the 3.x migration and is out of scope here.
+    mark_scheme_model: str | None = "gemini-2.5-flash"
+    extraction_model: str | None = "gemini-3.5-flash-lite"
+    correction_model: str | None = "gemini-3.8-flash"
+    generation_model: str | None = "gemini-3.5-flash-lite"
     study_plan_model: str | None = None
-    integrity_model: str | None = None
-    scan_metadata_model: str | None = None
+    scan_metadata_model: str | None = "gemini-3.5-flash-lite"
+    # develop's self-review evidence judge. Left on the `model` fallback
+    # (``None``) as develop shipped it — F1's per-task migration predates the
+    # judge and made no ruling about it, and inventing one here would be a
+    # model choice smuggled in through a merge.
+    #
+    # `integrity_model` is deliberately NOT re-added from develop's side: F4
+    # deleted the AI-detection feature it configured, and the key is listed in
+    # `_REMOVED_CONFIG_KEYS["gemini"]` below so `lemely doctor` warns a stale
+    # config instead of the knob silently doing nothing. Taking develop's
+    # declaration back would make that entry describe a key that still exists.
+    self_review_judge_model: str | None = None
     # Escalation: re-mark with a stronger model when marker confidence is low.
     # NOTE (D2.2): this is a *budget* knob — "spend a thinking retry / a Pro call to
     # try to improve this mark before it is final". It is NOT the human-review
@@ -81,13 +168,26 @@ class GeminiSettings(BaseModel):
     # operator-tunable. The two were coincidentally equal (0.80) before D2.2 and
     # are now free to move independently: raising this one costs Gemini dollars,
     # raising that one costs teacher time.
-    escalation_model: str | None = None
+    escalation_model: str | None = "gemini-3.8-flash"
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
     # Thinking budget: map of task_tag → token budget (0 = disabled / default).
     # Mark-scheme parsing is enabled by default: the extra reasoning headroom helps
     # the model tag "any N from" pools correctly (is_optional/is_alternative), which
     # avoids spurious mark-point-sum validation failures during structured extraction.
+    # 2.5-only knob (F1): 3.x models read thinking_level_for instead.
     thinking_budget_for: dict[str, int] = Field(default_factory=lambda: {"mark_scheme": 8000})
+    # F1 (Gemini 3.x migration): 3.x models replace the numeric thinking_budget
+    # with a named thinking_level ("minimal"/"low"/"medium"/"high" — ordered
+    # weakest to strongest). Only consulted for a model `_is_3x()` reports true
+    # for (lemely.io.gemini); a 2.5 model ignores this dict entirely. Defaults:
+    # "correction" runs cheap (low); "correction_borderline" and "escalation"
+    # spend more thinking on a mark the first pass was unsure about;
+    # "generation" stays low; "extraction" defaults to "minimal", which is only
+    # honoured on 3.6-flash/3.5-flash-lite (B7) — gemini.py falls back to "low"
+    # on any other 3.x model.
+    thinking_level_for: dict[str, ThinkingLevel] = Field(
+        default_factory=lambda: dict(_THINKING_LEVEL_FOR_DEFAULTS)
+    )
     # Determinism substrate (M0.2 / #26): generation parameters that affect output
     # reproducibility and therefore must be part of the cache-key fingerprint (see
     # GeminiClient._cache_key / _resolved_gen_params). Global defaults below, with
@@ -107,8 +207,9 @@ class GeminiSettings(BaseModel):
     backoff_seconds: float = Field(default=2.0, gt=0)
     # Persistent, file-backed cumulative-USD hard cap (see lemely.io.cost_ledger).
     # Enforced across process restarts against the ledger, not a per-process global.
-    # Default is ACTIVE at $8 — this is the intended hard ceiling for unattended runs.
-    total_usd_ceiling: float | None = Field(default=8.0, ge=0)
+    # Default is ACTIVE at $14 (raised from $8 by the user 2026-09-17, F1/D4) —
+    # this is the intended hard ceiling for unattended runs.
+    total_usd_ceiling: float | None = Field(default=14.0, ge=0)
     # Cumulative-USD thresholds that emit a BUDGET_WARNING event (ntfy) exactly once.
     usd_warning_thresholds: list[float] = Field(default_factory=lambda: [4.0, 6.0])
     # Checked against the module-level process counters in lemely.io.gemini (M0.2 /
@@ -122,17 +223,57 @@ class GeminiSettings(BaseModel):
     # Left as None (no default ceiling) here: the operative value is set per-run in
     # lemely.toml by whoever is sizing that run.
     per_run_token_ceiling: int | None = None
+    # I3 (US-010, label-free half): which SecondReader variant, if any,
+    # produces ExtractedAnswer.extraction_agreement (lemely.io.second_read).
+    # "none" (default) issues no second call and leaves extraction_agreement
+    # unset on every answer -- behaviour is unchanged on every existing path.
+    # "cross_model"/"structural" are built and unit-tested but NOT YET
+    # SELECTED: the plan's AUROC selection rule (adopt whichever variant
+    # scores >= 0.70 predicting Phase-A transcription error, else keep
+    # "none") needs Phase-A transcription labels that do not exist yet
+    # (US-008, a human labelling gate). Do not flip this default without
+    # that measurement.
+    second_reader: Literal["none", "cross_model", "structural"] = "none"
+    # Model for the "cross_model" second-read variant only (plan: primary
+    # gemini-3.5-flash-lite, second gemini-3.8-flash). The "structural"
+    # variant deliberately reuses extraction_model instead -- running the
+    # SAME model as the primary, on a different prompt, is the whole point
+    # of that variant.
+    second_read_model: str | None = "gemini-3.8-flash"
+    # Spec 2026-09-26 §4-5: the I1 crop-and-re-read stage. `max_rereads_per_paper`
+    # caps the zoomed re-read calls per paper (0 disables the stage; the
+    # default keeps I1's 15). `reread_concurrency` worker threads run them;
+    # they are I/O-bound, so 4 costs nothing on one vCPU and finishes 15
+    # re-reads in ~4 rounds. `reread_budget_seconds` is the wall clock for the
+    # whole stage: no re-read STARTS after it (in-flight calls finish); 45 s
+    # is 15% of Cloud Run's 300 s request window, which bounds the student
+    # grading run end to end. `upload_concurrency` bounds the parallel Files
+    # API uploads of page images before the extraction call (§7).
+    max_rereads_per_paper: int = Field(default=15, ge=0)
+    reread_concurrency: int = Field(default=4, ge=1, le=16)
+    reread_budget_seconds: float = Field(default=45.0, gt=0, allow_inf_nan=False)
+    upload_concurrency: int = Field(default=4, ge=1, le=16)
 
     def model_for(self, task_tag: str) -> str:
-        """Resolve the Gemini model name for a task, falling back to the global default."""
+        """Resolve the Gemini model name for a task, falling back to the global default.
+
+        F1: ``correction_borderline`` (the Step-1 thinking retry) and
+        ``escalation`` (the Step-2 Pro/stronger-model retry) both resolve to
+        their own tags rather than falling through to ``correction`` — before
+        this fix the borderline retry silently fell through to the global
+        ``model`` (2.5-flash) instead of staying on the configured correction
+        model (``correction_ai.py`` Step 1/Step 2 gates, plan F1 fix (1)).
+        """
         mapping: dict[str, str | None] = {
             "mark_scheme": self.mark_scheme_model,
             "extraction": self.extraction_model,
             "correction": self.correction_model,
+            "correction_borderline": self.correction_model,
+            "escalation": self.escalation_model,
             "generation": self.generation_model,
             "study_plan": self.study_plan_model,
-            "integrity": self.integrity_model,
             "scan_metadata": self.scan_metadata_model,
+            "self_review_judge": self.self_review_judge_model,
         }
         return mapping.get(task_tag) or self.model
 
@@ -308,6 +449,19 @@ class DatabaseSettings(BaseModel):
     pool_size: int = Field(default=5, ge=1)
     max_overflow: int = Field(default=10, ge=0)
     pool_pre_ping: bool = True
+    # Seconds libpq waits for a TCP connection before giving up. Its own
+    # default is unlimited, which is the wrong failure mode for a server: a
+    # firewall or security-group change that *drops* packets (rather than
+    # refusing them) leaves every connect blocked on the OS TCP timeout, and
+    # because FastAPI runs sync routes in a bounded threadpool, a polled route
+    # like ``GET /api/health`` exhausts that pool and takes the whole app down
+    # with it. Bounding it turns the hang into a catchable OperationalError.
+    # Floor is 2, not 1: libpq silently raises any smaller value to 2, so a
+    # `1` here would quietly not mean what it says (measured: 1 -> 2.1s).
+    connect_timeout_seconds: int = Field(default=5, ge=2)
+    # Seconds to wait for a free slot in the QueuePool (SQLAlchemy's own
+    # default is 30). Same reasoning: fail fast rather than pile up.
+    pool_timeout_seconds: int = Field(default=5, ge=1)
 
 
 class SupabaseSettings(BaseModel):
@@ -387,6 +541,13 @@ class AuthSettings(BaseModel):
     # Minimum seconds between successive OTP issues for the same phone. Stops an
     # attacker resetting the attempt counter by re-requesting before lockout.
     otp_min_resend_seconds: int = Field(default=30, ge=0)
+    # Time-to-live for a pending email-channel OTP challenge (spec §4.4), in
+    # seconds — independent of the phone challenge's `otp_ttl_seconds`. Longer
+    # than the phone default: the code sits in an inbox rather than an SMS a
+    # parent is expected to act on within a minute or two. Length, attempt cap
+    # and resend cooldown are shared with the phone code (`otp_length`,
+    # `otp_max_attempts`, `otp_min_resend_seconds`).
+    email_otp_ttl_seconds: int = Field(default=600, ge=60)
     # D7.12: reuses D1.7 item 2's OTP-resend-cooldown mechanism
     # (``lemely.auth.cooldown.CooldownStore``) for the cheapest abuse shape on
     # the two *public, unauthenticated* auth routes that mint an account or
@@ -406,24 +567,319 @@ class AuthSettings(BaseModel):
 
 
 class IntegritySettings(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    plagiarism_enabled: bool = True
-    ai_detection_enabled: bool = False  # opt-in; Gemini call per question
-    plagiarism_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
-    ai_detection_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+    """Advisory integrity-check tuning.
 
-
-class StorageSettings(BaseModel):
-    """Supabase Storage settings for the student self-mark upload path (P2.5).
-
-    Overrides via ``lemely.toml`` under the ``[storage]`` section or
-    ``LEMELY_STORAGE__*`` env vars. The bucket/keys used to authenticate against
-    Storage are the same ``supabase.url``/``service_role_key`` as GoTrue.
+    F4 removed the AI-generated-answer detector and the two knobs that used
+    to gate it here: it was a zero-shot classifier with no measured
+    false-positive rate, and JCQ guidance is that such a detector must never
+    be sole evidence. Only the plagiarism check (stdlib ``difflib`` against
+    the mark scheme's model answer, no Gemini call) remains. ``lemely
+    doctor`` warns — via :func:`find_removed_config_keys` — if a
+    ``lemely.toml`` still sets either removed key.
     """
 
     model_config = ConfigDict(extra="forbid")
-    bucket: str = "uploads"
+    plagiarism_enabled: bool = True
+    plagiarism_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+
+
+class BindingSettings(BaseModel):
+    """How answers on a scanned script are tied to questions, and how far that is checked.
+
+    ``binder`` picks who decides which question an answer belongs to. ``"label"``: the
+    model lists the question labels and the writing it sees, with no question ids, and
+    ``lemely.core.label_sequence`` binds the list to the mark scheme. ``"legacy"``: the
+    model hands out the ids itself, as extraction did before the binder existed.
+
+    ``gate`` picks what the checks on a binding do. ``"enforce"``: a paper whose
+    binding cannot be trusted is held. ``"observe"``: the checks run and are
+    published in the ``binding_gate_result`` event, and nothing else changes: the
+    extraction carries no report, so no paper is held and the check made after
+    marking does not run. ``"off"``: no checks and no report.
+    With ``binder="legacy"`` and ``gate="off"`` extraction is exactly what it was
+    before either existed.
+
+    The label binder requires ``gate="enforce"``; ``"observe"`` and ``"off"`` are
+    for the legacy binder only. The gate's coverage and lost-item checks are part of
+    reading a script safely with the label binder: they are what stops a part whose
+    writing the reader lost, or listed out of place, from being published as a blank
+    or under another question. Observing is for watching the gate on the old path.
+
+    ``read_model`` is the label binder's model. It is passed on every call and is not
+    ``gemini.extraction_model``: only ``gemini-3.8-flash`` returned a usable list when
+    this was measured, and the extraction default is a cheaper model that did not.
+    ``second_read`` reads the script a second time on that model, under the task tag
+    ``binding_second_read`` (its own thinking level, see
+    ``gemini.thinking_level_for``), so that two reads can be compared and a bad first
+    read replaced. It doubles the cost of the binding step. ``retry_model`` is the model
+    the legacy binder's one retry uses.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    binder: Literal["label", "legacy"] = "label"
+    gate: Literal["enforce", "observe", "off"] = "enforce"
+    read_model: str = Field(default="gemini-3.8-flash", min_length=1)
+    second_read: bool = True
+    retry_model: str = Field(default="gemini-3.8-flash", min_length=1)
+
+    @model_validator(mode="after")
+    def _label_binder_requires_the_gate(self) -> BindingSettings:
+        if self.binder == "label" and self.gate != "enforce":
+            raise ValueError(
+                f'binder="label" cannot run with gate="{self.gate}": the label binder\'s '
+                "coverage and lost-item checks are part of reading a script safely, and "
+                "without them writing the reader lost is published as a blank answer. "
+                'Set gate="enforce", or set binder="legacy" to watch the gate '
+                '(gate="observe") or switch it off (gate="off") on the old path.'
+            )
+        return self
+
+
+@dataclass(frozen=True)
+class MarkingOptions:
+    """The marking flags every ``correct_paper`` caller forwards together.
+
+    Built by :meth:`GradingSettings.marking_options`. All three flags travel
+    in one object so a caller cannot pass one and forget the others: three of
+    six callers once passed ``equivalence_gate`` and none passed
+    ``ecf_substitution``. Defaults are off, which marks exactly as a
+    caller that sets nothing.
+
+    ``reread_substitution`` (spec 2026-09-26 §4) marks an answer on its crop
+    re-read text when the re-read disagrees with the first read; it works on
+    its own and does not depend on ``equivalence_gate``.
+    """
+
+    equivalence_gate: bool = False
+    ecf_substitution: bool = False
+    reread_substitution: bool = False
+
+
+class GradingSettings(BaseModel):
+    """Teacher grading run tuning (spec 2026-09-03 §4.2).
+
+    ``stale_run_after_seconds``: a ``teacher_papers`` row in ``processing``
+    whose ``updated_at`` is older than this is a dead run — its instance died
+    — and may be reclaimed by the next regrade. Progress is written at every
+    stage and every question, so a silent quarter-hour is not a slow run.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    stale_run_after_seconds: int = Field(default=900, ge=60)
+    # US-005b (I8 wiring): when a matched point's `calculated_answer.value`
+    # is not literally present in the student's answer/working,
+    # `_verify_calculated_answers` may consult `lemely.core.equivalence` as
+    # a fallback before rejecting it. Defaults False -- with it off, the
+    # golden marking path is byte-identical to before this flag existed.
+    # Even with it on, this story never acts on an `equal` verdict to raise
+    # a mark (D12: `auto_awardable` means "could justify", not "does");
+    # a conflict only earns extra detail in the review reason. Acting on
+    # the signal is a separate, later story.
+    #
+    # Post-whole-branch-review C1 fix: this was previously an ASPIRATIONAL
+    # claim, not an enforced one -- `equivalence_gate` was declared here but
+    # read by no `correct_paper` caller off a loaded config, so no
+    # `lemely.toml` could ever enable US-005b's marking gate (US-040).
+    # Every `correct_paper` caller now reads this field through
+    # `GradingSettings.marking_options()` (spec 2026-09-26): the CLI, both
+    # web grading flows, quiz marking, the accuracy harness and the Gradio
+    # app. `tests/test_marking_options_wiring.py` fails if a call site omits
+    # `options=`. Setting `equivalence_gate = true` changes how every one of
+    # them marks non-MCQ answers. In the deployed service it is set by
+    # `LEMELY_GRADING__EQUIVALENCE_GATE`; see `docs/ci-cd.md`.
+    equivalence_gate: bool = False
+    # I7 (US-013, D19): error-carried-forward by substitution. Defaults
+    # False, threaded INDEPENDENTLY of `equivalence_gate` above -- neither
+    # flag implies the other in this config. `ecf_substitution` has no
+    # observable effect unless `equivalence_gate` is ALSO True: the
+    # `ecf_applied` marker it sets lives on `PointVerdict`
+    # (`core/schemas.py`), and `PointVerdict`s are only populated on the
+    # verdicts marking path, which `equivalence_gate` alone controls. Post-
+    # I7-review fix A: this was previously an ASPIRATIONAL claim, not an
+    # enforced one -- `point_verdicts` is absent from the wire schema's
+    # `required` list, so a model could volunteer it unasked, and
+    # `_maybe_apply_ecf_substitution` gated only on `mark.point_verdicts`
+    # being non-empty, so `ecf_substitution=True, equivalence_gate=False`
+    # could spend an extra BILLED marking call per eligible question with
+    # its result silently discarded. `_maybe_apply_ecf_substitution` now
+    # checks `equivalence_gate` explicitly, so the claim is enforced by
+    # code, not merely by where a field happens to live.
+    #
+    # See `correction_ai._maybe_apply_ecf_substitution` for the gate/chain
+    # rules and the measured activation ceiling, published as three
+    # separate numbers rather than one (a single number invited reading a
+    # true zero as a regression): GATE population 26 points / 10 of 289
+    # committed schemes (`_ECF_MARKER_RE`); genuine CROSS-LEAF chain
+    # population 438; their INTERSECTION -- the actual number of points I7
+    # can activate on -- 0. The gated and M/A/B/C-typed populations are
+    # disjoint on this det-parsed corpus, so I7 is provably inert on it BY
+    # CONSTRUCTION; this is an input-data limit (the feature targets
+    # Gemini-parsed schemes), not a reason to widen the gate.
+    #
+    # Read by every `correct_paper` caller through `marking_options()`, the
+    # same as `equivalence_gate`. Setting it without `equivalence_gate` is
+    # legal but inert, and each process logs a `marking_flags` warning at
+    # startup when that is the case. In the deployed service it is set by
+    # `LEMELY_GRADING__ECF_SUBSTITUTION`.
+    ecf_substitution: bool = False
+    # Spec 2026-09-26 §4 (#9): when on, an answer whose crop re-read disagrees
+    # with the first read (`reread_agreement` below 0.8) is marked on the
+    # re-read text instead. Independent of `equivalence_gate`; applies to the
+    # deterministic MCQ path and the AI path alike. The review flag still
+    # fires either way -- substitution never hides a disagreement from the
+    # teacher. Off by default: it changes how papers are marked, and no
+    # accuracy evidence yet says the re-read is the better reading.
+    # Deployed, it is set by LEMELY_GRADING__REREAD_SUBSTITUTION.
+    reread_substitution: bool = False
+
+    def marking_options(self) -> MarkingOptions:
+        """Return the marking flags as the object ``correct_paper`` takes."""
+        return MarkingOptions(
+            equivalence_gate=self.equivalence_gate,
+            ecf_substitution=self.ecf_substitution,
+            reread_substitution=self.reread_substitution,
+        )
+
+
+_ECF_INERT_REASON = "ecf_substitution has no effect unless equivalence_gate is also on"
+
+
+def marking_options_from(settings: object) -> MarkingOptions:
+    """Read marking flags off an untyped or absent settings object.
+
+    For callers such as the accuracy harness, whose ``settings`` is typed
+    ``object`` and is ``None`` in unit tests. Anything without a real
+    ``GradingSettings`` at ``.grading`` yields the defaults.
+    """
+    grading = getattr(settings, "grading", None)
+    if isinstance(grading, GradingSettings):
+        return grading.marking_options()
+    return MarkingOptions()
+
+
+def marking_flags_event(
+    options: MarkingOptions,
+) -> tuple[Literal["info", "warning"], dict[str, object]]:
+    """Decide the level and fields of the startup ``marking_flags`` line.
+
+    ``ecf_substitution`` on with ``equivalence_gate`` off is a legal but
+    inert configuration: ECF is applied only on the verdicts path, which
+    the gate controls. It logs at warning level so the mismatch is visible
+    in Cloud Run logs; the process keeps running.
+    """
+    fields: dict[str, object] = {
+        "equivalence_gate": options.equivalence_gate,
+        "ecf_substitution": options.ecf_substitution,
+        "reread_substitution": options.reread_substitution,
+    }
+    if options.ecf_substitution and not options.equivalence_gate:
+        fields["ecf_inert"] = True
+        fields["reason"] = _ECF_INERT_REASON
+        return "warning", fields
+    return "info", fields
+
+
+def log_marking_flags(options: MarkingOptions) -> None:
+    """Emit one ``marking_flags`` line recording the process's marking mode."""
+    level, fields = marking_flags_event(options)
+    log = structlog.get_logger("lemely.marking")
+    getattr(log, level)("marking_flags", **fields)
+
+
+class SandboxSettings(BaseModel):
+    """The two scan-render child processes (#260; see `lemely.runtime.sandbox`).
+
+    Each worker's child runs under ``RLIMIT_DATA`` (the real bound: heap and
+    private mappings) plus a looser ``RLIMIT_AS`` backstop (address space,
+    which also counts shared libraries and reserved-but-untouched memory).
+    The extraction worker serves extraction and the upload check; the
+    interactive worker serves preview and crop. The limits and the extraction
+    timeout are set from the worst admitted scans measured inside each child
+    (Task 11; the numbers, the rule and the headroom are in the
+    ``lemely.runtime.sandbox`` docstring). The two data limits are part of
+    the 2 GiB budget's worst case, which does not fit and which the owner
+    accepted on 2026-10-05 (``docs/ci-cd.md``, "Memory budget"). The
+    timeouts bound one call, including any wait for a busy worker.
+    ``scheme_parse_timeout_seconds`` cuts a user mark-scheme parse short, on
+    both paths (memory limits do not bound pdfplumber's CPU time).
+    ``enabled=False`` runs every target in the calling process, for tests
+    that patch a library in that process; it is not a deploy knob.
+    Set in the environment as ``LEMELY_SANDBOX__<FIELD>``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    start_timeout_seconds: float = Field(default=30.0, gt=0)
+    extraction_data_limit_bytes: int = Field(default=640 * 1024 * 1024, ge=64 * 1024 * 1024)
+    extraction_address_limit_bytes: int = Field(default=768 * 1024 * 1024, ge=128 * 1024 * 1024)
+    interactive_data_limit_bytes: int = Field(default=640 * 1024 * 1024, ge=64 * 1024 * 1024)
+    interactive_address_limit_bytes: int = Field(default=768 * 1024 * 1024, ge=128 * 1024 * 1024)
+    extraction_timeout_seconds: float = Field(default=180.0, gt=0)
+    upload_check_timeout_seconds: float = Field(default=20.0, gt=0)
+    scheme_parse_timeout_seconds: float = Field(default=20.0, gt=0)
+    preview_timeout_seconds: float = Field(default=15.0, gt=0)
+    crop_timeout_seconds: float = Field(default=10.0, gt=0)
+
+    @model_validator(mode="after")
+    def _data_limits_fit_their_address_limits(self) -> SandboxSettings:
+        """``RLIMIT_DATA`` above ``RLIMIT_AS`` would make the backstop the real bound."""
+        for worker in ("extraction", "interactive"):
+            data = getattr(self, f"{worker}_data_limit_bytes")
+            address = getattr(self, f"{worker}_address_limit_bytes")
+            if data > address:
+                raise ValueError(
+                    f"sandbox.{worker}_data_limit_bytes ({data}) must not exceed "
+                    f"sandbox.{worker}_address_limit_bytes ({address})"
+                )
+        return self
+
+
+class StorageSettings(BaseModel):
+    """Object storage for uploads (P2.5) and profile pictures (spec 2026-09-03, DS7/DS12).
+
+    ``backend`` selects the implementation ``lemely.web.deps.get_storage_backend``
+    builds: ``local`` (the default — files under ``paths.output_dir/storage``,
+    for dev, compose and CI) or ``gcs`` (Google Cloud Storage via the official
+    SDK, authenticated with application-default credentials — the Cloud Run
+    runtime service account in production). Overrides via ``[storage]`` in
+    ``lemely.toml`` or ``LEMELY_STORAGE__*`` env vars.
+
+    There is no Supabase Storage backend: DS7 removed it, and #220's
+    ``provider = "supabase"`` path came off with it. The two names are
+    deliberately different — a config written for ``provider`` fails loudly
+    against ``extra="forbid"`` rather than silently selecting a backend that
+    no longer exists.
+
+    **Why the bucket defaults carry a ``lemely-`` prefix.** GCS bucket names
+    are a single *global* namespace shared by every Google Cloud customer, so
+    bare ``uploads`` and ``avatars`` are long since taken and could never be
+    created — a default that can only ever fail is worse than no default. For
+    ``local`` these are directory names under ``paths.output_dir/storage``,
+    where the prefix is merely harmless. The deployed pipeline does not rely
+    on these defaults at all: ``.github/workflows/deploy.yml`` sets
+    ``LEMELY_STORAGE__BUCKET``/``__AVATAR_BUCKET`` per environment (project id
+    + environment suffix), which is what keeps staging and production from
+    sharing one bucket.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    backend: Literal["local", "gcs"] = "local"
+    # `min_length=1` is not decoration: an unset GitHub Actions variable
+    # renders as the empty string, so a mistyped `vars.` reference in
+    # deploy.yml would otherwise boot a service that writes every object to
+    # bucket "" and fails at the first upload instead of at startup.
+    bucket: str = Field(default="lemely-uploads", min_length=1)
     signed_url_ttl_seconds: int = Field(default=3600, ge=1)
+    # Profile pictures (student/teacher avatars) live in their own bucket,
+    # separate from `bucket` (self-mark scans/mark schemes) — the two have
+    # different retention/access shapes and no reason to share a namespace.
+    avatar_bucket: str = Field(default="lemely-avatars", min_length=1)
+    avatar_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1)
+    # GCP project id for the GCS client. Optional: Application Default
+    # Credentials usually carry (or can infer) a project on their own; set
+    # this only when ADC's own inference is wrong or absent (e.g. a
+    # user-account credential with no associated quota project).
+    gcs_project: OptionalCredential = None
 
 
 class PushSettings(BaseModel):
@@ -463,6 +919,119 @@ class PushSettings(BaseModel):
     timeout_seconds: float = Field(default=10.0, gt=0)
 
 
+class NotificationsSettings(BaseModel):
+    """The in-process notification sweeper (push-delivery spec §4).
+
+    Overrides via ``lemely.toml`` under the ``[notifications]`` section or
+    ``LEMELY_NOTIFICATIONS__*`` env vars.
+
+    ``create_app`` starts one asyncio task that, every ``sweep_poll_seconds``,
+    runs the three jobs in :mod:`lemely.web.scheduled_notifications` — due
+    announcements, ``streak_warning``, ``study_plan_reminder`` — each wrapped
+    so a job that throws is a logged warning and the other two still run.
+
+    **``sweeper_enabled`` is ``False`` under test** (``tests/conftest.py``
+    sets the env var for the whole suite) so the suite never races a
+    background task; the default is ``True`` because a deployment that forgot
+    to enable it would silently deliver nothing on a timer.
+
+    The two hours are civil hours **in each recipient's own zone**
+    (``users.timezone``, spec §3), never the server's: a student in Los
+    Angeles is warned at their 19:00, not Cairo's.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    sweeper_enabled: bool = True
+    # How often the sweep loop runs. A minute is fine-grained enough for a
+    # 19:00 warning and coarse enough that an idle deployment does almost
+    # nothing between ticks (the per-zone memo skips a zone once it is done).
+    sweep_poll_seconds: int = Field(default=60, ge=1)
+    # ``streak_warning`` fires once the recipient's local time is at or past
+    # this hour (spec §2: late enough that "nothing logged today" is true of
+    # most of the day, early enough to act on).
+    streak_warning_hour: int = Field(default=19, ge=0, le=23)
+    # ``study_plan_reminder`` fires once the recipient's local time is at or
+    # past this hour, for every incomplete session dated today.
+    study_plan_reminder_hour: int = Field(default=8, ge=0, le=23)
+
+
+class EmailSettings(BaseModel):
+    """Transactional-email credentials for the account-lifecycle mails (D7.7).
+
+    Overrides via ``lemely.toml`` under the ``[email]`` section or
+    ``LEMELY_EMAIL__*`` env vars.
+
+    **``api_key`` defaults to ``None`` and that is a supported state, not a
+    misconfiguration**, exactly as :class:`PushSettings` treats its VAPID keys:
+    with no key, ``lemely.web.deps`` wires
+    :class:`~lemely.auth.email.MockEmailProvider` and signup still completes —
+    the link is logged instead of posted. Every developer machine and every CI
+    run is in that state, so treating absence as an error would fail the suite
+    in exactly the environment it runs in.
+
+    **Why Resend and not Cloudflare.** The domain's DNS is on Cloudflare and the
+    SPF/DKIM/DMARC records that authorise this sender live in that zone (see
+    ``docs/email-delivery.md``), but Cloudflare Email Sending is *not available*
+    on the Workers Free plan — only inbound Email Routing is, plus outbound to
+    addresses already verified inside the account, which a stranger signing up
+    never is. Resend's free tier (3,000 mails/month, 100/day) covers the same
+    ground at no cost. The transport is a detail behind
+    :class:`~lemely.auth.email.EmailProvider`; the ``From:`` domain the
+    recipient sees is ``lemelyig.com`` either way.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    # Resend API key (``re_...``). Absent => the mock provider, see above. Never
+    # commit this. Deployed it arrives from the ``RESEND_API_KEY`` GitHub
+    # Actions environment secret, which ``deploy.yml`` hands to Cloud Run as
+    # ``LEMELY_EMAIL__API_KEY``; locally, export that variable in the shell.
+    api_key: OptionalSecret = None
+    # Public origin of the SPA that the emailed links point at. Required
+    # because AuthService mints links as *frontend routes*, not URLs:
+    # ``_mint_verification_link`` returns ``/verify-email/<token>``, which the
+    # SPA can navigate to directly but which is meaningless in an inbox — a
+    # mail client resolving that root-relative href against no base produced
+    # ``http:///verify-email/<token>``, an unreachable URL with an empty host.
+    # A real provider therefore joins this origin onto the link before sending.
+    # It lives here rather than in ``[auth]`` because the emailed mail is its
+    # only consumer; the dev link returned through the API stays relative,
+    # which is what the SPA wants. ``deploy.yml`` sets it per environment
+    # (staging.lemelyig.com vs lemelyig.com) rather than leaning on this
+    # default, so a misconfigured staging cannot mail production links.
+    app_base_url: AbsoluteOrigin = "https://lemelyig.com"
+    # Envelope sender. Must be on a domain verified with the provider *and*
+    # carrying this sender's SPF/DKIM records in the Cloudflare zone, or mail is
+    # rejected outright rather than merely landing in spam.
+    from_address: str = "noreply@lemelyig.com"
+    # Display name shown beside the address in a recipient's client.
+    from_name: str = "Lemely"
+    # Where a recipient's reply goes. ``None`` means replies return to
+    # ``from_address`` — an unattended mailbox, which is why this is worth
+    # setting to a real inbox once one exists.
+    reply_to: OptionalCredential = None
+    # Per-request timeout. Short on purpose: verification mail is a best-effort
+    # side effect of an already-created account (``AuthService`` rule 4 — see
+    # ``_try_send_verification``), and must never make a signup hang.
+    timeout_seconds: float = Field(default=10.0, gt=0)
+    # Base URL of the Resend REST API. A field rather than a constant purely so
+    # a test can point it at a local stub without monkeypatching the module.
+    api_base_url: str = "https://api.resend.com"
+
+
+class _RemovedKeysDotEnvSource(DotEnvSettingsSource):
+    """pydantic-settings' ``.env`` source minus every F4-removed key.
+
+    The same filter :func:`_pop_removed_env_vars` applies to ``os.environ``
+    and :func:`_drop_removed_config_keys` applies to TOML, on the third
+    source ``Settings`` reads (spec 2026-09-26 §11, #6). Keys arrive
+    lower-cased under ``case_sensitive=False``, hence the ``.upper()``.
+    """
+
+    def _load_env_vars(self) -> Mapping[str, str | None]:
+        lookup = _removed_env_var_lookup()
+        return {k: v for k, v in super()._load_env_vars().items() if k.upper() not in lookup}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LEMELY_",
@@ -482,8 +1051,13 @@ class Settings(BaseSettings):
     accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()
     det_parser: DetParserSettings = DetParserSettings()
     integrity: IntegritySettings = IntegritySettings()
+    binding: BindingSettings = BindingSettings()
+    grading: GradingSettings = GradingSettings()
+    sandbox: SandboxSettings = SandboxSettings()
     storage: StorageSettings = StorageSettings()
     push: PushSettings = PushSettings()
+    notifications: NotificationsSettings = NotificationsSettings()
+    email: EmailSettings = EmailSettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()
     auth: AuthSettings = AuthSettings()
@@ -511,7 +1085,17 @@ class Settings(BaseSettings):
         # Precedence: env > .env > init (which we use for TOML) > file-secrets > defaults
         return (
             env_settings,  # highest: LEMELY_* env vars
-            dotenv_settings,  # .env file
+            # .env file, minus F4-removed keys. Built from `dotenv_settings`'
+            # own resolved `env_file`/`env_file_encoding` (rather than letting
+            # `_RemovedKeysDotEnvSource` re-derive them from `settings_cls`
+            # alone) so a caller that overrides either via
+            # ``Settings(_env_file=..., _env_file_encoding=...)`` keeps
+            # working through this source too.
+            _RemovedKeysDotEnvSource(
+                settings_cls,
+                env_file=getattr(dotenv_settings, "env_file", None),
+                env_file_encoding=getattr(dotenv_settings, "env_file_encoding", None),
+            ),
             init_settings,  # TOML payload from load_settings(**toml_data)
             file_secret_settings,
         )
@@ -528,6 +1112,165 @@ def _discover_toml(cwd: Path) -> Path | None:
     return None
 
 
+# F4-removed keys, by the TOML section they used to live under. Every
+# settings model in this file uses ``extra="forbid"``, so — without the carve
+# out below — a stale ``lemely.toml``, environment variable, or ``.env`` line
+# that still sets one of these would fail ``Settings(...)`` with a bare Pydantic
+# ValidationError that does not say *why*, for every single caller of
+# ``load_settings`` (the CLI, the web app, every test that loads real
+# config), not just ``lemely doctor``. These keys are dropped silently before
+# validating, from every one of the three sources: the TOML dict
+# (:func:`_drop_removed_config_keys`), the environment
+# (:func:`_pop_removed_env_vars`, used by ``load_settings``), and the
+# ``.env`` file (:class:`_RemovedKeysDotEnvSource`, wired into every
+# :class:`Settings` construction via ``settings_customise_sources``, not
+# just ``load_settings``) — so a still-shipped config with one of them
+# keeps working exactly as it did before F4 removed the feature, however it
+# was supplied. ``lemely doctor`` is what surfaces the fact via
+# :func:`find_removed_config_keys`, reading the raw TOML and the raw
+# environment before either drop happens, so a developer actually learns
+# their config is stale instead of the key silently doing nothing forever.
+# All three supply paths (TOML, env var, ``.env``) get the same outcome
+# deliberately: a user who moved a setting from ``lemely.toml`` into
+# ``LEMELY_INTEGRITY__AI_DETECTION_ENABLED``
+# after upgrading deserves the same warning as one who left it in the file,
+# not a crash one way and a silent no-op the other.
+_REMOVED_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
+    "gemini": ("integrity_model",),
+    "integrity": ("ai_detection_enabled", "ai_detection_threshold"),
+}
+
+
+def _removed_env_var_name(section: str, key: str) -> str:
+    """The ``LEMELY_<SECTION>__<KEY>`` env var name for a removed TOML key.
+
+    Matches ``Settings.model_config``'s ``env_prefix="LEMELY_"`` and
+    ``env_nested_delimiter="__"`` — the same nesting scheme every other
+    section (e.g. ``LEMELY_GEMINI__CORRECTION_MODEL``) already uses.
+    """
+    return f"LEMELY_{section.upper()}__{key.upper()}"
+
+
+def _removed_env_var_lookup() -> dict[str, tuple[str, str]]:
+    """Map every removed key's uppercased env var name to its ``(section, key)``."""
+    return {
+        _removed_env_var_name(section, key): (section, key)
+        for section, keys in _REMOVED_CONFIG_KEYS.items()
+        for key in keys
+    }
+
+
+def _load_toml(toml_path: Path | None, cwd: Path | None) -> dict[str, Any] | None:
+    cwd = cwd or Path.cwd()
+    toml = toml_path if toml_path is not None else _discover_toml(cwd)
+    if toml is None:
+        return None
+    try:
+        import tomllib  # Python 3.11+
+    except ModuleNotFoundError:  # pragma: no cover
+        import tomli as tomllib  # type: ignore[no-redef]
+    with toml.open("rb") as fh:
+        return dict(tomllib.load(fh))
+
+
+def _drop_removed_config_keys(toml_data: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``toml_data`` with every F4-removed key deleted.
+
+    Only the affected sections are copied (shallow); everything else is
+    shared with the input, which is fine because nothing here mutates it.
+    """
+    result = dict(toml_data)
+    for section, keys in _REMOVED_CONFIG_KEYS.items():
+        section_data = result.get(section)
+        if isinstance(section_data, dict):
+            section_copy = dict(section_data)
+            for key in keys:
+                section_copy.pop(key, None)
+            result[section] = section_copy
+    return result
+
+
+def find_removed_config_keys(
+    *, toml_path: Path | None = None, cwd: Path | None = None
+) -> list[str]:
+    """Return dotted ``section.key`` names for F4-removed keys set via TOML, env vars or ``.env``.
+
+    Reads the TOML file, ``os.environ`` and the ``.env`` file directly,
+    without constructing a :class:`Settings`. Returns an empty list when no
+    removed key is set any of those ways. A key set in more than one place is
+    reported once. The ``.env`` file, if any, is the one named by
+    ``Settings.model_config["env_file"]`` (``None`` disables it, as the
+    suite's own ``tests/conftest.py::_disable_dotenv_file`` fixture does — see
+    :class:`_RemovedKeysDotEnvSource`, which follows the same setting) —
+    resolved against the PROCESS working directory, exactly as pydantic
+    resolves it for ``Settings`` itself, not against the ``cwd`` argument
+    above (which only steers TOML discovery).
+    """
+    found: list[str] = []
+    toml_data = _load_toml(toml_path, cwd)
+    if toml_data is not None:
+        for section, keys in _REMOVED_CONFIG_KEYS.items():
+            section_data = toml_data.get(section)
+            if not isinstance(section_data, dict):
+                continue
+            found.extend(f"{section}.{key}" for key in keys if key in section_data)
+
+    matched_upper = {name.upper() for name in os.environ}
+
+    env_file = Settings.model_config.get("env_file")
+    if env_file is not None:
+        # `env_file` is pydantic-settings' `DotenvType`: a single path, or a
+        # sequence of them (later files may override earlier ones for
+        # `Settings` itself, but for "was this key set anywhere" a plain
+        # union of the files' keys is all this check needs). A bare `str` is
+        # itself a `Sequence[str]`, so it must be checked before the
+        # sequence branch or it would be iterated character by character.
+        env_files = [env_file] if isinstance(env_file, str | os.PathLike) else env_file
+        for raw_path in env_files:
+            dotenv_path = Path(raw_path)
+            if not dotenv_path.is_absolute():
+                dotenv_path = Path.cwd() / dotenv_path
+            if dotenv_path.is_file():
+                matched_upper |= {name.upper() for name in dotenv_values(dotenv_path)}
+
+    for env_name, (section, key) in _removed_env_var_lookup().items():
+        dotted = f"{section}.{key}"
+        if env_name in matched_upper and dotted not in found:
+            found.append(dotted)
+    return found
+
+
+def _pop_removed_env_vars() -> dict[str, str]:
+    """Remove every F4-removed key's env var from ``os.environ`` and return what was popped.
+
+    Case-insensitive, matching pydantic-settings' own default env-var
+    matching (``Settings`` does not set ``case_sensitive``, so it defaults to
+    ``False``) — a lowercase or mixed-case spelling would otherwise still
+    reach ``Settings(...)`` unfiltered. Callers must restore the returned
+    mapping once the ``Settings(...)`` call this exists to protect is done;
+    see :func:`load_settings`.
+
+    This mutates the process-global ``os.environ``, which is a real, if
+    narrow, latent hazard: two concurrent ``load_settings()`` calls racing on
+    the same removed key could have the second see an already-empty
+    ``os.environ`` (nothing left to pop, so it restores nothing) while a
+    third thread constructing ``Settings()`` directly inside that window
+    would miss the var entirely. Deliberately accepted rather than engineered
+    around, because in practice this is startup-only: ``lemely.web.deps
+    .get_settings`` — the sole production caller — is ``@lru_cache(maxsize=1)``,
+    so ``load_settings()`` itself runs at most once per process; the CLI's
+    call sites are single-threaded. The blast radius if the race were ever
+    hit is also bounded to exactly the keys this mechanism exists to
+    discard — nothing else can be affected.
+    """
+    lookup = _removed_env_var_lookup()
+    popped: dict[str, str] = {}
+    for name in list(os.environ):
+        if name.upper() in lookup:
+            popped[name] = os.environ.pop(name)
+    return popped
+
+
 def load_settings(*, toml_path: Path | None = None, cwd: Path | None = None) -> Settings:
     """Load Settings with precedence: env > .env > TOML > defaults.
 
@@ -535,14 +1278,11 @@ def load_settings(*, toml_path: Path | None = None, cwd: Path | None = None) -> 
         toml_path: explicit TOML path (from --config). If None, discover.
         cwd: working directory for TOML discovery (defaults to Path.cwd()).
     """
-    cwd = cwd or Path.cwd()
-    toml = toml_path if toml_path is not None else _discover_toml(cwd)
-    if toml is None:
-        return Settings()
+    toml_data = _load_toml(toml_path, cwd)
+    popped_env = _pop_removed_env_vars()
     try:
-        import tomllib  # Python 3.11+
-    except ModuleNotFoundError:  # pragma: no cover
-        import tomli as tomllib  # type: ignore[no-redef]
-    with toml.open("rb") as fh:
-        toml_data = tomllib.load(fh)
-    return Settings(**toml_data)
+        if toml_data is None:
+            return Settings()
+        return Settings(**_drop_removed_config_keys(toml_data))
+    finally:
+        os.environ.update(popped_env)

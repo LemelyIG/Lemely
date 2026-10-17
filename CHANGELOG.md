@@ -25,8 +25,18 @@ this entry is the user-visible summary.
   invite or platform-admin provisioning. `school_admin` and `platform_admin` remain unobtainable by
   an anonymous caller, unchanged.
 - Email verification, gating exactly one route — submitting a paper for marking — and nothing
-  else; an unverified account can sign in, browse and upload normally *(limited: no configured mail
-  provider actually sends anything in this build — see below)*.
+  else; an unverified account can sign in, browse and upload normally.
+- **Verification and reset mail is really sent**, over Resend, from `noreply@lemelyig.com` —
+  `ResendEmailProvider` behind the existing `EmailProvider` seam. `lemely.web.deps` picks it by
+  the *presence of `[email] api_key`*, never an environment name: with no key the offline mock
+  still logs the link and the routes still return it, so local sign-up works with no mail service
+  running. Configuring a key flips both halves at once — mail sends, and the routes stop handing
+  the live link back through the API, because a verification link is a bearer credential.
+  Cloudflare Email Sending was ruled out: it is unavailable on the Workers Free plan and needs the
+  $5/month Paid plan. DNS for the sending domain still lives in the Cloudflare zone. The key
+  ships the way every other secret does — a `RESEND_API_KEY` Actions environment secret that
+  `deploy.yml` passes to Cloud Run — and leaving it unset keeps the deploy green on the mock. See
+  `docs/email-delivery.md`.
 - Password reset by email link, which revokes every outstanding token **and every signed-in
   device** on success.
 - Redeemable invite codes: a school admin can mint a seat invite, a teacher can mint a class
@@ -41,6 +51,22 @@ this entry is the user-visible summary.
 - Marketing CTAs and the login screen now point at `/signup` and `/reset` instead of dead-ending
   at `/login`.
 
+#### Parent invites replace phone sign-in
+
+- **Parent identity is now email + password, like every other role.** A parent gets an account
+  only by redeeming a child's invite: the student mints a single-use link (7-day expiry,
+  revocable) or a reusable short code (rotatable), the parent opens `/join/:code`, verifies an
+  email address with a six-digit code, sets a password, and in one call the account is created,
+  linked to the child, and signed in. `/login/parent`, the phone-OTP routes, and linking a parent
+  by phone number are all deleted. Full detail and the decision record are in
+  `BUILD/DECISIONS.md` (`D-2026-09-08`).
+- The demo parent (`parent@demo.lemely.local` / `Demo-Lemely-1!`) is created through the same
+  email signup path as the other demo roles and linked directly to the demo student, rather than
+  as a phone account — no invite is minted or redeemed for it.
+- **Kept, not deleted:** the phone-OTP seam (`SmsProvider`, `OtpChannel.phone`,
+  `AuthService.request_otp`/`verify_otp`, `users.phone`) stays in the tree for a possible future
+  paid SMS channel — it backs no route today.
+
 #### Deployment and CI/CD
 
 - Automated CI/CD: GitHub Actions deploys staging (`develop`) and production
@@ -50,16 +76,84 @@ this entry is the user-visible summary.
   migrations run as their own gated job ahead of each deploy rather than on
   container start. See [`docs/ci-cd.md`](docs/ci-cd.md).
 
+#### Push notifications delivered
+
+- Scheduled announcements are notified at their `publishAt` rather than at
+  create time: `announcements.notified_at` records the fan-out, and an
+  in-process sweeper claims due rows `FOR UPDATE SKIP LOCKED` and stamps them
+  after the send.
+- `streak_warning` (19:00) and `study_plan_reminder` (08:00) are sent daily,
+  each in the recipient's own time zone; idempotency is the existing unique
+  index on `notifications`, not a new table.
+- Per-user time zones: `users.timezone`, auto-detected from the device at boot
+  and overridable in Profile settings (`PUT /api/me/timezone`). Quiet hours,
+  streak days, the XP daily cap and the at-risk day follow it; the leaderboard
+  week and the profile week window stay global on purpose.
+- `[notifications]` settings (`sweeper_enabled`, `sweep_poll_seconds`, the two
+  trigger hours); the sweeper is off under test.
+- `lemely push-keygen` generates a VAPID keypair; `lemely doctor` reports
+  whether push is available; `deploy.yml` reads the keys from a repository
+  variable and secret and tolerates their absence. `docs/push-notifications.md`
+  covers generating, placing, verifying and rotating (rotation invalidates
+  every stored subscription).
+- Teacher and parent inboxes (`/teacher/notifications`, `/parent/notifications`)
+  for `at_risk_alert`, with unread counts in the nav; pushes now open the
+  screen each type is about.
+- The teacher announcements screen no longer says students cannot see
+  announcements. *Limited, still:* at-risk rule 3 (>=14 days inactive) is not
+  delivered by anything, and on Cloud Run at `--min-instances=0` a sweep only
+  happens while an instance is running (`docs/deployment.md` section 5.2).
+
+### Fixed
+
+- **The review queue was empty for every paper uploaded through the grading console.** A paper the
+  marker flagged showed `REVIEW` on its console card while `/teacher/review` said "Nothing waiting
+  for review" — the two screens read different tables and nothing joined them. The console derives
+  its badge from `teacher_papers.report_json`; the queue lists `review_queue` rows, and the only
+  writer of those was `AttemptRepository.persist_correction`, the *student* submission path. A
+  console upload is deliberately never attributed to a student (`teacher_papers.student_id` is
+  always NULL, D1.12), so it creates no `Attempt` and could therefore never create a queue row —
+  the queue was structurally incapable of holding one. Migration `0034` gives `review_queue` a
+  second source (`teacher_paper_id` + `question_id`, `attempt_id` now nullable, with a CHECK that
+  exactly one is set), `TeacherPaperRepository.finish` writes the flagged questions in the same
+  transaction as the report, and `ReviewService` lists, resolves, dismisses and bulk-approves them
+  alongside student items. Console rows are scoped by the grading console's own paper-visibility
+  rule rather than the class roster they have no place in, and `platform_admin` stays empty-scoped
+  on both halves — this queue has no super-role bypass and adding a source did not introduce one.
+  Existing papers are not backfilled: work a teacher has already looked at should not reappear as
+  unreviewed weeks later. *Limited, still:* a console item can be accepted as-is or dismissed but
+  **not re-marked** — its marks live inside the paper's report with no `QuestionResult` row for an
+  override to be recorded on, so `resolve` with `overrideMarks` is refused (422) rather than
+  accepted and silently dropped. Re-run the paper from the console to change its marks.
+- **Verification and password-reset emails carried an unreachable link.** `AuthService` mints
+  links as frontend routes (`/verify-email/<token>`) for the SPA to navigate to, and the first
+  real provider mailed that path as-is; a recipient's mail client resolved the root-relative
+  href against no base and produced `http:///verify-email/<token>`, an empty-host URL no browser
+  can open. Emailed links are now joined onto `[email] app_base_url` before sending, set per
+  environment by `deploy.yml` so staging cannot mail production links. Settings rejects an origin
+  missing a scheme or host at load time, so the failure is now a startup error rather than a dead
+  link discovered by a recipient. Tokens already minted are unaffected — the same token works once
+  the origin is prefixed by hand.
+
 ### Known limitations, stated rather than discovered later
 
-- **No configured provider sends mail.** The email seam (`EmailProvider`, mirroring the existing
-  SMS seam) ships with only an offline mock, exactly like parent phone-OTP. No screen claims a
-  mail was sent.
+- **Transactional mail is capped by a free tier.** Sending runs on Resend's free plan — 3,000
+  mails/month, 100/day — which bounds sign-ups plus resets per day. A send that fails or is
+  throttled is swallowed by design (it must not strand a just-created account, nor break
+  anti-enumeration on reset), so the failure mode is "no mail arrived", never a failed sign-up.
+  It is logged at `ERROR` on `lemely.auth.service`, which is the thing to alert on.
 - **The sign-up/resend/reset-request cooldown is in-process and per-worker** — a real deterrent
   against casual abuse from one process, not a distributed rate limit.
 - **The invite-code *mint* action has no screen yet.** The redemption side (`/join`) is fully
   wired; a school admin or teacher can mint a code today only via a direct API call, not a button
   in the product. See `BUILD/BLOCKERS.md` B8.
+- **Parent signup is two writes, not one transaction.** `POST /api/auth/parent/signup` creates the
+  GoTrue account and then links it to the child; a failure between the two leaves an account with
+  no link. The route does not fail the request over it — the GoTrue account already exists by that
+  point, so it returns a working session and only logs a warning. The invite is not marked redeemed
+  until the link succeeds, so re-presenting the same code at `/join/:code` while signed in completes
+  it — but **no UI currently tells the parent this happened**. See `BUILD/DECISIONS.md`
+  `D-2026-09-08`.
 
 ### Changed
 

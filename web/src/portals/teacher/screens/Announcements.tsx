@@ -4,7 +4,11 @@ import { Trash } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Chip } from "@/components/ui/chip"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { initialsOf, relativeTime } from "@/lib/utils"
 import {
   useAnnouncements,
@@ -45,25 +49,24 @@ import type { Announcement } from "@/lib/teacherTypes"
  * and reports the exact rows the server says it created (`announcements`),
  * rather than claiming a send it cannot verify.
  *
- * Two things the spec asks for that are honestly absent, per D3.14 §2 — do
- * not stub either:
+ * One thing the spec asks for that is honestly absent, per D3.14 §2 — do not
+ * stub it:
  * - **No attachment.** There is no attachment column and no storage wiring.
  *   It is omitted entirely rather than rendered as a disabled upload control,
  *   the same treatment T-05's absent integrity signals got.
- * - **`publishAt` is stored but never read.** No scheduler exists; delivery is
- *   Phase 5's. The field is offered because the column is real, and it is
- *   labelled with exactly what it does and does not do. Never word it as
- *   "will be sent at".
  *
- * **Nothing delivers these to a student yet.** There is no student-facing
- * announcement surface and no notification send path (MISSION §4 puts both in
- * Phase 5). The screen says so in the composer, because a teacher who writes
- * an announcement will otherwise reasonably assume it reached someone.
+ * `publishAt` both gates visibility and schedules the notification: a dated
+ * announcement is hidden from students until that moment
+ * (`AnnouncementService.list_for_student`), and the notification sweeper
+ * fans out to the audience at that moment (`lemely/web/scheduled_notifications.py`).
+ * An undated one is visible and notified as soon as it is written. This
+ * header used to say students could not see announcements and no notification
+ * was sent; both stopped being true in Phase 5, and the sentence is corrected
+ * rather than left standing.
  *
- * The "how it appears to a student" preview is therefore rendered as exactly
- * what is stored — title, body, audience, timestamp — and captioned as a
- * preview of the record, not of a student's inbox, since no student inbox
- * design exists to preview against.
+ * The "how it appears to a student" preview is rendered as exactly what is
+ * stored — title, body, audience, timestamp — and captioned as a preview of
+ * the record, not of a student's inbox.
  */
 
 type Audience = "classes" | "school"
@@ -73,11 +76,15 @@ function AnnouncementRow({
   audienceLabel,
   onDelete,
   deleting,
+  otherDeleting,
 }: {
   announcement: Announcement
   audienceLabel: string
   onDelete: () => void
+  /** This row is the one being deleted right now. */
   deleting: boolean
+  /** A different row is being deleted, so this one must not start a second. */
+  otherDeleting: boolean
 }) {
   return (
     <li className="bg-paper-raised border border-rule rounded-lg px-4 py-3.5 flex items-start gap-3">
@@ -97,12 +104,17 @@ function AnnouncementRow({
             : ""}
         </div>
       </div>
+      {/* `loading` on the row actually being deleted, `disabled` on the rest.
+          Those are different facts and used to render identically: every row
+          greyed out at once, so the teacher could not tell which of them was
+          going, or whether anything was happening at all. */}
       <Button
         type="button"
         variant="secondary"
         size="sm"
         onClick={onDelete}
-        disabled={deleting}
+        loading={deleting}
+        disabled={otherDeleting}
         aria-label={`Delete announcement ${announcement.title}`}
       >
         <Trash size={14} aria-hidden />
@@ -189,17 +201,14 @@ export function Announcements() {
     )
   }
 
-  const announcements = announcementsQuery.data?.announcements ?? []
-
   return (
     <div className="flex flex-col gap-6 min-w-0">
       <header>
         <h1 className="text-display-md text-ink m-0">Announcements</h1>
         <p className="text-body-md text-ink-muted m-0 mt-1 max-w-[640px] text-pretty">
-          Write a note for one or more of your classes. Announcements are saved against the
-          classes you pick. <strong className="text-ink font-medium">Students cannot see them
-          yet</strong>, and no notification is sent; the student-facing surface and delivery
-          arrive in a later phase.
+          Write a note for one or more of your classes. Students see it in their announcements
+          list and get a notification. A dated announcement stays hidden and unsent until the
+          date you set.
         </p>
       </header>
 
@@ -207,28 +216,22 @@ export function Announcements() {
         onSubmit={handleSubmit}
         className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4 max-w-[720px]"
       >
-        <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-          Title
-          <input
-            required
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Thermal physics test moved to Thursday"
-            className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-          />
-        </label>
+        <Input
+          label="Title"
+          required
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="e.g. Thermal physics test moved to Thursday"
+        />
 
-        <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-          Message
-          <textarea
-            required
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={5}
-            placeholder="Plain text. Line breaks are kept as you type them."
-            className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-lg text-ink resize-y focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-          />
-        </label>
+        <Textarea
+          label="Message"
+          required
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          rows={5}
+          placeholder="Plain text. Line breaks are kept as you type them."
+        />
 
         <fieldset className="border-0 p-0 m-0 flex flex-col gap-2">
           <legend className="text-eyebrow text-ink-faint p-0 mb-1">
@@ -242,10 +245,26 @@ export function Announcements() {
               checked={audience === "classes"}
               onChange={() => setAudience("classes")}
               className="accent-accent"
+              data-kit-field="radio"
             />
             My classes
           </label>
 
+          {/*
+           * `classesQuery` and `schoolsQuery` below stay hand-rolled rather
+           * than going through `<QueryState>`. Both are small inline notes
+           * beneath a radio option (`ps-6`, one line of text at most), and
+           * `QueryStateErrorProps` has no `compact` mode — the shared
+           * `ErrorState` it renders is `state-views.tsx`'s full centred
+           * panel (icon, `py-12`, `max-w-sm`), built for a whole route or
+           * section, not a single indented helper line under a radio button.
+           * Swapping the one-line note for that panel here would be a
+           * genuine layout regression, not a style unification. Both queries
+           * are also genuinely independent of the page's main data-loading
+           * surface (`announcementsQuery` above, which does go through
+           * `<QueryState>`): the composer form works with neither loaded,
+           * it simply can't submit to that audience yet.
+           */}
           {audience === "classes" ? (
             <div className="ps-6 flex flex-col gap-1.5">
               {classesQuery.isPending ? (
@@ -281,6 +300,7 @@ export function Announcements() {
                   checked={audience === "school"}
                   onChange={() => setAudience("school")}
                   className="accent-accent"
+                  data-kit-field="radio"
                 />
                 Whole school
               </label>
@@ -293,24 +313,22 @@ export function Announcements() {
                       Couldn't load your schools: {teacherLoadFailureMessage(schoolsQuery.error)}
                     </span>
                   ) : (
-                    <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted max-w-[320px]">
-                      School
-                      <select
-                        required
-                        value={schoolId}
-                        onChange={(e) => setSchoolId(e.target.value)}
-                        className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                      >
-                        <option value="" disabled>
-                          Choose a school…
+                    <Select
+                      label="School"
+                      required
+                      value={schoolId}
+                      onChange={(e) => setSchoolId(e.target.value)}
+                      wrapperClassName="max-w-[320px]"
+                    >
+                      <option value="" disabled>
+                        Choose a school…
+                      </option>
+                      {schools.map((s) => (
+                        <option key={s.schoolId} value={s.schoolId}>
+                          {s.schoolName}
                         </option>
-                        {schools.map((s) => (
-                          <option key={s.schoolId} value={s.schoolId}>
-                            {s.schoolName}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                      ))}
+                    </Select>
                   )}
                 </div>
               ) : null}
@@ -322,19 +340,14 @@ export function Announcements() {
           </p>
         </fieldset>
 
-        <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted max-w-[280px]">
-          Date it (optional)
-          <input
-            type="datetime-local"
-            value={publishAt}
-            onChange={(e) => setPublishAt(e.target.value)}
-            className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-          />
-          <span className="text-body-sm text-ink-muted text-pretty">
-            Recorded with the announcement. It does <strong>not</strong> schedule anything. There
-            is no delivery yet, so nothing will fire at this time.
-          </span>
-        </label>
+        <Input
+          label="Date it (optional)"
+          type="datetime-local"
+          value={publishAt}
+          onChange={(e) => setPublishAt(e.target.value)}
+          hint="Hidden from students and unsent until this date and time. Leave it empty to post now."
+          wrapperClassName="max-w-[280px]"
+        />
 
         <div className="flex items-center gap-3 flex-wrap">
           <Button type="submit" variant="ink" disabled={!canSubmit || createAnnouncement.isPending}>
@@ -358,8 +371,9 @@ export function Announcements() {
         ) : null}
       </form>
 
-      {/* Preview of the stored record, deliberately not of a student's inbox —
-          no student-facing surface exists to preview against. */}
+      {/* Preview of the stored record, deliberately not of the student
+          announcements screen: that screen adds its own read state and
+          ordering, and a second rendering of it here would drift. */}
       {title.trim() || body.trim() ? (
         <section className="max-w-[720px]">
           <h2 className="text-eyebrow text-ink-faint m-0 mb-2">
@@ -380,8 +394,8 @@ export function Announcements() {
             </p>
           </div>
           <p className="text-body-sm text-ink-muted mt-1.5 m-0 text-pretty">
-            This shows what gets stored. It is not a preview of a student's view, and students have
-            no announcements surface yet.
+            This shows what gets stored. Students read it in their own announcements list, which
+            lays it out differently.
           </p>
         </section>
       ) : null}
@@ -390,32 +404,51 @@ export function Announcements() {
         <h2 className="text-eyebrow text-ink-faint m-0 mb-2.5">
           Your announcements
         </h2>
-        {announcementsQuery.isPending ? (
-          <ListSkeleton rows={4} />
-        ) : announcementsQuery.isError ? (
-          <ErrorState
-            heading="Couldn't load your announcements"
-            body={teacherLoadFailureMessage(announcementsQuery.error)}
-            action={{ label: "Retry", onClick: () => announcementsQuery.refetch() }}
-          />
-        ) : announcements.length === 0 ? (
-          <EmptyState
-            heading="Nothing written yet"
-            body="Announcements you write appear here, newest first, with the class they were saved against. You can delete one at any time."
-          />
-        ) : (
-          <ul className="flex flex-col gap-2 m-0 p-0 list-none">
-            {announcements.map((a) => (
-              <AnnouncementRow
-                key={a.announcementId}
-                announcement={a}
-                audienceLabel={audienceLabelFor(a)}
-                onDelete={() => setPendingDelete(a)}
-                deleting={deleteAnnouncement.isPending}
-              />
-            ))}
-          </ul>
-        )}
+        {/*
+         * A panel inside the composer route, not a whole screen — the
+         * page's own visible `<h1>Announcements</h1>` sits above the form,
+         * so no `srHeading` here (per the recipe, that lands on a screen
+         * that is a whole route). `isEmpty`/`empty` is safe to use, unlike
+         * `Review.tsx`/`Quizzes.tsx` above: this section's heading isn't
+         * duplicated between the empty and loaded paths, so there's no
+         * markup to keep in sync by hand.
+         */}
+        <QueryState
+          query={announcementsQuery}
+          skeleton={<ListSkeleton rows={4} />}
+          error={{
+            heading: "Couldn't load your announcements",
+            body: teacherLoadFailureMessage,
+          }}
+          isEmpty={(data) => data.announcements.length === 0}
+          empty={
+            <EmptyState
+              heading="Nothing written yet"
+              body="Announcements you write appear here, newest first, with the class they were saved against. You can delete one at any time."
+            />
+          }
+        >
+          {(data) => (
+            <ul className="flex flex-col gap-2 m-0 p-0 list-none">
+              {data.announcements.map((a) => (
+                <AnnouncementRow
+                  key={a.announcementId}
+                  announcement={a}
+                  audienceLabel={audienceLabelFor(a)}
+                  onDelete={() => setPendingDelete(a)}
+                  deleting={
+                    deleteAnnouncement.isPending &&
+                    deleteAnnouncement.variables === a.announcementId
+                  }
+                  otherDeleting={
+                    deleteAnnouncement.isPending &&
+                    deleteAnnouncement.variables !== a.announcementId
+                  }
+                />
+              ))}
+            </ul>
+          )}
+        </QueryState>
         <ConfirmModal
           open={pendingDelete !== null}
           title="Delete this announcement?"
