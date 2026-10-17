@@ -22,6 +22,8 @@ _SPEC_3_3_RUN_MANIFEST_FIELDS = {
     "split",
     "corpus_digest",
     "arm",
+    "n_cases",
+    "n_unparseable",
 }
 
 

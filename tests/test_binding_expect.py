@@ -1,0 +1,380 @@
+"""Expected shape and expected numeric values of a mark scheme leaf."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from lemely.core.binding_expect import (
+    answer_matches_only,
+    answer_shape,
+    expected_numeric_values,
+    expected_shape,
+    matches_expected,
+)
+from lemely.core.loose_schemas import MarkScheme, Question
+
+CORPUS = Path(__file__).resolve().parent.parent / "corpus" / "mark-schemes"
+
+
+def _leaves(scheme: MarkScheme) -> dict[str, Question]:
+    return {q.id: q for q in scheme.all_questions_flat() if not q.parts and q.marks > 0}
+
+
+@pytest.fixture(scope="module")
+def leaves() -> dict[str, Question]:
+    with (CORPUS / "0625_w24_ms_41.json").open() as handle:
+        return _leaves(MarkScheme.model_validate(json.load(handle)))
+
+
+def _question(points: list[dict[str, Any]], **extra: Any) -> Question:
+    return Question.model_validate(
+        {
+            "id": "1",
+            "marks": 2,
+            "type": "recall",
+            "answer_points": [{"id": f"p{i}", "marks": 1, **p} for i, p in enumerate(points)],
+            **extra,
+        }
+    )
+
+
+def test_expected_values_table_for_0625_w24_41(leaves: dict[str, Question]) -> None:
+    table = {
+        "1a_i": ["43", "63"],
+        "1a_ii": ["20"],
+        "1b": ["0.28"],
+        "1c_i": ["4.9"],
+        "1c_ii": ["3.2"],
+        "2a_i": ["1.8e5"],
+        "2a_iii": ["420"],
+        "3b_ii": ["2.2e7"],
+        "2a_ii": [],
+        "8d": ["17000"],
+        "9b": ["9.5e17"],
+        "9c_iv": ["4.5e17"],
+        "8a": [],
+        "5b": [],
+    }
+    assert {key: expected_numeric_values(leaves[key]) for key in table} == table
+
+
+def test_method_points_are_not_expected_values() -> None:
+    method = _question([{"point": "k = F / x OR (k =) F / x OR 5.6 / 20", "math_mark_type": "C"}])
+    assert expected_numeric_values(method) == []
+    mixed = _question(
+        [
+            {"point": "6 OR 7", "math_mark_type": "M"},
+            {"point": "12 N", "math_mark_type": "A"},
+        ]
+    )
+    assert expected_numeric_values(mixed) == ["12"]
+
+
+def test_calculated_answer_is_used_when_set() -> None:
+    question = _question(
+        [
+            {
+                "point": "see value",
+                "math_mark_type": "A",
+                "calculated_answer": {"value": 180000.0, "unit": "kg m/s"},
+            }
+        ]
+    )
+    assert expected_numeric_values(question) == ["180000"]
+
+
+def test_product_is_not_mistaken_for_standard_form() -> None:
+    question = _question([{"point": "2 \u00d7 1000 N", "math_mark_type": "A"}])
+    assert expected_numeric_values(question) == []
+
+
+def test_matches_expected_accepts_rounding(leaves: dict[str, Question]) -> None:
+    assert matches_expected("180,000kg m/s", leaves["2a_i"])
+    assert matches_expected("1.8 x 10^5 kg m/s", leaves["2a_i"])
+    assert matches_expected("1. 43cm 2. 63cm", leaves["1a_i"])
+    assert matches_expected("3.25 m/s²", leaves["1c_ii"])  # plain decimal, within 2%
+    # 0.6% away from 420, still no match: an integer needs an exact value.
+    assert not matches_expected("422.5 m", leaves["2a_iii"])
+    assert matches_expected("420 m", leaves["2a_iii"])
+
+
+def test_matches_expected_rejects_neighbours_and_unreadable(leaves: dict[str, Question]) -> None:
+    assert not matches_expected("20cm", leaves["1a_i"])  # a neighbour's value
+    assert not matches_expected("13m/s²", leaves["1c_ii"])
+    assert not matches_expected("area under the graph line.", leaves["2a_iii"])
+    assert not matches_expected("44000000 N/m", leaves["2a_ii"])  # nothing expected
+    assert not matches_expected("1.7 x 10^5 kg m/s", leaves["2a_i"])
+
+
+@pytest.mark.parametrize(
+    ("answer", "shape"),
+    [
+        ("1. 43cm 2. 63cm", "number"),
+        ("20cm", "number"),
+        ("0.28 N/cm", "number"),
+        ("4.9 N", "number"),
+        ("13m/s²", "number"),
+        ("180,000kg m/s", "number"),
+        ("422.5 m", "number"),
+        ("44000000 N/m", "number"),
+        ("1700 Hz", "number"),
+        ("9.5 x 10^17 km", "number"),
+        ("4.5 x 10^17 s", "number"),
+        ("the force is 4.9 N", "number"),
+        ("area under the graph line.", "text"),
+        ("iron", "text"),
+        ("curved lines from N to S pole, denser at poles", "text"),
+        ("the speed went up to 5 because the car was driven faster than before", "text"),
+        ("[drawn field lines around bar magnet]", "drawing"),
+        ("see diagram", "drawing"),
+        ("field lines from N to S", "drawing"),
+    ],
+)
+def test_answer_shape_table(answer: str, shape: str) -> None:
+    assert answer_shape(answer) == shape
+
+
+def test_expected_shape_table(leaves: dict[str, Question]) -> None:
+    table = {
+        "1a_i": "number",
+        "2a_iii": "number",
+        "2a_ii": "text",
+        "7a": "text",
+        "8c_i": "text",
+        "8a": "unknown",
+        "3c": "unknown",
+    }
+    assert {key: expected_shape(leaves[key]) for key in table} == table
+    drawing = _question(
+        [{"point": "one field line", "math_mark_type": "B"}],
+        drawing_criteria=[
+            {"id": "d1", "criterion": "outline", "requirement": "closed shape", "marks": 1}
+        ],
+    )
+    assert expected_shape(drawing) == "drawing"
+    plot = _question(
+        [{"point": "5 N", "math_mark_type": "B"}],
+        plot_requirements=[{"id": "r1", "requirement": "points plotted", "marks": 1}],
+    )
+    assert expected_shape(plot) == "drawing"
+
+
+def test_expected_values_never_raise_on_any_corpus_leaf() -> None:
+    schemes = leaves_total = non_mcq = with_values = skipped = 0
+    for path in sorted(CORPUS.rglob("*.json")):
+        try:
+            with path.open() as handle:
+                scheme = MarkScheme.model_validate(json.load(handle))
+        except (ValueError, OSError):  # not every JSON file is a scheme
+            skipped += 1
+            continue
+        schemes += 1
+        for leaf in _leaves(scheme).values():
+            leaves_total += 1
+            expected_shape(leaf)
+            values = expected_numeric_values(leaf)
+            if leaf.mcq_answer is None:
+                non_mcq += 1
+                with_values += bool(values)
+    share = with_values / non_mcq if non_mcq else 0.0
+    print(  # noqa: T201
+        f"corpus: {schemes} schemes ({skipped} skipped), {leaves_total} leaves, "
+        f"{non_mcq} non-MCQ, {with_values} with expected values ({share:.1%})"
+    )
+    assert schemes > 0
+
+
+@pytest.mark.parametrize(
+    ("point", "values"),
+    [
+        ("1220", ["1220"]),
+        ("\u221214", ["-14"]),
+        ("0.047", ["0.047"]),
+        ("2.76 \u00d7 106", ["2.76e6"]),
+        ("4100000 oe", ["4100000"]),
+        ("3.2(0)", ["3.2"]),
+        ("64.5 cm cao", ["64.5"]),
+        ("467.42 OR 467.4", ["467.42", "467.4"]),
+    ],
+)
+def test_untyped_bare_value_points_are_expected_values(point: str, values: list[str]) -> None:
+    assert expected_numeric_values(_question([{"point": point}])) == values
+    assert expected_shape(_question([{"point": point}])) == "number"
+
+
+@pytest.mark.parametrize(
+    "point",
+    [
+        "1, 2, 3, 4, 6, 12",
+        "4.15, 4.25",
+        "5.6 / 20",
+        "x = 3",
+        "area under the line",
+        "2 + 3",
+        "3 and 5",
+        "3\n5",
+        "2 pairs of equal angles oe",
+        "2 \u00d7 1000",
+    ],
+)
+def test_untyped_lists_and_expressions_are_not_expected_values(point: str) -> None:
+    assert expected_numeric_values(_question([{"point": point}])) == []
+
+
+def test_typed_method_points_still_excluded() -> None:
+    for mark in ("C", "M"):
+        assert expected_numeric_values(_question([{"point": "1220", "math_mark_type": mark}])) == []
+    # a typed A point keeps its permissive reading (list-free, units allowed)
+    assert expected_numeric_values(_question([{"point": "12 N", "math_mark_type": "A"}])) == ["12"]
+
+
+@pytest.mark.parametrize("mark", ["A", "B"])
+@pytest.mark.parametrize("point", ["2 + 3", "12 - 5", "5.6 / 20", "4.15, 4.25"])
+def test_typed_expressions_and_lists_are_not_expected_values(point: str, mark: str) -> None:
+    assert expected_numeric_values(_question([{"point": point, "math_mark_type": mark}])) == []
+
+
+@pytest.mark.parametrize(
+    ("point", "values"),
+    [
+        ("43 cm AND 63 cm", ["43", "63"]),
+        ("3.2(0) m / s2", ["3.2"]),
+        ("0.28 N / cm", ["0.28"]),
+        ("1.8 \u00d7 105 kg m / s OR 1.8 \u00d7 105 N s", ["1.8e5"]),
+        ("2.2 \u00d7 107 N m", ["2.2e7"]),
+        ("420 m", ["420"]),
+    ],
+)
+def test_typed_values_with_compound_units_still_read(point: str, values: list[str]) -> None:
+    assert expected_numeric_values(_question([{"point": point, "math_mark_type": "A"}])) == values
+
+
+def test_prose_answers_match_nothing() -> None:
+    one = _question([{"point": "1", "math_mark_type": "B"}])
+    two = _question([{"point": "2", "math_mark_type": "B"}])
+    assert not matches_expected("Fig 1 shows the spring", one)
+    assert not matches_expected("the reading increases by 2", two)
+    assert matches_expected("1", one)
+
+
+def test_decimal_comma_is_ambiguous_and_yields_no_value() -> None:
+    one = _question([{"point": "1", "math_mark_type": "B"}])
+    eight = _question([{"point": "8", "math_mark_type": "B"}])
+    for question in (one, eight):
+        assert not matches_expected("1,8 N", question)
+    assert answer_shape("1,8 N") == "text"
+    assert not matches_expected("12,5 N", _question([{"point": "12", "math_mark_type": "B"}]))
+    assert matches_expected(
+        "180,000kg m/s", _question([{"point": "1.8 \u00d7 105 kg m / s", "math_mark_type": "A"}])
+    )
+
+
+def test_number_glued_to_a_non_unit_letter_yields_no_value() -> None:
+    two = _question([{"point": "2", "math_mark_type": "B"}])
+    three = _question([{"point": "3", "math_mark_type": "B"}])
+    assert not matches_expected("2x", two)
+    assert not matches_expected("3a", three)
+    assert matches_expected("2cm", two)
+    assert matches_expected("3A", three)
+    assert matches_expected("4.9N", _question([{"point": "4.9 N", "math_mark_type": "B"}]))
+    assert matches_expected("1700 Hz", _question([{"point": "1700 Hz", "math_mark_type": "B"}]))
+
+
+def test_enumerated_answer_still_reads_both_values(leaves: dict[str, Question]) -> None:
+    assert matches_expected("1. 43cm 2. 63cm", leaves["1a_i"])
+    assert not matches_expected(
+        "1. 43cm 2. 60cm", _question([{"point": "2", "math_mark_type": "B"}])
+    )
+
+
+def test_public_functions_never_raise_on_hostile_strings() -> None:
+    numeric = _question([{"point": "4.9 N", "math_mark_type": "B"}])
+    hostile = [
+        "5 x 10" + "1" * 5000,
+        "",
+        "1" * 50_000,
+        " " * 50_000,
+        "1e999999",
+        "\u2212" * 1000,
+        "\u00d7 10" * 500,
+        "٣٤٥",
+        "\uff11\uff12\uff13",
+        "5 x 10^" + "9" * 5000,
+        "1." + "1" * 5000,
+    ]
+    for text in hostile:
+        assert answer_shape(text) in {"number", "text", "drawing", "unknown"}
+        assert isinstance(matches_expected(text, numeric), bool)
+        hostile_point = _question([{"point": text, "math_mark_type": "A"}])
+        assert isinstance(expected_numeric_values(hostile_point), list)
+        assert isinstance(expected_shape(hostile_point), str)
+
+
+def test_unicode_minus_reads_as_negative() -> None:
+    negative = _question([{"point": "-4.9 N", "math_mark_type": "B"}])
+    assert matches_expected("\u22124.9 N", negative)
+    assert not matches_expected("4.9 N", negative)
+
+
+def test_decimal_point_position_matters() -> None:
+    small = _question([{"point": "0.28", "math_mark_type": "B"}])
+    large = _question([{"point": "2.8", "math_mark_type": "B"}])
+    assert not matches_expected("0.28", large)
+    assert not matches_expected("2.8", small)
+    assert matches_expected("0.28", small)
+
+
+def test_thousands_grouped_number_with_decimals_is_not_truncated() -> None:
+    whole = _question([{"point": "1234", "math_mark_type": "B"}])
+    decimal = _question([{"point": "1234.5", "math_mark_type": "B"}])
+    assert not matches_expected("1,234.5", whole)
+    assert matches_expected("1,234.5", decimal)
+    assert matches_expected("1,234.5 m", decimal)
+    grouped = _question([{"point": "1,234.5 m", "math_mark_type": "A"}])
+    assert expected_numeric_values(grouped) == ["1234.5"]
+    big = _question([{"point": "12,345.67 kg", "math_mark_type": "A"}])
+    assert expected_numeric_values(big) == ["12345.67"]
+    assert matches_expected("12,345.67 kg", big)
+    assert not matches_expected("13,000 kg", big)
+    assert expected_numeric_values(_question([{"point": "17 000.5 s", "math_mark_type": "A"}])) == [
+        "17000.5"
+    ]
+
+
+def test_relative_tolerance_boundary() -> None:
+    question = _question([{"point": "0.28", "math_mark_type": "B"}])
+    assert matches_expected("0.2855", question)  # +1.96%
+    assert matches_expected("0.2745", question)  # -1.96%
+    assert not matches_expected("0.2857", question)  # +2.04%
+    assert not matches_expected("0.2742", question)  # -2.07%
+
+
+def test_answer_matches_only_requires_every_value_to_match() -> None:
+    nine = _question([{"point": "9.6", "math_mark_type": "A"}])
+    assert answer_matches_only("9.6", nine)
+    assert answer_matches_only("9.6 cm", nine)
+    assert not answer_matches_only("9.6 x 2 = 19.2", nine)
+    two = _question(
+        [{"point": "43", "math_mark_type": "A"}, {"point": "63", "math_mark_type": "A"}]
+    )
+    assert answer_matches_only("1. 43cm 2. 63cm", two)
+    assert not answer_matches_only("1. 43cm 2. 64cm", two)
+
+
+def test_answer_matches_only_is_false_without_values_or_a_number_shape() -> None:
+    nine = _question([{"point": "9.6", "math_mark_type": "A"}])
+    prose = _question([{"point": "It stays the same"}])
+    assert not answer_matches_only("9.6", prose)
+    assert not answer_matches_only("", nine)
+    assert not answer_matches_only("no number here", nine)
+    assert not answer_matches_only("[diagram] 9.6", nine)
+
+
+def test_answer_matches_only_never_raises_on_hostile_strings() -> None:
+    nine = _question([{"point": "9.6", "math_mark_type": "A"}])
+    for text in ["\x00", "1e999", "9.6" * 5000, "\u2212", "1,2,3,4", "٣"]:
+        assert answer_matches_only(text, nine) in (True, False)

@@ -61,6 +61,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
           aria-invalid={resolvedState === "error" || undefined}
           aria-busy={isLoading || undefined}
           aria-describedby={cn(errorId, hintId) || undefined}
+          data-kit-field="select"
           className={cn(
             "w-full appearance-none rounded-md border bg-paper-raised ps-3 pe-9 py-2 text-body-md text-ink",
             "transition-colors duration-[var(--dur-instant)] ease-out-soft",

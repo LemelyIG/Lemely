@@ -1,11 +1,17 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { ArrowClockwise, Camera, UploadSimple } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { FileDrop } from "@/components/ui/file-drop"
-import { ProcessingState, type ProcessingStage } from "@/components/ui/processing-state"
+import {
+  ProcessingState,
+  type ProcessingStage,
+} from "@/components/ui/processing-state"
+import { QueryState } from "@/components/ui/query-state"
+import { ErrorState } from "@/components/ui/state-views"
+import { QueuedBanner } from "@/components/ui/queued-banner"
 import { CameraCapture } from "@/components/CameraCapture"
 import {
   advanceStage,
@@ -18,15 +24,27 @@ import {
   correctionFailureMessage,
   STREAM_ENDED_WITHOUT_RESULT,
 } from "@/lib/correctionOutcome"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   runCorrection,
   uploadScan,
   useActiveUpload,
   useUploadRun,
 } from "@/lib/hooks/useStudentApi"
+import { useProfile } from "@/lib/hooks/useMeApi"
 import { canStartRun, runPhase } from "@/lib/uploadRun"
 import { cn } from "@/lib/utils"
-import type { QuestionResult, Result, StudentCorrectFrame } from "@/lib/studentTypes"
+import { uploadStageProgress } from "@/lib/uploadProgress"
+import { SCAN_ACCEPT, SCHEME_ACCEPT } from "@/lib/scanAccept"
+import { defaultScanSource } from "@/lib/scanSource"
+import { shouldAutoStartCamera } from "@/lib/cameraAutoStart"
+import { readSharedScan } from "@/lib/sharedScan"
+import { setHasUnsubmittedScan } from "@/lib/activeScanGuard"
+import { enqueueUpload } from "@/lib/offline/uploadQueue"
+import { shouldQueueUpload } from "@/lib/offline/queueDecision"
+import { useUploadQueue } from "@/lib/offline/useUploadQueue"
+import { randomUuid } from "@/lib/uuid"
+import type { QuestionResult, Result, StudentCorrectFrame, UploadRun } from "@/lib/studentTypes"
 import { reassure } from "../data"
 
 /** Which source the student is using to produce `scanFile`. */
@@ -112,26 +130,66 @@ type ScanSource = "file" | "camera"
  *      is going and nothing else. Ticking the three stages off again would be
  *      inventing progress, which is the one thing S-14 rules out by name.
  *   2. **It does not re-POST `/correct`.** That would start a *second* marking
- *      run over the same scan: double Gemini spend against a hard-capped
- *      budget, a second attempt row, and — because the event bus is global and
- *      single-stream — cross-talk between the two. Recovery polls; it never
- *      re-runs.
+ *      run over the same scan: Gemini paid for twice, a second attempt row,
+ *      and two runs interleaving on one stream. The bus is per-run scoped now
+ *      (DS10), but both runs would carry the *same* scope — they are the same
+ *      paper — so scoping does not separate them the way it separates two
+ *      different papers. Recovery polls; it never re-runs.
  *
  * A recovered run also unlocks the retry that could not work before: after a
  * reload there is no `File` object any more, but the server still has the scan,
  * so `canRetryInPlace` is the real test of whether marking can start, and the
  * local file is not required for it.
+ *
+ * ── PR 4 (loading-and-error-screens programme) ────────────────────────────
+ *
+ * Two things fixed here, both logged during PR 3's review and deferred to
+ * this one.
+ *
+ * 1. **The upload had nothing on screen moving.** `uploadScan` posted through
+ *    `fetch`, which cannot report upload progress, so the slowest part of this
+ *    flow — a phone photo, on a bad connection — sat under "Marking…" with
+ *    all three SSE-driven stages still pending, because none of them starts
+ *    until the file has already landed. `uploadScan` now takes an
+ *    `onProgress` callback (`lib/api.ts::uploadWithProgress`, `XMLHttpRequest`-
+ *    based specifically because `fetch` cannot do this) and a fourth stage,
+ *    `upload`, is prepended to `STAGE_ORDER` and driven from real
+ *    `xhr.upload.onprogress` bytes via `resolvePaperId` below — not from a
+ *    frame, because there is no SSE stream yet at this point in the flow.
+ *    A resumed run (`canRetryInPlace`) has no bytes to report — they moved
+ *    before this render existed — so that path marks `upload` done at once
+ *    instead of leaving it at a 0% that will never move.
+ * 2. **A failed `/student/uploads/active` check was invisible.** `active.data`
+ *    stayed `undefined` forever, `strandedId` was never set, and a genuinely
+ *    stranded run was never surfaced — no error, no retry, nothing. A compact
+ *    `ErrorState` now renders alongside the ordinary panel when `active`
+ *    errors, with its own retry; it does not replace the upload form, because
+ *    the reader must still be able to start a fresh upload while the check
+ *    for an old one is failing.
  */
 
-/** The three stages the backend's SSE frames give us real signal for. Spec
- * S-14 also lists "identifying the paper" and "analysing your weak topics" —
- * omitted here because no frame type announces the start/end of either; a
- * stage with no event that could ever move it out of "pending" would look
- * stuck rather than honest. Flagged in the P2.5.3 report as a content gap. */
-const STAGE_ORDER = ["extract", "scheme", "mark"] as const
+/**
+ * Four stages. The first, `upload`, is unlike the other three: it isn't
+ * announced by an SSE frame at all, because it runs *before* the SSE stream
+ * exists — the file has to land on the server before `/student/correct` can
+ * open one. It is driven directly from `resolvePaperId`'s own
+ * `uploadScan(..., { onProgress })` call below, off real `xhr.upload.
+ * onprogress` bytes, using the same `advanceStage`/`failActiveStage` shared
+ * with `streamCorrection`'s frame loop so both halves of this one pipeline
+ * are described by the same machinery.
+ *
+ * `extract`, `scheme` and `mark` are the three stages the backend's SSE
+ * frames give us real signal for. Spec S-14 also lists "identifying the
+ * paper" and "analysing your weak topics" — omitted here because no frame
+ * type announces the start/end of either; a stage with no event that could
+ * ever move it out of "pending" would look stuck rather than honest.
+ * Flagged in the P2.5.3 report as a content gap.
+ */
+const STAGE_ORDER = ["upload", "extract", "scheme", "mark"] as const
 type StageId = (typeof STAGE_ORDER)[number]
 
 const initialStages: ProcessingStage[] = [
+  { id: "upload", label: "Uploading your scan", status: "pending" },
   { id: "extract", label: "Reading your answers", status: "pending" },
   { id: "scheme", label: "Fetching the mark scheme", status: "pending" },
   { id: "mark", label: "Marking your questions", status: "pending" },
@@ -143,6 +201,10 @@ function describeFrame(frame: StudentCorrectFrame): string {
     case "mark_scheme_progress":
       return frame.message ?? "Resolving the mark scheme"
     case "extraction_progress":
+      return frame.message ?? "Reading your answers"
+    case "extraction_queued":
+      return frame.message ?? "Waiting for another paper to finish"
+    case "extraction_dequeued":
       return frame.message ?? "Reading your answers"
     case "marking_progress":
       if (frame.phase === "complete") {
@@ -231,14 +293,74 @@ function SourceToggle({
   )
 }
 
+/**
+ * The "a run this tab is not streaming" prose panel — a recovered run (mid-
+ * flight or stopped) that this tab did not itself drive. Reads its own phase
+ * from `run` rather than trusting a caller's already-computed one, so the
+ * transitional render (see `CorrectPaper`'s `skeleton` below, which passes
+ * `active.data` before `stranded`'s own poll has answered) and the settled
+ * one agree by construction rather than by two call sites staying in sync.
+ *
+ * Renders as prose and NOT as the stage list, because the stage list is a
+ * claim about which step the pipeline reached and this reader has no such
+ * information: the SSE frames went to a bus with no replay, and the tab that
+ * was reading them is gone. Ticking stages off from a status word would be
+ * the invented progress S-14 rules out.
+ */
+function StrandedRunPanel({ run, onRetry }: { run: UploadRun; onRetry: () => void }) {
+  const phase = runPhase(run)
+  const waiting = phase === "waiting"
+  const stopped = phase === "stopped"
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-pretty text-body-sm text-ink-muted">
+        {waiting
+          ? "This paper was already being marked when you opened this page, and it is still going. Marking carries on even if you close the tab, so you can leave this open or come back later."
+          : "This paper was being marked and the run stopped before it finished. Nothing was marked, and your scan is still here."}
+      </p>
+      {run.filename ? (
+        <p className="text-body-sm text-ink">
+          <span className="text-ink-muted">Paper</span>{" "}
+          <span className="break-words">{run.filename}</span>
+        </p>
+      ) : null}
+      {stopped ? (
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<ArrowClockwise size={16} />}
+          onClick={onRetry}
+          className="self-start"
+        >
+          Start marking again
+        </Button>
+      ) : null}
+    </div>
+  )
+}
+
 export function CorrectPaper() {
   const navigate = useNavigate()
   const [scanFile, setScanFile] = useState<File | null>(null)
   const [schemeFile, setSchemeFile] = useState<File | null>(null)
+  // Task 8 (B5b) · multi-file picker. Choosing more than one image assembles
+  // them into the same single `scanFile` the rest of this screen already
+  // knows how to handle (upload, retry-in-place, the "Scan ready" summary) —
+  // there is no second, multi-file code path downstream of this. `assembling`
+  // covers the brief async gap while `assemblePagesToPdf` runs; `scanFileError`
+  // is this field's own inline error, separate from the run-level `error`
+  // below (a bad file selection is not a failed marking run).
+  const [assemblingScan, setAssemblingScan] = useState(false)
+  const [scanFileError, setScanFileError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [stages, setStages] = useState<ProcessingStage[]>(initialStages)
   const [error, setError] = useState<string | null>(null)
-  const [scanSource, setScanSource] = useState<ScanSource>("file")
+  // Touch devices (phone, tablet) open straight to the camera — see
+  // `defaultScanSource`'s own doc for why. Lazy initializer so `matchMedia`
+  // runs once, not on every render.
+  const [scanSource, setScanSource] = useState<ScanSource>(() =>
+    defaultScanSource(window.matchMedia?.bind(window)),
+  )
   const [cameraSessionKey, setCameraSessionKey] = useState(0)
   /*
    * The uploaded paper, held past a failure so the run can be retried without
@@ -253,6 +375,12 @@ export function CorrectPaper() {
    * (M4). A run THIS tab is streaming is not one of these: `running` is true
    * for the whole of that, and the id is already in `paperId`.
    */
+  // Task 10 (B6b). Global to the queue, not this scan pick alone: a scan
+  // queued on a previous visit (or from a different screen instance) must
+  // still show the banner here, since the queue is what is actually
+  // draining it — see `useUploadQueue.ts`'s own header for the three
+  // triggers that keep it moving.
+  const uploadQueue = useUploadQueue()
   const active = useActiveUpload()
   const strandedId =
     !running && active.data && active.data.paperId !== paperId ? active.data.paperId : undefined
@@ -296,7 +424,45 @@ export function CorrectPaper() {
     setScanFile(file)
     setPaperId(null)
     setError(null)
+    setScanFileError(null)
     setStages(initialStages)
+  }
+
+  /**
+   * Task 8 (B5b). `FileDrop`'s multi-select path: 0 files clears the field,
+   * 1 behaves exactly like the single-file picker always has, and 2+ photos
+   * assemble into one PDF via the same `assemblePagesToPdf` the camera flow
+   * uses. A PDF mixed with anything else (or more than one PDF) is refused
+   * outright rather than guessed at — a "one paper per upload" mark scheme
+   * checker cannot silently decide which PDF the reader meant.
+   */
+  const chooseScanFiles = async (files: File[]) => {
+    setScanFileError(null)
+    if (files.length === 0) {
+      chooseScan(null)
+      return
+    }
+    if (files.length === 1) {
+      chooseScan(files[0])
+      return
+    }
+    if (files.some((file) => file.type === "application/pdf")) {
+      setScanFileError("Choose either one PDF or a set of photos, not both.")
+      return
+    }
+    setAssemblingScan(true)
+    try {
+      // Task 11 (B6c): dynamic, not static — see CameraCapture.tsx's own
+      // comment on its matching call for why `pdf-lib` stays out of this
+      // chunk until a multi-photo upload actually needs it.
+      const { assemblePagesToPdf } = await import("@/lib/pdf/assemblePages")
+      const assembled = await assemblePagesToPdf(files)
+      chooseScan(assembled)
+    } catch {
+      setScanFileError("Could not combine those photos into one PDF. Try again.")
+    } finally {
+      setAssemblingScan(false)
+    }
   }
 
   const chooseScanSource = (source: ScanSource) => {
@@ -305,6 +471,65 @@ export function CorrectPaper() {
     chooseScan(null)
     if (source === "camera") setCameraSessionKey((k) => k + 1)
   }
+
+  /**
+   * Web Share Target (manifest's `share_target`) AND File Handling API
+   * (manifest's `file_handlers`): both funnel through the same Cache
+   * Storage bridge (`installFileHandlerBridge`, mounted once in `main.tsx`,
+   * and `handleShareTargetFetch` in the service worker both call the same
+   * `stashSharedFile`), so `readSharedScan` here picks up a file regardless
+   * of which OS mechanism delivered it. Mount-only: a share consumed once
+   * should not keep reappearing on every later visit, which is also why
+   * `readSharedScan` deletes the cache entry it reads.
+   *
+   * Guarded by a ref, not the `let cancelled` pattern this effect used to
+   * use (A6 review fix MEDIUM 3): React 18 StrictMode's dev-only double
+   * effect invoke called `readSharedScan` twice in the same tick, and since
+   * it deletes the cache entry as part of reading it, the two invocations
+   * raced — the first read (and deleted) the real file, then discarded it
+   * because its own cleanup had already flipped `cancelled` to true by the
+   * time its promise resolved; the second found nothing left to read
+   * either way. The ref persists across both invocations of the same
+   * effect (this is the same fiber, not a real unmount/remount), so it
+   * makes sure `readSharedScan` — and the cache delete inside it — only
+   * ever runs once no matter how many times the effect itself runs.
+   */
+  const sharedScanAttempted = useRef(false)
+  useEffect(() => {
+    if (sharedScanAttempted.current) return
+    sharedScanAttempted.current = true
+    readSharedScan()
+      .then((file) => {
+        if (!file) return
+        setScanSource("file")
+        chooseScan(file)
+      })
+      .catch(() => {
+        // Best-effort, matching handleShareTargetFetch's own contract — a
+        // non-secure context (no `caches`) or any other rejection here must
+        // not surface as an unhandled promise rejection on every mount.
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /*
+   * Reports whether this screen holds a scan the reader hasn't submitted
+   * yet — read by `UpdateToast.tsx`'s "Reload" action so a reload can't
+   * silently drop a shared/launched scan that only exists in this
+   * component's own state. See `activeScanGuard.ts`'s own doc for why.
+   *
+   * Gated on `paperId === null` too, not `scanFile !== null` alone: unlike
+   * `Grading.tsx`, this screen deliberately never clears `scanFile` on a
+   * successful run (M5's retry-in-place depends on it staying set) — the
+   * guard has to release once the scan actually reaches the server, or it
+   * would latch `true` for the rest of the mount and the reload refusal
+   * would keep telling a reader to "finish" a scan whose result is already
+   * on screen.
+   */
+  useEffect(() => {
+    setHasUnsubmittedScan(scanFile !== null && paperId === null)
+    return () => setHasUnsubmittedScan(false)
+  }, [scanFile, paperId])
 
   /**
    * Drive the stream for an already-uploaded paper. Split from `runPipeline`
@@ -362,6 +587,7 @@ export function CorrectPaper() {
           theory: [],
           integrity: [],
           provenance: "",
+          attemptId: frame.attempt_id ?? null,
           questions: frame.questions ?? [],
         }
         navigate(`/student/result/${id}`, { state: assembled })
@@ -392,12 +618,64 @@ export function CorrectPaper() {
    * scan the server already has. Returns `null` when there is neither a file to
    * send nor a paper to re-mark, which is the one case the caller must not
    * start a run for.
+   *
+   * PR 4: this is also where the `upload` stage lives. `runPipeline` resets
+   * every stage to `initialStages` (all pending) before calling this, so
+   * whichever branch runs below has to give `upload` a real status of its
+   * own rather than leaving it pending — a pending stage that nothing will
+   * ever move looks stuck, which `failActiveStage`'s own "nothing had
+   * started yet" case (see `pipelineStages.ts`) already treats as a place a
+   * failure can land, and an *unstarted*-forever stage is the success-path
+   * version of that same trap.
    */
   const resolvePaperId = async (): Promise<string | null> => {
-    if (canRetryInPlace(resumableId)) return resumableId
+    if (canRetryInPlace(resumableId)) {
+      // Nothing to report: this is either a same-tab retry after the scan
+      // already landed (M5) or a stopped run recovered from another tab
+      // (P6.2). Either way the bytes moved before this render existed, so
+      // the honest reading is "already done" — a bar stuck at a dead 0%
+      // would claim a transfer is in flight that finished or never happened
+      // in this tab at all.
+      setStages((prev) => advanceStage(prev, STAGE_ORDER, "upload", undefined, true))
+      return resumableId
+    }
     if (!scanFile) return null
-    const uploaded = await uploadScan(scanFile, schemeFile ?? undefined)
-    return uploaded.paperId
+    setStages((prev) => advanceStage(prev, STAGE_ORDER, "upload", undefined, false))
+    try {
+      const uploaded = await uploadScan(scanFile, schemeFile ?? undefined, {
+        onProgress: (progress) => {
+          setStages((prev) =>
+            advanceStage(prev, STAGE_ORDER, "upload", undefined, false, uploadStageProgress(progress)),
+          )
+        },
+      })
+      setStages((prev) => advanceStage(prev, STAGE_ORDER, "upload", undefined, true))
+      return uploaded.paperId
+    } catch (err) {
+      // Task 10 (B6b): an upload that never reached the server at all —
+      // `shouldQueueUpload` is the same "status 0" test `isOfflineFailure`
+      // uses — is not a failure to report, it is a scan to remember. Queued
+      // here, not in `runPipeline`'s own catch below: only THIS call, the
+      // one that moves bytes, should ever be queued. A `streamCorrection`
+      // failure further down means the scan already reached the server, so
+      // queuing it again would duplicate the upload rather than resume it —
+      // that case keeps the ordinary failure panel (`OfflineState`, via
+      // `studentLoadFailureMessage`, where it already applies elsewhere).
+      if (shouldQueueUpload(err)) {
+        await enqueueUpload({
+          id: randomUuid(),
+          idempotencyKey: randomUuid(),
+          scan: scanFile,
+          scanName: scanFile.name,
+          markScheme: schemeFile ?? null,
+          createdAt: Date.now(),
+        })
+        uploadQueue.retry()
+        setStages(initialStages)
+        return null
+      }
+      throw err
+    }
   }
 
   const runPipeline = async () => {
@@ -414,6 +692,19 @@ export function CorrectPaper() {
       setPaperId(id)
       await streamCorrection(id)
     } catch (err) {
+      // A cancelled upload is not a failed one. `uploadWithProgress` rejects
+      // with a `DOMException` named `AbortError` (matching what an aborted
+      // `fetch` does), and that is an `Error` with a message, so without this
+      // guard `correctionFailureMessage` would fall through to its "any Error
+      // with a message" branch and print "Upload cancelled" as the reason a
+      // red cross now sits on "Uploading your scan", under a panel headed
+      // "Marking stopped". Nothing wires an `AbortSignal` through yet — see
+      // `uploadScan`'s `signal` option — so this is unreachable today and is
+      // here so that whoever adds the cancel control cannot land that bug.
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setStages(initialStages)
+        return
+      }
       const message = correctionFailureMessage(err)
       setStages((prev) => failActiveStage(prev, message))
       setError(message)
@@ -427,15 +718,25 @@ export function CorrectPaper() {
   const retryLabel = retryable ? "Start marking again" : "Try again"
   /*
    * Nothing may start a second run while one is in flight. Two runs over one
-   * scan would spend the hard-capped Gemini budget twice, write a second
-   * attempt row, and cross-talk on an event bus that is global and
-   * single-stream. The form goes read-only rather than disappearing, so the
-   * student can still see what is being marked.
+   * scan would pay Gemini twice, write a second attempt row, and interleave
+   * on one stream — per-run bus scoping (DS10) does not help here, because
+   * both runs scope to the same paper. The form goes read-only rather than
+   * disappearing, so the student can still see what is being marked.
    */
+  /*
+   * D7.5's gate, read before the run rather than after the refusal.
+   * `undefined` (profile pending, or errored) counts as allowed: the app does
+   * not know, and a verified student must not watch a dead button through a
+   * page load. If it guesses wrong the run is refused, and
+   * `correctionFailureMessage` now words that refusal properly.
+   */
+  const profile = useProfile()
+  const emailVerified = profile.data?.emailVerified !== false
   const canStart = canStartRun({
     phase,
     hasScan: Boolean(scanFile),
     hasUploadedPaper: retryable,
+    emailVerified,
   })
   const busy = running || waitingOnServer
 
@@ -448,7 +749,7 @@ export function CorrectPaper() {
         : { tone: "bg-ok", title: "Ready when you are" }
 
   return (
-    <div className="lm-screen flex flex-col gap-8">
+    <div className="flex flex-col gap-8">
       {/* §8.5's margin rule, the same single texture element the dashboard
           header carries. The Operate lane runs texture low (§13). */}
       <header className="margin-rule flex flex-wrap items-end gap-5">
@@ -484,6 +785,8 @@ export function CorrectPaper() {
         )}
       </header>
 
+      <QueuedBanner count={uploadQueue.count} onRetry={uploadQueue.retry} />
+
       <div className="grid grid-correct-cols items-start gap-6 max-tablet:grid-cols-1">
         <Card className="flex flex-col gap-6 p-6">
           <div className="flex flex-col gap-3">
@@ -498,12 +801,15 @@ export function CorrectPaper() {
                 id="scan-file"
                 label="Scanned paper"
                 labelNote="required"
-                accept="application/pdf,image/*"
+                accept={SCAN_ACCEPT}
                 file={scanFile}
                 onFileChange={chooseScan}
-                busy={busy}
+                multiple
+                onFilesChange={chooseScanFiles}
+                busy={busy || assemblingScan}
+                error={scanFileError}
                 clearLabel="Choose a different scan"
-                hint="One paper per upload. Every page of it, in order."
+                hint="One paper per upload. Choose every page's photo at once, in order - or a single PDF."
               />
             ) : busy ? (
               <div className="rounded-lg border border-rule bg-paper-sunk px-4 py-3 text-body-sm text-ink-muted">
@@ -530,6 +836,7 @@ export function CorrectPaper() {
             ) : (
               <CameraCapture
                 key={cameraSessionKey}
+                autoStart={shouldAutoStartCamera(cameraSessionKey)}
                 onComplete={chooseScan}
                 onCancel={() => chooseScanSource("file")}
                 className="border-0 bg-transparent p-0"
@@ -546,7 +853,7 @@ export function CorrectPaper() {
             id="scheme-file"
             label="Mark scheme"
             labelNote="optional"
-            accept="application/pdf,image/*"
+            accept={SCHEME_ACCEPT}
             file={schemeFile}
             onFileChange={setSchemeFile}
             busy={busy}
@@ -584,39 +891,69 @@ export function CorrectPaper() {
               <h2 className="text-display-sm text-ink">{panel.title}</h2>
             </div>
 
+            {/*
+             * PR 4, audit item deferred from PR 3: a failed `/uploads/active`
+             * check used to be silent — `active.data` stayed `undefined`
+             * forever, `strandedId` was never set, and a genuinely stranded
+             * run was never surfaced. `compact` rather than `QueryState`'s
+             * full panel: this must sit *alongside* the ordinary upload form,
+             * not replace it — the reader can still start a fresh upload
+             * while the check for an old one is failing, so this is additive
+             * the way `QueryState`'s own exclusive skeleton/error/success
+             * switch cannot render.
+             *
+             * Gated on `!running`: once this tab is streaming its own run,
+             * whether some *other* run was also active is no longer a
+             * question this screen has to answer.
+             */}
+            {active.isError && !running ? (
+              <ErrorState
+                compact
+                heading="Couldn't check for a run already in progress"
+                body={studentLoadFailureMessage(active.error)}
+                action={{ label: "Try again", onClick: () => active.refetch() }}
+              />
+            ) : null}
+
             {strandedRun ? (
-              /*
-               * A run this tab is not streaming. It renders as prose and NOT as
-               * the stage list, because the stage list is a claim about which
-               * step the pipeline reached and this reader has no such
-               * information: the SSE frames went to a bus with no replay, and
-               * the tab that was reading them is gone. Ticking stages off from
-               * a status word would be the invented progress S-14 rules out.
-               */
-              <div className="flex flex-col gap-3">
-                <p className="text-pretty text-body-sm text-ink-muted">
-                  {waitingOnServer
-                    ? "This paper was already being marked when you opened this page, and it is still going. Marking carries on even if you close the tab, so you can leave this open or come back later."
-                    : "This paper was being marked and the run stopped before it finished. Nothing was marked, and your scan is still here."}
-                </p>
-                {strandedRun.filename ? (
-                  <p className="text-body-sm text-ink">
-                    <span className="text-ink-muted">Paper</span>{" "}
-                    <span className="break-words">{strandedRun.filename}</span>
-                  </p>
-                ) : null}
-                {strandedStopped ? (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    icon={<ArrowClockwise size={16} />}
-                    onClick={runPipeline}
-                    className="self-start"
-                  >
-                    Start marking again
-                  </Button>
-                ) : null}
-              </div>
+              <QueryState
+                query={stranded}
+                /*
+                 * `useUploadRun` is `enabled: !!paperId` (see that hook), so
+                 * with no `strandedId` it sits at `pending`/`fetchStatus:
+                 * "idle"` forever — the `idle` trap `query-state.tsx`'s own
+                 * header names. Unreachable here in practice: this branch
+                 * only renders when `strandedRun` is truthy, which (see its
+                 * definition above) only happens when `strandedId` is set —
+                 * and that is exactly what enables `stranded`. `null` rather
+                 * than inventing a state nothing can put the screen into.
+                 */
+                idle={null}
+                /*
+                 * While the fresh poll for THIS `strandedId` is in flight,
+                 * `active.data` already names the same run (`strandedRun`
+                 * falls back to it above, and this branch cannot be reached
+                 * unless it is set) — shown instead of a shimmer skeleton,
+                 * exactly as the pre-`QueryState` code did by falling back to
+                 * it (`stranded.data ?? active.data`).
+                 */
+                skeleton={<StrandedRunPanel run={active.data!} onRetry={runPipeline} />}
+                error={{
+                  /*
+                   * NEW: before this conversion a failed poll here fell back
+                   * silently to `active.data` with no error shown and no way
+                   * to retry beyond a full page reload — the poll's own
+                   * `refetchInterval` kept firing, but a query that has
+                   * settled into `status: "error"` needs a manual `refetch`
+                   * to leave it, which nothing here ever called. `refetch`
+                   * on `QueryState`'s retry button is that manual kick.
+                   */
+                  heading: "Couldn't check on this run",
+                  body: studentLoadFailureMessage,
+                }}
+              >
+                {(run) => <StrandedRunPanel run={run} onRetry={runPipeline} />}
+              </QueryState>
             ) : (
               <ProcessingState
                 stages={stages}
