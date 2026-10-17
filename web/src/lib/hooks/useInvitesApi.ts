@@ -82,6 +82,18 @@ export function normalizeInviteCode(raw: string): string {
  * looking for more.
  */
 export function describeInvitePreview(preview: InvitePreview): string[] {
+  if (preview.role === "parent") {
+    // A parent invite is child-issued, never school/class-issued —
+    // `schoolName`/`className`/`teacherName` are always `null` on this
+    // branch (`InviteService.preview`'s own parent case), so `childName` is
+    // the one fact this preview has to give. The backend's own fallback to
+    // "your child" when the child has no display name (design spec §4) means
+    // `childName` is rarely actually `null` in practice, but this still
+    // handles that case honestly rather than assuming the guarantee.
+    const who = preview.childName ?? "Your child"
+    return [`${who} invited you to follow their progress on Lemely`]
+  }
+
   const lines: string[] = []
   if (preview.schoolName) lines.push(preview.schoolName)
   if (preview.className) {
@@ -112,9 +124,36 @@ export function describeInvitePreview(preview: InvitePreview): string[] {
  * the handoff is the same mechanism, not a new one. `role` comes from the
  * *preview* (what the code provisions), never from a caller's own session —
  * there is no session yet on this branch. */
-export function signupPathForInvite(code: string, role: "student" | "teacher"): string {
+export function signupPathForInvite(code: string, role: "student" | "teacher" | "parent"): string {
   return `/signup/${role}?code=${encodeURIComponent(code)}`
 }
+
+/**
+ * Whether a signed-in caller's own role can redeem an invite of `previewRole`
+ * at all, mirroring `InviteService.redeem`'s own binding rule (design spec
+ * §4): a parent invite requires a parent caller, and a parent caller can only
+ * ever redeem a parent invite. Every other combination — a teacher redeeming
+ * a student invite, e.g., D1.10's seat/school-linking case — is untouched by
+ * that rule and stays allowed, exactly as it always has been; this function
+ * only ever says `false` for the one new pairing the rule actually restricts.
+ *
+ * Checked client-side, ahead of the redeem call, so `JoinWithCodeScreen` can
+ * show a refusal line instead of a "Join now" button that would only ever
+ * 403 — the same "the client should not offer a dead end as an action"
+ * reasoning `isTerminalRedeemFailure` below already applies to the
+ * server's *response*, applied here before the request is even sent.
+ */
+export function canRedeemInviteAs(previewRole: InvitePreview["role"], signedInRole: string): boolean {
+  if (previewRole === "parent") return signedInRole === "parent"
+  return signedInRole !== "parent"
+}
+
+/** The refusal line for a signed-in visitor whose role does not match what
+ * `canRedeemInviteAs` requires — one sentence for both directions of the
+ * mismatch, rather than a matrix of role-specific wording for a pairing this
+ * screen expects to be rare. */
+export const INVITE_ROLE_MISMATCH_MESSAGE =
+  "This invite doesn't match the kind of account you're signed in with. Sign out to use a different account."
 
 /**
  * Narrows an `ApiError.detail` onto a structured seat-quota-exceeded marker,
@@ -173,15 +212,21 @@ export function redeemFailureMessage(err: unknown): string {
 /**
  * Whether retrying the exact same redeem call could ever succeed.
  *
- * 404 (the code stopped resolving between preview and redeem) and 409
- * (already redeemed by someone else, or — see above — quota) are conflicts
- * with a *fact*, not a hiccup: pressing the same button again reproduces the
- * same refusal. `JoinWithCode.tsx` reads this to decide whether "join now"
- * stays on screen (a transient network/server failure, worth another try) or
- * is replaced by "enter a different code" (it will not be).
+ * 404 (the code stopped resolving between preview and redeem), 409 (already
+ * redeemed by someone else, or — see above — quota) and 403
+ * (`InviteRoleMismatchError`, design spec §4: a parent invite redeemed by a
+ * non-parent caller or vice versa) are all conflicts with a *fact*, not a
+ * hiccup: pressing the same button again reproduces the same refusal.
+ * `JoinWithCode.tsx` reads this to decide whether "join now" stays on screen
+ * (a transient network/server failure, worth another try) or is replaced by
+ * "enter a different code" (it will not be). The 403 case is defensive here
+ * — `JoinWithCodeScreen` already hides the button entirely via
+ * `canRedeemInviteAs` before a mismatched redeem could ever be sent — but a
+ * client whose session state raced ahead of what the button reflects should
+ * still not be offered a retry that can only fail the same way again.
  */
 export function isTerminalRedeemFailure(err: unknown): boolean {
-  return err instanceof ApiError && (err.status === 404 || err.status === 409)
+  return err instanceof ApiError && (err.status === 404 || err.status === 409 || err.status === 403)
 }
 
 /** Copy for the preview-lookup failure panel (`GET /api/invites/{code}`).
@@ -217,11 +262,17 @@ export function previewErrorCopy(err: unknown): {
 
 /** What redeeming a code produced (`RedeemInviteResponseDTO`). Not in
  * `authTypes.ts` — Task 13 defined `InvitePreview` there but no redeem-result
- * type, and this hook file is not that module to extend. */
+ * type, and this hook file is not that module to extend.
+ *
+ * `childId` is the parent-invites design's addition: non-null only when
+ * `role` is `"parent"`, the id of the child the redeeming parent is now
+ * linked to — `JoinWithCodeScreen`'s signed-in-parent branch reads it to land
+ * on `/parent/children/<childId>` instead of the parent portal's own root. */
 export interface RedeemInviteResult {
-  role: "student" | "teacher"
+  role: "student" | "teacher" | "parent"
   schoolId: string | null
   classId: string | null
+  childId: string | null
 }
 
 /**

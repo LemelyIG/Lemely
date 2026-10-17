@@ -194,6 +194,13 @@ export interface Result {
   theory: TheoryQuestion[]
   integrity: IntegrityRow[]
   provenance: string
+  /**
+   * `attempts.id` for a relationally-stored result; `null` for a file-store
+   * record (mirrors `ResultDTO.attemptId`). Addresses
+   * `GET /student/attempts/{attemptId}/questions` for the history branch's
+   * per-question rows, and the self-review routes.
+   */
+  attemptId?: string | null
 }
 
 // ── Upload + correct (self-mark) ─────────────────────────────────────────
@@ -239,12 +246,50 @@ export interface CorrectRequest {
  * Per-question grading result carried in the `questions` key of the
  * `POST /student/correct` SSE completion frame (mirrors `QuestionResultDTO`
  * in `lemely/web/schemas.py`) — a flatter shape than `TheoryQuestion` above.
- * `types.ts` already declares a `QuestionResult` missing the two flag
- * fields the DTO carries, so this extends it rather than duplicating it.
+ * `types.ts` already declares a `QuestionResult` missing the flag field the
+ * DTO carries, so this extends it rather than duplicating it.
  */
 export interface QuestionResult extends BaseQuestionResult {
   plagiarismFlagged: boolean
-  aiDetectionFlagged: boolean
+  /**
+   * `question_results.id`, the address the self-review routes take
+   * (`/student/attempts/{attemptId}/questions/{questionResultId}/self-review`).
+   * Present on every question of a `/student/correct` complete frame since
+   * the self-review spec; absent on frames from before it.
+   */
+  questionResultId?: string | null
+}
+
+// ── Paper deletion (spec 2026-09-22) ──────────────────────────────────────
+
+/**
+ * One row of `GET /student/attempts/deleted` — one per upload (R7): deleting
+ * a paper deletes every marking run of that scan, and the list reflects that
+ * rather than surfacing a row per run.
+ */
+export interface DeletedPaper {
+  attemptId: string
+  paperLabel: string
+  subjectCode: string | null
+  deletedAt: string
+  restoreDeadline: string
+}
+
+/** Payload for `GET /student/attempts/deleted`. */
+export interface DeletedPapers {
+  papers: DeletedPaper[]
+  retentionDays: number
+}
+
+/**
+ * The flat 409 body `DELETE /student/attempts/{attemptId}` returns for an
+ * integrity hold (Task 8 amendment). `deletableFrom` is absent for the
+ * "only uploaded papers can be deleted" 409, which is not a hold and has
+ * nothing to count down to.
+ */
+export interface DeletionRefusal {
+  detail: string
+  deletableFrom?: string | null
 }
 
 // ── Standings ─────────────────────────────────────────────────────────────
@@ -311,6 +356,8 @@ export interface StudentCorrectFrame {
     | "gemini_retry"
     | "gemini_escalate"
     | "extraction_progress"
+    | "extraction_queued"
+    | "extraction_dequeued"
     | "marking_progress"
     | "mark_scheme_progress"
     | "budget_warning"
