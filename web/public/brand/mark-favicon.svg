@@ -5,34 +5,86 @@
   <!--
     Lemely mark, favicon cut.
 
-    Same geometry as mark.svg, but the strokes are thickened and the mark is
-    scaled to fill more of the frame. This is a genuine optical cut, not
-    laziness: mark.svg's 2px hairline on a 64-unit viewBox resolves to half a
-    physical pixel at 16x16 and disappears entirely in a browser tab. The
-    hairline/heavy contrast that carries the concept is preserved as a RATIO
-    (here 3.5 against 7) rather than as absolute widths.
+    HAND-AUTHORED, unlike its two siblings. `mark.svg` and `mark-mono.svg` are
+    written by `npm run mark` from `src/lib/brandMark.ts`; this one is not,
+    because it is a different drawing rather than a different rendering of the
+    same one. A browser tab is 16 device pixels wide, which is four units of
+    this viewBox per pixel, and at that scale most of the parent mark does not
+    shrink — it fails.
 
-    Keep in sync with mark.svg if the geometry ever changes.
+    What is dropped, and why:
 
-    P6.5 moved this comment from above the opening tag to inside it. mark.svg's
-    own comment states the reason and this file was authored after it anyway:
-    libvips (and so sharp, and so the screenshot tooling) sniffs only the first
-    bytes to detect SVG, so a long leading comment pushes `<svg` out of that
-    window and the file is rejected as an unknown format. Nothing had noticed
-    because nothing had yet asked sharp to read this particular file.
+    - The eleven lines of ruling. At 0.95 units they are under a quarter of a
+      pixel each, in a grey four steps from the paper behind them. They render
+      as nothing, or as one smear across each page, which is worse than nothing.
+    - The margin rule, for the same arithmetic at 0.8.
+    - The stack edges. Their 1-unit offsets are a quarter of a pixel, so the pad
+      cannot read; all three outlines land in the same pixel column and the
+      outer edges just go muddy.
+    - The dog-ear. The flap is about six units across, a pixel and a half, and it
+      needs its one step of tone against the page behind it to read as a fold. At
+      a pixel and a half there is no tone, only a chipped corner.
+    - The coil, as rings. At 16px a ring is four device pixels across and the
+      gap between two is one, so four of them render as a dotted bar with the
+      dots landing wherever the rounding falls — and stacked against the tick
+      they merge into a single red blob, which is what the first attempt at this
+      file did. What ships is a solid accent bar in the gutter: the same
+      silhouette at this size, without pretending to a detail that cannot
+      resolve.
+    - The two-degree tilt. It is what makes the parent a doodle at 24px and up.
+      Here it only takes the outline off the pixel grid and greys every edge.
+      The wobble left in the paths is what carries the hand at this size.
+
+    What is kept: the open notebook, an accent binding down its gutter, and the
+    tick on the left page. Three marks is the budget here — the version of this
+    file with four was unreadable. The parent's weight ratio (sheet 1.15, coil
+    1.5, tick 1.9) is preserved as 4 : 4.5 : 5.5 rather than its absolute
+    widths, which is the same argument the previous favicon cut made about its
+    own hairlines.
+
+    The gutter is off-centre, at x=35 rather than 32. The parent's is centred;
+    here the left page has to hold a tick that cannot shrink below about five
+    pixels and still read as a tick, so the page is given the room. An optical
+    cut is allowed to move a line the parent does not.
+
+    The tick is drawn larger here relative to the page than in the parent. That
+    is not drift: there it is small because five lines of writing sit beside it
+    and it has a margin to sit in. With the writing gone there is no margin to
+    be marginal in, and a tick scaled to match would be three pixels of red in
+    an empty box.
+
+    Geometry snapped to the 16px pixel grid. One viewBox unit is exactly 0.25px
+    at 16x16, so a stroke of 4 is exactly one device pixel — but a stroke is
+    centred on its path, so the coordinate matters as much as the width. The
+    gutter sits at x=32 (spanning 30..34 at width 4, i.e. pixel 8 exactly) and
+    the pages meet it there. The coil and the tick are left to antialias, which
+    is correct for curves and diagonals.
+
+    Keep in step with `src/lib/brandMark.ts` if the parent's composition ever
+    changes. Nothing enforces that: this file is the one piece of the mark a
+    generator cannot write, which is the price of it being a real optical cut.
+
+    The comment sits inside the svg element: libvips (and so sharp, and so the
+    screenshot tooling) sniffs only the first bytes to detect SVG, so a long
+    leading comment pushes the opening tag out of that window and the file is
+    rejected as an unknown format.
   -->
-  <!-- Geometry snapped to the 16px pixel grid. At 16x16 one viewBox unit is
-       exactly 0.25px, so a stroke of 4 is exactly 1 device pixel. The catch is
-       that a stroke is centred on its path: putting the rule at x=16 spans
-       14..18, i.e. half of pixel 3 and half of pixel 4, and antialiasing
-       renders it grey instead of charcoal. Centring at x=18 spans 16..20,
-       which is pixel 4 exactly. Same reasoning puts the baseline at y=46
-       (spanning 44..48, row 11 exactly). The diagonal tick is left to
-       antialias, which is correct for a diagonal. -->
-  <g fill="none" stroke="#2F3437" stroke-width="4" stroke-linecap="butt">
-    <path d="M18 8 V46" />
-    <path d="M18 46 H48" />
-  </g>
-  <path d="M24 36 L32 46 L48 16" fill="none" stroke="#C0523D" stroke-width="8"
+  <!-- The open notebook. -->
+  <path d="M8 13 C22 12.4, 44 13.4, 57 12.8
+           C57.6 26, 56.8 40, 57.2 51.4
+           C43 52, 21 51, 8 51.6 Z"
+        fill="#FDFCFA" stroke="#2F3437" stroke-width="4"
+        stroke-linecap="round" stroke-linejoin="round" />
+  <!-- The binding, in the gutter. Not four rings, not three: at 16px a ring is
+       four pixels across and its gap is one, so a coil renders as a dotted bar
+       with the dots in the wrong places. A solid accent bar is the same
+       silhouette without the lie. It sits at x=35 rather than at the centre so
+       the tick has a page to fit on. -->
+  <path d="M35.2 15.6 C34.8 27, 35.6 39, 35.2 48.6"
+        fill="none" stroke="#C0523D" stroke-width="4.5" stroke-linecap="round" />
+  <!-- The correction, on the page that has been turned. -->
+  <path d="M13.6 33.4 C15.2 35.6, 16.8 37.8, 18.2 39.8
+           C20.8 35.2, 23.8 29.8, 26.6 24.8"
+        fill="none" stroke="#C0523D" stroke-width="5.5"
         stroke-linecap="round" stroke-linejoin="round" />
 </svg>

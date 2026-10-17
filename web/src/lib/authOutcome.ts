@@ -38,15 +38,37 @@ import { isEmailUnverifiedError } from "@/lib/authTypes"
  * rather than to the raw string, so a new enum member added server-side cannot
  * leak through this function.
  *
- * ── 2. The OTP request 429 is genuinely well written, and is kept ───────────
+ * The parent-invites design (superseding D3.11's phone flow) added a second
+ * caller of the identical shape: `AuthService.verify_parent_signup_code`
+ * raises `AuthError(f"Email verification failed: {result.value}")`, the same
+ * four `OtpResult` members behind an email-shaped prefix instead of a phone-
+ * shaped one. `otpVerifyFailureMessage` now checks both prefixes against the
+ * same table rather than gaining a sibling function — see that function's own
+ * comment, and `OTP_FAILURES`'s, for why the table's wording was also made
+ * channel-neutral at the same time (it used to say "text", which would be a
+ * false claim from the email caller).
+ *
+ * ── 2. The OTP request 429 was genuinely well written for the route it applied to ──
  *
  * `OtpRateLimitError` says "OTP already sent; retry in 12s."
  * (`lemely/auth/otp.py:112`) — a real sentence with a real number in it, and
- * nothing written here could improve on it. This is the same call
- * `teacherOutcome.ts` made for its 422 and `friendOutcome.ts` for its send
- * path. The family's rule has never been "always keep the detail" or "never
- * keep it"; it is "keep it where a human wrote it for a human", and that has
- * to be decided per endpoint by reading the endpoint.
+ * this note used to say nothing written here could improve on it, so
+ * `otpRequestFailureMessage`'s 429 branch kept the detail verbatim. That was
+ * true of the phone-OTP request route this function was written for
+ * (`POST /api/auth/otp/request`, since retired alongside the rest of D3.11's
+ * phone flow). It stopped being true the moment this function's only
+ * surviving production caller became `parentRequestCodeFailure`
+ * (`signupParentLogic.ts`), for the parent-invites email-code request: the
+ * word "OTP" is product copy nobody chose to show a parent typing an email
+ * address, against this project's own UI-copy rule (final review I-4). The
+ * 429 branch now extracts just the number from that same sentence — the one
+ * fact the reader wants — and writes an email-appropriate sentence around
+ * it, falling back to a numberless one if the detail's shape ever changes
+ * server-side. The underlying rule is unchanged from before: "keep the fact
+ * a human sentence carries, in words a human wrote for *this* reader", it
+ * simply now means extracting the number rather than keeping the sentence
+ * whole, because the sentence itself was written for a caller this route no
+ * longer has.
  *
  * ── 3. The password 401 is deliberately vague, and that is a security call ──
  *
@@ -173,6 +195,20 @@ export const AUTH_LINK_EXPIRED =
   "That link has expired or already been used. Ask for a new one and we'll send it straight away."
 
 /**
+ * G-07's typed-code failure, the code-shaped counterpart to
+ * `AUTH_LINK_EXPIRED`.
+ *
+ * `POST /auth/verify-email/code` collapses wrong, expired and locked-out into
+ * one non-revealing 400 (deliberately — see the route's own docstring), so
+ * this names all three rather than guessing which applied, exactly as
+ * `AUTH_LINK_EXPIRED` does for its four causes. It exists at all because
+ * reusing `AUTH_LINK_EXPIRED` here told someone who had typed six digits that
+ * their *link* had expired, when they may never have opened one.
+ */
+export const AUTH_CODE_REJECTED =
+  "That code didn't work. It may be wrong, expired, or already used. Ask for a new email and we'll send one straight away."
+
+/**
  * D7.5's soft gate, reached from outside this module's own two routes — see
  * note 6 above. Written to make sense wherever `require_verified_email`
  * eventually guards something, not only today's one route.
@@ -192,22 +228,43 @@ export const AUTH_INVITE_ALREADY_USED =
  * `OtpResult` (`lemely/auth/otp.py`) to a sentence, keeping the backend's
  * distinction and losing its vocabulary.
  *
- * `no_challenge` is the odd one: it means the server has no live code for this
- * number at all, which from the reader's side is indistinguishable from an
- * expired one, so it says the thing that is true either way and offers the
- * action that fixes both.
+ * `no_challenge` is the odd one: it means the server has no live code waiting
+ * at all, which from the reader's side is indistinguishable from an expired
+ * one, so it says the thing that is true either way and offers the action
+ * that fixes both.
+ *
+ * Channel-neutral on purpose, and that is a change from this constant's
+ * original wording. `AuthService.verify_parent_signup_code` (the
+ * parent-invites design, superseding D3.11's phone-OTP login) raises the
+ * identical `AuthError(f"Email verification failed: {result.value}")` shape
+ * `verify_otp` does, with the same four `OtpResult` members — see
+ * `otpVerifyFailureMessage` below, which now maps both prefixes onto this one
+ * table. The original wording said "we'll text it" and "that number", which
+ * would be a false claim on the email-shaped call: nobody is texted anything.
+ * Genericising to "send"/dropping the phone-specific noun keeps one sentence
+ * honest for both callers, rather than forking the table in two for a
+ * difference of one word.
  */
 const OTP_FAILURES: Record<string, string> = {
-  wrong_code: "That code doesn't match. Check the message and type it again.",
-  expired: "That code has expired. Ask for a new one and we'll text it straight away.",
+  wrong_code: "That code doesn't match. Check it and type it again.",
+  expired: "That code has expired. Ask for a new one and we'll send it straight away.",
   locked_out:
     "Too many tries with that code. Ask for a new one, and it will start counting again.",
-  no_challenge:
-    "We don't have a code waiting for that number. Ask for a new one and we'll text it straight away.",
+  no_challenge: "We don't have a code waiting for you. Ask for a new one and we'll send it straight away.",
 }
 
 /** The prefix `AuthService.verify_otp` puts in front of the enum value. */
 const OTP_PREFIX = "OTP verification failed:"
+
+/**
+ * The prefix `AuthService.verify_parent_signup_code` puts in front of the
+ * same enum value, for the parent-invites email-code step (design spec §4).
+ * Not a new vocabulary to map separately — `otpVerifyFailureMessage` treats
+ * this as `OTP_PREFIX`'s email-shaped sibling and reuses the identical
+ * `OTP_FAILURES` sentences for both, which is why that table's wording was
+ * genericised away from "text"/"number" (see its own comment).
+ */
+const EMAIL_CODE_PREFIX = "Email verification failed:"
 
 /**
  * Turn a failed sign-in into a sentence.
@@ -229,18 +286,33 @@ export function signInFailureMessage(err: unknown): string {
 }
 
 /**
- * Turn a failed OTP *verify* into a sentence, mapping the enum the backend
- * sends rather than printing it.
+ * Turn a failed OTP/email-code *verify* into a sentence, mapping the enum the
+ * backend sends rather than printing it.
+ *
+ * Two callers, one table: the phone-OTP `OTP verification failed: <member>`
+ * this function was written for, and the parent-invites email code's `Email
+ * verification failed: <member>` (`useParentSignupApi.ts`'s
+ * `useVerifyParentCode`), which reuses the identical four `OtpResult`
+ * members under a different prefix. Checking both prefixes here, rather than
+ * giving the email one its own function, is what keeps "four situations, four
+ * sentences" a single source of truth instead of two copies that could drift.
  */
 export function otpVerifyFailureMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 0) return AUTH_NETWORK_FAILURE
     if (err.status >= 500) return AUTH_SERVICE_FAILURE
-    if (typeof err.detail === "string" && err.detail.startsWith(OTP_PREFIX)) {
-      const reason = err.detail.slice(OTP_PREFIX.length).trim()
-      // An unmapped value falls through to the generic sentence rather than
-      // being shown: a member added to `OtpResult` later must not become copy.
-      if (reason in OTP_FAILURES) return OTP_FAILURES[reason]
+    if (typeof err.detail === "string") {
+      const prefix = err.detail.startsWith(OTP_PREFIX)
+        ? OTP_PREFIX
+        : err.detail.startsWith(EMAIL_CODE_PREFIX)
+          ? EMAIL_CODE_PREFIX
+          : null
+      if (prefix) {
+        const reason = err.detail.slice(prefix.length).trim()
+        // An unmapped value falls through to the generic sentence rather than
+        // being shown: a member added to `OtpResult` later must not become copy.
+        if (reason in OTP_FAILURES) return OTP_FAILURES[reason]
+      }
     }
     if (err.status === 401) return OTP_FAILURES.wrong_code
   }
@@ -249,20 +321,41 @@ export function otpVerifyFailureMessage(err: unknown): string {
 }
 
 /**
+ * Extract the retry-after seconds from `OtpRateLimitError`'s own wording
+ * ("OTP already sent; retry in 12s.", `lemely/auth/otp.py:112`), or `null`
+ * if the detail does not carry a number in that shape. The number, not the
+ * sentence, is the one fact worth keeping — see note 2 above.
+ */
+function secondsFromOtpRateLimitDetail(detail: string): number | null {
+  const match = detail.match(/(\d+)\s*s\b/)
+  if (match === null) return null
+  const seconds = Number(match[1])
+  return Number.isFinite(seconds) ? seconds : null
+}
+
+/**
  * Turn a failed OTP *request* into a sentence.
  *
- * The 429 keeps the server's own wording, which names the seconds remaining
- * and is better than anything written here. Everything else is ours.
+ * `otpRequestFailureMessage` was written for the phone-OTP request route and
+ * has exactly one production caller left: `parentRequestCodeFailure`
+ * (`signupParentLogic.ts`), for the parent-invites email-code request. Both
+ * the 429 and the 400/422 branches below are worded for that caller now, not
+ * the retired phone flow — see note 2 above for the 429, and note 2's own
+ * history for why "that number" would be simply false for an email address.
  */
 export function otpRequestFailureMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 0) return AUTH_NETWORK_FAILURE
-    if (err.status === 429 && typeof err.detail === "string" && err.detail.trim() !== "") {
-      return err.detail.trim()
+    if (err.status === 429) {
+      const seconds =
+        typeof err.detail === "string" ? secondsFromOtpRateLimitDetail(err.detail) : null
+      return seconds === null
+        ? "We just sent you a code. Wait a few seconds and try again."
+        : `We just sent you a code. Try again in ${seconds} seconds.`
     }
     if (err.status >= 500) return AUTH_SERVICE_FAILURE
     if (err.status === 400 || err.status === 422) {
-      return "We couldn't send a code to that number. Check the digits and the country, then try again."
+      return "We couldn't send a code to that email address. Check it and try again."
     }
     return "We couldn't send your code just then. Trying again usually sorts it."
   }
@@ -289,7 +382,9 @@ export function signUpFailureMessage(err: unknown): string {
 /**
  * Turn a failed email-verification action into a sentence — G-07's own
  * `/auth/verify-email` (confirm) and `/auth/verify-email/resend`, plus any
- * other screen's 403 against D7.5's gate (note 6 above). Checked in that
+ * other screen's 403 against D7.5's gate (note 6 above). G-07's third route,
+ * `/auth/verify-email/code`, has its own `verificationCodeFailureMessage`
+ * below, because its 400 means something this one's 400 copy denies. Checked in that
  * order: the marker first, because it is the one status this function's own
  * two routes never themselves produce.
  */
@@ -304,6 +399,28 @@ export function verificationFailureMessage(err: unknown): string {
   }
   if (err instanceof TypeError) return AUTH_NETWORK_FAILURE
   return "We couldn't verify your email just then. Trying again usually sorts it."
+}
+
+/**
+ * Turn a failed `POST /auth/verify-email/code` into a sentence.
+ *
+ * Separate from `verificationFailureMessage` for one reason: the 400. That
+ * function's 400 is `AUTH_LINK_EXPIRED`, which is right for the two routes it
+ * serves and wrong here — the person typed a code and may never have opened a
+ * link, so being told the link expired is simply untrue. Every other status
+ * maps identically, and deliberately so: this is the same screen.
+ */
+export function verificationCodeFailureMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 0) return AUTH_NETWORK_FAILURE
+    if (err.status === 403 && isEmailUnverifiedError(err.detail)) return AUTH_EMAIL_UNVERIFIED
+    if (err.status === 429) return AUTH_COOLDOWN_ACTIVE
+    if (err.status >= 500) return AUTH_SERVICE_FAILURE
+    if (err.status === 400) return AUTH_CODE_REJECTED
+    return "We couldn't check that code just then. Trying again usually sorts it."
+  }
+  if (err instanceof TypeError) return AUTH_NETWORK_FAILURE
+  return "We couldn't check that code just then. Trying again usually sorts it."
 }
 
 /**

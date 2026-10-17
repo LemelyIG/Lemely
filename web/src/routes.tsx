@@ -1,7 +1,9 @@
 import { lazy, Suspense } from "react"
-import { RouteFallback } from "@/components/ui/state-views"
+import { RouteSkeleton } from "@/components/ui/route-skeleton"
+import { RootOutlet } from "@/components/root-outlet"
+import { ScreenFrame } from "@/components/ui/screen-outlet"
 import type { RouteObject } from "react-router-dom"
-import { Navigate } from "react-router-dom"
+import { Navigate, Outlet, useSearchParams } from "react-router-dom"
 import { teacherRoute } from "@/portals/teacher"
 import { studentRoute } from "@/portals/student"
 import { parentRoute } from "@/portals/parent"
@@ -11,6 +13,7 @@ import { useAuth } from "@/lib/auth/AuthContext"
 import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
 import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
 import type { PageMeta } from "@/lib/meta/documentMeta"
+import { safeNextPath } from "@/lib/nextPath"
 /*
  * P3.1 (DECISION D1.4). Deliberately a static import, unlike every screen in
  * this file, which are all `React.lazy`.
@@ -22,6 +25,21 @@ import type { PageMeta } from "@/lib/meta/documentMeta"
  * It is a small screen, and it is the one worth carrying in the entry bundle.
  */
 import { NotFound } from "@/portals/misc/NotFound"
+import { ScanInbox } from "@/portals/misc/ScanInbox"
+/*
+ * PR 2 part A2. Static for the identical reason `NotFound` above is: this is
+ * the router's `errorElement`, so a lazy import of it would have to fetch a
+ * chunk from the same origin a chunk-load failure has already shown cannot be
+ * trusted — including the failure this exact screen exists to classify as
+ * `new-version` and recover from.
+ */
+import { RouteErrorScreen } from "@/components/route-error"
+/*
+ * `/session-ended` (below) is where `RequireAuth` sends a dead session before
+ * it has rendered a single portal chunk — the same reasoning, and the same
+ * "static, not lazy" answer, as the two imports above.
+ */
+import { SessionEnded } from "@/portals/misc/SessionEnded"
 
 /*
  * One role-based app. The Teacher (teal), Student (terracotta) and Parent
@@ -43,9 +61,6 @@ import { NotFound } from "@/portals/misc/NotFound"
 // that keeps a slow-loading DeviceSettings chunk from blanking an
 // already-rendered Login screen if a session is mid-navigation between them.
 const Login = lazy(() => import("@/portals/auth/Login").then((m) => ({ default: m.Login })))
-const ParentLogin = lazy(() =>
-  import("@/portals/auth/ParentLogin").then((m) => ({ default: m.ParentLogin })),
-)
 const DeviceSettings = lazy(() =>
   import("@/portals/settings/DeviceSettings").then((m) => ({ default: m.DeviceSettings })),
 )
@@ -53,6 +68,12 @@ const NotificationSettings = lazy(() =>
   import("@/portals/settings/NotificationSettings").then((m) => ({
     default: m.NotificationSettings,
   })),
+)
+const ProfileSettings = lazy(() =>
+  import("@/portals/settings/ProfileSettings").then((m) => ({ default: m.ProfileSettings })),
+)
+const InstallSettings = lazy(() =>
+  import("@/portals/settings/InstallSettings").then((m) => ({ default: m.InstallSettings })),
 )
 
 /*
@@ -81,6 +102,11 @@ const SignupRoleSelect = lazy(() =>
 )
 const SignupDetails = lazy(() =>
   import("@/portals/auth/SignupDetails").then((m) => ({ default: m.SignupDetails })),
+)
+// Parent-invites design (§4/§5), superseding D3.11's phone-OTP login this
+// same change retires. Same P6.1b reasoning as its four siblings above.
+const SignupParent = lazy(() =>
+  import("@/portals/auth/SignupParent").then((m) => ({ default: m.SignupParent })),
 )
 const VerifyEmail = lazy(() =>
   import("@/portals/auth/VerifyEmail").then((m) => ({ default: m.VerifyEmail })),
@@ -161,6 +187,56 @@ function LoginRoute({ children }: { children: React.ReactNode }) {
   return children
 }
 
+/**
+ * Guards `/session-ended` against a reader who already has a live session
+ * (adversarial review NIT, PR 2). Not `LoginRoute` reused verbatim: that one
+ * always lands a signed-in visitor on their portal root, but `/session-ended`
+ * can carry its own validated `?next=`, and a signed-in reader who followed
+ * one here should land on what it names instead of being sent to the root
+ * regardless — `next` was where they were headed before whatever routed them
+ * through this screen.
+ */
+function SessionEndedRoute({ children }: { children: React.ReactNode }) {
+  const { session } = useAuth()
+  const [searchParams] = useSearchParams()
+  if (!session) return children
+  const next = safeNextPath(searchParams.get("next"))
+  return <Navigate to={next ?? portalPathForRole(session.role)} replace />
+}
+
+/**
+ * `/settings/*` predates the in-portal `/teacher/settings/*` and
+ * `/student/settings/*` sections this same change adds. Both now exist, so a
+ * student or teacher following an old top-level link (a bookmark, a stale
+ * link elsewhere in the product) is sent on to the portal-scoped screen
+ * instead of rendering the frame-only version here — the two render the same
+ * sections, and the portal one carries the portal's own chrome around them.
+ *
+ * Parent and the two admin roles have no portal-scoped Settings section of
+ * their own (P4.10's `SettingsFrame` remains their only route to it), so this
+ * is a no-op for them and they keep rendering the framed screen exactly as
+ * they always have.
+ *
+ * `"install"` (A7 review fix HIGH 2) redirects only for `student`/`teacher`,
+ * same as its three siblings — the two roles `InstallBanner` targets, and
+ * the two roles `PortalSettingsLayout` now lists an install pill for.
+ */
+function SettingsLaneRedirect({
+  segment,
+  children,
+}: {
+  /** The path under a portal's own `settings` root: `""` for the profile
+   * index, `"devices"`, `"notifications"`, or `"install"` for its siblings. */
+  segment: "" | "devices" | "notifications" | "install"
+  children: React.ReactNode
+}) {
+  const { session } = useAuth()
+  const suffix = segment ? `/${segment}` : ""
+  if (session?.role === "student") return <Navigate to={`/student/settings${suffix}`} replace />
+  if (session?.role === "teacher") return <Navigate to={`/teacher/settings${suffix}`} replace />
+  return children
+}
+
 /*
  * P3.1 (DECISION D1.4) · error handling at the route level.
  *
@@ -177,8 +253,18 @@ function LoginRoute({ children }: { children: React.ReactNode }) {
  * rest of the page keeps working, and Phase 4 places those as it rebuilds each
  * surface. This is the backstop for everything that escapes them, including
  * errors thrown by a route's own element before any inner boundary mounts.
+ *
+ * PR 2 part A2: the element itself is now `RouteErrorScreen`
+ * (`components/route-error.tsx`), not the bare `NotFound` this constant used
+ * to hold directly. `NotFound` still answers the identical "no error, or a
+ * real 404" reading it always did — `RouteErrorScreen` reaches it by way of
+ * `classifyRouteError`'s `not-found` variant — but every *other* row of that
+ * classification table (offline, a stale build, a dropped session, a rate
+ * limit, the marking service down) now renders through the same
+ * `errorElement` too, instead of the generic "something went wrong at our
+ * end" every non-404 used to fall back to regardless of what actually failed.
  */
-const errorElement = <NotFound />
+const errorElement = <RouteErrorScreen />
 
 /*
  * The route table, exported as a plain value.
@@ -198,10 +284,10 @@ const errorElement = <NotFound />
 /*
  * P6.5 · page metadata for the top-level routes.
  *
- * `/`, `/login`, `/login/parent` and the `*` catch-all carried a `description`
- * here directly before Task 19; the nine routes spec §4.4 registers below join
- * them the same way. `/landing` and `/data` carry one too, spread in from route
- * objects `portals/marketing/index.tsx` defines, so they do not show up as a
+ * `/`, `/login` and the `*` catch-all carried a `description` here directly
+ * before Task 19; the routes spec §4.4 registers below join them the same
+ * way. `/landing` and `/data` carry one too, spread in from route objects
+ * `portals/marketing/index.tsx` defines, so they do not show up as a
  * `handle` literal in this file the way the rest do. Together this is the
  * entire list of routes a signed-out reader can reach in the product, and the
  * only ones that get a `description` (the module note in
@@ -209,17 +295,49 @@ const errorElement = <NotFound />
  * Everything behind `RequireAuth` gets a title only.
  *
  * The descriptions describe the screen and claim nothing about the product
- * that the product does not do (§3.2 item 10) — and, for the nine below in
- * particular, never that a mail or a text was sent. `deps.py` wires
- * `MockEmailProvider` unconditionally, exactly as it already wires
- * `MockSmsProvider`, so no deployment of this code as written delivers
- * either. The comment on `/login/parent` below records that finding for the
- * SMS side in full; the nine descriptions below follow its lead rather than
- * re-arguing it.
+ * that the product does not do (§3.2 item 10) — and never that a mail was
+ * sent. `deps.py` wires `MockEmailProvider` unconditionally, so no
+ * deployment of this code as written delivers one; the retired parent phone
+ * sign-in route's own comment used to record the identical finding on the
+ * SMS side of that same mock-provider wiring, before the parent-invites
+ * design (superseding D3.11) retired both that route and the phone-based
+ * login it backed.
  */
-const rootMeta: PageMeta = { title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION }
+const rootMeta: PageMeta = {
+  title: DEFAULT_TITLE,
+  description: DEFAULT_DESCRIPTION,
+  skeleton: "standalone",
+}
 
 export const appRoutes: RouteObject[] = [
+  /*
+   * Packet B2a · one pathless layout route wrapping every top-level route
+   * below, purely so `<ScrollRestoration>` has a data-router route to mount
+   * inside (`RootOutlet`). Deliberately carries no `errorElement`: every
+   * child route below keeps its own, so error bubbling is unchanged — this
+   * wrapper never catches anything itself.
+   */
+  {
+    element: <RootOutlet />,
+    children: [
+  /*
+   * Packet B2b · the second pathless layout route, grouping every top-level
+   * route that is not one of the five portal subtrees below (which get
+   * their own screen entrance from `ScreenOutlet` inside their own layout
+   * instead — see `screen-outlet.tsx`'s module header for why there are two
+   * exports rather than one). This is the auth/marketing/misc/settings lane:
+   * none of it has a shared layout `Outlet` of its own to hang an entrance
+   * off, so this route supplies one. No `errorElement` here either, for the
+   * identical reason `RootOutlet`'s own wrapper carries none: every child
+   * below keeps its own, so bubbling is unchanged.
+   */
+  {
+    element: (
+      <ScreenFrame>
+        <Outlet />
+      </ScreenFrame>
+    ),
+    children: [
   { path: "/", element: <Root />, errorElement, handle: rootMeta },
   /*
    * The public marketing lane. Deliberately NOT wrapped in `RequireAuth` — the
@@ -244,53 +362,49 @@ export const appRoutes: RouteObject[] = [
       title: "Sign in",
       description:
         "Sign in to Lemely to mark a past paper, review a class, or follow a child's progress.",
+      skeleton: "standalone",
     } satisfies PageMeta,
-    element: <LoginRoute><Suspense fallback={<RouteFallback className="p-8" />}><Login /></Suspense></LoginRoute>,
+    element: <LoginRoute><Suspense fallback={<RouteSkeleton />}><Login /></Suspense></LoginRoute>,
   },
-  // G-05. A separate route rather than a tab on /login: the parent flow shares
-  // no field with email/password, and the spec's whole framing for it is
-  // "the lowest-friction entry in the product".
+  /*
+   * PR 2 part A2 · `/session-ended`. `RequireAuth` sends a dead session here
+   * (`lib/auth/RequireAuth.tsx`) instead of straight to `/login`, carrying
+   * `?next=` so a successful sign-in returns the reader to what they were
+   * doing. Not wrapped in `LoginRoute`: unlike the nine below, nothing here
+   * mints a session, so there is no session-creating flow to protect a
+   * signed-in visitor from re-entering by mistake.
+   *
+   * It is wrapped in `SessionEndedRoute`, though (adversarial review NIT) —
+   * a *different* problem `LoginRoute` also exists for, just not the one its
+   * own docstring is about. `RequireAuth` always clears a session before it
+   * redirects here, so in the ordinary flow nobody with a live session ever
+   * reaches this URL. A stale bookmark or a link followed after signing back
+   * in some other way is the exception, and for that reader "Your session
+   * ended" is simply false — they have one. `SessionEndedRoute` sends them on
+   * instead of rendering the screen.
+   */
   {
-    path: "/login/parent",
+    path: "/session-ended",
     errorElement,
-    handle: {
-      title: "Parent sign in",
-      /*
-       * "a one-time code", not "a code sent by text", and the difference is
-       * load-bearing. The screen itself says "we'll text you a code" — and
-       * `lemely/web/deps.py` wires `sms=MockSmsProvider()` unconditionally,
-       * with no config switch, and `MockSmsProvider.send_code` *logs* the code
-       * rather than sending it. `SmsProvider` even documents a
-       * `delivers_out_of_band` flag that "any real provider added later must
-       * set True", i.e. none exists.
-       *
-       * So no deployment of this code as written can send an SMS. The screen's
-       * claim is a pre-existing defect recorded in D6.9 for the human, not
-       * something to fix from a route table. What this description will not do
-       * is carry the claim into a second file, and into the one place a
-       * scraper would index it. The OTP itself is real, so that is what it
-       * says.
-       */
-      description:
-        "Parents sign in to Lemely with a phone number and a one-time code. No password to set up.",
-    } satisfies PageMeta,
+    handle: { title: "Your session ended", skeleton: "standalone" } satisfies PageMeta,
     element: (
-      <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
-          <ParentLogin />
-        </Suspense>
-      </LoginRoute>
+      <SessionEndedRoute>
+        <SessionEnded />
+      </SessionEndedRoute>
     ),
   },
   /*
    * ────────────────────────────────────────────────────────────────────────
-   * Task 19 (spec §4.4) · the nine signup/verify/reset/join routes.
+   * Task 19 (spec §4.4) · the ten signup/verify/reset/join routes (`/signup/
+   * parent` joined the other nine with the parent-invites design, superseding
+   * D3.11's phone-based parent sign-in and the top-level route it used to sit
+   * beside).
    *
-   * Five of the nine (`/signup`, `/signup/student`, `/signup/teacher`,
-   * `/reset`, `/reset/:token`) are wrapped in `LoginRoute` exactly like
-   * `/login` and `/login/parent` above: a signed-in visitor has an account
-   * already and belongs back in their own portal rather than on a form for
-   * creating one or recovering a password they can currently use.
+   * Six of the ten (`/signup`, `/signup/student`, `/signup/teacher`,
+   * `/signup/parent`, `/reset`, `/reset/:token`) are wrapped in `LoginRoute`
+   * exactly like `/login` above: a signed-in visitor has an account already
+   * and belongs back in their own portal rather than on a form for creating
+   * one or recovering a password they can currently use.
    *
    * The other four (`/verify-email`, `/verify-email/:token`, `/join`,
    * `/join/:code`) are deliberately NOT wrapped — each carries its own
@@ -308,10 +422,11 @@ export const appRoutes: RouteObject[] = [
       title: "Sign up",
       description:
         "Sign up for Lemely as a student or a teacher, and get started marking past papers.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
       <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
+        <Suspense fallback={<RouteSkeleton />}>
           <SignupRoleSelect />
         </Suspense>
       </LoginRoute>
@@ -350,9 +465,10 @@ export const appRoutes: RouteObject[] = [
       title: "Student sign up",
       description:
         "Create a Lemely student account, upload a past paper, and see exactly what to study next.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <SignupDetails role="student" />
       </Suspense>
     ),
@@ -366,11 +482,43 @@ export const appRoutes: RouteObject[] = [
       title: "Teacher sign up",
       description:
         "Create a Lemely teacher account and mark past papers faster, with partial credit worked out for you.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <SignupDetails role="teacher" />
       </Suspense>
+    ),
+  },
+  /*
+   * G-05 (parent-invites design, §4/§5), superseding D3.11's phone-based
+   * login and the top-level route it used to occupy. Wrapped in `LoginRoute`
+   * like `/signup/student`/`/signup/teacher` above, and for the identical
+   * reason those two carry it (`SignupDetails.tsx`'s own module docstring):
+   * a signed-in visitor has an account already, so a freshly-created session
+   * racing this route's own `navigate()` is the exact defect that docstring
+   * records, not a hypothetical one.
+   *
+   * `SignupParent.tsx` reads `?code=` itself, matching
+   * `signupPathForInvite`'s `parent` branch (`useInvitesApi.ts`) exactly —
+   * this file adds no `:code` segment, the same choice spec §4.4 made for
+   * `/signup/student` and `/signup/teacher`.
+   */
+  {
+    path: "/signup/parent",
+    errorElement,
+    handle: {
+      title: "Parent sign up",
+      description:
+        "Create a Lemely parent account from an invite, and see how your child is doing.",
+      skeleton: "standalone",
+    } satisfies PageMeta,
+    element: (
+      <LoginRoute>
+        <Suspense fallback={<RouteSkeleton />}>
+          <SignupParent />
+        </Suspense>
+      </LoginRoute>
     ),
   },
   /*
@@ -392,18 +540,19 @@ export const appRoutes: RouteObject[] = [
       title: "Verify your email",
       description:
         "Check whether a Lemely account's email address is verified. Everything except marking a paper stays open in the meantime.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <VerifyEmail />
       </Suspense>
     ),
   },
   // G-07, confirm. Same exception, same component: `VerifyEmail.tsx` reads
   // `useParams().token` itself to choose which of its two states to render,
-  // the same "one component, two RouteObjects" shape `/login`/`/login/parent`
-  // above already use. See the comment on `/verify-email` for why neither of
-  // this pair is wrapped.
+  // the same "one component, two RouteObjects" shape `/signup/student`/
+  // `/signup/teacher` above already use. See the comment on `/verify-email`
+  // for why neither of this pair is wrapped.
   {
     path: "/verify-email/:token",
     errorElement,
@@ -411,9 +560,10 @@ export const appRoutes: RouteObject[] = [
       title: "Confirm your email",
       description:
         "Confirm a Lemely account's email address from a verification link, then continue into the app.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <VerifyEmail />
       </Suspense>
     ),
@@ -429,10 +579,11 @@ export const appRoutes: RouteObject[] = [
     handle: {
       title: "Reset your password",
       description: "Request a password reset for a Lemely account by email address.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
       <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
+        <Suspense fallback={<RouteSkeleton />}>
           <PasswordResetRequest />
         </Suspense>
       </LoginRoute>
@@ -448,10 +599,11 @@ export const appRoutes: RouteObject[] = [
       title: "Set a new password",
       description:
         "Set a new password for a Lemely account from a reset link. Every device gets signed out once the change takes effect.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
       <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
+        <Suspense fallback={<RouteSkeleton />}>
           <PasswordResetConfirm />
         </Suspense>
       </LoginRoute>
@@ -474,9 +626,10 @@ export const appRoutes: RouteObject[] = [
       title: "Join with an invite code",
       description:
         "Enter an invite code from your school to see what it joins, before you redeem it or sign up to claim it.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <JoinWithCode />
       </Suspense>
     ),
@@ -492,9 +645,10 @@ export const appRoutes: RouteObject[] = [
     handle: {
       title: "Preview your invite",
       description: "Preview the class an invite code joins, then redeem it or sign up to claim it.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <JoinWithCode />
       </Suspense>
     ),
@@ -502,15 +656,23 @@ export const appRoutes: RouteObject[] = [
   // G-11 (devices section). Top-level rather than inside a portal subtree: the
   // 3-device limit applies to every account, so all five roles reach the same
   // screen — the same reason `/api/me/devices` is role-agnostic (P5.7).
+  //
+  // Wrapped in `SettingsLaneRedirect`, inside `RequireAuth` rather than
+  // outside it: a signed-out visitor still gets sent to `/login` first, and
+  // only once there is a real session does it matter whether that session
+  // belongs to a student or teacher with a portal-scoped Settings of their
+  // own to be sent on to instead.
   {
     path: "/settings/devices",
     errorElement,
-    handle: { title: "Your devices" } satisfies PageMeta,
+    handle: { title: "Your devices", skeleton: "standalone" } satisfies PageMeta,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
-          <DeviceSettings />
-        </Suspense>
+        <SettingsLaneRedirect segment="devices">
+          <Suspense fallback={<RouteSkeleton />}>
+            <DeviceSettings />
+          </Suspense>
+        </SettingsLaneRedirect>
       </RequireAuth>
     ),
   },
@@ -525,14 +687,115 @@ export const appRoutes: RouteObject[] = [
     // "Notification settings", not "Notifications": the student portal has a
     // screen at /student/notifications that IS the reader's inbox, and two tabs
     // reading the same word is the defect this whole file is closing.
-    handle: { title: "Notification settings" } satisfies PageMeta,
+    handle: { title: "Notification settings", skeleton: "standalone" } satisfies PageMeta,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
-          <NotificationSettings />
-        </Suspense>
+        <SettingsLaneRedirect segment="notifications">
+          <Suspense fallback={<RouteSkeleton />}>
+            <NotificationSettings />
+          </Suspense>
+        </SettingsLaneRedirect>
       </RequireAuth>
     ),
+  },
+  // The third settings screen, added alongside the portal-scoped Settings
+  // sections above. Top level for the same reason as its two siblings: parent
+  // and the two admin roles have no portal Settings of their own to render
+  // this inside, so `/settings/profile` stays their only route to it.
+  {
+    path: "/settings/profile",
+    errorElement,
+    handle: { title: "Profile settings", skeleton: "standalone" } satisfies PageMeta,
+    element: (
+      <RequireAuth allowedRoles={ALL_ROLES}>
+        <SettingsLaneRedirect segment="">
+          <Suspense fallback={<RouteSkeleton />}>
+            <ProfileSettings />
+          </Suspense>
+        </SettingsLaneRedirect>
+      </RequireAuth>
+    ),
+  },
+  // Packet A7, wrapped in `SettingsLaneRedirect` as of the A7 review fix
+  // (HIGH 2): `PortalSettingsLayout` now lists an install pill, so
+  // `/student/settings/install` and `/teacher/settings/install` exist too
+  // (see `InstallSettings.tsx`'s own header for why this screen needs one).
+  {
+    path: "/settings/install",
+    errorElement,
+    handle: { title: "Install Lemely", skeleton: "standalone" } satisfies PageMeta,
+    element: (
+      <RequireAuth allowedRoles={ALL_ROLES}>
+        <SettingsLaneRedirect segment="install">
+          <Suspense fallback={<RouteSkeleton />}>
+            <InstallSettings />
+          </Suspense>
+        </SettingsLaneRedirect>
+      </RequireAuth>
+    ),
+  },
+  // Role-aware landing for the Web Share Target (`sw/shareTarget.ts`'s
+  // redirect) and the File Handling API route below — `ScanInbox` reads the
+  // session itself and forwards to whichever portal's upload surface fits
+  // the role. No `RequireAuth` here: its own destinations
+  // (`scanInboxDestination.ts`) are themselves inside `RequireAuth`-wrapped
+  // portal subtrees, so a signed-out reader still lands on `/login` by the
+  // normal route rather than a second guard.
+  {
+    path: "/scan-inbox",
+    errorElement,
+    handle: { title: "Opening your scan", skeleton: "standalone" } satisfies PageMeta,
+    element: <ScanInbox />,
+  },
+  // File Handling API (manifest's `file_handlers`, packet A6): the OS hands a
+  // launched image/PDF to this path via `window.launchQueue`, which forwards
+  // it into the same marking flow the Web Share Target (`/share-target`) and
+  // the in-app "Camera"/"File" pickers already use. Routed through
+  // `/scan-inbox` (not straight to `/student/correct`) so a teacher launching
+  // a file lands on their own upload surface too — see that route above.
+  {
+    path: "/file-handler",
+    errorElement,
+    handle: { title: "Opening your scan", skeleton: "standalone" } satisfies PageMeta,
+    element: <Navigate to="/scan-inbox" replace />,
+  },
+  /*
+   * Catch-all, last so it only matches what nothing above did.
+   *
+   * It is deliberately NOT gated by `RequireAuth`. A mistyped URL from a
+   * signed-out reader is a 404, not a login prompt: bouncing them to `/login`
+   * to then land somewhere that still is not the page they asked for is two
+   * wrong answers instead of one. `NotFound` reads the session itself and
+   * offers sign-in or the reader's own dashboard accordingly.
+   *
+   * Note this also catches unmatched paths *within* a portal subtree
+   * (`/student/nonsense`), because the portal routes above enumerate their
+   * children and match none of them. Those land here rather than on a
+   * portal-shaped 404, which is a known simplification: a 404 inside the
+   * student portal loses the sidebar. Rebuilding it as a per-portal child
+   * route is Phase 4 work, once each portal layout is its final shape.
+   *
+   * Placed inside this same `ScreenFrame` group, ahead of the five portal
+   * routes below, rather than after them where it used to sit: react-router
+   * ranks route matches by path specificity, not by declaration order (ties
+   * aside, and every path here is distinct), so moving it does not change
+   * which route wins for any URL — it only keeps every top-level,
+   * non-portal route contiguous in one group.
+   */
+  {
+    path: "*",
+    element: <NotFound />,
+    errorElement,
+    // Public, because this is the route a stale external link lands on, and it
+    // is the one page in the product whose description a scraper is likely to
+    // read by accident. It says what the page is, not what the product is.
+    handle: {
+      title: "Page not found",
+      description: "This Lemely page does not exist. The link may be out of date.",
+      skeleton: "standalone",
+    } satisfies PageMeta,
+  },
+    ],
   },
   {
     ...teacherRoute,
@@ -567,32 +830,21 @@ export const appRoutes: RouteObject[] = [
     errorElement,
     element: <RequireAuth allowedRoles={PARENT_ROLES}>{parentRoute.element}</RequireAuth>,
   },
-  /*
-   * Catch-all, last so it only matches what nothing above did.
-   *
-   * It is deliberately NOT gated by `RequireAuth`. A mistyped URL from a
-   * signed-out reader is a 404, not a login prompt: bouncing them to `/login`
-   * to then land somewhere that still is not the page they asked for is two
-   * wrong answers instead of one. `NotFound` reads the session itself and
-   * offers sign-in or the reader's own dashboard accordingly.
-   *
-   * Note this also catches unmatched paths *within* a portal subtree
-   * (`/student/nonsense`), because the portal routes above enumerate their
-   * children and match none of them. Those land here rather than on a
-   * portal-shaped 404, which is a known simplification: a 404 inside the
-   * student portal loses the sidebar. Rebuilding it as a per-portal child
-   * route is Phase 4 work, once each portal layout is its final shape.
-   */
-  {
-    path: "*",
-    element: <NotFound />,
-    errorElement,
-    // Public, because this is the route a stale external link lands on, and it
-    // is the one page in the product whose description a scraper is likely to
-    // read by accident. It says what the page is, not what the product is.
-    handle: {
-      title: "Page not found",
-      description: "This Lemely page does not exist. The link may be out of date.",
-    } satisfies PageMeta,
+    ],
   },
 ]
+
+/**
+ * Unwraps the pathless layout routes Packet B2a/B2b wrap `appRoutes` in
+ * (`RootOutlet`, then `ScreenFrame`), returning the same flat list of
+ * top-level routes route-lookup tests asserted against before those wrappers
+ * existed — `/login`, `/settings/devices`, the `teacher` portal root, and so
+ * on. A route that carries its own `path` is returned as-is, its `children`
+ * left untouched: this only descends into a layout route with no `path` of
+ * its own, never into a real route's own subtree.
+ */
+export function flattenRoutes(routes: RouteObject[]): RouteObject[] {
+  return routes.flatMap((route) =>
+    route.path === undefined && route.children ? flattenRoutes(route.children) : [route],
+  )
+}

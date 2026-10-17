@@ -1,11 +1,13 @@
 """`python -m lemely.web` must leave `lemely.*` INFO records actually emitted.
 
-P6.10's fresh-clone run found the parent's mock OTP documented in README and
-DELIVERY.md §7 as "printed to the backend log" and then absent from
-`docker compose logs backend`. The flow itself was fine — the code comes back
-as `devCode` — but the log line genuinely did not exist, and the cause was not
-specific to the OTP: **no `lemely.*` record below WARNING was emitted by that
-process at all.**
+P6.10's fresh-clone run found the parent's mock signup code (originally the
+phone-OTP flow, since retired by the parent-invites redesign in favour of a
+mock email signup code — see `lemely.auth.email.MockEmailProvider.send_signup_code`)
+documented in README and DELIVERY.md §7 as "printed to the backend log" and
+then absent from `docker compose logs backend`. The flow itself was fine — the
+code comes back as `devCode` — but the log line genuinely did not exist, and
+the cause was not specific to that one log line: **no `lemely.*` record below
+WARNING was emitted by that process at all.**
 
 uvicorn's default ``LOGGING_CONFIG`` declares handlers for the ``uvicorn*``
 loggers and carries no ``root`` entry, so ``dictConfig`` leaves the root logger
@@ -35,7 +37,7 @@ from uvicorn.config import LOGGING_CONFIG
 from lemely.runtime.logging import configure_logging
 from lemely.web.__main__ import main
 
-OTP_MESSAGE = "Mock SMS to +10000000000: your Lemely code is 424242"
+SIGNUP_CODE_MESSAGE = "Mock email to parent@example.invalid: your Lemely signup code is 424242"
 
 
 @pytest.fixture
@@ -79,7 +81,7 @@ def _emit_after_uvicorn_config(*, configure: bool) -> str:
     # Exactly what `uvicorn.run` does to logging on startup.
     logging.config.dictConfig(LOGGING_CONFIG)
 
-    logging.getLogger("lemely.auth.sms").info(OTP_MESSAGE)
+    logging.getLogger("lemely.auth.email").info(SIGNUP_CODE_MESSAGE)
     return stream.getvalue()
 
 
@@ -110,7 +112,7 @@ def test_lemely_info_survives_uvicorn_log_config(pristine_root_logger: None) -> 
     remove it.
     """
     emitted = _emit_after_uvicorn_config(configure=True)
-    assert OTP_MESSAGE in emitted
+    assert SIGNUP_CODE_MESSAGE in emitted
     assert '"level": "info"' in emitted
 
 

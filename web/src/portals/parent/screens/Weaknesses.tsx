@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useParams } from "react-router-dom"
 import { useChildWeaknesses } from "@/lib/hooks/useParentApi"
-import { ErrorState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { parentLoadFailureMessage } from "@/lib/parentOutcome"
 import { accuracyTone, TONE_CLASS } from "@/lib/severity"
@@ -94,56 +94,56 @@ function TopicRow({ topic, rank }: { topic: WeakTopic; rank: number }) {
 
 export function Weaknesses() {
   const { childId = "" } = useParams<{ childId: string }>()
-  const { data, isPending, isError, error } = useChildWeaknesses(childId)
-
-  if (isPending) {
-    return (
-      <div className="flex flex-col gap-6">
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={4} />
-      </div>
-    )
-  }
-
-  if (isError) {
-    return (
-      <ErrorState
-        heading="We couldn't load this"
-        body={parentLoadFailureMessage(error)}
-        action={{ label: "Try again", onClick: () => window.location.reload() }}
-      />
-    )
-  }
-
-  const topics = data.weakTopics
+  const query = useChildWeaknesses(childId)
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="margin-rule flex flex-col gap-2">
-        <h1 className="text-display-lg text-ink">What to work on next</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
-          Every student has a list like this. It is what marking is for. These are the topics
-          where the most marks are currently going, strongest signal first.
-        </p>
-      </div>
+      <QueryState
+        query={query}
+        srHeading="What to work on next"
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={4} />
+          </>
+        }
+        error={{ heading: "We couldn't load this", body: parentLoadFailureMessage }}
+      >
+        {(data) => {
+          const topics = data.weakTopics
 
-      {topics.length === 0 ? (
-        <p className="rounded-lg border border-rule bg-paper-raised p-5 text-body-md text-ink-muted">
-          Nothing stands out yet. Weak topics appear here once a few papers have been marked.
-        </p>
-      ) : (
-        <ol className="flex flex-col gap-2">
-          {topics.map((topic, index) => (
-            <TopicRow key={topic.topic} topic={topic} rank={index + 1} />
-          ))}
-        </ol>
-      )}
+          return (
+            <>
+              <div className="margin-rule flex flex-col gap-2">
+                <h1 className="text-display-lg text-ink">What to work on next</h1>
+                <p className="max-w-prose text-body-md text-ink-muted">
+                  Every student has a list like this. It is what marking is for. These are the
+                  topics where the most marks are currently going, strongest signal first.
+                </p>
+              </div>
 
-      {/* The absent signal, named rather than stubbed (see the module header). */}
-      <p className="rounded-lg border border-dashed border-rule p-5 text-body-sm text-ink-muted">
-        Lemely doesn't yet show parents what practice has been set on these topics. Their
-        teacher can see the same list, and it's a good thing to ask about.
-      </p>
+              {topics.length === 0 ? (
+                <p className="rounded-lg border border-rule bg-paper-raised p-5 text-body-md text-ink-muted">
+                  Nothing stands out yet. Weak topics appear here once a few papers have been
+                  marked.
+                </p>
+              ) : (
+                <ol className="flex flex-col gap-2">
+                  {topics.map((topic, index) => (
+                    <TopicRow key={topic.topic} topic={topic} rank={index + 1} />
+                  ))}
+                </ol>
+              )}
+
+              {/* The absent signal, named rather than stubbed (see the module header). */}
+              <p className="rounded-lg border border-dashed border-rule p-5 text-body-sm text-ink-muted">
+                Lemely doesn't yet show parents what practice has been set on these topics. Their
+                teacher can see the same list, and it's a good thing to ask about.
+              </p>
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

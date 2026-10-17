@@ -12,13 +12,18 @@ they are still ``/api/me/*`` settings — but they are gated
 from __future__ import annotations
 
 import uuid
+from io import BytesIO
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException
+import structlog
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from PIL import Image
 
 from lemely.auth.mirror import UserMirror
 from lemely.db.device_repo import MAX_DEVICES, DeviceRegistry
 from lemely.db.models.enums import Role, SessionMonth
+from lemely.db.models.users import User
 from lemely.db.notification_prefs_repo import (
     UNSET,
     NotificationPreferencesRow,
@@ -33,13 +38,19 @@ from lemely.db.student_profile_repo import (
     StudentProfileValidationError,
     SubjectEnrolmentRow,
 )
+from lemely.db.xp_repo import UserZoneReader
+from lemely.io.storage import StorageBackend
+from lemely.runtime.config import Settings
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
     get_device_registry,
     get_notification_prefs_service,
+    get_settings,
+    get_storage_backend,
     get_student_profile_service,
     get_user_mirror,
+    get_user_zone_reader,
     require_role,
 )
 from lemely.web.devices import to_device_dto
@@ -51,6 +62,8 @@ from lemely.web.schemas_me import (
     NotificationPreferencesDTO,
     NotificationPreferencesUpdateDTO,
     ProfileDTO,
+    TimezoneDTO,
+    TimezoneUpdateDTO,
 )
 from lemely.web.schemas_student_profile import (
     ConfidenceRatingDTO,
@@ -61,13 +74,41 @@ from lemely.web.schemas_student_profile import (
     StudentProfileWithEnrolmentsDTO,
     SubjectEnrolmentDTO,
 )
+from lemely.web.upload_utils import check_upload_cap
 
 router = APIRouter(prefix="/api/me")
+log = structlog.get_logger(__name__)
+
+# Avatar content types this build accepts, mapped to the extension the stored
+# object path carries — derived from the *sniffed* content type, never the
+# caller-supplied filename (mirrors ``lemely.web.upload_utils.safe_upload_name``'s
+# refusal to trust client-controlled names for anything but display).
+_AVATAR_CONTENT_TYPES: dict[str, str] = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+}
+
+# The Pillow-reported format each declared content type must actually sniff
+# as — a mismatch (e.g. real GIF bytes declared ``image/png``) is rejected
+# even though it decodes cleanly: it would otherwise be stored under an
+# extension that lies about what the bytes are.
+_AVATAR_PIL_FORMATS: dict[str, str] = {
+    "image/png": "PNG",
+    "image/jpeg": "JPEG",
+    "image/webp": "WEBP",
+}
 
 # G-12: "teacher/at-risk alerts (teacher and parent only)". Every other role's
 # GET has the field forced to null, and a PUT that supplies it (true or
 # false) is rejected outright rather than silently ignored.
 _AT_RISK_ALERT_ROLES = frozenset({Role.teacher.value, Role.parent.value})
+
+# Task 17, R10: review_withdrawn fires only for a teacher (Task 9's
+# `_notify_withdrawn_reviewers` never targets any other role), so it gets the
+# same null-on-GET / 422-on-disallowed-PUT treatment as atRiskAlert above,
+# narrowed to the one role it actually applies to.
+_REVIEW_WITHDRAWN_ROLES = frozenset({Role.teacher.value})
 
 
 def _to_dto(row: NotificationPreferencesRow, *, role: str) -> NotificationPreferencesDTO:
@@ -78,6 +119,7 @@ def _to_dto(row: NotificationPreferencesRow, *, role: str) -> NotificationPrefer
         streakWarning=row.streak_warning,
         studyPlanReminder=row.study_plan_reminder,
         atRiskAlert=row.at_risk_alert if role in _AT_RISK_ALERT_ROLES else None,
+        reviewWithdrawn=row.review_withdrawn if role in _REVIEW_WITHDRAWN_ROLES else None,
         quietHoursStart=row.quiet_hours_start,
         quietHoursEnd=row.quiet_hours_end,
     )
@@ -125,8 +167,9 @@ def put_notification_preferences(
     Only fields present in the request body are changed — an omitted field is
     left as-is; an explicit ``null`` on the quiet-hours pair clears that
     bound (``payload.model_fields_set`` is how "omitted" and "explicitly
-    sent" are told apart). ``atRiskAlert`` is teacher/parent only (G-12): any
-    other role supplying it at all — ``true`` or ``false`` — is a 422, never
+    sent" are told apart). ``atRiskAlert`` is teacher/parent only (G-12), and
+    ``reviewWithdrawn`` is teacher only (R10): either role supplying its
+    disallowed field at all — ``true`` or ``false`` — is a 422, never
     silently dropped. Setting exactly one of the quiet-hours pair is also a
     422 (enforced by the service).
     """
@@ -135,6 +178,11 @@ def put_notification_preferences(
         raise HTTPException(
             status_code=422,
             detail="atRiskAlert is only settable for the teacher and parent roles.",
+        )
+    if "reviewWithdrawn" in provided and auth.role not in _REVIEW_WITHDRAWN_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail="reviewWithdrawn is only settable for the teacher role.",
         )
 
     try:
@@ -165,6 +213,11 @@ def put_notification_preferences(
                 if "atRiskAlert" in provided
                 else UNSET
             ),
+            review_withdrawn=(
+                _required_bool(payload.reviewWithdrawn, field="reviewWithdrawn")
+                if "reviewWithdrawn" in provided
+                else UNSET
+            ),
             quiet_hours_start=payload.quietHoursStart if "quietHoursStart" in provided else UNSET,
             quiet_hours_end=payload.quietHoursEnd if "quietHoursEnd" in provided else UNSET,
         )
@@ -173,10 +226,89 @@ def put_notification_preferences(
     return _to_dto(row, role=auth.role)
 
 
+def _require_user_id(auth: AuthContext) -> uuid.UUID:
+    """Parse ``auth.user_id`` (the token ``sub``) as a UUID, or raise 422.
+
+    Shared by every ``/api/me/profile`` and ``/api/me/avatar`` route — should
+    not occur against a real token, but the mirror lookup requires a real
+    :class:`uuid.UUID`, not the bare string :class:`AuthContext` carries.
+    """
+    try:
+        return uuid.UUID(auth.user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Malformed user id.") from exc
+
+
+def _avatar_url_for(user: User, settings: Settings, storage: StorageBackend) -> str | None:
+    """Sign a fresh, time-limited URL for ``user``'s avatar, or ``None``.
+
+    ``None`` both when no avatar is set (``avatar_path is None``) and when
+    storage cannot be reached to sign one — the profile read (and the sidebar
+    it backs) must never 500 just because object storage is unavailable.
+
+    Catches ``Exception`` broadly rather than just
+    :class:`~lemely.runtime.errors.ExternalServiceError`: a misconfigured
+    Supabase service-role key raises :class:`~lemely.runtime.errors.AuthError`,
+    and a misconfigured GCS credential can raise a plain google-auth error —
+    neither is this helper's caller's problem, since its whole contract is
+    "never fail the profile read".
+    """
+    if user.avatar_path is None:
+        return None
+    try:
+        return storage.create_signed_url(
+            settings.storage.avatar_bucket,
+            user.avatar_path,
+            settings.storage.signed_url_ttl_seconds,
+        )
+    except Exception as exc:  # this helper's contract is "never fail the profile read".
+        log.warning("avatar_signed_url_failed", user_id=str(user.id), error=str(exc))
+        return None
+
+
+def _delete_avatar_object(storage: StorageBackend, settings: Settings, object_path: str) -> None:
+    """Best-effort removal of one avatar object; never raises.
+
+    The user-visible contract of ``DELETE /api/me/avatar`` is that the profile
+    picture is gone, and that is decided by the ``users.avatar_path`` pointer,
+    which is cleared in the database whether or not the object store answers.
+    So a storage failure here is logged and swallowed rather than 500ing a
+    delete that already succeeded from the caller's point of view — the worst
+    case is one orphaned object nothing references.
+
+    Catches ``Exception`` for the same reason :func:`_avatar_url_for` does: as
+    well as :class:`~lemely.runtime.errors.ExternalServiceError`, a missing
+    Supabase service-role key raises
+    :class:`~lemely.runtime.errors.AuthError` and a misconfigured GCS
+    credential raises a plain google-auth error.
+    :class:`~lemely.io.storage.StorageObjectNotFoundError` is included
+    deliberately: an already-absent object is the desired end state.
+    """
+    try:
+        storage.delete(settings.storage.avatar_bucket, object_path)
+    except Exception as exc:  # a delete that already succeeded must not 500.
+        log.warning("avatar_object_delete_failed", object_path=object_path, error=str(exc))
+
+
+def _profile_dto(user: User, settings: Settings, storage: StorageBackend) -> ProfileDTO:
+    """Build the ``ProfileDTO`` every ``/api/me/profile``-family route returns."""
+    return ProfileDTO(
+        displayName=user.display_name,
+        email=user.email,
+        role=user.role.value,
+        emailVerified=user.email_verified_at is not None,
+        avatarUrl=_avatar_url_for(user, settings, storage),
+        timezone=user.timezone,
+        timezoneIsExplicit=user.timezone_is_explicit,
+    )
+
+
 @router.get("/profile", response_model=ProfileDTO)
 def get_profile(
     auth: Annotated[AuthContext, Depends(get_auth_context)],
+    settings: Annotated[Settings, Depends(get_settings)],
     mirror: Annotated[UserMirror, Depends(get_user_mirror)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ) -> ProfileDTO:
     """Return the authenticated caller's real identity (P3.7 chunk B).
 
@@ -201,14 +333,190 @@ def get_profile(
     a token that validated against the same mirror) is a 404 rather than a
     500 or a fabricated profile.
     """
-    try:
-        user_id = uuid.UUID(auth.user_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="Malformed user id.") from exc
+    user_id = _require_user_id(auth)
     user = mirror.get_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="No profile found for this account.")
-    return ProfileDTO(displayName=user.display_name, email=user.email, role=user.role.value)
+    return _profile_dto(user, settings, storage)
+
+
+# ---------------------------------------------------------------------------
+# Avatar (profile picture): any authenticated role.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/avatar", response_model=ProfileDTO)
+async def upload_avatar(
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    mirror: Annotated[UserMirror, Depends(get_user_mirror)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+    image: Annotated[UploadFile, File()],
+) -> ProfileDTO:
+    """Set the authenticated caller's profile picture (every role, like ``get_profile``).
+
+    Accepts only ``image/png``, ``image/jpeg``, or ``image/webp`` by the
+    upload's declared content type (415 otherwise), caps the body at
+    ``settings.storage.avatar_max_bytes`` (413 over), and confirms the bytes
+    actually decode as an image with Pillow (422 on failure) — a client that
+    lies about the content type does not get to write an arbitrary blob into
+    the avatars bucket under an image content type. An image that decodes
+    cleanly but sniffs as a *different* format than the declared content type
+    (e.g. real GIF bytes declared ``image/png``) is also rejected (415),
+    rather than stored under an extension that lies about the bytes. An
+    image whose declared dimensions are absurdly large for its byte size —
+    Pillow's decompression-bomb guard — is a 422, not an unhandled 500: unlike
+    a plain corrupt/truncated file (``OSError``/``ValueError``), Pillow raises
+    :class:`PIL.Image.DecompressionBombError` for that case, which subclasses
+    ``Exception`` directly rather than either of those. The object path is
+    server-generated (``{user_id}/{uuid4().hex}.{ext}``, inside the avatars
+    bucket), never derived from the client's filename, and namespaced by the
+    caller's own id so one account can never overwrite another's avatar.
+
+    Returns the same :class:`ProfileDTO` shape as ``GET /api/me/profile`` so
+    the client can replace its cached profile with the response body directly.
+    """
+    content_type = image.content_type or ""
+    ext = _AVATAR_CONTENT_TYPES.get(content_type)
+    if ext is None:
+        raise HTTPException(
+            status_code=415,
+            detail="Only PNG, JPEG, or WEBP images are accepted.",
+        )
+
+    data = await image.read()
+    check_upload_cap(data, max_bytes=settings.storage.avatar_max_bytes, content_type=content_type)
+
+    try:
+        with Image.open(BytesIO(data)) as img:
+            sniffed_format = img.format
+            img.verify()
+    except Image.DecompressionBombError as exc:
+        raise HTTPException(status_code=422, detail="Image dimensions are too large.") from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Upload is not a valid image.") from exc
+
+    if sniffed_format != _AVATAR_PIL_FORMATS[content_type]:
+        raise HTTPException(
+            status_code=415,
+            detail="Image content does not match its declared content type.",
+        )
+
+    user_id = _require_user_id(auth)
+    object_path = f"{user_id}/{uuid.uuid4().hex}.{ext}"
+    storage.upload(settings.storage.avatar_bucket, object_path, data, image.content_type)
+    mirror.set_avatar_path(user_id, object_path)
+
+    user = mirror.get_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="No profile found for this account.")
+    return _profile_dto(user, settings, storage)
+
+
+@router.delete("/avatar", response_model=ProfileDTO)
+def delete_avatar(
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    mirror: Annotated[UserMirror, Depends(get_user_mirror)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+) -> ProfileDTO:
+    """Clear the authenticated caller's profile picture, object included.
+
+    Clears the ``users.avatar_path`` pointer **and** removes the object from
+    the avatars bucket. Earlier builds only cleared the pointer, because
+    :class:`~lemely.io.storage.StorageBackend` had no delete operation — which
+    left every deleted avatar sitting in the bucket forever, paid for and
+    never referenced again. The pointer is cleared first and the object
+    removed after, via :func:`_delete_avatar_object`: that order means a
+    storage outage can only ever leave an orphaned object, never a profile
+    still pointing at an object that is already gone.
+    """
+    user_id = _require_user_id(auth)
+    previous = mirror.get_by_id(user_id)
+    if previous is None:
+        raise HTTPException(status_code=404, detail="No profile found for this account.")
+    previous_path = previous.avatar_path
+
+    mirror.set_avatar_path(user_id, None)
+    if previous_path is not None:
+        _delete_avatar_object(storage, settings, previous_path)
+
+    # Re-read rather than reusing `previous`: that instance still carries the
+    # pre-delete `avatar_path`, so the DTO built from it would sign a URL for
+    # the object this route just removed.
+    user = mirror.get_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="No profile found for this account.")
+    return _profile_dto(user, settings, storage)
+
+
+# ---------------------------------------------------------------------------
+# Time zone: any authenticated role (push-delivery spec §3).
+# ---------------------------------------------------------------------------
+
+
+def _validate_zone_name(name: str) -> None:
+    """422 unless ``name`` resolves through :class:`ZoneInfo`.
+
+    An unvalidated string would be stored once and then degrade to the launch
+    zone on every read forever (``resolve_zone`` never raises), which looks
+    exactly like the feature silently not working. Length is the DTO's job.
+    """
+    if not name.strip():
+        raise HTTPException(status_code=422, detail="timezone must be an IANA zone name.")
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError) as exc:
+        raise HTTPException(
+            status_code=422, detail=f"Unknown time zone: {name!r}. Use an IANA name."
+        ) from exc
+
+
+@router.put("/timezone", response_model=TimezoneDTO)
+def put_timezone(
+    payload: TimezoneUpdateDTO,
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    mirror: Annotated[UserMirror, Depends(get_user_mirror)],
+    zones: Annotated[UserZoneReader, Depends(get_user_zone_reader)],
+) -> TimezoneDTO:
+    """Set the caller's civil-time zone, or let the device decide it.
+
+    On the ``me`` router rather than ``student-profile`` because a zone
+    applies to every role: a teacher and a parent both receive
+    ``at_risk_alert`` and both have quiet hours.
+
+    Three bodies mean three things:
+
+    * ``{"timezone": "Z", "explicit": true}`` — the settings picker. Stored,
+      and marked as the user's choice.
+    * ``{"timezone": "Z", "explicit": false}`` — the app-boot auto-detect.
+      Stored **only while no choice is on record**; otherwise ignored, so
+      opening the app on a plane never undoes a deliberate choice.
+    * ``{"timezone": null, "explicit": false}`` — "follow this device".
+      Clears the choice; the client then sends its device zone, which the
+      second rule now accepts.
+
+    ``{"timezone": null, "explicit": true}`` is a 422 (nothing to choose), as
+    is any name ``ZoneInfo`` cannot resolve or one over 64 characters. The
+    response is the *stored* state, which for an ignored auto-detect write is
+    the earlier choice, unchanged.
+
+    The zone reader's memo for this user is dropped after the write so the
+    next award or notification reads the new zone rather than a stale one.
+    """
+    if payload.timezone is None and payload.explicit:
+        raise HTTPException(status_code=422, detail="An explicit time zone cannot be null.")
+    if payload.timezone is not None:
+        _validate_zone_name(payload.timezone)
+
+    user_id = _require_user_id(auth)
+    mirror.set_timezone(user_id, payload.timezone, explicit=payload.explicit)
+    zones.forget(user_id)
+
+    user = mirror.get_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="No profile found for this account.")
+    return TimezoneDTO(timezone=user.timezone, timezoneIsExplicit=user.timezone_is_explicit)
 
 
 # ---------------------------------------------------------------------------

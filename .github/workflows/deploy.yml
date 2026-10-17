@@ -19,6 +19,18 @@ on:
         type: choice
         options: [staging, production]
         required: true
+      # Off by default, and dispatch-only, because this is the one step in the
+      # pipeline that reaches out to two third-party sites (ciegt.pooruli.com
+      # and pastpapers.papacambridge.com) — one syllabus request plus one PDF
+      # per session, paced 2s apart by the script itself. Running that on every
+      # push would put a few hundred requests a day onto two small hosts to
+      # re-derive rows that have not changed, which is the politeness budget
+      # `scripts/ingest_thresholds.py` is written to respect.
+      ingest_thresholds:
+        description: Also ingest CAIE grade thresholds into this environment's database
+        type: boolean
+        default: false
+        required: false
 
 concurrency:
   # Two deploys to the SAME environment must never race (a slower run
@@ -98,6 +110,86 @@ jobs:
           export LEMELY_DATABASE__URL
           alembic upgrade head
 
+  # Grade thresholds are NOT seeded by a migration and never will be:
+  # `docs/deployment.md` §3.5 explains why (a migration would either embed
+  # unverified numbers as literals or make schema replay depend on a live
+  # network call). So `alembic upgrade head` leaves `component_thresholds`
+  # empty, `GradeBoundaryStore` refuses to grade against boundaries Cambridge
+  # never published, and every grading surface in the environment 503s until
+  # this has run once. Staging spent its first days in exactly that state —
+  # the ingest was a manual step nobody was holding a terminal for.
+  #
+  # Deliberately NOT in `deploy-backend`'s `needs`. A skipped job skips
+  # everything downstream of it, so wiring this into the deploy chain would
+  # make an ordinary push-to-`develop` deploy skip the backend rollout
+  # entirely. It hangs off `migrate` alone (the tables must exist first) and
+  # nothing hangs off it, so on a normal deploy it is simply absent.
+  #
+  # Ordering against the rollout does not matter either way: the running
+  # backend caches boundaries only on a *successful* read, so a process that
+  # has been refusing picks the rows up on its next request with no redeploy.
+  ingest-thresholds:
+    needs: [resolve-env, approve, migrate]
+    if: github.event.inputs.ingest_thresholds == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-env.outputs.environment }}
+    # ~50 sessions x 3 subjects, each a download plus a pdfplumber parse, at
+    # the script's own 2s pacing. Minutes, not seconds — but bounded, so a
+    # host that stops answering cannot hold a runner for six hours.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      # Same extra as `migrate`: `[db]` on top of the base dependencies, which
+      # already carry pdfplumber (the PDF verification) and structlog.
+      - run: pip install -e ".[db]"
+
+      - name: Compute SQLAlchemy DB URL
+        env:
+          RAW_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          DB_URL_PSYCOPG="$(printf '%s' "$RAW_DB_URL" | sed -E 's#^postgresql://#postgresql+psycopg://#')"
+          # Re-masked for the same reason as `deploy-backend`'s copy of this
+          # step: the rewritten string no longer matches the registered secret
+          # byte-for-byte, so GitHub's automatic redaction would not catch it
+          # once it crosses into a later step via $GITHUB_ENV.
+          echo "::add-mask::$DB_URL_PSYCOPG"
+          echo "LEMELY_DATABASE__URL=$DB_URL_PSYCOPG" >> "$GITHUB_ENV"
+
+      - name: Ingest CAIE grade thresholds
+        run: python scripts/ingest_thresholds.py
+
+      # `main()` returns 0 unconditionally — a run where every document was
+      # unreadable, or where ciegt answered with nothing at all, still exits
+      # clean and prints `verified=0`. The exit code therefore proves only
+      # that the script ran, so the job asserts the thing that actually
+      # matters, against the database rather than against stdout: at least one
+      # row a paper can be graded on. Without this the pipeline would report
+      # green over precisely the state this job exists to end.
+      - name: Verify the ingest wrote gradeable rows
+        run: |
+          python - <<'PY'
+          import os
+          import sqlalchemy as sa
+
+          engine = sa.create_engine(os.environ["LEMELY_DATABASE__URL"])
+          with engine.connect() as conn:
+              verified = conn.execute(
+                  sa.text("SELECT count(*) FROM component_thresholds WHERE verified")
+              ).scalar_one()
+          print(f"verified component_thresholds rows: {verified}")
+          if not verified:
+              raise SystemExit(
+                  "ingest wrote no verified rows — grading stays unavailable in this "
+                  "environment. Check the step above for unreadable documents."
+              )
+          PY
+
   deploy-backend:
     needs: [resolve-env, migrate]
     runs-on: ubuntu-latest
@@ -106,7 +198,12 @@ jobs:
       contents: read
       id-token: write # Workload Identity Federation — no long-lived GCP key anywhere
     outputs:
-      url: ${{ steps.deploy.outputs.url }}
+      # NOT the deploy action's own `url` output: see the "Resolve the canonical
+      # backend URL" step. `revision` is the name of the revision holding 100%
+      # of traffic once this job has verified it runs this commit; the
+      # smoke-test job compares it with what the public domain reports.
+      url: ${{ steps.backend-url.outputs.url }}
+      revision: ${{ steps.serving.outputs.revision }}
     steps:
       - uses: actions/checkout@v4
 
@@ -141,22 +238,40 @@ jobs:
           echo "::add-mask::$DB_URL_PSYCOPG"
           echo "DATABASE_URL_PSYCOPG=$DB_URL_PSYCOPG" >> "$GITHUB_ENV"
 
-      # Free-tier shape throughout: max-instances=1 is NOT a cost knob, it is
-      # load-bearing — docs/deployment.md §5.1 documents two pieces of
-      # in-process state (the correction-job registry, the parent OTP store)
-      # that break silently with a second replica. min-instances=0 is the
-      # cost knob: it scales to zero between requests so idle time costs
-      # nothing, at the price of a cold start on the next request.
+      # max-instances=3 is a COST knob, not a correctness one. Every piece of
+      # state that once required a single replica now lives in Postgres or
+      # object storage (docs/deployment.md §5.1); the only per-instance state
+      # left is the Gemini response cache, which is a cache. Three is enough to
+      # absorb a spike and prove the app is instance-agnostic while a runaway
+      # cannot fan out to 100 containers on a free-tier project. min-instances=0
+      # keeps idle time free at the price of a cold start.
       # --allow-unauthenticated is required for the Cloudflare Worker's
       # plain fetch() to reach it (see web/worker/index.ts and docs/ci-cd.md
       # for the tradeoff and the optional shared-secret hardening it notes).
+      # --service-account runs the revision as the per-environment runtime
+      # identity provisioned by scripts/gcp-bootstrap.sh, which holds object
+      # access on its own upload bucket only — never a project-level storage
+      # role; the deployer's project-level iam.serviceAccountUser (also
+      # granted by that script) is the separate permission that lets it
+      # deploy a revision running as that identity.
       - id: deploy
         uses: google-github-actions/deploy-cloudrun@v3
         with:
           service: lemely-backend-${{ needs.resolve-env.outputs.environment }}
           region: us-central1
           image: ${{ env.IMAGE }}
-          # gen2 is the load-bearing flag here; 1Gi is only insurance.
+          # Incident 2026-10-05: staging was left pinned to a named revision
+          # (00041-pwk), so every deploy built a new revision that got 0% traffic
+          # and was retired; three deploys and their smoke tests went green while
+          # the old code kept serving. `migrate` runs BEFORE this job, so the
+          # database moved on (0040 dropped plagiarism_flagged) under that old code.
+          # Always route 100% to the new revision (idempotent; tags such as a debug
+          # tag survive, and each keeps serving its own old code at its own URL, so
+          # this action's `url` output must not be trusted: see the canonical URL
+          # step below), and the next step proves what is actually serving.
+          revision_traffic: LATEST=100
+          # gen2 is the load-bearing flag here; --memory is a budget (see the last
+          # paragraph of this comment, and docs/ci-cd.md).
           #
           # The first run of this pipeline died 55s into startup, before uvicorn
           # bound, with "Uncaught signal: 7, pid=1, tid=1" — SIGBUS. That message
@@ -175,17 +290,175 @@ jobs:
           # being the bottleneck, not the heap. Dropping back to 512Mi would
           # very likely still work, but 1Gi costs nothing extra while idle
           # (min-instances=0) and buys headroom against a cold-start spike that
-          # the per-minute metric could miss, so it stays.
-          flags: --allow-unauthenticated --max-instances=1 --min-instances=0 --memory=1Gi --cpu=1 --timeout=300 --port=8000 --execution-environment=gen2
+          # the per-minute metric could miss, so it stayed. That held until the
+          # scan workers (#260, #271).
+          #
+          # --memory=2Gi is a sum that does not fit at worst, and the owner
+          # ACCEPTED that worst case on 2026-10-05. Limits: the two scan
+          # workers' RLIMIT_DATA (extraction 640 MiB, interactive 640 MiB)
+          # and the parse worker's RLIMIT_AS (512 MiB). Measured peaks: the
+          # web process idle (226.4 MiB), one marking run's share of it (its
+          # pages, held until the Gemini calls are done, plus scan_hygiene:
+          # 959.0 MiB at worst, ten 16 Mpx pages as incompressible as the
+          # 40-page case, 458.0, plus 501.0 of hygiene on one) and the
+          # resource tracker (15.6 MiB). Total 2993.0 of 2048 MiB, a margin
+          # of -945.0 MiB, with every term at its worst at once. The owner
+          # accepted that corrected figure on 2026-10-05. Marking runs are
+          # capped at one per process (lemely/io/run_cap.py), so a second run
+          # waits for the first and adds nothing. A worker child is the kernel's first choice if the
+          # instance runs out (oom_score_adj 1000), but when the pressure is
+          # in the web process, killing an idle one frees little and the web
+          # process is next. There is no --concurrency flag. See "Memory
+          # budget" in docs/ci-cd.md.
+          flags: --allow-unauthenticated --service-account=lemely-backend-${{ needs.resolve-env.outputs.environment }}@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com --max-instances=3 --min-instances=0 --memory=2Gi --cpu=1 --timeout=300 --port=8000 --execution-environment=gen2
+          #
+          # --service-account runs the revision as the per-environment runtime
+          # identity provisioned by scripts/gcp-bootstrap.sh, which holds
+          # object access on its own two buckets only — never a project-level
+          # storage role; the deployer's project-level iam.serviceAccountUser
+          # (also granted by that script) is the separate permission that lets
+          # it deploy a revision running as that identity.
+          #
+          # LEMELY_EMAIL__API_KEY is deliberately allowed to be empty. An
+          # unset repository secret renders as the empty string, which
+          # `_blank_to_none` in lemely/runtime/config.py maps to None, which
+          # makes `_build_email_provider` wire MockEmailProvider. So this
+          # line is safe to merge before the Resend secret exists: the
+          # deploy succeeds and mail simply is not sent. Adding the secret
+          # and redeploying is the whole switch-on. See
+          # docs/email-delivery.md.
+          #
+          # LEMELY_EMAIL__APP_BASE_URL is the origin the emailed links are
+          # built on. It is set explicitly for both environments rather
+          # than left to the default in EmailSettings, so a staging deploy
+          # cannot mail links pointing at production. The hosts match the
+          # Worker Custom Domains in web/wrangler.jsonc and the smoke-test
+          # job below.
+          #
+          # Object storage is Google Cloud Storage, and the two bucket names
+          # are set explicitly per environment. They MUST differ between
+          # staging and production — one shared bucket would let a staging
+          # test overwrite a real student's scan or avatar at the same object
+          # path.
+          #
+          # The `||` fallbacks mean this works with no new GitHub variables:
+          # unset `vars.` render as the empty string, which is falsy, so the
+          # names default to `<project-id>-uploads-<env>` /
+          # `<project-id>-avatars-<env>` — globally unique because the GCS
+          # namespace is global and the project id already is. Set
+          # `GCS_UPLOADS_BUCKET`/`GCS_AVATAR_BUCKET` as environment variables
+          # (Settings > Environments > staging|production) only to point an
+          # environment at differently-named buckets. `scripts/gcp-bootstrap.sh`
+          # derives the same defaults, so the pair agree by construction.
+          #
+          # Web push (VAPID). The public key is handed to every browser and is
+          # a repository VARIABLE; the private key is a repository SECRET; the
+          # subject is a literal contact. An unset secret renders as the empty
+          # string, which `_blank_to_none` maps to None, so this is safe to
+          # merge before the pair is registered: the deploy succeeds and push
+          # simply stays unavailable, exactly like LEMELY_EMAIL__API_KEY
+          # above. Generate the pair with `lemely push-keygen`; rotating it
+          # invalidates every stored subscription (docs/push-notifications.md).
           env_vars: |-
             LEMELY_RUN_MIGRATIONS=0
+            LEMELY_STORAGE__BACKEND=gcs
+            LEMELY_STORAGE__GCS_PROJECT=${{ vars.GCP_PROJECT_ID }}
+            LEMELY_STORAGE__BUCKET=${{ vars.GCS_UPLOADS_BUCKET || format('{0}-uploads-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}
+            LEMELY_STORAGE__AVATAR_BUCKET=${{ vars.GCS_AVATAR_BUCKET || format('{0}-avatars-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}
             LEMELY_LOGGING__FORMAT=json
+            LEMELY_GRADING__EQUIVALENCE_GATE=${{ vars.GRADING_EQUIVALENCE_GATE || 'false' }}
+            LEMELY_GRADING__ECF_SUBSTITUTION=${{ vars.GRADING_ECF_SUBSTITUTION || 'false' }}
+            LEMELY_GRADING__REREAD_SUBSTITUTION=${{ vars.GRADING_REREAD_SUBSTITUTION || 'false' }}
             LEMELY_SUPABASE__URL=${{ secrets.SUPABASE_URL }}
             LEMELY_SUPABASE__JWT_SECRET=${{ secrets.SUPABASE_JWT_SECRET }}
             LEMELY_SUPABASE__ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
             LEMELY_SUPABASE__SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
             LEMELY_DATABASE__URL=${{ env.DATABASE_URL_PSYCOPG }}
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            LEMELY_EMAIL__API_KEY=${{ secrets.RESEND_API_KEY }}
+            LEMELY_EMAIL__APP_BASE_URL=https://${{ needs.resolve-env.outputs.environment == 'production' && 'lemelyig.com' || 'staging.lemelyig.com' }}
+            LEMELY_PUSH__VAPID_PUBLIC_KEY=${{ vars.VAPID_PUBLIC_KEY }}
+            LEMELY_PUSH__VAPID_PRIVATE_KEY=${{ secrets.VAPID_PRIVATE_KEY }}
+            LEMELY_PUSH__VAPID_SUBJECT=mailto:support@lemelyig.com
+
+      # Asserts what is SERVING, not what was created. `revision_traffic` above
+      # should have sent 100% to the new revision; this step does not trust that.
+      # It resolves the revision holding 100% of traffic (tagged 0% entries are
+      # ignored, and a `latestRevision` entry is resolved to the latest ready
+      # revision) and fails unless its `commit-sha` label is this run's commit.
+      # deploy-cloudrun@v3 stamps that label on every revision it deploys
+      # (skip_default_labels is false), so a mismatch means traffic is pinned
+      # elsewhere or the rollout did not take. See "Traffic pinning" in
+      # docs/ci-cd.md for the fix.
+      #
+      # The resolved revision name is exported as the `revision` job output: it
+      # is what the smoke-test job expects /api/health (K_REVISION) to report
+      # through the public domain.
+      - name: Verify the serving revision runs this commit
+        id: serving
+        run: |
+          set -euo pipefail
+          SERVICE="lemely-backend-${{ needs.resolve-env.outputs.environment }}"
+          REGION="us-central1"
+          SERVING="$(gcloud run services describe "$SERVICE" --region="$REGION" --format=json | jq -r '
+            .status.latestReadyRevisionName as $latest
+            | [.status.traffic[]?
+                | {rev: (.revisionName // (if .latestRevision then $latest else null end)),
+                   pct: (.percent // 0)}]
+            | map(select(.rev != null))
+            | group_by(.rev)
+            | map({rev: .[0].rev, pct: (map(.pct) | add)})
+            | map(select(.pct == 100))
+            | .[0].rev // empty')"
+          if [ -z "$SERVING" ]; then
+            echo "::error::No single revision of $SERVICE receives 100% of traffic."
+            gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.traffic)'
+            exit 1
+          fi
+          SERVING_SHA="$(gcloud run revisions describe "$SERVING" --region="$REGION" \
+                           --format='value(metadata.labels.commit-sha)')"
+          echo "serving revision: $SERVING (commit-sha=${SERVING_SHA:-<none>}); this run: ${{ github.sha }}"
+          if [ "$SERVING_SHA" != "${{ github.sha }}" ]; then
+            echo "::error::$SERVICE is serving revision $SERVING, built from commit ${SERVING_SHA:-<unlabelled>}, not ${{ github.sha }}. The deploy created a revision that is not taking traffic; the database has already been migrated, so old code is running on the new schema. Run: gcloud run services update-traffic $SERVICE --to-latest --region=$REGION"
+            exit 1
+          fi
+          echo "revision=$SERVING" >> "$GITHUB_OUTPUT"
+
+      # The URL handed to the frontend (wrangler's BACKEND_URL) and used for the
+      # direct health check. It comes from the SERVICE, never from the deploy
+      # action's `url` output.
+      #
+      # Incident 2026-10-06: with `revision_traffic: LATEST=100` the action's
+      # `url` output became the URL of the first traffic entry. On staging that
+      # was a tag URL (https://debug238---lemely-backend-staging-....run.app), a
+      # stale debug tag on revision 00040 running old code. The Worker was
+      # deployed with that as BACKEND_URL, so the public site proxied /api to old
+      # code on a migrated database and every marking insert failed with
+      # UndefinedColumn: plagiarism_flagged. The serving-revision check above
+      # passed, because it inspects the service's traffic, not the URL the
+      # frontend was given.
+      #
+      # `status.url` is the service's canonical URL; a tag URL has `---` in its
+      # host (`<tag>---<service>-<hash>.run.app`) and can never be canonical, so
+      # the job refuses one rather than hand it on.
+      - name: Resolve the canonical backend URL
+        id: backend-url
+        run: |
+          set -euo pipefail
+          SERVICE="lemely-backend-${{ needs.resolve-env.outputs.environment }}"
+          URL="$(gcloud run services describe "$SERVICE" --region=us-central1 --format='value(status.url)')"
+          if [ -z "$URL" ]; then
+            echo "::error::gcloud returned no status.url for $SERVICE."
+            exit 1
+          fi
+          case "$URL" in
+            *---*)
+              echo "::error::status.url for $SERVICE is a tag URL ($URL). A tagged revision has its own URL; the frontend must proxy to the service's canonical URL, which serves the latest revision."
+              exit 1
+              ;;
+          esac
+          echo "backend url: $URL"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
 
       # A rollout that fails the startup probe reports only "the user-provided
       # container failed to start and listen on the port" plus a Cloud Console
@@ -216,8 +489,16 @@ jobs:
               || echo "(could not read logs — grant roles/logging.viewer to the deploy service account)"
           fi
 
-      - name: Verify health directly against Cloud Run
-        run: curl --fail --silent --show-error --retry 5 --retry-delay 5 "${{ steps.deploy.outputs.url }}/api/health"
+      - name: Verify health and the storage backend directly against Cloud Run
+        run: |
+          BODY="$(curl --fail --silent --show-error --retry 5 --retry-delay 5 "${{ steps.backend-url.outputs.url }}/api/health")"
+          echo "$BODY"
+          echo "$BODY" | grep -q '"backend":"gcs"' || { echo "health does not report the gcs backend"; exit 1; }
+          # Same expression as LEMELY_STORAGE__BUCKET above, fallback included:
+          # hardcoding the default here would assert the wrong name the moment
+          # an environment sets GCS_UPLOADS_BUCKET, failing a correct deploy.
+          EXPECTED_BUCKET="${{ vars.GCS_UPLOADS_BUCKET || format('{0}-uploads-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}"
+          echo "$BODY" | grep -q "\"bucket\":\"${EXPECTED_BUCKET}\"" || { echo "health reports the wrong bucket (expected ${EXPECTED_BUCKET})"; exit 1; }
 
   deploy-frontend:
     needs: [resolve-env, deploy-backend]
@@ -236,9 +517,16 @@ jobs:
         working-directory: web
         run: npm ci
 
+      # `-- --mode <env>` (packet A5 review fix): `web/vite/manifest.ts`'s
+      # `buildManifest` reads Vite's own build mode to decide whether the
+      # manifest's `scope_extensions` (the staging origin) is present at
+      # all — see that function's own docstring. Plain `npm run build`
+      # always defaults to mode "production", which is correct for the
+      # production deploy but would silently omit scope_extensions from a
+      # staging build too without this.
       - name: Build SPA
         working-directory: web
-        run: npm run build
+        run: npm run build -- --mode ${{ needs.resolve-env.outputs.environment }}
 
       # `--var BACKEND_URL:<url>` overrides the placeholder in wrangler.jsonc
       # with the Cloud Run URL this same run just deployed — see
@@ -281,3 +569,41 @@ jobs:
 
       - name: API health through the same-origin proxy
         run: curl --fail --silent --show-error --retry 30 --retry-delay 10 --retry-all-errors "https://${{ steps.domain.outputs.host }}/api/health"
+
+      # The checks above prove that SOMETHING answers behind the public domain.
+      # This one proves WHICH backend: /api/health reports the Cloud Run revision
+      # that served it (K_REVISION), and it must be the revision deploy-backend
+      # verified is serving this commit. If the Worker's BACKEND_URL points
+      # anywhere else (incident 2026-10-06: a stale tag URL, old code on a
+      # migrated database) the revisions differ and this fails.
+      #
+      # Retries for ~90s because the Worker deploy and Cloudflare propagation
+      # take seconds; a backend too old to report `revision` never converges and
+      # fails the same way.
+      - name: Public domain reaches the revision just deployed
+        env:
+          HOST: ${{ steps.domain.outputs.host }}
+          EXPECTED: ${{ needs.deploy-backend.outputs.revision }}
+        run: |
+          set -uo pipefail
+          if [ -z "$EXPECTED" ]; then
+            echo "::error::deploy-backend exported no serving revision; cannot prove which backend the public domain reaches."
+            exit 1
+          fi
+          ACTUAL=""
+          for attempt in $(seq 1 18); do
+            BODY="$(curl --fail --silent --show-error -H 'Cache-Control: no-cache' "https://$HOST/api/health" || true)"
+            ACTUAL="$(printf '%s' "$BODY" | jq -r '.revision // empty' 2>/dev/null || true)"
+            if [ "$ACTUAL" = "$EXPECTED" ]; then
+              echo "https://$HOST/api/health reports revision $ACTUAL, the revision just deployed."
+              exit 0
+            fi
+            echo "attempt $attempt: expected revision $EXPECTED, public domain reports ${ACTUAL:-<none>}"
+            sleep 5
+          done
+          if [ -z "$ACTUAL" ]; then
+            echo "::error::https://$HOST/api/health reports no revision (last body: ${BODY:-<empty>}). The backend behind the public domain is either older than the revision field or not on Cloud Run, so it is not the revision just deployed ($EXPECTED); the frontend's BACKEND_URL points at a different revision."
+          else
+            echo "::error::https://$HOST/api/health reports revision $ACTUAL but the revision just deployed is $EXPECTED. The frontend's BACKEND_URL points at a different revision."
+          fi
+          exit 1

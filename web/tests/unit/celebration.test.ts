@@ -222,8 +222,8 @@ describe("the count-up reveal stays on the live marking path", () => {
     // The live path: `location.state` set by `CorrectPaper` right after marking.
     expect(src).toMatch(/<ResultHeader\s+res=\{live\}\s+reveal\s*\/>/)
     // The history path: fetched by paper id, and must not animate.
-    expect(src).toMatch(/<ResultHeader\s+res=\{data\}\s*\/>/)
-    expect(src).not.toMatch(/<ResultHeader\s+res=\{data\}\s+reveal/)
+    expect(src).toMatch(/<ResultHeader\s+res=\{data\}[^/]*\/>/)
+    expect(src).not.toMatch(/<ResultHeader\s+res=\{data\}[^/]*\breveal\b/)
   })
 
   it("counts up only the hero mark, never an inline one", () => {
@@ -254,6 +254,18 @@ describe("the count-up reveal stays on the live marking path", () => {
     [
       "src/portals/student/screens/practice/PracticeResult.tsx",
       "the practice set's mark, gated on PracticeSet's `justSubmitted` state",
+    ],
+    [
+      "src/portals/marketing/ClassBatch.tsx",
+      "the landing page's ClassBatch specimen count, gated on useReveal's " +
+        "IntersectionObserver `isIn` flag rather than mount: a fixed, " +
+        "fictional Example-fixture total, not a live result, so it cannot " +
+        "carry the same 'the student was waiting for it' proof the other " +
+        "two entries do — but design-import-spec.md names this exact " +
+        "scroll-triggered count-up as required motion technique, and it " +
+        "only starts once the block has genuinely entered the viewport, " +
+        "never on first render, which is the one piece of that proof a " +
+        "marketing fixture can offer",
     ],
   ])
 

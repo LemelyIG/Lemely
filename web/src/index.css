@@ -114,8 +114,14 @@
   --warn-wash: oklch(0.945 0.045 85);
   --err: oklch(0.38 0.145 27);
   --err-wash: oklch(0.94 0.035 27);
-  --info: oklch(0.44 0.08 240);
-  --info-wash: oklch(0.94 0.03 235);
+  /* P8 (audit-dossier remediation): was hue 240/235, identical to
+     --pastel-sky-ink's hue (240) and --focus-ring's hue (240), and
+     --info-wash was byte-identical to --pastel-sky. A neutral notice painted
+     in the Math subject's colour, or in the focus ring's colour, reads as a
+     false cue. Hue 265 clears both by >=25deg while keeping L/C unchanged, so
+     the AA measurements below are unaffected. */
+  --info: oklch(0.44 0.08 265);
+  --info-wash: oklch(0.94 0.03 265);
 
   /* ── §3.7 Product scales ─────────────────────────────────────────────── */
   /* Load-bearing product semantics, not decoration. They alias the semantic
@@ -183,6 +189,20 @@
   --dur-slow: 600ms;
   --dur-celebrate: 900ms;
 
+  /* ── §12 Loading tiers (PR 2 part B) ────────────────────────────────────
+     Every full-page wait has three tiers. Tier 1, 0 to --loading-tier-skeleton:
+     warm paper only, nothing visible (a `role="status"` "Loading" announcement
+     stays, visually hidden). Tier 2, --loading-tier-skeleton to
+     --loading-tier-slow: a skeleton matching the layout being waited for.
+     Tier 3, after --loading-tier-slow: the brand mark drawing itself, "Still
+     loading", and a reload button. Both thresholds are tokens so
+     `vite/preMountShell.ts` can
+     read them out of this file rather than a second, driftable copy — the
+     pre-mount shell in index.html stages on the same two numbers `RouteFallback`
+     does. See the `.lm-tier-*` classes below for the mechanism. */
+  --loading-tier-skeleton: 200ms;
+  --loading-tier-slow: 5000ms;
+
   /* ── §4.2 Type scale (raw values) ────────────────────────────────────── */
   /* Bundled into composite classes below, because Tailwind v4's --text-* can
      carry line-height/tracking/weight but NOT font-family, and every rung here
@@ -201,6 +221,111 @@
   --fs-data-md: 15px;
   --fs-data-sm: 11px;
   --fs-hand: 19px;
+  /* Not a §4.2 type rung: iOS Safari auto-zooms the viewport on focusing any
+     text input under 16px, so this is a platform floor for native form
+     fields, applied via `.text-field` regardless of what the surrounding
+     copy scale would otherwise call for. */
+  --fs-field: 16px;
+}
+
+/* ============================================================================
+ * DARK LADDER (Phase C, task C5a) — DESIGN.md §3.10 is the measured record.
+ *
+ * A token swap, nothing more. Every name below already has a job assigned in
+ * the light `:root` block above; nothing here is a new colour concept, and no
+ * component file changes for this to work. `--bg`/`--surface`/`--t1` (the
+ * compatibility layer, `:root, [data-portal="..."]` below) and `--grade-*` /
+ * `--mark-*` / `--confidence-*` / `--subject-*` (the alias layer, §3.7–3.8
+ * above) are all `var(--paper)`-style references, resolved against whatever
+ * is cascaded on the element — so the instant `data-theme="dark"` lands on
+ * `<html>`, they repaint for free. `@theme inline` (below) maps Tailwind
+ * utilities to `var(--token)` the same way and needs no changes either.
+ *
+ * Hue and chroma are kept from the light ladder for every token except where
+ * a comment below says otherwise; every value here is transcribed into
+ * DESIGN.md §3.10 exactly as shipped, and `tests/test_design_tokens.py` runs
+ * every contrast guarantee the light ladder makes against this one too.
+ *
+ * Out of scope for C5a, deliberately: `--shadow-float` and `--scrim` (§7).
+ * Resting cards carry no shadow in either theme, floating layers (popovers,
+ * modals, toasts) are the only consumers, and neither is a text/surface
+ * contrast pair this task's AA gate covers — a dark-appropriate elevation
+ * treatment (shadows read as "holes" on a dark surface; Material's answer is
+ * lighter panels, not darker shadows) is a design decision for whichever
+ * task first ships a floating layer against this ladder, not a token-value
+ * nudge. `tests/unit/design-tokens.test.ts`'s "same token set" check
+ * excludes both by construction: neither is a plain `oklch(L C H)` triple.
+ * ==========================================================================
+ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* ── §3.1 Paper ──────────────────────────────────────────────────────── */
+  --paper: oklch(0.2 0.004 85);
+  --paper-raised: oklch(0.24 0.003 85);
+  --paper-sunk: oklch(0.17 0.006 85);
+  --paper-inverse: oklch(0.92 0.008 250);
+
+  /* ── §3.2 Ink ────────────────────────────────────────────────────────── */
+  --ink: oklch(0.93 0.009 234);
+  --ink-muted: oklch(0.78 0.006 240);
+  --ink-faint: oklch(0.72 0.006 240);
+  --ink-inverse: oklch(0.25 0.004 85);
+
+  /* ── §3.3 Rules ──────────────────────────────────────────────────────── */
+  --rule: oklch(0.3 0.004 85);
+  --rule-strong: oklch(0.36 0.005 85);
+  --rule-faint: oklch(0.26 0.003 85);
+
+  /* ── §3.4 Accent ─────────────────────────────────────────────────────── */
+  /* Chroma nudged down from the light ladder's 0.146/0.132/0.028/0.10 (still
+     the same hues) so the fill does not glow past legibility at this
+     lightness. `--accent-on`: pure white measures 2.61:1 on this accent
+     (fails AA); the dark `--paper` measures 6.93:1 and reads as the fill
+     "recessing" into the page rather than sitting on it, so it aliases
+     `--paper` instead of carrying a second literal. */
+  --accent: oklch(0.72 0.13 33);
+  --accent-hover: oklch(0.78 0.13 34);
+  --accent-wash: oklch(0.28 0.05 34);
+  --accent-ink: oklch(0.8 0.1 34);
+  --accent-on: var(--paper);
+
+  /* ── §3.5 Pastels ────────────────────────────────────────────────────── */
+  --pastel-rose: oklch(0.3 0.032 20);
+  --pastel-rose-ink: oklch(0.85 0.11 20);
+  --pastel-amber: oklch(0.3 0.045 85);
+  --pastel-amber-ink: oklch(0.85 0.08 70);
+  --pastel-sage: oklch(0.3 0.032 155);
+  --pastel-sage-ink: oklch(0.85 0.07 160);
+  --pastel-sky: oklch(0.3 0.03 235);
+  --pastel-sky-ink: oklch(0.85 0.08 240);
+  --pastel-lilac: oklch(0.3 0.03 300);
+  --pastel-lilac-ink: oklch(0.85 0.08 300);
+  --pastel-clay: oklch(0.3 0.022 55);
+  --pastel-clay-ink: oklch(0.85 0.06 50);
+
+  /* ── §3.6 Semantic states ────────────────────────────────────────────── */
+  /* The §3.6 greyscale guarantee survives the theme swap but the ladder
+     flips direction: light DESCENDS (ok > warn > err — darkest reads
+     loudest against white paper); dark ASCENDS (ok < warn < err — brightest
+     reads loudest against near-black paper). `ok`/`warn` sit a little below
+     the 0.78-0.82 starting band (0.74/0.77) because at equal L the higher
+     chroma on `err` (0.145 vs 0.075/0.085) suppresses its luminance enough
+     to break monotonicity; nudging ok/warn down instead of touching any
+     hue/chroma keeps the full step >=0.02 in relative luminance, the same
+     floor §3.6 sets for the light ladder. `info` is not part of the ladder
+     (it never was, in either theme) and sits at the band's midpoint. */
+  --ok: oklch(0.74 0.075 175);
+  --ok-wash: oklch(0.28 0.03 175);
+  --warn: oklch(0.77 0.085 70);
+  --warn-wash: oklch(0.28 0.045 85);
+  --err: oklch(0.82 0.145 27);
+  --err-wash: oklch(0.27 0.035 27);
+  --info: oklch(0.8 0.08 265);
+  --info-wash: oklch(0.29 0.03 265);
+
+  /* ── §3.9 Focus ──────────────────────────────────────────────────────── */
+  --focus-ring: oklch(0.72 0.14 240);
 }
 
 @theme inline {
@@ -314,6 +439,33 @@
   --spacing-page-tablet: 20px;
   --spacing-page-mobile: 16px;
 
+  /* Landing-page design import (feat/landing-redesign). The imported page
+     CSS (`portals/marketing/marketing.css`) is written against a bare
+     4px-based `--space-*` scale rather than Tailwind's `p-*`/`gap-*`
+     utilities, because it is verbatim from the design project and targets
+     raw custom properties directly. Deliberately sparse — no --space-7,
+     --space-9, etc. — matching the design system's own scale exactly; a
+     value outside it is wrong rather than missing.
+     `--gutter`/`--page-*` alias the spacing tokens two lines up rather than
+     redefining the pixel values a second time, so there remains one source
+     of truth for the page-gutter figures. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-24: 96px;
+  --space-32: 128px;
+  --gutter: var(--spacing-gutter);
+  --page-desktop: var(--spacing-page-desktop);
+  --page-tablet: var(--spacing-page-tablet);
+  --page-mobile: var(--spacing-page-mobile);
+
   /* ── §5 Containers ───────────────────────────────────────────────────── */
   --container-read: 680px;
   --container-app: 1200px;
@@ -390,6 +542,23 @@
   --breakpoint-xs: 320px;
   --breakpoint-phone: 414px;
   --breakpoint-desktop: 1440px;
+  /* Packet B2a: the width the student/teacher/admin sidebars start showing
+     at, and BottomNav/NavDrawer stop being the primary navigation — the
+     `sidebar:` variant. Task 4 (B3) migrates every sidebar's ad hoc
+     `min-[820px]:`/`md:` literal onto this token. */
+  --breakpoint-sidebar: 820px;
+  /* Packet B3 (Task 4): the retrofit's other two dimensions. `--sidebar-width`
+     unifies the student sidebar's old 246px with the teacher/admin 252px —
+     one shell, one width, not three portals independently reinventing "how
+     wide is a sidebar". `--bottom-nav-height` is BottomNav's own height,
+     read back by `.pb-bottom-nav` so a portal's `<main>` never sits under the
+     fixed bar. Both feed `nav-shells.tsx`'s `SIDEBAR_WIDTH`/
+     `BOTTOM_NAV_HEIGHT` constants and `vite/preMountShell.ts`'s
+     `%LEMELY_SIDEBAR_WIDTH%`/`%LEMELY_SIDEBAR_BREAKPOINT%` placeholders —
+     see `readSidebarTokens` there for why the pre-mount shell reads these
+     back out of this file rather than a second, hand-typed copy. */
+  --sidebar-width: 252px;
+  --bottom-nav-height: 56px;
 
   /* ── Font sizes below text-xs, as size-only rungs ────────────────────── */
   --text-2xs: 11px;
@@ -552,6 +721,23 @@
   grid-template-columns: minmax(0, 1fr) 300px;
 }
 
+/* ── §3.6 The red-pen register (C3a) ──────────────────────────────────────
+   A wrong answer's expanded explanation reads in --mark-wrong ink at weight
+   500 with a 2px left rule — ink and a rule, never a fill. PRODUCT.md is
+   explicit: "avoid red-heavy error states; prefer amber/neutral for 'needs
+   attention.'" A red background on the one screen a student reads right
+   after seeing their score would be exactly that. Scoped to the expanded
+   explanation slot only (question-row.tsx) — never the row, never the
+   feedback panel's own bg-paper-sunk — and it carries no Caveat: this is
+   state the reader needs, not marginalia they can lose (§4.1). See
+   DESIGN.md §3.6. */
+.lm-red-pen {
+  color: var(--mark-wrong);
+  font-weight: 500;
+  border-inline-start: 2px solid var(--mark-wrong);
+  padding-inline-start: var(--space-3);
+}
+
 /* ── Base ──────────────────────────────────────────────────────────────── */
 
 * {
@@ -562,6 +748,15 @@ html,
 body {
   /* Hallmark mobile non-negotiable: no horizontal scroll, anywhere, ever. */
   overflow-x: clip;
+  /* Kills the grey tap flash Chrome/Android and older Safari paint on every
+     touch, which reads as a "hit" on the phone regardless of whether the
+     tapped element responds — real focus/active states already carry the
+     feedback. */
+  -webkit-tap-highlight-color: transparent;
+  /* Stops a swipe-to-scroll gesture at the page top/bottom from bleeding into
+     the browser's pull-to-refresh/back-navigation chrome; each scrollable
+     region below still rubber-bands to its own edges. */
+  overscroll-behavior-y: contain;
 }
 
 body {
@@ -621,6 +816,9 @@ body {
   select,
   textarea {
     min-block-size: 44px;
+    /* Removes the ~300ms double-tap-to-zoom delay a finger otherwise pays on
+       every one of these controls before the browser commits to a single tap. */
+    touch-action: manipulation;
   }
 
   /* Checkbox and radio are excluded above, and the exclusion is load-bearing
@@ -749,6 +947,15 @@ body {
   font-size: var(--fs-body-sm);
   font-weight: 400;
   line-height: 1.5;
+}
+/* The `--fs-field` platform floor (see its token comment). A standalone
+   override, not a modifier meant to combine with a `.text-body-*` class:
+   both live in the same twMerge font-size group (lib/utils.ts), so
+   cn("text-body-md", "text-field") always collapses to "text-field" alone —
+   a field using it gets family/weight/line-height from whatever it inherits,
+   not from a `.text-body-*` rung. */
+.text-field {
+  font-size: var(--fs-field);
 }
 .text-label {
   font-family: var(--font-sans);
@@ -929,6 +1136,74 @@ body {
     background-image: none;
     transform: none;
   }
+
+  /* Chrome that exists to navigate the app, not to be read on paper: portal
+     sidebars/headers, bottom nav, drawers, toasts, banners, tab strips. Any
+     component that should not print sets this attribute; the removal itself
+     stays that component's own decision, not a selector list kept here. */
+  [data-print="hide"] {
+    display: none !important;
+  }
+
+  /* A question block (C-6 QuestionRow) is one printed unit; it must not be
+     torn across a page boundary. `page-break-inside` is the legacy property
+     kept for engines that predate `break-inside`. */
+  .lm-print-avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /*
+   * §14 rule 3 ("tokens only") is deliberately broken here, and only here:
+   * dark mode (Phase C5) re-themes `--paper*`/`--ink*`/`--rule*`/semantic
+   * per `data-theme`, but ink on physical paper must stay legible regardless
+   * of which theme was active on screen when the student printed. Forcing
+   * the literal, not a token, guarantees that even if a future dark-mode
+   * token swap runs *inside* this block by mistake, print still resolves to
+   * a light page.
+   *
+   * C4/C5 review fix: `@media` adds no specificity, so a bare `:root` here
+   * (0,1,0) loses the cascade to the dark ladder's `:root[data-theme="dark"]`
+   * (0,2,0) regardless of source order — printing while the theme preference
+   * was dark left the print surface on the dark `--paper`/`--ink` pair,
+   * which is near-white ink on white paper (browsers don't print
+   * backgrounds by default). The selector below now also matches
+   * `:root[data-theme="dark"]` directly, at the SAME (0,2,0) specificity the
+   * dark ladder uses, and wins there by source order (this block comes
+   * after it in the file) — and it now resets `--ink*` and `--rule` too,
+   * not just `--paper*`, since PaperResult.tsx/question-row.tsx print real
+   * ink-coloured text and `--rule`-based borders.
+   *
+   * Re-verification review fix: `--ok`/`--warn`/`--err` are ALSO re-themed
+   * by the dark ladder (index.css:318-323) and ALSO print — PaperResult.tsx's
+   * `IntegrityMark` (border-ok/text-ok, border-warn/text-warn) and its
+   * "Needs review" copy (text-warn) sit on the print surface with no
+   * `data-print="hide"`. Same bug, one tier milder (washed out, not
+   * invisible: dark `--warn` measures 2.10:1 on forced white paper vs light
+   * `--warn`'s 7.58:1) — reset alongside the paper/ink/rule triple for the
+   * same reason.
+   *
+   * Values are the light ladder's own (§3.1/§3.2/§3.3 above), literal
+   * rather than `var()`, for the same "survives a future mistake inside
+   * this block" reason `--paper*` already relied on.
+   */
+  :root,
+  :root[data-theme="dark"] {
+    color-scheme: light;
+    --paper: #fff;
+    --paper-raised: #fff;
+    --paper-sunk: #fff;
+    --ink: oklch(0.321 0.009 234);
+    --ink-muted: oklch(0.48 0.006 240);
+    --ink-faint: oklch(0.52 0.006 240);
+    --rule: oklch(0.905 0.004 85);
+    --ok: oklch(0.48 0.075 175);
+    --ok-wash: oklch(0.945 0.03 175);
+    --warn: oklch(0.45 0.085 70);
+    --warn-wash: oklch(0.945 0.045 85);
+    --err: oklch(0.38 0.145 27);
+    --err-wash: oklch(0.94 0.035 27);
+  }
 }
 
 /* ── §9 Motion ─────────────────────────────────────────────────────────── */
@@ -971,6 +1246,229 @@ body {
 @keyframes lm-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* ── §9.2 exception: the mark's draw-on (`Mark`, `animated`) ─────────────
+   The ONE documented exception to "animate only transform and opacity" (§9.2):
+   `stroke-dashoffset` on the mark's silhouette. The product owner granted it
+   for this one loading mark specifically, because "the interface is quietly
+   still working" is the entire content of the animation and a
+   transform/opacity treatment cannot draw a line being drawn, which is the one
+   thing this state needs to say. DESIGN.md §9.2 records the exception itself.
+
+   The four steps share one 2.8s loop so the mark reads as being drawn once, in
+   the order a hand would draw it — right page, left page, coil, tick — then
+   held before it repeats. The steps overlap slightly so the line never stops
+   moving between them.
+
+   There is no `stroke-dasharray` length here, and there must not be one. Each
+   path carries `pathLength="1"` (set in `components/ui/mark.tsx` and in the
+   pre-mount shell), which renormalises its length for every stroke-dash
+   calculation, so `1` is "the whole path" whatever its real length is. The
+   previous version of this block hardcoded 36, 24 and 42 — three measurements
+   of three specific paths, copied into two files, and wrong the moment a curve
+   moved.
+
+   Reduced motion still holds without a separate rule here: the existing
+   blanket rule below forces `animation-duration` to ~0 and
+   `animation-iteration-count` to 1, so the animation completes instantly and
+   fill:`both` holds its LAST frame — which is why every 100% keyframe here
+   must be, and is, the fully drawn state (`stroke-dashoffset: 0`). A
+   reduced-motion viewer sees the complete mark immediately, never a stalled or
+   half-drawn stroke. */
+.lm-draw-page-right,
+.lm-draw-page-left,
+.lm-draw-coil,
+.lm-draw-tick {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation-duration: 2.8s;
+  animation-timing-function: var(--ease-out-soft);
+  animation-iteration-count: infinite;
+  animation-fill-mode: both;
+}
+.lm-draw-page-right {
+  animation-name: lm-draw-page-right;
+}
+.lm-draw-page-left {
+  animation-name: lm-draw-page-left;
+}
+.lm-draw-coil {
+  animation-name: lm-draw-coil;
+}
+.lm-draw-tick {
+  animation-name: lm-draw-tick;
+}
+@keyframes lm-draw-page-right {
+  0% {
+    stroke-dashoffset: 1;
+  }
+  20%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes lm-draw-page-left {
+  0%,
+  18% {
+    stroke-dashoffset: 1;
+  }
+  38%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes lm-draw-coil {
+  0%,
+  36% {
+    stroke-dashoffset: 1;
+  }
+  56%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes lm-draw-tick {
+  0%,
+  54% {
+    stroke-dashoffset: 1;
+  }
+  76%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* ── The brand mark's page turn ────────────────────────────────────────── */
+/* The geometry lives in `components/ui/brand-mark.tsx`; this is the motion.
+   It is here rather than in the component, and the mark is drawn inline rather
+   than loaded from `public/brand/mark.svg`, for one reason: the global
+   reduced-motion block at the bottom of this file cannot reach inside an
+   `<img>`. Neither can a `prefers-reduced-motion` query written inside the SVG
+   file — Chromium does not propagate the preference into an SVG-as-image at
+   all, measured with a probe whose fill changes under the query. Inline, the
+   mark is covered by the same rule as everything else and needs no special
+   case. `brand-mark.tsx` states the whole finding.
+
+   Only `transform` and `opacity` animate (§9.2), and the two halves of a turn
+   carry §9.1 easings explicitly rather than inheriting a browser default: the
+   sheet accelerates off the stack under `ease-in-soft` and settles onto the
+   facing page under `ease-out-soft`, so the two halves meet at the same speed
+   where they hand over instead of stalling at the top of the arc. */
+
+.lm-mark {
+  /* SVG's default `overflow: hidden` on the root is what keeps a turning sheet
+     inside the mark's own box; without it a page mid-turn would sweep across
+     whatever sits beside the logo. Stated because it is load-bearing and
+     invisible. */
+  display: block;
+}
+
+.lm-leaf {
+  /* The pivot is the spine, named in artboard coordinates, for both faces.
+
+     `fill-box` + `left center` is the tempting shorthand and it is wrong here.
+     A front face's bounding box does start at the spine, so it works; a back
+     face's does not, because the mirror that puts it on the left page has
+     already moved its box to the left half of the artboard. Its "left edge" is
+     then the notebook's outer edge, and the sheet swings about the wrong side
+     of the page. `view-box` resolves the origin against the artboard's own
+     64x64 box instead, so both faces pivot on the same point. The ancestor
+     `rotate(-2 32 32)` does not disturb it: that rotation is about (32,32)
+     itself, so the spine is at the same coordinate either side of it. */
+  transform-box: view-box;
+  transform-origin: 32px 32px;
+  animation-duration: 6s;
+  animation-iteration-count: infinite;
+}
+
+/* A back face is the underside of a sheet that has not been turned yet, so its
+   resting state is "not there". This is also what it falls back to when the
+   animation is removed — by reduced motion, by `animated={false}`, or by a
+   renderer that ignores the keyframes — which is why the still mark shows two
+   plain pages and not a third stacked on the right. */
+.lm-leaf-back {
+  opacity: 0;
+}
+
+.lm-leaf-front {
+  animation-name: lm-leaf-front;
+}
+.lm-leaf-back {
+  animation-name: lm-leaf-back;
+}
+
+/* One half-turn of stagger, so a sheet is always coming down on the left while
+   the next is going up on the right. */
+.lm-leaf-1 {
+  animation-delay: 0.84s;
+}
+.lm-leaf-2 {
+  animation-delay: 1.68s;
+}
+
+.lm-mark-still .lm-leaf {
+  animation: none;
+}
+
+/* 0 → -90deg: off the right stack and up onto its edge. It is cut at exactly
+   -90deg, where a rotated plane projects to zero width and is therefore
+   invisible, which is what makes the handover to the back face free. The
+   17.1% → 60% hold is the sheet waiting out of sight at 0deg; it fades back in
+   over an identical right page during the cycle's quiet quarter, when nothing
+   is passing over that page to cross-fade against. */
+@keyframes lm-leaf-front {
+  0%,
+  3% {
+    transform: perspective(150px) rotateY(0deg);
+    opacity: 1;
+    animation-timing-function: var(--ease-in-soft);
+  }
+  16.9% {
+    transform: perspective(150px) rotateY(-89.4deg);
+    opacity: 1;
+  }
+  17% {
+    transform: perspective(150px) rotateY(-90deg);
+    opacity: 0;
+  }
+  17.1%,
+  60% {
+    transform: perspective(150px) rotateY(0deg);
+    opacity: 0;
+  }
+  72%,
+  100% {
+    transform: perspective(150px) rotateY(0deg);
+    opacity: 1;
+  }
+}
+
+/* -90 → -180deg: over the gutter and down onto the left page, arriving exactly
+   on top of it. Because the face is pre-mirrored about the spine, -180deg lands
+   it un-mirrored, pixel-identical to the left page beneath — so the fade-out
+   that follows is a cross-fade between two identical images, and there is
+   nothing to see. */
+@keyframes lm-leaf-back {
+  0%,
+  17% {
+    transform: perspective(150px) rotateY(-90deg);
+    opacity: 0;
+  }
+  17.1% {
+    transform: perspective(150px) rotateY(-90deg);
+    opacity: 1;
+    animation-timing-function: var(--ease-out-soft);
+  }
+  31% {
+    transform: perspective(150px) rotateY(-180deg);
+    opacity: 1;
+  }
+  36%,
+  100% {
+    transform: perspective(150px) rotateY(-180deg);
+    opacity: 0;
   }
 }
 
@@ -1032,6 +1530,101 @@ body {
 .lm-screen {
   animation: lm-in var(--dur-base) var(--ease-out-soft) both;
 }
+/* Packet B2b: while a View Transition is in flight, `::view-transition-new
+   (root)` below is already carrying the incoming screen's entrance — the
+   screen's own `lm-in` on top of it is a second, competing animation on the
+   same pixels, which reads as a stutter rather than a single motion. Scoped
+   to `:active-view-transition` (true only for the transition's duration) so
+   `.lm-screen` still plays its own entrance on every navigation that does
+   not use `viewTransition` — a deep link, a signed-out redirect, anything
+   outside shell chrome. */
+html:active-view-transition .lm-screen {
+  animation: none;
+}
+
+/* View Transitions for portal-internal navigation (DESIGN.md §9.4), driven
+   by react-router's `viewTransition` prop — `document.startViewTransition`
+   natively, not React's own experimental `<ViewTransition>` (see the packet
+   B2b commit body: it does not typecheck against this repo's pinned stable
+   React). `RootOutlet` sets `html[data-direction]` from
+   `navigationDirection()` before each transition's snapshot is taken, and
+   these four rules read it to pick which of the two mirrored keyframes
+   plays. `back` is the exact reverse of `forward`: the outgoing screen exits
+   toward the edge the incoming one entered from, and vice versa, so the two
+   read as one continuous motion rather than the same slide played twice. */
+@keyframes lm-vt-old-forward {
+  to {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+@keyframes lm-vt-new-forward {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+@keyframes lm-vt-old-back {
+  to {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+@keyframes lm-vt-new-back {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--dur-base);
+  animation-timing-function: var(--ease-out-soft);
+}
+html[data-direction="forward"]::view-transition-old(root) {
+  animation-name: lm-vt-old-forward;
+}
+html[data-direction="forward"]::view-transition-new(root) {
+  animation-name: lm-vt-new-forward;
+}
+html[data-direction="back"]::view-transition-old(root) {
+  animation-name: lm-vt-old-back;
+}
+html[data-direction="back"]::view-transition-new(root) {
+  animation-name: lm-vt-new-back;
+}
+
+/* Exit phase for a dismissible overlay (`Modal`, `NavDrawer`; DESIGN.md §9.2
+   "Exits"). Mirrors of `lm-in`/`lm-slide-in-start` above, played over
+   `dur-fast`/`ease-in-soft` (§9.1: fast for dismissals) rather than the
+   entrance's `dur-base`/`ease-spring` — an exit should read as quicker than
+   the open it undoes. */
+@keyframes lm-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes lm-slide-out-start {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(calc(-100% * var(--lm-dir)));
+  }
+}
+.lm-out {
+  animation: lm-out var(--dur-fast) var(--ease-in-soft) both;
+}
+.lm-slide-out-start {
+  animation: lm-slide-out-start var(--dur-fast) var(--ease-in-soft) both;
+}
 
 /* The Read lane's column (DESIGN.md §2, §13). Study content — flashcards,
    worksheets, plan sessions — is a single centred column, not a well beside a
@@ -1056,6 +1649,72 @@ body {
   max-width: 65ch;
 }
 
+/* Keeps a scroll region's own rubber-band from handing off to the page (or,
+   inside a drawer/sheet, to the backdrop behind it) once it hits its end. */
+.lm-scroll {
+  overscroll-behavior: contain;
+}
+
+/* Standalone-app chrome: the nav drawer panel and trigger, `BottomNav`, and
+   the four portal top bars. These are navigation furniture, not content — a
+   long-press or drag-select on them (callout menu, text selection) is a
+   browser reflex with nothing useful to act on here, and on a home-screen
+   app it reads as a bug rather than a browser feature. */
+.lm-nav-chrome {
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+/* `padding-top` here is unlayered CSS, and unlayered always beats a layered
+   Tailwind utility (a header's own `py-4`/`py-2.5`) regardless of
+   specificity — so this has to be additive, not a bare `env(...)`, or it
+   would zero out a header's existing top padding on every route rather than
+   supplementing it. `--lm-app-header-pt` is the one place a header opts in;
+   a header that never sets it falls back to 0px and this rule is a no-op. */
+.lm-app-header {
+  padding-top: var(--lm-app-header-pt, 0px);
+}
+
+/* Only adds the inset in standalone/home-screen mode — in a normal browser
+   tab the OS chrome already reserves the notch/status-bar area, and adding
+   this on top of it would double the gap. */
+@media (display-mode: standalone) {
+  .lm-app-header {
+    padding-top: calc(var(--lm-app-header-pt, 0px) + env(safe-area-inset-top));
+  }
+}
+
+/* §14 rule 3 forbids an arbitrary value — an inline `style` prop setting a
+   raw spacing literal is the same violation in a different syntax, so these
+   are named classes instead, off the same `--spacing` scale `py-4`/`py-2.5`
+   themselves resolve through. One rung per header that needs to opt into
+   `--lm-app-header-pt`; add another here if a fifth header ever does. */
+.lm-app-header-pt-4 {
+  --lm-app-header-pt: calc(var(--spacing) * 4);
+}
+.lm-app-header-pt-2\.5 {
+  --lm-app-header-pt: calc(var(--spacing) * 2.5);
+}
+
+/* §14 rule 3 forbids an arbitrary value, so this is the named utility for the
+   home-indicator clearance `BottomNav` and the toast rail both need. */
+.lm-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Packet B3 (Task 4): the sidebar/bottom-nav named utilities §14 rule 3
+   requires in place of an arbitrary `w-[252px]`/`pb-[...]`. `.w-sidebar`
+   backs every portal's `<aside>` and the pre-mount shell's own skeleton
+   column; `.pb-bottom-nav` is `<main>`'s clearance for the fixed BottomNav,
+   stacking the bar's own height with the home-indicator inset the same way
+   `.lm-safe-bottom` does for the bar itself. */
+.w-sidebar {
+  width: var(--sidebar-width);
+}
+.pb-bottom-nav {
+  padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
+}
+
 .lm-scroll::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -1065,6 +1724,56 @@ body {
   border-radius: 6px;
   border: 3px solid transparent;
   background-clip: content-box;
+}
+
+/* Loading-tier staging (§12, PR 2 part B). A zero-duration animation with a
+   delay and `both` fill keeps the element at `opacity: 0` until the delay
+   elapses, then holds it at `opacity: 1` forever after — so tier 2 and tier 3
+   each simply wait for their own delay to run out, with no JavaScript timer
+   anywhere. The identical trick, with the same two tokens read out of this
+   file at build time, runs in `index.html`'s pre-mount shell
+   (`vite/preMountShell.ts`), which paints before this stylesheet is even
+   requested.
+
+   The reduced-motion rule at the bottom of this file forces
+   `animation-duration`, `transition-duration` AND both delays toward zero,
+   because a staggered entrance whose delay survives holds `opacity: 0`
+   through it. That rule therefore carries an explicit carve-out for the two
+   classes below, which stage rather than animate, so they still stage under
+   `prefers-reduced-motion`: `--loading-tier-skeleton` and
+   `--loading-tier-slow` still gate when tier 2 and tier 3 become visible,
+   only the (already instantaneous) opacity fade itself is affected, which is
+   not observable.
+
+   `visibility` rides along with `opacity` here, and that is NOT a second
+   motion property alongside it under §9.2's "animate only transform and
+   opacity" rule: `visibility` cannot be interpolated (it is a discrete,
+   keyword-only property — the UA snaps it to whichever keyframe's value is
+   current, it never tweens), so animating it produces a step, not motion.
+   It has to ride along because `opacity: 0` alone does not remove an element
+   from the accessibility tree or the tab order — only `visibility: hidden`
+   does — and both `.lm-tier-skeleton` and `.lm-tier-slow` sit inside a
+   `role="status"` live region. Without this, `RouteFallback`'s tier 3
+   ("Still loading… Reload the page") was reachable by Tab and announced by a
+   screen reader on every route transition, for the first 5s of every load,
+   never having been visible on screen at all. */
+@keyframes lm-appear {
+  from {
+    opacity: 0;
+    visibility: hidden;
+  }
+  to {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+.lm-tier-skeleton {
+  visibility: hidden;
+  animation: lm-appear 0s var(--loading-tier-skeleton) both;
+}
+.lm-tier-slow {
+  visibility: hidden;
+  animation: lm-appear 0s var(--loading-tier-slow) both;
 }
 
 /* ── §10 Direction ─────────────────────────────────────────────────────── */
@@ -1085,7 +1794,44 @@ body {
   *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
+    /* The delay matters as much as the duration here. Every staggered rule on
+       the marketing page uses a `both` fill, so its backwards fill holds the
+       `from` keyframe — `opacity: 0` for `rise`, `wordrise` and siblings —
+       for the whole delay. Zeroing duration alone left a reduced-motion
+       reader looking at invisible content for up to ~750ms before it snapped
+       in, which is the "broken" this block's own heading rules out. */
+    animation-delay: 0.001ms !important;
+    transition-delay: 0.001ms !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* The `*` rule above does not reach these: `::view-transition-*` are
+     UA-generated pseudo-elements outside the normal element tree, not
+     descendants any `*` selector matches. Left unguarded, a reduced-motion
+     reader would still get the ±24px directional slide on every
+     `viewTransition` navigation — the one motion this file most needs to
+     catch, since it is triggered by native browser API rather than by any
+     class this product controls. */
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+
+  /* The two exceptions, and the reason the blanket rule above needs one.
+     These classes use `animation-delay` as a TIMER, not as motion: duration
+     is `0s` and the backwards `both` fill holds `visibility: hidden` until
+     the delay elapses, so the delay IS the tier gate. Zeroing it collapses
+     both windows — tier 2's skeleton flashes on instant transitions, and
+     tier 3's "Still loading, reload the page" is on screen, announced, and
+     tabbable from the first frame of every navigation. That is the defect
+     §9.3 above documents having already fixed once, and it would land only
+     on reduced-motion users. Staging is not animation; it survives here. */
+  .lm-tier-skeleton {
+    animation-delay: var(--loading-tier-skeleton) !important;
+  }
+  .lm-tier-slow {
+    animation-delay: var(--loading-tier-slow) !important;
   }
 }
