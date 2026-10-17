@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import {
   createContext,
   useCallback,
@@ -47,6 +48,14 @@ export interface ToastOptions {
   /** ms before auto-dismiss. `0` disables auto-dismiss (the toast stays
    * until closed). Defaults to 5000. */
   duration?: number
+  /** A single inline control (packet A7's "Reload" on `<UpdateToast>`).
+   * Clicking it does not itself dismiss the toast — a caller whose action
+   * navigates away (a reload) has no need to, and one that doesn't wants
+   * the toast to stay until its own timer or the X does. */
+  action?: {
+    label: string
+    onClick: () => void
+  }
 }
 
 interface ToastRecord extends ToastOptions {
@@ -107,7 +116,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {createPortal(
         <div
           className={cn(
-            "pointer-events-none fixed end-4 bottom-4 z-toast",
+            "lm-safe-bottom pointer-events-none fixed end-4 bottom-4 z-toast",
             "flex w-full max-w-sm flex-col gap-2",
           )}
         >
@@ -129,8 +138,6 @@ function ToastItem({
   onDismiss: (id: string) => void
 }) {
   const duration = record.duration ?? DEFAULT_DURATION
-  const meta = variantMeta[record.variant ?? "default"]
-  const Glyph = meta.icon
 
   const remainingRef = useRef(duration)
   const startedAtRef = useRef<number>(Date.now())
@@ -172,13 +179,53 @@ function ToastItem({
   }
 
   return (
+    <ToastCard
+      title={record.title}
+      description={record.description}
+      variant={record.variant}
+      action={record.action}
+      onDismiss={() => onDismiss(record.id)}
+      onPause={handlePause}
+      onResume={handleResume}
+    />
+  )
+}
+
+/**
+ * The toast's markup on its own: no timer, no provider, no portal. `ToastItem`
+ * above owns the auto-dismiss clock and renders this; the dev-preview kit
+ * renders it directly so a toast's copy can be looked at without firing one.
+ * `onPause`/`onResume` are the hover/focus hooks that clock needs; a static
+ * render simply leaves them off.
+ */
+export function ToastCard({
+  title,
+  description,
+  variant = "default",
+  action,
+  onDismiss,
+  onPause,
+  onResume,
+}: {
+  title: string
+  description?: string
+  variant?: ToastVariant
+  action?: ToastOptions["action"]
+  onDismiss: () => void
+  onPause?: () => void
+  onResume?: () => void
+}) {
+  const meta = variantMeta[variant]
+  const Glyph = meta.icon
+
+  return (
     <div
       role="status"
       aria-live="polite"
-      onMouseEnter={handlePause}
-      onMouseLeave={handleResume}
-      onFocus={handlePause}
-      onBlur={handleResume}
+      onMouseEnter={onPause}
+      onMouseLeave={onResume}
+      onFocus={onPause}
+      onBlur={onResume}
       className={cn(
         "pointer-events-auto flex items-start gap-2.5 rounded-lg border border-rule bg-paper-raised p-3.5 shadow-[var(--shadow-float)]",
         "motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-spring)_both]",
@@ -190,14 +237,23 @@ function ToastItem({
         aria-hidden="true"
       />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <p className="text-body-sm font-medium text-ink">{record.title}</p>
-        {record.description ? (
-          <p className="text-body-sm text-ink-muted">{record.description}</p>
+        <p className="text-body-sm font-medium text-ink">{title}</p>
+        {description ? (
+          <p className="text-body-sm text-ink-muted">{description}</p>
+        ) : null}
+        {action ? (
+          <button
+            type="button"
+            onClick={action.onClick}
+            className="self-start text-body-sm font-medium text-accent-ink underline decoration-1 underline-offset-2 transition-colors hover:text-accent-hover active:scale-[0.98]"
+          >
+            {action.label}
+          </button>
         ) : null}
       </div>
       <button
         type="button"
-        onClick={() => onDismiss(record.id)}
+        onClick={onDismiss}
         aria-label="Dismiss notification"
         className={cn(
           "-me-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-faint transition-colors",

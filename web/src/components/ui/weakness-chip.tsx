@@ -62,7 +62,7 @@ function SeverityBars({ severity }: { severity: WeaknessSeverity }) {
 }
 
 const weaknessChipVariants = cva(
-  "inline-flex text-left transition-colors border border-rule bg-paper-raised",
+  "inline-flex text-start transition-colors border border-rule bg-paper-raised",
   {
     variants: {
       variant: {
