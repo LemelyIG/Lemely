@@ -20,18 +20,22 @@
  * it. This is `./data.ts`'s rule, applied to a page where the cost of breaking
  * it is higher: **a claim with no source comment does not ship.**
  *
- * Three things are therefore deliberately absent, and their absence is the
+ * Two things are therefore deliberately absent, and their absence is the
  * design rather than an oversight:
  *
  *   - No legal basis, no jurisdiction, no data-controller identity, no rights
  *     statement, no contact address. There is no operator in this repository to
  *     name and no inbox to promise a reply from. Inventing "privacy@lemely" is
  *     the dead-navigation defect (a link to nothing) wearing a serious face.
- *   - No retention period, because there is no retention machinery. See
- *     `notYetBuilt` below: nothing in `lemely/` purges, expires or anonymises
- *     anything, which was verified rather than assumed.
  *   - No terms of service at all. Nothing in this codebase implies a contract
  *     between anybody and anybody.
+ *
+ * A retention period used to be on this list of absences: earlier versions of
+ * this file said there was no retention machinery to describe. That stopped
+ * being true once paper deletion shipped. `RETENTION_DAYS` in
+ * `lemely/core/deletion.py` is the one number behind the window described in
+ * `deletion` below, and it is the actual restore window and the actual
+ * integrity hold, not a figure chosen for this page.
  *
  * If a sentence here stops being true, that is a defect in this file, and the
  * fix is to change the sentence rather than to soften it.
@@ -88,8 +92,8 @@ export const dataHandlingSections: DataHandlingSection[] = [
   {
     heading: "The papers you upload",
     /*
-     * `lemely/db/models/attempts.py:24` (Upload): the file goes to Supabase
-     * Storage (`lemely/io/storage.py`) and the row keeps storage_path,
+     * `lemely/db/models/attempts.py:24` (Upload): the file goes to Google
+     * Cloud Storage (`lemely/io/storage.py`) and the row keeps storage_path,
      * original_filename, content_type, byte_size, page_count.
      *
      * The marks are a separate table, `attempts.py:53` (Attempt): awarded and
@@ -98,7 +102,7 @@ export const dataHandlingSections: DataHandlingSection[] = [
      * records that a quiz attempt carries no grade at all rather than an
      * invented one.
      */
-    body: "A scan is kept as a file in Supabase Storage, along with its original filename, its type, its size and how many pages it has. What Lemely works out from it is stored separately: the marks for each question, a total, a grade where the grade boundaries for that paper are known, and how confident the marker was about each mark.",
+    body: "A scan is kept as a file in Google Cloud Storage, along with its original filename, its type, its size and how many pages it has. What Lemely works out from it is stored separately: the marks for each question, a total, a grade where the grade boundaries for that paper are known, and how confident the marker was about each mark. You can delete a paper you have uploaded; see below for what that removes and what it keeps.",
   },
   {
     heading: "Your scan is sent to Google",
@@ -127,7 +131,12 @@ export const dataHandlingSections: DataHandlingSection[] = [
      * `lemely/web/routers/parent.py:114` guards every parent route, and the
      * link itself is `ParentChildLink` (`lemely/db/models/users.py:72`).
      * Teacher access is class-scoped (`lemely/web/routers/teacher.py`,
-     * `lemely/db/models/…` class membership), and the review queue is
+     * `lemely/db/models/…` class membership). Two roles see more (issue 243):
+     * `teacher_paper_visible` in `lemely/db/teacher_paper_repo.py` grants a
+     * `school_admin` every paper their schools' teachers upload and a
+     * `platform_admin` every console paper, and `ClassService`
+     * (`lemely/db/class_repo.py`) gives a `school_admin` every class in their
+     * schools. The review queue is
      * `lemely/web/routers/review.py`, fed by the `needs_teacher_review` flag on
      * `Attempt` (`attempts.py:103`).
      *
@@ -135,43 +144,143 @@ export const dataHandlingSections: DataHandlingSection[] = [
      * first sentence: a parent screen that lists children is not the same claim
      * as a parent who can look up any student.
      */
-    body: "A parent who is linked to a student account can see that student's marks, weak topics and at-risk flags, and only for a student they are linked to. A teacher can see the work of students in their own classes. When Lemely is unsure about a paper it marked, that paper is put in a queue for a teacher to look at.",
+    body: "A parent who is linked to a student account can see that student's marks, weak topics and at-risk flags, and only for a student they are linked to. A teacher can see the work of students in their own classes. A school administrator can see the work of students in classes at their school, and the papers their school's teachers upload. Lemely's own platform administrators can open papers uploaded to the grading console, for support. When Lemely is unsure about a paper it marked, that paper is put in a queue for a teacher to look at.",
   },
   {
     heading: "What this site does not do",
     /*
-     * Verified by search rather than asserted: no analytics, advertising,
-     * session-recording or error-reporting script appears anywhere in
-     * `web/src`, `web/index.html` or `web/package.json`. Payment processing is
-     * out of scope outright (PRODUCT.md:74), which is also why the landing
-     * page's plans section renders a placeholder rather than tiers.
+     * Was "verified by search rather than asserted: no analytics,
+     * advertising, session-recording or error-reporting script appears
+     * anywhere in `web/src`". PR 1B (client error reporting) made that
+     * search stale rather than the sentence merely aging: `lib/clientErrors.ts`
+     * now exists, `main.tsx` wires it to `window`'s "error" and
+     * "unhandledrejection" listeners, and every portal's `ErrorBoundary`
+     * (`components/ui/error-boundary.tsx`) calls it from
+     * `componentDidCatch`. So this panel now names that path explicitly
+     * instead of continuing to claim it does not exist — see the section
+     * below. Payment processing is still out of scope outright
+     * (PRODUCT.md:74), which is also why the landing page's plans section
+     * renders a placeholder rather than tiers, and analytics, advertising
+     * and session-recording scripts are still genuinely absent — this
+     * sentence was re-verified against `web/src`, `web/index.html` and
+     * `web/package.json` for this change, not carried over unread.
      *
      * The last sentence is phrased as a fact about code paths, not as an
      * undertaking. "We will never sell your data" is a promise and cannot be
      * derived from a repository; "no code path sends it anywhere else" is a
-     * property of the code and can.
+     * property of the code and can. It now excepts the crash-report path
+     * named below by cross-reference rather than by silently no longer being
+     * true.
      */
-    body: "It loads no analytics, advertising or session-recording scripts. There is no payment processing anywhere in the product, so there is nothing to enter a card into. Beyond the services named on this page, no code path sends any of this to anyone.",
+    body: "It loads no analytics, advertising or session-recording scripts. There is no payment processing anywhere in the product, so there is nothing to enter a card into. Beyond the services named on this page and the crash reports described next, no code path sends any of this to anyone.",
+  },
+  {
+    heading: "If something breaks while you are using it",
+    /*
+     * `lib/clientErrors.ts` is the whole of this: `buildClientErrorReport()`
+     * defines the exact wire body (message, stack, componentStack, route,
+     * buildId, kind, userAgent, occurredAt), `redactRoute()` is what keeps a
+     * password-reset or invite-code token in the URL out of it, and the
+     * module's own comment is where "sent only when something breaks" comes
+     * from: it fires from `ErrorBoundary.componentDidCatch`
+     * (`components/ui/error-boundary.tsx`) and from the two `window`
+     * listeners `main.tsx` installs ("error", "unhandledrejection"), and
+     * from nowhere else in the client.
+     *
+     * "Lemely's backend" and "Google Cloud Logging" name where the report
+     * goes and stops, not a promise about how long Cloud Logging keeps it:
+     * that is Google's retention, not a rule this codebase sets, and it is a
+     * different thing from the 30-day paper retention `deletion` describes
+     * below, which this backend does control. The client IP is not something
+     * this client sends; it is what every HTTP request carries and what
+     * Cloud Logging records the request as having arrived from, the same as
+     * it would for any other route this backend serves.
+     *
+     * "Does not include your answers, your marks or your session data" is the
+     * negative space worth stating plainly: `buildClientErrorReport()` never
+     * reads `localStorage`/`sessionStorage` (its own comment says so), takes
+     * no form field or answer text as input, and the fields it does send are
+     * about the failure, not about you.
+     */
+    body: "If a screen breaks, Lemely sends a small report to help fix it: what went wrong, the technical detail of where in the code that happened, which screen you were on, your browser's user agent string and when it happened. That report goes to Lemely's own backend, which writes it to Google Cloud Logging alongside the network address the report arrived from, the same as any other request this backend receives. It is sent only when something breaks, never on an ordinary visit, and it does not include your answers, your marks, or anything stored in your session.",
   },
 ]
 
+/** The public shape of the deletion feature, for `DataHandlingDeletion` below. */
+export interface DataHandlingDeletion {
+  tag: string
+  heading: string
+  removes: string
+  keeps: string
+  window: string
+  hold: string
+}
+
 /**
- * The gap, stated on the page rather than left out.
+ * What deleting a paper actually does, stated the same way as every other
+ * panel on this page: as a description of behaviour, checked against a named
+ * module.
  *
- * Established by search across `lemely/` while preparing this page, and
- * recorded in D6.8: nothing purges, expires or anonymises a scan, an attempt or
- * an account, and no route deletes an account. `DELETE` routes exist for a
- * flashcard deck, a class, an announcement, a friendship and a device, and for
- * nothing else.
+ * This replaces a panel that used to say the opposite: that nothing could be
+ * deleted, and nothing purged on a schedule. Once paper deletion shipped, that
+ * panel was no longer a gap being disclosed, it was a claim contradicted by
+ * the code beside it. Keeping it as a labelled panel rather than folding it
+ * into a paragraph is still §4's rule that a caveat, or here a load-bearing
+ * fact, gets a chip rather than a colour.
  *
- * Putting this in a labelled panel rather than a paragraph is §4's rule that a
- * caveat gets a chip rather than a colour: a reader skimming headings should
- * not be able to miss the one item here that is missing rather than present.
+ * There is still no account deletion (no route removes a `users` row), so
+ * that absence is not restated here; this panel is about a paper, which is
+ * the thing a reader who found this page is likeliest to be asking about.
  */
-export const notYetBuilt = {
-  tag: "Not built yet",
-  heading: "There is no way to delete any of this",
-  body: "Lemely has no account deletion and no way to remove a scan you have uploaded. Nothing is deleted on a schedule either, so a paper uploaded today stays until someone removes it by hand. This is a real gap, and it is written here rather than left out.",
+export const deletion: DataHandlingDeletion = {
+  tag: "Deletion",
+  heading: "Deleting a paper",
+  /*
+   * `PaperDeletionService.delete` (`lemely/db/deletion_repo.py`) is the whole
+   * of this: the unit is the upload (R7, §13), so deleting one attempt
+   * deletes every attempt marked from that scan, the upload row, and (per
+   * `lemely/web/purge.py`'s own comment) the scan and a student's own
+   * uploaded mark-scheme scan kept beside it. `WeaknessRecord.attempt_id`
+   * (`lemely/db/models/attempts.py`) cascades on the attempt, so a weakness
+   * worked out from a deleted paper goes with it.
+   */
+  removes:
+    "Deleting a paper removes the scan, and a mark-scheme scan you uploaded alongside it, the upload record, every marking run made from that scan, the marks and per-question history from each of those runs, and the weaknesses worked out from them.",
+  /*
+   * Mark-scheme reference data: `lemely/web/purge.py`'s module docstring
+   * names this exactly, "the `mark_schemes` table is shared reference data
+   * and is never touched". XP and streak history: a separate table
+   * (`lemely/db/xp_repo.py`), untouched by `PaperDeletionService` or the
+   * purge job. The review-queue notice: `NotificationType.review_withdrawn`,
+   * sent from `lemely/web/routers/student_deletion.py` when a deleted paper
+   * had an open review item, so a teacher who was reviewing it is told it
+   * was withdrawn rather than being left looking at a queue item for a paper
+   * that quietly vanished. A parent linked to the student keeps seeing that
+   * student's ongoing history; nothing on a parent's screen shows that a
+   * paper was deleted.
+   */
+  keeps:
+    "It keeps the mark scheme itself, since that is shared reference data other students use, and it keeps your XP and streak history. If the paper was in a teacher's review queue, the teacher keeps a notice that a review item was withdrawn, a record that a paper existed without the paper itself. A parent linked to the student still sees that student's ongoing history, with nothing shown about a deletion.",
+  /*
+   * `RETENTION_DAYS` in `lemely/core/deletion.py` is 30, and its own
+   * docstring says it is deliberately one number for both the restore window
+   * and D8's integrity hold, so this page never states a second one. The
+   * file staying in Google Cloud Storage during the window, rather than
+   * being removed immediately, is `purge.py`'s "GCS first, the row as the
+   * record of intent": nothing is destroyed until the window has passed.
+   * Teacher console uploads (R2) purge on the same cutoff, via
+   * `purge_expired_teacher_papers` in the same module.
+   */
+  window:
+    "A deleted paper can be restored for 30 days from a Recently Deleted list, and the file stays in Google Cloud Storage for that window so restoring it brings back the same scan. After 30 days it is removed for good. A teacher who deletes a paper they uploaded through the grading console works to the same 30-day terms. A teacher can also unshare a paper from one class, so it stops appearing in that class's view and analytics; the student's own copy is unchanged.",
+  /*
+   * The integrity hold (D8), worded without a reason: `PaperDeletionService`
+   * and `BUILD/QUALITY-BAR.md` both say the flags behind it are teacher-only
+   * and must never reach a student-facing surface, so this sentence names
+   * the wait and the date and stops there, on the owner's ruling (R5/R9)
+   * rather than by omission.
+   */
+  hold: "In some cases a paper can't be deleted for up to 30 days after it was marked; Lemely tells you the date when that applies.",
 }
 
 /**

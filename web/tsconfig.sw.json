@@ -46,5 +46,10 @@
      narrow means that boundary is now enforced by `tsc -b`: any future attempt
      to reach page-only APIs from the worker fails the web-typecheck gate rather
      than failing at runtime on a reader's device. */
-  "include": ["src/sw.ts", "src/lib/push/pushDecision.ts"]
+  "include": [
+    "src/sw.ts",
+    "src/lib/push/pushDecision.ts",
+    "src/sw/shareTarget.ts",
+    "src/sw/widgetBridge.ts"
+  ]
 }

@@ -53,7 +53,15 @@ def render_correction(result: CorrectionResult) -> Table:
     t.add_column("Confidence")
     t.add_column("Marker")
     t.add_column("Review?")
-    marker_glyph = {"deterministic": "✓", "ai": "AI", "missing": "—"}
+    # One entry per `CorrectedQuestion.marker_source` literal; "blank" is
+    # task #36's member (a question the student left empty, no marking call).
+    marker_glyph = {
+        "deterministic": "✓",
+        "ai": "AI",
+        "missing": "—",
+        "dropped": "✗",
+        "blank": "∅",
+    }
     for q in result.questions:
         marks = f"{q.awarded_marks}/{q.maximum_marks}"
         style = "green" if q.awarded_marks == q.maximum_marks else "red"

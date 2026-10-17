@@ -37,11 +37,27 @@ export interface StepperProps {
   /** Read-only: renders a plain, non-interactive step indicator (no
    * buttons) — used for a non-draft quiz, where nothing here can be edited. */
   disabled?: boolean
+  /**
+   * Accessible name for the enclosing `<nav>` landmark. Defaults to the
+   * quiz-builder wording this component was originally written for, so its
+   * two existing call sites (`QuizBuilder`, `Onboarding`) are unaffected.
+   * Any other caller — e.g. the landing page's `ScanSequence` — should pass
+   * its own label rather than inherit a landmark name about a quiz that
+   * screen doesn't have.
+   */
+  label?: string
 }
 
-export function Stepper({ steps, current, onSelect, completed, disabled }: StepperProps) {
+export function Stepper({
+  steps,
+  current,
+  onSelect,
+  completed,
+  disabled,
+  label = "Quiz builder steps",
+}: StepperProps) {
   return (
-    <nav aria-label="Quiz builder steps">
+    <nav aria-label={label}>
       <ol className="flex flex-wrap items-center gap-1.5 list-none m-0 p-0">
         {steps.map((step) => {
           const active = step.id === current

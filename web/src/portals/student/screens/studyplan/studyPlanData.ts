@@ -5,12 +5,22 @@
  * runs unit-only, no jsdom).
  */
 
+import {
+  BookOpen,
+  Cards,
+  Circle,
+  FileText,
+  PencilSimple,
+  type Icon,
+} from "@phosphor-icons/react"
 import type {
   ActivityType,
   CurrentStudyPlanDTO,
   StudyPlanSessionDTO,
   StudyPlanWeekDTO,
 } from "@/lib/studyPlanTypes"
+import type { StudentExamCalendar } from "@/lib/announcementTypes"
+import { daysUntil, formatCountdown } from "@/lib/countdown"
 
 // ── The three wire states stay three states (D4.13) ─────────────────────
 
@@ -291,6 +301,71 @@ const ACTIVITY_LABELS: Record<ActivityType, string> = {
  * onto one of the four this build knows. */
 export function activityLabel(activityType: string): string {
   return ACTIVITY_LABELS[activityType as ActivityType] ?? activityType
+}
+
+const ACTIVITY_ICONS: Record<ActivityType, Icon> = {
+  practice: PencilSimple,
+  flashcards: Cards,
+  past_paper: FileText,
+  review: BookOpen,
+}
+
+/** `SessionRow`'s leading glyph (`aria-hidden`; `activityLabel` beside it
+ * already carries the meaning, §8's restraint rule). An unrecognised
+ * activity type — same posture as `activityLabel` — falls back rather than
+ * guessing which of the four it resembles. */
+export function activityIcon(activityType: string): Icon {
+  return ACTIVITY_ICONS[activityType as ActivityType] ?? Circle
+}
+
+// ── C3b: countdown header ────────────────────────────────────────────────
+
+/**
+ * The soonest upcoming exam date recorded for one subject, or `null` when
+ * none exists (never declared, undated, or already past). Scopes
+ * `Announcements.tsx`'s `nextExam` soonest-future-date rule to a single
+ * subject's entries, since `WeekHeader` needs one subject's countdown rather
+ * than the soonest across every declared paper.
+ */
+export function nextExamDateForSubject(
+  calendar: StudentExamCalendar | undefined,
+  subjectCode: string,
+  today: Date,
+): string | null {
+  if (!calendar) return null
+  let best: { date: string; days: number } | null = null
+  for (const entry of calendar.entries) {
+    if (entry.subjectCode !== subjectCode) continue
+    for (const date of entry.dates) {
+      const days = daysUntil(date.examDate, today)
+      if (days < 0) continue
+      if (best === null || days < best.days) best = { date: date.examDate, days }
+    }
+  }
+  return best?.date ?? null
+}
+
+/**
+ * `WeekHeader`'s `SectionHead` kicker: "Target grade B · Exam in 41 days".
+ * Either half is omitted when its fact is unknown; both unknown returns
+ * `undefined` (never an empty string), so `SectionHead` renders no kicker
+ * line at all rather than a blank one.
+ */
+export function weekHeaderKicker(
+  targetGrade: string | null,
+  examDate: string | null,
+  today: Date,
+): string | undefined {
+  const parts: string[] = []
+  if (targetGrade) parts.push(`Target grade ${targetGrade}`)
+  if (examDate) {
+    const days = daysUntil(examDate, today)
+    if (days >= 0) {
+      const formatted = formatCountdown(days)
+      parts.push(days <= 1 ? `Exam ${formatted.toLowerCase()}` : `Exam in ${formatted}`)
+    }
+  }
+  return parts.length > 0 ? parts.join(" · ") : undefined
 }
 
 /** `95` → `"1h 35m"`, `60` → `"1h"`, `45` → `"45m"`, `0` → `"0m"`. Whole

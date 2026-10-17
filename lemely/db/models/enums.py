@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from typing import Literal
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
@@ -43,6 +44,20 @@ class QualificationLevel(enum.Enum):
     a_level = "a_level"
 
 
+class PaperTier(enum.Enum):
+    """Which tier of a tiered syllabus a paper belongs to.
+
+    IGCSE splits some subjects into Core and Extended. The distinction is
+    load-bearing rather than cosmetic: Cambridge publishes different grade
+    thresholds for each, and a Core candidate cannot be awarded above C. A
+    subject with no tiering (0606 Additional Mathematics) leaves the column
+    NULL rather than inventing a tier for it.
+    """
+
+    core = "core"
+    extended = "extended"
+
+
 class SessionMonth(enum.Enum):
     """CAIE exam session month codes.
 
@@ -55,8 +70,15 @@ class SessionMonth(enum.Enum):
     specimen = "specimen"
 
 
-#: Display labels for :class:`SessionMonth` members.
-SESSION_MONTH_LABELS: dict[SessionMonth, str] = {
+#: Display labels for :class:`SessionMonth` members. Typed onto the exact
+#: ``Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]`` that
+#: ``lemely.core.schemas.ExamMetadata.session_month`` declares (same four
+#: values), rather than the wider ``str`` this dict used to carry -- a
+#: ``dict[SessionMonth, str]`` let ``history_repo.py``/``review_repo.py``
+#: feed a value with no static guarantee of membership into that ``Literal``
+#: field, which mypy's pydantic plugin does not check on construction.
+#: Typing the lookup table itself closes every call site at once.
+SESSION_MONTH_LABELS: dict[SessionMonth, Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]] = {
     SessionMonth.may_june: "May/June",
     SessionMonth.oct_nov: "Oct/Nov",
     SessionMonth.feb_mar: "Feb/Mar",
@@ -85,11 +107,35 @@ class ConfidenceBand(enum.Enum):
 
 
 class MarkerSource(enum.Enum):
-    """Which engine produced a question mark."""
+    """Which engine produced a question mark.
+
+    ``dropped`` (US-038, migration ``0038_marker_source_dropped``): the model
+    DID return an answer for this question, but extraction discarded it as
+    malformed (unrecoverable ``question_id``/``answer`` shape) -- see
+    ``lemely.core.schemas.CorrectedQuestion.marker_source``. Distinct from
+    ``missing``, which covers "nothing was ever attempted". Before this
+    migration the native Postgres enum had no fourth member, so
+    ``AttemptRepository`` mapped ``"dropped"`` onto ``missing`` on write and
+    the two review-detail readers (``review_repo.py``) disagreed on what a
+    teacher saw for the identical situation -- this member removes that
+    mapping and the disagreement it caused.
+
+    ``blank`` (task #36, migration ``0040_marker_source_blank``): the student
+    left the question empty and no marking call was made -- US-039's unflagged
+    zero. It reused ``missing`` until this member existed, carrying the
+    distinction in ``review_reason`` prose instead.
+
+    ``missing``, ``dropped`` and ``blank`` all mean "no marker formed an
+    opinion". ``lemely.core.schemas.UNSCORED_MARKER_SOURCES`` is the one place
+    that set is written down, and ``lemely.core.schemas.marker_scored`` the one
+    way to ask.
+    """
 
     deterministic = "deterministic"
     ai = "ai"
     missing = "missing"
+    dropped = "dropped"
+    blank = "blank"
 
 
 class BoundarySource(enum.Enum):
@@ -156,15 +202,44 @@ class ReviewStatus(enum.Enum):
     open = "open"
     resolved = "resolved"
     dismissed = "dismissed"
+    withdrawn = "withdrawn"
+    """The subject of the review went away — the student deleted the paper.
+
+    Distinct from ``dismissed``, which is a teacher's judgement and stamps
+    ``resolved_by``. Recording a student's deletion as ``dismissed`` would lie
+    in the audit column and make every dismissed-by-teacher metric count
+    deletions (design 2026-09-22 §6).
+    """
 
 
 class ReviewReason(enum.Enum):
-    """Why a question result was flagged for teacher review."""
+    """Why a question result was flagged for teacher review.
+
+    F4 removed the AI-generated-answer detector's review reason (migration
+    ``0037``): the detector it named had no measured false-positive rate and
+    JCQ guidance is that such a detector must never be sole evidence.
+    Existing rows carrying that reason were rewritten to ``manual`` (one-way;
+    see the migration's docstring). ``random_audit`` (N2) is a new member
+    added in the same migration, so the two changes share one Alembic head
+    instead of racing for it.
+
+    ``student_evidence_unjudged`` arrives from the student self-review spec
+    (``0037_question_result_pts``, which reaches this member with
+    ``ALTER TYPE ... ADD VALUE IF NOT EXISTS``). Because that revision and
+    ``0037_remove_ai_detection`` are Alembic *siblings* off
+    ``0036_upload_idempotency_key``, whichever order the merge head resolves
+    them in must leave the same member set — so ``0037_remove_ai_detection``'s
+    enum REBUILD names this member in both its member lists rather than
+    relying on develop's revision having already run. Dropping it is not a
+    cosmetic loss: ``lemely.db.self_review_repo`` writes it into
+    ``review_queue.reason``.
+    """
 
     low_confidence = "low_confidence"
     plagiarism_flag = "plagiarism_flag"
-    ai_detection_flag = "ai_detection_flag"
     manual = "manual"
+    random_audit = "random_audit"
+    student_evidence_unjudged = "student_evidence_unjudged"
 
 
 class NotificationType(enum.Enum):
@@ -175,6 +250,7 @@ class NotificationType(enum.Enum):
     streak_warning = "streak_warning"
     study_plan_reminder = "study_plan_reminder"
     at_risk_alert = "at_risk_alert"
+    review_withdrawn = "review_withdrawn"
 
 
 class XpSource(enum.Enum):
@@ -320,15 +396,46 @@ class InviteRole(enum.StrEnum):
     """The role an invite code provisions (D7.3).
 
     Deliberately **not** :class:`Role`. An invite may only ever produce a
-    student or a teacher; reusing the five-member ``Role`` here would put
-    ``platform_admin`` in the type system of a code an anonymous caller
-    redeems, and the only thing standing between that and an escalation would
-    be a validation nobody had written yet. A narrower type cannot express the
-    mistake.
+    student, a teacher, or a parent; reusing the five-member ``Role`` here
+    would put ``platform_admin`` in the type system of a code an anonymous
+    caller redeems, and the only thing standing between that and an
+    escalation would be a validation nobody had written yet. A narrower type
+    cannot express the mistake.
     """
 
     student = "student"
     teacher = "teacher"
+    parent = "parent"
+
+
+class RevisionSource(enum.Enum):
+    """What produced a :class:`QuestionResultRevision`.
+
+    ``ai`` is written at correction time (the only writer today —
+    ``AttemptRepository._persist``). ``teacher`` exists for a future writer:
+    the current override path (``ReviewRepository.resolve``) records a
+    teacher's correction on ``QuestionResult.teacher_awarded_marks`` directly
+    and never writes a ``QuestionResultRevision``, so no revision with
+    ``source=teacher`` is produced today. ``student_selfmark`` and ``remark``
+    are likewise written by the student self-review spec; all three exist
+    here so that spec needs no enum migration of its own (spec 2026-09-17 D5).
+    """
+
+    ai = "ai"
+    teacher = "teacher"
+    student_selfmark = "student_selfmark"
+    remark = "remark"
+
+
+class EvidenceVerdict(enum.Enum):
+    """Outcome of judging a student's written claim on a mark point.
+
+    Written by the student self-review spec; created here per D5.
+    """
+
+    accepted = "accepted"
+    rejected = "rejected"
+    not_required = "not_required"
 
 
 # ---------------------------------------------------------------------------
@@ -368,12 +475,14 @@ __all__ = [
     "BoundarySource",
     "ConfidenceBand",
     "DifficultySource",
+    "EvidenceVerdict",
     "ExamBoard",
     "FriendshipStatus",
     "InviteRole",
     "MarkerSource",
     "MembershipRole",
     "NotificationType",
+    "PaperTier",
     "PlanInterval",
     "QualificationLevel",
     "QuestionDifficulty",
@@ -384,6 +493,7 @@ __all__ = [
     "QuizSubmissionStatus",
     "ReviewReason",
     "ReviewStatus",
+    "RevisionSource",
     "Role",
     "SeatStatus",
     "SessionMonth",
