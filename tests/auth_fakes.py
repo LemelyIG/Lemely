@@ -77,6 +77,7 @@ class _MirroredUser:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     terms_accepted_at: datetime | None = None
     email_verified_at: datetime | None = None
+    avatar_path: str | None = None
 
 
 class FakeUserMirror:
@@ -131,6 +132,11 @@ class FakeUserMirror:
         if existing is not None:
             existing.email_verified_at = verified_at
 
+    def set_avatar_path(self, user_id: uuid.UUID, path: str | None) -> None:
+        existing = self.rows.get(user_id)
+        if existing is not None:
+            existing.avatar_path = path
+
 
 class FakeDeviceRegistry:
     """In-memory stand-in for :class:`~lemely.db.device_repo.DeviceRegistry`.
@@ -155,9 +161,10 @@ class FakeDeviceRegistry:
         user_agent: str | None = None,
         device_label: str | None = None,
         allow_eviction: bool = True,
+        evict_device_id: uuid.UUID | str | None = None,
         now: datetime | None = None,
     ) -> DeviceRegistration:
-        del user_agent, device_label, allow_eviction, now
+        del user_agent, device_label, allow_eviction, evict_device_id, now
         existing = next(
             (
                 sid
@@ -325,7 +332,7 @@ class FakeEmailProvider:
     ``tests/test_auth_service.py``, which does the same for the analogous OTP
     rule).
 
-    ``raise_on_send``, if set, makes both send methods raise instead of
+    ``raise_on_send``, if set, makes all three send methods raise instead of
     recording — for the tests proving a delivery failure never fails the
     operation that triggered it (D7's binding rule, stated on
     :meth:`~lemely.auth.service.AuthService.signup`).
@@ -333,15 +340,21 @@ class FakeEmailProvider:
 
     delivers_out_of_band: bool = False
     raise_on_send: bool = False
-    sent_verifications: list[tuple[str, str]] = field(default_factory=list)
+    sent_verifications: list[tuple[str, str, str]] = field(default_factory=list)
     sent_resets: list[tuple[str, str]] = field(default_factory=list)
+    sent_signup_codes: list[tuple[str, str]] = field(default_factory=list)
 
-    def send_verification(self, email: str, link: str) -> None:
+    def send_verification(self, email: str, link: str, code: str) -> None:
         if self.raise_on_send:
             raise RuntimeError("simulated verification-email delivery failure")
-        self.sent_verifications.append((email, link))
+        self.sent_verifications.append((email, link, code))
 
     def send_password_reset(self, email: str, link: str) -> None:
         if self.raise_on_send:
             raise RuntimeError("simulated password-reset-email delivery failure")
         self.sent_resets.append((email, link))
+
+    def send_signup_code(self, email: str, code: str) -> None:
+        if self.raise_on_send:
+            raise RuntimeError("simulated signup-code-email delivery failure")
+        self.sent_signup_codes.append((email, code))

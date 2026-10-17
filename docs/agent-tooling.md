@@ -98,6 +98,8 @@ These upstreams ship plain skills rather than plugins, so they are copied into
 | `composition-patterns`, `deploy-to-vercel`, `react-best-practices`, `react-native-skills`, `react-view-transitions`, `vercel-cli-with-tokens`, `vercel-optimize`, `web-design-guidelines`, `writing-guidelines` | [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) | `063bee9` (2026-08-28) |
 | `ui-refactor`, plus the `/ui-refactor`, `/fix-hierarchy`, `/fix-typography`, `/fix-layout`, `/fix-colors` commands in `.claude/commands/` | [LovroPodobnik/refactoring-ui-skill](https://github.com/LovroPodobnik/refactoring-ui-skill) | `a9e776a` (2026-01-08) |
 | `ux-heuristics` | [wondelai/skills](https://github.com/wondelai/skills/tree/main/ux-heuristics) | `eade5d1` (2026-08-29) |
+| `hallmark` | [nutlope/hallmark](https://github.com/nutlope/hallmark) | `13ac0ec` (2026-08-06) |
+| `brandkit`, `design-taste-frontend`, `full-output-enforcement`, `high-end-visual-design`, `minimalist-ui`, `redesign-existing-projects` | [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) | `ccbc156` (2026-08-24) |
 
 The copies are byte-identical to upstream. `.pre-commit-config.yaml` exempts
 them from `trailing-whitespace` and `end-of-file-fixer` so they stay that way
@@ -105,6 +107,14 @@ and a re-copy on update produces a diff that is upstream's, not ours — the sam
 reasoning that already exempts `reports/`. First-party skills under
 `.claude/skills/` are still formatted normally; a newly vendored skill has to be
 added to that exclude list by hand.
+
+Vendor these by copying the skill directory out of a clone of the upstream
+repository at a known commit. Do **not** vendor by running `npx skills add`
+alone: it writes the skill body to `.agents/` — which is gitignored — and
+leaves only a symlink under `.claude/skills/`, so the commit captures a link
+whose target no clone will ever have. Seven skills were committed that way
+before it was noticed. If you do use the installer, pass `--copy`, and check
+`git ls-files -s .claude/skills | awk '$1 == "120000"'` comes back empty.
 
 Four of the Vercel skills (`deploy-to-vercel`, `vercel-cli-with-tokens`,
 `vercel-optimize`, `react-native-skills`) assume a Vercel or React Native

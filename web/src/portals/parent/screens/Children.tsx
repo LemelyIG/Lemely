@@ -2,7 +2,7 @@
 import { Link, Navigate } from "react-router-dom"
 import { CaretRight, TrendDown, TrendUp } from "@phosphor-icons/react"
 import { useChildren } from "@/lib/hooks/useParentApi"
-import { ErrorState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { parentLoadFailureMessage } from "@/lib/parentOutcome"
 import { relativeTime } from "@/lib/utils"
@@ -97,16 +97,18 @@ function ChildCard({ child }: { child: ChildSummary }) {
  * list", and P3.6 chunk a deliberately shipped the API returning a plain empty
  * list with no copy, handing that explanation here.
  *
- * The flow described is D3.11's real one and nothing else: the parent logs in
- * by phone **first** (they just did — that is why they are reading this), and
- * then the child sends the invite from their own account. There is no
- * parent-initiated request to offer, because no such route exists; inventing a
- * "Request access" button that posts nowhere would be the exact failure mode
- * this build has fixed repeatedly.
+ * The flow described is the parent-invites design's real one (design spec
+ * §2, superseding D3.11's phone-login account): the child mints a code or
+ * link from their own account's Parent access screen and shares it; the
+ * parent redeems it at `/join`, confirms an email code, and sets a password
+ * — the account and the link are created by the same server call. There is
+ * no parent-initiated request to offer, because no such route exists;
+ * inventing a "Request access" button that posts nowhere would be the exact
+ * failure mode this build has fixed repeatedly.
  *
- * "Or via the school" is likewise omitted rather than stubbed — D3.11 rejected
- * school-side linking outright (no school child-registry surface exists), so
- * naming it here would promise a path a parent cannot take.
+ * "Or via the school" is likewise omitted rather than stubbed — the design
+ * rejects school-side linking outright (no school child-registry surface
+ * exists), so naming it here would promise a path a parent cannot take.
  *
  * P3.2 reviewed this as the parent role's first-run flow and deliberately left
  * its structure alone. It is already the composed getting-started view that
@@ -116,13 +118,6 @@ function ChildCard({ child }: { child: ChildSummary }) {
  * somebody else takes on another device. Forcing it into a shape built around
  * "here is your next button" would mean either three inert steps or three
  * buttons that go nowhere.
- *
- * Step 2 says "the number you signed in with" rather than printing it back.
- * `ProfileDTO` carries no phone, and adding one to `/api/me/profile` to
- * sharpen a line of copy would put a second source beside the OTP flow that
- * already owns that fact — the same call P3.8 chunk d made about school
- * memberships. The parent typed the number moments ago; the generic phrasing
- * costs them nothing.
  *
  * P4.6 changed the surface and not the structure: tokens, the margin rule
  * (§8.5), the step numbers on the data face, and one line of Caveat marginalia
@@ -148,8 +143,8 @@ function NoChildrenLinked() {
       <ol className="flex flex-col gap-4">
         {[
           "Ask your child to open Lemely and sign in.",
-          "In their account, they add a parent using the phone number you just signed in with.",
-          "Their results appear here straight away. There is no code to enter and nothing to accept.",
+          "In their account, they open Parent access and share their code or link with you.",
+          "Open what they send you, confirm your email, and you're in.",
         ].map((step, index) => (
           <li key={index} className="flex items-start gap-3">
             <span
@@ -172,55 +167,56 @@ function NoChildrenLinked() {
 }
 
 export function Children() {
-  const { data, isPending, isError, error } = useChildren()
-
-  if (isPending) {
-    // Skeletons, not a line of text (§12): the shape below is the heading plus
-    // the card list this screen resolves to, so nothing jumps when it arrives.
-    return (
-      <div className="flex flex-col gap-6">
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={2} />
-      </div>
-    )
-  }
-
-  if (isError) {
-    return (
-      <ErrorState
-        heading="We couldn't load your children"
-        body={parentLoadFailureMessage(error)}
-        action={{ label: "Try again", onClick: () => window.location.reload() }}
-      />
-    )
-  }
-
-  const children = data.children
-
-  // Spec: one child → skip this screen entirely. `replace` so the browser back
-  // button returns to where the parent actually came from rather than bouncing
-  // through a list they never saw.
-  if (children.length === 1) {
-    return <Navigate to={`/parent/children/${children[0].childId}`} replace />
-  }
-
-  if (children.length === 0) {
-    return <NoChildrenLinked />
-  }
+  const query = useChildren()
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="margin-rule flex flex-col gap-1">
-        <h1 className="text-display-lg text-ink">Your children</h1>
-        <p className="text-body-md text-ink-muted">
-          Tap a name to see how they're doing.
-        </p>
-      </div>
-      <div className="flex flex-col gap-3">
-        {children.map((child) => (
-          <ChildCard key={child.childId} child={child} />
-        ))}
-      </div>
+      <QueryState
+        query={query}
+        srHeading="Your children"
+        // Skeletons, not a line of text (§12): the shape below is the heading plus
+        // the card list this screen resolves to, so nothing jumps when it arrives.
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={2} />
+          </>
+        }
+        error={{ heading: "We couldn't load your children", body: parentLoadFailureMessage }}
+      >
+        {(data) => {
+          const children = data.children
+
+          // Spec: one child → skip this screen entirely. `replace` so the browser
+          // back button returns to where the parent actually came from rather than
+          // bouncing through a list they never saw. Stays inside `children` rather
+          // than `QueryState`'s `isEmpty`/`empty` (which only cover a single empty
+          // treatment): this screen branches three ways on the loaded payload —
+          // redirect, the no-children explainer, or the list — and only the last
+          // is this component's own render.
+          if (children.length === 1) {
+            return <Navigate to={`/parent/children/${children[0].childId}`} replace />
+          }
+
+          if (children.length === 0) {
+            return <NoChildrenLinked />
+          }
+
+          return (
+            <>
+              <div className="margin-rule flex flex-col gap-1">
+                <h1 className="text-display-lg text-ink">Your children</h1>
+                <p className="text-body-md text-ink-muted">Tap a name to see how they're doing.</p>
+              </div>
+              <div className="flex flex-col gap-3">
+                {children.map((child) => (
+                  <ChildCard key={child.childId} child={child} />
+                ))}
+              </div>
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

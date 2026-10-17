@@ -1,18 +1,25 @@
 /* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
+import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
 import { Eyebrow } from "@/components/ui/primitives"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { Button } from "@/components/ui/button"
+import { Popover } from "@/components/ui/popover"
+import { PullIndicator } from "@/components/ui/pull-indicator"
 import {
   useMarkAllNotificationsRead,
   useMarkNotificationRead,
   useNotifications,
 } from "@/lib/hooks/useNotificationApi"
+import { setAppBadge } from "@/lib/badging"
 import type { Notification } from "@/lib/notificationTypes"
 import { cn } from "@/lib/utils"
+import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
+import { useLongPress } from "@/lib/gestures/useLongPress"
 
 /*
  * G-13 · The notification inbox (P5.9 chunk B).
@@ -55,27 +62,39 @@ export function typeLabel(type: string): string {
 /**
  * Where a notification's "Open" action goes, or null for no action at all.
  *
- * **Only `announcement` has a destination, and `grade_ready` deliberately does
- * not — that is a measured constraint, not an oversight.** `grade_ready`'s
- * payload carries `uploadId` (the upload's UUID, `routers/student.py:891`), and
- * the only per-paper screen is `/student/result/:paperId`, whose `paperId` is a
- * **history record index**, not an id: `student_result` does `int(paper_id)` and
- * 404s on anything else (`routers/student.py:487`). So an "Open" button here
- * would be a guaranteed 404 dressed up as a link. There is no route that maps an
- * upload id to its result, and inventing one is not this screen's job.
+ * **`grade_ready` deliberately has no destination — that is a measured
+ * constraint, not an oversight.** Its payload carries `uploadId` (the upload's
+ * UUID, `routers/student.py:891`), and the only per-paper screen is
+ * `/student/result/:paperId`, whose `paperId` is a **history record index**,
+ * not an id: `student_result` does `int(paper_id)` and 404s on anything else
+ * (`routers/student.py:487`). So an "Open" button here would be a guaranteed
+ * 404 dressed up as a link. There is no route that maps an upload id to its
+ * result, and inventing one is not this screen's job.
  *
- * The three remaining types have no screen of their own either. A notification
- * with no destination renders with no action rather than a control that goes
- * somewhere unrelated — the title and body already carry the information, and
- * that is what D5.9 §2 means by "a notification is a pointer".
+ * `streak_warning` opens the profile, where the streak lives (S-31), and
+ * `study_plan_reminder` opens that session's page; both are pointers to a
+ * screen that already shows the thing, which is what D5.9 §2 means by "a
+ * notification is a pointer". A reminder whose payload lacks its ids renders
+ * with no action rather than a link that cannot resolve. `at_risk_alert` is
+ * addressed to teachers and parents and never reaches a student's inbox, so
+ * it has no destination here.
  *
  * Kept deliberately consistent with `pushClientBridge.destinationFor` so that
- * tapping a push and tapping the same row in this inbox land in the same place.
+ * tapping a push and tapping the same row in this inbox land in the same
+ * place. The two differ only where they must: this returns `null` for "no
+ * action", the bridge returns the root, because a click has to go somewhere.
  */
 export function destinationFor(notification: Notification): string | null {
   switch (notification.type) {
     case "announcement":
       return "/student/announcements"
+    case "streak_warning":
+      return "/student/profile"
+    case "study_plan_reminder": {
+      const { subjectCode, sessionId } = notification.payload
+      if (!subjectCode || !sessionId) return null
+      return `/student/plan/${encodeURIComponent(subjectCode)}/session/${encodeURIComponent(sessionId)}`
+    }
     default:
       return null
   }
@@ -114,66 +133,106 @@ function NotificationRow({ notification }: { notification: Notification }) {
     if (destination !== null) void navigate(destination)
   }
 
+  // Task 6 (B4b): long-press → "Mark read", only where that action makes
+  // sense (an already-read row has nothing left to mark) — same condition
+  // the visible "Mark as read" button below already uses. The gesture is
+  // additive: that button keeps working exactly as before, which is also why
+  // this row needs no "More actions" trigger of its own the way
+  // `question-row` does — the menu's only item is already a visible,
+  // keyboard-reachable button two lines down.
+  //
+  // `triggerProps` is still wired, minus its `onClick`: a *tap* on a
+  // notification must not open the menu, but the popover needs the trigger's
+  // ref and ARIA attributes to describe the relationship correctly and to
+  // hand focus back here when Escape closes it (`tabIndex={-1}` makes the
+  // card focusable programmatically without adding a tab stop).
+  const [menuOpen, setMenuOpen] = useState(false)
+  const longPress = useLongPress({ onLongPress: () => setMenuOpen(true) })
+
   return (
-    <Card
-      className={cn(
-        "transition-colors",
-        // Same unread marker as S-28's, for the same reason: a bold title
-        // fights the heading hierarchy and stops reading as emphasis once
-        // three in a row are unread.
-        unread && "border-s-2 border-s-accent",
+    <Popover
+      open={unread && menuOpen}
+      onOpenChange={setMenuOpen}
+      className="block"
+      renderTrigger={({ triggerProps }) => (
+        <Card
+          ref={triggerProps.ref}
+          tabIndex={-1}
+          aria-haspopup={unread ? triggerProps["aria-haspopup"] : undefined}
+          aria-expanded={unread ? triggerProps["aria-expanded"] : undefined}
+          aria-controls={unread ? triggerProps["aria-controls"] : undefined}
+          className={cn(
+            "transition-colors outline-none",
+            // Same unread marker as S-28's, for the same reason: a bold title
+            // fights the heading hierarchy and stops reading as emphasis once
+            // three in a row are unread.
+            unread && "border-s-2 border-s-accent",
+          )}
+          {...(unread ? longPress : {})}
+        >
+          <CardBody className="flex flex-col gap-2">
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                {/* <h2>, not <h3>: these rows sit directly under the page's <h1>
+                    with no section heading between them, so an <h3> skips a level
+                    (axe `heading-order`, moderate — found the moment the audit
+                    registry grew a POPULATED state for this screen in P5.11 chunk
+                    E, and invisible for as long as it only probed the empty one).
+                    S-28 uses <h3> for its cards legitimately, because it really
+                    does have "Notices"/"Calendar" <h2>s above them. Do not
+                    normalize the two to the same level; the level has to describe
+                    the actual outline, not match a sibling screen. */}
+                <h2 className="text-body-lg font-medium text-ink">{notification.title}</h2>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-ink-faint">
+                  <Chip tone={notification.type === "at_risk_alert" ? "warn" : "neutral"}>
+                    {typeLabel(notification.type)}
+                  </Chip>
+                  <time dateTime={notification.createdAt}>{formatAge(notification.createdAt)}</time>
+                </div>
+              </div>
+              {unread ? (
+                <Chip tone="warn" className="flex-none">
+                  Unread
+                </Chip>
+              ) : null}
+            </div>
+
+            {notification.body !== null ? (
+              <p className="max-w-[65ch] text-body-md text-ink-muted">{notification.body}</p>
+            ) : null}
+
+            <div className="flex flex-wrap gap-2">
+              {destination !== null ? (
+                <Button size="sm" onClick={open}>
+                  Open
+                </Button>
+              ) : null}
+              {unread ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => markRead.mutate(notification.notificationId)}
+                  disabled={markRead.isPending}
+                >
+                  Mark as read
+                </Button>
+              ) : null}
+            </div>
+          </CardBody>
+        </Card>
       )}
     >
-      <CardBody className="flex flex-col gap-2">
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            {/* <h2>, not <h3>: these rows sit directly under the page's <h1>
-                with no section heading between them, so an <h3> skips a level
-                (axe `heading-order`, moderate — found the moment the audit
-                registry grew a POPULATED state for this screen in P5.11 chunk
-                E, and invisible for as long as it only probed the empty one).
-                S-28 uses <h3> for its cards legitimately, because it really
-                does have "Notices"/"Calendar" <h2>s above them. Do not
-                normalize the two to the same level; the level has to describe
-                the actual outline, not match a sibling screen. */}
-            <h2 className="text-body-lg font-medium text-ink">{notification.title}</h2>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-ink-faint">
-              <Chip tone={notification.type === "at_risk_alert" ? "warn" : "neutral"}>
-                {typeLabel(notification.type)}
-              </Chip>
-              <time dateTime={notification.createdAt}>{formatAge(notification.createdAt)}</time>
-            </div>
-          </div>
-          {unread ? (
-            <Chip tone="warn" className="flex-none">
-              Unread
-            </Chip>
-          ) : null}
-        </div>
-
-        {notification.body !== null ? (
-          <p className="max-w-[65ch] text-body-md text-ink-muted">{notification.body}</p>
-        ) : null}
-
-        <div className="flex flex-wrap gap-2">
-          {destination !== null ? (
-            <Button size="sm" onClick={open}>
-              Open
-            </Button>
-          ) : null}
-          {unread ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => markRead.mutate(notification.notificationId)}
-              disabled={markRead.isPending}
-            >
-              Mark as read
-            </Button>
-          ) : null}
-        </div>
-      </CardBody>
-    </Card>
+      <button
+        type="button"
+        onClick={() => {
+          setMenuOpen(false)
+          markRead.mutate(notification.notificationId)
+        }}
+        className="block w-full rounded-md px-3 py-2 text-start text-body-sm text-ink transition-[background-color,transform] hover:bg-paper-sunk active:scale-[0.98]"
+      >
+        Mark read
+      </button>
+    </Popover>
   )
 }
 
@@ -202,81 +261,119 @@ function InboxHeading() {
 }
 
 export function Notifications() {
-  const { data, isPending, isError, refetch } = useNotifications()
+  const query = useNotifications()
   const markAll = useMarkAllNotificationsRead()
 
-  if (isPending) {
-    return (
-      <div className="flex flex-col gap-4">
-        <InboxHeading />
-        <ListSkeleton rows={3} />
-      </div>
-    )
-  }
+  // Task 7 (B5a): the reader landing on the canonical inbox (D5.9 §1) is
+  // itself the "I've seen what's waiting" signal — `BadgeSync` will put a
+  // real count back the moment a genuinely new row arrives.
+  useEffect(() => {
+    void setAppBadge(0)
+  }, [])
 
-  if (isError) {
-    return (
-      <div className="flex flex-col gap-4">
-        <InboxHeading />
-        <ErrorState
-          heading="Notifications could not be loaded"
+  // Task 6 (B4b): pull-to-refresh. The surface is this screen's own content
+  // wrapper, never `document.documentElement`: the hook translates whatever
+  // it is given, and a transformed root is the containing block for every
+  // `position: fixed` descendant, so pulling here used to drag `BottomNav`
+  // and any open scrim down with the list. `usePullToRefresh` still asks the
+  // *window* whether we are at the scroll top (this wrapper does not scroll
+  // itself — the portal shell scrolls `document`). The wrapper is the screen
+  // root rather than something narrower so `--lm-pull-progress`, which the
+  // hook sets on it, still cascades to the indicator positioned inside it.
+  const pullSurfaceRef = useRef<HTMLDivElement>(null)
+  const { pulling, refreshing } = usePullToRefresh(pullSurfaceRef, {
+    onRefresh: () => query.refetch(),
+  })
+
+  return (
+    /*
+     * `InboxHeading` sits outside `QueryState`, not inside each branch.
+     * Its own doc comment is unusually firm about this — "rendered in EVERY
+     * state ... a heading is what the page IS, not one of the things it
+     * happens to be showing" — and the branch-by-branch version could not
+     * keep that promise: `QueryState`'s `error` slot renders a fixed
+     * `ErrorState` with nowhere to compose a heading above it, so a reader
+     * whose inbox failed to load got a bare centred panel with no visible
+     * title, on the one screen whose comment forbids exactly that. Hoisting
+     * it fixes all four states at once and makes `srHeading` unnecessary.
+     * It also makes the four consistent: the skeleton and empty renders
+     * already put the heading on its own line above their content, and only
+     * the loaded render had it sharing a row with the controls.
+     */
+    <div ref={pullSurfaceRef} className="relative flex flex-col gap-4">
+      {/* `top` maps the hook's own `--lm-pull-progress` (0..1) onto the
+          40px the indicator travels to reveal itself, off-screen at rest
+          (`-40px`) and fully in view once the pull is armed (`0`). */}
+      <div
+        // P6.3: `z-dropdown`, not the raw `z-10` this carried. 10 is
+        // `--z-index-sticky`'s value, i.e. this floating indicator declared
+        // the band that belongs to sticky table headers and portal top bars.
+        className="pointer-events-none absolute inset-x-0 z-dropdown flex justify-center"
+        style={{ top: "calc(var(--lm-pull-progress, 0) * 40px - 40px)" }}
+      >
+        <PullIndicator progress={pulling ? 1 : 0} refreshing={refreshing} />
+      </div>
+      <InboxHeading />
+      <QueryState
+        query={query}
+        skeleton={<ListSkeleton rows={3} />}
+        error={{
+          heading: "Notifications could not be loaded",
           // An empty inbox and a failed fetch look identical if this lies, and
           // the difference matters: one means nothing has happened, the other
           // means something may have and we cannot show it.
-          body="This is a connection problem on our side. You may well have notifications waiting, and nothing has been lost."
-          action={{ label: "Try again", onClick: () => void refetch() }}
-        />
-      </div>
-    )
-  }
+          body: "This is a connection problem on our side. You may well have notifications waiting, and nothing has been lost.",
+        }}
+        isEmpty={(data) => data.notifications.length === 0}
+        empty={
+          <EmptyState
+            heading="Nothing yet"
+            body="When a paper is marked, a teacher posts an announcement, your streak needs a day logged, or a study session is due, it will appear here."
+          />
+        }
+      >
+        {(data) => {
+          const unreadCount = data.notifications.filter((n) => n.readAt === null).length
 
-  if (data.notifications.length === 0) {
-    return (
-      <div className="flex flex-col gap-4">
-        <InboxHeading />
-        <EmptyState
-          heading="Nothing yet"
-          body="When a paper is marked, a teacher posts an announcement, or your streak is about to break, it will appear here."
-        />
-      </div>
-    )
-  }
+          return (
+            <div className="flex flex-col gap-4">
+              {/* The heading having moved out, this row carries only the
+                  controls, so it aligns to the end rather than splitting. */}
+              <div className="flex flex-wrap items-end justify-end gap-3">
+                <div className="flex items-center gap-3">
+                  {/* The settings link sits here because the inbox is where a
+                      reader notices they are getting too much or too little.
+                      The sidebar's Settings entry also reaches this screen
+                      (Notification settings), so this is a convenience, not
+                      the only route to it. */}
+                  <Link
+                    to="/student/settings/notifications"
+                    className="text-body-sm text-accent-ink hover:underline"
+                  >
+                    Notification settings
+                  </Link>
+                  {unreadCount > 0 ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => markAll.mutate()}
+                      disabled={markAll.isPending}
+                    >
+                      Mark all as read
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
 
-  const unreadCount = data.notifications.filter((n) => n.readAt === null).length
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <InboxHeading />
-        <div className="flex items-center gap-3">
-          {/* The inbox is where a reader notices they are getting too much or
-              too little, so it is where the settings for that belong. Until the
-              portal navs grow an entry (P5.9 chunk D), this is also the only
-              route to G-12 for a student. */}
-          <Link
-            to="/settings/notifications"
-            className="text-body-sm text-accent-ink hover:underline"
-          >
-            Notification settings
-          </Link>
-          {unreadCount > 0 ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => markAll.mutate()}
-              disabled={markAll.isPending}
-            >
-              Mark all as read
-            </Button>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-3">
-        {data.notifications.map((notification) => (
-          <NotificationRow key={notification.notificationId} notification={notification} />
-        ))}
-      </div>
+              <div className="flex flex-col gap-3">
+                {data.notifications.map((notification) => (
+                  <NotificationRow key={notification.notificationId} notification={notification} />
+                ))}
+              </div>
+            </div>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

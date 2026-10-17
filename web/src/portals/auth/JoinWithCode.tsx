@@ -5,12 +5,16 @@ import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ErrorState } from "@/components/ui/state-views"
 import { SkeletonLine } from "@/components/ui/skeleton"
+import { QueryState, type QueryStateQuery } from "@/components/ui/query-state"
 import { ApiError } from "@/lib/api"
 import type { InvitePreview } from "@/lib/authTypes"
+import { parseJoinCode } from "@/lib/joinProtocol"
+import { withNext } from "@/lib/nextPath"
 import {
+  canRedeemInviteAs,
   describeInvitePreview,
+  INVITE_ROLE_MISMATCH_MESSAGE,
   isTerminalRedeemFailure,
   normalizeInviteCode,
   previewErrorCopy,
@@ -75,6 +79,15 @@ import { AuthFrame } from "./Login"
  * invite to `/student`, straight into `RequireAuth`'s guard bouncing them
  * back out again. `confirmSignedIn` below reads `session.role`.
  *
+ * The one exception is `result.childId` (design spec §5, parent-invites):
+ * still reading `session.role` to pick the *portal*, but once that portal is
+ * confirmed to be `parent`, `result.childId` — data only the redeemed invite
+ * itself carries — sends the reader straight to the child they just gained
+ * access to, rather than to the parent portal's own root. Not a
+ * contradiction of the reasoning above: `result.role` is still never trusted
+ * for *which portal*, this only reads one extra field once the portal is
+ * already settled.
+ *
  * ── AuthFrame ─────────────────────────────────────────────────────────────
  *
  * Reused from `Login.tsx`, not copied — see that export's own docstring for
@@ -109,6 +122,7 @@ function CodeEntryStep({
         required
         autoComplete="off"
         spellCheck={false}
+        enterKeyHint="go"
         placeholder="e.g. 7HKPX2WCQY"
         value={code}
         onChange={(event) => onChangeCode(event.target.value)}
@@ -143,51 +157,6 @@ function PreviewLoadingStep() {
   )
 }
 
-/** The preview-lookup failure panel — "invalid code" and "expired code" both
- * land here (see the module docstring for why that is one panel, not a gap).
- * `previewErrorCopy` decides whether the way forward is a fresh code or a
- * retry of the same one. */
-function PreviewErrorStep({
-  error,
-  onDifferentCode,
-  onRetry,
-}: {
-  error: unknown
-  onDifferentCode: () => void
-  onRetry: () => void
-}) {
-  const copy = previewErrorCopy(error)
-  return (
-    <>
-      {/*
-       * `ErrorState`'s own `heading` renders as a styled `<div>`, not an
-       * `<h1>` (`state-views.tsx`) - correct for its usual job of sitting
-       * inside a page that already has one (a portal's nav shell, a section
-       * header). This screen has no such shell: when this branch is what's
-       * on screen, `ErrorState`'s panel *is* the entire page. An `sr-only`
-       * `<h1>` gives a screen-reader user the page-level landmark
-       * QUALITY-BAR's "one h1 per page" rule asks for without touching that
-       * component's established visual contract, which every other caller
-       * still relies on.
-       */}
-      <h1 className="sr-only">{copy.heading}</h1>
-      <ErrorState
-        heading={copy.heading}
-        body={
-          error instanceof ApiError && error.status === 404
-            ? "We couldn't find an invite for that code. Check it and try again."
-            : "We couldn't look up that invite just now. Check your connection and try again."
-        }
-        action={{
-          label: copy.actionLabel,
-          onClick: copy.retryable ? onRetry : onDifferentCode,
-        }}
-        className="px-0 py-2"
-      />
-    </>
-  )
-}
-
 /**
  * The resolved preview — what §G-08 calls "a preview of what they're
  * joining", plus the confirm action. `isSignedIn` alone decides which of
@@ -197,6 +166,7 @@ function PreviewErrorStep({
 function InvitePreviewStep({
   preview,
   isSignedIn,
+  canRedeem,
   isRedeeming,
   redeemError,
   onConfirmSignedOut,
@@ -205,6 +175,11 @@ function InvitePreviewStep({
 }: {
   preview: InvitePreview
   isSignedIn: boolean
+  /** Whether the signed-in caller's own role can redeem this invite at all
+   * (`canRedeemInviteAs`, `useInvitesApi.ts`) — meaningless, and ignored,
+   * while signed out: a signed-out visitor's eventual role is whatever they
+   * sign up as, so there is nothing yet to mismatch. */
+  canRedeem: boolean
   isRedeeming: boolean
   redeemError: unknown
   onConfirmSignedOut: () => void
@@ -212,19 +187,27 @@ function InvitePreviewStep({
   onDifferentCode: () => void
 }) {
   const lines = describeInvitePreview(preview)
-  // Terminal failures (already redeemed, or the currently-unreachable seat-
-  // quota-full marker - see `useInvitesApi.ts`) replace the confirm button
-  // rather than sitting beside it: retrying the identical call reproduces the
-  // identical refusal, so offering "join now" again would be a dead end
-  // dressed up as an action. A transient failure (network, 5xx) is not
-  // terminal, and there the button stays so "try again" is one tap.
+  // Terminal failures (already redeemed, a role mismatch, or the currently-
+  // unreachable seat-quota-full marker - see `useInvitesApi.ts`) replace the
+  // confirm button rather than sitting beside it: retrying the identical call
+  // reproduces the identical refusal, so offering "join now" again would be a
+  // dead end dressed up as an action. A transient failure (network, 5xx) is
+  // not terminal, and there the button stays so "try again" is one tap.
   const terminal = isSignedIn && isTerminalRedeemFailure(redeemError)
+  // A role mismatch is caught before the request is even sent, not only after
+  // a 403 comes back — see `canRedeemInviteAs`'s own docstring for why this
+  // is checked ahead of, rather than instead of, `isTerminalRedeemFailure`.
+  const blocked = isSignedIn && !canRedeem
 
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
         <div className="text-eyebrow text-ink-faint">
-          {preview.role === "teacher" ? "Teacher invite" : "Student invite"}
+          {preview.role === "teacher"
+            ? "Teacher invite"
+            : preview.role === "parent"
+              ? "Parent invite"
+              : "Student invite"}
         </div>
         <h1 className="text-display-lg text-ink">You're about to join</h1>
       </div>
@@ -242,14 +225,18 @@ function InvitePreviewStep({
         ))}
       </div>
 
-      {redeemError ? (
+      {blocked ? (
+        <p role="alert" className="text-body-sm text-err">
+          {INVITE_ROLE_MISMATCH_MESSAGE}
+        </p>
+      ) : redeemError ? (
         <p role="alert" className="text-body-sm text-err">
           {redeemFailureMessage(redeemError)}
         </p>
       ) : null}
 
       <div className="flex flex-col gap-3">
-        {terminal ? null : (
+        {blocked || terminal ? null : (
           <Button
             type="button"
             variant="accent"
@@ -257,7 +244,19 @@ function InvitePreviewStep({
             loading={isRedeeming}
             onClick={isSignedIn ? onConfirmSignedIn : onConfirmSignedOut}
           >
-            {isSignedIn ? (isRedeeming ? "Joining…" : "Join now") : "Continue"}
+            {isSignedIn
+              ? isRedeeming
+                ? "Joining…"
+                : "Join now"
+              : // Design spec §5's own wording for the parent branch: signed
+                // out, this button is a first account, not a return trip, and
+                // "Continue" undersells that. Every other role keeps the
+                // original copy — a student or teacher's signed-out path
+                // still lands on `SignupDetails.tsx`, which has its own
+                // heading ("Create your student account") once there.
+                preview.role === "parent"
+                ? "Create your parent account"
+                : "Continue"}
           </Button>
         )}
         <Button type="button" variant="ghost" size="md" onClick={onDifferentCode}>
@@ -308,20 +307,74 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
     redeem.mutate(
       { code: activeCode },
       {
-        onSuccess: () => {
-          // `session` is guaranteed non-null here: this handler is only ever
-          // wired up when `session !== null` below (`isSignedIn`). The
-          // fallback is defensive typing, not a real path — see the module
-          // docstring for why this reads the caller's own role rather than
-          // the redeemed invite's.
+        onSuccess: (result) => {
+          // A parent landing directly on the child they just gained access
+          // to (design spec §5) rather than the portal's own root — the one
+          // case where the *redeemed invite's* own data names a more useful
+          // destination than "the caller's portal home" does. Every other
+          // role keeps the module docstring's original reasoning: `session`
+          // is guaranteed non-null here (this handler is only ever wired up
+          // when `session !== null` below, `isSignedIn`), and the fallback is
+          // defensive typing, not a real path.
+          if (session?.role === "parent" && result.childId) {
+            navigate(`/parent/children/${result.childId}`, { replace: true })
+            return
+          }
           navigate(portalPathForRole(session?.role ?? "student"), { replace: true })
         },
       },
     )
   }
 
+  // What the preview failure means right now — recomputed every render off
+  // `preview.error`, so it stays current without needing to live inside a
+  // ref or effect. Also used (harmlessly) when there is no error yet:
+  // `previewErrorCopy(null)` resolves to its generic, retryable branch, and
+  // nothing reads `errorCopy` unless `preview.status === "error"` anyway.
+  const errorCopy = previewErrorCopy(preview.error)
+
+  /*
+   * `<QueryState>`'s error action always calls `query.refetch()` (see that
+   * component's own contract in `query-state.tsx`) — there is no prop to
+   * point it at a different handler. This screen genuinely needs that: an
+   * invalid or expired code (404) never becomes valid on a second identical
+   * request (`previewErrorCopy`'s own docstring), so its action has to send
+   * the reader back to code entry rather than repeat the same failing
+   * lookup, while a network or server failure is worth retrying as-is.
+   * Wrapping `refetch` on the query object handed to `<QueryState>` routes
+   * the one real click target to the right place without `query-state.tsx`
+   * needing an overridable retry callback it does not have. This is still a
+   * single real query passed through, not two merged into one pseudo-query.
+   */
+  const previewForQueryState: QueryStateQuery<InvitePreview> = {
+    /*
+     * `isFetching`, not just `status`. The pre-conversion screen checked
+     * `preview.isFetching` *ahead* of its error branch, so pressing "Try
+     * again" put the loading step back on screen while the lookup ran.
+     * `QueryState` switches on `status`, which react-query leaves at
+     * `"error"` throughout a background refetch — so without this the retry
+     * button changed nothing at all for a whole round trip, and nothing ever
+     * again if the retry also failed. A button that does not visibly do
+     * anything reads as broken, which is worse than the failure it is
+     * offering to fix.
+     */
+    status: preview.isFetching ? "pending" : preview.status,
+    data: preview.data,
+    error: preview.error,
+    fetchStatus: preview.fetchStatus,
+    refetch: () => (errorCopy.retryable ? preview.refetch() : goBackToEntry()),
+  }
+
   let body: ReactNode
   if (activeCode.length === 0) {
+    // The lookup query is `enabled: false` for an empty code (`useInvitesApi.
+    // ts`), so it sits at `status: "pending", fetchStatus: "idle"` forever —
+    // exactly the case `<QueryState>`'s own `idle` prop exists for. Rather
+    // than route that through `idle` (which would also need this same
+    // component's landmark heading, and `CodeEntryStep` already renders its
+    // own visible `<h1>`), this branch stays a plain conditional outside
+    // `<QueryState>` entirely, matching the screen's original structure: the
+    // query is never consulted while there is no code to look up.
     body = (
       <CodeEntryStep
         code={codeInput}
@@ -329,29 +382,34 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
         onSubmit={handleSubmitCode}
       />
     )
-  } else if (preview.isFetching) {
-    body = <PreviewLoadingStep />
-  } else if (preview.isSuccess) {
-    body = (
-      <InvitePreviewStep
-        preview={preview.data}
-        isSignedIn={session !== null}
-        isRedeeming={redeem.isPending}
-        redeemError={redeem.isError ? redeem.error : null}
-        onConfirmSignedOut={confirmSignedOut}
-        onConfirmSignedIn={confirmSignedIn}
-        onDifferentCode={goBackToEntry}
-      />
-    )
   } else {
-    // preview.isError, or (unreachably, since `enabled` is tied to the same
-    // `activeCode.length === 0` check above) still pending with no data yet.
     body = (
-      <PreviewErrorStep
-        error={preview.error}
-        onDifferentCode={goBackToEntry}
-        onRetry={() => void preview.refetch()}
-      />
+      <QueryState
+        query={previewForQueryState}
+        srHeading="Join with an invite code"
+        skeleton={<PreviewLoadingStep />}
+        error={{
+          heading: errorCopy.heading,
+          retryLabel: errorCopy.actionLabel,
+          body: (err) =>
+            err instanceof ApiError && err.status === 404
+              ? "We couldn't find an invite for that code. Check it and try again."
+              : "We couldn't look up that invite just now. Check your connection and try again.",
+        }}
+      >
+        {(data) => (
+          <InvitePreviewStep
+            preview={data}
+            isSignedIn={session !== null}
+            canRedeem={session === null || canRedeemInviteAs(data.role, session.role)}
+            isRedeeming={redeem.isPending}
+            redeemError={redeem.isError ? redeem.error : null}
+            onConfirmSignedOut={confirmSignedOut}
+            onConfirmSignedIn={confirmSignedIn}
+            onDifferentCode={goBackToEntry}
+          />
+        )}
+      </QueryState>
     )
   }
 
@@ -362,8 +420,18 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
         session === null ? (
           <p className="text-body-sm text-ink-muted">
             Already have an account?{" "}
+            {/*
+             * `next` carries the reader back to this exact invite once
+             * they've signed in — spec §5's parent-invite bullet names this
+             * explicitly ("Already have an account? Sign in" →
+             * `/login?next=/join/<code>`), and there is no reason to withhold
+             * it from a student or teacher invite either: whoever redeems it
+             * wants to land back here regardless of which role the code is
+             * for. `activeCode` (not `codeInput`) because that is the code
+             * this screen is actually showing a preview of right now.
+             */}
             <Link
-              to="/login"
+              to={withNext("/login", activeCode ? `/join/${activeCode}` : null)}
               className="rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
             >
               Sign in
@@ -387,9 +455,16 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
  * whenever the *code itself* changes rather than only when the component
  * first mounts, which a plain prop would not do for two different deep links
  * opened in the same tab without an intervening unmount.
+ *
+ * `parseJoinCode` (packet A5) runs on the raw param before
+ * `normalizeInviteCode`: `vite/manifest.ts`'s `protocol_handlers` registers
+ * `web+lemely://join/<code>` against this exact route, and the OS fills its
+ * `%s` placeholder with the whole invoked URL, not just the code — see that
+ * function's own docstring. A plain `/join/ABC123` navigation is unaffected;
+ * `parseJoinCode` passes a bare code straight through.
  */
 export function JoinWithCode() {
   const { code } = useParams<{ code?: string }>()
-  const initialCode = normalizeInviteCode(code ?? "")
+  const initialCode = normalizeInviteCode(parseJoinCode(code ?? ""))
   return <JoinWithCodeScreen key={initialCode} initialCode={initialCode} />
 }

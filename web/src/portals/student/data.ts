@@ -8,14 +8,14 @@
  */
 
 import {
-  Atom,
   Bell,
-  Books,
-  Calculator,
+  ChalkboardTeacher,
+  Gear,
   HandHeart,
   House,
   Megaphone,
   NotePencil,
+  Trash,
   Trophy,
   UserCircle,
   UsersThree,
@@ -80,6 +80,16 @@ export const navGroups: NavGroup[] = [
     label: "Student",
     items: [
       { to: "/student", label: "Overview", end: true, icon: House },
+      // `items[1]` — second in this array, so a student who was never handed
+      // a class link (the only way onto `POST /student/classes/join` before
+      // this route existed) finds one right after Overview in the source
+      // order. `NavGroups` in `index.tsx` renders `items.slice(0, 1)`, then
+      // the enrolled-subject accordion, then `items.slice(1)` — so this row
+      // actually paints below the subjects, not above them. That is the
+      // existing, deliberate order for everything past Overview (Standings,
+      // Friends, and the rest all sit in the same trailing slice), not a
+      // placement this entry is exempt from.
+      { to: "/student/classes", label: "Your classes", icon: ChalkboardTeacher },
       // Enrolled subjects render here as a collapsible accordion — see
       // `SubjectNavGroup` in `index.tsx`. They come from `GET
       // /student/overview`'s real `subjects` list, not this static array,
@@ -90,6 +100,8 @@ export const navGroups: NavGroup[] = [
       { to: "/student/notifications", label: "Notifications", icon: Bell },
       { to: "/student/announcements", label: "Announcements", icon: Megaphone },
       { to: "/student/parents", label: "Your parents", icon: HandHeart },
+      { to: "/student/recently-deleted", label: "Recently deleted", icon: Trash },
+      { to: "/student/settings", label: "Settings", icon: Gear },
     ],
   },
   {
@@ -97,25 +109,6 @@ export const navGroups: NavGroup[] = [
     items: [{ to: "/student/correct", label: "Correct a paper", icon: NotePencil }],
   },
 ]
-
-/**
- * Glyph per subject code. `SubjectRow` (the real `/student/overview` DTO)
- * carries no icon field — a syllabus code is curriculum data, not a UI
- * concern the backend should own — so the mapping lives here, same spot the
- * old hardcoded Physics row's `Atom` came from. `Books` is the fallback for
- * any subject added to the curriculum before this map is.
- */
-export function subjectIcon(code: string): Icon {
-  switch (code) {
-    case "0625":
-      return Atom
-    case "0580":
-    case "0606":
-      return Calculator
-    default:
-      return Books
-  }
-}
 
 /**
  * The enrolled subject a pathname is currently inside, or null. Drives which
@@ -171,6 +164,7 @@ export function currentSubjectCode(pathname: string): string | null {
 export const crumbs: Record<string, string> = {
   "/student": "Home",
   "/student/correct": "Marking / Correct a paper",
+  "/student/classes": "Home / Your classes",
   "/student/board": "Home / Standings",
   "/student/friends": "Home / Friends",
   "/student/profile": "Home / Your profile",
@@ -182,6 +176,10 @@ export const crumbs: Record<string, string> = {
   "/student/notifications": "Home / Notifications",
   "/student/announcements": "Home / Announcements",
   "/student/parents": "Home / Your parents",
+  "/student/recently-deleted": "Home / Recently deleted",
+  "/student/settings": "Home / Settings",
+  "/student/settings/devices": "Home / Settings / Account and devices",
+  "/student/settings/notifications": "Home / Settings / Notifications",
   "/student/onboard": "Onboarding",
   "/student/landing": "lemely.com",
 }

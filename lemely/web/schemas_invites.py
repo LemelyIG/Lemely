@@ -61,23 +61,35 @@ class InvitePreviewDTO(ApiModel):
 
     Backs the **public**, unauthenticated ``GET /api/invites/{code}``. Every
     field here is something the code's holder already learned from whoever
-    handed it to them — a school's name, a class's name, a teacher's name.
-    Deliberately carries no id, no roster, no seat/enrolment count; see
+    handed it to them — a school's name, a class's name, a teacher's name, or
+    (spec §4) a child's name for a parent invite. Deliberately carries no id,
+    no roster, no seat/enrolment count; see
     :meth:`~lemely.db.invite_repo.InviteService.preview`.
+
+    ``childName`` is set only for a ``role="parent"`` preview — the child's
+    display name, or ``"your child"`` when blank (never their email or id,
+    the identical disclosure discipline the other three fields already carry).
     """
 
-    role: Literal["student", "teacher"]
+    role: Literal["student", "teacher", "parent"]
     schoolName: str | None = None
     className: str | None = None
     teacherName: str | None = None
+    childName: str | None = None
 
 
 class RedeemInviteResponseDTO(ApiModel):
-    """What redeeming a code produced, for the caller's next screen to read."""
+    """What redeeming a code produced, for the caller's next screen to read.
 
-    role: Literal["student", "teacher"]
+    ``childId`` (spec §4) is set only for a ``role="parent"`` redemption —
+    mirrors :attr:`~lemely.db.invite_repo.RedeemResult.child_id`, letting the
+    UI route straight to that child's overview.
+    """
+
+    role: Literal["student", "teacher", "parent"]
     schoolId: str | None = None
     classId: str | None = None
+    childId: str | None = None
 
 
 __all__ = [

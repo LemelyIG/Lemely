@@ -7,18 +7,19 @@ seed-helper style this file duplicates verbatim per this repo's convention —
 every ``test_*_repo.py`` file carries its own copy rather than sharing one via
 conftest). Proves the guarantees D3.11 requires:
 
-* ``link`` never creates a user — a phone with no ``role=parent`` account is
-  a clean :class:`ParentUserNotFoundError`, and the ``users`` row count is
-  provably unchanged.
-* ``link`` is idempotent (no duplicate link row, no ``IntegrityError``) and
-  picks the most-recently-created parent when multiple share a phone,
-  mirroring :meth:`~lemely.auth.mirror.DbUserMirror.get_by_phone`.
+* ``link_in_session`` is idempotent (no duplicate link row, no
+  ``IntegrityError``) and writes inside whatever transaction the caller
+  passes it rather than committing one of its own — proved by rolling that
+  transaction back and finding no row survived it.
 * ``get_child`` is the authz seam: ``None`` for an unlinked pair, a real row
   for a linked one — including the two-parent/two-child disjoint-link
   regression (a parent must never resolve a child linked only to someone
   else).
 * ``unlink`` is idempotent and its effect is visible from both directions
   (the child drops off the parent's list, the parent drops off the child's).
+* ``list_parents`` carries a parent's real email, and still falls back to
+  the phone for legacy phone-only rows whose email is the synthesised
+  placeholder.
 """
 
 from __future__ import annotations
@@ -36,11 +37,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from lemely.db.base import Base
 from lemely.db.models import ParentChildLink, User
 from lemely.db.models.enums import Role
-from lemely.db.parent_repo import (
-    _PLACEHOLDER_EMAIL_DOMAIN,
-    ParentLinkService,
-    ParentUserNotFoundError,
-)
+from lemely.db.parent_repo import _PLACEHOLDER_EMAIL_DOMAIN, ParentLinkService
 from lemely.runtime.config import DatabaseSettings
 
 if TYPE_CHECKING:
@@ -111,11 +108,6 @@ def _link(sm: sessionmaker[Session], *, parent_id: uuid.UUID, child_id: uuid.UUI
         session.add(ParentChildLink(parent_id=parent_id, child_id=child_id))
 
 
-def _user_count(sm: sessionmaker[Session]) -> int:
-    with sm() as session:
-        return int(session.scalar(select(func.count()).select_from(User)) or 0)
-
-
 def _link_row_count(sm: sessionmaker[Session]) -> int:
     with sm() as session:
         return int(session.scalar(select(func.count()).select_from(ParentChildLink)) or 0)
@@ -169,6 +161,18 @@ def test_list_parents_returns_every_parent_linked_to_a_child(
     assert {p.parent_id for p in parents} == {mum, dad}
 
 
+def test_list_parents_carries_email(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """The student UI shows a parent's email in place of a phone (spec §5)."""
+    child = _seed_user(pg_sessionmaker, Role.student)
+    parent = _seed_user(pg_sessionmaker, Role.parent, display_name="Mum")
+    _link(pg_sessionmaker, parent_id=parent, child_id=child)
+
+    service = ParentLinkService(pg_sessionmaker)
+    parents = service.list_parents(child)
+
+    assert parents[0].email == f"{parent}@example.com"
+
+
 def test_get_child_returns_none_when_no_link_row_exists(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
@@ -218,75 +222,59 @@ def test_malformed_uuid_raises_value_error(pg_sessionmaker: sessionmaker[Session
         service.get_child("not-a-uuid", "also-not-a-uuid")
 
 
-# ── link ─────────────────────────────────────────────────────────────────────
+# ── link_in_session ──────────────────────────────────────────────────────────
 
 
-def test_link_creates_a_row_and_returns_the_parent(
+def test_link_in_session_inserts_one_row_and_is_idempotent(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
+    """Mirrors the invite service's call site: caller owns the transaction."""
     student = _seed_user(pg_sessionmaker, Role.student)
-    parent = _seed_user(pg_sessionmaker, Role.parent, display_name="Mum", phone="+15550001111")
+    parent = _seed_user(pg_sessionmaker, Role.parent, display_name="Mum")
 
     service = ParentLinkService(pg_sessionmaker)
-    row = service.link(student, "+15550001111")
+    with pg_sessionmaker.begin() as session:
+        service.link_in_session(session, parent, student)
 
-    assert row.parent_id == parent
-    assert row.display_name == "Mum"
     assert service.get_child(parent, student) is not None
     assert _link_row_count(pg_sessionmaker) == 1
 
+    # Redeeming the same invite twice (e.g. a reusable code) must not
+    # attempt a duplicate insert or raise IntegrityError.
+    with pg_sessionmaker.begin() as session:
+        service.link_in_session(session, parent, student)
 
-def test_link_is_idempotent_no_duplicate_row(pg_sessionmaker: sessionmaker[Session]) -> None:
-    student = _seed_user(pg_sessionmaker, Role.student)
-    _seed_user(pg_sessionmaker, Role.parent, phone="+15550002222")
-
-    service = ParentLinkService(pg_sessionmaker)
-    first = service.link(student, "+15550002222")
-    second = service.link(student, "+15550002222")
-
-    assert first.parent_id == second.parent_id
     assert _link_row_count(pg_sessionmaker) == 1
 
 
-def test_link_unknown_phone_never_creates_a_user(pg_sessionmaker: sessionmaker[Session]) -> None:
+def test_link_in_session_participates_in_the_callers_transaction(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The write must live or die with the caller's transaction, not its own.
+
+    ``test_link_in_session_inserts_one_row_and_is_idempotent`` uses
+    ``pg_sessionmaker.begin()``, which always commits on a clean exit — that
+    alone can't tell "wrote through the session I was given" apart from "opened
+    and committed its own session regardless of what was passed in". Rolling
+    back here is the only way to prove ``link_in_session`` never calls
+    ``commit()`` itself: if it did, this rollback would have nothing left to
+    undo and the row would survive it.
+    """
     student = _seed_user(pg_sessionmaker, Role.student)
-    before = _user_count(pg_sessionmaker)
-
+    parent = _seed_user(pg_sessionmaker, Role.parent)
     service = ParentLinkService(pg_sessionmaker)
-    with pytest.raises(ParentUserNotFoundError):
-        service.link(student, "+15559999999")
 
-    assert _user_count(pg_sessionmaker) == before
+    with pg_sessionmaker() as session:
+        service.link_in_session(session, parent, student)
+        session.rollback()
+
     assert _link_row_count(pg_sessionmaker) == 0
 
+    # Contrast: a call inside a transaction that *does* commit leaves the row.
+    with pg_sessionmaker.begin() as session:
+        service.link_in_session(session, parent, student)
 
-def test_link_ignores_a_matching_phone_on_a_non_parent_role(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    """A student/teacher sharing the phone must not be mistaken for a parent."""
-    student = _seed_user(pg_sessionmaker, Role.student)
-    _seed_user(pg_sessionmaker, Role.teacher, phone="+15553333333")
-    before = _user_count(pg_sessionmaker)
-
-    service = ParentLinkService(pg_sessionmaker)
-    with pytest.raises(ParentUserNotFoundError):
-        service.link(student, "+15553333333")
-
-    assert _user_count(pg_sessionmaker) == before
-
-
-def test_link_picks_the_most_recently_created_parent_for_a_shared_phone(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    """Mirrors ``DbUserMirror.get_by_phone``'s tie-break so both lookups agree."""
-    student = _seed_user(pg_sessionmaker, Role.student)
-    _seed_user(pg_sessionmaker, Role.parent, display_name="Older", phone="+15554444444")
-    newer = _seed_user(pg_sessionmaker, Role.parent, display_name="Newer", phone="+15554444444")
-
-    service = ParentLinkService(pg_sessionmaker)
-    row = service.link(student, "+15554444444")
-
-    assert row.parent_id == newer
+    assert _link_row_count(pg_sessionmaker) == 1
 
 
 # ── unlink ───────────────────────────────────────────────────────────────────
@@ -328,8 +316,9 @@ def test_a_phone_only_parents_name_is_their_phone_not_the_placeholder_email(
     ``phone+20…@parents.lemely.local`` email because ``users.email`` is NOT
     NULL + unique. Falling back to that address showed a student
     "phone+201000000555@parents.lemely.local" where their parent's name should
-    be. Both ``ParentRow`` construction sites go through the same helper, so
-    both are asserted here.
+    be. The link row is seeded directly here (rather than through
+    ``link_in_session``, which no longer resolves a parent by phone) because
+    this test is about a legacy row's *display*, not how it got linked.
     """
     phone = "+201000000555"
     parent = uuid.uuid4()
@@ -344,13 +333,9 @@ def test_a_phone_only_parents_name_is_their_phone_not_the_placeholder_email(
                 phone=phone,
             )
         )
+    _link(pg_sessionmaker, parent_id=parent, child_id=child)
     service = ParentLinkService(pg_sessionmaker)
 
-    # link() returns a row directly...
-    linked = service.link(student_id=child, phone=phone)
-    assert linked.display_name == phone
-
-    # ...and list_parents() reads it back the same way.
     listed = service.list_parents(child)
     assert [p.display_name for p in listed] == [phone]
     assert all(_PLACEHOLDER_EMAIL_DOMAIN not in p.display_name for p in listed)

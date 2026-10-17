@@ -26,9 +26,9 @@ import type {
  *
  * That last point matters more here than on any other surface. A fallback turns
  * a failed read into a plausible-looking empty payload, and on this console an
- * empty payload reads as "nothing is wrong": zero open review items, zero failed
- * uploads, zero spend. The one screen whose whole job is noticing trouble must
- * never quietly report calm because the request died.
+ * empty payload reads as "nothing is wrong": zero open review items, zero
+ * failed uploads. The one screen whose whole job is noticing trouble must never
+ * quietly report calm because the request died.
  */
 
 const OVERVIEW_KEY = ["admin", "overview"] as const
@@ -36,7 +36,7 @@ const ACTIVATIONS_KEY = ["admin", "activations"] as const
 const PIPELINE_KEY = ["admin", "pipeline"] as const
 const SCHOOLS_KEY = ["admin", "schools"] as const
 
-/** `GET /api/admin/overview` — X-01's counts, spend, health and signups. */
+/** `GET /api/admin/overview` — X-01's counts, health and signups. */
 export function useAdminOverview(): UseQueryResult<PlatformOverview, Error> {
   return useQuery({
     queryKey: OVERVIEW_KEY,

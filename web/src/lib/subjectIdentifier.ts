@@ -1,4 +1,5 @@
 import { qualificationLevelLabel } from "./qualificationLevels"
+import type { LabelledValue } from "@/lib/referenceTypes"
 
 /**
  * Compose a subject's primary/secondary display text: the name leads,
@@ -18,11 +19,12 @@ import { qualificationLevelLabel } from "./qualificationLevels"
  * stray separator around it.
  */
 export function subjectIdentifier(
+  levels: LabelledValue[] | undefined,
   name: string,
   code: string,
   level?: string | null,
 ): { primary: string; secondary: string } {
-  const levelLabel = qualificationLevelLabel(level)
+  const levelLabel = qualificationLevelLabel(levels, level)
   const parts = [levelLabel, name === code ? null : code].filter(Boolean)
   return {
     primary: name,
