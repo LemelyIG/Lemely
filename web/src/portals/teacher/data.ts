@@ -35,8 +35,15 @@ export interface NavItem {
     | "schemes"
     | "quizzes"
     | "announcements"
+    | "notifications"
+    | "settings"
+    | "deleted"
   /** Index route match (Overview lives at /teacher). */
   end?: boolean
+  /** A live count rendered beside the label. `"unread-notifications"` is the
+   * inbox's own count; `"review-queue"` (Task 9, C3d) is the open
+   * review-queue depth (`useReviewQueueCount`), rendered only when > 0. */
+  badge?: "unread-notifications" | "review-queue"
 }
 
 /*
@@ -57,12 +64,31 @@ export interface NavItem {
 export const navItems: NavItem[] = [
   { to: "/teacher", label: "Overview", icon: "overview", end: true },
   { to: "/teacher/grading", label: "Grading", icon: "grading" },
-  { to: "/teacher/review", label: "Review", icon: "review" },
-  { to: "/teacher/classes", label: "Classes", icon: "classes" },
+  { to: "/teacher/review", label: "Review", icon: "review", badge: "review-queue" },
+  // `end: true`: without it this row also matched `/teacher/classes/:id`, so
+  // opening a class from "Your classes" below highlighted both rows at once.
+  { to: "/teacher/classes", label: "Classes", icon: "classes", end: true },
   { to: "/teacher/at-risk", label: "At-risk students", icon: "atRisk" },
   { to: "/teacher/schemes", label: "Mark schemes", icon: "schemes" },
   { to: "/teacher/quizzes", label: "AI quizzes", icon: "quizzes" },
   { to: "/teacher/announcements", label: "Announcements", icon: "announcements" },
+  // The inbox carries its unread count (push-delivery spec §6): at_risk_alert
+  // is the one notification a teacher receives, and it is the one that asks
+  // for action.
+  {
+    to: "/teacher/notifications",
+    label: "Notifications",
+    icon: "notifications",
+    badge: "unread-notifications",
+  },
+  // Settings moves into the primary nav from the footer's plain link (P5.9
+  // chunk D's placement is superseded here): a route under /teacher with a
+  // real active state belongs beside the rest of this teacher's sections
+  // rather than set apart as an account-level afterthought.
+  { to: "/teacher/settings", label: "Settings", icon: "settings" },
+  // R2/D4: the same full recovery surface the student portal gives its own
+  // deletion flow, not a hidden safety net reachable only from a toast.
+  { to: "/teacher/deleted", label: "Recently deleted", icon: "deleted" },
 ]
 
 /* ── Breadcrumb trail (P3.1 / DECISION D1.5) ─────────────────────────────── */
@@ -116,6 +142,18 @@ export function resolveTrail(pathname: string): TrailCrumb[] {
     return [root, { label: "Review", to: "/teacher/review" }, { label: "This item" }]
   }
 
+  if (path === "/teacher/settings/devices") {
+    return [
+      root,
+      { label: "Settings", to: "/teacher/settings" },
+      { label: "Account and devices" },
+    ]
+  }
+
+  if (path === "/teacher/settings/notifications") {
+    return [root, { label: "Settings", to: "/teacher/settings" }, { label: "Notifications" }]
+  }
+
   const classAnalytics = path.match(/^\/teacher\/classes\/([^/]+)\/analytics$/)
   if (classAnalytics) {
     return [
@@ -129,6 +167,16 @@ export function resolveTrail(pathname: string): TrailCrumb[] {
   const classDetail = path.match(/^\/teacher\/classes\/[^/]+$/)
   if (classDetail) {
     return [root, { label: "Classes", to: "/teacher/classes" }, { label: "This class" }]
+  }
+
+  const classPapers = path.match(/^\/teacher\/classes\/([^/]+)\/papers$/)
+  if (classPapers) {
+    return [
+      root,
+      { label: "Classes", to: "/teacher/classes" },
+      { label: "This class", to: `/teacher/classes/${classPapers[1]}` },
+      { label: "Papers" },
+    ]
   }
 
   // Reached by drilling in from a class roster or the at-risk list, and until
@@ -160,6 +208,30 @@ export function resolveTrail(pathname: string): TrailCrumb[] {
   // one-crumb trail), which is the honest outcome: no claim about where you
   // are beats a confident wrong one.
   return [root]
+}
+
+/**
+ * Whether the "Classes" nav row should read as active for the given pathname.
+ *
+ * `navItems`'s own `end: true` on this row means NavLink's default `isActive`
+ * fires only on the exact `/teacher/classes` path, deliberately, so opening a
+ * class from "Your classes" below highlights that class's own row instead of
+ * this one. But "Your classes" (`ClassesNavSection`) is capped at 5, so a
+ * class beyond the cap has no row of its own to highlight — and with `end:
+ * true` this row does not pick it up either, leaving no active row anywhere
+ * in the sidebar while a class screen is open. This function is that
+ * fallback: true on the exact classes path, and also true on a class (or its
+ * `/analytics` child) that is not among the ids currently rendered as rows,
+ * so "Classes" itself carries the marker for a class the sidebar cannot show
+ * individually. It stays false for a class that IS one of the visible rows,
+ * so the two active markers never appear together.
+ */
+export function classesItemActive(pathname: string, visibleClassIds: string[]): boolean {
+  const path = pathname.replace(/\/+$/, "") || pathname
+  if (path === "/teacher/classes") return true
+  const match = path.match(/^\/teacher\/classes\/([^/]+)(?:\/analytics)?$/)
+  if (!match) return false
+  return !visibleClassIds.includes(match[1])
 }
 
 /* ── Shared stat card ────────────────────────────────────────────────────── */

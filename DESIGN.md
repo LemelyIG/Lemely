@@ -67,10 +67,13 @@ layer most heavily. No sidebar; navigation collapses to a back path and progress
 
 ## 3. Colour tokens (OKLCH)
 
-OKLCH throughout, so lightness is perceptually uniform and a future dark theme
-is a lightness inversion rather than a re-pick. **Light mode only ships now**
-(§3.2 item 8); the scale is built so dark is a token swap, but dark is not
-implemented and not tested.
+OKLCH throughout, so lightness is perceptually uniform and dark mode is a
+lightness inversion rather than a re-pick. **Both light and dark ship.** Dark
+is a token swap under `data-theme="dark"` (§3.10) — REDESIGN-MISSION §3.2 item
+8's "build tokens so a future dark theme is a token swap" is what §3.10 now
+is, shipped in Phase C, task C5a. No component file changes for the swap to
+work, and every contrast guarantee this section makes is measured for both
+ladders by `tests/test_design_tokens.py`.
 
 Every value below is a token. Raw hex, `rgb()`, or `oklch()` written inline in a
 component is a gate failure (§3.2 item 13); lift the value here first.
@@ -199,7 +202,7 @@ system and it is carried forward on purpose.
 | `--ok` / `--ok-wash` | `oklch(0.48 0.075 175)` `#256B5B` | `oklch(0.945 0.030 175)` `#D9F4EC` | 5.41:1 | Correct, complete, saved, on track. |
 | `--warn` / `--warn-wash` | `oklch(0.45 0.085 70)` `#734C17` | `oklch(0.945 0.045 85)` `#FBEBCB` | 6.45:1 | Partial credit, uncertain, borderline, needs attention. |
 | `--err` / `--err-wash` | `oklch(0.38 0.145 27)` `#7E0D10` | `oklch(0.94 0.035 27)` `#FFE3DF` | 8.86:1 | Wrong, failed, destructive, blocked. |
-| `--info` / `--info-wash` | `oklch(0.44 0.080 240)` `#22587A` | `oklch(0.94 0.030 235)` `#D9EFFD` | 6.47:1 | Neutral notices, tips, "how this works". |
+| `--info` / `--info-wash` | `oklch(0.44 0.080 265)` `#3D517F` | `oklch(0.94 0.030 265)` `#E1EBFF` | 6.56:1 | Neutral notices, tips, "how this works". Hue 265 (was 240/235, which collided with `--pastel-sky-ink`'s hue and `--focus-ring`'s hue — see D-A3.1). |
 
 Every semantic text colour is also AA on `--paper` (5.38:1 to 10.04:1) and on
 `--paper-sunk`.
@@ -216,6 +219,24 @@ adjusted, the ordering must be preserved; a test enforces it
 **Colour never carries meaning alone.** Every state pairs its colour with an
 icon or a text label. A student who cannot distinguish the teal from the red
 must still be able to read their paper.
+
+**The red-pen register.** Its scope is narrow and deliberate: the per-question
+wrong-answer explanation on `PaperResult`, and nothing else. `.lm-red-pen`
+(`web/src/index.css`) sets `--mark-wrong` ink at weight 500 with a 2px
+`border-inline-start` rule, applied only to the expanded explanation slot a
+wrong `QuestionRow` renders — never the row itself, never the feedback panel
+beneath it (that keeps its own `bg-paper-sunk`), and never a red fill of any
+kind. PRODUCT.md's accessibility section sets the boundary this register stays
+inside of: "avoid red-heavy error states; prefer amber/neutral for 'needs
+attention.'" `PaperResult` is the screen a student opens the moment their
+marking finishes, already carrying whatever exam stress sent them there — an
+error-red panel fill on that screen is exactly the red-heavy state the caveat
+warns against. Ink and a rule read as a correction mark in the margin of a
+graded paper, which is what this actually is; a filled red block reads as an
+alarm. No Caveat here either — §4.1's rule that Caveat decorates and never
+carries meaning applies with particular force to a wrong answer, where the
+one thing the register may not do is soften or embellish what happened to the
+mark.
 
 ### 3.7 Product scales
 
@@ -276,6 +297,80 @@ states, and it must read as "the browser is talking to you" rather than as
 brand. `:focus-visible` only, never `:focus` (no rings on mouse click). It is
 never removed, on any element, for any reason.
 
+### 3.10 Dark ladder
+
+Shipped in Phase C, task C5a, as `:root[data-theme="dark"]` in `index.css` — a
+token swap and nothing more. Every token below already has a job assigned by
+its light-mode counterpart (§3.1–3.9); no component file changed to ship this.
+Hue and chroma are kept from the light ladder except where a row says
+otherwise; every value is measured, and `tests/test_design_tokens.py` runs
+every contrast guarantee this file makes about the light ladder against this
+one too, in the same test bodies (parametrised by theme, not duplicated).
+
+**The greyscale ladder (§3.6) survives the swap but flips direction.** Light
+DESCENDS with severity (`--ok` > `--warn` > `--err` in relative luminance —
+darkest text reads loudest against white paper). Dark ASCENDS (`--ok` <
+`--warn` < `--err` — brightest text reads loudest against near-black paper).
+`--ok`/`--warn` sit a little below the natural 0.78–0.82 starting band (L
+0.74/0.77) because at equal lightness `--err`'s higher chroma (0.145 vs
+0.075/0.085) suppresses its luminance enough to break the monotonic step;
+nudging lightness rather than touching hue or chroma keeps the step ≥0.02 in
+relative luminance — the same floor the light ladder is held to.
+
+**`--accent-on` does not carry its own literal in dark mode.** Pure white
+measures **2.61:1** on the dark `--accent` (fails AA); the dark `--paper`
+measures **6.93:1** and reads as the fill "recessing" into the page, so
+`index.css` sets `--accent-on: var(--paper)` instead of a second literal.
+
+| Token | Dark OKLCH | ≈ hex | Measured | Binding surface / use |
+|---|---|---|---|---|
+| `--paper` | `oklch(0.20 0.004 85)` | `#171614` | — | The page. |
+| `--paper-raised` | `oklch(0.24 0.003 85)` | `#201F1E` | — | Cards and panels — lighter than the canvas, same "sheet catches more light" logic as light. |
+| `--paper-sunk` | `oklch(0.17 0.006 85)` | `#110F0C` | — | Wells: sidebars, table headers, insets. |
+| `--paper-inverse` | `oklch(0.92 0.008 250)` | `#E1E5EA` | — | The one deliberately LIGHT surface in the dark theme — mirrors light's one deliberately dark surface. |
+| `--ink` | `oklch(0.93 0.009 234)` | `#E2E9ED` | 10.97:1 | Primary text, headings. Binding (tightest) surface: `--pastel-sage`. |
+| `--ink-muted` | `oklch(0.78 0.006 240)` | `#B4B8BB` | 6.73:1 | Secondary text. Binding surface: `--pastel-sage`. |
+| `--ink-faint` | `oklch(0.72 0.006 240)` | `#A1A5A8` | 5.43:1 | Captions, metadata. The floor. Binding surface: `--pastel-sage` — NOT `--paper-sunk`, and not `--err-wash` (light's binding surface). |
+| `--ink-inverse` | `oklch(0.25 0.004 85)` | `#22211F` | 12.64:1 | Text on `--paper-inverse`. |
+| `--rule` | `oklch(0.30 0.004 85)` | `#2F2E2C` | — | Default 1px border. |
+| `--rule-strong` | `oklch(0.36 0.005 85)` | `#3E3D3A` | — | Emphasis border. |
+| `--rule-faint` | `oklch(0.26 0.003 85)` | `#252422` | — | Ruled/dotted texture. |
+| `--accent` | `oklch(0.72 0.13 33)` | `#EA846E` | 6.93:1 on `--paper` (large text/UI) | Buttons, active nav, marks. Chroma down from light's 0.146, kept legible (not glowing) at this lightness. |
+| `--accent-hover` | `oklch(0.78 0.13 34)` | `#FF977F` | — | Hover/pressed — LIGHTER than `--accent`. Light's hover is darker (paper deepens under a press); dark's hover glows brighter instead — the equivalent "more emphasis" cue for its own surface. |
+| `--accent-wash` | `oklch(0.28 0.05 34)` | `#3E1F18` | — | Tinted backgrounds, selected rows, tag fills. |
+| `--accent-ink` | `oklch(0.80 0.10 34)` | `#F7A693` | 6.95:1 | Accent-coloured text. Binding surface: `--pastel-sage`. |
+| `--accent-on` | `var(--paper)` | `#171614` | 6.93:1 on `--accent` | Text/icons on an `--accent` fill. White fails AA (2.61:1); aliases `--paper` instead of a second literal. |
+| `--focus-ring` | `oklch(0.72 0.14 240)` | `#3FAFF3` | 7.42:1 on `--paper` | Focus ring. |
+| `--pastel-rose` / `-ink` | `oklch(0.30 0.032 20)` / `oklch(0.85 0.11 20)` | `#3C2727` / `#FFB1B0` | 7.98:1 on own fill | Unassigned / other subject. |
+| `--pastel-amber` / `-ink` | `oklch(0.30 0.045 85)` / `oklch(0.85 0.08 70)` | `#382C11` / `#F0C595` | 8.55:1 on own fill | English. |
+| `--pastel-sage` / `-ink` | `oklch(0.30 0.032 155)` / `oklch(0.85 0.07 160)` | `#213327` / `#A6DCBE` | 8.75:1 on own fill | Chemistry. |
+| `--pastel-sky` / `-ink` | `oklch(0.30 0.030 235)` / `oklch(0.85 0.08 240)` | `#1F303B` / `#9ED5FD` | 8.67:1 on own fill | Mathematics. |
+| `--pastel-lilac` / `-ink` | `oklch(0.30 0.030 300)` / `oklch(0.85 0.08 300)` | `#302A3B` / `#D5C2FB` | 8.51:1 on own fill | Physics. |
+| `--pastel-clay` / `-ink` | `oklch(0.30 0.022 55)` / `oklch(0.85 0.06 50)` | `#372B23` / `#EFC3AB` | 8.54:1 on own fill | Biology. |
+| `--ok` / `--ok-wash` | `oklch(0.74 0.075 175)` / `oklch(0.28 0.030 175)` | `#76BBA8` / `#182E28` | 6.47:1 on own wash | Correct, complete, on track. Ladder position: lowest. |
+| `--warn` / `--warn-wash` | `oklch(0.77 0.085 70)` / `oklch(0.28 0.045 85)` | `#D7AB78` / `#33270C` | 6.97:1 on own wash | Partial, uncertain, borderline. Ladder position: middle. |
+| `--err` / `--err-wash` | `oklch(0.82 0.145 27)` / `oklch(0.27 0.035 27)` | `#FF9D90` / `#36201D` | 7.61:1 on own wash | Wrong, failed, destructive. Ladder position: highest. |
+| `--info` / `--info-wash` | `oklch(0.80 0.080 265)` / `oklch(0.29 0.030 265)` | `#A5BDF2` / `#242B3B` | 7.54:1 on own wash | Neutral notices. Not part of the §3.6 ladder in either theme. |
+
+Every "Binding surface" above naming a tinted fill is the tightest of all
+fourteen surfaces the token may sit on (the three paper rungs plus the eleven
+tinted fills — the same matrix §3.2's prose describes for light); every pastel
+and semantic pair's ratio is against its own fill, which is tighter than
+`--paper` in every case, same as light.
+
+`--grade-*`, `--mark-*`, `--confidence-*`, and `--subject-*` (§3.7–3.8) are
+`var()` aliases of the tokens above, not redefined here — they repaint
+automatically the instant `data-theme="dark"` lands on `<html>`, and the same
+is true of the `--bg`/`--surface`/`--t1` compatibility layer and the
+`@theme inline` Tailwind mapping.
+
+**Out of scope for this ladder:** `--shadow-float` and `--scrim` (§7). Resting
+cards carry no shadow in either theme, and the only consumers are floating
+layers (popovers, dropdowns, modals, toasts). A dark-appropriate elevation
+treatment — shadows read as holes on a dark surface; Material's answer is
+lighter panels, not darker shadows — is a decision for whichever task first
+ships a floating layer against this ladder, not a token-value nudge here.
+
 ---
 
 ## 4. Typography
@@ -333,6 +428,7 @@ with the wrong family.
 | `data-md` | JetBrains Mono | 15 | 1.2 | 0 | 500 | Inline figures, marks, XP. |
 | `data-sm` | JetBrains Mono | 11 | 1 | 0.05em | 500 | Paper codes, IDs, timestamps, metadata. |
 | `hand` | Caveat | 19 | 1.35 | 0 | 400 | Marginalia. See §4.1. |
+| `field` | — | 16 | inherit | inherit | inherit | **Not a rung.** A platform floor: iOS Safari auto-zooms the viewport on focusing any input under 16px. `.text-field` is a standalone `font-size` override for native form fields, not a modifier layered on top of a `.text-body-*` class — both are in the same twMerge font-size group, so `cn("text-body-md", "text-field")` always collapses to `text-field` alone; family/weight/line-height come from whatever the field inherits, not from a `.text-body-*` rung. |
 
 **Mobile.** `display-hero` → 38px, `display-xl` → 30px, `display-lg` → 26px
 below 768px. Everything else holds; the body scale is already comfortable on a
@@ -343,6 +439,16 @@ students actually use.
 display headings and no italic emphasis inside a heading (§3.2 item 12);
 emphasis is weight, accent colour, or a drawn underline. Italic is body-copy
 only, plus Caveat, which is its own thing.
+
+**Platform chrome.** `index.html`'s `apple-mobile-web-app-status-bar-style` is
+`"default"`, not `"black-translucent"`, on purpose: `"black-translucent"` draws
+the status bar text over the page instead of reserving space for it, which is
+the exact "phone drew a dark address bar over a light app" defect the
+`theme-color` fix above this meta tag exists to prevent. `"default"` keeps the
+status bar its own opaque row, matching the light `--paper` ground everywhere
+this product renders. Do not "fix" the mismatch between this note's location
+and a stale `§5` reference elsewhere — this is the correct, current home for
+it.
 
 ---
 
@@ -485,6 +591,25 @@ watch it perform. Expressive motion is rationed to genuine wins (§9.2).
 - Scroll entries: fade up 8px over `dur-slow` with `ease-out-soft`, staggered 60ms per item, capped at 6 items of stagger (beyond that it reads as slow, not choreographed).
 - Press: `scale(0.98)` over `dur-fast`. Hover: a colour or 1px translate shift over `dur-instant`.
 - **Nothing blocks input.** No animation gates a click.
+- **Exits.** Every dismissible overlay (a `Modal`, `NavDrawer`, or anything
+  built on the same contract) plays an exit over `dur-fast`/`ease-in-soft`
+  before it unmounts, rather than disappearing on the frame its `open` prop
+  goes false. It unmounts on `animationend`, not a fixed timer, so the
+  animation and the unmount can never drift apart. Scroll lock and the focus
+  trap both stay active for the duration of the exit — the overlay is still
+  visibly present, so the page behind it must not start scrolling, and focus
+  must not yet be released, until it actually is. A re-open mid-exit snaps
+  straight back to open rather than finishing the exit first.
+- **The one documented exception.** The brand mark's self-drawing stroke
+  (`stroke-dashoffset` on the mark's silhouette — four steps: the right page,
+  the left page, the coil, the tick — in `components/ui/mark.tsx` and, inline,
+  in the pre-mount shell in `index.html`) is the one permitted
+  non-transform/opacity animation. Granted by the product owner for the
+  slow-load tier (§12) on the grounds that a few short paths are not the jank
+  this rule exists to prevent, and it renders fully drawn and still under
+  `prefers-reduced-motion` rather than animating. Both surfaces read their
+  geometry from `lib/brandMark.ts` and set `pathLength="1"`, so neither carries
+  a path length; the drawn mark is the mark, not a copy of it.
 
 ### 9.3 The celebration register
 
@@ -503,6 +628,20 @@ answer, and the marked-paper result reveal. Nothing else.
 not *broken*: transforms and celebration flourishes drop to a simple opacity
 change or nothing, but every state change stays legible and every element still
 arrives. Count-ups jump to their final value immediately. Confetti does not run.
+The loading tiers (§12) still stage under reduced motion: their delays live in
+`animation-delay`, which the reduced-motion rule leaves untouched, so only the
+motion within each tier (the pulsing skeleton, the self-drawing mark) is
+affected, never when a tier appears.
+
+**When View Transitions apply.** A screen's entrance (`.lm-screen`) plays on
+every navigation by default. Native View Transitions — a directional slide of
+the outgoing/incoming screen, keyed to browser back vs. everything else — are
+layered on top of that only for portal-internal navigation initiated from
+shell chrome: sidebar links, breadcrumbs, `BackControl`, bottom-tab and
+drawer navigation. They never apply to the marked-paper result reveal (§9.3's
+celebration register owns that entrance instead) and never run under
+`prefers-reduced-motion: reduce`, where both the screen entrance and any
+in-flight transition collapse to an immediate, static swap.
 
 ---
 
@@ -538,6 +677,7 @@ from these tokens; no chart sets its own colours.
 - **Legends and tooltips are required.** Tooltips give exact values. Meaning is never encoded by colour alone: pair with direct labels, shape, or pattern.
 - **Empty-data state is mandatory** on every chart, in the Read/Operate voice, with marginalia rather than a blank box.
 - A scoped D3 component is permitted if a viz genuinely exceeds Nivo, matching this theme; log the exception in the Phase 7 report.
+- **Dark mode (C5c).** Tokens re-resolve when `data-theme` changes: `useNivoTheme` (`web/src/lib/nivoTheme.ts`) watches `document.documentElement` with a `MutationObserver` on `data-theme` and re-runs `resolveChartTokens()`, so a chart already open when the reader flips Appearance repaints in the new ladder rather than holding the palette it mounted with.
 
 ---
 
@@ -549,10 +689,12 @@ that bind every component:
 - **Every interactive component implements all 8 states:** default, hover, focus-visible, active, disabled, loading, error, success. A component missing one does not merge (§9 gate 4).
 - **Buttons.** Solid ink or accent fill, `radius-md`, `scale(0.98)` press, subtle hover shift. Primary (accent fill), secondary (paper-raised + rule border), ghost (no fill or border). No pills. No button-in-button.
 - **Inputs.** Visible label always, never placeholder-as-label. `radius-md`, `--rule` border going `--rule-strong` on hover and `--focus-ring` on focus. Errors inline and adjacent to the field, never only at the top of the form.
-- **Cards.** `--paper-raised`, 1px `--rule`, `radius-lg`, 24px padding, no shadow. No forced equal-height rows; align titles and CTAs across siblings and pin CTAs to the bottom.
+- **Cards.** `--paper-raised`, 1px `--rule`, `radius-lg`, 24px padding, no shadow. No forced equal-height rows; align titles and CTAs across siblings and pin CTAs to the bottom. Marketing cards turn the knob to `space-8`.
 - **Tags and badges.** Pastel fill with its paired text colour, `radius-full`, `eyebrow` type, tight padding. This is the *only* place pills are legal.
 - **Tables.** `--paper-sunk` header, `--rule` row dividers, tabular-nums on every numeric column, right-aligned numbers, sticky header at `z-sticky`.
-- **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button.
+- **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button — the practice generator's "Create" button's `loading` prop is exactly this case (a sub-second mutation, not a route or content wait) and stays as it is. Token-driven (`bg-paper-sunk`), so a skeleton needs no dark-mode variant of its own — it works in both themes for free (C5c).
+- **Loading tiers.** Every full-page wait has three tiers, gated by two tokens (`--loading-tier-skeleton` 200ms, `--loading-tier-slow` 5s): tier 1 (0 to `--loading-tier-skeleton`) is warm paper only, nothing visible; tier 2 (`--loading-tier-skeleton` to `--loading-tier-slow`) is a skeleton matching the layout being waited for; tier 3 (after `--loading-tier-slow`) is the brand mark drawing itself, "Still loading", and a reload action. Applies both before React mounts (the pre-mount shell in `index.html`) and inside the app (`RouteFallback` for lazy route chunks).
+- **Route skeletons.** Every route with an `element` declares `handle.skeleton` (`"standalone" | "card-grid" | "list" | "page-header"`, `web/src/lib/meta/documentMeta.ts`): `"standalone"` for a top-level auth/settings/misc route with no portal chrome to promise; `"card-grid"` for a dashboard of tiles; `"list"` for a queue/roster/feed; `"page-header"` for everything else (a form, a single record, a drilldown). `<RouteSkeleton />` (`web/src/components/ui/route-skeleton.tsx`) reads the deepest matched route's declared shape and renders `RouteFallback`'s tier-2 skeleton accordingly, so a route that forgets to declare one is caught by a test rather than silently rendering the wrong shape. iOS home-screen splash screens (`web/vite/splashScreens.ts`) cover the one loading window this system cannot reach at all: iOS paints a blank rectangle before the pre-mount shell's own markup is even shown, unless the page's `<head>` carries a matching `apple-touch-startup-image` link for the device's exact size, dpr and orientation.
 - **Empty states** are composed, never blank: a line of Caveat marginalia, a one-sentence explanation, and the action that fills it.
 - **Error states** name what happened and what to do, in active voice ("We couldn't save your changes"), and offer a retry.
 
@@ -567,7 +709,7 @@ these knobs. Anything else is drift.
 | Knob | Range | Notes |
 |---|---|---|
 | Section spacing | `space-12` … `space-32` | Marketing turns it up, Operate turns it down. |
-| Card padding | `space-5` … `space-10` | Density. |
+| Card padding | `space-6` … `space-8` | Density. |
 | Display rung | `display-md` … `display-hero` | Which rung a page's title uses. |
 | Texture intensity | 0 … 3 elements/viewport | Read lane high, Operate low, per §8's budget. |
 | Motion | per §3.3 dials | Marketing 7, auth 5, student 7, teacher/parent 6. |
@@ -588,3 +730,318 @@ Per-surface dial rows are in REDESIGN-MISSION §3.3 and are authoritative.
 6. Check the four mobile widths (320/375/414/768) and desktop.
 7. Check `prefers-reduced-motion`, keyboard traversal, and focus-visible on every control.
 8. Ask the §1 question last: does this still feel like a well-kept notebook? If not, the texture layer (§8) is the first thing to reach for, and restraint is the second.
+9. Logical properties only (P3.4): `inline-start`/`inline-end`, `ms-`/`me-`/`ps-`/`pe-`, `text-start`/`text-end`; never `left`/`right`, `ml-`/`mr-`, `text-left`/`text-right`. `scripts/adapt_audit.mjs` and the responsive gate read `dir="rtl"`.
+
+---
+
+## 15. Device envelope
+
+Phase A's mechanics — what makes Lemely behave like an installed app rather
+than a browser tab, and where each rule actually lives. Sections below are
+the settled state after Phase A; forward pointers name what Phase B still
+owns.
+
+**Install / update lifecycle.** `registerType: "autoUpdate"` (`vite.config.ts`)
+means a new build is fetched and installed in the background with no
+prompt. Taking control is gated, not automatic: `self.skipWaiting()`
+(`src/sw.ts`) runs only inside the worker's own `message` listener, fired by
+the page once it has shown a reload prompt (`src/main.tsx` /
+`lib/staleChunk.ts`) and the reader has agreed — never on install, which
+would otherwise swap the app out from under whatever the reader is mid-way
+through. `scripts/check-native-invariants.mjs` enforces the gating
+mechanically (below).
+
+**Offline behaviour.** The service worker precaches the app shell only on
+the real production hosts — `PRECACHE_HOSTS` (`src/sw.ts`) lists
+`lemelyig.com`/`www.lemelyig.com` explicitly, so staging and local dev never
+precache and never need the activate-time cache-clear that host set exists
+to avoid (`emp-offline-staging-by-design`: offline on staging is expected to
+fail, not a bug — documented here rather than fixed, since fixing it would
+mean staging serving a stale deploy to a returning visitor, which is the
+exact failure this host split exists to avoid). `/api/*` is never cached,
+on any host: marks, grades and the review queue are live data, and a stale
+response there is a wrong answer, not a convenience. On the client,
+`isOfflineFailure` classifies a network error and `<OfflineState>`
+(`components/ui/state-views.tsx`, wired through `<QueryState>`) renders a
+real "you're offline" screen instead of the generic error state — a
+network failure and a 500 are different facts and read as different
+screens.
+
+**Offline upload queue (Task 10, B6).** A scan that fails to upload because
+the request never reached the server at all (`shouldQueueUpload`,
+`lib/offline/queueDecision.ts` — the same "status 0" test
+`isOfflineFailure` uses) is queued, not lost: `CorrectPaper.tsx` calls
+`enqueueUpload` (`lib/offline/uploadQueue.ts`) and renders `<QueuedBanner>`
+alongside the ordinary form rather than replacing it with a failure panel —
+a real 4xx/5xx from the server is a decision the server made and is never
+queued, only ever a genuine transport failure is. The queue itself is one
+`idb-keyval`-backed IndexedDB store (`QueuedUpload`: the scan and
+mark-scheme bytes as `Blob`s, an `Idempotency-Key` generated once per
+attempt and resent on every retry so a request that in fact already reached
+the server before the connection dropped is never double-uploaded, an
+attempt counter, and — once known — the `paperId`), drained by
+`drainUploadQueue`, which is DOM-free and takes its `upload`/`correct`
+network calls as injected dependencies so the exact same drain logic runs
+from two places: `useUploadQueue.ts`'s page hook (mount, the browser's
+`online` event, and a message from the worker) with a real, authenticated
+session, and `sw.ts`'s `Queue("lemely-uploads", { onSync })` — plain
+`Queue` with a custom `onSync`, not `workbox-background-sync`'s own replay
+plugin, because this flow needs the returned `paperId` back to call
+`/student/correct`, which the plugin's request-replay-and-discard shape
+cannot give it. An entry older than 24h or retried 5 times is dropped
+(`nextQueueAction`), never retried forever.
+
+The worker's own drain attempt is honest about a real limitation: it has no
+access to `localStorage`, so it cannot send the bearer token
+`/student/uploads`/`/student/correct` require, and its own `fetch` calls
+will ordinarily 401 — deliberately not "fixed" by mirroring a token into
+IndexedDB for the worker to read, which would be exactly the kind of
+second, longer-lived credential copy `sw.ts`'s push-handshake code already
+rejects for the same session-boundary reason. What Background Sync
+reliably does instead is message every open client once a sync fires
+(`UPLOAD_QUEUE_DRAINED`), including a tab that is open but
+backgrounded/throttled on mobile — a case the page's own `online` listener
+can miss — so that tab's `useUploadQueue.ts` hook runs the real,
+authenticated drain. Nothing is ever removed from the queue except by a
+`drainUploadQueue` call that actually succeeded, so this is a nudge, not a
+correctness dependency (`sw-background-sync-upload-candidate`,
+`sw-offline-production-trace`).
+
+Sign-out clears the queue (`AuthContext.tsx`'s `logout()` calls
+`clearUploadQueue()`): unlike a cached query response, an entry here holds
+the scan's own bytes, which must not sit on a shared device across an
+account switch (`offline-1`, `offline-3`).
+
+**Persisted query cache (Task 10, B6).** `main.tsx` wraps the app in
+`PersistQueryClientProvider` (`@tanstack/react-query-persist-client`) with
+an `idb-keyval`-backed persister (`lib/offline/queryPersister.ts`). Which
+queries are written to IndexedDB at all is an allowlist, not a denylist —
+`isPersistableQueryKey` (`lib/offline/persistAllowlist.ts`) only persists
+the reference catalogue, the student's/teacher's class list, announcements,
+the notifications inbox, the flashcard deck list, and the signed-in
+profile, by their real, re-grepped `queryKey` prefixes. Grades, an active
+marking run, and the teacher review queue are never written, not merely
+excluded on read: `dehydrateOptions.shouldDehydrateQuery` is checked before
+a query is ever serialized, so a stale number on a report card cannot
+happen by way of this cache. `maxAge` (24h) matches the upload queue's own
+abandon window, and `buster: currentBuildId()` invalidates the whole
+persisted cache on a new deploy, the same build-id guard `lib/staleChunk.ts`
+already uses for chunk URLs.
+
+**Safe areas.** `viewport-fit=cover` (`index.html`) opts into the notch/
+home-indicator layout in the first place; without it `env(safe-area-inset-*)`
+resolves to `0` everywhere and every rule below is a no-op. Standalone-only
+chrome is gated behind `@media (display-mode: standalone)` (`index.css`) —
+a same-origin browser tab gets no inset padding, because the browser's own
+chrome already occupies that space there. `.lm-app-header` adds the inset
+additively (`padding-top: calc(var(--lm-app-header-pt, 0px) +
+env(safe-area-inset-top))`) rather than replacing a header's existing
+padding, and `.lm-safe-bottom` does the equivalent for the bottom nav/toast
+rail. `apple-mobile-web-app-status-bar-style="default"` (`index.html`) is a
+deliberate choice, not an oversight: `black-translucent` draws the page
+*under* the status bar, which reads as content overlapping system chrome
+unless every top-level screen accounts for it independently; `default`
+keeps the status bar opaque and out of the layout's way, and the safe-area
+insets above are what actually earn the notch/home-indicator space back.
+
+**Orientation.** The manifest declares `orientation: "any"`
+(`vite/manifest.ts`) — a marking/study app has no portrait-only or
+landscape-only surface, and locking orientation would fight a student who
+rotates to read a wide mark scheme. Phase A ships no orientation-specific
+layout of its own; a dedicated landscape overlay or layout is Phase B's
+scope, not this one's.
+
+**Gestures.** Phase A shipped none. The disambiguation rule
+(`|dx| > 10 && |dx| > 2*|dy|`, distinguishing an intentional horizontal
+swipe from scroll noise) lives in `src/lib/gestures/dragMath.ts`
+(`shouldCommitDrag`), the single source of truth `useDragGesture`
+(`src/lib/gestures/useDragGesture.ts`) and every gesture built on it read.
+**Edge-swipe-back (standalone only, 24px inline-start edge)** is Task 4's
+(B3) own gesture — `src/lib/nav/edgeSwipeBack.ts` (`edgeSwipeDecision`) plus
+`src/components/edge-swipe-back.tsx` (`EdgeSwipeBack`, mounted by the
+student and teacher layouts, renders nothing). It is gated to a PWA running
+in standalone display mode (a browser tab already owns the platform's own
+back gesture) and to a drag that both starts within 24px of the
+inline-start edge and commits away from it, using the same `backTarget`
+decision `BackControl` (B2) uses.
+
+**The rest of the list, shipped in Task 5/6 (B4).** `useDragGesture`'s
+`commitThreshold` (default 10px) is raised per gesture to the distance that
+gesture actually means, so a drag short of the real threshold always
+springs back animated rather than snapping. **Flashcard reveal/grade**
+(`FlashcardReview.tsx`, `lib/flashcardSwipe.ts::flashcardSwipeAction`): one
+axis throughout the card's whole interaction — swipe right (or, before
+reveal, up — `flashcardSwipeAction` recognises both, though the discoverable
+touch path stays the single consistent right-swipe idiom) reveals at 60px;
+once revealed, left grades "again" and right grades "good" at 80px; "hard"
+and "easy" stay button/keyboard-only. Reveal button, grade buttons and the
+1-4/Space keyboard shortcuts are unchanged. **Nav-drawer drag-dismiss**
+(`nav-drawer.tsx`): the panel commits closed at 40% of its own width, RTL-
+aware via `--lm-dir` read at commit time (never cached, so a language switch
+mid-session is never stale); `startFilter` excludes the drawer's own
+scrollable nav list, so a vertical scroll in there is never fought.
+**Pull-to-refresh** (`lib/gestures/usePullToRefresh.ts`,
+`components/ui/pull-indicator.tsx::PullIndicator`) on Notifications,
+Announcements and Overview: none of the three has a scroll container of its
+own, so both the gesture and its scroll-top check key off
+`document.documentElement` — the same target `EdgeSwipeBack` already
+listens on, coexisting the way that component's own comment anticipates.
+**Quiz page-turn** (`QuizTaker.tsx`, `lib/quizSwipe.ts::quizSwipeAllowed`):
+swiping the question card always flushes the 600ms autosave before moving
+(a page-turn racing an unsaved answer is exactly the D3.21 shape); refuses
+to start on an MCQ radio, a textarea, an input, a button or a link, so it
+never races a tap already owned by one of those; and is fully disabled
+(the listener detaches, not merely a no-op check) in the last 60 seconds of
+a timed test. Previous/Next buttons are unchanged. **Long-press menus**
+(`lib/gestures/useLongPress.ts`, opening the existing `components/ui/
+popover.tsx::Popover` in controlled mode) on three rows, each only where it
+has a real secondary action to offer: `QuestionRow` gains optional
+`practiceHref`/`onShare` props (`PaperResult.tsx` supplies both — "Practice
+this topic" links to the practice generator prefilled with the question's
+topic when one is recorded, "Share" reuses the same action `ResultHeader`'s
+own Share button already builds); the notification row offers "Mark read",
+shown only while the row is actually unread; the flashcard deck row offers
+"Delete" through the existing confirm flow — **no "Rename"**:
+`lemely/web/routers/flashcards.py` has `DELETE /decks/{id}` and `PATCH
+/cards/{id}` but no deck rename endpoint, and `useFlashcardApi.ts` has no
+`useUpdateDeck`, so there is nothing for a rename item to call. No
+additional long-press targets beyond these three rows: the affirmed
+override for `gesture-no-long-press-and-thats-fine` is that the one
+additional place the dossier suggested stays without it, by user decision,
+rather than being added here for completeness.
+
+**Navigation chrome (Task 4, B3).** Three constants — `SIDEBAR_WIDTH` (252),
+`SIDEBAR_BREAKPOINT` (820), `BOTTOM_NAV_HEIGHT` (56), exported from
+`src/components/ui/nav-shells.tsx` and backed by `index.css`'s
+`--sidebar-width`/`--breakpoint-sidebar`/`--bottom-nav-height` tokens (§14
+rule 3: a named token, never an arbitrary `w-[252px]`/`min-[820px]`
+literal) — are the whole retrofit's shared vocabulary. `w-sidebar` and the
+`sidebar:` variant back every portal's `<aside>`; `.pb-bottom-nav` clears
+`<main>` from the fixed `BottomNav` below that breakpoint. Below it, the
+student portal shows a five-tab `BottomNav`: Overview · Correct · Classes ·
+Profile · More (opens the existing `NavDrawer`); the teacher portal shows
+Overview · Grading · Review · Classes · More. The student portal's "Correct"
+tab renders as a raised accent-circle emphasis tab (`BottomNav`'s
+`emphasisId`), and a matching `BottomActionBar` ("Correct a paper") appears
+above the bar on Overview, Subject and PaperResult — the three routes whose
+`handle.primaryAction === "correct"` — mirroring the header's own CTA, which
+stays for ≥ `SIDEBAR_BREAKPOINT` instead. The admin portal is desktop-first
+and carries no `BottomNav` at all; its two lanes reach every screen through
+`SidebarNav` and the `NavDrawer` alone. `TAB_ROOTS`
+(`src/lib/nav/scrollRestorationKey.ts`) names the eight `BottomNav`/
+`SidebarNav` destinations that restore scroll position by pathname rather
+than by history entry when a reader switches away and back — the same set
+`src/lib/nav/tabMemory.ts`'s `useTabState` reads for per-tab UI memory (a
+filter, an expanded section), so the two can never disagree about what
+counts as a tab.
+
+**Scanner (Task 8, B5).** `CameraCapture.tsx`'s live viewfinder runs a
+`requestAnimationFrame` loop (every 3rd frame, once the stream is live) that
+downscales to a 320px-wide luma buffer, runs a hand-rolled Sobel edge pass,
+finds the largest rectangular document quad in it, and tracks frame-to-frame
+stability — three steady frames with a quad found auto-fires "Capture page"
+exactly once, then re-arms after the new thumbnail lands. A found quad also
+drives perspective correction (a 4-point homography warp) on the captured
+frame instead of keeping it skewed, and is drawn live as a quad outline over
+the viewfinder. The torch button appears only when the active video track's
+capabilities actually report one (`torchSupported`). **Accuracy floor:** a
+rectangular sheet of paper on a contrasting surface, filling at least 20% of
+the frame — a photo that doesn't meet this still captures on the student's
+own tap, just without perspective correction. **Why not `opencv.js`:** the
+hand-rolled pipeline (`src/lib/scanner/`) is ~1.7KB gzipped in its own lazy
+chunk (`import("@/lib/scanner")`, loaded only once the camera stream starts —
+never in the file-picker-only path); `opencv.js` is 1.5MB+ as a single
+wasm/JS chunk, and `check-bundle-budget.mjs` gzips every shipped chunk
+individually, so a lazy `opencv.js` chunk would fail the budget outright.
+Hand-rolled is the only option that fits.
+
+**Capability register.**
+
+| Capability | Status | Where |
+|---|---|---|
+| Web Share Target | Shipped (A6) | `vite/manifest.ts`'s `share_target`, `src/sw/shareTarget.ts` |
+| Web Share (`navigator.share`) | Shipped (B5) | `src/lib/share.ts` (`shareResult`/`canWebShare`), `PaperResult.tsx`'s header Share button — falls back to copying the link (`navigator.clipboard.writeText`) plus a toast on an engine or a cancelled/refused share sheet; there is no result download on this screen to fall back to instead |
+| File Handling API | Shipped (A6) | `vite/manifest.ts`'s `file_handlers`, `/file-handler` (`routes.tsx`) |
+| Widgets (Streak) | Declared, SW bridge pending | `vite/manifest.ts`'s `widgets`, `public/widgets/streak.json`, `GET /api/student/widget` — `self.widgets.updateByTag` is not yet called anywhere in `src/sw.ts`; until it lands, an installed widget shows its static default data rather than a real streak |
+| Badging API | Shipped (B5) | `src/lib/badging.ts` (`setAppBadge`), `src/components/badge-sync.tsx` (`BadgeSync`, mounted in each authenticated portal layout — `useNotificationCounts` is auth-gated, so it cannot live in `main.tsx`), `Notifications.tsx` clears it to 0 on mount. Pushes carry no payload (`lemely/web/push.py:16`), so there is no count to read off a push event itself — `src/sw.ts`'s `handlePush` calls `self.navigator.setAppBadge?.(unread)` only when the page-side handshake reply (`src/lib/push/pushClientBridge.ts`) attached a cached `NotificationCounts.unread`, i.e. the badge rides the existing content handshake rather than the push body |
+| Haptics (Vibration API) | Shipped (B5) | `src/lib/haptics.ts` (`haptic`) — a tap on `ConfirmModal`'s confirm button, a success pulse once per finished flashcard review session (`FlashcardReview.tsx`) |
+| Torch (`MediaStreamTrack` capability) | Shipped (B5) | `src/lib/scanner/torch.ts` (`torchSupported`/`setTorch`), `CameraCapture.tsx`'s viewfinder button — rendered only when the active video track's own capabilities report `torch: true` |
+| Wake Lock | Shipped (B5) | `src/lib/wakeLock.ts` (`useWakeLock`), held by `CameraCapture.tsx` while `phase === "live" && started` — the one flow where the screen sleeping mid-capture loses real work |
+
+**Mechanical enforcement.** The mechanics sections above are guarded, not
+just documented: `scripts/check-native-invariants.mjs` (wired into `npm run
+lint` and CI's own unit-test step) asserts the viewport meta, the
+touch/tap/overscroll CSS rules, the `--fs-field` token, the safe-area
+rules, the additive `.lm-app-header` inset and its named utilities, the
+`lm-nav-chrome` coverage, the status-bar style meta, the absence of
+class-list `min-h-screen` outside a desktop `<aside>` (there is no
+"paired with `min-h-dvh`" exemption — the class must be gone, since
+Tailwind v4 emits `.min-h-screen` after `.min-h-dvh` regardless of source
+order and both sit at equal specificity, so `min-h-screen` always wins the
+cascade when both are present), the 8-state `active:` requirement on every
+interactive `components/ui/*.tsx` control — whether its classes sit inline
+on the JSX tag or inside a `cva(...)` variant recipe (`button.tsx`'s own
+shape: a reusable primitive with no `onClick` of its own, its `hover:`/
+`active:` split across a base array and a variant string rather than on
+any literal tag) — scoped per element/recipe, not merely present somewhere
+in the file, and that `skipWaiting` only ever runs inside `self.
+addEventListener("message", ...)`, never at module scope or inside some
+other block that still executes unconditionally at install time.
+`scripts/check-bundle-budget.mjs` (wired into `npm run
+build` via `postbuild` — which means it now also gates every production
+deploy, not only CI, since `deploy.yml`'s frontend build step runs through
+the same `npm run build`) fails the build if any shipped JS chunk exceeds
+its gzip budget — 150KB as of Phase B (Task 11, B6c), tightened from Phase
+A's 200KB once `pdf-lib` and the scanner were split out of `CorrectPaper`.
+The one named exception is the lazy `assemblePages-*.js` chunk that split
+produced: `pdf-lib`'s own official minified build has no tree-shakeable
+"core" and lands that chunk at ~171KB gzipped on its own, with no further
+code-organization move available to shrink it, so `KNOWN_HEAVY_LAZY_CHUNKS`
+in the script gives it its own 175KB ceiling rather than raising the
+general 150KB budget for every other chunk — the chunk only downloads once
+a student assembles 2+ photos into one PDF, never on an initial-load path,
+so it is not the same cost category the 150KB budget exists to catch.
+Neither script replaces this document, nor `tests/unit/
+nativeMechanics.test.ts` (the vitest suite CI's own unit-test step runs) —
+all three exist because a rule stated only in prose is a rule the next
+edit can silently break.
+
+`web/e2e/native-feel.spec.ts` (Task 12, B7) is the behavioural half of this
+enforcement — real device emulation (`iphone-15`/`pixel-7` Playwright
+projects), not source-text pins: 16px form fields, 44px tap targets, the
+chrome-suppression computed styles, safe-area CSS and the exact viewport
+meta, history-trapped dialogs, per-tab scroll and state memory, the
+authenticated deep-link return, and reduced motion across a whole screen
+rather than one component. `web/scripts/check_installability.mjs`
+(`npm run check:installable`) closes the gap Google's Lighthouse PWA-category
+removal left (`scripts/audit.mjs:210-214`): it calls the same CDP
+`Page.getInstallabilityErrors` that audit used to wrap, against a production
+build served under the real `lemelyig.com` origin family so the manifest's
+`scope_extensions` and service-worker scope are checked the way a real
+install actually would be, not against `127.0.0.1`.
+
+---
+
+## 16. Recorded decisions (audit remediation)
+
+Six audit-ledger findings compare a pre-redesign exploration canvas against
+this document and find a mismatch. In every case this document (or
+`PRODUCT.md`) is what shipped, and the canvas fact is the one that is stale.
+Full write-up (findings 1–5): `docs/design-canvas-notes.md`; finding 6's is
+§3.10 itself.
+
+1. **Device limit** (`trust-ops-device-limit-count-divergence`) — the canvas
+   diverges from `PRODUCT.md`'s "Maximum 3 concurrent devices per account".
+   `PRODUCT.md` wins.
+2. **Subject colour mapping** (`brand-subject-color-mapping-mismatch`) — §3.8
+   is authoritative; the canvas mapping is superseded.
+3. **Instrument Serif** (`x-type-instrument-serif-rejected`) — rejected as a
+   typeface; §4 names the four faces actually used.
+4. **"Academic Warmth" colour system** (`brand-color-system-superseded`) —
+   superseded by §3's OKLCH ladder.
+5. **Hero grade on the student home** (`student-home-no-hero-grade`) — not
+   built. Overview reports per-subject predicted grades; a single hero grade
+   would be a cross-subject aggregate the product does not compute.
+6. **Dark mode** (`x-a11y-dark-theme-exploration-correctly-unshipped`) —
+   shipped as a token swap; the exploration artboards' bespoke dark palette
+   was not adopted — see §3.10.

@@ -1,51 +1,25 @@
-"""Supabase Storage backend seam (P2.5).
+"""Object storage seam.
 
-The student self-mark upload path stores scans (and optional mark-scheme
-siblings) in Supabase Storage rather than on local disk. :class:`StorageBackend`
-is the Protocol both the real HTTP client and the test fake implement, mirroring
-the precedent set by :mod:`lemely.auth.gotrue` for GoTrue: a thin sync ``httpx``
-client authenticated with the service-role key, raising
-:class:`~lemely.runtime.errors.ExternalServiceError` on any non-2xx response.
+:class:`StorageBackend` is the Protocol the Google Cloud Storage backend
+(:mod:`lemely.io.storage_gcs`), the local filesystem backend
+(:mod:`lemely.io.storage_local`) and the test fake implement.
+
+The deployed backend is Google Cloud Storage. The public "How Lemely handles
+your data" page says so in as many words, and
+``web/tests/unit/dataHandling.test.ts`` asserts that this module and that
+copy still agree — so if this seam is ever pointed somewhere else, fix
+``web/src/portals/marketing/dataHandling.ts`` in the same change rather than
+relaxing the test. Where a user's scan is kept is a disclosure, not an
+implementation detail.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, cast
-
-import httpx
-
-from lemely.runtime.errors import AuthError, ExternalServiceError
+import os
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from lemely.runtime.config import Settings
-
-_TIMEOUT_SECONDS = 10.0
-# Uploads/downloads move whole PDFs (up to the 25MB cap) rather than small JSON
-# bodies, so they get a longer timeout than the GoTrue-style metadata calls.
-_TRANSFER_TIMEOUT_SECONDS = 30.0
-
-
-def _is_missing_key(response: httpx.Response) -> bool:
-    """Detect a missing-object response the real Supabase Storage API's way.
-
-    The local/self-hosted Storage API answers a missing object with HTTP
-    **400** (not 404) and a JSON body like ``{"statusCode": "404", "error":
-    "not_found", "message": "Object not found", "code": "NoSuchKey"}`` —
-    confirmed against a live local stack (D2.8). Checking only the outer HTTP
-    status therefore never actually distinguishes "no such object" from any
-    other 4xx failure. ``code == "NoSuchKey"`` specifically (not
-    ``"NoSuchBucket"``, a real misconfiguration that should still surface as
-    :class:`~lemely.runtime.errors.ExternalServiceError`) is the reliable
-    signal. Defensive against a non-JSON or differently-shaped body — treated
-    as "not the missing-key case" rather than raising here.
-    """
-    if response.status_code != 400:
-        return False
-    try:
-        body = response.json()
-    except ValueError:
-        return False
-    return isinstance(body, dict) and body.get("code") == "NoSuchKey"
 
 
 class StorageObjectNotFoundError(KeyError):
@@ -54,13 +28,13 @@ class StorageObjectNotFoundError(KeyError):
     Distinct from :class:`~lemely.runtime.errors.ExternalServiceError` so
     callers can distinguish "no such object" (an expected, handled case — e.g.
     an optional sibling mark-scheme upload) from a genuine backend failure.
-    Both :class:`HttpStorageBackend` and the hermetic fake raise this same
-    type, matching the shared-fake precedent set for GoTrue.
+    Every :class:`StorageBackend` implementation raises this same type,
+    matching the shared-fake precedent set for GoTrue.
     """
 
 
 class StorageBackend(Protocol):
-    """Upload, download, and signed-URL operations against object storage."""
+    """Upload, download, delete and signed-URL operations against object storage."""
 
     def upload(
         self,
@@ -76,108 +50,61 @@ class StorageBackend(Protocol):
         """Return the bytes stored at ``object_path`` in ``bucket``."""
         ...
 
+    def delete(self, bucket: str, object_path: str) -> None:
+        """Remove ``object_path`` from ``bucket``. A missing object is not an error."""
+        ...
+
     def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
-        """Return a time-limited signed URL for ``object_path`` in ``bucket``."""
+        """Return a URL that reads ``object_path`` for ``expires_in`` seconds.
+
+        Exists for profile pictures: the browser fetches the image directly,
+        so the bytes must be reachable without the caller's session, and the
+        reachability must expire. Every other consumer downloads through the
+        backend instead, which is why this is the only read that produces a
+        URL rather than bytes.
+
+        Raises :class:`~lemely.runtime.errors.ExternalServiceError` when the
+        configured credentials cannot sign. Callers that merely *display* an
+        avatar treat any failure as "no avatar" rather than an error — see
+        ``lemely.web.routers.me._avatar_url_for`` — because a profile read
+        must not fail just because object storage is unreachable.
+        """
         ...
 
 
-class HttpStorageBackend:
-    """Real :class:`StorageBackend` backed by the Supabase Storage REST API.
+def check_storage(settings: Settings, *, no_network: bool) -> tuple[bool, str]:
+    """``lemely doctor``'s storage check: ``(passed, detail)``.
 
-    Uses synchronous ``httpx`` to match the codebase's sync call style (see
-    :class:`~lemely.auth.gotrue.HttpGoTrueBackend`). Requires the service-role
-    key to be present in :class:`~lemely.runtime.config.SupabaseSettings`; a
-    missing key raises :class:`~lemely.runtime.errors.AuthError` at call time via
-    :meth:`_service_key`, matching the GoTrue precedent.
+    ``local``: the root is writable. ``gcs``: application-default credentials
+    resolve and — unless ``no_network`` — both buckets answer a metadata read.
+    Both, because uploads and avatars live in separate buckets and a deploy
+    that provisioned only one fails on whichever route touches the other.
     """
-
-    def __init__(self, settings: Settings) -> None:
-        """Initialise the client against ``settings.supabase``."""
-        self._settings = settings
-        self._base_url = settings.supabase.url.rstrip("/")
-
-    def _service_key(self) -> str:
-        key = self._settings.supabase.service_role_key
-        if key is None:
-            raise AuthError("Supabase service-role key is not configured.")
-        return key.get_secret_value()
-
-    def upload(
-        self,
-        bucket: str,
-        object_path: str,
-        data: bytes,
-        content_type: str | None,
-    ) -> None:
-        """Upload ``data`` to ``{bucket}/{object_path}`` (service-role key)."""
-        service_key = self._service_key()
+    if settings.storage.backend == "local":
+        root = settings.paths.output_dir / "storage"
         try:
-            response = httpx.post(
-                f"{self._base_url}/storage/v1/object/{bucket}/{object_path}",
-                content=data,
-                headers={
-                    "Authorization": f"Bearer {service_key}",
-                    "apikey": service_key,
-                    "Content-Type": content_type or "application/octet-stream",
-                },
-                timeout=_TRANSFER_TIMEOUT_SECONDS,
-            )
-        except httpx.HTTPError as exc:
-            raise ExternalServiceError(f"Storage upload request failed: {exc}") from exc
-        if response.status_code >= 300:
-            raise ExternalServiceError(
-                f"Storage upload failed ({response.status_code}): {response.text}"
-            )
+            root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return False, str(exc)
+        return os.access(root, os.W_OK), str(root)
+    try:
+        import google.auth
 
-    def download(self, bucket: str, object_path: str) -> bytes:
-        """Download the bytes at ``{bucket}/{object_path}`` (service-role key)."""
-        service_key = self._service_key()
-        try:
-            response = httpx.get(
-                f"{self._base_url}/storage/v1/object/{bucket}/{object_path}",
-                headers={
-                    "Authorization": f"Bearer {service_key}",
-                    "apikey": service_key,
-                },
-                timeout=_TRANSFER_TIMEOUT_SECONDS,
-            )
-        except httpx.HTTPError as exc:
-            raise ExternalServiceError(f"Storage download request failed: {exc}") from exc
-        if response.status_code == 404 or _is_missing_key(response):
-            raise StorageObjectNotFoundError(f"No object at {bucket}/{object_path}")
-        if response.status_code >= 300:
-            raise ExternalServiceError(
-                f"Storage download failed ({response.status_code}): {response.text}"
-            )
-        return response.content
+        google.auth.default()
+    except Exception as exc:  # any ADC failure surfaces as the detail
+        return False, f"application-default credentials: {exc}"
+    buckets = (settings.storage.bucket, settings.storage.avatar_bucket)
+    if no_network:
+        return True, f"gcs://{' + '.join(buckets)} (not probed: --no-network)"
+    try:
+        from google.cloud import storage
 
-    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
-        """Create a signed URL for ``{bucket}/{object_path}`` (service-role key)."""
-        service_key = self._service_key()
-        try:
-            response = httpx.post(
-                f"{self._base_url}/storage/v1/object/sign/{bucket}/{object_path}",
-                json={"expiresIn": expires_in},
-                headers={
-                    "Authorization": f"Bearer {service_key}",
-                    "apikey": service_key,
-                },
-                timeout=_TIMEOUT_SECONDS,
-            )
-        except httpx.HTTPError as exc:
-            raise ExternalServiceError(f"Storage sign request failed: {exc}") from exc
-        if response.status_code >= 300:
-            raise ExternalServiceError(
-                f"Storage sign failed ({response.status_code}): {response.text}"
-            )
-        body = cast("dict[str, object]", response.json())
-        try:
-            signed_url = str(body["signedURL"])
-        except KeyError as exc:
-            raise ExternalServiceError(f"Malformed Storage sign response: {exc}") from exc
-        if signed_url.startswith("/"):
-            return f"{self._base_url}{signed_url}"
-        return signed_url
+        client = storage.Client(project=settings.storage.gcs_project)
+        for name in buckets:
+            client.get_bucket(name)
+    except Exception as exc:  # any bucket-probe failure surfaces as the detail
+        return False, f"buckets {' + '.join(buckets)}: {exc}"
+    return True, f"gcs://{' + '.join(buckets)}"
 
 
-__all__ = ["HttpStorageBackend", "StorageBackend", "StorageObjectNotFoundError"]
+__all__ = ["StorageBackend", "StorageObjectNotFoundError", "check_storage"]

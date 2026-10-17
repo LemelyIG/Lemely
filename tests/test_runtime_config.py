@@ -50,6 +50,30 @@ class _IsolatedEnv:
 
 
 class SettingsTests(unittest.TestCase):
+    def test_notifications_defaults_match_the_spec(self) -> None:
+        with _IsolatedEnv(), TemporaryDirectory() as tmp:
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertTrue(s.notifications.sweeper_enabled)
+        self.assertEqual(s.notifications.sweep_poll_seconds, 60)
+        self.assertEqual(s.notifications.streak_warning_hour, 19)
+        self.assertEqual(s.notifications.study_plan_reminder_hour, 8)
+
+    def test_notifications_hours_must_be_hours(self) -> None:
+        from pydantic import ValidationError
+
+        from lemely.runtime.config import NotificationsSettings
+
+        with self.assertRaises(ValidationError):
+            NotificationsSettings(streak_warning_hour=24)
+        with self.assertRaises(ValidationError):
+            NotificationsSettings(sweep_poll_seconds=0)
+
+    def test_sweeper_can_be_disabled_from_the_environment(self) -> None:
+        with _IsolatedEnv(), TemporaryDirectory() as tmp:
+            os.environ["LEMELY_NOTIFICATIONS__SWEEPER_ENABLED"] = "0"
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertFalse(s.notifications.sweeper_enabled)
+
     def test_defaults_load_without_any_source(self) -> None:
         with _IsolatedEnv(), TemporaryDirectory() as tmp:
             s = load_settings(toml_path=None, cwd=Path(tmp))
@@ -173,6 +197,69 @@ class SettingsTests(unittest.TestCase):
             s = load_settings(toml_path=None, cwd=Path(tmp))
         assert s.gemini_api_key is not None
         self.assertEqual(s.gemini_api_key.get_secret_value(), " sk-real ")
+
+    def test_email_app_base_url_rejects_an_origin_with_no_host(self) -> None:
+        """The empty-host case is the one that reached a real inbox.
+
+        ``app_base_url = ""`` joined onto ``/verify-email/<token>`` produces
+        ``http:///verify-email/<token>``, which is syntactically a URL and
+        completely unreachable. Failing at settings-load turns that into a
+        startup error naming the value, instead of a broken link nobody sees
+        until a recipient clicks it.
+        """
+        for bad in ("", "lemelyig.com", "https://", "/verify-email"):
+            with (
+                self.subTest(value=bad),
+                TemporaryDirectory() as tmp,
+                _IsolatedEnv(LEMELY_EMAIL__APP_BASE_URL=bad),
+                self.assertRaises(ValidationError),
+            ):
+                load_settings(toml_path=None, cwd=Path(tmp))
+
+    def test_email_app_base_url_accepts_a_real_origin_and_trims_a_trailing_slash(self) -> None:
+        """A trailing slash must not survive into a doubled path separator."""
+        with (
+            _IsolatedEnv(LEMELY_EMAIL__APP_BASE_URL="https://staging.lemelyig.com/"),
+            TemporaryDirectory() as tmp,
+        ):
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertEqual(s.email.app_base_url, "https://staging.lemelyig.com")
+
+    def test_email_app_base_url_defaults_to_the_production_site(self) -> None:
+        with _IsolatedEnv(), TemporaryDirectory() as tmp:
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertEqual(s.email.app_base_url, "https://lemelyig.com")
+
+    def test_storage_defaults_to_gcs_with_globally_unique_bucket_names(self) -> None:
+        """GCS is the default provider, and the bucket defaults are GCS-shaped.
+
+        The prefix is not cosmetic. GCS bucket names live in a single global
+        namespace shared by every Google Cloud customer, so the old Supabase
+        defaults (bare ``uploads``/``avatars``, which are per-project there)
+        name buckets this project could never own — a default that can only
+        fail. Pinned here because it is a deployment-visible contract that no
+        other test would notice moving.
+        """
+        with _IsolatedEnv(), TemporaryDirectory() as tmp:
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertEqual(s.storage.backend, "local")
+        self.assertEqual(s.storage.bucket, "lemely-uploads")
+        self.assertEqual(s.storage.avatar_bucket, "lemely-avatars")
+
+    def test_storage_rejects_an_empty_bucket_name(self) -> None:
+        """An unset GitHub Actions variable renders as "" — fail at startup, not at upload.
+
+        ``deploy.yml`` passes the bucket names through ``vars.``; a mistyped or
+        missing one would otherwise boot a service that writes every object to
+        bucket ``""`` and only discovers it at the first student upload.
+        """
+        with (
+            _IsolatedEnv(LEMELY_STORAGE__BUCKET=""),
+            TemporaryDirectory() as tmp,
+            self.assertRaises(ValidationError) as cm,
+        ):
+            load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertIn("bucket", str(cm.exception))
 
     def test_toml_discovery_prefers_cwd_lemely_toml(self) -> None:
         with TemporaryDirectory() as tmp:

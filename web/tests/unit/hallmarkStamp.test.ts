@@ -72,8 +72,6 @@ const UNSTAMPED_KIT = [
   "src/components/ui/chart-frame.tsx",
   "src/components/ui/checkbox.tsx",
   "src/components/ui/confidence-indicator.tsx",
-  "src/components/ui/error-boundary.tsx",
-  "src/components/ui/error-state.tsx",
   "src/components/ui/input.tsx",
   "src/components/ui/kbd.tsx",
   "src/components/ui/modal.tsx",
@@ -93,7 +91,6 @@ const UNSTAMPED_KIT = [
   "src/components/ui/table.tsx",
   "src/components/ui/tabs.tsx",
   "src/components/ui/textarea.tsx",
-  "src/components/ui/toast.tsx",
   "src/components/ui/trend-sparkline.tsx",
   "src/components/ui/weakness-chip.tsx",
 ]

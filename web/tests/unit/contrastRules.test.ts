@@ -176,3 +176,41 @@ describe("--accent is not used for small text", () => {
     expect(offenders).toEqual([])
   })
 })
+
+/*
+ * Packet A3 (audit-dossier remediation). `text-dense-sm` (12.5px) and
+ * `text-metadata` (11px, via `--fs-data-sm`) are both sub-24px small text, but
+ * neither is derivable from the `--fs-*` scale the gate above reads: the
+ * `--text-dense-*` family lives in a separate `@theme` block under different
+ * naming (`--text-dense-sm`, not `--fs-dense-sm`), and `.text-metadata` is a
+ * hand-written class whose `font-size` merely *references* `--fs-data-sm`
+ * rather than being named after it. `CameraCapture.tsx` paired `text-accent`
+ * with `text-dense-sm` and the rule above could not see it — the exact gap
+ * this closes, named explicitly rather than folded into `smallTextUtilities`,
+ * since guessing at every alias `--fs-*` might someday acquire would be
+ * asserting more than this file's naming convention actually guarantees.
+ */
+describe("--accent is not used for small text (dense/metadata aliases)", () => {
+  const DENSE_SMALL_TEXT = ["text-dense-sm", "text-metadata"]
+
+  it("index.css still defines both aliased small-text classes", () => {
+    expect(INDEX_CSS).toContain("--text-dense-sm:")
+    expect(INDEX_CSS).toMatch(/\.text-metadata\s*\{/)
+  })
+
+  it("no class expression pairs text-accent with text-dense-sm or text-metadata", () => {
+    const offenders: string[] = []
+    for (const file of FILES) {
+      const source = stripComments(readFileSync(file, "utf8"))
+      for (const group of classGroups(source)) {
+        if (!hasClass(group.text, "text-accent")) continue
+        const rungs = DENSE_SMALL_TEXT.filter((rung) => hasClass(group.text, rung))
+        if (rungs.length === 0) continue
+        offenders.push(
+          `${relativeTo(file)}:${lineOf(source, group.index)} — text-accent with ${rungs.join(", ")}`,
+        )
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})

@@ -1,5 +1,6 @@
 import type { BadgeProps, BadgeTone } from "@/components/ui/badge"
 import { Badge } from "@/components/ui/badge"
+import { subjectGlyphFor } from "@/components/ui/subject-glyph"
 
 /*
  * DESIGN.md §3.8: "Semantic, not decorative: a student scanning a dashboard
@@ -74,17 +75,27 @@ export function subjectToneForCode(code: string): BadgeTone {
   return SUBJECT_CODE_TONES[code.trim()] ?? "rose"
 }
 
-export interface SubjectTagProps extends Omit<BadgeProps, "tone" | "children"> {
+export interface SubjectTagProps extends Omit<BadgeProps, "tone" | "children" | "icon"> {
   /** Subject name, e.g. "Mathematics", "Physics". Case-insensitive; rendered
    * verbatim as the label so a caller's exact casing/spelling ("Additional
    * Mathematics") still displays correctly even if it doesn't match a table
    * entry and falls back to the "other" colour. */
   subject: string
+  /** Renders the subject's glyph (`subjectGlyphFor`, `subject-glyph.tsx`)
+   * before the label — the same second, faster-scanning signal `Badge.icon`
+   * documents for its semantic tones, here fixed to the subject's own tone
+   * rather than left for the caller to pick. Off by default: most subject
+   * tags sit in dense lists (a table cell, a filter row) where a tag's own
+   * pastel fill is already the identifying signal, and a glyph on every row
+   * would be one more shape to scan past rather than a second signal. */
+  icon?: boolean
 }
 
-export function SubjectTag({ subject, ...props }: SubjectTagProps) {
+export function SubjectTag({ subject, icon, ...props }: SubjectTagProps) {
+  const tone = subjectTone(subject)
+  const Glyph = icon ? subjectGlyphFor(tone) : null
   return (
-    <Badge tone={subjectTone(subject)} {...props}>
+    <Badge tone={tone} icon={Glyph ? <Glyph size={12} /> : undefined} {...props}>
       {subject}
     </Badge>
   )
