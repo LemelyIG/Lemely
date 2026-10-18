@@ -408,7 +408,9 @@ def _result_json(result: AccuracyResult) -> dict[str, object]:
         "manifest": result.manifest.model_dump(mode="json"),
         "cost_usd_by_paper": result.cost_usd_by_paper,
         "cost_usd_total": result.cost_usd_total,
-        "question_results": [asdict(q) for q in result.question_results],
+        # Each entry carries the case it belongs to (`case_key`'s format) so offline
+        # tools can count scored parts per case and judge marks against truth exactly.
+        "question_results": [{"case_key": k, **asdict(q)} for k, q in _paired(result)],
     }
 
 

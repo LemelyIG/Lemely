@@ -1179,3 +1179,63 @@ def test_refused_screen_touches_nothing(
     assert not (tmp_path / "cache" / "lever1").exists()
     assert not (tmp_path / "lever1").exists()
     assert not (tmp_path / "ladder.json").exists()
+
+
+def test_results_json_has_case_keyed_question_results(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": [], "b": []}, clients)
+    variant = GoldenCase(
+        paper_id="b",
+        fixture_variant="scan2",
+        mark_scheme=None,  # type: ignore[arg-type]
+        ground_truth={},
+    )
+
+    def fake_measure(cases: list[GoldenCase], client: object, settings: object, **kw: Any):  # type: ignore[no-untyped-def]
+        qrs = [_qr("1a", 1, 2), _qr("1b", 0, 0, scored=False), _qr("2", 3, 3)]
+        ers = [_er("a", "1a"), _er("a", "1b"), _er("a", "1c", outcome="excluded")]
+        ers.append(_er("b", "2").model_copy(update={"fixture_variant": "scan2"}))
+        return _result(qrs, ers)
+
+    monkeypatch.setattr(runner, "measure_accuracy", fake_measure)
+    runner.run_config(
+        "baseline",
+        {},
+        out_dir=tmp_path,
+        cases=[_case("a"), variant],
+        settings=Settings(),
+        max_run_usd={"gemini": 1.0},
+    )
+    data = json.loads((tmp_path / "baseline" / "results.json").read_text())
+    picked = [
+        {k: q[k] for k in ("case_key", "question_id", "scored", "predicted_marks", "truth_marks")}
+        for q in data["question_results"]
+    ]
+    assert picked == [
+        {
+            "case_key": "a",
+            "question_id": "1a",
+            "scored": True,
+            "predicted_marks": 1,
+            "truth_marks": 2,
+        },
+        {
+            "case_key": "a",
+            "question_id": "1b",
+            "scored": False,
+            "predicted_marks": 0,
+            "truth_marks": 0,
+        },
+        {
+            "case_key": runner.case_key(variant),
+            "question_id": "2",
+            "scored": True,
+            "predicted_marks": 3,
+            "truth_marks": 3,
+        },
+    ]
+    # Existing fields are kept.
+    assert data["question_results"][0]["confidence_score"] == 0.9
+    assert {"metrics", "funnel", "manifest"} <= set(data)
