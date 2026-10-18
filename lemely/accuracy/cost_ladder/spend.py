@@ -112,16 +112,23 @@ def check_can_start(
 def resolve_projection(
     ledger: SpendLedger, label: str, max_run_usd: Mapping[str, float] | None
 ) -> dict[str, float]:
-    """The run's projected per-provider cost: the prefix's last run, else `--max-run-usd`."""
-    projected = ledger.projection(label)
-    if projected is not None:
-        return projected
-    if not max_run_usd:
+    """The run's projected per-provider cost.
+
+    Per provider, the larger of the explicit `--max-run-usd` value and the cost of
+    the prefix's last run; an explicit value is never ignored. With neither, refuse.
+    """
+    last = ledger.projection(label)
+    explicit = dict(max_run_usd or {})
+    if last is None and not explicit:
         raise SpendCapError(
             f"no completed run shares the prefix of {label!r} to project its cost from; "
             "pass --max-run-usd provider=usd for the first run"
         )
-    return dict(max_run_usd)
+    projected = last or {}
+    return {
+        provider: max(projected.get(provider, 0.0), explicit.get(provider, 0.0))
+        for provider in sorted(set(projected) | set(explicit))
+    }
 
 
 @dataclass

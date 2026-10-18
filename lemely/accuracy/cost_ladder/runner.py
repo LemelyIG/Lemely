@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
-from lemely.accuracy.cost_ladder.gate import RunSummary
+from lemely.accuracy.cost_ladder.gate import RunSummary, Verdict, aa_floor, judge
 from lemely.accuracy.cost_ladder.spend import (
     RUN_COST_FILE,
     CapWatch,
@@ -45,6 +46,17 @@ PINNED_CORPUS_DIGEST = "76989782d6fda9fc"
 P95_RANK = 0.95
 _UNSCORED_OUTCOMES = frozenset({"excluded", "unmatched"})
 
+BASELINE_LABEL = "baseline"
+AA_LABEL = "baseline_aa"
+#: Task tags a frozen-upstream screen calls live; every other tag replays the
+#: rung-0 baseline's cache.
+DEFAULT_LIVE_TAGS: tuple[str, ...] = ("correction", "correction_borderline", "escalation")
+CACHE_SUBDIR = "cache"
+AA_FLOOR_FILE = "aa_floor.json"
+LADDER_FILE = "ladder.json"
+
+CacheMode = Literal["read_write", "bypass", "refresh"]
+
 
 class CorpusDigestMismatch(RuntimeError):
     """The loaded golden cases are not the pinned 12-case dev corpus."""
@@ -58,11 +70,16 @@ def case_key(case: GoldenCase) -> str:
 
 
 def require_gemini_key(environ: Mapping[str, str]) -> None:
-    """Refuse to run live without the wrapper-provided key. Never echoes its value."""
-    if not environ.get("GEMINI_API_KEY"):
+    """Refuse to run live without a usable wrapper-provided key. Never echoes its value."""
+    key = environ.get("GEMINI_API_KEY")
+    if not key:
         raise RuntimeError(
             "GEMINI_API_KEY is not set; run through the wrapper that exports it "
             "(the key is read from the environment only)."
+        )
+    if key != key.strip() or any(ch.isspace() for ch in key):
+        raise RuntimeError(
+            "GEMINI_API_KEY contains whitespace; check the wrapper strips the key file's newline."
         )
 
 
@@ -162,14 +179,21 @@ class SpendCapReached(Exception):
 
 
 class _CapGuard:
-    """Adds each finished case's billed records to the run total; stops at the cap."""
+    """Books each finished case's billed records to the ledger and the run total.
 
-    def __init__(self, watch: CapWatch) -> None:
+    The ledger (``spend.json``) is written after every case, so a run killed
+    mid-way still leaves its billed spend on record; ``run_config`` books only
+    the records of unfinished cases at the end. Stops the run at the cap.
+    """
+
+    def __init__(self, watch: CapWatch, ledger: SpendLedger) -> None:
         self._watch = watch
+        self._ledger = ledger
         self.completed: list[str] = []
 
     def __call__(self, key: str) -> None:
         mine = [r for r in process_call_records() if r.case_key == key]
+        self._ledger.add(cost_by_provider(mine))
         self.completed.append(key)
         message = self._watch.add_case(mine)
         if message is not None:
@@ -299,6 +323,47 @@ def read_summary(path: Path) -> RunSummary:
     )
 
 
+def read_overrides(path: Path) -> dict[str, object]:
+    """The combined lever overrides a run recorded in its ``summary.json`` ({} for rung 0)."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return dict(data.get("overrides") or {})
+
+
+def read_records(path: Path) -> list[CallRecord]:
+    """The `CallRecord`s a run wrote to its ``records.jsonl``."""
+    return [
+        CallRecord(**json.loads(line))
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def compose_records(
+    live: Sequence[CallRecord],
+    frozen_upstream: Sequence[CallRecord],
+    *,
+    live_tags: Sequence[str],
+    case_keys: Sequence[str],
+) -> list[CallRecord]:
+    """The calls a frozen-upstream screen's cost, latency and validity are judged on.
+
+    A screen replays every non-live task tag from the baseline's cache, and a
+    cache hit records no call, so its live records alone would omit the upstream
+    cost and latency and flatter the saving. Per case, compose this screen's live
+    records with the baseline's records for that case whose tag is not live.
+    Billed spend is not composed: only *live* reaches the ledger.
+    """
+    tags = set(live_tags)
+    keys = set(case_keys)
+    upstream = [r for r in frozen_upstream if r.task_tag not in tags and r.case_key in keys]
+    return [*live, *upstream]
+
+
+def cache_dir_for(out_dir: Path, label: str) -> Path:
+    """The run's own Gemini cache directory, ``<out_dir>/cache/<label>``."""
+    return out_dir / CACHE_SUBDIR / label
+
+
 def _result_json(result: AccuracyResult) -> dict[str, object]:
     return {
         "metrics": asdict(result.metrics),
@@ -344,14 +409,29 @@ def run_config(
     client: GeminiClient | None = None,
     caps: SpendCaps | None = None,
     max_run_usd: Mapping[str, float] | None = None,
+    cache_dir: Path | None = None,
+    cache_mode: CacheMode = "bypass",
+    live_tags: Sequence[str] = (),
+    frozen_upstream: Sequence[CallRecord] | None = None,
+    summary_extra: Mapping[str, object] | None = None,
 ) -> RunSummary:
     """Run the pinned dev cases under *overrides*; write the run's artefacts and return its summary.
 
     Writes ``<out_dir>/<label>/{summary,records,results}.json[l]`` and
-    ``run_cost.json``. Always runs at ``cache_mode="bypass"``: a cached call
-    records no spend and would flatter both cost and the A/A floor. Every
-    precondition (corpus digest, price rows, spend caps) is checked before the
-    client is built. Billed spend is added to ``<out_dir>/spend.json`` even if the run fails.
+    ``run_cost.json``. *overrides* are the lever settings (recorded in
+    ``summary.json`` so a later screen can stack on them); the cache discipline
+    is applied on top of them and not recorded as a lever:
+
+    - ``gemini.cache_forget_enabled`` is always False, so no run deletes a cached read;
+    - *cache_dir*, when given, becomes ``paths.cache_dir``;
+    - ``gemini.cache_mode_for`` maps each of *live_tags* to ``"bypass"`` (and nothing else);
+    - the client's default mode is *cache_mode*.
+
+    With *frozen_upstream* (the baseline's records), the summary is judged on
+    `compose_records`; ``records.jsonl``, ``run_cost.json`` and the ledger hold
+    only this run's live records. Every precondition (corpus digest, price rows,
+    spend caps) is checked before the client is built. Billed spend is added to
+    ``<out_dir>/spend.json`` after each case and for any remainder when the run ends.
     """
     caps = caps or SpendCaps()
     if cases is None:
@@ -361,16 +441,22 @@ def run_config(
         cases = list(loaded)
     assert_corpus_digest(cases)
 
-    effective = apply_overrides(settings or load_settings(), overrides)
+    discipline: dict[str, object] = {
+        "gemini.cache_forget_enabled": False,
+        "gemini.cache_mode_for": dict.fromkeys(live_tags, "bypass"),
+    }
+    if cache_dir is not None:
+        discipline["paths.cache_dir"] = str(cache_dir)
+    effective = apply_overrides(apply_overrides(settings or load_settings(), overrides), discipline)
     preflight_prices(effective)
 
     ledger = SpendLedger(out_dir)
     spent_before = ledger.spent()
     check_can_start(spent_before, resolve_projection(ledger, label, max_run_usd), caps)
 
-    gemini = client or GeminiClient(effective, default_cache_mode="bypass")
+    gemini = client or GeminiClient(effective, default_cache_mode=cache_mode)
     keys = [case_key(c) for c in cases]
-    guard = _CapGuard(CapWatch(caps, spent_before))
+    guard = _CapGuard(CapWatch(caps, spent_before), ledger)
     reset_process_counters()
     probe = ProbeContext(keys, process_token_totals_by_task, guard)
     run_dir = out_dir / label
@@ -393,32 +479,197 @@ def run_config(
         billed = cost_by_provider(records)
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / RUN_COST_FILE).write_text(json.dumps(billed, sort_keys=True) + "\n")
-        ledger.add(billed)
+        booked = set(guard.completed)
+        ledger.add(cost_by_provider([r for r in records if r.case_key not in booked]))
         (run_dir / "records.jsonl").write_text(
             "".join(json.dumps(asdict(r), sort_keys=True) + "\n" for r in records),
             encoding="utf-8",
         )
 
+    done = keys if result is not None else list(guard.completed)
+    judged = (
+        records
+        if frozen_upstream is None
+        else compose_records(records, frozen_upstream, live_tags=live_tags, case_keys=done)
+    )
     if result is not None:
-        summary = summarise(result, records)
-        now = mean_usd(result, records, rate="now")
+        summary = summarise(result, judged)
+        now = mean_usd(result, judged, rate="now")
         (run_dir / "results.json").write_text(
             json.dumps(_result_json(result), indent=2, sort_keys=True, default=str) + "\n",
             encoding="utf-8",
         )
     else:
-        stop = stopped if stopped is not None else SpendCapReached("run did not finish", [])
-        summary = _capped_summary(records, keys, stop.completed)
-        done = stop.completed
+        summary = _capped_summary(judged, keys, done)
         now = (
-            sum(_per_case_sum(records, done, lambda r: r.usd_now).values()) / len(done)
+            sum(_per_case_sum(judged, done, lambda r: r.usd_now).values()) / len(done)
             if done
             else 0.0
         )
-    write_summary(
-        summary,
-        run_dir / "summary.json",
-        usd_per_script_mean_now=now,
-        extra={"stopped_by_spend_cap": str(stopped)} if stopped is not None else None,
-    )
+    extra: dict[str, object] = {
+        "overrides": dict(overrides),
+        "live_tags": list(live_tags),
+        "cache_mode": cache_mode,
+        "frozen_upstream": frozen_upstream is not None,
+    }
+    if frozen_upstream is not None:
+        tags = set(live_tags)
+        # A live call under a non-live tag means the upstream was not frozen (a cache
+        # miss); its cost is then counted twice (live and from the baseline).
+        extra["upstream_live_calls"] = sum(1 for r in records if r.task_tag not in tags)
+    if stopped is not None:
+        extra["stopped_by_spend_cap"] = str(stopped)
+    extra.update(summary_extra or {})
+    write_summary(summary, run_dir / "summary.json", usd_per_script_mean_now=now, extra=extra)
     return summary
+
+
+def run_baseline(
+    *,
+    out_dir: Path,
+    golden_dir: Path = Path("tests/golden"),
+    cases: Sequence[GoldenCase] | None = None,
+    settings: Settings | None = None,
+    caps: SpendCaps | None = None,
+    max_run_usd: Mapping[str, float] | None = None,
+) -> int:
+    """Rung 0 and its A/A rerun; write and return the churn floor.
+
+    The baseline runs on a fresh, empty ``<out_dir>/cache/baseline`` at
+    ``read_write``: every call is live and every response is written, which is the
+    frozen upstream later screens replay. The A/A rerun bypasses the cache
+    entirely (fully live, writes nothing) on its own directory.
+    """
+    base_cache = cache_dir_for(out_dir, BASELINE_LABEL)
+    if base_cache.exists() and any(base_cache.iterdir()):
+        raise RuntimeError(
+            f"baseline cache {base_cache} is not empty; a baseline must start from an "
+            "empty cache so every call is live. Use a fresh --out-dir."
+        )
+    base_cache.mkdir(parents=True, exist_ok=True)
+    aa_cache = cache_dir_for(out_dir, AA_LABEL)
+    aa_cache.mkdir(parents=True, exist_ok=True)
+
+    def one(label: str, cache: Path, mode: CacheMode) -> RunSummary:
+        return run_config(
+            label,
+            {},
+            out_dir=out_dir,
+            golden_dir=golden_dir,
+            cases=cases,
+            settings=settings,
+            caps=caps,
+            max_run_usd=max_run_usd,
+            cache_dir=cache,
+            cache_mode=mode,
+        )
+
+    a = one(BASELINE_LABEL, base_cache, "read_write")
+    b = one(AA_LABEL, aa_cache, "bypass")
+    floor = aa_floor(a, b)
+    (out_dir / AA_FLOOR_FILE).write_text(json.dumps({"aa_floor": floor}) + "\n", encoding="utf-8")
+    return floor
+
+
+def append_ladder(out_dir: Path, label: str) -> list[str]:
+    """Append *label* to ``<out_dir>/ladder.json``, the report's row order.
+
+    A re-screened label moves to the end: its verdict is the latest decision.
+    """
+    path = out_dir / LADDER_FILE
+    labels: list[str] = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+    labels = [*(x for x in labels if x != label), label]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(labels, indent=2) + "\n", encoding="utf-8")
+    return labels
+
+
+def run_screen(
+    label: str,
+    sets: Mapping[str, object],
+    *,
+    out_dir: Path,
+    against: str = BASELINE_LABEL,
+    live_tags: Sequence[str] = DEFAULT_LIVE_TAGS,
+    lever: str | None = None,
+    expected_saving: str = "n/a",
+    golden_dir: Path = Path("tests/golden"),
+    cases: Sequence[GoldenCase] | None = None,
+    settings: Settings | None = None,
+    caps: SpendCaps | None = None,
+    max_run_usd: Mapping[str, float] | None = None,
+) -> Verdict:
+    """Screen one lever stacked on the *against* run, frozen upstream, and judge it.
+
+    - Stacking: *sets* are merged over the *against* run's recorded combined
+      overrides, and the combined set is what runs and what is recorded.
+    - Cache: the baseline's cache is copied to a fresh ``<out_dir>/cache/<label>``;
+      the client reads and writes it, and only *live_tags* bypass it.
+    - Judging: savings, mismarks, id-match and validity against *against*;
+      latency always against the rung-0 baseline's p95.
+
+    Writes ``verdict.json`` beside the run's summary and appends *label* to
+    ``ladder.json``.
+    """
+    if label in (BASELINE_LABEL, AA_LABEL):
+        raise ValueError(f"{label!r} is reserved for the baseline runs")
+    against_summary_path = out_dir / against / "summary.json"
+    stacked_on = read_overrides(against_summary_path)
+    combined = {**stacked_on, **sets}
+    base_dir = out_dir / BASELINE_LABEL
+    original_p95 = read_summary(base_dir / "summary.json").latency_p95_ms
+    floor = int(json.loads((out_dir / AA_FLOOR_FILE).read_text(encoding="utf-8"))["aa_floor"])
+    frozen = read_records(base_dir / "records.jsonl")
+
+    cache = cache_dir_for(out_dir, label)
+    if cache.exists():
+        shutil.rmtree(cache)
+    shutil.copytree(cache_dir_for(out_dir, BASELINE_LABEL), cache)
+
+    candidate = run_config(
+        label,
+        combined,
+        out_dir=out_dir,
+        golden_dir=golden_dir,
+        cases=cases,
+        settings=settings,
+        caps=caps,
+        max_run_usd=max_run_usd,
+        cache_dir=cache,
+        cache_mode="read_write",
+        live_tags=live_tags,
+        frozen_upstream=frozen,
+        summary_extra={"against": against, "set": dict(sets)},
+    )
+    verdict = judge(
+        read_summary(against_summary_path),
+        candidate,
+        aa_floor=floor,
+        original_latency_p95_ms=original_p95,
+    )
+    run_dir = out_dir / label
+    (run_dir / "verdict.json").write_text(
+        json.dumps(
+            {
+                "lever": lever or label,
+                "expected_saving": expected_saving,
+                "proof": str(run_dir),
+                "against": against,
+                "overrides": combined,
+                "set": dict(sets),
+                "live_tags": list(live_tags),
+                "passed": verdict.passed,
+                "tier": verdict.tier,
+                "saving": verdict.saving,
+                "extra_mismarks": verdict.extra_mismarks,
+                "allowed_extra": verdict.allowed_extra,
+                "reasons": list(verdict.reasons),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    append_ladder(out_dir, label)
+    return verdict

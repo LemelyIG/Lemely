@@ -249,8 +249,10 @@ def test_require_gemini_key_refuses_without_value() -> None:
 
 
 def test_require_gemini_key_error_does_not_leak_value() -> None:
-    with pytest.raises(RuntimeError) as exc:
-        require_gemini_key({"GEMINI_API_KEY": ""})
+    # A key with stray whitespace (a wrapper that kept the file's newline) is refused,
+    # and the refusal names the variable without echoing the value.
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY") as exc:
+        require_gemini_key({"GEMINI_API_KEY": " secret-value\n"})
     assert "secret-value" not in str(exc.value)
 
 
@@ -506,3 +508,378 @@ def test_anthropic_and_google_providers_are_capped_separately() -> None:
     message = watch.add_case(recs)  # anthropic 30 + 5 = 35 >= 40 - 5; gemini 1 < 3 - 1
     assert message is not None
     assert message.startswith("anthropic")
+
+
+# --- fix round 1: rung-0 latency, stacking, cache discipline, composition -------------------
+
+
+def _tagged(
+    case: str,
+    tag: str,
+    *,
+    usd_2027: float = 0.0,
+    usd_now: float = 0.0,
+    latency_ms: int = 0,
+    parse_ok: bool = True,
+) -> CallRecord:
+    return replace(
+        _rec(case, usd_2027=usd_2027, usd_now=usd_now, latency_ms=latency_ms, parse_ok=parse_ok),
+        task_tag=tag,
+    )
+
+
+def _fake_harness(
+    monkeypatch: pytest.MonkeyPatch,
+    per_case: dict[str, list[CallRecord]],
+    clients: list[tuple[Settings, str]],
+    on_case_start: Any = None,
+) -> None:
+    """Fake harness billing per_case[case] live records; captures each client's settings/mode."""
+    records: list[CallRecord] = []
+    monkeypatch.setattr(runner, "_corpus_digest", lambda cases: runner.PINNED_CORPUS_DIGEST)
+    monkeypatch.setattr(runner, "preflight_prices", lambda settings: None)
+
+    def fake_client(settings: Settings, *, default_cache_mode: str = "read_write") -> object:
+        clients.append((settings, default_cache_mode))
+        return object()
+
+    monkeypatch.setattr(runner, "GeminiClient", fake_client)
+    monkeypatch.setattr(runner, "reset_process_counters", lambda: records.clear())
+    monkeypatch.setattr(runner, "process_call_records", lambda: list(records))
+    monkeypatch.setattr(runner, "set_call_context", lambda *, case_key: None)
+
+    def fake_measure(cases: list[GoldenCase], client: object, settings: object, **kw: Any):  # type: ignore[no-untyped-def]
+        probe = kw["cost_probe"]
+        for case in cases:
+            probe()
+            if on_case_start is not None:
+                on_case_start(case.paper_id)
+            records.extend(per_case[case.paper_id])
+            probe()
+        return _result([_qr("1a", 1, 1) for _ in cases], [_er(c.paper_id, "1a") for c in cases])
+
+    monkeypatch.setattr(runner, "measure_accuracy", fake_measure)
+
+
+def _seed_ladder(
+    out: Path,
+    *,
+    baseline: RunSummary,
+    baseline_records: list[CallRecord] | None = None,
+    aa_floor: int = 0,
+) -> None:
+    """A finished baseline: summary, records, A/A floor and a non-empty frozen cache."""
+    runner.write_summary(baseline, out / "baseline" / "summary.json", usd_per_script_mean_now=0.0)
+    (out / "baseline" / "records.jsonl").write_text(
+        "".join(json.dumps(runner.asdict(r)) + "\n" for r in baseline_records or [])
+    )
+    (out / "aa_floor.json").write_text(json.dumps({"aa_floor": aa_floor}))
+    entry = out / "cache" / "baseline" / "gemini" / "k.json"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("{}")
+
+
+def _stub_run_config(
+    monkeypatch: pytest.MonkeyPatch, candidate: RunSummary, seen: list[dict[str, Any]]
+) -> None:
+    def fake(label: str, overrides: dict[str, object], **kw: Any) -> RunSummary:
+        seen.append({"label": label, "overrides": dict(overrides), **kw})
+        runner.write_summary(
+            candidate,
+            kw["out_dir"] / label / "summary.json",
+            usd_per_script_mean_now=0.0,
+            extra={"overrides": dict(overrides), **(kw.get("summary_extra") or {})},
+        )
+        return candidate
+
+    monkeypatch.setattr(runner, "run_config", fake)
+
+
+def test_screen_judges_latency_against_rung0_baseline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _seed_ladder(tmp_path, baseline=_summary(latency_p95_ms=1000.0))
+    # The stacked-on run is slower than rung 0: 2x of it would be 6000 ms.
+    runner.write_summary(
+        _summary(latency_p95_ms=3000.0),
+        tmp_path / "lever1" / "summary.json",
+        usd_per_script_mean_now=0.0,
+        extra={"overrides": {}},
+    )
+    seen: list[dict[str, Any]] = []
+    # 2500 ms: within 2x the --against run, past 2x the rung-0 baseline.
+    _stub_run_config(monkeypatch, _summary(latency_p95_ms=2500.0), seen)
+    verdict = runner.run_screen("lever2", {}, out_dir=tmp_path, against="lever1")
+    assert not verdict.passed
+    assert any("2.0x original 1000.0ms" in r for r in verdict.reasons)
+
+
+def test_screen_stacks_set_on_against_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _seed_ladder(tmp_path, baseline=_summary())
+    runner.write_summary(
+        _summary(),
+        tmp_path / "lever1" / "summary.json",
+        usd_per_script_mean_now=0.0,
+        extra={"overrides": {"gemini.a": 1, "gemini.b": 2}},
+    )
+    seen: list[dict[str, Any]] = []
+    _stub_run_config(monkeypatch, _summary(), seen)
+    runner.run_screen(
+        "lever2",
+        {"gemini.b": 3, "gemini.c": "x"},
+        out_dir=tmp_path,
+        against="lever1",
+        lever="cheaper c",
+    )
+    combined = {"gemini.a": 1, "gemini.b": 3, "gemini.c": "x"}
+    assert seen[0]["overrides"] == combined
+    verdict = json.loads((tmp_path / "lever2" / "verdict.json").read_text())
+    assert verdict["overrides"] == combined
+    assert verdict["against"] == "lever1"
+    assert verdict["set"] == {"gemini.b": 3, "gemini.c": "x"}
+    summary = json.loads((tmp_path / "lever2" / "summary.json").read_text())
+    assert summary["overrides"] == combined
+    assert summary["against"] == "lever1"
+
+
+def test_baseline_runs_fresh_read_write_cache_then_bypass_aa(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": [_tagged("a", "extraction", usd_now=0.1)]}, clients)
+    floor = runner.run_baseline(
+        out_dir=tmp_path, cases=[_case("a")], settings=Settings(), max_run_usd={"gemini": 1.0}
+    )
+    assert floor == 0
+    (base_settings, base_mode), (aa_settings, aa_mode) = clients
+    assert base_mode == "read_write"
+    assert base_settings.paths.cache_dir == tmp_path / "cache" / "baseline"
+    assert aa_mode == "bypass"
+    assert aa_settings.paths.cache_dir != base_settings.paths.cache_dir
+    for s in (base_settings, aa_settings):
+        assert s.gemini.cache_forget_enabled is False
+        assert s.gemini.cache_mode_for == {}
+    assert json.loads((tmp_path / "aa_floor.json").read_text()) == {"aa_floor": 0}
+
+
+def test_baseline_refuses_non_empty_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": []}, clients)
+    stale = tmp_path / "cache" / "baseline" / "gemini" / "old.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("{}")
+    with pytest.raises(RuntimeError, match="not empty"):
+        runner.run_baseline(
+            out_dir=tmp_path, cases=[_case("a")], settings=Settings(), max_run_usd={"gemini": 1.0}
+        )
+    assert clients == []
+
+
+def test_screen_copies_baseline_cache_and_bypasses_live_tags(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _seed_ladder(tmp_path, baseline=_summary(scored_parts=1, id_match_rate=0.9))
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": [_tagged("a", "correction")]}, clients)
+    runner.run_screen(
+        "lever1",
+        {},
+        out_dir=tmp_path,
+        cases=[_case("a")],
+        settings=Settings(),
+        max_run_usd={"gemini": 1.0},
+    )
+    ((settings, mode),) = clients
+    assert mode == "read_write"
+    assert settings.paths.cache_dir == tmp_path / "cache" / "lever1"
+    assert (tmp_path / "cache" / "lever1" / "gemini" / "k.json").is_file()
+    assert settings.gemini.cache_forget_enabled is False
+    assert settings.gemini.cache_mode_for == {
+        "correction": "bypass",
+        "correction_borderline": "bypass",
+        "escalation": "bypass",
+    }
+    tags = ["correction", "correction_borderline", "escalation"]
+    assert json.loads((tmp_path / "lever1" / "summary.json").read_text())["live_tags"] == tags
+    assert json.loads((tmp_path / "lever1" / "verdict.json").read_text())["live_tags"] == tags
+
+
+def test_screen_honours_custom_live_tags(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _seed_ladder(tmp_path, baseline=_summary(scored_parts=1))
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": []}, clients)
+    runner.run_screen(
+        "lever1",
+        {},
+        out_dir=tmp_path,
+        live_tags=("escalation",),
+        cases=[_case("a")],
+        settings=Settings(),
+        max_run_usd={"gemini": 1.0},
+    )
+    assert clients[0][0].gemini.cache_mode_for == {"escalation": "bypass"}
+
+
+_LIVE = ("correction", "correction_borderline", "escalation")
+
+
+def _composed_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[RunSummary, list[CallRecord]]:
+    """Case a: baseline extraction (frozen) + correction; the screen re-runs correction live."""
+    frozen = [
+        _tagged("a", "extraction", usd_2027=0.50, usd_now=0.70, latency_ms=4000),
+        _tagged("a", "binding", usd_2027=0.20, usd_now=0.30, latency_ms=1000, parse_ok=False),
+        _tagged("a", "correction", usd_2027=0.40, usd_now=0.60, latency_ms=2000),
+        _tagged("b", "extraction", usd_2027=9.0, usd_now=9.0, latency_ms=9000),  # not in run
+    ]
+    live = [_tagged("a", "correction", usd_2027=0.10, usd_now=0.15, latency_ms=500)]
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": live}, clients)
+    summary = runner.run_config(
+        "lever1",
+        {},
+        out_dir=tmp_path,
+        cases=[_case("a")],
+        settings=Settings(),
+        max_run_usd={"gemini": 1.0},
+        cache_mode="read_write",
+        live_tags=_LIVE,
+        frozen_upstream=frozen,
+    )
+    return summary, live
+
+
+def test_screen_summary_includes_frozen_upstream_cost(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    summary, _ = _composed_run(monkeypatch, tmp_path)
+    # live correction 0.10 + frozen extraction 0.50 + frozen binding 0.20;
+    # the baseline correction record is dropped (correction is live).
+    assert summary.usd_per_script_mean == pytest.approx(0.80)
+    data = json.loads((tmp_path / "lever1" / "summary.json").read_text())
+    assert data["usd_per_script_mean_now"] == pytest.approx(0.15 + 0.70 + 0.30)
+
+
+def test_screen_summary_includes_frozen_upstream_latency(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    summary, _ = _composed_run(monkeypatch, tmp_path)
+    assert summary.latency_p95_ms == 500 + 4000 + 1000
+    # Validity is over the composed set: 2 of 3 parsed (the frozen binding call failed).
+    assert summary.validity_rate == pytest.approx(2 / 3)
+
+
+def test_spend_counts_only_live_records(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _composed_run(monkeypatch, tmp_path)
+    assert json.loads((tmp_path / "spend.json").read_text()) == {"gemini": pytest.approx(0.15)}
+    assert json.loads((tmp_path / "lever1" / "run_cost.json").read_text()) == {
+        "gemini": pytest.approx(0.15)
+    }
+    lines = (tmp_path / "lever1" / "records.jsonl").read_text().splitlines()
+    assert len(lines) == 1
+
+
+def test_resolve_projection_takes_per_provider_max(tmp_path: Path) -> None:
+    from lemely.accuracy.cost_ladder.spend import SpendLedger, resolve_projection
+
+    (tmp_path / "baseline").mkdir()
+    (tmp_path / "baseline" / "run_cost.json").write_text(
+        json.dumps({"gemini": 0.5, "anthropic": 2.0})
+    )
+    ledger = SpendLedger(tmp_path)
+    out = resolve_projection(ledger, "baseline_aa", {"gemini": 0.8, "anthropic": 1.0})
+    assert out == {"gemini": 0.8, "anthropic": 2.0}
+    assert resolve_projection(ledger, "baseline_aa", None) == {"gemini": 0.5, "anthropic": 2.0}
+
+
+def test_spend_written_after_each_case(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    seen: list[object] = []
+
+    def snapshot(case: str) -> None:
+        path = tmp_path / "spend.json"
+        seen.append(json.loads(path.read_text()) if path.is_file() else None)
+
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(
+        monkeypatch,
+        {"a": [_bill("a", 0.25)], "b": [_bill("b", 0.5)]},
+        clients,
+        on_case_start=snapshot,
+    )
+    runner.run_config(
+        "baseline",
+        {},
+        out_dir=tmp_path,
+        cases=[_case("a"), _case("b")],
+        settings=Settings(),
+        max_run_usd={"gemini": 1.0},
+    )
+    # Case b starts after case a's spend has reached the ledger.
+    assert seen == [None, {"gemini": pytest.approx(0.25)}]
+    assert json.loads((tmp_path / "spend.json").read_text()) == {"gemini": pytest.approx(0.75)}
+
+
+def _write_run(out: Path, label: str, *, passed: bool, usd: float, against: str) -> None:
+    runner.write_summary(
+        _summary(usd_per_script_mean=usd),
+        out / label / "summary.json",
+        usd_per_script_mean_now=usd * 2,
+    )
+    (out / label / "verdict.json").write_text(
+        json.dumps(
+            {
+                "lever": label,
+                "expected_saving": "10%",
+                "proof": str(out / label),
+                "against": against,
+                "overrides": {"gemini.x": label},
+                "set": {"gemini.x": label},
+                "live_tags": list(_LIVE),
+                "passed": passed,
+                "tier": "small",
+                "saving": 0.1,
+                "extra_mismarks": 0,
+                "allowed_extra": 0,
+                "reasons": [] if passed else ["nope"],
+            }
+        )
+    )
+
+
+def test_report_follows_ladder_order_and_final_is_last_pass(tmp_path: Path) -> None:
+    from lemely.accuracy.cost_ladder.report import write_report
+
+    runner.write_summary(
+        _summary(usd_per_script_mean=1.0),
+        tmp_path / "baseline" / "summary.json",
+        usd_per_script_mean_now=2.0,
+    )
+    _write_run(tmp_path, "zeta", passed=True, usd=0.7, against="baseline")
+    _write_run(tmp_path, "alpha", passed=True, usd=0.6, against="zeta")
+    _write_run(tmp_path, "mid", passed=False, usd=0.5, against="alpha")
+    for label in ("zeta", "alpha", "mid"):
+        runner.append_ladder(tmp_path, label)
+    # mtimes disagree with the append order: the report must not use them.
+    import os
+
+    os.utime(tmp_path / "zeta" / "verdict.json", (9e9, 9e9))
+    target = write_report(tmp_path, stop_reason="done")
+    text = target.read_text()
+    rows = [line for line in text.splitlines() if line.startswith("| ") and "lever" not in line]
+    assert [r.split(" | ")[0][2:] for r in rows] == ["zeta", "alpha", "mid"]
+    assert "stacked on" in text
+    assert "| zeta | baseline |" in text
+    assert "| alpha | zeta |" in text
+    assert "gemini.x=alpha" in text
+    # final = alpha (last PASS in ladder order), not mid (rejected) nor zeta (latest mtime).
+    assert "$0.6000 vs $1.0000" in text
+    assert "$1.2000 vs $2.0000" in text
+
+
+def test_append_ladder_keeps_explicit_order(tmp_path: Path) -> None:
+    for label in ("b", "a", "c", "a"):
+        runner.append_ladder(tmp_path, label)
+    assert json.loads((tmp_path / "ladder.json").read_text()) == ["b", "c", "a"]
