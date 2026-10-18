@@ -170,6 +170,24 @@ class GeminiSettings(BaseModel):
     # raising that one costs teacher time.
     escalation_model: str | None = "gemini-3.8-flash"
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+    # LLM cost-ladder levers. Every default reproduces the pre-ladder behaviour.
+    # Per-task-tag cache mode (unlisted tags behave as "read_write").
+    cache_mode_for: dict[str, Literal["read_write", "bypass", "refresh"]] = Field(
+        default_factory=dict
+    )
+    # Cascade: mark with the cheap correction model first, escalate to the strong
+    # model only when the cheap pass is unsure.
+    cascade_enabled: bool = False
+    # None means use ``escalation_model``.
+    cascade_strong_model: str | None = None
+    # Model name -> fitted confidence threshold; a model missing from the dict
+    # uses ``escalation_confidence_threshold``.
+    cascade_threshold_for: dict[str, float] = Field(default_factory=dict)
+    cascade_two_pass_disagreement: bool = False
+    cascade_unaddressed_points: bool = False
+    # Put the question-invariant correction prompt first so providers can cache it.
+    correction_shared_prefix: bool = False
+    correction_prefix_cache: Literal["implicit", "explicit"] = "implicit"
     # Thinking budget: map of task_tag → token budget (0 = disabled / default).
     # Mark-scheme parsing is enabled by default: the extra reasoning headroom helps
     # the model tag "any N from" pools correctly (is_optional/is_alternative), which
@@ -1071,6 +1089,11 @@ class Settings(BaseSettings):
     gemini_api_key: OptionalSecret = Field(
         default=None,
         validation_alias=AliasChoices("LEMELY_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    )
+    # Anthropic provider key (cost-ladder). Env-only, like the Gemini key.
+    anthropic_api_key: OptionalSecret = Field(
+        default=None,
+        validation_alias=AliasChoices("LEMELY_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
     )
 
     @classmethod

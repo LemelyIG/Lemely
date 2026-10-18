@@ -41,6 +41,24 @@ model = "gemini-2.5-flash"
 # escalation_model = "gemini-3.8-flash"
 # escalation_confidence_threshold = 0.8
 
+# LLM cost-ladder levers (all default to the pre-ladder behaviour).
+# Per-task cache mode: read_write | bypass | refresh (unlisted tags read_write).
+# cache_mode_for = {}
+# Cascade: cheap correction pass first, escalate only when it is unsure.
+# cascade_enabled = false
+# Strong model for the cascade (unset = use escalation_model).
+# cascade_strong_model = "gemini-3.8-flash"
+# Per-model fitted confidence threshold (missing model = escalation threshold).
+# cascade_threshold_for = {}
+# Escalate when two cheap passes disagree.
+# cascade_two_pass_disagreement = false
+# Escalate when the cheap pass leaves mark-scheme points unaddressed.
+# cascade_unaddressed_points = false
+# Put the question-invariant correction prompt first so it can be cached.
+# correction_shared_prefix = false
+# How the shared prefix is cached: implicit | explicit.
+# correction_prefix_cache = "implicit"
+
 max_retries = 3
 backoff_seconds = 2.0
 # Persistent cumulative-USD hard cap (survives process restarts). $14 is the
@@ -65,6 +83,7 @@ upload_concurrency = 4
 
 # gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.
 # gemini_api_key = "sk-..."
+# anthropic_api_key is a secret too — use the ANTHROPIC_API_KEY env var.
 
 # Thinking budget per task (tokens; 0 = disabled) — 2.5-and-earlier models
 # only. 3.x models read [gemini.thinking_level_for] instead (see below). NOTE:

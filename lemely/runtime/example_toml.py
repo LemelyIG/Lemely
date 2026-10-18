@@ -22,7 +22,27 @@ template developers copy.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from lemely.runtime.config import NotificationsSettings, Settings
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+
+def _toml_bool(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _toml_inline(mapping: Mapping[str, str | float]) -> str:
+    """Render a flat str-keyed mapping as a TOML inline table."""
+    if not mapping:
+        return "{}"
+    items = ", ".join(
+        f'"{k}" = "{v}"' if isinstance(v, str) else f'"{k}" = {v}' for k, v in mapping.items()
+    )
+    return "{ " + items + " }"
+
 
 _HEADER = """\
 # lemely.toml — configuration template
@@ -77,6 +97,28 @@ def render_example_toml() -> str:
     lines.append(f'# escalation_model = "{s.gemini.escalation_model}"')
     lines.append(f"# escalation_confidence_threshold = {s.gemini.escalation_confidence_threshold}")
     lines.append("")
+    lines.append("# LLM cost-ladder levers (all default to the pre-ladder behaviour).")
+    lines.append("# Per-task cache mode: read_write | bypass | refresh (unlisted tags read_write).")
+    lines.append(f"# cache_mode_for = {_toml_inline(s.gemini.cache_mode_for)}")
+    lines.append("# Cascade: cheap correction pass first, escalate only when it is unsure.")
+    lines.append(f"# cascade_enabled = {_toml_bool(s.gemini.cascade_enabled)}")
+    lines.append("# Strong model for the cascade (unset = use escalation_model).")
+    lines.append('# cascade_strong_model = "gemini-3.8-flash"')
+    lines.append("# Per-model fitted confidence threshold (missing model = escalation threshold).")
+    lines.append(f"# cascade_threshold_for = {_toml_inline(s.gemini.cascade_threshold_for)}")
+    lines.append("# Escalate when two cheap passes disagree.")
+    lines.append(
+        f"# cascade_two_pass_disagreement = {_toml_bool(s.gemini.cascade_two_pass_disagreement)}"
+    )
+    lines.append("# Escalate when the cheap pass leaves mark-scheme points unaddressed.")
+    lines.append(
+        f"# cascade_unaddressed_points = {_toml_bool(s.gemini.cascade_unaddressed_points)}"
+    )
+    lines.append("# Put the question-invariant correction prompt first so it can be cached.")
+    lines.append(f"# correction_shared_prefix = {_toml_bool(s.gemini.correction_shared_prefix)}")
+    lines.append("# How the shared prefix is cached: implicit | explicit.")
+    lines.append(f'# correction_prefix_cache = "{s.gemini.correction_prefix_cache}"')
+    lines.append("")
     lines.append(f"max_retries = {s.gemini.max_retries}")
     lines.append(f"backoff_seconds = {s.gemini.backoff_seconds}")
     lines.append("# Persistent cumulative-USD hard cap (survives process restarts). $14 is the")
@@ -103,6 +145,7 @@ def render_example_toml() -> str:
 
     lines.append("# gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.")
     lines.append('# gemini_api_key = "sk-..."')
+    lines.append("# anthropic_api_key is a secret too — use the ANTHROPIC_API_KEY env var.")
     lines.append("")
 
     lines.append("# Thinking budget per task (tokens; 0 = disabled) — 2.5-and-earlier models")
