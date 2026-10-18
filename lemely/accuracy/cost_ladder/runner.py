@@ -53,7 +53,12 @@ BASELINE_LABEL = "baseline"
 AA_LABEL = "baseline_aa"
 #: Task tags a frozen-upstream screen calls live; every other tag replays the
 #: rung-0 baseline's cache.
-DEFAULT_LIVE_TAGS: tuple[str, ...] = ("correction", "correction_borderline", "escalation")
+DEFAULT_LIVE_TAGS: tuple[str, ...] = (
+    "correction",
+    "correction_borderline",
+    "escalation",
+    "correction_prefix_cache",
+)
 CACHE_SUBDIR = "cache"
 ARCHIVE_SUBDIR = "archive"
 AA_FLOOR_FILE = "aa_floor.json"

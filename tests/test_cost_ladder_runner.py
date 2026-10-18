@@ -728,8 +728,9 @@ def test_screen_copies_baseline_cache_and_bypasses_live_tags(
         "correction": "bypass",
         "correction_borderline": "bypass",
         "escalation": "bypass",
+        "correction_prefix_cache": "bypass",
     }
-    tags = ["correction", "correction_borderline", "escalation"]
+    tags = ["correction", "correction_borderline", "escalation", "correction_prefix_cache"]
     assert json.loads((tmp_path / "lever1" / "summary.json").read_text())["live_tags"] == tags
     assert json.loads((tmp_path / "lever1" / "verdict.json").read_text())["live_tags"] == tags
 
@@ -751,6 +752,10 @@ def test_screen_honours_custom_live_tags(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
 
 _LIVE = ("correction", "correction_borderline", "escalation")
+
+
+def test_default_live_tags_include_prefix_cache() -> None:
+    assert "correction_prefix_cache" in runner.DEFAULT_LIVE_TAGS
 
 
 def _composed_run(
