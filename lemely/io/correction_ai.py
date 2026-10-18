@@ -482,7 +482,7 @@ class AICorrector:
             {"shared_prefix": shared_prefix} if shared_prefix is not None else {}
         )
 
-        leaf_log = os.environ.get(CASCADE_LEAF_LOG_ENV) if g.cascade_enabled else None
+        leaf_log = os.environ.get(CASCADE_LEAF_LOG_ENV) if g.cascade_enabled is True else None
         records_before = len(process_call_records()) if leaf_log else 0
         result = self._client.generate_structured(
             system_prompt=system_prompt,
@@ -496,7 +496,7 @@ class AICorrector:
             **prefix_kwargs,
         )
 
-        if g.cascade_enabled:
+        if g.cascade_enabled is True:
             result = self._cascade(
                 question,
                 system_prompt,
@@ -692,11 +692,11 @@ class AICorrector:
         unaddressed_ids = _unaddressed_point_ids(question, first)
         low_confidence = first.confidence < threshold
         unaddressed: bool | None = None
-        if g.cascade_unaddressed_points and unaddressed_ids is not None:
+        if g.cascade_unaddressed_points is True and unaddressed_ids is not None:
             unaddressed = bool(unaddressed_ids)
         disagreement: bool | None = None
         second: AIMarkResponse | None = None
-        if g.cascade_two_pass_disagreement and not low_confidence and not unaddressed:
+        if g.cascade_two_pass_disagreement is True and not low_confidence and not unaddressed:
             second = self._client.generate_structured(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
