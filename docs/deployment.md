@@ -110,7 +110,8 @@ All settings live in `lemely/runtime/config.py` as a nested pydantic-settings mo
 **Precedence** (highest first): environment variable → `lemely.toml` → default.
 The env prefix is `LEMELY_` and the nested delimiter is `__`
 (`config.py:262-263`), so `SupabaseSettings.jwt_secret` is
-`LEMELY_SUPABASE__JWT_SECRET`. `GEMINI_API_KEY` is the one un-prefixed exception.
+`LEMELY_SUPABASE__JWT_SECRET`. `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` are the
+un-prefixed exceptions (each also accepts a `LEMELY_`-prefixed spelling).
 
 Every settings group declares `extra="forbid"`, so a **typo'd key in `lemely.toml`
 is a startup error, not a silently ignored line.** Env vars that do not match a
@@ -127,6 +128,7 @@ field are ignored by pydantic-settings, so a typo'd *env var* is silent — chec
 | `LEMELY_SUPABASE__ANON_KEY` | `None` | Any real Supabase project. |
 | `LEMELY_SUPABASE__SERVICE_ROLE_KEY` | `None` | Any real Supabase project (server-side admin: user creation, Storage). |
 | `GEMINI_API_KEY` | `None` | To enable marking/extraction at all. Absent is a *documented* state — `/api/health` reports `apiKeyConfigured: false` rather than crashing (`lemely/web/routers/meta.py:17-19`). |
+| `ANTHROPIC_API_KEY` | `None` | Only when a task tag is routed to a `claude-` model (`gemini.<task>_model = "claude-haiku-5-5"`, cost-ladder lever A1). Every `claude-` call goes through `lemely/io/providers/anthropic_adapter.py` behind the same cache, retry and spend ledger as Gemini. Absent is the default and supported state: nothing calls Anthropic, and a `claude-` model configured without the key fails that call with `ExternalServiceError` (not retried). Secret, env-only like `GEMINI_API_KEY` — never put it in `lemely.toml`. Student work goes only through the synchronous Messages API; the Message Batches API is not used (data-protection decision). Text only: an image or file call on a `claude-` model raises `ValueError`. |
 | `LEMELY_WEB_HOST` / `LEMELY_WEB_PORT` | `0.0.0.0` / `8000` **in the image** | Already correct in the Dockerfile. The *application* default is `127.0.0.1`, right for a bare-metal dev run and unreachable from outside a container — the image overrides it (`Dockerfile:51-52`). |
 | `LEMELY_PUSH__VAPID_PUBLIC_KEY` / `__VAPID_PRIVATE_KEY` / `__VAPID_SUBJECT` | `None` | To enable web push. All three absent is a **supported** state (D5.9 §4): the transport reports itself unavailable and the notification inbox keeps working. Generate with `lemely push-keygen`; `deploy.yml` reads the public key from the `VAPID_PUBLIC_KEY` repository variable and the private key from the `VAPID_PRIVATE_KEY` secret. Rotating the pair invalidates every stored subscription — see `docs/push-notifications.md`. |
 | `LEMELY_NOTIFICATIONS__SWEEPER_ENABLED` | `true` | Set `false` to run an API instance that never sweeps (a second replica behind a load balancer, or a one-off maintenance container). The test suite sets it. See §5.2 for the Cloud Run caveat; `__SWEEP_POLL_SECONDS` (60), `__STREAK_WARNING_HOUR` (19) and `__STUDY_PLAN_REMINDER_HOUR` (8) are its companions. |
@@ -655,6 +657,8 @@ replaces it).
 [ ] LEMELY_SUPABASE__JWT_SECRET set to the REAL secret  <-- nothing warns you
 [ ] LEMELY_SUPABASE__ANON_KEY + __SERVICE_ROLE_KEY set
 [ ] GEMINI_API_KEY set (or accept apiKeyConfigured:false and no marking)
+[ ] ANTHROPIC_API_KEY set only if a task tag uses a claude- model; a spend
+    limit exists on the Anthropic workspace
 [ ] LEMELY_STORAGE__BACKEND=gcs -- the "local" default writes to per-container
     disk, invisible across instances (§5.1)
 [ ] A spend guard exists on the Gemini project (a billing budget or equivalent) --

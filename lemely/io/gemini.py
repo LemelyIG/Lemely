@@ -16,7 +16,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, TypeVar, cast
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar, cast
 
 import structlog
 from pydantic import BaseModel
@@ -29,9 +30,13 @@ from tenacity import (
 )
 
 from lemely.io.cost_ledger import CostLedger
+from lemely.io.providers import ProviderTransientError, is_anthropic_model
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus
+
+if TYPE_CHECKING:
+    from lemely.io.providers.anthropic_adapter import AnthropicAdapter, Usage
 
 _T = TypeVar("_T", bound=BaseModel)
 
@@ -123,10 +128,11 @@ _DEFAULT_PRICING: dict[str, tuple[float, float]] = {
     # Cost-ladder rung 0 (official pricing page, per 1M: $0.25 in / $0.025
     # cached / $1.50 out).
     "gemini-3.1-flash-lite": (0.000250, 0.001500),
-    # Anthropic Haiku 5.5 ($0.10 in / $0.01 cache read / $0.50 out per 1M). The
-    # claude-api skill's cached model table lists only Haiku 4.5, so this id is
-    # the `claude-haiku-5-5` convention, not a confirmed string. Cache-write
-    # premium is out of scope: cache writes are recorded as uncached input.
+    # Anthropic Haiku 5.5 ($0.10 in / $0.01 cache read / $0.50 out per 1M).
+    # Model id confirmed 2026-10-19 against
+    # https://platform.claude.com/docs/en/about-claude/models/overview (Claude
+    # API ID `claude-haiku-5-5`). Cache-write premium is out of scope: cache
+    # writes are recorded as uncached input.
     "claude-haiku-5-5": (0.000100, 0.000500),
 }
 
@@ -630,6 +636,22 @@ def _strip_schema(schema: Any, *, is_3x: bool = False) -> Any:
     return _resolve_refs(schema, defs, drop_keys=frozenset(drop_keys))
 
 
+def _usage_as_gemini_response(usage: Usage) -> SimpleNamespace:
+    """An Anthropic :class:`Usage` in the ``usage_metadata`` shape `_record_spend` reads.
+
+    Gemini reports candidate and thought tokens apart; Anthropic's output
+    total already includes thinking, so the candidate count is the remainder.
+    """
+    return SimpleNamespace(
+        usage_metadata=SimpleNamespace(
+            prompt_token_count=usage.input_tokens,
+            candidates_token_count=usage.output_tokens - usage.thinking_tokens,
+            thoughts_token_count=usage.thinking_tokens,
+            cached_content_token_count=usage.cached_tokens,
+        )
+    )
+
+
 class _TransientError(Exception):
     """Wraps transient Gemini SDK errors so tenacity can detect them."""
 
@@ -930,11 +952,16 @@ class GeminiClient:
         settings: Settings,
         *,
         _genai_client: Any = None,
+        _anthropic_client: Any = None,
         default_cache_mode: Literal["read_write", "bypass", "refresh"] = "read_write",
         ledger: CostLedger | _DefaultLedger | None = DEFAULT_LEDGER,
     ) -> None:
         self._settings = settings
         self._raw_client: Any = _genai_client
+        #: The Anthropic SDK client for ``claude-`` models; built lazily from
+        #: ``settings.anthropic_api_key`` unless a test injects one.
+        self._raw_anthropic_client: Any = _anthropic_client
+        self._anthropic_adapter: AnthropicAdapter | None = None
         self._ledger: CostLedger | None = (
             CostLedger(settings.paths.output_dir / "gemini_spend.json")
             if isinstance(ledger, _DefaultLedger)
@@ -988,6 +1015,24 @@ class GeminiClient:
             self._raw_client = genai.Client(api_key=api_key)
         return self._raw_client
 
+    @property
+    def _anthropic(self) -> AnthropicAdapter:
+        """The adapter every ``claude-`` call goes through (see :mod:`lemely.io.providers`)."""
+        if self._anthropic_adapter is None:
+            from lemely.io.providers.anthropic_adapter import AnthropicAdapter
+
+            if self._raw_anthropic_client is not None:
+                self._anthropic_adapter = AnthropicAdapter(self._raw_anthropic_client)
+            else:
+                key = self._settings.anthropic_api_key
+                if key is None:
+                    raise ExternalServiceError(
+                        "No Anthropic API key configured (ANTHROPIC_API_KEY); "
+                        "cannot call a claude- model."
+                    )
+                self._anthropic_adapter = AnthropicAdapter.from_api_key(key.get_secret_value())
+        return self._anthropic_adapter
+
     def start_new_run(self) -> None:
         """Reset the token/USD counters at the start of a new logical RUN.
 
@@ -1023,6 +1068,18 @@ class GeminiClient:
         """
         g = self._settings.gemini
         key = task_tag or ""
+        if is_anthropic_model(model):
+            # A claude- model takes one knob, Anthropic's effort, resolved from
+            # the same thinking_level_for table ("minimal" maps to "low").
+            from lemely.io.providers.anthropic_adapter import effort_for
+
+            return {
+                "thinking_budget": None,
+                "temperature": None,
+                "top_p": None,
+                "seed": None,
+                "thinking_level": effort_for(g.thinking_level_for.get(key, "low")),
+            }
         if _is_3x(model):
             requested_level = g.thinking_level_for.get(key, "low")
             return {
@@ -1064,7 +1121,7 @@ class GeminiClient:
         two disjoint substrates :meth:`_resolved_gen_params` already computes.
         """
         params = self._resolved_gen_params(task_tag, model)
-        if _is_3x(model):
+        if _is_3x(model) or is_anthropic_model(model):
             return cast(str, params["thinking_level"])
         return cast(int, params["thinking_budget"])
 
@@ -1138,6 +1195,14 @@ class GeminiClient:
         # N3 (plan:615) actually requires.
         if tool is not None:
             raw += f"|{tool}"
+        # The provider component, appended only for claude- models for the
+        # same reason as `tool` above: every Gemini key stays byte-identical.
+        # It carries the adapter's own reply cap, which replaces
+        # _MAX_OUTPUT_TOKENS on that path.
+        if is_anthropic_model(model):
+            from lemely.io.providers.anthropic_adapter import MAX_OUTPUT_TOKENS
+
+            raw += f"|provider=anthropic|max_tokens={MAX_OUTPUT_TOKENS}"
         return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
     def check_reachable(self) -> None:
@@ -1240,6 +1305,15 @@ class GeminiClient:
                     f"cumulative spend is ${ledger_total:.4f} (across all runs)."
                 )
 
+    def _active_model(self, model: str | None, task_tag: str | None) -> str:
+        """The model a call runs on: explicit, else the task tag's, else the default."""
+        g = self._settings.gemini
+        if model is not None:
+            return model
+        if task_tag is not None:
+            return g.model_for(task_tag)
+        return g.model
+
     def _structured_cache_key(
         self,
         *,
@@ -1260,13 +1334,7 @@ class GeminiClient:
         entry, and :meth:`structured_cache_key`, which names it for a caller that may
         have to remove it: the two cannot name different entries for the same call.
         """
-        g = self._settings.gemini
-        if model is not None:
-            active_model = model
-        elif task_tag is not None:
-            active_model = g.model_for(task_tag)
-        else:
-            active_model = g.model
+        active_model = self._active_model(model, task_tag)
         params_fingerprint = self._params_fingerprint(
             active_model, task_tag, response_schema, media_resolution=media_resolution
         )
@@ -1401,6 +1469,13 @@ class GeminiClient:
             # paper's cache key.
             if not image_uploads.matches(image_parts):
                 raise ValueError("image_uploads must carry the same page images as image_parts")
+        if is_anthropic_model(self._active_model(model, task_tag)) and (
+            image_parts or image_uploads or file_paths
+        ):
+            # Phase A sends Anthropic correction text only (lever A1).
+            raise ValueError(
+                "claude- models are served by the Anthropic adapter, which takes no images or files"
+            )
         active_model, cache_key = self._structured_cache_key(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -1835,6 +1910,10 @@ class GeminiClient:
         media_resolution: str | None = None,
         image_uploads: ImageUploads | None = None,
     ) -> str:
+        if is_anthropic_model(model):
+            return self._call_anthropic_once(
+                model, system_prompt, user_prompt, response_schema, log, task_tag
+            )
         from google.genai import types
 
         # I1: image_parts are sent inline; spec 2026-09-26 §7: when
@@ -1938,6 +2017,51 @@ class GeminiClient:
         if finish == "MAX_TOKENS":
             raise _TransientError(f"Gemini hit max_output_tokens ({model})")
         return raw
+
+    def _call_anthropic_once(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: type[_T],
+        log: Any,
+        task_tag: str | None,
+    ) -> str:
+        """One attempt on a ``claude-`` model; the Anthropic counterpart of :meth:`_call_once`.
+
+        Returns the raw reply text, so validation, the schema-correction retry
+        and the cache write in :meth:`generate_structured` treat both
+        providers alike. The spend is recorded before a truncated or refused
+        reply raises: those tokens were billed.
+        """
+        adapter = self._anthropic
+        effort = self._resolved_gen_params(task_tag, model)["thinking_level"]
+        t0 = time.monotonic()
+        try:
+            reply = adapter.complete(
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=response_schema,
+                thinking=effort,
+                cache_prefix=None,
+            )
+        except ProviderTransientError as exc:
+            raise _TransientError(str(exc)) from exc
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        self._record_spend(
+            response=_usage_as_gemini_response(reply.usage),
+            model=model,
+            task_tag=task_tag,
+            latency_ms=latency_ms,
+            log=log,
+            params_fingerprint=self._params_fingerprint(model, task_tag, response_schema),
+        )
+        try:
+            reply.raise_for_stop_reason(model)
+        except ProviderTransientError as exc:
+            raise _TransientError(str(exc)) from exc
+        return reply.text
 
     def _call_code_execution_once(
         self, model: str, prompt: str, log: Any, task_tag: str | None, *, params_fingerprint: str
