@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from lemely.accuracy.cost_ladder.gate import RunSummary, aa_floor, judge
+import pytest
+
+from lemely.accuracy.cost_ladder.gate import RunSummary, Verdict, aa_floor, judge
 
 ORIG_LAT = 1000.0
 
@@ -63,7 +65,7 @@ def test_big_tier_fails_two_extra_on_31_parts() -> None:
         aa_floor=0,
         original_latency_p95_ms=ORIG_LAT,
     )
-    assert not v.passed
+    assert not v.passed and v.tier == "big" and v.allowed_extra == 1
 
 
 def test_fixed_parts_do_not_offset_new_mismarks() -> None:
@@ -129,3 +131,59 @@ def test_zero_baseline_cost_fails() -> None:
     )
     assert not v.passed and v.saving == 0.0 and v.tier == "small"
     assert any("baseline cost is zero" in r for r in v.reasons)
+
+
+def test_big_tier_never_stricter_than_small() -> None:
+    def verdict(extra: int) -> Verdict:
+        return judge(
+            _run(scored_parts=31),
+            _run(scored_parts=31, mismarked_parts=_parts(extra), usd_per_script_mean=0.65),
+            aa_floor=3,
+            original_latency_p95_ms=ORIG_LAT,
+        )
+
+    ok = verdict(3)
+    assert ok.passed and ok.tier == "big" and ok.allowed_extra == 3
+    assert not verdict(4).passed
+
+
+def test_tier_boundary_at_thirty_percent() -> None:
+    at = judge(
+        _run(usd_per_script_mean=0.1),
+        _run(usd_per_script_mean=0.07),
+        aa_floor=0,
+        original_latency_p95_ms=ORIG_LAT,
+    )
+    assert at.tier == "big"
+    above = judge(
+        _run(usd_per_script_mean=0.1),
+        _run(usd_per_script_mean=0.0700001),
+        aa_floor=0,
+        original_latency_p95_ms=ORIG_LAT,
+    )
+    assert above.tier == "small"
+
+
+def test_big_tier_ceil_not_round() -> None:
+    v = judge(
+        _run(scored_parts=20),
+        _run(scored_parts=20, mismarked_parts=_parts(1), usd_per_script_mean=0.5),
+        aa_floor=0,
+        original_latency_p95_ms=ORIG_LAT,
+    )
+    assert v.passed and v.tier == "big" and v.allowed_extra == 1
+
+
+def test_minimal_validity_drop_fails() -> None:
+    v = judge(_run(), _run(validity_rate=1.0 - 1e-9), aa_floor=0, original_latency_p95_ms=ORIG_LAT)
+    assert not v.passed
+
+
+def test_minimal_id_match_drop_fails() -> None:
+    v = judge(_run(), _run(id_match_rate=0.9 - 1e-9), aa_floor=0, original_latency_p95_ms=ORIG_LAT)
+    assert not v.passed
+
+
+def test_negative_aa_floor_raises() -> None:
+    with pytest.raises(ValueError, match="aa_floor"):
+        judge(_run(), _run(), aa_floor=-1, original_latency_p95_ms=ORIG_LAT)

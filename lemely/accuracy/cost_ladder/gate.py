@@ -8,6 +8,7 @@ from typing import Literal
 
 BIG_TIER_SAVING = 0.30
 BIG_TIER_ALLOWED_FRACTION = 0.02
+BIG_TIER_TOLERANCE = 1e-9  # 1 - 0.07/0.1 is 0.29999999999999993, not 0.3
 LATENCY_FACTOR = 2.0
 
 
@@ -44,6 +45,8 @@ def judge(
     aa_floor: int,
     original_latency_p95_ms: float,
 ) -> Verdict:
+    if aa_floor < 0:
+        raise ValueError(f"aa_floor must be non-negative, got {aa_floor}")
     reasons: list[str] = []
 
     if baseline.usd_per_script_mean == 0:
@@ -51,11 +54,13 @@ def judge(
         reasons.append("baseline cost is zero")
     else:
         saving = 1 - candidate.usd_per_script_mean / baseline.usd_per_script_mean
-    tier: Literal["small", "big"] = "big" if saving >= BIG_TIER_SAVING else "small"
+    tier: Literal["small", "big"] = (
+        "big" if saving >= BIG_TIER_SAVING - BIG_TIER_TOLERANCE else "small"
+    )
 
     extra = len(candidate.mismarked_parts - baseline.mismarked_parts)
     if tier == "big":
-        allowed = math.ceil(BIG_TIER_ALLOWED_FRACTION * candidate.scored_parts)
+        allowed = max(aa_floor, math.ceil(BIG_TIER_ALLOWED_FRACTION * candidate.scored_parts))
     else:
         allowed = aa_floor
     if extra > allowed:
