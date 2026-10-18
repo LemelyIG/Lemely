@@ -340,8 +340,8 @@
 
 ### Task 11: A2 sweep and confirm screen (accuracy-measurer; spends money)
 
-- [ ] **Step 1:** Collect the cheap-model first passes for all scored leaves. Reuse the A1 screen's records when A1 shipped a cheap model. Otherwise, screen `cascade_enabled=true, cascade_threshold_for={}` with `correction_model=gemini-3.1-flash-lite` to log them.
-- [ ] **Step 2:** Run `scripts/cascade_sweep.py` and pick the cheapest passing combination. Because the sweep fits on the same 12 cases it is judged on, use leave-one-case-out: the chosen threshold must pass on each held-out case's simulation.
+- [ ] **Step 1:** Run one logging screen, `a2-log`, stacked on the post-A1 configuration. Settings: `cascade_enabled=true`; `correction_model` = the cheap model; `cascade_threshold_for={<cheap model>: 1.0}` so every leaf gets a real strong re-mark; `cascade_two_pass_disagreement=true` and `cascade_unaddressed_points=true` so pass 2 is logged. Export `LEMELY_CASCADE_LEAF_LOG=<out>/a2-log/cascade_leaves.jsonl` and delete that file before any rerun. This screen's own verdict is not a shipping decision; it only feeds the sweep.
+- [ ] **Step 2:** Run `scripts/cascade_sweep.py --loo` and pick the cheapest combination that passes `judge()` on the full run and on every 11-case subset.
 - [ ] **Step 3:** Run one live confirm screen with the chosen settings against the post-A1 configuration.
 - [ ] **Step 4:** Ship on PASS (a one-commit defaults flip). Record the verdict either way.
 
