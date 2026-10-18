@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import hashlib
 import io
@@ -9,11 +10,12 @@ import json
 import re
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, NamedTuple, TypeVar, cast
 
 import structlog
 from pydantic import BaseModel
@@ -84,13 +86,17 @@ _MEDIA_RESOLUTION_LEVELS: dict[str, str] = {
 # of the boundary).
 FLASH_3X_PROMO_END_DATE: date = date(2026, 12, 31)
 
+# `gemini-3.7-flash` was dropped from this tuple (deprecated 2026-10-08, routed
+# to 3.8-flash): it now resolves like any other unpriced model.
 _FLASH_3X_PROMO_MODELS: tuple[str, ...] = (
     "gemini-3.8-flash",
-    "gemini-3.7-flash",
     "gemini-3.6-flash",
 )
 _FLASH_3X_PROMO_RATE: tuple[float, float] = (0.000750, 0.003750)
 _FLASH_3X_POST_PROMO_RATE: tuple[float, float] = (0.001500, 0.007500)
+# Cached-input rate (USD per 1k) for the promo models, same date gate.
+_FLASH_3X_PROMO_CACHED: float = 0.000075
+_FLASH_3X_POST_PROMO_CACHED: float = 0.000150
 
 # US-034: `gemini-3.5-flash` had no row here, so the length-descending
 # substring match below fell through to the unrecognised-model fallback
@@ -115,7 +121,45 @@ _DEFAULT_PRICING: dict[str, tuple[float, float]] = {
     "gemini-2.5-pro": (0.001250, 0.010000),
     "gemini-3.5-flash-lite": (0.000300, 0.002500),
     "gemini-3.5-flash": (0.001500, 0.009000),
+    # Cost-ladder rung 0 (official pricing page, per 1M: $0.25 in / $0.025
+    # cached / $1.50 out).
+    "gemini-3.1-flash-lite": (0.000250, 0.001500),
+    # Anthropic Haiku 5.5 ($0.10 in / $0.01 cache read / $0.50 out per 1M). The
+    # claude-api skill's cached model table lists only Haiku 4.5, so this id is
+    # the `claude-haiku-5-5` convention, not a confirmed string. Cache-write
+    # premium is out of scope: cache writes are recorded as uncached input.
+    "claude-haiku-5-5": (0.000100, 0.000500),
 }
+
+# Cached-input rate (USD per 1k) by the same substring keys. A row absent here
+# has no confirmed cached price, so its cached tokens bill at the full input
+# rate: cost is conservatively overstated, never silently discounted.
+# gemini-3.8/3.6-flash are date-gated and live in `_dated_cached_table`.
+_CACHED_INPUT_PRICING: dict[str, float] = {
+    "gemini-3.5-flash-lite": 0.000030,
+    "gemini-2.5-flash": 0.000030,
+    "gemini-3.1-flash-lite": 0.000025,
+    "claude-haiku-5-5": 0.000010,
+}
+
+#: The first day the doubled 3.x-flash prices apply; `CallRecord.usd_2027` prices at it.
+PRICE_DATE_2027: date = date(2027, 1, 1)
+
+
+class PriceRow(NamedTuple):
+    """USD per 1k tokens."""
+
+    input: float
+    cached_input: float
+    output: float
+
+
+class UnpricedModelError(ExternalServiceError):
+    """A model has no price row; cost-ladder code must not guess."""
+
+    def __init__(self, model: str) -> None:
+        super().__init__(f"no price row for model {model!r}")
+        self.model = model
 
 
 def _today() -> date:
@@ -241,6 +285,17 @@ _process_input_tokens: int = 0
 _process_output_tokens: int = 0
 _process_accumulated_usd: float = 0.0
 _process_cost_by_task: dict[str, float] = {}
+_process_call_records: list[CallRecord] = []
+#: The harness's current case (`set_call_context`); stamped on every `CallRecord`.
+_call_case_key: str | None = None
+#: Per-call labels set by `generate_structured` and read by `_record_spend`.
+#: A ContextVar, so concurrent worker threads never see each other's labels.
+_call_labels: contextvars.ContextVar[tuple[str | None, str | None]] = contextvars.ContextVar(
+    "gemini_call_labels", default=(None, None)
+)
+#: Index (into `_process_call_records`) of the record this thread appended last,
+#: so a structured-output failure can mark exactly its own record.
+_thread_state = threading.local()
 
 #: Spec 2026-09-26 §9. The four process counters above and `CostLedger.add`
 #: are read-modify-write; the re-read stage and the Files API uploads run
@@ -269,12 +324,14 @@ def _reset_process_counters() -> None:
         _process_input_tokens, \
         _process_output_tokens, \
         _process_accumulated_usd, \
-        _process_cost_by_task
+        _process_cost_by_task, \
+        _process_call_records
     with _SPEND_LOCK:
         _process_input_tokens = 0
         _process_output_tokens = 0
         _process_accumulated_usd = 0.0
         _process_cost_by_task = {}
+        _process_call_records = []
 
 
 def reset_process_counters() -> None:
@@ -364,6 +421,126 @@ def _dated_pricing_table(today: date) -> dict[str, tuple[float, float]]:
         _FLASH_3X_PROMO_RATE if today <= FLASH_3X_PROMO_END_DATE else _FLASH_3X_POST_PROMO_RATE
     )
     return {**_DEFAULT_PRICING, **dict.fromkeys(_FLASH_3X_PROMO_MODELS, promo_rate)}
+
+
+def _dated_cached_table(today: date) -> dict[str, float]:
+    """`_CACHED_INPUT_PRICING` with the date-gated promo models' cached rate merged in."""
+    cached = (
+        _FLASH_3X_PROMO_CACHED if today <= FLASH_3X_PROMO_END_DATE else _FLASH_3X_POST_PROMO_CACHED
+    )
+    return {**_CACHED_INPUT_PRICING, **dict.fromkeys(_FLASH_3X_PROMO_MODELS, cached)}
+
+
+def price_row(model: str, settings: Settings, *, on: date) -> PriceRow:
+    """The USD-per-1k price row for ``model`` as of ``on``.
+
+    The same user-override-then-longest-substring match as `_resolve_pricing`,
+    but an unknown model raises :class:`UnpricedModelError` instead of
+    silently borrowing another model's rate. A user override carries no cached
+    rate, so its cached tokens bill at its input rate.
+    """
+    user = settings.gemini.pricing
+    if model in user:
+        p = user[model]
+        return PriceRow(float(p[0]), float(p[0]), float(p[1]))
+    table = _dated_pricing_table(on)
+    cached_table = _dated_cached_table(on)
+    for key in sorted(table, key=len, reverse=True):
+        if key in model:
+            in_price, out_price = table[key]
+            return PriceRow(in_price, cached_table.get(key, in_price), out_price)
+    raise UnpricedModelError(model)
+
+
+def _row_cost(row: PriceRow, *, input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
+    cached = min(max(cached_tokens, 0), max(input_tokens, 0))
+    uncached = max(input_tokens, 0) - cached
+    return (
+        uncached / 1000 * row.input
+        + cached / 1000 * row.cached_input
+        + output_tokens / 1000 * row.output
+    )
+
+
+def price_call(
+    model: str,
+    settings: Settings,
+    *,
+    input_tokens: int,
+    cached_tokens: int,
+    output_tokens: int,
+    on: date,
+) -> float:
+    """USD for one call as of ``on``.
+
+    Uncached input is ``input_tokens - cached_tokens`` at the input rate, cached
+    input is at the cached rate, and ``output_tokens`` must already include
+    thinking tokens (they bill as output).
+    """
+    return _row_cost(
+        price_row(model, settings, on=on),
+        input_tokens=input_tokens,
+        cached_tokens=cached_tokens,
+        output_tokens=output_tokens,
+    )
+
+
+@dataclass(frozen=True)
+class CallRecord:
+    """One paid model call: tokens, both price points, and who asked for it."""
+
+    provider: str
+    task_tag: str | None
+    model: str
+    thinking: str | int | None
+    input_tokens: int
+    cached_tokens: int
+    output_tokens: int
+    thinking_tokens: int
+    usd_now: float
+    usd_2027: float
+    latency_ms: int
+    attempt: Literal["first", "borderline", "escalation"] | None
+    question_id: str | None
+    case_key: str | None
+    #: False when the response failed structured-output validation; the record
+    #: is still appended before the error propagates.
+    parse_ok: bool
+
+
+def process_call_records() -> list[CallRecord]:
+    """A copy of every `CallRecord` appended since the last reset."""
+    with _SPEND_LOCK:
+        return list(_process_call_records)
+
+
+def set_call_context(*, case_key: str | None) -> None:
+    """Name the case the harness is running; later records carry it as `case_key`."""
+    global _call_case_key
+    with _SPEND_LOCK:
+        _call_case_key = case_key
+
+
+def _mark_last_record_unparsed() -> None:
+    """Flip `parse_ok` off on the record this thread appended last."""
+    idx = getattr(_thread_state, "last_record_index", None)
+    with _SPEND_LOCK:
+        if idx is not None and idx < len(_process_call_records):
+            _process_call_records[idx] = replace(_process_call_records[idx], parse_ok=False)
+
+
+@contextlib.contextmanager
+def _call_labelled(attempt: str | None, question_id: str | None) -> Iterator[None]:
+    """Scope the `attempt`/`question_id` labels `_record_spend` stamps on records."""
+    token = _call_labels.set((attempt, question_id))
+    try:
+        yield
+    finally:
+        _call_labels.reset(token)
+
+
+def _provider_for(model: str) -> str:
+    return "anthropic" if "claude" in model else "gemini"
 
 
 def fallback_pricing_status(
@@ -1156,6 +1333,8 @@ class GeminiClient:
         extra_cache_key: str = "",
         task_tag: str | None = None,
         cache_mode: Literal["read_write", "bypass", "refresh"] | None = None,
+        attempt: Literal["first", "borderline", "escalation"] | None = None,
+        question_id: str | None = None,
     ) -> _T:
         """I1: send per-page images instead of uploading a whole file.
 
@@ -1171,6 +1350,9 @@ class GeminiClient:
         no media resolution. ``image_uploads`` (spec 2026-09-26 §7) sends the
         same images as Files API URIs instead of inline bytes; the cache key
         still comes from ``image_parts``.
+
+        ``attempt`` and ``question_id`` only label the `CallRecord` this call
+        appends; they are never part of the cache key.
         """
         if cache_mode is None:
             cache_mode = self.default_cache_mode
@@ -1240,24 +1422,26 @@ class GeminiClient:
             model=active_model,
         )
         t0 = time.monotonic()
-        raw_text = self._call_with_retry(
-            active_model,
-            system_prompt,
-            user_prompt,
-            file_paths,
-            response_schema,
-            log,
-            task_tag,
-            image_parts=image_parts,
-            media_resolution=media_resolution,
-            image_uploads=image_uploads,
-        )
+        with _call_labelled(attempt, question_id):
+            raw_text = self._call_with_retry(
+                active_model,
+                system_prompt,
+                user_prompt,
+                file_paths,
+                response_schema,
+                log,
+                task_tag,
+                image_parts=image_parts,
+                media_resolution=media_resolution,
+                image_uploads=image_uploads,
+            )
         latency_ms = int((time.monotonic() - t0) * 1000)
         log.debug("gemini_latency_ms", latency_ms=latency_ms)
 
         try:
             result: _T = response_schema.model_validate_json(raw_text)
         except Exception as exc:
+            _mark_last_record_unparsed()
             log.debug(
                 "gemini_validation_failure",
                 schema=response_schema.__name__,
@@ -1270,21 +1454,23 @@ class GeminiClient:
                 "Fix only the fields mentioned in the error above and return valid JSON "
                 "matching the schema exactly. Do not change any other fields."
             )
-            raw_text = self._call_with_retry(
-                active_model,
-                system_prompt,
-                corrected,
-                file_paths,
-                response_schema,
-                log,
-                task_tag,
-                image_parts=image_parts,
-                media_resolution=media_resolution,
-                image_uploads=image_uploads,
-            )
+            with _call_labelled(attempt, question_id):
+                raw_text = self._call_with_retry(
+                    active_model,
+                    system_prompt,
+                    corrected,
+                    file_paths,
+                    response_schema,
+                    log,
+                    task_tag,
+                    image_parts=image_parts,
+                    media_resolution=media_resolution,
+                    image_uploads=image_uploads,
+                )
             try:
                 result = response_schema.model_validate_json(raw_text)
             except Exception as exc:
+                _mark_last_record_unparsed()
                 log.debug(
                     "gemini_validation_failure_retry",
                     schema=response_schema.__name__,
@@ -1429,9 +1615,41 @@ class GeminiClient:
         # any call made with a non-zero thinking budget.
         thoughts_tok = int(getattr(response.usage_metadata, "thoughts_token_count", 0) or 0)
         out_tok = candidates_tok + thoughts_tok
-        in_price, out_price = _resolve_pricing(model, self._settings)
-        usd = in_tok / 1000 * in_price + out_tok / 1000 * out_price
+        # A bare MagicMock attribute would read as 1 via int(); only a real number counts.
+        cached_raw = getattr(response.usage_metadata, "cached_content_token_count", 0)
+        cached_tok = (
+            min(max(int(cached_raw), 0), in_tok)
+            if isinstance(cached_raw, int) and not isinstance(cached_raw, bool)
+            else 0
+        )
+        try:
+            usd = price_call(
+                model,
+                self._settings,
+                input_tokens=in_tok,
+                cached_tokens=cached_tok,
+                output_tokens=out_tok,
+                on=_today(),
+            )
+            usd_2027 = price_call(
+                model,
+                self._settings,
+                input_tokens=in_tok,
+                cached_tokens=cached_tok,
+                output_tokens=out_tok,
+                on=PRICE_DATE_2027,
+            )
+        except UnpricedModelError:
+            # The ledger must keep accounting for a model with no row: the
+            # existing warn-and-fall-back path, billed with no cache discount.
+            in_price, out_price = _resolve_pricing(model, self._settings)
+            fallback = PriceRow(in_price, in_price, out_price)
+            usd = usd_2027 = _row_cost(
+                fallback, input_tokens=in_tok, cached_tokens=cached_tok, output_tokens=out_tok
+            )
         usd_rounded = round(usd, 6)
+        attempt, question_id = _call_labels.get()
+        thinking = self.resolved_thinking(task_tag, model) if task_tag else None
         g = self._settings.gemini
         new_total: float | None = None
         crossed: list[float] = []
@@ -1447,6 +1665,26 @@ class GeminiClient:
             # events below. Spend is still observable via the log line.
             if self._ledger is not None:
                 new_total, crossed = self._ledger.add(usd, thresholds=g.usd_warning_thresholds)
+            _thread_state.last_record_index = len(_process_call_records)
+            _process_call_records.append(
+                CallRecord(
+                    provider=_provider_for(model),
+                    task_tag=task_tag,
+                    model=model,
+                    thinking=thinking,
+                    input_tokens=in_tok,
+                    cached_tokens=cached_tok,
+                    output_tokens=out_tok,
+                    thinking_tokens=thoughts_tok,
+                    usd_now=usd,
+                    usd_2027=usd_2027,
+                    latency_ms=latency_ms,
+                    attempt=cast(Any, attempt),
+                    question_id=question_id,
+                    case_key=_call_case_key,
+                    parse_ok=True,
+                )
+            )
         if new_total is not None:
             for threshold in crossed:
                 bus.publish(
@@ -1469,6 +1707,7 @@ class GeminiClient:
             # them) so a thinking-budget change is visible in the logs
             # rather than showing up as unexplained output-token drift.
             thoughts_tokens=thoughts_tok,
+            cached_tokens=cached_tok,
             usd_cost=usd_rounded,
             cache_hit=False,
             # M0.4 reads this off the log to record which generation parameters
