@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import math
+import os
 import re
 from collections.abc import Mapping, Sequence
 from typing import Literal, NamedTuple
@@ -35,7 +37,7 @@ from lemely.core.schemas import (
     confidence_band_for_score,
     dedupe_point_verdicts,
 )
-from lemely.io.gemini import GeminiClient, thinking_rank
+from lemely.io.gemini import CallRecord, GeminiClient, process_call_records, thinking_rank
 from lemely.io.prompts.correction_ai import (
     VERSION,
     build_marker_user_prompt,
@@ -283,6 +285,57 @@ def _dropped_question_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> fr
     return frozenset()
 
 
+#: Environment variable naming a JSONL file. When set and the cascade is on,
+#: every marked leaf appends one line (see :func:`_append_leaf_log`) for
+#: ``scripts/cascade_sweep.py``. Unset, nothing is written.
+CASCADE_LEAF_LOG_ENV = "LEMELY_CASCADE_LEAF_LOG"
+
+
+def _unaddressed_point_ids(question: Question, response: AIMarkResponse) -> list[str] | None:
+    """Mark-scheme point ids ``response.point_verdicts`` gives no verdict for.
+
+    ``None`` when the response carries no point verdicts at all: the marker was
+    not asked for them, so their absence says nothing about coverage.
+    """
+    if not response.point_verdicts:
+        return None
+    addressed = {pv.point_id for pv in response.point_verdicts}
+    return [ap.id for ap in question.answer_points if ap.id not in addressed]
+
+
+def _append_leaf_log(
+    path: str,
+    entry: Mapping[str, object],
+    records: Sequence[CallRecord],
+    question_id: str,
+) -> None:
+    """Append one cascade leaf, with its calls' 2027 USD and latency, to *path*.
+
+    *records* are the call records appended while this leaf was marked; the
+    ones labelled with this ``question_id`` are summed per attempt (``first``,
+    ``borderline`` as ``pass2``, ``escalation`` as ``strong``). An attempt with
+    no record (not made, or a cache hit) is ``None``.
+    """
+    mine = [r for r in records if r.question_id == question_id]
+    by_attempt = {"first": "first", "borderline": "pass2", "escalation": "strong"}
+    usd: dict[str, float | None] = dict.fromkeys(by_attempt.values())
+    latency: dict[str, int | None] = dict.fromkeys(by_attempt.values())
+    for r in mine:
+        slot = by_attempt.get(r.attempt or "")
+        if slot is None:
+            continue
+        usd[slot] = (usd[slot] or 0.0) + r.usd_2027
+        latency[slot] = (latency[slot] or 0) + r.latency_ms
+    line = {
+        "case_key": next((r.case_key for r in mine if r.case_key is not None), None),
+        **entry,
+        "usd_2027": usd,
+        "latency_ms": latency,
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line, sort_keys=True) + "\n")
+
+
 class AICorrector:
     """Marks individual non-MCQ questions via the shared GeminiClient."""
 
@@ -357,6 +410,8 @@ class AICorrector:
         )
         system_prompt = marker_system_prompt(reader_describes_drawings=reader_describes_drawings)
 
+        leaf_log = os.environ.get(CASCADE_LEAF_LOG_ENV) if g.cascade_enabled else None
+        records_before = len(process_call_records()) if leaf_log else 0
         result = self._client.generate_structured(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -364,8 +419,60 @@ class AICorrector:
             prompt_version=VERSION,
             extra_cache_key=f"q={question.id}",
             task_tag="correction",
+            attempt="first",
+            question_id=question.id,
         )
 
+        if g.cascade_enabled:
+            result = self._cascade(
+                question,
+                system_prompt,
+                user_prompt,
+                result,
+                leaf_log=leaf_log,
+                records_before=records_before,
+            )
+        else:
+            result = self._retry_low_confidence(question, system_prompt, user_prompt, result)
+
+        # Post-I6-review Item A: ``PointVerdict.ecf_applied`` must be
+        # CODE-set only -- I7's whole contract is that it records a re-mark
+        # the CODE performed (:func:`_maybe_apply_ecf_substitution`), never
+        # something the model claims about its own single-pass answer. But
+        # the field is on the wire response schema with no description
+        # telling the model that, so nothing stops it setting
+        # ``ecf_applied=True`` unprompted -- which would persist onto
+        # ``CorrectedQuestion.point_verdicts`` as an ECF claim the code never
+        # made, on a call where no substitution happened at all (including
+        # every call today, since ``ecf_substitution`` defaults off).
+        # Unconditionally forced False here, regardless of
+        # ``equivalence_gate``/``ecf_substitution`` or what the model
+        # returned, so ``_maybe_apply_ecf_substitution``'s explicit
+        # ``ecf_applied=True`` merge is the ONLY place this field can ever
+        # become True.
+        if result.point_verdicts:
+            result = result.model_copy(
+                update={
+                    "point_verdicts": [
+                        pv.model_copy(update={"ecf_applied": False}) for pv in result.point_verdicts
+                    ]
+                }
+            )
+        return result
+
+    def _retry_low_confidence(
+        self,
+        question: Question,
+        system_prompt: str,
+        user_prompt: str,
+        result: AIMarkResponse,
+    ) -> AIMarkResponse:
+        """The non-cascade path: a borderline thinking retry, then escalation.
+
+        Both steps fire on ``escalation_confidence_threshold``; prompts and cache
+        keys are what ``mark_question`` sent before the cascade existed.
+        """
+        g = self._client._settings.gemini
         # Step 1: thinking retry for borderline confidence (cheaper than Pro escalation).
         # F1 review MUST-FIX 2 (2026-09-17): the gate now reads
         # GeminiClient.resolved_thinking() — the single source of truth also
@@ -412,6 +519,8 @@ class AICorrector:
                 prompt_version=VERSION,
                 extra_cache_key=f"q={question.id}:thinking",
                 task_tag="correction_borderline",
+                attempt="borderline",
+                question_id=question.id,
             )
             last_call = (correction_model, borderline_thinking)
 
@@ -452,32 +561,105 @@ class AICorrector:
                 extra_cache_key=f"q={question.id}:escalated",
                 task_tag="escalation",
                 model=escalation_model,
-            )
-
-        # Post-I6-review Item A: ``PointVerdict.ecf_applied`` must be
-        # CODE-set only -- I7's whole contract is that it records a re-mark
-        # the CODE performed (:func:`_maybe_apply_ecf_substitution`), never
-        # something the model claims about its own single-pass answer. But
-        # the field is on the wire response schema with no description
-        # telling the model that, so nothing stops it setting
-        # ``ecf_applied=True`` unprompted -- which would persist onto
-        # ``CorrectedQuestion.point_verdicts`` as an ECF claim the code never
-        # made, on a call where no substitution happened at all (including
-        # every call today, since ``ecf_substitution`` defaults off).
-        # Unconditionally forced False here, regardless of
-        # ``equivalence_gate``/``ecf_substitution`` or what the model
-        # returned, so ``_maybe_apply_ecf_substitution``'s explicit
-        # ``ecf_applied=True`` merge is the ONLY place this field can ever
-        # become True.
-        if result.point_verdicts:
-            result = result.model_copy(
-                update={
-                    "point_verdicts": [
-                        pv.model_copy(update={"ecf_applied": False}) for pv in result.point_verdicts
-                    ]
-                }
+                attempt="escalation",
+                question_id=question.id,
             )
         return result
+
+    def _cascade(
+        self,
+        question: Question,
+        system_prompt: str,
+        user_prompt: str,
+        first: AIMarkResponse,
+        *,
+        leaf_log: str | None,
+        records_before: int,
+    ) -> AIMarkResponse:
+        """Cost-ladder lever A2: keep the cheap first pass unless a trigger fires.
+
+        ``first`` came from ``correction_model``. The triggers, cheapest first,
+        so a later one is never paid for once an earlier one has fired:
+
+        - confidence below ``cascade_threshold_for`` for that model, else below
+          ``escalation_confidence_threshold``;
+        - with ``cascade_unaddressed_points``, ``first.point_verdicts`` leaves a
+          mark-scheme point unaddressed (inert when the list is empty);
+        - with ``cascade_two_pass_disagreement``, a second cheap pass
+          (``:pass2``) awards different marks.
+
+        On a trigger the strong model (``cascade_strong_model or
+        escalation_model``) re-marks the original prompt, and its response is
+        the answer. With no strong model configured the first pass stands.
+        The borderline thinking retry never runs here.
+        """
+        g = self._client._settings.gemini
+        cheap_model = g.model_for("correction")
+        strong_model = g.cascade_strong_model or g.escalation_model
+        threshold = g.cascade_threshold_for.get(cheap_model, g.escalation_confidence_threshold)
+
+        unaddressed_ids = _unaddressed_point_ids(question, first)
+        low_confidence = first.confidence < threshold
+        unaddressed: bool | None = None
+        if g.cascade_unaddressed_points and unaddressed_ids is not None:
+            unaddressed = bool(unaddressed_ids)
+        disagreement: bool | None = None
+        second: AIMarkResponse | None = None
+        if g.cascade_two_pass_disagreement and not low_confidence and not unaddressed:
+            second = self._client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=AIMarkResponse,
+                prompt_version=VERSION,
+                extra_cache_key=f"q={question.id}:pass2",
+                task_tag="correction",
+                attempt="borderline",
+                question_id=question.id,
+            )
+            disagreement = second.awarded_marks != first.awarded_marks
+
+        strong: AIMarkResponse | None = None
+        if strong_model and (low_confidence or unaddressed or disagreement):
+            bus.publish(
+                EventType.GEMINI_ESCALATE,
+                question_id=question.id,
+                confidence=first.confidence,
+                escalation_model=strong_model,
+            )
+            strong = self._client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=AIMarkResponse,
+                prompt_version=VERSION,
+                extra_cache_key=f"q={question.id}:cascade",
+                task_tag="escalation",
+                model=strong_model,
+                attempt="escalation",
+                question_id=question.id,
+            )
+
+        entry: dict[str, object] = {
+            "question_id": question.id,
+            "model": cheap_model,
+            "strong_model": strong_model,
+            "threshold": threshold,
+            "confidence": first.confidence,
+            "awarded_marks": first.awarded_marks,
+            "pass2_awarded_marks": second.awarded_marks if second is not None else None,
+            "unaddressed_point_ids": unaddressed_ids,
+            "triggers": {
+                "low_confidence": low_confidence,
+                "disagreement": disagreement,
+                "unaddressed": unaddressed,
+            },
+            "escalated": strong is not None,
+            "strong_awarded_marks": strong.awarded_marks if strong is not None else None,
+            "strong_confidence": strong.confidence if strong is not None else None,
+        }
+        structlog.get_logger().bind(component="correction_cascade").info("cascade_leaf", **entry)
+        if leaf_log:
+            _append_leaf_log(leaf_log, entry, process_call_records()[records_before:], question.id)
+        return strong if strong is not None else first
 
 
 def _build_mcq_corrected(

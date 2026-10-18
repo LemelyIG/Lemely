@@ -1,0 +1,549 @@
+"""Correction cascade (cost-ladder lever A2): cheap first pass, strong re-mark on a trigger."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from collections.abc import Iterator
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from lemely.core.loose_schemas import Question
+from lemely.core.schemas import AIMarkResponse, PointVerdict
+from lemely.io import correction_ai
+from lemely.io.correction_ai import CASCADE_LEAF_LOG_ENV, AICorrector
+from lemely.io.gemini import GeminiClient, reset_process_counters, set_call_context
+from lemely.runtime.config import GeminiSettings, PathsSettings, Settings, load_settings
+from scripts import cascade_sweep
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+def _question() -> Question:
+    return Question.model_validate(
+        {
+            "id": "1",
+            "marks": 2,
+            "type": "explanation",
+            "answer_points": [
+                {"id": "p1", "point": "gravity", "marks": 1},
+                {"id": "p2", "point": "speed", "marks": 1},
+            ],
+        }
+    )
+
+
+def _mark(awarded: int, confidence: float, verdict_ids: tuple[str, ...] = ()) -> AIMarkResponse:
+    return AIMarkResponse(
+        awarded_marks=awarded,
+        confidence=confidence,
+        feedback="f",
+        point_verdicts=[PointVerdict(point_id=pid, verdict="awarded") for pid in verdict_ids],
+    )
+
+
+class _FakeClient:
+    """Records every `generate_structured` call and answers from a queue.
+
+    ``mark_question`` reads ``_settings.gemini`` and ``resolved_thinking`` only;
+    the correction tag thinks "low" and every other tag "high", so the
+    non-cascade borderline retry would fire on a low-confidence first pass.
+    """
+
+    def __init__(self, gemini: GeminiSettings, responses: list[AIMarkResponse]) -> None:
+        self._settings = SimpleNamespace(gemini=gemini)
+        self._responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    def generate_structured(self, **kwargs: Any) -> AIMarkResponse:
+        self.calls.append(kwargs)
+        return self._responses.pop(0)
+
+    def resolved_thinking(self, task_tag: str, model: str) -> str:
+        return "low" if task_tag == "correction" else "high"
+
+
+def _cascade(**overrides: Any) -> GeminiSettings:
+    base: dict[str, Any] = {
+        "cascade_enabled": True,
+        "correction_model": "cheap-model",
+        "escalation_model": "gemini-3.8-flash",
+        "escalation_confidence_threshold": 0.80,
+    }
+    return GeminiSettings(**{**base, **overrides})
+
+
+def _run(
+    gemini: GeminiSettings, responses: list[AIMarkResponse]
+) -> tuple[AIMarkResponse, _FakeClient]:
+    fake = _FakeClient(gemini, responses)
+    result = AICorrector(cast("GeminiClient", fake)).mark_question(_question(), "gravity")
+    return result, fake
+
+
+def _attempts(fake: _FakeClient) -> list[tuple[str | None, str | None, str | None]]:
+    return [(c.get("attempt"), c.get("task_tag"), c.get("model")) for c in fake.calls]
+
+
+# ---------------------------------------------------------------------------
+# Cascade off: byte-identical prompts and cache keys
+# ---------------------------------------------------------------------------
+
+
+def _resp(confidence: float) -> MagicMock:
+    body = json.dumps(
+        {"awarded_marks": 1, "confidence": confidence, "matched_point_ids": [], "feedback": "f"}
+    )
+    return MagicMock(
+        text=body,
+        candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
+        usage_metadata=MagicMock(
+            prompt_token_count=10, candidates_token_count=20, cached_content_token_count=0
+        ),
+    )
+
+
+@pytest.fixture
+def isolated_env() -> Iterator[None]:
+    snap = dict(os.environ)
+    for k in list(os.environ):
+        if k.startswith("LEMELY_"):
+            del os.environ[k]
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(snap)
+
+
+def _real_settings(tmp: Path, **gemini: Any) -> Settings:
+    s = load_settings(toml_path=None, cwd=tmp)
+    return s.model_copy(
+        update={
+            "paths": PathsSettings(cache_dir=tmp / ".cache", output_dir=tmp / "outputs"),
+            "gemini": s.gemini.model_copy(update=gemini),
+        }
+    )
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+#: Captured from the pre-cascade ``mark_question`` (HEAD 983c977e) with the
+#: thinking levels below, so all three steps run: (task_tag, extra_cache_key,
+#: cache key, sha256(system)[:16], sha256(user)[:16]).
+_PINNED_OFF_CALLS = [
+    (
+        "correction",
+        "q=1",
+        "28fddd7b0ac12734",
+        "f3c3b9df5d0c756b",
+        "ab9ade96eb640d88",
+    ),
+    (
+        "correction_borderline",
+        "q=1:thinking",
+        "5a2bc7b64efeea2c",
+        "f3c3b9df5d0c756b",
+        "4123b5e56538ed2d",
+    ),
+    (
+        "escalation",
+        "q=1:escalated",
+        "774313362cbcf9a1",
+        "f3c3b9df5d0c756b",
+        "7b92a94030173706",
+    ),
+]
+
+
+def _off_call_fingerprints(tmp: Path) -> list[tuple[str, str, str, str, str]]:
+    settings = _real_settings(
+        tmp,
+        thinking_level_for={
+            "correction": "low",
+            "correction_borderline": "medium",
+            "escalation": "high",
+            "extraction": "minimal",
+            "generation": "low",
+        },
+    )
+    assert settings.gemini.cascade_enabled is False
+    genai = MagicMock()
+    genai.models.generate_content.side_effect = [_resp(0.5), _resp(0.6), _resp(0.95)]
+    client = GeminiClient(settings, _genai_client=genai)
+    seen: list[tuple[str, str, str, str, str]] = []
+    real = client._structured_cache_key
+
+    def _spy(**kwargs: Any) -> tuple[str, str]:
+        model, key = real(**kwargs)
+        seen.append(
+            (
+                kwargs["task_tag"],
+                kwargs["extra_cache_key"],
+                key,
+                _sha(kwargs["system_prompt"]),
+                _sha(kwargs["user_prompt"]),
+            )
+        )
+        return model, key
+
+    with patch.object(client, "_structured_cache_key", side_effect=_spy):
+        AICorrector(client).mark_question(_question(), "gravity")
+    return seen
+
+
+def test_cascade_off_is_byte_identical(tmp_path: Path, isolated_env: None) -> None:
+    assert _off_call_fingerprints(tmp_path) == _PINNED_OFF_CALLS
+
+
+# ---------------------------------------------------------------------------
+# Cascade on: triggers
+# ---------------------------------------------------------------------------
+
+
+def test_low_confidence_escalates_to_strong() -> None:
+    result, fake = _run(
+        _cascade(cascade_strong_model="strong-model"), [_mark(1, 0.5), _mark(2, 0.95)]
+    )
+    assert result.awarded_marks == 2
+    assert _attempts(fake) == [
+        ("first", "correction", None),
+        ("escalation", "escalation", "strong-model"),
+    ]
+    assert all(c["question_id"] == "1" for c in fake.calls)
+    assert fake.calls[1]["extra_cache_key"] == "q=1:cascade"
+    # The strong model re-marks the original prompt, unprimed by the first pass.
+    assert fake.calls[1]["user_prompt"] == fake.calls[0]["user_prompt"]
+
+
+@pytest.mark.parametrize("strong", [None, ""])
+def test_strong_model_falls_back_to_escalation_model(strong: str | None) -> None:
+    _, fake = _run(_cascade(cascade_strong_model=strong), [_mark(1, 0.5), _mark(2, 0.95)])
+    assert fake.calls[1]["model"] == "gemini-3.8-flash"
+
+
+def test_high_confidence_does_not_escalate() -> None:
+    result, fake = _run(_cascade(), [_mark(1, 0.95)])
+    assert result.awarded_marks == 1
+    assert _attempts(fake) == [("first", "correction", None)]
+
+
+def test_disagreement_trigger_fires_on_mark_mismatch() -> None:
+    result, fake = _run(
+        _cascade(cascade_two_pass_disagreement=True),
+        [_mark(1, 0.95), _mark(2, 0.95), _mark(2, 0.97)],
+    )
+    assert _attempts(fake) == [
+        ("first", "correction", None),
+        ("borderline", "correction", None),
+        ("escalation", "escalation", "gemini-3.8-flash"),
+    ]
+    assert fake.calls[1]["extra_cache_key"] == "q=1:pass2"
+    assert fake.calls[1]["user_prompt"] == fake.calls[0]["user_prompt"]
+    assert result.confidence == 0.97
+
+
+def test_disagreement_trigger_quiet_when_passes_agree() -> None:
+    result, fake = _run(
+        _cascade(cascade_two_pass_disagreement=True), [_mark(1, 0.95), _mark(1, 0.90)]
+    )
+    assert len(fake.calls) == 2
+    # The first pass is the answer; the second only votes.
+    assert result.confidence == 0.95
+
+
+def test_disagreement_pass_skipped_when_confidence_already_fires() -> None:
+    _, fake = _run(_cascade(cascade_two_pass_disagreement=True), [_mark(1, 0.5), _mark(2, 0.95)])
+    assert [c["attempt"] for c in fake.calls] == ["first", "escalation"]
+
+
+def test_unaddressed_point_trigger() -> None:
+    _, fired = _run(
+        _cascade(cascade_unaddressed_points=True), [_mark(1, 0.95, ("p1",)), _mark(1, 0.95)]
+    )
+    assert [c["attempt"] for c in fired.calls] == ["first", "escalation"]
+    _, quiet = _run(_cascade(cascade_unaddressed_points=True), [_mark(1, 0.95, ("p1", "p2"))])
+    assert len(quiet.calls) == 1
+
+
+def test_unaddressed_trigger_inert_without_point_verdicts() -> None:
+    _, fake = _run(_cascade(cascade_unaddressed_points=True), [_mark(1, 0.95)])
+    assert len(fake.calls) == 1
+
+
+def test_unaddressed_trigger_off_ignores_missing_points() -> None:
+    _, fake = _run(_cascade(), [_mark(1, 0.95, ("p1",))])
+    assert len(fake.calls) == 1
+
+
+def test_borderline_retry_skipped_under_cascade() -> None:
+    # Off: the low first pass gets the borderline thinking retry (and Step 2).
+    off = _cascade(cascade_enabled=False)
+    _, fake_off = _run(off, [_mark(1, 0.5), _mark(1, 0.6), _mark(1, 0.9)])
+    assert "correction_borderline" in [c["task_tag"] for c in fake_off.calls]
+    # On: straight to the strong model, no borderline thinking retry.
+    _, fake_on = _run(_cascade(), [_mark(1, 0.5), _mark(1, 0.9)])
+    assert [c["task_tag"] for c in fake_on.calls] == ["correction", "escalation"]
+
+
+def test_cascade_off_labels_attempts() -> None:
+    off = _cascade(cascade_enabled=False)
+    _, fake = _run(off, [_mark(1, 0.5), _mark(1, 0.6), _mark(1, 0.9)])
+    assert [c["attempt"] for c in fake.calls] == ["first", "borderline", "escalation"]
+    assert all(c["question_id"] == "1" for c in fake.calls)
+
+
+def test_fitted_threshold_per_model() -> None:
+    fitted = _cascade(cascade_threshold_for={"cheap-model": 0.6})
+    _, below_default = _run(fitted, [_mark(1, 0.7)])
+    assert len(below_default.calls) == 1  # 0.7 clears the fitted 0.6
+    _, under_fitted = _run(fitted, [_mark(1, 0.55), _mark(1, 0.9)])
+    assert len(under_fitted.calls) == 2
+    other = _cascade(cascade_threshold_for={"other-model": 0.1})
+    _, falls_back = _run(other, [_mark(1, 0.7), _mark(1, 0.9)])
+    assert len(falls_back.calls) == 2  # 0.7 < escalation_confidence_threshold 0.80
+
+
+def test_no_strong_model_keeps_first_pass() -> None:
+    result, fake = _run(_cascade(escalation_model=None), [_mark(1, 0.3)])
+    assert result.awarded_marks == 1
+    assert len(fake.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Per-leaf log
+# ---------------------------------------------------------------------------
+
+
+def test_leaf_log_records_first_pass_and_triggers(
+    tmp_path: Path, isolated_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = tmp_path / "leaves.jsonl"
+    monkeypatch.setenv(CASCADE_LEAF_LOG_ENV, str(log))
+    settings = _real_settings(
+        tmp_path,
+        cascade_enabled=True,
+        cascade_two_pass_disagreement=True,
+        cascade_unaddressed_points=True,
+        cascade_threshold_for={"gemini-3.8-flash": 0.7},
+    )
+    genai = MagicMock()
+    genai.models.generate_content.side_effect = [_resp(0.75), _resp(0.9)]
+    client = GeminiClient(settings, _genai_client=genai)
+    reset_process_counters()
+    set_call_context(case_key="paperA")
+    try:
+        AICorrector(client).mark_question(_question(), "gravity")
+    finally:
+        set_call_context(case_key=None)
+    (entry,) = [json.loads(line) for line in log.read_text().splitlines()]
+    assert entry["case_key"] == "paperA"
+    assert entry["question_id"] == "1"
+    assert entry["model"] == "gemini-3.8-flash"
+    assert entry["threshold"] == 0.7
+    assert entry["confidence"] == 0.75
+    assert entry["awarded_marks"] == 1
+    assert entry["pass2_awarded_marks"] == 1
+    assert entry["unaddressed_point_ids"] is None
+    assert entry["triggers"] == {
+        "low_confidence": False,
+        "disagreement": False,
+        "unaddressed": None,
+    }
+    assert entry["escalated"] is False
+    assert entry["strong_awarded_marks"] is None
+    assert entry["usd_2027"]["first"] > 0
+    assert entry["usd_2027"]["pass2"] > 0
+    assert entry["usd_2027"]["strong"] is None
+    assert set(entry["latency_ms"]) == {"first", "pass2", "strong"}
+
+
+def test_leaf_log_off_without_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(CASCADE_LEAF_LOG_ENV, raising=False)
+    monkeypatch.chdir(tmp_path)
+    _run(_cascade(), [_mark(1, 0.95)])
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_module_exports_env_name() -> None:
+    assert correction_ai.CASCADE_LEAF_LOG_ENV == "LEMELY_CASCADE_LEAF_LOG"
+
+
+# ---------------------------------------------------------------------------
+# Sweep
+# ---------------------------------------------------------------------------
+
+
+def _summary(path: Path, *, usd: float, mismarked: list[str], scored: int) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "summary.json").write_text(
+        json.dumps(
+            {
+                "usd_per_script_mean": usd,
+                "latency_p95_ms": 1000.0,
+                "mismarked_parts": mismarked,
+                "scored_parts": scored,
+                "id_match_rate": 1.0,
+                "validity_rate": 1.0,
+                "incomplete": [],
+            }
+        )
+    )
+
+
+def _record(case: str, qid: str | None, tag: str, usd: float, ms: int = 100) -> dict[str, Any]:
+    return {
+        "case_key": case,
+        "question_id": qid,
+        "task_tag": tag,
+        "usd_2027": usd,
+        "latency_ms": ms,
+        "attempt": "first" if qid else None,
+        "model": "m",
+        "parse_ok": True,
+    }
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def _leaf(
+    case: str,
+    qid: str,
+    confidence: float,
+    *,
+    pass2: int | None = None,
+    usd_first: float = 0.01,
+) -> dict[str, Any]:
+    return {
+        "case_key": case,
+        "question_id": qid,
+        "model": "cheap-model",
+        "strong_model": "gemini-3.8-flash",
+        "threshold": 0.0,
+        "confidence": confidence,
+        "awarded_marks": 1,
+        "pass2_awarded_marks": pass2,
+        "unaddressed_point_ids": None,
+        "triggers": {"low_confidence": False, "disagreement": None, "unaddressed": None},
+        "escalated": False,
+        "strong_awarded_marks": None,
+        "strong_confidence": None,
+        "usd_2027": {"first": usd_first, "pass2": None, "strong": None},
+        "latency_ms": {"first": 100, "pass2": None, "strong": None},
+    }
+
+
+def test_sweep_picks_cheapest_passing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Two cases, two leaves each. The cheap model mismarks c1/q1 (confidence
+    0.60) and c2/q1 (0.70); the strong baseline mismarks nothing. The saving is
+    big-tier, which allows ceil(2% of 4) = 1 extra mismark, so the cheapest pass
+    is 0.61: it escalates c1/q1 alone. Below that both mismarks stand; above
+    0.70 a second strong call is paid for."""
+    baseline = tmp_path / "baseline"
+    screen = tmp_path / "screen"
+    _summary(baseline, usd=0.50, mismarked=[], scored=4)
+    _summary(screen, usd=0.10, mismarked=["c1/q1", "c2/q1"], scored=4)
+    (tmp_path / "aa_floor.json").write_text(json.dumps({"aa_floor": 0}))
+    base_rows = []
+    for case in ("c1", "c2"):
+        base_rows.append(_record(case, None, "extraction", 0.05))
+        for qid in ("q1", "q2"):
+            base_rows.append(_record(case, qid, "correction", 0.10))
+    _write_jsonl(baseline / "records.jsonl", base_rows)
+    _write_jsonl(screen / "records.jsonl", [])
+    _write_jsonl(
+        screen / "cascade_leaves.jsonl",
+        [
+            _leaf("c1", "q1", 0.60),
+            _leaf("c1", "q2", 0.90),
+            _leaf("c2", "q1", 0.70),
+            _leaf("c2", "q2", 0.95),
+        ],
+    )
+    best = cascade_sweep.sweep(cascade_sweep.load_inputs(screen_dir=screen, baseline_dir=baseline))
+    assert best is not None
+    assert best.combo.threshold == pytest.approx(0.61)
+    assert best.combo.disagreement is False
+    assert best.combo.unaddressed is False
+    assert best.verdict.passed
+    # c1: extraction 0.05 + two cheap passes 0.02 + one strong 0.10; c2: no strong.
+    assert best.summary.usd_per_script_mean == pytest.approx((0.17 + 0.07) / 2)
+    assert best.summary.mismarked_parts == frozenset({"c2/q1"})
+
+    code = cascade_sweep.main(["--screen", str(screen), "--baseline", str(baseline)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "threshold=0.61" in out
+    assert '"cheap-model": 0.61' in out
+
+
+def test_sweep_reports_none_when_nothing_passes(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline"
+    screen = tmp_path / "screen"
+    # Baseline $0.012/script: the cheap pass alone saves 17%, a small-tier
+    # saving that allows no extra mismark; escalating costs more than baseline.
+    _summary(baseline, usd=0.012, mismarked=[], scored=1)
+    _summary(screen, usd=0.10, mismarked=["c1/q1"], scored=1)
+    (tmp_path / "aa_floor.json").write_text(json.dumps({"aa_floor": 0}))
+    _write_jsonl(baseline / "records.jsonl", [_record("c1", "q1", "correction", 0.10)])
+    _write_jsonl(screen / "records.jsonl", [])
+    # Confidence 0.995 never falls below a swept threshold; no pass2 logged.
+    _write_jsonl(screen / "cascade_leaves.jsonl", [_leaf("c1", "q1", 0.995)])
+    inputs = cascade_sweep.load_inputs(screen_dir=screen, baseline_dir=baseline)
+    assert cascade_sweep.sweep(inputs) is None
+    assert cascade_sweep.main(["--screen", str(screen), "--baseline", str(baseline)]) == 1
+
+
+def test_sweep_missing_pass2_is_pessimistic(tmp_path: Path) -> None:
+    """A combination that needs a second pass the screen never ran assumes the
+    trigger fired: the strong cost is paid and the strong mark is used."""
+    baseline = tmp_path / "baseline"
+    screen = tmp_path / "screen"
+    _summary(baseline, usd=0.50, mismarked=[], scored=1)
+    _summary(screen, usd=0.10, mismarked=[], scored=1)
+    (tmp_path / "aa_floor.json").write_text(json.dumps({"aa_floor": 0}))
+    _write_jsonl(baseline / "records.jsonl", [_record("c1", "q1", "correction", 0.10)])
+    _write_jsonl(screen / "records.jsonl", [])
+    _write_jsonl(screen / "cascade_leaves.jsonl", [_leaf("c1", "q1", 0.95)])
+    inputs = cascade_sweep.load_inputs(screen_dir=screen, baseline_dir=baseline)
+    sim = cascade_sweep.simulate(inputs, cascade_sweep.Combo(0.5, True, False))
+    assert sim.unknown == 1
+    # first 0.01 + assumed pass2 0.01 + strong 0.10
+    assert sim.summary.usd_per_script_mean == pytest.approx(0.12)
+
+
+def test_sweep_uses_screen_strong_mark_when_screen_escalated(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline"
+    screen = tmp_path / "screen"
+    _summary(baseline, usd=0.50, mismarked=["c1/q1"], scored=1)
+    _summary(screen, usd=0.10, mismarked=[], scored=1)
+    (tmp_path / "aa_floor.json").write_text(json.dumps({"aa_floor": 0}))
+    _write_jsonl(baseline / "records.jsonl", [_record("c1", "q1", "correction", 0.10)])
+    _write_jsonl(screen / "records.jsonl", [])
+    leaf = _leaf("c1", "q1", 0.5)
+    leaf.update(
+        escalated=True,
+        strong_awarded_marks=2,
+        usd_2027={"first": 0.01, "pass2": None, "strong": 0.07},
+        latency_ms={"first": 100, "pass2": None, "strong": 300},
+    )
+    _write_jsonl(screen / "cascade_leaves.jsonl", [leaf])
+    inputs = cascade_sweep.load_inputs(screen_dir=screen, baseline_dir=baseline)
+    escalate = cascade_sweep.simulate(inputs, cascade_sweep.Combo(0.9, False, False))
+    # The screen's own strong re-mark was right (not in the screen's mismarks).
+    assert escalate.summary.mismarked_parts == frozenset()
+    assert escalate.summary.usd_per_script_mean == pytest.approx(0.08)
+    keep = cascade_sweep.simulate(inputs, cascade_sweep.Combo(0.4, False, False))
+    # Cheap mark (1) differs from the right strong mark (2): the cheap mark is wrong.
+    assert keep.summary.mismarked_parts == frozenset({"c1/q1"})
