@@ -537,25 +537,41 @@ _PREFIX_CACHE_EXPIRY_MARGIN_SECONDS: int = 30
 #: The ``task_tag`` of the `CallRecord` that carries an explicit cache's cost.
 PREFIX_CACHE_TASK_TAG = "correction_prefix_cache"
 #: Explicit context-cache storage, USD per 1M tokens per hour, by the same
-#: longest-substring match as the price tables. From
-#: https://ai.google.dev/gemini-api/docs/pricing for the 2.5 lines ($1.00 flash,
-#: $4.50 pro); not confirmed for 3.x, and a model that matches no key is charged
-#: the pro rate, so storage is overstated rather than left out.
-_CACHE_STORAGE_USD_PER_MTOK_HOUR: dict[str, float] = {"flash": 1.00, "pro": 4.50}
-_CACHE_STORAGE_FALLBACK_USD_PER_MTOK_HOUR: float = 4.50
+#: longest-substring match as the price tables. Rows given by the cost-ladder
+#: controller (2026-10-19): gemini-3.8/3.6-flash store at $0.50 through
+#: ``FLASH_3X_PROMO_END_DATE`` and $1.00 after it (the same date gate as their
+#: token prices); gemini-3.5-flash-lite stores at $1.00 on both sides. Any other
+#: model has no storage row and :func:`prefix_cache_storage_usd` raises
+#: :class:`UnpricedModelError` rather than guess.
+_CACHE_STORAGE_PROMO_USD_PER_MTOK_HOUR: float = 0.50
+_CACHE_STORAGE_POST_PROMO_USD_PER_MTOK_HOUR: float = 1.00
+_CACHE_STORAGE_STATIC_USD_PER_MTOK_HOUR: dict[str, float] = {"gemini-3.5-flash-lite": 1.00}
 
 
-def prefix_cache_storage_usd(model: str, tokens: int, ttl_seconds: int) -> float:
-    """USD to keep ``tokens`` in an explicit cache for ``ttl_seconds``."""
-    rate = next(
-        (
-            _CACHE_STORAGE_USD_PER_MTOK_HOUR[key]
-            for key in sorted(_CACHE_STORAGE_USD_PER_MTOK_HOUR, key=len, reverse=True)
-            if key in model
-        ),
-        _CACHE_STORAGE_FALLBACK_USD_PER_MTOK_HOUR,
+def _cache_storage_rate(model: str, *, on: date) -> float:
+    """USD per 1M tokens per hour of explicit-cache storage for ``model`` as of ``on``."""
+    promo = (
+        _CACHE_STORAGE_PROMO_USD_PER_MTOK_HOUR
+        if on <= FLASH_3X_PROMO_END_DATE
+        else _CACHE_STORAGE_POST_PROMO_USD_PER_MTOK_HOUR
     )
-    return max(tokens, 0) / 1_000_000 * rate * ttl_seconds / 3600
+    table = {
+        **_CACHE_STORAGE_STATIC_USD_PER_MTOK_HOUR,
+        **dict.fromkeys(_FLASH_3X_PROMO_MODELS, promo),
+    }
+    for key in sorted(table, key=len, reverse=True):
+        if key in model:
+            return table[key]
+    raise UnpricedModelError(model)
+
+
+def prefix_cache_storage_usd(model: str, tokens: int, ttl_seconds: int, *, on: date) -> float:
+    """USD to keep ``tokens`` in an explicit cache for ``ttl_seconds``, priced as of ``on``.
+
+    Raises:
+        UnpricedModelError: ``model`` has no storage row.
+    """
+    return max(tokens, 0) / 1_000_000 * _cache_storage_rate(model, on=on) * ttl_seconds / 3600
 
 
 @dataclass(frozen=True)
@@ -1765,7 +1781,8 @@ class GeminiClient:
         params_fingerprint: str,
         extra_log_fields: dict[str, Any] | None = None,
         sends_thinking: bool = True,
-        extra_usd: float = 0.0,
+        extra_usd_now: float = 0.0,
+        extra_usd_2027: float = 0.0,
     ) -> None:
         """Account for one paid response: counters, ledger, log line, events.
 
@@ -1783,9 +1800,10 @@ class GeminiClient:
         ``latency_ms`` and ``tool``. The structured path passes none, so its
         line keeps exactly the fields M0.4 reads today.
 
-        `extra_usd` is a charge that is not priced per token, added to the
-        call's USD at both price points: an explicit prefix cache's storage
-        (:meth:`cached_prefix_handle`). Every other caller leaves it at 0.
+        `extra_usd_now` / `extra_usd_2027` are a charge that is not priced per
+        token, priced today and at `PRICE_DATE_2027`: an explicit prefix cache's
+        storage (:meth:`cached_prefix_handle`). Today's figure is also added to
+        the ledger and the counters. Every other caller leaves both at 0.
         """
         global \
             _process_input_tokens, \
@@ -1835,10 +1853,10 @@ class GeminiClient:
             # Fallback USD feeds the ledger/log only; the record carries NaN so
             # an unpriced model can never be silently summed into cost metrics.
             usd_now = usd_2027 = math.nan
-        if extra_usd:
-            usd += extra_usd
-            usd_now += extra_usd
-            usd_2027 += extra_usd
+        if extra_usd_now or extra_usd_2027:
+            usd += extra_usd_now
+            usd_now += extra_usd_now
+            usd_2027 += extra_usd_2027
         usd_rounded = round(usd, 6)
         attempt, question_id = _call_labels.get()
         thinking = self.resolved_thinking(task_tag, model) if task_tag and sends_thinking else None
@@ -1921,28 +1939,43 @@ class GeminiClient:
 
         Made on the first call for a (model, prompt version, prefix) and reused
         until :data:`PREFIX_CACHE_TTL_SECONDS` is nearly up, then made again.
-        Its cost is recorded as a `CallRecord` tagged :data:`PREFIX_CACHE_TASK_TAG`:
-        the cached tokens at the full input rate (the creation, conservatively
-        not discounted) plus their storage for the whole TTL
-        (:func:`prefix_cache_storage_usd`). That record carries no attempt or
-        question id, so it is not charged to the leaf that happened to make it.
+        Entries past that point are pruned from the in-process store on every
+        access. Its cost is recorded as a `CallRecord` tagged
+        :data:`PREFIX_CACHE_TASK_TAG`: the cached tokens at the full input rate
+        (the creation, conservatively not discounted) plus their storage for
+        the whole TTL (:func:`prefix_cache_storage_usd`), priced today and at
+        `PRICE_DATE_2027`. That record carries no attempt or question id, so it
+        is not charged to the leaf that happened to make it.
 
-        A creation the API refuses (a prefix below its minimum size, a model
-        without explicit caching) is logged once and returns None for the rest
-        of this client's life: the caller then sends the prefix as a plain
-        system instruction, where implicit caching may still apply.
+        None, and the caller sends the prefix as a plain system instruction
+        (where implicit caching may still apply), when:
+
+        - ``model`` has no storage price: no cache is made, so no cost goes
+          unrecorded; remembered for the rest of this client's life;
+        - the API refuses the creation (a prefix below its minimum size, a model
+          without explicit caching): logged and remembered the same way;
+        - the creation fails transiently (:func:`_is_transient`): logged and NOT
+          remembered, so the next call tries again.
         """
         digest = hashlib.sha256(prefix.text.encode()).hexdigest()
         key = (model, prefix.version, digest)
         with self._prefix_cache_lock:
             now = time.monotonic()
+            for stale in [
+                k
+                for k, held in self._prefix_caches.items()
+                if held is not None and now >= held[1] - _PREFIX_CACHE_EXPIRY_MARGIN_SECONDS
+            ]:
+                del self._prefix_caches[stale]
             if key in self._prefix_caches:
                 held = self._prefix_caches[key]
-                if held is None:
-                    return None
-                name, expires_at = held
-                if now < expires_at - _PREFIX_CACHE_EXPIRY_MARGIN_SECONDS:
-                    return name
+                return None if held is None else held[0]
+            try:
+                _cache_storage_rate(model, on=_today())
+            except UnpricedModelError:
+                log.warning("prefix_cache_storage_unpriced", model=model)
+                self._prefix_caches[key] = None
+                return None
             from google.genai import types
 
             self._check_cost_ceiling()
@@ -1956,14 +1989,24 @@ class GeminiClient:
                     ),
                 )
             except Exception as exc:
-                log.warning("prefix_cache_create_failed", model=model, error=str(exc)[:200])
-                self._prefix_caches[key] = None
+                transient = _is_transient(exc)
+                log.warning(
+                    "prefix_cache_create_failed",
+                    model=model,
+                    transient=transient,
+                    error=str(exc)[:200],
+                )
+                if not transient:
+                    self._prefix_caches[key] = None
                 return None
             latency_ms = int((time.monotonic() - now) * 1000)
             tokens_raw = getattr(getattr(cache, "usage_metadata", None), "total_token_count", 0)
             tokens = tokens_raw if isinstance(tokens_raw, int) else 0
             self._prefix_caches[key] = (str(cache.name), now + PREFIX_CACHE_TTL_SECONDS)
-        storage_usd = prefix_cache_storage_usd(model, tokens, PREFIX_CACHE_TTL_SECONDS)
+        storage_now = prefix_cache_storage_usd(model, tokens, PREFIX_CACHE_TTL_SECONDS, on=_today())
+        storage_2027 = prefix_cache_storage_usd(
+            model, tokens, PREFIX_CACHE_TTL_SECONDS, on=PRICE_DATE_2027
+        )
         with _call_labelled(None, None):
             self._record_spend(
                 response=SimpleNamespace(
@@ -1981,11 +2024,13 @@ class GeminiClient:
                 params_fingerprint=digest[:12],
                 extra_log_fields={
                     "prefix_cache": str(cache.name),
-                    "storage_usd": round(storage_usd, 6),
+                    "storage_usd": round(storage_now, 6),
+                    "storage_usd_2027": round(storage_2027, 6),
                     "ttl_seconds": PREFIX_CACHE_TTL_SECONDS,
                 },
                 sends_thinking=False,
-                extra_usd=storage_usd,
+                extra_usd_now=storage_now,
+                extra_usd_2027=storage_2027,
             )
         return str(cache.name)
 

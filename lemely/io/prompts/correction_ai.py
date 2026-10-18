@@ -325,14 +325,99 @@ def marker_system_prompt(*, reader_describes_drawings: bool = False) -> str:
 SHARED_PREFIX_SEPARATOR = "\n\n---\n\n"
 
 
+def _reworded(text: str, edits: tuple[tuple[str, str], ...]) -> str:
+    """``text`` with each ``(old, new)`` applied; each ``old`` must occur exactly once.
+
+    The prefix restates text written for another position. Failing loudly when
+    that text changes keeps the two from drifting apart unnoticed.
+    """
+    for old, new in edits:
+        if text.count(old) != 1:
+            raise ValueError(f"expected exactly one {old!r} to reword for the shared prefix")
+        text = text.replace(old, new)
+    return text
+
+
+#: Where the system prompt says the paper's own principles are, rewritten for the
+#: shared prefix, which carries them after the paper's mark scheme.
+_PREFIX_INSTRUCTION_EDITS: tuple[tuple[str, str], ...] = (
+    (
+        "which are supplied in the user prompt when the paper prints them",
+        "which are supplied after this paper's full mark scheme, below, when the paper prints them",
+    ),
+)
+
+#: ``SCIENCE_DEFAULT_RULES`` rewritten for the shared prefix. There it follows the
+#: whole paper's mark scheme, and the leaf's subtree and earlier-part values come
+#: later, in the user prompt.
+_PREFIX_DEFAULT_RULES_EDITS: tuple[tuple[str, str], ...] = (
+    (
+        "an earlier-part value supplied below,",
+        "an earlier-part value supplied with the question being marked,",
+    ),
+    (
+        "The MARK SCHEME SUBTREE above always wins.",
+        "The MARK SCHEME SUBTREE of the question being marked (given with that question) "
+        "always wins.",
+    ),
+    (
+        "guidance in the system prompt only where the two differ.",
+        "guidance at the start of these instructions only where the two differ.",
+    ),
+    (
+        "so the system prompt's fallback for that still applies.",
+        "so the fallback for that at the start of these instructions still applies.",
+    ),
+)
+
+
+def shared_prefix_instructions(*, reader_describes_drawings: bool) -> str:
+    """The instructions part of the shared prefix: :func:`marker_system_prompt`, reworded.
+
+    The one sentence that places the paper's own principles "in the user prompt"
+    says instead that they follow the paper's mark scheme, where
+    :func:`render_paper_mark_scheme` puts them. Nothing else differs.
+    """
+    return _reworded(
+        marker_system_prompt(reader_describes_drawings=reader_describes_drawings),
+        _PREFIX_INSTRUCTION_EDITS,
+    )
+
+
+def _paper_rules_block(metadata: MarkSchemeMetadata) -> str | None:
+    """The paper's marking rules as the shared prefix states them, or None.
+
+    The same choice :func:`build_marker_user_prompt` makes from
+    :func:`printed_principles` and :func:`default_marking_rules`: the paper's own
+    principles, else the published science defaults, never both. The wording says
+    where the guidance they override is, now that they are in the system prompt.
+    """
+    principles = printed_principles(metadata)
+    if principles:
+        principle_lines = "\n".join(f"  - {p}" for p in principles)
+        return (
+            "THIS PAPER'S PRINTED GENERIC MARKING PRINCIPLES (verbatim from the mark scheme):\n"
+            f"{principle_lines}\n"
+            "These are the paper's own published rules and TAKE PRECEDENCE over the general "
+            "guidance at the start of these instructions wherever the two differ — including "
+            "the M/A dependency rule.\n"
+        )
+    default_rules = default_marking_rules(metadata)
+    if default_rules:
+        return _reworded(default_rules, _PREFIX_DEFAULT_RULES_EDITS)
+    return None
+
+
 def render_paper_mark_scheme(mark_scheme: MarkScheme) -> str:
-    """The whole paper's mark scheme as the paper block of the shared prefix.
+    """The paper block of the shared prefix: everything that is the same for every leaf.
 
     Deterministic: the paper code from the metadata, then every top-level
     question in source order, each dumped as the user prompt dumps a subtree
-    (indented JSON without null or default fields). Nothing that varies between
-    scripts of one paper is in it: no timestamps, no student text, no run ids.
-    The question ids are the scheme's own, the same for every script.
+    (indented JSON without null or default fields), then the paper's marking
+    rules (:func:`_paper_rules_block`), which the user prompt no longer carries
+    when the prefix is on. Nothing that varies between scripts of one paper is in
+    it: no timestamps, no student text, no run ids. The question ids are the
+    scheme's own, the same for every script.
     """
     meta = mark_scheme.metadata
     paper_code = f"{meta.subject_code}/{meta.paper_number}{meta.paper_variant}"
@@ -340,25 +425,29 @@ def render_paper_mark_scheme(mark_scheme: MarkScheme) -> str:
         q.model_dump_json(indent=2, exclude_none=True, exclude_defaults=True)
         for q in mark_scheme.questions
     )
-    return (
+    block = (
         f"THIS PAPER'S FULL MARK SCHEME ({meta.subject} {paper_code}; JSON, every question "
         "in source order). It is reference for context only: mark only the question whose "
-        "MARK SCHEME SUBTREE the user prompt gives, against that subtree.\n"
+        "MARK SCHEME SUBTREE you are given with the student's answer, against that subtree.\n"
         f"{questions}\n"
     )
+    rules = _paper_rules_block(meta)
+    return block if rules is None else f"{block}\n{rules}"
 
 
 def build_shared_prefix(mark_scheme: MarkScheme, *, reader_describes_drawings: bool) -> str:
-    """The system prompt followed by the paper's whole mark scheme (cost-ladder lever A3).
+    """The marking instructions followed by the paper's whole mark scheme and rules (lever A3).
 
     Sent as the system prompt of every correction call on the paper when
     ``GeminiSettings.correction_shared_prefix`` is on, so it is the same for every
-    leaf of every script and a provider can cache it. ``reader_describes_drawings``
-    picks the system prompt as :func:`marker_system_prompt` does, so a paper whose
-    answers come from both kinds of reader has two prefixes.
+    leaf of every script and a provider can cache it. It is
+    :func:`shared_prefix_instructions`, then :data:`SHARED_PREFIX_SEPARATOR`, then
+    :func:`render_paper_mark_scheme`. ``reader_describes_drawings`` picks the
+    system prompt as :func:`marker_system_prompt` does, so a paper whose answers
+    come from both kinds of reader has two prefixes.
     """
     return (
-        marker_system_prompt(reader_describes_drawings=reader_describes_drawings)
+        shared_prefix_instructions(reader_describes_drawings=reader_describes_drawings)
         + SHARED_PREFIX_SEPARATOR
         + render_paper_mark_scheme(mark_scheme)
     )

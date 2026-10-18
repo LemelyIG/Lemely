@@ -53,6 +53,7 @@ from lemely.io.prompts.correction_ai import (
     marker_system_prompt,
     printed_principles,
     render_paper_mark_scheme,
+    shared_prefix_instructions,
 )
 from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD
 from lemely.io.validation import validate_mark_scheme
@@ -387,7 +388,7 @@ class AICorrector:
         prefix = self._prefixes.get(reader_describes_drawings)
         if prefix is None:
             prefix = SharedPrefix(
-                instructions=marker_system_prompt(
+                instructions=shared_prefix_instructions(
                     reader_describes_drawings=reader_describes_drawings
                 ),
                 paper=render_paper_mark_scheme(self._mark_scheme),
@@ -457,9 +458,20 @@ class AICorrector:
         With ``correction_shared_prefix`` on and the paper's scheme given to the
         constructor, the system prompt of this call and of every retry,
         cascade pass and escalation it makes is the paper's shared prefix
-        (:meth:`_shared_prefix`); the user prompt is unchanged.
+        (:meth:`_shared_prefix`). The prefix carries the paper's marking rules,
+        so the user prompt leaves out ``principles`` and ``default_rules`` when they
+        are the ones the prefix derived from the scheme; rules that differ from
+        those stay in the user prompt. Everything else in the user prompt is
+        leaf-specific and unchanged.
         """
         g = self._client._settings.gemini
+        shared_prefix = self._shared_prefix(reader_describes_drawings=reader_describes_drawings)
+        if shared_prefix is not None and self._mark_scheme is not None:
+            meta = self._mark_scheme.metadata
+            if principles == printed_principles(meta) and default_rules == default_marking_rules(
+                meta
+            ):
+                principles, default_rules = None, None
         user_prompt = build_marker_user_prompt(
             question,
             student_answer,
@@ -471,7 +483,6 @@ class AICorrector:
             default_rules=default_rules,
             reader_describes_drawings=reader_describes_drawings,
         )
-        shared_prefix = self._shared_prefix(reader_describes_drawings=reader_describes_drawings)
         system_prompt = (
             shared_prefix.text
             if shared_prefix is not None
