@@ -6,7 +6,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
-from pathlib import Path  # noqa: TC003 - used at runtime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,7 +16,11 @@ if TYPE_CHECKING:
 
 GEMINI = "gemini"
 ANTHROPIC = "anthropic"
-SPEND_FILE = "spend.json"
+#: The combined ledger every cost-ladder run books to, whatever its ``--out-dir``.
+#: Repo-relative (not cwd-relative); only an explicit ``--spend-file`` moves it.
+DEFAULT_SPEND_FILE = (
+    Path(__file__).resolve().parents[3] / "BUILD" / "accuracy-runs" / "cost-ladder-spend.json"
+)
 RUN_COST_FILE = "run_cost.json"
 
 
@@ -56,11 +60,14 @@ def label_prefix(label: str) -> str:
 
 
 class SpendLedger:
-    """`<out_dir>/spend.json`: {provider: usd} accumulated across runs, never reset here."""
+    """A JSON ledger of {provider: usd} accumulated across every run, never reset here.
 
-    def __init__(self, out_dir: Path) -> None:
-        self.path = out_dir / SPEND_FILE
-        self._out_dir = out_dir
+    Lives at `DEFAULT_SPEND_FILE` unless given another path, so starting a new
+    ``--out-dir`` does not start the combined cap from zero.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
 
     def spent(self) -> dict[str, float]:
         if not self.path.is_file():
@@ -72,25 +79,26 @@ class SpendLedger:
         totals = self.spent()
         for provider, usd in costs.items():
             totals[provider] = totals.get(provider, 0.0) + usd
-        self._out_dir.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(totals, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         tmp.replace(self.path)
         return totals
 
-    def projection(self, label: str) -> dict[str, float] | None:
-        """Per-provider cost of the latest completed run with the same label prefix."""
-        prefix = label_prefix(label)
-        costs = [
-            p
-            for p in self._out_dir.glob(f"*/{RUN_COST_FILE}")
-            if p.parent.name != label and label_prefix(p.parent.name) == prefix
-        ]
-        if not costs:
-            return None
-        latest = max(costs, key=lambda p: p.stat().st_mtime)
-        data = json.loads(latest.read_text(encoding="utf-8"))
-        return {str(k): float(v) for k, v in data.items()}
+
+def last_run_cost(out_dir: Path, label: str) -> dict[str, float] | None:
+    """Per-provider cost of the latest run in *out_dir* sharing *label*'s prefix."""
+    prefix = label_prefix(label)
+    costs = [
+        p
+        for p in out_dir.glob(f"*/{RUN_COST_FILE}")
+        if p.parent.name != label and label_prefix(p.parent.name) == prefix
+    ]
+    if not costs:
+        return None
+    latest = max(costs, key=lambda p: p.stat().st_mtime)
+    data = json.loads(latest.read_text(encoding="utf-8"))
+    return {str(k): float(v) for k, v in data.items()}
 
 
 def check_can_start(
@@ -110,14 +118,14 @@ def check_can_start(
 
 
 def resolve_projection(
-    ledger: SpendLedger, label: str, max_run_usd: Mapping[str, float] | None
+    out_dir: Path, label: str, max_run_usd: Mapping[str, float] | None
 ) -> dict[str, float]:
     """The run's projected per-provider cost.
 
     Per provider, the larger of the explicit `--max-run-usd` value and the cost of
     the prefix's last run; an explicit value is never ignored. With neither, refuse.
     """
-    last = ledger.projection(label)
+    last = last_run_cost(out_dir, label)
     explicit = dict(max_run_usd or {})
     if last is None and not explicit:
         raise SpendCapError(

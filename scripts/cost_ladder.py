@@ -4,7 +4,7 @@ r"""LLM cost-ladder driver: baseline + A/A floor, one-lever screens, and the rep
 Live runs spend Gemini budget. Keys come from the environment only (a wrapper
 exports GEMINI_API_KEY / ANTHROPIC_API_KEY); this script never prints them.
 
-    cost_ladder.py baseline
+    cost_ladder.py baseline [--restart-baseline | --aa-only]
     cost_ladder.py screen --label L --lever "..." --expected-saving 40% \\
         --set gemini.correction_model=... [--against <label>] \\
         [--live-tags correction,correction_borderline,escalation]
@@ -27,7 +27,7 @@ from lemely.accuracy.cost_ladder.runner import (
     run_baseline,
     run_screen,
 )
-from lemely.accuracy.cost_ladder.spend import SpendCaps
+from lemely.accuracy.cost_ladder.spend import DEFAULT_SPEND_FILE, SpendCaps
 from lemely.io.gemini import UnpricedModelError
 
 DEFAULT_OUT_DIR = Path("reports/cost-ladder")
@@ -65,6 +65,9 @@ def _baseline(args: argparse.Namespace) -> int:
         golden_dir=args.golden,
         caps=_caps(args),
         max_run_usd=_max_run_usd(args),
+        spend_file=args.spend_file,
+        restart=args.restart_baseline,
+        aa_only=args.aa_only,
     )
     print(f"A/A floor: {floor} newly mismarked parts between two baseline runs")
     return 0
@@ -84,6 +87,7 @@ def _screen(args: argparse.Namespace) -> int:
         golden_dir=args.golden,
         caps=_caps(args),
         max_run_usd=_max_run_usd(args),
+        spend_file=args.spend_file,
     )
     print(
         f"{'ACCEPT' if verdict.passed else 'REJECT'} {args.label} "
@@ -111,10 +115,26 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
         metavar="provider=usd",
-        help="projected per-provider cost of a first run (no earlier run to project from)",
+        help="projected per-provider cost of a run; the larger of this and the last run's cost",
+    )
+    parser.add_argument(
+        "--spend-file",
+        type=Path,
+        default=None,
+        help=f"combined spend ledger (default {DEFAULT_SPEND_FILE}, whatever --out-dir is)",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("baseline").set_defaults(fn=_baseline)
+    baseline = sub.add_parser("baseline")
+    mode = baseline.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--restart-baseline",
+        action="store_true",
+        help="delete this out-dir's baseline cache, baseline and A/A runs first (spend is kept)",
+    )
+    mode.add_argument(
+        "--aa-only", action="store_true", help="rerun only the A/A run against the baseline"
+    )
+    baseline.set_defaults(fn=_baseline)
     screen = sub.add_parser("screen")
     screen.add_argument("--label", required=True)
     screen.add_argument("--lever")
@@ -123,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     screen.add_argument(
         "--against",
         default=BASELINE_LABEL,
-        help="label of the run this lever stacks on (its overrides are inherited)",
+        help="label of the accepted run this lever stacks on (overrides and live tags inherit)",
     )
     screen.add_argument(
         "--live-tags",
@@ -137,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.fn(args))
-    except (RuntimeError, UnpricedModelError) as exc:
+    except (RuntimeError, ValueError, UnpricedModelError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

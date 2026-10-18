@@ -10,7 +10,7 @@ from lemely.accuracy.cost_ladder.gate import Verdict
 from lemely.accuracy.cost_ladder.runner import BASELINE_LABEL, LADDER_FILE, read_summary
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
     from lemely.accuracy.cost_ladder.gate import RunSummary
@@ -79,10 +79,13 @@ def _vs(final: float, base: float) -> str:
     return f"${final:.4f} vs ${base:.4f} per script{pct}"
 
 
-def write_ladder(rows: list[LadderRow], out: Path, *, footer: LadderFooter) -> None:
-    lines = [
-        "# Cost ladder",
-        "",
+def write_ladder(
+    rows: list[LadderRow], out: Path, *, footer: LadderFooter, notes: Sequence[str] = ()
+) -> None:
+    lines = ["# Cost ladder", ""]
+    for note in notes:
+        lines += [note, ""]
+    lines += [
         "| " + " | ".join(HEADER) + " |",
         "|" + "|".join("---" for _ in HEADER) + "|",
     ]
@@ -147,6 +150,15 @@ def write_report(out_dir: Path, *, stop_reason: str) -> Path:
     """Write ``<out_dir>/LADDER.md`` from the screened runs; return its path."""
     rows, final = load_rows(out_dir)
     base = out_dir / BASELINE_LABEL
+    base_data = json.loads((base / "summary.json").read_text(encoding="utf-8"))
+    notes: list[str] = []
+    if "in_run_cache_hits" in base_data:
+        notes.append(
+            f"Baseline in-run cache hits: {base_data['in_run_cache_hits']} "
+            "(calls replayed within rung 0 itself; their cost is not in its total). "
+            f"Cache entries written: {base_data.get('cache_entries_written', '?')}; "
+            f"cacheable live records: {base_data.get('cacheable_live_records', '?')}."
+        )
     footer = LadderFooter(
         baseline_usd_2026=_now_usd(base),
         baseline_usd_2027=read_summary(base / "summary.json").usd_per_script_mean,
@@ -155,5 +167,5 @@ def write_report(out_dir: Path, *, stop_reason: str) -> Path:
         stop_reason=stop_reason,
     )
     target = out_dir / "LADDER.md"
-    write_ladder(rows, target, footer=footer)
+    write_ladder(rows, target, footer=footer, notes=notes)
     return target
