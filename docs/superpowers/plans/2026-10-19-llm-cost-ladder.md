@@ -226,7 +226,7 @@
     - `baseline` runs the baseline and the A/A rerun and prints the floor;
     - `screen --label L --set key=value ...` runs one configuration and judges it against a given `--against` summary;
     - `report` writes `LADDER.md`.
-  - The case set is pinned by `--golden tests/golden --split dev`. The run asserts corpus digest `76989782d6fda9fc` and aborts on mismatch.
+  - The case set is pinned by `--golden tests/golden --split dev`. The run asserts corpus digest `090492b217365de4` and aborts on mismatch.
   - The script refuses to run without the wrapper-provided key env, and never echoes it.
 
 - [ ] **Step 1: Write the failing tests** (fake harness result and fake records, with no model calls):
