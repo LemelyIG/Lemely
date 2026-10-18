@@ -18,8 +18,8 @@
   - saving of 30% or more: extra mismarked scored parts ≤ `max(aa_floor, ceil(0.02 × scored parts))`; the 2% term is 1 on `cost-201`'s 31 scored parts;
   - both tiers: id-match must not drop, the structured-output validity rate must not drop, p95 latency per script ≤ 2× the rung-0 baseline, and any failed call or missing leaf fails the run.
 - A/A floor: one rerun of the rung-0 baseline, reused for every later comparison.
-- Spend caps across all cost-ladder runs combined, in billed dollars: **Gemini $3.00, Anthropic $40.00** (user decision 2026-10-19). Enforced by the runner (Task 5) before and during every run; overshoot is at most one case's cost.
-- Screen set: `tests/golden`, dev split, the 12 cases of `BUILD/accuracy-runs/cost-201-2026-10-01` (corpus digest `76989782d6fda9fc`). No full-corpus run.
+- Spend caps across all cost-ladder runs combined, in billed dollars: **Gemini $6.00, Anthropic $40.00** (user decisions 2026-10-19; Gemini raised from $3.00 after the fixture finding). Pass `--cap-gemini-usd 6.0` on every ladder command. Enforced by the runner (Task 5) before and during every run; overshoot is at most one case's cost.
+- Screen set: `tests/golden`, dev split, the same 12 cases as `BUILD/accuracy-runs/cost-201-2026-10-01`, after Task 5b's fixture fix (the corpus digest is re-pinned by Task 5b; the old digest `76989782d6fda9fc` is void). No full-corpus run.
 - Phase A stops when the next lever is expected to save under 5% of the current cost. Phase B is skipped if Phase A cuts 50% or more from the rung-0 baseline.
 - Every new behaviour sits behind a setting whose default reproduces today's prompts and cache keys byte for byte.
 - No third-party routing library (no LiteLLM, no OpenRouter).
@@ -240,6 +240,20 @@
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `pytest tests/test_cost_ladder_runner.py tests/test_cost_ladder_gate.py -v`. Expected: PASS.
 - [ ] **Step 5: Commit:** `feat(accuracy): cost-ladder runner and report`.
+
+### Task 5b: Golden fixture fix (found by the first baseline, 2026-10-19)
+
+The first live baseline held 11 of 12 golden cases on binding gate G5: the fixtures use flat mark schemes (sub-parts at top level with no parent node) and render labels as `Q1a_i`, shapes production never produces (diagnosis: `.superpowers/sdd/binder-hold-diagnosis.md`). The golden harness cannot measure theory papers on develop since PR #310.
+
+**Files:** `tests/golden/**` (mark schemes and the 4 regenerated scans), `lemely/accuracy/synth.py`, `lemely/accuracy/cost_ladder/runner.py` (the pinned digest constant only), new guard tests.
+
+- [ ] Re-nest the 11 theory schemes under parent questions with `marks: 0`; leaf ids unchanged, so `answers.json` and truth stay valid; fix wrong `parent_id`s (e.g. 0625_s20 `1a_i` → `1a`).
+- [ ] `synth.py` prints the paper's label form (`1(a)(i)`), not `Q{question_id}`.
+- [ ] Regenerate the affected scans with `scripts/regenerate_golden_fixtures.py` ($0, no API).
+- [ ] $0 CI guards: no golden leaf yields `undecomposable_id`; the renderer's labels bind with 0 unaligned against their own scheme.
+- [ ] Re-pin the corpus digest in the runner and in this plan.
+
+The Task 6 baseline then reruns with `baseline --restart-baseline` (the first, held baseline cost $0.349 and stays in the ledger).
 
 ### Task 6: Rung-0 live baseline (accuracy-measurer agent; spends money)
 
