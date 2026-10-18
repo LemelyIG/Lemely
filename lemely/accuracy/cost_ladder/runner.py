@@ -45,7 +45,7 @@ from lemely.runtime.events import EventType, bus
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-PINNED_CORPUS_DIGEST = "76989782d6fda9fc"
+PINNED_CORPUS_DIGEST = "090492b217365de4"
 P95_RANK = 0.95
 _UNSCORED_OUTCOMES = frozenset({"excluded", "unmatched"})
 

@@ -86,7 +86,7 @@ def _manifest() -> RunManifest:
         models_by_task={},
         cache_mode="bypass",
         split="dev",
-        corpus_digest="76989782d6fda9fc",
+        corpus_digest="090492b217365de4",
     )
 
 
@@ -231,12 +231,12 @@ def _case(paper: str) -> GoldenCase:
 
 def test_corpus_digest_mismatch_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "_corpus_digest", lambda cases: "deadbeefdeadbeef")
-    with pytest.raises(CorpusDigestMismatch, match="76989782d6fda9fc"):
+    with pytest.raises(CorpusDigestMismatch, match="090492b217365de4"):
         assert_corpus_digest([_case("p1")])
 
 
 def test_corpus_digest_match_passes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(runner, "_corpus_digest", lambda cases: "76989782d6fda9fc")
+    monkeypatch.setattr(runner, "_corpus_digest", lambda cases: "090492b217365de4")
     assert_corpus_digest([_case("p1")])
 
 
