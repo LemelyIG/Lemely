@@ -54,7 +54,7 @@ Every lever is judged on the 12 `cost-201` cases, against the configuration it i
 | Saving from the lever | Extra mismarked question parts allowed |
 |---|---|
 | under 30% | no more than the A/A churn floor (one rerun of the rung-0 baseline on the same 12 cases; the same floor is reused for every later comparison) |
-| 30% or more | up to `ceil(0.02 × scored parts)` extra mismarked parts; with the 31 scored parts of `cost-201`, that is 1 |
+| 30% or more | up to `max(A/A floor, ceil(0.02 × scored parts))` extra mismarked parts, so a big win never gets less room than a small one; with the 31 scored parts of `cost-201`, the 2% term is 1 |
 
 In both tiers:
 

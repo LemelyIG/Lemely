@@ -15,7 +15,7 @@
 - Metric: $ per marked script on the web marking path, **priced at the rates in force from 2027-01-01**.
 - Pass rule, judged against the configuration the lever stacks on:
   - saving under 30%: extra mismarked scored parts ≤ the A/A churn floor;
-  - saving of 30% or more: extra mismarked scored parts ≤ `ceil(0.02 × scored parts)`, which is 1 on `cost-201`'s 31 scored parts;
+  - saving of 30% or more: extra mismarked scored parts ≤ `max(aa_floor, ceil(0.02 × scored parts))`; the 2% term is 1 on `cost-201`'s 31 scored parts;
   - both tiers: id-match must not drop, the structured-output validity rate must not drop, p95 latency per script ≤ 2× the rung-0 baseline, and any failed call or missing leaf fails the run.
 - A/A floor: one rerun of the rung-0 baseline, reused for every later comparison.
 - Screen set: `tests/golden`, dev split, the 12 cases of `BUILD/accuracy-runs/cost-201-2026-10-01` (corpus digest `76989782d6fda9fc`). No full-corpus run.
@@ -131,7 +131,7 @@
 - Rules:
   - `extra_mismarks = len(candidate.mismarked_parts - baseline.mismarked_parts)`. Newly wrong parts count; parts the candidate fixes do not offset them.
   - The tier is `big` when `saving >= 0.30`.
-  - `allowed_extra = aa_floor` in the small tier, or `math.ceil(0.02 * candidate.scored_parts)` in the big tier.
+  - `allowed_extra = aa_floor` in the small tier, or `max(aa_floor, math.ceil(0.02 * candidate.scored_parts))` in the big tier.
   - The run fails on any of: `extra_mismarks > allowed_extra`; `candidate.id_match_rate < baseline.id_match_rate`; `candidate.validity_rate < baseline.validity_rate`; `candidate.latency_p95_ms > 2 * original_latency_p95_ms`; a non-empty `candidate.incomplete`; or `candidate.scored_parts != baseline.scored_parts`, because a changed denominator is a narrowed screen.
   - The module does no I/O and has no imports from `lemely.io`.
 
