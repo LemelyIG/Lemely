@@ -12,15 +12,23 @@ Inputs:
 
 - ``--screen DIR``: a cost-ladder run made with ``gemini.cascade_enabled=true``
   and ``LEMELY_CASCADE_LEAF_LOG=DIR/cascade_leaves.jsonl`` in the environment.
-  Its ``summary.json`` gives the screen's final mismarks; its ``records.jsonl``
-  names every leaf the AI marked (each must have a leaf-log line); the leaf log
-  (one JSON line per marked leaf, written by ``lemely.io.correction_ai``) gives
-  each leaf's first-pass confidence and marks, the second pass's marks, the
-  unaddressed points, the strong re-mark's marks, and each call's cost.
+  Its ``results.json`` gives every question's case key, final predicted marks,
+  truth marks, type and whether it was scored; the leaf log (one JSON line per
+  marked leaf, written by ``lemely.io.correction_ai``) gives each leaf's
+  first-pass confidence and marks, the second pass's marks, the unaddressed
+  points, the strong re-mark's marks, and each call's cost.
 - ``--baseline DIR``: the baseline run. Its ``summary.json`` is what the
-  candidate is judged against; its ``records.jsonl`` gives every case's
-  non-correction cost (which the cascade does not change), each leaf's
-  correction cost (the proxy base), and per-case totals for leave-one-out.
+  candidate is judged against on the whole run; its ``results.json`` gives the
+  baseline's marks (a proxied strong re-mark takes them) and, with its
+  ``records.jsonl``, the per-case figures for leave-one-out; its
+  ``records.jsonl`` also gives every case's non-correction cost (which the
+  cascade does not change) and each leaf's correction cost (the proxy base).
+
+Every simulated mark is judged against ``truth_marks``. The screen's final
+(post-processed) mark is known for the response the screen returned; the other
+response's mark is its raw AI mark when it differs from the returned one, and
+the sweep counts those as ``approximated``. Scored parts per case come from the
+``scored`` flag in ``results.json``.
 
 The logging screen this is built for runs the cheap model with a fitted
 threshold of 1.0 and both triggers on, so every leaf logs a first pass, a second
@@ -28,20 +36,24 @@ pass and a real strong re-mark. Logged strong cost, latency and marks are always
 used. A leaf without a logged strong call is proxied from the baseline's
 correction cost and latency for that leaf, scaled up by the mean ratio of logged
 strong to baseline over the leaves that have one (never scaled below 1). With no
-logged strong call anywhere the sweep refuses rather than guess.
+logged strong call anywhere the sweep refuses rather than guess. A leaf logged
+with ``strong_skipped_identical`` (the strong call would repeat the first pass,
+so the cascade never makes it) takes its first pass as the strong result, at no
+extra cost.
 
 Where the logs cannot say what would have happened, the simulation assumes the
-worse outcome and counts it as ``unknown``:
-
-- a combination needs the second pass's marks but the screen never ran it: the
-  trigger is taken to fire (the second pass and the strong call are paid for);
-- a leaf the screen escalated keeps its cheap mark under a combination, and the
-  strong re-mark gave different marks: the cheap mark is counted as mismarked.
+worse outcome and counts it as ``unknown``: a combination needs the second
+pass's marks but the screen never ran it (the trigger is taken to fire, and the
+second pass and the strong call are paid for), or a proxied leaf has no baseline
+result (counted as mismarked).
 
 The sweep refuses a leaf log that mixes run tokens or cascade configs, a line
 without a first-pass cost, a strong or second pass that ran without a cost, an
-unpriced (NaN) cost in the log or the baseline records, and an AI-marked part of
-the screen with no leaf line.
+unpriced (NaN) cost in the log or the baseline records, a ``results.json``
+without case keys, and a scored non-MCQ question in the screen's results with no
+leaf line. MCQ parts are excluded by ``question_type == "mcq"``: they are marked
+deterministically and never reach the AI marker, while every scored non-MCQ part
+was marked by it.
 
 Run with the repository on the path:
 ``PYTHONPATH=. python scripts/cascade_sweep.py --screen DIR --baseline DIR [--loo]``.
@@ -82,6 +94,7 @@ class Leaf:
     pass2_awarded: int | None
     unaddressed: bool | None  # None: the response carried no point verdicts
     strong_awarded: int | None  # set exactly when a strong call was logged
+    strong_skipped: bool  # the strong call would repeat the first pass
     usd_first: float
     usd_pass2: float | None
     usd_strong: float | None
@@ -95,6 +108,17 @@ class Combo:
     threshold: float
     disagreement: bool
     unaddressed: bool
+
+
+@dataclass(frozen=True)
+class Result:
+    """One question result from a run's ``results.json``."""
+
+    case_key: str
+    question_type: str
+    predicted: int
+    truth: int
+    scored: bool
 
 
 @dataclass(frozen=True)
@@ -114,6 +138,10 @@ class Inputs:
     strong_usd_factor: float  # >= 1: scales a proxied strong call's cost
     strong_ms_factor: float
     cases: tuple[str, ...]
+    screen_results: dict[str, Result]  # "<case_key>/<question_id>" -> result
+    baseline_results: dict[str, Result]
+    screen_scored_by_case: dict[str, int]
+    baseline_scored_by_case: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -122,6 +150,7 @@ class Simulation:
     summary: RunSummary
     unknown: int
     proxied: int
+    approximated: int  # marks judged raw: not the response the screen returned
 
 
 @dataclass(frozen=True)
@@ -131,6 +160,7 @@ class Choice:
     verdict: Verdict
     unknown: int
     proxied: int
+    approximated: int
     loo: tuple[tuple[str, Verdict], ...] = field(default=())
 
 
@@ -195,6 +225,7 @@ def _leaf(raw: dict[str, object]) -> Leaf:
         ),
         usd_first=usd_first,
         usd_pass2=usd_pass2,
+        strong_skipped=bool(raw.get("strong_skipped_identical")),
         usd_strong=usd_strong if escalated else None,
         ms_first=ms_first,
         ms_pass2=_number(ms.get("pass2"), f"{key} pass2 latency"),
@@ -233,19 +264,45 @@ def _jsonl(path: Path) -> list[dict[str, object]]:
     ]
 
 
-def _ai_marked_parts(screen_records: list[dict[str, object]]) -> set[str]:
-    """Parts the screen's AI marker made a first-pass call for."""
-    parts: set[str] = set()
-    for rec in screen_records:
-        case, qid = rec.get("case_key"), rec.get("question_id")
-        if (
-            isinstance(case, str)
-            and isinstance(qid, str)
-            and rec.get("task_tag") in CORRECTION_TAGS
-            and rec.get("attempt") == "first"
-        ):
-            parts.add(f"{case}/{qid}")
-    return parts
+def read_results(path: Path) -> dict[str, Result]:
+    """A run's question results by ``<case_key>/<question_id>``; refuses missing case keys."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    results: dict[str, Result] = {}
+    for row in data["question_results"]:
+        case, qid = row.get("case_key"), row.get("question_id")
+        if not isinstance(case, str) or not isinstance(qid, str):
+            raise ValueError(
+                f"{path}: question result without case_key/question_id; "
+                "re-run with a runner that writes case-keyed results"
+            )
+        predicted = _integer(row.get("predicted_marks"), f"{case}/{qid} predicted_marks")
+        truth = _integer(row.get("truth_marks"), f"{case}/{qid} truth_marks")
+        if predicted is None or truth is None:
+            raise ValueError(f"{path}: {case}/{qid} without predicted/truth marks")
+        results[f"{case}/{qid}"] = Result(
+            case_key=case,
+            question_type=str(row.get("question_type")),
+            predicted=predicted,
+            truth=truth,
+            scored=bool(row.get("scored", True)),
+        )
+    return results
+
+
+def _scored_by_case(results: dict[str, Result]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for result in results.values():
+        if result.scored:
+            counts[result.case_key] = counts.get(result.case_key, 0) + 1
+    return counts
+
+
+def _mismarked(results: dict[str, Result], kept: frozenset[str] | None = None) -> set[str]:
+    return {
+        key
+        for key, r in results.items()
+        if r.scored and r.predicted != r.truth and (kept is None or r.case_key in kept)
+    }
 
 
 def _ratio_factor(observed: list[float]) -> float:
@@ -267,10 +324,16 @@ def load_inputs(
         floor_path = baseline_dir.parent / AA_FLOOR_FILE
         aa_floor = int(json.loads(floor_path.read_text(encoding="utf-8"))["aa_floor"])
     leaves, run_token = read_leaves(leaf_log or screen_dir / LEAF_LOG)
+    screen_results = read_results(screen_dir / "results.json")
+    baseline_results = read_results(baseline_dir / "results.json")
     logged = {leaf.key for leaf in leaves}
-    missing = sorted(_ai_marked_parts(_jsonl(screen_dir / "records.jsonl")) - logged)
+    missing = sorted(
+        key
+        for key, r in screen_results.items()
+        if r.scored and r.question_type != "mcq" and key not in logged
+    )
     if missing:
-        raise ValueError(f"AI-marked parts with no leaf-log line: {', '.join(missing)}")
+        raise ValueError(f"scored non-MCQ parts with no leaf-log line: {', '.join(missing)}")
 
     leaf_usd: dict[str, float] = {}
     leaf_ms: dict[str, float] = {}
@@ -298,9 +361,12 @@ def load_inputs(
             upstream_ms[case] = upstream_ms.get(case, 0.0) + ms
     for leaf in leaves:
         cases[leaf.case_key] = None
+    for result in screen_results.values():
+        cases[result.case_key] = None
 
     with_strong = [leaf for leaf in leaves if leaf.usd_strong is not None]
-    if not with_strong:
+    needs_proxy = any(leaf.usd_strong is None and not leaf.strong_skipped for leaf in leaves)
+    if needs_proxy and not with_strong:
         raise ValueError(
             "no leaf has a logged strong call; refusing to proxy the strong cost "
             "(log the screen with threshold 1.0 so every leaf is re-marked)"
@@ -334,6 +400,10 @@ def load_inputs(
         strong_usd_factor=_ratio_factor(usd_ratios),
         strong_ms_factor=_ratio_factor(ms_ratios),
         cases=tuple(cases),
+        screen_results=screen_results,
+        baseline_results=baseline_results,
+        screen_scored_by_case=_scored_by_case(screen_results),
+        baseline_scored_by_case=_scored_by_case(baseline_results),
     )
 
 
@@ -348,34 +418,14 @@ def _nearest_rank(values: list[float], q: float) -> float:
     return ordered[max(math.ceil(q * len(ordered)) - 1, 0)]
 
 
-def _case_of(key: str, cases: tuple[str, ...]) -> str | None:
-    """The case a ``<case_key>/<question_id>`` part belongs to (case keys may hold a '/')."""
-    owners = [case for case in cases if key.startswith(f"{case}/")]
-    return max(owners, key=len) if owners else None
-
-
-def _in_cases(key: str, inputs: Inputs, kept: frozenset[str]) -> bool:
-    case = _case_of(key, inputs.cases)
-    return case is None or case in kept
-
-
 def _kept_cases(inputs: Inputs, held_out: str | None) -> tuple[str, ...]:
     if held_out is not None and held_out not in inputs.cases:
         raise ValueError(f"unknown case {held_out!r}")
     return tuple(case for case in inputs.cases if case != held_out)
 
 
-def _subset_scored_parts(inputs: Inputs, kept: frozenset[str]) -> int:
-    """A lower bound on a subset's scored parts: its logged leaves plus its known mismarks.
-
-    The run artefacts do not say which case each scored part belongs to, so
-    the bound errs low, which only ever shrinks the big-tier allowance.
-    """
-    parts = {leaf.key for leaf in inputs.leaves if leaf.case_key in kept}
-    for key in inputs.screen.mismarked_parts | inputs.baseline.mismarked_parts:
-        if _in_cases(key, inputs, kept):
-            parts.add(key)
-    return len(parts)
+def _scored_in(by_case: dict[str, int], kept: frozenset[str]) -> int:
+    return sum(n for case, n in by_case.items() if case in kept)
 
 
 def _incomplete_in(incomplete: tuple[str, ...], kept: frozenset[str]) -> tuple[str, ...]:
@@ -396,8 +446,8 @@ def baseline_summary(inputs: Inputs, held_out: str | None = None) -> RunSummary:
     return RunSummary(
         usd_per_script_mean=_mean([inputs.case_usd.get(c, 0.0) for c in cases]),
         latency_p95_ms=_nearest_rank([inputs.case_ms.get(c, 0.0) for c in cases], P95_RANK),
-        mismarked_parts=frozenset(k for k in base.mismarked_parts if _in_cases(k, inputs, kept)),
-        scored_parts=_subset_scored_parts(inputs, kept),
+        mismarked_parts=frozenset(_mismarked(inputs.baseline_results, kept)),
+        scored_parts=_scored_in(inputs.baseline_scored_by_case, kept),
         id_match_rate=base.id_match_rate,
         validity_rate=base.validity_rate,
         incomplete=_incomplete_in(base.incomplete, kept),
@@ -412,12 +462,10 @@ def simulate(inputs: Inputs, combo: Combo, held_out: str | None = None) -> Simul
     ms = {case: inputs.upstream_ms.get(case, 0.0) for case in cases}
     leaves = [leaf for leaf in inputs.leaves if leaf.case_key in kept]
     logged = {leaf.key for leaf in inputs.leaves}
-    mismarked = {
-        k for k in inputs.screen.mismarked_parts if k not in logged and _in_cases(k, inputs, kept)
-    }
+    mismarked = {k for k in _mismarked(inputs.screen_results, kept) if k not in logged}
     proxy_usd_base = max(inputs.leaf_usd.values(), default=0.0)
     proxy_ms_base = max(inputs.leaf_ms.values(), default=0.0)
-    unknown = proxied = 0
+    unknown = proxied = approximated = 0
 
     for leaf in leaves:
         cost, latency = leaf.usd_first, leaf.ms_first
@@ -431,28 +479,41 @@ def simulate(inputs: Inputs, combo: Combo, held_out: str | None = None) -> Simul
             else:
                 fire = leaf.pass2_awarded != leaf.awarded
 
-        if fire and leaf.usd_strong is not None:
-            cost += leaf.usd_strong
+        # The raw marks the cascade would return; None: take the baseline's mark.
+        raw: int | None
+        if not fire or leaf.strong_skipped:
+            raw = leaf.awarded
+        elif leaf.strong_awarded is not None:
+            raw = leaf.strong_awarded
+            cost += leaf.usd_strong or 0.0
             latency += leaf.ms_strong or 0.0
-            wrong = leaf.key in inputs.screen.mismarked_parts
-        elif fire:
+        else:
+            raw = None
             proxied += 1
             cost += inputs.leaf_usd.get(leaf.key, proxy_usd_base) * inputs.strong_usd_factor
             latency += inputs.leaf_ms.get(leaf.key, proxy_ms_base) * inputs.strong_ms_factor
-            wrong = leaf.key in inputs.baseline.mismarked_parts
-        elif leaf.strong_awarded is None or leaf.strong_awarded == leaf.awarded:
-            wrong = leaf.key in inputs.screen.mismarked_parts
-        else:
-            # The screen's final mark is the strong one, which differs from the
-            # cheap one: if the strong mark was right the cheap one is wrong,
-            # and if it was wrong the cheap one is unknown -- count it wrong.
-            wrong = True
-            if leaf.key in inputs.screen.mismarked_parts:
-                unknown += 1
-        if wrong:
-            mismarked.add(leaf.key)
         usd[leaf.case_key] += cost
         ms[leaf.case_key] += latency
+
+        result = inputs.screen_results.get(leaf.key)
+        if result is None or not result.scored:
+            continue
+        if raw is None:
+            base = inputs.baseline_results.get(leaf.key)
+            if base is None:
+                unknown += 1
+                mismarked.add(leaf.key)
+                continue
+            mark = base.predicted
+        else:
+            returned = leaf.strong_awarded if leaf.strong_awarded is not None else leaf.awarded
+            if raw == returned:
+                mark = result.predicted  # the screen's final, post-processed mark
+            else:
+                mark = raw
+                approximated += 1
+        if mark != result.truth:
+            mismarked.add(leaf.key)
 
     screen = inputs.screen
     summary = RunSummary(
@@ -460,7 +521,9 @@ def simulate(inputs: Inputs, combo: Combo, held_out: str | None = None) -> Simul
         latency_p95_ms=_nearest_rank(list(ms.values()), P95_RANK),
         mismarked_parts=frozenset(mismarked),
         scored_parts=(
-            screen.scored_parts if held_out is None else _subset_scored_parts(inputs, kept)
+            screen.scored_parts
+            if held_out is None
+            else _scored_in(inputs.screen_scored_by_case, kept)
         ),
         id_match_rate=screen.id_match_rate,
         validity_rate=screen.validity_rate,
@@ -468,7 +531,13 @@ def simulate(inputs: Inputs, combo: Combo, held_out: str | None = None) -> Simul
         if held_out is None
         else _incomplete_in(screen.incomplete, kept),
     )
-    return Simulation(combo=combo, summary=summary, unknown=unknown, proxied=proxied)
+    return Simulation(
+        combo=combo,
+        summary=summary,
+        unknown=unknown,
+        proxied=proxied,
+        approximated=approximated,
+    )
 
 
 def judge_combo(
@@ -513,7 +582,17 @@ def sweep(inputs: Inputs, *, loo: bool = False) -> Choice | None:
             held = tuple((case, judge_combo(inputs, combo, case)[1]) for case in inputs.cases)
             if not all(v.passed for _, v in held):
                 continue
-        passing.append(Choice(combo, sim.summary, verdict, sim.unknown, sim.proxied, held))
+        passing.append(
+            Choice(
+                combo,
+                sim.summary,
+                verdict,
+                sim.unknown,
+                sim.proxied,
+                sim.approximated,
+                held,
+            )
+        )
     if not passing:
         return None
     return min(
@@ -579,7 +658,7 @@ def main(argv: list[str] | None = None) -> int:
         f"cheapest passing: threshold={combo.threshold:.2f} "
         f"disagreement={combo.disagreement} unaddressed={combo.unaddressed} "
         f"usd/script={best.summary.usd_per_script_mean:.4f} {_verdict_line(best.verdict)} "
-        f"unknown={best.unknown} proxied={best.proxied}"
+        f"unknown={best.unknown} proxied={best.proxied} approximated={best.approximated}"
     )
     for case, verdict in best.loo:
         print(f"  held out {case}: {'PASS' if verdict.passed else 'FAIL'} {_verdict_line(verdict)}")

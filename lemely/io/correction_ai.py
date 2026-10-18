@@ -602,7 +602,10 @@ class AICorrector:
         the answer. The first pass stands when no strong model is configured,
         or when the strong call would repeat the first pass exactly (same model
         and resolved thinking; the non-cascade ``last_call`` guard). The
-        borderline thinking retry never runs here.
+        borderline thinking retry never runs here. The leaf log's
+        ``strong_skipped_identical`` is True whenever the strong call would repeat
+        the first pass, whether or not a trigger fired: the first pass IS the
+        strong result for such a leaf.
 
         With ``LEMELY_CASCADE_LEAF_LOG`` set, an ``OSError`` writing that file
         fails the leaf (see :func:`_append_leaf_log`).
@@ -633,10 +636,12 @@ class AICorrector:
             disagreement = second.awarded_marks != first.awarded_marks
 
         strong: AIMarkResponse | None = None
-        repeats_first = strong_model is not None and (
-            strong_model,
-            self._client.resolved_thinking("escalation", strong_model),
-        ) == (cheap_model, self._client.resolved_thinking("correction", cheap_model))
+        repeats_first = False
+        if strong_model:
+            repeats_first = (
+                strong_model,
+                self._client.resolved_thinking("escalation", strong_model),
+            ) == (cheap_model, self._client.resolved_thinking("correction", cheap_model))
         if strong_model and not repeats_first and (low_confidence or unaddressed or disagreement):
             bus.publish(
                 EventType.GEMINI_ESCALATE,
@@ -678,6 +683,7 @@ class AICorrector:
                 "unaddressed": unaddressed,
             },
             "escalated": strong is not None,
+            "strong_skipped_identical": repeats_first,
             "strong_awarded_marks": strong.awarded_marks if strong is not None else None,
             "strong_confidence": strong.confidence if strong is not None else None,
         }
