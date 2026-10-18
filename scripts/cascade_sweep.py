@@ -5,25 +5,30 @@ No API calls. For every confidence threshold from 0.50 to 0.99 (step 0.01),
 combined with each on/off setting of the disagreement and unaddressed-point
 triggers, it simulates the marks and the 2027 cost per script a cascade would
 produce, judges the result against the baseline with ``judge()``, and prints the
-cheapest combination that passes with a saving.
+cheapest combination that passes with a saving. With ``--loo`` the combination
+must also pass on every leave-one-case-out subset.
 
 Inputs:
 
 - ``--screen DIR``: a cost-ladder run made with ``gemini.cascade_enabled=true``
   and ``LEMELY_CASCADE_LEAF_LOG=DIR/cascade_leaves.jsonl`` in the environment.
-  Its ``summary.json`` gives the cheap marks' mismarks; the leaf log (one JSON
-  line per marked leaf, written by ``lemely.io.correction_ai``) gives each
-  leaf's first-pass confidence and marks, the second pass's marks, the
-  unaddressed points, whether the screen escalated, and each call's cost.
+  Its ``summary.json`` gives the screen's final mismarks; its ``records.jsonl``
+  names every leaf the AI marked (each must have a leaf-log line); the leaf log
+  (one JSON line per marked leaf, written by ``lemely.io.correction_ai``) gives
+  each leaf's first-pass confidence and marks, the second pass's marks, the
+  unaddressed points, the strong re-mark's marks, and each call's cost.
 - ``--baseline DIR``: the baseline run. Its ``summary.json`` is what the
-  candidate is judged against and gives the strong model's mismarks; its
-  ``records.jsonl`` gives the strong re-mark's cost and latency per leaf (the
-  baseline's correction calls for that leaf) and every case's non-correction
-  cost, which the cascade does not change.
+  candidate is judged against; its ``records.jsonl`` gives every case's
+  non-correction cost (which the cascade does not change), each leaf's
+  correction cost (the proxy base), and per-case totals for leave-one-out.
 
-A screen that gathers the most data runs with the second pass and the
-unaddressed check on and a fitted threshold of 0 for the cheap model, so the
-confidence trigger never short-circuits the second pass.
+The logging screen this is built for runs the cheap model with a fitted
+threshold of 1.0 and both triggers on, so every leaf logs a first pass, a second
+pass and a real strong re-mark. Logged strong cost, latency and marks are always
+used. A leaf without a logged strong call is proxied from the baseline's
+correction cost and latency for that leaf, scaled up by the mean ratio of logged
+strong to baseline over the leaves that have one (never scaled below 1). With no
+logged strong call anywhere the sweep refuses rather than guess.
 
 Where the logs cannot say what would have happened, the simulation assumes the
 worse outcome and counts it as ``unknown``:
@@ -33,8 +38,13 @@ worse outcome and counts it as ``unknown``:
 - a leaf the screen escalated keeps its cheap mark under a combination, and the
   strong re-mark gave different marks: the cheap mark is counted as mismarked.
 
+The sweep refuses a leaf log that mixes run tokens or cascade configs, a line
+without a first-pass cost, a strong or second pass that ran without a cost, an
+unpriced (NaN) cost in the log or the baseline records, and an AI-marked part of
+the screen with no leaf line.
+
 Run with the repository on the path:
-``PYTHONPATH=. python scripts/cascade_sweep.py --screen DIR --baseline DIR``.
+``PYTHONPATH=. python scripts/cascade_sweep.py --screen DIR --baseline DIR [--loo]``.
 """
 
 from __future__ import annotations
@@ -44,8 +54,7 @@ import itertools
 import json
 import math
 import sys
-from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -72,8 +81,7 @@ class Leaf:
     awarded: int
     pass2_awarded: int | None
     unaddressed: bool | None  # None: the response carried no point verdicts
-    screen_escalated: bool
-    strong_awarded: int | None
+    strong_awarded: int | None  # set exactly when a strong call was logged
     usd_first: float
     usd_pass2: float | None
     usd_strong: float | None
@@ -92,14 +100,19 @@ class Combo:
 @dataclass(frozen=True)
 class Inputs:
     leaves: tuple[Leaf, ...]
+    run_token: str
     screen: RunSummary
     baseline: RunSummary
     aa_floor: int
     original_latency_p95_ms: float
-    strong_usd: dict[str, float]  # leaf key -> baseline correction USD
-    strong_ms: dict[str, float]
+    leaf_usd: dict[str, float]  # leaf key -> baseline correction USD
+    leaf_ms: dict[str, float]
     upstream_usd: dict[str, float]  # case key -> baseline non-correction USD
     upstream_ms: dict[str, float]
+    case_usd: dict[str, float]  # case key -> baseline total USD
+    case_ms: dict[str, float]
+    strong_usd_factor: float  # >= 1: scales a proxied strong call's cost
+    strong_ms_factor: float
     cases: tuple[str, ...]
 
 
@@ -108,6 +121,7 @@ class Simulation:
     combo: Combo
     summary: RunSummary
     unknown: int
+    proxied: int
 
 
 @dataclass(frozen=True)
@@ -116,24 +130,26 @@ class Choice:
     summary: RunSummary
     verdict: Verdict
     unknown: int
+    proxied: int
+    loo: tuple[tuple[str, Verdict], ...] = field(default=())
 
 
-def _optional_float(value: object) -> float | None:
+def _number(value: object, what: str) -> float | None:
     if value is None:
         return None
-    if not isinstance(value, int | float):
-        raise ValueError(f"expected a number, got {value!r}")
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{what}: expected a number, got {value!r}")
     number = float(value)
     if math.isnan(number):
-        raise ValueError("leaf log carries an unpriced (NaN) call; the screen is incomplete")
+        raise ValueError(f"{what}: unpriced (NaN) cost; the run is incomplete")
     return number
 
 
-def _optional_int(value: object) -> int | None:
+def _integer(value: object, what: str) -> int | None:
     if value is None:
         return None
-    if not isinstance(value, int):
-        raise ValueError(f"expected an integer, got {value!r}")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{what}: expected an integer, got {value!r}")
     return value
 
 
@@ -142,44 +158,98 @@ def _leaf(raw: dict[str, object]) -> Leaf:
     question_id = raw.get("question_id")
     if not isinstance(case_key, str) or not isinstance(question_id, str):
         raise ValueError(f"leaf log line without case_key/question_id: {raw!r}")
-    usd = raw["usd_2027"]
-    ms = raw["latency_ms"]
+    key = f"{case_key}/{question_id}"
+    usd = raw.get("usd_2027")
+    ms = raw.get("latency_ms")
     if not isinstance(usd, dict) or not isinstance(ms, dict):
-        raise ValueError(f"leaf log line without usd_2027/latency_ms: {raw!r}")
-    unaddressed_ids = raw.get("unaddressed_point_ids")
-    confidence = _optional_float(raw["confidence"])
-    awarded = _optional_int(raw["awarded_marks"])
+        raise ValueError(f"{key}: leaf log line without usd_2027/latency_ms")
+    confidence = _number(raw.get("confidence"), f"{key} confidence")
+    awarded = _integer(raw.get("awarded_marks"), f"{key} awarded_marks")
+    usd_first = _number(usd.get("first"), f"{key} first-pass cost")
+    ms_first = _number(ms.get("first"), f"{key} first-pass latency")
     if confidence is None or awarded is None:
-        raise ValueError(f"leaf log line without confidence/awarded_marks: {raw!r}")
+        raise ValueError(f"{key}: leaf log line without confidence/awarded_marks")
+    if usd_first is None or ms_first is None:
+        raise ValueError(f"{key}: no first-pass cost logged (no call record); refusing $0")
+    pass2 = _integer(raw.get("pass2_awarded_marks"), f"{key} pass2_awarded_marks")
+    usd_pass2 = _number(usd.get("pass2"), f"{key} pass2 cost")
+    if pass2 is not None and usd_pass2 is None:
+        raise ValueError(f"{key}: second pass ran without a logged cost; refusing $0")
+    escalated = bool(raw.get("escalated"))
+    usd_strong = _number(usd.get("strong"), f"{key} strong cost")
+    if escalated and usd_strong is None:
+        raise ValueError(f"{key}: strong call ran without a logged cost; refusing $0")
+    unaddressed_ids = raw.get("unaddressed_point_ids")
     return Leaf(
-        key=f"{case_key}/{question_id}",
+        key=key,
         case_key=case_key,
-        model=str(raw["model"]),
+        model=str(raw.get("model")),
         confidence=confidence,
         awarded=awarded,
-        pass2_awarded=_optional_int(raw.get("pass2_awarded_marks")),
+        pass2_awarded=pass2,
         unaddressed=None if unaddressed_ids is None else bool(unaddressed_ids),
-        screen_escalated=bool(raw.get("escalated")),
-        strong_awarded=_optional_int(raw.get("strong_awarded_marks")),
-        usd_first=_optional_float(usd.get("first")) or 0.0,
-        usd_pass2=_optional_float(usd.get("pass2")),
-        usd_strong=_optional_float(usd.get("strong")),
-        ms_first=_optional_float(ms.get("first")) or 0.0,
-        ms_pass2=_optional_float(ms.get("pass2")),
-        ms_strong=_optional_float(ms.get("strong")),
+        strong_awarded=(
+            _integer(raw.get("strong_awarded_marks"), f"{key} strong_awarded_marks")
+            if escalated
+            else None
+        ),
+        usd_first=usd_first,
+        usd_pass2=usd_pass2,
+        usd_strong=usd_strong if escalated else None,
+        ms_first=ms_first,
+        ms_pass2=_number(ms.get("pass2"), f"{key} pass2 latency"),
+        ms_strong=_number(ms.get("strong"), f"{key} strong latency") if escalated else None,
     )
 
 
-def read_leaves(path: Path) -> tuple[Leaf, ...]:
-    """The leaf log, one leaf per key; a later line for the same leaf replaces an earlier one."""
+def read_leaves(path: Path) -> tuple[tuple[Leaf, ...], str]:
+    """The leaf log, one leaf per key (a later line replaces an earlier one), and its run token.
+
+    Refuses a log with more than one run token or cascade config.
+    """
     by_key: dict[str, Leaf] = {}
+    tokens: set[str] = set()
+    configs: set[str] = set()
     for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            leaf = _leaf(json.loads(line))
-            by_key[leaf.key] = leaf
+        if not line.strip():
+            continue
+        raw = json.loads(line)
+        tokens.add(str(raw.get("run_token")))
+        configs.add(json.dumps(raw.get("config"), sort_keys=True))
+        leaf = _leaf(raw)
+        by_key[leaf.key] = leaf
     if not by_key:
         raise ValueError(f"{path} has no cascade leaves")
-    return tuple(by_key.values())
+    if len(tokens) > 1:
+        raise ValueError(f"{path} holds more than one run (run tokens {sorted(tokens)})")
+    if len(configs) > 1:
+        raise ValueError(f"{path} holds more than one cascade config: {sorted(configs)}")
+    return tuple(by_key.values()), tokens.pop()
+
+
+def _jsonl(path: Path) -> list[dict[str, object]]:
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+
+
+def _ai_marked_parts(screen_records: list[dict[str, object]]) -> set[str]:
+    """Parts the screen's AI marker made a first-pass call for."""
+    parts: set[str] = set()
+    for rec in screen_records:
+        case, qid = rec.get("case_key"), rec.get("question_id")
+        if (
+            isinstance(case, str)
+            and isinstance(qid, str)
+            and rec.get("task_tag") in CORRECTION_TAGS
+            and rec.get("attempt") == "first"
+        ):
+            parts.add(f"{case}/{qid}")
+    return parts
+
+
+def _ratio_factor(observed: list[float]) -> float:
+    return max(1.0, sum(observed) / len(observed)) if observed else 1.0
 
 
 def load_inputs(
@@ -190,54 +260,79 @@ def load_inputs(
     aa_floor: int | None = None,
     original_latency_p95_ms: float | None = None,
 ) -> Inputs:
-    """Read everything the simulation needs; defaults follow the cost-ladder layout."""
+    """Read and check everything the simulation needs; defaults follow the cost-ladder layout."""
     screen = read_summary(screen_dir / "summary.json")
     baseline = read_summary(baseline_dir / "summary.json")
     if aa_floor is None:
         floor_path = baseline_dir.parent / AA_FLOOR_FILE
         aa_floor = int(json.loads(floor_path.read_text(encoding="utf-8"))["aa_floor"])
-    leaves = read_leaves(leaf_log or screen_dir / LEAF_LOG)
+    leaves, run_token = read_leaves(leaf_log or screen_dir / LEAF_LOG)
+    logged = {leaf.key for leaf in leaves}
+    missing = sorted(_ai_marked_parts(_jsonl(screen_dir / "records.jsonl")) - logged)
+    if missing:
+        raise ValueError(f"AI-marked parts with no leaf-log line: {', '.join(missing)}")
 
-    strong_usd: dict[str, float] = {}
-    strong_ms: dict[str, float] = {}
+    leaf_usd: dict[str, float] = {}
+    leaf_ms: dict[str, float] = {}
     upstream_usd: dict[str, float] = {}
     upstream_ms: dict[str, float] = {}
+    case_usd: dict[str, float] = {}
+    case_ms: dict[str, float] = {}
     cases: dict[str, None] = {}
-    records = baseline_dir / "records.jsonl"
-    for line in records.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        rec = json.loads(line)
+    for rec in _jsonl(baseline_dir / "records.jsonl"):
         case = rec.get("case_key")
         if not isinstance(case, str):
             continue
         cases[case] = None
-        usd = float(rec["usd_2027"])
-        usd = 0.0 if math.isnan(usd) else usd
-        ms = float(rec["latency_ms"])
+        usd = _number(rec.get("usd_2027"), f"baseline record for {case}") or 0.0
+        ms = _number(rec.get("latency_ms"), f"baseline record for {case}") or 0.0
+        case_usd[case] = case_usd.get(case, 0.0) + usd
+        case_ms[case] = case_ms.get(case, 0.0) + ms
         qid = rec.get("question_id")
         if rec.get("task_tag") in CORRECTION_TAGS and isinstance(qid, str):
             key = f"{case}/{qid}"
-            strong_usd[key] = strong_usd.get(key, 0.0) + usd
-            strong_ms[key] = strong_ms.get(key, 0.0) + ms
+            leaf_usd[key] = leaf_usd.get(key, 0.0) + usd
+            leaf_ms[key] = leaf_ms.get(key, 0.0) + ms
         else:
             upstream_usd[case] = upstream_usd.get(case, 0.0) + usd
             upstream_ms[case] = upstream_ms.get(case, 0.0) + ms
     for leaf in leaves:
         cases[leaf.case_key] = None
 
+    with_strong = [leaf for leaf in leaves if leaf.usd_strong is not None]
+    if not with_strong:
+        raise ValueError(
+            "no leaf has a logged strong call; refusing to proxy the strong cost "
+            "(log the screen with threshold 1.0 so every leaf is re-marked)"
+        )
+    usd_ratios = [
+        (leaf.usd_strong or 0.0) / leaf_usd[leaf.key]
+        for leaf in with_strong
+        if leaf_usd.get(leaf.key, 0.0) > 0
+    ]
+    ms_ratios = [
+        (leaf.ms_strong or 0.0) / leaf_ms[leaf.key]
+        for leaf in with_strong
+        if leaf_ms.get(leaf.key, 0.0) > 0
+    ]
+
     return Inputs(
         leaves=leaves,
+        run_token=run_token,
         screen=screen,
         baseline=baseline,
         aa_floor=aa_floor,
         original_latency_p95_ms=(
             baseline.latency_p95_ms if original_latency_p95_ms is None else original_latency_p95_ms
         ),
-        strong_usd=strong_usd,
-        strong_ms=strong_ms,
+        leaf_usd=leaf_usd,
+        leaf_ms=leaf_ms,
         upstream_usd=upstream_usd,
         upstream_ms=upstream_ms,
+        case_usd=case_usd,
+        case_ms=case_ms,
+        strong_usd_factor=_ratio_factor(usd_ratios),
+        strong_ms_factor=_ratio_factor(ms_ratios),
         cases=tuple(cases),
     )
 
@@ -253,17 +348,78 @@ def _nearest_rank(values: list[float], q: float) -> float:
     return ordered[max(math.ceil(q * len(ordered)) - 1, 0)]
 
 
-def simulate(inputs: Inputs, combo: Combo) -> Simulation:
-    """The run summary a cascade with *combo* would have produced on the screen's cases."""
-    usd = {case: inputs.upstream_usd.get(case, 0.0) for case in inputs.cases}
-    ms = {case: inputs.upstream_ms.get(case, 0.0) for case in inputs.cases}
-    mean_strong_usd = _mean(list(inputs.strong_usd.values()))
-    mean_strong_ms = _mean(list(inputs.strong_ms.values()))
-    logged = {leaf.key for leaf in inputs.leaves}
-    mismarked = {k for k in inputs.screen.mismarked_parts if k not in logged}
-    unknown = 0
+def _case_of(key: str, cases: tuple[str, ...]) -> str | None:
+    """The case a ``<case_key>/<question_id>`` part belongs to (case keys may hold a '/')."""
+    owners = [case for case in cases if key.startswith(f"{case}/")]
+    return max(owners, key=len) if owners else None
 
-    for leaf in inputs.leaves:
+
+def _in_cases(key: str, inputs: Inputs, kept: frozenset[str]) -> bool:
+    case = _case_of(key, inputs.cases)
+    return case is None or case in kept
+
+
+def _kept_cases(inputs: Inputs, held_out: str | None) -> tuple[str, ...]:
+    if held_out is not None and held_out not in inputs.cases:
+        raise ValueError(f"unknown case {held_out!r}")
+    return tuple(case for case in inputs.cases if case != held_out)
+
+
+def _subset_scored_parts(inputs: Inputs, kept: frozenset[str]) -> int:
+    """A lower bound on a subset's scored parts: its logged leaves plus its known mismarks.
+
+    The run artefacts do not say which case each scored part belongs to, so
+    the bound errs low, which only ever shrinks the big-tier allowance.
+    """
+    parts = {leaf.key for leaf in inputs.leaves if leaf.case_key in kept}
+    for key in inputs.screen.mismarked_parts | inputs.baseline.mismarked_parts:
+        if _in_cases(key, inputs, kept):
+            parts.add(key)
+    return len(parts)
+
+
+def _incomplete_in(incomplete: tuple[str, ...], kept: frozenset[str]) -> tuple[str, ...]:
+    return tuple(
+        entry
+        for entry in incomplete
+        if any(entry == case or entry.startswith(f"{case} ") for case in kept)
+    )
+
+
+def baseline_summary(inputs: Inputs, held_out: str | None = None) -> RunSummary:
+    """The baseline as judged: the run's own summary, or rebuilt on the kept cases."""
+    if held_out is None:
+        return inputs.baseline
+    cases = _kept_cases(inputs, held_out)
+    kept = frozenset(cases)
+    base = inputs.baseline
+    return RunSummary(
+        usd_per_script_mean=_mean([inputs.case_usd.get(c, 0.0) for c in cases]),
+        latency_p95_ms=_nearest_rank([inputs.case_ms.get(c, 0.0) for c in cases], P95_RANK),
+        mismarked_parts=frozenset(k for k in base.mismarked_parts if _in_cases(k, inputs, kept)),
+        scored_parts=_subset_scored_parts(inputs, kept),
+        id_match_rate=base.id_match_rate,
+        validity_rate=base.validity_rate,
+        incomplete=_incomplete_in(base.incomplete, kept),
+    )
+
+
+def simulate(inputs: Inputs, combo: Combo, held_out: str | None = None) -> Simulation:
+    """The run summary a cascade with *combo* would have produced, optionally without one case."""
+    cases = _kept_cases(inputs, held_out)
+    kept = frozenset(cases)
+    usd = {case: inputs.upstream_usd.get(case, 0.0) for case in cases}
+    ms = {case: inputs.upstream_ms.get(case, 0.0) for case in cases}
+    leaves = [leaf for leaf in inputs.leaves if leaf.case_key in kept]
+    logged = {leaf.key for leaf in inputs.leaves}
+    mismarked = {
+        k for k in inputs.screen.mismarked_parts if k not in logged and _in_cases(k, inputs, kept)
+    }
+    proxy_usd_base = max(inputs.leaf_usd.values(), default=0.0)
+    proxy_ms_base = max(inputs.leaf_ms.values(), default=0.0)
+    unknown = proxied = 0
+
+    for leaf in leaves:
         cost, latency = leaf.usd_first, leaf.ms_first
         fire = leaf.confidence < combo.threshold or (combo.unaddressed and leaf.unaddressed is True)
         if not fire and combo.disagreement:
@@ -275,16 +431,16 @@ def simulate(inputs: Inputs, combo: Combo) -> Simulation:
             else:
                 fire = leaf.pass2_awarded != leaf.awarded
 
-        if fire:
-            if leaf.screen_escalated and leaf.usd_strong is not None:
-                cost += leaf.usd_strong
-                latency += leaf.ms_strong or 0.0
-            else:
-                cost += inputs.strong_usd.get(leaf.key, mean_strong_usd)
-                latency += inputs.strong_ms.get(leaf.key, mean_strong_ms)
-            source = inputs.screen if leaf.screen_escalated else inputs.baseline
-            wrong = leaf.key in source.mismarked_parts
-        elif not leaf.screen_escalated or leaf.strong_awarded == leaf.awarded:
+        if fire and leaf.usd_strong is not None:
+            cost += leaf.usd_strong
+            latency += leaf.ms_strong or 0.0
+            wrong = leaf.key in inputs.screen.mismarked_parts
+        elif fire:
+            proxied += 1
+            cost += inputs.leaf_usd.get(leaf.key, proxy_usd_base) * inputs.strong_usd_factor
+            latency += inputs.leaf_ms.get(leaf.key, proxy_ms_base) * inputs.strong_ms_factor
+            wrong = leaf.key in inputs.baseline.mismarked_parts
+        elif leaf.strong_awarded is None or leaf.strong_awarded == leaf.awarded:
             wrong = leaf.key in inputs.screen.mismarked_parts
         else:
             # The screen's final mark is the strong one, which differs from the
@@ -303,12 +459,33 @@ def simulate(inputs: Inputs, combo: Combo) -> Simulation:
         usd_per_script_mean=_mean(list(usd.values())),
         latency_p95_ms=_nearest_rank(list(ms.values()), P95_RANK),
         mismarked_parts=frozenset(mismarked),
-        scored_parts=screen.scored_parts,
+        scored_parts=(
+            screen.scored_parts if held_out is None else _subset_scored_parts(inputs, kept)
+        ),
         id_match_rate=screen.id_match_rate,
         validity_rate=screen.validity_rate,
-        incomplete=screen.incomplete,
+        incomplete=screen.incomplete
+        if held_out is None
+        else _incomplete_in(screen.incomplete, kept),
     )
-    return Simulation(combo=combo, summary=summary, unknown=unknown)
+    return Simulation(combo=combo, summary=summary, unknown=unknown, proxied=proxied)
+
+
+def judge_combo(
+    inputs: Inputs, combo: Combo, held_out: str | None = None
+) -> tuple[Simulation, Verdict]:
+    """Simulate *combo* (optionally without *held_out*) and judge it on the same cases.
+
+    The A/A floor and the original latency stay the whole run's values.
+    """
+    sim = simulate(inputs, combo, held_out)
+    verdict = judge(
+        baseline_summary(inputs, held_out),
+        sim.summary,
+        aa_floor=inputs.aa_floor,
+        original_latency_p95_ms=inputs.original_latency_p95_ms,
+    )
+    return sim, verdict
 
 
 def combos() -> list[Combo]:
@@ -320,22 +497,23 @@ def combos() -> list[Combo]:
     ]
 
 
-def sweep(inputs: Inputs) -> Choice | None:
+def sweep(inputs: Inputs, *, loo: bool = False) -> Choice | None:
     """The cheapest combination ``judge()`` passes with a positive saving, else None.
 
+    With *loo* it must also pass on every subset that leaves one case out.
     Ties go to fewer mismarks, then the lower threshold.
     """
     passing: list[Choice] = []
     for combo in combos():
-        sim = simulate(inputs, combo)
-        verdict = judge(
-            inputs.baseline,
-            sim.summary,
-            aa_floor=inputs.aa_floor,
-            original_latency_p95_ms=inputs.original_latency_p95_ms,
-        )
-        if verdict.passed and verdict.saving > 0:
-            passing.append(Choice(combo, sim.summary, verdict, sim.unknown))
+        sim, verdict = judge_combo(inputs, combo)
+        if not (verdict.passed and verdict.saving > 0):
+            continue
+        held: tuple[tuple[str, Verdict], ...] = ()
+        if loo:
+            held = tuple((case, judge_combo(inputs, combo, case)[1]) for case in inputs.cases)
+            if not all(v.passed for _, v in held):
+                continue
+        passing.append(Choice(combo, sim.summary, verdict, sim.unknown, sim.proxied, held))
     if not passing:
         return None
     return min(
@@ -349,10 +527,17 @@ def sweep(inputs: Inputs) -> Choice | None:
 
 
 def cheap_model(inputs: Inputs) -> str:
-    models = Counter(leaf.model for leaf in inputs.leaves)
+    models = {leaf.model for leaf in inputs.leaves}
     if len(models) != 1:
         raise ValueError(f"leaf log mixes first-pass models: {sorted(models)}")
     return next(iter(models))
+
+
+def _verdict_line(verdict: Verdict) -> str:
+    return (
+        f"saving={verdict.saving:.1%} tier={verdict.tier} "
+        f"extra_mismarks={verdict.extra_mismarks}/{verdict.allowed_extra}"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -362,6 +547,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--leaf-log", type=Path, help=f"default: <screen>/{LEAF_LOG}")
     parser.add_argument("--aa-floor", type=int, help=f"default: <baseline>/../{AA_FLOOR_FILE}")
     parser.add_argument("--original-p95-ms", type=float, help="default: the baseline's latency p95")
+    parser.add_argument(
+        "--loo", action="store_true", help="also require a pass on every leave-one-case-out subset"
+    )
     args = parser.parse_args(argv)
     try:
         inputs = load_inputs(
@@ -372,23 +560,29 @@ def main(argv: list[str] | None = None) -> int:
             original_latency_p95_ms=args.original_p95_ms,
         )
         model = cheap_model(inputs)
+        best = sweep(inputs, loo=args.loo)
     except (OSError, ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    best = sweep(inputs)
-    print(f"{len(combos())} combinations over {len(inputs.leaves)} logged leaves")
+    print(
+        f"{len(combos())} combinations over {len(inputs.leaves)} logged leaves "
+        f"in {len(inputs.cases)} cases (run {inputs.run_token}); "
+        f"proxy factors usd x{inputs.strong_usd_factor:.2f} latency x{inputs.strong_ms_factor:.2f}"
+    )
     if best is None:
-        print("no combination passes judge() with a saving")
+        scope = "the whole run and every held-out subset" if args.loo else "the whole run"
+        print(f"no combination passes judge() with a saving on {scope}")
         return 1
-    combo, verdict = best.combo, best.verdict
+    combo = best.combo
     print(
         f"cheapest passing: threshold={combo.threshold:.2f} "
         f"disagreement={combo.disagreement} unaddressed={combo.unaddressed} "
-        f"usd/script={best.summary.usd_per_script_mean:.4f} saving={verdict.saving:.1%} "
-        f"tier={verdict.tier} extra_mismarks={verdict.extra_mismarks}/{verdict.allowed_extra} "
-        f"unknown={best.unknown}"
+        f"usd/script={best.summary.usd_per_script_mean:.4f} {_verdict_line(best.verdict)} "
+        f"unknown={best.unknown} proxied={best.proxied}"
     )
+    for case, verdict in best.loo:
+        print(f"  held out {case}: {'PASS' if verdict.passed else 'FAIL'} {_verdict_line(verdict)}")
     print(
         "settings: "
         f"gemini.cascade_threshold_for={json.dumps({model: combo.threshold})} "

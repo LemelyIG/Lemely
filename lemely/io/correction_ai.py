@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import uuid
 from collections.abc import Mapping, Sequence
 from typing import Literal, NamedTuple
 
@@ -290,6 +291,10 @@ def _dropped_question_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> fr
 #: ``scripts/cascade_sweep.py``. Unset, nothing is written.
 CASCADE_LEAF_LOG_ENV = "LEMELY_CASCADE_LEAF_LOG"
 
+#: Generated once per process and stamped on every leaf-log line, so
+#: ``scripts/cascade_sweep.py`` can refuse a file that mixes two runs.
+CASCADE_RUN_TOKEN = uuid.uuid4().hex
+
 
 def _unaddressed_point_ids(question: Question, response: AIMarkResponse) -> list[str] | None:
     """Mark-scheme point ids ``response.point_verdicts`` gives no verdict for.
@@ -315,6 +320,9 @@ def _append_leaf_log(
     ones labelled with this ``question_id`` are summed per attempt (``first``,
     ``borderline`` as ``pass2``, ``escalation`` as ``strong``). An attempt with
     no record (not made, or a cache hit) is ``None``.
+
+    The file is opened for append on every leaf; an ``OSError`` from *path*
+    (missing directory, no permission) propagates and fails that leaf's marking.
     """
     mine = [r for r in records if r.question_id == question_id]
     by_attempt = {"first": "first", "borderline": "pass2", "escalation": "strong"}
@@ -327,6 +335,7 @@ def _append_leaf_log(
         usd[slot] = (usd[slot] or 0.0) + r.usd_2027
         latency[slot] = (latency[slot] or 0) + r.latency_ms
     line = {
+        "run_token": CASCADE_RUN_TOKEN,
         "case_key": next((r.case_key for r in mine if r.case_key is not None), None),
         **entry,
         "usd_2027": usd,
@@ -590,8 +599,13 @@ class AICorrector:
 
         On a trigger the strong model (``cascade_strong_model or
         escalation_model``) re-marks the original prompt, and its response is
-        the answer. With no strong model configured the first pass stands.
-        The borderline thinking retry never runs here.
+        the answer. The first pass stands when no strong model is configured,
+        or when the strong call would repeat the first pass exactly (same model
+        and resolved thinking; the non-cascade ``last_call`` guard). The
+        borderline thinking retry never runs here.
+
+        With ``LEMELY_CASCADE_LEAF_LOG`` set, an ``OSError`` writing that file
+        fails the leaf (see :func:`_append_leaf_log`).
         """
         g = self._client._settings.gemini
         cheap_model = g.model_for("correction")
@@ -619,7 +633,11 @@ class AICorrector:
             disagreement = second.awarded_marks != first.awarded_marks
 
         strong: AIMarkResponse | None = None
-        if strong_model and (low_confidence or unaddressed or disagreement):
+        repeats_first = strong_model is not None and (
+            strong_model,
+            self._client.resolved_thinking("escalation", strong_model),
+        ) == (cheap_model, self._client.resolved_thinking("correction", cheap_model))
+        if strong_model and not repeats_first and (low_confidence or unaddressed or disagreement):
             bus.publish(
                 EventType.GEMINI_ESCALATE,
                 question_id=question.id,
@@ -639,6 +657,13 @@ class AICorrector:
             )
 
         entry: dict[str, object] = {
+            "config": {
+                "model": cheap_model,
+                "strong_model": strong_model,
+                "threshold": threshold,
+                "two_pass_disagreement": g.cascade_two_pass_disagreement,
+                "unaddressed_points": g.cascade_unaddressed_points,
+            },
             "question_id": question.id,
             "model": cheap_model,
             "strong_model": strong_model,

@@ -57,9 +57,16 @@ class _FakeClient:
     non-cascade borderline retry would fire on a low-confidence first pass.
     """
 
-    def __init__(self, gemini: GeminiSettings, responses: list[AIMarkResponse]) -> None:
+    def __init__(
+        self,
+        gemini: GeminiSettings,
+        responses: list[AIMarkResponse],
+        *,
+        same_thinking: bool = False,
+    ) -> None:
         self._settings = SimpleNamespace(gemini=gemini)
         self._responses = list(responses)
+        self._same_thinking = same_thinking
         self.calls: list[dict[str, Any]] = []
 
     def generate_structured(self, **kwargs: Any) -> AIMarkResponse:
@@ -67,6 +74,8 @@ class _FakeClient:
         return self._responses.pop(0)
 
     def resolved_thinking(self, task_tag: str, model: str) -> str:
+        if self._same_thinking:
+            return "high"
         return "low" if task_tag == "correction" else "high"
 
 
@@ -81,9 +90,9 @@ def _cascade(**overrides: Any) -> GeminiSettings:
 
 
 def _run(
-    gemini: GeminiSettings, responses: list[AIMarkResponse]
+    gemini: GeminiSettings, responses: list[AIMarkResponse], *, same_thinking: bool = False
 ) -> tuple[AIMarkResponse, _FakeClient]:
-    fake = _FakeClient(gemini, responses)
+    fake = _FakeClient(gemini, responses, same_thinking=same_thinking)
     result = AICorrector(cast("GeminiClient", fake)).mark_question(_question(), "gravity")
     return result, fake
 
@@ -313,6 +322,26 @@ def test_fitted_threshold_per_model() -> None:
     assert len(falls_back.calls) == 2  # 0.7 < escalation_confidence_threshold 0.80
 
 
+def test_unaddressed_trigger_short_circuits_pass2() -> None:
+    _, fake = _run(
+        _cascade(cascade_unaddressed_points=True, cascade_two_pass_disagreement=True),
+        [_mark(1, 0.95, ("p1",)), _mark(2, 0.95)],
+    )
+    assert [c["attempt"] for c in fake.calls] == ["first", "escalation"]
+
+
+def test_strong_call_skipped_when_it_repeats_the_first_pass() -> None:
+    """Strong model and thinking equal to the first pass's: the re-mark would be
+    the identical call, so it is not made (the non-cascade ``last_call`` guard)."""
+    same = _cascade(cascade_strong_model="cheap-model")
+    result, fake = _run(same, [_mark(1, 0.3)], same_thinking=True)
+    assert result.awarded_marks == 1
+    assert len(fake.calls) == 1
+    # Same model, harder thinking: a different call, so it runs.
+    _, harder = _run(same, [_mark(1, 0.3), _mark(2, 0.9)])
+    assert [c["attempt"] for c in harder.calls] == ["first", "escalation"]
+
+
 def test_no_strong_model_keeps_first_pass() -> None:
     result, fake = _run(_cascade(escalation_model=None), [_mark(1, 0.3)])
     assert result.awarded_marks == 1
@@ -365,6 +394,14 @@ def test_leaf_log_records_first_pass_and_triggers(
     assert entry["usd_2027"]["pass2"] > 0
     assert entry["usd_2027"]["strong"] is None
     assert set(entry["latency_ms"]) == {"first", "pass2", "strong"}
+    assert entry["run_token"] == correction_ai.CASCADE_RUN_TOKEN
+    assert entry["config"] == {
+        "model": "gemini-3.8-flash",
+        "strong_model": "gemini-3.8-flash",
+        "threshold": 0.7,
+        "two_pass_disagreement": True,
+        "unaddressed_points": True,
+    }
 
 
 def test_leaf_log_off_without_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -382,22 +419,58 @@ def test_module_exports_env_name() -> None:
 # Sweep
 # ---------------------------------------------------------------------------
 
+_TOKEN = "run-a"
+_CONFIG: dict[str, Any] = {
+    "model": "cheap-model",
+    "strong_model": "gemini-3.8-flash",
+    "threshold": 1.0,
+    "two_pass_disagreement": True,
+    "unaddressed_points": True,
+}
 
-def _summary(path: Path, *, usd: float, mismarked: list[str], scored: int) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-    (path / "summary.json").write_text(
-        json.dumps(
-            {
-                "usd_per_script_mean": usd,
-                "latency_p95_ms": 1000.0,
-                "mismarked_parts": mismarked,
-                "scored_parts": scored,
-                "id_match_rate": 1.0,
-                "validity_rate": 1.0,
-                "incomplete": [],
-            }
-        )
-    )
+
+def _leaf(
+    case: str,
+    qid: str,
+    confidence: float,
+    *,
+    awarded: int = 1,
+    strong: int = 1,
+    pass2: int | None = 1,
+    usd_first: float | None = 0.01,
+    usd_strong: float | None = 0.10,
+    run_token: str = _TOKEN,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One logged leaf; a leaf with ``usd_strong`` was re-marked by the strong model."""
+    escalated = usd_strong is not None
+    return {
+        "run_token": run_token,
+        "config": config or _CONFIG,
+        "case_key": case,
+        "question_id": qid,
+        "model": "cheap-model",
+        "strong_model": "gemini-3.8-flash",
+        "threshold": 1.0,
+        "confidence": confidence,
+        "awarded_marks": awarded,
+        "pass2_awarded_marks": pass2,
+        "unaddressed_point_ids": None,
+        "triggers": {"low_confidence": escalated, "disagreement": None, "unaddressed": None},
+        "escalated": escalated,
+        "strong_awarded_marks": strong if escalated else None,
+        "strong_confidence": 0.9 if escalated else None,
+        "usd_2027": {
+            "first": usd_first,
+            "pass2": 0.01 if pass2 is not None else None,
+            "strong": usd_strong,
+        },
+        "latency_ms": {
+            "first": 100,
+            "pass2": 100 if pass2 is not None else None,
+            "strong": 300 if escalated else None,
+        },
+    }
 
 
 def _record(case: str, qid: str | None, tag: str, usd: float, ms: int = 100) -> dict[str, Any]:
@@ -417,133 +490,256 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
 
-def _leaf(
-    case: str,
-    qid: str,
-    confidence: float,
+def _summary(path: Path, *, usd: float, mismarked: list[str], scored: int) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "summary.json").write_text(
+        json.dumps(
+            {
+                "usd_per_script_mean": usd,
+                "latency_p95_ms": 1000.0,
+                "mismarked_parts": mismarked,
+                "scored_parts": scored,
+                "id_match_rate": 1.0,
+                "validity_rate": 1.0,
+                "incomplete": [],
+            }
+        )
+    )
+
+
+def _write_run(
+    tmp: Path,
     *,
-    pass2: int | None = None,
-    usd_first: float = 0.01,
-) -> dict[str, Any]:
-    return {
-        "case_key": case,
-        "question_id": qid,
-        "model": "cheap-model",
-        "strong_model": "gemini-3.8-flash",
-        "threshold": 0.0,
-        "confidence": confidence,
-        "awarded_marks": 1,
-        "pass2_awarded_marks": pass2,
-        "unaddressed_point_ids": None,
-        "triggers": {"low_confidence": False, "disagreement": None, "unaddressed": None},
-        "escalated": False,
-        "strong_awarded_marks": None,
-        "strong_confidence": None,
-        "usd_2027": {"first": usd_first, "pass2": None, "strong": None},
-        "latency_ms": {"first": 100, "pass2": None, "strong": None},
-    }
+    upstream: dict[str, float],
+    leaves: list[dict[str, Any]],
+    screen_mismarked: list[str] | None = None,
+    baseline_mismarked: list[str] | None = None,
+    baseline_correction_usd: float = 0.10,
+    extra_screen_records: list[dict[str, Any]] | None = None,
+) -> tuple[Path, Path]:
+    """Lay out ``<tmp>/{baseline,screen}`` and ``<tmp>/aa_floor.json`` (floor 0).
+
+    The baseline pays ``upstream[case]`` once per case and
+    ``baseline_correction_usd`` per leaf; the screen has one first-pass
+    correction record per leaf.
+    """
+    baseline, screen = tmp / "baseline", tmp / "screen"
+    rows: list[dict[str, Any]] = []
+    per_case: dict[str, float] = {}
+    for case, usd in upstream.items():
+        rows.append(_record(case, None, "extraction", usd))
+        per_case[case] = usd
+    for leaf in leaves:
+        rows.append(
+            _record(leaf["case_key"], leaf["question_id"], "correction", baseline_correction_usd)
+        )
+        per_case[leaf["case_key"]] += baseline_correction_usd
+    _summary(
+        baseline,
+        usd=sum(per_case.values()) / len(per_case),
+        mismarked=baseline_mismarked or [],
+        scored=len(leaves),
+    )
+    _summary(screen, usd=0.0, mismarked=screen_mismarked or [], scored=len(leaves))
+    _write_jsonl(baseline / "records.jsonl", rows)
+    screen_rows = [
+        _record(leaf["case_key"], leaf["question_id"], "correction", 0.01) for leaf in leaves
+    ]
+    _write_jsonl(screen / "records.jsonl", screen_rows + (extra_screen_records or []))
+    _write_jsonl(screen / "cascade_leaves.jsonl", leaves)
+    (tmp / "aa_floor.json").write_text(json.dumps({"aa_floor": 0}))
+    return screen, baseline
+
+
+def _inputs(screen: Path, baseline: Path) -> cascade_sweep.Inputs:
+    return cascade_sweep.load_inputs(screen_dir=screen, baseline_dir=baseline)
 
 
 def test_sweep_picks_cheapest_passing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Two cases, two leaves each. The cheap model mismarks c1/q1 (confidence
-    0.60) and c2/q1 (0.70); the strong baseline mismarks nothing. The saving is
-    big-tier, which allows ceil(2% of 4) = 1 extra mismark, so the cheapest pass
-    is 0.61: it escalates c1/q1 alone. Below that both mismarks stand; above
-    0.70 a second strong call is paid for."""
-    baseline = tmp_path / "baseline"
-    screen = tmp_path / "screen"
-    _summary(baseline, usd=0.50, mismarked=[], scored=4)
-    _summary(screen, usd=0.10, mismarked=["c1/q1", "c2/q1"], scored=4)
-    (tmp_path / "aa_floor.json").write_text(json.dumps({"aa_floor": 0}))
-    base_rows = []
-    for case in ("c1", "c2"):
-        base_rows.append(_record(case, None, "extraction", 0.05))
-        for qid in ("q1", "q2"):
-            base_rows.append(_record(case, qid, "correction", 0.10))
-    _write_jsonl(baseline / "records.jsonl", base_rows)
-    _write_jsonl(screen / "records.jsonl", [])
-    _write_jsonl(
-        screen / "cascade_leaves.jsonl",
-        [
-            _leaf("c1", "q1", 0.60),
+    """Two cases, two leaves each, every leaf re-marked by the strong model in
+    the logging screen (all strong marks right). The cheap model is wrong on
+    c1/q1 (confidence 0.60) and c2/q1 (0.70). The saving is big-tier, which
+    allows ceil(2% of 4) = 1 extra mismark, so the cheapest pass is 0.61: it
+    escalates c1/q1 alone. Below that both mismarks stand; above 0.70 a second
+    strong call is paid for."""
+    screen, baseline = _write_run(
+        tmp_path,
+        upstream={"c1": 0.05, "c2": 0.05},
+        leaves=[
+            _leaf("c1", "q1", 0.60, strong=2),
             _leaf("c1", "q2", 0.90),
-            _leaf("c2", "q1", 0.70),
+            _leaf("c2", "q1", 0.70, strong=2),
             _leaf("c2", "q2", 0.95),
         ],
     )
-    best = cascade_sweep.sweep(cascade_sweep.load_inputs(screen_dir=screen, baseline_dir=baseline))
+    best = cascade_sweep.sweep(_inputs(screen, baseline))
     assert best is not None
-    assert best.combo.threshold == pytest.approx(0.61)
-    assert best.combo.disagreement is False
-    assert best.combo.unaddressed is False
+    assert best.combo == cascade_sweep.Combo(0.61, False, False)
     assert best.verdict.passed
-    # c1: extraction 0.05 + two cheap passes 0.02 + one strong 0.10; c2: no strong.
+    # c1: extraction 0.05 + two cheap passes 0.02 + one logged strong 0.10; c2: no strong.
     assert best.summary.usd_per_script_mean == pytest.approx((0.17 + 0.07) / 2)
     assert best.summary.mismarked_parts == frozenset({"c2/q1"})
+    assert best.proxied == 0
 
     code = cascade_sweep.main(["--screen", str(screen), "--baseline", str(baseline)])
     out = capsys.readouterr().out
     assert code == 0
     assert "threshold=0.61" in out
+    assert "proxied=0" in out
     assert '"cheap-model": 0.61' in out
 
 
 def test_sweep_reports_none_when_nothing_passes(tmp_path: Path) -> None:
-    baseline = tmp_path / "baseline"
-    screen = tmp_path / "screen"
     # Baseline $0.012/script: the cheap pass alone saves 17%, a small-tier
-    # saving that allows no extra mismark; escalating costs more than baseline.
-    _summary(baseline, usd=0.012, mismarked=[], scored=1)
-    _summary(screen, usd=0.10, mismarked=["c1/q1"], scored=1)
-    (tmp_path / "aa_floor.json").write_text(json.dumps({"aa_floor": 0}))
-    _write_jsonl(baseline / "records.jsonl", [_record("c1", "q1", "correction", 0.10)])
-    _write_jsonl(screen / "records.jsonl", [])
-    # Confidence 0.995 never falls below a swept threshold; no pass2 logged.
-    _write_jsonl(screen / "cascade_leaves.jsonl", [_leaf("c1", "q1", 0.995)])
-    inputs = cascade_sweep.load_inputs(screen_dir=screen, baseline_dir=baseline)
-    assert cascade_sweep.sweep(inputs) is None
+    # saving that allows no extra mismark; anything more costs more than baseline.
+    screen, baseline = _write_run(
+        tmp_path,
+        upstream={"c1": 0.0},
+        leaves=[_leaf("c1", "q1", 0.995, strong=2)],
+        baseline_correction_usd=0.012,
+    )
+    assert cascade_sweep.sweep(_inputs(screen, baseline)) is None
     assert cascade_sweep.main(["--screen", str(screen), "--baseline", str(baseline)]) == 1
+
+
+def test_sweep_uses_logged_strong_cost_and_marks(tmp_path: Path) -> None:
+    screen, baseline = _write_run(
+        tmp_path,
+        upstream={"c1": 0.0},
+        leaves=[_leaf("c1", "q1", 0.5, strong=2, usd_strong=0.07)],
+        baseline_mismarked=["c1/q1"],
+    )
+    inputs = _inputs(screen, baseline)
+    escalate = cascade_sweep.simulate(inputs, cascade_sweep.Combo(0.9, False, False))
+    # The screen's own strong re-mark was right, whatever the baseline did.
+    assert escalate.summary.mismarked_parts == frozenset()
+    assert escalate.summary.usd_per_script_mean == pytest.approx(0.08)
+    assert escalate.proxied == 0
+    keep = cascade_sweep.simulate(inputs, cascade_sweep.Combo(0.4, False, False))
+    # Cheap mark (1) differs from the right strong mark (2): the cheap mark is wrong.
+    assert keep.summary.mismarked_parts == frozenset({"c1/q1"})
+
+
+@pytest.mark.parametrize(("logged_strong", "proxy"), [(0.20, 0.20), (0.05, 0.10)])
+def test_sweep_proxies_unlogged_strong_never_cheap(
+    tmp_path: Path, logged_strong: float, proxy: float
+) -> None:
+    """A leaf with no logged strong call costs the baseline's correction cost
+    scaled by max(1, mean logged-strong / baseline ratio)."""
+    screen, baseline = _write_run(
+        tmp_path,
+        upstream={"c1": 0.0},
+        leaves=[
+            _leaf("c1", "q1", 0.5, usd_strong=logged_strong),
+            _leaf("c1", "q2", 0.5, usd_strong=None),
+        ],
+        baseline_mismarked=["c1/q2"],
+    )
+    sim = cascade_sweep.simulate(_inputs(screen, baseline), cascade_sweep.Combo(0.9, False, False))
+    assert sim.proxied == 1
+    assert sim.summary.usd_per_script_mean == pytest.approx(0.01 + logged_strong + 0.01 + proxy)
+    # A proxied leaf takes the baseline's mark.
+    assert sim.summary.mismarked_parts == frozenset({"c1/q2"})
+
+
+def test_sweep_refuses_to_proxy_without_any_logged_strong(tmp_path: Path) -> None:
+    screen, baseline = _write_run(
+        tmp_path, upstream={"c1": 0.0}, leaves=[_leaf("c1", "q1", 0.5, usd_strong=None)]
+    )
+    with pytest.raises(ValueError, match="logged strong"):
+        _inputs(screen, baseline)
 
 
 def test_sweep_missing_pass2_is_pessimistic(tmp_path: Path) -> None:
     """A combination that needs a second pass the screen never ran assumes the
-    trigger fired: the strong cost is paid and the strong mark is used."""
-    baseline = tmp_path / "baseline"
-    screen = tmp_path / "screen"
-    _summary(baseline, usd=0.50, mismarked=[], scored=1)
-    _summary(screen, usd=0.10, mismarked=[], scored=1)
-    (tmp_path / "aa_floor.json").write_text(json.dumps({"aa_floor": 0}))
-    _write_jsonl(baseline / "records.jsonl", [_record("c1", "q1", "correction", 0.10)])
-    _write_jsonl(screen / "records.jsonl", [])
-    _write_jsonl(screen / "cascade_leaves.jsonl", [_leaf("c1", "q1", 0.95)])
-    inputs = cascade_sweep.load_inputs(screen_dir=screen, baseline_dir=baseline)
-    sim = cascade_sweep.simulate(inputs, cascade_sweep.Combo(0.5, True, False))
+    trigger fired: the second pass and the strong call are paid for."""
+    screen, baseline = _write_run(
+        tmp_path, upstream={"c1": 0.0}, leaves=[_leaf("c1", "q1", 0.95, pass2=None)]
+    )
+    sim = cascade_sweep.simulate(_inputs(screen, baseline), cascade_sweep.Combo(0.5, True, False))
     assert sim.unknown == 1
-    # first 0.01 + assumed pass2 0.01 + strong 0.10
+    # first 0.01 + assumed pass2 0.01 + logged strong 0.10
     assert sim.summary.usd_per_script_mean == pytest.approx(0.12)
 
 
-def test_sweep_uses_screen_strong_mark_when_screen_escalated(tmp_path: Path) -> None:
-    baseline = tmp_path / "baseline"
-    screen = tmp_path / "screen"
-    _summary(baseline, usd=0.50, mismarked=["c1/q1"], scored=1)
-    _summary(screen, usd=0.10, mismarked=[], scored=1)
-    (tmp_path / "aa_floor.json").write_text(json.dumps({"aa_floor": 0}))
-    _write_jsonl(baseline / "records.jsonl", [_record("c1", "q1", "correction", 0.10)])
-    _write_jsonl(screen / "records.jsonl", [])
-    leaf = _leaf("c1", "q1", 0.5)
-    leaf.update(
-        escalated=True,
-        strong_awarded_marks=2,
-        usd_2027={"first": 0.01, "pass2": None, "strong": 0.07},
-        latency_ms={"first": 100, "pass2": None, "strong": 300},
+@pytest.mark.parametrize(
+    "second",
+    [
+        _leaf("c1", "q2", 0.9, run_token="run-b"),
+        _leaf("c1", "q2", 0.9, config={**_CONFIG, "threshold": 0.8}),
+    ],
+)
+def test_sweep_refuses_a_log_from_two_runs(tmp_path: Path, second: dict[str, Any]) -> None:
+    screen, baseline = _write_run(
+        tmp_path, upstream={"c1": 0.0}, leaves=[_leaf("c1", "q1", 0.5), second]
     )
-    _write_jsonl(screen / "cascade_leaves.jsonl", [leaf])
-    inputs = cascade_sweep.load_inputs(screen_dir=screen, baseline_dir=baseline)
-    escalate = cascade_sweep.simulate(inputs, cascade_sweep.Combo(0.9, False, False))
-    # The screen's own strong re-mark was right (not in the screen's mismarks).
-    assert escalate.summary.mismarked_parts == frozenset()
-    assert escalate.summary.usd_per_script_mean == pytest.approx(0.08)
-    keep = cascade_sweep.simulate(inputs, cascade_sweep.Combo(0.4, False, False))
-    # Cheap mark (1) differs from the right strong mark (2): the cheap mark is wrong.
-    assert keep.summary.mismarked_parts == frozenset({"c1/q1"})
+    with pytest.raises(ValueError, match="more than one"):
+        _inputs(screen, baseline)
+
+
+def test_sweep_refuses_a_marked_part_without_a_leaf_line(tmp_path: Path) -> None:
+    screen, baseline = _write_run(
+        tmp_path,
+        upstream={"c1": 0.0},
+        leaves=[_leaf("c1", "q1", 0.5)],
+        extra_screen_records=[_record("c1", "q9", "correction", 0.01)],
+    )
+    with pytest.raises(ValueError, match="c1/q9"):
+        _inputs(screen, baseline)
+
+
+def test_sweep_refuses_missing_first_pass_cost(tmp_path: Path) -> None:
+    screen, baseline = _write_run(
+        tmp_path, upstream={"c1": 0.0}, leaves=[_leaf("c1", "q1", 0.5, usd_first=None)]
+    )
+    with pytest.raises(ValueError, match="first"):
+        _inputs(screen, baseline)
+
+
+def test_sweep_refuses_unpriced_baseline_record(tmp_path: Path) -> None:
+    screen, baseline = _write_run(
+        tmp_path, upstream={"c1": float("nan")}, leaves=[_leaf("c1", "q1", 0.5)]
+    )
+    with pytest.raises(ValueError, match="unpriced"):
+        _inputs(screen, baseline)
+
+
+def test_loo_rejects_combination_failing_a_held_out_case(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """c1 is cheap to run, so it carries the whole-run saving into the big tier,
+    where 1 extra mismark (c2/q1, cheap confidence 0.70) is allowed. Holding c1
+    out drops the saving to the small tier, which allows none, so leave-one-out
+    must escalate c2/q1: threshold 0.71."""
+    screen, baseline = _write_run(
+        tmp_path,
+        upstream={"c1": 0.0, "c2": 0.25, "c3": 0.25},
+        leaves=[
+            _leaf("c1", "q1", 0.95),
+            _leaf("c2", "q1", 0.70, strong=2),
+            _leaf("c3", "q1", 0.95),
+        ],
+    )
+    inputs = _inputs(screen, baseline)
+    whole = cascade_sweep.sweep(inputs)
+    assert whole is not None
+    assert whole.combo == cascade_sweep.Combo(0.50, False, False)
+    verdicts = {
+        case: cascade_sweep.judge_combo(inputs, whole.combo, held_out=case)[1]
+        for case in inputs.cases
+    }
+    assert not verdicts["c1"].passed
+    assert verdicts["c1"].tier == "small"
+
+    loo = cascade_sweep.sweep(inputs, loo=True)
+    assert loo is not None
+    assert loo.combo == cascade_sweep.Combo(0.71, False, False)
+    assert loo.summary.usd_per_script_mean == pytest.approx((0.01 + 0.36 + 0.26) / 3)
+    assert [case for case, _ in loo.loo] == ["c1", "c2", "c3"]
+    assert all(v.passed for _, v in loo.loo)
+
+    code = cascade_sweep.main(["--screen", str(screen), "--baseline", str(baseline), "--loo"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "threshold=0.71" in out
+    assert "held out c1: PASS" in out
