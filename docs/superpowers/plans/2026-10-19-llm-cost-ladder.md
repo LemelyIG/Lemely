@@ -19,7 +19,7 @@
   - both tiers: id-match must not drop, the structured-output validity rate must not drop, p95 latency per script ≤ 2× the rung-0 baseline, and any failed call or missing leaf fails the run.
 - A/A floor: one rerun of the rung-0 baseline, reused for every later comparison.
 - Spend caps across all cost-ladder runs combined, in billed dollars: **Gemini $6.00, Anthropic $40.00** (user decisions 2026-10-19; Gemini raised from $3.00 after the fixture finding). Pass `--cap-gemini-usd 6.0` on every ladder command. Enforced by the runner (Task 5) before and during every run; overshoot is at most one case's cost.
-- Screen set: `tests/golden`, dev split, the same 12 cases as `BUILD/accuracy-runs/cost-201-2026-10-01`, after Task 5b's fixture fix (the corpus digest is re-pinned by Task 5b; the old digest `76989782d6fda9fc` is void). No full-corpus run.
+- Screen set: `tests/golden`, dev split, the same 12 cases as `BUILD/accuracy-runs/cost-201-2026-10-01`, after Task 5b's fixture fix (corpus digest `090492b217365de4`, re-pinned by Task 5b at 70890df5; the old digest `76989782d6fda9fc` is void). No full-corpus run.
 - Phase A stops when the next lever is expected to save under 5% of the current cost. Phase B is skipped if Phase A cuts 50% or more from the rung-0 baseline.
 - Every new behaviour sits behind a setting whose default reproduces today's prompts and cache keys byte for byte.
 - No third-party routing library (no LiteLLM, no OpenRouter).
