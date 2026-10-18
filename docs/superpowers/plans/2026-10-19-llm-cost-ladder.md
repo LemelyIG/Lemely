@@ -18,6 +18,7 @@
   - saving of 30% or more: extra mismarked scored parts ≤ `max(aa_floor, ceil(0.02 × scored parts))`; the 2% term is 1 on `cost-201`'s 31 scored parts;
   - both tiers: id-match must not drop, the structured-output validity rate must not drop, p95 latency per script ≤ 2× the rung-0 baseline, and any failed call or missing leaf fails the run.
 - A/A floor: one rerun of the rung-0 baseline, reused for every later comparison.
+- Spend caps across all cost-ladder runs combined, in billed dollars: **Gemini $3.00, Anthropic $40.00** (user decision 2026-10-19). Enforced by the runner (Task 5) before and during every run; overshoot is at most one case's cost.
 - Screen set: `tests/golden`, dev split, the 12 cases of `BUILD/accuracy-runs/cost-201-2026-10-01` (corpus digest `76989782d6fda9fc`). No full-corpus run.
 - Phase A stops when the next lever is expected to save under 5% of the current cost. Phase B is skipped if Phase A cuts 50% or more from the rung-0 baseline.
 - Every new behaviour sits behind a setting whose default reproduces today's prompts and cache keys byte for byte.
