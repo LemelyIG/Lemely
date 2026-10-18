@@ -532,7 +532,13 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
 
-def _write_summary(path: Path, results: list[dict[str, Any]], *, usd: float) -> None:
+def _write_summary(
+    path: Path,
+    results: list[dict[str, Any]],
+    *,
+    usd: float,
+    incomplete: tuple[str, ...] = (),
+) -> None:
     """``summary.json`` and ``results.json`` for one run, mismarks derived from *results*."""
     path.mkdir(parents=True, exist_ok=True)
     scored = [r for r in results if r["scored"]]
@@ -550,7 +556,7 @@ def _write_summary(path: Path, results: list[dict[str, Any]], *, usd: float) -> 
                 "scored_parts": len(scored),
                 "id_match_rate": 1.0,
                 "validity_rate": 1.0,
-                "incomplete": [],
+                "incomplete": list(incomplete),
             }
         )
     )
@@ -566,6 +572,7 @@ def _write_run(
     baseline_pred: dict[str, int] | None = None,
     screen_pred: dict[str, int] | None = None,
     mcq: tuple[str, ...] = (),
+    screen_incomplete: tuple[str, ...] = (),
     extra_screen_results: list[dict[str, Any]] | None = None,
     baseline_correction_usd: float = 0.10,
 ) -> tuple[Path, Path]:
@@ -596,7 +603,12 @@ def _write_run(
         )
         per_case[leaf["case_key"]] += baseline_correction_usd
     _write_summary(baseline, base_results, usd=sum(per_case.values()) / len(per_case))
-    _write_summary(screen, screen_results + (extra_screen_results or []), usd=0.0)
+    _write_summary(
+        screen,
+        screen_results + (extra_screen_results or []),
+        usd=0.0,
+        incomplete=screen_incomplete,
+    )
     _write_jsonl(baseline / "records.jsonl", rows)
     _write_jsonl(screen / "cascade_leaves.jsonl", leaves)
     (tmp / "aa_floor.json").write_text(json.dumps({"aa_floor": 0}))
@@ -639,6 +651,10 @@ def test_sweep_picks_cheapest_passing(tmp_path: Path, capsys: pytest.CaptureFixt
     assert "threshold=0.61" in out
     assert "proxied=0" in out
     assert '"cheap-model": 0.61' in out
+    # c1/q2 and c2/q2 keep a cheap mark the screen did not return, judged right:
+    # 1 extra mismark + 2 = 3 > 1 allowed.
+    assert "approximated judged correct: 2" in out
+    assert "FRAGILE" in out
 
 
 def test_sweep_reports_none_when_nothing_passes(tmp_path: Path) -> None:
@@ -688,6 +704,57 @@ def test_sweep_strong_mark_uses_the_screen_final_mark(tmp_path: Path) -> None:
     assert escalate.summary.mismarked_parts == frozenset()
     keep = cascade_sweep.simulate(inputs, cascade_sweep.Combo(0.4, False, False))
     assert keep.summary.mismarked_parts == frozenset({"c1/q1"})
+
+
+def test_sweep_other_response_is_approximated_even_with_equal_raw_marks(tmp_path: Path) -> None:
+    """The screen returned the strong re-mark. Keeping the cheap pass is judged
+    on its raw mark even when that equals the strong raw mark: post-processing
+    depends on more than the raw marks, so the screen's final is not borrowed."""
+    screen, baseline = _write_run(
+        tmp_path,
+        upstream={"c1": 0.0},
+        leaves=[_leaf("c1", "q1", 0.5, awarded=2, strong=2)],
+        screen_pred={"c1/q1": 1},
+        truth={"c1/q1": 1},
+    )
+    inputs = _inputs(screen, baseline)
+    keep = cascade_sweep.simulate(inputs, cascade_sweep.Combo(0.4, False, False))
+    assert keep.approximated == 1
+    assert keep.approximated_correct == 0
+    assert keep.summary.mismarked_parts == frozenset({"c1/q1"})
+    escalate = cascade_sweep.simulate(inputs, cascade_sweep.Combo(0.9, False, False))
+    assert escalate.approximated == 0
+    assert escalate.summary.mismarked_parts == frozenset()
+
+
+def test_sweep_refuses_a_leaf_marked_twice_in_one_run(tmp_path: Path) -> None:
+    screen, baseline = _write_run(
+        tmp_path,
+        upstream={"c1": 0.0},
+        leaves=[_leaf("c1", "q1", 0.5), _leaf("c1", "q1", 0.6)],
+    )
+    with pytest.raises(ValueError, match="marked twice"):
+        _inputs(screen, baseline)
+
+
+def test_loo_filters_incomplete_entries_by_case(tmp_path: Path) -> None:
+    screen, baseline = _write_run(
+        tmp_path,
+        upstream={"c1": 0.0, "c2": 0.0},
+        leaves=[_leaf("c1", "q1", 0.5), _leaf("c2", "q1", 0.5)],
+        screen_incomplete=("c1 (unpriced model x)",),
+    )
+    inputs = _inputs(screen, baseline)
+    combo = cascade_sweep.Combo(0.9, False, False)
+    assert cascade_sweep.simulate(inputs, combo).summary.incomplete == ("c1 (unpriced model x)",)
+    assert cascade_sweep.simulate(inputs, combo, held_out="c1").summary.incomplete == ()
+    assert cascade_sweep.simulate(inputs, combo, held_out="c2").summary.incomplete == (
+        "c1 (unpriced model x)",
+    )
+    _, verdict = cascade_sweep.judge_combo(inputs, combo, held_out="c1")
+    assert not any("incomplete" in reason for reason in verdict.reasons)
+    _, verdict = cascade_sweep.judge_combo(inputs, combo, held_out="c2")
+    assert any("incomplete" in reason for reason in verdict.reasons)
 
 
 def test_sweep_returned_response_takes_the_screen_final_mark(tmp_path: Path) -> None:

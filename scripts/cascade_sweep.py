@@ -25,10 +25,19 @@ Inputs:
   cascade does not change) and each leaf's correction cost (the proxy base).
 
 Every simulated mark is judged against ``truth_marks``. The screen's final
-(post-processed) mark is known for the response the screen returned; the other
-response's mark is its raw AI mark when it differs from the returned one, and
-the sweep counts those as ``approximated``. Scored parts per case come from the
-``scored`` flag in ``results.json``.
+(post-processed) mark is known only for the response the screen returned (the
+strong re-mark if the screen escalated the leaf, else the first pass). A
+combination that keeps the other response is judged on that response's raw AI
+mark, even when it equals the returned raw mark, since post-processing depends
+on more than the raw marks; the sweep counts those as ``approximated`` and, for
+the chosen combination, reports how many were judged correct and flags it
+``FRAGILE`` when its extra mismarks plus that count would exceed the allowance.
+Scored parts per case come from the ``scored`` flag in ``results.json``.
+
+The leaf log must come from one uninterrupted screen: every line carries the
+process's run token, so a resumed or interrupted screen (a new process, a new
+token) is refused. Delete the leaf log and re-run the whole label. A leaf marked
+twice in one run (an ECF re-mark) is refused too.
 
 The logging screen this is built for runs the cheap model with a fitted
 threshold of 1.0 and both triggers on, so every leaf logs a first pass, a second
@@ -151,6 +160,7 @@ class Simulation:
     unknown: int
     proxied: int
     approximated: int  # marks judged raw: not the response the screen returned
+    approximated_correct: int  # of those, judged equal to the truth
 
 
 @dataclass(frozen=True)
@@ -161,6 +171,7 @@ class Choice:
     unknown: int
     proxied: int
     approximated: int
+    approximated_correct: int
     loo: tuple[tuple[str, Verdict], ...] = field(default=())
 
 
@@ -234,9 +245,10 @@ def _leaf(raw: dict[str, object]) -> Leaf:
 
 
 def read_leaves(path: Path) -> tuple[tuple[Leaf, ...], str]:
-    """The leaf log, one leaf per key (a later line replaces an earlier one), and its run token.
+    """The leaf log, one leaf per key, and its run token.
 
-    Refuses a log with more than one run token or cascade config.
+    Refuses a log with more than one run token or cascade config, and a leaf
+    logged twice in one run.
     """
     by_key: dict[str, Leaf] = {}
     tokens: set[str] = set()
@@ -248,6 +260,11 @@ def read_leaves(path: Path) -> tuple[tuple[Leaf, ...], str]:
         tokens.add(str(raw.get("run_token")))
         configs.add(json.dumps(raw.get("config"), sort_keys=True))
         leaf = _leaf(raw)
+        if leaf.key in by_key:
+            raise ValueError(
+                f"{path}: {leaf.key} is logged more than once; "
+                "leaf marked twice in one run (ECF re-mark?); not supported"
+            )
         by_key[leaf.key] = leaf
     if not by_key:
         raise ValueError(f"{path} has no cascade leaves")
@@ -465,7 +482,7 @@ def simulate(inputs: Inputs, combo: Combo, held_out: str | None = None) -> Simul
     mismarked = {k for k in _mismarked(inputs.screen_results, kept) if k not in logged}
     proxy_usd_base = max(inputs.leaf_usd.values(), default=0.0)
     proxy_ms_base = max(inputs.leaf_ms.values(), default=0.0)
-    unknown = proxied = approximated = 0
+    unknown = proxied = approximated = approximated_correct = 0
 
     for leaf in leaves:
         cost, latency = leaf.usd_first, leaf.ms_first
@@ -479,12 +496,15 @@ def simulate(inputs: Inputs, combo: Combo, held_out: str | None = None) -> Simul
             else:
                 fire = leaf.pass2_awarded != leaf.awarded
 
-        # The raw marks the cascade would return; None: take the baseline's mark.
+        # The raw marks the cascade would return, and whether they come from the
+        # strong re-mark; raw None: take the baseline's mark.
         raw: int | None
+        from_strong = False
         if not fire or leaf.strong_skipped:
             raw = leaf.awarded
         elif leaf.strong_awarded is not None:
             raw = leaf.strong_awarded
+            from_strong = True
             cost += leaf.usd_strong or 0.0
             latency += leaf.ms_strong or 0.0
         else:
@@ -506,12 +526,13 @@ def simulate(inputs: Inputs, combo: Combo, held_out: str | None = None) -> Simul
                 continue
             mark = base.predicted
         else:
-            returned = leaf.strong_awarded if leaf.strong_awarded is not None else leaf.awarded
-            if raw == returned:
+            screen_returned_strong = leaf.strong_awarded is not None
+            if from_strong == screen_returned_strong:
                 mark = result.predicted  # the screen's final, post-processed mark
             else:
                 mark = raw
                 approximated += 1
+                approximated_correct += mark == result.truth
         if mark != result.truth:
             mismarked.add(leaf.key)
 
@@ -537,6 +558,7 @@ def simulate(inputs: Inputs, combo: Combo, held_out: str | None = None) -> Simul
         unknown=unknown,
         proxied=proxied,
         approximated=approximated,
+        approximated_correct=approximated_correct,
     )
 
 
@@ -590,6 +612,7 @@ def sweep(inputs: Inputs, *, loo: bool = False) -> Choice | None:
                 sim.unknown,
                 sim.proxied,
                 sim.approximated,
+                sim.approximated_correct,
                 held,
             )
         )
@@ -659,6 +682,14 @@ def main(argv: list[str] | None = None) -> int:
         f"disagreement={combo.disagreement} unaddressed={combo.unaddressed} "
         f"usd/script={best.summary.usd_per_script_mean:.4f} {_verdict_line(best.verdict)} "
         f"unknown={best.unknown} proxied={best.proxied} approximated={best.approximated}"
+    )
+    verdict = best.verdict
+    fragile = verdict.extra_mismarks + best.approximated_correct > verdict.allowed_extra
+    print(
+        f"approximated judged correct: {best.approximated_correct} "
+        f"(extra_mismarks {verdict.extra_mismarks} + {best.approximated_correct} "
+        f"{'>' if fragile else '<='} allowed {verdict.allowed_extra})"
+        + (" FRAGILE: the pass rests on raw-judged marks" if fragile else "")
     )
     for case, verdict in best.loo:
         print(f"  held out {case}: {'PASS' if verdict.passed else 'FAIL'} {_verdict_line(verdict)}")
