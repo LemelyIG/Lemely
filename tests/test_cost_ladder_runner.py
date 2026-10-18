@@ -1008,14 +1008,15 @@ def test_baseline_records_in_run_cache_hits(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     clients: list[tuple[Settings, str]] = []
-    recs = [_tagged("a", "extraction"), _tagged("a", "correction", parse_ok=False)]
+    # All calls parse: an unparsed call would make rung 0 incomplete, which run_baseline refuses.
+    recs = [_tagged("a", "extraction"), _tagged("a", "correction")]
     _fake_harness(monkeypatch, {"a": recs}, clients, cache_hits_per_case=2)
     runner.run_baseline(
         out_dir=tmp_path, cases=[_case("a")], settings=Settings(), max_run_usd={"gemini": 1.0}
     )
     data = json.loads((tmp_path / "baseline" / "summary.json").read_text())
     assert data["in_run_cache_hits"] == 2
-    assert data["cacheable_live_records"] == 1  # the unparsed call writes no entry
+    assert data["cacheable_live_records"] == 2
     assert data["cache_entries_written"] == 0  # the fake client writes none
     # The A/A rerun bypasses the cache and is not annotated.
     assert "in_run_cache_hits" not in json.loads(
@@ -1239,3 +1240,174 @@ def test_results_json_has_case_keyed_question_results(
     # Existing fields are kept.
     assert data["question_results"][0]["confidence_score"] == 0.9
     assert {"metrics", "funnel", "manifest"} <= set(data)
+
+
+# --- fix round 4: complete-baseline guard, safe restart, ladder integrity -------------------
+
+
+def _cap_baseline(out: Path) -> None:
+    """Rewrite the seeded baseline summary as one stopped by the spend cap."""
+    runner.write_summary(
+        _summary(incomplete=("b (spend cap)",)),
+        out / "baseline" / "summary.json",
+        usd_per_script_mean_now=0.0,
+        extra={"stopped_by_spend_cap": "gemini: cap reached"},
+    )
+
+
+def test_capped_baseline_refuses_aa_only_and_screen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _seed_ladder(tmp_path, baseline=_summary())
+    _cap_baseline(tmp_path)
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": []}, clients)
+    kwargs: dict[str, Any] = {
+        "cases": [_case("a")],
+        "settings": Settings(),
+        "max_run_usd": {"gemini": 1.0},
+    }
+    with pytest.raises(runner.LadderStateError, match="--restart-baseline"):
+        runner.run_baseline(out_dir=tmp_path, aa_only=True, **kwargs)
+    with pytest.raises(runner.LadderStateError, match="--restart-baseline"):
+        runner.run_screen("lever1", {}, out_dir=tmp_path, **kwargs)
+    assert clients == []
+    assert not (tmp_path / "cache" / "lever1").exists()
+
+
+@pytest.mark.parametrize("capped", ["baseline", "baseline_aa"])
+def test_incomplete_baseline_or_aa_writes_no_floor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capped: str
+) -> None:
+    labels: list[str] = []
+
+    def fake(label: str, overrides: dict[str, object], **kw: Any) -> RunSummary:
+        labels.append(label)
+        incomplete = ("a",) if label == capped else ()
+        s = _summary(incomplete=incomplete)
+        runner.write_summary(s, kw["out_dir"] / label / "summary.json", usd_per_script_mean_now=0.0)
+        (kw["out_dir"] / label / "records.jsonl").write_text("")
+        return s
+
+    monkeypatch.setattr(runner, "run_config", fake)
+    with pytest.raises(runner.LadderStateError, match="--restart-baseline"):
+        runner.run_baseline(out_dir=tmp_path, cases=[_case("a")])
+    assert not (tmp_path / "aa_floor.json").exists()
+    # An incomplete baseline is caught before the A/A run spends anything.
+    assert labels == (["baseline"] if capped == "baseline" else ["baseline", "baseline_aa"])
+
+
+def test_restart_archives_screens_and_needs_no_max_run_usd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _seed_ladder(tmp_path, baseline=_summary())
+    (tmp_path / "baseline_aa").mkdir()
+    (tmp_path / "baseline_aa" / "run_cost.json").write_text(json.dumps({"gemini": 0.25}))
+    _seed_run(tmp_path, "lever1", _summary())
+    runner.append_ladder(tmp_path, "lever1")
+    (tmp_path / "cache" / "lever1" / "gemini").mkdir(parents=True)
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": [_bill("a", 0.25)]}, clients)
+    runner.run_baseline(out_dir=tmp_path, cases=[_case("a")], settings=Settings(), restart=True)
+    (archive,) = (tmp_path / "archive").iterdir()
+    assert archive.name.startswith("restart-")
+    assert (archive / "ladder.json").is_file()
+    assert (archive / "lever1" / "verdict.json").is_file()
+    assert not (tmp_path / "lever1").exists()
+    assert not (tmp_path / "ladder.json").exists()
+    assert not (tmp_path / "cache" / "lever1").exists()
+    assert [mode for _, mode in clients] == ["read_write", "bypass"]
+
+
+def test_restart_refused_by_checks_deletes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _spend_file_in_tmp: Path
+) -> None:
+    _seed_ladder(tmp_path, baseline=_summary())
+    _seed_run(tmp_path, "lever1", _summary())
+    runner.append_ladder(tmp_path, "lever1")
+    _spend_file_in_tmp.write_text(json.dumps({"gemini": 2.9}))
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": []}, clients)
+    with pytest.raises(SpendCapError):
+        runner.run_baseline(
+            out_dir=tmp_path,
+            cases=[_case("a")],
+            settings=Settings(),
+            max_run_usd={"gemini": 1.0},
+            restart=True,
+        )
+    assert (tmp_path / "cache" / "baseline" / "gemini" / "k.json").is_file()
+    assert (tmp_path / "baseline" / "summary.json").is_file()
+    assert (tmp_path / "lever1" / "verdict.json").is_file()
+    assert (tmp_path / "ladder.json").is_file()
+    assert not (tmp_path / "archive").exists()
+
+
+def test_aa_only_refused_while_ladder_has_rows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _seed_ladder(tmp_path, baseline=_summary())
+    runner.append_ladder(tmp_path, "lever1")
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": []}, clients)
+    with pytest.raises(runner.LadderStateError, match="--restart-baseline"):
+        runner.run_baseline(out_dir=tmp_path, cases=[_case("a")], settings=Settings(), aa_only=True)
+    assert clients == []
+
+
+def test_screen_against_itself_is_refused(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _seed_ladder(tmp_path, baseline=_summary())
+    _seed_run(tmp_path, "lever1", _summary())
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": []}, clients)
+    with pytest.raises(runner.LadderStateError, match="itself"):
+        runner.run_screen("lever1", {}, out_dir=tmp_path, against="lever1", cases=[_case("a")])
+    assert clients == []
+
+
+def test_rescreen_of_a_stacked_on_label_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _seed_ladder(tmp_path, baseline=_summary())
+    _seed_run(tmp_path, "lever1", _summary())
+    _seed_run(tmp_path, "lever2", _summary())
+    verdict2 = tmp_path / "lever2" / "verdict.json"
+    verdict2.write_text(json.dumps({"passed": True, "against": "lever1"}))
+    runner.append_ladder(tmp_path, "lever1")
+    runner.append_ladder(tmp_path, "lever2")
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": []}, clients)
+    with pytest.raises(runner.LadderStateError, match="lever2"):
+        runner.run_screen("lever1", {}, out_dir=tmp_path, cases=[_case("a")])
+    assert clients == []
+    assert (tmp_path / "lever1" / "verdict.json").is_file()
+
+
+def test_post_run_check_catches_uncased_upstream_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _seed_ladder(tmp_path, baseline=_summary(scored_parts=2))
+    started: list[str] = []
+    uncased = replace(_tagged("a", "binding", usd_now=0.05), case_key=None)
+    per_case = {"a": [_tagged("a", "correction"), uncased], "b": [_tagged("b", "correction")]}
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, per_case, clients, on_case_start=started.append)
+    with pytest.raises(runner.UpstreamNotFrozen, match="binding"):
+        runner.run_screen(
+            "lever1",
+            {},
+            out_dir=tmp_path,
+            cases=[_case("a"), _case("b")],
+            settings=Settings(),
+            max_run_usd={"gemini": 1.0},
+        )
+    assert started == ["a", "b"]  # the per-case guard cannot see it; the post-run check does
+    assert not (tmp_path / "lever1" / "verdict.json").exists()
+    assert json.loads((tmp_path / "spend.json").read_text()) == {"gemini": pytest.approx(0.05)}
+
+
+def test_report_without_baseline_is_a_clear_error(tmp_path: Path) -> None:
+    from lemely.accuracy.cost_ladder.report import write_report
+
+    with pytest.raises(runner.LadderStateError, match="baseline"):
+        write_report(tmp_path, stop_reason="x")

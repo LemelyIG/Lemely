@@ -6,6 +6,7 @@ import json
 import math
 import shutil
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -54,6 +55,7 @@ AA_LABEL = "baseline_aa"
 #: rung-0 baseline's cache.
 DEFAULT_LIVE_TAGS: tuple[str, ...] = ("correction", "correction_borderline", "escalation")
 CACHE_SUBDIR = "cache"
+ARCHIVE_SUBDIR = "archive"
 AA_FLOOR_FILE = "aa_floor.json"
 LADDER_FILE = "ladder.json"
 
@@ -586,10 +588,58 @@ def run_config(
     return summary
 
 
-def _require(path: Path, what: str) -> Path:
+def require_file(path: Path, what: str) -> Path:
+    """*path*, or a `LadderStateError` naming *what* is missing (never a bare traceback)."""
     if not path.is_file():
         raise LadderStateError(f"{what} not found at {path}")
     return path
+
+
+def require_complete(summary_path: Path, what: str) -> RunSummary:
+    """Read a baseline-side summary, refusing one stopped by the cap or with incomplete cases.
+
+    A floor or a screen judged against a partial rung 0 would be meaningless.
+    """
+    data = json.loads(require_file(summary_path, what).read_text(encoding="utf-8"))
+    problems: list[str] = []
+    if data.get("stopped_by_spend_cap"):
+        problems.append(f"stopped by the spend cap ({data['stopped_by_spend_cap']})")
+    if data.get("incomplete"):
+        problems.append("incomplete cases: " + ", ".join(data["incomplete"]))
+    if problems:
+        raise LadderStateError(
+            f"{what} at {summary_path} is not a complete run ({'; '.join(problems)}). "
+            "Rerun it with `baseline --restart-baseline`."
+        )
+    return read_summary(summary_path)
+
+
+def _ladder_labels(out_dir: Path) -> list[str]:
+    path = out_dir / LADDER_FILE
+    return list(json.loads(path.read_text(encoding="utf-8"))) if path.is_file() else []
+
+
+def _archive_ladder(out_dir: Path) -> None:
+    """Move ladder.json and every screen run dir to ``archive/restart-<UTC>/``.
+
+    Screens were judged against the baseline being restarted, so they leave the
+    live ladder; their cache copies are deleted.
+    """
+    keep = {BASELINE_LABEL, AA_LABEL, CACHE_SUBDIR, ARCHIVE_SUBDIR}
+    screens = [d for d in out_dir.iterdir() if d.is_dir() and d.name not in keep]
+    ladder = out_dir / LADDER_FILE
+    if not screens and not ladder.exists():
+        return
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    dest = out_dir / ARCHIVE_SUBDIR / f"restart-{stamp}"
+    dest.mkdir(parents=True)
+    if ladder.exists():
+        shutil.move(ladder, dest / LADDER_FILE)
+    for run_dir in screens:
+        shutil.move(run_dir, dest / run_dir.name)
+        cache = cache_dir_for(out_dir, run_dir.name)
+        if cache.exists():
+            shutil.rmtree(cache)
 
 
 def _baseline_cache_stats(out_dir: Path) -> dict[str, int]:
@@ -632,16 +682,26 @@ def run_baseline(
     evidence (`_baseline_cache_stats`); it does not fail on it. The A/A rerun
     bypasses the cache entirely (fully live, writes nothing) on its own directory.
 
-    *restart* deletes this out-dir's baseline cache, ``baseline/``, ``baseline_aa/``
-    and ``aa_floor.json`` first; the spend ledger is kept. *aa_only* reruns only
-    the A/A run against the existing baseline.
+    Both runs must be complete (`require_complete`) before the floor is written;
+    an incomplete baseline stops before the A/A run spends anything.
+
+    *restart* replaces this out-dir's baseline: once `run_config`'s checks pass
+    (projection, caps, prices; nothing is touched before), it archives the ladder
+    and screens (`_archive_ladder`) and deletes the baseline cache, ``baseline/``,
+    ``baseline_aa/`` and ``aa_floor.json``. The spend ledger is kept.
+
+    *aa_only* reruns only the A/A run against the existing, complete baseline; it
+    is refused while ``ladder.json`` has rows, since a new floor would change the
+    rule earlier verdicts were judged under.
     """
     if restart and aa_only:
         raise ValueError("--restart-baseline and --aa-only are mutually exclusive")
     base_cache = cache_dir_for(out_dir, BASELINE_LABEL)
     aa_cache = cache_dir_for(out_dir, AA_LABEL)
 
-    def one(label: str, cache: Path, mode: CacheMode) -> RunSummary:
+    def one(
+        label: str, cache: Path, mode: CacheMode, hook: Callable[[], None] | None = None
+    ) -> RunSummary:
         return run_config(
             label,
             {},
@@ -654,31 +714,43 @@ def run_baseline(
             cache_dir=cache,
             cache_mode=mode,
             spend_file=spend_file,
+            on_checks_passed=hook,
         )
 
+    base_summary = out_dir / BASELINE_LABEL / "summary.json"
     if aa_only:
-        a = read_summary(_require(out_dir / BASELINE_LABEL / "summary.json", "baseline summary"))
+        if _ladder_labels(out_dir):
+            raise LadderStateError(
+                "--aa-only is refused while ladder.json has rows: a new A/A floor would "
+                "change the rule earlier verdicts were judged under. Use --restart-baseline."
+            )
     else:
-        if restart:
+
+        def wipe() -> None:
+            _archive_ladder(out_dir)
             for path in (base_cache, aa_cache, out_dir / BASELINE_LABEL, out_dir / AA_LABEL):
                 if path.exists():
                     shutil.rmtree(path)
             (out_dir / AA_FLOOR_FILE).unlink(missing_ok=True)
-        if base_cache.exists() and any(base_cache.iterdir()):
+            base_cache.mkdir(parents=True, exist_ok=True)
+
+        if not restart and base_cache.exists() and any(base_cache.iterdir()):
             raise RuntimeError(
                 f"baseline cache {base_cache} is not empty; a baseline must start from an "
                 "empty cache so every call is live. Pass --restart-baseline to delete this "
                 "baseline (cache, baseline and A/A runs; spend is kept), or --aa-only to "
                 "rerun only the A/A run."
             )
-        base_cache.mkdir(parents=True, exist_ok=True)
-        a = one(BASELINE_LABEL, base_cache, "read_write")
-        summary_path = out_dir / BASELINE_LABEL / "summary.json"
-        data = json.loads(summary_path.read_text(encoding="utf-8"))
+        if not restart:
+            base_cache.mkdir(parents=True, exist_ok=True)
+        one(BASELINE_LABEL, base_cache, "read_write", wipe if restart else None)
+        data = json.loads(base_summary.read_text(encoding="utf-8"))
         data.update(_baseline_cache_stats(out_dir))
-        summary_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", "utf-8")
+        base_summary.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", "utf-8")
+    a = require_complete(base_summary, "baseline summary")
     aa_cache.mkdir(parents=True, exist_ok=True)
-    b = one(AA_LABEL, aa_cache, "bypass")
+    one(AA_LABEL, aa_cache, "bypass")
+    b = require_complete(out_dir / AA_LABEL / "summary.json", "A/A summary")
     floor = aa_floor(a, b)
     (out_dir / AA_FLOOR_FILE).write_text(json.dumps({"aa_floor": floor}) + "\n", encoding="utf-8")
     return floor
@@ -738,20 +810,33 @@ def run_screen(
     in `run_config`) writes nothing. Otherwise writes ``verdict.json`` beside the
     run's summary and appends *label* to ``ladder.json``.
     """
-    if label in (BASELINE_LABEL, AA_LABEL):
-        raise ValueError(f"{label!r} is reserved for the baseline runs")
+    if label in (BASELINE_LABEL, AA_LABEL, CACHE_SUBDIR, ARCHIVE_SUBDIR):
+        raise ValueError(f"{label!r} is reserved")
+    if against == label:
+        raise LadderStateError(f"screen {label!r} cannot stack on itself (--against {against})")
+    for row in _ladder_labels(out_dir):
+        row_verdict = out_dir / row / "verdict.json"
+        if row_verdict.is_file() and (
+            json.loads(row_verdict.read_text(encoding="utf-8")).get("against") == label
+        ):
+            raise LadderStateError(
+                f"cannot re-screen {label!r}: ladder row {row!r} stacks on it. "
+                "Screen the change under a new label."
+            )
     base_dir = out_dir / BASELINE_LABEL
-    original_p95 = read_summary(
-        _require(base_dir / "summary.json", "baseline summary (run `baseline` first)")
+    original_p95 = require_complete(
+        base_dir / "summary.json", "baseline summary (run `baseline` first)"
     ).latency_p95_ms
-    floor_path = _require(out_dir / AA_FLOOR_FILE, "A/A floor aa_floor.json (run `baseline` first)")
+    floor_path = require_file(
+        out_dir / AA_FLOOR_FILE, "A/A floor aa_floor.json (run `baseline` first)"
+    )
     floor = int(json.loads(floor_path.read_text(encoding="utf-8"))["aa_floor"])
-    frozen = read_records(_require(base_dir / "records.jsonl", "baseline records"))
-    against_summary_path = _require(
+    frozen = read_records(require_file(base_dir / "records.jsonl", "baseline records"))
+    against_summary_path = require_file(
         out_dir / against / "summary.json", f"--against run {against!r} summary"
     )
     if against != BASELINE_LABEL:
-        against_verdict = _require(
+        against_verdict = require_file(
             out_dir / against / "verdict.json", f"--against run {against!r} verdict"
         )
         if not json.loads(against_verdict.read_text(encoding="utf-8")).get("passed"):

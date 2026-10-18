@@ -7,7 +7,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from lemely.accuracy.cost_ladder.gate import Verdict
-from lemely.accuracy.cost_ladder.runner import BASELINE_LABEL, LADDER_FILE, read_summary
+from lemely.accuracy.cost_ladder.runner import (
+    BASELINE_LABEL,
+    LADDER_FILE,
+    read_summary,
+    require_file,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -148,9 +153,10 @@ def load_rows(out_dir: Path) -> tuple[list[LadderRow], Path]:
 
 def write_report(out_dir: Path, *, stop_reason: str) -> Path:
     """Write ``<out_dir>/LADDER.md`` from the screened runs; return its path."""
-    rows, final = load_rows(out_dir)
     base = out_dir / BASELINE_LABEL
-    base_data = json.loads((base / "summary.json").read_text(encoding="utf-8"))
+    base_summary = require_file(base / "summary.json", "baseline summary (run `baseline` first)")
+    rows, final = load_rows(out_dir)
+    base_data = json.loads(base_summary.read_text(encoding="utf-8"))
     notes: list[str] = []
     if "in_run_cache_hits" in base_data:
         notes.append(

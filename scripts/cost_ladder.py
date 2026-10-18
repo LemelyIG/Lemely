@@ -3,6 +3,7 @@ r"""LLM cost-ladder driver: baseline + A/A floor, one-lever screens, and the rep
 
 Live runs spend Gemini budget. Keys come from the environment only (a wrapper
 exports GEMINI_API_KEY / ANTHROPIC_API_KEY); this script never prints them.
+The default spend ledger is per worktree (repo-relative): run all ladder commands from one checkout.
 
     cost_ladder.py baseline [--restart-baseline | --aa-only]
     cost_ladder.py screen --label L --lever "..." --expected-saving 40% \\
@@ -121,7 +122,11 @@ def main(argv: list[str] | None = None) -> int:
         "--spend-file",
         type=Path,
         default=None,
-        help=f"combined spend ledger (default {DEFAULT_SPEND_FILE}, whatever --out-dir is)",
+        help=(
+            f"combined spend ledger (default {DEFAULT_SPEND_FILE}, whatever --out-dir is). "
+            "The default is per worktree (repo-relative): "
+            "run all ladder commands from one checkout."
+        ),
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     baseline = sub.add_parser("baseline")
@@ -157,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.fn(args))
-    except (RuntimeError, ValueError, UnpricedModelError) as exc:
+    except (RuntimeError, ValueError, FileNotFoundError, UnpricedModelError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
