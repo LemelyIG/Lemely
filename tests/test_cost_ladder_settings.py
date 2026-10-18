@@ -12,6 +12,7 @@ from lemely.runtime.example_toml import render_example_toml
 
 _NEW_KEYS = (
     "cache_mode_for",
+    "cache_forget_enabled",
     "cascade_enabled",
     "cascade_strong_model",
     "cascade_threshold_for",
@@ -25,6 +26,7 @@ _NEW_KEYS = (
 def test_defaults_reproduce_current_behaviour() -> None:
     g = GeminiSettings()
     assert g.cache_mode_for == {}
+    assert g.cache_forget_enabled is True
     assert g.cascade_enabled is False
     assert g.cascade_strong_model is None
     assert g.cascade_threshold_for == {}

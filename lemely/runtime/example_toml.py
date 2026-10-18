@@ -100,6 +100,8 @@ def render_example_toml() -> str:
     lines.append("# LLM cost-ladder levers (all default to the pre-ladder behaviour).")
     lines.append("# Per-task cache mode: read_write | bypass | refresh (unlisted tags read_write).")
     lines.append(f"# cache_mode_for = {_toml_inline(s.gemini.cache_mode_for)}")
+    lines.append("# False makes forget_cached a no-op so measurement runs keep every cached read.")
+    lines.append(f"# cache_forget_enabled = {_toml_bool(s.gemini.cache_forget_enabled)}")
     lines.append("# Cascade: cheap correction pass first, escalate only when it is unsure.")
     lines.append(f"# cascade_enabled = {_toml_bool(s.gemini.cascade_enabled)}")
     lines.append("# Strong model for the cascade (unset = use escalation_model).")

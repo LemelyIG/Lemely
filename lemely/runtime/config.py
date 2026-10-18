@@ -171,10 +171,14 @@ class GeminiSettings(BaseModel):
     escalation_model: str | None = "gemini-3.8-flash"
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
     # LLM cost-ladder levers. Every default reproduces the pre-ladder behaviour.
-    # Per-task-tag cache mode (unlisted tags behave as "read_write").
+    # Per-task-tag cache mode (unlisted tags behave as "read_write"). A tag mapped
+    # to "refresh" overwrites existing entries (e.g. a frozen baseline).
     cache_mode_for: dict[str, Literal["read_write", "bypass", "refresh"]] = Field(
         default_factory=dict
     )
+    # When False, ``GeminiClient.forget_cached`` is a no-op so measurement runs keep
+    # every cached read (a frozen upstream across screens); production keeps True.
+    cache_forget_enabled: bool = True
     # Cascade: mark with the cheap correction model first, escalate to the strong
     # model only when the cheap pass is unsure.
     cascade_enabled: bool = False

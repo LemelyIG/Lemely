@@ -1333,7 +1333,12 @@ class GeminiClient:
         held is read afresh on every ``read_write`` run, harness sweeps included, and
         is paid for each time; that is intended, because a held paper replayed from
         the cache is held for ever.
+
+        ``GeminiSettings.cache_forget_enabled = False`` turns this into a no-op (0)
+        for measurement runs, so every screen reads the same frozen upstream entries.
         """
+        if not self._settings.gemini.cache_forget_enabled:
+            return 0
         if self.default_cache_mode not in ("read_write", "refresh"):
             return 0
         forgotten = 0

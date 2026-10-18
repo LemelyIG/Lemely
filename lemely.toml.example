@@ -44,6 +44,8 @@ model = "gemini-2.5-flash"
 # LLM cost-ladder levers (all default to the pre-ladder behaviour).
 # Per-task cache mode: read_write | bypass | refresh (unlisted tags read_write).
 # cache_mode_for = {}
+# False makes forget_cached a no-op so measurement runs keep every cached read.
+# cache_forget_enabled = true
 # Cascade: cheap correction pass first, escalate only when it is unsure.
 # cascade_enabled = false
 # Strong model for the cascade (unset = use escalation_model).
