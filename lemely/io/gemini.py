@@ -955,6 +955,26 @@ class GeminiClient:
         #: of leaving it to that widening.
         self.default_cache_mode: Literal["read_write", "bypass", "refresh"] = default_cache_mode
 
+    def _effective_cache_mode(
+        self, cache_mode: Literal["read_write", "bypass", "refresh"] | None, task_tag: str | None
+    ) -> Literal["read_write", "bypass", "refresh"]:
+        """Resolve a call's cache mode.
+
+        Order: explicit call-site mode, else the per-task-tag override in
+        ``settings.gemini.cache_mode_for``, else :attr:`default_cache_mode`.
+        The tag override lets a screen of a correction-only lever replay
+        extraction and binding from the frozen-upstream cache while correction
+        calls go live. Unvalidated values pass through so the callers' own
+        ``cache_mode`` check still rejects them.
+        """
+        if cache_mode is not None:
+            return cache_mode
+        if task_tag is not None:
+            override = self._settings.gemini.cache_mode_for.get(task_tag)
+            if override is not None:
+                return override
+        return self.default_cache_mode
+
     @property
     def _client(self) -> Any:
         if self._raw_client is None:
@@ -1360,8 +1380,7 @@ class GeminiClient:
         ``attempt`` and ``question_id`` only label the `CallRecord` this call
         appends; they are never part of the cache key.
         """
-        if cache_mode is None:
-            cache_mode = self.default_cache_mode
+        cache_mode = self._effective_cache_mode(cache_mode, task_tag)
         if cache_mode not in ("read_write", "bypass", "refresh"):
             raise ValueError(
                 f"cache_mode must be one of 'read_write', 'bypass', 'refresh'; got {cache_mode!r}"
@@ -1522,8 +1541,7 @@ class GeminiClient:
         and model — see that method's docstring for why a collision there
         would be dangerous, not merely wasteful.
         """
-        if cache_mode is None:
-            cache_mode = self.default_cache_mode
+        cache_mode = self._effective_cache_mode(cache_mode, task_tag)
         if cache_mode not in ("read_write", "bypass", "refresh"):
             raise ValueError(
                 f"cache_mode must be one of 'read_write', 'bypass', 'refresh'; got {cache_mode!r}"
