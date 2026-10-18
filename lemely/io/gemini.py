@@ -1633,6 +1633,10 @@ class GeminiClient:
             active_model = g.model_for(task_tag)
         else:
             active_model = g.model
+        if is_anthropic_model(active_model):
+            raise ValueError(
+                f"generate_with_code_execution is Gemini-only; got Anthropic model {active_model!r}"
+            )
 
         log = structlog.get_logger().bind(
             component="gemini_client",
@@ -2048,6 +2052,8 @@ class GeminiClient:
             )
         except ProviderTransientError as exc:
             raise _TransientError(str(exc)) from exc
+        except Exception as exc:
+            raise ExternalServiceError(str(exc)) from exc
         latency_ms = int((time.monotonic() - t0) * 1000)
         self._record_spend(
             response=_usage_as_gemini_response(reply.usage),

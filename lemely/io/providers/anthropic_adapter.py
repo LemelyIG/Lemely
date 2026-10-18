@@ -56,6 +56,9 @@ _EFFORT_FOR_LEVEL: dict[str, Effort] = {
     "high": "high",
 }
 
+#: A 5-minute cache write bills at 1.25x the base input rate.
+_CACHE_WRITE_PREMIUM_NUM, _CACHE_WRITE_PREMIUM_DEN = 5, 4
+
 #: 429 rate limit, 529 overloaded, and every 5xx are retried by the client.
 _TRANSIENT_STATUS = frozenset({429, 529})
 
@@ -75,11 +78,13 @@ def effort_for(level: str) -> Effort:
 class Usage:
     """Token counts for one call, in the units ``CallRecord`` uses.
 
-    ``input_tokens`` is every input token: uncached, cache reads and cache
-    writes (Anthropic reports the three separately). ``cached_tokens`` is the
-    cache reads, billed at the cached rate; cache writes bill as uncached
-    input, which understates nothing. ``output_tokens`` includes
-    ``thinking_tokens``, as Anthropic's own total does.
+    ``input_tokens`` is the billing-equivalent input count: uncached tokens,
+    cache reads, and cache writes weighted by the 1.25x premium Anthropic
+    charges for a 5-minute cache write (Anthropic reports the three
+    separately). Priced as uncached input minus ``cached_tokens`` at the input
+    rate, this reproduces the exact bill. ``cached_tokens`` is the cache reads,
+    billed at the cached rate. ``output_tokens`` includes ``thinking_tokens``,
+    as Anthropic's own total does.
     """
 
     input_tokens: int
@@ -115,7 +120,9 @@ def _usage_of(message: Message) -> Usage:
     cache_write = int(u.cache_creation_input_tokens or 0)
     details = u.output_tokens_details
     return Usage(
-        input_tokens=int(u.input_tokens) + cache_read + cache_write,
+        input_tokens=int(u.input_tokens)
+        + cache_read
+        + -(-cache_write * _CACHE_WRITE_PREMIUM_NUM // _CACHE_WRITE_PREMIUM_DEN),
         cached_tokens=cache_read,
         output_tokens=int(u.output_tokens),
         thinking_tokens=int(details.thinking_tokens) if details is not None else 0,
