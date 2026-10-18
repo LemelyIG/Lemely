@@ -7,6 +7,7 @@ import contextvars
 import hashlib
 import io
 import json
+import math
 import re
 import threading
 import time
@@ -65,13 +66,13 @@ _MEDIA_RESOLUTION_LEVELS: dict[str, str] = {
 #
 # F1 (Gemini 3.x migration, 2026-09-17): 3.x rows added below at the current
 # promotional GA rate (re-verified against live docs 17 Sep). Corrected on
-# review (2026-09-17): 3.8/3.7/3.6-flash bill $0.75/$3.75 per 1M through
+# review (2026-09-17): 3.8/3.6-flash bill $0.75/$3.75 per 1M through
 # 2026-12-31 ONLY, then $1.50/$7.50 from 2027-01-01. `total_usd_ceiling`
 # (enforced against a ledger computed from this table, see `_call_once`)
 # would otherwise be enforced against a stale rate once it doubles — the
 # $14 ceiling would then trip at roughly $28 of real spend.
 #
-# US-026: date-gated below. `gemini-3.8-flash`/`-3.7-flash`/`-3.6-flash` are
+# US-026: date-gated below. `gemini-3.8-flash`/`-3.6-flash` are
 # NOT static keys in `_DEFAULT_PRICING` — `_resolve_pricing` merges a
 # date-selected rate for them into a COPY of this table before running its one
 # length-descending substring match, so a future maintainer adding a correctly
@@ -86,8 +87,6 @@ _MEDIA_RESOLUTION_LEVELS: dict[str, str] = {
 # of the boundary).
 FLASH_3X_PROMO_END_DATE: date = date(2026, 12, 31)
 
-# `gemini-3.7-flash` was dropped from this tuple (deprecated 2026-10-08, routed
-# to 3.8-flash): it now resolves like any other unpriced model.
 _FLASH_3X_PROMO_MODELS: tuple[str, ...] = (
     "gemini-3.8-flash",
     "gemini-3.6-flash",
@@ -109,8 +108,8 @@ _FLASH_3X_POST_PROMO_CACHED: float = 0.000150
 # Source: https://ai.google.dev/gemini-api/docs/pricing, retrieved
 # 2026-09-21: $1.50 / $9.00 per 1M tokens. That page was also checked for a
 # 2027-01-01 scheduled increase on `gemini-3.5-flash` (the mechanism
-# `gemini-3.8/3.7/3.6-flash` use, see `FLASH_3X_PROMO_END_DATE` below) —
-# unlike those three, the page states no scheduled change for
+# `gemini-3.8/3.6-flash` use, see `FLASH_3X_PROMO_END_DATE` below) —
+# unlike those two, the page states no scheduled change for
 # `gemini-3.5-flash`, so this is a plain static row rather than a
 # date-gated one. Note `gemini-2.5-pro` below is priced <=200k context per
 # the same page; if the real rate differs above that context window, this
@@ -176,7 +175,7 @@ def _today() -> date:
 def promo_pricing_status(settings: Settings, today: date | None = None) -> tuple[bool, str]:
     """Advisory status for `lemely doctor`.
 
-    Warns once the 3.8/3.7/3.6-flash promotional window
+    Warns once the 3.8/3.6-flash promotional window
     (`FLASH_3X_PROMO_END_DATE`) is within 30 days of lapsing to the real,
     doubled rate — or has already lapsed — so a developer notices before the
     $14 ceiling silently starts guarding a stale price. Returns (ok, detail);
@@ -204,13 +203,13 @@ def promo_pricing_status(settings: Settings, today: date | None = None) -> tuple
     if days_left < 0:
         return (
             False,
-            f"3.8/3.7/3.6-flash promotional pricing expired {-days_left} day(s) ago "
+            f"3.8/3.6-flash promotional pricing expired {-days_left} day(s) ago "
             f"(on {FLASH_3X_PROMO_END_DATE}); rates now bill at the post-promo rate.",
         )
     if days_left <= 30:
         return (
             False,
-            f"3.8/3.7/3.6-flash promotional pricing expires in {days_left} day(s) "
+            f"3.8/3.6-flash promotional pricing expires in {days_left} day(s) "
             f"(on {FLASH_3X_PROMO_END_DATE}); verify the post-promo rate is still "
             "correct before it takes effect.",
         )
@@ -286,15 +285,20 @@ _process_output_tokens: int = 0
 _process_accumulated_usd: float = 0.0
 _process_cost_by_task: dict[str, float] = {}
 _process_call_records: list[CallRecord] = []
+_Attempt = Literal["first", "borderline", "escalation"]
 #: The harness's current case (`set_call_context`); stamped on every `CallRecord`.
-_call_case_key: str | None = None
+#: A ContextVar, so concurrent worker threads never see each other's case.
+_call_case_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "gemini_call_case_key", default=None
+)
 #: Per-call labels set by `generate_structured` and read by `_record_spend`.
 #: A ContextVar, so concurrent worker threads never see each other's labels.
-_call_labels: contextvars.ContextVar[tuple[str | None, str | None]] = contextvars.ContextVar(
+_call_labels: contextvars.ContextVar[tuple[_Attempt | None, str | None]] = contextvars.ContextVar(
     "gemini_call_labels", default=(None, None)
 )
-#: Index (into `_process_call_records`) of the record this thread appended last,
-#: so a structured-output failure can mark exactly its own record.
+#: The record this thread appended last (by identity, not list index), so a
+#: structured-output failure marks exactly its own record even if a concurrent
+#: reset has since replaced the list.
 _thread_state = threading.local()
 
 #: Spec 2026-09-26 §9. The four process counters above and `CostLedger.add`
@@ -382,9 +386,8 @@ def _resolve_pricing(
 ) -> tuple[float, float]:
     """Return (input_usd_per_1k, output_usd_per_1k) for the given model.
 
-    Checks user-configured overrides first. Then resolves the 3.8/3.7/
-    3.6-flash promotional rate (US-026 — see `FLASH_3X_PROMO_END_DATE`) for
-    "today" and merges it into a COPY of `_DEFAULT_PRICING` under those three
+    Checks user-configured overrides first. Then resolves the 3.8/3.6-flash promotional rate (US-026 — see `FLASH_3X_PROMO_END_DATE`) for
+    "today" and merges it into a COPY of `_DEFAULT_PRICING` under those two
     exact keys, so the length-descending substring match below is the ONLY
     matching mechanism in this function — a promo model can never shadow, or
     be shadowed by, another row via a second matching path. Falls back to
@@ -500,7 +503,7 @@ class CallRecord:
     usd_now: float
     usd_2027: float
     latency_ms: int
-    attempt: Literal["first", "borderline", "escalation"] | None
+    attempt: _Attempt | None
     question_id: str | None
     case_key: str | None
     #: False when the response failed structured-output validation; the record
@@ -516,21 +519,24 @@ def process_call_records() -> list[CallRecord]:
 
 def set_call_context(*, case_key: str | None) -> None:
     """Name the case the harness is running; later records carry it as `case_key`."""
-    global _call_case_key
-    with _SPEND_LOCK:
-        _call_case_key = case_key
+    _call_case_key.set(case_key)
 
 
 def _mark_last_record_unparsed() -> None:
     """Flip `parse_ok` off on the record this thread appended last."""
-    idx = getattr(_thread_state, "last_record_index", None)
+    last: CallRecord | None = getattr(_thread_state, "last_record", None)
+    if last is None:
+        return
     with _SPEND_LOCK:
-        if idx is not None and idx < len(_process_call_records):
-            _process_call_records[idx] = replace(_process_call_records[idx], parse_ok=False)
+        for i in range(len(_process_call_records) - 1, -1, -1):
+            if _process_call_records[i] is last:
+                _process_call_records[i] = replace(last, parse_ok=False)
+                _thread_state.last_record = _process_call_records[i]
+                return
 
 
 @contextlib.contextmanager
-def _call_labelled(attempt: str | None, question_id: str | None) -> Iterator[None]:
+def _call_labelled(attempt: _Attempt | None, question_id: str | None) -> Iterator[None]:
     """Scope the `attempt`/`question_id` labels `_record_spend` stamps on records."""
     token = _call_labels.set((attempt, question_id))
     try:
@@ -1333,7 +1339,7 @@ class GeminiClient:
         extra_cache_key: str = "",
         task_tag: str | None = None,
         cache_mode: Literal["read_write", "bypass", "refresh"] | None = None,
-        attempt: Literal["first", "borderline", "escalation"] | None = None,
+        attempt: _Attempt | None = None,
         question_id: str | None = None,
     ) -> _T:
         """I1: send per-page images instead of uploading a whole file.
@@ -1586,6 +1592,7 @@ class GeminiClient:
         log: Any,
         params_fingerprint: str,
         extra_log_fields: dict[str, Any] | None = None,
+        sends_thinking: bool = True,
     ) -> None:
         """Account for one paid response: counters, ledger, log line, events.
 
@@ -1631,6 +1638,7 @@ class GeminiClient:
                 output_tokens=out_tok,
                 on=_today(),
             )
+            usd_now = usd
             usd_2027 = price_call(
                 model,
                 self._settings,
@@ -1644,12 +1652,15 @@ class GeminiClient:
             # existing warn-and-fall-back path, billed with no cache discount.
             in_price, out_price = _resolve_pricing(model, self._settings)
             fallback = PriceRow(in_price, in_price, out_price)
-            usd = usd_2027 = _row_cost(
+            usd = _row_cost(
                 fallback, input_tokens=in_tok, cached_tokens=cached_tok, output_tokens=out_tok
             )
+            # Fallback USD feeds the ledger/log only; the record carries NaN so
+            # an unpriced model can never be silently summed into cost metrics.
+            usd_now = usd_2027 = math.nan
         usd_rounded = round(usd, 6)
         attempt, question_id = _call_labels.get()
-        thinking = self.resolved_thinking(task_tag, model) if task_tag else None
+        thinking = self.resolved_thinking(task_tag, model) if task_tag and sends_thinking else None
         g = self._settings.gemini
         new_total: float | None = None
         crossed: list[float] = []
@@ -1665,26 +1676,25 @@ class GeminiClient:
             # events below. Spend is still observable via the log line.
             if self._ledger is not None:
                 new_total, crossed = self._ledger.add(usd, thresholds=g.usd_warning_thresholds)
-            _thread_state.last_record_index = len(_process_call_records)
-            _process_call_records.append(
-                CallRecord(
-                    provider=_provider_for(model),
-                    task_tag=task_tag,
-                    model=model,
-                    thinking=thinking,
-                    input_tokens=in_tok,
-                    cached_tokens=cached_tok,
-                    output_tokens=out_tok,
-                    thinking_tokens=thoughts_tok,
-                    usd_now=usd,
-                    usd_2027=usd_2027,
-                    latency_ms=latency_ms,
-                    attempt=cast(Any, attempt),
-                    question_id=question_id,
-                    case_key=_call_case_key,
-                    parse_ok=True,
-                )
+            record = CallRecord(
+                provider=_provider_for(model),
+                task_tag=task_tag,
+                model=model,
+                thinking=thinking,
+                input_tokens=in_tok,
+                cached_tokens=cached_tok,
+                output_tokens=out_tok,
+                thinking_tokens=thoughts_tok,
+                usd_now=usd_now,
+                usd_2027=usd_2027,
+                latency_ms=latency_ms,
+                attempt=attempt,
+                question_id=question_id,
+                case_key=_call_case_key.get(),
+                parse_ok=True,
             )
+            _process_call_records.append(record)
+            _thread_state.last_record = record
         if new_total is not None:
             for threshold in crossed:
                 bus.publish(
@@ -1948,6 +1958,7 @@ class GeminiClient:
             log=log,
             params_fingerprint=params_fingerprint,
             extra_log_fields={"latency_ms": latency_ms, "tool": "code_execution"},
+            sends_thinking=False,
         )
 
         candidates = response.candidates or []

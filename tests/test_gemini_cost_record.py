@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import inspect
+import math
 import tempfile
+import threading
 import unittest
 from datetime import date
 from unittest.mock import MagicMock, patch
 
 from pydantic import BaseModel
 
+from lemely.io import gemini as gemini_module
 from lemely.io.gemini import (
     PRICE_DATE_2027,
     CallRecord,
@@ -23,7 +26,7 @@ from lemely.io.gemini import (
     set_call_context,
 )
 from lemely.runtime.errors import ParseError
-from tests.test_gemini_client import _make_settings, _mock_response
+from tests.gemini_fakes import make_settings, mock_response
 
 _TODAY = date(2026, 10, 19)
 _MODEL = "gemini-3.8-flash"
@@ -33,16 +36,18 @@ class _Schema(BaseModel):
     value: str
 
 
-def _response(text: str, *, prompt: int, cached: int, candidates: int, thoughts: int = 0):
-    resp = _mock_response(text, in_tok=prompt, out_tok=candidates, thoughts_tok=thoughts)
-    resp.usage_metadata.cached_content_token_count = cached
-    return resp
+def _response(
+    text: str, *, prompt: int, cached: int, candidates: int, thoughts: int = 0
+) -> MagicMock:
+    return mock_response(
+        text, prompt=prompt, candidates=candidates, thoughts=thoughts, cached=cached
+    )
 
 
 class CostRecordTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.mkdtemp()
-        self.settings = _make_settings(self.tmp)
+        self.settings = make_settings(self.tmp)
         _reset_process_counters()
         set_call_context(case_key=None)
         patcher = patch("lemely.io.gemini._today", lambda: _TODAY)
@@ -204,10 +209,87 @@ class CostRecordTests(unittest.TestCase):
 
     def test_mock_usage_without_cached_attr_counts_zero_cached(self) -> None:
         # A bare MagicMock attribute must not be read as 1 cached token.
-        client = self._client(_mock_response('{"value": "a"}', in_tok=100, out_tok=10))
+        resp = _response('{"value": "a"}', prompt=100, cached=0, candidates=10)
+        resp.usage_metadata = MagicMock(
+            spec=["prompt_token_count", "candidates_token_count", "thoughts_token_count"],
+            prompt_token_count=100,
+            candidates_token_count=10,
+            thoughts_token_count=0,
+        )
+        client = self._client(resp)
         self._call(client)
         (rec,) = process_call_records()
         self.assertEqual(rec.cached_tokens, 0)
+
+    def test_unpriced_model_record_is_nan_ledger_still_advances(self) -> None:
+        client = self._client(_response('{"value": "a"}', prompt=1_000, cached=0, candidates=100))
+        before = gemini_module._process_accumulated_usd
+        client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            response_schema=_Schema,
+            prompt_version="1",
+            model="gemini-9-ultra",
+        )
+        (rec,) = process_call_records()
+        self.assertTrue(math.isnan(rec.usd_now))
+        self.assertTrue(math.isnan(rec.usd_2027))
+        self.assertGreater(gemini_module._process_accumulated_usd, before)
+
+    def test_case_key_is_context_local_across_threads(self) -> None:
+        client = self._client(
+            _response('{"value": "a"}', prompt=100, cached=0, candidates=10),
+            _response('{"value": "b"}', prompt=100, cached=0, candidates=10),
+        )
+        barrier = threading.Barrier(2)
+
+        def worker(key: str, extra: str) -> None:
+            set_call_context(case_key=key)
+            barrier.wait(timeout=5)
+            self._call(client, extra_cache_key=extra)
+
+        threads = [
+            threading.Thread(target=worker, args=("case-A", "a")),
+            threading.Thread(target=worker, args=("case-B", "b")),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        self.assertEqual(
+            sorted(r.case_key or "" for r in process_call_records()), ["case-A", "case-B"]
+        )
+
+    def test_stale_unparsed_mark_after_reset_does_not_flip_other_record(self) -> None:
+        client = self._client()
+        spend = {
+            "model": _MODEL,
+            "task_tag": None,
+            "latency_ms": 0,
+            "log": MagicMock(),
+            "params_fingerprint": "f",
+        }
+        client._record_spend(response=_response("x", prompt=1, cached=0, candidates=1), **spend)
+        stale = gemini_module._thread_state.last_record
+        _reset_process_counters()
+        client._record_spend(response=_response("y", prompt=2, cached=0, candidates=1), **spend)
+        # This thread's pointer now names the second record; point it back at the
+        # reset-away first one, as a failure arriving after the reset would.
+        gemini_module._thread_state.last_record = stale
+        gemini_module._mark_last_record_unparsed()
+        self.assertEqual([r.parse_ok for r in process_call_records()], [True])
+
+    def test_code_execution_record_has_no_thinking(self) -> None:
+        resp = _response("x", prompt=100, cached=0, candidates=10)
+        part = MagicMock()
+        part.code_execution_result.output = "42"
+        resp.candidates[0].content.parts = [part]
+        client = self._client(resp)
+        client._call_code_execution_once(
+            _MODEL, "p", MagicMock(), "marking", params_fingerprint="f"
+        )
+        (rec,) = process_call_records()
+        self.assertIsNone(rec.thinking)
 
 
 if __name__ == "__main__":
