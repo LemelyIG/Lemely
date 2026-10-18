@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from lemely.core.loose_schemas import MarkSchemeMetadata, Question
+from lemely.core.loose_schemas import MarkScheme, MarkSchemeMetadata, Question
 
 VERSION = "12"
 
@@ -319,6 +319,49 @@ def marker_system_prompt(*, reader_describes_drawings: bool = False) -> str:
     ``MARKER_SYSTEM_PROMPT``, which does not name the word.
     """
     return READER_MARKER_SYSTEM_PROMPT if reader_describes_drawings else MARKER_SYSTEM_PROMPT
+
+
+#: Joins the system prompt and the paper block in :func:`build_shared_prefix`.
+SHARED_PREFIX_SEPARATOR = "\n\n---\n\n"
+
+
+def render_paper_mark_scheme(mark_scheme: MarkScheme) -> str:
+    """The whole paper's mark scheme as the paper block of the shared prefix.
+
+    Deterministic: the paper code from the metadata, then every top-level
+    question in source order, each dumped as the user prompt dumps a subtree
+    (indented JSON without null or default fields). Nothing that varies between
+    scripts of one paper is in it: no timestamps, no student text, no run ids.
+    The question ids are the scheme's own, the same for every script.
+    """
+    meta = mark_scheme.metadata
+    paper_code = f"{meta.subject_code}/{meta.paper_number}{meta.paper_variant}"
+    questions = "\n".join(
+        q.model_dump_json(indent=2, exclude_none=True, exclude_defaults=True)
+        for q in mark_scheme.questions
+    )
+    return (
+        f"THIS PAPER'S FULL MARK SCHEME ({meta.subject} {paper_code}; JSON, every question "
+        "in source order). It is reference for context only: mark only the question whose "
+        "MARK SCHEME SUBTREE the user prompt gives, against that subtree.\n"
+        f"{questions}\n"
+    )
+
+
+def build_shared_prefix(mark_scheme: MarkScheme, *, reader_describes_drawings: bool) -> str:
+    """The system prompt followed by the paper's whole mark scheme (cost-ladder lever A3).
+
+    Sent as the system prompt of every correction call on the paper when
+    ``GeminiSettings.correction_shared_prefix`` is on, so it is the same for every
+    leaf of every script and a provider can cache it. ``reader_describes_drawings``
+    picks the system prompt as :func:`marker_system_prompt` does, so a paper whose
+    answers come from both kinds of reader has two prefixes.
+    """
+    return (
+        marker_system_prompt(reader_describes_drawings=reader_describes_drawings)
+        + SHARED_PREFIX_SEPARATOR
+        + render_paper_mark_scheme(mark_scheme)
+    )
 
 
 def build_marker_user_prompt(

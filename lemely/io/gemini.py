@@ -528,6 +528,60 @@ def set_call_context(*, case_key: str | None) -> None:
     _call_case_key.set(case_key)
 
 
+#: Lifetime of an explicit prefix cache (cost-ladder lever A3): long enough for
+#: one paper's scripts marked back to back, short enough that storage stays small.
+PREFIX_CACHE_TTL_SECONDS: int = 600
+#: A cache within this many seconds of expiry is not reused: a call that starts
+#: on it could reach the API after it has gone.
+_PREFIX_CACHE_EXPIRY_MARGIN_SECONDS: int = 30
+#: The ``task_tag`` of the `CallRecord` that carries an explicit cache's cost.
+PREFIX_CACHE_TASK_TAG = "correction_prefix_cache"
+#: Explicit context-cache storage, USD per 1M tokens per hour, by the same
+#: longest-substring match as the price tables. From
+#: https://ai.google.dev/gemini-api/docs/pricing for the 2.5 lines ($1.00 flash,
+#: $4.50 pro); not confirmed for 3.x, and a model that matches no key is charged
+#: the pro rate, so storage is overstated rather than left out.
+_CACHE_STORAGE_USD_PER_MTOK_HOUR: dict[str, float] = {"flash": 1.00, "pro": 4.50}
+_CACHE_STORAGE_FALLBACK_USD_PER_MTOK_HOUR: float = 4.50
+
+
+def prefix_cache_storage_usd(model: str, tokens: int, ttl_seconds: int) -> float:
+    """USD to keep ``tokens`` in an explicit cache for ``ttl_seconds``."""
+    rate = next(
+        (
+            _CACHE_STORAGE_USD_PER_MTOK_HOUR[key]
+            for key in sorted(_CACHE_STORAGE_USD_PER_MTOK_HOUR, key=len, reverse=True)
+            if key in model
+        ),
+        _CACHE_STORAGE_FALLBACK_USD_PER_MTOK_HOUR,
+    )
+    return max(tokens, 0) / 1_000_000 * rate * ttl_seconds / 3600
+
+
+@dataclass(frozen=True)
+class SharedPrefix:
+    """A system prompt that is the same for every call on one paper (lever A3).
+
+    ``text`` is what is sent as the system prompt and what the reply cache key is
+    built from; it is ``instructions`` followed by ``paper``. A Gemini call sends
+    ``text`` as the system instruction, or, with ``cache="explicit"`` on a 3.x
+    model, as an explicit cache it creates once per (model, ``version``, text).
+    A ``claude-`` call sends ``instructions`` as the system prompt and ``paper``
+    as the adapter's ``cache_prefix``.
+    """
+
+    instructions: str
+    paper: str
+    text: str
+    cache: Literal["implicit", "explicit"]
+    version: str
+
+    def __post_init__(self) -> None:
+        """Refuse a ``text`` that is not ``instructions`` followed by ``paper``."""
+        if not (self.text.startswith(self.instructions) and self.text.endswith(self.paper)):
+            raise ValueError("SharedPrefix.text must be instructions followed by paper")
+
+
 def _mark_last_record_unparsed() -> None:
     """Flip `parse_ok` off on the record this thread appended last."""
     last: CallRecord | None = getattr(_thread_state, "last_record", None)
@@ -981,6 +1035,12 @@ class GeminiClient:
         #: precise. An explicit annotation pins the attribute's type instead
         #: of leaving it to that widening.
         self.default_cache_mode: Literal["read_write", "bypass", "refresh"] = default_cache_mode
+        #: Explicit prefix caches this client made (lever A3), keyed by
+        #: (model, prompt version, sha256 of the prefix): the cache name and its
+        #: expiry on the monotonic clock, or None when creation failed and the
+        #: prefix is sent as a plain system instruction for the rest of the run.
+        self._prefix_caches: dict[tuple[str, str, str], tuple[str, float] | None] = {}
+        self._prefix_cache_lock = threading.Lock()
 
     def _effective_cache_mode(
         self, cache_mode: Literal["read_write", "bypass", "refresh"] | None, task_tag: str | None
@@ -1434,6 +1494,7 @@ class GeminiClient:
         cache_mode: Literal["read_write", "bypass", "refresh"] | None = None,
         attempt: _Attempt | None = None,
         question_id: str | None = None,
+        shared_prefix: SharedPrefix | None = None,
     ) -> _T:
         """I1: send per-page images instead of uploading a whole file.
 
@@ -1452,7 +1513,14 @@ class GeminiClient:
 
         ``attempt`` and ``question_id`` only label the `CallRecord` this call
         appends; they are never part of the cache key.
+
+        ``shared_prefix`` (lever A3) says ``system_prompt`` is a per-paper prefix and
+        how to have the provider cache it (see :class:`SharedPrefix`). Its ``text``
+        must be ``system_prompt``; it is not part of the reply cache key, which is
+        built from ``system_prompt`` as for any call. None sends what it always did.
         """
+        if shared_prefix is not None and shared_prefix.text != system_prompt:
+            raise ValueError("shared_prefix.text must be the system_prompt it is sent as")
         cache_mode = self._effective_cache_mode(cache_mode, task_tag)
         if cache_mode not in ("read_write", "bypass", "refresh"):
             raise ValueError(
@@ -1539,6 +1607,7 @@ class GeminiClient:
                 image_parts=image_parts,
                 media_resolution=media_resolution,
                 image_uploads=image_uploads,
+                shared_prefix=shared_prefix,
             )
         latency_ms = int((time.monotonic() - t0) * 1000)
         log.debug("gemini_latency_ms", latency_ms=latency_ms)
@@ -1571,6 +1640,7 @@ class GeminiClient:
                     image_parts=image_parts,
                     media_resolution=media_resolution,
                     image_uploads=image_uploads,
+                    shared_prefix=shared_prefix,
                 )
             try:
                 result = response_schema.model_validate_json(raw_text)
@@ -1695,6 +1765,7 @@ class GeminiClient:
         params_fingerprint: str,
         extra_log_fields: dict[str, Any] | None = None,
         sends_thinking: bool = True,
+        extra_usd: float = 0.0,
     ) -> None:
         """Account for one paid response: counters, ledger, log line, events.
 
@@ -1711,6 +1782,10 @@ class GeminiClient:
         beyond the shared fields -- the code-execution path's
         ``latency_ms`` and ``tool``. The structured path passes none, so its
         line keeps exactly the fields M0.4 reads today.
+
+        `extra_usd` is a charge that is not priced per token, added to the
+        call's USD at both price points: an explicit prefix cache's storage
+        (:meth:`cached_prefix_handle`). Every other caller leaves it at 0.
         """
         global \
             _process_input_tokens, \
@@ -1760,6 +1835,10 @@ class GeminiClient:
             # Fallback USD feeds the ledger/log only; the record carries NaN so
             # an unpriced model can never be silently summed into cost metrics.
             usd_now = usd_2027 = math.nan
+        if extra_usd:
+            usd += extra_usd
+            usd_now += extra_usd
+            usd_2027 += extra_usd
         usd_rounded = round(usd, 6)
         attempt, question_id = _call_labels.get()
         thinking = self.resolved_thinking(task_tag, model) if task_tag and sends_thinking else None
@@ -1837,6 +1916,79 @@ class GeminiClient:
             latency_ms=latency_ms,
         )
 
+    def cached_prefix_handle(self, model: str, prefix: SharedPrefix, *, log: Any) -> str | None:
+        """The name of an explicit cache holding ``prefix.text`` on ``model``, or None.
+
+        Made on the first call for a (model, prompt version, prefix) and reused
+        until :data:`PREFIX_CACHE_TTL_SECONDS` is nearly up, then made again.
+        Its cost is recorded as a `CallRecord` tagged :data:`PREFIX_CACHE_TASK_TAG`:
+        the cached tokens at the full input rate (the creation, conservatively
+        not discounted) plus their storage for the whole TTL
+        (:func:`prefix_cache_storage_usd`). That record carries no attempt or
+        question id, so it is not charged to the leaf that happened to make it.
+
+        A creation the API refuses (a prefix below its minimum size, a model
+        without explicit caching) is logged once and returns None for the rest
+        of this client's life: the caller then sends the prefix as a plain
+        system instruction, where implicit caching may still apply.
+        """
+        digest = hashlib.sha256(prefix.text.encode()).hexdigest()
+        key = (model, prefix.version, digest)
+        with self._prefix_cache_lock:
+            now = time.monotonic()
+            if key in self._prefix_caches:
+                held = self._prefix_caches[key]
+                if held is None:
+                    return None
+                name, expires_at = held
+                if now < expires_at - _PREFIX_CACHE_EXPIRY_MARGIN_SECONDS:
+                    return name
+            from google.genai import types
+
+            self._check_cost_ceiling()
+            try:
+                cache = self._client.caches.create(
+                    model=model,
+                    config=types.CreateCachedContentConfig(
+                        system_instruction=prefix.text,
+                        ttl=f"{PREFIX_CACHE_TTL_SECONDS}s",
+                        display_name=f"lemely-prefix-{prefix.version}-{digest[:12]}",
+                    ),
+                )
+            except Exception as exc:
+                log.warning("prefix_cache_create_failed", model=model, error=str(exc)[:200])
+                self._prefix_caches[key] = None
+                return None
+            latency_ms = int((time.monotonic() - now) * 1000)
+            tokens_raw = getattr(getattr(cache, "usage_metadata", None), "total_token_count", 0)
+            tokens = tokens_raw if isinstance(tokens_raw, int) else 0
+            self._prefix_caches[key] = (str(cache.name), now + PREFIX_CACHE_TTL_SECONDS)
+        storage_usd = prefix_cache_storage_usd(model, tokens, PREFIX_CACHE_TTL_SECONDS)
+        with _call_labelled(None, None):
+            self._record_spend(
+                response=SimpleNamespace(
+                    usage_metadata=SimpleNamespace(
+                        prompt_token_count=tokens,
+                        candidates_token_count=0,
+                        thoughts_token_count=0,
+                        cached_content_token_count=0,
+                    )
+                ),
+                model=model,
+                task_tag=PREFIX_CACHE_TASK_TAG,
+                latency_ms=latency_ms,
+                log=log,
+                params_fingerprint=digest[:12],
+                extra_log_fields={
+                    "prefix_cache": str(cache.name),
+                    "storage_usd": round(storage_usd, 6),
+                    "ttl_seconds": PREFIX_CACHE_TTL_SECONDS,
+                },
+                sends_thinking=False,
+                extra_usd=storage_usd,
+            )
+        return str(cache.name)
+
     def image_uploads(
         self, images: list[bytes], *, concurrency: int, mime_type: str = "image/png"
     ) -> ImageUploads:
@@ -1880,6 +2032,7 @@ class GeminiClient:
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
         image_uploads: ImageUploads | None = None,
+        shared_prefix: SharedPrefix | None = None,
     ) -> str:
         try:
             for attempt in self._retry_policy(log, task_tag=task_tag, model=model):
@@ -1895,6 +2048,7 @@ class GeminiClient:
                         image_parts=image_parts,
                         media_resolution=media_resolution,
                         image_uploads=image_uploads,
+                        shared_prefix=shared_prefix,
                     )
         except _TransientError as exc:
             raise ExternalServiceError(str(exc)) from exc
@@ -1913,10 +2067,17 @@ class GeminiClient:
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
         image_uploads: ImageUploads | None = None,
+        shared_prefix: SharedPrefix | None = None,
     ) -> str:
         if is_anthropic_model(model):
             return self._call_anthropic_once(
-                model, system_prompt, user_prompt, response_schema, log, task_tag
+                model,
+                system_prompt,
+                user_prompt,
+                response_schema,
+                log,
+                task_tag,
+                shared_prefix=shared_prefix,
             )
         from google.genai import types
 
@@ -1991,6 +2152,12 @@ class GeminiClient:
             config_kwargs["temperature"] = gen_params["temperature"]
             config_kwargs["top_p"] = gen_params["top_p"]
             config_kwargs["seed"] = gen_params["seed"]
+        if shared_prefix is not None and shared_prefix.cache == "explicit" and is_3x:
+            cache_name = self.cached_prefix_handle(model, shared_prefix, log=log)
+            if cache_name is not None:
+                # The cache carries the system instruction; the API refuses both.
+                del config_kwargs["system_instruction"]
+                config_kwargs["cached_content"] = cache_name
 
         try:
             response = self._client.models.generate_content(
@@ -2030,6 +2197,8 @@ class GeminiClient:
         response_schema: type[_T],
         log: Any,
         task_tag: str | None,
+        *,
+        shared_prefix: SharedPrefix | None = None,
     ) -> str:
         """One attempt on a ``claude-`` model; the Anthropic counterpart of :meth:`_call_once`.
 
@@ -2037,6 +2206,10 @@ class GeminiClient:
         and the cache write in :meth:`generate_structured` treat both
         providers alike. The spend is recorded before a truncated or refused
         reply raises: those tokens were billed.
+
+        With ``shared_prefix`` the system prompt is its ``instructions`` and its
+        ``paper`` goes as the adapter's ``cache_prefix``; both carry a cache
+        breakpoint, and the two together are ``system_prompt``.
         """
         adapter = self._anthropic
         effort = self._resolved_gen_params(task_tag, model)["thinking_level"]
@@ -2044,11 +2217,11 @@ class GeminiClient:
         try:
             reply = adapter.complete(
                 model=model,
-                system_prompt=system_prompt,
+                system_prompt=shared_prefix.instructions if shared_prefix else system_prompt,
                 user_prompt=user_prompt,
                 response_schema=response_schema,
                 thinking=effort,
-                cache_prefix=None,
+                cache_prefix=shared_prefix.paper if shared_prefix else None,
             )
         except ProviderTransientError as exc:
             raise _TransientError(str(exc)) from exc

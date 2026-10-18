@@ -8,7 +8,7 @@ import os
 import re
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, TypedDict
 
 import structlog
 
@@ -38,13 +38,21 @@ from lemely.core.schemas import (
     confidence_band_for_score,
     dedupe_point_verdicts,
 )
-from lemely.io.gemini import CallRecord, GeminiClient, process_call_records, thinking_rank
+from lemely.io.gemini import (
+    CallRecord,
+    GeminiClient,
+    SharedPrefix,
+    process_call_records,
+    thinking_rank,
+)
 from lemely.io.prompts.correction_ai import (
     VERSION,
     build_marker_user_prompt,
+    build_shared_prefix,
     default_marking_rules,
     marker_system_prompt,
     printed_principles,
+    render_paper_mark_scheme,
 )
 from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD
 from lemely.io.validation import validate_mark_scheme
@@ -345,11 +353,52 @@ def _append_leaf_log(
         fh.write(json.dumps(line, sort_keys=True) + "\n")
 
 
-class AICorrector:
-    """Marks individual non-MCQ questions via the shared GeminiClient."""
+class _PrefixKwargs(TypedDict, total=False):
+    """``generate_structured``'s ``shared_prefix`` argument, present only when set."""
 
-    def __init__(self, gemini_client: GeminiClient) -> None:
+    shared_prefix: SharedPrefix
+
+
+class AICorrector:
+    """Marks individual non-MCQ questions via the shared GeminiClient.
+
+    ``mark_scheme`` is the whole paper's scheme, given by :func:`correct_paper`.
+    It is read only with ``GeminiSettings.correction_shared_prefix`` on (cost-ladder
+    lever A3): every correction call on the paper is then sent the same system
+    prompt, :func:`build_shared_prefix`, so a provider can cache it. Without a
+    scheme, or with the flag off, prompts are what they always were.
+    """
+
+    def __init__(
+        self, gemini_client: GeminiClient, *, mark_scheme: MarkScheme | None = None
+    ) -> None:
         self._client = gemini_client
+        self._mark_scheme = mark_scheme
+        #: Built once per value of ``reader_describes_drawings``, not once per leaf.
+        self._prefixes: dict[bool, SharedPrefix] = {}
+
+    def _shared_prefix(self, *, reader_describes_drawings: bool) -> SharedPrefix | None:
+        """The paper's shared prefix when lever A3 is on and the scheme is known."""
+        g = self._client._settings.gemini
+        # `is True`, not truthiness: the setting is a validated bool, and a stand-in
+        # settings object whose attributes are all truthy must not switch the lever on.
+        if g.correction_shared_prefix is not True or self._mark_scheme is None:
+            return None
+        prefix = self._prefixes.get(reader_describes_drawings)
+        if prefix is None:
+            prefix = SharedPrefix(
+                instructions=marker_system_prompt(
+                    reader_describes_drawings=reader_describes_drawings
+                ),
+                paper=render_paper_mark_scheme(self._mark_scheme),
+                text=build_shared_prefix(
+                    self._mark_scheme, reader_describes_drawings=reader_describes_drawings
+                ),
+                cache=g.correction_prefix_cache,
+                version=VERSION,
+            )
+            self._prefixes[reader_describes_drawings] = prefix
+        return prefix
 
     def mark_question(
         self,
@@ -404,6 +453,11 @@ class AICorrector:
         :func:`_maybe_apply_ecf_substitution`, the only caller that ever
         passes this non-empty. Not tied to ``equivalence_gate``: this
         parameter exists on every call regardless of that flag's value.
+
+        With ``correction_shared_prefix`` on and the paper's scheme given to the
+        constructor, the system prompt of this call and of every retry,
+        cascade pass and escalation it makes is the paper's shared prefix
+        (:meth:`_shared_prefix`); the user prompt is unchanged.
         """
         g = self._client._settings.gemini
         user_prompt = build_marker_user_prompt(
@@ -417,7 +471,16 @@ class AICorrector:
             default_rules=default_rules,
             reader_describes_drawings=reader_describes_drawings,
         )
-        system_prompt = marker_system_prompt(reader_describes_drawings=reader_describes_drawings)
+        shared_prefix = self._shared_prefix(reader_describes_drawings=reader_describes_drawings)
+        system_prompt = (
+            shared_prefix.text
+            if shared_prefix is not None
+            else marker_system_prompt(reader_describes_drawings=reader_describes_drawings)
+        )
+        # Sent only when set, so a flag-off call passes exactly the arguments it did.
+        prefix_kwargs: _PrefixKwargs = (
+            {"shared_prefix": shared_prefix} if shared_prefix is not None else {}
+        )
 
         leaf_log = os.environ.get(CASCADE_LEAF_LOG_ENV) if g.cascade_enabled else None
         records_before = len(process_call_records()) if leaf_log else 0
@@ -430,6 +493,7 @@ class AICorrector:
             task_tag="correction",
             attempt="first",
             question_id=question.id,
+            **prefix_kwargs,
         )
 
         if g.cascade_enabled:
@@ -440,9 +504,12 @@ class AICorrector:
                 result,
                 leaf_log=leaf_log,
                 records_before=records_before,
+                prefix_kwargs=prefix_kwargs,
             )
         else:
-            result = self._retry_low_confidence(question, system_prompt, user_prompt, result)
+            result = self._retry_low_confidence(
+                question, system_prompt, user_prompt, result, prefix_kwargs=prefix_kwargs
+            )
 
         # Post-I6-review Item A: ``PointVerdict.ecf_applied`` must be
         # CODE-set only -- I7's whole contract is that it records a re-mark
@@ -475,11 +542,14 @@ class AICorrector:
         system_prompt: str,
         user_prompt: str,
         result: AIMarkResponse,
+        *,
+        prefix_kwargs: _PrefixKwargs,
     ) -> AIMarkResponse:
         """The non-cascade path: a borderline thinking retry, then escalation.
 
         Both steps fire on ``escalation_confidence_threshold``; prompts and cache
         keys are what ``mark_question`` sent before the cascade existed.
+        ``prefix_kwargs`` is the first pass's ``shared_prefix`` argument, if any.
         """
         g = self._client._settings.gemini
         # Step 1: thinking retry for borderline confidence (cheaper than Pro escalation).
@@ -530,6 +600,7 @@ class AICorrector:
                 task_tag="correction_borderline",
                 attempt="borderline",
                 question_id=question.id,
+                **prefix_kwargs,
             )
             last_call = (correction_model, borderline_thinking)
 
@@ -572,6 +643,7 @@ class AICorrector:
                 model=escalation_model,
                 attempt="escalation",
                 question_id=question.id,
+                **prefix_kwargs,
             )
         return result
 
@@ -584,6 +656,7 @@ class AICorrector:
         *,
         leaf_log: str | None,
         records_before: int,
+        prefix_kwargs: _PrefixKwargs,
     ) -> AIMarkResponse:
         """Cost-ladder lever A2: keep the cheap first pass unless a trigger fires.
 
@@ -608,7 +681,8 @@ class AICorrector:
         strong result for such a leaf.
 
         With ``LEMELY_CASCADE_LEAF_LOG`` set, an ``OSError`` writing that file
-        fails the leaf (see :func:`_append_leaf_log`).
+        fails the leaf (see :func:`_append_leaf_log`). ``prefix_kwargs`` is the
+        first pass's ``shared_prefix`` argument, sent with every pass here.
         """
         g = self._client._settings.gemini
         cheap_model = g.model_for("correction")
@@ -632,6 +706,7 @@ class AICorrector:
                 task_tag="correction",
                 attempt="borderline",
                 question_id=question.id,
+                **prefix_kwargs,
             )
             disagreement = second.awarded_marks != first.awarded_marks
 
@@ -659,6 +734,7 @@ class AICorrector:
                 model=strong_model,
                 attempt="escalation",
                 question_id=question.id,
+                **prefix_kwargs,
             )
 
         entry: dict[str, object] = {
@@ -2898,7 +2974,9 @@ def correct_paper(
             "This paper contains non-MCQ questions. Pass a GeminiClient or set mcq_only=True."
         )
 
-    ai = AICorrector(gemini_client) if (gemini_client and not mcq_only) else None
+    ai = (
+        AICorrector(gemini_client, mark_scheme=scheme) if (gemini_client and not mcq_only) else None
+    )
     # The marking rules every AI marking call on this paper is given: the scheme's own
     # printed principles, or, for a science scheme stored without any, the published
     # ones for its syllabus family. Never both.
