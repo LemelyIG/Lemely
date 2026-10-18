@@ -182,7 +182,9 @@ class GeminiSettings(BaseModel):
     cascade_strong_model: str | None = None
     # Model name -> fitted confidence threshold; a model missing from the dict
     # uses ``escalation_confidence_threshold``.
-    cascade_threshold_for: dict[str, float] = Field(default_factory=dict)
+    cascade_threshold_for: dict[str, Annotated[float, Field(ge=0.0, le=1.0)]] = Field(
+        default_factory=dict
+    )
     cascade_two_pass_disagreement: bool = False
     cascade_unaddressed_points: bool = False
     # Put the question-invariant correction prompt first so providers can cache it.

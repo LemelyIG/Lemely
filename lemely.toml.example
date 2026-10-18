@@ -47,7 +47,7 @@ model = "gemini-2.5-flash"
 # Cascade: cheap correction pass first, escalate only when it is unsure.
 # cascade_enabled = false
 # Strong model for the cascade (unset = use escalation_model).
-# cascade_strong_model = "gemini-3.8-flash"
+# cascade_strong_model = ""  # unset = use escalation_model
 # Per-model fitted confidence threshold (missing model = escalation threshold).
 # cascade_threshold_for = {}
 # Escalate when two cheap passes disagree.

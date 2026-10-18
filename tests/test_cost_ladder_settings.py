@@ -44,6 +44,7 @@ def test_example_toml_lists_new_keys() -> None:
 
 
 def test_anthropic_key_from_env_is_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LEMELY_ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-very-secret")
     s = load_settings(cwd=Path("/nonexistent-lemely-cwd"))
     assert s.anthropic_api_key is not None
@@ -58,3 +59,17 @@ def test_cache_mode_for_rejects_unknown_mode() -> None:
     }
     with pytest.raises(ValidationError):
         GeminiSettings(cache_mode_for={"correction": "bogus"})  # type: ignore[dict-item]
+
+
+def test_anthropic_key_defaults_none_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LEMELY_ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    s = load_settings(cwd=Path("/nonexistent-lemely-cwd"))
+    assert s.anthropic_api_key is None
+
+
+@pytest.mark.parametrize("bad", [1.5, -0.1])
+def test_cascade_threshold_out_of_range_rejected(bad: float) -> None:
+    assert GeminiSettings(cascade_threshold_for={"m": 0.5}).cascade_threshold_for == {"m": 0.5}
+    with pytest.raises(ValidationError):
+        GeminiSettings(cascade_threshold_for={"m": bad})

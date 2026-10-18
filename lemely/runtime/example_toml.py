@@ -103,7 +103,7 @@ def render_example_toml() -> str:
     lines.append("# Cascade: cheap correction pass first, escalate only when it is unsure.")
     lines.append(f"# cascade_enabled = {_toml_bool(s.gemini.cascade_enabled)}")
     lines.append("# Strong model for the cascade (unset = use escalation_model).")
-    lines.append('# cascade_strong_model = "gemini-3.8-flash"')
+    lines.append('# cascade_strong_model = ""  # unset = use escalation_model')
     lines.append("# Per-model fitted confidence threshold (missing model = escalation threshold).")
     lines.append(f"# cascade_threshold_for = {_toml_inline(s.gemini.cascade_threshold_for)}")
     lines.append("# Escalate when two cheap passes disagree.")
