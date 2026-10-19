@@ -1,0 +1,124 @@
+"""Cost-ladder B12: a per-task-tag output-token cap on Gemini calls."""
+
+from __future__ import annotations
+
+import tempfile
+from unittest.mock import MagicMock, patch
+
+import pytest
+from pydantic import BaseModel, ValidationError
+
+from lemely.io import gemini as gemini_module
+from lemely.io.gemini import (
+    GeminiClient,
+    _reset_process_counters,
+    process_call_records,
+)
+from lemely.runtime.config import GeminiSettings, Settings
+from lemely.runtime.errors import ExternalServiceError
+from tests.gemini_fakes import make_settings, mock_response
+
+_MODEL = "gemini-3.8-flash"
+
+
+class _Schema(BaseModel):
+    value: str
+
+
+def _settings(caps: dict[str, int]) -> Settings:
+    base = make_settings(tempfile.mkdtemp())
+    gemini = base.gemini.model_copy(update={"max_output_tokens_for": caps, "backoff_seconds": 0.01})
+    return base.model_copy(update={"gemini": gemini})
+
+
+def _client(settings: Settings, *responses: MagicMock) -> tuple[GeminiClient, MagicMock]:
+    genai = MagicMock()
+    genai.models.generate_content.side_effect = list(responses)
+    return GeminiClient(settings, _genai_client=genai), genai
+
+
+def _call(client: GeminiClient, tag: str = "extraction") -> _Schema:
+    return client.generate_structured(
+        system_prompt="s",
+        user_prompt="u",
+        response_schema=_Schema,
+        prompt_version="1",
+        model=_MODEL,
+        task_tag=tag,
+    )
+
+
+def _sent_cap(genai: MagicMock) -> int:
+    return int(genai.models.generate_content.call_args.kwargs["config"].max_output_tokens)
+
+
+def _truncated(text: str = '{"value": "x') -> MagicMock:
+    resp = mock_response(text, candidates=500, thoughts=100)
+    resp.candidates[0].finish_reason.__str__ = lambda self: "MAX_TOKENS"  # type: ignore[method-assign]
+    return resp
+
+
+def test_setting_defaults_empty_and_bounded() -> None:
+    assert GeminiSettings().max_output_tokens_for == {}
+    assert GeminiSettings(max_output_tokens_for={"extraction": 8000}).max_output_tokens_for == {
+        "extraction": 8000
+    }
+    for bad in (0, -1):
+        with pytest.raises(ValidationError):
+            GeminiSettings(max_output_tokens_for={"extraction": bad})
+
+
+def test_default_sends_constant_and_fingerprint_unchanged() -> None:
+    client, genai = _client(_settings({}), mock_response('{"value": "a"}'))
+    _call(client)
+    assert _sent_cap(genai) == gemini_module._MAX_OUTPUT_TOKENS
+    # An unrelated tag's cap leaves this tag's fingerprint untouched.
+    other = GeminiClient(_settings({"other": 100}), _genai_client=MagicMock())
+    assert client._params_fingerprint(_MODEL, "extraction", _Schema) == other._params_fingerprint(
+        _MODEL, "extraction", _Schema
+    )
+
+
+def test_per_tag_cap_sent_and_fingerprinted() -> None:
+    client, genai = _client(_settings({"extraction": 8000}), mock_response('{"value": "a"}'))
+    _call(client)
+    assert _sent_cap(genai) == 8000
+    plain = GeminiClient(_settings({}), _genai_client=MagicMock())
+    assert client._params_fingerprint(_MODEL, "extraction", _Schema) != plain._params_fingerprint(
+        _MODEL, "extraction", _Schema
+    )
+    # Another tag still gets the default and the old fingerprint.
+    assert client._params_fingerprint(_MODEL, "other", _Schema) == plain._params_fingerprint(
+        _MODEL, "other", _Schema
+    )
+
+
+def test_cap_does_not_touch_anthropic_fingerprint() -> None:
+    capped = GeminiClient(_settings({"extraction": 8000}), _genai_client=MagicMock())
+    plain = GeminiClient(_settings({}), _genai_client=MagicMock())
+    model = "claude-sonnet-5-5"
+    assert capped._params_fingerprint(model, "extraction", _Schema) == plain._params_fingerprint(
+        model, "extraction", _Schema
+    )
+
+
+def test_truncated_capped_reply_is_billed_recorded_and_not_retried() -> None:
+    _reset_process_counters()
+    client, genai = _client(
+        _settings({"extraction": 8000}), _truncated(), _truncated(), _truncated(), _truncated()
+    )
+    with patch("lemely.io.gemini.time.sleep"), pytest.raises(ExternalServiceError) as err:
+        _call(client)
+    assert genai.models.generate_content.call_count == 1
+    (rec,) = process_call_records()
+    assert rec.parse_ok is False
+    assert rec.output_tokens > 0
+    assert rec.usd_now > 0
+    assert "8000" in str(err.value)
+
+
+def test_truncated_default_cap_still_retries_as_before() -> None:
+    client, genai = _client(_settings({}), _truncated(), mock_response('{"value": "a"}'))
+    with patch("tenacity.nap.time.sleep"):
+        assert _call(client).value == "a"
+    assert genai.models.generate_content.call_count == 2

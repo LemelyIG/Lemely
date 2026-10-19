@@ -190,6 +190,10 @@ class GeminiSettings(BaseModel):
         default_factory=dict
     )
     cascade_two_pass_disagreement: bool = False
+    # Per-task-tag output-token cap (thinking tokens included); a tag's value
+    # replaces the client's default cap for that tag's Gemini calls. A reply cut
+    # off at a set cap is billed, recorded unparsed and not retried.
+    max_output_tokens_for: dict[str, Annotated[int, Field(gt=0)]] = Field(default_factory=dict)
     cascade_unaddressed_points: bool = False
     # Put the question-invariant correction prompt first so providers can cache it.
     correction_shared_prefix: bool = False

@@ -1201,6 +1201,19 @@ class GeminiClient:
             return cast(str, params["thinking_level"])
         return cast(int, params["thinking_budget"])
 
+    def _output_cap(self, task_tag: str | None) -> tuple[int, bool]:
+        """The Gemini output-token cap for ``task_tag`` and whether a per-tag cap set it.
+
+        ``max_output_tokens`` counts thinking tokens too (Gemini thinking docs,
+        https://ai.google.dev/gemini-api/docs/thinking: "sets the maximum number of
+        tokens a response can generate, including thought tokens"), so a per-tag
+        cap bounds reasoning as well as the reply.
+        """
+        override = self._settings.gemini.max_output_tokens_for.get(task_tag or "")
+        if override is None:
+            return _MAX_OUTPUT_TOKENS, False
+        return override, True
+
     def _params_fingerprint(
         self,
         model: str,
@@ -1257,10 +1270,16 @@ class GeminiClient:
             schema_json = json.dumps(response_schema.model_json_schema(), sort_keys=True)
             schema_hash = hashlib.sha256(schema_json.encode()).hexdigest()[:12]
         api_line = "3x" if _is_3x(model) else "2x"
+        # The per-tag cap applies to Gemini calls only; claude- models carry the
+        # adapter's own cap below.
+        output_cap = (
+            _MAX_OUTPUT_TOKENS if is_anthropic_model(model) else self._output_cap(task_tag)[0]
+        )
         raw = (
             f"{model}|{api_line}|{params['temperature']}|{params['top_p']}"
             f"|{params['seed']}|{params['thinking_budget']}|{params['thinking_level']}"
-            f"|{_MAX_OUTPUT_TOKENS}|{schema_hash}|{media_resolution or 'none'}"
+            f"|{output_cap}"
+            f"|{schema_hash}|{media_resolution or 'none'}"
         )
         # N3 review MUST-FIX 1: `tool` folds in ONLY when set, not as a
         # `|none` segment appended unconditionally. Every plain
@@ -2161,6 +2180,7 @@ class GeminiClient:
 
         is_3x = _is_3x(model)
         gen_params = self._resolved_gen_params(task_tag, model)
+        output_cap, cap_is_per_tag = self._output_cap(task_tag)
         stripped_schema = _strip_schema(response_schema.model_json_schema(), is_3x=is_3x)
         log.debug(
             "gemini_schema_sent",
@@ -2180,7 +2200,7 @@ class GeminiClient:
         # same config class in this SDK version, so 2.5 is untouched by
         # keeping response_schema).
         config_kwargs: dict[str, Any] = {
-            "max_output_tokens": _MAX_OUTPUT_TOKENS,
+            "max_output_tokens": output_cap,
             "response_mime_type": "application/json",
             "system_instruction": system_prompt,
         }
@@ -2231,6 +2251,14 @@ class GeminiClient:
         raw = response.text or ""
         finish = str(response.candidates[0].finish_reason if response.candidates else "")
         if finish == "MAX_TOKENS":
+            if cap_is_per_tag:
+                # A reply cut off at an operator-set cap is billed (recorded
+                # above) and marked unparsed. Not transient: a retry would send
+                # the same cap and repeat the runaway, so it fails at once.
+                _mark_last_record_unparsed()
+                raise ExternalServiceError(
+                    f"Gemini hit the {output_cap}-token output cap for {task_tag} ({model})"
+                )
             raise _TransientError(f"Gemini hit max_output_tokens ({model})")
         return raw
 

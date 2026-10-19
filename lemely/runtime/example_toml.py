@@ -112,6 +112,9 @@ def render_example_toml() -> str:
     lines.append(
         f"# cascade_two_pass_disagreement = {_toml_bool(s.gemini.cascade_two_pass_disagreement)}"
     )
+    lines.append("# Per-task output-token cap, thinking included (unlisted tags keep the default).")
+    lines.append("# A reply cut off at a set cap is billed, recorded unparsed and not retried.")
+    lines.append(f"# max_output_tokens_for = {_toml_inline(s.gemini.max_output_tokens_for)}")
     lines.append("# Escalate when the cheap pass leaves mark-scheme points unaddressed.")
     lines.append(
         f"# cascade_unaddressed_points = {_toml_bool(s.gemini.cascade_unaddressed_points)}"
