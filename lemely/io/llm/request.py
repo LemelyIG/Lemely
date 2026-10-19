@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
     from pydantic import BaseModel
 
+from lemely.io.llm.image_fit import IMG_FIT_VERSION
 from lemely.io.providers import is_anthropic_model
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
@@ -69,11 +70,11 @@ def provider_fingerprint(model: str, *, max_output_tokens: int) -> str:
     """The provider part of a reply's cache key: the single source for it.
 
     Empty for every Gemini model, so no Gemini key moves. A ``claude-`` model adds
-    the provider name and the reply cap it is sent with.
+    the provider name, the reply cap it is sent with and the page-image fit version.
     """
     if not is_anthropic_model(model):
         return ""
-    return f"|provider=anthropic|max_tokens={max_output_tokens}"
+    return f"|provider=anthropic|max_tokens={max_output_tokens}|img_fit={IMG_FIT_VERSION}"
 
 
 @dataclass(frozen=True)

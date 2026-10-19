@@ -71,6 +71,11 @@ model = "gemini-2.5-flash"
 # correction_shared_prefix = false
 # How the shared prefix is cached: implicit | explicit.
 # correction_prefix_cache = "implicit"
+# Claude page images: greyscaled, enhanced and stepped down from 2576 px until
+# under this many estimated tokens (95,000 keeps Haiku 5.5 under its 100k
+# price tier), never below the floor in pixels.
+# claude_image_token_budget = 95000
+# claude_image_floor_px = 1568
 
 max_retries = 3
 backoff_seconds = 2.0
@@ -304,10 +309,12 @@ second_read = true
 # scripts it saves far less than on the golden set (0/20 reads).
 second_read_mode = "always"
 # The second read's model. Unset: read_model reads twice. A claude- model
-# (e.g. claude-haiku-5-5) makes it a cross-model read: Claude is sent the
-# same page images under the binding_second_read task tag (its thinking
-# level is the Anthropic effort), and needs ANTHROPIC_API_KEY; `lemely
-# doctor` checks for it.
+# (e.g. claude-haiku-5-5) makes it a cross-model read under the
+# binding_second_read task tag: its thinking level is the Anthropic effort
+# and its max_output_tokens_for cap applies. Claude gets the pages fitted
+# under gemini.claude_image_token_budget, never below
+# gemini.claude_image_floor_px. Needs ANTHROPIC_API_KEY; `lemely doctor`
+# checks for it.
 # second_read_model = "claude-haiku-5-5"
 # The model the legacy binder's one retry uses, when the gate is on.
 retry_model = "gemini-3.8-flash"

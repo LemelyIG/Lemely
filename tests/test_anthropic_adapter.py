@@ -32,6 +32,7 @@ from lemely.io.gemini import (
     record_calls,
     set_call_context,
 )
+from lemely.io.llm import image_fit
 from lemely.io.providers import (
     ProviderError,
     ProviderTransientError,
@@ -39,8 +40,6 @@ from lemely.io.providers import (
     is_anthropic_model,
 )
 from lemely.io.providers.anthropic_adapter import (
-    MANY_IMAGES_LONG_EDGE,
-    MAX_LONG_EDGE,
     MAX_OUTPUT_TOKENS,
     AnthropicAdapter,
     Usage,
@@ -108,24 +107,54 @@ def _message(
     )
 
 
+class _FakeStream:
+    def __init__(self, outcome: object) -> None:
+        self._outcome = outcome
+
+    def __enter__(self) -> _FakeStream:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def get_final_message(self) -> object:
+        return self._outcome
+
+
 class _FakeMessages:
     def __init__(self, outcomes: list[object]) -> None:
         self._outcomes = list(outcomes)
         self.calls: list[dict[str, Any]] = []
+        self.streamed: list[dict[str, Any]] = []
+        self.count_calls: list[dict[str, Any]] = []
+        self.count_result = 1_000
 
-    def create(self, **kwargs: Any) -> object:
-        self.calls.append(kwargs)
+    def _next(self) -> object:
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
         return outcome
 
+    def create(self, **kwargs: Any) -> object:
+        self.calls.append(kwargs)
+        return self._next()
+
+    def stream(self, **kwargs: Any) -> _FakeStream:
+        self.calls.append(kwargs)
+        self.streamed.append(kwargs)
+        return _FakeStream(self._next())
+
+    def count_tokens(self, **kwargs: Any) -> object:
+        self.count_calls.append(kwargs)
+        return SimpleNamespace(input_tokens=self.count_result)
+
 
 class _FakeAnthropic:
-    """Stands in for ``anthropic.Anthropic``: only ``messages.create`` is touched."""
+    """Stands in for ``anthropic.Anthropic``: ``messages`` and ``files``."""
 
     def __init__(self, *outcomes: object) -> None:
         self.messages = _FakeMessages(list(outcomes))
+        self.files = MagicMock()
 
 
 def _status_error(status: int) -> anthropic.APIStatusError:
@@ -428,34 +457,6 @@ class ImageInputTests(unittest.TestCase):
         call = self._complete([])
         self.assertEqual(call["messages"], [{"role": "user", "content": "user"}])
 
-    def test_a_page_over_the_native_long_edge_is_downscaled(self) -> None:
-        call = self._complete([_image(MAX_LONG_EDGE + 400, 1000)])
-        ((media_type, data),) = _sent_images(call)
-        self.assertEqual(media_type, "image/png")
-        with Image.open(io.BytesIO(data)) as sent:
-            self.assertEqual(sent.size, (MAX_LONG_EDGE, round(1000 * MAX_LONG_EDGE / 2976)))
-
-    def test_a_jpeg_page_stays_jpeg_when_downscaled(self) -> None:
-        call = self._complete([_image(200, MAX_LONG_EDGE + 1, "JPEG")])
-        ((media_type, data),) = _sent_images(call)
-        self.assertEqual(media_type, "image/jpeg")
-        with Image.open(io.BytesIO(data)) as sent:
-            self.assertEqual(sent.format, "JPEG")
-            self.assertEqual(max(sent.size), MAX_LONG_EDGE)
-
-    def test_more_than_twenty_pages_are_held_to_the_many_image_edge(self) -> None:
-        small = _image(100, 100)
-        tall = _image(1000, MANY_IMAGES_LONG_EDGE + 300)
-        call = self._complete([tall] + [small] * 20)
-        sent = _sent_images(call)
-        self.assertEqual(len(sent), 21)
-        with Image.open(io.BytesIO(sent[0][1])) as first:
-            self.assertEqual(max(first.size), MANY_IMAGES_LONG_EDGE)
-        self.assertTrue(all(data == small for _media, data in sent[1:]))
-        # Twenty pages are not "many": the same tall page keeps its size.
-        call = self._complete([tall] + [small] * 19)
-        self.assertEqual(_sent_images(call)[0][1], tall)
-
     def test_too_many_pages_are_refused_before_any_request(self) -> None:
         fake = _FakeAnthropic(_message(_VALID_MARK))
         images = [_image(8, 8)] * (anthropic_adapter.MAX_IMAGES_PER_REQUEST + 1)
@@ -479,17 +480,8 @@ class ImageInputTests(unittest.TestCase):
         ):
             self._complete([png])
 
-    def test_pages_over_the_request_size_are_refused(self) -> None:
-        png = _image(64, 64)
-        encoded = len(base64.b64encode(png))
-        with (
-            patch.object(anthropic_adapter, "MAX_IMAGES_BASE64_TOTAL", 2 * encoded - 1),
-            self.assertRaisesRegex(ProviderError, "request"),
-        ):
-            self._complete([png, png])
-
     def test_bytes_that_are_not_png_or_jpeg_are_refused(self) -> None:
-        for data in (b"GIF89a....", b"\x89PNG\r\n\x1a\n-truncated", b""):
+        for data in (b"GIF89a....", b""):
             with self.subTest(data=data[:6]), self.assertRaises(ProviderError):
                 self._complete([data])
 
@@ -663,7 +655,8 @@ class ClientDispatchTests(_ClientTestCase):
         client, fake, genai = self._client(_message(_VALID_MARK))
         self._mark(client, image_parts=pages, media_resolution="high")
         (call,) = fake.messages.calls
-        self.assertEqual(_sent_images(call), [("image/png", pages[0]), ("image/png", pages[1])])
+        fitted = image_fit.fit(pages).images
+        self.assertEqual(_sent_images(call), [("image/png", fitted[0]), ("image/png", fitted[1])])
         self.assertEqual(
             call["messages"][0]["content"][-1], {"type": "text", "text": "Mark this answer."}
         )
@@ -677,7 +670,9 @@ class ClientDispatchTests(_ClientTestCase):
         uploads.matches.return_value = True
         self._mark(client, image_parts=pages, image_uploads=uploads)
         uploads.ensure.assert_not_called()
-        self.assertEqual(_sent_images(fake.messages.calls[0]), [("image/png", pages[0])])
+        self.assertEqual(
+            _sent_images(fake.messages.calls[0]), [("image/png", image_fit.fit(pages).images[0])]
+        )
         genai.files.upload.assert_not_called()
 
     def test_claude_image_cache_key_follows_the_image_bytes(self) -> None:

@@ -11,25 +11,16 @@ would save.
 
 Scope: text and page images in, structured JSON out. Images arrive as
 encoded PNG or JPEG bytes (``GeminiClient.generate_structured``'s
-``image_parts``) and are sent inline as base64 ``image`` blocks, ahead of the
-text, in the order given. Files (``file_paths``) are still rejected before a
+``image_parts``) and are sent as base64 ``image`` blocks (or Files API ids), ahead
+of the text, in the order given. Files (``file_paths``) are still rejected before a
 request is built, and Gemini's own image knobs do not apply: ``image_uploads``
 (Files API handles) and ``media_resolution`` are ignored for a ``claude-``
 model, which always gets the bytes themselves.
 
-Image limits (https://platform.claude.com/docs/en/build-with-claude/vision,
-read 2026-10-19). A page whose long edge is over :data:`MAX_LONG_EDGE` (the
-long edge Claude 4.7-and-later models read natively; the API would scale it
-down to that anyway, so nothing the model sees is lost), or over
-:data:`MANY_IMAGES_LONG_EDGE` when the request holds more than
-:data:`MANY_IMAGES_THRESHOLD` images (the API refuses bigger ones then), is
-scaled down here, keeping its aspect ratio and its format. Everything else is
-sent byte for byte. A request that would still break a hard limit (more than
-:data:`MAX_IMAGES_PER_REQUEST` images, one image over
-:data:`MAX_IMAGE_BASE64_BYTES` encoded, or all of them over
-:data:`MAX_IMAGES_BASE64_TOTAL`) raises :class:`ProviderError` before it is
-sent: pages are never recompressed lossily to squeeze under a limit, since a
-handwriting read on degraded pages would fail silently instead of loudly.
+Images arrive already fitted by ``lemely.io.llm.image_fit`` (greyscale, long
+edge, token and byte budgets). This module only checks what the API would refuse
+outright: the media type, more than :data:`MAX_IMAGES_PER_REQUEST` images, or one
+image over :data:`MAX_IMAGE_BASE64_BYTES` encoded.
 
 Mark bounds. Structured outputs cannot express numeric ``minimum`` /
 ``maximum``: :func:`anthropic.transform_schema` drops them from the schema
@@ -45,12 +36,10 @@ the bound is enforced where it is for every provider, the clamp in
 from __future__ import annotations
 
 import base64
-import io
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 import anthropic
-from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ValidationError
 
 from lemely.io.llm.provider import Usage
@@ -63,6 +52,7 @@ if TYPE_CHECKING:
     from anthropic.types import (
         Base64ImageSourceParam,
         ContentBlockParam,
+        FileImageSourceParam,
         ImageBlockParam,
         Message,
         MessageParam,
@@ -94,20 +84,15 @@ _CACHE_WRITE_PREMIUM_NUM, _CACHE_WRITE_PREMIUM_DEN = 5, 4
 #: 429 rate limit, 529 overloaded, and every 5xx are retried by the client.
 _TRANSIENT_STATUS = frozenset({429, 529})
 
-#: The longest edge, in pixels, a Claude 4.7-and-later model reads natively.
-MAX_LONG_EDGE = 2576
-#: Above this many images in one request the API holds every image to
-#: :data:`MANY_IMAGES_LONG_EDGE` on both dimensions.
-MANY_IMAGES_THRESHOLD = 20
-MANY_IMAGES_LONG_EDGE = 2000
 #: The API's image cap for a 200k-context model (600 for the others); the lower
 #: one, since a binding read is a few dozen pages at most.
 MAX_IMAGES_PER_REQUEST = 100
 #: One image, base64-encoded (the API's limit is 10 MB).
 MAX_IMAGE_BASE64_BYTES = 10_000_000
-#: Every image of one request, base64-encoded: the API's 32 MB request limit
-#: less room for the prompt and the response schema.
-MAX_IMAGES_BASE64_TOTAL = 30_000_000
+
+#: The SDK refuses a non-streaming request whose max_tokens implies more than ten
+#: minutes (3600 * max_tokens / 128000 > 600); above this the reply is streamed.
+NONSTREAMING_MAX_TOKENS = 21_333
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _JPEG_MAGIC = b"\xff\xd8\xff"
@@ -172,68 +157,45 @@ def _media_type(data: bytes, page: int) -> _MediaType:
     raise ProviderError(f"page {page} is neither PNG nor JPEG; Claude is sent only those")
 
 
-def _fit(data: bytes, media_type: _MediaType, long_edge: int, page: int) -> bytes:
-    """``data`` as it is, or scaled down so its long edge is ``long_edge``, same format."""
-    try:
-        with Image.open(io.BytesIO(data)) as img:
-            width, height = img.size
-            if max(width, height) <= long_edge:
-                return data
-            scale = long_edge / max(width, height)
-            size = (max(1, round(width * scale)), max(1, round(height * scale)))
-            fmt = "PNG" if media_type == "image/png" else "JPEG"
-            img.load()
-            work: Image.Image = img
-            if work.mode not in ("L", "RGB") and not (fmt == "PNG" and work.mode in ("LA", "RGBA")):
-                work = work.convert("RGBA" if fmt == "PNG" and "A" in work.getbands() else "RGB")
-            resized = work.resize(size, Image.Resampling.LANCZOS)
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
-        raise ProviderError(f"page {page} could not be read as an image: {exc}") from exc
-    out = io.BytesIO()
-    if fmt == "JPEG":
-        resized.save(out, fmt, quality=95)
-    else:
-        resized.save(out, fmt)
-    return out.getvalue()
-
-
 def image_blocks(images: Sequence[bytes]) -> list[ImageBlockParam]:
-    """Base64 ``image`` blocks for ``images``, in order, held to the API's limits.
-
-    See the module docstring for what is scaled down and what is refused.
+    """Base64 ``image`` blocks for already-fitted ``images``, in order.
 
     Raises:
-        ProviderError: a page is not a readable PNG or JPEG, or the request would
-            break a limit that scaling down to the native size does not meet.
+        ProviderError: a page is not PNG or JPEG, one is over the per-image size,
+            or there are more images than the API takes.
     """
     if len(images) > MAX_IMAGES_PER_REQUEST:
         raise ProviderError(
             f"{len(images)} images in one Claude request; the limit is {MAX_IMAGES_PER_REQUEST}"
         )
-    long_edge = MANY_IMAGES_LONG_EDGE if len(images) > MANY_IMAGES_THRESHOLD else MAX_LONG_EDGE
     blocks: list[ImageBlockParam] = []
-    total = 0
     for page, data in enumerate(images, start=1):
         media_type = _media_type(data, page)
-        encoded = base64.standard_b64encode(_fit(data, media_type, long_edge, page)).decode("ascii")
+        encoded = base64.standard_b64encode(data).decode("ascii")
         if len(encoded) > MAX_IMAGE_BASE64_BYTES:
             raise ProviderError(
                 f"page {page} is {len(encoded)} bytes base64-encoded; Claude takes at most "
                 f"{MAX_IMAGE_BASE64_BYTES} per image"
             )
-        total += len(encoded)
         source: Base64ImageSourceParam = {
             "type": "base64",
             "media_type": media_type,
             "data": encoded,
         }
         blocks.append({"type": "image", "source": source})
-    if total > MAX_IMAGES_BASE64_TOTAL:
-        raise ProviderError(
-            f"{len(images)} pages are {total} bytes base64-encoded; one Claude request takes "
-            f"at most {MAX_IMAGES_BASE64_TOTAL} of images"
-        )
     return blocks
+
+
+def file_image_blocks(file_ids: Sequence[str]) -> list[ImageBlockParam]:
+    """``image`` blocks that reference Files API uploads by id, in order."""
+    if len(file_ids) > MAX_IMAGES_PER_REQUEST:
+        raise ProviderError(
+            f"{len(file_ids)} images in one Claude request; the limit is {MAX_IMAGES_PER_REQUEST}"
+        )
+    return [
+        {"type": "image", "source": cast("FileImageSourceParam", {"type": "file", "file_id": fid})}
+        for fid in file_ids
+    ]
 
 
 def _is_transient(exc: anthropic.APIError) -> bool:
@@ -259,6 +221,44 @@ class AnthropicAdapter:
         """
         return cls(anthropic.Anthropic(api_key=api_key, max_retries=0))
 
+    @property
+    def raw(self) -> anthropic.Anthropic:
+        """The SDK client (the Files API uploads use it)."""
+        return self._client
+
+    @staticmethod
+    def _user_message(
+        user_prompt: str,
+        *,
+        cache_prefix: str | None,
+        images: Sequence[bytes],
+        image_file_ids: Sequence[str],
+    ) -> MessageParam:
+        if not (cache_prefix or images or image_file_ids):
+            return {"role": "user", "content": user_prompt}
+        content: list[ContentBlockParam] = [
+            *image_blocks(images),
+            *file_image_blocks(image_file_ids),
+        ]
+        if cache_prefix:
+            content.append(
+                {"type": "text", "text": cache_prefix, "cache_control": {"type": "ephemeral"}}
+            )
+        content.append({"type": "text", "text": user_prompt})
+        return {"role": "user", "content": content}
+
+    def _send(self, **kwargs: Any) -> Message:  # type: ignore[explicit-any]  # noqa: ANN401
+        """One request; streamed when ``max_tokens`` is past the SDK's non-streaming limit."""
+        try:
+            if kwargs["max_tokens"] > NONSTREAMING_MAX_TOKENS:
+                with self._client.messages.stream(**kwargs) as stream:
+                    return cast("Message", stream.get_final_message())
+            return cast("Message", self._client.messages.create(**kwargs))
+        except anthropic.APIError as exc:
+            if _is_transient(exc):
+                raise ProviderTransientError(str(exc)) from exc
+            raise ProviderError(str(exc)) from exc
+
     def complete(
         self,
         *,
@@ -269,21 +269,19 @@ class AnthropicAdapter:
         thinking: str | None,
         cache_prefix: str | None,
         images: Sequence[bytes] = (),
+        image_file_ids: Sequence[str] = (),
+        max_tokens: int = MAX_OUTPUT_TOKENS,
     ) -> AnthropicReply:
         """Send one request; return the unvalidated reply.
 
-        ``thinking`` is a Lemely thinking level (see :func:`effort_for`);
-        ``None`` sends no effort, leaving the model's default. The system
-        prompt, and ``cache_prefix`` when given (sent as a user text block
-        ahead of ``user_prompt``), carry prompt-caching breakpoints.
-        ``images`` (PNG or JPEG bytes) go first in the user message, as
-        :func:`image_blocks` builds them, so the model sees the pages before
-        the question about them.
+        ``images`` are already fitted (``lemely.io.llm.image_fit``) and go first, as
+        base64 blocks; ``image_file_ids`` reference the same kind of pages uploaded
+        through the Files API. ``max_tokens`` above :data:`NONSTREAMING_MAX_TOKENS`
+        is streamed.
 
         Raises:
             ProviderTransientError: 429, 529, any 5xx, or a connection failure.
-            ProviderError: any other API error, or ``images`` the API would
-                refuse (:func:`image_blocks`).
+            ProviderError: any other API error, or images the API would refuse.
         """
         output_config: OutputConfigParam = {
             "format": {
@@ -298,34 +296,50 @@ class AnthropicAdapter:
             if system_prompt
             else []
         )
-        message: MessageParam
-        if cache_prefix or images:
-            content: list[ContentBlockParam] = [*image_blocks(images)]
-            if cache_prefix:
-                content.append(
-                    {"type": "text", "text": cache_prefix, "cache_control": {"type": "ephemeral"}}
-                )
-            content.append({"type": "text", "text": user_prompt})
-            message = {"role": "user", "content": content}
-        else:
-            message = {"role": "user", "content": user_prompt}
-        try:
-            response = self._client.messages.create(
-                model=model,
-                max_tokens=MAX_OUTPUT_TOKENS,
-                system=system,
-                messages=[message],
-                thinking={"type": "adaptive"},
-                output_config=output_config,
-            )
-        except anthropic.APIError as exc:
-            if _is_transient(exc):
-                raise ProviderTransientError(str(exc)) from exc
-            raise ProviderError(str(exc)) from exc
+        message = self._user_message(
+            user_prompt, cache_prefix=cache_prefix, images=images, image_file_ids=image_file_ids
+        )
+        response = self._send(
+            model=model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=[message],
+            thinking={"type": "adaptive"},
+            output_config=output_config,
+        )
         text = "".join(block.text for block in response.content if block.type == "text")
         return AnthropicReply(
             text=text, usage=_usage_of(response), stop_reason=response.stop_reason
         )
+
+    def count_tokens(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        cache_prefix: str | None,
+        images: Sequence[bytes] = (),
+        image_file_ids: Sequence[str] = (),
+    ) -> int:
+        """Input tokens the request would bill, from the free count endpoint.
+
+        Raises:
+            ProviderError: the endpoint failed (a preflight caller treats it as unknown).
+        """
+        message = self._user_message(
+            user_prompt, cache_prefix=cache_prefix, images=images, image_file_ids=image_file_ids
+        )
+        system: list[TextBlockParam] = (
+            [{"type": "text", "text": system_prompt}] if system_prompt else []
+        )
+        try:
+            counted = self._client.messages.count_tokens(
+                model=model, system=system, messages=[message]
+            )
+        except anthropic.APIError as exc:
+            raise ProviderError(str(exc)) from exc
+        return int(counted.input_tokens)
 
     def generate(
         self,

@@ -104,7 +104,7 @@ class ClaudeProviderTests(unittest.TestCase):
             response_schema=_Reply,
         )
         with self.assertRaises(TransientCallError):
-            ClaudeProvider(_RaisingAdapter()).complete(req, log=MagicMock())  # type: ignore[arg-type]
+            ClaudeProvider(_RaisingAdapter(), client._settings).complete(req, log=MagicMock())  # type: ignore[arg-type]
 
     def test_usage_in_the_gemini_shape(self) -> None:
         shaped = usage_as_gemini_response(
@@ -159,4 +159,4 @@ class DispatchTests(unittest.TestCase):
             response_schema=_Reply,
         )
         with self.assertRaisesRegex(ExternalServiceError, "permanent"):
-            ClaudeProvider(_Broken()).complete(req, log=MagicMock())  # type: ignore[arg-type]
+            ClaudeProvider(_Broken(), client._settings).complete(req, log=MagicMock())  # type: ignore[arg-type]

@@ -1291,8 +1291,8 @@ class GeminiClient:
             schema_json = json.dumps(response_schema.model_json_schema(), sort_keys=True)
             schema_hash = hashlib.sha256(schema_json.encode()).hexdigest()[:12]
         api_line = "3x" if _is_3x(model) else "2x"
-        # The per-tag cap applies to Gemini calls only; claude- models carry the
-        # adapter's own cap below.
+        # The Gemini cap below is Gemini's; a claude- model carries its own cap in
+        # the provider segment at the end.
         output_cap = (
             _MAX_OUTPUT_TOKENS if is_anthropic_model(model) else self._output_cap(task_tag)[0]
         )
@@ -1313,12 +1313,9 @@ class GeminiClient:
             raw += f"|{tool}"
         # The provider component, appended only for claude- models for the
         # same reason as `tool` above: every Gemini key stays byte-identical.
-        # It carries the adapter's own reply cap, which replaces
-        # _MAX_OUTPUT_TOKENS on that path.
+        # It carries the call's reply cap and the image-fit version.
         if is_anthropic_model(model):
-            from lemely.io.providers.anthropic_adapter import MAX_OUTPUT_TOKENS
-
-            raw += provider_fingerprint(model, max_output_tokens=MAX_OUTPUT_TOKENS)
+            raw += provider_fingerprint(model, max_output_tokens=self._claude_output_cap(task_tag))
         return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
     def check_reachable(self) -> None:
@@ -2115,13 +2112,19 @@ class GeminiClient:
             reraise=True,
         )
 
+    def _claude_output_cap(self, task_tag: str | None) -> int:
+        """A claude- call's max_tokens: the tag's max_output_tokens_for, else the adapter's."""
+        from lemely.io.providers.anthropic_adapter import MAX_OUTPUT_TOKENS
+
+        return self._settings.gemini.max_output_tokens_for.get(task_tag or "", MAX_OUTPUT_TOKENS)
+
     def _provider_for_model(self, model: str) -> Provider:
         """The provider for ``model``'s prefix; the Claude one is built on first use."""
         if is_anthropic_model(model):
             if self._claude_provider is None:
                 from lemely.io.llm.claude_provider import ClaudeProvider
 
-                self._claude_provider = ClaudeProvider(self._anthropic)
+                self._claude_provider = ClaudeProvider(self._anthropic, self._settings)
             return self._claude_provider
         return self._gemini_provider
 
@@ -2143,9 +2146,7 @@ class GeminiClient:
         """The one request an attempt sends (spec §1)."""
         on_claude = is_anthropic_model(model)
         if on_claude:
-            from lemely.io.providers.anthropic_adapter import MAX_OUTPUT_TOKENS
-
-            cap = MAX_OUTPUT_TOKENS
+            cap = self._claude_output_cap(task_tag)
             effort: str | None = self._resolved_gen_params(task_tag, model)["thinking_level"]
         else:
             cap = self._output_cap(task_tag)[0]

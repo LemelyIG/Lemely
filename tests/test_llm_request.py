@@ -8,6 +8,7 @@ from pathlib import Path
 
 from lemely.io import gemini as gemini_module
 from lemely.io.llm.errors import CapTruncatedError, TransientCallError
+from lemely.io.llm.image_fit import IMG_FIT_VERSION
 from lemely.io.llm.provider import ProviderReply, Usage
 from lemely.io.llm.request import (
     CachePlan,
@@ -25,10 +26,10 @@ class ProviderFingerprintTests(unittest.TestCase):
             with self.subTest(model=model):
                 self.assertEqual(provider_fingerprint(model, max_output_tokens=65536), "")
 
-    def test_claude_segment_is_todays(self) -> None:
+    def test_claude_segment(self) -> None:
         self.assertEqual(
             provider_fingerprint("claude-haiku-5-5", max_output_tokens=16000),
-            "|provider=anthropic|max_tokens=16000",
+            f"|provider=anthropic|max_tokens=16000|img_fit={IMG_FIT_VERSION}",
         )
 
     def test_request_fingerprint_is_the_module_function(self) -> None:

@@ -235,6 +235,12 @@ class GeminiSettings(BaseModel):
     # Put the question-invariant correction prompt first so providers can cache it.
     correction_shared_prefix: bool = False
     correction_prefix_cache: Literal["implicit", "explicit"] = "implicit"
+    # Claude page images (spec 2026-10-19 §2): greyscaled and enhanced, stepped
+    # down from 2576 px until the request is under this many estimated tokens
+    # (95,000 keeps Haiku 5.5 under its 100k price tier), never below the floor
+    # (about 135 DPI on A4). Gemini calls do not read either.
+    claude_image_token_budget: int = Field(default=95_000, gt=0)
+    claude_image_floor_px: int = Field(default=1568, ge=256)
     # Thinking budget: map of task_tag → token budget (0 = disabled / default).
     # Mark-scheme parsing is enabled by default: the extra reasoning headroom helps
     # the model tag "any N from" pools correctly (is_optional/is_alternative), which
