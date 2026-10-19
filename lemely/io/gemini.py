@@ -32,14 +32,22 @@ from tenacity import (
 from lemely.io.cost_ledger import CostLedger
 from lemely.io.llm.errors import CapTruncatedError as _CapTruncatedError
 from lemely.io.llm.errors import TransientCallError as _TransientError
-from lemely.io.llm.request import provider_fingerprint
-from lemely.io.providers import ProviderTransientError, is_anthropic_model
+from lemely.io.llm.gemini_provider import GeminiProvider
+from lemely.io.llm.request import (
+    CodeExecution,
+    DocumentInput,
+    ImageInput,
+    LLMRequest,
+    provider_fingerprint,
+)
+from lemely.io.providers import ProviderError, is_anthropic_model
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus
 
 if TYPE_CHECKING:
-    from lemely.io.llm.provider import Usage
+    from lemely.io.llm.claude_provider import ClaudeProvider
+    from lemely.io.llm.provider import Provider, ProviderReply
     from lemely.io.providers.anthropic_adapter import AnthropicAdapter
 
 _T = TypeVar("_T", bound=BaseModel)
@@ -737,22 +745,6 @@ def _strip_schema(schema: Any, *, is_3x: bool = False) -> Any:
     return _resolve_refs(schema, defs, drop_keys=frozenset(drop_keys))
 
 
-def _usage_as_gemini_response(usage: Usage) -> SimpleNamespace:
-    """An Anthropic :class:`Usage` in the ``usage_metadata`` shape `_record_spend` reads.
-
-    Gemini reports candidate and thought tokens apart; Anthropic's output
-    total already includes thinking, so the candidate count is the remainder.
-    """
-    return SimpleNamespace(
-        usage_metadata=SimpleNamespace(
-            prompt_token_count=usage.input_tokens,
-            candidates_token_count=usage.output_tokens - usage.thinking_tokens,
-            thoughts_token_count=usage.thinking_tokens,
-            cached_content_token_count=usage.cached_tokens,
-        )
-    )
-
-
 class _DefaultLedger:
     """Sentinel: build the file ledger under ``paths.output_dir`` (CLI, Gradio, eval)."""
 
@@ -1084,6 +1076,8 @@ class GeminiClient:
         #: prefix is sent as a plain system instruction for the rest of the run.
         self._prefix_caches: dict[tuple[str, str, str], tuple[str, float] | None] = {}
         self._prefix_cache_lock = threading.Lock()
+        self._gemini_provider = GeminiProvider(self)
+        self._claude_provider: ClaudeProvider | None = None
 
     def _effective_cache_mode(
         self, cache_mode: Literal["read_write", "bypass", "refresh"] | None, task_tag: str | None
@@ -2121,6 +2115,86 @@ class GeminiClient:
             reraise=True,
         )
 
+    def _provider_for_model(self, model: str) -> Provider:
+        """The provider for ``model``'s prefix; the Claude one is built on first use."""
+        if is_anthropic_model(model):
+            if self._claude_provider is None:
+                from lemely.io.llm.claude_provider import ClaudeProvider
+
+                self._claude_provider = ClaudeProvider(self._anthropic)
+            return self._claude_provider
+        return self._gemini_provider
+
+    def _build_request(
+        self,
+        *,
+        model: str,
+        task_tag: str | None,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: type[BaseModel] | None,
+        file_paths: list[Path] | None = None,
+        image_parts: list[bytes] | None = None,
+        media_resolution: str | None = None,
+        image_uploads: Any = None,
+        shared_prefix: SharedPrefix | None = None,
+        tool: CodeExecution | None = None,
+    ) -> LLMRequest:
+        """The one request an attempt sends (spec §1)."""
+        on_claude = is_anthropic_model(model)
+        if on_claude:
+            from lemely.io.providers.anthropic_adapter import MAX_OUTPUT_TOKENS
+
+            cap = MAX_OUTPUT_TOKENS
+            effort: str | None = self._resolved_gen_params(task_tag, model)["thinking_level"]
+        else:
+            cap = self._output_cap(task_tag)[0]
+            effort = None
+        split = on_claude and shared_prefix is not None
+        return LLMRequest(
+            model=model,
+            task_tag=task_tag,
+            system=shared_prefix.instructions if split and shared_prefix else system_prompt,
+            prompt=user_prompt,
+            response_schema=response_schema,
+            images=tuple(ImageInput(data) for data in (image_parts or ())),
+            documents=tuple(DocumentInput.from_path(fp) for fp in (file_paths or ())),
+            tool=tool,
+            effort=effort,
+            max_output_tokens=cap,
+            cache_prefix=shared_prefix.paper if split and shared_prefix else None,
+            media_resolution=media_resolution,
+            uploads=None if on_claude else image_uploads,
+            shared_prefix=None if on_claude else shared_prefix,
+        )
+
+    def _check_stop(self, reply: ProviderReply, req: LLMRequest) -> None:
+        """The stop rules each provider had, applied after the spend is recorded."""
+        model, task_tag = req.model, req.task_tag
+        if is_anthropic_model(model):
+            if reply.stop_reason == "max_tokens":
+                # Billed (recorded already), marked unparsed, not transient: one
+                # fresh retry in _call_with_retry, then this raises.
+                _mark_last_record_unparsed()
+                raise _CapTruncatedError(
+                    f"Anthropic hit the {req.max_output_tokens}-token max_tokens "
+                    f"for {task_tag} ({model})"
+                )
+            if reply.stop_reason == "refusal":
+                raise ProviderError(f"Anthropic refused the request ({model})")
+            return
+        output_cap, cap_is_per_tag = self._output_cap(task_tag)
+        if cap_is_per_tag:
+            if reply.stop_reason == "max_tokens":
+                _mark_last_record_unparsed()
+                raise _CapTruncatedError(
+                    f"Gemini hit the {output_cap}-token output cap for {task_tag} ({model})"
+                )
+        elif reply.stop_detail == "MAX_TOKENS":
+            # Inert against the real SDK (str() of the enum is
+            # "FinishReason.MAX_TOKENS"); kept as it was, see the history of _call_once.
+            raise _TransientError(f"Gemini hit max_output_tokens ({model})")
+
     def _call_with_retry(
         self,
         model: str,
@@ -2184,222 +2258,30 @@ class GeminiClient:
         image_uploads: ImageUploads | None = None,
         shared_prefix: SharedPrefix | None = None,
     ) -> str:
-        if is_anthropic_model(model):
-            return self._call_anthropic_once(
-                model,
-                system_prompt,
-                user_prompt,
-                response_schema,
-                log,
-                task_tag,
-                shared_prefix=shared_prefix,
-                image_parts=image_parts,
-                media_resolution=media_resolution,
-            )
-        from google.genai import types
-
-        # I1: image_parts are sent inline; spec 2026-09-26 §7: when
-        # `image_uploads` is given the same images are sent as Files API
-        # URIs — `Part.from_uri` carries `media_resolution` in google-genai
-        # 2.10 — and inline_data is never built. The `file_paths` branch
-        # (mark-scheme parsers) is unchanged.
-        resolved_media_resolution = (
-            _MEDIA_RESOLUTION_LEVELS.get(media_resolution, media_resolution)
-            if media_resolution is not None
-            else None
-        )
-        file_parts: list[Any] = []
-        if image_uploads is not None:
-            for uploaded in image_uploads.ensure():
-                file_parts.append(
-                    types.Part.from_uri(
-                        file_uri=uploaded.uri,
-                        mime_type=uploaded.mime_type,
-                        media_resolution=resolved_media_resolution,
-                    )
-                )
-        elif image_parts:
-            for data in image_parts:
-                file_parts.append(
-                    types.Part.from_bytes(
-                        data=data,
-                        mime_type="image/png",
-                        media_resolution=resolved_media_resolution,
-                    )
-                )
-        elif file_paths:
-            for fp in file_paths:
-                file_parts.append(self._client.files.upload(file=fp))
-
-        is_3x = _is_3x(model)
-        gen_params = self._resolved_gen_params(task_tag, model)
-        output_cap, cap_is_per_tag = self._output_cap(task_tag)
-        stripped_schema = _strip_schema(response_schema.model_json_schema(), is_3x=is_3x)
-        log.debug(
-            "gemini_schema_sent",
-            schema=response_schema.__name__,
-            top_level_properties=list((stripped_schema.get("properties") or {}).keys()),
-        )
-        t0 = time.monotonic()
-
-        # F1: 2.5 and 3.x are disjoint API lines. 3.x removes
-        # temperature/top_p/top_k/candidate_count outright (passing them is
-        # rejected, not merely ignored) and replaces the numeric
-        # thinking_budget with a named thinking_level; it also takes the
-        # structured-output schema via response_json_schema rather than
-        # response_schema (google-genai 2.10.0, types.py:6029 —
-        # GenerateContentConfig.response_json_schema, "alternative to
-        # response_schema that accepts JSON Schema"; both fields exist on the
-        # same config class in this SDK version, so 2.5 is untouched by
-        # keeping response_schema).
-        config_kwargs: dict[str, Any] = {
-            "max_output_tokens": output_cap,
-            "response_mime_type": "application/json",
-            "system_instruction": system_prompt,
-        }
-        if is_3x:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(
-                thinking_level=gen_params["thinking_level"]
-            )
-            config_kwargs["response_json_schema"] = stripped_schema
-        else:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(
-                thinking_budget=gen_params["thinking_budget"]
-            )
-            config_kwargs["response_schema"] = stripped_schema
-            config_kwargs["temperature"] = gen_params["temperature"]
-            config_kwargs["top_p"] = gen_params["top_p"]
-            config_kwargs["seed"] = gen_params["seed"]
-        if shared_prefix is not None and shared_prefix.cache == "explicit" and is_3x:
-            cache_name = self.cached_prefix_handle(model, shared_prefix, log=log)
-            if cache_name is not None:
-                # The cache carries the system instruction; the API refuses both.
-                del config_kwargs["system_instruction"]
-                config_kwargs["cached_content"] = cache_name
-
-        try:
-            response = self._client.models.generate_content(
-                model=model,
-                config=types.GenerateContentConfig(**config_kwargs),
-                contents=[user_prompt, *file_parts],
-            )
-        except Exception as exc:
-            if _is_transient(exc):
-                raise _TransientError(str(exc)) from exc
-            raise ExternalServiceError(str(exc)) from exc
-
-        latency_ms = int((time.monotonic() - t0) * 1000)
-
-        self._record_spend(
-            response=response,
+        req = self._build_request(
             model=model,
             task_tag=task_tag,
-            latency_ms=latency_ms,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_schema=response_schema,
+            file_paths=file_paths,
+            image_parts=image_parts,
+            media_resolution=media_resolution,
+            image_uploads=image_uploads,
+            shared_prefix=shared_prefix,
+        )
+        reply = self._provider_for_model(model).complete(req, log=log)
+        self._record_spend(
+            response=reply.usage_response,
+            model=model,
+            task_tag=task_tag,
+            latency_ms=reply.latency_ms,
             log=log,
             params_fingerprint=self._params_fingerprint(
                 model, task_tag, response_schema, media_resolution=media_resolution
             ),
         )
-
-        raw = response.text or ""
-        finish_reason = response.candidates[0].finish_reason if response.candidates else None
-        if cap_is_per_tag:
-            # The SDK's FinishReason is a str-enum: str() gives "FinishReason.MAX_TOKENS",
-            # so compare the member name.
-            if getattr(finish_reason, "name", str(finish_reason)) == "MAX_TOKENS":
-                # A reply cut off at an operator-set cap is billed (recorded
-                # above) and marked unparsed. Not transient (no backoff loop);
-                # _call_with_retry makes one fresh retry, then lets this raise.
-                _mark_last_record_unparsed()
-                raise _CapTruncatedError(
-                    f"Gemini hit the {output_cap}-token output cap for {task_tag} ({model})"
-                )
-        elif str(finish_reason) == "MAX_TOKENS":
-            # Inert against the real SDK (str() of the enum is
-            # "FinishReason.MAX_TOKENS"), so a default-path truncated reply has
-            # always gone on to the schema-correction call and then ParseError.
-            # Left as is by design: making it match would turn a runaway into up
-            # to four full-price tenacity retries.
-            raise _TransientError(f"Gemini hit max_output_tokens ({model})")
-        return raw
-
-    def _call_anthropic_once(
-        self,
-        model: str,
-        system_prompt: str,
-        user_prompt: str,
-        response_schema: type[_T],
-        log: Any,
-        task_tag: str | None,
-        *,
-        shared_prefix: SharedPrefix | None = None,
-        image_parts: list[bytes] | None = None,
-        media_resolution: str | None = None,
-    ) -> str:
-        """One attempt on a ``claude-`` model; the Anthropic counterpart of :meth:`_call_once`.
-
-        Returns the raw reply text, so validation, the schema-correction retry
-        and the cache write in :meth:`generate_structured` treat both
-        providers alike. The spend is recorded before a truncated or refused
-        reply raises: those tokens were billed.
-
-        With ``shared_prefix`` the system prompt is its ``instructions`` and its
-        ``paper`` goes as the adapter's ``cache_prefix``; both carry a cache
-        breakpoint, and the two together are ``system_prompt``.
-
-        ``image_parts`` are sent as image blocks ahead of the text. Claude has no
-        ``media_resolution``: it is not sent, and is passed here only so the
-        spend record's fingerprint is the cache key's.
-        """
-        # Loaded by ``self._anthropic`` (the adapter imports the SDK) in any case.
-        import anthropic
-
-        from lemely.io.providers.anthropic_adapter import MAX_OUTPUT_TOKENS
-
-        adapter = self._anthropic
-        effort = self._resolved_gen_params(task_tag, model)["thinking_level"]
-        t0 = time.monotonic()
-        try:
-            reply = adapter.complete(
-                model=model,
-                system_prompt=shared_prefix.instructions if shared_prefix else system_prompt,
-                user_prompt=user_prompt,
-                response_schema=response_schema,
-                thinking=effort,
-                cache_prefix=shared_prefix.paper if shared_prefix else None,
-                images=image_parts or (),
-            )
-        except ProviderTransientError as exc:
-            raise _TransientError(str(exc)) from exc
-        except ExternalServiceError:
-            # ProviderError and friends already say what failed.
-            raise
-        except (anthropic.AnthropicError, OSError) as exc:
-            # SDK and I/O failures only: a programming error (TypeError,
-            # AttributeError, AssertionError, ...) propagates as itself.
-            raise ExternalServiceError(str(exc)) from exc
-        latency_ms = int((time.monotonic() - t0) * 1000)
-        self._record_spend(
-            response=_usage_as_gemini_response(reply.usage),
-            model=model,
-            task_tag=task_tag,
-            latency_ms=latency_ms,
-            log=log,
-            params_fingerprint=self._params_fingerprint(
-                model, task_tag, response_schema, media_resolution=media_resolution
-            ),
-        )
-        if reply.stop_reason == "max_tokens":
-            # The same rule as a Gemini reply cut off at a per-tag cap: billed
-            # (recorded above), marked unparsed, not transient (tenacity would
-            # pay full price up to four times for a runaway). _call_with_retry
-            # makes one fresh retry, then lets this raise.
-            _mark_last_record_unparsed()
-            raise _CapTruncatedError(
-                f"Anthropic hit the {MAX_OUTPUT_TOKENS}-token max_tokens for {task_tag} ({model})"
-            )
-        # A refusal raises ProviderError (permanent).
-        reply.raise_for_stop_reason(model)
+        self._check_stop(reply, req)
         return reply.text
 
     def _call_code_execution_once(
@@ -2422,38 +2304,27 @@ class GeminiClient:
                 string, so a caller cannot mistake "nothing to compare" for
                 "the sandbox found no output".
         """
-        from google.genai import types
-
-        tool = types.Tool(code_execution=types.ToolCodeExecution())
-        t0 = time.monotonic()
-        try:
-            response = self._client.models.generate_content(
-                model=model,
-                config=types.GenerateContentConfig(tools=[tool]),
-                contents=[prompt],
-            )
-        except Exception as exc:
-            raise ExternalServiceError(str(exc)) from exc
-        latency_ms = int((time.monotonic() - t0) * 1000)
-
-        self._record_spend(
-            response=response,
+        req = self._build_request(
             model=model,
             task_tag=task_tag,
-            latency_ms=latency_ms,
+            system_prompt="",
+            user_prompt=prompt,
+            response_schema=None,
+            tool=CodeExecution(),
+        )
+        reply = self._provider_for_model(model).complete(req, log=log)
+        self._record_spend(
+            response=reply.usage_response,
+            model=model,
+            task_tag=task_tag,
+            latency_ms=reply.latency_ms,
             log=log,
             params_fingerprint=params_fingerprint,
-            extra_log_fields={"latency_ms": latency_ms, "tool": "code_execution"},
+            extra_log_fields={"latency_ms": reply.latency_ms, "tool": "code_execution"},
             sends_thinking=False,
         )
-
-        candidates = response.candidates or []
-        parts = candidates[0].content.parts if candidates and candidates[0].content else []
-        for part in parts or []:
-            result = getattr(part, "code_execution_result", None)
-            output = getattr(result, "output", None) if result is not None else None
-            if output:
-                return str(output)
+        if reply.text:
+            return reply.text
         raise ParseError(
             f"Gemini code_execution call ({model}) returned no code_execution_result part."
         )
