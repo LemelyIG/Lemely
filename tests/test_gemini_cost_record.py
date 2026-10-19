@@ -26,6 +26,7 @@ from lemely.io.gemini import (
     record_calls,
     set_call_context,
 )
+from lemely.io.llm.pricing import CLAUDE_PRICING
 from lemely.runtime.errors import ParseError
 from tests.gemini_fakes import make_settings, mock_response
 
@@ -126,7 +127,7 @@ class CostRecordTests(unittest.TestCase):
 
     def test_haiku_row_exists(self) -> None:
         row = price_row("claude-haiku-5-5", self.settings, on=_TODAY)
-        self.assertEqual(row[:3], (0.0001, 0.00001, 0.0005))
+        self.assertEqual(row, CLAUDE_PRICING["claude-haiku-5-5"])
 
     def test_deprecated_3_7_flash_is_no_longer_priced(self) -> None:
         with self.assertRaises(UnpricedModelError):

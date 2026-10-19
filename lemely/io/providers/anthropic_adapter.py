@@ -78,7 +78,6 @@ _EFFORT_FOR_LEVEL: dict[str, Effort] = {
     "high": "high",
 }
 
-#: A 5-minute cache write bills at 1.25x the base input rate.
 #: 429 rate limit, 529 overloaded, and every 5xx are retried by the client.
 _TRANSIENT_STATUS = frozenset({429, 529})
 

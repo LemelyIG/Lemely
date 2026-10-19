@@ -88,9 +88,20 @@ def _message(
     output_tokens: int = 200,
     thinking_tokens: int = 0,
     stop_reason: str = "end_turn",
+    cache_write_5m: int | None = None,
+    cache_write_1h: int | None = None,
 ) -> SimpleNamespace:
     """A stand-in for ``anthropic.types.Message`` with real ints in every usage field."""
     text = payload if isinstance(payload, str) else json.dumps(payload)
+    # If cache_write_5m and cache_write_1h are provided, use the SDK's split cache_creation path.
+    if cache_write_5m is not None or cache_write_1h is not None:
+        cache_creation = SimpleNamespace(
+            ephemeral_5m_input_tokens=cache_write_5m or 0,
+            ephemeral_1h_input_tokens=cache_write_1h or 0,
+        )
+    else:
+        cache_creation = None
+
     return SimpleNamespace(
         content=[
             SimpleNamespace(type="thinking", thinking=""),
@@ -103,6 +114,7 @@ def _message(
             cache_creation_input_tokens=cache_write,
             output_tokens=output_tokens,
             output_tokens_details=SimpleNamespace(thinking_tokens=thinking_tokens),
+            cache_creation=cache_creation,
         ),
     )
 
@@ -557,6 +569,31 @@ class ClientDispatchTests(_ClientTestCase):
         (rec,) = process_call_records()
         # uncached 1000 + cache write 2000 at 1.25x the input rate.
         self.assertAlmostEqual(rec.usd_now, (1_000 + 1.25 * 2_000) * 0.0001 / 1000, places=12)
+        self.assertEqual(rec.usd_2027, rec.usd_now)
+
+    def test_sdk_cache_creation_split_into_5m_and_1h(self) -> None:
+        # The real SDK path: cache_creation.ephemeral_5m_input_tokens and
+        # ephemeral_1h_input_tokens are read when cache_creation is not None.
+        client, _fake, _genai = self._client(
+            _message(
+                _VALID_MARK,
+                input_tokens=1_000,
+                cache_write=3_000,  # for consistency, even though the split takes precedence
+                output_tokens=0,
+                cache_write_5m=2_000,
+                cache_write_1h=1_000,
+            )
+        )
+        self._mark(client)
+        (rec,) = process_call_records()
+        # The split cache_creation structure is read: 5m and 1h are separate.
+        self.assertEqual(rec.cache_write_5m_tokens, 2_000)
+        self.assertEqual(rec.cache_write_1h_tokens, 1_000)
+        # input_tokens is the sum: uncached + cache_write_5m + cache_write_1h
+        self.assertEqual(rec.input_tokens, 1_000 + 2_000 + 1_000)
+        # USD: 1000 uncached @ 0.0001 + 2000 5m @ 0.000125 + 1000 1h @ 0.000200
+        expected_usd = (1_000 * 0.0001 + 2_000 * 0.000125 + 1_000 * 0.000200) / 1000
+        self.assertAlmostEqual(rec.usd_now, expected_usd, places=12)
         self.assertEqual(rec.usd_2027, rec.usd_now)
 
     def test_sdk_exception_outside_api_error_becomes_external_service_error(self) -> None:
