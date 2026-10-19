@@ -1,5 +1,9 @@
 {
  "binding_second_read": {
+  "cache_creates": [],
+  "cache_entries": {
+   "dc5cd20786768515": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "dc5cd20786768515"
   ],
@@ -124,6 +128,10 @@
   "uploads": []
  },
  "correction": {
+  "cache_creates": [],
+  "cache_entries": {
+   "feb64b5e22026886": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "feb64b5e22026886"
   ],
@@ -230,6 +238,10 @@
   "uploads": []
  },
  "correction_borderline": {
+  "cache_creates": [],
+  "cache_entries": {
+   "f68fd242bd8507f0": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "f68fd242bd8507f0"
   ],
@@ -336,6 +348,10 @@
   "uploads": []
  },
  "correction_cache_hit": {
+  "cache_creates": [],
+  "cache_entries": {
+   "feb64b5e22026886": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "feb64b5e22026886"
   ],
@@ -458,7 +474,172 @@
   ],
   "uploads": []
  },
+ "correction_explicit_prefix_cache": {
+  "cache_creates": [
+   {
+    "config": {
+     "display_name": "lemely-prefix-v1-ada25c4ba840",
+     "system_instruction": "INSTR\nPAPER",
+     "ttl": "600s"
+    },
+    "model": "gemini-3.8-flash"
+   }
+  ],
+  "cache_entries": {
+   "5e6fa911339f5ceb": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "5e6fa911339f5ceb"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.8-flash",
+    "task": "correction"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 2000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 0,
+    "task": "correction_prefix_cache",
+    "usd_cost": 0.001667
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 1200,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 40,
+    "task": "correction",
+    "usd_cost": 0.000375
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "schema": "_Reply",
+    "task": "correction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 2000,
+    "log_level": "info",
+    "model": "gemini-3.8-flash",
+    "output_tokens": 0,
+    "params_fingerprint": "ada25c4ba840",
+    "prefix_cache": "cachedContents/golden-prefix",
+    "storage_usd": 0.000167,
+    "storage_usd_2027": 0.000333,
+    "task": "correction",
+    "thoughts_tokens": 0,
+    "ttl_seconds": 600,
+    "usd_cost": 0.001667
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 1000,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 1200,
+    "log_level": "info",
+    "model": "gemini-3.8-flash",
+    "output_tokens": 40,
+    "params_fingerprint": "aecc57dcd215",
+    "task": "correction",
+    "thoughts_tokens": 0,
+    "usd_cost": 0.000375
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "task": "correction"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 2000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 0,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "correction_prefix_cache",
+    "thinking": null,
+    "thinking_tokens": 0,
+    "usd_2027": 0.0033333333333333335,
+    "usd_now": 0.0016666666666666668
+   },
+   {
+    "attempt": null,
+    "cached_tokens": 1000,
+    "case_key": null,
+    "input_tokens": 1200,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 40,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "correction",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 0.00075,
+    "usd_now": 0.000375
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "cached_content": "cachedContents/golden-prefix",
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-3.8-flash"
+   }
+  ],
+  "uploads": []
+ },
  "correction_schema_retry": {
+  "cache_creates": [],
+  "cache_entries": {
+   "feb64b5e22026886": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "feb64b5e22026886"
   ],
@@ -649,6 +830,10 @@
   "uploads": []
  },
  "correction_shared_prefix": {
+  "cache_creates": [],
+  "cache_entries": {
+   "66528a3a8181c0aa": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "66528a3a8181c0aa"
   ],
@@ -754,7 +939,173 @@
   ],
   "uploads": []
  },
+ "correction_transient_retry": {
+  "cache_creates": [],
+  "cache_entries": {
+   "feb64b5e22026886": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "feb64b5e22026886"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   },
+   {
+    "attempt": 1,
+    "error": "503 Service Unavailable",
+    "event": "gemini_retry",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 900,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "task": "correction",
+    "usd_cost": 0.000255
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "schema": "_Reply",
+    "task": "correction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "attempt": 1,
+    "component": "gemini_client",
+    "error": "503 Service Unavailable",
+    "event": "gemini_retry",
+    "log_level": "warning",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "schema": "_Reply",
+    "task": "correction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 900,
+    "log_level": "info",
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "params_fingerprint": "d0aed2b4ef80",
+    "task": "correction",
+    "thoughts_tokens": 0,
+    "usd_cost": 0.000255
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 900,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "correction",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 0.000255,
+    "usd_now": 0.000255
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-3.1-flash-lite"
+   },
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-3.1-flash-lite"
+   }
+  ],
+  "uploads": []
+ },
  "escalation": {
+  "cache_creates": [],
+  "cache_entries": {
+   "28ce735d8cccb594": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "28ce735d8cccb594"
   ],
@@ -861,6 +1212,10 @@
   "uploads": []
  },
  "extraction_cap_truncated": {
+  "cache_creates": [],
+  "cache_entries": {
+   "957b1e383a4aadb9": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "957b1e383a4aadb9"
   ],
@@ -1073,6 +1428,10 @@
   "uploads": []
  },
  "extraction_files_api": {
+  "cache_creates": [],
+  "cache_entries": {
+   "816b2bc047aecab2": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "816b2bc047aecab2"
   ],
@@ -1215,6 +1574,10 @@
   ]
  },
  "extraction_inline_images": {
+  "cache_creates": [],
+  "cache_entries": {
+   "816b2bc047aecab2": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "816b2bc047aecab2"
   ],
@@ -1339,6 +1702,10 @@
   "uploads": []
  },
  "generation": {
+  "cache_creates": [],
+  "cache_entries": {
+   "062a72db5c8b840b": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "062a72db5c8b840b"
   ],
@@ -1445,6 +1812,10 @@
   "uploads": []
  },
  "mark_scheme_pdf": {
+  "cache_creates": [],
+  "cache_entries": {
+   "ed1d630d57722c07": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "ed1d630d57722c07"
   ],
@@ -1562,6 +1933,10 @@
   ]
  },
  "question_validity_code_execution": {
+  "cache_creates": [],
+  "cache_entries": {
+   "1c883f741041bc8f": "42"
+  },
   "cache_keys": [
    "1c883f741041bc8f"
   ],
@@ -1637,6 +2012,10 @@
   "uploads": []
  },
  "scan_metadata_pdf": {
+  "cache_creates": [],
+  "cache_entries": {
+   "b5eed42f3e45f32a": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "b5eed42f3e45f32a"
   ],
@@ -1754,6 +2133,10 @@
   ]
  },
  "untagged": {
+  "cache_creates": [],
+  "cache_entries": {
+   "e5ffe82e14e950e3": "{\"value\": \"ok\"}"
+  },
   "cache_keys": [
    "e5ffe82e14e950e3"
   ],

@@ -141,6 +141,9 @@ def _code_response() -> MagicMock:
 _PREFIX = SharedPrefix(
     instructions="INSTR\n", paper="PAPER", text="INSTR\nPAPER", cache="implicit", version="v1"
 )
+_EXPLICIT_PREFIX = dataclasses.replace(_PREFIX, cache="explicit")
+_PREFIX_CACHE_NAME = "cachedContents/golden-prefix"
+_PREFIX_CACHE_TOKENS = 2000
 
 #: name -> (call, responses, how many times the call is made)
 _CASES: dict[str, tuple[Callable[[GeminiClient, Path], Any], Callable[[], list[Any]], int]] = {
@@ -158,6 +161,21 @@ _CASES: dict[str, tuple[Callable[[GeminiClient, Path], Any], Callable[[], list[A
     "correction_schema_retry": (
         _structured(task_tag="correction"),
         lambda: [mock_response("{}"), mock_response(_OK)],
+        1,
+    ),
+    "correction_transient_retry": (
+        _structured(task_tag="correction"),
+        lambda: [Exception("503 Service Unavailable"), mock_response(_OK, prompt=900)],
+        1,
+    ),
+    "correction_explicit_prefix_cache": (
+        _structured(
+            task_tag="correction",
+            model="gemini-3.8-flash",
+            system_prompt="INSTR\nPAPER",
+            shared_prefix=_EXPLICIT_PREFIX,
+        ),
+        lambda: [mock_response(_OK, prompt=1200, cached=1000, candidates=40)],
         1,
     ),
     "correction_borderline": (
@@ -224,9 +242,22 @@ _CASES: dict[str, tuple[Callable[[GeminiClient, Path], Any], Callable[[], list[A
 def _run(
     call: Callable[[GeminiClient, Path], Any], responses: Callable[[], list[Any]], repeat: int
 ) -> dict[str, Any]:
-    tmp = Path(tempfile.mkdtemp())
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        return _run_in(Path(tmp_dir), call, responses, repeat)
+
+
+def _run_in(
+    tmp: Path,
+    call: Callable[[GeminiClient, Path], Any],
+    responses: Callable[[], list[Any]],
+    repeat: int,
+) -> dict[str, Any]:
     settings = make_settings(str(tmp))
     genai = fake_genai_client()
+    genai.caches.create.return_value = MagicMock(
+        usage_metadata=MagicMock(total_token_count=_PREFIX_CACHE_TOKENS)
+    )
+    genai.caches.create.return_value.name = _PREFIX_CACHE_NAME
     genai.models.generate_content.side_effect = responses()
     client = GeminiClient(settings, _genai_client=genai, ledger=None)
     events: list[dict[str, Any]] = []
@@ -254,6 +285,14 @@ def _run(
     return _jsonable(
         {
             "cache_keys": sorted(p.stem for p in cache_dir.glob("*.json")),
+            # Entries are the raw model text (no timestamps), so nothing is dropped.
+            "cache_entries": {
+                p.stem: p.read_text(encoding="utf-8") for p in sorted(cache_dir.glob("*.json"))
+            },
+            "cache_creates": [
+                {"model": c.kwargs["model"], "config": c.kwargs["config"]}
+                for c in genai.caches.create.call_args_list
+            ],
             "outputs": outputs,
             "events": _scrub(events),
             "logs": _scrub(logs),
