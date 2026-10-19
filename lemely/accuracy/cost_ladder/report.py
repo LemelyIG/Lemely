@@ -30,6 +30,7 @@ HEADER = (
     "id-match",
     "p95 latency",
     "validity",
+    "review rate",
     "proof",
     "verdict",
     "reasons",
@@ -45,6 +46,9 @@ class LadderRow:
     proof: str
     stacked_on: str = BASELINE_LABEL
     overrides: Mapping[str, object] = field(default_factory=dict)
+    #: Share of scored parts flagged for teacher review (``summary.json``); None for a
+    #: summary written before it was recorded. Reported only: the gate does not read it.
+    review_rate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -73,6 +77,7 @@ def _row(row: LadderRow) -> list[str]:
         f"{row.candidate.id_match_rate:.3f}",
         f"{row.candidate.latency_p95_ms:.0f} ms",
         f"{row.candidate.validity_rate:.3f}",
+        "-" if row.review_rate is None else f"{row.review_rate * 100:.1f}%",
         row.proof,
         "ACCEPT" if v.passed else "REJECT",
         "; ".join(v.reasons) or "-",
@@ -110,6 +115,12 @@ def write_ladder(
     out.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _review_rate(run_dir: Path) -> float | None:
+    data = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    rate = data.get("review_rate")
+    return float(rate) if isinstance(rate, int | float) else None
+
+
 def _now_usd(run_dir: Path) -> float:
     data = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
     return float(data["usd_per_script_mean_now"])
@@ -144,6 +155,7 @@ def load_rows(out_dir: Path) -> tuple[list[LadderRow], Path]:
                 proof=v["proof"],
                 stacked_on=v.get("against", BASELINE_LABEL),
                 overrides=v.get("overrides", {}),
+                review_rate=_review_rate(run_dir),
             )
         )
         if verdict.passed:

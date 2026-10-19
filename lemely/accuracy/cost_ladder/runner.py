@@ -313,6 +313,7 @@ class _Marking:
 
     case_keys: tuple[str, ...]  # every case the run covered, in run order
     scored: tuple[tuple[str, str, int, int], ...]  # (case, question_id, predicted, truth)
+    review_flagged: int  # scored parts flagged ``needs_teacher_review``
     unmarked_cases: frozenset[str]  # cases with a ground-truth leaf that was not marked
     failed_cases: frozenset[str]  # cases with a placeholder leaf (`_failed_marking`)
     missing_cases: frozenset[str]  # cases that produced no marking at all
@@ -355,6 +356,7 @@ def _marking(result: AccuracyResult, expected_cases: Sequence[str] = ()) -> _Mar
         scored=tuple(
             (k, q.question_id, q.predicted_marks, q.truth_marks) for k, q in paired if q.scored
         ),
+        review_flagged=sum(1 for _, q in paired if q.scored and q.needs_teacher_review),
         unmarked_cases=frozenset(
             _eval_case_key(e) for e in result.eval_records if e.outcome in _UNSCORED_OUTCOMES
         ),
@@ -371,6 +373,15 @@ def _marking(result: AccuracyResult, expected_cases: Sequence[str] = ()) -> _Mar
         missing_cases=frozenset(expected_cases) - set(produced),
         id_match_rate=result.metrics.id_match_rate,
     )
+
+
+def review_rate(marking: _Marking) -> float | None:
+    """Share of scored parts flagged for teacher review; None when nothing was scored.
+
+    Reported beside the gate's view (``summary.json``, LADDER.md), never judged:
+    `RunSummary` and `gate.judge` do not read it.
+    """
+    return marking.review_flagged / len(marking.scored) if marking.scored else None
 
 
 def _summarise_marking(marking: _Marking, records: Sequence[CallRecord]) -> RunSummary:
@@ -650,9 +661,11 @@ def run_config(
         if frozen_upstream is None
         else compose_records(records, frozen_upstream, live_tags=live_tags, case_keys=done)
     )
+    rate: float | None = None
     if result is not None:
         marking = _marking(result, keys)
         summary = _summarise_marking(marking, judged)
+        rate = review_rate(marking)
         now = _mean_usd(marking.case_keys, judged, rate="now")
         (run_dir / "results.json").write_text(
             json.dumps(_result_json(result, keys), indent=2, sort_keys=True, default=str) + "\n",
@@ -671,6 +684,7 @@ def run_config(
         "cache_mode": cache_mode,
         "frozen_upstream": frozen_upstream is not None,
         "cache_hits": len(hits),
+        "review_rate": rate,
     }
     if stopped is not None:
         extra["stopped_by_spend_cap"] = str(stopped)
@@ -1074,6 +1088,9 @@ def _marking_from_results(results: Mapping[str, object], records: Sequence[CallR
             for q in qrs
             if q.get("scored", True)
         ),
+        review_flagged=sum(
+            1 for q in qrs if q.get("scored", True) and q.get("needs_teacher_review") is True
+        ),
         unmarked_cases=unmarked,
         failed_cases=frozenset(
             str(q["case_key"])
@@ -1138,8 +1155,13 @@ def resummarise(label: str, *, out_dir: Path) -> RunSummary:
             case_keys=marking.case_keys,
         )
     summary = _summarise_marking(marking, judged)
-    replaced = {f.name for f in fields(RunSummary)} | {"usd_per_script_mean_now", "resummarised"}
+    replaced = {f.name for f in fields(RunSummary)} | {
+        "usd_per_script_mean_now",
+        "resummarised",
+        "review_rate",
+    }
     extra = {k: v for k, v in old.items() if k not in replaced}
+    extra["review_rate"] = review_rate(marking)
     extra["resummarised"] = {
         "from": ["records.jsonl", "results.json"],
         "incomplete_before": old.get("incomplete", []),
