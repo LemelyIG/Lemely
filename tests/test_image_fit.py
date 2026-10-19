@@ -66,7 +66,40 @@ def _realistic_page() -> bytes:
     return _png(page)
 
 
+def _realistic_with_marks(*, red_width: int | None) -> Image.Image:
+    """The realistic blue-writing page, plus 60 red ticks of ``red_width`` px if given."""
+    with Image.open(io.BytesIO(_realistic_page())) as src:
+        page = src.convert("RGB")
+    if red_width is not None:
+        draw = ImageDraw.Draw(page)
+        for tick in range(60):
+            y = 300 + tick * 50
+            draw.line([(2250, y), (2330, y - 30)], fill=(200, 20, 20), width=red_width)
+    return page
+
+
 class ColourTests(unittest.TestCase):
+    def test_pen_width_blue_and_red_strokes_on_a_full_size_page_are_colour(self) -> None:
+        """3 px strokes vanish if the page is shrunk before the saturation check."""
+        self.assertTrue(has_colour_ink(_realistic_with_marks(red_width=3)))
+        self.assertTrue(has_colour_ink(_realistic_with_marks(red_width=6)))
+
+    def test_pen_width_blue_writing_alone_on_a_full_size_page_is_one_family(self) -> None:
+        self.assertFalse(has_colour_ink(_realistic_with_marks(red_width=None)))
+
+    def test_noisy_grey_scan_is_not_colour(self) -> None:
+        with Image.open(io.BytesIO(_realistic_page())) as src:
+            grey = src.convert("L").convert("RGB")
+        self.assertFalse(has_colour_ink(grey))
+
+    def test_transparent_pages_are_composited_onto_white(self) -> None:
+        for mode, clear in (("LA", (0, 0)), ("RGBA", (0, 0, 0, 0))):
+            with self.subTest(mode=mode):
+                fitted = fit([_png(Image.new(mode, (40, 40), clear))])
+                with Image.open(io.BytesIO(fitted.images[0])) as sent:
+                    self.assertEqual(sent.mode, "L")
+                    self.assertEqual(sent.getpixel((20, 20)), 255)
+
     def test_one_ink_is_not_meaningful_colour(self) -> None:
         img = Image.open(io.BytesIO(_page(800, 1100, inks=((30, 40, 140),))))
         self.assertFalse(has_colour_ink(img.convert("RGB")))
@@ -104,7 +137,9 @@ class BudgetTests(unittest.TestCase):
 
     def test_nineteen_real_size_pages_step_down_to_2200(self) -> None:
         """2576: 19 x 6252 = 118,788 tokens, over 95k. 2200: 19 x 4559 = 86,621, under."""
-        fitted = fit([_page(_REAL_W, _REAL_H, inks=((30, 40, 140),))] * 19)
+        with patch.object(image_fit, "_encode", wraps=image_fit._encode) as encode:
+            fitted = fit([_page(_REAL_W, _REAL_H, inks=((30, 40, 140),))] * 19)
+        self.assertEqual(encode.call_count, 19, "2576 is skipped on tokens alone, never encoded")
         self.assertEqual(fitted.long_edge, 2200)
         self.assertLessEqual(fitted.est_tokens, DEFAULT_TOKEN_BUDGET)
         self.assertFalse(fitted.over_token_budget)
@@ -150,6 +185,11 @@ class ErrorTests(unittest.TestCase):
 
 
 class ThumbnailTests(unittest.TestCase):
+    def test_thumbnails_skip_colour_detection(self) -> None:
+        with patch.object(image_fit, "has_colour_ink") as detect:
+            thumbnails([_page(200, 300, inks=((30, 40, 140), (200, 20, 20)))])
+        detect.assert_not_called()
+
     def test_thumbnails_are_greyscale_at_768(self) -> None:
         (thumb,) = thumbnails([_page(_REAL_W, _REAL_H, inks=((30, 40, 140), (200, 20, 20)))])
         with Image.open(io.BytesIO(thumb)) as img:

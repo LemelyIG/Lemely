@@ -17,12 +17,15 @@ from __future__ import annotations
 
 import io
 import math
-from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageChops, UnidentifiedImageError
 
 from lemely.io.providers import ProviderError
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 IMG_FIT_VERSION = "v1"
 LONG_EDGE_STEPS: tuple[int, ...] = (2576, 2200, 2000, 1800, 1568)
@@ -39,7 +42,6 @@ THUMBNAIL_LONG_EDGE = 768
 PIXELS_PER_TOKEN = 750
 
 _GREY_MODES = frozenset({"1", "L", "LA", "I", "I;16", "F"})
-_COLOUR_SAMPLE_EDGE = 256
 _SATURATION_MIN = 90
 _VALUE_MIN = 60
 _HUE_FAMILIES = 6
@@ -80,15 +82,24 @@ def base64_len(n: int) -> int:
 
 
 def has_colour_ink(img: Image.Image) -> bool:
-    """True when two or more saturated hue families each cover 0.1% of the page."""
-    sample = img.convert("RGB")
-    sample.thumbnail((_COLOUR_SAMPLE_EDGE, _COLOUR_SAMPLE_EDGE))
-    hue, sat, val = sample.convert("HSV").split()
-    total = sample.width * sample.height
-    counts = [0] * _HUE_FAMILIES
-    for h, s, v in zip(hue.tobytes(), sat.tobytes(), val.tobytes(), strict=True):
-        if s >= _SATURATION_MIN and v >= _VALUE_MIN:
-            counts[((h + _HUE_SHIFT) % 256) * _HUE_FAMILIES // 256] += 1
+    """True when two or more saturated hue families each cover 0.1% of the page.
+
+    Measured at full resolution, with masks and histograms in Pillow's C code: shrinking
+    the page first averages a 3 px pen stroke into paper and loses it.
+    """
+    hue, sat, val = img.convert("RGB").convert("HSV").split()
+    if not any(sat.histogram()[_SATURATION_MIN:]):
+        return False
+    not_inked = ImageChops.invert(
+        ImageChops.multiply(
+            sat.point([255 if s >= _SATURATION_MIN else 0 for s in range(256)]),
+            val.point([255 if v >= _VALUE_MIN else 0 for v in range(256)]),
+        )
+    )
+    # Hue to family id; inked pixels keep it, the rest become 255 and fall outside 0..5.
+    family_of = hue.point([((h + _HUE_SHIFT) % 256) * _HUE_FAMILIES // 256 for h in range(256)])
+    counts = ImageChops.lighter(family_of, not_inked).histogram()[:_HUE_FAMILIES]
+    total = img.width * img.height
     return sum(1 for c in counts if c / total >= _HUE_FAMILY_MIN_SHARE) >= 2
 
 
@@ -114,17 +125,28 @@ def _resized(img: Image.Image, long_edge: int) -> Image.Image:
     return img.resize(size, Image.Resampling.LANCZOS)
 
 
-def _prepare(data: bytes, page: int, first_edge: int) -> tuple[_Page, bool]:
+def _on_white(img: Image.Image) -> Image.Image:
+    """``img`` composited onto white when it has transparency, so clear is not black."""
+    if img.mode in ("LA", "RGBA", "PA") or "transparency" in img.info:
+        rgba = img.convert("RGBA")
+        base = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        return Image.alpha_composite(base, rgba)
+    return img
+
+
+def _prepare(
+    data: bytes, page: int, first_edge: int, *, detect_colour: bool = True
+) -> tuple[_Page, bool]:
     """The page decoded, greyscaled unless meaningful colour, held to ``first_edge``."""
     try:
         with Image.open(io.BytesIO(data)) as src:
             src.load()
             fmt = src.format
             if src.mode in _GREY_MODES:
-                work, colour = src.convert("L"), False
+                work, colour = _on_white(src).convert("L"), False
             else:
-                rgb = src.convert("RGB")
-                colour = has_colour_ink(rgb)
+                rgb = _on_white(src).convert("RGB")
+                colour = detect_colour and has_colour_ink(rgb)
                 work = rgb if colour else rgb.convert("L")
             as_is = fmt == "PNG" and src.mode == ("RGB" if colour else "L")
             if max(work.size) > first_edge:
@@ -196,10 +218,16 @@ def fit(
     raise AssertionError("unreachable: the last step always returns")  # pragma: no cover
 
 
-def thumbnails(images: Sequence[bytes], *, long_edge: int = THUMBNAIL_LONG_EDGE) -> tuple[bytes, ...]:
+def thumbnails(
+    images: Sequence[bytes], *, long_edge: int = THUMBNAIL_LONG_EDGE
+) -> tuple[bytes, ...]:
     """Greyscale PNG thumbnails, ``long_edge`` on the long side, for an overview pass."""
     out: list[bytes] = []
     for number, data in enumerate(images, start=1):
-        page = _Page(original=data, image=_prepare(data, number, long_edge)[0].image.convert("L"), as_is=False)
+        page = _Page(
+            original=data,
+            image=_prepare(data, number, long_edge, detect_colour=False)[0].image.convert("L"),
+            as_is=False,
+        )
         out.append(_encode(page, long_edge, number))
     return tuple(out)
