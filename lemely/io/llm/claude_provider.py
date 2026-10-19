@@ -54,11 +54,16 @@ class ClaudeProvider:
 
     def _fit(self, req: LLMRequest, *, inline: bool) -> FittedImages:
         g = self._settings.gemini
+        if inline and req.uploads is not None:
+            # The job's handle fits the inline fallback once, not once per call.
+            inline_fitted: FittedImages = req.uploads.inline_fit()
+            return inline_fitted
         return image_fit.fit(
             [image.data for image in req.images],
             byte_limit=image_fit.DEFAULT_BYTE_LIMIT if inline else None,
             token_budget=g.claude_image_token_budget,
             floor_px=g.claude_image_floor_px,
+            enhance=g.claude_image_enhance is True,
         )
 
     def _pages(

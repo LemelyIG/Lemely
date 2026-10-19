@@ -1007,10 +1007,11 @@ class ImageUploads:
 
                 g = client._settings.gemini
                 self._claude = ClaudeImageUploads(
-                    client._anthropic.raw,
+                    lambda: client._anthropic.raw,
                     self._images,
                     token_budget=g.claude_image_token_budget,
                     floor_px=g.claude_image_floor_px,
+                    enhance=g.claude_image_enhance is True,
                 )
             return self._claude
 
@@ -1342,6 +1343,7 @@ class GeminiClient:
                 max_output_tokens=self._claude_output_cap(task_tag),
                 image_token_budget=self._settings.gemini.claude_image_token_budget,
                 image_floor_px=self._settings.gemini.claude_image_floor_px,
+                image_enhance=self._settings.gemini.claude_image_enhance is True,
             )
         return hashlib.sha256(raw.encode()).hexdigest()[:12]
 

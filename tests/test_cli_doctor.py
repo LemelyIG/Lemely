@@ -97,6 +97,41 @@ class DoctorTests(unittest.TestCase):
         table = next(c for c in payload["checks"] if c["name"] == "gemini_model_table")
         self.assertIn("binding_second_read=claude-haiku-5-5", table["detail"])
 
+    def _workspace_check(self, **env: str) -> dict[str, object] | None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env=self._doctor_env(tmp, ANTHROPIC_API_KEY="sk-ant-test", **env),
+            )
+        payload = json.loads(result.output)
+        return next((c for c in payload["checks"] if c["name"] == "claude_files_workspace"), None)
+
+    def test_doctor_names_only_image_carrying_claude_calls_as_uploading(self) -> None:
+        check = self._workspace_check(
+            LEMELY_GEMINI__CORRECTION_MODEL="claude-haiku-5-5",
+            LEMELY_GEMINI__EXTRACTION_MODEL="claude-haiku-5-5",
+            LEMELY_BINDING__SECOND_READ_MODEL="claude-haiku-5-5",
+        )
+        assert check is not None
+        self.assertTrue(check["ok"])
+        detail = str(check["detail"])
+        self.assertIn("extraction", detail)
+        self.assertIn("binding_second_read", detail)
+        self.assertNotIn("correction", detail)
+        self.assertIn("dedicated Lemely workspace", detail)
+
+    def test_doctor_skips_the_workspace_check_when_no_image_call_is_on_claude(self) -> None:
+        self.assertIsNone(self._workspace_check(LEMELY_GEMINI__CORRECTION_MODEL="claude-haiku-5-5"))
+
+    def test_doctor_says_inline_when_the_files_api_is_off(self) -> None:
+        check = self._workspace_check(
+            LEMELY_GEMINI__EXTRACTION_MODEL="claude-haiku-5-5",
+            LEMELY_GEMINI__CLAUDE_FILES_API="false",
+        )
+        assert check is not None
+        self.assertIn("sent inline", str(check["detail"]))
+
     def test_doctor_does_not_need_an_anthropic_key_under_default_settings(self) -> None:
         with TemporaryDirectory() as tmp:
             result = self.runner.invoke(

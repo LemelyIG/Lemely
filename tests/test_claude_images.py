@@ -130,6 +130,31 @@ class OutputCapTests(_Base):
         self.assertEqual(fake.messages.streamed[0]["max_tokens"], 32_768)
 
 
+class EnhanceToggleTests(_Base):
+    def test_the_setting_changes_the_bytes_sent(self) -> None:
+        page = _scan_page(800, 1100)
+        sent: dict[bool, bytes] = {}
+        for enhance in (True, False):
+            client, fake = self._client(_message(_VALID_MARK), claude_image_enhance=enhance)
+            self._read(client, [page])
+            ((_, sent[enhance]),) = _sent_images(fake.messages.calls[0])
+        self.assertNotEqual(sent[True], sent[False])
+
+    def test_off_sends_what_an_unenhanced_fit_makes(self) -> None:
+        page = _scan_page(800, 1100)
+        client, fake = self._client(_message(_VALID_MARK), claude_image_enhance=False)
+        self._read(client, [page])
+        ((_, data),) = _sent_images(fake.messages.calls[0])
+        plain = image_fit.fit(
+            [page],
+            byte_limit=image_fit.DEFAULT_BYTE_LIMIT,
+            token_budget=95_000,
+            floor_px=1568,
+            enhance=False,
+        )
+        self.assertEqual(data, plain.images[0])
+
+
 class CacheKeyTests(_Base):
     def test_claude_key_carries_the_cap_and_the_fit_version(self) -> None:
         client, _fake = self._client()
@@ -153,9 +178,24 @@ class CacheKeyTests(_Base):
                     key, other._params_fingerprint(_HAIKU, "binding_second_read", AIMarkResponse)
                 )
 
+    def test_claude_key_moves_with_image_enhancement(self) -> None:
+        on, _ = self._client()
+        off, _ = self._client(claude_image_enhance=False)
+        key_on = on._params_fingerprint(_HAIKU, "binding_second_read", AIMarkResponse)
+        key_off = off._params_fingerprint(_HAIKU, "binding_second_read", AIMarkResponse)
+        self.assertNotEqual(key_on, key_off)
+        self.assertEqual(
+            key_off,
+            self._client(claude_image_enhance=False)[0]._params_fingerprint(
+                _HAIKU, "binding_second_read", AIMarkResponse
+            ),
+        )
+
     def test_gemini_key_ignores_the_claude_image_settings(self) -> None:
         base, _ = self._client()
-        other, _ = self._client(claude_image_token_budget=80_000, claude_image_floor_px=1200)
+        other, _ = self._client(
+            claude_image_token_budget=80_000, claude_image_floor_px=1200, claude_image_enhance=False
+        )
         model = "gemini-2.5-flash"
         self.assertEqual(
             base._params_fingerprint(model, "extraction", AIMarkResponse),

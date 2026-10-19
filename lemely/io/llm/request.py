@@ -66,13 +66,19 @@ class CachePlan:
 
 
 def provider_fingerprint(
-    model: str, *, max_output_tokens: int, image_token_budget: int, image_floor_px: int
+    model: str,
+    *,
+    max_output_tokens: int,
+    image_token_budget: int,
+    image_floor_px: int,
+    image_enhance: bool,
 ) -> str:
     """The provider part of a reply's cache key: the single source for it.
 
     Empty for every Gemini model, so no Gemini key moves. A ``claude-`` model adds
     the provider name, the reply cap it is sent with, the page-image fit version and
-    the token budget and pixel floor that fit uses (each changes the pixels sent).
+    the token budget, pixel floor and enhancement that fit uses (each changes the pixels
+    sent; ``image_enhance`` selects the fit version).
     """
     if not is_anthropic_model(model):
         return ""
@@ -80,7 +86,7 @@ def provider_fingerprint(
     from lemely.io.llm import image_fit
 
     return (
-        f"|provider=anthropic|max_tokens={max_output_tokens}|img_fit={image_fit.IMG_FIT_VERSION}"
+        f"|provider=anthropic|max_tokens={max_output_tokens}|img_fit={image_fit.img_fit_version(enhance=image_enhance)}"
         f"|img_budget={image_token_budget}|img_floor={image_floor_px}"
     )
 
@@ -111,11 +117,14 @@ class LLMRequest:
     uploads: Any = None
     shared_prefix: Any = None
 
-    def fingerprint(self, *, image_token_budget: int, image_floor_px: int) -> str:
+    def fingerprint(
+        self, *, image_token_budget: int, image_floor_px: int, image_enhance: bool
+    ) -> str:
         """The provider part of this request's cache key (:func:`provider_fingerprint`)."""
         return provider_fingerprint(
             self.model,
             max_output_tokens=self.max_output_tokens,
             image_token_budget=image_token_budget,
             image_floor_px=image_floor_px,
+            image_enhance=image_enhance,
         )

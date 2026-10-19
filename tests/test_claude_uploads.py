@@ -15,19 +15,33 @@ from structlog.testing import capture_logs
 
 from lemely.core.schemas import AIMarkResponse
 from lemely.io.gemini import GeminiClient, _reset_process_counters, record_calls
+from lemely.io.llm import image_fit
 from lemely.io.llm.claude_uploads import ClaudeImageUploads
-from tests.test_anthropic_adapter import _VALID_MARK, _FakeAnthropic, _message, _settings
+from tests.test_anthropic_adapter import (
+    _VALID_MARK,
+    _FakeAnthropic,
+    _message,
+    _settings,
+    _status_error,
+)
 
 _HAIKU = "claude-haiku-5-5"
 
 
 class _FakeFiles:
-    def __init__(self, *, fail_on: int | None = None) -> None:
+    def __init__(
+        self, *, fail_on: int | None = None, errors: list[Exception] | None = None
+    ) -> None:
         self.uploads: list[dict[str, Any]] = []
         self.deleted: list[str] = []
+        self.attempts = 0
         self._fail_on = fail_on
+        self._errors = list(errors or [])
 
     def upload(self, *, file: tuple[str, bytes, str], expires_in_seconds: int) -> SimpleNamespace:
+        self.attempts += 1
+        if self._errors:
+            raise self._errors.pop(0)
         if self._fail_on is not None and len(self.uploads) + 1 == self._fail_on:
             raise OSError("upload refused")
         self.uploads.append({"file": file, "expires_in_seconds": expires_in_seconds})
@@ -157,11 +171,104 @@ class UploadTests(_Base):
         )
 
 
+class KeylessReplayTests(_Base):
+    def test_a_cached_reply_replays_without_an_anthropic_key_when_uploads_are_passed(self) -> None:
+        files = _FakeFiles()
+        client, _fake = self._client(files, _message(_VALID_MARK))
+        with client.image_uploads(list(_PAGES), concurrency=1) as uploads:
+            self._read(client, uploads, "extraction")
+        self.assertEqual(len(files.uploads), 2)
+
+        keyless = _settings(self.tmp).model_copy(update={"anthropic_api_key": None})
+        replay = GeminiClient(keyless, _genai_client=object(), ledger=None)
+        with replay.image_uploads(list(_PAGES), concurrency=1) as uploads:
+            self._read(replay, uploads, "extraction")  # raises without the lazy lookup
+        self.assertEqual(len(files.uploads), 2)
+        self.assertEqual(files.deleted, ["file_1", "file_2"])
+
+
+class InlineFallbackTests(_Base):
+    def test_the_inline_fit_is_made_once_per_job_after_an_upload_failure(self) -> None:
+        files = _FakeFiles(fail_on=1)
+        client, fake = self._client(files, *(_message(_VALID_MARK) for _ in range(3)))
+        with (
+            patch("lemely.io.llm.claude_uploads.fit", wraps=image_fit.fit) as uploads_fit,
+            client.image_uploads(list(_PAGES), concurrency=1) as uploads,
+        ):
+            for tag in ("extraction", "binding_second_read", "binding_first_read"):
+                self._read(client, uploads, tag)
+        self.assertEqual(len(fake.messages.calls), 3)
+        inline = [c for c in uploads_fit.call_args_list if c.kwargs["byte_limit"] is not None]
+        self.assertEqual(len(inline), 1)
+
+
 class ClaudeImageUploadsUnitTests(unittest.TestCase):
+    def _uploads(self, files: _FakeFiles, **kw: Any) -> ClaudeImageUploads:
+        return ClaudeImageUploads(
+            lambda: SimpleNamespace(files=files),  # type: ignore[arg-type,return-value]
+            list(_PAGES),
+            token_budget=95_000,
+            floor_px=1568,
+            **kw,
+        )
+
+    def test_the_client_is_looked_up_on_first_upload_not_at_construction(self) -> None:
+        looked_up: list[int] = []
+
+        def lookup() -> Any:
+            looked_up.append(1)
+            return SimpleNamespace(files=_FakeFiles())
+
+        uploads = ClaudeImageUploads(lookup, list(_PAGES), token_budget=95_000, floor_px=1568)
+        uploads.delete()
+        self.assertEqual(looked_up, [])
+        uploads.ensure()
+        uploads.ensure()
+        self.assertEqual(looked_up, [1])
+
+    def test_a_transient_upload_error_is_retried(self) -> None:
+        files = _FakeFiles(errors=[_status_error(429), _status_error(529)])
+        uploads = self._uploads(files)
+        with patch("lemely.io.llm.claude_uploads.time.sleep") as sleep:
+            _fitted, ids = uploads.ensure()
+        self.assertEqual(ids, ("file_1", "file_2"))
+        self.assertEqual(files.attempts, 4)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_transient_errors_are_recorded_after_the_last_try(self) -> None:
+        files = _FakeFiles(errors=[_status_error(500)] * 3)
+        uploads = self._uploads(files)
+        with patch("lemely.io.llm.claude_uploads.time.sleep"):
+            for _ in range(2):
+                with self.assertRaisesRegex(Exception, "upload"):
+                    uploads.ensure()
+        self.assertEqual(files.attempts, 3)
+
+    def test_a_permanent_upload_error_is_not_retried(self) -> None:
+        files = _FakeFiles(errors=[_status_error(400)])
+        uploads = self._uploads(files)
+        with (
+            patch("lemely.io.llm.claude_uploads.time.sleep") as sleep,
+            self.assertRaisesRegex(Exception, "upload"),
+        ):
+            uploads.ensure()
+        self.assertEqual(files.attempts, 1)
+        sleep.assert_not_called()
+
+    def test_a_programming_error_propagates_as_itself(self) -> None:
+        files = _FakeFiles(errors=[TypeError("bug")])
+        with self.assertRaises(TypeError):
+            self._uploads(files).ensure()
+
+    def test_enhance_reaches_the_fit(self) -> None:
+        with patch("lemely.io.llm.claude_uploads.fit", wraps=image_fit.fit) as spy:
+            self._uploads(_FakeFiles(), enhance=False).ensure()
+        self.assertIs(spy.call_args.kwargs["enhance"], False)
+
     def test_ensure_is_idempotent_and_a_failure_is_remembered(self) -> None:
         files = _FakeFiles(fail_on=1)
         uploads = ClaudeImageUploads(
-            SimpleNamespace(files=files), list(_PAGES), token_budget=95_000, floor_px=1568
+            lambda: SimpleNamespace(files=files), list(_PAGES), token_budget=95_000, floor_px=1568
         )
         for _ in range(2):
             with self.assertRaisesRegex(Exception, "upload"):
@@ -170,7 +277,10 @@ class ClaudeImageUploadsUnitTests(unittest.TestCase):
 
     def test_matches_only_the_same_pages(self) -> None:
         uploads = ClaudeImageUploads(
-            SimpleNamespace(files=_FakeFiles()), list(_PAGES), token_budget=95_000, floor_px=1568
+            lambda: SimpleNamespace(files=_FakeFiles()),
+            list(_PAGES),
+            token_budget=95_000,
+            floor_px=1568,
         )
         self.assertTrue(uploads.matches(list(_PAGES)))
         self.assertFalse(uploads.matches(list(reversed(_PAGES))))

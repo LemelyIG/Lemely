@@ -30,6 +30,7 @@ class ProviderFingerprintTests(unittest.TestCase):
                         max_output_tokens=65536,
                         image_token_budget=95000,
                         image_floor_px=1568,
+                        image_enhance=True,
                     ),
                     "",
                 )
@@ -41,10 +42,21 @@ class ProviderFingerprintTests(unittest.TestCase):
                 max_output_tokens=16000,
                 image_token_budget=95000,
                 image_floor_px=1568,
+                image_enhance=True,
             ),
             f"|provider=anthropic|max_tokens=16000|img_fit={image_fit.IMG_FIT_VERSION}"
             "|img_budget=95000|img_floor=1568",
         )
+
+    def test_claude_segment_without_enhancement_uses_the_plain_version(self) -> None:
+        segment = provider_fingerprint(
+            "claude-haiku-5-5",
+            max_output_tokens=16000,
+            image_token_budget=95000,
+            image_floor_px=1568,
+            image_enhance=False,
+        )
+        self.assertIn(f"img_fit={image_fit.IMG_FIT_VERSION_PLAIN}|", segment)
 
     def test_request_fingerprint_is_the_module_function(self) -> None:
         req = LLMRequest(
@@ -56,12 +68,13 @@ class ProviderFingerprintTests(unittest.TestCase):
             max_output_tokens=16000,
         )
         self.assertEqual(
-            req.fingerprint(image_token_budget=95000, image_floor_px=1568),
+            req.fingerprint(image_token_budget=95000, image_floor_px=1568, image_enhance=True),
             provider_fingerprint(
                 "claude-haiku-5-5",
                 max_output_tokens=16000,
                 image_token_budget=95000,
                 image_floor_px=1568,
+                image_enhance=True,
             ),
         )
 

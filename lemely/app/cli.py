@@ -570,7 +570,12 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # Spec 2026-10-19 §2a: page images for claude- tags go to the Files API, which a
     # workspace-scoped key can read back. A standard key cannot report its workspace,
     # so this stays a static advisory.
-    if claude_tags_any := [t for t, m in configured_models.items() if m.startswith("claude-")]:
+    # Only the calls that carry page images (extraction and the binding reads) upload.
+    if claude_tags_any := [
+        t
+        for t, m in configured_models.items()
+        if m.startswith("claude-") and (t == "extraction" or t.startswith("binding"))
+    ]:
         record(
             "claude_files_workspace",
             True,
