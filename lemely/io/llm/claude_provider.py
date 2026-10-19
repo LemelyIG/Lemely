@@ -6,9 +6,10 @@ module lazily, on the first ``claude-`` call.
 
 from __future__ import annotations
 
+import base64
 import time
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import anthropic
 
@@ -19,8 +20,12 @@ from lemely.io.providers import ProviderError, ProviderTransientError
 from lemely.runtime.errors import ExternalServiceError
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from anthropic.types import DocumentBlockParam
+
     from lemely.io.llm.image_fit import FittedImages
-    from lemely.io.llm.request import LLMRequest
+    from lemely.io.llm.request import DocumentInput, LLMRequest
     from lemely.io.providers.anthropic_adapter import AnthropicAdapter
     from lemely.runtime.config import Settings
 
@@ -42,6 +47,67 @@ def usage_as_gemini_response(usage: Usage) -> SimpleNamespace:
             container_seconds=usage.container_seconds,
         )
     )
+
+
+#: The API's request limit (PDF support docs, read 2026-10-20).
+MAX_REQUEST_BYTES = 32_000_000
+#: PDF pages per request: 600 when the context window is 1M tokens (Haiku 5.5, Sonnet 5.5
+#: and Opus 5.5 all have 1M; models page, read 2026-10-20), 100 under 1M.
+MAX_PDF_PAGES = 600
+
+
+def _pdf_pages(data: bytes, number: int) -> int:
+    import pypdfium2 as pdfium
+
+    try:
+        doc = pdfium.PdfDocument(data)
+    except (pdfium.PdfiumError, ValueError, OSError) as exc:
+        raise ProviderError(f"document {number} is not a readable PDF: {exc}") from exc
+    try:
+        return len(doc)
+    finally:
+        doc.close()
+
+
+def document_blocks(docs: Sequence[DocumentInput]) -> list[DocumentBlockParam]:
+    """``document`` blocks: PDFs as base64, text as plain text; page limit enforced."""
+    blocks: list[DocumentBlockParam] = []
+    pages = 0
+    for number, doc in enumerate(docs, start=1):
+        source: dict[str, Any]
+        if doc.media_type == "application/pdf":
+            pages += _pdf_pages(doc.data, number)
+            source = {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": base64.standard_b64encode(doc.data).decode("ascii"),
+            }
+        else:
+            source = {"type": "text", "media_type": "text/plain", "data": doc.data.decode("utf-8")}
+        block: dict[str, Any] = {"type": "document", "source": source}
+        if doc.cache:
+            block["cache_control"] = {"type": "ephemeral"}
+        if doc.citations:
+            block["citations"] = {"enabled": True}
+        if doc.title:
+            block["title"] = doc.title
+        blocks.append(cast("DocumentBlockParam", block))
+    if pages > MAX_PDF_PAGES:
+        raise ProviderError(
+            f"{pages} PDF pages in one Claude request; the limit is {MAX_PDF_PAGES}"
+        )
+    return blocks
+
+
+def _request_bytes(req: LLMRequest, images: Sequence[bytes]) -> int:
+    """What the request body carries, near enough: base64 payloads plus the text."""
+    docs = sum(
+        image_fit.base64_len(len(d.data)) if d.media_type == "application/pdf" else len(d.data)
+        for d in req.documents
+    )
+    pics = sum(image_fit.base64_len(len(i)) for i in images)
+    text = sum(len(s.encode()) for s in (req.system, req.prompt, req.cache_prefix or ""))
+    return docs + pics + text
 
 
 #: Preflight with the count endpoint when the estimate is within 10% of the budget.
@@ -100,6 +166,7 @@ class ClaudeProvider:
         *,
         images: tuple[bytes, ...] | None = None,
         file_ids: tuple[str, ...] = (),
+        documents: Sequence[DocumentBlockParam] = (),
     ) -> int | None:
         """The count endpoint's figure for ``req``, or None if it fails.
 
@@ -116,6 +183,7 @@ class ClaudeProvider:
                 cache_prefix=req.cache_prefix,
                 images=images,
                 image_file_ids=file_ids,
+                documents=documents,
             )
         except ExternalServiceError:
             return None
@@ -124,7 +192,17 @@ class ClaudeProvider:
         """Send ``req``; 429/529/5xx/connection raise ``TransientCallError``."""
         if req.response_schema is None:
             raise ProviderError("a Claude call needs a response schema")
+        if any(d.citations for d in req.documents):
+            raise ProviderError(
+                "citations cannot be combined with a response schema (the API returns 400)"
+            )
+        documents = document_blocks(req.documents)
         fitted, images, file_ids = self._pages(req, log)
+        size = _request_bytes(req, images)
+        if size > MAX_REQUEST_BYTES:
+            raise ProviderError(
+                f"the request is {size} bytes; one Claude request takes at most {MAX_REQUEST_BYTES}"
+            )
         if fitted is not None:
             if fitted.over_token_budget:
                 log.warning(
@@ -136,7 +214,9 @@ class ClaudeProvider:
                 )
             budget = self._settings.gemini.claude_image_token_budget
             if fitted.est_tokens >= PREFLIGHT_SHARE * budget:
-                counted = self.count_tokens(req, images=images, file_ids=file_ids)
+                counted = self.count_tokens(
+                    req, images=images, file_ids=file_ids, documents=documents
+                )
                 log.info(
                     "claude_token_preflight",
                     est_tokens=fitted.est_tokens,
@@ -154,6 +234,7 @@ class ClaudeProvider:
                 cache_prefix=req.cache_prefix,
                 images=images,
                 image_file_ids=file_ids,
+                documents=documents,
                 max_tokens=req.max_output_tokens,
             )
         except ProviderTransientError as exc:

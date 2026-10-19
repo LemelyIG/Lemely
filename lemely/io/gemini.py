@@ -11,7 +11,7 @@ import math
 import re
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
@@ -1416,6 +1416,7 @@ class GeminiClient:
         extra_key: str,
         params_fingerprint: str,
         image_parts: list[bytes] | None = None,
+        documents: Sequence[DocumentInput] | None = None,
     ) -> str:
         prompt_hash = hashlib.sha256(
             (system_prompt + user_prompt + prompt_version + extra_key).encode()
@@ -1439,6 +1440,13 @@ class GeminiClient:
             h = hashlib.sha256()
             for fp in sorted(file_paths):
                 h.update(fp.read_bytes())
+            files_hash = h.hexdigest()[:12]
+        elif documents:
+            # One document hashes exactly as today's one-file `file_paths` does, so a
+            # caller moved from file_paths to documents keeps its cache keys.
+            h = hashlib.sha256()
+            for doc in documents:
+                h.update(doc.data)
             files_hash = h.hexdigest()[:12]
         else:
             files_hash = "none"
@@ -1500,12 +1508,17 @@ class GeminiClient:
             return g.model_for(task_tag)
         return g.model
 
+    def model_for_tag(self, task_tag: str) -> str:
+        """The model a call under ``task_tag`` runs on when it names none."""
+        return self._active_model(None, task_tag)
+
     def _structured_cache_key(
         self,
         *,
         system_prompt: str,
         user_prompt: str,
         file_paths: list[Path] | None,
+        documents: Sequence[DocumentInput] | None,
         image_parts: list[bytes] | None,
         media_resolution: str | None,
         response_schema: type[BaseModel],
@@ -1533,6 +1546,7 @@ class GeminiClient:
             extra_cache_key,
             params_fingerprint,
             image_parts=image_parts,
+            documents=documents,
         )
         return active_model, cache_key
 
@@ -1542,6 +1556,7 @@ class GeminiClient:
         system_prompt: str,
         user_prompt: str,
         file_paths: list[Path] | None = None,
+        documents: Sequence[DocumentInput] | None = None,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
         response_schema: type[BaseModel],
@@ -1561,6 +1576,7 @@ class GeminiClient:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             file_paths=file_paths,
+            documents=documents,
             image_parts=image_parts,
             media_resolution=media_resolution,
             response_schema=response_schema,
@@ -1609,6 +1625,7 @@ class GeminiClient:
         system_prompt: str,
         user_prompt: str,
         file_paths: list[Path] | None = None,
+        documents: Sequence[DocumentInput] | None = None,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
         image_uploads: ImageUploads | None = None,
@@ -1641,7 +1658,9 @@ class GeminiClient:
         base64 image blocks (scaled down or refused there by the API's limits);
         ``image_uploads`` is ignored (never uploaded) and ``media_resolution``
         is not sent, though it stays in the cache key as for any call.
-        ``file_paths`` is refused.
+        ``file_paths`` is refused; ``documents`` go as ``document`` blocks, first.
+        ``documents`` and ``file_paths`` together raise ``ValueError``; on Gemini
+        a document is uploaded from its ``source_path``.
 
         ``attempt`` and ``question_id`` only label the `CallRecord` this call
         appends; they are never part of the cache key.
@@ -1670,10 +1689,12 @@ class GeminiClient:
             if not image_uploads.matches(image_parts):
                 raise ValueError("image_uploads must carry the same page images as image_parts")
         on_claude = is_anthropic_model(self._active_model(model, task_tag))
+        if file_paths and documents:
+            raise ValueError("pass file_paths or documents, not both")
         if on_claude and file_paths:
-            # The Anthropic adapter takes text and page images, not files.
             raise ValueError(
-                "claude- models are served by the Anthropic adapter, which takes no files"
+                f"claude- models take no file_paths (task_tag={task_tag!r}); send typed PDFs "
+                "as documents and scans as rasterised image_parts"
             )
         claude_uploads: ClaudeImageUploads | None = None
         if on_claude:
@@ -1685,6 +1706,7 @@ class GeminiClient:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             file_paths=file_paths,
+            documents=documents,
             image_parts=image_parts,
             media_resolution=media_resolution,
             response_schema=response_schema,
@@ -1742,6 +1764,7 @@ class GeminiClient:
                 response_schema,
                 log,
                 task_tag,
+                documents=documents,
                 image_parts=image_parts,
                 media_resolution=media_resolution,
                 image_uploads=claude_uploads if on_claude else image_uploads,
@@ -1775,6 +1798,7 @@ class GeminiClient:
                     response_schema,
                     log,
                     task_tag,
+                    documents=documents,
                     image_parts=image_parts,
                     media_resolution=media_resolution,
                     image_uploads=claude_uploads if on_claude else image_uploads,
@@ -2241,6 +2265,7 @@ class GeminiClient:
         user_prompt: str,
         response_schema: type[BaseModel] | None,
         file_paths: list[Path] | None = None,
+        documents: Sequence[DocumentInput] | None = None,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
         image_uploads: Any = None,
@@ -2263,7 +2288,9 @@ class GeminiClient:
             prompt=user_prompt,
             response_schema=response_schema,
             images=tuple(ImageInput(data) for data in (image_parts or ())),
-            documents=tuple(DocumentInput.from_path(fp) for fp in (file_paths or ())),
+            documents=tuple(documents)
+            if documents
+            else tuple(DocumentInput(data=b"", source_path=fp) for fp in (file_paths or ())),
             tool=tool,
             effort=effort,
             max_output_tokens=cap,
@@ -2310,6 +2337,7 @@ class GeminiClient:
         log: Any,
         task_tag: str | None = None,
         *,
+        documents: Sequence[DocumentInput] | None = None,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
         image_uploads: ImageUploads | ClaudeImageUploads | None = None,
@@ -2325,6 +2353,7 @@ class GeminiClient:
                 response_schema,
                 log,
                 task_tag,
+                documents=documents,
                 image_parts=image_parts,
                 media_resolution=media_resolution,
                 image_uploads=image_uploads,
@@ -2358,6 +2387,7 @@ class GeminiClient:
         log: Any,
         task_tag: str | None = None,
         *,
+        documents: Sequence[DocumentInput] | None = None,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
         image_uploads: ImageUploads | ClaudeImageUploads | None = None,
@@ -2370,6 +2400,7 @@ class GeminiClient:
             user_prompt=user_prompt,
             response_schema=response_schema,
             file_paths=file_paths,
+            documents=documents,
             image_parts=image_parts,
             media_resolution=media_resolution,
             image_uploads=image_uploads,

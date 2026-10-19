@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from anthropic.types import (
         Base64ImageSourceParam,
         ContentBlockParam,
+        DocumentBlockParam,
         FileImageSourceParam,
         ImageBlockParam,
         Message,
@@ -235,10 +236,12 @@ class AnthropicAdapter:
         cache_prefix: str | None,
         images: Sequence[bytes],
         image_file_ids: Sequence[str],
+        documents: Sequence[DocumentBlockParam] = (),
     ) -> MessageParam:
-        if not (cache_prefix or images or image_file_ids):
+        if not (cache_prefix or images or image_file_ids or documents):
             return {"role": "user", "content": user_prompt}
         content: list[ContentBlockParam] = [
+            *documents,
             *image_blocks(images),
             *file_image_blocks(image_file_ids),
         ]
@@ -276,10 +279,12 @@ class AnthropicAdapter:
         cache_prefix: str | None,
         images: Sequence[bytes] = (),
         image_file_ids: Sequence[str] = (),
+        documents: Sequence[DocumentBlockParam] = (),
         max_tokens: int = MAX_OUTPUT_TOKENS,
     ) -> AnthropicReply:
         """Send one request; return the unvalidated reply.
 
+        ``documents`` are ``document`` blocks and go before everything else.
         ``images`` are already fitted (``lemely.io.llm.image_fit``) and go first, as
         base64 blocks; ``image_file_ids`` reference the same kind of pages uploaded
         through the Files API. ``max_tokens`` above :data:`NONSTREAMING_MAX_TOKENS`
@@ -303,7 +308,11 @@ class AnthropicAdapter:
             else []
         )
         message = self._user_message(
-            user_prompt, cache_prefix=cache_prefix, images=images, image_file_ids=image_file_ids
+            user_prompt,
+            cache_prefix=cache_prefix,
+            images=images,
+            image_file_ids=image_file_ids,
+            documents=documents,
         )
         response = self._send(
             model=model,
@@ -327,6 +336,7 @@ class AnthropicAdapter:
         cache_prefix: str | None,
         images: Sequence[bytes] = (),
         image_file_ids: Sequence[str] = (),
+        documents: Sequence[DocumentBlockParam] = (),
     ) -> int:
         """Input tokens the request would bill, from the free count endpoint.
 
@@ -334,7 +344,11 @@ class AnthropicAdapter:
             ProviderError: the endpoint failed (a preflight caller treats it as unknown).
         """
         message = self._user_message(
-            user_prompt, cache_prefix=cache_prefix, images=images, image_file_ids=image_file_ids
+            user_prompt,
+            cache_prefix=cache_prefix,
+            images=images,
+            image_file_ids=image_file_ids,
+            documents=documents,
         )
         system: list[TextBlockParam] = (
             [{"type": "text", "text": system_prompt}] if system_prompt else []
