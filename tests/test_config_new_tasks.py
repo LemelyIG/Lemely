@@ -698,3 +698,14 @@ class TestRereadStageSettings:
         with pytest.raises(ValidationError) as exc_info:
             GeminiSettings(reread_budget_seconds=float("inf"))
         assert exc_info.value.errors()[0]["type"] == "finite_number"
+
+
+def test_anthropic_key_missing_tags_lists_only_claude_tags_by_default() -> None:
+    from lemely.runtime.config import Settings, anthropic_key_missing_tags
+
+    settings = Settings(anthropic_api_key=None)
+    tags = ("correction", "correction_borderline", "escalation", "extraction", "generation")
+    models = {tag: settings.gemini.model_for(tag) for tag in tags}
+    assert anthropic_key_missing_tags(settings, models) == ["correction", "correction_borderline"]
+    keyed = Settings(anthropic_api_key="k")  # type: ignore[arg-type]
+    assert anthropic_key_missing_tags(keyed, models) == []

@@ -584,7 +584,16 @@ class DoctorBindingTests(unittest.TestCase):
         self.assertIn("binding_read=gemini-3.8-flash", checks["gemini_model_table"]["detail"])
         binding = checks["binding"]
         self.assertTrue(binding["ok"], msg=binding)
-        for expected in ("binder=label", "gate=enforce", "gemini-3.8-flash", "low", "medium"):
+        # Both reads think "low" since cost-ladder B1; the table names the second read's
+        # tag, so that is a choice and not a warning, and the advisory says what makes
+        # the second read independent.
+        for expected in (
+            "binder=label",
+            "gate=enforce",
+            "both reads on gemini-3.8-flash think low",
+            "b1-second-read-low/verdict.json",
+            "own task tag and cache key",
+        ):
             self.assertIn(expected, binding["detail"])
 
     def test_doctor_warns_when_the_second_read_is_the_first_one_again(self) -> None:

@@ -1139,9 +1139,12 @@ def binding_models(settings: Settings) -> dict[str, str]:
 def binding_status(settings: Settings) -> tuple[bool, str]:
     """Advisory status for ``lemely doctor``: how answers are bound, and at what cost.
 
-    Not ok when a second read is configured and would be the first read again: both
-    go to the same model, so only how hard each thinks makes the second a second
-    opinion. For a 3.x model that is ``gemini.thinking_level_for`` (tags
+    Not ok when a second read is configured, would be the first read again, and the
+    thinking table does not name ``binding_second_read`` (a table written before the
+    binder existed). Both reads share a model; the second has its own task tag and
+    cache key, so equal thinking that the table sets on purpose (the shipped default
+    since cost-ladder B1: both "low") is reported ok. For a 3.x model that is
+    ``gemini.thinking_level_for`` (tags
     ``extraction`` and ``binding_second_read``); a table for it in ``lemely.toml``
     replaces the defaults, so one written before the binder existed leaves
     ``binding_second_read`` out. A 2.5 model ignores that table and reads
@@ -1169,11 +1172,20 @@ def binding_status(settings: Settings) -> tuple[bool, str]:
     if first == second:
         # A level is a name (3.x); a budget is a number of tokens (2.5 and earlier).
         table = "thinking_level_for" if isinstance(first, str) else "thinking_budget_for"
+        if SECOND_READ_TASK_TAG not in getattr(settings.gemini, table):
+            return (
+                False,
+                f"{summary}: both reads on {model} resolve to the same thinking ({first}), so "
+                "the second read is the first one again; set a different value for "
+                f"{SECOND_READ_TASK_TAG} in [gemini.{table}]",
+            )
+        # The table names the second read's tag: the same thinking is a choice (B1), not
+        # a stale table. Independence comes from the separate task tag and cache key.
         return (
-            False,
-            f"{summary}: both reads on {model} resolve to the same thinking ({first}), so the "
-            "second read is the first one again; set a different value for "
-            f"{SECOND_READ_TASK_TAG} in [gemini.{table}]",
+            True,
+            f"{summary}: both reads on {model} think {first} (cost-ladder B1: "
+            "BUILD/accuracy-runs/cost-ladder-2026-10-19/b1-second-read-low/verdict.json); the "
+            "second read is independent by its own task tag and cache key, not by thinking",
         )
     if binding.second_read_mode == "on_trigger":
         return (
