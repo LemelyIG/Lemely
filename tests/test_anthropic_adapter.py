@@ -536,8 +536,12 @@ class GeminiCacheKeyStabilityTests(unittest.TestCase):
         depend on the default ``thinking_level_for``, so a deliberate change to
         those defaults is the one legitimate reason to re-capture them. The two
         ``extraction``-tag keys were re-captured when ``max_output_tokens_for``
-        began capping that tag at 16384 (cost-ladder B12); the ``correction`` and
-        untagged keys did not move, which is the proof the cap is tag-scoped.
+        began capping that tag at 16384 (cost-ladder B12), and again when the
+        shipped ``extraction`` cap was raised to 32768 (the cap is part of the
+        params fingerprint, so every extraction-tag key moves with it; the cache
+        entries written under 16384 are simply not reused). The ``correction`` and
+        untagged keys did not move either time, which is the proof the cap is
+        tag-scoped.
         """
         client = GeminiClient(
             make_settings(tempfile.mkdtemp()), _genai_client=object(), ledger=None
@@ -545,7 +549,7 @@ class GeminiCacheKeyStabilityTests(unittest.TestCase):
         pinned = [
             ("gemini-3.8-flash", "correction", "62e1535661dcbc4c"),
             ("gemini-2.5-flash", None, "95b0df425f53e2b3"),
-            ("gemini-3.5-flash-lite", "extraction", "6b1b203108fd62ed"),
+            ("gemini-3.5-flash-lite", "extraction", "e085585624b85b62"),
         ]
         for model, tag, expected in pinned:
             with self.subTest(model=model, tag=tag):
@@ -571,7 +575,7 @@ class GeminiCacheKeyStabilityTests(unittest.TestCase):
                 model="gemini-3.8-flash",
                 task_tag="extraction",
             ),
-            "2536c5f9b31d8fe9",
+            "2ccf959d2b070367",
         )
 
 

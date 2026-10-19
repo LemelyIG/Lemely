@@ -210,15 +210,26 @@ class GeminiSettings(BaseModel):
     )
     cascade_two_pass_disagreement: bool = False
     # Per-task-tag output-token cap (thinking tokens included); a tag's value
-    # replaces the client's default cap for that tag's Gemini calls. A reply cut
-    # off at a set cap is billed, recorded unparsed, retried once afresh, then fails.
-    # Runaway guard, never hit on golden (largest binder output 1,608 tokens; a
-    # 65,522-token runaway first read was seen at rung 0):
+    # replaces the client's default cap (65,536) for that tag's Gemini calls. A
+    # reply cut off at a set cap is billed, recorded unparsed, retried once
+    # afresh, then fails. Which calls each cap covers:
+    # - "extraction" (32,768): every call under that tag -- the label binder's
+    #   first read of a whole script (lemely.io.binding), the crop re-reads
+    #   (lemely.io.reread), and legacy whole-paper extraction, MCQ answers included
+    #   (lemely.io.answer_extraction: the main read and the binding gate's retry).
+    # - "binding_second_read" (16,384): the label binder's second read only.
+    # Runaway guards, never hit in measurement. Evidence: the largest binder
+    # output on golden is 1,608 tokens in the B12 screen (1,626 across all the
+    # cost-ladder screens); a real 19-page scan (0625/41 Oct/Nov 2024,
+    # tests/fixtures/binding/0625_w24_41/streams) replies in about 7,100 tokens
+    # (text length / 4), 22% of the extraction cap; a 65,522-token runaway first
+    # read was seen at rung 0:
     # BUILD/accuracy-runs/cost-ladder-2026-10-19/b12-binder-output-cap/verdict.json
-    # Safe only because binding_second_read thinks "low" (B1): at "medium" second
-    # reads reached 47-65k tokens at rung 0, so raise this cap before raising that level.
+    # Coupled to B1: the second-read cap is safe only because binding_second_read
+    # thinks "low"; at "medium" second reads reached 47-65k tokens at rung 0, so
+    # raise this cap before raising that level.
     max_output_tokens_for: dict[str, Annotated[int, Field(gt=0)]] = Field(
-        default_factory=lambda: {"extraction": 16384, "binding_second_read": 16384}
+        default_factory=lambda: {"extraction": 32768, "binding_second_read": 16384}
     )
     cascade_unaddressed_points: bool = False
     # Put the question-invariant correction prompt first so providers can cache it.

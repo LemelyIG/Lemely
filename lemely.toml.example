@@ -24,8 +24,9 @@ model = "gemini-2.5-flash"
 # Per-task model overrides (omit a key to use the global `model` above).
 # F1 (Gemini 3.x migration, 2026-09-17): these are the shipped defaults, so
 # they are commented out here purely as documentation of what you are
-# overriding if you uncomment one. correction/escalation default to
-# gemini-3.8-flash; extraction/generation/scan_metadata default to
+# overriding if you uncomment one. correction defaults to
+# gemini-3.1-flash-lite and escalation to gemini-3.8-flash;
+# extraction/generation/scan_metadata default to
 # gemini-3.5-flash-lite; mark_scheme stays on gemini-2.5-flash (its chunked
 # parser and thinking_budget tuning predate the 3.x migration, D20). Run
 # `lemely doctor` to see what model_for() actually resolves for every tag.
@@ -63,7 +64,7 @@ model = "gemini-2.5-flash"
 # A reply cut off at a set cap is billed, recorded unparsed, retried once
 # afresh, then fails. A table you set REPLACES the shipped caps (no merge):
 # list every entry you want kept, both extraction and binding_second_read.
-# max_output_tokens_for = { "extraction" = 16384, "binding_second_read" = 16384 }
+# max_output_tokens_for = { "extraction" = 32768, "binding_second_read" = 16384 }
 # Escalate when the cheap pass leaves mark-scheme points unaddressed.
 # cascade_unaddressed_points = false
 # Put the question-invariant correction prompt first so it can be cached.
