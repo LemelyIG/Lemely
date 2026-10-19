@@ -70,6 +70,10 @@ class _IsolatedEnv:
         for k in list(os.environ):
             if k.startswith("LEMELY_"):
                 del os.environ[k]
+        # These tests drive correction through a mocked google-genai client; the
+        # shipped default (claude-haiku-5-5, cost-ladder A1) would route to the
+        # Anthropic adapter instead, so pin the Gemini correction model.
+        os.environ["LEMELY_GEMINI__CORRECTION_MODEL"] = "gemini-3.8-flash"
         return self
 
     def __exit__(self, *_: object) -> None:

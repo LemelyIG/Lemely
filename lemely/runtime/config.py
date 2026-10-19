@@ -148,7 +148,8 @@ class GeminiSettings(BaseModel):
     # parser tuning predates the 3.x migration and is out of scope here.
     mark_scheme_model: str | None = "gemini-2.5-flash"
     extraction_model: str | None = "gemini-3.5-flash-lite"
-    correction_model: str | None = "gemini-3.8-flash"
+    # Cost-ladder A1: BUILD/accuracy-runs/cost-ladder-2026-10-19/a1-haiku/verdict.json
+    correction_model: str | None = "claude-haiku-5-5"
     generation_model: str | None = "gemini-3.5-flash-lite"
     study_plan_model: str | None = None
     scan_metadata_model: str | None = "gemini-3.5-flash-lite"
@@ -1159,6 +1160,19 @@ class Settings(BaseSettings):
             init_settings,  # TOML payload from load_settings(**toml_data)
             file_secret_settings,
         )
+
+
+def anthropic_key_missing_tags(settings: Settings, models: Mapping[str, str]) -> list[str]:
+    """Task tags in ``models`` that resolve to a ``claude-`` model while no Anthropic key is set.
+
+    A ``claude-`` model with no key fails on the first call to it
+    (``ExternalServiceError``, not retried), so every paper dies late. Callers
+    that run at startup (``lemely doctor``, the web lifespan) use this to say so
+    up front. Empty when a key is configured or no tag routes to Anthropic.
+    """
+    if settings.anthropic_api_key is not None and settings.anthropic_api_key.get_secret_value():
+        return []
+    return [tag for tag, model in models.items() if model.startswith("claude-")]
 
 
 def _discover_toml(cwd: Path) -> Path | None:

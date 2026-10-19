@@ -1874,7 +1874,12 @@ class RunManifestTests(unittest.TestCase):
             for key in [k for k in os.environ if k.startswith("LEMELY_")]:
                 del os.environ[key]
             settings = load_settings(toml_path=None, cwd=Path(tempfile.mkdtemp()))
-        return settings.model_copy(update={"binding": BindingSettings(**binding)})
+        # The pinned fingerprint predates cost-ladder A1; hold the correction model
+        # at its pre-A1 value so this still isolates the binder's effect.
+        gemini = settings.gemini.model_copy(update={"correction_model": "gemini-3.8-flash"})
+        return settings.model_copy(
+            update={"binding": BindingSettings(**binding), "gemini": gemini}
+        )
 
     def _with_second_read_level(self, settings, level: str | None):
         levels = {

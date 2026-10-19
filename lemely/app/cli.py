@@ -558,6 +558,24 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     model_table = ", ".join(f"{tag}={model}" for tag, model in configured_models.items())
     record("gemini_model_table", True, detail=model_table)
 
+    # Cost-ladder A1: correction runs on a claude- model by default. Without
+    # ANTHROPIC_API_KEY every such call fails at first use, so this is fatal
+    # (not advisory) whenever any task tag resolves to a claude- model.
+    from lemely.runtime.config import anthropic_key_missing_tags
+
+    claude_tags = anthropic_key_missing_tags(settings, configured_models)
+    record(
+        "anthropic_api_key",
+        not claude_tags,
+        detail=(
+            ""
+            if not claude_tags
+            else "no ANTHROPIC_API_KEY set but task tag(s) "
+            + ", ".join(f"{t}={configured_models[t]}" for t in claude_tags)
+            + " use a claude- model; set ANTHROPIC_API_KEY (or LEMELY_ANTHROPIC_API_KEY)"
+        ),
+    )
+
     # How answers are tied to questions and what that costs per extraction; not
     # ok when the binding step's second read would be the first read again (same
     # model, same thinking level), which pays twice for one opinion. Advisory.

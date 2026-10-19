@@ -31,7 +31,7 @@ model = "gemini-2.5-flash"
 # `lemely doctor` to see what model_for() actually resolves for every tag.
 # mark_scheme_model    = "gemini-2.5-flash"
 # extraction_model     = "gemini-3.5-flash-lite"
-# correction_model     = "gemini-3.8-flash"
+# correction_model     = "claude-haiku-5-5"
 # generation_model     = "gemini-3.5-flash-lite"
 # scan_metadata_model  = "gemini-3.5-flash-lite"
 

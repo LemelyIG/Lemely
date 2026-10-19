@@ -105,8 +105,8 @@ class TestSecondReaderSettings:
     def test_f1_defaults(self) -> None:
         """F1 acceptance (1): model_for() resolves every tag to the migration defaults."""
         s = GeminiSettings()
-        assert s.model_for("correction") == "gemini-3.8-flash"
-        assert s.model_for("correction_borderline") == "gemini-3.8-flash"
+        assert s.model_for("correction") == "claude-haiku-5-5"
+        assert s.model_for("correction_borderline") == "claude-haiku-5-5"
         assert s.model_for("escalation") == "gemini-3.8-flash"
         assert s.model_for("extraction") == "gemini-3.5-flash-lite"
         assert s.model_for("generation") == "gemini-3.5-flash-lite"

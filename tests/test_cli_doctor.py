@@ -15,9 +15,19 @@ from lemely.app.cli import cli
 from lemely.runtime.config import Settings
 
 
+def _runner_with_anthropic_key() -> CliRunner:
+    """A runner whose default env carries a dummy Anthropic key.
+
+    The shipped ``gemini.correction_model`` is ``claude-haiku-5-5`` (cost-ladder A1),
+    so ``doctor`` fails without ``ANTHROPIC_API_KEY``; tests about anything else
+    start from a valid key and override it per call when the key is the subject.
+    """
+    return CliRunner(env={"ANTHROPIC_API_KEY": "test-anthropic-key-not-validated"})
+
+
 class DoctorTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.runner = CliRunner()
+        self.runner = _runner_with_anthropic_key()
         snapshot = {
             k: v for k, v in os.environ.items() if k.startswith("LEMELY_") or k == "GEMINI_API_KEY"
         }
@@ -46,6 +56,47 @@ class DoctorTests(unittest.TestCase):
         payload = json.loads(result.output)
         self.assertFalse(payload["all_passed"])
         self.assertIn("gemini_api_key", json.dumps(payload))
+
+    def _doctor_env(self, tmp: str, **extra: str | None) -> dict[str, str | None]:
+        (Path(tmp) / "Sources").mkdir()
+        (Path(tmp) / "outputs").mkdir()
+        return {
+            "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+            "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+            "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+            "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+            **extra,
+        }
+
+    def test_doctor_fails_when_a_claude_model_is_configured_without_an_anthropic_key(self) -> None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env=self._doctor_env(tmp, ANTHROPIC_API_KEY=None),
+            )
+        self.assertEqual(result.exit_code, 3, msg=result.output)
+        payload = json.loads(result.output)
+        self.assertFalse(payload["all_passed"])
+        check = next(c for c in payload["checks"] if c["name"] == "anthropic_api_key")
+        self.assertFalse(check["ok"])
+        self.assertIn("correction=claude-haiku-5-5", check["detail"])
+
+    def test_doctor_does_not_need_an_anthropic_key_when_no_tag_uses_claude(self) -> None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env=self._doctor_env(
+                    tmp,
+                    ANTHROPIC_API_KEY=None,
+                    LEMELY_GEMINI__CORRECTION_MODEL="gemini-3.8-flash",
+                ),
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "anthropic_api_key")
+        self.assertTrue(check["ok"])
 
     def test_doctor_succeeds_with_valid_env(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -204,7 +255,7 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
     ``lemely.toml`` still sets a key F4 removed."""
 
     def setUp(self) -> None:
-        self.runner = CliRunner()
+        self.runner = _runner_with_anthropic_key()
 
     def test_doctor_warns_on_stale_integrity_key_without_failing(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -453,7 +504,7 @@ class US034FallbackPricingVisibilityTests(unittest.TestCase):
     today)."""
 
     def setUp(self) -> None:
-        self.runner = CliRunner()
+        self.runner = _runner_with_anthropic_key()
 
     def test_doctor_names_a_nonexistent_configured_model_as_hitting_the_fallback(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -506,7 +557,7 @@ class DoctorBindingTests(unittest.TestCase):
     """`lemely doctor` shows how answers are bound and what that costs."""
 
     def setUp(self) -> None:
-        self.runner = CliRunner()
+        self.runner = _runner_with_anthropic_key()
 
     def _doctor(self, **extra_env: str) -> dict[str, dict[str, object]]:
         with TemporaryDirectory() as tmp:
