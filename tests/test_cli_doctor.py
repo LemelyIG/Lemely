@@ -76,6 +76,27 @@ class DoctorTests(unittest.TestCase):
         self.assertFalse(check["ok"])
         self.assertIn("correction=claude-haiku-5-5", check["detail"])
 
+    def test_doctor_fails_when_the_second_read_is_on_claude_without_an_anthropic_key(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env=self._doctor_env(
+                    tmp,
+                    ANTHROPIC_API_KEY=None,
+                    LEMELY_BINDING__SECOND_READ_MODEL="claude-haiku-5-5",
+                ),
+            )
+        self.assertEqual(result.exit_code, 3, msg=result.output)
+        payload = json.loads(result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "anthropic_api_key")
+        self.assertFalse(check["ok"])
+        self.assertIn("binding_second_read=claude-haiku-5-5", check["detail"])
+        table = next(c for c in payload["checks"] if c["name"] == "gemini_model_table")
+        self.assertIn("binding_second_read=claude-haiku-5-5", table["detail"])
+
     def test_doctor_does_not_need_an_anthropic_key_under_default_settings(self) -> None:
         with TemporaryDirectory() as tmp:
             result = self.runner.invoke(
@@ -585,6 +606,21 @@ class DoctorBindingTests(unittest.TestCase):
             "own task tag and cache key",
         ):
             self.assertIn(expected, binding["detail"])
+
+    def test_doctor_reports_a_cross_model_second_read(self) -> None:
+        checks = self._doctor(
+            LEMELY_BINDING__SECOND_READ_MODEL="claude-haiku-5-5",
+            ANTHROPIC_API_KEY="test-key-not-validated-with-no-network",
+        )
+        binding = checks["binding"]
+        self.assertTrue(binding["ok"], msg=binding)
+        for expected in (
+            "first on gemini-3.8-flash (thinking low)",
+            "second on claude-haiku-5-5 (thinking low)",
+            "two reads per extraction",
+        ):
+            self.assertIn(expected, binding["detail"])
+        self.assertNotIn("b1-second-read-low", binding["detail"])
 
     def test_doctor_reports_on_trigger_mode_when_both_reads_think_alike(self) -> None:
         always = self._doctor()["binding"]["detail"]

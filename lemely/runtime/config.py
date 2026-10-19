@@ -679,6 +679,12 @@ class BindingSettings(BaseModel):
     read replaced. It doubles the cost of the binding step. ``retry_model`` is the model
     the legacy binder's one retry uses.
 
+    ``second_read_model`` is the second read's model; ``None`` (the default) reads it on
+    ``read_model``, as before. A ``claude-`` model makes the second read a cross-model
+    one: the Anthropic adapter is sent the same page images, under the same task tag
+    (``binding_second_read``: its thinking level maps to Anthropic effort) and its own
+    cache key, and ``lemely doctor`` requires an Anthropic key for it.
+
     ``second_read_mode`` says when that second read is made, with ``second_read`` on.
     ``"always"``: on every script, at the same time as the first. ``"on_trigger"``: the
     first read is made alone, and the second only when something about the first gives
@@ -702,6 +708,7 @@ class BindingSettings(BaseModel):
     read_model: str = Field(default="gemini-3.8-flash", min_length=1)
     second_read: bool = True
     second_read_mode: Literal["always", "on_trigger"] = "always"
+    second_read_model: str | None = Field(default=None, min_length=1)
     retry_model: str = Field(default="gemini-3.8-flash", min_length=1)
 
     @model_validator(mode="after")

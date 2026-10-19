@@ -2961,3 +2961,198 @@ def test_legacy_binder_with_gate_off_is_unchanged(
     assert _pairs(extracted) == [(a["question_id"], a["answer"]) for a in aligned["answers"]]
     assert extracted.dropped_question_ids == []
     assert extracted.unbound_question_ids == []
+
+
+# --------------------------------------------------------------------------------------
+# A second read on another model (``BindingSettings.second_read_model``)
+# --------------------------------------------------------------------------------------
+_CLAUDE = "claude-haiku-5-5"
+
+
+def _forgotten_on_hold(
+    tmp: Path, scheme: MarkScheme, **binding: Any
+) -> tuple[GeminiClient, list[list[str]], list[dict[str, Any]], BindingOutcome]:
+    """Two reads that disagree at paper scope, so the paper is held and both keys forgotten."""
+    client, _genai = _client(tmp, **binding)
+    pages = _pages()
+    model = _Model(first=_items(_run(1)), second=_items(_with_texts_rotated(_run(1), 6)))
+    forgotten: list[list[str]] = []
+
+    def _forget(keys: Any) -> int:
+        forgotten.append(list(keys))
+        return 0
+
+    with (
+        _events(EventType.BINDING_GATE_RESULT) as seen,
+        client.image_uploads([p.png_bytes for p in pages], concurrency=1) as uploads,
+        patch.object(client, "generate_structured", side_effect=model),
+        patch.object(client, "forget_cached", side_effect=_forget),
+    ):
+        outcome = run_binding(
+            client, pages, scheme, uploads=uploads, settings=client._settings, manifest_key="k"
+        )
+    return client, forgotten, seen[EventType.BINDING_GATE_RESULT], outcome
+
+
+def _read_keys(client: GeminiClient, scheme: MarkScheme, first: str, second: str) -> list[str]:
+    binder = LabelBinder(client)
+    return [
+        binder.cache_key(
+            _pages(), scheme, model=first, extra_cache_key="k|bind1", task_tag="extraction"
+        ),
+        binder.cache_key(
+            _pages(),
+            scheme,
+            model=second,
+            extra_cache_key="k|bind2",
+            task_tag="binding_second_read",
+        ),
+    ]
+
+
+def test_by_default_both_reads_are_on_the_read_model_as_before(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    assert BindingSettings().second_read_model is None
+    model = _Model(first=_items(_run(1)), second=_items(_run(1)))
+    with _events(EventType.BINDING_GATE_RESULT) as seen:
+        outcome = _bind(tmp_path, scheme, model)
+    assert [(c["task_tag"], c["model"]) for c in sorted(model.calls, key=model.key)] == [
+        ("extraction", _READ_MODEL),
+        ("binding_second_read", _READ_MODEL),
+    ]
+    assert outcome.report is not None and outcome.report.model == _READ_MODEL
+    (event,) = seen[EventType.BINDING_GATE_RESULT]
+    assert "second_read_model" not in event
+    assert event["model"] == _READ_MODEL
+
+    client, forgotten, (held,), _outcome = _forgotten_on_hold(tmp_path, scheme)
+    assert forgotten == [_read_keys(client, scheme, _READ_MODEL, _READ_MODEL)]
+    assert "second_read_model" not in held
+
+
+def test_a_second_read_model_the_same_as_the_read_model_changes_nothing(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    client, forgotten, (held,), _outcome = _forgotten_on_hold(
+        tmp_path, scheme, second_read_model=_READ_MODEL
+    )
+    assert forgotten == [_read_keys(client, scheme, _READ_MODEL, _READ_MODEL)]
+    assert held["second_read_model"] == _READ_MODEL
+
+
+def test_a_claude_second_read_uses_its_model_under_the_second_read_tag(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    model = _Model(first=_items(_run(1)), second=_items(_run(1)))
+    with _events(EventType.BINDING_GATE_RESULT) as seen:
+        outcome = _bind(tmp_path, scheme, model, second_read_model=_CLAUDE)
+    first, second = model.call("first"), model.call("second")
+    assert (first["model"], first["task_tag"], first["extra_cache_key"]) == (
+        _READ_MODEL,
+        "extraction",
+        "scan-1|bind1",
+    )
+    assert (second["model"], second["task_tag"], second["extra_cache_key"]) == (
+        _CLAUDE,
+        "binding_second_read",
+        "scan-1|bind2",
+    )
+    assert second["image_parts"] == first["image_parts"]
+    # The first read was returned: the report names its model.
+    assert outcome.report is not None and outcome.report.verdict == "pass"
+    assert outcome.report.model == _READ_MODEL
+    (event,) = seen[EventType.BINDING_GATE_RESULT]
+    assert event["second_read_model"] == _CLAUDE
+
+    client, forgotten, _held, _outcome = _forgotten_on_hold(
+        tmp_path, scheme, second_read_model=_CLAUDE
+    )
+    assert forgotten == [_read_keys(client, scheme, _READ_MODEL, _CLAUDE)]
+
+
+def test_a_returned_claude_second_read_names_its_model_in_the_report(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    model = _Model(first=_items(_question_4_unanchored(4)), second=_items(_run(1)))
+    outcome = _bind(tmp_path, scheme, model, second_read_model=_CLAUDE)
+    assert outcome.report is not None
+    assert (outcome.report.verdict, outcome.report.retried) == ("pass", True)
+    assert outcome.report.model == _CLAUDE
+
+
+def test_a_claude_second_read_on_trigger_uses_its_model(tmp_path: Path, scheme: MarkScheme) -> None:
+    model = _Model(first=_items(_question_4_unanchored(4)), second=_items(_run(1)))
+    _bind(
+        tmp_path,
+        scheme,
+        model,
+        second_read_model=_CLAUDE,
+        second_read_mode="on_trigger",
+    )
+    assert model.call("second")["model"] == _CLAUDE
+    assert model.call("first")["model"] == _READ_MODEL
+
+
+def test_a_claude_second_read_sends_the_page_images_to_anthropic(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    """End to end through a real ``GeminiClient``: Gemini reads first, Claude second."""
+    import io
+    from types import SimpleNamespace
+
+    from pydantic import SecretStr
+
+    settings = _settings(tmp_path, second_read_model=_CLAUDE).model_copy(
+        update={"anthropic_api_key": SecretStr("test-key")}
+    )
+    reply = json.dumps(_items(_run(1)))
+    genai = fake_genai_client()
+    genai.models.generate_content.return_value = MagicMock(
+        text=reply,
+        candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
+        usage_metadata=MagicMock(prompt_token_count=5, candidates_token_count=30),
+    )
+    sent: list[dict[str, Any]] = []
+
+    def create(**kwargs: Any) -> SimpleNamespace:
+        sent.append(kwargs)
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text=reply)],
+            stop_reason="end_turn",
+            usage=SimpleNamespace(
+                input_tokens=40_000,
+                cache_read_input_tokens=0,
+                cache_creation_input_tokens=0,
+                output_tokens=3_000,
+                output_tokens_details=SimpleNamespace(thinking_tokens=1_000),
+            ),
+        )
+
+    anthropic_fake = SimpleNamespace(messages=SimpleNamespace(create=create))
+    client = GeminiClient(settings, _genai_client=genai, _anthropic_client=anthropic_fake)
+
+    def _png(index: int) -> bytes:
+        buf = io.BytesIO()
+        Image.new("L", (40 + index, 60), color=255).save(buf, "PNG")
+        return buf.getvalue()
+
+    pages = [
+        RasterisedPage(index=i, width=40 + i, height=60, png_bytes=_png(i), dpi=72.0)
+        for i in range(_PAGE_COUNT)
+    ]
+    with client.image_uploads([p.png_bytes for p in pages], concurrency=1) as uploads:
+        outcome = run_binding(
+            client, pages, scheme, uploads=uploads, settings=settings, manifest_key="k"
+        )
+
+    assert outcome.report is not None and outcome.report.verdict == "pass"
+    assert genai.models.generate_content.call_count == 1  # the first read only
+    (call,) = sent
+    assert call["model"] == _CLAUDE
+    assert call["output_config"]["effort"] == "low"  # binding_second_read's "low"
+    content = call["messages"][0]["content"]
+    images = [block for block in content if block["type"] == "image"]
+    assert len(images) == _PAGE_COUNT
+    assert content[-1]["type"] == "text"
+    assert all(block["type"] == "image" for block in content[:_PAGE_COUNT])

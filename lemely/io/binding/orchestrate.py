@@ -369,6 +369,8 @@ def _publish_result(
     made). It is published as ``second_read_triggers`` beside ``second_read_mode``, so
     that the share of scripts read twice can be counted. Under ``"always"`` neither
     field is there, and the line and the event are what they were.
+    ``second_read_model`` is published only when the settings name one, for the same
+    reason.
 
     The event has no subscriber of its own and is never sent to a browser
     (``lemely.web.sse``), so the same fields are written as one ``binding_gate_result``
@@ -396,6 +398,8 @@ def _publish_result(
     if triggers is not None:
         fields["second_read_mode"] = settings.second_read_mode
         fields["second_read_triggers"] = list(triggers)
+    if settings.second_read_model is not None:
+        fields["second_read_model"] = settings.second_read_model
     structlog.get_logger().bind(component="binding_gate").info(
         "binding_gate_result",
         **fields,
@@ -752,7 +756,9 @@ def run_binding(
     """Read ``pages`` with the label binder, check the binding, and choose a read or hold.
 
     Every call uses ``uploads``, the page uploads the caller already has, and
-    ``settings.binding.read_model``. The gate must be enforcing: the label binder is
+    ``settings.binding.read_model``, except the second read, which uses
+    ``second_read_model(settings.binding)`` (a ``claude-`` model is sent the page
+    bytes, not the uploads). The gate must be enforcing: the label binder is
     not run without its checks.
 
     A verdict other than ``pass``, or a job that fails in the reads, leaves neither
@@ -784,13 +790,15 @@ def run_binding(
             "binder_for keeps such a paper on the legacy binder"
         )
     binder = LabelBinder(client)
+    second_model = second_read_model(binding)
+    model_for_read = {_FIRST_READ[0]: binding.read_model, _SECOND_READ[0]: second_model}
 
     def _read(task_tag: str, suffix: str) -> _Read:
         stream = binder.read(
             pages,
             mark_scheme,
             uploads=uploads,
-            model=binding.read_model,
+            model=model_for_read[task_tag],
             extra_cache_key=manifest_key + suffix,
             task_tag=task_tag,
         )
@@ -810,7 +818,7 @@ def run_binding(
         binder.cache_key(
             pages,
             mark_scheme,
-            model=binding.read_model,
+            model=model_for_read[task_tag],
             extra_cache_key=manifest_key + suffix,
             task_tag=task_tag,
         )
@@ -927,7 +935,8 @@ def run_binding(
         checks=checks,
         verdict=decided,
         retried=retried,
-        model=binding.read_model,
+        # The model of the read whose answers go on.
+        model=second_model if chosen_read is second_read else binding.read_model,
     )
     answered = {answer.question_id for answer in chosen.answers}
     # A group that shows the trace of writing listed before its label is never
@@ -1121,16 +1130,27 @@ def gate_legacy(
     )
 
 
+def second_read_model(binding: BindingSettings) -> str:
+    """The label binder's second read's model: ``second_read_model``, else ``read_model``."""
+    return binding.second_read_model or binding.read_model
+
+
 def binding_models(settings: Settings) -> dict[str, str]:
     """The models the binding step calls by name, for ``lemely doctor``'s model table.
 
-    ``binding_read`` is the label binder's model, for both of its reads.
-    ``binding_retry`` is the gated legacy binder's retry. The legacy binder's first
-    call is the ordinary extraction call and is already in the table as ``extraction``.
+    ``binding_read`` is the label binder's model, for both of its reads unless
+    ``second_read_model`` is set: then the second read's model is listed as
+    ``binding_second_read`` (when a second read is made), so that the Anthropic-key
+    and pricing checks see it. ``binding_retry`` is the gated legacy binder's retry.
+    The legacy binder's first call is the ordinary extraction call and is already in
+    the table as ``extraction``.
     """
     binding = settings.binding
     if binding.binder == "label":
-        return {"binding_read": binding.read_model}
+        models = {"binding_read": binding.read_model}
+        if binding.second_read and binding.second_read_model is not None:
+            models[SECOND_READ_TASK_TAG] = binding.second_read_model
+        return models
     if binding.gate != "off":
         return {"binding_retry": binding.retry_model}
     return {}
@@ -1141,9 +1161,10 @@ def binding_status(settings: Settings) -> tuple[bool, str]:
 
     Not ok when a second read is configured, would be the first read again, and the
     thinking table does not name ``binding_second_read`` (a table written before the
-    binder existed). Both reads share a model; the second has its own task tag and
-    cache key, so equal thinking that the table sets on purpose (the shipped default
-    since cost-ladder B1: both "low") is reported ok. For a 3.x model that is
+    binder existed). A ``second_read_model`` other than ``read_model`` is a cross-model
+    second read and always ok. Otherwise both reads share a model; the second has its
+    own task tag and cache key, so equal thinking that the table sets on purpose (the
+    shipped default since cost-ladder B1: both "low") is reported ok. For a 3.x model that is
     ``gemini.thinking_level_for`` (tags
     ``extraction`` and ``binding_second_read``); a table for it in ``lemely.toml``
     replaces the defaults, so one written before the binder existed leaves
@@ -1168,12 +1189,20 @@ def binding_status(settings: Settings) -> tuple[bool, str]:
     summary += " (a scheme that is all multiple choice keeps the legacy binder)"
     if not binding.second_read:
         return True, f"{summary}: one read on {model} (thinking {first})"
-    second = client.resolved_thinking(SECOND_READ_TASK_TAG, model)
+    second_model = second_read_model(binding)
+    second = client.resolved_thinking(SECOND_READ_TASK_TAG, second_model)
     mode = (
         "the second read runs only when the first gives a reason for it"
         if binding.second_read_mode == "on_trigger"
         else "two reads per extraction"
     )
+    if second_model != model:
+        # Another model reads the second time: independent whatever the thinking.
+        return (
+            True,
+            f"{summary}: a cross-model second read, first on {model} (thinking {first}), "
+            f"second on {second_model} (thinking {second}); {mode}",
+        )
     if first == second:
         # A level is a name (3.x); a budget is a number of tokens (2.5 and earlier).
         table = "thinking_level_for" if isinstance(first, str) else "thinking_budget_for"

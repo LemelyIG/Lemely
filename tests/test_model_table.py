@@ -23,3 +23,19 @@ def test_cascade_strong_model_listed_only_when_the_cascade_uses_it() -> None:
     off = Settings().model_copy(deep=True)
     off.gemini.cascade_strong_model = "claude-haiku-5-5"
     assert "cascade_strong" not in configured_models(off)
+
+
+def test_the_second_read_model_is_listed_only_when_it_is_set_and_read() -> None:
+    default = configured_models(Settings())
+    assert "binding_second_read" not in default
+    claude = Settings().model_copy(deep=True)
+    claude.binding.second_read_model = "claude-haiku-5-5"
+    table = configured_models(claude)
+    assert table["binding_second_read"] == "claude-haiku-5-5"
+    assert table["binding_read"] == claude.binding.read_model
+    one_read = claude.model_copy(deep=True)
+    one_read.binding.second_read = False
+    assert "binding_second_read" not in configured_models(one_read)
+    legacy = claude.model_copy(deep=True)
+    legacy.binding.binder = "legacy"
+    assert "binding_second_read" not in configured_models(legacy)

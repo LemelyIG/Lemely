@@ -743,6 +743,15 @@ def test_startup_checks_the_cascade_strong_model(
     assert "correction," not in message
 
 
+@pytest.mark.usefixtures("_fresh_settings")
+def test_startup_checks_the_binding_second_read_model(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("LEMELY_BINDING__SECOND_READ_MODEL", "claude-haiku-5-5")
+    (message,) = _startup_claude_errors(monkeypatch, caplog)
+    assert "binding_second_read" in message
+
+
 def test_a_client_without_the_context_manager_never_starts_a_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
