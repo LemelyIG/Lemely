@@ -45,7 +45,8 @@ Nothing here runs in production yet. Claude stays a development provider until C
 | Architecture | Provider interface: `LLMRequest` plus a `Provider` protocol; the client keeps the shared machinery |
 | PDFs | Per caller: typed PDFs (mark schemes) as native `document` blocks, scans rasterised to images |
 | Code execution | Claude's server tool, not a Google Cloud or local sandbox (cheaper at our volume, and no sandbox for us to secure) |
-| Haiku 100k tier | Preflight, then downscale best-effort. If the floor is reached, send anyway, price the higher tier and warn. The extra cost is accepted only where no other reduction exists. |
+| Haiku 100k tier | Preflight, then downscale best-effort. Past the floor, the binder uses an overview pass plus high-res chunks (flag, off by default). With the flag off, the request is sent at the floor, priced at the higher tier, and a warning is logged. The extra cost is accepted only where no other reduction exists. |
+| Claude Files API | Yes. Page images are uploaded once per job with a 1-hour expiry and deleted at job end, in a dedicated workspace. |
 | B levers | Cache breakpoints, citations, effort per tag. The 1h cache TTL was dropped. |
 | Opportunities in scope | Blank-leaf skip, effort by leaf kind, greyscale everywhere, terse rationale |
 | Data rule (standing) | Student data goes only through the synchronous Messages API, never the Batch API |
@@ -88,10 +89,40 @@ T0 pins this with a golden test before the refactor begins.
 2. **Estimate.** Tokens per page are estimated as `w*h/750`.
 3. **Step down.** While the request is over `token_budget` or `byte_limit`, step the long edge down: 2576, 2200, 2000, 1800, 1568.
    - `token_budget` defaults to 95,000: the 100k tier line, less headroom for the prompt.
-   - `byte_limit` is 30,000,000 base64 bytes.
+   - `byte_limit` is 30,000,000 base64 bytes. It applies only to inline base64; images sent by `file_id` (section 2a) are exempt.
 4. **Floor.** `floor_px` defaults to 1568 (about 135 DPI on A4) and is configurable. It marks the point below which handwriting is treated as unreadable.
-5. **Still over the token budget at the floor.** Send at the floor, price at the higher tier and log `claude_over_tier` (pages, estimated tokens, tag).
-6. **Still over the byte limit at the floor.** This is the only refusal: a `ProviderError` that names the page count and the byte total.
+5. **Still over the token budget at the floor.** If `binding.claude_chunked_read` is on and the caller is the binder, use the overview-and-chunks read (section 2b). Otherwise send at the floor, price at the higher tier and log `claude_over_tier` (pages, estimated tokens, tag).
+6. **Still over the byte limit at the floor (inline only).** This is the only refusal: a `ProviderError` that names the page count and the byte total. With the Files API on, the byte limit does not apply.
+
+### 2a. Claude Files API (page images)
+
+`ClaudeImageUploads` is the Claude counterpart of today's Gemini `ImageUploads`, with the same `matches()` guard and context-manager shape.
+
+- **Upload.** Fitted page images are uploaded once per job through `client.files.upload` (GA, no beta header), with `expires_in_seconds=3600`. Requests then reference them as `image` blocks with `source.type="file"`.
+- **Delete.** Every `file_id` is deleted when the job ends, on success or failure. The expiry backs this up if the process dies.
+- **Retry and reuse.** The binder's second read and any retry reuse the same `file_id`s; nothing is re-uploaded.
+- **Cache key.** It still comes from the image bytes plus `img_fit=v1`, never from `file_id`s, so a cached reply never depends on an upload.
+- **Fallback.** Flag `claude_files_api` (on whenever the provider is Claude and the request has images). If an upload fails, the request falls back to inline base64, and the inline byte limit applies.
+- **Workspace.** The Anthropic key must belong to a dedicated Lemely workspace, because uploaded files can be read by any key in their workspace. `doctor` reports the key's workspace when the API exposes it. A `file_id` is never taken from user input.
+- **Data.** Files API storage is not ZDR-eligible. The 1-hour expiry plus deletion at job end bound the storage time. These are student scans, so the T2 report records this exposure explicitly.
+- **Cost.** File operations are free. Content is billed as input tokens, so `image_fit`'s token budget still applies.
+- **To confirm in T2.** The per-request image-count limits when images come by `file_id`; the vision docs give 100 images per request.
+
+### 2b. Overview and chunked binder read (over the floor)
+
+Flag `binding.claude_chunked_read`, off by default. It applies only when the fitted pages are still over the token budget at the floor.
+
+1. **Overview pass.** Every page is sent as a thumbnail with a 768 px long edge (about 800 tokens a page). It returns a `PageMap`: for each page, the question labels it holds, and which answers continue across the page break.
+2. **Chunk reads.** Pages are split into contiguous chunks under the token budget at full fitted resolution. Each chunk read gets:
+   - the `PageMap` as text;
+   - the last page of the previous chunk again, as overlap;
+   - the normal binder prompt, restricted to the labels the map assigns to the chunk's pages.
+
+   Chunk reads run in parallel, so latency is one overview plus one chunk.
+3. **Merge.** Deterministic, by label. An answer that continues across a chunk boundary is joined in the order the map gives. If a label appears in two chunks with different answers, the binding gate sees a disagreement (`G9`), as it does for the two-read check today.
+4. **Second read.** The B1 second read repeats step 2 with the same `PageMap`. The overview runs once.
+5. **Pricing.** Every call is priced separately and stays under the tier. The overview, the chunks and the merge are logged with `chunked_read=true`.
+6. **Risk.** A wrong map steers the chunks wrongly. The gate's existing missing-label and disagreement checks are the guard; C screens the flag on long scripts before it is ever enabled.
 
 Further rules:
 
@@ -205,9 +236,10 @@ Candidates recorded for C, not built here:
 
 - **T0.** A golden test pins Gemini cache keys, events and `CallRecord`s for representative calls of each tag.
 - **Fake-SDK unit tests** for every feature, with no network.
+- **Long-script fixture.** A synthetic 45-page script forces the chunked read; its merge must reproduce the labels of the same answers read in one pass.
 - **Realistic image fixture.** 19 pages at 2430×3439, noisy RGB. It must fit under the byte limit and the token budget at or above the floor.
 - **`inference_geo`.** A test asserts it is unset.
-- **Live E2E (T9).**
+- **Live E2E (T11).**
   - The real script `0625_w24_41` runs with every task tag on `claude-haiku-5-5` and every lever on, from the pinned worktree, inside the existing $40 Anthropic cap.
   - It reports:
     - $ per paper against the $0.10 target, split by tag;
@@ -222,7 +254,7 @@ Candidates recorded for C, not built here:
 |---|---|
 | T0 | Golden pin of Gemini behaviour |
 | T1 | Provider refactor (`LLMRequest`, `Provider`, both providers); no behaviour change |
-| T2 | `image_fit`, which fixes the review findings on `188542b1`/`4e065532` (critical byte limit, output cap, version token, encode in `try`, stale TOML comment) |
+| T2 | `image_fit` plus Claude Files API uploads (2a), which fix the review findings on `188542b1`/`4e065532` (critical byte limit, output cap, version token, encode in `try`, stale TOML comment) |
 | T3 | Pricing: tiered rows, cache writes, container time, doctor |
 | T4 | PDFs: document blocks, the `parsers.py` and `scan_metadata.py` callers |
 | T5 | Code execution on Claude |
@@ -230,7 +262,8 @@ Candidates recorded for C, not built here:
 | T7 | B3 effort per tag and per kind |
 | T8 | B2 citations, then terse rationale |
 | T9 | Blank-leaf skip |
-| T10 | Live E2E on the real script; report against $0.10 |
+| T10 | Overview and chunked binder read (2b) |
+| T11 | Live E2E on the real script; report against $0.10 |
 
 Each task gets its own spec and quality review. T1 also gets a check that the T0 golden test still passes unchanged.
 
