@@ -108,17 +108,33 @@ class EnhanceTests(unittest.TestCase):
         self.assertGreater(_mean(out, (400, 160, 420, 180)), 245)
 
     def test_shaded_paper_is_flattened(self) -> None:
-        """A left-to-right shading from 150 to 250 loses most of its spread."""
+        """A left-to-right scan shading from 220 to 250 (within the allowed drop) is divided out."""
         page = _grey_with_lines(
             self._W,
             self._H,
-            paper=(150, 250),
+            paper=(220, 250),
             ink=40,
             rows=self._ROWS,
         )
         band = (0, 160, self._W, 200)
-        self.assertGreater(_stdev(page, band), 25)
-        self.assertLess(_stdev(enhance_page(page), band), 6)
+        self.assertGreater(_stdev(page, band), 8)
+        self.assertLess(_stdev(enhance_page(page), band), 3)
+
+    def _page_with_box(self, fill: int, box: tuple[int, int, int, int]) -> Image.Image:
+        page = _grey_with_lines(1556, 2200, paper=(232, 232), ink=40, rows=(150, 210))
+        ImageDraw.Draw(page).rectangle(box, fill=fill)
+        return page
+
+    def test_wide_shaded_region_is_not_taken_for_paper(self) -> None:
+        """A 300 px region at 40% grey is markable content: it stays far darker than paper."""
+        out = enhance_page(self._page_with_box(153, (900, 700, 1200, 1000)))
+        paper, region = _mean(out, (700, 700, 800, 800)), _mean(out, (1000, 800, 1100, 900))
+        self.assertGreaterEqual(paper - region, 60)
+
+    def test_wide_dark_bar_stays_solid(self) -> None:
+        """A 300 px bar at 60 is not hollowed out to mid grey by the flattening."""
+        out = enhance_page(self._page_with_box(60, (1000, 1300, 1300, 1700)))
+        self.assertLessEqual(_mean(out, (1100, 1400, 1200, 1600)), 80)
 
     def test_edges_are_sharpened(self) -> None:
         """A soft-edged band gets a steeper edge than with the unsharp mask turned off."""
@@ -154,7 +170,7 @@ class EnhanceTests(unittest.TestCase):
     def test_cache_version_differs_between_variants(self) -> None:
         self.assertEqual(img_fit_version(), IMG_FIT_VERSION)
         self.assertEqual(img_fit_version(enhance=False), IMG_FIT_VERSION_PLAIN)
-        self.assertEqual(IMG_FIT_VERSION, "v2")
+        self.assertEqual(IMG_FIT_VERSION, "v3")
         self.assertNotEqual(IMG_FIT_VERSION, IMG_FIT_VERSION_PLAIN)
 
 
@@ -243,7 +259,11 @@ class BudgetTests(unittest.TestCase):
 
     def test_order_is_kept(self) -> None:
         a, b = _png(Image.new("L", (10, 10), 0)), _png(Image.new("L", (12, 10), 255))
-        self.assertEqual(fit([a, b]).images, (a, b))
+        sizes = []
+        for data in fit([a, b]).images:
+            with Image.open(io.BytesIO(data)) as img:
+                sizes.append((img.size, img.getpixel((0, 0))))
+        self.assertEqual(sizes, [((10, 10), 0), ((12, 10), 255)])
 
     def test_fit_is_deterministic(self) -> None:
         pages = [_page(_REAL_W, _REAL_H, inks=((30, 40, 140),))] * 2

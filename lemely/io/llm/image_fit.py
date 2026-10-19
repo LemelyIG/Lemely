@@ -35,9 +35,9 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-IMG_FIT_VERSION = "v2"
+IMG_FIT_VERSION = "v3"
 #: Cache-key version of the unenhanced variant (``fit(..., enhance=False)``): its pixels differ.
-IMG_FIT_VERSION_PLAIN = "v2-plain"
+IMG_FIT_VERSION_PLAIN = "v3-plain"
 LONG_EDGE_STEPS: tuple[int, ...] = (2576, 2200, 2000, 1800, 1568)
 #: Above this many images in one request the API holds each to MANY_IMAGES_LONG_EDGE.
 MANY_IMAGES_THRESHOLD = 20
@@ -49,6 +49,8 @@ DEFAULT_BYTE_LIMIT = 30_000_000
 #: About 135 DPI on A4.
 DEFAULT_FLOOR_PX = 1568
 THUMBNAIL_LONG_EDGE = 768
+_FAST_PNG_LEVEL = 1
+_SMALL_PNG_LEVEL = 6
 PIXELS_PER_TOKEN = 750
 
 #: Paper shading is estimated on a page shrunk by this factor, so a 3 px stroke is mostly
@@ -59,9 +61,14 @@ _BG_REDUCE = 16
 _BG_MAX_WINDOW = 7
 #: Blur radius in reduced pixels that turns the blocky max-filter into smooth shading.
 _BG_BLUR_RADIUS = 2.0
-#: The paper estimate is never taken below this, so a dark region (a shaded diagram, a page
-#: edge) is not divided by a tiny number and blown out to white.
-_BG_FLOOR = 96
+#: Percentile of the shrunk page taken as its own paper level: the bulk of a page is paper,
+#: so this sits on it whatever shaded diagrams or dark edges there are.
+_BG_PAPER_PERCENTILE = 90
+#: The paper estimate may fall at most this many grey levels below the page's own paper
+#: level. Scan shading and yellowing stay within it and are divided out; a solid region
+#: darker than that (a shaded Venn region, a histogram bar, a filled diagram) is content, and
+#: a window-wide one would otherwise be taken for paper and erased or hollowed out.
+_MAX_SHADING_DROP = 30
 #: Fraction of pixels clipped at each end of the levels stretch: enough to ignore dust and
 #: the odd saturated pixel, small enough that sparse pencil does not become the clip.
 _LEVELS_CLIP_LOW = 0.002
@@ -102,10 +109,12 @@ def base64_len(n: int) -> int:
 
 def _background(grey: Image.Image) -> NDArray[np.float32]:
     """The paper level at every pixel of ``grey`` as floats: shading, yellowing, gradients."""
-    small = grey.reduce(_BG_REDUCE).filter(ImageFilter.MaxFilter(_BG_MAX_WINDOW))
+    reduced = grey.reduce(_BG_REDUCE)
+    paper = float(np.percentile(np.asarray(reduced), _BG_PAPER_PERCENTILE))
+    small = reduced.filter(ImageFilter.MaxFilter(_BG_MAX_WINDOW))
     smooth = small.filter(ImageFilter.GaussianBlur(_BG_BLUR_RADIUS))
     full = smooth.resize(grey.size, Image.Resampling.BILINEAR)
-    return np.maximum(np.asarray(full, dtype=np.float32), _BG_FLOOR)
+    return np.maximum(np.asarray(full, dtype=np.float32), max(1.0, paper - _MAX_SHADING_DROP))
 
 
 def _stretch_levels(grey: Image.Image) -> Image.Image:
@@ -175,12 +184,22 @@ def img_fit_version(*, enhance: bool = True) -> str:
     return IMG_FIT_VERSION if enhance else IMG_FIT_VERSION_PLAIN
 
 
-def _encode(page: Image.Image, long_edge: int, number: int, *, enhance: bool) -> bytes:
-    """``page`` at ``long_edge``, enhanced there unless ``enhance`` is False, as PNG bytes."""
+def _encode(
+    page: Image.Image,
+    long_edge: int,
+    number: int,
+    *,
+    enhance: bool,
+    compress_level: int = _SMALL_PNG_LEVEL,
+) -> bytes:
+    """``page`` at ``long_edge``, enhanced there unless ``enhance`` is False, as PNG bytes.
+
+    ``compress_level`` trades size for save time; pixels are identical at every level.
+    """
     try:
         out = io.BytesIO()
         sized = _resized(page, long_edge)
-        (enhance_page(sized) if enhance else sized).save(out, "PNG")
+        (enhance_page(sized) if enhance else sized).save(out, "PNG", compress_level=compress_level)
     except (OSError, ValueError) as exc:
         raise ProviderError(f"page {number} could not be encoded: {exc}") from exc
     return out.getvalue()
@@ -206,6 +225,8 @@ def fit(
     if floor_px < 1:
         raise ValueError(f"floor_px must be positive, got {floor_px}")
     steps = steps_for(floor_px, len(images))
+    # No inline limit means Files API upload: bytes do not matter, save time does.
+    level = _FAST_PNG_LEVEL if byte_limit is None else _SMALL_PNG_LEVEL
     pages = [_prepare(data, number, steps[0]) for number, data in enumerate(images, start=1)]
     for edge in steps:
         page_tokens = tuple(estimate_tokens(*_size_at(p.width, p.height, edge)) for p in pages)
@@ -216,7 +237,7 @@ def fit(
         encoded_pages: list[bytes] = []
         b64 = 0
         for n, p in enumerate(pages, start=1):
-            encoded_pages.append(_encode(p, edge, n, enhance=enhance))
+            encoded_pages.append(_encode(p, edge, n, enhance=enhance, compress_level=level))
             b64 += base64_len(len(encoded_pages[-1]))
             if not last and byte_limit is not None and b64 > byte_limit:
                 break  # already over: the remaining pages cannot bring this step back under
