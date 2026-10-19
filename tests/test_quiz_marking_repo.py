@@ -841,8 +841,8 @@ def test_mark_submission_low_confidence_non_mcq_queues_review(
     assert len(calls) == 2, (
         f"expected exactly 2 calls (correction + the Step-1 thinking retry), got {len(calls)}"
     )
-    assert calls[0].kwargs["model"] == "gemini-3.8-flash"
-    assert calls[1].kwargs["model"] == "gemini-3.8-flash"
+    assert calls[0].kwargs["model"] == "gemini-3.1-flash-lite"
+    assert calls[1].kwargs["model"] == "gemini-3.1-flash-lite"
 
     assert result.status == QuizSubmissionStatus.marked
     assert result.attempt_id is not None

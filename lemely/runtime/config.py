@@ -148,8 +148,13 @@ class GeminiSettings(BaseModel):
     # parser tuning predates the 3.x migration and is out of scope here.
     mark_scheme_model: str | None = "gemini-2.5-flash"
     extraction_model: str | None = "gemini-3.5-flash-lite"
-    # Cost-ladder A1: BUILD/accuracy-runs/cost-ladder-2026-10-19/a1-haiku/verdict.json
-    correction_model: str | None = "claude-haiku-5-5"
+    # Cost-ladder A1: gemini-3.1-flash-lite passed its live screen
+    # (BUILD/accuracy-runs/cost-ladder-2026-10-19/a1-flash-lite/verdict.json:
+    # 50.5% saving vs the B12 config, identical mismark set, id-match 1.0, 0/78
+    # parts flagged for review). claude-haiku-5-5 is development-only, via config:
+    # its screen (a1-haiku) passed but flagged 20.5% of parts for review, and
+    # review-threshold calibration failed.
+    correction_model: str | None = "gemini-3.1-flash-lite"
     generation_model: str | None = "gemini-3.5-flash-lite"
     study_plan_model: str | None = None
     scan_metadata_model: str | None = "gemini-3.5-flash-lite"
@@ -181,16 +186,8 @@ class GeminiSettings(BaseModel):
     # model's threshold. Post-processing only: no prompt or cache key reads it.
     # Applies in ``lemely.io.correction_ai`` alone; the db/web layers still read
     # the 0.90 constant from the persisted ``confidence_score``.
-    #
-    # claude-haiku-5-5 = 0.85: `scripts/fit_review_threshold.py` on
-    # BUILD/accuracy-runs/cost-ladder-2026-10-19/a1-haiku/results.json, the
-    # highest threshold with review rate <= 10% (1/78 = 1.3%; 0.86 gives 12/78 =
-    # 15.4%, because 11 of Haiku's 70 AI marks sit at exactly 0.85). RISK: the
-    # same 0.85 cluster holds 4 of the screen's 5 mismarks, so in-sample flag
-    # recall falls from 0.80 to 0.00. Fitted and judged on the same 12 cases
-    # (leave-one-case-out refits all return 0.85; stable, not validated).
     review_confidence_threshold_for: dict[str, Annotated[float, Field(ge=0.0, le=1.0)]] = Field(
-        default_factory=lambda: {"claude-haiku-5-5": 0.85}
+        default_factory=dict
     )
     # LLM cost-ladder levers. Every default reproduces the pre-ladder behaviour.
     # Per-task-tag cache mode (unlisted tags behave as "read_write"). A tag mapped

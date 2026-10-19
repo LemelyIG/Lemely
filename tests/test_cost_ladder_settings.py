@@ -36,7 +36,7 @@ def test_defaults_reproduce_current_behaviour() -> None:
     assert g.cascade_unaddressed_points is False
     assert g.correction_shared_prefix is False
     assert g.correction_prefix_cache == "implicit"
-    assert g.correction_model == "claude-haiku-5-5"
+    assert g.correction_model == "gemini-3.1-flash-lite"
 
 
 def test_example_toml_lists_new_keys() -> None:

@@ -15,19 +15,9 @@ from lemely.app.cli import cli
 from lemely.runtime.config import Settings
 
 
-def _runner_with_anthropic_key() -> CliRunner:
-    """A runner whose default env carries a dummy Anthropic key.
-
-    The shipped ``gemini.correction_model`` is ``claude-haiku-5-5`` (cost-ladder A1),
-    so ``doctor`` fails without ``ANTHROPIC_API_KEY``; tests about anything else
-    start from a valid key and override it per call when the key is the subject.
-    """
-    return CliRunner(env={"ANTHROPIC_API_KEY": "test-anthropic-key-not-validated"})
-
-
 class DoctorTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.runner = _runner_with_anthropic_key()
+        self.runner = CliRunner()
         snapshot = {
             k: v for k, v in os.environ.items() if k.startswith("LEMELY_") or k == "GEMINI_API_KEY"
         }
@@ -73,7 +63,11 @@ class DoctorTests(unittest.TestCase):
             result = self.runner.invoke(
                 cli,
                 ["--json", "doctor", "--no-network"],
-                env=self._doctor_env(tmp, ANTHROPIC_API_KEY=None),
+                env=self._doctor_env(
+                    tmp,
+                    ANTHROPIC_API_KEY=None,
+                    LEMELY_GEMINI__CORRECTION_MODEL="claude-haiku-5-5",
+                ),
             )
         self.assertEqual(result.exit_code, 3, msg=result.output)
         payload = json.loads(result.output)
@@ -82,16 +76,12 @@ class DoctorTests(unittest.TestCase):
         self.assertFalse(check["ok"])
         self.assertIn("correction=claude-haiku-5-5", check["detail"])
 
-    def test_doctor_does_not_need_an_anthropic_key_when_no_tag_uses_claude(self) -> None:
+    def test_doctor_does_not_need_an_anthropic_key_under_default_settings(self) -> None:
         with TemporaryDirectory() as tmp:
             result = self.runner.invoke(
                 cli,
                 ["--json", "doctor", "--no-network"],
-                env=self._doctor_env(
-                    tmp,
-                    ANTHROPIC_API_KEY=None,
-                    LEMELY_GEMINI__CORRECTION_MODEL="gemini-3.8-flash",
-                ),
+                env=self._doctor_env(tmp, ANTHROPIC_API_KEY=None),
             )
         self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.output)
@@ -255,7 +245,7 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
     ``lemely.toml`` still sets a key F4 removed."""
 
     def setUp(self) -> None:
-        self.runner = _runner_with_anthropic_key()
+        self.runner = CliRunner()
 
     def test_doctor_warns_on_stale_integrity_key_without_failing(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -504,7 +494,7 @@ class US034FallbackPricingVisibilityTests(unittest.TestCase):
     today)."""
 
     def setUp(self) -> None:
-        self.runner = _runner_with_anthropic_key()
+        self.runner = CliRunner()
 
     def test_doctor_names_a_nonexistent_configured_model_as_hitting_the_fallback(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -557,7 +547,7 @@ class DoctorBindingTests(unittest.TestCase):
     """`lemely doctor` shows how answers are bound and what that costs."""
 
     def setUp(self) -> None:
-        self.runner = _runner_with_anthropic_key()
+        self.runner = CliRunner()
 
     def _doctor(self, **extra_env: str) -> dict[str, dict[str, object]]:
         with TemporaryDirectory() as tmp:
