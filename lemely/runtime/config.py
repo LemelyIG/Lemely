@@ -194,7 +194,11 @@ class GeminiSettings(BaseModel):
     # Per-task-tag output-token cap (thinking tokens included); a tag's value
     # replaces the client's default cap for that tag's Gemini calls. A reply cut
     # off at a set cap is billed, recorded unparsed, retried once afresh, then fails.
-    max_output_tokens_for: dict[str, Annotated[int, Field(gt=0)]] = Field(default_factory=dict)
+    # Runaway guard, never hit on golden: BUILD/accuracy-runs/cost-ladder-2026-10-19/
+    # b12-binder-output-cap/verdict.json
+    max_output_tokens_for: dict[str, Annotated[int, Field(gt=0)]] = Field(
+        default_factory=lambda: {"extraction": 16384, "binding_second_read": 16384}
+    )
     cascade_unaddressed_points: bool = False
     # Put the question-invariant correction prompt first so providers can cache it.
     correction_shared_prefix: bool = False

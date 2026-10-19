@@ -57,7 +57,7 @@ model = "gemini-2.5-flash"
 # Per-task output-token cap, thinking included (unlisted tags keep the default).
 # A reply cut off at a set cap is billed, recorded unparsed, retried once
 # afresh, then fails.
-# max_output_tokens_for = {}
+# max_output_tokens_for = { "extraction" = 16384, "binding_second_read" = 16384 }
 # Escalate when the cheap pass leaves mark-scheme points unaddressed.
 # cascade_unaddressed_points = false
 # Put the question-invariant correction prompt first so it can be cached.

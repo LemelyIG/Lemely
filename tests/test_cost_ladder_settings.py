@@ -32,7 +32,7 @@ def test_defaults_reproduce_current_behaviour() -> None:
     assert g.cascade_strong_model is None
     assert g.cascade_threshold_for == {}
     assert g.cascade_two_pass_disagreement is False
-    assert g.max_output_tokens_for == {}
+    assert g.max_output_tokens_for == {"extraction": 16384, "binding_second_read": 16384}
     assert g.cascade_unaddressed_points is False
     assert g.correction_shared_prefix is False
     assert g.correction_prefix_cache == "implicit"

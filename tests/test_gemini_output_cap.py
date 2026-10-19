@@ -57,8 +57,11 @@ def _truncated(text: str = '{"value": "x') -> MagicMock:
     return mock_response(text, candidates=500, thoughts=100, finish_reason="MAX_TOKENS")
 
 
-def test_setting_defaults_empty_and_bounded() -> None:
-    assert GeminiSettings().max_output_tokens_for == {}
+def test_setting_defaults_runaway_guard_and_bounded() -> None:
+    assert GeminiSettings().max_output_tokens_for == {
+        "extraction": 16384,
+        "binding_second_read": 16384,
+    }
     assert GeminiSettings(max_output_tokens_for={"extraction": 8000}).max_output_tokens_for == {
         "extraction": 8000
     }
