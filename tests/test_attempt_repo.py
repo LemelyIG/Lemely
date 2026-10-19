@@ -279,6 +279,50 @@ def test_persist_correction_round_trips_dropped_marker_source(
         assert result.marker_source == MarkerSource.dropped
 
 
+def test_persist_correction_strips_nul_bytes_from_model_text(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A NUL in model-written text must not fail the whole correction.
+
+    Postgres text and JSONB columns reject U+0000. Staging hit this when
+    the reader transcribed a degree sign as ``\\x00`` (``"61.6\\x00"``):
+    the flush raised ``psycopg.DataError`` and the student lost the marked
+    paper. Every model-written field is stripped on the way to the row.
+    """
+    user_id = _seed_user(pg_sessionmaker)
+    nul = CorrectedQuestion(
+        question_id="3b",
+        awarded_marks=4,
+        maximum_marks=4,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.95,
+        needs_teacher_review=False,
+        student_answer="direction = 61.6\x00",
+        expected_answer="62\x00",
+        topic="1.5 Forces\x00",
+        review_reason="re\x00ad",
+        marker_source="ai",
+        feedback="Full\x00 marks.",
+        rationale="A2\x00",
+        matched_point_ids=["p1\x00"],
+    )
+    report = _report()
+    report.correction.questions.append(nul)
+    AttemptRepository(pg_sessionmaker).persist_correction(user_id=user_id, report=report)
+
+    with pg_sessionmaker() as session:
+        result = session.scalars(
+            select(QuestionResult).where(QuestionResult.question_id == "3b")
+        ).one()
+        assert result.student_answer == "direction = 61.6"
+        assert result.expected_answer == "62"
+        assert result.topic == "1.5 Forces"
+        assert result.review_reason == "read"
+        assert result.feedback == "Full marks."
+        assert result.rationale == "A2"
+        assert result.matched_point_ids == ["p1"]
+
+
 def test_persist_correction_writes_weakness_records(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
