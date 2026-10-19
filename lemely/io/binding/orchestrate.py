@@ -1169,6 +1169,11 @@ def binding_status(settings: Settings) -> tuple[bool, str]:
     if not binding.second_read:
         return True, f"{summary}: one read on {model} (thinking {first})"
     second = client.resolved_thinking(SECOND_READ_TASK_TAG, model)
+    mode = (
+        "the second read runs only when the first gives a reason for it"
+        if binding.second_read_mode == "on_trigger"
+        else "two reads per extraction"
+    )
     if first == second:
         # A level is a name (3.x); a budget is a number of tokens (2.5 and earlier).
         table = "thinking_level_for" if isinstance(first, str) else "thinking_budget_for"
@@ -1176,7 +1181,7 @@ def binding_status(settings: Settings) -> tuple[bool, str]:
             return (
                 False,
                 f"{summary}: both reads on {model} resolve to the same thinking ({first}), so "
-                "the second read is the first one again; set a different value for "
+                f"the second read is the first one again ({mode}); set a different value for "
                 f"{SECOND_READ_TASK_TAG} in [gemini.{table}]",
             )
         # The table names the second read's tag: the same thinking is a choice (B1), not
@@ -1185,7 +1190,8 @@ def binding_status(settings: Settings) -> tuple[bool, str]:
             True,
             f"{summary}: both reads on {model} think {first} (cost-ladder B1: "
             "BUILD/accuracy-runs/cost-ladder-2026-10-19/b1-second-read-low/verdict.json); the "
-            "second read is independent by its own task tag and cache key, not by thinking",
+            "second read is independent by its own task tag and cache key, not by thinking; "
+            f"{mode}",
         )
     if binding.second_read_mode == "on_trigger":
         return (

@@ -586,6 +586,15 @@ class DoctorBindingTests(unittest.TestCase):
         ):
             self.assertIn(expected, binding["detail"])
 
+    def test_doctor_reports_on_trigger_mode_when_both_reads_think_alike(self) -> None:
+        always = self._doctor()["binding"]["detail"]
+        self.assertIn("two reads per extraction", always)
+        on_trigger = self._doctor(LEMELY_BINDING__SECOND_READ_MODE="on_trigger")["binding"]
+        self.assertTrue(on_trigger["ok"], msg=on_trigger)
+        self.assertIn("think low", on_trigger["detail"])
+        self.assertIn("only when the first gives a reason for it", on_trigger["detail"])
+        self.assertNotIn("two reads per extraction", on_trigger["detail"])
+
     def test_doctor_warns_when_the_second_read_is_the_first_one_again(self) -> None:
         # A [gemini.thinking_level_for] table replaces the defaults, so one written
         # before the binder existed leaves `binding_second_read` out: both reads then
