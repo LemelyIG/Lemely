@@ -1,0 +1,39 @@
+{
+  "against": "baseline",
+  "allowed_extra": 2,
+  "expected_saving": "0.40",
+  "extra_mismarks": 0,
+  "lever": "B1 second-read thinking medium->low",
+  "live_tags": [
+    "correction",
+    "correction_borderline",
+    "escalation",
+    "correction_prefix_cache",
+    "binding_second_read"
+  ],
+  "overrides": {
+    "gemini.thinking_level_for": {
+      "binding_second_read": "low",
+      "correction": "low",
+      "correction_borderline": "high",
+      "escalation": "high",
+      "extraction": "minimal",
+      "generation": "low"
+    }
+  },
+  "passed": true,
+  "proof": "/home/sico/Code/Lemely/BUILD/accuracy-runs/cost-ladder-2026-10-19/b1-second-read-low",
+  "reasons": [],
+  "saving": 0.36376628555097024,
+  "set": {
+    "gemini.thinking_level_for": {
+      "binding_second_read": "low",
+      "correction": "low",
+      "correction_borderline": "high",
+      "escalation": "high",
+      "extraction": "minimal",
+      "generation": "low"
+    }
+  },
+  "tier": "big"
+}
