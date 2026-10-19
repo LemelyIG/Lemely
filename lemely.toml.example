@@ -281,6 +281,13 @@ read_model = "gemini-3.8-flash"
 # reads can be compared and a bad first read replaced. Doubles the cost of
 # the binding step. Read by the label binder only.
 second_read = true
+# When the second read is made. "always" -- on every script, at the same
+# time as the first. "on_trigger" -- the first read alone, then the second
+# only when the first gives a reason: a part not bound or left blank, a
+# label missing, out of place or seen twice, or a gate check that fails
+# on it. With no reason the paper goes on with the first read, as with
+# second_read off.
+second_read_mode = "always"
 # The model the legacy binder's one retry uses, when the gate is on.
 retry_model = "gemini-3.8-flash"
 

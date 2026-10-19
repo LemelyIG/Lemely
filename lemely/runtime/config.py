@@ -641,6 +641,15 @@ class BindingSettings(BaseModel):
     ``gemini.thinking_level_for``), so that two reads can be compared and a bad first
     read replaced. It doubles the cost of the binding step. ``retry_model`` is the model
     the legacy binder's one retry uses.
+
+    ``second_read_mode`` says when that second read is made, with ``second_read`` on.
+    ``"always"``: on every script, at the same time as the first. ``"on_trigger"``: the
+    first read is made alone, and the second only when something about the first gives
+    a reason for it (``lemely.io.binding.second_read_triggers``: a leaf not bound or
+    left with nothing under its label, a label missing, out of place or seen twice, a
+    gate check failed). With no trigger the paper goes on with the first read, as it
+    does with ``second_read`` off. Trigger recall is measured on recorded reads only:
+    a second read that disagrees with a first read that looks whole is not seen.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -648,6 +657,7 @@ class BindingSettings(BaseModel):
     gate: Literal["enforce", "observe", "off"] = "enforce"
     read_model: str = Field(default="gemini-3.8-flash", min_length=1)
     second_read: bool = True
+    second_read_mode: Literal["always", "on_trigger"] = "always"
     retry_model: str = Field(default="gemini-3.8-flash", min_length=1)
 
     @model_validator(mode="after")

@@ -29,6 +29,11 @@ question-scope check names: doubted.
 With ``second_read`` off there is one read, and a paper-scope failure on it is a hold.
 With it on, a paper is never let out on one read: a second read that fails is made
 once more, and if it fails again the job fails as it does when the first read fails.
+``second_read_mode="on_trigger"`` reads first and makes the second read only when the
+first gives a reason for it (``second_read_triggers``); with none the paper goes on
+with the first read, exactly as with ``second_read`` off: what a second read that
+agreed with the first would have left, less the G9 check in the report. A triggered
+second read is made after the first, and retried, as above.
 The checks see part of what can go wrong: a pass means nothing was found, not that the
 binding is right.
 
@@ -80,15 +85,17 @@ from lemely.core.label_sequence import (
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 from lemely.core.text_agreement import text_agreement
 from lemely.io.binding.label_binder import BoundRead, LabelBinder, to_bound_read
+from lemely.io.binding.second_read_triggers import second_read_triggers
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, LemelyError
 from lemely.runtime.events import EventType, bus
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
-    from lemely.core.binding import BindingVerdict, SeenWriting
+    from lemely.core.binding import BindingVerdict, SeenWriting, StreamItem
     from lemely.core.label_sequence import BoundStream
     from lemely.core.loose_schemas import MarkScheme
+    from lemely.io.binding.second_read_triggers import SecondReadTrigger
     from lemely.io.gemini import GeminiClient, ImageUploads
     from lemely.io.rasterise import RasterisedPage
     from lemely.runtime.config import BindingSettings, Settings
@@ -181,13 +188,15 @@ class _Read:
     ``writings`` is the writing each bound leaf holds, by question id, and ``doubts``
     the binder's doubts on each (``label_sequence.DOUBTS``). ``stream`` is the bound
     stream itself, which is what says where a missing label lies between labels written
-    by hand (``binding_gate.skipped_parts``).
+    by hand (``binding_gate.skipped_parts``). ``items`` is the reader's list as parsed,
+    which is what ``second_read_triggers`` reads beside the bound stream.
     """
 
     bound: BoundRead
     writings: dict[str, list[SeenWriting]]
     doubts: dict[str, list[str]] = field(default_factory=dict)
     stream: BoundStream | None = None
+    items: tuple[StreamItem, ...] = ()
 
 
 def binder_for(
@@ -334,6 +343,7 @@ def _publish_result(
     by_paper_shape: bool = False,
     marked_from_other_read: int = 0,
     skipped_parts_count: int = 0,
+    triggers: Iterable[SecondReadTrigger] | None = None,
 ) -> None:
     """Publish and log what the gate decided.
 
@@ -353,6 +363,12 @@ def _publish_result(
     returned read that G5 left out of its rate as parts the student skipped on a
     handwritten sheet (the answered leaf before each is not counted here); they are
     among ``unaligned``, since they still go to a teacher.
+
+    ``triggers`` is given only under ``second_read_mode="on_trigger"``: the triggers
+    that fired on the first read (empty when none did, and the second read was not
+    made). It is published as ``second_read_triggers`` beside ``second_read_mode``, so
+    that the share of scripts read twice can be counted. Under ``"always"`` neither
+    field is there, and the line and the event are what they were.
 
     The event has no subscriber of its own and is never sent to a browser
     (``lemely.web.sse``), so the same fields are written as one ``binding_gate_result``
@@ -377,6 +393,9 @@ def _publish_result(
         "marked_from_other_read": marked_from_other_read,
         "skipped_parts": skipped_parts_count,
     }
+    if triggers is not None:
+        fields["second_read_mode"] = settings.second_read_mode
+        fields["second_read_triggers"] = list(triggers)
     structlog.get_logger().bind(component="binding_gate").info(
         "binding_gate_result",
         **fields,
@@ -455,10 +474,20 @@ def _read_both(
         return first_read, second_read
     if second_error is not None:
         _note_failed_second_read(second_error)
+    return first_read, _second_again(second, forget_second)
+
+
+def _second_again(second: Callable[[], _Read], forget_second: Callable[[], object] | None) -> _Read:
+    """The second read's one more attempt, after it failed (``_read_both``).
+
+    ``forget_second`` is called first. A ``LemelyError`` (a cost-ceiling breach
+    included) is raised as it is; any other crash is logged with its traceback and
+    raised as an ``ExternalServiceError`` that carries a fixed sentence.
+    """
     if forget_second is not None:
         forget_second()
     try:
-        return first_read, second()
+        return second()
     except CostCeilingError:
         raise
     except LemelyError:
@@ -468,6 +497,40 @@ def _read_both(
             "binding_second_read_crashed", exc_info=crash
         )
         raise ExternalServiceError(SECOND_READ_CRASH_MESSAGE) from crash
+
+
+def _read_second_after(
+    second: Callable[[], _Read], *, forget_second: Callable[[], object] | None = None
+) -> _Read:
+    """The second read made on its own, after the first: ``on_trigger``'s second read.
+
+    It fails as it does beside the first in ``_read_both``: a cost-ceiling breach is
+    raised at once; any other failure is published as ``SECOND_READ_FAILED`` and the
+    read is made once more (``_second_again``), whose failure fails the job.
+    """
+    try:
+        return second()
+    except CostCeilingError:
+        raise
+    except Exception as exc:  # published, then the read is made once more
+        _note_failed_second_read(exc)
+    return _second_again(second, forget_second)
+
+
+def _first_read_triggers(read: _Read, mark_scheme: MarkScheme) -> tuple[SecondReadTrigger, ...]:
+    """What, on the first read alone, calls for a second read (``second_read_triggers``).
+
+    The gate's checks are run on the read as one read is checked: nothing is excused as
+    a part the student skipped, since that takes two reads (``_skipped``).
+    """
+    if read.stream is None:  # pragma: no cover - every read made here is bound
+        raise RuntimeError("the first read has no bound stream")
+    return second_read_triggers(
+        read.items,
+        read.stream,
+        lost_items=_lost_items(read.bound.drops),
+        checks=_label_checks(read.bound, mark_scheme, GateThresholds()),
+    )
 
 
 def _in_paper_order(mark_scheme: MarkScheme, ids: list[str]) -> list[str]:
@@ -700,7 +763,11 @@ def run_binding(
     from the first read. A second read that fails otherwise is published as
     ``SECOND_READ_FAILED`` and made once more; if it fails again its error is raised
     and the job fails (``_read_both``). With ``second_read`` on, nothing is returned
-    from one read.
+    from one read, except under ``second_read_mode="on_trigger"`` when no trigger
+    fired on the first read (``second_read_triggers``): the paper then goes on with the
+    first read exactly as with ``second_read`` off, and only its key is in
+    ``read_cache_keys``. A triggered second read is made after the first, not beside
+    it, and fails and is retried as in ``_read_both``.
     """
     binding = settings.binding
     if binding.binder != "label":
@@ -733,6 +800,7 @@ def run_binding(
             writings={leaf.question_id: list(leaf.writings) for leaf in bound.leaves},
             doubts={leaf.question_id: list(leaf.doubts) for leaf in bound.leaves},
             stream=bound,
+            items=tuple(stream.items),
         )
 
     reads = [_FIRST_READ, _SECOND_READ] if binding.second_read else [_FIRST_READ]
@@ -759,8 +827,27 @@ def run_binding(
         """Take the reads out of the response cache: the next run reads the scan afresh."""
         client.forget_cached(read_cache_keys)
 
+    on_trigger = binding.second_read and binding.second_read_mode == "on_trigger"
+    triggers: tuple[SecondReadTrigger, ...] | None = None
     second_read: _Read | None = None
-    if binding.second_read:
+    if on_trigger:
+        try:
+            first_read = _first()
+            triggers = _first_read_triggers(first_read, mark_scheme)
+            if triggers:
+                second_read = _read_second_after(
+                    _second, forget_second=lambda: client.forget_cached(read_cache_keys[1:])
+                )
+        except CostCeilingError:
+            raise
+        except Exception:
+            # As in ``_read_both``: the job fails with nothing known about the binding.
+            _forget_reads()
+            raise
+        if second_read is None:
+            # Only the first read was made: only its key goes on.
+            read_cache_keys = read_cache_keys[:1]
+    elif binding.second_read:
         try:
             first_read, second_read = _read_both(
                 _first, _second, forget_second=lambda: client.forget_cached(read_cache_keys[1:])
@@ -927,6 +1014,7 @@ def run_binding(
         review_reasons=review_reasons,
         marked_from_other_read=len(from_other),
         skipped_parts_count=len(chosen_skipped.skipped),
+        triggers=triggers,
     )
     by_id = {
         **{a.question_id: a for a in _with_statuses(chosen.answers, unverified, cleared)},
@@ -1086,6 +1174,12 @@ def binding_status(settings: Settings) -> tuple[bool, str]:
             f"{summary}: both reads on {model} resolve to the same thinking ({first}), so the "
             "second read is the first one again; set a different value for "
             f"{SECOND_READ_TASK_TAG} in [gemini.{table}]",
+        )
+    if binding.second_read_mode == "on_trigger":
+        return (
+            True,
+            f"{summary}: one read on {model} per extraction (thinking {first}), and a second "
+            f"(thinking {second}) only when the first gives a reason for it",
         )
     return (
         True,
