@@ -241,6 +241,11 @@ class GeminiSettings(BaseModel):
     # (about 135 DPI on A4). Gemini calls do not read either.
     claude_image_token_budget: int = Field(default=95_000, gt=0)
     claude_image_floor_px: int = Field(default=1568, ge=256)
+    # Spec §2a: page images for a claude- call go through Claude's Files API, uploaded
+    # once per job (1 h expiry, deleted at job end) and referenced by id. Files API
+    # storage is not ZDR-eligible; the key must belong to a dedicated workspace.
+    # Off: the pages are sent inline, under the 30 MB base64 limit.
+    claude_files_api: bool = True
     # Thinking budget: map of task_tag → token budget (0 = disabled / default).
     # Mark-scheme parsing is enabled by default: the extra reasoning headroom helps
     # the model tag "any N from" pools correctly (is_optional/is_alternative), which

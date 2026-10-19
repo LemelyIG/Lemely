@@ -47,6 +47,7 @@ from lemely.runtime.events import EventType, bus
 
 if TYPE_CHECKING:
     from lemely.io.llm.claude_provider import ClaudeProvider
+    from lemely.io.llm.claude_uploads import ClaudeImageUploads
     from lemely.io.llm.provider import Provider, ProviderReply
     from lemely.io.providers.anthropic_adapter import AnthropicAdapter
 
@@ -793,6 +794,8 @@ class ImageUploads:
         # failed) is still cleaned up.
         self._uploaded: dict[int, Any] = {}
         self._uploaded_lock = threading.Lock()
+        self._claude: ClaudeImageUploads | None = None
+        self._claude_lock = threading.Lock()
         # Set by the first page to fail, inside the SAME worker thread that
         # is about to move on to the next queued page (deterministic for
         # `concurrency=1`; best effort above it) -- so a page queued behind
@@ -996,6 +999,21 @@ class ImageUploads:
             raise ExternalServiceError(str(exc)) from exc
         raise ExternalServiceError("Unreachable")  # pragma: no cover
 
+    def for_claude(self, client: GeminiClient) -> ClaudeImageUploads:
+        """The same pages for the Claude Files API; made once, deleted with this object."""
+        with self._claude_lock:
+            if self._claude is None:
+                from lemely.io.llm.claude_uploads import ClaudeImageUploads
+
+                g = client._settings.gemini
+                self._claude = ClaudeImageUploads(
+                    client._anthropic.raw,
+                    self._images,
+                    token_budget=g.claude_image_token_budget,
+                    floor_px=g.claude_image_floor_px,
+                )
+            return self._claude
+
     def delete(self) -> None:
         """Best effort: a delete that fails is logged and never fails the paper.
 
@@ -1013,6 +1031,10 @@ class ImageUploads:
         worker thread never needs to invert (a worker only ever takes
         `_uploaded_lock` on its own, briefly, in `_upload_and_wait`).
         """
+        with self._claude_lock:
+            claude, self._claude = self._claude, None
+        if claude is not None:
+            claude.delete()
         with self._lock:
             with self._uploaded_lock:
                 uploaded_files, self._uploaded = list(self._uploaded.values()), {}
@@ -1607,8 +1629,11 @@ class GeminiClient:
             raise ValueError(
                 "claude- models are served by the Anthropic adapter, which takes no files"
             )
+        claude_uploads: ClaudeImageUploads | None = None
         if on_claude:
-            # Files API handles are Gemini's: a claude- call sends `image_parts` inline.
+            # Spec §2a: the same pages go to Claude's own Files API, once per job.
+            if image_uploads is not None and self._settings.gemini.claude_files_api is True:
+                claude_uploads = image_uploads.for_claude(self)
             image_uploads = None
         active_model, cache_key = self._structured_cache_key(
             system_prompt=system_prompt,
@@ -1672,7 +1697,7 @@ class GeminiClient:
                 task_tag,
                 image_parts=image_parts,
                 media_resolution=media_resolution,
-                image_uploads=image_uploads,
+                image_uploads=claude_uploads if on_claude else image_uploads,
                 shared_prefix=shared_prefix,
             )
         latency_ms = int((time.monotonic() - t0) * 1000)
@@ -1705,7 +1730,7 @@ class GeminiClient:
                     task_tag,
                     image_parts=image_parts,
                     media_resolution=media_resolution,
-                    image_uploads=image_uploads,
+                    image_uploads=claude_uploads if on_claude else image_uploads,
                     shared_prefix=shared_prefix,
                 )
             try:
@@ -2170,7 +2195,7 @@ class GeminiClient:
             max_output_tokens=cap,
             cache_prefix=shared_prefix.paper if split and shared_prefix else None,
             media_resolution=media_resolution,
-            uploads=None if on_claude else image_uploads,
+            uploads=image_uploads,
             shared_prefix=None if on_claude else shared_prefix,
         )
 
@@ -2213,7 +2238,7 @@ class GeminiClient:
         *,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
-        image_uploads: ImageUploads | None = None,
+        image_uploads: ImageUploads | ClaudeImageUploads | None = None,
         shared_prefix: SharedPrefix | None = None,
     ) -> str:
         def _attempt() -> str:
@@ -2261,7 +2286,7 @@ class GeminiClient:
         *,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
-        image_uploads: ImageUploads | None = None,
+        image_uploads: ImageUploads | ClaudeImageUploads | None = None,
         shared_prefix: SharedPrefix | None = None,
     ) -> str:
         req = self._build_request(

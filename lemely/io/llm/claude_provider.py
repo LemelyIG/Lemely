@@ -62,11 +62,21 @@ class ClaudeProvider:
         )
 
     def _pages(
-        self, req: LLMRequest
+        self, req: LLMRequest, log: Any
     ) -> tuple[FittedImages | None, tuple[bytes, ...], tuple[str, ...]]:
-        """The fit, and the inline images or Files API ids to send (Task 2c adds ids)."""
+        """The fit, and the inline images or the Files API ids to send.
+
+        Uploads first (no inline byte limit); an upload failure falls back to inline
+        base64, where the byte limit at the floor is the one refusal.
+        """
         if not req.images:
             return None, (), ()
+        if req.uploads is not None:
+            try:
+                fitted, file_ids = req.uploads.ensure()
+                return fitted, (), file_ids
+            except ExternalServiceError as exc:
+                log.warning("claude_files_api_fallback", error=str(exc)[:200], tag=req.task_tag)
         fitted = self._fit(req, inline=True)
         if fitted.over_byte_limit:
             raise ProviderError(
@@ -106,7 +116,7 @@ class ClaudeProvider:
         """Send ``req``; 429/529/5xx/connection raise ``TransientCallError``."""
         if req.response_schema is None:
             raise ProviderError("a Claude call needs a response schema")
-        fitted, images, file_ids = self._pages(req)
+        fitted, images, file_ids = self._pages(req, log)
         if fitted is not None:
             if fitted.over_token_budget:
                 log.warning(

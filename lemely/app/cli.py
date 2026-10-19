@@ -567,6 +567,24 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         ),
     )
 
+    # Spec 2026-10-19 §2a: page images for claude- tags go to the Files API, which a
+    # workspace-scoped key can read back. A standard key cannot report its workspace,
+    # so this stays a static advisory.
+    if claude_tags_any := [t for t, m in configured_models.items() if m.startswith("claude-")]:
+        record(
+            "claude_files_workspace",
+            True,
+            detail=(
+                "claude_files_api is on: page images for "
+                + ", ".join(claude_tags_any)
+                + " are uploaded (1 h expiry, deleted at job end; not ZDR-eligible). "
+                "A standard key cannot report its workspace: confirm ANTHROPIC_API_KEY "
+                "belongs to the dedicated Lemely workspace."
+                if settings.gemini.claude_files_api
+                else "claude_files_api is off: page images are sent inline"
+            ),
+        )
+
     # How answers are tied to questions and what that costs per extraction; not
     # ok when the binding step's second read would be the first read again (same
     # model, same thinking level), which pays twice for one opinion. Advisory.
@@ -695,6 +713,7 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # first wastes a call, it does not break extraction.
     advisory_checks = {
         "binding",
+        "claude_files_workspace",
         "gradio_extra_installed",
         "storage_backend",
         "push_transport",

@@ -662,14 +662,19 @@ class ClientDispatchTests(_ClientTestCase):
         )
         genai.models.generate_content.assert_not_called()
 
-    def test_files_api_uploads_are_not_used_for_claude(self) -> None:
-        """``image_uploads`` are Gemini Files API handles: a claude- call sends the bytes."""
+    def test_files_api_off_keeps_gemini_uploads_unused(self) -> None:
+        """With claude_files_api off, a claude- call sends the bytes and never ensures uploads."""
         pages = [_image(20, 30)]
-        client, fake, genai = self._client(_message(_VALID_MARK))
+        settings = _settings(self.tmp)
+        settings = settings.model_copy(
+            update={"gemini": settings.gemini.model_copy(update={"claude_files_api": False})}
+        )
+        client, fake, genai = self._client(_message(_VALID_MARK), settings=settings)
         uploads = MagicMock(spec=ImageUploads)
         uploads.matches.return_value = True
         self._mark(client, image_parts=pages, image_uploads=uploads)
         uploads.ensure.assert_not_called()
+        uploads.for_claude.assert_not_called()
         self.assertEqual(
             _sent_images(fake.messages.calls[0]), [("image/png", image_fit.fit(pages).images[0])]
         )

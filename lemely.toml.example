@@ -76,6 +76,9 @@ model = "gemini-2.5-flash"
 # price tier), never below the floor in pixels.
 # claude_image_token_budget = 95000
 # claude_image_floor_px = 1568
+# Page images for claude- calls go through Claude's Files API (1 h expiry,
+# deleted at job end; not ZDR-eligible: use a dedicated workspace key).
+# claude_files_api = true
 
 max_retries = 3
 backoff_seconds = 2.0
