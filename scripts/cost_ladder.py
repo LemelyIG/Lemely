@@ -9,6 +9,7 @@ The default spend ledger is per worktree (repo-relative): run all ladder command
     cost_ladder.py screen --label L --lever "..." --expected-saving 40% \\
         --set gemini.correction_model=... [--against <label>] \\
         [--live-tags correction,correction_borderline,escalation]
+    cost_ladder.py resummarise --label L        # $0, from stored records
     cost_ladder.py report --stop-reason "..."
 """
 
@@ -25,6 +26,7 @@ from lemely.accuracy.cost_ladder.runner import (
     DEFAULT_LIVE_TAGS,
     parse_override_value,
     require_gemini_key,
+    resummarise,
     run_baseline,
     run_screen,
 )
@@ -99,6 +101,19 @@ def _screen(args: argparse.Namespace) -> int:
     return 0 if verdict.passed else 1
 
 
+def _resummarise(args: argparse.Namespace) -> int:
+    # $0: stored records only. No key, no client, no spend.
+    summary = resummarise(args.label, out_dir=args.out_dir)
+    print(
+        f"resummarised {args.label}: ${summary.usd_per_script_mean:.4f}/script (2027), "
+        f"validity {summary.validity_rate:.3f}, "
+        f"incomplete: {', '.join(summary.incomplete) or 'none'}"
+    )
+    if (args.out_dir / args.label / "verdict.json").is_file():
+        print("  note: verdict.json was not re-judged; rescreen to judge the new summary")
+    return 0
+
+
 def _report(args: argparse.Namespace) -> int:
     target = write_report(args.out_dir, stop_reason=args.stop_reason)
     print(f"wrote {target}")
@@ -156,6 +171,11 @@ def main(argv: list[str] | None = None) -> int:
         help="comma-separated task tags called live; all others replay the baseline cache",
     )
     screen.set_defaults(fn=_screen)
+    resum = sub.add_parser(
+        "resummarise", help="$0: recompute a run's summary.json from its stored records"
+    )
+    resum.add_argument("--label", required=True)
+    resum.set_defaults(fn=_resummarise)
     report = sub.add_parser("report")
     report.add_argument("--stop-reason", required=True)
     report.set_defaults(fn=_report)

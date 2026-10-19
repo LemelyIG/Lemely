@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import shutil
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, fields
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -44,6 +44,8 @@ from lemely.runtime.events import EventType, bus
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+
+    from lemely.eval.records import EvalRecord
 
 PINNED_CORPUS_DIGEST = "090492b217365de4"
 P95_RANK = 0.95
@@ -250,6 +252,10 @@ class _CapGuard:
             raise SpendCapReached(message, self.completed)
 
 
+def _eval_case_key(e: EvalRecord) -> str:
+    return e.paper_id if e.fixture_variant is None else f"{e.paper_id}/{e.fixture_variant}"
+
+
 def _paired(result: AccuracyResult) -> list[tuple[str, QuestionResult]]:
     """(case key, QuestionResult) per marked leaf.
 
@@ -262,10 +268,7 @@ def _paired(result: AccuracyResult) -> list[tuple[str, QuestionResult]]:
             f"{len(marked)} marked eval records but "
             f"{len(result.question_results)} question results; cannot attribute cases"
         )
-    return [
-        (e.paper_id if e.fixture_variant is None else f"{e.paper_id}/{e.fixture_variant}", q)
-        for e, q in zip(marked, result.question_results, strict=True)
-    ]
+    return [(_eval_case_key(e), q) for e, q in zip(marked, result.question_results, strict=True)]
 
 
 def _per_case_sum(
@@ -280,12 +283,7 @@ def _per_case_sum(
 
 
 def _case_keys(result: AccuracyResult) -> list[str]:
-    keys: dict[str, None] = {}
-    for e in result.eval_records:
-        keys[e.paper_id if e.fixture_variant is None else f"{e.paper_id}/{e.fixture_variant}"] = (
-            None
-        )
-    return list(keys)
+    return list(dict.fromkeys(_eval_case_key(e) for e in result.eval_records))
 
 
 def _nearest_rank(values: Sequence[float], q: float) -> float:
@@ -295,9 +293,8 @@ def _nearest_rank(values: Sequence[float], q: float) -> float:
     return ordered[max(math.ceil(q * len(ordered)) - 1, 0)]
 
 
-def mean_usd(result: AccuracyResult, records: Sequence[CallRecord], *, rate: str) -> float:
-    """Mean over cases of the summed per-call USD, at the ``now`` or ``2027`` rate."""
-    keys = _case_keys(result)
+def _mean_usd(keys: Sequence[str], records: Sequence[CallRecord], *, rate: str) -> float:
+    """Mean over *keys* of each case's summed per-call USD, at the ``now`` or ``2027`` rate."""
     if not keys:
         return 0.0
     pick: Callable[[CallRecord], float] = (
@@ -306,42 +303,78 @@ def mean_usd(result: AccuracyResult, records: Sequence[CallRecord], *, rate: str
     return sum(_per_case_sum(records, keys, pick).values()) / len(keys)
 
 
-def summarise(result: AccuracyResult, records: list[CallRecord]) -> RunSummary:
-    """Reduce one harness run and its call records to what the gate judges."""
-    keys = _case_keys(result)
-    scored = [(k, q) for k, q in _paired(result) if q.scored]
-    mismarked = frozenset(
-        f"{k}/{q.question_id}" for k, q in scored if q.predicted_marks != q.truth_marks
+@dataclass(frozen=True)
+class _Marking:
+    """What `summarise` needs from a run's marking, from a live result or a stored one."""
+
+    case_keys: tuple[str, ...]  # every case the run covered, in run order
+    scored: tuple[tuple[str, str, int, int], ...]  # (case, question_id, predicted, truth)
+    unmarked_cases: frozenset[str]  # cases with a ground-truth leaf that was not marked
+    missing_cases: frozenset[str]  # cases that produced no marking at all
+    id_match_rate: float | None
+
+
+def _marking(result: AccuracyResult, expected_cases: Sequence[str] = ()) -> _Marking:
+    produced = _case_keys(result)
+    return _Marking(
+        case_keys=tuple(dict.fromkeys([*expected_cases, *produced])),
+        scored=tuple(
+            (k, q.question_id, q.predicted_marks, q.truth_marks)
+            for k, q in _paired(result)
+            if q.scored
+        ),
+        unmarked_cases=frozenset(
+            _eval_case_key(e) for e in result.eval_records if e.outcome in _UNSCORED_OUTCOMES
+        ),
+        missing_cases=frozenset(expected_cases) - set(produced),
+        id_match_rate=result.metrics.id_match_rate,
     )
 
+
+def _summarise_marking(marking: _Marking, records: Sequence[CallRecord]) -> RunSummary:
+    """The gate's view of a run.
+
+    A case is incomplete only when its marking is short: a ground-truth leaf was
+    not marked (funnel shortfall, which is also how a call that failed with no
+    usable response shows), the case produced no marking at all, or one of its
+    calls is unpriced (NaN cost). A call that failed to parse but was recovered
+    leaves the case complete; it is counted in ``validity_rate`` instead, which
+    the gate requires not to drop.
+    """
+    keys = list(marking.case_keys)
     latency = _per_case_sum(records, keys, lambda r: float(r.latency_ms))
     ok = sum(1 for r in records if r.parse_ok)
-    validity = ok / len(records) if records else 1.0
-
-    shortfall = {
-        e.paper_id if e.fixture_variant is None else f"{e.paper_id}/{e.fixture_variant}"
-        for e in result.eval_records
-        if e.outcome in _UNSCORED_OUTCOMES
-    }
-    incomplete: dict[str, str] = dict.fromkeys(shortfall, "")
+    incomplete: dict[str, str] = dict.fromkeys(marking.unmarked_cases, "")
+    for key in marking.missing_cases:
+        incomplete[key] = " (no marking)"
     for r in records:
-        if r.case_key is None:
-            continue
-        if math.isnan(r.usd_2027):
+        if r.case_key is not None and math.isnan(r.usd_2027):
             incomplete[r.case_key] = f" (unpriced model {r.model})"
-        elif not r.parse_ok:
-            incomplete.setdefault(r.case_key, "")
-    id_match = result.metrics.id_match_rate
-
     return RunSummary(
-        usd_per_script_mean=mean_usd(result, records, rate="2027"),
+        usd_per_script_mean=_mean_usd(keys, records, rate="2027"),
         latency_p95_ms=_nearest_rank(list(latency.values()), P95_RANK),
-        mismarked_parts=mismarked,
-        scored_parts=len(scored),
-        id_match_rate=1.0 if id_match is None else id_match,
-        validity_rate=validity,
+        mismarked_parts=frozenset(
+            f"{case}/{qid}" for case, qid, predicted, truth in marking.scored if predicted != truth
+        ),
+        scored_parts=len(marking.scored),
+        id_match_rate=1.0 if marking.id_match_rate is None else marking.id_match_rate,
+        validity_rate=ok / len(records) if records else 1.0,
         incomplete=tuple(f"{k}{incomplete[k]}" for k in sorted(incomplete)),
     )
+
+
+def summarise(
+    result: AccuracyResult,
+    records: list[CallRecord],
+    *,
+    expected_cases: Sequence[str] = (),
+) -> RunSummary:
+    """Reduce one harness run and its call records to what the gate judges.
+
+    *expected_cases* are the cases the run was given; one that produced no
+    marking is incomplete. See `_summarise_marking` for the completeness rule.
+    """
+    return _summarise_marking(_marking(result, expected_cases), records)
 
 
 def write_summary(
@@ -408,8 +441,16 @@ def cache_dir_for(out_dir: Path, label: str) -> Path:
     return out_dir / CACHE_SUBDIR / label
 
 
-def _result_json(result: AccuracyResult) -> dict[str, object]:
+def _result_json(result: AccuracyResult, case_keys: Sequence[str]) -> dict[str, object]:
     return {
+        # Everything `resummarise` needs to rebuild the marking without the model:
+        # the cases run, and the per-case leaves that were not marked.
+        "case_keys": list(case_keys),
+        "unmarked_leaves": [
+            {"case_key": _eval_case_key(e), "question_id": e.question_id, "outcome": e.outcome}
+            for e in result.eval_records
+            if e.outcome in _UNSCORED_OUTCOMES
+        ],
         "metrics": asdict(result.metrics),
         "funnel": asdict(result.funnel),
         "manifest": result.manifest.model_dump(mode="json"),
@@ -566,10 +607,11 @@ def run_config(
         else compose_records(records, frozen_upstream, live_tags=live_tags, case_keys=done)
     )
     if result is not None:
-        summary = summarise(result, judged)
-        now = mean_usd(result, judged, rate="now")
+        marking = _marking(result, keys)
+        summary = _summarise_marking(marking, judged)
+        now = _mean_usd(marking.case_keys, judged, rate="now")
         (run_dir / "results.json").write_text(
-            json.dumps(_result_json(result), indent=2, sort_keys=True, default=str) + "\n",
+            json.dumps(_result_json(result, keys), indent=2, sort_keys=True, default=str) + "\n",
             encoding="utf-8",
         )
     else:
@@ -912,3 +954,116 @@ def run_screen(
     )
     append_ladder(out_dir, label)
     return verdict
+
+
+def _stored_int(value: object) -> int:
+    if not isinstance(value, int):
+        raise LadderStateError(f"results.json holds a non-integer mark {value!r}")
+    return value
+
+
+def _marking_from_results(results: Mapping[str, object], records: Sequence[CallRecord]) -> _Marking:
+    """Rebuild a run's `_Marking` from its stored ``results.json``.
+
+    Refuses (`LadderStateError`) what it cannot attribute to a case.
+    """
+    raw = results.get("question_results")
+    if not isinstance(raw, list) or any(
+        not isinstance(q, dict) or "case_key" not in q for q in raw
+    ):
+        raise LadderStateError(
+            "results.json predates case-keyed question results; this run cannot be resummarised"
+        )
+    qrs: list[dict[str, object]] = raw
+    stored_cases = results.get("case_keys")
+    if isinstance(stored_cases, list):
+        case_keys = tuple(str(k) for k in stored_cases)
+    else:
+        case_keys = tuple(
+            dict.fromkeys(
+                [*(str(q["case_key"]) for q in qrs), *(r.case_key for r in records if r.case_key)]
+            )
+        )
+    unmarked_raw = results.get("unmarked_leaves")
+    if isinstance(unmarked_raw, list):
+        unmarked = frozenset(str(u["case_key"]) for u in unmarked_raw)
+    else:
+        funnel = results.get("funnel")
+        leaves = funnel.get("leaves") if isinstance(funnel, dict) else None
+        if not isinstance(leaves, int):
+            raise LadderStateError("results.json has neither unmarked_leaves nor a funnel")
+        if leaves > len(qrs):
+            raise LadderStateError(
+                f"results.json predates per-case leaf outcomes and has {leaves - len(qrs)} "
+                "unmarked leaves that cannot be attributed to cases; this run cannot be "
+                "resummarised"
+            )
+        unmarked = frozenset()
+    marked = {str(q["case_key"]) for q in qrs}
+    metrics = results.get("metrics")
+    id_match = metrics.get("id_match_rate") if isinstance(metrics, dict) else None
+    return _Marking(
+        case_keys=case_keys,
+        scored=tuple(
+            (
+                str(q["case_key"]),
+                str(q["question_id"]),
+                _stored_int(q["predicted_marks"]),
+                _stored_int(q["truth_marks"]),
+            )
+            for q in qrs
+            if q.get("scored", True)
+        ),
+        unmarked_cases=unmarked,
+        missing_cases=frozenset(case_keys) - marked - unmarked,
+        id_match_rate=float(id_match) if isinstance(id_match, int | float) else None,
+    )
+
+
+def resummarise(label: str, *, out_dir: Path) -> RunSummary:
+    """Recompute ``<out_dir>/<label>/summary.json`` from the run's stored records. $0.
+
+    Uses the run's ``records.jsonl`` and ``results.json`` and the same reduction as
+    a live run (`_summarise_marking`); a frozen-upstream screen is recomposed with
+    the baseline's records under its recorded live tags. Every other field of the
+    old summary (overrides, live tags, cache stats, against) is kept, and the old
+    ``incomplete`` list is kept under ``resummarised``. No client, no model call,
+    no ledger change. ``verdict.json`` is not re-judged.
+    """
+    run_dir = out_dir / label
+    results = json.loads(
+        require_file(
+            run_dir / "results.json",
+            f"run {label!r} results.json (only a finished run can be resummarised)",
+        ).read_text(encoding="utf-8")
+    )
+    records = read_records(require_file(run_dir / "records.jsonl", f"run {label!r} records"))
+    summary_path = require_file(run_dir / "summary.json", f"run {label!r} summary")
+    old: dict[str, object] = json.loads(summary_path.read_text(encoding="utf-8"))
+    marking = _marking_from_results(results, records)
+    judged: list[CallRecord] = list(records)
+    if old.get("frozen_upstream"):
+        frozen = read_records(
+            require_file(out_dir / BASELINE_LABEL / "records.jsonl", "baseline records")
+        )
+        live = old.get("live_tags")
+        judged = compose_records(
+            records,
+            frozen,
+            live_tags=[str(t) for t in live] if isinstance(live, list) else [],
+            case_keys=marking.case_keys,
+        )
+    summary = _summarise_marking(marking, judged)
+    replaced = {f.name for f in fields(RunSummary)} | {"usd_per_script_mean_now", "resummarised"}
+    extra = {k: v for k, v in old.items() if k not in replaced}
+    extra["resummarised"] = {
+        "from": ["records.jsonl", "results.json"],
+        "incomplete_before": old.get("incomplete", []),
+    }
+    write_summary(
+        summary,
+        summary_path,
+        usd_per_script_mean_now=_mean_usd(marking.case_keys, judged, rate="now"),
+        extra=extra,
+    )
+    return summary

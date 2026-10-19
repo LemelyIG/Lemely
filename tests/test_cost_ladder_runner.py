@@ -203,11 +203,14 @@ def test_incomplete_case_listed() -> None:
         _er("p2", "1b", outcome="excluded"),  # funnel shortfall in p2
         _er("p3", "1a", outcome="unmatched"),  # funnel shortfall in p3
     ]
-    recs = [_rec("p4", parse_ok=False)]  # failed call in p4
+    # p4: a call failed to parse but every leaf was marked. Validity counts it;
+    # completeness does not (user decision 2026-10-19).
+    recs = [_rec("p4", parse_ok=False)]
     ers.append(_er("p4", "1a"))
     qrs.append(_qr("1a", 1, 1))
     s = summarise(_result(qrs, ers), recs)
-    assert s.incomplete == ("p2", "p3", "p4")
+    assert s.incomplete == ("p2", "p3")
+    assert s.validity_rate == 0.0
 
 
 def test_clean_run_has_no_incomplete_and_full_validity() -> None:
@@ -1013,15 +1016,15 @@ def test_baseline_records_in_run_cache_hits(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     clients: list[tuple[Settings, str]] = []
-    # All calls parse: an unparsed call would make rung 0 incomplete, which run_baseline refuses.
-    recs = [_tagged("a", "extraction"), _tagged("a", "correction")]
+    # A recovered parse failure lowers validity but leaves rung 0 complete.
+    recs = [_tagged("a", "extraction"), _tagged("a", "correction", parse_ok=False)]
     _fake_harness(monkeypatch, {"a": recs}, clients, cache_hits_per_case=2)
     runner.run_baseline(
         out_dir=tmp_path, cases=[_case("a")], settings=Settings(), max_run_usd={"gemini": 1.0}
     )
     data = json.loads((tmp_path / "baseline" / "summary.json").read_text())
     assert data["in_run_cache_hits"] == 2
-    assert data["cacheable_live_records"] == 2
+    assert data["cacheable_live_records"] == 1  # the unparsed call writes no entry
     assert data["cache_entries_written"] == 0  # the fake client writes none
     # The A/A rerun bypasses the cache and is not annotated.
     assert "in_run_cache_hits" not in json.loads(
@@ -1416,3 +1419,194 @@ def test_report_without_baseline_is_a_clear_error(tmp_path: Path) -> None:
 
     with pytest.raises(runner.LadderStateError, match="baseline"):
         write_report(tmp_path, stop_reason="x")
+
+
+# --- fix round 5: parse failures are validity, not completeness; $0 resummarise ------------
+
+
+def test_parse_failure_with_all_leaves_scored_is_complete() -> None:
+    qrs = [_qr("1a", 1, 1), _qr("1b", 2, 2)]
+    ers = [_er("p1", "1a"), _er("p1", "1b")]
+    recs = [_rec("p1"), _rec("p1", parse_ok=False), _rec("p1"), _rec("p1")]
+    s = summarise(_result(qrs, ers), recs)
+    assert s.incomplete == ()
+    assert s.validity_rate == 0.75
+    assert s.scored_parts == 2
+
+
+def test_case_with_an_unmarked_leaf_is_still_incomplete() -> None:
+    qrs = [_qr("1a", 1, 1)]
+    ers = [_er("p1", "1a"), _er("p1", "1b", outcome="unmatched")]
+    s = summarise(_result(qrs, ers), [_rec("p1")])
+    assert s.incomplete == ("p1",)
+
+
+def test_expected_case_with_no_marking_is_incomplete() -> None:
+    s = summarise(
+        _result([_qr("1a", 1, 1)], [_er("p1", "1a")]), [_rec("p1")], expected_cases=["p1", "p9"]
+    )
+    assert s.incomplete == ("p9 (no marking)",)
+
+
+def test_unpriced_record_still_marks_case_incomplete() -> None:
+    rec = replace(_rec("p1", usd_2027=0.1), usd_2027=float("nan"), model="gemini-9-x")
+    s = summarise(_result([_qr("1a", 1, 1)], [_er("p1", "1a")]), [rec])
+    assert s.incomplete == ("p1 (unpriced model gemini-9-x)",)
+
+
+def test_results_json_records_cases_and_unmarked_leaves(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": [], "b": []}, clients)
+
+    def fake_measure(cases: list[GoldenCase], client: object, settings: object, **kw: Any):  # type: ignore[no-untyped-def]
+        qrs = [_qr("1a", 1, 1)]
+        ers = [
+            _er("a", "1a"),
+            _er("a", "1b", outcome="excluded"),
+            _er("b", "1", outcome="unmatched"),
+        ]
+        return _result(qrs, ers)
+
+    monkeypatch.setattr(runner, "measure_accuracy", fake_measure)
+    runner.run_config(
+        "baseline",
+        {},
+        out_dir=tmp_path,
+        cases=[_case("a"), _case("b")],
+        settings=Settings(),
+        max_run_usd={"gemini": 1.0},
+    )
+    data = json.loads((tmp_path / "baseline" / "results.json").read_text())
+    assert data["case_keys"] == ["a", "b"]
+    assert data["unmarked_leaves"] == [
+        {"case_key": "a", "question_id": "1b", "outcome": "excluded"},
+        {"case_key": "b", "question_id": "1", "outcome": "unmatched"},
+    ]
+
+
+def _boom(*a: object, **k: object) -> None:
+    raise AssertionError("resummarise must not call the model or build a client")
+
+
+def test_resummarise_recomputes_baseline_at_zero_cost(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _spend_file_in_tmp: Path
+) -> None:
+    clients: list[tuple[Settings, str]] = []
+    recs = [
+        _tagged("a", "extraction", usd_2027=0.2, usd_now=0.3, parse_ok=False),
+        _tagged("a", "extraction", usd_2027=0.2, usd_now=0.3),
+    ]
+    _fake_harness(monkeypatch, {"a": recs}, clients, cache_hits_per_case=1)
+    runner.run_baseline(
+        out_dir=tmp_path, cases=[_case("a")], settings=Settings(), max_run_usd={"gemini": 1.0}
+    )
+    path = tmp_path / "baseline" / "summary.json"
+    old = json.loads(path.read_text())
+    # Simulate a summary written under the old rule (parse failure -> incomplete).
+    path.write_text(json.dumps({**old, "incomplete": ["a"], "usd_per_script_mean": 99.0}))
+    spend_before = _spend_file_in_tmp.read_text()
+    monkeypatch.setattr(runner, "GeminiClient", _boom)
+    monkeypatch.setattr(runner, "measure_accuracy", _boom)
+
+    summary = runner.resummarise("baseline", out_dir=tmp_path)
+
+    assert summary.incomplete == ()
+    assert summary.usd_per_script_mean == pytest.approx(0.4)
+    assert summary.validity_rate == 0.5
+    new = json.loads(path.read_text())
+    for kept in (
+        "in_run_cache_hits",
+        "cache_entries_written",
+        "cacheable_live_records",
+        "overrides",
+        "live_tags",
+        "cache_mode",
+        "cache_hits",
+    ):
+        assert new[kept] == old[kept]
+    assert new["resummarised"]["incomplete_before"] == ["a"]
+    assert _spend_file_in_tmp.read_text() == spend_before
+
+
+def test_aa_only_works_after_resummarised_baseline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": [_tagged("a", "extraction")]}, clients)
+    runner.run_baseline(
+        out_dir=tmp_path, cases=[_case("a")], settings=Settings(), max_run_usd={"gemini": 1.0}
+    )
+    path = tmp_path / "baseline" / "summary.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), "incomplete": ["a"]}))
+    kwargs: dict[str, Any] = {"cases": [_case("a")], "settings": Settings(), "aa_only": True}
+    with pytest.raises(runner.LadderStateError, match="--restart-baseline"):
+        runner.run_baseline(out_dir=tmp_path, **kwargs)
+    runner.resummarise("baseline", out_dir=tmp_path)
+    assert runner.run_baseline(out_dir=tmp_path, **kwargs) == 0
+    assert [mode for _, mode in clients] == ["read_write", "bypass", "bypass"]
+
+
+def test_resummarise_screen_keeps_frozen_upstream_composition(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    frozen = [
+        _tagged("a", "extraction", usd_2027=0.50, latency_ms=4000),
+        _tagged("a", "correction", usd_2027=0.40, latency_ms=2000),
+    ]
+    _seed_ladder(tmp_path, baseline=_summary(scored_parts=1), baseline_records=frozen)
+    clients: list[tuple[Settings, str]] = []
+    live = [_tagged("a", "correction", usd_2027=0.10, latency_ms=500)]
+    _fake_harness(monkeypatch, {"a": live}, clients)
+    first = runner.run_screen(
+        "lever1",
+        {},
+        out_dir=tmp_path,
+        cases=[_case("a")],
+        settings=Settings(),
+        max_run_usd={"gemini": 1.0},
+    )
+    assert first is not None
+    path = tmp_path / "lever1" / "summary.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), "usd_per_script_mean": 99.0}))
+    summary = runner.resummarise("lever1", out_dir=tmp_path)
+    assert summary.usd_per_script_mean == pytest.approx(0.60)  # live 0.10 + frozen extraction 0.50
+    assert summary.latency_p95_ms == 4500
+    data = json.loads(path.read_text())
+    assert data["against"] == "baseline"
+    assert data["frozen_upstream"] is True
+
+
+def test_resummarise_refuses_unattributable_unmarked_leaves(tmp_path: Path) -> None:
+    run = tmp_path / "baseline"
+    run.mkdir()
+    runner.write_summary(_summary(), run / "summary.json", usd_per_script_mean_now=0.0)
+    (run / "records.jsonl").write_text("")
+    # An older results.json: no case_keys / unmarked_leaves, and 3 leaves but 2 results.
+    qr = {
+        "case_key": "a",
+        "question_id": "1a",
+        "question_type": "theory",
+        "predicted_marks": 1,
+        "truth_marks": 1,
+        "confidence_score": 0.9,
+        "needs_teacher_review": False,
+        "scored": True,
+    }
+    (run / "results.json").write_text(
+        json.dumps(
+            {
+                "metrics": {"id_match_rate": 1.0},
+                "funnel": {"leaves": 3, "extracted": 3, "matched": 2, "marked": 2},
+                "question_results": [qr, {**qr, "question_id": "1b"}],
+            }
+        )
+    )
+    with pytest.raises(runner.LadderStateError, match="unmarked"):
+        runner.resummarise("baseline", out_dir=tmp_path)
+
+
+def test_resummarise_of_missing_run_is_a_clear_error(tmp_path: Path) -> None:
+    with pytest.raises(runner.LadderStateError, match=r"results\.json"):
+        runner.resummarise("nope", out_dir=tmp_path)
