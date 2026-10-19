@@ -649,7 +649,7 @@ def _call_labelled(attempt: _Attempt | None, question_id: str | None) -> Iterato
 
 
 def _provider_for(model: str) -> str:
-    return "anthropic" if "claude" in model else "gemini"
+    return "anthropic" if is_anthropic_model(model) else "gemini"
 
 
 def fallback_pricing_status(
@@ -2339,6 +2339,11 @@ class GeminiClient:
         ``paper`` goes as the adapter's ``cache_prefix``; both carry a cache
         breakpoint, and the two together are ``system_prompt``.
         """
+        # Loaded by ``self._anthropic`` (the adapter imports the SDK) in any case.
+        import anthropic
+
+        from lemely.io.providers.anthropic_adapter import MAX_OUTPUT_TOKENS
+
         adapter = self._anthropic
         effort = self._resolved_gen_params(task_tag, model)["thinking_level"]
         t0 = time.monotonic()
@@ -2353,7 +2358,12 @@ class GeminiClient:
             )
         except ProviderTransientError as exc:
             raise _TransientError(str(exc)) from exc
-        except Exception as exc:
+        except ExternalServiceError:
+            # ProviderError and friends already say what failed.
+            raise
+        except (anthropic.AnthropicError, OSError) as exc:
+            # SDK and I/O failures only: a programming error (TypeError,
+            # AttributeError, AssertionError, ...) propagates as itself.
             raise ExternalServiceError(str(exc)) from exc
         latency_ms = int((time.monotonic() - t0) * 1000)
         self._record_spend(
@@ -2364,10 +2374,17 @@ class GeminiClient:
             log=log,
             params_fingerprint=self._params_fingerprint(model, task_tag, response_schema),
         )
-        try:
-            reply.raise_for_stop_reason(model)
-        except ProviderTransientError as exc:
-            raise _TransientError(str(exc)) from exc
+        if reply.stop_reason == "max_tokens":
+            # The same rule as a Gemini reply cut off at a per-tag cap: billed
+            # (recorded above), marked unparsed, not transient (tenacity would
+            # pay full price up to four times for a runaway). _call_with_retry
+            # makes one fresh retry, then lets this raise.
+            _mark_last_record_unparsed()
+            raise _CapTruncatedError(
+                f"Anthropic hit the {MAX_OUTPUT_TOKENS}-token max_tokens for {task_tag} ({model})"
+            )
+        # A refusal raises ProviderError (permanent).
+        reply.raise_for_stop_reason(model)
         return reply.text
 
     def _call_code_execution_once(

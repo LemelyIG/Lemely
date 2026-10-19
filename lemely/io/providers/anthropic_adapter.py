@@ -15,12 +15,12 @@ only, so images and files are rejected before a request is built
 
 Mark bounds. Structured outputs cannot express numeric ``minimum`` /
 ``maximum``: :func:`anthropic.transform_schema` drops them from the schema
-sent, so every reply is validated against the pydantic model in code, which
-restores ``awarded_marks >= 0`` and ``0 <= confidence <= 1``. The upper bound
-belongs to the question, not the schema. :meth:`AnthropicAdapter.generate`
-enforces it when the caller passes ``max_awarded_marks``. The
-``GeminiClient`` path does not know the question; there the bound stays
-where it is for every provider, the clamp in
+sent, so every reply is validated against the pydantic model in code (by
+``GeminiClient.generate_structured`` on the production path), which restores
+``awarded_marks >= 0`` and ``0 <= confidence <= 1``. The upper bound belongs to
+the question, not the schema. :meth:`AnthropicAdapter.complete`, the method
+``GeminiClient`` calls, returns the reply unvalidated and does not check it;
+the bound is enforced where it is for every provider, the clamp in
 ``lemely.io.correction_ai`` and ``CorrectedQuestion.validate_awarded_marks``.
 """
 
@@ -104,9 +104,12 @@ class AnthropicReply:
     def raise_for_stop_reason(self, model: str) -> None:
         """Raise when the reply cannot be used as it stands.
 
-        ``max_tokens`` truncated the JSON, so it is transient, the same rule as
-        Gemini's ``MAX_TOKENS``. A ``refusal`` is permanent: the same request
-        is refused again.
+        ``max_tokens`` truncated the JSON: transient here (for
+        :meth:`AnthropicAdapter.generate`). ``GeminiClient`` checks
+        ``max_tokens`` itself before calling this and treats it like a Gemini
+        reply cut off at a per-tag cap (one fresh retry, then fail), so on the
+        production path only the refusal rule applies. A ``refusal`` is
+        permanent: the same request is refused again.
         """
         if self.stop_reason == "max_tokens":
             raise ProviderTransientError(f"Anthropic hit max_tokens ({model})")
@@ -227,6 +230,10 @@ class AnthropicAdapter:
         max_awarded_marks: int | None = None,
     ) -> tuple[_T, Usage]:
         """Send one request and return the validated reply with its usage.
+
+        A test helper: production calls go through ``GeminiClient``, which
+        calls :meth:`complete` and owns validation, retries and spend. Only
+        this helper checks ``max_awarded_marks``.
 
         Raises:
             ProviderTransientError: as :meth:`complete`, or the reply was cut

@@ -417,11 +417,19 @@ class ClientDispatchTests(_ClientTestCase):
         self.assertAlmostEqual(rec.usd_now, (1_000 + 1.25 * 2_000) * 0.0001 / 1000, places=12)
         self.assertEqual(rec.usd_2027, rec.usd_now)
 
-    def test_unexpected_adapter_exception_becomes_external_service_error(self) -> None:
-        client, fake, _genai = self._client(RuntimeError("boom"))
+    def test_sdk_exception_outside_api_error_becomes_external_service_error(self) -> None:
+        client, fake, _genai = self._client(anthropic.AnthropicError("boom"))
         with self.assertRaises(ExternalServiceError):
             self._mark(client)
         self.assertEqual(len(fake.messages.calls), 1)
+
+    def test_programming_errors_are_not_rewrapped(self) -> None:
+        for exc in (TypeError("t"), AttributeError("a"), AssertionError("x")):
+            with self.subTest(exc=type(exc).__name__):
+                client, fake, _genai = self._client(exc)
+                with self.assertRaises(type(exc)):
+                    self._mark(client, cache_mode="bypass")
+                self.assertEqual(len(fake.messages.calls), 1)
 
     def test_code_execution_rejects_claude_model(self) -> None:
         client, fake, genai = self._client()
@@ -476,7 +484,19 @@ class ClientDispatchTests(_ClientTestCase):
         )
         self._mark(client)
         self.assertEqual(len(fake.messages.calls), 2)
-        self.assertEqual(len(process_call_records()), 2)
+        self.assertEqual([r.parse_ok for r in process_call_records()], [False, True])
+
+    def test_max_tokens_twice_fails_after_one_fresh_retry(self) -> None:
+        """Not a tenacity-transient: a runaway is paid for twice at most, not max_retries + 1."""
+        truncated = '{"awarded_marks": 2'
+        client, fake, _genai = self._client(
+            *[_message(truncated, stop_reason="max_tokens") for _ in range(4)],
+            settings=_settings(self.tmp, max_retries=3),
+        )
+        with self.assertRaisesRegex(ExternalServiceError, "max_tokens"):
+            self._mark(client, cache_mode="bypass")
+        self.assertEqual(len(fake.messages.calls), 2)
+        self.assertEqual([r.parse_ok for r in process_call_records()], [False, False])
 
     def test_out_of_bounds_reply_goes_through_schema_correction_retry(self) -> None:
         client, fake, _genai = self._client(
