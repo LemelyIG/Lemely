@@ -195,11 +195,25 @@ class GeminiUnchangedTests(_Base):
         client = MagicMock()
         client.model_for_tag.return_value = _HAIKU
         page = MagicMock(png_bytes=b"\x89PNG-page")
-        with patch("lemely.io.scan_metadata.rasterise_pdf_to_pages", return_value=[page, page]):
+        with patch("lemely.io.scan_metadata.rasterise_scan_to_pages", return_value=[page, page]):
             ScanMetadataExtractor(client)(self.pdf)
         kwargs = client.generate_structured.call_args.kwargs
         self.assertEqual(kwargs["image_parts"], [b"\x89PNG-page", b"\x89PNG-page"])
         self.assertNotIn("file_paths", kwargs)
+
+    def test_documents_without_bytes_are_refused(self) -> None:
+        client, fake = self._claude()
+        with self.assertRaisesRegex(ValueError, "task_tag='mark_scheme'"):
+            client.generate_structured(
+                system_prompt="s",
+                user_prompt="u",
+                documents=[DocumentInput(data=b"", source_path=self.pdf)],
+                response_schema=AIMarkResponse,
+                prompt_version="v1",
+                model=_HAIKU,
+                task_tag="mark_scheme",
+            )
+        self.assertEqual(fake.messages.calls, [])
 
     def test_scan_metadata_with_a_mock_model_stays_on_gemini(self) -> None:
         client = MagicMock()

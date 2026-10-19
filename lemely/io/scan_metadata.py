@@ -11,13 +11,18 @@ from lemely.io.prompts.scan_metadata import (
     build_scan_meta_user_prompt,
 )
 from lemely.io.providers import is_anthropic_model
-from lemely.io.rasterise import rasterise_pdf_to_pages
+from lemely.io.rasterise import rasterise_scan_to_pages
 from lemely.runtime.events import EventType, bus
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from lemely.io.gemini import GeminiClient
+
+
+#: Pages sent to Claude for metadata: the subject, paper, variant and session sit on the
+#: cover page, so later pages only add image tokens (cost). Gemini still gets the whole PDF.
+_METADATA_PAGES = 2
 
 
 class ScanMetadataExtractor:
@@ -34,8 +39,9 @@ class ScanMetadataExtractor:
     def __call__(self, scan_path: Path) -> ExamMetadata:
         """Extract ExamMetadata from the given scan PDF.
 
-        Gemini is sent the PDF itself. A claude- model takes no PDF scan: the pages
-        are rasterised and sent as images (fitted by ``lemely.io.llm.image_fit``).
+        Gemini is sent the PDF itself. A claude- model takes no PDF scan: the first
+        ``_METADATA_PAGES`` pages are rasterised in the extraction sandbox (a PDF or an
+        image upload) and sent as images (fitted by ``lemely.io.llm.image_fit``).
 
         Args:
             scan_path: Path to the student answer scan PDF.
@@ -47,7 +53,7 @@ class ScanMetadataExtractor:
         user_prompt = build_scan_meta_user_prompt(scan_path)
         model = self._client.model_for_tag("scan_metadata")
         if isinstance(model, str) and is_anthropic_model(model):
-            pages = rasterise_pdf_to_pages(scan_path)
+            pages = rasterise_scan_to_pages(scan_path)[:_METADATA_PAGES]
             return self._client.generate_structured(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,

@@ -1691,6 +1691,9 @@ class GeminiClient:
         on_claude = is_anthropic_model(self._active_model(model, task_tag))
         if file_paths and documents:
             raise ValueError("pass file_paths or documents, not both")
+        if documents and any(not doc.data for doc in documents):
+            # Data-less documents would all hash to sha256(b"") in the cache key.
+            raise ValueError(f"documents must carry their bytes (task_tag={task_tag!r})")
         if on_claude and file_paths:
             raise ValueError(
                 f"claude- models take no file_paths (task_tag={task_tag!r}); send typed PDFs "

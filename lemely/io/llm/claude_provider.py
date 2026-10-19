@@ -52,7 +52,9 @@ def usage_as_gemini_response(usage: Usage) -> SimpleNamespace:
 #: The API's request limit (PDF support docs, read 2026-10-20).
 MAX_REQUEST_BYTES = 32_000_000
 #: PDF pages per request: 600 when the context window is 1M tokens (Haiku 5.5, Sonnet 5.5
-#: and Opus 5.5 all have 1M; models page, read 2026-10-20), 100 under 1M.
+#: and Opus 5.5 all have 1M; models page, read 2026-10-20), 100 under 1M. The limit
+#: assumes 1M-context models: every configured Claude model has one (platform.claude.com
+#: models overview, checked 2026-10-19); a model under 1M would need 100.
 MAX_PDF_PAGES = 600
 
 
