@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from lemely.io.model_table import MODEL_TABLE_TAGS, configured_models
+from datetime import date
+
+from lemely.io.model_table import MODEL_TABLE_TAGS, configured_models, model_rows
 from lemely.runtime.config import Settings
 
 
@@ -39,3 +41,25 @@ def test_the_second_read_model_is_listed_only_when_it_is_set_and_read() -> None:
     legacy = claude.model_copy(deep=True)
     legacy.binding.binder = "legacy"
     assert "binding_second_read" not in configured_models(legacy)
+
+
+def _with_gemini(**gemini: object) -> Settings:
+    s = Settings()
+    return s.model_copy(update={"gemini": s.gemini.model_copy(update=gemini)})
+
+
+def test_model_rows_one_per_configured_tag_with_provider_effort_and_price() -> None:
+    s = _with_gemini(correction_model="claude-haiku-5-5")
+    rows = model_rows(s, on=date(2026, 10, 19))
+    assert [r.tag for r in rows] == list(configured_models(s))
+    correction = next(r for r in rows if r.tag == "correction")
+    assert (correction.provider, correction.effort) == ("anthropic", "low")
+    assert correction.price == "0.1/0.01/0.5 $/MTok, >100000 tokens 0.5/0.05/2.5"
+    extraction = next(r for r in rows if r.tag == "extraction")
+    assert extraction.provider == "gemini"
+    assert extraction.price is not None
+
+
+def test_model_rows_unpriced_model_has_no_price() -> None:
+    rows = model_rows(_with_gemini(correction_model="claude-nonexistent-9"), on=date(2026, 10, 19))
+    assert next(r for r in rows if r.tag == "correction").price is None

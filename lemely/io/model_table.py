@@ -6,11 +6,15 @@ Anthropic-key check) and the web startup check, so the two cannot drift apart.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 from lemely.io.binding.orchestrate import binding_models
 
 if TYPE_CHECKING:
+    from datetime import date
+
+    from lemely.io.llm.pricing import PriceRow
     from lemely.runtime.config import Settings
 
 #: The task tags resolved through ``GeminiSettings.model_for``.
@@ -41,3 +45,46 @@ def configured_models(settings: Settings) -> dict[str, str]:
         models["cascade_strong"] = g.cascade_strong_model
     models.update(binding_models(settings))
     return models
+
+
+@dataclass(frozen=True)
+class ModelRow:
+    """One task tag as ``lemely doctor`` lists it."""
+
+    tag: str
+    model: str
+    provider: Literal["gemini", "anthropic"]
+    effort: str
+    price: str | None
+
+
+def _per_mtok(row: PriceRow) -> str:
+    return f"{row.input * 1000:g}/{row.cached_input * 1000:g}/{row.output * 1000:g}"
+
+
+def model_rows(settings: Settings, *, on: date) -> list[ModelRow]:
+    """Every configured tag with its provider, effort (thinking level) and price row."""
+    from lemely.io.gemini import GeminiClient, UnpricedModelError, price_row
+    from lemely.io.providers import is_anthropic_model
+
+    client = GeminiClient(settings, _genai_client=object(), ledger=None)
+    rows: list[ModelRow] = []
+    for tag, model in configured_models(settings).items():
+        try:
+            row = price_row(model, settings, on=on)
+        except UnpricedModelError:
+            price: str | None = None
+        else:
+            price = f"{_per_mtok(row)} $/MTok"
+            if row.tier2 is not None and row.tier_threshold_tokens is not None:
+                price += f", >{row.tier_threshold_tokens} tokens {_per_mtok(row.tier2)}"
+        rows.append(
+            ModelRow(
+                tag=tag,
+                model=model,
+                provider="anthropic" if is_anthropic_model(model) else "gemini",
+                effort=str(client.resolved_thinking(tag, model)),
+                price=price,
+            )
+        )
+    return rows

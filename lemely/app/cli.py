@@ -613,6 +613,32 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     fallback_ok, fallback_detail = fallback_pricing_status(settings, configured_models)
     record("gemini_fallback_pricing", fallback_ok, detail=fallback_detail)
 
+    # Spec 2026-10-19 §3: every tag's provider, model, effort and price row. A claude-
+    # tag with no row is fatal (its calls fail closed); a Gemini tag with no row only
+    # warns (it is priced through the fallback, as gemini_fallback_pricing says).
+    from lemely.io.gemini import _today
+    from lemely.io.model_table import model_rows
+
+    rows = model_rows(settings, on=_today())
+    record(
+        "llm_price_table",
+        all(r.price is not None for r in rows),
+        detail="; ".join(
+            f"{r.tag}={r.provider}:{r.model} effort={r.effort} price={r.price or 'NO ROW'}"
+            for r in rows
+        ),
+    )
+    unpriced_claude = [r.tag for r in rows if r.provider == "anthropic" and r.price is None]
+    record(
+        "claude_price_rows",
+        not unpriced_claude,
+        detail=""
+        if not unpriced_claude
+        else "no price row for the claude- model of: "
+        + ", ".join(unpriced_claude)
+        + "; every call to it fails closed",
+    )
+
     # US-035: an unreadable gemini_spend.json already logged a warning
     # (`CostLedger._read`'s `cost_ledger_corrupt` event) but had zero code
     # consumers, so the $14 USD ceiling read $0.00 forever after one corrupt
@@ -725,6 +751,7 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         "no_removed_config_keys",
         "gemini_promo_pricing_window",
         "gemini_fallback_pricing",
+        "llm_price_table",
         "gemini_cost_ledger",
     }
     fatal_checks = [c for c in checks if c["name"] not in advisory_checks]

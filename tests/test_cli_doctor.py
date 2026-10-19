@@ -58,6 +58,31 @@ class DoctorTests(unittest.TestCase):
             **extra,
         }
 
+    def test_doctor_lists_the_price_table_and_fails_an_unpriced_claude_tag(self) -> None:
+        with TemporaryDirectory() as tmp:
+            env = self._doctor_env(
+                tmp,
+                LEMELY_GEMINI__CORRECTION_MODEL="claude-nonexistent-9",
+                ANTHROPIC_API_KEY="test-key",
+            )
+            result = self.runner.invoke(cli, ["--json", "doctor", "--no-network"], env=env)
+        payload = json.loads(result.output)
+        checks = {c["name"]: c for c in payload["checks"]}
+        self.assertIn(
+            "correction=anthropic:claude-nonexistent-9", checks["llm_price_table"]["detail"]
+        )
+        self.assertFalse(checks["claude_price_rows"]["ok"])
+        self.assertFalse(payload["all_passed"])
+
+    def test_doctor_price_rows_pass_on_defaults(self) -> None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli, ["--json", "doctor", "--no-network"], env=self._doctor_env(tmp)
+            )
+        checks = {c["name"]: c for c in json.loads(result.output)["checks"]}
+        self.assertTrue(checks["claude_price_rows"]["ok"])
+        self.assertTrue(checks["llm_price_table"]["ok"])
+
     def test_doctor_fails_when_a_claude_model_is_configured_without_an_anthropic_key(self) -> None:
         with TemporaryDirectory() as tmp:
             result = self.runner.invoke(
