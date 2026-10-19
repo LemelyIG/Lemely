@@ -29,6 +29,7 @@ from lemely.accuracy.harness import (
     load_golden_cases,
     measure_accuracy,
 )
+from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
 from lemely.io.gemini import (
     PRICE_DATE_2027,
     CallRecord,
@@ -50,6 +51,9 @@ if TYPE_CHECKING:
 PINNED_CORPUS_DIGEST = "090492b217365de4"
 P95_RANK = 0.95
 _UNSCORED_OUTCOMES = frozenset({"excluded", "unmatched"})
+#: marker_source of a placeholder leaf left by a marking or extraction that failed.
+_FAILED_MARKER_SOURCES = frozenset({"missing", "dropped"})
+MARKING_FAILED = " (marking failed)"
 
 BASELINE_LABEL = "baseline"
 AA_LABEL = "baseline_aa"
@@ -310,19 +314,37 @@ class _Marking:
     case_keys: tuple[str, ...]  # every case the run covered, in run order
     scored: tuple[tuple[str, str, int, int], ...]  # (case, question_id, predicted, truth)
     unmarked_cases: frozenset[str]  # cases with a ground-truth leaf that was not marked
+    failed_cases: frozenset[str]  # cases with a placeholder leaf (`_failed_marking`)
     missing_cases: frozenset[str]  # cases that produced no marking at all
     id_match_rate: float | None
 
 
-def _failed_marking(*, scored: bool, needs_teacher_review: bool) -> bool:
-    """A leaf the harness counts as marked although no model marked it.
+def _failed_marking(
+    *,
+    marker_source: str | None,
+    scored: bool,
+    needs_teacher_review: bool,
+    review_reason: str | None,
+) -> bool:
+    """A placeholder leaf the harness counts as marked although no marker marked it.
 
-    When marking or extraction fails outright, correction_ai builds a placeholder
-    leaf (marker_source "missing"/"dropped") that the harness counts as marked, so
-    the funnel shows no shortfall. It is unscored and flagged for teacher review;
-    a blank answer is unscored too but not flagged, and is a real marking.
+    correction_ai leaves marker_source "missing" when no marker ran (the AI call
+    failed, no AI client was given, or the paper was marked MCQ-only) and
+    "dropped" when extraction lost the answer. The harness counts both as marked,
+    so the funnel shows no shortfall. A blank ("blank") is a real marking, even
+    when the binder later flags it for review.
+
+    Without a marker_source (a result stored before it was recorded), a failed
+    leaf is one that is unscored, flagged for review, and whose review reason is
+    not the blank answer's.
     """
-    return not scored and needs_teacher_review
+    if marker_source is not None:
+        return marker_source in _FAILED_MARKER_SOURCES
+    return (
+        not scored
+        and needs_teacher_review
+        and not (review_reason or "").startswith(_BLANK_ANSWER_REVIEW_REASON)
+    )
 
 
 def _marking(result: AccuracyResult, expected_cases: Sequence[str] = ()) -> _Marking:
@@ -335,12 +357,17 @@ def _marking(result: AccuracyResult, expected_cases: Sequence[str] = ()) -> _Mar
         ),
         unmarked_cases=frozenset(
             _eval_case_key(e) for e in result.eval_records if e.outcome in _UNSCORED_OUTCOMES
-        )
-        | {
+        ),
+        failed_cases=frozenset(
             k
             for k, q in paired
-            if _failed_marking(scored=q.scored, needs_teacher_review=q.needs_teacher_review)
-        },
+            if _failed_marking(
+                marker_source=q.marker_source,
+                scored=q.scored,
+                needs_teacher_review=q.needs_teacher_review,
+                review_reason=q.review_reason,
+            )
+        ),
         missing_cases=frozenset(expected_cases) - set(produced),
         id_match_rate=result.metrics.id_match_rate,
     )
@@ -350,9 +377,9 @@ def _summarise_marking(marking: _Marking, records: Sequence[CallRecord]) -> RunS
     """The gate's view of a run.
 
     A case is incomplete only when its marking is short: a ground-truth leaf was
-    not marked (a funnel shortfall, or a placeholder leaf left by a marking or
-    extraction call that failed outright, see `_failed_marking`), the case
-    produced no marking at all, or one of its calls is unpriced (NaN cost). A
+    not marked (a funnel shortfall; or, listed as "<case> (marking failed)", a
+    placeholder leaf no marker formed an opinion on, see `_failed_marking`), the
+    case produced no marking at all, or one of its calls is unpriced (NaN cost). A
     call that failed to parse but was recovered leaves the case complete; it is
     counted in ``validity_rate`` instead, which the gate requires not to drop.
     """
@@ -360,6 +387,8 @@ def _summarise_marking(marking: _Marking, records: Sequence[CallRecord]) -> RunS
     latency = _per_case_sum(records, keys, lambda r: float(r.latency_ms))
     ok = sum(1 for r in records if r.parse_ok)
     incomplete: dict[str, str] = dict.fromkeys(marking.unmarked_cases, "")
+    for key in marking.failed_cases:
+        incomplete[key] = MARKING_FAILED
     for key in marking.missing_cases:
         incomplete[key] = " (no marking)"
     for r in records:
@@ -977,6 +1006,10 @@ def _stored_int(value: object) -> int:
     return value
 
 
+def _stored_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
 def _marking_from_results(results: Mapping[str, object], records: Sequence[CallRecord]) -> _Marking:
     """Rebuild a run's `_Marking` from its stored ``results.json``.
 
@@ -1041,15 +1074,17 @@ def _marking_from_results(results: Mapping[str, object], records: Sequence[CallR
             for q in qrs
             if q.get("scored", True)
         ),
-        unmarked_cases=unmarked
-        | {
+        unmarked_cases=unmarked,
+        failed_cases=frozenset(
             str(q["case_key"])
             for q in qrs
             if _failed_marking(
+                marker_source=_stored_str(q.get("marker_source")),
                 scored=q.get("scored", True) is not False,
                 needs_teacher_review=q.get("needs_teacher_review") is True,
+                review_reason=_stored_str(q.get("review_reason")),
             )
-        },
+        ),
         missing_cases=frozenset(case_keys) - marked - unmarked,
         id_match_rate=float(id_match) if isinstance(id_match, int | float) else None,
     )

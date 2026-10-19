@@ -31,6 +31,7 @@ from lemely.accuracy.harness import (
 )
 from lemely.eval.manifest import RunManifest
 from lemely.eval.records import EvalRecord
+from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
 from lemely.io.gemini import CallRecord, UnpricedModelError
 from lemely.runtime.config import Settings
 from lemely.runtime.events import EventType, bus
@@ -51,6 +52,8 @@ def _qr(
     *,
     scored: bool = True,
     needs_teacher_review: bool = False,
+    marker_source: str | None = None,
+    review_reason: str | None = None,
 ) -> QuestionResult:
     return QuestionResult(
         question_id=qid,
@@ -60,6 +63,8 @@ def _qr(
         confidence_score=0.9,
         needs_teacher_review=needs_teacher_review,
         scored=scored,
+        review_reason=review_reason,
+        marker_source=marker_source,
     )
 
 
@@ -219,9 +224,9 @@ def test_incomplete_case_listed() -> None:
     # (scored=False, needs_teacher_review=True), so the case is incomplete.
     recs.append(_rec("p5", parse_ok=False))
     ers.append(_er("p5", "1a", outcome="abstain"))
-    qrs.append(_qr("1a", 0, 1, scored=False, needs_teacher_review=True))
+    qrs.append(_qr("1a", 0, 1, scored=False, needs_teacher_review=True, marker_source="missing"))
     s = summarise(_result(qrs, ers), recs)
-    assert s.incomplete == ("p2", "p3", "p5")
+    assert s.incomplete == ("p2", "p3", "p5 (marking failed)")
     assert s.validity_rate == 0.0
 
 
@@ -1492,6 +1497,8 @@ def test_results_json_records_cases_and_unmarked_leaves(
     )
     data = json.loads((tmp_path / "baseline" / "results.json").read_text())
     assert data["case_keys"] == ["a", "b"]
+    # Stored so resummarise keys a failed marking on its source, not on the flags.
+    assert "marker_source" in data["question_results"][0]
     assert data["unmarked_leaves"] == [
         {"case_key": "a", "question_id": "1b", "outcome": "excluded"},
         {"case_key": "b", "question_id": "1", "outcome": "unmatched"},
@@ -1630,26 +1637,64 @@ def test_resummarise_of_missing_run_is_a_clear_error(tmp_path: Path) -> None:
 # --- fix round 6: failed marking is a shortfall; resummarise cannot rewrite judged history ---
 
 
-def test_failed_marking_call_makes_case_incomplete() -> None:
+@pytest.mark.parametrize("source", ["missing", "dropped"])
+def test_failed_marking_call_makes_case_incomplete(source: str) -> None:
     # The call failed to parse AND produced no usable marking: correction_ai builds a
-    # "missing" leaf (scored=False, needs_teacher_review=True) that the harness counts
-    # as marked, so the funnel shows no shortfall. The case is still incomplete.
-    qrs = [_qr("1a", 1, 1), _qr("1b", 0, 2, scored=False, needs_teacher_review=True)]
+    # "missing" (or, for extraction, "dropped") leaf that the harness counts as
+    # marked, so the funnel shows no shortfall. The case is still incomplete.
+    failed = _qr("1b", 0, 2, scored=False, needs_teacher_review=True, marker_source=source)
+    qrs = [_qr("1a", 1, 1, marker_source="ai"), failed, _qr("1a", 1, 1, marker_source="ai")]
     ers = [_er("p1", "1a"), _er("p1", "1b", outcome="abstain"), _er("p2", "1a")]
-    qrs.append(_qr("1a", 1, 1))
     recs = [_rec("p1"), _rec("p1", parse_ok=False), _rec("p2")]
     s = summarise(_result(qrs, ers), recs)
-    assert s.incomplete == ("p1",)
+    assert s.incomplete == ("p1 (marking failed)",)
     assert s.scored_parts == 2
 
 
-def test_blank_answer_leaf_keeps_case_complete() -> None:
-    # A blank answer is unscored but needs no teacher review: the case is complete.
-    qrs = [_qr("1a", 1, 1), _qr("1b", 0, 2, scored=False, needs_teacher_review=False)]
+_BLANK = _BLANK_ANSWER_REVIEW_REASON
+
+
+@pytest.mark.parametrize(
+    ("review", "reason"),
+    [(False, _BLANK), (True, f"{_BLANK}; binding unverified")],
+    ids=["unflagged", "flagged-by-binder"],
+)
+def test_blank_answer_leaf_keeps_case_complete(review: bool, reason: str) -> None:
+    # A blank is unscored, and the binder may flag it for review after it is built
+    # ("unverified" binding). It is a real marking either way: the case is complete.
+    blank = _qr(
+        "1b",
+        0,
+        2,
+        scored=False,
+        needs_teacher_review=review,
+        marker_source="blank",
+        review_reason=reason,
+    )
+    qrs = [_qr("1a", 1, 1, marker_source="ai"), blank]
     ers = [_er("p1", "1a"), _er("p1", "1b", outcome="abstain")]
     s = summarise(_result(qrs, ers), [_rec("p1")])
     assert s.incomplete == ()
     assert s.scored_parts == 1
+
+
+@pytest.mark.parametrize(
+    ("reason", "incomplete"),
+    [
+        (f"{_BLANK}; binding unverified", ()),
+        ("AI marking failed: boom", ("p1 (marking failed)",)),
+        (None, ("p1 (marking failed)",)),
+    ],
+    ids=["flagged-blank", "failed-call", "no-reason"],
+)
+def test_without_marker_source_the_review_reason_decides(
+    reason: str | None, incomplete: tuple[str, ...]
+) -> None:
+    # A QuestionResult with no marker_source (built before it was recorded) falls
+    # back to: unscored, flagged, and not a blank by its review reason.
+    leaf = _qr("1b", 0, 2, scored=False, needs_teacher_review=True, review_reason=reason)
+    s = summarise(_result([_qr("1a", 1, 1), leaf], [_er("p1", "1a"), _er("p1", "1b")]), [])
+    assert s.incomplete == incomplete
 
 
 def _stored_qr(case: str, qid: str, **kw: object) -> dict[str, object]:
@@ -1697,17 +1742,27 @@ def test_resummarise_counts_a_failed_marking_leaf_as_incomplete(tmp_path: Path) 
         tmp_path,
         "baseline",
         [
-            _stored_qr("a", "1a"),
-            _stored_qr("a", "1b", scored=False, needs_teacher_review=True),  # failed call
-            _stored_qr("b", "1a", scored=False, needs_teacher_review=False),  # blank
-            _stored_qr("c", "1a"),
+            _stored_qr("a", "1a", marker_source="ai"),
+            _stored_qr("a", "1b", scored=False, needs_teacher_review=True, marker_source="missing"),
+            _stored_qr("b", "1a", scored=False, needs_teacher_review=False, marker_source="blank"),
+            _stored_qr("c", "1a", marker_source="ai"),
+            _stored_qr(
+                "d",
+                "1a",
+                scored=False,
+                needs_teacher_review=True,
+                marker_source="blank",
+                review_reason=f"{_BLANK}; binding unverified",
+            ),
+            _stored_qr("e", "1a", scored=False, needs_teacher_review=True, marker_source="dropped"),
         ],
         records=[_rec("a", parse_ok=False), _rec("a"), _rec("b"), _rec("c", parse_ok=False)],
     )
     summary = runner.resummarise("baseline", out_dir=tmp_path)
     # a: parse failure + missing leaf -> incomplete; b: blank -> complete;
-    # c: recovered parse failure, all leaves marked -> complete.
-    assert summary.incomplete == ("a",)
+    # c: recovered parse failure, all leaves marked -> complete; d: blank the binder
+    # flagged -> complete; e: dropped leaf -> incomplete.
+    assert summary.incomplete == ("a (marking failed)", "e (marking failed)")
     assert summary.validity_rate == 0.5
 
 
@@ -1716,15 +1771,32 @@ def test_resummarise_old_format_counts_a_failed_marking_leaf(tmp_path: Path) -> 
     path = _stored_run(
         tmp_path,
         "baseline",
-        [_stored_qr("a", "1a", scored=False, needs_teacher_review=True), _stored_qr("b", "1a")],
-        records=[_rec("a"), _rec("b")],
+        [
+            _stored_qr(
+                "a",
+                "1a",
+                scored=False,
+                needs_teacher_review=True,
+                review_reason="AI marking failed: boom",
+            ),
+            _stored_qr("b", "1a"),
+            _stored_qr(
+                "c",
+                "1a",
+                scored=False,
+                needs_teacher_review=True,
+                review_reason=f"{_BLANK}; binding unverified",
+            ),
+        ],
+        records=[_rec("a"), _rec("b"), _rec("c")],
     )
     results = path.parent / "results.json"
     data = json.loads(results.read_text())
     del data["case_keys"], data["unmarked_leaves"]
-    data["funnel"] = {"leaves": 2, "extracted": 2, "matched": 2, "marked": 2}
+    data["funnel"] = {"leaves": 3, "extracted": 3, "matched": 3, "marked": 3}
     results.write_text(json.dumps(data))
-    assert runner.resummarise("baseline", out_dir=tmp_path).incomplete == ("a",)
+    # No marker_source stored: the review reason tells the flagged blank (c) apart.
+    assert runner.resummarise("baseline", out_dir=tmp_path).incomplete == ("a (marking failed)",)
 
 
 @pytest.mark.parametrize(
@@ -1755,3 +1827,46 @@ def test_resummarise_of_a_judged_screen_is_refused(tmp_path: Path) -> None:
     with pytest.raises(runner.LadderStateError, match=r"verdict\.json"):
         runner.resummarise("lever1", out_dir=tmp_path)
     assert path.read_text() == before
+
+
+# The marker_source decides whenever it is present, even where the review-reason
+# fallback would disagree: a blank flagged under another reason stays complete, and
+# a missing leaf is a failed marking even if it was never flagged.
+_SOURCE_DECIDES = [
+    ("blank", True, "binding unverified", ()),
+    ("missing", False, None, ("p1 (marking failed)",)),
+]
+
+
+@pytest.mark.parametrize(("source", "review", "reason", "incomplete"), _SOURCE_DECIDES)
+def test_marker_source_takes_precedence_live(
+    source: str, review: bool, reason: str | None, incomplete: tuple[str, ...]
+) -> None:
+    leaf = _qr(
+        "1b",
+        0,
+        2,
+        scored=False,
+        needs_teacher_review=review,
+        marker_source=source,
+        review_reason=reason,
+    )
+    qrs = [_qr("1a", 1, 1, marker_source="ai"), leaf]
+    s = summarise(_result(qrs, [_er("p1", "1a"), _er("p1", "1b")]), [])
+    assert s.incomplete == incomplete
+
+
+@pytest.mark.parametrize(("source", "review", "reason", "incomplete"), _SOURCE_DECIDES)
+def test_marker_source_takes_precedence_stored(
+    tmp_path: Path, source: str, review: bool, reason: str | None, incomplete: tuple[str, ...]
+) -> None:
+    leaf = _stored_qr(
+        "p1",
+        "1b",
+        scored=False,
+        needs_teacher_review=review,
+        marker_source=source,
+        review_reason=reason,
+    )
+    _stored_run(tmp_path, "baseline", [_stored_qr("p1", "1a", marker_source="ai"), leaf])
+    assert runner.resummarise("baseline", out_dir=tmp_path).incomplete == incomplete

@@ -573,6 +573,46 @@ class MeasureAccuracyTests(unittest.TestCase):
         self.assertEqual(len(result.question_results), 1)
         self.assertTrue(result.question_results[0].is_correct)
 
+    def test_question_results_carry_marker_source(self):
+        """Cost-ladder round 7: each QuestionResult records the leaf's marker_source,
+        so a failed marking ("missing"/"dropped") can be told from a blank even
+        after the binder flags the blank for review."""
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+
+        mcq = GoldenCase(
+            paper_id="p1",
+            mark_scheme=self._mark_scheme(["1"]),
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=None,
+        )
+        theory = GoldenCase(
+            paper_id="p2",
+            mark_scheme=CostCeilingAbortsTheSweepTests._theory_mark_scheme(["1", "2"]),
+            ground_truth={
+                "1": GoldenAnswer(student_answer="", awarded_marks=0),
+                "2": GoldenAnswer(student_answer="the reason", awarded_marks=2),
+            },
+            scan_path=None,
+        )
+        from unittest.mock import MagicMock
+
+        from lemely.io.correction_ai import AICorrector
+
+        def failing_mark(*_a: object, **_k: object) -> object:
+            raise ValueError("model returned nothing usable")
+
+        with patch.object(AICorrector, "mark_question", failing_mark):
+            result = measure_accuracy(
+                [mcq, theory],
+                gemini_client=MagicMock(default_cache_mode="bypass"),
+                settings=None,
+                arm="oracle+mark",
+            )
+        sources = [q.marker_source for q in result.question_results]
+        self.assertEqual(len(sources), 3)
+        self.assertNotIn(sources[0], (None, "missing", "dropped", "blank"))
+        self.assertEqual(sources[1:], ["blank", "missing"])  # the failed AI marking is missing
+
     def test_oracle_arm_corrections_are_never_gated_on_addresses_question(self):
         """The correction-only arm marks golden answer text that was never
         read off a scan, so the binding gate's off-topic check (G8) does not

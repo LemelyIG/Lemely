@@ -354,6 +354,10 @@ class QuestionResult:
     extraction_confidence: float | None = None
     maximum_marks: int | None = None
     review_reason: str | None = None
+    #: The leaf's ``CorrectedQuestion.marker_source`` ("missing"/"dropped" for a
+    #: marking or extraction that failed outright, "blank" for a blank answer).
+    #: ``None`` for a result built without one.
+    marker_source: str | None = None
 
     @property
     def is_correct(self) -> bool:
@@ -1487,6 +1491,7 @@ def measure_accuracy(
                 ),
                 maximum_marks=cq.maximum_marks,
                 review_reason=cq.review_reason,
+                marker_source=cq.marker_source,
             )
             all_results.append(question_result)
             eval_records.append(
