@@ -4,13 +4,18 @@ Pure: Pillow only, no I/O, no SDK. The result is deterministic in the input byte
 and the constants below; ``IMG_FIT_VERSION`` goes into the Claude cache key, so a
 policy change invalidates replies cached under the old one.
 
-1. Greyscale every page, unless it carries meaningful colour (two or more ink
-   colours, :func:`has_colour_ink`).
+1. Greyscale every page (transparency composited onto white), for readability rather
+   than size: tokens are ``w * h / 750`` whatever the colour.
 2. Estimate tokens per page as ``w * h / 750``.
 3. Step the long edge down (2576, 2200, 2000, 1800, then the floor) while the
    request is over ``token_budget`` or ``byte_limit``.
 4. Stop at ``floor_px``: below it handwriting is treated as unreadable. Being over a
    budget there is reported in the result, never raised: the caller decides.
+
+Each page is enhanced after it is resized to the chosen long edge, so sharpening acts at
+the scale the model sees (:func:`enhance_page`): paper shading is divided out, the levels are
+stretched so paper is white and ink dark, and a mild unsharp mask crisps strokes. There is
+no thresholding: it would destroy faint pencil.
 """
 
 from __future__ import annotations
@@ -20,14 +25,19 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from PIL import Image, ImageChops, UnidentifiedImageError
+import numpy as np
+from PIL import Image, ImageFilter, UnidentifiedImageError
 
 from lemely.io.providers import ProviderError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-IMG_FIT_VERSION = "v1"
+    from numpy.typing import NDArray
+
+IMG_FIT_VERSION = "v2"
+#: Cache-key version of the unenhanced variant (``fit(..., enhance=False)``): its pixels differ.
+IMG_FIT_VERSION_PLAIN = "v2-plain"
 LONG_EDGE_STEPS: tuple[int, ...] = (2576, 2200, 2000, 1800, 1568)
 #: Above this many images in one request the API holds each to MANY_IMAGES_LONG_EDGE.
 MANY_IMAGES_THRESHOLD = 20
@@ -41,13 +51,30 @@ DEFAULT_FLOOR_PX = 1568
 THUMBNAIL_LONG_EDGE = 768
 PIXELS_PER_TOKEN = 750
 
-_GREY_MODES = frozenset({"1", "L", "LA", "I", "I;16", "F"})
-_SATURATION_MIN = 90
-_VALUE_MIN = 60
-_HUE_FAMILIES = 6
-#: Shift so that red (hue near 0 and near 255) falls in one family.
-_HUE_SHIFT = 21
-_HUE_FAMILY_MIN_SHARE = 0.001
+#: Paper shading is estimated on a page shrunk by this factor, so a 3 px stroke is mostly
+#: averaged away and the local maximum below recovers the paper.
+_BG_REDUCE = 16
+#: Odd max-filter width in reduced pixels (about 110 px at full size): wider than a stroke
+#: or a handwritten letter, so ink never counts as paper.
+_BG_MAX_WINDOW = 7
+#: Blur radius in reduced pixels that turns the blocky max-filter into smooth shading.
+_BG_BLUR_RADIUS = 2.0
+#: The paper estimate is never taken below this, so a dark region (a shaded diagram, a page
+#: edge) is not divided by a tiny number and blown out to white.
+_BG_FLOOR = 96
+#: Fraction of pixels clipped at each end of the levels stretch: enough to ignore dust and
+#: the odd saturated pixel, small enough that sparse pencil does not become the clip.
+_LEVELS_CLIP_LOW = 0.002
+_LEVELS_CLIP_HIGH = 0.005
+#: Below this ink-to-paper span (grey levels) the page is blank or noise, and stretching
+#: would blow the noise up into fake writing; faint pencil on shaded paper sits above it.
+_LEVELS_MIN_SPAN = 24
+#: Unsharp mask radius in pixels at the final edge: about a pen stroke wide at 2000 px.
+_SHARPEN_RADIUS = 1.3
+#: Unsharp strength in percent: crisp edges without ringing around dense writing.
+_SHARPEN_PERCENT = 80
+#: Edges under this many grey levels are left alone, so paper grain is not sharpened.
+_SHARPEN_THRESHOLD = 3
 
 
 @dataclass(frozen=True)
@@ -61,14 +88,6 @@ class FittedImages:
     base64_bytes: int
     over_token_budget: bool
     over_byte_limit: bool
-    colour_pages: tuple[int, ...]
-
-
-@dataclass(frozen=True)
-class _Page:
-    original: bytes
-    image: Image.Image
-    as_is: bool
 
 
 def estimate_tokens(width: int, height: int) -> int:
@@ -81,26 +100,32 @@ def base64_len(n: int) -> int:
     return 4 * math.ceil(n / 3)
 
 
-def has_colour_ink(img: Image.Image) -> bool:
-    """True when two or more saturated hue families each cover 0.1% of the page.
+def _background(grey: Image.Image) -> NDArray[np.float32]:
+    """The paper level at every pixel of ``grey`` as floats: shading, yellowing, gradients."""
+    small = grey.reduce(_BG_REDUCE).filter(ImageFilter.MaxFilter(_BG_MAX_WINDOW))
+    smooth = small.filter(ImageFilter.GaussianBlur(_BG_BLUR_RADIUS))
+    full = smooth.resize(grey.size, Image.Resampling.BILINEAR)
+    return np.maximum(np.asarray(full, dtype=np.float32), _BG_FLOOR)
 
-    Measured at full resolution, with masks and histograms in Pillow's C code: shrinking
-    the page first averages a 3 px pen stroke into paper and loses it.
-    """
-    hue, sat, val = img.convert("RGB").convert("HSV").split()
-    if not any(sat.histogram()[_SATURATION_MIN:]):
-        return False
-    not_inked = ImageChops.invert(
-        ImageChops.multiply(
-            sat.point([255 if s >= _SATURATION_MIN else 0 for s in range(256)]),
-            val.point([255 if v >= _VALUE_MIN else 0 for v in range(256)]),
-        )
+
+def _stretch_levels(grey: Image.Image) -> Image.Image:
+    """``grey`` with the darkest and lightest few pixels clipped and the rest spread out."""
+    cumulative = np.cumsum(grey.histogram()) / (grey.width * grey.height)
+    low = int(np.searchsorted(cumulative, _LEVELS_CLIP_LOW))
+    high = int(np.searchsorted(cumulative, 1 - _LEVELS_CLIP_HIGH))
+    if high - low < _LEVELS_MIN_SPAN:
+        return grey
+    scale = 255 / (high - low)
+    return grey.point([min(255, max(0, round((v - low) * scale))) for v in range(256)])
+
+
+def enhance_page(grey: Image.Image) -> Image.Image:
+    """``grey`` (mode L) flattened, level-stretched and mildly sharpened for reading."""
+    flat = np.clip(np.asarray(grey, dtype=np.float32) * (255 / _background(grey)), 0, 255)
+    stretched = _stretch_levels(Image.fromarray(np.rint(flat).astype(np.uint8), "L"))
+    return stretched.filter(
+        ImageFilter.UnsharpMask(_SHARPEN_RADIUS, _SHARPEN_PERCENT, _SHARPEN_THRESHOLD)
     )
-    # Hue to family id; inked pixels keep it, the rest become 255 and fall outside 0..5.
-    family_of = hue.point([((h + _HUE_SHIFT) % 256) * _HUE_FAMILIES // 256 for h in range(256)])
-    counts = ImageChops.lighter(family_of, not_inked).histogram()[:_HUE_FAMILIES]
-    total = img.width * img.height
-    return sum(1 for c in counts if c / total >= _HUE_FAMILY_MIN_SHARE) >= 2
 
 
 def steps_for(floor_px: int, count: int) -> tuple[int, ...]:
@@ -134,34 +159,28 @@ def _on_white(img: Image.Image) -> Image.Image:
     return img
 
 
-def _prepare(
-    data: bytes, page: int, first_edge: int, *, detect_colour: bool = True
-) -> tuple[_Page, bool]:
-    """The page decoded, greyscaled unless meaningful colour, held to ``first_edge``."""
+def _prepare(data: bytes, page: int, first_edge: int) -> Image.Image:
+    """The page decoded as greyscale on white and held to ``first_edge``."""
     try:
         with Image.open(io.BytesIO(data)) as src:
             src.load()
-            fmt = src.format
-            if src.mode in _GREY_MODES:
-                work, colour = _on_white(src).convert("L"), False
-            else:
-                rgb = _on_white(src).convert("RGB")
-                colour = detect_colour and has_colour_ink(rgb)
-                work = rgb if colour else rgb.convert("L")
-            as_is = fmt == "PNG" and src.mode == ("RGB" if colour else "L")
-            if max(work.size) > first_edge:
-                work, as_is = _resized(work, first_edge), False
+            work = _on_white(src).convert("L")
+        return _resized(work, first_edge)
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise ProviderError(f"page {page} could not be read as an image: {exc}") from exc
-    return _Page(original=data, image=work, as_is=as_is), colour
 
 
-def _encode(page: _Page, long_edge: int, number: int) -> bytes:
-    if page.as_is and max(page.image.size) <= long_edge:
-        return page.original
+def img_fit_version(*, enhance: bool = True) -> str:
+    """The cache-key version for output made with or without enhancement."""
+    return IMG_FIT_VERSION if enhance else IMG_FIT_VERSION_PLAIN
+
+
+def _encode(page: Image.Image, long_edge: int, number: int, *, enhance: bool) -> bytes:
+    """``page`` at ``long_edge``, enhanced there unless ``enhance`` is False, as PNG bytes."""
     try:
         out = io.BytesIO()
-        _resized(page.image, long_edge).save(out, "PNG")
+        sized = _resized(page, long_edge)
+        (enhance_page(sized) if enhance else sized).save(out, "PNG")
     except (OSError, ValueError) as exc:
         raise ProviderError(f"page {number} could not be encoded: {exc}") from exc
     return out.getvalue()
@@ -173,10 +192,12 @@ def fit(
     byte_limit: int | None = DEFAULT_BYTE_LIMIT,
     token_budget: int = DEFAULT_TOKEN_BUDGET,
     floor_px: int = DEFAULT_FLOOR_PX,
+    enhance: bool = True,
 ) -> FittedImages:
     """``images`` greyscaled and stepped down until under both limits, or at the floor.
 
-    ``byte_limit`` None means the images go by Files API id: no inline limit.
+    ``byte_limit`` None means the images go by Files API id: no inline limit. ``enhance``
+    False sends plain greyscale pages; pair it with :func:`img_fit_version` in cache keys.
 
     Raises:
         ProviderError: a page cannot be read or encoded (named by its 1-based number).
@@ -185,23 +206,21 @@ def fit(
     if floor_px < 1:
         raise ValueError(f"floor_px must be positive, got {floor_px}")
     steps = steps_for(floor_px, len(images))
-    pages: list[_Page] = []
-    colour_pages: list[int] = []
-    for number, data in enumerate(images, start=1):
-        page, colour = _prepare(data, number, steps[0])
-        pages.append(page)
-        if colour:
-            colour_pages.append(number)
+    pages = [_prepare(data, number, steps[0]) for number, data in enumerate(images, start=1)]
     for edge in steps:
-        page_tokens = tuple(
-            estimate_tokens(*_size_at(p.image.width, p.image.height, edge)) for p in pages
-        )
+        page_tokens = tuple(estimate_tokens(*_size_at(p.width, p.height, edge)) for p in pages)
         tokens = sum(page_tokens)
         last = edge == steps[-1]
         if tokens > token_budget and not last:
             continue
-        encoded = tuple(_encode(p, edge, n) for n, p in enumerate(pages, start=1))
-        b64 = sum(base64_len(len(e)) for e in encoded)
+        encoded_pages: list[bytes] = []
+        b64 = 0
+        for n, p in enumerate(pages, start=1):
+            encoded_pages.append(_encode(p, edge, n, enhance=enhance))
+            b64 += base64_len(len(encoded_pages[-1]))
+            if not last and byte_limit is not None and b64 > byte_limit:
+                break  # already over: the remaining pages cannot bring this step back under
+        encoded = tuple(encoded_pages)
         over_tokens = tokens > token_budget
         over_bytes = byte_limit is not None and b64 > byte_limit
         if last or not (over_tokens or over_bytes):
@@ -213,21 +232,15 @@ def fit(
                 base64_bytes=b64,
                 over_token_budget=over_tokens,
                 over_byte_limit=over_bytes,
-                colour_pages=tuple(colour_pages),
             )
     raise AssertionError("unreachable: the last step always returns")  # pragma: no cover
 
 
 def thumbnails(
-    images: Sequence[bytes], *, long_edge: int = THUMBNAIL_LONG_EDGE
+    images: Sequence[bytes], *, long_edge: int = THUMBNAIL_LONG_EDGE, enhance: bool = True
 ) -> tuple[bytes, ...]:
-    """Greyscale PNG thumbnails, ``long_edge`` on the long side, for an overview pass."""
-    out: list[bytes] = []
-    for number, data in enumerate(images, start=1):
-        page = _Page(
-            original=data,
-            image=_prepare(data, number, long_edge, detect_colour=False)[0].image.convert("L"),
-            as_is=False,
-        )
-        out.append(_encode(page, long_edge, number))
-    return tuple(out)
+    """Enhanced greyscale PNG thumbnails, ``long_edge`` on the long side, for an overview."""
+    return tuple(
+        _encode(_prepare(data, number, long_edge), long_edge, number, enhance=enhance)
+        for number, data in enumerate(images, start=1)
+    )

@@ -1,4 +1,4 @@
-"""Spec 2026-10-19 §2: greyscale, token and byte budgets, floor, and a real-size fixture."""
+"""Spec 2026-10-19 §2: greyscale, enhancement, token and byte budgets, floor, real-size fixture."""
 
 from __future__ import annotations
 
@@ -8,15 +8,19 @@ import random
 import unittest
 from unittest.mock import patch
 
-from PIL import Image, ImageDraw
+import numpy as np
+from PIL import Image, ImageDraw, ImageFilter
 
 from lemely.io.llm import image_fit
 from lemely.io.llm.image_fit import (
     DEFAULT_BYTE_LIMIT,
     DEFAULT_TOKEN_BUDGET,
+    IMG_FIT_VERSION,
+    IMG_FIT_VERSION_PLAIN,
+    enhance_page,
     estimate_tokens,
     fit,
-    has_colour_ink,
+    img_fit_version,
     steps_for,
     thumbnails,
 )
@@ -47,13 +51,10 @@ def _page(width: int, height: int, *, inks: tuple[tuple[int, int, int], ...] = (
 def _realistic_page() -> bytes:
     """One 2430x3439 RGB scan page: noisy near-white paper and 40 lines of blue writing."""
     rng = random.Random(41)
-    channels = [
-        Image.frombytes("L", (_REAL_W, _REAL_H), rng.randbytes(_REAL_W * _REAL_H)).point(
-            lambda v: 255 - _NOISE_LEVELS + v % _NOISE_LEVELS
-        )
-        for _ in range(3)
-    ]
-    page = Image.merge("RGB", channels)
+    noise = np.random.default_rng(41).integers(
+        255 - _NOISE_LEVELS, 255, (_REAL_H, _REAL_W, 3), dtype=np.uint8
+    )
+    page = Image.fromarray(noise, "RGB")
     draw = ImageDraw.Draw(page)
     for line in range(40):
         y = 300 + line * 75
@@ -66,31 +67,112 @@ def _realistic_page() -> bytes:
     return _png(page)
 
 
-def _realistic_with_marks(*, red_width: int | None) -> Image.Image:
-    """The realistic blue-writing page, plus 60 red ticks of ``red_width`` px if given."""
-    with Image.open(io.BytesIO(_realistic_page())) as src:
-        page = src.convert("RGB")
-    if red_width is not None:
-        draw = ImageDraw.Draw(page)
-        for tick in range(60):
-            y = 300 + tick * 50
-            draw.line([(2250, y), (2330, y - 30)], fill=(200, 20, 20), width=red_width)
-    return page
+def _grey_with_lines(
+    width: int, height: int, *, paper: tuple[int, int], ink: int, rows: tuple[int, ...]
+) -> Image.Image:
+    """A grey page shaded left to right from ``paper[0]`` to ``paper[1]``, with 3 px strokes."""
+    shade = np.linspace(paper[0], paper[1], width).round().astype(np.uint8)
+    img = Image.fromarray(np.tile(shade, (height, 1)), "L")
+    draw = ImageDraw.Draw(img)
+    for y in rows:
+        draw.line([(width // 8, y), (width * 7 // 8, y)], fill=ink, width=3)
+    return img
 
 
-class ColourTests(unittest.TestCase):
-    def test_pen_width_blue_and_red_strokes_on_a_full_size_page_are_colour(self) -> None:
-        """3 px strokes vanish if the page is shrunk before the saturation check."""
-        self.assertTrue(has_colour_ink(_realistic_with_marks(red_width=3)))
-        self.assertTrue(has_colour_ink(_realistic_with_marks(red_width=6)))
+def _mean(img: Image.Image, box: tuple[int, int, int, int]) -> float:
+    return float(np.asarray(img.crop(box)).mean())
 
-    def test_pen_width_blue_writing_alone_on_a_full_size_page_is_one_family(self) -> None:
-        self.assertFalse(has_colour_ink(_realistic_with_marks(red_width=None)))
 
-    def test_noisy_grey_scan_is_not_colour(self) -> None:
-        with Image.open(io.BytesIO(_realistic_page())) as src:
-            grey = src.convert("L").convert("RGB")
-        self.assertFalse(has_colour_ink(grey))
+def _stdev(img: Image.Image, box: tuple[int, int, int, int]) -> float:
+    return float(np.asarray(img.crop(box)).std())
+
+
+class EnhanceTests(unittest.TestCase):
+    _W, _H = 800, 1000
+    _ROWS = tuple(range(150, 900, 60))
+
+    def test_faint_pencil_keeps_or_gains_contrast_and_is_not_clipped_to_white(self) -> None:
+        page = _grey_with_lines(self._W, self._H, paper=(225, 225), ink=185, rows=self._ROWS)
+        out = enhance_page(page)
+        stroke_after = _mean(out, (400, 149, 420, 152))
+        paper_after = _mean(out, (400, 160, 420, 180))
+        # Flattening alone lifts the paper to 255 and gives a contrast of about 45; the
+        # levels stretch is what doubles it.
+        self.assertGreaterEqual(paper_after - stroke_after, 2 * (225 - 185))
+        self.assertLess(stroke_after, 120)
+
+    def test_dark_ink_stays_dark_and_paper_goes_white(self) -> None:
+        page = _grey_with_lines(self._W, self._H, paper=(230, 230), ink=30, rows=self._ROWS)
+        out = enhance_page(page)
+        self.assertLess(_mean(out, (400, 149, 420, 152)), 60)
+        self.assertGreater(_mean(out, (400, 160, 420, 180)), 245)
+
+    def test_shaded_paper_is_flattened(self) -> None:
+        """A left-to-right shading from 150 to 250 loses most of its spread."""
+        page = _grey_with_lines(
+            self._W,
+            self._H,
+            paper=(150, 250),
+            ink=40,
+            rows=self._ROWS,
+        )
+        band = (0, 160, self._W, 200)
+        self.assertGreater(_stdev(page, band), 25)
+        self.assertLess(_stdev(enhance_page(page), band), 6)
+
+    def test_edges_are_sharpened(self) -> None:
+        """A soft-edged band gets a steeper edge than with the unsharp mask turned off."""
+        band = Image.new("L", (self._W, self._H), 230)
+        ImageDraw.Draw(band).rectangle([200, 300, 600, 700], fill=40)
+        soft = band.filter(ImageFilter.GaussianBlur(2))
+
+        def steepest(img: Image.Image) -> int:
+            row = np.asarray(img, dtype=np.int16)[500]
+            return int(np.abs(np.diff(row)).max())
+
+        with patch.object(image_fit, "_SHARPEN_PERCENT", 0):
+            unsharpened = steepest(enhance_page(soft))
+        self.assertGreater(steepest(enhance_page(soft)), unsharpened)
+
+    def test_blank_noisy_paper_is_not_stretched_into_writing(self) -> None:
+        noise = np.random.default_rng(3).integers(232, 239, (self._H, self._W), dtype=np.uint8)
+        out = enhance_page(Image.fromarray(noise, "L"))
+        self.assertGreater(int(np.asarray(out).min()), 225)
+        self.assertLess(_stdev(out, (0, 0, self._W, self._H)), 5)
+
+    def test_enhancement_is_deterministic(self) -> None:
+        page = _grey_with_lines(self._W, self._H, paper=(200, 200), ink=60, rows=self._ROWS)
+        self.assertEqual(enhance_page(page).tobytes(), enhance_page(page).tobytes())
+
+    def test_enhanced_pages_differ_from_plain_ones(self) -> None:
+        page = _png(_grey_with_lines(400, 500, paper=(220, 220), ink=60, rows=(100, 200)))
+        plain = fit([page], enhance=False).images[0]
+        self.assertNotEqual(fit([page]).images[0], plain)
+        with Image.open(io.BytesIO(plain)) as img:
+            self.assertEqual(img.getpixel((10, 10)), 220)
+
+    def test_cache_version_differs_between_variants(self) -> None:
+        self.assertEqual(img_fit_version(), IMG_FIT_VERSION)
+        self.assertEqual(img_fit_version(enhance=False), IMG_FIT_VERSION_PLAIN)
+        self.assertEqual(IMG_FIT_VERSION, "v2")
+        self.assertNotEqual(IMG_FIT_VERSION, IMG_FIT_VERSION_PLAIN)
+
+
+class GreyscaleTests(unittest.TestCase):
+    def test_every_mode_is_sent_as_greyscale(self) -> None:
+        fills: tuple[tuple[str, float | tuple[float, ...]], ...] = (
+            ("L", 200),
+            ("RGB", (200, 10, 10)),
+            ("1", 1),
+            ("P", 3),
+            ("LA", (200, 255)),
+            ("RGBA", (200, 10, 10, 255)),
+        )
+        for mode, fill in fills:
+            with self.subTest(mode=mode):
+                fitted = fit([_png(Image.new(mode, (40, 40), fill))])
+                with Image.open(io.BytesIO(fitted.images[0])) as sent:
+                    self.assertEqual(sent.mode, "L")
 
     def test_transparent_pages_are_composited_onto_white(self) -> None:
         for mode, clear in (("LA", (0, 0)), ("RGBA", (0, 0, 0, 0))):
@@ -100,29 +182,19 @@ class ColourTests(unittest.TestCase):
                     self.assertEqual(sent.mode, "L")
                     self.assertEqual(sent.getpixel((20, 20)), 255)
 
-    def test_one_ink_is_not_meaningful_colour(self) -> None:
-        img = Image.open(io.BytesIO(_page(800, 1100, inks=((30, 40, 140),))))
-        self.assertFalse(has_colour_ink(img.convert("RGB")))
+    def test_png_with_a_transparency_key_is_composited_onto_white(self) -> None:
+        for mode, key in (("RGB", (0, 0, 0)), ("L", 0)):
+            with self.subTest(mode=mode):
+                buf = io.BytesIO()
+                Image.new(mode, (40, 40), key).save(buf, "PNG", transparency=key)
+                fitted = fit([buf.getvalue()], enhance=False)
+                with Image.open(io.BytesIO(fitted.images[0])) as sent:
+                    self.assertEqual(sent.getpixel((20, 20)), 255)
 
-    def test_two_inks_are_meaningful_colour(self) -> None:
-        img = Image.open(io.BytesIO(_page(800, 1100, inks=((30, 40, 140), (200, 20, 20)))))
-        self.assertTrue(has_colour_ink(img.convert("RGB")))
-
-    def test_single_ink_page_is_sent_greyscale(self) -> None:
-        fitted = fit([_page(800, 1100, inks=((30, 40, 140),))])
+    def test_colour_is_not_kept(self) -> None:
+        fitted = fit([_page(800, 1100, inks=((30, 40, 140), (200, 20, 20)))])
         with Image.open(io.BytesIO(fitted.images[0])) as sent:
             self.assertEqual(sent.mode, "L")
-        self.assertEqual(fitted.colour_pages, ())
-
-    def test_two_ink_page_keeps_its_colour(self) -> None:
-        fitted = fit([_page(800, 1100), _page(800, 1100, inks=((30, 40, 140), (200, 20, 20)))])
-        with Image.open(io.BytesIO(fitted.images[1])) as sent:
-            self.assertEqual(sent.mode, "RGB")
-        self.assertEqual(fitted.colour_pages, (2,))
-
-    def test_greyscale_png_within_the_edge_is_sent_byte_for_byte(self) -> None:
-        grey = _png(Image.new("L", (300, 400), 200))
-        self.assertEqual(fit([grey]).images, (grey,))
 
 
 class BudgetTests(unittest.TestCase):
@@ -157,6 +229,15 @@ class BudgetTests(unittest.TestCase):
         self.assertTrue(fitted.over_byte_limit)
         self.assertEqual(fitted.long_edge, 1568)
 
+    def test_a_step_over_the_byte_limit_stops_encoding_its_pages(self) -> None:
+        """Once page 1 is over the limit, pages 2..n cannot bring that step back under."""
+        with patch.object(image_fit, "_encode", wraps=image_fit._encode) as encode:
+            fitted = fit([_page(1000, 1400)] * 4, byte_limit=100)
+        # Five steps: the first four stop after one page each, the floor encodes all four.
+        self.assertEqual(encode.call_count, 4 * 1 + 4)
+        self.assertEqual(len(fitted.images), 4)
+        self.assertTrue(fitted.over_byte_limit)
+
     def test_no_byte_limit_for_file_uploads(self) -> None:
         self.assertFalse(fit([_page(1000, 1400)], byte_limit=None).over_byte_limit)
 
@@ -185,16 +266,17 @@ class ErrorTests(unittest.TestCase):
 
 
 class ThumbnailTests(unittest.TestCase):
-    def test_thumbnails_skip_colour_detection(self) -> None:
-        with patch.object(image_fit, "has_colour_ink") as detect:
-            thumbnails([_page(200, 300, inks=((30, 40, 140), (200, 20, 20)))])
-        detect.assert_not_called()
-
     def test_thumbnails_are_greyscale_at_768(self) -> None:
         (thumb,) = thumbnails([_page(_REAL_W, _REAL_H, inks=((30, 40, 140), (200, 20, 20)))])
         with Image.open(io.BytesIO(thumb)) as img:
             self.assertEqual(img.mode, "L")
             self.assertEqual(max(img.size), 768)
+
+    def test_thumbnails_are_enhanced_unless_asked_not_to(self) -> None:
+        page = _png(_grey_with_lines(400, 500, paper=(220, 220), ink=60, rows=(100, 200)))
+        self.assertNotEqual(
+            thumbnails([page], long_edge=300), thumbnails([page], long_edge=300, enhance=False)
+        )
 
 
 class RealisticFixtureTests(unittest.TestCase):
@@ -206,7 +288,6 @@ class RealisticFixtureTests(unittest.TestCase):
         self.assertLessEqual(fitted.base64_bytes, DEFAULT_BYTE_LIMIT)
         self.assertLessEqual(fitted.est_tokens, DEFAULT_TOKEN_BUDGET)
         self.assertFalse(fitted.over_byte_limit or fitted.over_token_budget)
-        self.assertEqual(fitted.colour_pages, ())
 
     def test_the_fixture_is_at_least_as_hard_as_the_real_scan(self) -> None:
         """Its 2576-edge RGB page is no smaller than the real script's (Task 2a step 6)."""
