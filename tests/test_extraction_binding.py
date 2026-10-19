@@ -3094,17 +3094,26 @@ def test_a_claude_second_read_on_trigger_uses_its_model(tmp_path: Path, scheme: 
     assert model.call("first")["model"] == _READ_MODEL
 
 
+@pytest.mark.parametrize("files_api", [True, False])
 def test_a_claude_second_read_sends_the_page_images_to_anthropic(
-    tmp_path: Path, scheme: MarkScheme
+    tmp_path: Path, scheme: MarkScheme, files_api: bool
 ) -> None:
-    """End to end through a real ``GeminiClient``: Gemini reads first, Claude second."""
+    """End to end through a real ``GeminiClient``: Gemini reads first, Claude second.
+
+    With the Files API on (the default) the pages are uploaded once and sent as
+    ``file_id`` image blocks, then deleted; with it off they go inline as base64.
+    """
     import io
     from types import SimpleNamespace
 
     from pydantic import SecretStr
 
+    settings_gemini = _settings(tmp_path, second_read_model=_CLAUDE).gemini
     settings = _settings(tmp_path, second_read_model=_CLAUDE).model_copy(
-        update={"anthropic_api_key": SecretStr("test-key")}
+        update={
+            "anthropic_api_key": SecretStr("test-key"),
+            "gemini": settings_gemini.model_copy(update={"claude_files_api": files_api}),
+        }
     )
     reply = json.dumps(_items(_run(1)))
     genai = fake_genai_client()
@@ -3129,7 +3138,17 @@ def test_a_claude_second_read_sends_the_page_images_to_anthropic(
             ),
         )
 
-    anthropic_fake = SimpleNamespace(messages=SimpleNamespace(create=create))
+    uploaded: list[str] = []
+    deleted: list[str] = []
+
+    def upload(**kwargs: Any) -> SimpleNamespace:
+        uploaded.append(kwargs["file"][0])
+        return SimpleNamespace(id=f"file_{len(uploaded)}")
+
+    anthropic_fake = SimpleNamespace(
+        messages=SimpleNamespace(create=create),
+        files=SimpleNamespace(upload=upload, delete=deleted.append),
+    )
     client = GeminiClient(settings, _genai_client=genai, _anthropic_client=anthropic_fake)
 
     def _png(index: int) -> bytes:
@@ -3156,3 +3175,12 @@ def test_a_claude_second_read_sends_the_page_images_to_anthropic(
     assert len(images) == _PAGE_COUNT
     assert content[-1]["type"] == "text"
     assert all(block["type"] == "image" for block in content[:_PAGE_COUNT])
+    if files_api:
+        assert [block["source"] for block in images] == [
+            {"type": "file", "file_id": f"file_{n}"} for n in range(1, _PAGE_COUNT + 1)
+        ]
+        assert len(uploaded) == _PAGE_COUNT
+        assert sorted(deleted) == sorted(f"file_{n}" for n in range(1, _PAGE_COUNT + 1))
+    else:
+        assert all(block["source"]["type"] == "base64" for block in images)
+        assert uploaded == [] and deleted == []
