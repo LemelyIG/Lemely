@@ -287,6 +287,12 @@ second_read = true
 # label missing, out of place or seen twice, or a gate check that fails
 # on it. With no reason the paper goes on with the first read, as with
 # second_read off.
+# Unsafe as shipped: a first read with every label present but writing
+# under the wrong labels fires no trigger, so the G9 cross-read check is
+# lost and those answers go out verified. Not screened; keep `always`.
+# COST: its blank_leaf trigger fires on every script with a genuinely
+# skipped part (5/5 reads of the one real scan on disk), so on real
+# scripts it saves far less than on the golden set (0/20 reads).
 second_read_mode = "always"
 # The model the legacy binder's one retry uses, when the gate is on.
 retry_model = "gemini-3.8-flash"

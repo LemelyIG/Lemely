@@ -143,6 +143,25 @@ def test_the_example_toml_lists_the_mode_with_its_default() -> None:
     assert (_ROOT / "lemely.toml.example").read_text(encoding="utf-8") == text
 
 
+def _squashed(text: str) -> str:
+    return " ".join(text.replace("#", " ").replace("``", "`").split())
+
+
+_UNSAFE = (
+    "Unsafe as shipped: a first read with every label present but writing under the wrong "
+    "labels fires no trigger, so the G9 cross-read check is lost and those answers go out "
+    "verified. Not screened; keep `always`."
+)
+
+
+def test_the_risk_of_on_trigger_is_stated_where_the_setting_is_configured() -> None:
+    for where in (render_example_toml(), BindingSettings.__doc__ or ""):
+        text = _squashed(where)
+        assert _squashed(_UNSAFE) in text
+        assert "blank_leaf" in text
+        assert "5/5 reads" in text
+
+
 # --------------------------------------------------------------------------------------
 # The triggers, one at a time, on a hand-built bound stream
 # --------------------------------------------------------------------------------------
@@ -517,5 +536,8 @@ def test_every_block_the_first_reader_missed_fires_a_trigger(
             changed.append(index)
             if not _triggers_of(first, scheme):
                 missed.append(index)
-    assert len(changed) >= len(blocks) * 3 // 4
+    # 48 blocks; removing 7 of them changes nothing (blank blocks and the second of two
+    # blocks under one label), so 41 pairs changed.
+    assert (len(blocks), len(changed)) == (48, 41)
+    assert [i for i in blocks if i not in changed] == [1, 15, 44, 70, 71, 79, 80]
     assert missed == []

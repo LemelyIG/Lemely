@@ -651,6 +651,13 @@ class BindingSettings(BaseModel):
     gate check failed). With no trigger the paper goes on with the first read, as it
     does with ``second_read`` off. Trigger recall is measured on recorded reads only:
     a second read that disagrees with a first read that looks whole is not seen.
+
+    Unsafe as shipped: a first read with every label present but writing under the
+    wrong labels fires no trigger, so the G9 cross-read check is lost and those answers
+    go out verified. Not screened; keep ``always``. Its cost is not what the golden
+    screen shows either: the ``blank_leaf`` trigger fires on every script with a
+    genuinely skipped part (5/5 reads of the one real scan on disk), so on real scripts
+    the second read is made far more often than on the golden set (0/20 reads).
     """
 
     model_config = ConfigDict(extra="forbid")
