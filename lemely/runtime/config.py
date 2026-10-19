@@ -181,8 +181,16 @@ class GeminiSettings(BaseModel):
     # model's threshold. Post-processing only: no prompt or cache key reads it.
     # Applies in ``lemely.io.correction_ai`` alone; the db/web layers still read
     # the 0.90 constant from the persisted ``confidence_score``.
+    #
+    # claude-haiku-5-5 = 0.85: `scripts/fit_review_threshold.py` on
+    # BUILD/accuracy-runs/cost-ladder-2026-10-19/a1-haiku/results.json, the
+    # highest threshold with review rate <= 10% (1/78 = 1.3%; 0.86 gives 12/78 =
+    # 15.4%, because 11 of Haiku's 70 AI marks sit at exactly 0.85). RISK: the
+    # same 0.85 cluster holds 4 of the screen's 5 mismarks, so in-sample flag
+    # recall falls from 0.80 to 0.00. Fitted and judged on the same 12 cases
+    # (leave-one-case-out refits all return 0.85; stable, not validated).
     review_confidence_threshold_for: dict[str, Annotated[float, Field(ge=0.0, le=1.0)]] = Field(
-        default_factory=dict
+        default_factory=lambda: {"claude-haiku-5-5": 0.85}
     )
     # LLM cost-ladder levers. Every default reproduces the pre-ladder behaviour.
     # Per-task-tag cache mode (unlisted tags behave as "read_write"). A tag mapped

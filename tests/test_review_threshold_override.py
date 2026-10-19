@@ -331,3 +331,29 @@ def test_threshold_is_in_no_prompt_or_cache_key(tmp_path: Path, isolated_env: No
     listed = _call_fingerprints(tmp_path / "b", {"gemini-3.8-flash": 0.5, "x": 0.99})
     assert empty
     assert listed == empty
+
+
+# ---------------------------------------------------------------------------
+# The shipped default: fitted for claude-haiku-5-5 only
+# ---------------------------------------------------------------------------
+
+
+def test_shipped_default_lists_only_haiku() -> None:
+    assert GeminiSettings().review_confidence_threshold_for == {"claude-haiku-5-5": 0.85}
+
+
+@pytest.mark.parametrize(
+    "model", ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "claude-x"]
+)
+def test_shipped_default_leaves_other_models_at_090(model: str) -> None:
+    assert review_threshold_for(GeminiSettings(), model) == REVIEW_CONFIDENCE_THRESHOLD
+
+
+def test_shipped_default_applies_to_a_haiku_mark() -> None:
+    g = GeminiSettings()
+    assert g.correction_model == "claude-haiku-5-5"
+    passed, _ = _mark_paper(g, [_mark(0.85)])
+    assert passed.needs_teacher_review is False
+    flagged, _ = _mark_paper(g, [_mark(0.84)])
+    assert flagged.needs_teacher_review is True
+    assert flagged.review_reason == "confidence 0.84 below review threshold 0.85"

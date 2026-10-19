@@ -44,7 +44,7 @@ model = "gemini-2.5-flash"
 # flagged for teacher review below its value (unlisted models: 0.90). A table
 # you set REPLACES the shipped one (no merge). Applies to the marking step;
 # the review queue and teacher console still read the 0.90 constant.
-# review_confidence_threshold_for = {}
+# review_confidence_threshold_for = { "claude-haiku-5-5" = 0.85 }
 
 # LLM cost-ladder levers (all default to the pre-ladder behaviour).
 # Per-task cache mode: read_write | bypass | refresh (unlisted tags read_write).
