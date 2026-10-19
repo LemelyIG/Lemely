@@ -55,7 +55,8 @@ model = "gemini-2.5-flash"
 # Escalate when two cheap passes disagree.
 # cascade_two_pass_disagreement = false
 # Per-task output-token cap, thinking included (unlisted tags keep the default).
-# A reply cut off at a set cap is billed, recorded unparsed and not retried.
+# A reply cut off at a set cap is billed, recorded unparsed, retried once
+# afresh, then fails.
 # max_output_tokens_for = {}
 # Escalate when the cheap pass leaves mark-scheme points unaddressed.
 # cascade_unaddressed_points = false

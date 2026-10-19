@@ -15,8 +15,10 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import MagicMock
+
+from google.genai import types
 
 from lemely.runtime.config import PathsSettings, Settings, load_settings
 
@@ -102,7 +104,13 @@ def make_settings(tmp: str) -> Settings:
 
 
 def mock_response(
-    text: str, *, prompt: int = 10, candidates: int = 20, thoughts: int = 0, cached: int = 0
+    text: str,
+    *,
+    prompt: int = 10,
+    candidates: int = 20,
+    thoughts: int = 0,
+    cached: int = 0,
+    finish_reason: Literal["STOP", "MAX_TOKENS"] = "STOP",
 ) -> MagicMock:
     """A stubbed Gemini response with every usage field set to a real int.
 
@@ -112,9 +120,8 @@ def mock_response(
     resp = MagicMock()
     resp.text = text
     cand = MagicMock()
-    finish = MagicMock()
-    finish.__str__ = lambda self: "STOP"  # type: ignore[method-assign]
-    cand.finish_reason = finish
+    # The SDK's own str-enum member, so str() is "FinishReason.STOP" as in production.
+    cand.finish_reason = types.FinishReason[finish_reason]
     resp.candidates = [cand]
     resp.usage_metadata = MagicMock(
         prompt_token_count=prompt,

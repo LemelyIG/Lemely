@@ -2103,22 +2103,20 @@ class GeminiClient:
         shared_prefix: SharedPrefix | None = None,
     ) -> str:
         def _attempt() -> str:
-            for attempt in self._retry_policy(log, task_tag=task_tag, model=model):
-                with attempt:
-                    return self._call_once(
-                        model,
-                        system_prompt,
-                        user_prompt,
-                        file_paths,
-                        response_schema,
-                        log,
-                        task_tag,
-                        image_parts=image_parts,
-                        media_resolution=media_resolution,
-                        image_uploads=image_uploads,
-                        shared_prefix=shared_prefix,
-                    )
-            raise ParseError("Unreachable")  # pragma: no cover
+            return self._retry_policy(log, task_tag=task_tag, model=model)(
+                self._call_once,
+                model,
+                system_prompt,
+                user_prompt,
+                file_paths,
+                response_schema,
+                log,
+                task_tag,
+                image_parts=image_parts,
+                media_resolution=media_resolution,
+                image_uploads=image_uploads,
+                shared_prefix=shared_prefix,
+            )
 
         try:
             try:
@@ -2268,9 +2266,11 @@ class GeminiClient:
         )
 
         raw = response.text or ""
-        finish = str(response.candidates[0].finish_reason if response.candidates else "")
-        if finish == "MAX_TOKENS":
-            if cap_is_per_tag:
+        finish_reason = response.candidates[0].finish_reason if response.candidates else None
+        if cap_is_per_tag:
+            # The SDK's FinishReason is a str-enum: str() gives "FinishReason.MAX_TOKENS",
+            # so compare the member name.
+            if getattr(finish_reason, "name", str(finish_reason)) == "MAX_TOKENS":
                 # A reply cut off at an operator-set cap is billed (recorded
                 # above) and marked unparsed. Not transient (no backoff loop);
                 # _call_with_retry makes one fresh retry, then lets this raise.
@@ -2278,6 +2278,12 @@ class GeminiClient:
                 raise _CapTruncatedError(
                     f"Gemini hit the {output_cap}-token output cap for {task_tag} ({model})"
                 )
+        elif str(finish_reason) == "MAX_TOKENS":
+            # Inert against the real SDK (str() of the enum is
+            # "FinishReason.MAX_TOKENS"), so a default-path truncated reply has
+            # always gone on to the schema-correction call and then ParseError.
+            # Left as is by design: making it match would turn a runaway into up
+            # to four full-price tenacity retries.
             raise _TransientError(f"Gemini hit max_output_tokens ({model})")
         return raw
 

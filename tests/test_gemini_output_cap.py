@@ -16,7 +16,7 @@ from lemely.io.gemini import (
     set_call_context,
 )
 from lemely.runtime.config import GeminiSettings, Settings
-from lemely.runtime.errors import CostCeilingError, ExternalServiceError
+from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from tests.gemini_fakes import make_settings, mock_response
 
 _MODEL = "gemini-3.8-flash"
@@ -54,9 +54,7 @@ def _sent_cap(genai: MagicMock) -> int:
 
 
 def _truncated(text: str = '{"value": "x') -> MagicMock:
-    resp = mock_response(text, candidates=500, thoughts=100)
-    resp.candidates[0].finish_reason.__str__ = lambda self: "MAX_TOKENS"  # type: ignore[method-assign]
-    return resp
+    return mock_response(text, candidates=500, thoughts=100, finish_reason="MAX_TOKENS")
 
 
 def test_setting_defaults_empty_and_bounded() -> None:
@@ -148,8 +146,17 @@ def test_ceiling_checked_before_the_retry() -> None:
     assert genai.models.generate_content.call_count == 1
 
 
-def test_truncated_default_cap_still_retries_as_before() -> None:
-    client, genai = _client(_settings({}), _truncated(), mock_response('{"value": "a"}'))
-    with patch("tenacity.nap.time.sleep"):
-        assert _call(client).value == "a"
+def test_default_path_truncation_goes_to_schema_correction_then_parse_error() -> None:
+    # The old str() comparison never matched the real enum, so on the default path
+    # a truncated reply is just unparseable JSON: one schema-correction call, then
+    # ParseError. Pinned so a global "fix" is a deliberate decision.
+    _reset_process_counters()
+    client, genai = _client(_settings({}), _truncated(), _truncated())
+    with pytest.raises(ParseError):
+        _call(client)
     assert genai.models.generate_content.call_count == 2
+    first, second = (c.kwargs for c in genai.models.generate_content.call_args_list)
+    assert "failed validation" not in str(first["contents"])
+    assert "failed validation" in str(second["contents"])
+    records = process_call_records()
+    assert [r.parse_ok for r in records] == [False, False]
