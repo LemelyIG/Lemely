@@ -577,36 +577,36 @@ def _run_grading_job(
                 )
             metadata = row.metadata
 
-            # Detection is advisory: it names the card and helps the resolver
-            # match the parsed-scheme corpus, but a paper with an attached
-            # scheme marks fine without it. A failure here must not cost the
-            # teacher their marks, so it is warned about and stepped over.
-            if metadata is None and _detection_available(settings):
-                try:
-                    metadata = ScanMetadataExtractor(gemini_client)(scan_path)
-                    repo.set_metadata(paper_id, metadata)
-                except Exception as exc:
-                    log.exception("teacher_detection_failed", paper_id=str(paper_id))
-                    bus.publish(
-                        EventType.WARNING,
-                        paper_id=str(paper_id),
-                        message=f"Could not read this scan's exam details: {exc}",
-                    )
-
-            repo.set_stage(paper_id, "scheme")
-            scheme = row.mark_scheme or resolve_mark_scheme(
-                sibling, corpus, settings, gemini_client, metadata=metadata
-            )
-            if scheme is None:
-                repo.fail(
-                    paper_id,
-                    "No mark scheme could be resolved for this paper — nothing was marked. "
-                    "Attach one on upload, or add it under Mark schemes and re-run.",
-                )
-                return
-            repo.set_mark_scheme(paper_id, scheme)
-
             with script_cost_scope(settings, script_key=f"teacher_paper:{paper_id}"):
+                # Detection is advisory: it names the card and helps the resolver
+                # match the parsed-scheme corpus, but a paper with an attached
+                # scheme marks fine without it. A failure here must not cost the
+                # teacher their marks, so it is warned about and stepped over.
+                if metadata is None and _detection_available(settings):
+                    try:
+                        metadata = ScanMetadataExtractor(gemini_client)(scan_path)
+                        repo.set_metadata(paper_id, metadata)
+                    except Exception as exc:
+                        log.exception("teacher_detection_failed", paper_id=str(paper_id))
+                        bus.publish(
+                            EventType.WARNING,
+                            paper_id=str(paper_id),
+                            message=f"Could not read this scan's exam details: {exc}",
+                        )
+
+                repo.set_stage(paper_id, "scheme")
+                scheme = row.mark_scheme or resolve_mark_scheme(
+                    sibling, corpus, settings, gemini_client, metadata=metadata
+                )
+                if scheme is None:
+                    repo.fail(
+                        paper_id,
+                        "No mark scheme could be resolved for this paper — nothing was marked. "
+                        "Attach one on upload, or add it under Mark schemes and re-run.",
+                    )
+                    return
+                repo.set_mark_scheme(paper_id, scheme)
+
                 repo.set_stage(paper_id, "extract")
                 extracted = extract_answers(scan_path, scheme, gemini_client=gemini_client)
                 ensure_binding_allows_marking(extracted)
