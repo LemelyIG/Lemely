@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ from lemely.io.gemini import (
     GeminiClient,
     _reset_process_counters,
     process_call_records,
+    record_calls,
     set_call_context,
 )
 from lemely.runtime.config import GeminiSettings, Settings
@@ -20,6 +22,13 @@ from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseE
 from tests.gemini_fakes import make_settings, mock_response
 
 _MODEL = "gemini-3.8-flash"
+
+
+@pytest.fixture(autouse=True)
+def _recording() -> Iterator[None]:
+    """These tests read call records, which are kept only while a recorder is open."""
+    with record_calls():
+        yield
 
 
 class _Schema(BaseModel):

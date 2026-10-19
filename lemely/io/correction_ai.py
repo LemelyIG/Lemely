@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -43,6 +44,7 @@ from lemely.io.gemini import (
     GeminiClient,
     SharedPrefix,
     process_call_records,
+    record_calls,
     thinking_rank,
 )
 from lemely.io.prompts.correction_ai import (
@@ -518,33 +520,39 @@ class AICorrector:
         )
 
         leaf_log = os.environ.get(CASCADE_LEAF_LOG_ENV) if g.cascade_enabled is True else None
-        records_before = len(process_call_records()) if leaf_log else 0
-        result = self._client.generate_structured(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            response_schema=AIMarkResponse,
-            prompt_version=VERSION,
-            extra_cache_key=f"q={question.id}",
-            task_tag="correction",
-            attempt="first",
-            question_id=question.id,
-            **prefix_kwargs,
+        # The leaf log reads this leaf's call records, which are kept only while
+        # a recorder is open; the cost-ladder runner already holds one (blocks nest).
+        recorder: contextlib.AbstractContextManager[None] = (
+            record_calls() if leaf_log else contextlib.nullcontext()
         )
+        with recorder:
+            records_before = len(process_call_records()) if leaf_log else 0
+            result = self._client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=AIMarkResponse,
+                prompt_version=VERSION,
+                extra_cache_key=f"q={question.id}",
+                task_tag="correction",
+                attempt="first",
+                question_id=question.id,
+                **prefix_kwargs,
+            )
 
-        if g.cascade_enabled is True:
-            result, final_model = self._cascade(
-                question,
-                system_prompt,
-                user_prompt,
-                result,
-                leaf_log=leaf_log,
-                records_before=records_before,
-                prefix_kwargs=prefix_kwargs,
-            )
-        else:
-            result, final_model = self._retry_low_confidence(
-                question, system_prompt, user_prompt, result, prefix_kwargs=prefix_kwargs
-            )
+            if g.cascade_enabled is True:
+                result, final_model = self._cascade(
+                    question,
+                    system_prompt,
+                    user_prompt,
+                    result,
+                    leaf_log=leaf_log,
+                    records_before=records_before,
+                    prefix_kwargs=prefix_kwargs,
+                )
+            else:
+                result, final_model = self._retry_low_confidence(
+                    question, system_prompt, user_prompt, result, prefix_kwargs=prefix_kwargs
+                )
         self.last_mark_model = final_model
 
         # Post-I6-review Item A: ``PointVerdict.ecf_applied`` must be

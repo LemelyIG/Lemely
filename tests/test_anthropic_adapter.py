@@ -25,6 +25,7 @@ from lemely.io.gemini import (
     price_call,
     price_row,
     process_call_records,
+    record_calls,
     set_call_context,
 )
 from lemely.io.providers import ProviderTransientError, is_anthropic_model
@@ -126,6 +127,8 @@ def _settings(tmp: str, **gemini_updates: object) -> Settings:
 class _ClientTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.mkdtemp()
+        # Call records are kept only while a recorder is open.
+        self.enterContext(record_calls())
         _reset_process_counters()
         set_call_context(case_key=None)
         today = patch("lemely.io.gemini._today", lambda: _TODAY)

@@ -23,6 +23,7 @@ from lemely.io.gemini import (
     price_call,
     price_row,
     process_call_records,
+    record_calls,
     set_call_context,
 )
 from lemely.runtime.errors import ParseError
@@ -48,6 +49,8 @@ class CostRecordTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.mkdtemp()
         self.settings = make_settings(self.tmp)
+        # Call records are kept only while a recorder is open.
+        self.enterContext(record_calls())
         _reset_process_counters()
         set_call_context(case_key=None)
         patcher = patch("lemely.io.gemini._today", lambda: _TODAY)
@@ -290,6 +293,54 @@ class CostRecordTests(unittest.TestCase):
         )
         (rec,) = process_call_records()
         self.assertIsNone(rec.thinking)
+
+
+class RecorderSwitchTests(unittest.TestCase):
+    """Records are appended only while a `record_calls` block is open."""
+
+    def setUp(self) -> None:
+        self.settings = make_settings(tempfile.mkdtemp())
+        _reset_process_counters()
+        patcher = patch("lemely.io.gemini._today", lambda: _TODAY)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _call(self, extra: str) -> None:
+        genai = MagicMock()
+        genai.models.generate_content.return_value = _response(
+            '{"value": "a"}', prompt=100, cached=0, candidates=10
+        )
+        GeminiClient(self.settings, _genai_client=genai).generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            response_schema=_Schema,
+            prompt_version="1",
+            model=_MODEL,
+            extra_cache_key=extra,
+        )
+
+    def test_default_path_appends_nothing(self) -> None:
+        before = gemini_module._process_accumulated_usd
+        self._call("a")
+        self.assertEqual(process_call_records(), [])
+        self.assertEqual(gemini_module._process_call_records, [])
+        # Spend is still counted; only the per-call record is skipped.
+        self.assertGreater(gemini_module._process_accumulated_usd, before)
+
+    def test_recorder_on_appends(self) -> None:
+        with record_calls():
+            self._call("a")
+            self.assertEqual(len(process_call_records()), 1)
+
+    def test_nested_blocks_keep_records_until_outermost_exit(self) -> None:
+        with record_calls():
+            with record_calls():
+                self._call("a")
+            self._call("b")
+            self.assertEqual(len(process_call_records()), 2)
+        self.assertEqual(process_call_records(), [])
+        self._call("c")
+        self.assertEqual(process_call_records(), [])
 
 
 if __name__ == "__main__":

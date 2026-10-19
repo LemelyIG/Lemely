@@ -27,6 +27,7 @@ from lemely.io.gemini import (
     prefix_cache_storage_usd,
     price_call,
     process_call_records,
+    record_calls,
     reset_process_counters,
 )
 from lemely.io.prompts.correction_ai import (
@@ -106,6 +107,13 @@ def isolated_env() -> Iterator[None]:
     finally:
         os.environ.clear()
         os.environ.update(snap)
+
+
+@pytest.fixture
+def recording() -> Iterator[None]:
+    """Keep call records for the test (they are kept only while a recorder is open)."""
+    with record_calls():
+        yield
 
 
 def _real_settings(tmp: Path, **gemini: Any) -> Settings:
@@ -343,7 +351,7 @@ def test_reports_prefix_sizes_and_lists_papers_at_the_caching_floor(
 
 
 def test_explicit_cache_created_once_per_paper(
-    tmp_path: Path, isolated_env: None, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, isolated_env: None, recording: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     reset_process_counters()
     monkeypatch.setattr("lemely.io.gemini._today", lambda: date(2026, 10, 19))

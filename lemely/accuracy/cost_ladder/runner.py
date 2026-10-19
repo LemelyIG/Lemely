@@ -37,6 +37,7 @@ from lemely.io.gemini import (
     price_row,
     process_call_records,
     process_token_totals_by_task,
+    record_calls,
     reset_process_counters,
     set_call_context,
 )
@@ -620,35 +621,37 @@ def run_config(
         hits.append(None)
 
     bus.subscribe(EventType.GEMINI_CACHE_HIT, count_hit)
-    reset_process_counters()
-    probe = ProbeContext(keys, process_token_totals_by_task, guard)
-    run_dir = out_dir / label
-    result: AccuracyResult | None = None
-    stopped: SpendCapReached | None = None
-    try:
-        result = measure_accuracy(
-            list(cases),
-            gemini,
-            effective,
-            run_id=label,
-            split="dev",
-            cost_probe=probe,
-        )
-    except SpendCapReached as exc:
-        stopped = exc
-    finally:
-        bus.unsubscribe(EventType.GEMINI_CACHE_HIT, count_hit)
-        set_call_context(case_key=None)
-        records = process_call_records()
-        billed = cost_by_provider(records)
-        run_dir.mkdir(parents=True, exist_ok=True)
-        (run_dir / RUN_COST_FILE).write_text(json.dumps(billed, sort_keys=True) + "\n")
-        booked = set(guard.completed)
-        ledger.add(cost_by_provider([r for r in records if r.case_key not in booked]))
-        (run_dir / "records.jsonl").write_text(
-            "".join(json.dumps(asdict(r), sort_keys=True) + "\n" for r in records),
-            encoding="utf-8",
-        )
+    # Records are kept only inside this block (the web process keeps none).
+    with record_calls():
+        reset_process_counters()
+        probe = ProbeContext(keys, process_token_totals_by_task, guard)
+        run_dir = out_dir / label
+        result: AccuracyResult | None = None
+        stopped: SpendCapReached | None = None
+        try:
+            result = measure_accuracy(
+                list(cases),
+                gemini,
+                effective,
+                run_id=label,
+                split="dev",
+                cost_probe=probe,
+            )
+        except SpendCapReached as exc:
+            stopped = exc
+        finally:
+            bus.unsubscribe(EventType.GEMINI_CACHE_HIT, count_hit)
+            set_call_context(case_key=None)
+            records = process_call_records()
+            billed = cost_by_provider(records)
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / RUN_COST_FILE).write_text(json.dumps(billed, sort_keys=True) + "\n")
+            booked = set(guard.completed)
+            ledger.add(cost_by_provider([r for r in records if r.case_key not in booked]))
+            (run_dir / "records.jsonl").write_text(
+                "".join(json.dumps(asdict(r), sort_keys=True) + "\n" for r in records),
+                encoding="utf-8",
+            )
 
     if frozen_upstream is not None:
         # Calls made outside any case (no case_key) are not seen by the guard.

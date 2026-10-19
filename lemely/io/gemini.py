@@ -291,6 +291,8 @@ _process_output_tokens: int = 0
 _process_accumulated_usd: float = 0.0
 _process_cost_by_task: dict[str, float] = {}
 _process_call_records: list[CallRecord] = []
+#: Open `record_calls` blocks; records are appended only while this is above 0.
+_recording_depth: int = 0
 _Attempt = Literal["first", "borderline", "escalation"]
 #: The harness's current case (`set_call_context`); stamped on every `CallRecord`.
 #: A ContextVar, so concurrent worker threads never see each other's case.
@@ -518,9 +520,34 @@ class CallRecord:
 
 
 def process_call_records() -> list[CallRecord]:
-    """A copy of every `CallRecord` appended since the last reset."""
+    """A copy of every `CallRecord` appended since the last reset.
+
+    Empty unless a :func:`record_calls` block is (or was, until its outermost
+    exit) active: the default path records nothing.
+    """
     with _SPEND_LOCK:
         return list(_process_call_records)
+
+
+@contextlib.contextmanager
+def record_calls() -> Iterator[None]:
+    """Append a `CallRecord` for every paid call made while this block is open.
+
+    Off by default, so a long-lived process (the web app) never accumulates
+    records. Process-wide, not per-thread, because the harness marks from
+    worker threads. Blocks nest; when the outermost one exits the records are
+    cleared, so read them (:func:`process_call_records`) inside the block.
+    """
+    global _recording_depth, _process_call_records
+    with _SPEND_LOCK:
+        _recording_depth += 1
+    try:
+        yield
+    finally:
+        with _SPEND_LOCK:
+            _recording_depth -= 1
+            if _recording_depth == 0:
+                _process_call_records = []
 
 
 def set_call_context(*, case_key: str | None) -> None:
@@ -1915,8 +1942,11 @@ class GeminiClient:
                 case_key=_call_case_key.get(),
                 parse_ok=True,
             )
-            _process_call_records.append(record)
-            _thread_state.last_record = record
+            if _recording_depth > 0:
+                _process_call_records.append(record)
+                _thread_state.last_record = record
+            else:
+                _thread_state.last_record = None
         if new_total is not None:
             for threshold in crossed:
                 bus.publish(

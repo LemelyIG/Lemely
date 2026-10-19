@@ -1870,3 +1870,57 @@ def test_marker_source_takes_precedence_stored(
     )
     _stored_run(tmp_path, "baseline", [_stored_qr("p1", "1a", marker_source="ai"), leaf])
     assert runner.resummarise("baseline", out_dir=tmp_path).incomplete == incomplete
+
+
+def test_run_config_records_real_client_calls_inside_its_recorder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The real record path: the client appends only because ``run_config`` opened a recorder."""
+    from unittest.mock import MagicMock
+
+    from pydantic import BaseModel
+
+    from lemely.io.gemini import GeminiClient, process_call_records
+    from tests.gemini_fakes import make_settings, mock_response
+
+    class _Out(BaseModel):
+        value: str
+
+    monkeypatch.setattr(runner, "_corpus_digest", lambda cases: runner.PINNED_CORPUS_DIGEST)
+    monkeypatch.setattr(runner, "preflight_prices", lambda settings: None)
+    genai = MagicMock()
+    genai.models.generate_content.return_value = mock_response(
+        '{"value": "a"}', prompt=100, candidates=10, thoughts=0, cached=0
+    )
+    client = GeminiClient(make_settings(str(tmp_path)), _genai_client=genai)
+
+    def fake_measure(cases: list[GoldenCase], gemini: GeminiClient, settings: object, **kw: Any):  # type: ignore[no-untyped-def]
+        probe = kw["cost_probe"]
+        for case in cases:
+            probe()
+            gemini.generate_structured(
+                system_prompt="s",
+                user_prompt="u",
+                response_schema=_Out,
+                prompt_version="1",
+                model="gemini-3.8-flash",
+                extra_cache_key=case.paper_id,
+                cache_mode="bypass",
+            )
+            probe()
+        return _result([_qr("1a", 1, 1) for _ in cases], [_er(c.paper_id, "1a") for c in cases])
+
+    monkeypatch.setattr(runner, "measure_accuracy", fake_measure)
+    runner.run_config(
+        "baseline",
+        {},
+        out_dir=tmp_path,
+        cases=[_case("a"), _case("b")],
+        settings=Settings(),
+        client=client,
+        max_run_usd={"gemini": 1.0},
+    )
+    lines = (tmp_path / "baseline" / "records.jsonl").read_text().splitlines()
+    assert [json.loads(line)["case_key"] for line in lines] == ["a", "b"]
+    # The recorder closed with the run: the process keeps nothing afterwards.
+    assert process_call_records() == []
