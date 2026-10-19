@@ -726,6 +726,10 @@ class _TransientError(Exception):
     """Wraps transient Gemini SDK errors so tenacity can detect them."""
 
 
+class _CapTruncatedError(ExternalServiceError):
+    """A reply cut off at a per-tag output cap; not transient, retried once afresh."""
+
+
 class _DefaultLedger:
     """Sentinel: build the file ledger under ``paths.output_dir`` (CLI, Gradio, eval)."""
 
@@ -2098,7 +2102,7 @@ class GeminiClient:
         image_uploads: ImageUploads | None = None,
         shared_prefix: SharedPrefix | None = None,
     ) -> str:
-        try:
+        def _attempt() -> str:
             for attempt in self._retry_policy(log, task_tag=task_tag, model=model):
                 with attempt:
                     return self._call_once(
@@ -2114,6 +2118,21 @@ class GeminiClient:
                         image_uploads=image_uploads,
                         shared_prefix=shared_prefix,
                     )
+            raise ParseError("Unreachable")  # pragma: no cover
+
+        try:
+            try:
+                return _attempt()
+            except _CapTruncatedError as first:
+                # Runaways are stochastic (the same call came back under 1.6k
+                # tokens on a rerun), so a reply cut off at a per-tag cap gets
+                # exactly one fresh generation of the same request at the same
+                # cap. It is not a schema-correction call. The truncated attempt
+                # is already billed and recorded; the ceiling is checked before
+                # paying again, and a second truncation raises.
+                log.warning("gemini_cap_truncated_retry", error=str(first))
+                self._check_cost_ceiling()
+                return _attempt()
         except _TransientError as exc:
             raise ExternalServiceError(str(exc)) from exc
         raise ParseError("Unreachable")  # pragma: no cover
@@ -2253,10 +2272,10 @@ class GeminiClient:
         if finish == "MAX_TOKENS":
             if cap_is_per_tag:
                 # A reply cut off at an operator-set cap is billed (recorded
-                # above) and marked unparsed. Not transient: a retry would send
-                # the same cap and repeat the runaway, so it fails at once.
+                # above) and marked unparsed. Not transient (no backoff loop);
+                # _call_with_retry makes one fresh retry, then lets this raise.
                 _mark_last_record_unparsed()
-                raise ExternalServiceError(
+                raise _CapTruncatedError(
                     f"Gemini hit the {output_cap}-token output cap for {task_tag} ({model})"
                 )
             raise _TransientError(f"Gemini hit max_output_tokens ({model})")

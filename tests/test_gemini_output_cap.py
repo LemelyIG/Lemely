@@ -13,9 +13,10 @@ from lemely.io.gemini import (
     GeminiClient,
     _reset_process_counters,
     process_call_records,
+    set_call_context,
 )
 from lemely.runtime.config import GeminiSettings, Settings
-from lemely.runtime.errors import ExternalServiceError
+from lemely.runtime.errors import CostCeilingError, ExternalServiceError
 from tests.gemini_fakes import make_settings, mock_response
 
 _MODEL = "gemini-3.8-flash"
@@ -102,19 +103,49 @@ def test_cap_does_not_touch_anthropic_fingerprint() -> None:
     )
 
 
-def test_truncated_capped_reply_is_billed_recorded_and_not_retried() -> None:
+def test_truncated_twice_raises_after_exactly_two_calls_both_billed() -> None:
     _reset_process_counters()
     client, genai = _client(
         _settings({"extraction": 8000}), _truncated(), _truncated(), _truncated(), _truncated()
     )
     with patch("lemely.io.gemini.time.sleep"), pytest.raises(ExternalServiceError) as err:
         _call(client)
-    assert genai.models.generate_content.call_count == 1
-    (rec,) = process_call_records()
-    assert rec.parse_ok is False
-    assert rec.output_tokens > 0
-    assert rec.usd_now > 0
+    assert genai.models.generate_content.call_count == 2
+    records = process_call_records()
+    assert len(records) == 2
+    assert all(r.parse_ok is False and r.output_tokens > 0 and r.usd_now > 0 for r in records)
     assert "8000" in str(err.value)
+
+
+def test_truncated_then_ok_makes_one_fresh_call_and_bills_both() -> None:
+    _reset_process_counters()
+    client, genai = _client(
+        _settings({"extraction": 8000}), _truncated(), mock_response('{"value": "a"}')
+    )
+    set_call_context(case_key=None)
+    assert _call(client).value == "a"
+    assert genai.models.generate_content.call_count == 2
+    first, second = (c.kwargs for c in genai.models.generate_content.call_args_list)
+    assert first["contents"] == second["contents"]
+    assert first["config"].max_output_tokens == second["config"].max_output_tokens == 8000
+    # Same request, not a schema-correction prompt.
+    assert "failed validation" not in str(second["contents"])
+    r1, r2 = process_call_records()
+    assert (r1.parse_ok, r2.parse_ok) == (False, True)
+    assert (r1.attempt, r1.question_id) == (r2.attempt, r2.question_id)
+    assert r1.usd_now > 0 and r2.usd_now > 0
+
+
+def test_ceiling_checked_before_the_retry() -> None:
+    _reset_process_counters()
+    base = _settings({"extraction": 8000})
+    settings = base.model_copy(
+        update={"gemini": base.gemini.model_copy(update={"per_run_token_ceiling": 100})}
+    )
+    client, genai = _client(settings, _truncated(), mock_response('{"value": "a"}'))
+    with pytest.raises(CostCeilingError):
+        _call(client)
+    assert genai.models.generate_content.call_count == 1
 
 
 def test_truncated_default_cap_still_retries_as_before() -> None:
