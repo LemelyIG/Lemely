@@ -314,18 +314,33 @@ class _Marking:
     id_match_rate: float | None
 
 
+def _failed_marking(*, scored: bool, needs_teacher_review: bool) -> bool:
+    """A leaf the harness counts as marked although no model marked it.
+
+    When marking or extraction fails outright, correction_ai builds a placeholder
+    leaf (marker_source "missing"/"dropped") that the harness counts as marked, so
+    the funnel shows no shortfall. It is unscored and flagged for teacher review;
+    a blank answer is unscored too but not flagged, and is a real marking.
+    """
+    return not scored and needs_teacher_review
+
+
 def _marking(result: AccuracyResult, expected_cases: Sequence[str] = ()) -> _Marking:
     produced = _case_keys(result)
+    paired = _paired(result)
     return _Marking(
         case_keys=tuple(dict.fromkeys([*expected_cases, *produced])),
         scored=tuple(
-            (k, q.question_id, q.predicted_marks, q.truth_marks)
-            for k, q in _paired(result)
-            if q.scored
+            (k, q.question_id, q.predicted_marks, q.truth_marks) for k, q in paired if q.scored
         ),
         unmarked_cases=frozenset(
             _eval_case_key(e) for e in result.eval_records if e.outcome in _UNSCORED_OUTCOMES
-        ),
+        )
+        | {
+            k
+            for k, q in paired
+            if _failed_marking(scored=q.scored, needs_teacher_review=q.needs_teacher_review)
+        },
         missing_cases=frozenset(expected_cases) - set(produced),
         id_match_rate=result.metrics.id_match_rate,
     )
@@ -335,11 +350,11 @@ def _summarise_marking(marking: _Marking, records: Sequence[CallRecord]) -> RunS
     """The gate's view of a run.
 
     A case is incomplete only when its marking is short: a ground-truth leaf was
-    not marked (funnel shortfall, which is also how a call that failed with no
-    usable response shows), the case produced no marking at all, or one of its
-    calls is unpriced (NaN cost). A call that failed to parse but was recovered
-    leaves the case complete; it is counted in ``validity_rate`` instead, which
-    the gate requires not to drop.
+    not marked (a funnel shortfall, or a placeholder leaf left by a marking or
+    extraction call that failed outright, see `_failed_marking`), the case
+    produced no marking at all, or one of its calls is unpriced (NaN cost). A
+    call that failed to parse but was recovered leaves the case complete; it is
+    counted in ``validity_rate`` instead, which the gate requires not to drop.
     """
     keys = list(marking.case_keys)
     latency = _per_case_sum(records, keys, lambda r: float(r.latency_ms))
@@ -965,7 +980,11 @@ def _stored_int(value: object) -> int:
 def _marking_from_results(results: Mapping[str, object], records: Sequence[CallRecord]) -> _Marking:
     """Rebuild a run's `_Marking` from its stored ``results.json``.
 
-    Refuses (`LadderStateError`) what it cannot attribute to a case.
+    An older results.json has no ``case_keys``; its cases are then the union of
+    the question results' and the records' case keys (in that order), so a case
+    with neither (no marking and no call) cannot be seen as missing. Refuses
+    (`LadderStateError`) what it cannot attribute to a case, and a malformed
+    ``unmarked_leaves``.
     """
     raw = results.get("question_results")
     if not isinstance(raw, list) or any(
@@ -984,9 +1003,17 @@ def _marking_from_results(results: Mapping[str, object], records: Sequence[CallR
                 [*(str(q["case_key"]) for q in qrs), *(r.case_key for r in records if r.case_key)]
             )
         )
-    unmarked_raw = results.get("unmarked_leaves")
-    if isinstance(unmarked_raw, list):
-        unmarked = frozenset(str(u["case_key"]) for u in unmarked_raw)
+    unmarked: frozenset[str]
+    if "unmarked_leaves" in results:
+        unmarked_raw = results["unmarked_leaves"]
+        if not isinstance(unmarked_raw, list) or any(
+            not isinstance(u, dict) or not isinstance(u.get("case_key"), str) for u in unmarked_raw
+        ):
+            raise LadderStateError(
+                "results.json unmarked_leaves is malformed (expected a list of objects with a "
+                "string case_key); this run cannot be resummarised"
+            )
+        unmarked = frozenset(u["case_key"] for u in unmarked_raw)
     else:
         funnel = results.get("funnel")
         leaves = funnel.get("leaves") if isinstance(funnel, dict) else None
@@ -1014,7 +1041,15 @@ def _marking_from_results(results: Mapping[str, object], records: Sequence[CallR
             for q in qrs
             if q.get("scored", True)
         ),
-        unmarked_cases=unmarked,
+        unmarked_cases=unmarked
+        | {
+            str(q["case_key"])
+            for q in qrs
+            if _failed_marking(
+                scored=q.get("scored", True) is not False,
+                needs_teacher_review=q.get("needs_teacher_review") is True,
+            )
+        },
         missing_cases=frozenset(case_keys) - marked - unmarked,
         id_match_rate=float(id_match) if isinstance(id_match, int | float) else None,
     )
@@ -1028,9 +1063,23 @@ def resummarise(label: str, *, out_dir: Path) -> RunSummary:
     the baseline's records under its recorded live tags. Every other field of the
     old summary (overrides, live tags, cache stats, against) is kept, and the old
     ``incomplete`` list is kept under ``resummarised``. No client, no model call,
-    no ledger change. ``verdict.json`` is not re-judged.
+    no ledger change.
+
+    Judged history is not rewritten: the baseline and A/A runs are refused while
+    ``ladder.json`` has rows (the verdicts were judged against them), and a run
+    with a ``verdict.json`` is refused (its verdict would no longer match).
     """
     run_dir = out_dir / label
+    if label in (BASELINE_LABEL, AA_LABEL) and _ladder_labels(out_dir):
+        raise LadderStateError(
+            f"resummarise {label!r} is refused while ladder.json has rows: those verdicts "
+            "were judged against this run. Use `baseline --restart-baseline`."
+        )
+    if (run_dir / "verdict.json").is_file():
+        raise LadderStateError(
+            f"resummarise {label!r} is refused: it has a verdict.json, which would no longer "
+            "match its summary. Screen the change under a new label."
+        )
     results = json.loads(
         require_file(
             run_dir / "results.json",

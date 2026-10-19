@@ -44,14 +44,21 @@ def _spend_file_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return path
 
 
-def _qr(qid: str, predicted: int, truth: int, *, scored: bool = True) -> QuestionResult:
+def _qr(
+    qid: str,
+    predicted: int,
+    truth: int,
+    *,
+    scored: bool = True,
+    needs_teacher_review: bool = False,
+) -> QuestionResult:
     return QuestionResult(
         question_id=qid,
         question_type="theory",
         predicted_marks=predicted,
         truth_marks=truth,
         confidence_score=0.9,
-        needs_teacher_review=False,
+        needs_teacher_review=needs_teacher_review,
         scored=scored,
     )
 
@@ -208,8 +215,13 @@ def test_incomplete_case_listed() -> None:
     recs = [_rec("p4", parse_ok=False)]
     ers.append(_er("p4", "1a"))
     qrs.append(_qr("1a", 1, 1))
+    # p5: the marking call failed outright; the leaf is a "missing" placeholder
+    # (scored=False, needs_teacher_review=True), so the case is incomplete.
+    recs.append(_rec("p5", parse_ok=False))
+    ers.append(_er("p5", "1a", outcome="abstain"))
+    qrs.append(_qr("1a", 0, 1, scored=False, needs_teacher_review=True))
     s = summarise(_result(qrs, ers), recs)
-    assert s.incomplete == ("p2", "p3")
+    assert s.incomplete == ("p2", "p3", "p5")
     assert s.validity_rate == 0.0
 
 
@@ -1570,6 +1582,9 @@ def test_resummarise_screen_keeps_frozen_upstream_composition(
     assert first is not None
     path = tmp_path / "lever1" / "summary.json"
     path.write_text(json.dumps({**json.loads(path.read_text()), "usd_per_script_mean": 99.0}))
+    # A judged screen cannot be resummarised (its verdict would no longer match);
+    # this exercises the composition on a screen whose verdict was never written.
+    (tmp_path / "lever1" / "verdict.json").unlink()
     summary = runner.resummarise("lever1", out_dir=tmp_path)
     assert summary.usd_per_script_mean == pytest.approx(0.60)  # live 0.10 + frozen extraction 0.50
     assert summary.latency_p95_ms == 4500
@@ -1610,3 +1625,133 @@ def test_resummarise_refuses_unattributable_unmarked_leaves(tmp_path: Path) -> N
 def test_resummarise_of_missing_run_is_a_clear_error(tmp_path: Path) -> None:
     with pytest.raises(runner.LadderStateError, match=r"results\.json"):
         runner.resummarise("nope", out_dir=tmp_path)
+
+
+# --- fix round 6: failed marking is a shortfall; resummarise cannot rewrite judged history ---
+
+
+def test_failed_marking_call_makes_case_incomplete() -> None:
+    # The call failed to parse AND produced no usable marking: correction_ai builds a
+    # "missing" leaf (scored=False, needs_teacher_review=True) that the harness counts
+    # as marked, so the funnel shows no shortfall. The case is still incomplete.
+    qrs = [_qr("1a", 1, 1), _qr("1b", 0, 2, scored=False, needs_teacher_review=True)]
+    ers = [_er("p1", "1a"), _er("p1", "1b", outcome="abstain"), _er("p2", "1a")]
+    qrs.append(_qr("1a", 1, 1))
+    recs = [_rec("p1"), _rec("p1", parse_ok=False), _rec("p2")]
+    s = summarise(_result(qrs, ers), recs)
+    assert s.incomplete == ("p1",)
+    assert s.scored_parts == 2
+
+
+def test_blank_answer_leaf_keeps_case_complete() -> None:
+    # A blank answer is unscored but needs no teacher review: the case is complete.
+    qrs = [_qr("1a", 1, 1), _qr("1b", 0, 2, scored=False, needs_teacher_review=False)]
+    ers = [_er("p1", "1a"), _er("p1", "1b", outcome="abstain")]
+    s = summarise(_result(qrs, ers), [_rec("p1")])
+    assert s.incomplete == ()
+    assert s.scored_parts == 1
+
+
+def _stored_qr(case: str, qid: str, **kw: object) -> dict[str, object]:
+    return {
+        "case_key": case,
+        "question_id": qid,
+        "question_type": "theory",
+        "predicted_marks": 1,
+        "truth_marks": 1,
+        "confidence_score": 0.9,
+        "needs_teacher_review": False,
+        "scored": True,
+        **kw,
+    }
+
+
+def _stored_run(
+    out: Path,
+    label: str,
+    question_results: list[dict[str, object]],
+    *,
+    records: list[CallRecord] | None = None,
+    **results: object,
+) -> Path:
+    """A finished run on disk (summary, records, results.json); returns its summary path."""
+    run = out / label
+    run.mkdir(parents=True, exist_ok=True)
+    runner.write_summary(_summary(), run / "summary.json", usd_per_script_mean_now=0.0)
+    (run / "records.jsonl").write_text(
+        "".join(json.dumps(runner.asdict(r)) + "\n" for r in records or [])
+    )
+    payload: dict[str, object] = {
+        "metrics": {"id_match_rate": 1.0},
+        "case_keys": sorted({str(q["case_key"]) for q in question_results}),
+        "unmarked_leaves": [],
+        "question_results": question_results,
+        **results,
+    }
+    (run / "results.json").write_text(json.dumps(payload))
+    return run / "summary.json"
+
+
+def test_resummarise_counts_a_failed_marking_leaf_as_incomplete(tmp_path: Path) -> None:
+    _stored_run(
+        tmp_path,
+        "baseline",
+        [
+            _stored_qr("a", "1a"),
+            _stored_qr("a", "1b", scored=False, needs_teacher_review=True),  # failed call
+            _stored_qr("b", "1a", scored=False, needs_teacher_review=False),  # blank
+            _stored_qr("c", "1a"),
+        ],
+        records=[_rec("a", parse_ok=False), _rec("a"), _rec("b"), _rec("c", parse_ok=False)],
+    )
+    summary = runner.resummarise("baseline", out_dir=tmp_path)
+    # a: parse failure + missing leaf -> incomplete; b: blank -> complete;
+    # c: recovered parse failure, all leaves marked -> complete.
+    assert summary.incomplete == ("a",)
+    assert summary.validity_rate == 0.5
+
+
+def test_resummarise_old_format_counts_a_failed_marking_leaf(tmp_path: Path) -> None:
+    # No case_keys / unmarked_leaves (older results.json), funnel with no shortfall.
+    path = _stored_run(
+        tmp_path,
+        "baseline",
+        [_stored_qr("a", "1a", scored=False, needs_teacher_review=True), _stored_qr("b", "1a")],
+        records=[_rec("a"), _rec("b")],
+    )
+    results = path.parent / "results.json"
+    data = json.loads(results.read_text())
+    del data["case_keys"], data["unmarked_leaves"]
+    data["funnel"] = {"leaves": 2, "extracted": 2, "matched": 2, "marked": 2}
+    results.write_text(json.dumps(data))
+    assert runner.resummarise("baseline", out_dir=tmp_path).incomplete == ("a",)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [["a"], [{"question_id": "1a"}], [{"case_key": 3}], "a"],
+    ids=["bare-string", "no-case-key", "non-string-key", "not-a-list"],
+)
+def test_resummarise_rejects_malformed_unmarked_leaves(tmp_path: Path, bad: object) -> None:
+    _stored_run(tmp_path, "baseline", [_stored_qr("a", "1a")], unmarked_leaves=bad)
+    with pytest.raises(runner.LadderStateError, match="unmarked_leaves"):
+        runner.resummarise("baseline", out_dir=tmp_path)
+
+
+@pytest.mark.parametrize("label", ["baseline", "baseline_aa"])
+def test_resummarise_of_baseline_refused_while_ladder_has_rows(tmp_path: Path, label: str) -> None:
+    path = _stored_run(tmp_path, label, [_stored_qr("a", "1a")], records=[_rec("a")])
+    before = path.read_text()
+    runner.append_ladder(tmp_path, "lever1")
+    with pytest.raises(runner.LadderStateError, match="--restart-baseline"):
+        runner.resummarise(label, out_dir=tmp_path)
+    assert path.read_text() == before
+
+
+def test_resummarise_of_a_judged_screen_is_refused(tmp_path: Path) -> None:
+    path = _stored_run(tmp_path, "lever1", [_stored_qr("a", "1a")], records=[_rec("a")])
+    (tmp_path / "lever1" / "verdict.json").write_text(json.dumps({"passed": True}))
+    before = path.read_text()
+    with pytest.raises(runner.LadderStateError, match=r"verdict\.json"):
+        runner.resummarise("lever1", out_dir=tmp_path)
+    assert path.read_text() == before

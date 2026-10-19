@@ -9,7 +9,7 @@ The default spend ledger is per worktree (repo-relative): run all ladder command
     cost_ladder.py screen --label L --lever "..." --expected-saving 40% \\
         --set gemini.correction_model=... [--against <label>] \\
         [--live-tags correction,correction_borderline,escalation]
-    cost_ladder.py resummarise --label L        # $0, from stored records
+    cost_ladder.py resummarise --label L        # $0, from stored records; not judged runs
     cost_ladder.py report --stop-reason "..."
 """
 
@@ -109,8 +109,6 @@ def _resummarise(args: argparse.Namespace) -> int:
         f"validity {summary.validity_rate:.3f}, "
         f"incomplete: {', '.join(summary.incomplete) or 'none'}"
     )
-    if (args.out_dir / args.label / "verdict.json").is_file():
-        print("  note: verdict.json was not re-judged; rescreen to judge the new summary")
     return 0
 
 
