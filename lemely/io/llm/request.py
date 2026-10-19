@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from pydantic import BaseModel
 
 from lemely.io.providers import is_anthropic_model
 
