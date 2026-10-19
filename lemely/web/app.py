@@ -17,6 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from lemely import __version__
+from lemely.io.model_table import configured_models
 from lemely.runtime.config import anthropic_key_missing_tags, log_marking_flags
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web.deps import get_settings, get_sweeper
@@ -75,13 +76,8 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     settings = get_settings()
     log_marking_flags(settings.grading.marking_options())
-    missing_claude = anthropic_key_missing_tags(
-        settings,
-        {
-            tag: settings.gemini.model_for(tag)
-            for tag in ("correction", "correction_borderline", "escalation", "extraction")
-        },
-    )
+    # The same model table `lemely doctor` checks: every configured claude- model.
+    missing_claude = anthropic_key_missing_tags(settings, configured_models(settings))
     if missing_claude:
         log.error(
             "ANTHROPIC_API_KEY is not set but task tag(s) %s use a claude- model; "

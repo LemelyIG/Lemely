@@ -293,7 +293,7 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
         self.assertTrue(check["ok"])
 
     def test_doctor_warns_when_promo_pricing_window_is_within_30_days_of_expiry(self) -> None:
-        """US-026: `lemely doctor` warns, but does not fail, when the 3.8/3.7/
+        """US-026: `lemely doctor` warns, but does not fail, when the 3.8/
         3.6-flash promotional pricing window (see FLASH_3X_PROMO_END_DATE in
         lemely.io.gemini) is within 30 days of lapsing to the real rate."""
         from datetime import timedelta

@@ -537,30 +537,21 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # F1 (Gemini 3.x migration): surface what model_for() actually resolves to
     # per task tag, so a config mistake (e.g. escalation falling back to the
     # global 2.5 model) is visible without reading lemely.toml by hand.
-    model_table_tags = (
-        "correction",
-        "correction_borderline",
-        "escalation",
-        "extraction",
-        "generation",
-        "mark_scheme",
-        "scan_metadata",
-        "study_plan",
-    )
-    configured_models = {tag: settings.gemini.model_for(tag) for tag in model_table_tags}
-    # The binding step names its models itself, not through model_for(): the label
-    # binder's reads, or the gated legacy binder's one retry. Listed with the rest
-    # so the table shows every model extraction can call and the pricing checks
-    # below cover them.
-    from lemely.io.binding.orchestrate import binding_models, binding_status
+    # The table also lists the cascade's own strong model and the binding step's
+    # models (the label binder's reads, or the gated legacy binder's one retry),
+    # which are named directly rather than through model_for(), so the pricing
+    # and key checks below cover every model a run can call. The web startup
+    # check reads the same table.
+    from lemely.io.binding.orchestrate import binding_status
+    from lemely.io.model_table import configured_models as configured_models_for
 
-    configured_models.update(binding_models(settings))
+    configured_models = configured_models_for(settings)
     model_table = ", ".join(f"{tag}={model}" for tag, model in configured_models.items())
     record("gemini_model_table", True, detail=model_table)
 
-    # Cost-ladder A1: correction runs on a claude- model by default. Without
-    # ANTHROPIC_API_KEY every such call fails at first use, so this is fatal
-    # (not advisory) whenever any task tag resolves to a claude- model.
+    # Cost-ladder A1: a claude- model configured for any task tag needs
+    # ANTHROPIC_API_KEY, or every call to it fails at first use, so this is
+    # fatal (not advisory) whenever any tag in the table resolves to one.
     from lemely.runtime.config import anthropic_key_missing_tags
 
     claude_tags = anthropic_key_missing_tags(settings, configured_models)
@@ -583,7 +574,7 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     record("binding", binding_ok, detail=binding_detail)
 
     # US-026: the $14 total_usd_ceiling is only as honest as the pricing table
-    # it's ledgered against — warn (advisory, never fatal) once the 3.8/3.7/
+    # it's ledgered against — warn (advisory, never fatal) once the 3.8/
     # 3.6-flash promotional rate is close to lapsing to the real, doubled
     # rate, so a developer notices before the ceiling starts guarding a stale
     # price. See FLASH_3X_PROMO_END_DATE / promo_pricing_status in gemini.py.

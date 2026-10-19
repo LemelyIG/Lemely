@@ -696,6 +696,53 @@ def test_startup_logs_the_marking_flags(monkeypatch: pytest.MonkeyPatch) -> None
     assert flags[0]["ecf_inert"] is True
 
 
+def _startup_claude_errors(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> list[str]:
+    """Start and stop the app with no Anthropic key; the startup check's error lines."""
+    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "0")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("LEMELY_ANTHROPIC_API_KEY", raising=False)
+    with (
+        caplog.at_level(logging.ERROR, logger="lemely.web.app"),
+        TestClient(create_app()) as client,
+    ):
+        assert client.get("/api/health").status_code == 200
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "lemely.web.app" and "ANTHROPIC_API_KEY" in r.getMessage()
+    ]
+
+
+@pytest.mark.usefixtures("_fresh_settings")
+def test_startup_logs_nothing_about_anthropic_with_default_models(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert _startup_claude_errors(monkeypatch, caplog) == []
+
+
+@pytest.mark.usefixtures("_fresh_settings")
+def test_startup_logs_an_error_for_a_claude_tag_without_a_key(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("LEMELY_GEMINI__CORRECTION_MODEL", "claude-haiku-5-5")
+    (message,) = _startup_claude_errors(monkeypatch, caplog)
+    assert "correction" in message
+
+
+@pytest.mark.usefixtures("_fresh_settings")
+def test_startup_checks_the_cascade_strong_model(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The same table as ``lemely doctor``: tags outside the old four are checked too."""
+    monkeypatch.setenv("LEMELY_GEMINI__CASCADE_ENABLED", "true")
+    monkeypatch.setenv("LEMELY_GEMINI__CASCADE_STRONG_MODEL", "claude-haiku-5-5")
+    (message,) = _startup_claude_errors(monkeypatch, caplog)
+    assert "cascade_strong" in message
+    assert "correction," not in message
+
+
 def test_a_client_without_the_context_manager_never_starts_a_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
