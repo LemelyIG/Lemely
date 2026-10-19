@@ -56,7 +56,8 @@ model = "gemini-2.5-flash"
 # cascade_two_pass_disagreement = false
 # Per-task output-token cap, thinking included (unlisted tags keep the default).
 # A reply cut off at a set cap is billed, recorded unparsed, retried once
-# afresh, then fails.
+# afresh, then fails. A table you set REPLACES the shipped caps (no merge):
+# list every entry you want kept, both extraction and binding_second_read.
 # max_output_tokens_for = { "extraction" = 16384, "binding_second_read" = 16384 }
 # Escalate when the cheap pass leaves mark-scheme points unaddressed.
 # cascade_unaddressed_points = false
@@ -107,6 +108,8 @@ mark_scheme = 8000
 # This table REPLACES the defaults: a key left out here falls back to
 # "low". Leaving out binding_second_read makes the binding step's second
 # read the same call as its first (see [binding]); `lemely doctor` says so.
+# binding_second_read is safe at "low" only because max_output_tokens_for caps
+# it: at "medium" second reads reached 47-65k tokens, so raise that cap first.
 [gemini.thinking_level_for]
 correction = "low"
 correction_borderline = "high"  # Step-1 retry before Step-2 escalation

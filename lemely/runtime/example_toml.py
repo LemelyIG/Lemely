@@ -114,7 +114,8 @@ def render_example_toml() -> str:
     )
     lines.append("# Per-task output-token cap, thinking included (unlisted tags keep the default).")
     lines.append("# A reply cut off at a set cap is billed, recorded unparsed, retried once")
-    lines.append("# afresh, then fails.")
+    lines.append("# afresh, then fails. A table you set REPLACES the shipped caps (no merge):")
+    lines.append("# list every entry you want kept, both extraction and binding_second_read.")
     lines.append(f"# max_output_tokens_for = {_toml_inline(s.gemini.max_output_tokens_for)}")
     lines.append("# Escalate when the cheap pass leaves mark-scheme points unaddressed.")
     lines.append(
@@ -172,6 +173,8 @@ def render_example_toml() -> str:
     lines.append("# This table REPLACES the defaults: a key left out here falls back to")
     lines.append('# "low". Leaving out binding_second_read makes the binding step\'s second')
     lines.append("# read the same call as its first (see [binding]); `lemely doctor` says so.")
+    lines.append('# binding_second_read is safe at "low" only because max_output_tokens_for caps')
+    lines.append('# it: at "medium" second reads reached 47-65k tokens, so raise that cap first.')
     lines.append("[gemini.thinking_level_for]")
     comments = {
         "correction_borderline": "  # Step-1 retry before Step-2 escalation",

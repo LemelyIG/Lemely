@@ -127,10 +127,12 @@ _THINKING_LEVEL_FOR_DEFAULTS: dict[str, ThinkingLevel] = {
     "extraction": "minimal",
     "generation": "low",
     # The label binder's second read of a script (lemely.io.binding.orchestrate). It
-    # runs on the same model as the first read, which goes out under "extraction"; a
-    # different thinking level here is what makes it a second opinion and not the
-    # same call again. "low" since the cost-ladder B1 screen (36.4% cheaper, no extra
+    # runs on the same model as the first read, which goes out under "extraction";
+    # independence comes from the separate task tag and cache key (both reads think
+    # "low"). "low" since the cost-ladder B1 screen (36.4% cheaper, no extra
     # mismarks): BUILD/accuracy-runs/cost-ladder-2026-10-19/b1-second-read-low/verdict.json
+    # Coupled to max_output_tokens_for: safe only at "low"; at "medium" second reads
+    # reached 47-65k tokens at rung 0, so raise that cap before raising this level.
     "binding_second_read": "low",
 }
 
@@ -194,8 +196,11 @@ class GeminiSettings(BaseModel):
     # Per-task-tag output-token cap (thinking tokens included); a tag's value
     # replaces the client's default cap for that tag's Gemini calls. A reply cut
     # off at a set cap is billed, recorded unparsed, retried once afresh, then fails.
-    # Runaway guard, never hit on golden: BUILD/accuracy-runs/cost-ladder-2026-10-19/
-    # b12-binder-output-cap/verdict.json
+    # Runaway guard, never hit on golden (largest binder output 1,608 tokens; a
+    # 65,522-token runaway first read was seen at rung 0):
+    # BUILD/accuracy-runs/cost-ladder-2026-10-19/b12-binder-output-cap/verdict.json
+    # Safe only because binding_second_read thinks "low" (B1): at "medium" second
+    # reads reached 47-65k tokens at rung 0, so raise this cap before raising that level.
     max_output_tokens_for: dict[str, Annotated[int, Field(gt=0)]] = Field(
         default_factory=lambda: {"extraction": 16384, "binding_second_read": 16384}
     )
