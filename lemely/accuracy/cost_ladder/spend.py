@@ -32,7 +32,7 @@ class SpendCapError(RuntimeError):
 class SpendCaps:
     """Billed-dollar ceilings across ALL cost-ladder runs combined."""
 
-    gemini_usd: float = 3.00
+    gemini_usd: float = 6.00
     anthropic_usd: float = 40.00
 
     def cap_for(self, provider: str) -> float:

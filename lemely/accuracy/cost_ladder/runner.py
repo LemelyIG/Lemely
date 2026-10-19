@@ -923,10 +923,12 @@ def run_screen(
     if against == label:
         raise LadderStateError(f"screen {label!r} cannot stack on itself (--against {against})")
     for row in _ladder_labels(out_dir):
-        row_verdict = out_dir / row / "verdict.json"
-        if row_verdict.is_file() and (
-            json.loads(row_verdict.read_text(encoding="utf-8")).get("against") == label
-        ):
+        # A row without its verdict cannot show it does not stack on *label*:
+        # refuse rather than skip it (skipping would let a re-screen orphan it).
+        row_verdict = require_file(
+            out_dir / row / "verdict.json", f"ladder row {row!r} verdict (needed to re-screen)"
+        )
+        if json.loads(row_verdict.read_text(encoding="utf-8")).get("against") == label:
             raise LadderStateError(
                 f"cannot re-screen {label!r}: ladder row {row!r} stacks on it. "
                 "Screen the change under a new label."

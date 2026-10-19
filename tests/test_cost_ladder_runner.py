@@ -457,7 +457,7 @@ def _stub_run(
 def test_cap_blocks_run_before_start(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     calls: list[str] = []
     _stub_run(monkeypatch, {"a": 1.0}, calls)
-    (tmp_path / "spend.json").write_text(json.dumps({"gemini": 2.5}))
+    (tmp_path / "spend.json").write_text(json.dumps({"gemini": 5.5}))
     with pytest.raises(SpendCapError, match="gemini"):
         runner.run_config(
             "baseline",
@@ -465,10 +465,10 @@ def test_cap_blocks_run_before_start(monkeypatch: pytest.MonkeyPatch, tmp_path: 
             out_dir=tmp_path,
             cases=[_case("a")],
             settings=Settings(),
-            max_run_usd={"gemini": 0.6},  # 2.5 + 0.6 > 3.00
+            max_run_usd={"gemini": 0.6},  # 5.5 + 0.6 > 6.00, the default cap
         )
     assert calls == []  # nothing ran
-    assert json.loads((tmp_path / "spend.json").read_text()) == {"gemini": 2.5}
+    assert json.loads((tmp_path / "spend.json").read_text()) == {"gemini": 5.5}
 
 
 def test_first_run_refused_without_max_run_usd(
@@ -1189,7 +1189,7 @@ def test_refused_screen_touches_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _spend_file_in_tmp: Path
 ) -> None:
     _seed_ladder(tmp_path, baseline=_summary())
-    _spend_file_in_tmp.write_text(json.dumps({"gemini": 2.9}))
+    _spend_file_in_tmp.write_text(json.dumps({"gemini": 5.9}))
     clients: list[tuple[Settings, str]] = []
     _fake_harness(monkeypatch, {"a": []}, clients)
     with pytest.raises(SpendCapError):
@@ -1350,7 +1350,7 @@ def test_restart_refused_by_checks_deletes_nothing(
     _seed_ladder(tmp_path, baseline=_summary())
     _seed_run(tmp_path, "lever1", _summary())
     runner.append_ladder(tmp_path, "lever1")
-    _spend_file_in_tmp.write_text(json.dumps({"gemini": 2.9}))
+    _spend_file_in_tmp.write_text(json.dumps({"gemini": 5.9}))
     clients: list[tuple[Settings, str]] = []
     _fake_harness(monkeypatch, {"a": []}, clients)
     with pytest.raises(SpendCapError):
@@ -1924,3 +1924,57 @@ def test_run_config_records_real_client_calls_inside_its_recorder(
     assert [json.loads(line)["case_key"] for line in lines] == ["a", "b"]
     # The recorder closed with the run: the process keeps nothing afterwards.
     assert process_call_records() == []
+
+
+def test_default_gemini_cap_is_six_dollars() -> None:
+    assert SpendCaps().gemini_usd == 6.00
+    assert SpendCaps().anthropic_usd == 40.00
+
+
+def test_rescreen_refused_when_a_ladder_row_has_no_verdict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A row missing verdict.json cannot show it does not stack on the label: refuse."""
+    _seed_ladder(tmp_path, baseline=_summary())
+    _seed_run(tmp_path, "lever1", _summary())
+    _seed_run(tmp_path, "lever2", _summary())
+    runner.append_ladder(tmp_path, "lever1")
+    runner.append_ladder(tmp_path, "lever2")
+    (tmp_path / "lever2" / "verdict.json").unlink()
+    clients: list[tuple[Settings, str]] = []
+    _fake_harness(monkeypatch, {"a": []}, clients)
+    with pytest.raises(runner.LadderStateError, match="lever2"):
+        runner.run_screen("lever1", {}, out_dir=tmp_path, cases=[_case("a")])
+    assert clients == []
+    assert (tmp_path / "lever1" / "verdict.json").is_file()
+
+
+def test_script_maps_file_not_found_to_exit_2(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts import cost_ladder as script
+
+    def missing(out_dir: Path, *, stop_reason: str) -> Path:
+        raise FileNotFoundError(f"{out_dir}/ladder.json")
+
+    monkeypatch.setattr(script, "write_report", missing)
+    code = script.main(["--out-dir", str(tmp_path), "report", "--stop-reason", "done"])
+    assert code == 2
+    assert capsys.readouterr().err.startswith("error: ")
+
+
+def test_script_cap_defaults_match_spend_caps(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from scripts import cost_ladder as script
+
+    seen: dict[str, Any] = {}
+
+    def fake_baseline(**kw: Any) -> int:
+        seen.update(kw)
+        return 0
+
+    monkeypatch.setattr(script, "require_gemini_key", lambda env: None)
+    monkeypatch.setattr(script, "run_baseline", fake_baseline)
+    assert script.main(["--out-dir", str(tmp_path), "baseline"]) == 0
+    assert seen["caps"] == SpendCaps()

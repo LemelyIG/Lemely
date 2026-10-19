@@ -122,8 +122,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else "")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--golden", type=Path, default=GOLDEN_DIR)
-    parser.add_argument("--cap-gemini-usd", type=float, default=3.0)
-    parser.add_argument("--cap-anthropic-usd", type=float, default=40.0)
+    parser.add_argument("--cap-gemini-usd", type=float, default=SpendCaps().gemini_usd)
+    parser.add_argument("--cap-anthropic-usd", type=float, default=SpendCaps().anthropic_usd)
     parser.add_argument(
         "--max-run-usd",
         action="append",
