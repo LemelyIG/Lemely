@@ -246,6 +246,9 @@ class GeminiSettings(BaseModel):
     # storage is not ZDR-eligible; the key must belong to a dedicated workspace.
     # Off: the pages are sent inline, under the 30 MB base64 limit.
     claude_files_api: bool = True
+    # Spec §2 cost guard: a marked script whose model spend passes this logs
+    # `script_over_cost_target` with the split by task tag. Never blocks marking.
+    paper_cost_target_usd: float = Field(default=0.10, gt=0)
     # Greyscale pages for claude- calls are enhanced for readability (paper shading
     # divided out, levels stretched, light sharpening). False sends plain greyscale
     # (for A/B); it changes the pixels, so it is part of the reply cache key.

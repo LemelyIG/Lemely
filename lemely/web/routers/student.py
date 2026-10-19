@@ -69,7 +69,7 @@ from lemely.db.student_profile_repo import StudentProfileService, SubjectEnrolme
 from lemely.db.upload_repo import IDEMPOTENCY_KEY_WINDOW, StudentUploadRepository, UploadRun
 from lemely.db.xp_repo import UserZoneReader, XpService, civil_date_in_zone
 from lemely.io.det.profiles import get_profile
-from lemely.io.gemini import GeminiClient
+from lemely.io.gemini import GeminiClient, script_cost_scope
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
 from lemely.io.scan_metadata import ScanMetadataExtractor
@@ -1069,16 +1069,17 @@ def student_correct(
                     upload_repo.set_status(owned.id, UploadStatus.failed)
                     return
 
-                extracted = extract_answers(scan_path, mark_scheme, gemini_client=gemini_client)
-                ensure_binding_allows_marking(extracted)
-                report = grade_paper(
-                    mark_scheme,
-                    extracted,
-                    gemini_client=gemini_client,
-                    student_id=None,
-                    integrity_settings=settings.integrity,
-                    options=settings.grading.marking_options(),
-                )
+                with script_cost_scope(settings, script_key=f"upload:{owned.id}"):
+                    extracted = extract_answers(scan_path, mark_scheme, gemini_client=gemini_client)
+                    ensure_binding_allows_marking(extracted)
+                    report = grade_paper(
+                        mark_scheme,
+                        extracted,
+                        gemini_client=gemini_client,
+                        student_id=None,
+                        integrity_settings=settings.integrity,
+                        options=settings.grading.marking_options(),
+                    )
                 attempt_id = attempt_repo.persist_correction(
                     user_id=auth.user_id,
                     report=report,

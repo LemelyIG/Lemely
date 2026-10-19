@@ -303,6 +303,37 @@ _call_case_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 _call_labels: contextvars.ContextVar[tuple[_Attempt | None, str | None]] = contextvars.ContextVar(
     "gemini_call_labels", default=(None, None)
 )
+#: The per-script cost accumulator `script_cost_scope` opens; None outside one.
+_script_cost: contextvars.ContextVar[dict[str, float] | None] = contextvars.ContextVar(
+    "lemely_script_cost", default=None
+)
+
+
+@contextlib.contextmanager
+def script_cost_scope(settings: Settings, *, script_key: str) -> Iterator[dict[str, float]]:
+    """Add up one script's paid calls by task tag; warn past ``paper_cost_target_usd``.
+
+    Threads see the scope when started under ``contextvars.copy_context().run``
+    (the binder's two reads and the uploads are). Never raises, never blocks.
+    """
+    costs: dict[str, float] = {}
+    token = _script_cost.set(costs)
+    try:
+        yield costs
+    finally:
+        _script_cost.reset(token)
+        total = sum(costs.values())
+        target = settings.gemini.paper_cost_target_usd
+        if total > target:
+            structlog.get_logger().warning(
+                "script_over_cost_target",
+                script_key=script_key,
+                total_usd=round(total, 6),
+                target_usd=target,
+                by_tag={tag: round(usd, 6) for tag, usd in sorted(costs.items())},
+            )
+
+
 #: The record this thread appended last (by identity, not list index), so a
 #: structured-output failure marks exactly its own record even if a concurrent
 #: reset has since replaced the list.
@@ -1979,6 +2010,10 @@ class GeminiClient:
             _process_accumulated_usd += usd
             if task_tag:
                 _process_cost_by_task[task_tag] = _process_cost_by_task.get(task_tag, 0.0) + usd
+            scope = _script_cost.get()
+            if scope is not None:
+                bucket = task_tag or "untagged"
+                scope[bucket] = scope.get(bucket, 0.0) + usd
             # Persist cumulative spend to the cross-run ledger; this is the
             # source of truth for the hard USD ceiling. DS3: a ledgerless
             # client (the web process) skips the ledger and the budget

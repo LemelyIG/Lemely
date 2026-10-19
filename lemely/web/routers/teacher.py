@@ -99,7 +99,7 @@ if TYPE_CHECKING:
 from lemely.db.review_queue_rules import review_reasons_for
 from lemely.db.review_repo import ReviewService
 from lemely.db.student_profile_repo import StudentProfileService
-from lemely.io.gemini import GeminiClient
+from lemely.io.gemini import GeminiClient, script_cost_scope
 from lemely.io.question_generation import QuestionGenerator
 from lemely.io.scan_limits import ScanRejectedError
 from lemely.io.scan_metadata import ScanMetadataExtractor
@@ -606,26 +606,27 @@ def _run_grading_job(
                 return
             repo.set_mark_scheme(paper_id, scheme)
 
-            repo.set_stage(paper_id, "extract")
-            extracted = extract_answers(scan_path, scheme, gemini_client=gemini_client)
-            ensure_binding_allows_marking(extracted)
+            with script_cost_scope(settings, script_key=f"teacher_paper:{paper_id}"):
+                repo.set_stage(paper_id, "extract")
+                extracted = extract_answers(scan_path, scheme, gemini_client=gemini_client)
+                ensure_binding_allows_marking(extracted)
 
-            repo.set_stage(paper_id, "mark")
-            # `student_id=None`/`history_store=None`: a console upload is never
-            # attributed to a student account (D1.12 — `TeacherPaper.student_id`
-            # is always null today), so there is nobody to record a history
-            # entry for. The marks live on this row and are served from it.
-            # integrity_settings: the operator's [integrity], as the student
-            # upload already passes (#259).
-            report = grade_paper(
-                scheme,
-                extracted,
-                gemini_client=gemini_client,
-                student_id=None,
-                history_store=None,
-                integrity_settings=settings.integrity,
-                options=settings.grading.marking_options(),
-            )
+                repo.set_stage(paper_id, "mark")
+                # `student_id=None`/`history_store=None`: a console upload is never
+                # attributed to a student account (D1.12 — `TeacherPaper.student_id`
+                # is always null today), so there is nobody to record a history
+                # entry for. The marks live on this row and are served from it.
+                # integrity_settings: the operator's [integrity], as the student
+                # upload already passes (#259).
+                report = grade_paper(
+                    scheme,
+                    extracted,
+                    gemini_client=gemini_client,
+                    student_id=None,
+                    history_store=None,
+                    integrity_settings=settings.integrity,
+                    options=settings.grading.marking_options(),
+                )
             repo.finish(paper_id, report)
     except TeacherPaperDeletedError:
         # The teacher deleted the paper mid-run. Delete already ended the run

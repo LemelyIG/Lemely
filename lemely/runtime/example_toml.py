@@ -142,6 +142,9 @@ def render_example_toml() -> str:
     lines.append("# Page images for claude- calls go through Claude's Files API (1 h expiry,")
     lines.append("# deleted at job end; not ZDR-eligible: use a dedicated workspace key).")
     lines.append(f"# claude_files_api = {_toml_bool(s.gemini.claude_files_api)}")
+    lines.append("# A script whose model spend passes this logs script_over_cost_target")
+    lines.append("# (split by task tag). It never blocks marking.")
+    lines.append(f"# paper_cost_target_usd = {s.gemini.paper_cost_target_usd}")
     lines.append(
         "# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B)."
     )
