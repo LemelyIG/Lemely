@@ -174,6 +174,16 @@ class GeminiSettings(BaseModel):
     # raising that one costs teacher time.
     escalation_model: str | None = "gemini-3.8-flash"
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+    # Per-model human-review threshold: model name -> the confidence below which
+    # a FINAL AI mark from that model is flagged ``needs_teacher_review``. A model
+    # missing from the map uses ``REVIEW_CONFIDENCE_THRESHOLD`` (0.90). Keyed by
+    # the model whose mark is final, so an escalated leaf uses the escalation
+    # model's threshold. Post-processing only: no prompt or cache key reads it.
+    # Applies in ``lemely.io.correction_ai`` alone; the db/web layers still read
+    # the 0.90 constant from the persisted ``confidence_score``.
+    review_confidence_threshold_for: dict[str, Annotated[float, Field(ge=0.0, le=1.0)]] = Field(
+        default_factory=dict
+    )
     # LLM cost-ladder levers. Every default reproduces the pre-ladder behaviour.
     # Per-task-tag cache mode (unlisted tags behave as "read_write"). A tag mapped
     # to "refresh" overwrites existing entries (e.g. a frozen baseline).

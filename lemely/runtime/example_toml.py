@@ -96,6 +96,14 @@ def render_example_toml() -> str:
     lines.append("# the gate compares (model, thinking) tuples, not model names alone.")
     lines.append(f'# escalation_model = "{s.gemini.escalation_model}"')
     lines.append(f"# escalation_confidence_threshold = {s.gemini.escalation_confidence_threshold}")
+    lines.append("# Per-model human-review threshold: a final AI mark from a listed model is")
+    lines.append("# flagged for teacher review below its value (unlisted models: 0.90). A table")
+    lines.append("# you set REPLACES the shipped one (no merge). Applies to the marking step;")
+    lines.append("# the review queue and teacher console still read the 0.90 constant.")
+    lines.append(
+        "# review_confidence_threshold_for = "
+        f"{_toml_inline(s.gemini.review_confidence_threshold_for)}"
+    )
     lines.append("")
     lines.append("# LLM cost-ladder levers (all default to the pre-ladder behaviour).")
     lines.append("# Per-task cache mode: read_write | bypass | refresh (unlisted tags read_write).")

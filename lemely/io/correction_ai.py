@@ -57,7 +57,7 @@ from lemely.io.prompts.correction_ai import (
 )
 from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD
 from lemely.io.validation import validate_mark_scheme
-from lemely.runtime.config import MarkingOptions
+from lemely.runtime.config import GeminiSettings, MarkingOptions
 from lemely.runtime.errors import ConfigError, CostCeilingError, LemelyError
 from lemely.runtime.events import EventType, bus
 
@@ -360,6 +360,21 @@ class _PrefixKwargs(TypedDict, total=False):
     shared_prefix: SharedPrefix
 
 
+def review_threshold_for(gemini: GeminiSettings, model: str | None) -> float:
+    """The human-review confidence threshold for a final AI mark ``model`` gave.
+
+    ``GeminiSettings.review_confidence_threshold_for`` overrides
+    :data:`REVIEW_CONFIDENCE_THRESHOLD` per model; an unlisted or unknown model
+    (``None``) keeps the global value. A stand-in settings object without a real
+    dict also keeps it.
+    """
+    table = getattr(gemini, "review_confidence_threshold_for", None)
+    if model is None or not isinstance(table, dict):
+        return REVIEW_CONFIDENCE_THRESHOLD
+    value = table.get(model)
+    return float(value) if isinstance(value, int | float) else REVIEW_CONFIDENCE_THRESHOLD
+
+
 class AICorrector:
     """Marks individual non-MCQ questions via the shared GeminiClient.
 
@@ -377,6 +392,15 @@ class AICorrector:
         self._mark_scheme = mark_scheme
         #: Built once per value of ``reader_describes_drawings``, not once per leaf.
         self._prefixes: dict[bool, SharedPrefix] = {}
+        #: The model whose response the last :meth:`mark_question` returned (the
+        #: escalation model when it escalated); ``None`` before the first call.
+        self.last_mark_model: str | None = None
+
+    def review_threshold(self) -> float:
+        """The review threshold for the last mark: :func:`review_threshold_for` its model."""
+        if self.last_mark_model is None:
+            return REVIEW_CONFIDENCE_THRESHOLD
+        return review_threshold_for(self._client._settings.gemini, self.last_mark_model)
 
     def _shared_prefix(self, *, reader_describes_drawings: bool) -> SharedPrefix | None:
         """The paper's shared prefix when lever A3 is on and the scheme is known."""
@@ -508,7 +532,7 @@ class AICorrector:
         )
 
         if g.cascade_enabled is True:
-            result = self._cascade(
+            result, final_model = self._cascade(
                 question,
                 system_prompt,
                 user_prompt,
@@ -518,9 +542,10 @@ class AICorrector:
                 prefix_kwargs=prefix_kwargs,
             )
         else:
-            result = self._retry_low_confidence(
+            result, final_model = self._retry_low_confidence(
                 question, system_prompt, user_prompt, result, prefix_kwargs=prefix_kwargs
             )
+        self.last_mark_model = final_model
 
         # Post-I6-review Item A: ``PointVerdict.ecf_applied`` must be
         # CODE-set only -- I7's whole contract is that it records a re-mark
@@ -555,12 +580,13 @@ class AICorrector:
         result: AIMarkResponse,
         *,
         prefix_kwargs: _PrefixKwargs,
-    ) -> AIMarkResponse:
+    ) -> tuple[AIMarkResponse, str]:
         """The non-cascade path: a borderline thinking retry, then escalation.
 
         Both steps fire on ``escalation_confidence_threshold``; prompts and cache
         keys are what ``mark_question`` sent before the cascade existed.
         ``prefix_kwargs`` is the first pass's ``shared_prefix`` argument, if any.
+        Returns the final response and the model that gave it.
         """
         g = self._client._settings.gemini
         # Step 1: thinking retry for borderline confidence (cheaper than Pro escalation).
@@ -656,7 +682,8 @@ class AICorrector:
                 question_id=question.id,
                 **prefix_kwargs,
             )
-        return result
+            return result, escalation_model
+        return result, correction_model
 
     def _cascade(
         self,
@@ -668,7 +695,7 @@ class AICorrector:
         leaf_log: str | None,
         records_before: int,
         prefix_kwargs: _PrefixKwargs,
-    ) -> AIMarkResponse:
+    ) -> tuple[AIMarkResponse, str]:
         """Cost-ladder lever A2: keep the cheap first pass unless a trigger fires.
 
         ``first`` came from ``correction_model``. The triggers, cheapest first,
@@ -694,6 +721,7 @@ class AICorrector:
         With ``LEMELY_CASCADE_LEAF_LOG`` set, an ``OSError`` writing that file
         fails the leaf (see :func:`_append_leaf_log`). ``prefix_kwargs`` is the
         first pass's ``shared_prefix`` argument, sent with every pass here.
+        Returns the kept response and the model that gave it.
         """
         g = self._client._settings.gemini
         cheap_model = g.model_for("correction")
@@ -777,7 +805,9 @@ class AICorrector:
         structlog.get_logger().bind(component="correction_cascade").info("cascade_leaf", **entry)
         if leaf_log:
             _append_leaf_log(leaf_log, entry, process_call_records()[records_before:], question.id)
-        return strong if strong is not None else first
+        if strong is not None and strong_model:
+            return strong, strong_model
+        return first, cheap_model
 
 
 def _build_mcq_corrected(
@@ -1547,6 +1577,8 @@ def _build_ai_corrected_from_verdicts(
     mark: AIMarkResponse,
     student_working: str | None,
     extraction_confidence: float | None,
+    *,
+    review_threshold: float = REVIEW_CONFIDENCE_THRESHOLD,
 ) -> CorrectedQuestion:
     """I6 (US-013): the point-verdict marking path.
 
@@ -1602,7 +1634,8 @@ def _build_ai_corrected_from_verdicts(
     4. `no_span` / M-point-outside-``working_out`` (:func:`_check_point_evidence`),
        queued under the `low_confidence` bucket per that function's
        docstring -- no new enum member, no new trigger.
-    5. ``mark.confidence < REVIEW_CONFIDENCE_THRESHOLD``.
+    5. ``mark.confidence < review_threshold`` (``REVIEW_CONFIDENCE_THRESHOLD``
+       unless the marking model has its own, :func:`review_threshold_for`).
     """
     totals = _awarded_from_verdicts(question, mark.point_verdicts)
     capped, matched_point_ids = totals.capped, totals.matched_point_ids
@@ -1678,7 +1711,7 @@ def _build_ai_corrected_from_verdicts(
         question, mark.point_verdicts, student_answer, student_working
     )
     no_span = evidence_reason is not None
-    low_confidence = mark.confidence < REVIEW_CONFIDENCE_THRESHOLD or no_span
+    low_confidence = mark.confidence < review_threshold or no_span
 
     reasons: list[str] = []
     if coherence_mismatch:
@@ -1692,8 +1725,7 @@ def _build_ai_corrected_from_verdicts(
             reasons.append(evidence_reason or "")
         else:
             reasons.append(
-                f"confidence {mark.confidence:.2f} below review threshold "
-                f"{REVIEW_CONFIDENCE_THRESHOLD:.2f}"
+                f"confidence {mark.confidence:.2f} below review threshold {review_threshold:.2f}"
             )
     review_reason = " | ".join(reasons) if reasons else None
 
@@ -1729,6 +1761,7 @@ def _build_ai_corrected(
     extraction_confidence: float | None = None,
     *,
     equivalence_gate: bool = False,
+    review_threshold: float = REVIEW_CONFIDENCE_THRESHOLD,
 ) -> CorrectedQuestion:
     """Convert AIMarkResponse + question metadata into a CorrectedQuestion.
 
@@ -1799,7 +1832,9 @@ def _build_ai_corrected(
 
     Four independent reasons flag a question for human review (D2.2, D2.3 for #3, M1.5 for #40):
 
-    1. ``confidence < REVIEW_CONFIDENCE_THRESHOLD`` — the marker itself is unsure.
+    1. ``confidence < review_threshold`` — the marker itself is unsure.
+       ``review_threshold`` is :data:`REVIEW_CONFIDENCE_THRESHOLD` unless the
+       model whose mark this is has its own (:func:`review_threshold_for`).
     2. The marker returned a mark outside ``[0, question.marks]``. The value is
        clamped into range either way, but a marker that asks for 4 marks on a
        3-mark question has misread the mark scheme, so the (silently corrected)
@@ -1819,7 +1854,12 @@ def _build_ai_corrected(
     """
     if equivalence_gate and mark.point_verdicts and question.answer_points:
         return _build_ai_corrected_from_verdicts(
-            question, student_answer, mark, student_working, extraction_confidence
+            question,
+            student_answer,
+            mark,
+            student_working,
+            extraction_confidence,
+            review_threshold=review_threshold,
         )
 
     clamped = max(0, min(mark.awarded_marks, question.marks))
@@ -1848,7 +1888,7 @@ def _build_ai_corrected(
         awarded = _awarded_after_backstop(
             question, clamped, set(mark.matched_point_ids), set(matched_point_ids)
         )
-    low_confidence = mark.confidence < REVIEW_CONFIDENCE_THRESHOLD
+    low_confidence = mark.confidence < review_threshold
 
     reasons: list[str] = []
     if out_of_range:
@@ -1862,8 +1902,7 @@ def _build_ai_corrected(
         reasons.append("unverified accuracy mark(s): " + "; ".join(rejections))
     if not reasons and low_confidence:
         reasons.append(
-            f"confidence {mark.confidence:.2f} below review threshold "
-            f"{REVIEW_CONFIDENCE_THRESHOLD:.2f}"
+            f"confidence {mark.confidence:.2f} below review threshold {review_threshold:.2f}"
         )
     review_reason = " | ".join(reasons) if reasons else None
 
@@ -2364,8 +2403,13 @@ def _maybe_apply_ecf_substitution(
     top_level_leaves: list[Question],
     corrected_by_id: dict[str, CorrectedQuestion],
     log: structlog.BoundLogger,
+    review_threshold: float = REVIEW_CONFIDENCE_THRESHOLD,
 ) -> CorrectedQuestion:
     """I7 (US-013) ORDER: try without substitution first.
+
+    ``review_threshold`` is the one ``cq`` was built with (the first pass's
+    model's). The merged mark carries the lower of the two passes' confidences,
+    so it is judged by the stricter of the two passes' thresholds.
 
     ``cq``/``mark`` were already marked by the caller with no substitution;
     only re-mark when a part is BELOW MAX *and* GATED *and* has a resolvable
@@ -2572,7 +2616,7 @@ def _maybe_apply_ecf_substitution(
     # Post-I7-review Critical 1 fix: the re-mark's OWN confidence/feedback
     # must replace the first pass's, not the other way round.
     # `_build_ai_corrected_from_verdicts` evaluates
-    # `mark.confidence < REVIEW_CONFIDENCE_THRESHOLD` -- if `merged_mark`
+    # `mark.confidence < review_threshold` -- if `merged_mark`
     # kept the first pass's (often HIGH) confidence, an ECF re-mark the
     # model itself was UNSURE about would ship unflagged, carrying feedback
     # that describes the first pass's rejection rather than the award that
@@ -2619,6 +2663,7 @@ def _maybe_apply_ecf_substitution(
         student_working,
         extraction_confidence,
         equivalence_gate=equivalence_gate,
+        review_threshold=max(review_threshold, ai.review_threshold()),
     ).model_copy(update={"addresses_question": _addresses_judgement(mark2)})
 
 
@@ -3159,6 +3204,7 @@ def correct_paper(
                 message=f"AI marking failed for q={q.id}: {exc!s}",
             )
             continue
+        review_threshold = ai.review_threshold()
         cq = _build_ai_corrected(
             q,
             student_answer or "",
@@ -3166,6 +3212,7 @@ def correct_paper(
             student_working,
             extraction_confidence,
             equivalence_gate=equivalence_gate,
+            review_threshold=review_threshold,
         )
         cq = _maybe_apply_ecf_substitution(
             q,
@@ -3185,6 +3232,7 @@ def correct_paper(
             top_level_leaves=top_level_groups[_top_level_ancestor_id(q.id, all_by_id)],
             corrected_by_id=corrected_by_id,
             log=log,
+            review_threshold=review_threshold,
         )
         corrected.append(cq)
         prior_results_accumulated[q.id] = cq.awarded_marks
