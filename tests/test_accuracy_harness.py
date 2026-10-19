@@ -1877,9 +1877,7 @@ class RunManifestTests(unittest.TestCase):
         # The pinned fingerprint predates cost-ladder A1; hold the correction model
         # at its pre-A1 value so this still isolates the binder's effect.
         gemini = settings.gemini.model_copy(update={"correction_model": "gemini-3.8-flash"})
-        return settings.model_copy(
-            update={"binding": BindingSettings(**binding), "gemini": gemini}
-        )
+        return settings.model_copy(update={"binding": BindingSettings(**binding), "gemini": gemini})
 
     def _with_second_read_level(self, settings, level: str | None):
         levels = {
