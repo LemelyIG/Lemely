@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 
 from lemely.io import gemini as gemini_module
+from lemely.io.llm import image_fit
 from lemely.io.llm.errors import CapTruncatedError, TransientCallError
-from lemely.io.llm.image_fit import IMG_FIT_VERSION
 from lemely.io.llm.provider import ProviderReply, Usage
 from lemely.io.llm.request import (
     CachePlan,
@@ -24,12 +24,26 @@ class ProviderFingerprintTests(unittest.TestCase):
     def test_gemini_models_add_nothing(self) -> None:
         for model in ("gemini-3.8-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite"):
             with self.subTest(model=model):
-                self.assertEqual(provider_fingerprint(model, max_output_tokens=65536), "")
+                self.assertEqual(
+                    provider_fingerprint(
+                        model,
+                        max_output_tokens=65536,
+                        image_token_budget=95000,
+                        image_floor_px=1568,
+                    ),
+                    "",
+                )
 
     def test_claude_segment(self) -> None:
         self.assertEqual(
-            provider_fingerprint("claude-haiku-5-5", max_output_tokens=16000),
-            f"|provider=anthropic|max_tokens=16000|img_fit={IMG_FIT_VERSION}",
+            provider_fingerprint(
+                "claude-haiku-5-5",
+                max_output_tokens=16000,
+                image_token_budget=95000,
+                image_floor_px=1568,
+            ),
+            f"|provider=anthropic|max_tokens=16000|img_fit={image_fit.IMG_FIT_VERSION}"
+            "|img_budget=95000|img_floor=1568",
         )
 
     def test_request_fingerprint_is_the_module_function(self) -> None:
@@ -42,7 +56,13 @@ class ProviderFingerprintTests(unittest.TestCase):
             max_output_tokens=16000,
         )
         self.assertEqual(
-            req.fingerprint(), provider_fingerprint("claude-haiku-5-5", max_output_tokens=16000)
+            req.fingerprint(image_token_budget=95000, image_floor_px=1568),
+            provider_fingerprint(
+                "claude-haiku-5-5",
+                max_output_tokens=16000,
+                image_token_budget=95000,
+                image_floor_px=1568,
+            ),
         )
 
 

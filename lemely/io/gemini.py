@@ -1313,9 +1313,14 @@ class GeminiClient:
             raw += f"|{tool}"
         # The provider component, appended only for claude- models for the
         # same reason as `tool` above: every Gemini key stays byte-identical.
-        # It carries the call's reply cap and the image-fit version.
+        # It carries the call's reply cap, the image-fit version, budget and floor.
         if is_anthropic_model(model):
-            raw += provider_fingerprint(model, max_output_tokens=self._claude_output_cap(task_tag))
+            raw += provider_fingerprint(
+                model,
+                max_output_tokens=self._claude_output_cap(task_tag),
+                image_token_budget=self._settings.gemini.claude_image_token_budget,
+                image_floor_px=self._settings.gemini.claude_image_floor_px,
+            )
         return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
     def check_reachable(self) -> None:

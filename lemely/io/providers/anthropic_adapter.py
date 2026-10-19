@@ -248,7 +248,11 @@ class AnthropicAdapter:
         return {"role": "user", "content": content}
 
     def _send(self, **kwargs: Any) -> Message:  # type: ignore[explicit-any]  # noqa: ANN401
-        """One request; streamed when ``max_tokens`` is past the SDK's non-streaming limit."""
+        """One request; streamed when ``max_tokens`` is past the SDK's non-streaming limit.
+
+        Some models have a per-model non-streaming limit below 21,333 tokens, so a cap
+        under the threshold can still be refused by the API.
+        """
         try:
             if kwargs["max_tokens"] > NONSTREAMING_MAX_TOKENS:
                 with self._client.messages.stream(**kwargs) as stream:

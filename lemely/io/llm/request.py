@@ -10,7 +10,6 @@ if TYPE_CHECKING:
 
     from pydantic import BaseModel
 
-from lemely.io.llm.image_fit import IMG_FIT_VERSION
 from lemely.io.providers import is_anthropic_model
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
@@ -66,15 +65,24 @@ class CachePlan:
             raise ValueError(f"cache breakpoints named twice: {self.breakpoints}")
 
 
-def provider_fingerprint(model: str, *, max_output_tokens: int) -> str:
+def provider_fingerprint(
+    model: str, *, max_output_tokens: int, image_token_budget: int, image_floor_px: int
+) -> str:
     """The provider part of a reply's cache key: the single source for it.
 
     Empty for every Gemini model, so no Gemini key moves. A ``claude-`` model adds
-    the provider name, the reply cap it is sent with and the page-image fit version.
+    the provider name, the reply cap it is sent with, the page-image fit version and
+    the token budget and pixel floor that fit uses (each changes the pixels sent).
     """
     if not is_anthropic_model(model):
         return ""
-    return f"|provider=anthropic|max_tokens={max_output_tokens}|img_fit={IMG_FIT_VERSION}"
+    # Read at call time, and imported here, so importing this module stays free of Pillow.
+    from lemely.io.llm import image_fit
+
+    return (
+        f"|provider=anthropic|max_tokens={max_output_tokens}|img_fit={image_fit.IMG_FIT_VERSION}"
+        f"|img_budget={image_token_budget}|img_floor={image_floor_px}"
+    )
 
 
 @dataclass(frozen=True)
@@ -103,6 +111,11 @@ class LLMRequest:
     uploads: Any = None
     shared_prefix: Any = None
 
-    def fingerprint(self) -> str:
+    def fingerprint(self, *, image_token_budget: int, image_floor_px: int) -> str:
         """The provider part of this request's cache key (:func:`provider_fingerprint`)."""
-        return provider_fingerprint(self.model, max_output_tokens=self.max_output_tokens)
+        return provider_fingerprint(
+            self.model,
+            max_output_tokens=self.max_output_tokens,
+            image_token_budget=image_token_budget,
+            image_floor_px=image_floor_px,
+        )

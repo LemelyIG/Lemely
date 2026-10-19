@@ -136,6 +136,28 @@ class CacheKeyTests(_Base):
         second = client._params_fingerprint(_HAIKU, "binding_second_read", AIMarkResponse)
         correction = client._params_fingerprint(_HAIKU, "correction", AIMarkResponse)
         self.assertNotEqual(second, correction)
-        with patch("lemely.io.llm.request.IMG_FIT_VERSION", "v2"):
+        with patch("lemely.io.llm.image_fit.IMG_FIT_VERSION", "v-test"):
             moved = client._params_fingerprint(_HAIKU, "binding_second_read", AIMarkResponse)
         self.assertNotEqual(second, moved)
+
+    def test_claude_key_moves_with_the_image_budget_and_floor(self) -> None:
+        base, _ = self._client()
+        key = base._params_fingerprint(_HAIKU, "binding_second_read", AIMarkResponse)
+        for setting, value in (
+            ("claude_image_token_budget", 80_000),
+            ("claude_image_floor_px", 1200),
+        ):
+            with self.subTest(setting=setting):
+                other, _ = self._client(**{setting: value})
+                self.assertNotEqual(
+                    key, other._params_fingerprint(_HAIKU, "binding_second_read", AIMarkResponse)
+                )
+
+    def test_gemini_key_ignores_the_claude_image_settings(self) -> None:
+        base, _ = self._client()
+        other, _ = self._client(claude_image_token_budget=80_000, claude_image_floor_px=1200)
+        model = "gemini-2.5-flash"
+        self.assertEqual(
+            base._params_fingerprint(model, "extraction", AIMarkResponse),
+            other._params_fingerprint(model, "extraction", AIMarkResponse),
+        )

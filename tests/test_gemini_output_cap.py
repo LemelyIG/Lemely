@@ -104,11 +104,12 @@ def test_per_tag_cap_sent_and_fingerprinted() -> None:
     )
 
 
-def test_cap_does_not_touch_anthropic_fingerprint() -> None:
+def test_cap_moves_the_anthropic_fingerprint() -> None:
+    # Since cc800d2f a Claude call is sent with the tag's cap, so the key carries it.
     capped = GeminiClient(_settings({"extraction": 8000}), _genai_client=MagicMock())
     plain = GeminiClient(_settings({}), _genai_client=MagicMock())
     model = "claude-sonnet-5-5"
-    assert capped._params_fingerprint(model, "extraction", _Schema) == plain._params_fingerprint(
+    assert capped._params_fingerprint(model, "extraction", _Schema) != plain._params_fingerprint(
         model, "extraction", _Schema
     )
 

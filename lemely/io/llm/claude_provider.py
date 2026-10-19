@@ -62,7 +62,7 @@ class ClaudeProvider:
         )
 
     def _pages(
-        self, req: LLMRequest, log: Any
+        self, req: LLMRequest
     ) -> tuple[FittedImages | None, tuple[bytes, ...], tuple[str, ...]]:
         """The fit, and the inline images or Files API ids to send (Task 2c adds ids)."""
         if not req.images:
@@ -76,9 +76,20 @@ class ClaudeProvider:
             )
         return fitted, fitted.images, ()
 
-    def count_tokens(self, req: LLMRequest) -> int | None:
-        """The count endpoint's figure for ``req`` as it would be sent, or None."""
-        images = self._fit(req, inline=True).images if req.images else ()
+    def count_tokens(
+        self,
+        req: LLMRequest,
+        *,
+        images: tuple[bytes, ...] | None = None,
+        file_ids: tuple[str, ...] = (),
+    ) -> int | None:
+        """The count endpoint's figure for ``req``, or None if it fails.
+
+        ``images`` and ``file_ids`` are the pages already prepared for sending; left
+        out, the request's own images are fitted.
+        """
+        if images is None:
+            images = self._fit(req, inline=True).images if req.images else ()
         try:
             return self._adapter.count_tokens(
                 model=req.model,
@@ -86,6 +97,7 @@ class ClaudeProvider:
                 user_prompt=req.prompt,
                 cache_prefix=req.cache_prefix,
                 images=images,
+                image_file_ids=file_ids,
             )
         except ExternalServiceError:
             return None
@@ -94,7 +106,7 @@ class ClaudeProvider:
         """Send ``req``; 429/529/5xx/connection raise ``TransientCallError``."""
         if req.response_schema is None:
             raise ProviderError("a Claude call needs a response schema")
-        fitted, images, file_ids = self._pages(req, log)
+        fitted, images, file_ids = self._pages(req)
         if fitted is not None:
             if fitted.over_token_budget:
                 log.warning(
@@ -106,17 +118,7 @@ class ClaudeProvider:
                 )
             budget = self._settings.gemini.claude_image_token_budget
             if fitted.est_tokens >= PREFLIGHT_SHARE * budget:
-                try:
-                    counted: int | None = self._adapter.count_tokens(
-                        model=req.model,
-                        system_prompt=req.system,
-                        user_prompt=req.prompt,
-                        cache_prefix=req.cache_prefix,
-                        images=images,
-                        image_file_ids=file_ids,
-                    )
-                except ExternalServiceError:
-                    counted = None
+                counted = self.count_tokens(req, images=images, file_ids=file_ids)
                 log.info(
                     "claude_token_preflight",
                     est_tokens=fitted.est_tokens,
