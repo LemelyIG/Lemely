@@ -371,10 +371,10 @@ def test_second_read_uses_its_own_task_tag_and_cache_key(
     assert calls["extraction"]["model"] == calls["binding_second_read"]["model"] == _READ_MODEL
     assert all(call["image_uploads"] is uploads for call in calls.values())
 
-    # Same model, different thinking level: the second read is not the first one again.
-    assert client._settings.gemini.thinking_level_for["binding_second_read"] == "medium"
+    # Same model, own cache key and task tag: the second read is not the first one again.
+    assert client._settings.gemini.thinking_level_for["binding_second_read"] == "low"
     assert client.resolved_thinking("extraction", _READ_MODEL) == "low"
-    assert client.resolved_thinking("binding_second_read", _READ_MODEL) == "medium"
+    assert client.resolved_thinking("binding_second_read", _READ_MODEL) == "low"
     # Two paid calls (neither served from the other's cache entry), one upload of the pages.
     assert genai.models.generate_content.call_count == 2
     assert len(genai.files.uploads) == _PAGE_COUNT

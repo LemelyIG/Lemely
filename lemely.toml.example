@@ -113,7 +113,7 @@ correction_borderline = "high"  # Step-1 retry before Step-2 escalation
 escalation = "high"
 extraction = "minimal"
 generation = "low"
-binding_second_read = "medium"  # the label binder's second read, see [binding]
+binding_second_read = "low"  # the label binder's second read, see [binding]
 
 [accuracy_eval]
 mark_accuracy_target = 0.95

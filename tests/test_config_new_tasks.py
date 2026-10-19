@@ -294,9 +294,9 @@ class TestBindingSettings:
         assert s.gemini.model_for("extraction") == "gemini-3.5-flash-lite"
         assert s.binding.read_model != s.gemini.model_for("extraction")
 
-    def test_second_read_thinks_harder_than_the_first_by_default(self) -> None:
+    def test_second_read_defaults_to_low_thinking(self) -> None:
         levels = GeminiSettings().thinking_level_for
-        assert levels["binding_second_read"] == "medium"
+        assert levels["binding_second_read"] == "low"
         assert levels["extraction"] == "minimal"
 
     @pytest.mark.parametrize(

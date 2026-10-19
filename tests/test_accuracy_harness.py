@@ -1896,7 +1896,7 @@ class RunManifestTests(unittest.TestCase):
         the stand-in used by the tests above has no such entry and hid it.
         """
         legacy = self._real_settings(binder="legacy", gate="off")
-        self.assertEqual(legacy.gemini.thinking_level_for["binding_second_read"], "medium")
+        self.assertEqual(legacy.gemini.thinking_level_for["binding_second_read"], "low")
         as_shipped = self._manifest(legacy).params_fingerprint
         # The same run with the thinking table as it was before the entry existed.
         self.assertEqual(

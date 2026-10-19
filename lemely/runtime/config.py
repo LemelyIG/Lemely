@@ -129,8 +129,9 @@ _THINKING_LEVEL_FOR_DEFAULTS: dict[str, ThinkingLevel] = {
     # The label binder's second read of a script (lemely.io.binding.orchestrate). It
     # runs on the same model as the first read, which goes out under "extraction"; a
     # different thinking level here is what makes it a second opinion and not the
-    # same call again.
-    "binding_second_read": "medium",
+    # same call again. "low" since the cost-ladder B1 screen (36.4% cheaper, no extra
+    # mismarks): BUILD/accuracy-runs/cost-ladder-2026-10-19/b1-second-read-low/verdict.json
+    "binding_second_read": "low",
 }
 
 
