@@ -134,8 +134,9 @@ def isolated_env() -> Iterator[None]:
 
 def _real_settings(tmp: Path, **gemini: Any) -> Settings:
     s = load_settings(toml_path=None, cwd=tmp)
-    # These tests mock the Gemini client; the shipped correction default is
-    # claude-haiku-5-5 (cost-ladder A1), so pin the Gemini model they exercise.
+    # The mocks and fitted thresholds here are for the pre-A1 correction model,
+    # gemini-3.8-flash; the pin holds that model for them (the shipped default
+    # is now gemini-3.1-flash-lite).
     gemini = {"correction_model": "gemini-3.8-flash", **gemini}
     return s.model_copy(
         update={
