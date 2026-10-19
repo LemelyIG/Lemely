@@ -246,6 +246,10 @@ class GeminiSettings(BaseModel):
     # storage is not ZDR-eligible; the key must belong to a dedicated workspace.
     # Off: the pages are sent inline, under the 30 MB base64 limit.
     claude_files_api: bool = True
+    # Greyscale pages for claude- calls are enhanced for readability (paper shading
+    # divided out, levels stretched, light sharpening). False sends plain greyscale
+    # (for A/B); it changes the pixels, so it is part of the reply cache key.
+    claude_image_enhance: bool = True
     # Thinking budget: map of task_tag → token budget (0 = disabled / default).
     # Mark-scheme parsing is enabled by default: the extra reasoning headroom helps
     # the model tag "any N from" pools correctly (is_optional/is_alternative), which

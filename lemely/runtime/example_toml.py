@@ -142,6 +142,10 @@ def render_example_toml() -> str:
     lines.append("# Page images for claude- calls go through Claude's Files API (1 h expiry,")
     lines.append("# deleted at job end; not ZDR-eligible: use a dedicated workspace key).")
     lines.append(f"# claude_files_api = {_toml_bool(s.gemini.claude_files_api)}")
+    lines.append(
+        "# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B)."
+    )
+    lines.append(f"# claude_image_enhance = {_toml_bool(s.gemini.claude_image_enhance)}")
     lines.append("")
     lines.append(f"max_retries = {s.gemini.max_retries}")
     lines.append(f"backoff_seconds = {s.gemini.backoff_seconds}")
