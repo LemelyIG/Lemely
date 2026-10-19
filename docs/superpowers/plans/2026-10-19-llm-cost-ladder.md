@@ -277,6 +277,33 @@ Rung-0 finding (93a1764c, 2026-10-19): one binder first read ran away to 65,522 
 - [ ] **Step 2:** If B1 or B2 beats any of A1–A3, amend this plan. Swap that lever into Phase A with its own build and screen tasks, written to the standard of Tasks 10–13. Then stop and get the user's approval before continuing.
 - [ ] **Step 3:** If correction is no longer the largest share, stop and report to the user. Phase A as written assumes it is.
 
+### Task 7 outcome (2026-10-19, user-approved re-rank)
+
+Rung 0 at 93a1764c (baseline + A/A, both complete; A/A floor 1 part; id-match 1.0; 78 scored parts): mean $0.122-0.158 per script at 2027 rates. `binding_second_read` (gemini-3.8-flash, thinking medium) is about 50-55% of cost and about 90% of its output is thinking tokens; correction 23-33%; the binder's first read (tag `extraction`) 10-35%, inflated once by a 65,522-token runaway. Phase A is re-ordered to:
+
+1. **B1** - `binding_second_read` thinking medium -> low (config only; screened first).
+2. **B2** - second read only on deterministic triggers (Task 15 build).
+3. **B12** - per-tag output-token cap on binder reads, so a runaway fails fast (Task 14 build).
+4. **A1** - correction model switch (built: Tasks 8-9).
+
+Binder-lever screens add `binding_second_read` (and, for first-read levers, `extraction`) to `--live-tags`, so binding runs live and id-match is measured, not replayed.
+
+### Task 14: B12 build - per-tag output-token cap
+
+**Files:** `lemely/io/gemini.py`, `lemely/runtime/config.py`, `lemely/runtime/example_toml.py`, `lemely.toml.example`, `tests/test_gemini_output_cap.py` (new).
+
+- [ ] New setting `GeminiSettings.max_output_tokens_for: dict[str, int] = {}` (bounded >0); a tag's value replaces the client's default output cap for that tag's calls; empty map = today's requests and cache keys byte-identical (the cap already feeds the params fingerprint, so a set cap changes the key).
+- [ ] Confirm from the Gemini docs whether thinking tokens count against `max_output_tokens` on 3.x, and record it; a truncated reply (finish reason MAX_TOKENS) is billed, recorded with parse_ok=False, and not retried with the same cap.
+- [ ] Tests: default byte-identical; per-tag cap sent and fingerprinted; truncated reply recorded and not looped.
+
+### Task 15: B2 build - second read only on triggers
+
+**Files:** `lemely/io/binding/orchestrate.py` (second-read decision only), `lemely/runtime/config.py` (`BindingSettings.second_read_mode: Literal["always", "on_trigger"] = "always"`), example TOML, `tests/test_binding_second_read_triggers.py` (new). Runs after Task 14 (shared `config.py`).
+
+- [ ] With `on_trigger`, the second read runs only when a deterministic trigger fires on the first read: bound labels do not match the expected question set; missing, duplicated or out-of-order labels; any unaligned/unbound leaf or gate check that would fail; the first read failed to parse or was truncated. `always` stays byte-identical.
+- [ ] Trigger recall by replay ($0): over every recorded case where a second read changed the binding (golden screens, `tests/fixtures/binding` streams), the triggers must have fired - 100% recall, reported with the case list.
+- [ ] Tests per trigger, plus `always` unchanged.
+
 ### Task 8: Anthropic provider adapter
 
 **Files:**
