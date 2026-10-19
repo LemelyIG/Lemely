@@ -526,7 +526,7 @@ class ClientDispatchTests(_ClientTestCase):
         (rec,) = process_call_records()
         self.assertEqual(rec.provider, "anthropic")
         self.assertEqual(rec.model, _HAIKU)
-        self.assertEqual(rec.input_tokens, 4_100)  # 600 + 3000 + 1.25 * 400
+        self.assertEqual(rec.input_tokens, 4_000)  # 600 + 3000 + 400, the plain total
         self.assertEqual(rec.cached_tokens, 3_000)
         self.assertEqual(rec.output_tokens, 700)
         self.assertEqual(rec.thinking_tokens, 300)
@@ -535,11 +535,19 @@ class ClientDispatchTests(_ClientTestCase):
         self.assertTrue(rec.parse_ok)
         settings = make_settings(self.tmp)
         expected = price_call(
-            _HAIKU, settings, input_tokens=4_100, cached_tokens=3_000, output_tokens=700, on=_TODAY
+            _HAIKU,
+            settings,
+            input_tokens=4_000,
+            cached_tokens=3_000,
+            output_tokens=700,
+            cache_write_5m_tokens=400,
+            on=_TODAY,
         )
         self.assertAlmostEqual(rec.usd_now, expected, places=12)
         self.assertEqual(rec.usd_2027, rec.usd_now)
-        self.assertAlmostEqual(expected, (1_100 * 0.0001 + 3_000 * 0.00001 + 700 * 0.0005) / 1000)
+        self.assertAlmostEqual(
+            expected, (600 * 0.0001 + 3_000 * 0.00001 + 400 * 0.000125 + 700 * 0.0005) / 1000
+        )
 
     def test_cache_write_premium_priced(self) -> None:
         client, _fake, _genai = self._client(

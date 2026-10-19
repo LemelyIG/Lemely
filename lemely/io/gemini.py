@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 import structlog
 from pydantic import BaseModel
@@ -33,6 +33,7 @@ from lemely.io.cost_ledger import CostLedger
 from lemely.io.llm.errors import CapTruncatedError as _CapTruncatedError
 from lemely.io.llm.errors import TransientCallError as _TransientError
 from lemely.io.llm.gemini_provider import GeminiProvider
+from lemely.io.llm.pricing import PriceRow, claude_row, row_cost
 from lemely.io.llm.request import (
     CodeExecution,
     DocumentInput,
@@ -141,12 +142,6 @@ _DEFAULT_PRICING: dict[str, tuple[float, float]] = {
     # Cost-ladder rung 0 (official pricing page, per 1M: $0.25 in / $0.025
     # cached / $1.50 out).
     "gemini-3.1-flash-lite": (0.000250, 0.001500),
-    # Anthropic Haiku 5.5 ($0.10 in / $0.01 cache read / $0.50 out per 1M).
-    # Model id confirmed 2026-10-19 against
-    # https://platform.claude.com/docs/en/about-claude/models/overview (Claude
-    # API ID `claude-haiku-5-5`). Cache-write premium is out of scope: cache
-    # writes are recorded as uncached input.
-    "claude-haiku-5-5": (0.000100, 0.000500),
 }
 
 # Cached-input rate (USD per 1k) by the same substring keys. A row absent here
@@ -157,19 +152,10 @@ _CACHED_INPUT_PRICING: dict[str, float] = {
     "gemini-3.5-flash-lite": 0.000030,
     "gemini-2.5-flash": 0.000030,
     "gemini-3.1-flash-lite": 0.000025,
-    "claude-haiku-5-5": 0.000010,
 }
 
 #: The first day the doubled 3.x-flash prices apply; `CallRecord.usd_2027` prices at it.
 PRICE_DATE_2027: date = date(2027, 1, 1)
-
-
-class PriceRow(NamedTuple):
-    """USD per 1k tokens."""
-
-    input: float
-    cached_input: float
-    output: float
 
 
 class UnpricedModelError(ExternalServiceError):
@@ -467,6 +453,11 @@ def price_row(model: str, settings: Settings, *, on: date) -> PriceRow:
     if model in user:
         p = user[model]
         return PriceRow(float(p[0]), float(p[0]), float(p[1]))
+    if is_anthropic_model(model):
+        row = claude_row(model)
+        if row is None:
+            raise UnpricedModelError(model)
+        return row
     table = _dated_pricing_table(on)
     cached_table = _dated_cached_table(on)
     for key in sorted(table, key=len, reverse=True):
@@ -477,13 +468,17 @@ def price_row(model: str, settings: Settings, *, on: date) -> PriceRow:
 
 
 def _row_cost(row: PriceRow, *, input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
-    cached = min(max(cached_tokens, 0), max(input_tokens, 0))
-    uncached = max(input_tokens, 0) - cached
-    return (
-        uncached / 1000 * row.input
-        + cached / 1000 * row.cached_input
-        + output_tokens / 1000 * row.output
+    return row_cost(
+        row, input_tokens=input_tokens, cached_tokens=cached_tokens, output_tokens=output_tokens
     )
+
+
+def _usage_number(meta: Any, name: str) -> float:
+    """A usage field as a number; a missing field or a mock attribute reads as 0."""
+    raw = getattr(meta, name, 0)
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return 0
+    return max(raw, 0)
 
 
 def price_call(
@@ -494,6 +489,9 @@ def price_call(
     cached_tokens: int,
     output_tokens: int,
     on: date,
+    cache_write_5m_tokens: int = 0,
+    cache_write_1h_tokens: int = 0,
+    container_seconds: float = 0.0,
 ) -> float:
     """USD for one call as of ``on``.
 
@@ -501,11 +499,14 @@ def price_call(
     input is at the cached rate, and ``output_tokens`` must already include
     thinking tokens (they bill as output).
     """
-    return _row_cost(
+    return row_cost(
         price_row(model, settings, on=on),
         input_tokens=input_tokens,
         cached_tokens=cached_tokens,
         output_tokens=output_tokens,
+        cache_write_5m_tokens=cache_write_5m_tokens,
+        cache_write_1h_tokens=cache_write_1h_tokens,
+        container_seconds=container_seconds,
     )
 
 
@@ -530,6 +531,11 @@ class CallRecord:
     #: False when the response failed structured-output validation; the record
     #: is still appended before the error propagates.
     parse_ok: bool
+    #: Claude prompt-cache writes (5-minute and 1-hour), part of ``input_tokens``.
+    cache_write_5m_tokens: int = 0
+    cache_write_1h_tokens: int = 0
+    #: Billed code-execution container time.
+    container_seconds: float = 0.0
 
 
 def process_call_records() -> list[CallRecord]:
@@ -698,7 +704,9 @@ def fallback_pricing_status(
     hits = sorted(
         f"{tag}={model}"
         for tag, model in configured_models.items()
-        if model not in user_pricing and not any(key in model for key in pricing_table)
+        if model not in user_pricing
+        and not any(key in model for key in pricing_table)
+        and claude_row(model) is None
     )
     if hits:
         return (
@@ -1414,6 +1422,11 @@ class GeminiClient:
         d.mkdir(parents=True, exist_ok=True)
         return d / f"{key}.json"
 
+    def _require_price(self, model: str) -> None:
+        """Fail closed: a claude- model with no price row is never called (spec §6)."""
+        if is_anthropic_model(model):
+            price_row(model, self._settings, on=_today())
+
     def _check_cost_ceiling(self) -> None:
         g = self._settings.gemini
         if g.per_run_token_ceiling is not None:
@@ -1675,6 +1688,7 @@ class GeminiClient:
             )
             return response_schema.model_validate_json(cache_path.read_text(encoding="utf-8"))
 
+        self._require_price(active_model)
         self._check_cost_ceiling()
 
         if image_uploads is not None:
@@ -1832,6 +1846,7 @@ class GeminiClient:
             )
             return cache_path.read_text(encoding="utf-8")
 
+        self._require_price(active_model)
         self._check_cost_ceiling()
 
         bus.publish(
@@ -1901,6 +1916,18 @@ class GeminiClient:
             if isinstance(cached_raw, int) and not isinstance(cached_raw, bool)
             else 0
         )
+        write_5m = int(_usage_number(response.usage_metadata, "cache_write_5m_tokens"))
+        write_1h = int(_usage_number(response.usage_metadata, "cache_write_1h_tokens"))
+        container_s = float(_usage_number(response.usage_metadata, "container_seconds"))
+        extra_usage = {
+            k: v
+            for k, v in (
+                ("cache_write_5m_tokens", write_5m),
+                ("cache_write_1h_tokens", write_1h),
+                ("container_seconds", container_s),
+            )
+            if v
+        }
         try:
             usd = price_call(
                 model,
@@ -1909,6 +1936,9 @@ class GeminiClient:
                 cached_tokens=cached_tok,
                 output_tokens=out_tok,
                 on=_today(),
+                cache_write_5m_tokens=write_5m,
+                cache_write_1h_tokens=write_1h,
+                container_seconds=container_s,
             )
             usd_now = usd
             usd_2027 = price_call(
@@ -1918,6 +1948,9 @@ class GeminiClient:
                 cached_tokens=cached_tok,
                 output_tokens=out_tok,
                 on=PRICE_DATE_2027,
+                cache_write_5m_tokens=write_5m,
+                cache_write_1h_tokens=write_1h,
+                container_seconds=container_s,
             )
         except UnpricedModelError:
             # The ledger must keep accounting for a model with no row: the
@@ -1968,6 +2001,9 @@ class GeminiClient:
                 question_id=question_id,
                 case_key=_call_case_key.get(),
                 parse_ok=True,
+                cache_write_5m_tokens=write_5m,
+                cache_write_1h_tokens=write_1h,
+                container_seconds=container_s,
             )
             if _recording_depth > 0:
                 _process_call_records.append(record)
@@ -2002,6 +2038,7 @@ class GeminiClient:
             # M0.4 reads this off the log to record which generation parameters
             # a sweep actually ran under.
             params_fingerprint=params_fingerprint,
+            **extra_usage,
             **(extra_log_fields or {}),
         )
         bus.publish(

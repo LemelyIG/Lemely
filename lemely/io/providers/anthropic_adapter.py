@@ -79,8 +79,6 @@ _EFFORT_FOR_LEVEL: dict[str, Effort] = {
 }
 
 #: A 5-minute cache write bills at 1.25x the base input rate.
-_CACHE_WRITE_PREMIUM_NUM, _CACHE_WRITE_PREMIUM_DEN = 5, 4
-
 #: 429 rate limit, 529 overloaded, and every 5xx are retried by the client.
 _TRANSIENT_STATUS = frozenset({429, 529})
 
@@ -137,15 +135,20 @@ class AnthropicReply:
 def _usage_of(message: Message) -> Usage:
     u = message.usage
     cache_read = int(u.cache_read_input_tokens or 0)
-    cache_write = int(u.cache_creation_input_tokens or 0)
+    creation = getattr(u, "cache_creation", None)
+    if creation is not None:
+        write_5m = int(creation.ephemeral_5m_input_tokens or 0)
+        write_1h = int(creation.ephemeral_1h_input_tokens or 0)
+    else:
+        write_5m, write_1h = int(u.cache_creation_input_tokens or 0), 0
     details = u.output_tokens_details
     return Usage(
-        input_tokens=int(u.input_tokens)
-        + cache_read
-        + -(-cache_write * _CACHE_WRITE_PREMIUM_NUM // _CACHE_WRITE_PREMIUM_DEN),
+        input_tokens=int(u.input_tokens) + cache_read + write_5m + write_1h,
         cached_tokens=cache_read,
         output_tokens=int(u.output_tokens),
         thinking_tokens=int(details.thinking_tokens) if details is not None else 0,
+        cache_write_5m_tokens=write_5m,
+        cache_write_1h_tokens=write_1h,
     )
 
 

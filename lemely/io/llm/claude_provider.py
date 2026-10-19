@@ -37,6 +37,9 @@ def usage_as_gemini_response(usage: Usage) -> SimpleNamespace:
             candidates_token_count=usage.output_tokens - usage.thinking_tokens,
             thoughts_token_count=usage.thinking_tokens,
             cached_content_token_count=usage.cached_tokens,
+            cache_write_5m_tokens=usage.cache_write_5m_tokens,
+            cache_write_1h_tokens=usage.cache_write_1h_tokens,
+            container_seconds=usage.container_seconds,
         )
     )
 

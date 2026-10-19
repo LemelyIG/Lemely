@@ -125,10 +125,8 @@ class CostRecordTests(unittest.TestCase):
         )
 
     def test_haiku_row_exists(self) -> None:
-        self.assertEqual(
-            price_row("claude-haiku-5-5", self.settings, on=_TODAY),
-            PriceRow(0.0001, 0.00001, 0.0005),
-        )
+        row = price_row("claude-haiku-5-5", self.settings, on=_TODAY)
+        self.assertEqual(row[:3], (0.0001, 0.00001, 0.0005))
 
     def test_deprecated_3_7_flash_is_no_longer_priced(self) -> None:
         with self.assertRaises(UnpricedModelError):

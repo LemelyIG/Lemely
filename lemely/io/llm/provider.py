@@ -13,16 +13,19 @@ if TYPE_CHECKING:
 class Usage:
     """Token counts for one Claude call, in the units ``CallRecord`` uses.
 
-    ``input_tokens`` is the billing-equivalent input count: uncached tokens, cache
-    reads, and cache writes weighted by the 1.25x premium of a 5-minute write.
-    ``cached_tokens`` is the cache reads. ``output_tokens`` includes
-    ``thinking_tokens``.
+    ``input_tokens`` is the total input: uncached tokens, cache reads and cache
+    writes. ``cached_tokens`` is the reads; the two write counts are the 5-minute
+    and 1-hour writes (``usage.cache_creation``). ``output_tokens`` includes
+    ``thinking_tokens``. ``container_seconds`` is billed code-execution time.
     """
 
     input_tokens: int
     cached_tokens: int
     output_tokens: int
     thinking_tokens: int
+    cache_write_5m_tokens: int = 0
+    cache_write_1h_tokens: int = 0
+    container_seconds: float = 0.0
 
 
 @dataclass(frozen=True)
