@@ -5,6 +5,8 @@ Every test drives a fake SDK client: no network call, no Anthropic spend.
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import tempfile
 import unittest
@@ -16,11 +18,13 @@ from unittest.mock import MagicMock, patch
 
 import anthropic
 import httpx2
+from PIL import Image
 from pydantic import BaseModel, SecretStr
 
 from lemely.core.schemas import AIMarkResponse
 from lemely.io.gemini import (
     GeminiClient,
+    ImageUploads,
     _reset_process_counters,
     price_call,
     price_row,
@@ -28,8 +32,15 @@ from lemely.io.gemini import (
     record_calls,
     set_call_context,
 )
-from lemely.io.providers import ProviderTransientError, is_anthropic_model
+from lemely.io.providers import (
+    ProviderError,
+    ProviderTransientError,
+    anthropic_adapter,
+    is_anthropic_model,
+)
 from lemely.io.providers.anthropic_adapter import (
+    MANY_IMAGES_LONG_EDGE,
+    MAX_LONG_EDGE,
     MAX_OUTPUT_TOKENS,
     AnthropicAdapter,
     Usage,
@@ -50,6 +61,23 @@ _VALID_MARK = {
     "point_verdicts": [],
     "addresses_question": "yes",
 }
+
+
+def _image(width: int, height: int, fmt: str = "PNG") -> bytes:
+    """A real encoded image of the given size (grey, so it compresses to almost nothing)."""
+    buf = io.BytesIO()
+    Image.new("L" if fmt == "PNG" else "RGB", (width, height), color=200).save(buf, fmt)
+    return buf.getvalue()
+
+
+def _sent_images(call: dict[str, Any]) -> list[tuple[str, bytes]]:
+    """``(media_type, decoded bytes)`` of every image block in the call's user message."""
+    (message,) = call["messages"]
+    return [
+        (block["source"]["media_type"], base64.b64decode(block["source"]["data"]))
+        for block in message["content"]
+        if block["type"] == "image"
+    ]
 
 
 def _message(
@@ -352,6 +380,120 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual((row.input, row.cached_input, row.output), (0.0001, 0.00001, 0.0005))
 
 
+class ImageInputTests(unittest.TestCase):
+    """Page images go to Claude as base64 ``image`` blocks, ahead of the text."""
+
+    def _complete(self, images: list[bytes], **kwargs: Any) -> dict[str, Any]:
+        fake = _FakeAnthropic(_message(_VALID_MARK))
+        AnthropicAdapter(fake).complete(
+            model=_HAIKU,
+            system_prompt="sys",
+            user_prompt=kwargs.pop("user_prompt", "user"),
+            response_schema=AIMarkResponse,
+            thinking="low",
+            cache_prefix=kwargs.pop("cache_prefix", None),
+            images=images,
+        )
+        (call,) = fake.messages.calls
+        return call
+
+    def test_images_go_first_as_base64_blocks_in_page_order(self) -> None:
+        png, jpeg = _image(40, 60), _image(30, 20, "JPEG")
+        call = self._complete([png, jpeg])
+        (message,) = call["messages"]
+        self.assertEqual(message["role"], "user")
+        content = message["content"]
+        self.assertEqual([b["type"] for b in content], ["image", "image", "text"])
+        self.assertEqual(content[0]["source"]["type"], "base64")
+        # Small pages are sent exactly as they came: same bytes, same order.
+        self.assertEqual(_sent_images(call), [("image/png", png), ("image/jpeg", jpeg)])
+        self.assertEqual(content[2], {"type": "text", "text": "user"})
+        # The base64 text has no line breaks (the API rejects them).
+        self.assertNotIn("\n", content[0]["source"]["data"])
+
+    def test_images_come_before_a_cached_prefix_too(self) -> None:
+        png = _image(10, 10)
+        call = self._complete([png], cache_prefix="paper")
+        content = call["messages"][0]["content"]
+        self.assertEqual([b["type"] for b in content], ["image", "text", "text"])
+        self.assertEqual(
+            content[1:],
+            [
+                {"type": "text", "text": "paper", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "user"},
+            ],
+        )
+
+    def test_no_images_sends_the_message_as_before(self) -> None:
+        call = self._complete([])
+        self.assertEqual(call["messages"], [{"role": "user", "content": "user"}])
+
+    def test_a_page_over_the_native_long_edge_is_downscaled(self) -> None:
+        call = self._complete([_image(MAX_LONG_EDGE + 400, 1000)])
+        ((media_type, data),) = _sent_images(call)
+        self.assertEqual(media_type, "image/png")
+        with Image.open(io.BytesIO(data)) as sent:
+            self.assertEqual(sent.size, (MAX_LONG_EDGE, round(1000 * MAX_LONG_EDGE / 2976)))
+
+    def test_a_jpeg_page_stays_jpeg_when_downscaled(self) -> None:
+        call = self._complete([_image(200, MAX_LONG_EDGE + 1, "JPEG")])
+        ((media_type, data),) = _sent_images(call)
+        self.assertEqual(media_type, "image/jpeg")
+        with Image.open(io.BytesIO(data)) as sent:
+            self.assertEqual(sent.format, "JPEG")
+            self.assertEqual(max(sent.size), MAX_LONG_EDGE)
+
+    def test_more_than_twenty_pages_are_held_to_the_many_image_edge(self) -> None:
+        small = _image(100, 100)
+        tall = _image(1000, MANY_IMAGES_LONG_EDGE + 300)
+        call = self._complete([tall] + [small] * 20)
+        sent = _sent_images(call)
+        self.assertEqual(len(sent), 21)
+        with Image.open(io.BytesIO(sent[0][1])) as first:
+            self.assertEqual(max(first.size), MANY_IMAGES_LONG_EDGE)
+        self.assertTrue(all(data == small for _media, data in sent[1:]))
+        # Twenty pages are not "many": the same tall page keeps its size.
+        call = self._complete([tall] + [small] * 19)
+        self.assertEqual(_sent_images(call)[0][1], tall)
+
+    def test_too_many_pages_are_refused_before_any_request(self) -> None:
+        fake = _FakeAnthropic(_message(_VALID_MARK))
+        images = [_image(8, 8)] * (anthropic_adapter.MAX_IMAGES_PER_REQUEST + 1)
+        with self.assertRaisesRegex(ProviderError, "images"):
+            AnthropicAdapter(fake).complete(
+                model=_HAIKU,
+                system_prompt="sys",
+                user_prompt="user",
+                response_schema=AIMarkResponse,
+                thinking="low",
+                cache_prefix=None,
+                images=images,
+            )
+        self.assertEqual(fake.messages.calls, [])
+
+    def test_an_image_over_the_per_image_size_is_refused(self) -> None:
+        png = _image(64, 64)
+        with (
+            patch.object(anthropic_adapter, "MAX_IMAGE_BASE64_BYTES", 10),
+            self.assertRaisesRegex(ProviderError, "page 1"),
+        ):
+            self._complete([png])
+
+    def test_pages_over_the_request_size_are_refused(self) -> None:
+        png = _image(64, 64)
+        encoded = len(base64.b64encode(png))
+        with (
+            patch.object(anthropic_adapter, "MAX_IMAGES_BASE64_TOTAL", 2 * encoded - 1),
+            self.assertRaisesRegex(ProviderError, "request"),
+        ):
+            self._complete([png, png])
+
+    def test_bytes_that_are_not_png_or_jpeg_are_refused(self) -> None:
+        for data in (b"GIF89a....", b"\x89PNG\r\n\x1a\n-truncated", b""):
+            with self.subTest(data=data[:6]), self.assertRaises(ProviderError):
+                self._complete([data])
+
+
 class ClientDispatchTests(_ClientTestCase):
     def test_dispatch_by_model_prefix(self) -> None:
         client, fake, genai = self._client(_message(_VALID_MARK))
@@ -509,14 +651,80 @@ class ClientDispatchTests(_ClientTestCase):
         self.assertIn("failed validation", fake.messages.calls[1]["messages"][0]["content"])
         self.assertEqual([r.parse_ok for r in process_call_records()], [False, False])
 
-    def test_images_rejected(self) -> None:
+    def test_files_rejected(self) -> None:
         client, fake, genai = self._client(_message(_VALID_MARK))
-        with self.assertRaises(ValueError):
-            self._mark(client, image_parts=[b"\x89PNG"])
         with self.assertRaises(ValueError):
             self._mark(client, file_paths=[Path(self.tmp) / "scheme.pdf"])
         self.assertEqual(fake.messages.calls, [])
         genai.files.upload.assert_not_called()
+
+    def test_image_parts_are_sent_to_claude(self) -> None:
+        pages = [_image(20, 30), _image(30, 20)]
+        client, fake, genai = self._client(_message(_VALID_MARK))
+        self._mark(client, image_parts=pages, media_resolution="high")
+        (call,) = fake.messages.calls
+        self.assertEqual(_sent_images(call), [("image/png", pages[0]), ("image/png", pages[1])])
+        self.assertEqual(
+            call["messages"][0]["content"][-1], {"type": "text", "text": "Mark this answer."}
+        )
+        genai.models.generate_content.assert_not_called()
+
+    def test_files_api_uploads_are_not_used_for_claude(self) -> None:
+        """``image_uploads`` are Gemini Files API handles: a claude- call sends the bytes."""
+        pages = [_image(20, 30)]
+        client, fake, genai = self._client(_message(_VALID_MARK))
+        uploads = MagicMock(spec=ImageUploads)
+        uploads.matches.return_value = True
+        self._mark(client, image_parts=pages, image_uploads=uploads)
+        uploads.ensure.assert_not_called()
+        self.assertEqual(_sent_images(fake.messages.calls[0]), [("image/png", pages[0])])
+        genai.files.upload.assert_not_called()
+
+    def test_claude_image_cache_key_follows_the_image_bytes(self) -> None:
+        client, _fake, _genai = self._client()
+        args: dict[str, Any] = {
+            "system_prompt": "sys",
+            "user_prompt": "user",
+            "response_schema": AIMarkResponse,
+            "prompt_version": "v1",
+            "model": _HAIKU,
+            "task_tag": "binding_second_read",
+        }
+        no_images = client.structured_cache_key(**args)
+        one = client.structured_cache_key(image_parts=[b"page-a"], **args)
+        other = client.structured_cache_key(image_parts=[b"page-b"], **args)
+        self.assertEqual(len({no_images, one, other}), 3)
+        self.assertEqual(one, client.structured_cache_key(image_parts=[b"page-a"], **args))
+        # The same hashing as a Gemini call: the files component is the bytes' hash.
+        fingerprint = client._params_fingerprint(_HAIKU, "binding_second_read", AIMarkResponse)
+        self.assertEqual(
+            one,
+            client._cache_key(
+                _HAIKU, "sys", "user", "v1", None, "", fingerprint, image_parts=[b"page-a"]
+            ),
+        )
+
+    def test_an_image_call_is_cached_and_replayed_by_bytes(self) -> None:
+        page_a, page_b = _image(20, 30), _image(21, 30)
+        client, fake, _genai = self._client(_message(_VALID_MARK), _message(_VALID_MARK))
+        self._mark(client, image_parts=[page_a])
+        self._mark(client, image_parts=[page_a])
+        self.assertEqual(len(fake.messages.calls), 1)
+        self._mark(client, image_parts=[page_b])
+        self.assertEqual(len(fake.messages.calls), 2)
+
+    def test_image_tokens_are_priced_as_input(self) -> None:
+        """Anthropic bills image tokens inside ``usage.input_tokens``: nothing special."""
+        client, _fake, _genai = self._client(
+            _message(_VALID_MARK, input_tokens=48_000, output_tokens=2_000)
+        )
+        self._mark(client, image_parts=[_image(20, 30)], task_tag="binding_second_read")
+        (rec,) = process_call_records()
+        self.assertEqual(rec.provider, "anthropic")
+        self.assertEqual(rec.task_tag, "binding_second_read")
+        self.assertEqual(rec.input_tokens, 48_000)
+        self.assertEqual(rec.cached_tokens, 0)
+        self.assertAlmostEqual(rec.usd_now, (48_000 * 0.0001 + 2_000 * 0.0005) / 1000, places=12)
 
     def test_missing_api_key_is_a_permanent_error(self) -> None:
         settings = _settings(self.tmp).model_copy(update={"anthropic_api_key": None})

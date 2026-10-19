@@ -1577,6 +1577,12 @@ class GeminiClient:
         same images as Files API URIs instead of inline bytes; the cache key
         still comes from ``image_parts``.
 
+        On a ``claude-`` model ``image_parts`` go to the Anthropic adapter as
+        base64 image blocks (scaled down or refused there by the API's limits);
+        ``image_uploads`` is ignored (never uploaded) and ``media_resolution``
+        is not sent, though it stays in the cache key as for any call.
+        ``file_paths`` is refused.
+
         ``attempt`` and ``question_id`` only label the `CallRecord` this call
         appends; they are never part of the cache key.
 
@@ -1603,13 +1609,15 @@ class GeminiClient:
             # paper's cache key.
             if not image_uploads.matches(image_parts):
                 raise ValueError("image_uploads must carry the same page images as image_parts")
-        if is_anthropic_model(self._active_model(model, task_tag)) and (
-            image_parts or image_uploads or file_paths
-        ):
-            # Phase A sends Anthropic correction text only (lever A1).
+        on_claude = is_anthropic_model(self._active_model(model, task_tag))
+        if on_claude and file_paths:
+            # The Anthropic adapter takes text and page images, not files.
             raise ValueError(
-                "claude- models are served by the Anthropic adapter, which takes no images or files"
+                "claude- models are served by the Anthropic adapter, which takes no files"
             )
+        if on_claude:
+            # Files API handles are Gemini's: a claude- call sends `image_parts` inline.
+            image_uploads = None
         active_model, cache_key = self._structured_cache_key(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -2189,6 +2197,8 @@ class GeminiClient:
                 log,
                 task_tag,
                 shared_prefix=shared_prefix,
+                image_parts=image_parts,
+                media_resolution=media_resolution,
             )
         from google.genai import types
 
@@ -2327,6 +2337,8 @@ class GeminiClient:
         task_tag: str | None,
         *,
         shared_prefix: SharedPrefix | None = None,
+        image_parts: list[bytes] | None = None,
+        media_resolution: str | None = None,
     ) -> str:
         """One attempt on a ``claude-`` model; the Anthropic counterpart of :meth:`_call_once`.
 
@@ -2338,6 +2350,10 @@ class GeminiClient:
         With ``shared_prefix`` the system prompt is its ``instructions`` and its
         ``paper`` goes as the adapter's ``cache_prefix``; both carry a cache
         breakpoint, and the two together are ``system_prompt``.
+
+        ``image_parts`` are sent as image blocks ahead of the text. Claude has no
+        ``media_resolution``: it is not sent, and is passed here only so the
+        spend record's fingerprint is the cache key's.
         """
         # Loaded by ``self._anthropic`` (the adapter imports the SDK) in any case.
         import anthropic
@@ -2355,6 +2371,7 @@ class GeminiClient:
                 response_schema=response_schema,
                 thinking=effort,
                 cache_prefix=shared_prefix.paper if shared_prefix else None,
+                images=image_parts or (),
             )
         except ProviderTransientError as exc:
             raise _TransientError(str(exc)) from exc
@@ -2372,7 +2389,9 @@ class GeminiClient:
             task_tag=task_tag,
             latency_ms=latency_ms,
             log=log,
-            params_fingerprint=self._params_fingerprint(model, task_tag, response_schema),
+            params_fingerprint=self._params_fingerprint(
+                model, task_tag, response_schema, media_resolution=media_resolution
+            ),
         )
         if reply.stop_reason == "max_tokens":
             # The same rule as a Gemini reply cut off at a per-tag cap: billed
