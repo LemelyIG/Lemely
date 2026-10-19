@@ -16,7 +16,7 @@
 - Pass rule, judged against the configuration the lever stacks on:
   - saving under 30%: extra mismarked scored parts ≤ the A/A churn floor;
   - saving of 30% or more: extra mismarked scored parts ≤ `max(aa_floor, ceil(0.02 × scored parts))`; the 2% term is 1 on `cost-201`'s 31 scored parts;
-  - both tiers: id-match must not drop, the structured-output validity rate must not drop, p95 latency per script ≤ 2× the rung-0 baseline, and any failed call or missing leaf fails the run.
+  - both tiers: id-match must not drop, the structured-output validity rate must not drop, p95 latency per script ≤ 2× the rung-0 baseline, and any failed call or unmarked leaf fails the run. A reply that fails to parse but whose leaves are still marked (e.g. recovered by the second read) is counted only in the validity rate (user decision 2026-10-19).
 - A/A floor: one rerun of the rung-0 baseline, reused for every later comparison.
 - Spend caps across all cost-ladder runs combined, in billed dollars: **Gemini $6.00, Anthropic $40.00** (user decisions 2026-10-19; Gemini raised from $3.00 after the fixture finding). Pass `--cap-gemini-usd 6.0` on every ladder command. Enforced by the runner (Task 5) before and during every run; overshoot is at most one case's cost.
 - Screen set: `tests/golden`, dev split, the same 12 cases as `BUILD/accuracy-runs/cost-201-2026-10-01`, after Task 5b's fixture fix (corpus digest `090492b217365de4`, re-pinned by Task 5b at 70890df5; the old digest `76989782d6fda9fc` is void). No full-corpus run.
@@ -268,6 +268,8 @@ The Task 6 baseline then reruns with `baseline --restart-baseline` (the first, h
   - confirmation that no gemini-3.8-flash record carries thinking `minimal`, which the API rejects (design §6.3);
   - the A/A floor.
 - [ ] **Step 3:** Run the `accuracy-reviewer` agent over `SPLIT.md` against `records.jsonl`. The numbers must be recomputable from the records.
+
+Rung-0 finding (93a1764c, 2026-10-19): one binder first read ran away to 65,522 output tokens (370 s, failed to parse, about $0.49 at 2027 rates, a quarter of the baseline). New lever **B12: cap binder output tokens and detect runaway reads** (no accuracy cost expected; cuts cost and p95 latency). It enters the Task 7 ranking with B1 and B2.
 
 ### Task 7: Re-rank checkpoint (orchestrator, no code)
 

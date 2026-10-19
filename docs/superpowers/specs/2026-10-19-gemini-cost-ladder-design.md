@@ -61,7 +61,7 @@ In both tiers:
 - id-match must not drop;
 - p95 latency per script must stay at or under 2× the original baseline;
 - the structured-output validity rate must not drop;
-- a run with any failed call or missing leaf fails.
+- a run with any failed call or unmarked leaf fails; a reply that fails to parse but whose leaves are still marked counts only in the validity rate.
 
 Mismarks are counted per question part, not per script.
 
