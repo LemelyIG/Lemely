@@ -53,6 +53,7 @@ import anthropic
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ValidationError
 
+from lemely.io.llm.provider import Usage
 from lemely.io.providers import ProviderError, ProviderTransientError
 from lemely.runtime.errors import ParseError
 
@@ -122,25 +123,6 @@ def effort_for(level: str) -> Effort:
             f"No Anthropic effort for thinking level {level!r}; "
             f"expected one of {sorted(_EFFORT_FOR_LEVEL)}"
         ) from None
-
-
-@dataclass(frozen=True)
-class Usage:
-    """Token counts for one call, in the units ``CallRecord`` uses.
-
-    ``input_tokens`` is the billing-equivalent input count: uncached tokens,
-    cache reads, and cache writes weighted by the 1.25x premium Anthropic
-    charges for a 5-minute cache write (Anthropic reports the three
-    separately). Priced as uncached input minus ``cached_tokens`` at the input
-    rate, this reproduces the exact bill. ``cached_tokens`` is the cache reads,
-    billed at the cached rate. ``output_tokens`` includes ``thinking_tokens``,
-    as Anthropic's own total does.
-    """
-
-    input_tokens: int
-    cached_tokens: int
-    output_tokens: int
-    thinking_tokens: int
 
 
 @dataclass(frozen=True)

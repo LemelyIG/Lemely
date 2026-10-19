@@ -319,6 +319,10 @@ module = [
   "lemely.app.gradio_app",
   "lemely.app.live_log",
   "lemely.io.gemini",
+  # Provider-neutral request/reply carry the SDK-shaped `uploads`, `usage_response`
+  # and `log` handles as Any, as the client does.
+  "lemely.io.llm.request",
+  "lemely.io.llm.provider",
   # Injectable-SDK-client precedent (see lemely.io.gemini above): the
   # constructor's `_client: Any` is the same test-seam shape, and the SDK's
   # own `Client`/`Blob` types are otherwise untyped here (google.cloud.*

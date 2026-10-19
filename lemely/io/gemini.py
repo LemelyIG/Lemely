@@ -30,13 +30,17 @@ from tenacity import (
 )
 
 from lemely.io.cost_ledger import CostLedger
+from lemely.io.llm.errors import CapTruncatedError as _CapTruncatedError
+from lemely.io.llm.errors import TransientCallError as _TransientError
+from lemely.io.llm.request import provider_fingerprint
 from lemely.io.providers import ProviderTransientError, is_anthropic_model
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus
 
 if TYPE_CHECKING:
-    from lemely.io.providers.anthropic_adapter import AnthropicAdapter, Usage
+    from lemely.io.llm.provider import Usage
+    from lemely.io.providers.anthropic_adapter import AnthropicAdapter
 
 _T = TypeVar("_T", bound=BaseModel)
 
@@ -749,14 +753,6 @@ def _usage_as_gemini_response(usage: Usage) -> SimpleNamespace:
     )
 
 
-class _TransientError(Exception):
-    """Wraps transient Gemini SDK errors so tenacity can detect them."""
-
-
-class _CapTruncatedError(ExternalServiceError):
-    """A reply cut off at a per-tag output cap; not transient, retried once afresh."""
-
-
 class _DefaultLedger:
     """Sentinel: build the file ledger under ``paths.output_dir`` (CLI, Gradio, eval)."""
 
@@ -1328,7 +1324,7 @@ class GeminiClient:
         if is_anthropic_model(model):
             from lemely.io.providers.anthropic_adapter import MAX_OUTPUT_TOKENS
 
-            raw += f"|provider=anthropic|max_tokens={MAX_OUTPUT_TOKENS}"
+            raw += provider_fingerprint(model, max_output_tokens=MAX_OUTPUT_TOKENS)
         return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
     def check_reachable(self) -> None:
