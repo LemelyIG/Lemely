@@ -610,13 +610,6 @@ class ClientDispatchTests(_ClientTestCase):
                     self._mark(client, cache_mode="bypass")
                 self.assertEqual(len(fake.messages.calls), 1)
 
-    def test_code_execution_rejects_claude_model(self) -> None:
-        client, fake, genai = self._client()
-        with self.assertRaises(ValueError):
-            client.generate_with_code_execution(prompt="p", prompt_version="v1", model=_HAIKU)
-        self.assertEqual(fake.messages.calls, [])
-        genai.models.generate_content.assert_not_called()
-
     def test_record_thinking_is_the_effort_sent(self) -> None:
         settings = _settings(self.tmp, thinking_level_for={"correction": "high"})
         client, fake, _genai = self._client(_message(_VALID_MARK), settings=settings)

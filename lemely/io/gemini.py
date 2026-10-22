@@ -35,7 +35,6 @@ from lemely.io.llm.errors import TransientCallError as _TransientError
 from lemely.io.llm.gemini_provider import GeminiProvider
 from lemely.io.llm.pricing import PriceRow, claude_row, row_cost
 from lemely.io.llm.request import (
-    CLAUDE_CODE_EXECUTION_TAGS,
     CodeExecution,
     DocumentInput,
     ImageInput,
@@ -1869,12 +1868,6 @@ class GeminiClient:
             active_model = g.model_for(task_tag)
         else:
             active_model = g.model
-        if is_anthropic_model(active_model) and task_tag not in CLAUDE_CODE_EXECUTION_TAGS:
-            raise ValueError(
-                "code execution on Claude is allowed only for task tags "
-                f"{sorted(CLAUDE_CODE_EXECUTION_TAGS)} (it is not ZDR-covered and must "
-                f"never see student data); got task_tag={task_tag!r}"
-            )
 
         log = structlog.get_logger().bind(
             component="gemini_client",

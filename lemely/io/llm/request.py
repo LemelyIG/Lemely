@@ -16,9 +16,6 @@ Effort = Literal["low", "medium", "high", "xhigh", "max"]
 CacheSpot = Literal["system", "documents", "images", "prefix"]
 #: Claude's server-side code-execution tool version (docs read 2026-10-20: latest).
 CODE_EXECUTION_TOOL = "code_execution_20260521"
-#: Code execution is not covered by zero data retention: only tags that carry no
-#: student data may use it on Claude.
-CLAUDE_CODE_EXECUTION_TAGS: frozenset[str] = frozenset({"question_validity", "generation"})
 #: The API's limit on cache breakpoints in one request.
 MAX_CACHE_BREAKPOINTS = 4
 

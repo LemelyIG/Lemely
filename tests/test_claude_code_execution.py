@@ -95,10 +95,13 @@ class CodeExecutionTests(unittest.TestCase):
         (rec,) = process_call_records()
         self.assertEqual(rec.container_seconds, 0)
 
-    def test_student_data_tags_refused_before_sending(self) -> None:
+    def test_every_task_tag_may_use_code_execution(self) -> None:
         for tag in ("correction", "extraction", None):
-            with self.subTest(tag=tag), self.assertRaises(ValueError):
-                self._run(_message(_result("42\n")), tag=tag)
+            with self.subTest(tag=tag):
+                self.tmp = tempfile.mkdtemp()  # fresh cache: each tag must reach the API
+                text, fake = self._run(_message(_result("42\n")), tag=tag)
+                self.assertEqual(text, "42")
+                self.assertEqual(len(fake.messages.calls), 1)
 
     def test_empty_reply_is_a_parse_error(self) -> None:
         with self.assertRaises(ParseError):
