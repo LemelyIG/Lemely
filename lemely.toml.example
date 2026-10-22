@@ -82,6 +82,11 @@ model = "gemini-2.5-flash"
 # A script whose model spend passes this logs script_over_cost_target
 # (split by task tag). It never blocks marking.
 # paper_cost_target_usd = 0.1
+# Claude prompt-cache breakpoints per task tag: system | documents | images |
+# prefix. Unlisted tags mark system and prefix (the A1 behaviour). A changed
+# effort or thinking setting invalidates the cached messages (docs, prompt
+# caching): both binder tags must send the same effort for the second read to hit.
+# claude_cache_for = {}
 # Greyscale pages are enhanced for readability; false sends plain greyscale (A/B).
 # claude_image_enhance = true
 

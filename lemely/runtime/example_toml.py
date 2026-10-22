@@ -27,20 +27,26 @@ from typing import TYPE_CHECKING
 from lemely.runtime.config import NotificationsSettings, Settings
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
 
 def _toml_bool(value: bool) -> str:
     return "true" if value else "false"
 
 
-def _toml_inline(mapping: Mapping[str, str | float]) -> str:
+def _toml_value(value: str | float | Sequence[str]) -> str:
+    if isinstance(value, str):
+        return f'"{value}"'
+    if isinstance(value, int | float):
+        return str(value)
+    return "[" + ", ".join(f'"{v}"' for v in value) + "]"
+
+
+def _toml_inline(mapping: Mapping[str, str | float | Sequence[str]]) -> str:
     """Render a flat str-keyed mapping as a TOML inline table."""
     if not mapping:
         return "{}"
-    items = ", ".join(
-        f'"{k}" = "{v}"' if isinstance(v, str) else f'"{k}" = {v}' for k, v in mapping.items()
-    )
+    items = ", ".join(f'"{k}" = {_toml_value(v)}' for k, v in mapping.items())
     return "{ " + items + " }"
 
 
@@ -145,6 +151,13 @@ def render_example_toml() -> str:
     lines.append("# A script whose model spend passes this logs script_over_cost_target")
     lines.append("# (split by task tag). It never blocks marking.")
     lines.append(f"# paper_cost_target_usd = {s.gemini.paper_cost_target_usd}")
+    lines.append("# Claude prompt-cache breakpoints per task tag: system | documents | images |")
+    lines.append("# prefix. Unlisted tags mark system and prefix (the A1 behaviour). A changed")
+    lines.append("# effort or thinking setting invalidates the cached messages (docs, prompt")
+    lines.append(
+        "# caching): both binder tags must send the same effort for the second read to hit."
+    )
+    lines.append(f"# claude_cache_for = {_toml_inline(s.gemini.claude_cache_for)}")
     lines.append(
         "# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B)."
     )

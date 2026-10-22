@@ -51,6 +51,9 @@ from tests.gemini_fakes import make_settings, mock_response
 
 _TODAY = date(2026, 10, 19)
 _HAIKU = "claude-haiku-5-5"
+# Over the 512 estimated tokens a cache breakpoint needs (4 characters a token).
+_LONG_SYSTEM = "s" * 2_100
+_LONG_PREFIX = "p" * 2_100
 
 _VALID_MARK = {
     "awarded_marks": 2,
@@ -335,7 +338,7 @@ class AdapterTests(unittest.TestCase):
         adapter = AnthropicAdapter(fake)
         adapter.generate(
             model=_HAIKU,
-            system_prompt="sys",
+            system_prompt=_LONG_SYSTEM,
             user_prompt="user",
             response_schema=AIMarkResponse,
             thinking=None,
@@ -344,7 +347,7 @@ class AdapterTests(unittest.TestCase):
         first = fake.messages.calls[0]
         self.assertEqual(
             first["system"],
-            [{"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}],
+            [{"type": "text", "text": _LONG_SYSTEM, "cache_control": {"type": "ephemeral"}}],
         )
         self.assertEqual(
             first["messages"],
@@ -364,7 +367,7 @@ class AdapterTests(unittest.TestCase):
         )
         adapter.generate(
             model=_HAIKU,
-            system_prompt="sys",
+            system_prompt=_LONG_SYSTEM,
             user_prompt="user",
             response_schema=AIMarkResponse,
             thinking=None,
@@ -454,13 +457,13 @@ class ImageInputTests(unittest.TestCase):
 
     def test_images_come_before_a_cached_prefix_too(self) -> None:
         png = _image(10, 10)
-        call = self._complete([png], cache_prefix="paper")
+        call = self._complete([png], cache_prefix=_LONG_PREFIX)
         content = call["messages"][0]["content"]
         self.assertEqual([b["type"] for b in content], ["image", "text", "text"])
         self.assertEqual(
             content[1:],
             [
-                {"type": "text", "text": "paper", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": _LONG_PREFIX, "cache_control": {"type": "ephemeral"}},
                 {"type": "text", "text": "user"},
             ],
         )

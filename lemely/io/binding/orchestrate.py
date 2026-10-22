@@ -86,6 +86,7 @@ from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 from lemely.core.text_agreement import text_agreement
 from lemely.io.binding.label_binder import BoundRead, LabelBinder, to_bound_read
 from lemely.io.binding.second_read_triggers import second_read_triggers
+from lemely.io.providers import is_anthropic_model
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, LemelyError
 from lemely.runtime.events import EventType, bus
 
@@ -503,6 +504,18 @@ def _second_again(second: Callable[[], _Read], forget_second: Callable[[], objec
         raise ExternalServiceError(SECOND_READ_CRASH_MESSAGE) from crash
 
 
+def _reads_share_a_claude_cache(settings: Settings, first_model: str, second_model: str) -> bool:
+    """Both reads on one claude- model, each with a breakpoint after the pages (spec §4 B1).
+
+    The second read can then be served the pages from the first read's prompt cache,
+    but only once the first response has begun: so the reads are made in turn.
+    """
+    if first_model != second_model or not is_anthropic_model(first_model):
+        return False
+    cache_for = settings.gemini.claude_cache_for
+    return all("images" in cache_for.get(tag, []) for tag in (_FIRST_READ[0], _SECOND_READ[0]))
+
+
 def _read_second_after(
     second: Callable[[], _Read], *, forget_second: Callable[[], object] | None = None
 ) -> _Read:
@@ -773,7 +786,9 @@ def run_binding(
     fired on the first read (``second_read_triggers``): the paper then goes on with the
     first read exactly as with ``second_read`` off, and only its key is in
     ``read_cache_keys``. A triggered second read is made after the first, not beside
-    it, and fails and is retried as in ``_read_both``.
+    it, and fails and is retried as in ``_read_both``. When both reads share a Claude
+    prompt cache (``_reads_share_a_claude_cache``) the second is made after the first,
+    not beside it.
     """
     binding = settings.binding
     if binding.binder != "label":
@@ -857,9 +872,15 @@ def run_binding(
             read_cache_keys = read_cache_keys[:1]
     elif binding.second_read:
         try:
-            first_read, second_read = _read_both(
-                _first, _second, forget_second=lambda: client.forget_cached(read_cache_keys[1:])
-            )
+            if _reads_share_a_claude_cache(settings, binding.read_model, second_model):
+                first_read = _first()
+                second_read = _read_second_after(
+                    _second, forget_second=lambda: client.forget_cached(read_cache_keys[1:])
+                )
+            else:
+                first_read, second_read = _read_both(
+                    _first, _second, forget_second=lambda: client.forget_cached(read_cache_keys[1:])
+                )
         except CostCeilingError:
             raise
         except Exception:

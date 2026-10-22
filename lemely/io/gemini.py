@@ -35,6 +35,8 @@ from lemely.io.llm.errors import TransientCallError as _TransientError
 from lemely.io.llm.gemini_provider import GeminiProvider
 from lemely.io.llm.pricing import PriceRow, claude_row, row_cost
 from lemely.io.llm.request import (
+    LEGACY_CLAUDE_CACHE_PLAN,
+    CachePlan,
     CodeExecution,
     DocumentInput,
     ImageInput,
@@ -2278,9 +2280,12 @@ class GeminiClient:
         if on_claude:
             cap = self._claude_output_cap(task_tag)
             effort: str | None = self._resolved_gen_params(task_tag, model)["thinking_level"]
+            spots = self._settings.gemini.claude_cache_for.get(task_tag or "")
+            cache_plan = LEGACY_CLAUDE_CACHE_PLAN if spots is None else CachePlan(tuple(spots))
         else:
             cap = self._output_cap(task_tag)[0]
             effort = None
+            cache_plan = CachePlan()
         split = on_claude and shared_prefix is not None
         return LLMRequest(
             model=model,
@@ -2293,6 +2298,7 @@ class GeminiClient:
             if documents
             else tuple(DocumentInput(data=b"", source_path=fp) for fp in (file_paths or ())),
             tool=tool,
+            cache_plan=cache_plan,
             effort=effort,
             max_output_tokens=cap,
             cache_prefix=shared_prefix.paper if split and shared_prefix else None,

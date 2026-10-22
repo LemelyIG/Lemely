@@ -18,6 +18,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SecretStr,
+    field_validator,
     model_validator,
 )
 from pydantic_settings import (
@@ -115,6 +116,7 @@ class LoggingSettings(BaseModel):
 # the weakest thinking level with no error anywhere. A ``Literal`` here makes
 # config load reject it instead.
 ThinkingLevel = Literal["minimal", "low", "medium", "high"]
+ClaudeCacheSpot = Literal["system", "documents", "images", "prefix"]
 
 # Typed separately from the inline dict literal below: a bare `dict[str, str]`
 # literal loses the `Literal` member type on assignment, so mypy strict
@@ -249,6 +251,25 @@ class GeminiSettings(BaseModel):
     # Spec §2 cost guard: a marked script whose model spend passes this logs
     # `script_over_cost_target` with the split by task tag. Never blocks marking.
     paper_cost_target_usd: float = Field(default=0.10, gt=0)
+    # Spec §4 B1: prompt-cache breakpoints per task tag for claude- calls. A tag not
+    # listed keeps the A1 behaviour (system prompt and shared-prefix paper marked).
+    # "images" after the binder's pages lets its second read hit the first's cache;
+    # with it on both binder tags and both reads on one claude- model, the reads run
+    # one after the other. At most 4 spots per tag.
+    claude_cache_for: dict[str, list[ClaudeCacheSpot]] = Field(default_factory=dict)
+
+    @field_validator("claude_cache_for")
+    @classmethod
+    def _at_most_four_distinct_spots(
+        cls, value: dict[str, list[ClaudeCacheSpot]]
+    ) -> dict[str, list[ClaudeCacheSpot]]:
+        for tag, spots in value.items():
+            if len(spots) > 4 or len(set(spots)) != len(spots):
+                raise ValueError(
+                    f"claude_cache_for[{tag!r}]: at most 4 distinct spots, got {spots}"
+                )
+        return value
+
     # Greyscale pages for claude- calls are enhanced for readability (paper shading
     # divided out, levels stretched, light sharpening). False sends plain greyscale
     # (for A/B); it changes the pixels, so it is part of the reply cache key.

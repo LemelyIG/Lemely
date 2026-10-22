@@ -188,6 +188,7 @@ class ClaudeProvider:
                 images=images,
                 image_file_ids=file_ids,
                 documents=documents,
+                cache_plan=req.cache_plan,
             )
         except ExternalServiceError:
             return None
@@ -278,6 +279,7 @@ class ClaudeProvider:
                 image_file_ids=file_ids,
                 documents=documents,
                 max_tokens=req.max_output_tokens,
+                cache_plan=req.cache_plan,
             )
         except ProviderTransientError as exc:
             raise TransientCallError(str(exc)) from exc

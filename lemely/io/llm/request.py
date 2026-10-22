@@ -18,6 +18,10 @@ CacheSpot = Literal["system", "documents", "images", "prefix"]
 CODE_EXECUTION_TOOL = "code_execution_20260521"
 #: The API's limit on cache breakpoints in one request.
 MAX_CACHE_BREAKPOINTS = 4
+#: Below this many tokens a cache breakpoint is not placed (5.5 models' minimum).
+CACHE_MIN_TOKENS = 512
+#: Text-length estimate of tokens.
+CHARS_PER_TOKEN = 4
 
 
 @dataclass(frozen=True)
@@ -65,6 +69,10 @@ class CachePlan:
             )
         if len(set(self.breakpoints)) != len(self.breakpoints):
             raise ValueError(f"cache breakpoints named twice: {self.breakpoints}")
+
+
+#: The breakpoints every claude- call has placed since lever A1.
+LEGACY_CLAUDE_CACHE_PLAN = CachePlan(breakpoints=("system", "prefix"))
 
 
 def provider_fingerprint(

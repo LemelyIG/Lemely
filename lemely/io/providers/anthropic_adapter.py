@@ -36,13 +36,23 @@ the bound is enforced where it is for every provider, the clamp in
 from __future__ import annotations
 
 import base64
+import io
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 import anthropic
+from PIL import Image
 from pydantic import BaseModel, ValidationError
 
+from lemely.io.llm.image_fit import estimate_tokens
 from lemely.io.llm.provider import Usage
+from lemely.io.llm.request import (
+    CACHE_MIN_TOKENS,
+    CHARS_PER_TOKEN,
+    LEGACY_CLAUDE_CACHE_PLAN,
+    MAX_CACHE_BREAKPOINTS,
+    CachePlan,
+)
 from lemely.io.providers import ProviderError, ProviderTransientError
 from lemely.runtime.errors import ParseError
 
@@ -51,6 +61,7 @@ if TYPE_CHECKING:
 
     from anthropic.types import (
         Base64ImageSourceParam,
+        CacheControlEphemeralParam,
         ContentBlock,
         ContentBlockParam,
         DocumentBlockParam,
@@ -259,6 +270,68 @@ def file_image_blocks(file_ids: Sequence[str]) -> list[ImageBlockParam]:
     ]
 
 
+_EPHEMERAL: CacheControlEphemeralParam = {"type": "ephemeral"}
+
+
+def _image_tokens(data: bytes) -> int:
+    with Image.open(io.BytesIO(data)) as img:
+        return estimate_tokens(*img.size)
+
+
+def _request_parts(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    cache_prefix: str | None,
+    documents: Sequence[DocumentBlockParam],
+    images: Sequence[bytes],
+    image_file_ids: Sequence[str],
+    cache_plan: CachePlan | None,
+) -> tuple[list[TextBlockParam], MessageParam]:
+    """System blocks and the user message, with breakpoints where the plan and size allow.
+
+    Order: system, documents, images, prefix, per-call text. A spot is marked only
+    when the estimated tokens up to and including it reach CACHE_MIN_TOKENS.
+    """
+    spots = set((cache_plan or LEGACY_CLAUDE_CACHE_PLAN).breakpoints)
+    running = len(system_prompt) // CHARS_PER_TOKEN
+    system: list[TextBlockParam] = []
+    if system_prompt:
+        block: TextBlockParam = {"type": "text", "text": system_prompt}
+        if "system" in spots and running >= CACHE_MIN_TOKENS:
+            block["cache_control"] = _EPHEMERAL
+        system.append(block)
+    docs = [cast("DocumentBlockParam", dict(d)) for d in documents]
+    for doc in docs:
+        source = cast("dict[str, str]", doc["source"])
+        running += (
+            len(source["data"]) // CHARS_PER_TOKEN if source["type"] == "text" else CACHE_MIN_TOKENS
+        )
+    if docs and "documents" in spots and running >= CACHE_MIN_TOKENS:
+        docs[-1]["cache_control"] = _EPHEMERAL
+    pictures = [*image_blocks(images), *file_image_blocks(image_file_ids)]
+    running += sum(_image_tokens(i) for i in images) + CACHE_MIN_TOKENS * len(image_file_ids)
+    if pictures and "images" in spots and running >= CACHE_MIN_TOKENS:
+        pictures[-1]["cache_control"] = _EPHEMERAL
+    content: list[ContentBlockParam] = [*docs, *pictures]
+    if cache_prefix:
+        running += len(cache_prefix) // CHARS_PER_TOKEN
+        prefix: TextBlockParam = {"type": "text", "text": cache_prefix}
+        if "prefix" in spots and running >= CACHE_MIN_TOKENS:
+            prefix["cache_control"] = _EPHEMERAL
+        content.append(prefix)
+    marked = sum(1 for b in [*system, *content] if "cache_control" in b)
+    if marked > MAX_CACHE_BREAKPOINTS:
+        raise ProviderError(
+            f"{marked} cache breakpoints in one Claude request; "
+            f"the limit is {MAX_CACHE_BREAKPOINTS}"
+        )
+    if not content:
+        return system, {"role": "user", "content": user_prompt}
+    content.append({"type": "text", "text": user_prompt})
+    return system, {"role": "user", "content": content}
+
+
 def _is_transient(exc: anthropic.APIError) -> bool:
     if isinstance(exc, anthropic.APIConnectionError):  # includes APITimeoutError
         return True
@@ -286,29 +359,6 @@ class AnthropicAdapter:
     def raw(self) -> anthropic.Anthropic:
         """The SDK client (the Files API uploads use it)."""
         return self._client
-
-    @staticmethod
-    def _user_message(
-        user_prompt: str,
-        *,
-        cache_prefix: str | None,
-        images: Sequence[bytes],
-        image_file_ids: Sequence[str],
-        documents: Sequence[DocumentBlockParam] = (),
-    ) -> MessageParam:
-        if not (cache_prefix or images or image_file_ids or documents):
-            return {"role": "user", "content": user_prompt}
-        content: list[ContentBlockParam] = [
-            *documents,
-            *image_blocks(images),
-            *file_image_blocks(image_file_ids),
-        ]
-        if cache_prefix:
-            content.append(
-                {"type": "text", "text": cache_prefix, "cache_control": {"type": "ephemeral"}}
-            )
-        content.append({"type": "text", "text": user_prompt})
-        return {"role": "user", "content": content}
 
     def _send(self, **kwargs: Any) -> Message:  # type: ignore[explicit-any]  # noqa: ANN401
         """One request; streamed when ``max_tokens`` is past the SDK's non-streaming limit.
@@ -339,6 +389,7 @@ class AnthropicAdapter:
         image_file_ids: Sequence[str] = (),
         documents: Sequence[DocumentBlockParam] = (),
         max_tokens: int = MAX_OUTPUT_TOKENS,
+        cache_plan: CachePlan | None = None,
     ) -> AnthropicReply:
         """Send one request; return the unvalidated reply.
 
@@ -360,17 +411,14 @@ class AnthropicAdapter:
         }
         if thinking is not None:
             output_config["effort"] = effort_for(thinking)
-        system: list[TextBlockParam] = (
-            [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
-            if system_prompt
-            else []
-        )
-        message = self._user_message(
-            user_prompt,
+        system, message = _request_parts(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             cache_prefix=cache_prefix,
+            documents=documents,
             images=images,
             image_file_ids=image_file_ids,
-            documents=documents,
+            cache_plan=cache_plan,
         )
         response = self._send(
             model=model,
@@ -443,21 +491,21 @@ class AnthropicAdapter:
         images: Sequence[bytes] = (),
         image_file_ids: Sequence[str] = (),
         documents: Sequence[DocumentBlockParam] = (),
+        cache_plan: CachePlan | None = None,
     ) -> int:
         """Input tokens the request would bill, from the free count endpoint.
 
         Raises:
             ProviderError: the endpoint failed (a preflight caller treats it as unknown).
         """
-        message = self._user_message(
-            user_prompt,
+        system, message = _request_parts(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             cache_prefix=cache_prefix,
+            documents=documents,
             images=images,
             image_file_ids=image_file_ids,
-            documents=documents,
-        )
-        system: list[TextBlockParam] = (
-            [{"type": "text", "text": system_prompt}] if system_prompt else []
+            cache_plan=cache_plan,
         )
         try:
             counted = self._client.messages.count_tokens(
