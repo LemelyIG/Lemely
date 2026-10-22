@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 
     from anthropic.types import (
         Base64ImageSourceParam,
+        ContentBlock,
         ContentBlockParam,
         DocumentBlockParam,
         FileImageSourceParam,
@@ -67,14 +68,23 @@ _RESULT_BLOCKS = frozenset({"bash_code_execution_tool_result", "code_execution_t
 _RESULT_CONTENT = frozenset({"bash_code_execution_result", "code_execution_result"})
 
 
-def code_execution_output(message: Message) -> tuple[str, bool]:
-    """What the code printed (last successful run), else the final text; and whether code ran."""
-    stdout: str | None = None
+def _usage_ran_code(message: Message) -> bool:
+    """Whether the usage counter reports a code-execution request."""
     server_use = getattr(
         getattr(message.usage, "server_tool_use", None), "code_execution_requests", 0
     )
-    ran = isinstance(server_use, int) and server_use > 0
-    for block in message.content:
+    return isinstance(server_use, int) and server_use > 0
+
+
+def code_execution_output(message: Message) -> tuple[str, bool]:
+    """What the code printed (last successful run), else the final text; and whether code ran."""
+    return _output_of(message.content, _usage_ran_code(message))
+
+
+def _output_of(blocks: Sequence[ContentBlock], ran: bool) -> tuple[str, bool]:
+    """:func:`code_execution_output` over content blocks (several legs concatenated)."""
+    stdout: str | None = None
+    for block in blocks:
         if getattr(block, "type", None) == "server_tool_use":
             ran = True
         if getattr(block, "type", None) not in _RESULT_BLOCKS:
@@ -91,7 +101,7 @@ def code_execution_output(message: Message) -> tuple[str, bool]:
     if not ran:
         # Prose with no code run is not sandbox output (Gemini behaves the same).
         return "", False
-    texts = [b.text for b in message.content if b.type == "text"]
+    texts = [b.text for b in blocks if b.type == "text"]
     return (texts[-1].strip() if texts else ""), ran
 
 
@@ -378,7 +388,12 @@ class AnthropicAdapter:
     def complete_code_execution(
         self, *, model: str, prompt: str, thinking: str | None, max_tokens: int = MAX_OUTPUT_TOKENS
     ) -> AnthropicReply:
-        """One request with Claude's code-execution tool; plain text, no response schema."""
+        """Claude's code-execution tool; plain text, no response schema.
+
+        Loops through ``pause_turn`` continuations (up to ``MAX_PAUSE_CONTINUATIONS``)
+        in one container. The answer is the last successful stdout across all legs,
+        else the final text if code ran; a cut-off, refused or still-paused reply is "".
+        """
         from lemely.io.llm.request import CODE_EXECUTION_TOOL
 
         extra: dict[str, object] = {}
@@ -387,6 +402,7 @@ class AnthropicAdapter:
         messages: list[MessageParam] = [{"role": "user", "content": prompt}]
         usage = Usage(0, 0, 0, 0)
         ran_code = False
+        content: list[ContentBlock] = []
         container_id: str | None = None
         for _ in range(MAX_PAUSE_CONTINUATIONS + 1):
             if container_id is not None:
@@ -400,8 +416,9 @@ class AnthropicAdapter:
                 **extra,
             )
             usage = _add_usage(usage, _usage_of(response))
-            text, ran = code_execution_output(response)
-            ran_code = ran_code or ran
+            content.extend(response.content)
+            ran_code = ran_code or _usage_ran_code(response)
+            text, ran_code = _output_of(content, ran_code)
             if response.stop_reason != "pause_turn":
                 if response.stop_reason in ("max_tokens", "refusal"):
                     text = ""

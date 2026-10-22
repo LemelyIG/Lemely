@@ -131,12 +131,27 @@ class CodeExecutionTests(unittest.TestCase):
 
     def test_pause_turn_cap_exhausted_is_a_parse_error(self) -> None:
         def paused() -> SimpleNamespace:
-            m = _message(SimpleNamespace(type="text", text="Let me compute this."))
+            m = _message(SimpleNamespace(type="text", text="Let me compute this."), _result("42\n"))
             m.stop_reason = "pause_turn"
             return m
 
         with self.assertRaises(ParseError):
             self._run(*[paused() for _ in range(MAX_PAUSE_CONTINUATIONS + 1)])
+
+    def test_stdout_from_an_earlier_pause_turn_leg_is_kept(self) -> None:
+        first = _message(
+            SimpleNamespace(type="server_tool_use", name="bash_code_execution"),
+            _result("42\n"),
+            SimpleNamespace(type="text", text="Checking"),
+        )
+        first.stop_reason = "pause_turn"
+        first.container = SimpleNamespace(id="cont_1")
+        text, _fake = self._run(
+            first, _message(SimpleNamespace(type="text", text="The answer is 42."))
+        )
+        self.assertEqual(text, "42")
+        (rec,) = process_call_records()
+        self.assertEqual(rec.container_seconds, 300)
 
     def test_max_tokens_and_refusal_are_never_returned(self) -> None:
         for reason in ("max_tokens", "refusal"):
