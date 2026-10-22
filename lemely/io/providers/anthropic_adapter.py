@@ -63,6 +63,30 @@ if TYPE_CHECKING:
 
 _T = TypeVar("_T", bound=BaseModel)
 
+_RESULT_BLOCKS = frozenset({"bash_code_execution_tool_result", "code_execution_tool_result"})
+_RESULT_CONTENT = frozenset({"bash_code_execution_result", "code_execution_result"})
+
+
+def code_execution_output(message: Message) -> tuple[str, bool]:
+    """What the code printed (last successful run), else the final text; and whether code ran."""
+    stdout: str | None = None
+    ran = False
+    for block in message.content:
+        if getattr(block, "type", None) not in _RESULT_BLOCKS:
+            continue
+        ran = True
+        content = getattr(block, "content", None)
+        if getattr(content, "type", None) not in _RESULT_CONTENT:
+            continue
+        out = getattr(content, "stdout", "") or ""
+        if getattr(content, "return_code", 1) == 0 and out.strip():
+            stdout = out
+    if stdout is not None:
+        return stdout.strip(), ran
+    texts = [b.text for b in message.content if b.type == "text"]
+    return (texts[-1].strip() if texts else ""), ran
+
+
 Effort = Literal["low", "medium", "high"]
 
 #: Reply budget per call. A marking reply is a few hundred tokens plus
@@ -115,6 +139,7 @@ class AnthropicReply:
     text: str
     usage: Usage
     stop_reason: str | None
+    ran_code: bool = False
 
     def raise_for_stop_reason(self, model: str) -> None:
         """Raise when the reply cannot be used as it stands.
@@ -325,6 +350,28 @@ class AnthropicAdapter:
         text = "".join(block.text for block in response.content if block.type == "text")
         return AnthropicReply(
             text=text, usage=_usage_of(response), stop_reason=response.stop_reason
+        )
+
+    def complete_code_execution(
+        self, *, model: str, prompt: str, thinking: str | None, max_tokens: int = MAX_OUTPUT_TOKENS
+    ) -> AnthropicReply:
+        """One request with Claude's code-execution tool; plain text, no response schema."""
+        from lemely.io.llm.request import CODE_EXECUTION_TOOL
+
+        output_config: OutputConfigParam = {}
+        if thinking is not None:
+            output_config["effort"] = effort_for(thinking)
+        response = self._send(
+            model=model,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+            tools=[{"type": CODE_EXECUTION_TOOL, "name": "code_execution"}],
+            thinking={"type": "adaptive"},
+            output_config=output_config,
+        )
+        text, ran = code_execution_output(response)
+        return AnthropicReply(
+            text=text, usage=_usage_of(response), stop_reason=response.stop_reason, ran_code=ran
         )
 
     def count_tokens(

@@ -35,6 +35,7 @@ from lemely.io.llm.errors import TransientCallError as _TransientError
 from lemely.io.llm.gemini_provider import GeminiProvider
 from lemely.io.llm.pricing import PriceRow, claude_row, row_cost
 from lemely.io.llm.request import (
+    CLAUDE_CODE_EXECUTION_TAGS,
     CodeExecution,
     DocumentInput,
     ImageInput,
@@ -1868,9 +1869,11 @@ class GeminiClient:
             active_model = g.model_for(task_tag)
         else:
             active_model = g.model
-        if is_anthropic_model(active_model):
+        if is_anthropic_model(active_model) and task_tag not in CLAUDE_CODE_EXECUTION_TAGS:
             raise ValueError(
-                f"generate_with_code_execution is Gemini-only; got Anthropic model {active_model!r}"
+                "code execution on Claude is allowed only for task tags "
+                f"{sorted(CLAUDE_CODE_EXECUTION_TAGS)} (it is not ZDR-covered and must "
+                f"never see student data); got task_tag={task_tag!r}"
             )
 
         log = structlog.get_logger().bind(
@@ -2464,6 +2467,7 @@ class GeminiClient:
         )
         if reply.text:
             return reply.text
+        provider = "Anthropic" if is_anthropic_model(model) else "Gemini"
         raise ParseError(
-            f"Gemini code_execution call ({model}) returned no code_execution_result part."
+            f"{provider} code_execution call ({model}) returned no code_execution_result part."
         )

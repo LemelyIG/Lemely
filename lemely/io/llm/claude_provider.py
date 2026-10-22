@@ -7,6 +7,7 @@ module lazily, on the first ``claude-`` call.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -15,6 +16,7 @@ import anthropic
 
 from lemely.io.llm import image_fit
 from lemely.io.llm.errors import TransientCallError
+from lemely.io.llm.pricing import CODE_EXECUTION_MIN_BILLED_SECONDS
 from lemely.io.llm.provider import ProviderReply, Usage
 from lemely.io.providers import ProviderError, ProviderTransientError
 from lemely.runtime.errors import ExternalServiceError
@@ -190,8 +192,42 @@ class ClaudeProvider:
         except ExternalServiceError:
             return None
 
+    def _complete_code_execution(self, req: LLMRequest) -> ProviderReply:
+        """Claude's code-execution tool; container time billed at the 5-minute minimum."""
+        t0 = time.monotonic()
+        try:
+            reply = self._adapter.complete_code_execution(
+                model=req.model,
+                prompt=req.prompt,
+                thinking=req.effort,
+                max_tokens=req.max_output_tokens,
+            )
+        except ProviderTransientError as exc:
+            raise TransientCallError(str(exc)) from exc
+        except ExternalServiceError:
+            raise
+        except (anthropic.AnthropicError, OSError) as exc:
+            raise ExternalServiceError(str(exc)) from exc
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        seconds = (
+            max(latency_ms / 1000, float(CODE_EXECUTION_MIN_BILLED_SECONDS))
+            if reply.ran_code
+            else 0.0
+        )
+        usage = dataclasses.replace(reply.usage, container_seconds=seconds)
+        return ProviderReply(
+            text=reply.text,
+            usage_response=usage_as_gemini_response(usage),
+            stop_reason=reply.stop_reason,
+            stop_detail=str(reply.stop_reason),
+            latency_ms=latency_ms,
+            usage=usage,
+        )
+
     def complete(self, req: LLMRequest, *, log: Any) -> ProviderReply:
         """Send ``req``; 429/529/5xx/connection raise ``TransientCallError``."""
+        if req.tool is not None:
+            return self._complete_code_execution(req)
         if req.response_schema is None:
             raise ProviderError("a Claude call needs a response schema")
         if any(d.citations for d in req.documents):
