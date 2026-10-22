@@ -1836,12 +1836,14 @@ class GeminiClient:
         task_tag: str | None = None,
         cache_mode: Literal["read_write", "bypass", "refresh"] | None = None,
     ) -> str:
-        """N3 step 3: ask Gemini's own ``code_execution`` tool to run code.
+        """N3 step 3: ask the model's own ``code_execution`` tool to run code.
 
-        This is Gemini's built-in tool (``docs/plans/ai-improvements-plan.md``
-        :615) — NOT a locally-built sandbox. No subprocess, no local process
-        isolation; the code runs on Google's side and this method only reads
-        back the ``code_execution_result`` part of the response.
+        Gemini's built-in tool (``docs/plans/ai-improvements-plan.md`` :615) or
+        Claude's server-side code-execution tool, by ``model`` -- NOT a
+        locally-built sandbox. No subprocess, no local process isolation; the
+        code runs on the provider's side and this method only reads back what it
+        printed (Gemini's ``code_execution_result`` part; for Claude, the stdout
+        of the last successful run, the final text only when code did run).
 
         Unlike :meth:`generate_structured`, this is a plain-text call (no
         ``response_schema`` — the ``code_execution`` tool and structured JSON
@@ -2422,10 +2424,11 @@ class GeminiClient:
     def _call_code_execution_once(
         self, model: str, prompt: str, log: Any, task_tag: str | None, *, params_fingerprint: str
     ) -> str:
-        """Send ``prompt`` with Gemini's ``code_execution`` tool enabled.
+        """Send ``prompt`` with the provider's ``code_execution`` tool enabled.
 
         Returns the ``output`` of the response's ``code_execution_result``
-        part. No retry loop here (unlike :meth:`_call_with_retry`) — a
+        part (Claude: the executed code's stdout; a ``pause_turn`` is continued
+        inside the provider, ``max_tokens`` / ``refusal`` give no text). No retry loop here (unlike :meth:`_call_with_retry`) — a
         code-execution call is only ever made from
         :mod:`lemely.io.question_gates`' fallback path, where a transient
         failure is just one more reason the gate could not verify this
@@ -2433,9 +2436,9 @@ class GeminiClient:
         of the caller's own regenerate-on-reject loop.
 
         Raises:
-            ParseError: the response has no ``code_execution_result`` part
-                (the model answered in prose instead of running code, or the
-                execution itself errored) — never returned as an empty
+            ParseError: the response has no code-execution output
+                (the model answered in prose instead of running code, the
+                execution itself errored, or the reply was cut off or refused) — never returned as an empty
                 string, so a caller cannot mistake "nothing to compare" for
                 "the sandbox found no output".
         """
@@ -2456,7 +2459,8 @@ class GeminiClient:
             log=log,
             params_fingerprint=params_fingerprint,
             extra_log_fields={"latency_ms": reply.latency_ms, "tool": "code_execution"},
-            sends_thinking=False,
+            # Claude sends adaptive thinking with the effort; Gemini's tool call sends none.
+            sends_thinking=is_anthropic_model(model),
         )
         if reply.text:
             return reply.text

@@ -209,6 +209,10 @@ class ClaudeProvider:
         except (anthropic.AnthropicError, OSError) as exc:
             raise ExternalServiceError(str(exc)) from exc
         latency_ms = int((time.monotonic() - t0) * 1000)
+        # Container time is estimated from the request's wall-clock (all legs of a
+        # paused turn, one container), floored at the 5-minute minimum. The monthly
+        # 1,550 free container hours are ignored on purpose: the estimate stays
+        # conservative (never under-billed).
         seconds = (
             max(latency_ms / 1000, float(CODE_EXECUTION_MIN_BILLED_SECONDS))
             if reply.ran_code

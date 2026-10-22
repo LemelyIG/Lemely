@@ -70,8 +70,13 @@ _RESULT_CONTENT = frozenset({"bash_code_execution_result", "code_execution_resul
 def code_execution_output(message: Message) -> tuple[str, bool]:
     """What the code printed (last successful run), else the final text; and whether code ran."""
     stdout: str | None = None
-    ran = False
+    server_use = getattr(
+        getattr(message.usage, "server_tool_use", None), "code_execution_requests", 0
+    )
+    ran = isinstance(server_use, int) and server_use > 0
     for block in message.content:
+        if getattr(block, "type", None) == "server_tool_use":
+            ran = True
         if getattr(block, "type", None) not in _RESULT_BLOCKS:
             continue
         ran = True
@@ -83,9 +88,15 @@ def code_execution_output(message: Message) -> tuple[str, bool]:
             stdout = out
     if stdout is not None:
         return stdout.strip(), ran
+    if not ran:
+        # Prose with no code run is not sandbox output (Gemini behaves the same).
+        return "", False
     texts = [b.text for b in message.content if b.type == "text"]
     return (texts[-1].strip() if texts else ""), ran
 
+
+#: Resends of a ``pause_turn`` reply before the call gives up with no answer.
+MAX_PAUSE_CONTINUATIONS = 3
 
 Effort = Literal["low", "medium", "high"]
 
@@ -155,6 +166,18 @@ class AnthropicReply:
             raise ProviderTransientError(f"Anthropic hit max_tokens ({model})")
         if self.stop_reason == "refusal":
             raise ProviderError(f"Anthropic refused the request ({model})")
+
+
+def _add_usage(total: Usage, more: Usage) -> Usage:
+    """``total`` plus ``more``, field by field (the legs of a paused turn)."""
+    return Usage(
+        input_tokens=total.input_tokens + more.input_tokens,
+        cached_tokens=total.cached_tokens + more.cached_tokens,
+        output_tokens=total.output_tokens + more.output_tokens,
+        thinking_tokens=total.thinking_tokens + more.thinking_tokens,
+        cache_write_5m_tokens=total.cache_write_5m_tokens + more.cache_write_5m_tokens,
+        cache_write_1h_tokens=total.cache_write_1h_tokens + more.cache_write_1h_tokens,
+    )
 
 
 def _usage_of(message: Message) -> Usage:
@@ -358,21 +381,40 @@ class AnthropicAdapter:
         """One request with Claude's code-execution tool; plain text, no response schema."""
         from lemely.io.llm.request import CODE_EXECUTION_TOOL
 
-        output_config: OutputConfigParam = {}
+        extra: dict[str, object] = {}
         if thinking is not None:
-            output_config["effort"] = effort_for(thinking)
-        response = self._send(
-            model=model,
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-            tools=[{"type": CODE_EXECUTION_TOOL, "name": "code_execution"}],
-            thinking={"type": "adaptive"},
-            output_config=output_config,
-        )
-        text, ran = code_execution_output(response)
-        return AnthropicReply(
-            text=text, usage=_usage_of(response), stop_reason=response.stop_reason, ran_code=ran
-        )
+            extra["output_config"] = {"effort": effort_for(thinking)}
+        messages: list[MessageParam] = [{"role": "user", "content": prompt}]
+        usage = Usage(0, 0, 0, 0)
+        ran_code = False
+        container_id: str | None = None
+        for _ in range(MAX_PAUSE_CONTINUATIONS + 1):
+            if container_id is not None:
+                extra["container"] = container_id
+            response = self._send(
+                model=model,
+                max_tokens=max_tokens,
+                messages=messages,
+                tools=[{"type": CODE_EXECUTION_TOOL, "name": "code_execution"}],
+                thinking={"type": "adaptive"},
+                **extra,
+            )
+            usage = _add_usage(usage, _usage_of(response))
+            text, ran = code_execution_output(response)
+            ran_code = ran_code or ran
+            if response.stop_reason != "pause_turn":
+                if response.stop_reason in ("max_tokens", "refusal"):
+                    text = ""
+                return AnthropicReply(
+                    text=text, usage=usage, stop_reason=response.stop_reason, ran_code=ran_code
+                )
+            # Official docs: a paused turn is sent back as-is to continue; the
+            # response's container id is passed back so it stays one container.
+            messages = [*messages, {"role": "assistant", "content": response.content}]
+            container = getattr(response, "container", None)
+            container_id = getattr(container, "id", None) or container_id
+        # Still paused after the cap: no usable answer (an empty text is never cached).
+        return AnthropicReply(text="", usage=usage, stop_reason="pause_turn", ran_code=ran_code)
 
     def count_tokens(
         self,

@@ -14,6 +14,7 @@ from lemely.io.gemini import (
     process_call_records,
     record_calls,
 )
+from lemely.io.providers.anthropic_adapter import MAX_PAUSE_CONTINUATIONS, AnthropicAdapter
 from lemely.runtime.errors import ParseError
 from tests.test_anthropic_adapter import _FakeAnthropic, _settings
 
@@ -79,9 +80,72 @@ class CodeExecutionTests(unittest.TestCase):
         )
         self.assertNotIn("format", call.get("output_config", {}))
 
-    def test_falls_back_to_the_final_text_block(self) -> None:
-        text, _fake = self._run(_message(SimpleNamespace(type="text", text="42")))
+    def test_text_only_reply_is_a_parse_error(self) -> None:
+        # No code ran: prose must never pass as sandbox output.
+        with self.assertRaises(ParseError):
+            self._run(_message(SimpleNamespace(type="text", text="42")))
+
+    def test_code_ran_without_stdout_falls_back_to_the_final_text(self) -> None:
+        text, _fake = self._run(
+            _message(_result("", return_code=1), SimpleNamespace(type="text", text="42"))
+        )
         self.assertEqual(text, "42")
+
+    def test_server_tool_use_counts_as_code_run(self) -> None:
+        text, _fake = self._run(
+            _message(
+                SimpleNamespace(type="server_tool_use", name="bash_code_execution"),
+                SimpleNamespace(type="text", text="42"),
+            )
+        )
+        self.assertEqual(text, "42")
+
+    def test_usage_counter_counts_as_code_run(self) -> None:
+        msg = _message(SimpleNamespace(type="text", text="42"))
+        msg.usage.server_tool_use = SimpleNamespace(code_execution_requests=1)
+        text, _fake = self._run(msg)
+        self.assertEqual(text, "42")
+
+    def test_adapter_omits_output_config_without_effort(self) -> None:
+        fake = _FakeAnthropic(_message(_result("42\n")))
+        AnthropicAdapter(fake).complete_code_execution(  # type: ignore[arg-type]
+            model=_HAIKU, prompt="p", thinking=None
+        )
+        self.assertNotIn("output_config", fake.messages.calls[0])
+
+    def test_pause_turn_is_continued_in_one_container(self) -> None:
+        paused = _message(SimpleNamespace(type="text", text="Let me compute this."))
+        paused.stop_reason = "pause_turn"
+        paused.container = SimpleNamespace(id="cont_1")
+        text, fake = self._run(paused, _message(_result("42\n")))
+        self.assertEqual(text, "42")
+        first, second = fake.messages.calls
+        self.assertNotIn("container", first)
+        self.assertEqual(second["container"], "cont_1")
+        self.assertEqual(second["messages"][-1]["role"], "assistant")
+        self.assertEqual(second["messages"][-1]["content"], paused.content)
+        (rec,) = process_call_records()
+        self.assertEqual(rec.thinking, "low")  # the effort sent is recorded
+        self.assertEqual(rec.input_tokens, 4_000)  # usage summed over both legs
+        self.assertEqual(rec.container_seconds, 300)  # billed once
+
+    def test_pause_turn_cap_exhausted_is_a_parse_error(self) -> None:
+        def paused() -> SimpleNamespace:
+            m = _message(SimpleNamespace(type="text", text="Let me compute this."))
+            m.stop_reason = "pause_turn"
+            return m
+
+        with self.assertRaises(ParseError):
+            self._run(*[paused() for _ in range(MAX_PAUSE_CONTINUATIONS + 1)])
+
+    def test_max_tokens_and_refusal_are_never_returned(self) -> None:
+        for reason in ("max_tokens", "refusal"):
+            with self.subTest(reason=reason):
+                self.tmp = tempfile.mkdtemp()
+                msg = _message(_result("42\n"), SimpleNamespace(type="text", text="42"))
+                msg.stop_reason = reason
+                with self.assertRaises(ParseError):
+                    self._run(msg)
 
     def test_container_time_billed_at_the_five_minute_minimum(self) -> None:
         self._run(_message(_result("42\n")))
@@ -91,7 +155,8 @@ class CodeExecutionTests(unittest.TestCase):
         self.assertAlmostEqual(rec.usd_now, expected, places=12)
 
     def test_no_code_ran_no_container_time(self) -> None:
-        self._run(_message(SimpleNamespace(type="text", text="42")))
+        with self.assertRaises(ParseError):
+            self._run(_message(SimpleNamespace(type="text", text="42")))
         (rec,) = process_call_records()
         self.assertEqual(rec.container_seconds, 0)
 
