@@ -58,7 +58,12 @@ from lemely.io.llm.request import (
     CachePlan,
 )
 from lemely.io.providers import ProviderError, ProviderTransientError
-from lemely.io.providers.claude_schema import extract_json, json_instruction, needs_prompt_json
+from lemely.io.providers.claude_schema import (
+    USER_CLOSING_LINE,
+    extract_json,
+    json_instruction,
+    needs_prompt_json,
+)
 from lemely.runtime.errors import ParseError
 
 if TYPE_CHECKING:
@@ -447,6 +452,7 @@ class AnthropicAdapter:
             # schema goes in the (cacheable) system block and the reply is parsed here.
             instruction = json_instruction(response_schema.model_json_schema())
             system_prompt = f"{system_prompt}\n\n{instruction}".strip()
+            user_prompt = f"{user_prompt}\n\n{USER_CLOSING_LINE}".strip()
         else:
             output_config["format"] = {"type": "json_schema", "schema": sendable}
         if thinking is not None:

@@ -5,20 +5,24 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from typing import Literal
 
 import anthropic
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import AIMarkResponse
 from lemely.io.providers.anthropic_adapter import AnthropicAdapter
 from lemely.io.providers.claude_schema import (
     CLAUDE_MAX_OPTIONAL_PARAMS,
+    PROMPT_JSON_VERSION,
+    USER_CLOSING_LINE,
     extract_json,
     json_instruction,
     needs_prompt_json,
     recursive_definitions,
     schema_budget,
+    schema_rules,
 )
 from lemely.runtime.errors import ParseError
 from tests.test_anthropic_adapter import _VALID_MARK, _FakeAnthropic, _message
@@ -121,3 +125,89 @@ class HelperTests(unittest.TestCase):
 
     def test_instruction_embeds_schema(self) -> None:
         self.assertIn('"title":"_Node"', json_instruction(_Node.model_json_schema()))
+
+
+class _Color(BaseModel):
+    name: str
+    tags: list[str]
+    kind: str | None = None
+    note: str = ""
+    parts: list[_Node] | None = None
+
+
+class ExtractionTests(unittest.TestCase):
+    def test_braces_in_prose(self) -> None:
+        self.assertEqual(extract_json('Use {x} like so: {"a": 1} ok'), '{"a": 1}')
+
+    def test_two_objects_last_wins(self) -> None:
+        self.assertEqual(extract_json('{"a": 1} then {"a": 2}'), '{"a": 2}')
+
+    def test_draft_fence_then_corrected_fence(self) -> None:
+        text = 'draft\n```json\n{"a": 1}\n```\nfixed\n```json\n{"a": 2}\n```'
+        self.assertEqual(extract_json(text), '{"a": 2}')
+
+    def test_fence_then_prose_with_brace(self) -> None:
+        self.assertEqual(extract_json('```json\n{"a": 1}\n```\nSee set {1, 2}.'), '{"a": 1}')
+
+    def test_nested_and_string_braces(self) -> None:
+        self.assertEqual(
+            extract_json('x {"a": "}{", "b": {"c": 1}} y'), '{"a": "}{", "b": {"c": 1}}'
+        )
+
+
+class InstructionTests(unittest.TestCase):
+    def test_nulls_in_non_nullable_optionals_fail_validation(self) -> None:
+        # The rationale for "omit": an optional field is not a nullable one.
+        with self.assertRaises(ValidationError):
+            _Color.model_validate({"name": "r", "tags": [], "note": None})
+        _Color.model_validate({"name": "r", "tags": []})
+
+    def test_instruction_says_omit_not_null_for_absent(self) -> None:
+        text = json_instruction(_Color.model_json_schema())
+        self.assertIn("Omit an optional field", text)
+        self.assertNotIn("use null for an absent", text)
+
+    def test_rules_are_derived_from_schema(self) -> None:
+        class Shape(BaseModel):
+            id: str
+            items: list[str]
+            level: Literal["low", "high"]
+
+        rules = " ".join(schema_rules(Shape.model_json_schema()))
+        self.assertIn("Required top-level fields: id, items, level", rules)
+        self.assertIn("items", rules)
+        self.assertIn('level must be one of: "low", "high"', rules)
+        self.assertIn("Rules:", json_instruction(Shape.model_json_schema()))
+
+    def test_user_turn_closing_line_on_prompt_route_only(self) -> None:
+        fake, _ = _call(_Node, '{"name": "a"}')
+        (call,) = fake.messages.calls
+        self.assertIn(USER_CLOSING_LINE, json.dumps(call["messages"]))
+        fake2, _ = _call(AIMarkResponse, json.dumps(_VALID_MARK))
+        (call2,) = fake2.messages.calls
+        self.assertNotIn(USER_CLOSING_LINE, json.dumps(call2["messages"]))
+
+    def test_version_is_in_system_text(self) -> None:
+        self.assertIn(PROMPT_JSON_VERSION, json_instruction(_Node.model_json_schema()))
+
+
+class BudgetTests(unittest.TestCase):
+    def test_inline_and_array_item_objects_are_counted(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {
+                "inline": {
+                    "type": "object",
+                    "properties": {"a": {"type": "string"}, "b": {"type": "string"}},
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"c": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
+                    },
+                },
+            },
+            "required": ["inline", "rows"],
+        }
+        self.assertEqual(schema_budget(schema), (3, 1))
