@@ -124,9 +124,11 @@ class UploadTests(_Base):
         # (.superpowers/sdd/binding-investigation.md, Q1), so it is not asked.
         files = _FakeFiles()
         client, fake = self._client(files, _message(_VALID_MARK), claude_image_token_budget=700)
-        with client.image_uploads(list(_PAGES), concurrency=1) as uploads:
-            with capture_logs() as logs:
-                self._read(client, uploads, "binding_second_read")
+        with (
+            client.image_uploads(list(_PAGES), concurrency=1) as uploads,
+            capture_logs() as logs,
+        ):
+            self._read(client, uploads, "binding_second_read")
         self.assertEqual(fake.messages.count_calls, [])
         (pre,) = [e for e in logs if e["event"] == "claude_token_preflight"]
         self.assertIsNone(pre["counted_tokens"])
