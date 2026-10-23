@@ -221,6 +221,9 @@ class GeminiSettings(BaseModel):
     #   (lemely.io.reread), and legacy whole-paper extraction, MCQ answers included
     #   (lemely.io.answer_extraction: the main read and the binding gate's retry).
     # - "binding_second_read" (16,384): the label binder's second read only.
+    # For claude- models these defaults do not apply: the binder tags (extraction,
+    # binding_second_read, binding_overview) default to 32,768 unless this map is set
+    # in the settings with the tag named (GeminiClient._claude_output_cap).
     # Runaway guards, never hit in measurement. Evidence: the largest binder
     # output on golden is 1,608 tokens in the B12 screen (1,626 across all the
     # cost-ladder screens); a real 19-page scan (0625/41 Oct/Nov 2024,

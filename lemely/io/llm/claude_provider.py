@@ -257,15 +257,26 @@ class ClaudeProvider:
                 )
             budget = self._settings.gemini.claude_image_token_budget
             if fitted.est_tokens >= PREFLIGHT_SHARE * budget:
-                counted = self.count_tokens(
-                    req, images=images, file_ids=file_ids, documents=documents
-                )
-                log.info(
-                    "claude_token_preflight",
-                    est_tokens=fitted.est_tokens,
-                    counted_tokens=counted,
-                    tag=req.task_tag,
-                )
+                if file_ids:
+                    # The count endpoint answers 400 "File sources are not supported in
+                    # the token counting endpoint" for file ids: the estimate stands alone.
+                    log.info(
+                        "claude_token_preflight",
+                        est_tokens=fitted.est_tokens,
+                        counted_tokens=None,
+                        reason="file_sources",
+                        tag=req.task_tag,
+                    )
+                else:
+                    counted = self.count_tokens(
+                        req, images=images, file_ids=file_ids, documents=documents
+                    )
+                    log.info(
+                        "claude_token_preflight",
+                        est_tokens=fitted.est_tokens,
+                        counted_tokens=counted,
+                        tag=req.task_tag,
+                    )
         t0 = time.monotonic()
         try:
             reply = self._adapter.complete(

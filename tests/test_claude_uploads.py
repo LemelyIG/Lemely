@@ -70,11 +70,19 @@ class _Base(unittest.TestCase):
         self.addCleanup(today.stop)
 
     def _client(
-        self, files: _FakeFiles, *outcomes: object, files_api: bool = True
+        self,
+        files: _FakeFiles,
+        *outcomes: object,
+        files_api: bool = True,
+        **gemini: Any,
     ) -> tuple[GeminiClient, _FakeAnthropic]:
         settings = _settings(self.tmp)
         settings = settings.model_copy(
-            update={"gemini": settings.gemini.model_copy(update={"claude_files_api": files_api})}
+            update={
+                "gemini": settings.gemini.model_copy(
+                    update={"claude_files_api": files_api, **gemini}
+                )
+            }
         )
         fake = _FakeAnthropic(*outcomes)
         fake.files = files
@@ -110,6 +118,32 @@ class UploadTests(_Base):
         expected = [{"type": "file", "file_id": "file_1"}, {"type": "file", "file_id": "file_2"}]
         self.assertEqual([_sources(c) for c in fake.messages.calls], [expected, expected])
         self.assertEqual(files.deleted, ["file_1", "file_2"])
+
+    def test_file_sources_skip_the_count_endpoint_and_log_why(self) -> None:
+        # The endpoint answers 400 "File sources are not supported" for file ids
+        # (.superpowers/sdd/binding-investigation.md, Q1), so it is not asked.
+        files = _FakeFiles()
+        client, fake = self._client(files, _message(_VALID_MARK), claude_image_token_budget=700)
+        with client.image_uploads(list(_PAGES), concurrency=1) as uploads:
+            with capture_logs() as logs:
+                self._read(client, uploads, "binding_second_read")
+        self.assertEqual(fake.messages.count_calls, [])
+        (pre,) = [e for e in logs if e["event"] == "claude_token_preflight"]
+        self.assertIsNone(pre["counted_tokens"])
+        self.assertEqual(pre["reason"], "file_sources")
+        self.assertGreater(pre["est_tokens"], 0)
+
+    def test_inline_images_still_use_the_count_endpoint(self) -> None:
+        files = _FakeFiles()
+        client, fake = self._client(
+            files, _message(_VALID_MARK), files_api=False, claude_image_token_budget=700
+        )
+        with capture_logs() as logs:
+            self._read(client, None, "binding_second_read")
+        self.assertEqual(len(fake.messages.count_calls), 1)
+        (pre,) = [e for e in logs if e["event"] == "claude_token_preflight"]
+        self.assertIsNotNone(pre["counted_tokens"])
+        self.assertNotIn("reason", pre)
 
     def test_uploads_expire_in_one_hour(self) -> None:
         files = _FakeFiles()

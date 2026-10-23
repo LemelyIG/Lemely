@@ -120,8 +120,32 @@ class OutputCapTests(_Base):
         client, fake = self._client(_message(_VALID_MARK), _message(_VALID_MARK))
         self._read(client, [_scan_page(400, 600)], tag="binding_second_read")
         self._read(client, [_scan_page(401, 600)], tag="correction")
-        self.assertEqual([c["max_tokens"] for c in fake.messages.calls], [16_384, 16_000])
-        self.assertEqual(fake.messages.streamed, [])
+        # binding_second_read is 32,768 on Claude by default, so it streams (F4).
+        self.assertEqual([c["max_tokens"] for c in fake.messages.calls], [32_768, 16_000])
+        self.assertEqual([c["max_tokens"] for c in fake.messages.streamed], [32_768])
+
+    def test_claude_binder_tags_default_to_32768(self) -> None:
+        # 4 of 11 Haiku-low second reads hit 16,384 on runaway thinking
+        # (.superpowers/sdd/binding-investigation.md); Gemini keeps 16,384.
+        client, _fake = self._client()
+        for tag in ("extraction", "binding_second_read", "binding_overview"):
+            with self.subTest(tag=tag):
+                self.assertEqual(client._claude_output_cap(tag), 32_768)
+        self.assertEqual(client._claude_output_cap("correction"), 16_000)
+        self.assertEqual(client._output_cap("binding_second_read"), (16_384, True))
+
+    def test_an_explicit_max_output_tokens_for_overrides_the_claude_default(self) -> None:
+        client, _fake = self._client(max_output_tokens_for={"binding_second_read": 20_000})
+        self.assertEqual(client._claude_output_cap("binding_second_read"), 20_000)
+        self.assertEqual(client._claude_output_cap("binding_overview"), 32_768)
+
+    def test_the_claude_cap_is_in_the_claude_cache_key_only(self) -> None:
+        client, _fake = self._client()
+        before = client._params_fingerprint(_HAIKU, "binding_second_read", AIMarkResponse)
+        tight, _ = self._client(max_output_tokens_for={"binding_second_read": 16_384})
+        self.assertNotEqual(
+            before, tight._params_fingerprint(_HAIKU, "binding_second_read", AIMarkResponse)
+        )
 
     def test_a_cap_above_the_nonstreaming_limit_streams(self) -> None:
         client, fake = self._client(_message(_VALID_MARK))

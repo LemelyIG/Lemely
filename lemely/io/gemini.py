@@ -60,6 +60,14 @@ _T = TypeVar("_T", bound=BaseModel)
 # because it feeds the cache-key fingerprint (spec 3.3): changing it changes what
 # the model may return, so it must invalidate cached replies.
 _MAX_OUTPUT_TOKENS: int = 65536
+#: Output cap for a claude- binder read. Haiku at effort "low" still thinks 10k-16k tokens
+#: on about half of full-script reads: 4 of 11 second reads hit 16,384, one on both
+#: attempts (.superpowers/sdd/binding-investigation.md). Streaming starts above 21,333.
+_CLAUDE_BINDER_OUTPUT_CAP: int = 32768
+#: The tags that cap applies to: the binder's reads and the chunked reader's overview.
+_CLAUDE_BINDER_CAP_TAGS: frozenset[str] = frozenset(
+    {"extraction", "binding_second_read", "binding_overview"}
+)
 
 # I1: the SDK's `types.PartMediaResolutionLevel` enum members are named
 # "MEDIA_RESOLUTION_MEDIUM" etc., not the short "medium"/"high" the plan
@@ -2342,10 +2350,22 @@ class GeminiClient:
         )
 
     def _claude_output_cap(self, task_tag: str | None) -> int:
-        """A claude- call's max_tokens: the tag's max_output_tokens_for, else the adapter's."""
+        """A claude- call's max_tokens.
+
+        The tag's ``max_output_tokens_for`` when the settings name one, else the adapter's.
+        The binder tags (``_CLAUDE_BINDER_CAP_TAGS``) default to
+        ``_CLAUDE_BINDER_OUTPUT_CAP`` instead of the Gemini-tuned default map, which is
+        used only when the settings leave ``max_output_tokens_for`` unset or leave this
+        tag out of it.
+        """
         from lemely.io.providers.anthropic_adapter import MAX_OUTPUT_TOKENS
 
-        return self._settings.gemini.max_output_tokens_for.get(task_tag or "", MAX_OUTPUT_TOKENS)
+        g = self._settings.gemini
+        tag = task_tag or ""
+        named = "max_output_tokens_for" in g.model_fields_set and tag in g.max_output_tokens_for
+        if tag in _CLAUDE_BINDER_CAP_TAGS and not named:
+            return _CLAUDE_BINDER_OUTPUT_CAP
+        return g.max_output_tokens_for.get(tag, MAX_OUTPUT_TOKENS)
 
     def _provider_for_model(self, model: str) -> Provider:
         """The provider for ``model``'s prefix; the Claude one is built on first use."""
