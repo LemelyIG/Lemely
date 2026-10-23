@@ -100,6 +100,8 @@ class _Base(unittest.TestCase):
             prompt_version="v1",
             model=_HAIKU,
             task_tag=tag,
+            # As the binder does (orchestrate): each read has its own key suffix.
+            extra_cache_key=tag,
         )
 
 
@@ -188,6 +190,7 @@ class UploadTests(_Base):
             prompt_version="v1",
             model=_HAIKU,
             task_tag="extraction",
+            extra_cache_key="extraction",
         )
         with client.image_uploads(list(_PAGES), concurrency=1) as uploads:
             self._read(client, uploads, "extraction")
