@@ -3112,7 +3112,14 @@ def test_a_claude_second_read_sends_the_page_images_to_anthropic(
     settings = _settings(tmp_path, second_read_model=_CLAUDE).model_copy(
         update={
             "anthropic_api_key": SecretStr("test-key"),
-            "gemini": settings_gemini.model_copy(update={"claude_files_api": files_api}),
+            "gemini": settings_gemini.model_copy(
+                update={
+                    "claude_files_api": files_api,
+                    # This fake takes ``create`` only; the Claude binder default of
+                    # 32,768 would stream, so the caps are named here.
+                    "max_output_tokens_for": {"extraction": 32768, "binding_second_read": 16384},
+                }
+            ),
         }
     )
     reply = json.dumps(_items(_run(1)))
@@ -3174,7 +3181,12 @@ def test_a_claude_second_read_sends_the_page_images_to_anthropic(
     images = [block for block in content if block["type"] == "image"]
     assert len(images) == _PAGE_COUNT
     assert content[-1]["type"] == "text"
-    assert all(block["type"] == "image" for block in content[:_PAGE_COUNT])
+    # Each page image is preceded by its 0-based index label.
+    assert [block["type"] for block in content[: 2 * _PAGE_COUNT : 2]] == ["text"] * _PAGE_COUNT
+    assert [block["text"] for block in content[: 2 * _PAGE_COUNT : 2]] == [
+        f"Page index {n}:" for n in range(_PAGE_COUNT)
+    ]
+    assert [block["type"] for block in content[1 : 2 * _PAGE_COUNT : 2]] == ["image"] * _PAGE_COUNT
     if files_api:
         assert [block["source"] for block in images] == [
             {"type": "file", "file_id": f"file_{n}"} for n in range(1, _PAGE_COUNT + 1)

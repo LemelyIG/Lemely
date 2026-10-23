@@ -19,6 +19,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from structlog.testing import capture_logs
 
 from lemely.core.binding import SeenLabel, SeenWriting, UnboundWriting
 from lemely.core.label_sequence import (
@@ -705,7 +706,7 @@ def test_the_clean_first_question_binds_whole(tmp_path: Path) -> None:
     assert [leaf for leaf in _blank_leaves(bound) if leaf.startswith("1")] == []
 
 
-@pytest.mark.parametrize("page", [454, 19, -1, 1.5, None, "two", True, "absent"])
+@pytest.mark.parametrize("page", [454, -1, 1.5, None, "two", True, "absent"])
 def test_an_answer_with_a_bad_page_is_kept_as_uncertain_and_its_leaf_is_not_blank(
     tmp_path: Path, page: Any
 ) -> None:
@@ -781,6 +782,91 @@ def test_an_answer_with_a_bad_page_and_unreadable_text_is_counted_twice(tmp_path
     assert read.items[5] == SeenWriting(
         page=2, answer="", box=None, confidence=0.9, placed_by="uncertain"
     )
+
+
+def _shifted(items: list[dict[str, Any]], by: int) -> list[dict[str, Any]]:
+    return [{**item, "page": item["page"] + by} for item in items]
+
+
+def _recorded_stream() -> tuple[list[dict[str, Any]], int]:
+    data = json.loads((_FIXTURES / "streams" / "A_run1.json").read_text())
+    return data["items"], data["page_count"]
+
+
+def test_a_whole_read_numbered_from_one_is_reindexed_not_demoted() -> None:
+    """Evidence: .superpowers/sdd/binding-investigation.md, Q2 (Q9 lost, 7 marks)."""
+    items, pages = _recorded_stream()
+    zero_based = parse_stream_items(items, page_count=pages)
+    assert zero_based.drops == {}
+    assert max(i.page for i in zero_based.items) == pages - 1
+
+    one_based = parse_stream_items(_shifted(items, 1), page_count=pages)
+
+    assert one_based.drops == {"reindexed_one_based": 1}  # once per read, not per item
+    assert one_based.items == zero_based.items  # pages, boxes and placements all as 0-based
+    assert max(i.page for i in one_based.items) == pages - 1
+    bound, bound_read = _bind(one_based)
+    reference = _bind(zero_based)[1]
+    assert [(a.question_id, a.answer) for a in bound_read.answers] == [
+        (a.question_id, a.answer) for a in reference.answers
+    ]
+    assert bound_read.unbound == reference.unbound
+    assert bound_read.unaligned_ids == reference.unaligned_ids
+    nine = [a for a in bound_read.answers if a.question_id.startswith("9")]
+    assert nine  # the last page's question is bound to its leaves, not set aside
+    assert all(w.placed_by != "uncertain" for leaf in bound.leaves for w in leaf.writings)
+    assert not any(u.writing.placed_by == "uncertain" for u in bound_read.unbound)
+
+
+def test_reindexing_is_logged_once() -> None:
+    items, pages = _recorded_stream()
+    with capture_logs() as logs:
+        parse_stream_items(_shifted(items, 1), page_count=pages)
+        parse_stream_items(items, page_count=pages)
+    (event,) = [e for e in logs if e["event"] == "binding_read_reindexed"]
+    assert event["pages"] == pages
+
+
+def test_reindexing_keeps_boxes_on_the_shifted_page() -> None:
+    items, pages = _recorded_stream()
+    read = parse_stream_items(_shifted(items, 1), page_count=pages)
+    writing = next(i for i in read.items if isinstance(i, SeenWriting) and i.box is not None)
+    assert writing.page == next(
+        r["page"] for r in items if r.get("type") == "answer" and r.get("box")
+    )
+    assert writing.box is not None
+
+
+def test_a_mixed_read_with_page_zero_and_the_last_page_number_keeps_the_per_item_repair() -> None:
+    items = [_label("1", page=0), _answer("x", page=0), _label("2", page=19), _answer("y", page=19)]
+    read = parse_stream_items(items, page_count=19)
+    assert read.drops == {"repaired_page": 2}
+    assert [i.page for i in read.items] == [0, 0, 0, 0]
+    assert isinstance(read.items[3], SeenWriting)
+    assert read.items[3].placed_by == "uncertain"  # still demoted
+    assert read.items[3].box is None
+
+
+def test_a_zero_based_read_is_unchanged() -> None:
+    items = [_label("1", page=0), _answer("x", page=0), _label("2", page=18), _answer("y", page=18)]
+    read = parse_stream_items(items, page_count=19)
+    assert read.drops == {}
+    assert [i.page for i in read.items] == [0, 0, 18, 18]
+    assert [i.placed_by for i in read.items if isinstance(i, SeenWriting)] == ["position"] * 2
+
+
+def test_a_read_without_the_last_page_number_is_not_reindexed() -> None:
+    """Pages 1..18 and no page 19: a 0-based read that skipped page 0 (the recorded one)."""
+    items, pages = _recorded_stream()
+    assert min(i["page"] for i in items) >= 1
+    assert parse_stream_items(items, page_count=pages).drops == {}
+
+
+def test_a_one_based_read_with_one_more_bad_page_reindexes_and_repairs_that_item() -> None:
+    items = [_label("1", page=1), _answer("x", page=2), _label("2", page=4), _answer("y", page=99)]
+    read = parse_stream_items(items, page_count=4)
+    assert read.drops == {"reindexed_one_based": 1, "repaired_page": 1}
+    assert [i.page for i in read.items] == [0, 1, 3, 3]
 
 
 @pytest.mark.parametrize("page", [454, None, "two", 1.5])
