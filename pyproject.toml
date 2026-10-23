@@ -335,6 +335,7 @@ module = [
   # above).
   "lemely.io.storage_gcs",
   "lemely.io.answer_extraction",
+  "lemely.io.binding.chunked_read",
   "lemely.io.scan_hygiene",
   "lemely.io.reread",
   "lemely.io.correction_ai",

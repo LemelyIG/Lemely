@@ -10,7 +10,7 @@ into the records the rest of the pipeline uses.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import ConfigDict, ValidationError, create_model
 
@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
     from lemely.core.binding import BindingStatus
     from lemely.core.loose_schemas import MarkScheme
+    from lemely.io.binding.chunked_read import ChunkedLabelReader
     from lemely.io.gemini import GeminiClient, ImageUploads
     from lemely.io.rasterise import RasterisedPage
 
@@ -310,8 +311,9 @@ def parse_stream_items(raw_items: list[object], *, page_count: int) -> StreamRea
 class LabelBinder:
     """Asks the model for the reading-order list of labels and writing on a script."""
 
-    def __init__(self, client: GeminiClient) -> None:
+    def __init__(self, client: GeminiClient, *, chunked: ChunkedLabelReader | None = None) -> None:
         self._client = client
+        self._chunked = chunked
 
     def read(
         self,
@@ -328,8 +330,18 @@ class LabelBinder:
 
         ``model`` overrides the configured extraction model. ``task_tag`` picks the
         call's thinking level and the cost bucket it is counted in. A cost-ceiling or
-        service error from the call is not caught here.
+        service error from the call is not caught here. A script the chunked reader
+        applies to (a claude- model, pages over the token budget at the floor) is read
+        as an overview plus chunks instead.
         """
+        if self._chunked is not None and self._chunked.applies(pages, model):
+            return self._chunked.read(
+                pages,
+                mark_scheme,
+                model=cast("str", model),
+                extra_cache_key=extra_cache_key,
+                task_tag=task_tag,
+            )
         raw = self._client.generate_structured(
             system_prompt=LABEL_BINDING_SYSTEM_PROMPT,
             user_prompt=build_label_binding_user_prompt(mark_scheme, page_count=len(pages)),

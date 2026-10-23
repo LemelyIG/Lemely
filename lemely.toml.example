@@ -340,6 +340,9 @@ second_read_mode = "always"
 # gemini.claude_image_floor_px. Needs ANTHROPIC_API_KEY; `lemely doctor`
 # checks for it.
 # second_read_model = "claude-haiku-5-5"
+# A claude- read still over the token budget at the image floor is read as
+# an overview pass plus page chunks under the budget (off until screened).
+# claude_chunked_read = false
 # The model the legacy binder's one retry uses, when the gate is on.
 retry_model = "gemini-3.8-flash"
 

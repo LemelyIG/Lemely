@@ -761,6 +761,9 @@ class BindingSettings(BaseModel):
     second_read: bool = True
     second_read_mode: Literal["always", "on_trigger"] = "always"
     second_read_model: str | None = Field(default=None, min_length=1)
+    #: Spec §2b: a claude- read whose pages are still over the token budget at the
+    #: floor is read as an overview plus chunks. Off by default; screened in C.
+    claude_chunked_read: bool = False
     retry_model: str = Field(default="gemini-3.8-flash", min_length=1)
 
     @model_validator(mode="after")
