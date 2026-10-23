@@ -250,7 +250,7 @@ _GEMINI_3X_RE = re.compile(r"^gemini-3\.\d")
 _MINIMAL_THINKING_MODELS_RE = re.compile(r"^gemini-3\.(5-flash-lite|6-flash)\b")
 
 # Ordered weakest → strongest, mirrors google.genai.types.ThinkingLevel.
-_THINKING_LEVEL_ORDER = {"minimal": 0, "low": 1, "medium": 2, "high": 3}
+_THINKING_LEVEL_ORDER = {"minimal": 0, "low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5}
 
 
 def thinking_rank(value: int | str) -> int:
@@ -1265,7 +1265,9 @@ class GeminiClient:
             "thinking_level": None,
         }
 
-    def resolved_thinking(self, task_tag: str, model: str) -> int | str:
+    def resolved_thinking(
+        self, task_tag: str, model: str, leaf_kind: str | None = None
+    ) -> int | str:
         """The ONE thinking knob that actually affects ``model``'s output for ``task_tag``.
 
         F1 review MUST-FIX 2 (2026-09-17): this is the single source of truth
@@ -1288,7 +1290,13 @@ class GeminiClient:
         ``thinking_budget`` (an int) on a 2.5-and-earlier model — exactly the
         two disjoint substrates :meth:`_resolved_gen_params` already computes.
         """
-        params = self._resolved_gen_params(task_tag, model)
+        # ``leaf_kind`` picks the claude_effort_for["tag:kind"] entry, as the real call
+        # does inside generate_structured; without it a gate sees the tag-only effort.
+        token = _call_leaf_kind.set(leaf_kind)
+        try:
+            params = self._resolved_gen_params(task_tag, model)
+        finally:
+            _call_leaf_kind.reset(token)
         if _is_3x(model) or is_anthropic_model(model):
             return cast(str, params["thinking_level"])
         return cast(int, params["thinking_budget"])

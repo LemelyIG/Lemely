@@ -160,6 +160,11 @@ def render_example_toml() -> str:
     lines.append(f"# claude_cache_for = {_toml_inline(s.gemini.claude_cache_for)}")
     lines.append("# Claude effort (low | medium | high | xhigh | max) per tag or tag:kind,")
     lines.append('# e.g. { "correction:extended" = "medium" }. Unlisted: thinking_level_for.')
+    lines.append(
+        "# haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept every level (docs: effort);"
+    )
+    lines.append("# a model that rejects one fails the call. Higher effort spends more of")
+    lines.append("# max_output_tokens_for (thinking counts toward max_tokens).")
     lines.append(f"# claude_effort_for = {_toml_inline(s.gemini.claude_effort_for)}")
     lines.append(
         "# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B)."

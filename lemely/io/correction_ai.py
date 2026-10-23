@@ -526,6 +526,8 @@ class AICorrector:
         # B3: the leaf's kind picks a claude_effort_for["tag:kind"] effort. Sent only
         # when that table is set, so a call without it passes exactly what it did.
         table = getattr(g, "claude_effort_for", None)
+        # ``isinstance(..., dict)`` is the MagicMock-safe check (a stand-in settings
+        # object returns a truthy mock here), the same reason other flags use ``is True``.
         if isinstance(table, dict) and table:
             prefix_kwargs["leaf_kind"] = leaf_kind(question)
 
@@ -625,9 +627,10 @@ class AICorrector:
         # defaults to 0, so "borderline > correction" reduces to the same
         # "budget > 0" check in the common case).
         correction_model = g.model_for("correction")
-        correction_thinking = self._client.resolved_thinking("correction", correction_model)
-        borderline_thinking = self._client.resolved_thinking(
-            "correction_borderline", correction_model
+        gate_kind = prefix_kwargs.get("leaf_kind")
+        correction_thinking = self._resolved_thinking("correction", correction_model, gate_kind)
+        borderline_thinking = self._resolved_thinking(
+            "correction_borderline", correction_model, gate_kind
         )
         borderline_gate = thinking_rank(borderline_thinking) > thinking_rank(correction_thinking)
         # Spec 2026-09-26 §3 (#10): the Step-2 guard compares against the
@@ -675,7 +678,10 @@ class AICorrector:
         escalation_model = g.escalation_model
         if (
             escalation_model
-            and (escalation_model, self._client.resolved_thinking("escalation", escalation_model))
+            and (
+                escalation_model,
+                self._resolved_thinking("escalation", escalation_model, gate_kind),
+            )
             != last_call
             and result.confidence < g.escalation_confidence_threshold
         ):
@@ -702,6 +708,12 @@ class AICorrector:
             )
             return result, escalation_model
         return result, correction_model
+
+    def _resolved_thinking(self, tag: str, model: str, kind: str | None) -> int | str:
+        """``resolved_thinking`` at the leaf kind the call runs at (tag-only when none)."""
+        if kind is None:
+            return self._client.resolved_thinking(tag, model)
+        return self._client.resolved_thinking(tag, model, kind)
 
     def _cascade(
         self,
@@ -770,10 +782,11 @@ class AICorrector:
         strong: AIMarkResponse | None = None
         repeats_first = False
         if strong_model:
+            kind = prefix_kwargs.get("leaf_kind")
             repeats_first = (
                 strong_model,
-                self._client.resolved_thinking("escalation", strong_model),
-            ) == (cheap_model, self._client.resolved_thinking("correction", cheap_model))
+                self._resolved_thinking("escalation", strong_model, kind),
+            ) == (cheap_model, self._resolved_thinking("correction", cheap_model, kind))
         if strong_model and not repeats_first and (low_confidence or unaddressed or disagreement):
             bus.publish(
                 EventType.GEMINI_ESCALATE,

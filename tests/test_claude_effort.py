@@ -141,3 +141,61 @@ class CorrectorPassesKindTests(unittest.TestCase):
     def test_kind_sent_only_when_the_table_is_set(self) -> None:
         self.assertNotIn("leaf_kind", self._kwargs({}))
         self.assertEqual(self._kwargs({"correction": "high"})["leaf_kind"], "extended")
+
+
+class EscalationGateTests(unittest.TestCase):
+    """The borderline gate ranks Claude efforts and reads them at the leaf's kind."""
+
+    def _calls(self, table: dict[str, str]) -> int:
+        from lemely.io.correction_ai import AICorrector
+
+        settings = make_settings(tempfile.mkdtemp())
+        gemini = settings.gemini.model_copy(
+            update={
+                "correction_model": _HAIKU,
+                "escalation_model": None,
+                "escalation_confidence_threshold": 0.9,
+                "claude_effort_for": table,
+            }
+        )
+        settings = settings.model_copy(update={"gemini": gemini})
+        client = GeminiClient(settings, _genai_client=fake_genai_client(), ledger=None)
+        question = MagicMock(type=QuestionType.EXPLANATION, id="2", marks=2)
+        low = AIMarkResponse.model_validate({**_VALID_MARK, "confidence": 0.1})
+        with (
+            patch("lemely.io.correction_ai.build_marker_user_prompt", return_value="u"),
+            patch.object(client, "generate_structured", return_value=low) as call,
+        ):
+            AICorrector(client).mark_question(question, "answer")
+        return call.call_count
+
+    def test_thinking_rank_orders_efforts(self) -> None:
+        from lemely.io.gemini import thinking_rank
+
+        ranks = [thinking_rank(v) for v in ("low", "medium", "high", "xhigh", "max")]
+        self.assertEqual(ranks, sorted(set(ranks)))
+
+    def test_borderline_above_correction_fires_for_xhigh_and_max(self) -> None:
+        self.assertEqual(self._calls({"correction": "high", "correction_borderline": "xhigh"}), 2)
+        self.assertEqual(self._calls({"correction": "xhigh", "correction_borderline": "max"}), 2)
+
+    def test_borderline_below_correction_does_not_fire(self) -> None:
+        self.assertEqual(self._calls({"correction": "max", "correction_borderline": "high"}), 1)
+        self.assertEqual(self._calls({"correction": "xhigh", "correction_borderline": "high"}), 1)
+
+    def test_gate_reads_the_effort_of_the_leaf_kind(self) -> None:
+        # Tag-only, borderline (medium) is below correction (high): no retry. The
+        # extended leaf's borderline call really runs at xhigh, so the gate must fire.
+        table = {
+            "correction": "high",
+            "correction_borderline": "medium",
+            "correction_borderline:extended": "xhigh",
+        }
+        self.assertEqual(self._calls(table), 2)
+        # And the reverse: a tag:kind entry that lowers the retry stops it firing.
+        table = {
+            "correction": "medium",
+            "correction_borderline": "high",
+            "correction_borderline:extended": "low",
+        }
+        self.assertEqual(self._calls(table), 1)

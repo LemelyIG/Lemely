@@ -160,18 +160,18 @@ def _as_effort(value: str) -> Effort:
 
 
 def resolve_effort(
-    efforts: object,
+    efforts: Mapping[str, Effort] | object,
     thinking_levels: Mapping[str, str],
     tag: str,
     kind: str | None = None,
-) -> str:
+) -> Effort:
     """Claude effort for a task tag: ``tag:kind``, then ``tag``, then its thinking level.
 
     ``efforts`` is ``GeminiSettings.claude_effort_for``; anything that is not a dict
     (a stand-in settings object) counts as empty.
     """
-    table = efforts if isinstance(efforts, dict) else {}
-    return str(
+    table: Mapping[str, Effort] = efforts if isinstance(efforts, dict) else {}
+    return (
         (table.get(f"{tag}:{kind}") if kind else None)
         or table.get(tag)
         or effort_for(thinking_levels.get(tag, "low"))
