@@ -90,8 +90,10 @@ class PlanTests(_Base):
             cache_for={"binding_second_read": ["system", "images"]}, image_parts=[_page(), _page()]
         )
         content = call["messages"][0]["content"]
+        # [label, image, label, image, text]: the breakpoint is on the last image only.
         self.assertNotIn("cache_control", content[0])
-        self.assertEqual(content[1]["cache_control"], _EPHEMERAL)
+        self.assertNotIn("cache_control", content[1])
+        self.assertEqual(content[3]["cache_control"], _EPHEMERAL)
         self.assertEqual(_marked(call), ["text", "image"])
 
     def test_empty_plan_marks_nothing(self) -> None:

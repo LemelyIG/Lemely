@@ -191,6 +191,37 @@ class CacheKeyTests(_Base):
             ),
         )
 
+    def test_claude_key_moves_with_page_labels_only_for_several_images(self) -> None:
+        client, _fake = self._client()
+        args = (_HAIKU, "binding_second_read", AIMarkResponse)
+        none = client._params_fingerprint(*args)
+        one = client._params_fingerprint(*args, n_images=1)
+        two = client._params_fingerprint(*args, n_images=2)
+        self.assertEqual(none, one)
+        self.assertNotEqual(one, two)
+        self.assertEqual(two, client._params_fingerprint(*args, n_images=19))
+
+    def test_the_structured_key_changes_between_one_and_two_pages(self) -> None:
+        client, _fake = self._client()
+        common = {
+            "system_prompt": "s",
+            "user_prompt": "u",
+            "response_schema": AIMarkResponse,
+            "prompt_version": "v1",
+            "task_tag": "binding_second_read",
+        }
+        gem = "gemini-2.5-flash"
+        for model, moves in ((_HAIKU, True), (gem, False)):
+            one = client.structured_cache_key(model=model, image_parts=[b"a"], **common)
+            two = client.structured_cache_key(model=model, image_parts=[b"a", b"b"], **common)
+            self.assertNotEqual(one, two)  # different bytes always differ; compare segments:
+            seg = client._params_fingerprint
+            self.assertEqual(
+                seg(model, "binding_second_read", AIMarkResponse, n_images=2)
+                != seg(model, "binding_second_read", AIMarkResponse, n_images=1),
+                moves,
+            )
+
     def test_gemini_key_ignores_the_claude_image_settings(self) -> None:
         base, _ = self._client()
         other, _ = self._client(

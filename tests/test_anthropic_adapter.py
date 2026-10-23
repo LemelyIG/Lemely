@@ -33,6 +33,7 @@ from lemely.io.gemini import (
     set_call_context,
 )
 from lemely.io.llm import image_fit
+from lemely.io.llm.request import CachePlan
 from lemely.io.providers import (
     ProviderError,
     ProviderTransientError,
@@ -447,13 +448,58 @@ class ImageInputTests(unittest.TestCase):
         (message,) = call["messages"]
         self.assertEqual(message["role"], "user")
         content = message["content"]
-        self.assertEqual([b["type"] for b in content], ["image", "image", "text"])
-        self.assertEqual(content[0]["source"]["type"], "base64")
+        # Several images: a page-index label precedes each (F1).
+        self.assertEqual([b["type"] for b in content], ["text", "image", "text", "image", "text"])
+        self.assertEqual(content[1]["source"]["type"], "base64")
         # Small pages are sent exactly as they came: same bytes, same order.
         self.assertEqual(_sent_images(call), [("image/png", png), ("image/jpeg", jpeg)])
-        self.assertEqual(content[2], {"type": "text", "text": "user"})
+        self.assertEqual(content[4], {"type": "text", "text": "user"})
         # The base64 text has no line breaks (the API rejects them).
-        self.assertNotIn("\n", content[0]["source"]["data"])
+        self.assertNotIn("\n", content[1]["source"]["data"])
+
+    def test_several_images_are_each_preceded_by_a_page_index_label(self) -> None:
+        # Evidence: binding-investigation.md, 3 of 22 full-script reads numbered 1..N.
+        pages = [_image(10 + i, 20) for i in range(3)]
+        content = self._complete(pages)["messages"][0]["content"]
+        self.assertEqual(
+            [b["type"] for b in content],
+            ["text", "image", "text", "image", "text", "image", "text"],
+        )
+        self.assertEqual(
+            [b["text"] for b in content[0:6:2]],
+            ["Page index 0:", "Page index 1:", "Page index 2:"],
+        )
+        self.assertEqual(content[-1], {"type": "text", "text": "user"})
+
+    def test_a_single_image_carries_no_label(self) -> None:
+        content = self._complete([_image(10, 10)])["messages"][0]["content"]
+        self.assertEqual([b["type"] for b in content], ["image", "text"])
+
+    def test_the_images_breakpoint_stays_on_the_last_image_and_labels_are_unmarked(self) -> None:
+        big = [_image(900, 900), _image(901, 900)]
+        fake = _FakeAnthropic(_message(_VALID_MARK))
+        AnthropicAdapter(fake).complete(
+            model=_HAIKU,
+            system_prompt="sys",
+            user_prompt="user",
+            response_schema=AIMarkResponse,
+            thinking="low",
+            cache_prefix=None,
+            images=big,
+            cache_plan=CachePlan(("images",)),
+        )
+        content = fake.messages.calls[0]["messages"][0]["content"]
+        marked = [i for i, b in enumerate(content) if "cache_control" in b]
+        self.assertEqual(marked, [3])
+        self.assertEqual(content[3]["type"], "image")
+
+    def test_file_ids_are_labelled_the_same_way(self) -> None:
+        blocks = anthropic_adapter.labelled_pictures(
+            anthropic_adapter.file_image_blocks(["file_a", "file_b"])
+        )
+        self.assertEqual([b["type"] for b in blocks], ["text", "image", "text", "image"])
+        self.assertEqual(blocks[2], {"type": "text", "text": "Page index 1:"})
+        self.assertEqual(blocks[3]["source"], {"type": "file", "file_id": "file_b"})
 
     def test_images_come_before_a_cached_prefix_too(self) -> None:
         png = _image(10, 10)

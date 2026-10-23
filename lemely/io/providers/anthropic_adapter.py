@@ -316,6 +316,23 @@ def file_image_blocks(file_ids: Sequence[str]) -> list[ImageBlockParam]:
 _EPHEMERAL: CacheControlEphemeralParam = {"type": "ephemeral"}
 
 
+def labelled_pictures(pictures: Sequence[ImageBlockParam]) -> list[ContentBlockParam]:
+    """``pictures`` with a ``Page index {i}:`` text block (0-based) before each image.
+
+    Only when there is more than one picture: a lone image has no index to confuse.
+    The labels sit with the images, ahead of the per-call text, so the cached
+    system+images prefix is the same for every read of the same pages. The request's
+    cache key carries ``PAGE_LABEL_VERSION`` for these requests (``provider_fingerprint``).
+    """
+    if len(pictures) < 2:
+        return list(pictures)
+    labelled: list[ContentBlockParam] = []
+    for index, picture in enumerate(pictures):
+        labelled.append({"type": "text", "text": f"Page index {index}:"})
+        labelled.append(picture)
+    return labelled
+
+
 def _image_tokens(data: bytes) -> int:
     with Image.open(io.BytesIO(data)) as img:
         return estimate_tokens(*img.size)
@@ -356,7 +373,7 @@ def _request_parts(
     running += sum(_image_tokens(i) for i in images) + CACHE_MIN_TOKENS * len(image_file_ids)
     if pictures and "images" in spots and running >= CACHE_MIN_TOKENS:
         pictures[-1]["cache_control"] = _EPHEMERAL
-    content: list[ContentBlockParam] = [*docs, *pictures]
+    content: list[ContentBlockParam] = [*docs, *labelled_pictures(pictures)]
     if cache_prefix:
         running += len(cache_prefix) // CHARS_PER_TOKEN
         prefix: TextBlockParam = {"type": "text", "text": cache_prefix}

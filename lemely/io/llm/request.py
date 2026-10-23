@@ -22,6 +22,11 @@ MAX_CACHE_BREAKPOINTS = 4
 CACHE_MIN_TOKENS = 512
 #: Text-length estimate of tokens.
 CHARS_PER_TOKEN = 4
+#: Version of the ``Page index {i}:`` text blocks put before each image of a Claude
+#: request that carries several (``anthropic_adapter.labelled_pictures``). It joins the
+#: Claude cache key for those requests. Why: with bare image blocks Haiku numbered a
+#: 19-page script 1..19 in 3 of 22 reads (.superpowers/sdd/binding-investigation.md).
+PAGE_LABEL_VERSION = "v1"
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,7 @@ def provider_fingerprint(
     image_floor_px: int,
     image_enhance: bool,
     response_schema: type[BaseModel] | None = None,
+    image_count: int = 0,
 ) -> str:
     """The provider part of a reply's cache key: the single source for it.
 
@@ -91,7 +97,8 @@ def provider_fingerprint(
     the token budget, pixel floor and enhancement that fit uses (each changes the pixels
     sent; ``image_enhance`` selects the fit version). When ``response_schema`` takes the
     prompt-JSON route, ``|pj=<PROMPT_JSON_VERSION>`` is appended, since the instruction
-    wording is part of what is sent.
+    wording is part of what is sent. A request with more than one image is sent with a
+    page-index label before each (``|pg_lbl=<PAGE_LABEL_VERSION>``).
     """
     if not is_anthropic_model(model):
         return ""
@@ -107,6 +114,8 @@ def provider_fingerprint(
 
         if prompt_json_for(response_schema):
             fingerprint += f"|pj={PROMPT_JSON_VERSION}"
+    if image_count > 1:
+        fingerprint += f"|pg_lbl={PAGE_LABEL_VERSION}"
     return fingerprint
 
 
@@ -147,4 +156,5 @@ class LLMRequest:
             image_floor_px=image_floor_px,
             image_enhance=image_enhance,
             response_schema=self.response_schema,
+            image_count=len(self.images),
         )

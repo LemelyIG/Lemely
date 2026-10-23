@@ -1322,6 +1322,7 @@ class GeminiClient:
         *,
         media_resolution: str | None = None,
         tool: str | None = None,
+        n_images: int = 0,
     ) -> str:
         """Hash every input that can change the model's output.
 
@@ -1401,6 +1402,7 @@ class GeminiClient:
                 image_floor_px=self._settings.gemini.claude_image_floor_px,
                 image_enhance=self._settings.gemini.claude_image_enhance is True,
                 response_schema=response_schema,
+                image_count=n_images,
             )
         return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
@@ -1553,7 +1555,11 @@ class GeminiClient:
         """
         active_model = self._active_model(model, task_tag)
         params_fingerprint = self._params_fingerprint(
-            active_model, task_tag, response_schema, media_resolution=media_resolution
+            active_model,
+            task_tag,
+            response_schema,
+            media_resolution=media_resolution,
+            n_images=len(image_parts or ()),
         )
         cache_key = self._cache_key(
             active_model,
@@ -2513,7 +2519,11 @@ class GeminiClient:
             latency_ms=reply.latency_ms,
             log=log,
             params_fingerprint=self._params_fingerprint(
-                model, task_tag, response_schema, media_resolution=media_resolution
+                model,
+                task_tag,
+                response_schema,
+                media_resolution=media_resolution,
+                n_images=len(req.images),
             ),
         )
         self._check_stop(reply, req)
