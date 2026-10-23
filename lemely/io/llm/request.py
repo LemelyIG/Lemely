@@ -103,11 +103,9 @@ def provider_fingerprint(
         f"|img_budget={image_token_budget}|img_floor={image_floor_px}"
     )
     if response_schema is not None:
-        import anthropic
+        from lemely.io.providers.claude_schema import PROMPT_JSON_VERSION, prompt_json_for
 
-        from lemely.io.providers.claude_schema import PROMPT_JSON_VERSION, needs_prompt_json
-
-        if needs_prompt_json(anthropic.transform_schema(response_schema)):
+        if prompt_json_for(response_schema):
             fingerprint += f"|pj={PROMPT_JSON_VERSION}"
     return fingerprint
 

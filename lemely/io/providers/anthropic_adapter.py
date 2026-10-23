@@ -39,6 +39,7 @@ the bound is enforced where it is for every provider, the clamp in
 from __future__ import annotations
 
 import base64
+import copy
 import io
 import time
 from dataclasses import dataclass
@@ -61,8 +62,9 @@ from lemely.io.providers import ProviderError, ProviderTransientError
 from lemely.io.providers.claude_schema import (
     USER_CLOSING_LINE,
     extract_json,
-    json_instruction,
-    needs_prompt_json,
+    json_instruction_for,
+    prompt_json_for,
+    sendable_schema,
 )
 from lemely.runtime.errors import ParseError
 
@@ -444,17 +446,19 @@ class AnthropicAdapter:
             ProviderTransientError: 429, 529, any 5xx, or a connection failure.
             ProviderError: any other API error, or images the API would refuse.
         """
-        sendable = anthropic.transform_schema(response_schema)
-        prompt_json = needs_prompt_json(sendable)
+        prompt_json = prompt_json_for(response_schema)
         output_config: OutputConfigParam = {}
         if prompt_json:
             # Recursive or over Claude's schema limits: no output_config.format; the
             # schema goes in the (cacheable) system block and the reply is parsed here.
-            instruction = json_instruction(response_schema.model_json_schema())
+            instruction = json_instruction_for(response_schema)
             system_prompt = f"{system_prompt}\n\n{instruction}".strip()
             user_prompt = f"{user_prompt}\n\n{USER_CLOSING_LINE}".strip()
         else:
-            output_config["format"] = {"type": "json_schema", "schema": sendable}
+            output_config["format"] = {
+                "type": "json_schema",
+                "schema": copy.deepcopy(sendable_schema(response_schema)),
+            }
         if thinking is not None:
             output_config["effort"] = _as_effort(thinking)
         system, message = _request_parts(

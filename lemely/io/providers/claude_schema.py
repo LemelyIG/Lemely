@@ -17,8 +17,11 @@ original pydantic model, as on the structured path.
 from __future__ import annotations
 
 import json
-import re
-from typing import Any
+from functools import cache
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 #: Documented caps across a whole structured-output schema.
 CLAUDE_MAX_OPTIONAL_PARAMS = 24
@@ -114,6 +117,23 @@ def needs_prompt_json(schema: Schema) -> bool:
     return bool(recursive_definitions(schema)) or exceeds_claude_limits(schema)
 
 
+@cache
+def sendable_schema(model: type[BaseModel]) -> Schema:
+    """``anthropic.transform_schema`` of ``model``, computed once per class.
+
+    Shared across calls: treat the result as read-only (copy before mutating).
+    """
+    import anthropic
+
+    return anthropic.transform_schema(model)
+
+
+@cache
+def prompt_json_for(model: type[BaseModel]) -> bool:
+    """Whether ``model``'s schema goes on the prompt-JSON route (cached per class)."""
+    return needs_prompt_json(sendable_schema(model))
+
+
 #: Bump when the wording of :func:`json_instruction` / :data:`USER_CLOSING_LINE` changes.
 PROMPT_JSON_VERSION = "pj2"
 
@@ -185,40 +205,79 @@ def json_instruction(schema: Schema) -> str:
     )
 
 
-_FENCED = re.compile(r"```[a-zA-Z]*[ \t]*\n(.*?)```", re.DOTALL)
+@cache
+def json_instruction_for(model: type[BaseModel]) -> str:
+    """:func:`json_instruction` of ``model``'s pydantic schema (cached per class)."""
+    return json_instruction(model.model_json_schema())
+
+
+def _balanced_end(text: str, start: int) -> int:
+    """Index just past the bracket group opening at ``start``; -1 if it never closes.
+
+    Counts ``{[`` against ``}]`` and skips string contents (with backslash escapes).
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return -1
 
 
 def _last_object(text: str) -> str | None:
-    """Text of the last complete JSON object in ``text`` (scanning every ``{``)."""
+    """Text of the last top-level JSON object in ``text``, or None.
+
+    Only top-level ``{`` (and ``[``) positions are candidates, so an inner object of
+    a larger object is never an answer. A candidate that decodes is kept (a top-level
+    array is skipped whole); one that does not decode but closes is prose (``{x}``)
+    and is skipped; one that never closes is a truncated reply, which makes the
+    answer incomplete: None, even if an earlier object decoded. Fenced and unfenced
+    objects are considered together; the later position wins.
+    """
     decoder = json.JSONDecoder()
     best: tuple[int, int] | None = None
-    pos = text.find("{")
-    while pos != -1:
+    pos = 0
+    while pos < len(text):
+        if text[pos] not in "{[":
+            pos += 1
+            continue
         try:
             obj, end = decoder.raw_decode(text, pos)
         except ValueError:
-            pos = text.find("{", pos + 1)
-            continue
-        if isinstance(obj, dict):
-            best = (pos, end)
-            pos = text.find("{", end)
+            end = _balanced_end(text, pos)
+            if end == -1:
+                return None
         else:
-            pos = text.find("{", pos + 1)
+            if isinstance(obj, dict):
+                best = (pos, end)
+        pos = end
     return None if best is None else text[best[0] : best[1]]
 
 
 def extract_json(text: str) -> str:
     """The JSON object in a free-text reply; the final answer wins.
 
-    Fenced blocks are tried last-first, then the whole text, taking the last complete
-    object that decodes to a dict (so a draft followed by a correction yields the
-    correction, and braces in surrounding prose are ignored). A reply with no such
-    object comes back stripped and unchanged so the pydantic parse reports it.
+    Takes the last complete top-level object anywhere in the text (fenced or not;
+    the later position wins), so a draft followed by a correction yields the
+    correction and braces in surrounding prose are ignored. A truncated final object
+    (``max_tokens`` cutoff), a top-level array, or no object at all comes back
+    stripped and unchanged so the pydantic parse reports it.
     """
     stripped = text.strip()
-    for block in reversed(_FENCED.findall(stripped)):
-        found = _last_object(block)
-        if found is not None:
-            return found
     found = _last_object(stripped)
     return stripped if found is None else found

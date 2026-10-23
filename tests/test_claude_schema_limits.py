@@ -21,10 +21,13 @@ from lemely.io.providers.claude_schema import (
     USER_CLOSING_LINE,
     extract_json,
     json_instruction,
+    json_instruction_for,
     needs_prompt_json,
+    prompt_json_for,
     recursive_definitions,
     schema_budget,
     schema_rules,
+    sendable_schema,
 )
 from lemely.runtime.errors import ParseError
 from tests.test_anthropic_adapter import _VALID_MARK, _FakeAnthropic, _message
@@ -151,10 +154,44 @@ class ExtractionTests(unittest.TestCase):
     def test_fence_then_prose_with_brace(self) -> None:
         self.assertEqual(extract_json('```json\n{"a": 1}\n```\nSee set {1, 2}.'), '{"a": 1}')
 
+    def test_truncated_outer_object_is_not_an_inner_object(self) -> None:
+        for text in (
+            '{"a":1,"inner":{"b":2},"rows":[{"c":3},{"c":4}], "tail":',
+            '```json\n{"a":1,"n":{"b":2}\n',
+            '[{"a":1},{"a":2}]',
+        ):
+            self.assertEqual(extract_json(text), text.strip(), text)
+
+    def test_fence_then_correction_in_prose(self) -> None:
+        self.assertEqual(extract_json('```json\n{"a":1}\n```\nCorrected: {"a":2}'), '{"a":2}')
+
+    def test_truncated_later_object_voids_earlier_draft(self) -> None:
+        text = '{"a":1} then {"a":2,"b":'
+        self.assertEqual(extract_json(text), text)
+
     def test_nested_and_string_braces(self) -> None:
         self.assertEqual(
             extract_json('x {"a": "}{", "b": {"c": 1}} y'), '{"a": "}{", "b": {"c": 1}}'
         )
+
+
+class CacheTests(unittest.TestCase):
+    def test_cached_routing_matches_uncached(self) -> None:
+        for model in (MarkScheme, AIMarkResponse, _Node):
+            sent = anthropic.transform_schema(model)
+            self.assertEqual(sendable_schema(model), sent)
+            self.assertEqual(prompt_json_for(model), needs_prompt_json(sent))
+            self.assertEqual(
+                json_instruction_for(model), json_instruction(model.model_json_schema())
+            )
+
+    def test_transform_runs_once_per_class(self) -> None:
+        sendable_schema.cache_clear()
+        prompt_json_for.cache_clear()
+        with patch("anthropic.transform_schema", wraps=anthropic.transform_schema) as spy:
+            for _ in range(3):
+                prompt_json_for(AIMarkResponse)
+            self.assertEqual(spy.call_count, 1)
 
 
 class InstructionTests(unittest.TestCase):
