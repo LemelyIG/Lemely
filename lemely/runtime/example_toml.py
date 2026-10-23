@@ -166,6 +166,9 @@ def render_example_toml() -> str:
     lines.append("# a model that rejects one fails the call. Higher effort spends more of")
     lines.append("# max_output_tokens_for (thinking counts toward max_tokens).")
     lines.append(f"# claude_effort_for = {_toml_inline(s.gemini.claude_effort_for)}")
+    lines.append("# The marker quotes the mark scheme for every awarded mark; an unquoted or")
+    lines.append("# misquoted mark goes to review as uncited_mark.")
+    lines.append(f"# correction_citations = {_toml_bool(s.gemini.correction_citations)}")
     lines.append(
         "# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B)."
     )

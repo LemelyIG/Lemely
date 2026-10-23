@@ -15,6 +15,7 @@ import structlog
 
 from lemely.core.binding import BindingVerdict
 from lemely.core.binding_gate import GateThresholds, check_off_topic, verdict
+from lemely.core.cited_marks import flag_uncited, uncited
 from lemely.core.correction import _exam_metadata, _load_mark_scheme
 from lemely.core.equivalence import Verdict, VerdictKind, equivalent
 from lemely.core.leaf_kind import leaf_kind
@@ -39,6 +40,7 @@ from lemely.core.schemas import (
     SourceBox,
     confidence_band_for_score,
     dedupe_point_verdicts,
+    marker_response_schema,
 )
 from lemely.io.gemini import (
     CallRecord,
@@ -392,6 +394,14 @@ class AICorrector:
     scheme, or with the flag off, prompts are what they always were.
     """
 
+    def citations_on(self) -> bool:
+        """B2: whether marks carry evidence quotes (``correction_citations``)."""
+        return self._client._settings.gemini.correction_citations is True
+
+    def _mark_schema(self) -> type[AIMarkResponse]:
+        """The reply schema for the flags in force; ``AIMarkResponse`` with them off."""
+        return marker_response_schema(cited=self.citations_on())
+
     def __init__(
         self, gemini_client: GeminiClient, *, mark_scheme: MarkScheme | None = None
     ) -> None:
@@ -542,7 +552,7 @@ class AICorrector:
             result = self._client.generate_structured(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                response_schema=AIMarkResponse,
+                response_schema=self._mark_schema(),
                 prompt_version=VERSION,
                 extra_cache_key=f"q={question.id}",
                 task_tag="correction",
@@ -652,7 +662,7 @@ class AICorrector:
                 user_prompt=(
                     user_prompt + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
                 ),
-                response_schema=AIMarkResponse,
+                response_schema=self._mark_schema(),
                 prompt_version=VERSION,
                 extra_cache_key=f"q={question.id}:thinking",
                 task_tag="correction_borderline",
@@ -697,7 +707,7 @@ class AICorrector:
                     user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
                     "Please re-evaluate carefully before responding."
                 ),
-                response_schema=AIMarkResponse,
+                response_schema=self._mark_schema(),
                 prompt_version=VERSION,
                 extra_cache_key=f"q={question.id}:escalated",
                 task_tag="escalation",
@@ -769,7 +779,7 @@ class AICorrector:
             second = self._client.generate_structured(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                response_schema=AIMarkResponse,
+                response_schema=self._mark_schema(),
                 prompt_version=VERSION,
                 extra_cache_key=f"q={question.id}:pass2",
                 task_tag="correction",
@@ -797,7 +807,7 @@ class AICorrector:
             strong = self._client.generate_structured(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                response_schema=AIMarkResponse,
+                response_schema=self._mark_schema(),
                 prompt_version=VERSION,
                 extra_cache_key=f"q={question.id}:cascade",
                 task_tag="escalation",
@@ -3245,6 +3255,8 @@ def correct_paper(
             equivalence_gate=equivalence_gate,
             review_threshold=review_threshold,
         )
+        if ai.citations_on() and uncited(q, mark):
+            cq = flag_uncited(cq)
         cq = _maybe_apply_ecf_substitution(
             q,
             cq,

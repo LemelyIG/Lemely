@@ -262,6 +262,10 @@ class GeminiSettings(BaseModel):
     # numeric, short, extended, from the leaf's question type). Lookup: tag:kind,
     # then tag, then thinking_level_for[tag] mapped to effort. Claude calls only.
     claude_effort_for: dict[str, ClaudeEffort] = Field(default_factory=dict)
+    # Spec §4 B2 (fallback; native citations cannot combine with structured output):
+    # the marker quotes the mark-scheme words each awarded mark rests on, and a mark
+    # without a valid quote goes to review as "uncited_mark". Both providers.
+    correction_citations: bool = False
 
     @field_validator("claude_cache_for")
     @classmethod

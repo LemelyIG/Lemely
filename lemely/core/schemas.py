@@ -877,6 +877,29 @@ class AIMarkResponse(StrictModel):
         return json_schema
 
 
+class AIMarkResponseCited(AIMarkResponse):
+    """A mark with the mark-scheme words each awarded mark rests on (spec §4 B2).
+
+    The fallback for citations, which the Messages API cannot combine with
+    structured outputs. ``lemely.core.cited_marks`` checks each quote against the
+    mark scheme the marker was shown.
+    """
+
+    evidence_quotes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "For every mark awarded, the exact words of the MARK SCHEME SUBTREE it was "
+            "awarded against, copied character for character. One quote per matched "
+            "point. Quote the mark scheme, never the student's answer."
+        ),
+    )
+
+
+def marker_response_schema(*, cited: bool) -> type[AIMarkResponse]:
+    """The correction reply schema for the flags in force."""
+    return AIMarkResponseCited if cited else AIMarkResponse
+
+
 class SubjectResult(StrictModel):
     subject_code: str = Field(...)
     session_month: Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]

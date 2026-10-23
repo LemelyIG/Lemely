@@ -93,6 +93,9 @@ model = "gemini-2.5-flash"
 # a model that rejects one fails the call. Higher effort spends more of
 # max_output_tokens_for (thinking counts toward max_tokens).
 # claude_effort_for = {}
+# The marker quotes the mark scheme for every awarded mark; an unquoted or
+# misquoted mark goes to review as uncited_mark.
+# correction_citations = false
 # Greyscale pages are enhanced for readability; false sends plain greyscale (A/B).
 # claude_image_enhance = true
 
