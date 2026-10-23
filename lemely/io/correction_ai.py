@@ -400,7 +400,10 @@ class AICorrector:
 
     def _mark_schema(self) -> type[AIMarkResponse]:
         """The reply schema for the flags in force; ``AIMarkResponse`` with them off."""
-        return marker_response_schema(cited=self.citations_on())
+        g = self._client._settings.gemini
+        return marker_response_schema(
+            cited=self.citations_on(), terse=g.correction_terse_rationale is True
+        )
 
     def __init__(
         self, gemini_client: GeminiClient, *, mark_scheme: MarkScheme | None = None

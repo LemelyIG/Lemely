@@ -27,12 +27,29 @@ _PUNCTUATION = {
 }
 
 
+# Labels, not mark-scheme wording: an id, the question type or a mark-code name is
+# not something a mark rests on, so quoting one never cites a mark.
+_LABEL_KEYS = frozenset(
+    {
+        "id",
+        "parent_id",
+        "type",
+        "scheme_format",
+        "assessment_objectives",
+        "topic_hint",
+        "question_command",
+        "math_mark_type",
+    }
+)
+
+
 def _strings(value: object) -> Iterator[str]:
     if isinstance(value, str):
         yield value
     elif isinstance(value, dict):
-        for item in value.values():
-            yield from _strings(item)
+        for key, item in value.items():
+            if key not in _LABEL_KEYS:
+                yield from _strings(item)
     elif isinstance(value, list):
         for item in value:
             yield from _strings(item)
@@ -44,7 +61,10 @@ def _dump(model: object) -> object:
 
 
 def scheme_text(question: Question) -> str:
-    """Every string in the question's mark-scheme subtree, one per line."""
+    """Every quotable string in the question's mark-scheme subtree, one per line.
+
+    Labels (ids, the question type, the mark-code name) are left out.
+    """
     return "\n".join(_strings(_dump(question)))
 
 

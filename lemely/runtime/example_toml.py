@@ -169,6 +169,10 @@ def render_example_toml() -> str:
     lines.append("# The marker quotes the mark scheme for every awarded mark; an unquoted or")
     lines.append("# misquoted mark goes to review as uncited_mark.")
     lines.append(f"# correction_citations = {_toml_bool(s.gemini.correction_citations)}")
+    lines.append("# Ask the marker for a rationale of at most 25 words (cut at 300 chars).")
+    lines.append(
+        f"# correction_terse_rationale = {_toml_bool(s.gemini.correction_terse_rationale)}"
+    )
     lines.append(
         "# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B)."
     )

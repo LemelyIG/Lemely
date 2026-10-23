@@ -69,10 +69,11 @@ class CheckTests(unittest.TestCase):
         # The same quote twice, or a quote from the wrong point, does not cover both.
         twice = _mark(["gravity acts on it"] * 2, awarded=2, matched=["p1", "p2"])
         self.assertTrue(uncited(_leaf(), twice))
-        swapped = _mark(
-            ["no air resistance"] * 1 + ["no air resistance"], awarded=2, matched=["p1", "p2"]
+        # Two different quotes that both come from p2 leave p1 uncovered.
+        wrong_point = _mark(
+            ["no air resistance", "air resistance"], awarded=2, matched=["p1", "p2"]
         )
-        self.assertTrue(uncited(_leaf(), swapped))
+        self.assertTrue(uncited(_leaf(), wrong_point))
 
     def test_zero_marks_need_no_quote(self) -> None:
         self.assertFalse(uncited(_leaf(), _mark([], awarded=0)))
@@ -144,6 +145,75 @@ class NormalisationTests(unittest.TestCase):
         self.assertNotIn(old_norm(rendered), old_norm(raw))
         self.assertNotIn(old_norm("v \u2212 u"), old_norm("v - u"))
         self.assertLess(len(old_norm("C")), 3)
+
+
+class LabelTests(unittest.TestCase):
+    """Ids and the question type are labels, not mark-scheme wording."""
+
+    def test_quoting_a_label_alone_is_uncited(self) -> None:
+        q = _question({"id": "p_sc", "point": "v = d / t", "marks": 1})
+        for label in ("calculation", "p_sc"):
+            self.assertTrue(uncited(q, _mark([label], matched=[])), label)
+            self.assertTrue(uncited(q, _mark([label], matched=["p_sc"])), label)
+        self.assertNotIn("calculation", scheme_text(q))
+        self.assertNotIn("p_sc", scheme_text(q))
+        self.assertFalse(uncited(q, _mark(["v = d / t"], matched=["p_sc"])))
+
+    def test_the_label_joined_to_a_point_is_uncited(self) -> None:
+        q = _question({"id": "p1", "point": "v = d / t", "marks": 1})
+        self.assertTrue(uncited(q, _mark(["p1\nv = d / t"], matched=["p1"])))
+
+    def test_guidance_and_accept_text_still_cite(self) -> None:
+        q = Question.model_validate(
+            {
+                "id": "1",
+                "marks": 1,
+                "type": "recall",
+                "marking_guidance": "credit any unit conversion shown",
+                "answer_points": [{"id": "p1", "point": "9.8", "marks": 1, "accept": ["g = 9.81"]}],
+            }
+        )
+        self.assertFalse(uncited(q, _mark(["credit any unit conversion shown"], matched=[])))
+        self.assertFalse(uncited(q, _mark(["g = 9.81"], matched=["p1"])))
+
+
+class TerseTests(unittest.TestCase):
+    def test_schema_choice(self) -> None:
+        from lemely.core.schemas import AIMarkResponseCitedTerse, AIMarkResponseTerse
+
+        self.assertIs(marker_response_schema(cited=False, terse=True), AIMarkResponseTerse)
+        self.assertIs(marker_response_schema(cited=True, terse=True), AIMarkResponseCitedTerse)
+        self.assertIs(marker_response_schema(cited=True, terse=False), AIMarkResponseCited)
+        self.assertIs(marker_response_schema(cited=False), AIMarkResponse)
+
+    def test_long_feedback_is_cut_not_refused(self) -> None:
+        from lemely.core.schemas import TERSE_FEEDBACK_MAX_CHARS, AIMarkResponseTerse
+
+        reply = AIMarkResponseTerse(awarded_marks=1, confidence=0.9, feedback="w " * 400)
+        self.assertEqual(len(reply.feedback), TERSE_FEEDBACK_MAX_CHARS)
+
+    def test_the_cap_is_asked_for_in_the_schema(self) -> None:
+        from lemely.core.schemas import AIMarkResponseCitedTerse
+
+        schema = AIMarkResponseCitedTerse.model_json_schema()
+        self.assertIn("25 words", schema["properties"]["feedback"]["description"])
+        self.assertIn("evidence_quotes", schema["properties"])
+        self.assertNotIn("maxLength", schema["properties"]["feedback"])
+
+    def test_the_corrector_picks_the_schema_from_the_flags(self) -> None:
+        from lemely.core.schemas import AIMarkResponseCitedTerse, AIMarkResponseTerse
+        from lemely.io.correction_ai import AICorrector
+
+        def schema_for(*, cited: bool, terse: bool) -> type[AIMarkResponse]:
+            client = MagicMock()
+            gemini = client._settings.gemini
+            gemini.correction_citations = cited
+            gemini.correction_terse_rationale = terse
+            return AICorrector(client)._mark_schema()
+
+        self.assertIs(schema_for(cited=False, terse=False), AIMarkResponse)
+        self.assertIs(schema_for(cited=False, terse=True), AIMarkResponseTerse)
+        self.assertIs(schema_for(cited=True, terse=True), AIMarkResponseCitedTerse)
 
 
 class SchemaTests(unittest.TestCase):

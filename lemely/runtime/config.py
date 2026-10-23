@@ -266,6 +266,10 @@ class GeminiSettings(BaseModel):
     # the marker quotes the mark-scheme words each awarded mark rests on, and a mark
     # without a valid quote goes to review as "uncited_mark". Both providers.
     correction_citations: bool = False
+    # Spec §5.4: the correction reply's rationale is asked for in at most 25 words
+    # and cut at 300 characters (output tokens). Screened with and without
+    # correction_citations in sub-project C.
+    correction_terse_rationale: bool = False
 
     @field_validator("claude_cache_for")
     @classmethod
