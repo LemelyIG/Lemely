@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import partial
-from itertools import pairwise
 from typing import TYPE_CHECKING, Literal, cast
 
 import structlog
@@ -307,9 +306,10 @@ def _numbered_from_one(raw_items: list[object], page_count: int) -> bool:
 
     Evidence of a shift, all of it needed: no item on page 0; at least
     ``_MIN_ONE_BASED_TAIL_ITEMS`` items on page ``page_count`` (a page that does not exist
-    counting from 0); and the pages never go back in stream order, as a read in order does
-    not, which also makes those items the tail of the stream. One stray item on the last
-    page leaves the rest of the read on page 0 and up, so it is not a shifted count.
+    counting from 0); and every item after the first one on that page is on it too, so those
+    items are the tail of the stream. Earlier backtracks in the read are allowed: a shifted
+    read still places an odd item a page early. One stray item on the last page leaves the
+    rest of the read on page 0 and up, so it is not a shifted count.
     Evidence: 3 of 22 full-script reads of one 19-page script were numbered 1..19
     (.superpowers/sdd/binding-investigation.md).
     """
@@ -321,7 +321,8 @@ def _numbered_from_one(raw_items: list[object], page_count: int) -> bool:
     ]
     if 0 in known or known.count(page_count) < _MIN_ONE_BASED_TAIL_ITEMS:
         return False
-    return all(earlier <= later for earlier, later in pairwise(known))
+    tail = known[known.index(page_count) :]
+    return all(page == page_count for page in tail)
 
 
 def parse_stream_items(raw_items: list[object], *, page_count: int) -> StreamRead:

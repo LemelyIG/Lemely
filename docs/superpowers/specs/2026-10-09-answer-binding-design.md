@@ -87,6 +87,7 @@ Each check returns pass or fail with evidence. No check trusts an id the model s
 
 | # | Check | Notes |
 |---|---|---|
+| `stub_read` | Paper scope, not per answer: a read covering under 30% of the paper's leaves, after one refresh, holds the paper | Stub reads covered 0.0 and 0.12; clean reads 1.0; honest partial scripts 0.56-0.65. A read numbered from page 1 is re-indexed as a whole (no item on page 0, at least two on the last page number, every item after the first of those on it) before any check runs |
 | G6 | Rate of shape mismatches: a number was expected and prose was found, or the reverse | Shape comes from the mark scheme's answer points and the question paper's cue (`= ........ [2]`), not from `type` |
 | G7 | Shift detector. For leaves with a numeric expected value, compare the student's value with the expected value at offsets 0, ±1, ±2 using `lemely.core.equivalence`. More matches at a non-zero offset than at zero means a shift | Staging: "4.9 N" on `1c_ii` equals the expected value of `1c_i`; "20 cm" on `1b` equals that of `1a_ii` |
 | G8 | The marker returns a new field `addresses_question` (`yes`, `no`, `unclear`) per answer. The gate counts `no` and the longest run of `no` | Same marking call, no extra cost. Covers papers with few numeric answers. Runs after marking and before publication |

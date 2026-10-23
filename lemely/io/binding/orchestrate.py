@@ -128,6 +128,9 @@ LOST_ITEM_REASONS = ("malformed_item", "unknown_type")
 #: scripts, where a student stopped early, cover 0.56-0.65, so 0.3 sits between the two
 #: groups and never calls an honest partial script a stub
 #: (.superpowers/sdd/binding-investigation.md, Q1).
+#: A genuinely short script (a student who stopped early, coverage 0.26 say) also takes the
+#: stub path: one refresh, then a hold with ``stub_read`` and G5. Acceptable, as it is held
+#: either way.
 _MIN_READ_LABEL_COVERAGE = 0.3
 #: What the ``stub_read`` check says: a read that is still a stub after its one refresh.
 STUB_READ_DETAIL = "a read returned too few of the paper's question labels, twice"

@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -903,6 +904,18 @@ def test_a_real_one_based_read_with_its_tail_on_the_last_page_is_reindexed() -> 
     assert sum(1 for i in shifted if i["page"] == pages) >= 14  # the investigation's shape
     assert shifted[-1]["page"] == pages
     assert parse_stream_items(shifted, page_count=pages).drops == {"reindexed_one_based": 1}
+
+
+def test_a_one_based_read_with_an_earlier_backtrack_is_still_reindexed() -> None:
+    items, pages = _recorded_stream()
+    shifted = _shifted(items, 1)
+    k = next(i for i in range(60, len(shifted)) if shifted[i]["page"] >= 3)
+    assert shifted[k - 1]["page"] <= shifted[k]["page"]
+    shifted[k] = {**shifted[k], "page": shifted[k]["page"] - 1}  # one item a page early
+    pages_seen = [i["page"] for i in shifted]
+    assert any(b < a for a, b in pairwise(pages_seen))  # a backtrack
+    read = parse_stream_items(shifted, page_count=pages)
+    assert read.drops == {"reindexed_one_based": 1}
 
 
 @pytest.mark.parametrize("page", [454, None, "two", 1.5])
