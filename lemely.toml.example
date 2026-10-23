@@ -87,6 +87,9 @@ model = "gemini-2.5-flash"
 # effort or thinking setting invalidates the cached messages (docs, prompt
 # caching): both binder tags must send the same effort for the second read to hit.
 # claude_cache_for = {}
+# Claude effort (low | medium | high | xhigh | max) per tag or tag:kind,
+# e.g. { "correction:extended" = "medium" }. Unlisted: thinking_level_for.
+# claude_effort_for = {}
 # Greyscale pages are enhanced for readability; false sends plain greyscale (A/B).
 # claude_image_enhance = true
 

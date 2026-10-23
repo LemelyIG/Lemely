@@ -117,6 +117,7 @@ class LoggingSettings(BaseModel):
 # config load reject it instead.
 ThinkingLevel = Literal["minimal", "low", "medium", "high"]
 ClaudeCacheSpot = Literal["system", "documents", "images", "prefix"]
+ClaudeEffort = Literal["low", "medium", "high", "xhigh", "max"]
 
 # Typed separately from the inline dict literal below: a bare `dict[str, str]`
 # literal loses the `Literal` member type on assignment, so mypy strict
@@ -257,6 +258,10 @@ class GeminiSettings(BaseModel):
     # with it on both binder tags and both reads on one claude- model, the reads run
     # one after the other. At most 4 spots per tag.
     claude_cache_for: dict[str, list[ClaudeCacheSpot]] = Field(default_factory=dict)
+    # Spec §4 B3: Anthropic effort per task tag, or per "tag:kind" (kind: mcq,
+    # numeric, short, extended, from the leaf's question type). Lookup: tag:kind,
+    # then tag, then thinking_level_for[tag] mapped to effort. Claude calls only.
+    claude_effort_for: dict[str, ClaudeEffort] = Field(default_factory=dict)
 
     @field_validator("claude_cache_for")
     @classmethod

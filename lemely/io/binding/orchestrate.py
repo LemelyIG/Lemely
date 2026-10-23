@@ -87,6 +87,7 @@ from lemely.core.text_agreement import text_agreement
 from lemely.io.binding.label_binder import BoundRead, LabelBinder, to_bound_read
 from lemely.io.binding.second_read_triggers import second_read_triggers
 from lemely.io.providers import is_anthropic_model
+from lemely.io.providers.anthropic_adapter import resolve_effort
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, LemelyError
 from lemely.runtime.events import EventType, bus
 
@@ -508,12 +509,18 @@ def _reads_share_a_claude_cache(settings: Settings, first_model: str, second_mod
     """Both reads on one claude- model, each with a breakpoint after the pages (spec §4 B1).
 
     The second read can then be served the pages from the first read's prompt cache,
-    but only once the first response has begun: so the reads are made in turn.
+    but only once the first response has begun: so the reads are made in turn. A
+    different effort invalidates the cached messages, so both tags must also resolve to
+    the same effort (B3); otherwise the in-turn read would pay the write and never hit.
     """
     if first_model != second_model or not is_anthropic_model(first_model):
         return False
-    cache_for = settings.gemini.claude_cache_for
-    return all("images" in cache_for.get(tag, []) for tag in (_FIRST_READ[0], _SECOND_READ[0]))
+    g = settings.gemini
+    tags = (_FIRST_READ[0], _SECOND_READ[0])
+    if not all("images" in g.claude_cache_for.get(tag, []) for tag in tags):
+        return False
+    first, second = (resolve_effort(g.claude_effort_for, g.thinking_level_for, tag) for tag in tags)
+    return first == second
 
 
 def _read_second_after(

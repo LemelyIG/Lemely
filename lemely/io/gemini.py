@@ -305,6 +305,11 @@ _call_case_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 _call_labels: contextvars.ContextVar[tuple[_Attempt | None, str | None]] = contextvars.ContextVar(
     "gemini_call_labels", default=(None, None)
 )
+
+#: The leaf kind of the structured call in progress (B3 effort lookup); None outside one.
+_call_leaf_kind: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "lemely_call_leaf_kind", default=None
+)
 #: The per-script cost accumulator `script_cost_scope` opens; None outside one.
 _script_cost: contextvars.ContextVar[dict[str, float] | None] = contextvars.ContextVar(
     "lemely_script_cost", default=None
@@ -1230,16 +1235,18 @@ class GeminiClient:
         g = self._settings.gemini
         key = task_tag or ""
         if is_anthropic_model(model):
-            # A claude- model takes one knob, Anthropic's effort, resolved from
-            # the same thinking_level_for table ("minimal" maps to "low").
-            from lemely.io.providers.anthropic_adapter import effort_for
+            # A claude- model takes one knob, Anthropic's effort: claude_effort_for
+            # (tag:kind, then tag), else thinking_level_for ("minimal" maps to "low").
+            from lemely.io.providers.anthropic_adapter import resolve_effort
 
             return {
                 "thinking_budget": None,
                 "temperature": None,
                 "top_p": None,
                 "seed": None,
-                "thinking_level": effort_for(g.thinking_level_for.get(key, "low")),
+                "thinking_level": resolve_effort(
+                    g.claude_effort_for, g.thinking_level_for, key, _call_leaf_kind.get()
+                ),
             }
         if _is_3x(model):
             requested_level = g.thinking_level_for.get(key, "low")
@@ -1566,6 +1573,7 @@ class GeminiClient:
         model: str | None = None,
         extra_cache_key: str = "",
         task_tag: str | None = None,
+        leaf_kind: str | None = None,
     ) -> str:
         """The key the reply of the structured call these arguments make is cached under.
 
@@ -1574,19 +1582,23 @@ class GeminiClient:
         was made from are no longer at hand: it keeps this short string, not the
         images, and gives it to :meth:`forget_cached`.
         """
-        _model, cache_key = self._structured_cache_key(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            file_paths=file_paths,
-            documents=documents,
-            image_parts=image_parts,
-            media_resolution=media_resolution,
-            response_schema=response_schema,
-            prompt_version=prompt_version,
-            model=model,
-            extra_cache_key=extra_cache_key,
-            task_tag=task_tag,
-        )
+        token = _call_leaf_kind.set(leaf_kind)
+        try:
+            _model, cache_key = self._structured_cache_key(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                file_paths=file_paths,
+                documents=documents,
+                image_parts=image_parts,
+                media_resolution=media_resolution,
+                response_schema=response_schema,
+                prompt_version=prompt_version,
+                model=model,
+                extra_cache_key=extra_cache_key,
+                task_tag=task_tag,
+            )
+        finally:
+            _call_leaf_kind.reset(token)
         return cache_key
 
     def forget_cached(self, cache_keys: Iterable[str]) -> int:
@@ -1622,6 +1634,56 @@ class GeminiClient:
         return forgotten
 
     def generate_structured(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        file_paths: list[Path] | None = None,
+        documents: Sequence[DocumentInput] | None = None,
+        image_parts: list[bytes] | None = None,
+        media_resolution: str | None = None,
+        image_uploads: ImageUploads | None = None,
+        response_schema: type[_T],
+        prompt_version: str,
+        model: str | None = None,
+        extra_cache_key: str = "",
+        task_tag: str | None = None,
+        cache_mode: Literal["read_write", "bypass", "refresh"] | None = None,
+        attempt: _Attempt | None = None,
+        question_id: str | None = None,
+        shared_prefix: SharedPrefix | None = None,
+        leaf_kind: str | None = None,
+    ) -> _T:
+        """I1: send per-page images instead of uploading a whole file.
+
+        See :meth:`_generate_structured` for the arguments. ``leaf_kind`` (B3) picks a
+        ``claude_effort_for["tag:kind"]`` effort on a claude- model; Gemini ignores
+        it. It reaches the cache key only through the effort it selects.
+        """
+        token = _call_leaf_kind.set(leaf_kind)
+        try:
+            return self._generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                file_paths=file_paths,
+                documents=documents,
+                image_parts=image_parts,
+                media_resolution=media_resolution,
+                image_uploads=image_uploads,
+                response_schema=response_schema,
+                prompt_version=prompt_version,
+                model=model,
+                extra_cache_key=extra_cache_key,
+                task_tag=task_tag,
+                cache_mode=cache_mode,
+                attempt=attempt,
+                question_id=question_id,
+                shared_prefix=shared_prefix,
+            )
+        finally:
+            _call_leaf_kind.reset(token)
+
+    def _generate_structured(
         self,
         *,
         system_prompt: str,

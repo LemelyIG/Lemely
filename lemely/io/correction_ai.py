@@ -17,6 +17,7 @@ from lemely.core.binding import BindingVerdict
 from lemely.core.binding_gate import GateThresholds, check_off_topic, verdict
 from lemely.core.correction import _exam_metadata, _load_mark_scheme
 from lemely.core.equivalence import Verdict, VerdictKind, equivalent
+from lemely.core.leaf_kind import leaf_kind
 from lemely.core.loose_schemas import (
     AnswerPoint,
     CalculatedAnswer,
@@ -357,9 +358,13 @@ def _append_leaf_log(
 
 
 class _PrefixKwargs(TypedDict, total=False):
-    """``generate_structured``'s ``shared_prefix`` argument, present only when set."""
+    """``generate_structured``'s ``shared_prefix`` and ``leaf_kind`` arguments.
+
+    Each is present only when set.
+    """
 
     shared_prefix: SharedPrefix
+    leaf_kind: str
 
 
 def review_threshold_for(gemini: GeminiSettings, model: str | None) -> float:
@@ -518,6 +523,11 @@ class AICorrector:
         prefix_kwargs: _PrefixKwargs = (
             {"shared_prefix": shared_prefix} if shared_prefix is not None else {}
         )
+        # B3: the leaf's kind picks a claude_effort_for["tag:kind"] effort. Sent only
+        # when that table is set, so a call without it passes exactly what it did.
+        table = getattr(g, "claude_effort_for", None)
+        if isinstance(table, dict) and table:
+            prefix_kwargs["leaf_kind"] = leaf_kind(question)
 
         leaf_log = os.environ.get(CASCADE_LEAF_LOG_ENV) if g.cascade_enabled is True else None
         # The leaf log reads this leaf's call records, which are kept only while

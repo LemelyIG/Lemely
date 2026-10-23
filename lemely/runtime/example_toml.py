@@ -158,6 +158,9 @@ def render_example_toml() -> str:
         "# caching): both binder tags must send the same effort for the second read to hit."
     )
     lines.append(f"# claude_cache_for = {_toml_inline(s.gemini.claude_cache_for)}")
+    lines.append("# Claude effort (low | medium | high | xhigh | max) per tag or tag:kind,")
+    lines.append('# e.g. { "correction:extended" = "medium" }. Unlisted: thinking_level_for.')
+    lines.append(f"# claude_effort_for = {_toml_inline(s.gemini.claude_effort_for)}")
     lines.append(
         "# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B)."
     )

@@ -181,3 +181,24 @@ class BinderSequencingTests(unittest.TestCase):
         self.assertTrue(share(settings, _HAIKU, _HAIKU))
         self.assertFalse(share(settings, _HAIKU, "claude-sonnet-5-5"))
         self.assertFalse(share(settings, "gemini-3.8-flash", "gemini-3.8-flash"))
+
+    def test_different_effort_means_no_shared_cache(self) -> None:
+        # B3: a changed effort invalidates the cached messages, so the in-turn read
+        # would pay the write and never hit; the reads run together instead.
+        client = _binder_client(tempfile.mkdtemp(), self._SHARED)
+        g = client._settings.gemini
+        share = orchestrate._reads_share_a_claude_cache
+        same = client._settings.model_copy(
+            update={
+                "gemini": g.model_copy(
+                    update={
+                        "claude_effort_for": {"extraction": "high", "binding_second_read": "high"}
+                    }
+                )
+            }
+        )
+        self.assertTrue(share(same, _HAIKU, _HAIKU))
+        differ = client._settings.model_copy(
+            update={"gemini": g.model_copy(update={"claude_effort_for": {"extraction": "high"}})}
+        )
+        self.assertFalse(share(differ, _HAIKU, _HAIKU))

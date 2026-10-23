@@ -57,7 +57,7 @@ from lemely.io.providers import ProviderError, ProviderTransientError
 from lemely.runtime.errors import ParseError
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from anthropic.types import (
         Base64ImageSourceParam,
@@ -119,7 +119,8 @@ def _output_of(blocks: Sequence[ContentBlock], ran: bool) -> tuple[str, bool]:
 #: Resends of a ``pause_turn`` reply before the call gives up with no answer.
 MAX_PAUSE_CONTINUATIONS = 3
 
-Effort = Literal["low", "medium", "high"]
+EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
 
 #: Reply budget per call. A marking reply is a few hundred tokens plus
 #: thinking; 16k keeps a non-streaming request well inside the SDK's
@@ -151,6 +152,30 @@ NONSTREAMING_MAX_TOKENS = 21_333
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _JPEG_MAGIC = b"\xff\xd8\xff"
 _MediaType = Literal["image/png", "image/jpeg"]
+
+
+def _as_effort(value: str) -> Effort:
+    """An effort passes as it is; a Lemely thinking level maps through effort_for."""
+    return cast("Effort", value) if value in EFFORTS else effort_for(value)
+
+
+def resolve_effort(
+    efforts: object,
+    thinking_levels: Mapping[str, str],
+    tag: str,
+    kind: str | None = None,
+) -> str:
+    """Claude effort for a task tag: ``tag:kind``, then ``tag``, then its thinking level.
+
+    ``efforts`` is ``GeminiSettings.claude_effort_for``; anything that is not a dict
+    (a stand-in settings object) counts as empty.
+    """
+    table = efforts if isinstance(efforts, dict) else {}
+    return str(
+        (table.get(f"{tag}:{kind}") if kind else None)
+        or table.get(tag)
+        or effort_for(thinking_levels.get(tag, "low"))
+    )
 
 
 def effort_for(level: str) -> Effort:
@@ -410,7 +435,7 @@ class AnthropicAdapter:
             }
         }
         if thinking is not None:
-            output_config["effort"] = effort_for(thinking)
+            output_config["effort"] = _as_effort(thinking)
         system, message = _request_parts(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -446,7 +471,7 @@ class AnthropicAdapter:
 
         extra: dict[str, object] = {}
         if thinking is not None:
-            extra["output_config"] = {"effort": effort_for(thinking)}
+            extra["output_config"] = {"effort": _as_effort(thinking)}
         messages: list[MessageParam] = [{"role": "user", "content": prompt}]
         usage = Usage(0, 0, 0, 0)
         ran_code = False
