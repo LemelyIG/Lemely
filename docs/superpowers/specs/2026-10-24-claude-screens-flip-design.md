@@ -125,7 +125,14 @@ These are diagnosis first. A fix lands only with evidence and a red test.
    - log `claude_tier_guard`.
 
    Unit-tested with a synthetic 24-page estimate.
-5. **Minors:**
+5. **Escalation rate.** Haiku made 0 `escalation` calls in all four E2E runs, even though 3 to 4 leaves per run were below `escalation_confidence_threshold` (0.80) and Claude confidences sit at 0.80 to 0.85, just above it. Confirm which triggers can escalate when `cascade_enabled = false`:
+   - the confidence threshold;
+   - `escalate_on_mark_mismatch`;
+   - `escalate_on_defaulted_marks`;
+   - and the others.
+
+   Record the rate the flipped config would produce. Moving escalation to Sonnet costs 20x Haiku per call. A small downward shift in Claude's confidences could therefore turn many leaves into Sonnet calls. See "Escalation rate" below.
+6. **Minors:**
    - the per-script cost scope also covers the CLI and batch paths (today only the web routes warn);
    - `extract_json` and a bracket in prose that never closes;
    - harden the timing of `tests/test_web_teacher.py::test_a_row_queued_for_the_run_slot_is_alive_and_not_lost_while_it_waits`.
@@ -154,6 +161,21 @@ Adjudication (c2):
 - The Gemini path is untouched.
 
 Stacking order: cost winners, then accuracy winners, then the threshold fit on the stacked configuration.
+
+### Escalation rate
+
+Escalation moves from Haiku (as in the E2E runs) to `claude-sonnet-5-5` at the flip. Sonnet's input, cache-write and output rates are 20x Haiku's. The escalation rate is a cost driver, so it is tracked throughout:
+
+- **Reporting.** Every rung reports:
+  - the escalation rate (escalated leaves ÷ leaves, per script and mean);
+  - escalation dollars per script and their share of the script cost;
+  - which trigger fired for each escalated leaf.
+
+  These figures go into `LADDER.md` and `FLIP.md`.
+- **Pricing in the screens.** From the screens onward, the base and every rung run escalation on `claude-sonnet-5-5`, the model it will use after the flip. Escalation cost is therefore measured, not estimated.
+- **Fit.** When lever d fits the review threshold, it also fits `escalation_confidence_threshold` (or `cascade_threshold_for`) for Haiku. The fit is done on the stacked configuration's confidences, against the reference, with no API calls. It picks the threshold that escalates the leaves with `abs_error > 0` while keeping every script at or below $0.10 at Sonnet prices.
+- **Cap.** If the stacked configuration escalates more than 10% of leaves on any script, add a per-script escalation cap (most-uncertain leaves first) as an extra cost lever. It is screened with `judge` before the flip.
+- **Flip bar.** `judge_flip` reports escalation rate and escalation dollars next to its checks. Every real script must stay at or below $0.10 with escalation included.
 
 ### P4. Flip
 
