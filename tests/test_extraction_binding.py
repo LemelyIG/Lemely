@@ -32,7 +32,13 @@ from lemely.io import correction_ai
 from lemely.io.answer_extraction import GeminiAnswerExtractor
 from lemely.io.binding import orchestrate, parse_stream_items, to_bound_read
 from lemely.io.binding.label_binder import LabelBinder
-from lemely.io.binding.orchestrate import LOST_ITEM_REASONS, BindingOutcome, run_binding
+from lemely.io.binding.orchestrate import (
+    _MIN_READ_LABEL_COVERAGE,
+    LOST_ITEM_REASONS,
+    BindingOutcome,
+    _label_coverage,
+    run_binding,
+)
 from lemely.io.correction_ai import correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.io.rasterise import RasterisedPage
@@ -1299,6 +1305,103 @@ def test_a_second_read_that_fails_twice_fails_the_job(
     assert model.made() == ["first", "second", "second"]
     assert seen[EventType.BINDING_GATE_RESULT] == []
     assert len(seen[EventType.SECOND_READ_FAILED]) == 1  # the first failure; the second is raised
+
+
+# --------------------------------------------------------------------------------------
+# A stub read is a failed read (binding fix F3)
+# --------------------------------------------------------------------------------------
+def _stub() -> dict[str, Any]:
+    """A schema-valid reply that closed its list after four items (the recorded 185-token one)."""
+    return _items(_run(1)[:4])
+
+
+def _refreshed(model: _Model) -> list[bool]:
+    return [call.get("cache_mode") == "refresh" for call in model.calls]
+
+
+def test_a_clean_read_is_made_once_and_asked_for_nothing_extra(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    model = _Model(first=_items(_run(1)), second=_items(_run(2)))
+    _bind(tmp_path, scheme, model)
+    assert model.made() == ["first", "second"]
+    assert all("cache_mode" not in call for call in model.calls)
+
+
+def test_a_stub_first_read_is_made_again_afresh_and_the_clean_one_is_used(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    model = _Model(first=[_stub(), _items(_run(1))], second=_items(_run(2)))
+    with structlog.testing.capture_logs() as logs:
+        outcome = _bind(tmp_path, scheme, model)
+    assert model.made() == ["first", "first", "second"]
+    firsts = [c for c in model.calls if model.key(c) == "first"]
+    assert ["cache_mode" in c for c in firsts] == [False, True]
+    assert firsts[1]["cache_mode"] == "refresh"
+    assert firsts[1]["task_tag"] == firsts[0]["task_tag"]
+    assert firsts[1]["model"] == firsts[0]["model"]
+    assert outcome.report.verdict == "pass"
+    (stub,) = [e for e in logs if e["event"] == "binding_read_stub"]
+    assert (stub["tag"], stub["items"]) == ("extraction", 4)
+    assert stub["coverage"] < 0.6
+
+
+def test_a_stub_second_read_is_made_again_afresh_and_compared(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    model = _Model(first=_items(_run(1)), second=[_stub(), _items(_run(2))])
+    with _events(EventType.SECOND_READ_FAILED) as seen:
+        outcome = _bind(tmp_path, scheme, model)
+    assert model.made() == ["first", "second", "second"]
+    assert [c.get("cache_mode") for c in model.calls if model.key(c) == "second"] == [
+        None,
+        "refresh",
+    ]
+    assert seen[EventType.SECOND_READ_FAILED] == []  # one retry inside the read, not a failure
+    assert [c.id for c in outcome.report.checks] == ["G1", "G2", "G5", "G6", "G7", "G9"]
+
+
+def test_a_second_read_that_is_a_stub_twice_fails_as_a_read_that_raised(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    """Never a vacuous G9: the paper is not let out on a stub second read."""
+    model = _Model(first=_items(_run(1)), second=[_stub()] * 4)
+    with (
+        _events(EventType.SECOND_READ_FAILED, EventType.BINDING_GATE_RESULT) as seen,
+        pytest.raises(ExternalServiceError, match="too few of the paper's question labels"),
+    ):
+        _bind(tmp_path, scheme, model)
+    # Each attempt at the second read is a read and a refreshed read; the failed second
+    # read is made once more as for any other failure (``_read_both``).
+    assert model.made() == ["first", "second", "second", "second", "second"]
+    assert seen[EventType.BINDING_GATE_RESULT] == []
+    (failure,) = seen[EventType.SECOND_READ_FAILED]
+    assert failure["stage"] == "binding_second_read"
+    assert "too few" in failure["error"]
+
+
+def test_a_first_read_that_is_a_stub_twice_fails_the_job(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    model = _Model(first=[_stub(), _stub()])
+    with pytest.raises(ExternalServiceError, match="too few of the paper's question labels"):
+        _bind(tmp_path, scheme, model, second_read=False)
+    assert model.made() == ["first", "first"]
+
+
+def test_label_coverage_is_the_share_of_the_papers_leaves_whose_label_was_bound(
+    scheme: MarkScheme,
+) -> None:
+    for name, items, expected in (
+        ("clean", _run(1), 1.0),
+        ("stub of 4", _run(1)[:4], 0.0),
+    ):
+        stream = parse_stream_items(items, page_count=_PAGE_COUNT)
+        coverage = _label_coverage(bind_stream(stream.items, scheme))
+        assert coverage == pytest.approx(expected, abs=0.2), name
+    stub25 = bind_stream(parse_stream_items(_run(1)[:25], page_count=_PAGE_COUNT).items, scheme)
+    assert _label_coverage(stub25) < _MIN_READ_LABEL_COVERAGE
+    assert _MIN_READ_LABEL_COVERAGE == 0.6
 
 
 def test_with_the_second_read_switched_off_one_read_is_used_as_before(

@@ -10,6 +10,7 @@ into the records the rest of the pipeline uses.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import partial
 from typing import TYPE_CHECKING, Literal, cast
 
 import structlog
@@ -358,10 +359,13 @@ class LabelBinder:
         media_resolution: str = "high",
         extra_cache_key: str,
         task_tag: str = "extraction",
+        cache_mode: Literal["read_write", "bypass", "refresh"] | None = None,
     ) -> StreamRead:
         """Read every page in one call and return the list the model gave.
 
-        ``model`` overrides the configured extraction model. ``task_tag`` picks the
+        ``model`` overrides the configured extraction model. ``cache_mode`` is passed on
+        to the call when given (a read made again after a stub is made ``"refresh"``);
+        the chunked reader never reads its cache. ``task_tag`` picks the
         call's thinking level and the cost bucket it is counted in. A cost-ceiling or
         service error from the call is not caught here. A script the chunked reader
         applies to (a claude- model, pages over the token budget at the floor) is read
@@ -376,7 +380,8 @@ class LabelBinder:
                 extra_cache_key=extra_cache_key,
                 task_tag=task_tag,
             )
-        raw = self._client.generate_structured(
+        call = partial(
+            self._client.generate_structured,
             system_prompt=LABEL_BINDING_SYSTEM_PROMPT,
             user_prompt=build_label_binding_user_prompt(mark_scheme, page_count=len(pages)),
             image_parts=[page.png_bytes for page in pages],
@@ -388,6 +393,9 @@ class LabelBinder:
             extra_cache_key=extra_cache_key,
             task_tag=task_tag,
         )
+        # ``cache_mode`` is named only when set, so a read that is not a repeat sends the
+        # call it always did.
+        raw = call() if cache_mode is None else call(cache_mode=cache_mode)
         return parse_stream_items(raw.model_dump()["items"], page_count=len(pages))
 
     def cache_key(

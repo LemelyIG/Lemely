@@ -98,6 +98,7 @@ if TYPE_CHECKING:
     from lemely.core.binding import BindingVerdict, SeenWriting, StreamItem
     from lemely.core.label_sequence import BoundStream
     from lemely.core.loose_schemas import MarkScheme
+    from lemely.io.binding.label_binder import StreamRead
     from lemely.io.binding.second_read_triggers import SecondReadTrigger
     from lemely.io.gemini import GeminiClient, ImageUploads
     from lemely.io.rasterise import RasterisedPage
@@ -120,6 +121,16 @@ MARKED_FROM_OTHER_READ = "marked_from_other_read"
 # Reasons in ``StreamRead.drops`` for a reply item that was left out and may have been
 # writing. A part whose block was lost this way looks blank and is not.
 LOST_ITEM_REASONS = ("malformed_item", "unknown_type")
+
+#: A read whose bound leaves are fewer than this share of the paper's leaves is a stub.
+#: Clean reads of the 43-leaf script bound 43 of 43 in every recorded run (5 of 5, 104-111
+#: items); the two live stubs had 4 items (0 of 43 bound) and 25 items (5 of 43 bound), so
+#: 0.6 sits far from both and leaves room for a read that honestly misses some labels
+#: (.superpowers/sdd/binding-investigation.md, Q1).
+_MIN_READ_LABEL_COVERAGE = 0.6
+#: What is said when the second read is a stub twice. It is published on the
+#: ``SECOND_READ_FAILED`` event and is the message of the error the job fails with.
+STUB_READ_MESSAGE = "the reader returned too few of the paper's question labels"
 
 # Each read's task tag and the suffix its cache key takes after the paper's own key.
 _FIRST_READ = ("extraction", "|bind1")
@@ -222,6 +233,17 @@ def binder_for(
     if binding.binder == "label" and all_multiple_choice(mark_scheme):
         return "legacy", True
     return binding.binder, False
+
+
+def _label_coverage(bound: BoundStream) -> float:
+    """The share of the paper's leaves whose label the read bound (1.0 for no leaves).
+
+    A leaf is bound when ``bind_stream`` aligned it to a label, whether or not it holds
+    writing: the labels are printed on the paper, so a read that saw the script finds
+    them all, answered or not.
+    """
+    total = len(bound.leaves) + len(bound.unaligned_ids)
+    return len(bound.leaves) / total if total else 1.0
 
 
 def _as_extracted(answers: list[ExtractedAnswer]) -> ExtractedAnswers:
@@ -817,7 +839,9 @@ def run_binding(
     second_model = second_read_model(binding)
     model_for_read = {_FIRST_READ[0]: binding.read_model, _SECOND_READ[0]: second_model}
 
-    def _read(task_tag: str, suffix: str) -> _Read:
+    def _attempt(
+        task_tag: str, suffix: str, cache_mode: Literal["refresh"] | None
+    ) -> tuple[StreamRead, BoundStream]:
         stream = binder.read(
             pages,
             mark_scheme,
@@ -825,8 +849,30 @@ def run_binding(
             model=model_for_read[task_tag],
             extra_cache_key=manifest_key + suffix,
             task_tag=task_tag,
+            cache_mode=cache_mode,
         )
-        bound = bind_stream(stream.items, mark_scheme)
+        return stream, bind_stream(stream.items, mark_scheme)
+
+    def _read(task_tag: str, suffix: str) -> _Read:
+        stream, bound = _attempt(task_tag, suffix, None)
+        coverage = _label_coverage(bound)
+        if coverage < _MIN_READ_LABEL_COVERAGE:
+            # A schema-valid reply that closed its list early: it parses, and would
+            # leave every leaf unaligned, so the cross-read check would pass on nothing.
+            log = structlog.get_logger().bind(component="binding_gate")
+            log.warning(
+                "binding_read_stub", tag=task_tag, items=len(stream.items), coverage=coverage
+            )
+            stream, bound = _attempt(task_tag, suffix, "refresh")
+            coverage = _label_coverage(bound)
+            if coverage < _MIN_READ_LABEL_COVERAGE:
+                log.warning(
+                    "binding_read_stub_again",
+                    tag=task_tag,
+                    items=len(stream.items),
+                    coverage=coverage,
+                )
+                raise ExternalServiceError(STUB_READ_MESSAGE)
         return _Read(
             bound=to_bound_read(bound, page_count=len(pages), drops=stream.drops),
             writings={leaf.question_id: list(leaf.writings) for leaf in bound.leaves},
