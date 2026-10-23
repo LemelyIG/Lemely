@@ -14,7 +14,11 @@ from lemely.io.gemini import (
     process_call_records,
     record_calls,
 )
-from lemely.io.providers.anthropic_adapter import MAX_PAUSE_CONTINUATIONS, AnthropicAdapter
+from lemely.io.providers.anthropic_adapter import (
+    MAX_LEG_RETRIES,
+    MAX_PAUSE_CONTINUATIONS,
+    AnthropicAdapter,
+)
 from lemely.runtime.errors import ExternalServiceError, ParseError
 from tests.test_anthropic_adapter import _FakeAnthropic, _settings, _status_error
 
@@ -176,6 +180,44 @@ class CodeExecutionTests(unittest.TestCase):
         self.assertEqual(text, "42")
         (rec,) = process_call_records()
         self.assertEqual(rec.container_seconds, 300)
+
+    def _paused_first_leg(self) -> SimpleNamespace:
+        first = _message(
+            SimpleNamespace(type="server_tool_use", name="bash_code_execution"),
+            _result("42\n"),
+            SimpleNamespace(type="text", text="Checking"),
+        )
+        first.stop_reason = "pause_turn"
+        first.container = SimpleNamespace(id="cont_1")
+        return first
+
+    def test_a_transient_on_a_continuation_leg_retries_that_leg_only(self) -> None:
+        with patch("lemely.io.providers.anthropic_adapter.time.sleep"):
+            text, fake = self._run(
+                self._paused_first_leg(),
+                _status_error(529),
+                _message(SimpleNamespace(type="text", text="The answer is 42.")),
+            )
+        self.assertEqual(text, "42")
+        containers = [c.get("container") for c in fake.messages.calls]
+        self.assertEqual(containers, [None, "cont_1", "cont_1"])
+        (rec,) = process_call_records()
+        self.assertEqual(rec.container_seconds, 300)
+        self.assertEqual(rec.input_tokens, 4_000)
+
+    def test_a_persistent_transient_on_a_continuation_records_usage_and_never_reruns(
+        self,
+    ) -> None:
+        errors = [_status_error(529) for _ in range(MAX_LEG_RETRIES + 1)]
+        with (
+            patch("lemely.io.providers.anthropic_adapter.time.sleep"),
+            patch("lemely.io.gemini.time.sleep"),
+            self.assertRaises((ParseError, ExternalServiceError)),
+        ):
+            self._run(self._paused_first_leg(), *errors)
+        (rec,) = process_call_records()
+        self.assertEqual(rec.container_seconds, 300)
+        self.assertEqual(rec.input_tokens, 2_000)
 
     def test_max_tokens_and_refusal_are_never_returned(self) -> None:
         for reason in ("max_tokens", "refusal"):

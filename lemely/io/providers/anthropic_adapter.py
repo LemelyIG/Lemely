@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import base64
 import io
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
@@ -121,6 +122,9 @@ def _output_of(blocks: Sequence[ContentBlock], ran: bool) -> tuple[str, bool]:
 
 #: Resends of a ``pause_turn`` reply before the call gives up with no answer.
 MAX_PAUSE_CONTINUATIONS = 3
+# Transient retries of one continuation leg (same container, same messages).
+MAX_LEG_RETRIES = 2
+LEG_RETRY_BACKOFF_SECONDS = 1.0
 
 EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
@@ -483,17 +487,28 @@ class AnthropicAdapter:
         ran_code = False
         content: list[ContentBlock] = []
         container_id: str | None = None
-        for _ in range(MAX_PAUSE_CONTINUATIONS + 1):
+        for leg in range(MAX_PAUSE_CONTINUATIONS + 1):
             if container_id is not None:
                 extra["container"] = container_id
-            response = self._send(
-                model=model,
-                max_tokens=max_tokens,
-                messages=messages,
-                tools=[{"type": CODE_EXECUTION_TOOL, "name": "code_execution"}],
-                thinking={"type": "adaptive"},
-                **extra,
-            )
+            try:
+                response = self._send_leg(
+                    first_leg=leg == 0,
+                    model=model,
+                    max_tokens=max_tokens,
+                    messages=messages,
+                    tools=[{"type": CODE_EXECUTION_TOOL, "name": "code_execution"}],
+                    thinking={"type": "adaptive"},
+                    **extra,
+                )
+            except ProviderTransientError:
+                if leg == 0:
+                    raise
+                # An earlier leg ran and was billed: a from-scratch retry upstream would
+                # re-run the code in a second container. Return the gathered usage with
+                # an incomplete stop so the caller records it and raises ParseError.
+                return AnthropicReply(
+                    text="", usage=usage, stop_reason="pause_turn", ran_code=ran_code
+                )
             usage = _add_usage(usage, _usage_of(response))
             content.extend(response.content)
             ran_code = ran_code or _usage_ran_code(response)
@@ -511,6 +526,23 @@ class AnthropicAdapter:
             container_id = getattr(container, "id", None) or container_id
         # Still paused after the cap: no usable answer (an empty text is never cached).
         return AnthropicReply(text="", usage=usage, stop_reason="pause_turn", ran_code=ran_code)
+
+    def _send_leg(self, *, first_leg: bool, **kwargs: Any) -> Message:  # type: ignore[explicit-any]  # noqa: ANN401
+        """One code-execution leg; a continuation leg retries its own transients.
+
+        The first leg propagates a transient (nothing is billed yet, so the client's
+        from-scratch retry is safe). A continuation leg retries ``MAX_LEG_RETRIES``
+        times with a short backoff, then re-raises.
+        """
+        attempt = 0
+        while True:
+            try:
+                return self._send(**kwargs)
+            except ProviderTransientError:
+                if first_leg or attempt >= MAX_LEG_RETRIES:
+                    raise
+                attempt += 1
+                time.sleep(LEG_RETRY_BACKOFF_SECONDS * attempt)
 
     def count_tokens(
         self,
