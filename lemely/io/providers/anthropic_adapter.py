@@ -58,6 +58,7 @@ from lemely.io.llm.request import (
     CachePlan,
 )
 from lemely.io.providers import ProviderError, ProviderTransientError
+from lemely.io.providers.claude_schema import extract_json, json_instruction, needs_prompt_json
 from lemely.runtime.errors import ParseError
 
 if TYPE_CHECKING:
@@ -438,12 +439,16 @@ class AnthropicAdapter:
             ProviderTransientError: 429, 529, any 5xx, or a connection failure.
             ProviderError: any other API error, or images the API would refuse.
         """
-        output_config: OutputConfigParam = {
-            "format": {
-                "type": "json_schema",
-                "schema": anthropic.transform_schema(response_schema),
-            }
-        }
+        sendable = anthropic.transform_schema(response_schema)
+        prompt_json = needs_prompt_json(sendable)
+        output_config: OutputConfigParam = {}
+        if prompt_json:
+            # Recursive or over Claude's schema limits: no output_config.format; the
+            # schema goes in the (cacheable) system block and the reply is parsed here.
+            instruction = json_instruction(response_schema.model_json_schema())
+            system_prompt = f"{system_prompt}\n\n{instruction}".strip()
+        else:
+            output_config["format"] = {"type": "json_schema", "schema": sendable}
         if thinking is not None:
             output_config["effort"] = _as_effort(thinking)
         system, message = _request_parts(
@@ -464,6 +469,8 @@ class AnthropicAdapter:
             output_config=output_config,
         )
         text = "".join(block.text for block in response.content if block.type == "text")
+        if prompt_json:
+            text = extract_json(text)
         return AnthropicReply(
             text=text, usage=_usage_of(response), stop_reason=response.stop_reason
         )
