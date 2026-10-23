@@ -11,7 +11,12 @@ from unittest.mock import MagicMock, patch
 from lemely.core.leaf_kind import leaf_kind
 from lemely.core.loose_schemas import QuestionType
 from lemely.core.schemas import AIMarkResponse
-from lemely.io.gemini import GeminiClient, _reset_process_counters, record_calls
+from lemely.io.gemini import (
+    GeminiClient,
+    _reset_process_counters,
+    process_call_records,
+    record_calls,
+)
 from tests.gemini_fakes import fake_genai_client, make_settings
 from tests.test_anthropic_adapter import _VALID_MARK, _FakeAnthropic, _message, _settings
 
@@ -66,6 +71,11 @@ class EffortTests(unittest.TestCase):
         self.assertEqual(self._effort(table, kind="numeric"), "medium")
         self.assertEqual(self._effort({}, kind="extended"), "low")
         self.assertEqual(self._effort({"correction": "max"}, kind=None), "max")
+
+    def test_the_call_record_carries_the_leaf_kind_effort(self) -> None:
+        table = {"correction:extended": "xhigh", "correction": "medium"}
+        self._effort(table, kind="extended")
+        self.assertEqual(process_call_records()[-1].thinking, "xhigh")
 
     def test_effort_is_in_the_cache_key(self) -> None:
         settings = _settings(self.tmp)

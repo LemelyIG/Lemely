@@ -53,7 +53,7 @@ class ScanMetadataExtractor:
         user_prompt = build_scan_meta_user_prompt(scan_path)
         model = self._client.model_for_tag("scan_metadata")
         if isinstance(model, str) and is_anthropic_model(model):
-            pages = rasterise_scan_to_pages(scan_path)[:_METADATA_PAGES]
+            pages = rasterise_scan_to_pages(scan_path, max_pages=_METADATA_PAGES)
             return self._client.generate_structured(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,

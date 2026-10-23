@@ -63,3 +63,15 @@ def test_model_rows_one_per_configured_tag_with_provider_effort_and_price() -> N
 def test_model_rows_unpriced_model_has_no_price() -> None:
     rows = model_rows(_with_gemini(correction_model="claude-nonexistent-9"), on=date(2026, 10, 19))
     assert next(r for r in rows if r.tag == "correction").price is None
+
+
+def test_the_first_binder_read_shows_the_extraction_effort_and_the_overview_is_listed() -> None:
+    s = Settings().model_copy(deep=True)
+    s.binding.claude_chunked_read = True
+    s.gemini.thinking_level_for = {**s.gemini.thinking_level_for, "extraction": "high"}
+    s.gemini.thinking_level_for.pop("binding_read", None)
+    rows = {r.tag: r for r in model_rows(s, on=date(2026, 10, 19))}
+    assert rows["binding_read"].effort == rows["extraction"].effort
+    assert "binding_overview" in rows
+    assert rows["binding_overview"].model == s.binding.read_model
+    assert "binding_overview" not in configured_models(Settings())

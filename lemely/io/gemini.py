@@ -1726,10 +1726,12 @@ class GeminiClient:
         same images as Files API URIs instead of inline bytes; the cache key
         still comes from ``image_parts``.
 
-        On a ``claude-`` model ``image_parts`` go to the Anthropic adapter as
-        base64 image blocks (scaled down or refused there by the API's limits);
-        ``image_uploads`` is ignored (never uploaded) and ``media_resolution``
-        is not sent, though it stays in the cache key as for any call.
+        On a ``claude-`` model ``image_parts`` are fitted, then sent as Files API
+        references when ``image_uploads`` is a ``ClaudeImageUploads`` (uploaded once
+        per job), falling back to inline base64 image blocks if the upload fails or
+        no uploads handle is given; a Gemini ``ImageUploads`` handle is ignored.
+        ``media_resolution`` is not sent, though it stays in the cache key as for
+        any call.
         ``file_paths`` is refused; ``documents`` go as ``document`` blocks, first.
         ``documents`` and ``file_paths`` together raise ``ValueError``; on Gemini
         a document is uploaded from its ``source_path``.
@@ -1982,9 +1984,24 @@ class GeminiClient:
             task=task_tag or "untagged",
             model=active_model,
         )
-        raw_text = self._call_code_execution_once(
-            active_model, prompt, log, task_tag, params_fingerprint=params_fingerprint
-        )
+        if is_anthropic_model(active_model):
+            # Claude's transients (429/529/5xx) retry under the client's policy; a
+            # final one is an ExternalServiceError, as every Gemini failure already is.
+            try:
+                raw_text = self._retry_policy(log, task_tag=task_tag, model=active_model)(
+                    self._call_code_execution_once,
+                    active_model,
+                    prompt,
+                    log,
+                    task_tag,
+                    params_fingerprint=params_fingerprint,
+                )
+            except _TransientError as exc:
+                raise ExternalServiceError(str(exc)) from exc
+        else:
+            raw_text = self._call_code_execution_once(
+                active_model, prompt, log, task_tag, params_fingerprint=params_fingerprint
+            )
 
         if cache_mode in ("read_write", "refresh"):
             cache_path.write_text(raw_text, encoding="utf-8")
@@ -2097,7 +2114,11 @@ class GeminiClient:
             usd_2027 += extra_usd_2027
         usd_rounded = round(usd, 6)
         attempt, question_id = _call_labels.get()
-        thinking = self.resolved_thinking(task_tag, model) if task_tag and sends_thinking else None
+        thinking = (
+            self.resolved_thinking(task_tag, model, _call_leaf_kind.get())
+            if task_tag and sends_thinking
+            else None
+        )
         g = self._settings.gemini
         new_total: float | None = None
         crossed: list[float] = []
@@ -2504,7 +2525,8 @@ class GeminiClient:
 
         Returns the ``output`` of the response's ``code_execution_result``
         part (Claude: the executed code's stdout; a ``pause_turn`` is continued
-        inside the provider, ``max_tokens`` / ``refusal`` give no text). No retry loop here (unlike :meth:`_call_with_retry`) — a
+        inside the provider, ``max_tokens`` / ``refusal`` give no text). No retry loop here (unlike :meth:`_call_with_retry`;
+        :meth:`generate_with_code_execution` retries Claude's transients around it) — a
         code-execution call is only ever made from
         :mod:`lemely.io.question_gates`' fallback path, where a transient
         failure is just one more reason the gate could not verify this

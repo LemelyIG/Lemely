@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import itertools
 import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
@@ -603,7 +604,9 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
 SCAN_PAGES_TARGET = "lemely.io.rasterise.iter_scan_pages"
 
 
-def iter_scan_pages(scan_path: Path, dpi: float) -> Iterator[RasterisedPage]:
+def iter_scan_pages(
+    scan_path: Path, dpi: float, max_pages: int | None = None
+) -> Iterator[RasterisedPage]:
     """The pages of a scan, one at a time: what the extraction worker's child runs.
 
     Dispatches on the file's actual content, as :func:`rasterise_scan_to_pages`
@@ -611,7 +614,8 @@ def iter_scan_pages(scan_path: Path, dpi: float) -> Iterator[RasterisedPage]:
     A PDF neither reader finds a page in yields nothing (the caller raises
     the ``ValueError``): only that ``ValueError``, from the rewrite, before
     any page is rendered, is caught, so a failure part-way through can never
-    pass for a shorter scan.
+    pass for a shorter scan. ``max_pages`` stops after that many pages, before the
+    rest are rendered; None renders them all.
     """
     if not _looks_like_pdf(scan_path):
         yield from _rasterise_single_image(scan_path)
@@ -620,11 +624,17 @@ def iter_scan_pages(scan_path: Path, dpi: float) -> Iterator[RasterisedPage]:
         canonical = canonical_pdf_bytes(scan_path.read_bytes())
     except ValueError:  # "the PDF has no pages"
         return
-    yield from _iter_canonical_pages(canonical, dpi=dpi)
+    if max_pages is None:
+        yield from _iter_canonical_pages(canonical, dpi=dpi)
+        return
+    # Closed on exit so the document is released as soon as the last wanted page is out.
+    rendering = cast("Generator[RasterisedPage]", _iter_canonical_pages(canonical, dpi=dpi))
+    with contextlib.closing(rendering):
+        yield from itertools.islice(rendering, max_pages)
 
 
 def rasterise_scan_to_pages(
-    scan_path: Path, *, dpi: float = EXTRACTION_DPI
+    scan_path: Path, *, dpi: float = EXTRACTION_DPI, max_pages: int | None = None
 ) -> list[RasterisedPage]:
     """Rasterise a scanned exam paper to per-page PNG images, in the extraction worker.
 
@@ -645,7 +655,8 @@ def rasterise_scan_to_pages(
     ``reason`` and text) and raised as :class:`ScanRenderFailedError`, whose
     message is the fixed :data:`RENDER_FAILED_MESSAGE`: both grading flows
     show the error's text to the user. Raises :class:`ValueError` when the
-    scan produced no pages.
+    scan produced no pages. ``max_pages`` renders only the first that many pages of
+    a PDF (the rest are never decoded); None renders all.
     """
     # `stream` is a generator function, so its result has `close()`.
     stream = cast(
@@ -654,6 +665,7 @@ def rasterise_scan_to_pages(
             SCAN_PAGES_TARGET,
             scan_path,
             dpi,
+            *(() if max_pages is None else (max_pages,)),
             timeout=sandbox.sandbox_settings().extraction_timeout_seconds,
             item_type=RasterisedPage,
         ),

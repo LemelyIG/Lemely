@@ -1180,6 +1180,9 @@ def binding_models(settings: Settings) -> dict[str, str]:
         models = {"binding_read": binding.read_model}
         if binding.second_read and binding.second_read_model is not None:
             models[SECOND_READ_TASK_TAG] = binding.second_read_model
+        if binding.claude_chunked_read is True:
+            # The overview pass runs on the read model (chunked_read.py), under its own tag.
+            models["binding_overview"] = binding.read_model
         return models
     if binding.gate != "off":
         return {"binding_retry": binding.retry_model}

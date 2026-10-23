@@ -376,7 +376,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(fake.messages.calls[1]["messages"], [{"role": "user", "content": "user"}])
 
     def test_sdk_errors_split_into_transient_and_permanent(self) -> None:
-        for status in (429, 500, 503, 529):
+        for status in (408, 409, 429, 500, 503, 529):
             with self.subTest(status=status):
                 adapter = AnthropicAdapter(_FakeAnthropic(_status_error(status)))
                 with self.assertRaises(ProviderTransientError):

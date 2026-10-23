@@ -11,11 +11,14 @@ would save.
 
 Scope: text and page images in, structured JSON out. Images arrive as
 encoded PNG or JPEG bytes (``GeminiClient.generate_structured``'s
-``image_parts``) and are sent as base64 ``image`` blocks (or Files API ids), ahead
-of the text, in the order given. Files (``file_paths``) are still rejected before a
-request is built, and Gemini's own image knobs do not apply: ``image_uploads``
-(Files API handles) and ``media_resolution`` are ignored for a ``claude-``
-model, which always gets the bytes themselves.
+``image_parts``). With ``gemini.claude_files_api`` on (the default) the provider
+uploads them once per job to Anthropic's Files API and sends ``image`` blocks that
+reference the file ids; if the upload fails, or the flag is off, they go inline as
+base64 ``image`` blocks. Either way the user message is ordered documents, images
+(in the order given), the cached prefix text, then the prompt. Files (``file_paths``)
+are still rejected before a request is built, and Gemini's own image knobs do not
+apply: Gemini's ``image_uploads`` handles are replaced by the Claude uploads described
+above, and ``media_resolution`` is ignored for a ``claude-`` model.
 
 Images arrive already fitted by ``lemely.io.llm.image_fit`` (greyscale, long
 edge, token and byte budgets). This module only checks what the API would refuse
@@ -136,11 +139,14 @@ _EFFORT_FOR_LEVEL: dict[str, Effort] = {
     "high": "high",
 }
 
-#: 429 rate limit, 529 overloaded, and every 5xx are retried by the client.
-_TRANSIENT_STATUS = frozenset({429, 529})
+#: 408 timeout, 409 conflict, 429 rate limit, 529 overloaded, and every 5xx are retried
+#: by the client (the Anthropic SDK's own retry policy retries the same statuses).
+_TRANSIENT_STATUS = frozenset({408, 409, 429, 529})
 
-#: The API's image cap for a 200k-context model (600 for the others); the lower
-#: one, since a binding read is a few dozen pages at most.
+#: The API's image cap per request: 100 for a model with a 200k-token context window,
+#: 600 for every other (platform.claude.com/docs/en/build-with-claude/vision, "Request
+#: limits", read 2026-10-23). The lower one holds for all, and a binding read (chunked
+#: or not) is a few dozen pages at most.
 MAX_IMAGES_PER_REQUEST = 100
 #: One image, base64-encoded (the API's limit is 10 MB).
 MAX_IMAGE_BASE64_BYTES = 10_000_000

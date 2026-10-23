@@ -19,7 +19,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
 from lemely.io.binding.label_binder import StreamRead, _StreamOutput, parse_stream_items
-from lemely.io.llm.image_fit import FittedImages, fit, thumbnails
+from lemely.io.llm.image_fit import FittedImages, estimate_floor_tokens, fit, thumbnails
 from lemely.io.prompts.label_binding import (
     CHUNK_VERSION,
     LABEL_BINDING_SYSTEM_PROMPT,
@@ -146,10 +146,17 @@ class ChunkedLabelReader:
         return fitted
 
     def applies(self, pages: list[RasterisedPage], model: str | None) -> bool:
-        """A claude- read whose pages are still over the token budget at the floor."""
-        return (
-            model is not None and is_anthropic_model(model) and self._fit(pages).over_token_budget
+        """A claude- read whose pages are still over the token budget at the floor.
+
+        Decided from the page headers alone; the full fit runs only on the chunked path.
+        """
+        if model is None or not is_anthropic_model(model):
+            return False
+        g = self._client._settings.gemini
+        floor_tokens = estimate_floor_tokens(
+            [p.png_bytes for p in pages], floor_px=g.claude_image_floor_px
         )
+        return floor_tokens > g.claude_image_token_budget
 
     def _page_map(
         self, pages: list[RasterisedPage], mark_scheme: MarkScheme, *, model: str
@@ -163,10 +170,8 @@ class ChunkedLabelReader:
                     system_prompt=OVERVIEW_SYSTEM_PROMPT,
                     user_prompt=build_overview_user_prompt(mark_scheme, page_count=len(pages)),
                     image_parts=list(
-                        thumbnails(
-                            [p.png_bytes for p in pages],
-                            enhance=self._client._settings.gemini.claude_image_enhance is True,
-                        )
+                        # Plain: the provider's own fit enhances the thumbnails once.
+                        thumbnails([p.png_bytes for p in pages], enhance=False)
                     ),
                     response_schema=PageMap,
                     prompt_version=OVERVIEW_VERSION,

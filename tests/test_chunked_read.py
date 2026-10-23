@@ -161,6 +161,30 @@ class ReadTests(unittest.TestCase):
         self.assertFalse(ChunkedLabelReader(_client(budget=95_000)).applies(pages, _HAIKU))
         self.assertFalse(ChunkedLabelReader(_client()).applies(pages, "gemini-3.8-flash"))
 
+    def test_applies_decides_from_headers_without_fitting_or_encoding(self) -> None:
+        from unittest.mock import patch
+
+        pages = _pages()
+        reader = ChunkedLabelReader(_client())
+        with (
+            patch("lemely.io.llm.image_fit._encode") as encode,
+            patch("lemely.io.binding.chunked_read.fit") as fit,
+        ):
+            self.assertTrue(reader.applies(pages, _HAIKU))
+            self.assertFalse(ChunkedLabelReader(_client(budget=95_000)).applies(pages, _HAIKU))
+        encode.assert_not_called()
+        fit.assert_not_called()
+
+    def test_overview_thumbnails_are_not_enhanced_before_the_provider_fit(self) -> None:
+        from unittest.mock import patch
+
+        pages = _pages()
+        reader = ChunkedLabelReader(_client())
+        reader._client._settings.gemini.claude_image_enhance = True
+        with patch("lemely.io.binding.chunked_read.thumbnails", return_value=(b"t",)) as thumbs:
+            self._read(reader, pages, _FakeModel(pages), "extraction")
+        self.assertFalse(thumbs.call_args.kwargs["enhance"])
+
 
 class _OverviewModel(_FakeModel):
     """A model whose overview answer is chosen by the test, optionally held open."""

@@ -17,6 +17,10 @@ if TYPE_CHECKING:
     from lemely.io.llm.pricing import PriceRow
     from lemely.runtime.config import Settings
 
+#: A listed tag whose calls run under another tag's thinking level: the first binder
+#: read is made under ``extraction`` (see ``lemely.io.binding.orchestrate``).
+_EFFORT_TAG: dict[str, str] = {"binding_read": "extraction"}
+
 #: The task tags resolved through ``GeminiSettings.model_for``.
 MODEL_TABLE_TAGS: tuple[str, ...] = (
     "correction",
@@ -83,7 +87,7 @@ def model_rows(settings: Settings, *, on: date) -> list[ModelRow]:
                 tag=tag,
                 model=model,
                 provider="anthropic" if is_anthropic_model(model) else "gemini",
-                effort=str(client.resolved_thinking(tag, model)),
+                effort=str(client.resolved_thinking(_EFFORT_TAG.get(tag, tag), model)),
                 price=price,
             )
         )

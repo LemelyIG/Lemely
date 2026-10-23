@@ -72,12 +72,12 @@ class TestScanMetadataOnClaude:
         client = self._client()
         with (
             patch(
-                "lemely.io.scan_metadata.rasterise_scan_to_pages", return_value=pages
+                "lemely.io.scan_metadata.rasterise_scan_to_pages", return_value=pages[:2]
             ) as sandboxed,
             patch("lemely.io.rasterise.rasterise_pdf_to_pages") as in_process,
         ):
             ScanMetadataExtractor(client)(scan)
-        sandboxed.assert_called_once_with(scan)
+        sandboxed.assert_called_once_with(scan, max_pages=2)
         in_process.assert_not_called()
         kwargs = client.generate_structured.call_args.kwargs
         assert kwargs["image_parts"] == [bytes([0]), bytes([1])]

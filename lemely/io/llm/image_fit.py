@@ -179,6 +179,30 @@ def _prepare(data: bytes, page: int, first_edge: int) -> Image.Image:
         raise ProviderError(f"page {page} could not be read as an image: {exc}") from exc
 
 
+def estimate_floor_tokens(images: Sequence[bytes], *, floor_px: int) -> int:
+    """The tokens ``images`` come to at the floor size, read from headers (no pixel decode).
+
+    Matches ``fit``'s last step: the same sizes, so ``> token_budget`` here is
+    ``fit(...).over_token_budget`` without encoding a page.
+
+    Raises:
+        ProviderError: a page's header cannot be read (named by its 1-based number).
+        ValueError: ``floor_px`` is less than 1.
+    """
+    if floor_px < 1:
+        raise ValueError(f"floor_px must be positive, got {floor_px}")
+    steps = steps_for(floor_px, len(images))
+    total = 0
+    for number, data in enumerate(images, start=1):
+        try:
+            with Image.open(io.BytesIO(data)) as src:
+                width, height = src.size
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            raise ProviderError(f"page {number} could not be read as an image: {exc}") from exc
+        total += estimate_tokens(*_size_at(*_size_at(width, height, steps[0]), steps[-1]))
+    return total
+
+
 def img_fit_version(*, enhance: bool = True) -> str:
     """The cache-key version for output made with or without enhancement."""
     return IMG_FIT_VERSION if enhance else IMG_FIT_VERSION_PLAIN

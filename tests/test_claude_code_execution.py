@@ -15,8 +15,8 @@ from lemely.io.gemini import (
     record_calls,
 )
 from lemely.io.providers.anthropic_adapter import MAX_PAUSE_CONTINUATIONS, AnthropicAdapter
-from lemely.runtime.errors import ParseError
-from tests.test_anthropic_adapter import _FakeAnthropic, _settings
+from lemely.runtime.errors import ExternalServiceError, ParseError
+from tests.test_anthropic_adapter import _FakeAnthropic, _settings, _status_error
 
 _HAIKU = "claude-haiku-5-5"
 
@@ -79,6 +79,30 @@ class CodeExecutionTests(unittest.TestCase):
             call["tools"], [{"type": "code_execution_20260521", "name": "code_execution"}]
         )
         self.assertNotIn("format", call.get("output_config", {}))
+
+    def test_a_transient_error_is_retried_under_the_client_policy(self) -> None:
+        with patch("lemely.io.gemini.time.sleep"):
+            text, fake = self._run(_status_error(529), _message(_result("42\n")))
+        self.assertEqual(text, "42")
+        self.assertEqual(len(fake.messages.calls), 2)
+
+    def test_a_persistent_transient_error_is_an_external_service_error(self) -> None:
+        # question_gates catches (ParseError, ExternalServiceError): nothing else may escape.
+        fake = _FakeAnthropic(*[_status_error(529) for _ in range(2)])
+        client = GeminiClient(
+            _settings(self.tmp, max_retries=1),
+            _genai_client=object(),
+            _anthropic_client=fake,
+            ledger=None,
+        )
+        with (
+            patch("lemely.io.gemini.time.sleep"),
+            self.assertRaises(ExternalServiceError),
+        ):
+            client.generate_with_code_execution(
+                prompt="p", prompt_version="v1", model=_HAIKU, task_tag="question_validity"
+            )
+        self.assertEqual(len(fake.messages.calls), 2)
 
     def test_text_only_reply_is_a_parse_error(self) -> None:
         # No code ran: prose must never pass as sandbox output.
