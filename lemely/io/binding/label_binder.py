@@ -339,6 +339,7 @@ class LabelBinder:
                 pages,
                 mark_scheme,
                 model=cast("str", model),
+                media_resolution=media_resolution,
                 extra_cache_key=extra_cache_key,
                 task_tag=task_tag,
             )

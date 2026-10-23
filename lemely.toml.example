@@ -342,6 +342,9 @@ second_read_mode = "always"
 # second_read_model = "claude-haiku-5-5"
 # A claude- read still over the token budget at the image floor is read as
 # an overview pass plus page chunks under the budget (off until screened).
+# The binding_overview call (the 768 px map pass) uses the effort, output cap and
+# cache defaults of its tag unless set. Chunk calls send their pages inline, not
+# through the Files API: input tokens are unchanged, bandwidth is higher.
 # claude_chunked_read = false
 # The model the legacy binder's one retry uses, when the gate is on.
 retry_model = "gemini-3.8-flash"

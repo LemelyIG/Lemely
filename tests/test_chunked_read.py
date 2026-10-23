@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,7 @@ from lemely.io.binding.chunked_read import (
 )
 from lemely.io.binding.label_binder import LabelBinder, parse_stream_items
 from lemely.io.gemini import GeminiClient
+from lemely.io.prompts.label_binding import build_label_binding_user_prompt
 from lemely.io.rasterise import RasterisedPage
 from tests.gemini_fakes import fake_genai_client, make_settings
 
@@ -157,6 +160,141 @@ class ReadTests(unittest.TestCase):
         pages = _pages()
         self.assertFalse(ChunkedLabelReader(_client(budget=95_000)).applies(pages, _HAIKU))
         self.assertFalse(ChunkedLabelReader(_client()).applies(pages, "gemini-3.8-flash"))
+
+
+class _OverviewModel(_FakeModel):
+    """A model whose overview answer is chosen by the test, optionally held open."""
+
+    def __init__(self, pages: list[RasterisedPage], overview: PageMap) -> None:
+        super().__init__(pages)
+        self.overview = overview
+        self.entered = threading.Event()
+        self.second_entered = threading.Event()
+        self.release = threading.Event()
+        self.hold = False
+
+    def __call__(self, **kwargs: Any) -> Any:
+        if kwargs["task_tag"] == OVERVIEW_TASK_TAG:
+            self.calls.append(kwargs)
+            if self.entered.is_set():
+                self.second_entered.set()
+            self.entered.set()
+            if self.hold:
+                self.release.wait(timeout=10)
+            return self.overview
+        return super().__call__(**kwargs)
+
+
+def _true_map() -> PageMap:
+    return PageMap(pages=[PageEntry(page=p, labels=[f"{p + 1}"]) for p in range(_PAGES)])
+
+
+class OverviewLockTests(unittest.TestCase):
+    def test_two_concurrent_reads_make_one_overview_call(self) -> None:
+        from unittest.mock import patch
+
+        pages = _pages()
+        reader = ChunkedLabelReader(_client())
+        model = _OverviewModel(pages, _true_map())
+        model.hold = True
+        with patch.object(reader._client, "generate_structured", side_effect=model):
+            threads = [
+                threading.Thread(
+                    target=reader.read,
+                    args=(pages, _scheme()),
+                    kwargs={"model": _HAIKU, "extra_cache_key": "k", "task_tag": tag},
+                )
+                for tag in ("extraction", "binding_second_read")
+            ]
+            threads[0].start()
+            self.assertTrue(model.entered.wait(timeout=10))
+            threads[1].start()
+            # Without the lock the second read reaches the overview call while the first holds it.
+            model.second_entered.wait(timeout=1.5)
+            model.release.set()
+            for t in threads:
+                t.join(timeout=30)
+        tags = [c["task_tag"] for c in model.calls]
+        self.assertEqual(tags.count(OVERVIEW_TASK_TAG), 1)
+
+
+class OverviewValidationTests(unittest.TestCase):
+    def _chunk_prompts(self, overview: PageMap) -> list[str]:
+        from unittest.mock import patch
+
+        pages = _pages()
+        reader = ChunkedLabelReader(_client())
+        model = _OverviewModel(pages, overview)
+        with patch.object(reader._client, "generate_structured", side_effect=model):
+            merged = reader.read(
+                pages, _scheme(), model=_HAIKU, extra_cache_key="k", task_tag="extraction"
+            )
+        self.assertEqual(len(merged.items), 2 * _PAGES)
+        return [c["user_prompt"] for c in model.calls if c["task_tag"] != OVERVIEW_TASK_TAG]
+
+    def test_a_map_that_does_not_cover_the_pages_exactly_narrows_nothing(self) -> None:
+        def listed(prompt: str) -> int:
+            return sum(1 for line in prompt.splitlines() if re.match(r"- \S+ \[\d+ marks?\]", line))
+
+        whole = listed(build_label_binding_user_prompt(_scheme(), page_count=1))
+        one_based = PageMap(pages=[PageEntry(page=p + 1, labels=["1"]) for p in range(_PAGES)])
+        duplicate = PageMap(pages=[*_true_map().pages, PageEntry(page=3, labels=["2"])])
+        missing = PageMap(pages=_true_map().pages[:-1])
+        out_of_range = PageMap(pages=[*_true_map().pages[:-1], PageEntry(page=99, labels=["1"])])
+        for bad in (one_based, duplicate, missing, out_of_range):
+            for prompt in self._chunk_prompts(bad):
+                self.assertNotIn("Page map of the whole script", prompt)
+                self.assertEqual(listed(prompt), whole)
+        from lemely.io.prompts.label_binding import _printed_labels
+
+        first = _printed_labels(_scheme())[0][0]
+        good = self._chunk_prompts(
+            PageMap(pages=[PageEntry(page=p, labels=[first]) for p in range(_PAGES)])
+        )
+        self.assertTrue(all("Page map of the whole script" in p for p in good))
+        self.assertLess(listed(good[0]), whole)
+
+    def test_narrowing_keeps_the_scheme_neighbours_of_a_mapped_label(self) -> None:
+        from lemely.io.prompts.label_binding import _printed_labels
+
+        scheme = _scheme()
+        printed = [label for label, _ in _printed_labels(scheme)]
+        mid = len(printed) // 2
+        prompt = build_label_binding_user_prompt(scheme, page_count=3, labels=[printed[mid]])
+        for label in printed[mid - 1 : mid + 2]:
+            self.assertIn(f"- {label} [", prompt)
+        self.assertNotIn(f"- {printed[mid + 3]} [", prompt)
+
+    def test_overlap_page_items_are_counted_as_drops(self) -> None:
+        from unittest.mock import patch
+
+        pages = _pages()
+        reader = ChunkedLabelReader(_client())
+        model = _OverviewModel(pages, _true_map())
+        with patch.object(reader._client, "generate_structured", side_effect=model):
+            merged = reader.read(
+                pages, _scheme(), model=_HAIKU, extra_cache_key="k", task_tag="extraction"
+            )
+        self.assertEqual(merged.drops.get("overlap_page"), 2 * 3)
+
+    def test_media_resolution_reaches_the_chunk_calls(self) -> None:
+        from unittest.mock import patch
+
+        pages = _pages()
+        reader = ChunkedLabelReader(_client())
+        model = _OverviewModel(pages, _true_map())
+        with patch.object(reader._client, "generate_structured", side_effect=model):
+            reader.read(
+                pages,
+                _scheme(),
+                model=_HAIKU,
+                media_resolution="medium",
+                extra_cache_key="k",
+                task_tag="extraction",
+            )
+        chunk_calls = [c for c in model.calls if c["task_tag"] != OVERVIEW_TASK_TAG]
+        self.assertTrue(chunk_calls)
+        self.assertTrue(all(c["media_resolution"] == "medium" for c in chunk_calls))
 
 
 class BinderDispatchTests(unittest.TestCase):

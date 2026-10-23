@@ -437,6 +437,11 @@ def render_example_toml() -> str:
     lines.append('# second_read_model = "claude-haiku-5-5"')
     lines.append("# A claude- read still over the token budget at the image floor is read as")
     lines.append("# an overview pass plus page chunks under the budget (off until screened).")
+    lines.append(
+        "# The binding_overview call (the 768 px map pass) uses the effort, output cap and"
+    )
+    lines.append("# cache defaults of its tag unless set. Chunk calls send their pages inline, not")
+    lines.append("# through the Files API: input tokens are unchanged, bandwidth is higher.")
     lines.append(f"# claude_chunked_read = {_toml_bool(s.binding.claude_chunked_read)}")
     lines.append("# The model the legacy binder's one retry uses, when the gate is on.")
     lines.append(f'retry_model = "{s.binding.retry_model}"')

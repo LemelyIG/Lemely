@@ -272,14 +272,20 @@ def build_label_binding_user_prompt(
     year = meta.session_year if meta.session_year is not None else "Specimen"
     printed = _printed_labels(mark_scheme)
     if labels:
-        wanted = [
-            (label, marks)
-            for label, marks in printed
-            if any(
+        # The map is a 768 px read and can miss a label: keep each matched leaf's
+        # neighbours in scheme order too, so a missed label is still on the list.
+        hit = [
+            any(
                 label == m or label.startswith(m + "(") or m.startswith(label + "(") for m in labels
             )
+            for label, _marks in printed
         ]
-        printed = wanted or printed
+        keep = [
+            hit[i] or (i > 0 and hit[i - 1]) or (i + 1 < len(hit) and hit[i + 1])
+            for i in range(len(hit))
+        ]
+        wanted = [entry for entry, k in zip(printed, keep, strict=True) if k]
+        printed = wanted if any(hit) else printed
     label_list = "\n".join(
         f"- {label} [{marks} mark{'s' if marks != 1 else ''}]" for label, marks in printed
     )
@@ -329,10 +335,14 @@ def build_chunk_user_prompt(
     first_page: int,
     total_pages: int,
     overlap: bool,
-    page_map: str,
-    labels: Sequence[str],
+    page_map: str | None,
+    labels: Sequence[str] | None,
 ) -> str:
-    """One chunk's binder request: the normal request, its labels, its place, the map."""
+    """One chunk's binder request: the normal request, its labels, its place, the map.
+
+    ``labels`` and ``page_map`` of None (an overview that did not validate) leave the
+    full label list and no map.
+    """
     base = build_label_binding_user_prompt(mark_scheme, page_count=page_count, labels=labels)
     place = (
         f"This is part of a longer script of {total_pages} pages. The attached images are "
@@ -344,4 +354,6 @@ def build_chunk_user_prompt(
             " Image 0 is the last page of the previous part, sent again only so that writing "
             "carrying on from it makes sense: list nothing that is on image 0."
         )
+    if page_map is None:
+        return f"{base}\n\n{place}"
     return f"{base}\n\n{place}\n\nPage map of the whole script, from an overview read:\n{page_map}"
