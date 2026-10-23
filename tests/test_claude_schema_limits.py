@@ -6,12 +6,14 @@ import json
 import unittest
 from pathlib import Path
 from typing import Literal
+from unittest.mock import patch
 
 import anthropic
 from pydantic import BaseModel, ValidationError
 
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import AIMarkResponse
+from lemely.io.llm.request import provider_fingerprint
 from lemely.io.providers.anthropic_adapter import AnthropicAdapter
 from lemely.io.providers.claude_schema import (
     CLAUDE_MAX_OPTIONAL_PARAMS,
@@ -211,3 +213,39 @@ class BudgetTests(unittest.TestCase):
             "required": ["inline", "rows"],
         }
         self.assertEqual(schema_budget(schema), (3, 1))
+
+
+def _fp(model: str, schema: type[BaseModel] | None) -> str:
+    return provider_fingerprint(
+        model,
+        max_output_tokens=1000,
+        image_token_budget=1500,
+        image_floor_px=400,
+        image_enhance=False,
+        response_schema=schema,
+    )
+
+
+class _Plain(BaseModel):
+    name: str
+    kind: str | None = None
+
+
+class CacheKeyTests(unittest.TestCase):
+    def test_prompt_json_schema_key_carries_the_version(self) -> None:
+        self.assertTrue(_fp(_MODEL, _Node).endswith(f"|pj={PROMPT_JSON_VERSION}"))
+        self.assertTrue(_fp(_MODEL, _wide_model()).endswith(f"|pj={PROMPT_JSON_VERSION}"))
+
+    def test_version_bump_changes_the_key(self) -> None:
+        before = _fp(_MODEL, _Node)
+        with patch("lemely.io.providers.claude_schema.PROMPT_JSON_VERSION", "pj-next"):
+            after = _fp(_MODEL, _Node)
+        self.assertNotEqual(before, after)
+        self.assertTrue(after.endswith("|pj=pj-next"))
+
+    def test_within_limit_schema_key_has_no_pj(self) -> None:
+        self.assertNotIn("|pj=", _fp(_MODEL, _Plain))
+        self.assertEqual(_fp(_MODEL, _Plain), _fp(_MODEL, None))
+
+    def test_gemini_key_unchanged(self) -> None:
+        self.assertEqual(_fp("gemini-2.5-flash", _Node), "")

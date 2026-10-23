@@ -1400,6 +1400,7 @@ class GeminiClient:
                 image_token_budget=self._settings.gemini.claude_image_token_budget,
                 image_floor_px=self._settings.gemini.claude_image_floor_px,
                 image_enhance=self._settings.gemini.claude_image_enhance is True,
+                response_schema=response_schema,
             )
         return hashlib.sha256(raw.encode()).hexdigest()[:12]
 

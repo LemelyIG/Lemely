@@ -82,23 +82,34 @@ def provider_fingerprint(
     image_token_budget: int,
     image_floor_px: int,
     image_enhance: bool,
+    response_schema: type[BaseModel] | None = None,
 ) -> str:
     """The provider part of a reply's cache key: the single source for it.
 
     Empty for every Gemini model, so no Gemini key moves. A ``claude-`` model adds
     the provider name, the reply cap it is sent with, the page-image fit version and
     the token budget, pixel floor and enhancement that fit uses (each changes the pixels
-    sent; ``image_enhance`` selects the fit version).
+    sent; ``image_enhance`` selects the fit version). When ``response_schema`` takes the
+    prompt-JSON route, ``|pj=<PROMPT_JSON_VERSION>`` is appended, since the instruction
+    wording is part of what is sent.
     """
     if not is_anthropic_model(model):
         return ""
     # Read at call time, and imported here, so importing this module stays free of Pillow.
     from lemely.io.llm import image_fit
 
-    return (
+    fingerprint = (
         f"|provider=anthropic|max_tokens={max_output_tokens}|img_fit={image_fit.img_fit_version(enhance=image_enhance)}"
         f"|img_budget={image_token_budget}|img_floor={image_floor_px}"
     )
+    if response_schema is not None:
+        import anthropic
+
+        from lemely.io.providers.claude_schema import PROMPT_JSON_VERSION, needs_prompt_json
+
+        if needs_prompt_json(anthropic.transform_schema(response_schema)):
+            fingerprint += f"|pj={PROMPT_JSON_VERSION}"
+    return fingerprint
 
 
 @dataclass(frozen=True)
@@ -137,4 +148,5 @@ class LLMRequest:
             image_token_budget=image_token_budget,
             image_floor_px=image_floor_px,
             image_enhance=image_enhance,
+            response_schema=self.response_schema,
         )
