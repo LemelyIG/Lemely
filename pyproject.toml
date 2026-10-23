@@ -18,6 +18,10 @@ dependencies = [
   "structlog>=24,<26",
   "tenacity>=9,<10",
   "google-genai>=2.1,<3",
+  # lemely/io/providers/anthropic_adapter.py (cost-ladder lever A1). Floor at
+  # the release current on 2026-10-19; 1.x is the httpx2-based line whose
+  # `output_config` structured outputs and `transform_schema` the adapter uses.
+  "anthropic>=1.15.0,<2",
   "PyMuPDF>=1.27,<2",
   "Pillow>=12,<13",
   "jinja2>=3.1,<4",
@@ -166,6 +170,10 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/io/prompts/__init__.py" = ["F403", "F401"]
 "lemely/io/gemini.py" = ["PLW0603", "PLW0602", "BLE001", "ANN401", "E501", "TCH", "SIM102"]
 "lemely/io/ciegt.py" = ["ANN401"]
+"lemely/io/llm/request.py" = ["ANN401"]
+"lemely/io/llm/provider.py" = ["ANN401"]
+"lemely/io/llm/gemini_provider.py" = ["ANN401"]
+"lemely/io/llm/claude_provider.py" = ["ANN401"]
 "lemely/io/parsers.py" = ["TCH"]
 "lemely/io/det/gmp.py" = ["ANN401"]
 # Unicode lookalikes are the entire subject matter here: the module maps Adobe
@@ -315,12 +323,19 @@ module = [
   "lemely.app.gradio_app",
   "lemely.app.live_log",
   "lemely.io.gemini",
+  # Provider-neutral request/reply carry the SDK-shaped `uploads`, `usage_response`
+  # and `log` handles as Any, as the client does.
+  "lemely.io.llm.request",
+  "lemely.io.llm.provider",
+  "lemely.io.llm.gemini_provider",
+  "lemely.io.llm.claude_provider",
   # Injectable-SDK-client precedent (see lemely.io.gemini above): the
   # constructor's `_client: Any` is the same test-seam shape, and the SDK's
   # own `Client`/`Blob` types are otherwise untyped here (google.cloud.*
   # above).
   "lemely.io.storage_gcs",
   "lemely.io.answer_extraction",
+  "lemely.io.binding.chunked_read",
   "lemely.io.scan_hygiene",
   "lemely.io.reread",
   "lemely.io.correction_ai",

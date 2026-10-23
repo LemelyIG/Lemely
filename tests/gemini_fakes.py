@@ -10,12 +10,17 @@ prove overlap with a ``threading.Barrier``) or make one fail.
 
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import MagicMock
+
+from google.genai import types
+
+from lemely.runtime.config import PathsSettings, Settings, load_settings
 
 
 @dataclass
@@ -78,3 +83,50 @@ def fake_genai_client() -> MagicMock:
     client = MagicMock()
     client.files = FakeFiles()
     return client
+
+
+def make_settings(tmp: str) -> Settings:
+    """Default settings with cache/output redirected into ``tmp`` (env-isolated)."""
+    snap = dict(os.environ)
+    for k in list(os.environ):
+        if k.startswith("LEMELY_"):
+            del os.environ[k]
+    try:
+        s = load_settings(toml_path=None, cwd=Path(tmp))
+    finally:
+        os.environ.clear()
+        os.environ.update(snap)
+    return s.model_copy(
+        update={
+            "paths": PathsSettings(cache_dir=Path(tmp) / ".cache", output_dir=Path(tmp) / "outputs")
+        }
+    )
+
+
+def mock_response(
+    text: str,
+    *,
+    prompt: int = 10,
+    candidates: int = 20,
+    thoughts: int = 0,
+    cached: int = 0,
+    finish_reason: Literal["STOP", "MAX_TOKENS"] = "STOP",
+) -> MagicMock:
+    """A stubbed Gemini response with every usage field set to a real int.
+
+    A bare ``MagicMock`` attribute reads as 1 via ``int()``, so each token field
+    is set explicitly.
+    """
+    resp = MagicMock()
+    resp.text = text
+    cand = MagicMock()
+    # The SDK's own str-enum member, so str() is "FinishReason.STOP" as in production.
+    cand.finish_reason = types.FinishReason[finish_reason]
+    resp.candidates = [cand]
+    resp.usage_metadata = MagicMock(
+        prompt_token_count=prompt,
+        candidates_token_count=candidates,
+        thoughts_token_count=thoughts,
+        cached_content_token_count=cached,
+    )
+    return resp

@@ -982,7 +982,7 @@ class F1PricingTests(unittest.TestCase):
 
 
 class US026PromoPricingBoundaryTests(unittest.TestCase):
-    """US-026: the 3.8/3.7/3.6-flash promotional rate ($0.75/$3.75 per 1M)
+    """US-026: the 3.8/3.6-flash promotional rate ($0.75/$3.75 per 1M)
     lapses to the real Google rate ($1.50/$7.50 per 1M) on
     ``FLASH_3X_PROMO_END_DATE`` — pinned on BOTH sides of that boundary with an
     injectable clock so the assertion cannot rot as the real calendar moves."""
@@ -996,7 +996,7 @@ class US026PromoPricingBoundaryTests(unittest.TestCase):
         from lemely.io.gemini import FLASH_3X_PROMO_END_DATE, _resolve_pricing
 
         settings = _make_settings(self.tmp)
-        for model in ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"):
+        for model in ("gemini-3.8-flash", "gemini-3.6-flash"):
             with self.subTest(model=model):
                 price = _resolve_pricing(model, settings, today=lambda: FLASH_3X_PROMO_END_DATE)
                 self.assertEqual(price, (0.000750, 0.003750))
@@ -1010,7 +1010,7 @@ class US026PromoPricingBoundaryTests(unittest.TestCase):
         settings = _make_settings(self.tmp)
         day_after = FLASH_3X_PROMO_END_DATE + timedelta(days=1)
         self.assertEqual(day_after, date(2027, 1, 1))
-        for model in ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"):
+        for model in ("gemini-3.8-flash", "gemini-3.6-flash"):
             with self.subTest(model=model):
                 price = _resolve_pricing(model, settings, today=lambda: day_after)
                 self.assertEqual(price, (0.001500, 0.007500))
@@ -1640,6 +1640,7 @@ class SpendLockTests(unittest.TestCase):
                 "input_tokens",
                 "output_tokens",
                 "thoughts_tokens",
+                "cached_tokens",
                 "usd_cost",
                 "cache_hit",
                 "params_fingerprint",
@@ -1671,6 +1672,7 @@ class SpendLockTests(unittest.TestCase):
                 "input_tokens",
                 "output_tokens",
                 "thoughts_tokens",
+                "cached_tokens",
                 "usd_cost",
                 "cache_hit",
                 "params_fingerprint",

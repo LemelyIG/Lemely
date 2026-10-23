@@ -22,7 +22,33 @@ template developers copy.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from lemely.runtime.config import NotificationsSettings, Settings
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+
+def _toml_bool(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _toml_value(value: str | float | Sequence[str]) -> str:
+    if isinstance(value, str):
+        return f'"{value}"'
+    if isinstance(value, int | float):
+        return str(value)
+    return "[" + ", ".join(f'"{v}"' for v in value) + "]"
+
+
+def _toml_inline(mapping: Mapping[str, str | float | Sequence[str]]) -> str:
+    """Render a flat str-keyed mapping as a TOML inline table."""
+    if not mapping:
+        return "{}"
+    items = ", ".join(f'"{k}" = {_toml_value(v)}' for k, v in mapping.items())
+    return "{ " + items + " }"
+
 
 _HEADER = """\
 # lemely.toml — configuration template
@@ -60,8 +86,9 @@ def render_example_toml() -> str:
     lines.append("# Per-task model overrides (omit a key to use the global `model` above).")
     lines.append("# F1 (Gemini 3.x migration, 2026-09-17): these are the shipped defaults, so")
     lines.append("# they are commented out here purely as documentation of what you are")
-    lines.append("# overriding if you uncomment one. correction/escalation default to")
-    lines.append("# gemini-3.8-flash; extraction/generation/scan_metadata default to")
+    lines.append("# overriding if you uncomment one. correction defaults to")
+    lines.append("# gemini-3.1-flash-lite and escalation to gemini-3.8-flash;")
+    lines.append("# extraction/generation/scan_metadata default to")
     lines.append("# gemini-3.5-flash-lite; mark_scheme stays on gemini-2.5-flash (its chunked")
     lines.append("# parser and thinking_budget tuning predate the 3.x migration, D20). Run")
     lines.append("# `lemely doctor` to see what model_for() actually resolves for every tag.")
@@ -76,6 +103,82 @@ def render_example_toml() -> str:
     lines.append("# the gate compares (model, thinking) tuples, not model names alone.")
     lines.append(f'# escalation_model = "{s.gemini.escalation_model}"')
     lines.append(f"# escalation_confidence_threshold = {s.gemini.escalation_confidence_threshold}")
+    lines.append("# Per-model human-review threshold: a final AI mark from a listed model is")
+    lines.append("# flagged for teacher review below its value (unlisted models: 0.90). A table")
+    lines.append("# you set REPLACES the shipped one (no merge). Applies to the marking step;")
+    lines.append("# the review queue and teacher console still read the 0.90 constant.")
+    lines.append(
+        "# review_confidence_threshold_for = "
+        f"{_toml_inline(s.gemini.review_confidence_threshold_for)}"
+    )
+    lines.append("")
+    lines.append("# LLM cost-ladder levers (all default to the pre-ladder behaviour).")
+    lines.append("# Per-task cache mode: read_write | bypass | refresh (unlisted tags read_write).")
+    lines.append(f"# cache_mode_for = {_toml_inline(s.gemini.cache_mode_for)}")
+    lines.append("# False makes forget_cached a no-op so measurement runs keep every cached read.")
+    lines.append(f"# cache_forget_enabled = {_toml_bool(s.gemini.cache_forget_enabled)}")
+    lines.append("# Cascade: cheap correction pass first, escalate only when it is unsure.")
+    lines.append(f"# cascade_enabled = {_toml_bool(s.gemini.cascade_enabled)}")
+    lines.append("# Strong model for the cascade (unset = use escalation_model).")
+    lines.append('# cascade_strong_model = ""  # unset = use escalation_model')
+    lines.append("# Per-model fitted confidence threshold (missing model = escalation threshold).")
+    lines.append(f"# cascade_threshold_for = {_toml_inline(s.gemini.cascade_threshold_for)}")
+    lines.append("# Escalate when two cheap passes disagree.")
+    lines.append(
+        f"# cascade_two_pass_disagreement = {_toml_bool(s.gemini.cascade_two_pass_disagreement)}"
+    )
+    lines.append("# Per-task output-token cap, thinking included (unlisted tags keep the default).")
+    lines.append("# A reply cut off at a set cap is billed, recorded unparsed, retried once")
+    lines.append("# afresh, then fails. A table you set REPLACES the shipped caps (no merge):")
+    lines.append("# list every entry you want kept, both extraction and binding_second_read.")
+    lines.append("# Naming binding_second_read here pins Claude's binder cap too: on a claude-")
+    lines.append("# model it defaults to 32768 when the tag is not named.")
+    lines.append(f"# max_output_tokens_for = {_toml_inline(s.gemini.max_output_tokens_for)}")
+    lines.append("# Escalate when the cheap pass leaves mark-scheme points unaddressed.")
+    lines.append(
+        f"# cascade_unaddressed_points = {_toml_bool(s.gemini.cascade_unaddressed_points)}"
+    )
+    lines.append("# Put the question-invariant correction prompt first so it can be cached.")
+    lines.append(f"# correction_shared_prefix = {_toml_bool(s.gemini.correction_shared_prefix)}")
+    lines.append("# How the shared prefix is cached: implicit | explicit.")
+    lines.append(f'# correction_prefix_cache = "{s.gemini.correction_prefix_cache}"')
+    lines.append("# Claude page images: greyscaled, enhanced and stepped down from 2576 px until")
+    lines.append("# under this many estimated tokens (95,000 keeps Haiku 5.5 under its 100k")
+    lines.append("# price tier), never below the floor in pixels.")
+    lines.append(f"# claude_image_token_budget = {s.gemini.claude_image_token_budget}")
+    lines.append(f"# claude_image_floor_px = {s.gemini.claude_image_floor_px}")
+    lines.append("# Page images for claude- calls go through Claude's Files API (1 h expiry,")
+    lines.append("# deleted at job end; not ZDR-eligible: use a dedicated workspace key).")
+    lines.append(f"# claude_files_api = {_toml_bool(s.gemini.claude_files_api)}")
+    lines.append("# A script whose model spend passes this logs script_over_cost_target")
+    lines.append("# (split by task tag). It never blocks marking.")
+    lines.append(f"# paper_cost_target_usd = {s.gemini.paper_cost_target_usd}")
+    lines.append("# Claude prompt-cache breakpoints per task tag: system | documents | images |")
+    lines.append("# prefix. Unlisted tags mark system and prefix (the A1 behaviour). A changed")
+    lines.append("# effort or thinking setting invalidates the cached messages (docs, prompt")
+    lines.append(
+        "# caching): both binder tags must send the same effort for the second read to hit."
+    )
+    lines.append(f"# claude_cache_for = {_toml_inline(s.gemini.claude_cache_for)}")
+    lines.append("# Claude effort (low | medium | high | xhigh | max) per tag or tag:kind,")
+    lines.append('# e.g. { "correction:extended" = "medium" }. Unlisted: thinking_level_for.')
+    lines.append(
+        "# haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept every level (docs: effort);"
+    )
+    lines.append("# a model that rejects one fails the call. Higher effort spends more of")
+    lines.append("# max_output_tokens_for (thinking counts toward max_tokens).")
+    lines.append(f"# claude_effort_for = {_toml_inline(s.gemini.claude_effort_for)}")
+    lines.append("# The marker quotes the mark scheme for every awarded mark; an unquoted or")
+    lines.append("# misquoted mark goes to review as uncited_mark.")
+    lines.append(f"# correction_citations = {_toml_bool(s.gemini.correction_citations)}")
+    lines.append("# Ask the marker for a rationale of at most 25 words (cut at 300 chars).")
+    lines.append(
+        f"# correction_terse_rationale = {_toml_bool(s.gemini.correction_terse_rationale)}"
+    )
+    lines.append(
+        "# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B)."
+    )
+    lines.append(f"# claude_image_enhance = {_toml_bool(s.gemini.claude_image_enhance)}")
     lines.append("")
     lines.append(f"max_retries = {s.gemini.max_retries}")
     lines.append(f"backoff_seconds = {s.gemini.backoff_seconds}")
@@ -103,6 +206,7 @@ def render_example_toml() -> str:
 
     lines.append("# gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.")
     lines.append('# gemini_api_key = "sk-..."')
+    lines.append("# anthropic_api_key is a secret too — use the ANTHROPIC_API_KEY env var.")
     lines.append("")
 
     lines.append("# Thinking budget per task (tokens; 0 = disabled) — 2.5-and-earlier models")
@@ -123,6 +227,8 @@ def render_example_toml() -> str:
     lines.append("# This table REPLACES the defaults: a key left out here falls back to")
     lines.append('# "low". Leaving out binding_second_read makes the binding step\'s second')
     lines.append("# read the same call as its first (see [binding]); `lemely doctor` says so.")
+    lines.append('# binding_second_read is safe at "low" only because max_output_tokens_for caps')
+    lines.append('# it: at "medium" second reads reached 47-65k tokens, so raise that cap first.')
     lines.append("[gemini.thinking_level_for]")
     comments = {
         "correction_borderline": "  # Step-1 retry before Step-2 escalation",
@@ -310,6 +416,35 @@ def render_example_toml() -> str:
     lines.append("# reads can be compared and a bad first read replaced. Doubles the cost of")
     lines.append("# the binding step. Read by the label binder only.")
     lines.append(f"second_read = {str(s.binding.second_read).lower()}")
+    lines.append('# When the second read is made. "always" -- on every script, at the same')
+    lines.append('# time as the first. "on_trigger" -- the first read alone, then the second')
+    lines.append("# only when the first gives a reason: a part not bound or left blank, a")
+    lines.append("# label missing, out of place or seen twice, or a gate check that fails")
+    lines.append("# on it. With no reason the paper goes on with the first read, as with")
+    lines.append("# second_read off.")
+    lines.append("# Unsafe as shipped: a first read with every label present but writing")
+    lines.append("# under the wrong labels fires no trigger, so the G9 cross-read check is")
+    lines.append("# lost and those answers go out verified. Not screened; keep `always`.")
+    lines.append("# COST: its blank_leaf trigger fires on every script with a genuinely")
+    lines.append("# skipped part (5/5 reads of the one real scan on disk), so on real")
+    lines.append("# scripts it saves far less than on the golden set (0/20 reads).")
+    lines.append(f'second_read_mode = "{s.binding.second_read_mode}"')
+    lines.append("# The second read's model. Unset: read_model reads twice. A claude- model")
+    lines.append("# (e.g. claude-haiku-5-5) makes it a cross-model read under the")
+    lines.append("# binding_second_read task tag: its thinking level is the Anthropic effort")
+    lines.append("# and its max_output_tokens_for cap applies. Claude gets the pages fitted")
+    lines.append("# under gemini.claude_image_token_budget, never below")
+    lines.append("# gemini.claude_image_floor_px. Needs ANTHROPIC_API_KEY; `lemely doctor`")
+    lines.append("# checks for it.")
+    lines.append('# second_read_model = "claude-haiku-5-5"')
+    lines.append("# A claude- read still over the token budget at the image floor is read as")
+    lines.append("# an overview pass plus page chunks under the budget (off until screened).")
+    lines.append(
+        "# The binding_overview call (the 768 px map pass) uses the effort, output cap and"
+    )
+    lines.append("# cache defaults of its tag unless set. Chunk calls send their pages inline, not")
+    lines.append("# through the Files API: input tokens are unchanged, bandwidth is higher.")
+    lines.append(f"# claude_chunked_read = {_toml_bool(s.binding.claude_chunked_read)}")
     lines.append("# The model the legacy binder's one retry uses, when the gate is on.")
     lines.append(f'retry_model = "{s.binding.retry_model}"')
     lines.append("")

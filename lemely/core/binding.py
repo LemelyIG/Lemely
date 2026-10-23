@@ -18,7 +18,7 @@ class _StrictModel(BaseModel):
 BindingSource = Literal["position", "label", "legacy"]
 BindingStatus = Literal["verified", "unverified", "unbound"]
 BindingVerdict = Literal["pass", "retry", "hold"]
-CheckId = Literal["G1", "G2", "G5", "G6", "G7", "G8", "G9"]
+CheckId = Literal["G1", "G2", "G5", "G6", "G7", "G8", "G9", "stub_read"]
 
 
 class BindingCheck(_StrictModel):

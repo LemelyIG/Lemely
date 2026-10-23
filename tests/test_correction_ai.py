@@ -70,6 +70,10 @@ class _IsolatedEnv:
         for k in list(os.environ):
             if k.startswith("LEMELY_"):
                 del os.environ[k]
+        # The mocked replies and thresholds here were written for the pre-A1
+        # correction model, gemini-3.8-flash; the pin holds that model for the
+        # mocks (the shipped default is now gemini-3.1-flash-lite).
+        os.environ["LEMELY_GEMINI__CORRECTION_MODEL"] = "gemini-3.8-flash"
         return self
 
     def __exit__(self, *_: object) -> None:

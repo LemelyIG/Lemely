@@ -1929,7 +1929,11 @@ def _golden_calculated_answers() -> list[tuple[str, float, str]]:
     root = Path(__file__).parent / "golden"
     for path in sorted(glob.glob(str(root / "*" / "mark_scheme.json"))):
         scheme = json.loads(Path(path).read_text())
-        for question in scheme.get("questions", []):
+        # Sub-parts nest under their question (Task 5b), so walk ``parts`` too.
+        stack = list(scheme.get("questions", []))
+        while stack:
+            question = stack.pop()
+            stack.extend(question.get("parts") or [])
             for point in question.get("answer_points") or []:
                 calc = point.get("calculated_answer")
                 if calc and calc.get("value") is not None:
@@ -1971,6 +1975,10 @@ _EXPECTED_GOLDEN_PARSES: dict[tuple[float, str], sympy.Expr] = {
     (28.89, ""): sympy.Float(28.89),
     (81.1, ""): sympy.Float(81.1),
     (30.45, ""): sympy.Float(30.45),
+    # 0625_w21_qp_32_theory_nested: always nested, so unseen until the walk above
+    # learned to descend into ``parts`` (Task 5b nested the other schemes too).
+    (2.5, "m/s^2"): 2.5 * _m / _s**2,
+    (5.0, "N"): 5.0 * sympy.Symbol("N"),
 }
 
 

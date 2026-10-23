@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import hashlib
 import io
 import json
+import math
 import re
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 import structlog
 from pydantic import BaseModel
@@ -26,9 +30,29 @@ from tenacity import (
 )
 
 from lemely.io.cost_ledger import CostLedger
+from lemely.io.llm.errors import CapTruncatedError as _CapTruncatedError
+from lemely.io.llm.errors import TransientCallError as _TransientError
+from lemely.io.llm.gemini_provider import GeminiProvider
+from lemely.io.llm.pricing import PriceRow, claude_row, row_cost
+from lemely.io.llm.request import (
+    LEGACY_CLAUDE_CACHE_PLAN,
+    CachePlan,
+    CodeExecution,
+    DocumentInput,
+    ImageInput,
+    LLMRequest,
+    provider_fingerprint,
+)
+from lemely.io.providers import ProviderError, is_anthropic_model
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus
+
+if TYPE_CHECKING:
+    from lemely.io.llm.claude_provider import ClaudeProvider
+    from lemely.io.llm.claude_uploads import ClaudeImageUploads
+    from lemely.io.llm.provider import Provider, ProviderReply
+    from lemely.io.providers.anthropic_adapter import AnthropicAdapter
 
 _T = TypeVar("_T", bound=BaseModel)
 
@@ -36,6 +60,14 @@ _T = TypeVar("_T", bound=BaseModel)
 # because it feeds the cache-key fingerprint (spec 3.3): changing it changes what
 # the model may return, so it must invalidate cached replies.
 _MAX_OUTPUT_TOKENS: int = 65536
+#: Output cap for a claude- binder read. Haiku at effort "low" still thinks 10k-16k tokens
+#: on about half of full-script reads: 4 of 11 second reads hit 16,384, one on both
+#: attempts (.superpowers/sdd/binding-investigation.md). Streaming starts above 21,333.
+_CLAUDE_BINDER_OUTPUT_CAP: int = 32768
+#: The tags that cap applies to: the binder's reads and the chunked reader's overview.
+_CLAUDE_BINDER_CAP_TAGS: frozenset[str] = frozenset(
+    {"extraction", "binding_second_read", "binding_overview"}
+)
 
 # I1: the SDK's `types.PartMediaResolutionLevel` enum members are named
 # "MEDIA_RESOLUTION_MEDIUM" etc., not the short "medium"/"high" the plan
@@ -63,13 +95,13 @@ _MEDIA_RESOLUTION_LEVELS: dict[str, str] = {
 #
 # F1 (Gemini 3.x migration, 2026-09-17): 3.x rows added below at the current
 # promotional GA rate (re-verified against live docs 17 Sep). Corrected on
-# review (2026-09-17): 3.8/3.7/3.6-flash bill $0.75/$3.75 per 1M through
+# review (2026-09-17): 3.8/3.6-flash bill $0.75/$3.75 per 1M through
 # 2026-12-31 ONLY, then $1.50/$7.50 from 2027-01-01. `total_usd_ceiling`
 # (enforced against a ledger computed from this table, see `_call_once`)
 # would otherwise be enforced against a stale rate once it doubles — the
 # $14 ceiling would then trip at roughly $28 of real spend.
 #
-# US-026: date-gated below. `gemini-3.8-flash`/`-3.7-flash`/`-3.6-flash` are
+# US-026: date-gated below. `gemini-3.8-flash`/`-3.6-flash` are
 # NOT static keys in `_DEFAULT_PRICING` — `_resolve_pricing` merges a
 # date-selected rate for them into a COPY of this table before running its one
 # length-descending substring match, so a future maintainer adding a correctly
@@ -86,11 +118,13 @@ FLASH_3X_PROMO_END_DATE: date = date(2026, 12, 31)
 
 _FLASH_3X_PROMO_MODELS: tuple[str, ...] = (
     "gemini-3.8-flash",
-    "gemini-3.7-flash",
     "gemini-3.6-flash",
 )
 _FLASH_3X_PROMO_RATE: tuple[float, float] = (0.000750, 0.003750)
 _FLASH_3X_POST_PROMO_RATE: tuple[float, float] = (0.001500, 0.007500)
+# Cached-input rate (USD per 1k) for the promo models, same date gate.
+_FLASH_3X_PROMO_CACHED: float = 0.000075
+_FLASH_3X_POST_PROMO_CACHED: float = 0.000150
 
 # US-034: `gemini-3.5-flash` had no row here, so the length-descending
 # substring match below fell through to the unrecognised-model fallback
@@ -103,8 +137,8 @@ _FLASH_3X_POST_PROMO_RATE: tuple[float, float] = (0.001500, 0.007500)
 # Source: https://ai.google.dev/gemini-api/docs/pricing, retrieved
 # 2026-09-21: $1.50 / $9.00 per 1M tokens. That page was also checked for a
 # 2027-01-01 scheduled increase on `gemini-3.5-flash` (the mechanism
-# `gemini-3.8/3.7/3.6-flash` use, see `FLASH_3X_PROMO_END_DATE` below) —
-# unlike those three, the page states no scheduled change for
+# `gemini-3.8/3.6-flash` use, see `FLASH_3X_PROMO_END_DATE` below) —
+# unlike those two, the page states no scheduled change for
 # `gemini-3.5-flash`, so this is a plain static row rather than a
 # date-gated one. Note `gemini-2.5-pro` below is priced <=200k context per
 # the same page; if the real rate differs above that context window, this
@@ -115,7 +149,31 @@ _DEFAULT_PRICING: dict[str, tuple[float, float]] = {
     "gemini-2.5-pro": (0.001250, 0.010000),
     "gemini-3.5-flash-lite": (0.000300, 0.002500),
     "gemini-3.5-flash": (0.001500, 0.009000),
+    # Cost-ladder rung 0 (official pricing page, per 1M: $0.25 in / $0.025
+    # cached / $1.50 out).
+    "gemini-3.1-flash-lite": (0.000250, 0.001500),
 }
+
+# Cached-input rate (USD per 1k) by the same substring keys. A row absent here
+# has no confirmed cached price, so its cached tokens bill at the full input
+# rate: cost is conservatively overstated, never silently discounted.
+# gemini-3.8/3.6-flash are date-gated and live in `_dated_cached_table`.
+_CACHED_INPUT_PRICING: dict[str, float] = {
+    "gemini-3.5-flash-lite": 0.000030,
+    "gemini-2.5-flash": 0.000030,
+    "gemini-3.1-flash-lite": 0.000025,
+}
+
+#: The first day the doubled 3.x-flash prices apply; `CallRecord.usd_2027` prices at it.
+PRICE_DATE_2027: date = date(2027, 1, 1)
+
+
+class UnpricedModelError(ExternalServiceError):
+    """A model has no price row; cost-ladder code must not guess."""
+
+    def __init__(self, model: str) -> None:
+        super().__init__(f"no price row for model {model!r}")
+        self.model = model
 
 
 def _today() -> date:
@@ -132,7 +190,7 @@ def _today() -> date:
 def promo_pricing_status(settings: Settings, today: date | None = None) -> tuple[bool, str]:
     """Advisory status for `lemely doctor`.
 
-    Warns once the 3.8/3.7/3.6-flash promotional window
+    Warns once the 3.8/3.6-flash promotional window
     (`FLASH_3X_PROMO_END_DATE`) is within 30 days of lapsing to the real,
     doubled rate — or has already lapsed — so a developer notices before the
     $14 ceiling silently starts guarding a stale price. Returns (ok, detail);
@@ -160,13 +218,13 @@ def promo_pricing_status(settings: Settings, today: date | None = None) -> tuple
     if days_left < 0:
         return (
             False,
-            f"3.8/3.7/3.6-flash promotional pricing expired {-days_left} day(s) ago "
+            f"3.8/3.6-flash promotional pricing expired {-days_left} day(s) ago "
             f"(on {FLASH_3X_PROMO_END_DATE}); rates now bill at the post-promo rate.",
         )
     if days_left <= 30:
         return (
             False,
-            f"3.8/3.7/3.6-flash promotional pricing expires in {days_left} day(s) "
+            f"3.8/3.6-flash promotional pricing expires in {days_left} day(s) "
             f"(on {FLASH_3X_PROMO_END_DATE}); verify the post-promo rate is still "
             "correct before it takes effect.",
         )
@@ -200,7 +258,7 @@ _GEMINI_3X_RE = re.compile(r"^gemini-3\.\d")
 _MINIMAL_THINKING_MODELS_RE = re.compile(r"^gemini-3\.(5-flash-lite|6-flash)\b")
 
 # Ordered weakest → strongest, mirrors google.genai.types.ThinkingLevel.
-_THINKING_LEVEL_ORDER = {"minimal": 0, "low": 1, "medium": 2, "high": 3}
+_THINKING_LEVEL_ORDER = {"minimal": 0, "low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5}
 
 
 def thinking_rank(value: int | str) -> int:
@@ -241,6 +299,60 @@ _process_input_tokens: int = 0
 _process_output_tokens: int = 0
 _process_accumulated_usd: float = 0.0
 _process_cost_by_task: dict[str, float] = {}
+_process_call_records: list[CallRecord] = []
+#: Open `record_calls` blocks; records are appended only while this is above 0.
+_recording_depth: int = 0
+_Attempt = Literal["first", "borderline", "escalation"]
+#: The harness's current case (`set_call_context`); stamped on every `CallRecord`.
+#: A ContextVar, so concurrent worker threads never see each other's case.
+_call_case_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "gemini_call_case_key", default=None
+)
+#: Per-call labels set by `generate_structured` and read by `_record_spend`.
+#: A ContextVar, so concurrent worker threads never see each other's labels.
+_call_labels: contextvars.ContextVar[tuple[_Attempt | None, str | None]] = contextvars.ContextVar(
+    "gemini_call_labels", default=(None, None)
+)
+
+#: The leaf kind of the structured call in progress (B3 effort lookup); None outside one.
+_call_leaf_kind: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "lemely_call_leaf_kind", default=None
+)
+#: The per-script cost accumulator `script_cost_scope` opens; None outside one.
+_script_cost: contextvars.ContextVar[dict[str, float] | None] = contextvars.ContextVar(
+    "lemely_script_cost", default=None
+)
+
+
+@contextlib.contextmanager
+def script_cost_scope(settings: Settings, *, script_key: str) -> Iterator[dict[str, float]]:
+    """Add up one script's paid calls by task tag; warn past ``paper_cost_target_usd``.
+
+    Threads see the scope when started under ``contextvars.copy_context().run``
+    (the binder's two reads and the uploads are). Never raises, never blocks.
+    """
+    costs: dict[str, float] = {}
+    token = _script_cost.set(costs)
+    try:
+        yield costs
+    finally:
+        _script_cost.reset(token)
+        total = sum(costs.values())
+        target = settings.gemini.paper_cost_target_usd
+        if total > target:
+            structlog.get_logger().warning(
+                "script_over_cost_target",
+                script_key=script_key,
+                total_usd=round(total, 6),
+                target_usd=target,
+                by_tag={tag: round(usd, 6) for tag, usd in sorted(costs.items())},
+            )
+
+
+#: The record this thread appended last (by identity, not list index), so a
+#: structured-output failure marks exactly its own record even if a concurrent
+#: reset has since replaced the list.
+_thread_state = threading.local()
 
 #: Spec 2026-09-26 §9. The four process counters above and `CostLedger.add`
 #: are read-modify-write; the re-read stage and the Files API uploads run
@@ -269,12 +381,14 @@ def _reset_process_counters() -> None:
         _process_input_tokens, \
         _process_output_tokens, \
         _process_accumulated_usd, \
-        _process_cost_by_task
+        _process_cost_by_task, \
+        _process_call_records
     with _SPEND_LOCK:
         _process_input_tokens = 0
         _process_output_tokens = 0
         _process_accumulated_usd = 0.0
         _process_cost_by_task = {}
+        _process_call_records = []
 
 
 def reset_process_counters() -> None:
@@ -325,9 +439,8 @@ def _resolve_pricing(
 ) -> tuple[float, float]:
     """Return (input_usd_per_1k, output_usd_per_1k) for the given model.
 
-    Checks user-configured overrides first. Then resolves the 3.8/3.7/
-    3.6-flash promotional rate (US-026 — see `FLASH_3X_PROMO_END_DATE`) for
-    "today" and merges it into a COPY of `_DEFAULT_PRICING` under those three
+    Checks user-configured overrides first. Then resolves the 3.8/3.6-flash promotional rate (US-026 — see `FLASH_3X_PROMO_END_DATE`) for
+    "today" and merges it into a COPY of `_DEFAULT_PRICING` under those two
     exact keys, so the length-descending substring match below is the ONLY
     matching mechanism in this function — a promo model can never shadow, or
     be shadowed by, another row via a second matching path. Falls back to
@@ -366,6 +479,244 @@ def _dated_pricing_table(today: date) -> dict[str, tuple[float, float]]:
     return {**_DEFAULT_PRICING, **dict.fromkeys(_FLASH_3X_PROMO_MODELS, promo_rate)}
 
 
+def _dated_cached_table(today: date) -> dict[str, float]:
+    """`_CACHED_INPUT_PRICING` with the date-gated promo models' cached rate merged in."""
+    cached = (
+        _FLASH_3X_PROMO_CACHED if today <= FLASH_3X_PROMO_END_DATE else _FLASH_3X_POST_PROMO_CACHED
+    )
+    return {**_CACHED_INPUT_PRICING, **dict.fromkeys(_FLASH_3X_PROMO_MODELS, cached)}
+
+
+def price_row(model: str, settings: Settings, *, on: date) -> PriceRow:
+    """The USD-per-1k price row for ``model`` as of ``on``.
+
+    The same user-override-then-longest-substring match as `_resolve_pricing`,
+    but an unknown model raises :class:`UnpricedModelError` instead of
+    silently borrowing another model's rate. A user override carries no cached
+    rate, so its cached tokens bill at its input rate.
+    """
+    user = settings.gemini.pricing
+    if model in user:
+        p = user[model]
+        return PriceRow(float(p[0]), float(p[0]), float(p[1]))
+    if is_anthropic_model(model):
+        row = claude_row(model)
+        if row is None:
+            raise UnpricedModelError(model)
+        return row
+    table = _dated_pricing_table(on)
+    cached_table = _dated_cached_table(on)
+    for key in sorted(table, key=len, reverse=True):
+        if key in model:
+            in_price, out_price = table[key]
+            return PriceRow(in_price, cached_table.get(key, in_price), out_price)
+    raise UnpricedModelError(model)
+
+
+def _row_cost(row: PriceRow, *, input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
+    return row_cost(
+        row, input_tokens=input_tokens, cached_tokens=cached_tokens, output_tokens=output_tokens
+    )
+
+
+def _usage_number(meta: Any, name: str) -> float:
+    """A usage field as a number; a missing field or a mock attribute reads as 0."""
+    raw = getattr(meta, name, 0)
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return 0
+    return max(raw, 0)
+
+
+def price_call(
+    model: str,
+    settings: Settings,
+    *,
+    input_tokens: int,
+    cached_tokens: int,
+    output_tokens: int,
+    on: date,
+    cache_write_5m_tokens: int = 0,
+    cache_write_1h_tokens: int = 0,
+    container_seconds: float = 0.0,
+) -> float:
+    """USD for one call as of ``on``.
+
+    Uncached input is ``input_tokens - cached_tokens`` at the input rate, cached
+    input is at the cached rate, and ``output_tokens`` must already include
+    thinking tokens (they bill as output).
+    """
+    return row_cost(
+        price_row(model, settings, on=on),
+        input_tokens=input_tokens,
+        cached_tokens=cached_tokens,
+        output_tokens=output_tokens,
+        cache_write_5m_tokens=cache_write_5m_tokens,
+        cache_write_1h_tokens=cache_write_1h_tokens,
+        container_seconds=container_seconds,
+    )
+
+
+@dataclass(frozen=True)
+class CallRecord:
+    """One paid model call: tokens, both price points, and who asked for it."""
+
+    provider: str
+    task_tag: str | None
+    model: str
+    thinking: str | int | None
+    input_tokens: int
+    cached_tokens: int
+    output_tokens: int
+    thinking_tokens: int
+    usd_now: float
+    usd_2027: float
+    latency_ms: int
+    attempt: _Attempt | None
+    question_id: str | None
+    case_key: str | None
+    #: False when the response failed structured-output validation; the record
+    #: is still appended before the error propagates.
+    parse_ok: bool
+    #: Claude prompt-cache writes (5-minute and 1-hour), part of ``input_tokens``.
+    cache_write_5m_tokens: int = 0
+    cache_write_1h_tokens: int = 0
+    #: Billed code-execution container time.
+    container_seconds: float = 0.0
+
+
+def process_call_records() -> list[CallRecord]:
+    """A copy of every `CallRecord` appended since the last reset.
+
+    Empty unless a :func:`record_calls` block is (or was, until its outermost
+    exit) active: the default path records nothing.
+    """
+    with _SPEND_LOCK:
+        return list(_process_call_records)
+
+
+@contextlib.contextmanager
+def record_calls() -> Iterator[None]:
+    """Append a `CallRecord` for every paid call made while this block is open.
+
+    Off by default, so a long-lived process (the web app) never accumulates
+    records. Process-wide, not per-thread, because the harness marks from
+    worker threads. Blocks nest; when the outermost one exits the records are
+    cleared, so read them (:func:`process_call_records`) inside the block.
+    """
+    global _recording_depth, _process_call_records
+    with _SPEND_LOCK:
+        _recording_depth += 1
+    try:
+        yield
+    finally:
+        with _SPEND_LOCK:
+            _recording_depth -= 1
+            if _recording_depth == 0:
+                _process_call_records = []
+
+
+def set_call_context(*, case_key: str | None) -> None:
+    """Name the case the harness is running; later records carry it as `case_key`."""
+    _call_case_key.set(case_key)
+
+
+#: Lifetime of an explicit prefix cache (cost-ladder lever A3): long enough for
+#: one paper's scripts marked back to back, short enough that storage stays small.
+PREFIX_CACHE_TTL_SECONDS: int = 600
+#: A cache within this many seconds of expiry is not reused: a call that starts
+#: on it could reach the API after it has gone.
+_PREFIX_CACHE_EXPIRY_MARGIN_SECONDS: int = 30
+#: The ``task_tag`` of the `CallRecord` that carries an explicit cache's cost.
+PREFIX_CACHE_TASK_TAG = "correction_prefix_cache"
+#: Explicit context-cache storage, USD per 1M tokens per hour, by the same
+#: longest-substring match as the price tables. Rows given by the cost-ladder
+#: controller (2026-10-19): gemini-3.8/3.6-flash store at $0.50 through
+#: ``FLASH_3X_PROMO_END_DATE`` and $1.00 after it (the same date gate as their
+#: token prices); gemini-3.5-flash-lite stores at $1.00 on both sides. Any other
+#: model has no storage row and :func:`prefix_cache_storage_usd` raises
+#: :class:`UnpricedModelError` rather than guess.
+_CACHE_STORAGE_PROMO_USD_PER_MTOK_HOUR: float = 0.50
+_CACHE_STORAGE_POST_PROMO_USD_PER_MTOK_HOUR: float = 1.00
+_CACHE_STORAGE_STATIC_USD_PER_MTOK_HOUR: dict[str, float] = {"gemini-3.5-flash-lite": 1.00}
+
+
+def _cache_storage_rate(model: str, *, on: date) -> float:
+    """USD per 1M tokens per hour of explicit-cache storage for ``model`` as of ``on``."""
+    promo = (
+        _CACHE_STORAGE_PROMO_USD_PER_MTOK_HOUR
+        if on <= FLASH_3X_PROMO_END_DATE
+        else _CACHE_STORAGE_POST_PROMO_USD_PER_MTOK_HOUR
+    )
+    table = {
+        **_CACHE_STORAGE_STATIC_USD_PER_MTOK_HOUR,
+        **dict.fromkeys(_FLASH_3X_PROMO_MODELS, promo),
+    }
+    for key in sorted(table, key=len, reverse=True):
+        if key in model:
+            return table[key]
+    raise UnpricedModelError(model)
+
+
+def prefix_cache_storage_usd(model: str, tokens: int, ttl_seconds: int, *, on: date) -> float:
+    """USD to keep ``tokens`` in an explicit cache for ``ttl_seconds``, priced as of ``on``.
+
+    Raises:
+        UnpricedModelError: ``model`` has no storage row.
+    """
+    return max(tokens, 0) / 1_000_000 * _cache_storage_rate(model, on=on) * ttl_seconds / 3600
+
+
+@dataclass(frozen=True)
+class SharedPrefix:
+    """A system prompt that is the same for every call on one paper (lever A3).
+
+    ``text`` is what is sent as the system prompt and what the reply cache key is
+    built from; it is ``instructions`` followed by ``paper``. A Gemini call sends
+    ``text`` as the system instruction, or, with ``cache="explicit"`` on a 3.x
+    model, as an explicit cache it creates once per (model, ``version``, text).
+    A ``claude-`` call sends ``instructions`` as the system prompt and ``paper``
+    as the adapter's ``cache_prefix``.
+    """
+
+    instructions: str
+    paper: str
+    text: str
+    cache: Literal["implicit", "explicit"]
+    version: str
+
+    def __post_init__(self) -> None:
+        """Refuse a ``text`` that is not ``instructions`` followed by ``paper``."""
+        if not (self.text.startswith(self.instructions) and self.text.endswith(self.paper)):
+            raise ValueError("SharedPrefix.text must be instructions followed by paper")
+
+
+def _mark_last_record_unparsed() -> None:
+    """Flip `parse_ok` off on the record this thread appended last."""
+    last: CallRecord | None = getattr(_thread_state, "last_record", None)
+    if last is None:
+        return
+    with _SPEND_LOCK:
+        for i in range(len(_process_call_records) - 1, -1, -1):
+            if _process_call_records[i] is last:
+                _process_call_records[i] = replace(last, parse_ok=False)
+                _thread_state.last_record = _process_call_records[i]
+                return
+
+
+@contextlib.contextmanager
+def _call_labelled(attempt: _Attempt | None, question_id: str | None) -> Iterator[None]:
+    """Scope the `attempt`/`question_id` labels `_record_spend` stamps on records."""
+    token = _call_labels.set((attempt, question_id))
+    try:
+        yield
+    finally:
+        _call_labels.reset(token)
+
+
+def _provider_for(model: str) -> str:
+    return "anthropic" if is_anthropic_model(model) else "gemini"
+
+
 def fallback_pricing_status(
     settings: Settings,
     configured_models: dict[str, str],
@@ -399,7 +750,9 @@ def fallback_pricing_status(
     hits = sorted(
         f"{tag}={model}"
         for tag, model in configured_models.items()
-        if model not in user_pricing and not any(key in model for key in pricing_table)
+        if model not in user_pricing
+        and not any(key in model for key in pricing_table)
+        and claude_row(model) is None
     )
     if hits:
         return (
@@ -445,10 +798,6 @@ def _strip_schema(schema: Any, *, is_3x: bool = False) -> Any:
     defs = schema.get("$defs", {}) if isinstance(schema, dict) else {}
     drop_keys = _GEMINI_3X_UNSUPPORTED_KEYS if is_3x else frozenset()
     return _resolve_refs(schema, defs, drop_keys=frozenset(drop_keys))
-
-
-class _TransientError(Exception):
-    """Wraps transient Gemini SDK errors so tenacity can detect them."""
 
 
 class _DefaultLedger:
@@ -499,6 +848,8 @@ class ImageUploads:
         # failed) is still cleaned up.
         self._uploaded: dict[int, Any] = {}
         self._uploaded_lock = threading.Lock()
+        self._claude: ClaudeImageUploads | None = None
+        self._claude_lock = threading.Lock()
         # Set by the first page to fail, inside the SAME worker thread that
         # is about to move on to the next queued page (deterministic for
         # `concurrency=1`; best effort above it) -- so a page queued behind
@@ -702,6 +1053,22 @@ class ImageUploads:
             raise ExternalServiceError(str(exc)) from exc
         raise ExternalServiceError("Unreachable")  # pragma: no cover
 
+    def for_claude(self, client: GeminiClient) -> ClaudeImageUploads:
+        """The same pages for the Claude Files API; made once, deleted with this object."""
+        with self._claude_lock:
+            if self._claude is None:
+                from lemely.io.llm.claude_uploads import ClaudeImageUploads
+
+                g = client._settings.gemini
+                self._claude = ClaudeImageUploads(
+                    lambda: client._anthropic.raw,
+                    self._images,
+                    token_budget=g.claude_image_token_budget,
+                    floor_px=g.claude_image_floor_px,
+                    enhance=g.claude_image_enhance is True,
+                )
+            return self._claude
+
     def delete(self) -> None:
         """Best effort: a delete that fails is logged and never fails the paper.
 
@@ -719,6 +1086,10 @@ class ImageUploads:
         worker thread never needs to invert (a worker only ever takes
         `_uploaded_lock` on its own, briefly, in `_upload_and_wait`).
         """
+        with self._claude_lock:
+            claude, self._claude = self._claude, None
+        if claude is not None:
+            claude.delete()
         with self._lock:
             with self._uploaded_lock:
                 uploaded_files, self._uploaded = list(self._uploaded.values()), {}
@@ -747,11 +1118,16 @@ class GeminiClient:
         settings: Settings,
         *,
         _genai_client: Any = None,
+        _anthropic_client: Any = None,
         default_cache_mode: Literal["read_write", "bypass", "refresh"] = "read_write",
         ledger: CostLedger | _DefaultLedger | None = DEFAULT_LEDGER,
     ) -> None:
         self._settings = settings
         self._raw_client: Any = _genai_client
+        #: The Anthropic SDK client for ``claude-`` models; built lazily from
+        #: ``settings.anthropic_api_key`` unless a test injects one.
+        self._raw_anthropic_client: Any = _anthropic_client
+        self._anthropic_adapter: AnthropicAdapter | None = None
         self._ledger: CostLedger | None = (
             CostLedger(settings.paths.output_dir / "gemini_spend.json")
             if isinstance(ledger, _DefaultLedger)
@@ -771,6 +1147,34 @@ class GeminiClient:
         #: precise. An explicit annotation pins the attribute's type instead
         #: of leaving it to that widening.
         self.default_cache_mode: Literal["read_write", "bypass", "refresh"] = default_cache_mode
+        #: Explicit prefix caches this client made (lever A3), keyed by
+        #: (model, prompt version, sha256 of the prefix): the cache name and its
+        #: expiry on the monotonic clock, or None when creation failed and the
+        #: prefix is sent as a plain system instruction for the rest of the run.
+        self._prefix_caches: dict[tuple[str, str, str], tuple[str, float] | None] = {}
+        self._prefix_cache_lock = threading.Lock()
+        self._gemini_provider = GeminiProvider(self)
+        self._claude_provider: ClaudeProvider | None = None
+
+    def _effective_cache_mode(
+        self, cache_mode: Literal["read_write", "bypass", "refresh"] | None, task_tag: str | None
+    ) -> Literal["read_write", "bypass", "refresh"]:
+        """Resolve a call's cache mode.
+
+        Order: explicit call-site mode, else the per-task-tag override in
+        ``settings.gemini.cache_mode_for``, else :attr:`default_cache_mode`.
+        The tag override lets a screen of a correction-only lever replay
+        extraction and binding from the frozen-upstream cache while correction
+        calls go live. Unvalidated values pass through so the callers' own
+        ``cache_mode`` check still rejects them.
+        """
+        if cache_mode is not None:
+            return cache_mode
+        if task_tag is not None:
+            override = self._settings.gemini.cache_mode_for.get(task_tag)
+            if override is not None:
+                return override
+        return self.default_cache_mode
 
     @property
     def _client(self) -> Any:
@@ -784,6 +1188,24 @@ class GeminiClient:
             )
             self._raw_client = genai.Client(api_key=api_key)
         return self._raw_client
+
+    @property
+    def _anthropic(self) -> AnthropicAdapter:
+        """The adapter every ``claude-`` call goes through (see :mod:`lemely.io.providers`)."""
+        if self._anthropic_adapter is None:
+            from lemely.io.providers.anthropic_adapter import AnthropicAdapter
+
+            if self._raw_anthropic_client is not None:
+                self._anthropic_adapter = AnthropicAdapter(self._raw_anthropic_client)
+            else:
+                key = self._settings.anthropic_api_key
+                if key is None:
+                    raise ExternalServiceError(
+                        "No Anthropic API key configured (ANTHROPIC_API_KEY); "
+                        "cannot call a claude- model."
+                    )
+                self._anthropic_adapter = AnthropicAdapter.from_api_key(key.get_secret_value())
+        return self._anthropic_adapter
 
     def start_new_run(self) -> None:
         """Reset the token/USD counters at the start of a new logical RUN.
@@ -820,6 +1242,20 @@ class GeminiClient:
         """
         g = self._settings.gemini
         key = task_tag or ""
+        if is_anthropic_model(model):
+            # A claude- model takes one knob, Anthropic's effort: claude_effort_for
+            # (tag:kind, then tag), else thinking_level_for ("minimal" maps to "low").
+            from lemely.io.providers.anthropic_adapter import resolve_effort
+
+            return {
+                "thinking_budget": None,
+                "temperature": None,
+                "top_p": None,
+                "seed": None,
+                "thinking_level": resolve_effort(
+                    g.claude_effort_for, g.thinking_level_for, key, _call_leaf_kind.get()
+                ),
+            }
         if _is_3x(model):
             requested_level = g.thinking_level_for.get(key, "low")
             return {
@@ -837,7 +1273,9 @@ class GeminiClient:
             "thinking_level": None,
         }
 
-    def resolved_thinking(self, task_tag: str, model: str) -> int | str:
+    def resolved_thinking(
+        self, task_tag: str, model: str, leaf_kind: str | None = None
+    ) -> int | str:
         """The ONE thinking knob that actually affects ``model``'s output for ``task_tag``.
 
         F1 review MUST-FIX 2 (2026-09-17): this is the single source of truth
@@ -860,10 +1298,29 @@ class GeminiClient:
         ``thinking_budget`` (an int) on a 2.5-and-earlier model — exactly the
         two disjoint substrates :meth:`_resolved_gen_params` already computes.
         """
-        params = self._resolved_gen_params(task_tag, model)
-        if _is_3x(model):
+        # ``leaf_kind`` picks the claude_effort_for["tag:kind"] entry, as the real call
+        # does inside generate_structured; without it a gate sees the tag-only effort.
+        token = _call_leaf_kind.set(leaf_kind)
+        try:
+            params = self._resolved_gen_params(task_tag, model)
+        finally:
+            _call_leaf_kind.reset(token)
+        if _is_3x(model) or is_anthropic_model(model):
             return cast(str, params["thinking_level"])
         return cast(int, params["thinking_budget"])
+
+    def _output_cap(self, task_tag: str | None) -> tuple[int, bool]:
+        """The Gemini output-token cap for ``task_tag`` and whether a per-tag cap set it.
+
+        ``max_output_tokens`` counts thinking tokens too (Gemini thinking docs,
+        https://ai.google.dev/gemini-api/docs/thinking: "sets the maximum number of
+        tokens a response can generate, including thought tokens"), so a per-tag
+        cap bounds reasoning as well as the reply.
+        """
+        override = self._settings.gemini.max_output_tokens_for.get(task_tag or "")
+        if override is None:
+            return _MAX_OUTPUT_TOKENS, False
+        return override, True
 
     def _params_fingerprint(
         self,
@@ -873,6 +1330,7 @@ class GeminiClient:
         *,
         media_resolution: str | None = None,
         tool: str | None = None,
+        n_images: int = 0,
     ) -> str:
         """Hash every input that can change the model's output.
 
@@ -921,10 +1379,16 @@ class GeminiClient:
             schema_json = json.dumps(response_schema.model_json_schema(), sort_keys=True)
             schema_hash = hashlib.sha256(schema_json.encode()).hexdigest()[:12]
         api_line = "3x" if _is_3x(model) else "2x"
+        # The Gemini cap below is Gemini's; a claude- model carries its own cap in
+        # the provider segment at the end.
+        output_cap = (
+            _MAX_OUTPUT_TOKENS if is_anthropic_model(model) else self._output_cap(task_tag)[0]
+        )
         raw = (
             f"{model}|{api_line}|{params['temperature']}|{params['top_p']}"
             f"|{params['seed']}|{params['thinking_budget']}|{params['thinking_level']}"
-            f"|{_MAX_OUTPUT_TOKENS}|{schema_hash}|{media_resolution or 'none'}"
+            f"|{output_cap}"
+            f"|{schema_hash}|{media_resolution or 'none'}"
         )
         # N3 review MUST-FIX 1: `tool` folds in ONLY when set, not as a
         # `|none` segment appended unconditionally. Every plain
@@ -935,6 +1399,19 @@ class GeminiClient:
         # N3 (plan:615) actually requires.
         if tool is not None:
             raw += f"|{tool}"
+        # The provider component, appended only for claude- models for the
+        # same reason as `tool` above: every Gemini key stays byte-identical.
+        # It carries the call's reply cap, the image-fit version, budget and floor.
+        if is_anthropic_model(model):
+            raw += provider_fingerprint(
+                model,
+                max_output_tokens=self._claude_output_cap(task_tag),
+                image_token_budget=self._settings.gemini.claude_image_token_budget,
+                image_floor_px=self._settings.gemini.claude_image_floor_px,
+                image_enhance=self._settings.gemini.claude_image_enhance is True,
+                response_schema=response_schema,
+                image_count=n_images,
+            )
         return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
     def check_reachable(self) -> None:
@@ -967,6 +1444,7 @@ class GeminiClient:
         extra_key: str,
         params_fingerprint: str,
         image_parts: list[bytes] | None = None,
+        documents: Sequence[DocumentInput] | None = None,
     ) -> str:
         prompt_hash = hashlib.sha256(
             (system_prompt + user_prompt + prompt_version + extra_key).encode()
@@ -991,6 +1469,13 @@ class GeminiClient:
             for fp in sorted(file_paths):
                 h.update(fp.read_bytes())
             files_hash = h.hexdigest()[:12]
+        elif documents:
+            # One document hashes exactly as today's one-file `file_paths` does, so a
+            # caller moved from file_paths to documents keeps its cache keys.
+            h = hashlib.sha256()
+            for doc in documents:
+                h.update(doc.data)
+            files_hash = h.hexdigest()[:12]
         else:
             files_hash = "none"
         # M0.2 / #26: params_fingerprint (temperature/top_p/seed/thinking_budget)
@@ -1003,6 +1488,11 @@ class GeminiClient:
         d = self._settings.paths.cache_dir / "gemini"
         d.mkdir(parents=True, exist_ok=True)
         return d / f"{key}.json"
+
+    def _require_price(self, model: str) -> None:
+        """Fail closed: a claude- model with no price row is never called (spec §6)."""
+        if is_anthropic_model(model):
+            price_row(model, self._settings, on=_today())
 
     def _check_cost_ceiling(self) -> None:
         g = self._settings.gemini
@@ -1037,12 +1527,26 @@ class GeminiClient:
                     f"cumulative spend is ${ledger_total:.4f} (across all runs)."
                 )
 
+    def _active_model(self, model: str | None, task_tag: str | None) -> str:
+        """The model a call runs on: explicit, else the task tag's, else the default."""
+        g = self._settings.gemini
+        if model is not None:
+            return model
+        if task_tag is not None:
+            return g.model_for(task_tag)
+        return g.model
+
+    def model_for_tag(self, task_tag: str) -> str:
+        """The model a call under ``task_tag`` runs on when it names none."""
+        return self._active_model(None, task_tag)
+
     def _structured_cache_key(
         self,
         *,
         system_prompt: str,
         user_prompt: str,
         file_paths: list[Path] | None,
+        documents: Sequence[DocumentInput] | None,
         image_parts: list[bytes] | None,
         media_resolution: str | None,
         response_schema: type[BaseModel],
@@ -1057,15 +1561,13 @@ class GeminiClient:
         entry, and :meth:`structured_cache_key`, which names it for a caller that may
         have to remove it: the two cannot name different entries for the same call.
         """
-        g = self._settings.gemini
-        if model is not None:
-            active_model = model
-        elif task_tag is not None:
-            active_model = g.model_for(task_tag)
-        else:
-            active_model = g.model
+        active_model = self._active_model(model, task_tag)
         params_fingerprint = self._params_fingerprint(
-            active_model, task_tag, response_schema, media_resolution=media_resolution
+            active_model,
+            task_tag,
+            response_schema,
+            media_resolution=media_resolution,
+            n_images=len(image_parts or ()),
         )
         cache_key = self._cache_key(
             active_model,
@@ -1076,6 +1578,7 @@ class GeminiClient:
             extra_cache_key,
             params_fingerprint,
             image_parts=image_parts,
+            documents=documents,
         )
         return active_model, cache_key
 
@@ -1085,6 +1588,7 @@ class GeminiClient:
         system_prompt: str,
         user_prompt: str,
         file_paths: list[Path] | None = None,
+        documents: Sequence[DocumentInput] | None = None,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
         response_schema: type[BaseModel],
@@ -1092,6 +1596,7 @@ class GeminiClient:
         model: str | None = None,
         extra_cache_key: str = "",
         task_tag: str | None = None,
+        leaf_kind: str | None = None,
     ) -> str:
         """The key the reply of the structured call these arguments make is cached under.
 
@@ -1100,18 +1605,23 @@ class GeminiClient:
         was made from are no longer at hand: it keeps this short string, not the
         images, and gives it to :meth:`forget_cached`.
         """
-        _model, cache_key = self._structured_cache_key(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            file_paths=file_paths,
-            image_parts=image_parts,
-            media_resolution=media_resolution,
-            response_schema=response_schema,
-            prompt_version=prompt_version,
-            model=model,
-            extra_cache_key=extra_cache_key,
-            task_tag=task_tag,
-        )
+        token = _call_leaf_kind.set(leaf_kind)
+        try:
+            _model, cache_key = self._structured_cache_key(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                file_paths=file_paths,
+                documents=documents,
+                image_parts=image_parts,
+                media_resolution=media_resolution,
+                response_schema=response_schema,
+                prompt_version=prompt_version,
+                model=model,
+                extra_cache_key=extra_cache_key,
+                task_tag=task_tag,
+            )
+        finally:
+            _call_leaf_kind.reset(token)
         return cache_key
 
     def forget_cached(self, cache_keys: Iterable[str]) -> int:
@@ -1130,7 +1640,12 @@ class GeminiClient:
         held is read afresh on every ``read_write`` run, harness sweeps included, and
         is paid for each time; that is intended, because a held paper replayed from
         the cache is held for ever.
+
+        ``GeminiSettings.cache_forget_enabled = False`` turns this into a no-op (0)
+        for measurement runs, so every screen reads the same frozen upstream entries.
         """
+        if not self._settings.gemini.cache_forget_enabled:
+            return 0
         if self.default_cache_mode not in ("read_write", "refresh"):
             return 0
         forgotten = 0
@@ -1147,6 +1662,7 @@ class GeminiClient:
         system_prompt: str,
         user_prompt: str,
         file_paths: list[Path] | None = None,
+        documents: Sequence[DocumentInput] | None = None,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
         image_uploads: ImageUploads | None = None,
@@ -1156,6 +1672,59 @@ class GeminiClient:
         extra_cache_key: str = "",
         task_tag: str | None = None,
         cache_mode: Literal["read_write", "bypass", "refresh"] | None = None,
+        attempt: _Attempt | None = None,
+        question_id: str | None = None,
+        shared_prefix: SharedPrefix | None = None,
+        leaf_kind: str | None = None,
+    ) -> _T:
+        """I1: send per-page images instead of uploading a whole file.
+
+        See :meth:`_generate_structured` for the arguments. ``leaf_kind`` (B3) picks a
+        ``claude_effort_for["tag:kind"]`` effort on a claude- model; Gemini ignores
+        it. It reaches the cache key only through the effort it selects.
+        """
+        token = _call_leaf_kind.set(leaf_kind)
+        try:
+            return self._generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                file_paths=file_paths,
+                documents=documents,
+                image_parts=image_parts,
+                media_resolution=media_resolution,
+                image_uploads=image_uploads,
+                response_schema=response_schema,
+                prompt_version=prompt_version,
+                model=model,
+                extra_cache_key=extra_cache_key,
+                task_tag=task_tag,
+                cache_mode=cache_mode,
+                attempt=attempt,
+                question_id=question_id,
+                shared_prefix=shared_prefix,
+            )
+        finally:
+            _call_leaf_kind.reset(token)
+
+    def _generate_structured(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        file_paths: list[Path] | None = None,
+        documents: Sequence[DocumentInput] | None = None,
+        image_parts: list[bytes] | None = None,
+        media_resolution: str | None = None,
+        image_uploads: ImageUploads | None = None,
+        response_schema: type[_T],
+        prompt_version: str,
+        model: str | None = None,
+        extra_cache_key: str = "",
+        task_tag: str | None = None,
+        cache_mode: Literal["read_write", "bypass", "refresh"] | None = None,
+        attempt: _Attempt | None = None,
+        question_id: str | None = None,
+        shared_prefix: SharedPrefix | None = None,
     ) -> _T:
         """I1: send per-page images instead of uploading a whole file.
 
@@ -1171,9 +1740,28 @@ class GeminiClient:
         no media resolution. ``image_uploads`` (spec 2026-09-26 §7) sends the
         same images as Files API URIs instead of inline bytes; the cache key
         still comes from ``image_parts``.
+
+        On a ``claude-`` model ``image_parts`` are fitted, then sent as Files API
+        references when ``image_uploads`` is a ``ClaudeImageUploads`` (uploaded once
+        per job), falling back to inline base64 image blocks if the upload fails or
+        no uploads handle is given; a Gemini ``ImageUploads`` handle is ignored.
+        ``media_resolution`` is not sent, though it stays in the cache key as for
+        any call.
+        ``file_paths`` is refused; ``documents`` go as ``document`` blocks, first.
+        ``documents`` and ``file_paths`` together raise ``ValueError``; on Gemini
+        a document is uploaded from its ``source_path``.
+
+        ``attempt`` and ``question_id`` only label the `CallRecord` this call
+        appends; they are never part of the cache key.
+
+        ``shared_prefix`` (lever A3) says ``system_prompt`` is a per-paper prefix and
+        how to have the provider cache it (see :class:`SharedPrefix`). Its ``text``
+        must be ``system_prompt``; it is not part of the reply cache key, which is
+        built from ``system_prompt`` as for any call. None sends what it always did.
         """
-        if cache_mode is None:
-            cache_mode = self.default_cache_mode
+        if shared_prefix is not None and shared_prefix.text != system_prompt:
+            raise ValueError("shared_prefix.text must be the system_prompt it is sent as")
+        cache_mode = self._effective_cache_mode(cache_mode, task_tag)
         if cache_mode not in ("read_write", "bypass", "refresh"):
             raise ValueError(
                 f"cache_mode must be one of 'read_write', 'bypass', 'refresh'; got {cache_mode!r}"
@@ -1189,10 +1777,28 @@ class GeminiClient:
             # paper's cache key.
             if not image_uploads.matches(image_parts):
                 raise ValueError("image_uploads must carry the same page images as image_parts")
+        on_claude = is_anthropic_model(self._active_model(model, task_tag))
+        if file_paths and documents:
+            raise ValueError("pass file_paths or documents, not both")
+        if documents and any(not doc.data for doc in documents):
+            # Data-less documents would all hash to sha256(b"") in the cache key.
+            raise ValueError(f"documents must carry their bytes (task_tag={task_tag!r})")
+        if on_claude and file_paths:
+            raise ValueError(
+                f"claude- models take no file_paths (task_tag={task_tag!r}); send typed PDFs "
+                "as documents and scans as rasterised image_parts"
+            )
+        claude_uploads: ClaudeImageUploads | None = None
+        if on_claude:
+            # Spec §2a: the same pages go to Claude's own Files API, once per job.
+            if image_uploads is not None and self._settings.gemini.claude_files_api is True:
+                claude_uploads = image_uploads.for_claude(self)
+            image_uploads = None
         active_model, cache_key = self._structured_cache_key(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             file_paths=file_paths,
+            documents=documents,
             image_parts=image_parts,
             media_resolution=media_resolution,
             response_schema=response_schema,
@@ -1227,6 +1833,7 @@ class GeminiClient:
             )
             return response_schema.model_validate_json(cache_path.read_text(encoding="utf-8"))
 
+        self._require_price(active_model)
         self._check_cost_ceiling()
 
         if image_uploads is not None:
@@ -1240,24 +1847,28 @@ class GeminiClient:
             model=active_model,
         )
         t0 = time.monotonic()
-        raw_text = self._call_with_retry(
-            active_model,
-            system_prompt,
-            user_prompt,
-            file_paths,
-            response_schema,
-            log,
-            task_tag,
-            image_parts=image_parts,
-            media_resolution=media_resolution,
-            image_uploads=image_uploads,
-        )
+        with _call_labelled(attempt, question_id):
+            raw_text = self._call_with_retry(
+                active_model,
+                system_prompt,
+                user_prompt,
+                file_paths,
+                response_schema,
+                log,
+                task_tag,
+                documents=documents,
+                image_parts=image_parts,
+                media_resolution=media_resolution,
+                image_uploads=claude_uploads if on_claude else image_uploads,
+                shared_prefix=shared_prefix,
+            )
         latency_ms = int((time.monotonic() - t0) * 1000)
         log.debug("gemini_latency_ms", latency_ms=latency_ms)
 
         try:
             result: _T = response_schema.model_validate_json(raw_text)
         except Exception as exc:
+            _mark_last_record_unparsed()
             log.debug(
                 "gemini_validation_failure",
                 schema=response_schema.__name__,
@@ -1270,21 +1881,25 @@ class GeminiClient:
                 "Fix only the fields mentioned in the error above and return valid JSON "
                 "matching the schema exactly. Do not change any other fields."
             )
-            raw_text = self._call_with_retry(
-                active_model,
-                system_prompt,
-                corrected,
-                file_paths,
-                response_schema,
-                log,
-                task_tag,
-                image_parts=image_parts,
-                media_resolution=media_resolution,
-                image_uploads=image_uploads,
-            )
+            with _call_labelled(attempt, question_id):
+                raw_text = self._call_with_retry(
+                    active_model,
+                    system_prompt,
+                    corrected,
+                    file_paths,
+                    response_schema,
+                    log,
+                    task_tag,
+                    documents=documents,
+                    image_parts=image_parts,
+                    media_resolution=media_resolution,
+                    image_uploads=claude_uploads if on_claude else image_uploads,
+                    shared_prefix=shared_prefix,
+                )
             try:
                 result = response_schema.model_validate_json(raw_text)
             except Exception as exc:
+                _mark_last_record_unparsed()
                 log.debug(
                     "gemini_validation_failure_retry",
                     schema=response_schema.__name__,
@@ -1310,12 +1925,14 @@ class GeminiClient:
         task_tag: str | None = None,
         cache_mode: Literal["read_write", "bypass", "refresh"] | None = None,
     ) -> str:
-        """N3 step 3: ask Gemini's own ``code_execution`` tool to run code.
+        """N3 step 3: ask the model's own ``code_execution`` tool to run code.
 
-        This is Gemini's built-in tool (``docs/plans/ai-improvements-plan.md``
-        :615) — NOT a locally-built sandbox. No subprocess, no local process
-        isolation; the code runs on Google's side and this method only reads
-        back the ``code_execution_result`` part of the response.
+        Gemini's built-in tool (``docs/plans/ai-improvements-plan.md`` :615) or
+        Claude's server-side code-execution tool, by ``model`` -- NOT a
+        locally-built sandbox. No subprocess, no local process isolation; the
+        code runs on the provider's side and this method only reads back what it
+        printed (Gemini's ``code_execution_result`` part; for Claude, the stdout
+        of the last successful run, the final text only when code did run).
 
         Unlike :meth:`generate_structured`, this is a plain-text call (no
         ``response_schema`` — the ``code_execution`` tool and structured JSON
@@ -1330,8 +1947,7 @@ class GeminiClient:
         and model — see that method's docstring for why a collision there
         would be dangerous, not merely wasteful.
         """
-        if cache_mode is None:
-            cache_mode = self.default_cache_mode
+        cache_mode = self._effective_cache_mode(cache_mode, task_tag)
         if cache_mode not in ("read_write", "bypass", "refresh"):
             raise ValueError(
                 f"cache_mode must be one of 'read_write', 'bypass', 'refresh'; got {cache_mode!r}"
@@ -1375,6 +1991,7 @@ class GeminiClient:
             )
             return cache_path.read_text(encoding="utf-8")
 
+        self._require_price(active_model)
         self._check_cost_ceiling()
 
         bus.publish(
@@ -1382,9 +1999,24 @@ class GeminiClient:
             task=task_tag or "untagged",
             model=active_model,
         )
-        raw_text = self._call_code_execution_once(
-            active_model, prompt, log, task_tag, params_fingerprint=params_fingerprint
-        )
+        if is_anthropic_model(active_model):
+            # Claude's transients (429/529/5xx) retry under the client's policy; a
+            # final one is an ExternalServiceError, as every Gemini failure already is.
+            try:
+                raw_text = self._retry_policy(log, task_tag=task_tag, model=active_model)(
+                    self._call_code_execution_once,
+                    active_model,
+                    prompt,
+                    log,
+                    task_tag,
+                    params_fingerprint=params_fingerprint,
+                )
+            except _TransientError as exc:
+                raise ExternalServiceError(str(exc)) from exc
+        else:
+            raw_text = self._call_code_execution_once(
+                active_model, prompt, log, task_tag, params_fingerprint=params_fingerprint
+            )
 
         if cache_mode in ("read_write", "refresh"):
             cache_path.write_text(raw_text, encoding="utf-8")
@@ -1400,6 +2032,9 @@ class GeminiClient:
         log: Any,
         params_fingerprint: str,
         extra_log_fields: dict[str, Any] | None = None,
+        sends_thinking: bool = True,
+        extra_usd_now: float = 0.0,
+        extra_usd_2027: float = 0.0,
     ) -> None:
         """Account for one paid response: counters, ledger, log line, events.
 
@@ -1416,6 +2051,11 @@ class GeminiClient:
         beyond the shared fields -- the code-execution path's
         ``latency_ms`` and ``tool``. The structured path passes none, so its
         line keeps exactly the fields M0.4 reads today.
+
+        `extra_usd_now` / `extra_usd_2027` are a charge that is not priced per
+        token, priced today and at `PRICE_DATE_2027`: an explicit prefix cache's
+        storage (:meth:`cached_prefix_handle`). Today's figure is also added to
+        the ledger and the counters. Every other caller leaves both at 0.
         """
         global \
             _process_input_tokens, \
@@ -1429,9 +2069,71 @@ class GeminiClient:
         # any call made with a non-zero thinking budget.
         thoughts_tok = int(getattr(response.usage_metadata, "thoughts_token_count", 0) or 0)
         out_tok = candidates_tok + thoughts_tok
-        in_price, out_price = _resolve_pricing(model, self._settings)
-        usd = in_tok / 1000 * in_price + out_tok / 1000 * out_price
+        # A bare MagicMock attribute would read as 1 via int(); only a real number counts.
+        cached_raw = getattr(response.usage_metadata, "cached_content_token_count", 0)
+        cached_tok = (
+            min(max(int(cached_raw), 0), in_tok)
+            if isinstance(cached_raw, int) and not isinstance(cached_raw, bool)
+            else 0
+        )
+        write_5m = int(_usage_number(response.usage_metadata, "cache_write_5m_tokens"))
+        write_1h = int(_usage_number(response.usage_metadata, "cache_write_1h_tokens"))
+        container_s = float(_usage_number(response.usage_metadata, "container_seconds"))
+        extra_usage = {
+            k: v
+            for k, v in (
+                ("cache_write_5m_tokens", write_5m),
+                ("cache_write_1h_tokens", write_1h),
+                ("container_seconds", container_s),
+            )
+            if v
+        }
+        try:
+            usd = price_call(
+                model,
+                self._settings,
+                input_tokens=in_tok,
+                cached_tokens=cached_tok,
+                output_tokens=out_tok,
+                on=_today(),
+                cache_write_5m_tokens=write_5m,
+                cache_write_1h_tokens=write_1h,
+                container_seconds=container_s,
+            )
+            usd_now = usd
+            usd_2027 = price_call(
+                model,
+                self._settings,
+                input_tokens=in_tok,
+                cached_tokens=cached_tok,
+                output_tokens=out_tok,
+                on=PRICE_DATE_2027,
+                cache_write_5m_tokens=write_5m,
+                cache_write_1h_tokens=write_1h,
+                container_seconds=container_s,
+            )
+        except UnpricedModelError:
+            # The ledger must keep accounting for a model with no row: the
+            # existing warn-and-fall-back path, billed with no cache discount.
+            in_price, out_price = _resolve_pricing(model, self._settings)
+            fallback = PriceRow(in_price, in_price, out_price)
+            usd = _row_cost(
+                fallback, input_tokens=in_tok, cached_tokens=cached_tok, output_tokens=out_tok
+            )
+            # Fallback USD feeds the ledger/log only; the record carries NaN so
+            # an unpriced model can never be silently summed into cost metrics.
+            usd_now = usd_2027 = math.nan
+        if extra_usd_now or extra_usd_2027:
+            usd += extra_usd_now
+            usd_now += extra_usd_now
+            usd_2027 += extra_usd_2027
         usd_rounded = round(usd, 6)
+        attempt, question_id = _call_labels.get()
+        thinking = (
+            self.resolved_thinking(task_tag, model, _call_leaf_kind.get())
+            if task_tag and sends_thinking
+            else None
+        )
         g = self._settings.gemini
         new_total: float | None = None
         crossed: list[float] = []
@@ -1441,12 +2143,41 @@ class GeminiClient:
             _process_accumulated_usd += usd
             if task_tag:
                 _process_cost_by_task[task_tag] = _process_cost_by_task.get(task_tag, 0.0) + usd
+            scope = _script_cost.get()
+            if scope is not None:
+                bucket = task_tag or "untagged"
+                scope[bucket] = scope.get(bucket, 0.0) + usd
             # Persist cumulative spend to the cross-run ledger; this is the
             # source of truth for the hard USD ceiling. DS3: a ledgerless
             # client (the web process) skips the ledger and the budget
             # events below. Spend is still observable via the log line.
             if self._ledger is not None:
                 new_total, crossed = self._ledger.add(usd, thresholds=g.usd_warning_thresholds)
+            record = CallRecord(
+                provider=_provider_for(model),
+                task_tag=task_tag,
+                model=model,
+                thinking=thinking,
+                input_tokens=in_tok,
+                cached_tokens=cached_tok,
+                output_tokens=out_tok,
+                thinking_tokens=thoughts_tok,
+                usd_now=usd_now,
+                usd_2027=usd_2027,
+                latency_ms=latency_ms,
+                attempt=attempt,
+                question_id=question_id,
+                case_key=_call_case_key.get(),
+                parse_ok=True,
+                cache_write_5m_tokens=write_5m,
+                cache_write_1h_tokens=write_1h,
+                container_seconds=container_s,
+            )
+            if _recording_depth > 0:
+                _process_call_records.append(record)
+                _thread_state.last_record = record
+            else:
+                _thread_state.last_record = None
         if new_total is not None:
             for threshold in crossed:
                 bus.publish(
@@ -1469,11 +2200,13 @@ class GeminiClient:
             # them) so a thinking-budget change is visible in the logs
             # rather than showing up as unexplained output-token drift.
             thoughts_tokens=thoughts_tok,
+            cached_tokens=cached_tok,
             usd_cost=usd_rounded,
             cache_hit=False,
             # M0.4 reads this off the log to record which generation parameters
             # a sweep actually ran under.
             params_fingerprint=params_fingerprint,
+            **extra_usage,
             **(extra_log_fields or {}),
         )
         bus.publish(
@@ -1485,6 +2218,106 @@ class GeminiClient:
             usd_cost=usd_rounded,
             latency_ms=latency_ms,
         )
+
+    def cached_prefix_handle(self, model: str, prefix: SharedPrefix, *, log: Any) -> str | None:
+        """The name of an explicit cache holding ``prefix.text`` on ``model``, or None.
+
+        Made on the first call for a (model, prompt version, prefix) and reused
+        until :data:`PREFIX_CACHE_TTL_SECONDS` is nearly up, then made again.
+        Entries past that point are pruned from the in-process store on every
+        access. Its cost is recorded as a `CallRecord` tagged
+        :data:`PREFIX_CACHE_TASK_TAG`: the cached tokens at the full input rate
+        (the creation, conservatively not discounted) plus their storage for
+        the whole TTL (:func:`prefix_cache_storage_usd`), priced today and at
+        `PRICE_DATE_2027`. That record carries no attempt or question id, so it
+        is not charged to the leaf that happened to make it.
+
+        None, and the caller sends the prefix as a plain system instruction
+        (where implicit caching may still apply), when:
+
+        - ``model`` has no storage price: no cache is made, so no cost goes
+          unrecorded; remembered for the rest of this client's life;
+        - the API refuses the creation (a prefix below its minimum size, a model
+          without explicit caching): logged and remembered the same way;
+        - the creation fails transiently (:func:`_is_transient`): logged and NOT
+          remembered, so the next call tries again.
+        """
+        digest = hashlib.sha256(prefix.text.encode()).hexdigest()
+        key = (model, prefix.version, digest)
+        with self._prefix_cache_lock:
+            now = time.monotonic()
+            for stale in [
+                k
+                for k, held in self._prefix_caches.items()
+                if held is not None and now >= held[1] - _PREFIX_CACHE_EXPIRY_MARGIN_SECONDS
+            ]:
+                del self._prefix_caches[stale]
+            if key in self._prefix_caches:
+                held = self._prefix_caches[key]
+                return None if held is None else held[0]
+            try:
+                _cache_storage_rate(model, on=_today())
+            except UnpricedModelError:
+                log.warning("prefix_cache_storage_unpriced", model=model)
+                self._prefix_caches[key] = None
+                return None
+            from google.genai import types
+
+            self._check_cost_ceiling()
+            try:
+                cache = self._client.caches.create(
+                    model=model,
+                    config=types.CreateCachedContentConfig(
+                        system_instruction=prefix.text,
+                        ttl=f"{PREFIX_CACHE_TTL_SECONDS}s",
+                        display_name=f"lemely-prefix-{prefix.version}-{digest[:12]}",
+                    ),
+                )
+            except Exception as exc:
+                transient = _is_transient(exc)
+                log.warning(
+                    "prefix_cache_create_failed",
+                    model=model,
+                    transient=transient,
+                    error=str(exc)[:200],
+                )
+                if not transient:
+                    self._prefix_caches[key] = None
+                return None
+            latency_ms = int((time.monotonic() - now) * 1000)
+            tokens_raw = getattr(getattr(cache, "usage_metadata", None), "total_token_count", 0)
+            tokens = tokens_raw if isinstance(tokens_raw, int) else 0
+            self._prefix_caches[key] = (str(cache.name), now + PREFIX_CACHE_TTL_SECONDS)
+        storage_now = prefix_cache_storage_usd(model, tokens, PREFIX_CACHE_TTL_SECONDS, on=_today())
+        storage_2027 = prefix_cache_storage_usd(
+            model, tokens, PREFIX_CACHE_TTL_SECONDS, on=PRICE_DATE_2027
+        )
+        with _call_labelled(None, None):
+            self._record_spend(
+                response=SimpleNamespace(
+                    usage_metadata=SimpleNamespace(
+                        prompt_token_count=tokens,
+                        candidates_token_count=0,
+                        thoughts_token_count=0,
+                        cached_content_token_count=0,
+                    )
+                ),
+                model=model,
+                task_tag=PREFIX_CACHE_TASK_TAG,
+                latency_ms=latency_ms,
+                log=log,
+                params_fingerprint=digest[:12],
+                extra_log_fields={
+                    "prefix_cache": str(cache.name),
+                    "storage_usd": round(storage_now, 6),
+                    "storage_usd_2027": round(storage_2027, 6),
+                    "ttl_seconds": PREFIX_CACHE_TTL_SECONDS,
+                },
+                sends_thinking=False,
+                extra_usd_now=storage_now,
+                extra_usd_2027=storage_2027,
+            )
+        return str(cache.name)
 
     def image_uploads(
         self, images: list[bytes], *, concurrency: int, mime_type: str = "image/png"
@@ -1516,6 +2349,109 @@ class GeminiClient:
             reraise=True,
         )
 
+    def _claude_output_cap(self, task_tag: str | None) -> int:
+        """A claude- call's max_tokens.
+
+        The tag's ``max_output_tokens_for`` when the settings name one, else the adapter's.
+        The binder tags (``_CLAUDE_BINDER_CAP_TAGS``) default to
+        ``_CLAUDE_BINDER_OUTPUT_CAP`` instead of the Gemini-tuned default map, which is
+        used only when the settings leave ``max_output_tokens_for`` unset or leave this
+        tag out of it.
+        """
+        from lemely.io.providers.anthropic_adapter import MAX_OUTPUT_TOKENS
+
+        g = self._settings.gemini
+        tag = task_tag or ""
+        named = "max_output_tokens_for" in g.model_fields_set and tag in g.max_output_tokens_for
+        if tag in _CLAUDE_BINDER_CAP_TAGS and not named:
+            return _CLAUDE_BINDER_OUTPUT_CAP
+        return g.max_output_tokens_for.get(tag, MAX_OUTPUT_TOKENS)
+
+    def _provider_for_model(self, model: str) -> Provider:
+        """The provider for ``model``'s prefix; the Claude one is built on first use."""
+        if is_anthropic_model(model):
+            if self._claude_provider is None:
+                from lemely.io.llm.claude_provider import ClaudeProvider
+
+                self._claude_provider = ClaudeProvider(self._anthropic, self._settings)
+            return self._claude_provider
+        return self._gemini_provider
+
+    def _build_request(
+        self,
+        *,
+        model: str,
+        task_tag: str | None,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: type[BaseModel] | None,
+        file_paths: list[Path] | None = None,
+        documents: Sequence[DocumentInput] | None = None,
+        image_parts: list[bytes] | None = None,
+        media_resolution: str | None = None,
+        image_uploads: Any = None,
+        shared_prefix: SharedPrefix | None = None,
+        tool: CodeExecution | None = None,
+    ) -> LLMRequest:
+        """The one request an attempt sends (spec §1)."""
+        on_claude = is_anthropic_model(model)
+        if on_claude:
+            cap = self._claude_output_cap(task_tag)
+            effort: str | None = self._resolved_gen_params(task_tag, model)["thinking_level"]
+            spots = self._settings.gemini.claude_cache_for.get(task_tag or "")
+            cache_plan = LEGACY_CLAUDE_CACHE_PLAN if spots is None else CachePlan(tuple(spots))
+        else:
+            cap = self._output_cap(task_tag)[0]
+            effort = None
+            cache_plan = CachePlan()
+        split = on_claude and shared_prefix is not None
+        return LLMRequest(
+            model=model,
+            task_tag=task_tag,
+            system=shared_prefix.instructions if split and shared_prefix else system_prompt,
+            prompt=user_prompt,
+            response_schema=response_schema,
+            images=tuple(ImageInput(data) for data in (image_parts or ())),
+            documents=tuple(documents)
+            if documents
+            else tuple(DocumentInput(data=b"", source_path=fp) for fp in (file_paths or ())),
+            tool=tool,
+            cache_plan=cache_plan,
+            effort=effort,
+            max_output_tokens=cap,
+            cache_prefix=shared_prefix.paper if split and shared_prefix else None,
+            media_resolution=media_resolution,
+            uploads=image_uploads,
+            shared_prefix=None if on_claude else shared_prefix,
+        )
+
+    def _check_stop(self, reply: ProviderReply, req: LLMRequest) -> None:
+        """The stop rules each provider had, applied after the spend is recorded."""
+        model, task_tag = req.model, req.task_tag
+        if is_anthropic_model(model):
+            if reply.stop_reason == "max_tokens":
+                # Billed (recorded already), marked unparsed, not transient: one
+                # fresh retry in _call_with_retry, then this raises.
+                _mark_last_record_unparsed()
+                raise _CapTruncatedError(
+                    f"Anthropic hit the {req.max_output_tokens}-token max_tokens "
+                    f"for {task_tag} ({model})"
+                )
+            if reply.stop_reason == "refusal":
+                raise ProviderError(f"Anthropic refused the request ({model})")
+            return
+        output_cap, cap_is_per_tag = self._output_cap(task_tag)
+        if cap_is_per_tag:
+            if reply.stop_reason == "max_tokens":
+                _mark_last_record_unparsed()
+                raise _CapTruncatedError(
+                    f"Gemini hit the {output_cap}-token output cap for {task_tag} ({model})"
+                )
+        elif reply.stop_detail == "MAX_TOKENS":
+            # Inert against the real SDK (str() of the enum is
+            # "FinishReason.MAX_TOKENS"); kept as it was, see the history of _call_once.
+            raise _TransientError(f"Gemini hit max_output_tokens ({model})")
+
     def _call_with_retry(
         self,
         model: str,
@@ -1526,25 +2462,42 @@ class GeminiClient:
         log: Any,
         task_tag: str | None = None,
         *,
+        documents: Sequence[DocumentInput] | None = None,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
-        image_uploads: ImageUploads | None = None,
+        image_uploads: ImageUploads | ClaudeImageUploads | None = None,
+        shared_prefix: SharedPrefix | None = None,
     ) -> str:
+        def _attempt() -> str:
+            return self._retry_policy(log, task_tag=task_tag, model=model)(
+                self._call_once,
+                model,
+                system_prompt,
+                user_prompt,
+                file_paths,
+                response_schema,
+                log,
+                task_tag,
+                documents=documents,
+                image_parts=image_parts,
+                media_resolution=media_resolution,
+                image_uploads=image_uploads,
+                shared_prefix=shared_prefix,
+            )
+
         try:
-            for attempt in self._retry_policy(log, task_tag=task_tag, model=model):
-                with attempt:
-                    return self._call_once(
-                        model,
-                        system_prompt,
-                        user_prompt,
-                        file_paths,
-                        response_schema,
-                        log,
-                        task_tag,
-                        image_parts=image_parts,
-                        media_resolution=media_resolution,
-                        image_uploads=image_uploads,
-                    )
+            try:
+                return _attempt()
+            except _CapTruncatedError as first:
+                # Runaways are stochastic (the same call came back under 1.6k
+                # tokens on a rerun), so a reply cut off at a per-tag cap gets
+                # exactly one fresh generation of the same request at the same
+                # cap. It is not a schema-correction call. The truncated attempt
+                # is already billed and recorded; the ceiling is checked before
+                # paying again, and a second truncation raises.
+                log.warning("gemini_cap_truncated_retry", error=str(first))
+                self._check_cost_ceiling()
+                return _attempt()
         except _TransientError as exc:
             raise ExternalServiceError(str(exc)) from exc
         raise ParseError("Unreachable")  # pragma: no cover
@@ -1559,121 +2512,52 @@ class GeminiClient:
         log: Any,
         task_tag: str | None = None,
         *,
+        documents: Sequence[DocumentInput] | None = None,
         image_parts: list[bytes] | None = None,
         media_resolution: str | None = None,
-        image_uploads: ImageUploads | None = None,
+        image_uploads: ImageUploads | ClaudeImageUploads | None = None,
+        shared_prefix: SharedPrefix | None = None,
     ) -> str:
-        from google.genai import types
-
-        # I1: image_parts are sent inline; spec 2026-09-26 §7: when
-        # `image_uploads` is given the same images are sent as Files API
-        # URIs — `Part.from_uri` carries `media_resolution` in google-genai
-        # 2.10 — and inline_data is never built. The `file_paths` branch
-        # (mark-scheme parsers) is unchanged.
-        resolved_media_resolution = (
-            _MEDIA_RESOLUTION_LEVELS.get(media_resolution, media_resolution)
-            if media_resolution is not None
-            else None
-        )
-        file_parts: list[Any] = []
-        if image_uploads is not None:
-            for uploaded in image_uploads.ensure():
-                file_parts.append(
-                    types.Part.from_uri(
-                        file_uri=uploaded.uri,
-                        mime_type=uploaded.mime_type,
-                        media_resolution=resolved_media_resolution,
-                    )
-                )
-        elif image_parts:
-            for data in image_parts:
-                file_parts.append(
-                    types.Part.from_bytes(
-                        data=data,
-                        mime_type="image/png",
-                        media_resolution=resolved_media_resolution,
-                    )
-                )
-        elif file_paths:
-            for fp in file_paths:
-                file_parts.append(self._client.files.upload(file=fp))
-
-        is_3x = _is_3x(model)
-        gen_params = self._resolved_gen_params(task_tag, model)
-        stripped_schema = _strip_schema(response_schema.model_json_schema(), is_3x=is_3x)
-        log.debug(
-            "gemini_schema_sent",
-            schema=response_schema.__name__,
-            top_level_properties=list((stripped_schema.get("properties") or {}).keys()),
-        )
-        t0 = time.monotonic()
-
-        # F1: 2.5 and 3.x are disjoint API lines. 3.x removes
-        # temperature/top_p/top_k/candidate_count outright (passing them is
-        # rejected, not merely ignored) and replaces the numeric
-        # thinking_budget with a named thinking_level; it also takes the
-        # structured-output schema via response_json_schema rather than
-        # response_schema (google-genai 2.10.0, types.py:6029 —
-        # GenerateContentConfig.response_json_schema, "alternative to
-        # response_schema that accepts JSON Schema"; both fields exist on the
-        # same config class in this SDK version, so 2.5 is untouched by
-        # keeping response_schema).
-        config_kwargs: dict[str, Any] = {
-            "max_output_tokens": _MAX_OUTPUT_TOKENS,
-            "response_mime_type": "application/json",
-            "system_instruction": system_prompt,
-        }
-        if is_3x:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(
-                thinking_level=gen_params["thinking_level"]
-            )
-            config_kwargs["response_json_schema"] = stripped_schema
-        else:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(
-                thinking_budget=gen_params["thinking_budget"]
-            )
-            config_kwargs["response_schema"] = stripped_schema
-            config_kwargs["temperature"] = gen_params["temperature"]
-            config_kwargs["top_p"] = gen_params["top_p"]
-            config_kwargs["seed"] = gen_params["seed"]
-
-        try:
-            response = self._client.models.generate_content(
-                model=model,
-                config=types.GenerateContentConfig(**config_kwargs),
-                contents=[user_prompt, *file_parts],
-            )
-        except Exception as exc:
-            if _is_transient(exc):
-                raise _TransientError(str(exc)) from exc
-            raise ExternalServiceError(str(exc)) from exc
-
-        latency_ms = int((time.monotonic() - t0) * 1000)
-
-        self._record_spend(
-            response=response,
+        req = self._build_request(
             model=model,
             task_tag=task_tag,
-            latency_ms=latency_ms,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_schema=response_schema,
+            file_paths=file_paths,
+            documents=documents,
+            image_parts=image_parts,
+            media_resolution=media_resolution,
+            image_uploads=image_uploads,
+            shared_prefix=shared_prefix,
+        )
+        reply = self._provider_for_model(model).complete(req, log=log)
+        self._record_spend(
+            response=reply.usage_response,
+            model=model,
+            task_tag=task_tag,
+            latency_ms=reply.latency_ms,
             log=log,
             params_fingerprint=self._params_fingerprint(
-                model, task_tag, response_schema, media_resolution=media_resolution
+                model,
+                task_tag,
+                response_schema,
+                media_resolution=media_resolution,
+                n_images=len(req.images),
             ),
         )
-
-        raw = response.text or ""
-        finish = str(response.candidates[0].finish_reason if response.candidates else "")
-        if finish == "MAX_TOKENS":
-            raise _TransientError(f"Gemini hit max_output_tokens ({model})")
-        return raw
+        self._check_stop(reply, req)
+        return reply.text
 
     def _call_code_execution_once(
         self, model: str, prompt: str, log: Any, task_tag: str | None, *, params_fingerprint: str
     ) -> str:
-        """Send ``prompt`` with Gemini's ``code_execution`` tool enabled.
+        """Send ``prompt`` with the provider's ``code_execution`` tool enabled.
 
         Returns the ``output`` of the response's ``code_execution_result``
-        part. No retry loop here (unlike :meth:`_call_with_retry`) — a
+        part (Claude: the executed code's stdout; a ``pause_turn`` is continued
+        inside the provider, ``max_tokens`` / ``refusal`` give no text). No retry loop here (unlike :meth:`_call_with_retry`;
+        :meth:`generate_with_code_execution` retries Claude's transients around it) — a
         code-execution call is only ever made from
         :mod:`lemely.io.question_gates`' fallback path, where a transient
         failure is just one more reason the gate could not verify this
@@ -1681,43 +2565,35 @@ class GeminiClient:
         of the caller's own regenerate-on-reject loop.
 
         Raises:
-            ParseError: the response has no ``code_execution_result`` part
-                (the model answered in prose instead of running code, or the
-                execution itself errored) — never returned as an empty
+            ParseError: the response has no code-execution output
+                (the model answered in prose instead of running code, the
+                execution itself errored, or the reply was cut off or refused) — never returned as an empty
                 string, so a caller cannot mistake "nothing to compare" for
                 "the sandbox found no output".
         """
-        from google.genai import types
-
-        tool = types.Tool(code_execution=types.ToolCodeExecution())
-        t0 = time.monotonic()
-        try:
-            response = self._client.models.generate_content(
-                model=model,
-                config=types.GenerateContentConfig(tools=[tool]),
-                contents=[prompt],
-            )
-        except Exception as exc:
-            raise ExternalServiceError(str(exc)) from exc
-        latency_ms = int((time.monotonic() - t0) * 1000)
-
-        self._record_spend(
-            response=response,
+        req = self._build_request(
             model=model,
             task_tag=task_tag,
-            latency_ms=latency_ms,
+            system_prompt="",
+            user_prompt=prompt,
+            response_schema=None,
+            tool=CodeExecution(),
+        )
+        reply = self._provider_for_model(model).complete(req, log=log)
+        self._record_spend(
+            response=reply.usage_response,
+            model=model,
+            task_tag=task_tag,
+            latency_ms=reply.latency_ms,
             log=log,
             params_fingerprint=params_fingerprint,
-            extra_log_fields={"latency_ms": latency_ms, "tool": "code_execution"},
+            extra_log_fields={"latency_ms": reply.latency_ms, "tool": "code_execution"},
+            # Claude sends adaptive thinking with the effort; Gemini's tool call sends none.
+            sends_thinking=is_anthropic_model(model),
         )
-
-        candidates = response.candidates or []
-        parts = candidates[0].content.parts if candidates and candidates[0].content else []
-        for part in parts or []:
-            result = getattr(part, "code_execution_result", None)
-            output = getattr(result, "output", None) if result is not None else None
-            if output:
-                return str(output)
+        if reply.text:
+            return reply.text
+        provider = "Anthropic" if is_anthropic_model(model) else "Gemini"
         raise ParseError(
-            f"Gemini code_execution call ({model}) returned no code_execution_result part."
+            f"{provider} code_execution call ({model}) returned no code_execution_result part."
         )

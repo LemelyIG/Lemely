@@ -47,6 +47,128 @@ class DoctorTests(unittest.TestCase):
         self.assertFalse(payload["all_passed"])
         self.assertIn("gemini_api_key", json.dumps(payload))
 
+    def _doctor_env(self, tmp: str, **extra: str | None) -> dict[str, str | None]:
+        (Path(tmp) / "Sources").mkdir()
+        (Path(tmp) / "outputs").mkdir()
+        return {
+            "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+            "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+            "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+            "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+            **extra,
+        }
+
+    def test_doctor_lists_the_price_table_and_fails_an_unpriced_claude_tag(self) -> None:
+        with TemporaryDirectory() as tmp:
+            env = self._doctor_env(
+                tmp,
+                LEMELY_GEMINI__CORRECTION_MODEL="claude-nonexistent-9",
+                ANTHROPIC_API_KEY="test-key",
+            )
+            result = self.runner.invoke(cli, ["--json", "doctor", "--no-network"], env=env)
+        payload = json.loads(result.output)
+        checks = {c["name"]: c for c in payload["checks"]}
+        self.assertIn(
+            "correction=anthropic:claude-nonexistent-9", checks["llm_price_table"]["detail"]
+        )
+        self.assertFalse(checks["claude_price_rows"]["ok"])
+        self.assertFalse(payload["all_passed"])
+
+    def test_doctor_price_rows_pass_on_defaults(self) -> None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli, ["--json", "doctor", "--no-network"], env=self._doctor_env(tmp)
+            )
+        checks = {c["name"]: c for c in json.loads(result.output)["checks"]}
+        self.assertTrue(checks["claude_price_rows"]["ok"])
+        self.assertTrue(checks["llm_price_table"]["ok"])
+
+    def test_doctor_fails_when_a_claude_model_is_configured_without_an_anthropic_key(self) -> None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env=self._doctor_env(
+                    tmp,
+                    ANTHROPIC_API_KEY=None,
+                    LEMELY_GEMINI__CORRECTION_MODEL="claude-haiku-5-5",
+                ),
+            )
+        self.assertEqual(result.exit_code, 3, msg=result.output)
+        payload = json.loads(result.output)
+        self.assertFalse(payload["all_passed"])
+        check = next(c for c in payload["checks"] if c["name"] == "anthropic_api_key")
+        self.assertFalse(check["ok"])
+        self.assertIn("correction=claude-haiku-5-5", check["detail"])
+
+    def test_doctor_fails_when_the_second_read_is_on_claude_without_an_anthropic_key(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env=self._doctor_env(
+                    tmp,
+                    ANTHROPIC_API_KEY=None,
+                    LEMELY_BINDING__SECOND_READ_MODEL="claude-haiku-5-5",
+                ),
+            )
+        self.assertEqual(result.exit_code, 3, msg=result.output)
+        payload = json.loads(result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "anthropic_api_key")
+        self.assertFalse(check["ok"])
+        self.assertIn("binding_second_read=claude-haiku-5-5", check["detail"])
+        table = next(c for c in payload["checks"] if c["name"] == "gemini_model_table")
+        self.assertIn("binding_second_read=claude-haiku-5-5", table["detail"])
+
+    def _workspace_check(self, **env: str) -> dict[str, object] | None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env=self._doctor_env(tmp, ANTHROPIC_API_KEY="sk-ant-test", **env),
+            )
+        payload = json.loads(result.output)
+        return next((c for c in payload["checks"] if c["name"] == "claude_files_workspace"), None)
+
+    def test_doctor_names_only_image_carrying_claude_calls_as_uploading(self) -> None:
+        check = self._workspace_check(
+            LEMELY_GEMINI__CORRECTION_MODEL="claude-haiku-5-5",
+            LEMELY_GEMINI__EXTRACTION_MODEL="claude-haiku-5-5",
+            LEMELY_BINDING__SECOND_READ_MODEL="claude-haiku-5-5",
+        )
+        assert check is not None
+        self.assertTrue(check["ok"])
+        detail = str(check["detail"])
+        self.assertIn("extraction", detail)
+        self.assertIn("binding_second_read", detail)
+        self.assertNotIn("correction", detail)
+        self.assertIn("dedicated Lemely workspace", detail)
+
+    def test_doctor_skips_the_workspace_check_when_no_image_call_is_on_claude(self) -> None:
+        self.assertIsNone(self._workspace_check(LEMELY_GEMINI__CORRECTION_MODEL="claude-haiku-5-5"))
+
+    def test_doctor_says_inline_when_the_files_api_is_off(self) -> None:
+        check = self._workspace_check(
+            LEMELY_GEMINI__EXTRACTION_MODEL="claude-haiku-5-5",
+            LEMELY_GEMINI__CLAUDE_FILES_API="false",
+        )
+        assert check is not None
+        self.assertIn("sent inline", str(check["detail"]))
+
+    def test_doctor_does_not_need_an_anthropic_key_under_default_settings(self) -> None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env=self._doctor_env(tmp, ANTHROPIC_API_KEY=None),
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "anthropic_api_key")
+        self.assertTrue(check["ok"])
+
     def test_doctor_succeeds_with_valid_env(self) -> None:
         with TemporaryDirectory() as tmp:
             (Path(tmp) / "Sources").mkdir()
@@ -252,7 +374,7 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
         self.assertTrue(check["ok"])
 
     def test_doctor_warns_when_promo_pricing_window_is_within_30_days_of_expiry(self) -> None:
-        """US-026: `lemely doctor` warns, but does not fail, when the 3.8/3.7/
+        """US-026: `lemely doctor` warns, but does not fail, when the 3.8/
         3.6-flash promotional pricing window (see FLASH_3X_PROMO_END_DATE in
         lemely.io.gemini) is within 30 days of lapsing to the real rate."""
         from datetime import timedelta
@@ -533,8 +655,41 @@ class DoctorBindingTests(unittest.TestCase):
         self.assertIn("binding_read=gemini-3.8-flash", checks["gemini_model_table"]["detail"])
         binding = checks["binding"]
         self.assertTrue(binding["ok"], msg=binding)
-        for expected in ("binder=label", "gate=enforce", "gemini-3.8-flash", "low", "medium"):
+        # Both reads think "low" since cost-ladder B1; the table names the second read's
+        # tag, so that is a choice and not a warning, and the advisory says what makes
+        # the second read independent.
+        for expected in (
+            "binder=label",
+            "gate=enforce",
+            "both reads on gemini-3.8-flash think low",
+            "b1-second-read-low/verdict.json",
+            "own task tag and cache key",
+        ):
             self.assertIn(expected, binding["detail"])
+
+    def test_doctor_reports_a_cross_model_second_read(self) -> None:
+        checks = self._doctor(
+            LEMELY_BINDING__SECOND_READ_MODEL="claude-haiku-5-5",
+            ANTHROPIC_API_KEY="test-key-not-validated-with-no-network",
+        )
+        binding = checks["binding"]
+        self.assertTrue(binding["ok"], msg=binding)
+        for expected in (
+            "first on gemini-3.8-flash (thinking low)",
+            "second on claude-haiku-5-5 (thinking low)",
+            "two reads per extraction",
+        ):
+            self.assertIn(expected, binding["detail"])
+        self.assertNotIn("b1-second-read-low", binding["detail"])
+
+    def test_doctor_reports_on_trigger_mode_when_both_reads_think_alike(self) -> None:
+        always = self._doctor()["binding"]["detail"]
+        self.assertIn("two reads per extraction", always)
+        on_trigger = self._doctor(LEMELY_BINDING__SECOND_READ_MODE="on_trigger")["binding"]
+        self.assertTrue(on_trigger["ok"], msg=on_trigger)
+        self.assertIn("think low", on_trigger["detail"])
+        self.assertIn("only when the first gives a reason for it", on_trigger["detail"])
+        self.assertNotIn("two reads per extraction", on_trigger["detail"])
 
     def test_doctor_warns_when_the_second_read_is_the_first_one_again(self) -> None:
         # A [gemini.thinking_level_for] table replaces the defaults, so one written

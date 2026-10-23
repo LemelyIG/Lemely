@@ -1,0 +1,47 @@
+{
+  "against": "b12-binder-output-cap",
+  "cache_hits": 0,
+  "cache_mode": "read_write",
+  "frozen_upstream": true,
+  "id_match_rate": 1.0,
+  "incomplete": [],
+  "latency_p95_ms": 58463.0,
+  "live_tags": [
+    "correction",
+    "correction_borderline",
+    "escalation",
+    "correction_prefix_cache",
+    "binding_second_read",
+    "extraction"
+  ],
+  "mismarked_parts": [
+    "0580_s23_qp_22_theory/partial/12a",
+    "0580_s23_qp_22_theory/partial/14",
+    "0580_s23_qp_22_theory/partial/19",
+    "0580_s23_qp_22_theory/partial/2",
+    "0580_s23_qp_22_theory/partial/4",
+    "0606_s23_qp_12_theory/wrong/3b"
+  ],
+  "overrides": {
+    "gemini.correction_model": "gemini-3.1-flash-lite",
+    "gemini.max_output_tokens_for": {
+      "binding_second_read": 16384,
+      "extraction": 16384
+    },
+    "gemini.thinking_level_for": {
+      "binding_second_read": "low",
+      "correction": "low",
+      "correction_borderline": "high",
+      "escalation": "high",
+      "extraction": "minimal",
+      "generation": "low"
+    }
+  },
+  "scored_parts": 78,
+  "set": {
+    "gemini.correction_model": "gemini-3.1-flash-lite"
+  },
+  "usd_per_script_mean": 0.030200975,
+  "usd_per_script_mean_now": 0.0189189875,
+  "validity_rate": 1.0
+}

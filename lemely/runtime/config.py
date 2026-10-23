@@ -18,6 +18,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SecretStr,
+    field_validator,
     model_validator,
 )
 from pydantic_settings import (
@@ -115,6 +116,8 @@ class LoggingSettings(BaseModel):
 # the weakest thinking level with no error anywhere. A ``Literal`` here makes
 # config load reject it instead.
 ThinkingLevel = Literal["minimal", "low", "medium", "high"]
+ClaudeCacheSpot = Literal["system", "documents", "images", "prefix"]
+ClaudeEffort = Literal["low", "medium", "high", "xhigh", "max"]
 
 # Typed separately from the inline dict literal below: a bare `dict[str, str]`
 # literal loses the `Literal` member type on assignment, so mypy strict
@@ -127,10 +130,13 @@ _THINKING_LEVEL_FOR_DEFAULTS: dict[str, ThinkingLevel] = {
     "extraction": "minimal",
     "generation": "low",
     # The label binder's second read of a script (lemely.io.binding.orchestrate). It
-    # runs on the same model as the first read, which goes out under "extraction"; a
-    # different thinking level here is what makes it a second opinion and not the
-    # same call again.
-    "binding_second_read": "medium",
+    # runs on the same model as the first read, which goes out under "extraction";
+    # independence comes from the separate task tag and cache key (both reads think
+    # "low"). "low" since the cost-ladder B1 screen (36.4% cheaper, no extra
+    # mismarks): BUILD/accuracy-runs/cost-ladder-2026-10-19/b1-second-read-low/verdict.json
+    # Coupled to max_output_tokens_for: safe only at "low"; at "medium" second reads
+    # reached 47-65k tokens at rung 0, so raise that cap before raising this level.
+    "binding_second_read": "low",
 }
 
 
@@ -145,7 +151,13 @@ class GeminiSettings(BaseModel):
     # parser tuning predates the 3.x migration and is out of scope here.
     mark_scheme_model: str | None = "gemini-2.5-flash"
     extraction_model: str | None = "gemini-3.5-flash-lite"
-    correction_model: str | None = "gemini-3.8-flash"
+    # Cost-ladder A1: gemini-3.1-flash-lite passed its live screen
+    # (BUILD/accuracy-runs/cost-ladder-2026-10-19/a1-flash-lite/verdict.json:
+    # 50.5% saving vs the B12 config, identical mismark set, id-match 1.0, 0/78
+    # parts flagged for review). claude-haiku-5-5 is development-only, via config:
+    # its screen (a1-haiku) passed but flagged 20.5% of parts for review, and
+    # review-threshold calibration failed.
+    correction_model: str | None = "gemini-3.1-flash-lite"
     generation_model: str | None = "gemini-3.5-flash-lite"
     study_plan_model: str | None = None
     scan_metadata_model: str | None = "gemini-3.5-flash-lite"
@@ -170,6 +182,114 @@ class GeminiSettings(BaseModel):
     # raising that one costs teacher time.
     escalation_model: str | None = "gemini-3.8-flash"
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+    # Per-model human-review threshold: model name -> the confidence below which
+    # a FINAL AI mark from that model is flagged ``needs_teacher_review``. A model
+    # missing from the map uses ``REVIEW_CONFIDENCE_THRESHOLD`` (0.90). Keyed by
+    # the model whose mark is final, so an escalated leaf uses the escalation
+    # model's threshold. Post-processing only: no prompt or cache key reads it.
+    # Applies in ``lemely.io.correction_ai`` alone; the db/web layers still read
+    # the 0.90 constant from the persisted ``confidence_score``.
+    review_confidence_threshold_for: dict[str, Annotated[float, Field(ge=0.0, le=1.0)]] = Field(
+        default_factory=dict
+    )
+    # LLM cost-ladder levers. Every default reproduces the pre-ladder behaviour.
+    # Per-task-tag cache mode (unlisted tags behave as "read_write"). A tag mapped
+    # to "refresh" overwrites existing entries (e.g. a frozen baseline).
+    cache_mode_for: dict[str, Literal["read_write", "bypass", "refresh"]] = Field(
+        default_factory=dict
+    )
+    # When False, ``GeminiClient.forget_cached`` is a no-op so measurement runs keep
+    # every cached read (a frozen upstream across screens); production keeps True.
+    cache_forget_enabled: bool = True
+    # Cascade: mark with the cheap correction model first, escalate to the strong
+    # model only when the cheap pass is unsure.
+    cascade_enabled: bool = False
+    # None means use ``escalation_model``.
+    cascade_strong_model: str | None = None
+    # Model name -> fitted confidence threshold; a model missing from the dict
+    # uses ``escalation_confidence_threshold``.
+    cascade_threshold_for: dict[str, Annotated[float, Field(ge=0.0, le=1.0)]] = Field(
+        default_factory=dict
+    )
+    cascade_two_pass_disagreement: bool = False
+    # Per-task-tag output-token cap (thinking tokens included); a tag's value
+    # replaces the client's default cap (65,536) for that tag's Gemini calls. A
+    # reply cut off at a set cap is billed, recorded unparsed, retried once
+    # afresh, then fails. Which calls each cap covers:
+    # - "extraction" (32,768): every call under that tag -- the label binder's
+    #   first read of a whole script (lemely.io.binding), the crop re-reads
+    #   (lemely.io.reread), and legacy whole-paper extraction, MCQ answers included
+    #   (lemely.io.answer_extraction: the main read and the binding gate's retry).
+    # - "binding_second_read" (16,384): the label binder's second read only.
+    # For claude- models these defaults do not apply: the binder tags (extraction,
+    # binding_second_read, binding_overview) default to 32,768 unless this map is set
+    # in the settings with the tag named (GeminiClient._claude_output_cap).
+    # Runaway guards, never hit in measurement. Evidence: the largest binder
+    # output on golden is 1,608 tokens in the B12 screen (1,626 across all the
+    # cost-ladder screens); a real 19-page scan (0625/41 Oct/Nov 2024,
+    # tests/fixtures/binding/0625_w24_41/streams) replies in about 7,100 tokens
+    # (text length / 4), 22% of the extraction cap; a 65,522-token runaway first
+    # read was seen at rung 0:
+    # BUILD/accuracy-runs/cost-ladder-2026-10-19/b12-binder-output-cap/verdict.json
+    # Coupled to B1: the second-read cap is safe only because binding_second_read
+    # thinks "low"; at "medium" second reads reached 47-65k tokens at rung 0, so
+    # raise this cap before raising that level.
+    max_output_tokens_for: dict[str, Annotated[int, Field(gt=0)]] = Field(
+        default_factory=lambda: {"extraction": 32768, "binding_second_read": 16384}
+    )
+    cascade_unaddressed_points: bool = False
+    # Put the question-invariant correction prompt first so providers can cache it.
+    correction_shared_prefix: bool = False
+    correction_prefix_cache: Literal["implicit", "explicit"] = "implicit"
+    # Claude page images (spec 2026-10-19 §2): greyscaled and enhanced, stepped
+    # down from 2576 px until the request is under this many estimated tokens
+    # (95,000 keeps Haiku 5.5 under its 100k price tier), never below the floor
+    # (about 135 DPI on A4). Gemini calls do not read either.
+    claude_image_token_budget: int = Field(default=95_000, gt=0)
+    claude_image_floor_px: int = Field(default=1568, ge=256)
+    # Spec §2a: page images for a claude- call go through Claude's Files API, uploaded
+    # once per job (1 h expiry, deleted at job end) and referenced by id. Files API
+    # storage is not ZDR-eligible; the key must belong to a dedicated workspace.
+    # Off: the pages are sent inline, under the 30 MB base64 limit.
+    claude_files_api: bool = True
+    # Spec §2 cost guard: a marked script whose model spend passes this logs
+    # `script_over_cost_target` with the split by task tag. Never blocks marking.
+    paper_cost_target_usd: float = Field(default=0.10, gt=0)
+    # Spec §4 B1: prompt-cache breakpoints per task tag for claude- calls. A tag not
+    # listed keeps the A1 behaviour (system prompt and shared-prefix paper marked).
+    # "images" after the binder's pages lets its second read hit the first's cache;
+    # with it on both binder tags and both reads on one claude- model, the reads run
+    # one after the other. At most 4 spots per tag.
+    claude_cache_for: dict[str, list[ClaudeCacheSpot]] = Field(default_factory=dict)
+    # Spec §4 B3: Anthropic effort per task tag, or per "tag:kind" (kind: mcq,
+    # numeric, short, extended, from the leaf's question type). Lookup: tag:kind,
+    # then tag, then thinking_level_for[tag] mapped to effort. Claude calls only.
+    claude_effort_for: dict[str, ClaudeEffort] = Field(default_factory=dict)
+    # Spec §4 B2 (fallback; native citations cannot combine with structured output):
+    # the marker quotes the mark-scheme words each awarded mark rests on, and a mark
+    # without a valid quote goes to review as "uncited_mark". Both providers.
+    correction_citations: bool = False
+    # Spec §5.4: the correction reply's rationale is asked for in at most 25 words
+    # and cut at 300 characters (output tokens). Screened with and without
+    # correction_citations in sub-project C.
+    correction_terse_rationale: bool = False
+
+    @field_validator("claude_cache_for")
+    @classmethod
+    def _at_most_four_distinct_spots(
+        cls, value: dict[str, list[ClaudeCacheSpot]]
+    ) -> dict[str, list[ClaudeCacheSpot]]:
+        for tag, spots in value.items():
+            if len(spots) > 4 or len(set(spots)) != len(spots):
+                raise ValueError(
+                    f"claude_cache_for[{tag!r}]: at most 4 distinct spots, got {spots}"
+                )
+        return value
+
+    # Greyscale pages for claude- calls are enhanced for readability (paper shading
+    # divided out, levels stretched, light sharpening). False sends plain greyscale
+    # (for A/B); it changes the pixels, so it is part of the reply cache key.
+    claude_image_enhance: bool = True
     # Thinking budget: map of task_tag → token budget (0 = disabled / default).
     # Mark-scheme parsing is enabled by default: the extra reasoning headroom helps
     # the model tag "any N from" pools correctly (is_optional/is_alternative), which
@@ -613,6 +733,28 @@ class BindingSettings(BaseModel):
     ``gemini.thinking_level_for``), so that two reads can be compared and a bad first
     read replaced. It doubles the cost of the binding step. ``retry_model`` is the model
     the legacy binder's one retry uses.
+
+    ``second_read_model`` is the second read's model; ``None`` (the default) reads it on
+    ``read_model``, as before. A ``claude-`` model makes the second read a cross-model
+    one: the Anthropic adapter is sent the same page images, under the same task tag
+    (``binding_second_read``: its thinking level maps to Anthropic effort) and its own
+    cache key, and ``lemely doctor`` requires an Anthropic key for it.
+
+    ``second_read_mode`` says when that second read is made, with ``second_read`` on.
+    ``"always"``: on every script, at the same time as the first. ``"on_trigger"``: the
+    first read is made alone, and the second only when something about the first gives
+    a reason for it (``lemely.io.binding.second_read_triggers``: a leaf not bound or
+    left with nothing under its label, a label missing, out of place or seen twice, a
+    gate check failed). With no trigger the paper goes on with the first read, as it
+    does with ``second_read`` off. Trigger recall is measured on recorded reads only:
+    a second read that disagrees with a first read that looks whole is not seen.
+
+    Unsafe as shipped: a first read with every label present but writing under the
+    wrong labels fires no trigger, so the G9 cross-read check is lost and those answers
+    go out verified. Not screened; keep ``always``. Its cost is not what the golden
+    screen shows either: the ``blank_leaf`` trigger fires on every script with a
+    genuinely skipped part (5/5 reads of the one real scan on disk), so on real scripts
+    the second read is made far more often than on the golden set (0/20 reads).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -620,6 +762,11 @@ class BindingSettings(BaseModel):
     gate: Literal["enforce", "observe", "off"] = "enforce"
     read_model: str = Field(default="gemini-3.8-flash", min_length=1)
     second_read: bool = True
+    second_read_mode: Literal["always", "on_trigger"] = "always"
+    second_read_model: str | None = Field(default=None, min_length=1)
+    #: Spec §2b: a claude- read whose pages are still over the token budget at the
+    #: floor is read as an overview plus chunks. Off by default; screened in C.
+    claude_chunked_read: bool = False
     retry_model: str = Field(default="gemini-3.8-flash", min_length=1)
 
     @model_validator(mode="after")
@@ -1072,6 +1219,11 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("LEMELY_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"),
     )
+    # Anthropic provider key (cost-ladder). Env-only, like the Gemini key.
+    anthropic_api_key: OptionalSecret = Field(
+        default=None,
+        validation_alias=AliasChoices("LEMELY_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
+    )
 
     @classmethod
     def settings_customise_sources(
@@ -1099,6 +1251,19 @@ class Settings(BaseSettings):
             init_settings,  # TOML payload from load_settings(**toml_data)
             file_secret_settings,
         )
+
+
+def anthropic_key_missing_tags(settings: Settings, models: Mapping[str, str]) -> list[str]:
+    """Task tags in ``models`` that resolve to a ``claude-`` model while no Anthropic key is set.
+
+    A ``claude-`` model with no key fails on the first call to it
+    (``ExternalServiceError``, not retried), so every paper dies late. Callers
+    that run at startup (``lemely doctor``, the web lifespan) use this to say so
+    up front. Empty when a key is configured or no tag routes to Anthropic.
+    """
+    if settings.anthropic_api_key is not None and settings.anthropic_api_key.get_secret_value():
+        return []
+    return [tag for tag, model in models.items() if model.startswith("claude-")]
 
 
 def _discover_toml(cwd: Path) -> Path | None:

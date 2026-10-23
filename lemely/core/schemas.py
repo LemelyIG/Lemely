@@ -877,6 +877,65 @@ class AIMarkResponse(StrictModel):
         return json_schema
 
 
+class AIMarkResponseCited(AIMarkResponse):
+    """A mark with the mark-scheme words each awarded mark rests on (spec §4 B2).
+
+    The fallback for citations, which the Messages API cannot combine with
+    structured outputs. ``lemely.core.cited_marks`` checks each quote against the
+    mark scheme the marker was shown.
+    """
+
+    evidence_quotes: list[str] = Field(
+        ...,
+        description=(
+            "For every mark awarded, the exact words of the MARK SCHEME SUBTREE it was "
+            "awarded against, copied character for character. One quote per matched "
+            "point. Quote the mark scheme, never the student's answer."
+        ),
+    )
+
+
+#: A terse rationale is cut to this many characters (never refused: a refusal
+#: would cost a schema-correction retry).
+TERSE_FEEDBACK_MAX_CHARS = 300
+_TERSE_FEEDBACK_DESCRIPTION = (
+    "At most 25 words: why the marks were or were not awarded. No restating the answer."
+)
+
+
+def _cut(value: str) -> str:
+    return value[:TERSE_FEEDBACK_MAX_CHARS]
+
+
+class AIMarkResponseTerse(AIMarkResponse):
+    """Spec §5.4: a correction reply whose rationale is capped (output tokens)."""
+
+    feedback: str = Field(..., description=_TERSE_FEEDBACK_DESCRIPTION)
+
+    @field_validator("feedback")
+    @classmethod
+    def _cap_feedback(cls, value: str) -> str:
+        return _cut(value)
+
+
+class AIMarkResponseCitedTerse(AIMarkResponseCited):
+    """Terse rationale with evidence quotes: the evidence lives in the quotes."""
+
+    feedback: str = Field(..., description=_TERSE_FEEDBACK_DESCRIPTION)
+
+    @field_validator("feedback")
+    @classmethod
+    def _cap_feedback(cls, value: str) -> str:
+        return _cut(value)
+
+
+def marker_response_schema(*, cited: bool, terse: bool = False) -> type[AIMarkResponse]:
+    """The correction reply schema for the flags in force."""
+    if cited:
+        return AIMarkResponseCitedTerse if terse else AIMarkResponseCited
+    return AIMarkResponseTerse if terse else AIMarkResponse
+
+
 class SubjectResult(StrictModel):
     subject_code: str = Field(...)
     session_month: Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]
