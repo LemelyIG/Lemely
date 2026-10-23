@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import partial
+from itertools import pairwise
 from typing import TYPE_CHECKING, Literal, cast
 
 import structlog
@@ -294,18 +295,33 @@ def _parse_item(
     return item, reasons
 
 
-def _numbered_from_one(raw_items: list[object], page_count: int) -> bool:
-    """Whether the reader numbered the pages from 1: one item is on page ``page_count``.
+# Items on the last page number needed before a read counts as numbered from 1. No item on
+# page 0 is the normal state (page 0 is usually an unlabelled cover), so it proves nothing
+# alone, and one stray item on page ``page_count`` stays a per-item repair. A real 1-based
+# read had 14 items there (.superpowers/sdd/binding-investigation.md, 3 of 22 reads).
+_MIN_ONE_BASED_TAIL_ITEMS = 2
 
-    That page does not exist when counting from 0, and no item is on page 0. Looking at
-    the whole read is what tells a shifted count from one stray page: a stray page leaves
-    the rest of the read on page 0 and up. Evidence: 3 of 22 full-script reads of one
-    19-page script were numbered 1..19 (.superpowers/sdd/binding-investigation.md).
+
+def _numbered_from_one(raw_items: list[object], page_count: int) -> bool:
+    """Whether the reader numbered the pages from 1, shifting the whole read by one.
+
+    Evidence of a shift, all of it needed: no item on page 0; at least
+    ``_MIN_ONE_BASED_TAIL_ITEMS`` items on page ``page_count`` (a page that does not exist
+    counting from 0); and the pages never go back in stream order, as a read in order does
+    not, which also makes those items the tail of the stream. One stray item on the last
+    page leaves the rest of the read on page 0 and up, so it is not a shifted count.
+    Evidence: 3 of 22 full-script reads of one 19-page script were numbered 1..19
+    (.superpowers/sdd/binding-investigation.md).
     """
-    pages = [
-        _coerce_page(raw.get("page"), page_count + 1) for raw in raw_items if isinstance(raw, dict)
+    known = [
+        page
+        for raw in raw_items
+        if isinstance(raw, dict)
+        and (page := _coerce_page(raw.get("page"), page_count + 1)) is not None
     ]
-    return page_count in pages and 0 not in pages
+    if 0 in known or known.count(page_count) < _MIN_ONE_BASED_TAIL_ITEMS:
+        return False
+    return all(earlier <= later for earlier, later in pairwise(known))
 
 
 def parse_stream_items(raw_items: list[object], *, page_count: int) -> StreamRead:

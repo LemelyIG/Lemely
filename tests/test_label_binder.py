@@ -706,7 +706,7 @@ def test_the_clean_first_question_binds_whole(tmp_path: Path) -> None:
     assert [leaf for leaf in _blank_leaves(bound) if leaf.startswith("1")] == []
 
 
-@pytest.mark.parametrize("page", [454, -1, 1.5, None, "two", True, "absent"])
+@pytest.mark.parametrize("page", [454, 19, -1, 1.5, None, "two", True, "absent"])
 def test_an_answer_with_a_bad_page_is_kept_as_uncertain_and_its_leaf_is_not_blank(
     tmp_path: Path, page: Any
 ) -> None:
@@ -863,10 +863,46 @@ def test_a_read_without_the_last_page_number_is_not_reindexed() -> None:
 
 
 def test_a_one_based_read_with_one_more_bad_page_reindexes_and_repairs_that_item() -> None:
-    items = [_label("1", page=1), _answer("x", page=2), _label("2", page=4), _answer("y", page=99)]
+    items = [
+        _label("1", page=1),
+        _answer("x", page=2),
+        _label("2", page=4),
+        _answer("y", page=4),
+        _answer("z", page=99),
+    ]
     read = parse_stream_items(items, page_count=4)
     assert read.drops == {"reindexed_one_based": 1, "repaired_page": 1}
-    assert [i.page for i in read.items] == [0, 1, 3, 3]
+    assert [i.page for i in read.items] == [0, 1, 3, 3, 3]
+
+
+@pytest.mark.parametrize("where", ["end", "middle"])
+def test_one_stray_item_on_the_last_page_number_does_not_reindex_a_correct_read(where: str) -> None:
+    """Page 0 is usually an unlabelled cover, so 'no item on page 0' proves nothing (review)."""
+    items, pages = _recorded_stream()
+    assert not any(i["page"] == 0 for i in items)
+    reference = parse_stream_items(items, page_count=pages)
+    stray = _answer("stray", page=pages)
+    stream = [*items, stray] if where == "end" else [*items[:50], stray, *items[50:]]
+
+    read = parse_stream_items(stream, page_count=pages)
+
+    assert read.drops == {"repaired_page": 1}  # the stray alone, demoted as before
+    kept = [i for i in read.items if not (isinstance(i, SeenWriting) and i.answer == "stray")]
+    assert kept == reference.items  # no page, box or placement of the correct read moved
+
+
+def test_a_stray_pair_that_is_not_the_tail_does_not_reindex() -> None:
+    items, pages = _recorded_stream()
+    stream = [*items[:50], _answer("a", page=pages), _answer("b", page=pages), *items[50:]]
+    assert parse_stream_items(stream, page_count=pages).drops.get("reindexed_one_based") is None
+
+
+def test_a_real_one_based_read_with_its_tail_on_the_last_page_is_reindexed() -> None:
+    items, pages = _recorded_stream()
+    shifted = _shifted(items, 1)
+    assert sum(1 for i in shifted if i["page"] == pages) >= 14  # the investigation's shape
+    assert shifted[-1]["page"] == pages
+    assert parse_stream_items(shifted, page_count=pages).drops == {"reindexed_one_based": 1}
 
 
 @pytest.mark.parametrize("page", [454, None, "two", 1.5])

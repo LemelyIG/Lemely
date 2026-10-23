@@ -1343,7 +1343,7 @@ def test_a_stub_first_read_is_made_again_afresh_and_the_clean_one_is_used(
     assert outcome.report.verdict == "pass"
     (stub,) = [e for e in logs if e["event"] == "binding_read_stub"]
     assert (stub["tag"], stub["items"]) == ("extraction", 4)
-    assert stub["coverage"] < 0.6
+    assert stub["coverage"] < 0.3
 
 
 def test_a_stub_second_read_is_made_again_afresh_and_compared(
@@ -1361,32 +1361,83 @@ def test_a_stub_second_read_is_made_again_afresh_and_compared(
     assert [c.id for c in outcome.report.checks] == ["G1", "G2", "G5", "G6", "G7", "G9"]
 
 
-def test_a_second_read_that_is_a_stub_twice_fails_as_a_read_that_raised(
+def test_a_second_read_that_is_a_stub_twice_holds_the_paper_on_the_first_read(
     tmp_path: Path, scheme: MarkScheme
 ) -> None:
-    """Never a vacuous G9: the paper is not let out on a stub second read."""
+    """Never a vacuous G9, and never a crash: the teacher is told to check the pages."""
     model = _Model(first=_items(_run(1)), second=[_stub()] * 4)
-    with (
-        _events(EventType.SECOND_READ_FAILED, EventType.BINDING_GATE_RESULT) as seen,
-        pytest.raises(ExternalServiceError, match="too few of the paper's question labels"),
-    ):
-        _bind(tmp_path, scheme, model)
-    # Each attempt at the second read is a read and a refreshed read; the failed second
-    # read is made once more as for any other failure (``_read_both``).
-    assert model.made() == ["first", "second", "second", "second", "second"]
-    assert seen[EventType.BINDING_GATE_RESULT] == []
-    (failure,) = seen[EventType.SECOND_READ_FAILED]
-    assert failure["stage"] == "binding_second_read"
-    assert "too few" in failure["error"]
+    with _events(EventType.SECOND_READ_FAILED, EventType.BINDING_GATE_RESULT) as seen:
+        outcome = _bind(tmp_path, scheme, model)
+    # One read and its one refresh: the stub is a held paper, not a failed read, so the
+    # second read is not made over again.
+    assert model.made() == ["first", "second", "second"]
+    assert outcome.report.verdict == "hold"
+    assert outcome.report.retried is True
+    failed = [c for c in outcome.report.checks if not c.passed]
+    assert [(c.id, c.scope) for c in failed] == [("stub_read", "paper")]
+    assert not any(c.id == "G9" for c in outcome.report.checks)  # no comparison against a stub
+    assert len(outcome.answers) > 30  # the clean first read is kept as the record
+    assert seen[EventType.SECOND_READ_FAILED] == []
+    (event,) = seen[EventType.BINDING_GATE_RESULT]
+    assert event["verdict"] == "hold"
 
 
-def test_a_first_read_that_is_a_stub_twice_fails_the_job(
+def test_a_first_read_that_is_a_stub_twice_holds_on_the_second_read(
     tmp_path: Path, scheme: MarkScheme
 ) -> None:
+    model = _Model(first=[_stub(), _stub()], second=_items(_run(2)))
+    outcome = _bind(tmp_path, scheme, model)
+    assert model.made() == ["first", "first", "second"]
+    assert outcome.report.verdict == "hold"
+    assert [c.id for c in outcome.report.checks if not c.passed] == ["stub_read"]
+    assert len(outcome.answers) > 30  # the clean second read is the record
+
+
+def test_a_single_read_that_is_a_stub_twice_holds(tmp_path: Path, scheme: MarkScheme) -> None:
     model = _Model(first=[_stub(), _stub()])
-    with pytest.raises(ExternalServiceError, match="too few of the paper's question labels"):
-        _bind(tmp_path, scheme, model, second_read=False)
+    outcome = _bind(tmp_path, scheme, model, second_read=False)
     assert model.made() == ["first", "first"]
+    assert outcome.report.verdict == "hold"
+    assert "stub_read" in [c.id for c in outcome.report.checks if not c.passed]
+
+
+def test_a_script_with_its_last_pages_missing_holds_without_raising(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    """Pages 13-18 absent cover 0.56 of the leaves: a short script, not a stub (probe2)."""
+    short = [i for i in _run(1) if i["page"] <= 12]
+    short2 = [i for i in _run(2) if i["page"] <= 12]
+    model = _Model(first=_items(short), second=_items(short2))
+    outcome = _bind(tmp_path, scheme, model)
+    assert model.made() == ["first", "second"]  # no refresh: 0.56 is above the stub line
+    assert outcome.report.verdict == "hold"
+    assert "stub_read" not in [c.id for c in outcome.report.checks]
+
+
+@pytest.mark.parametrize(
+    ("default_mode", "expected"), [("bypass", "bypass"), ("read_write", "refresh")]
+)
+def test_a_stub_retry_follows_the_effective_cache_mode(
+    tmp_path: Path, scheme: MarkScheme, default_mode: str, expected: str
+) -> None:
+    model = _Model(first=[_stub(), _items(_run(1))], second=_items(_run(2)))
+    client, _genai = _client(tmp_path)
+    client.default_cache_mode = default_mode  # type: ignore[assignment]
+    pages = _pages()
+    with (
+        client.image_uploads([p.png_bytes for p in pages], concurrency=1) as uploads,
+        patch.object(client, "generate_structured", side_effect=model),
+    ):
+        run_binding(
+            client,
+            pages,
+            scheme,
+            uploads=uploads,
+            settings=client._settings,
+            manifest_key="scan-1",
+        )
+    firsts = [c for c in model.calls if model.key(c) == "first"]
+    assert firsts[1]["cache_mode"] == expected
 
 
 def test_label_coverage_is_the_share_of_the_papers_leaves_whose_label_was_bound(
@@ -1401,7 +1452,10 @@ def test_label_coverage_is_the_share_of_the_papers_leaves_whose_label_was_bound(
         assert coverage == pytest.approx(expected, abs=0.2), name
     stub25 = bind_stream(parse_stream_items(_run(1)[:25], page_count=_PAGE_COUNT).items, scheme)
     assert _label_coverage(stub25) < _MIN_READ_LABEL_COVERAGE
-    assert _MIN_READ_LABEL_COVERAGE == 0.6
+    assert _MIN_READ_LABEL_COVERAGE == 0.3
+    # Real partial scripts, which stopped early, cover 0.56-0.65 and are not stubs.
+    partial = bind_stream(parse_stream_items(_run(1)[:80], page_count=_PAGE_COUNT).items, scheme)
+    assert _label_coverage(partial) >= _MIN_READ_LABEL_COVERAGE
 
 
 def test_with_the_second_read_switched_off_one_read_is_used_as_before(

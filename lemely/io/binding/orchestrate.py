@@ -124,13 +124,13 @@ LOST_ITEM_REASONS = ("malformed_item", "unknown_type")
 
 #: A read whose bound leaves are fewer than this share of the paper's leaves is a stub.
 #: Clean reads of the 43-leaf script bound 43 of 43 in every recorded run (5 of 5, 104-111
-#: items); the two live stubs had 4 items (0 of 43 bound) and 25 items (5 of 43 bound), so
-#: 0.6 sits far from both and leaves room for a read that honestly misses some labels
+#: items); the two measured stubs covered 0.0 (4 items) and 0.12 (25 items). Real partial
+#: scripts, where a student stopped early, cover 0.56-0.65, so 0.3 sits between the two
+#: groups and never calls an honest partial script a stub
 #: (.superpowers/sdd/binding-investigation.md, Q1).
-_MIN_READ_LABEL_COVERAGE = 0.6
-#: What is said when the second read is a stub twice. It is published on the
-#: ``SECOND_READ_FAILED`` event and is the message of the error the job fails with.
-STUB_READ_MESSAGE = "the reader returned too few of the paper's question labels"
+_MIN_READ_LABEL_COVERAGE = 0.3
+#: What the ``stub_read`` check says: a read that is still a stub after its one refresh.
+STUB_READ_DETAIL = "a read returned too few of the paper's question labels, twice"
 
 # Each read's task tag and the suffix its cache key takes after the paper's own key.
 _FIRST_READ = ("extraction", "|bind1")
@@ -211,6 +211,7 @@ class _Read:
     doubts: dict[str, list[str]] = field(default_factory=dict)
     stream: BoundStream | None = None
     items: tuple[StreamItem, ...] = ()
+    stub: bool = False
 
 
 def binder_for(
@@ -840,7 +841,7 @@ def run_binding(
     model_for_read = {_FIRST_READ[0]: binding.read_model, _SECOND_READ[0]: second_model}
 
     def _attempt(
-        task_tag: str, suffix: str, cache_mode: Literal["refresh"] | None
+        task_tag: str, suffix: str, cache_mode: Literal["refresh", "bypass"] | None
     ) -> tuple[StreamRead, BoundStream]:
         stream = binder.read(
             pages,
@@ -856,6 +857,7 @@ def run_binding(
     def _read(task_tag: str, suffix: str) -> _Read:
         stream, bound = _attempt(task_tag, suffix, None)
         coverage = _label_coverage(bound)
+        stub = False
         if coverage < _MIN_READ_LABEL_COVERAGE:
             # A schema-valid reply that closed its list early: it parses, and would
             # leave every leaf unaligned, so the cross-read check would pass on nothing.
@@ -863,22 +865,28 @@ def run_binding(
             log.warning(
                 "binding_read_stub", tag=task_tag, items=len(stream.items), coverage=coverage
             )
-            stream, bound = _attempt(task_tag, suffix, "refresh")
+            # A run that bypasses the cache must not start writing to it: the repeat
+            # is bypassed too, and refreshed only where the cache is in use.
+            effective = settings.gemini.cache_mode_for.get(task_tag, client.default_cache_mode)
+            stream, bound = _attempt(
+                task_tag, suffix, "bypass" if effective == "bypass" else "refresh"
+            )
             coverage = _label_coverage(bound)
-            if coverage < _MIN_READ_LABEL_COVERAGE:
+            stub = coverage < _MIN_READ_LABEL_COVERAGE
+            if stub:
                 log.warning(
                     "binding_read_stub_again",
                     tag=task_tag,
                     items=len(stream.items),
                     coverage=coverage,
                 )
-                raise ExternalServiceError(STUB_READ_MESSAGE)
         return _Read(
             bound=to_bound_read(bound, page_count=len(pages), drops=stream.drops),
             writings={leaf.question_id: list(leaf.writings) for leaf in bound.leaves},
             doubts={leaf.question_id: list(leaf.doubts) for leaf in bound.leaves},
             stream=bound,
             items=tuple(stream.items),
+            stub=stub,
         )
 
     reads = [_FIRST_READ, _SECOND_READ] if binding.second_read else [_FIRST_READ]
@@ -945,6 +953,16 @@ def run_binding(
             raise
     else:
         first_read = _first()
+    # A read still a stub after its one refresh holds the paper. It is left out of the
+    # comparison: against a stub every leaf is unaligned, so the cross-read check would
+    # pass on nothing. The other read stays as the record.
+    stubbed = first_read.stub or (second_read is not None and second_read.stub)
+    second_read_made = second_read is not None
+    record_model = binding.read_model
+    if stubbed and second_read is not None:
+        if first_read.stub and not second_read.stub:
+            first_read, record_model = second_read, second_model
+        second_read = None
     first = first_read.bound
     second = second_read.bound if second_read is not None else None
 
@@ -995,6 +1013,8 @@ def run_binding(
         decided, retried = "pass", True
     else:
         decided, retried = "hold", second is not None
+    if stubbed:
+        decided, retried = "hold", second_read_made
 
     if decided != "pass":
         # A held paper has no teacher queue: running it again is the only way on, and
@@ -1006,13 +1026,21 @@ def run_binding(
         # client already has.
         _forget_reads()
     checks = [*chosen_checks, *compared]
+    if stubbed:
+        checks.append(
+            BindingCheck(id="stub_read", passed=False, scope="paper", detail=STUB_READ_DETAIL)
+        )
     enforced = BindingReport(
         binder="label",
         checks=checks,
         verdict=decided,
         retried=retried,
         # The model of the read whose answers go on.
-        model=second_model if chosen_read is second_read else binding.read_model,
+        model=record_model
+        if stubbed
+        else second_model
+        if chosen_read is second_read
+        else binding.read_model,
     )
     answered = {answer.question_id for answer in chosen.answers}
     # A group that shows the trace of writing listed before its label is never

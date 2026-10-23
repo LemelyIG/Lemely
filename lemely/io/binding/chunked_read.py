@@ -68,10 +68,10 @@ class PageMap(BaseModel):
         return sorted(entry.page for entry in self.pages) == list(range(page_count))
 
     def text(self) -> str:
-        """The map as lines of 1-based pages, for a chunk's prompt."""
+        """The map as lines of 0-based pages, as the image labels number them (chunk prompt)."""
         lines = []
         for entry in sorted(self.pages, key=lambda e: e.page):
-            line = f"page {entry.page + 1}: {', '.join(entry.labels) or 'no label'}"
+            line = f"page {entry.page}: {', '.join(entry.labels) or 'no label'}"
             if entry.continues_to_next:
                 line += "; writing continues onto the next page"
             lines.append(line)

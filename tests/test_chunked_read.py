@@ -113,7 +113,9 @@ class PlanTests(unittest.TestCase):
             ]
         )
         self.assertEqual(page_map.labels_on(range(1, 2)), ["1(b)"])
-        self.assertIn("page 1: 1(a); writing continues onto the next page", page_map.text())
+        self.assertEqual(
+            page_map.text(), "page 0: 1(a); writing continues onto the next page\npage 1: 1(b)"
+        )
 
 
 class ReadTests(unittest.TestCase):
@@ -153,7 +155,7 @@ class ReadTests(unittest.TestCase):
         model = _FakeModel(pages)
         self._read(reader, pages, model, "extraction")
         second = next(c for c in model.calls if "pages 15 to 29" in c["user_prompt"])
-        self.assertIn("page 16: 16", second["user_prompt"])
+        self.assertIn("page 15: 16", second["user_prompt"])
         self.assertIn("Image 0 is the last page of the previous part", second["user_prompt"])
 
     def test_not_applied_under_the_budget_or_off_claude(self) -> None:

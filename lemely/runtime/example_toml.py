@@ -131,6 +131,8 @@ def render_example_toml() -> str:
     lines.append("# A reply cut off at a set cap is billed, recorded unparsed, retried once")
     lines.append("# afresh, then fails. A table you set REPLACES the shipped caps (no merge):")
     lines.append("# list every entry you want kept, both extraction and binding_second_read.")
+    lines.append("# Naming binding_second_read here pins Claude's binder cap too: on a claude-")
+    lines.append("# model it defaults to 32768 when the tag is not named.")
     lines.append(f"# max_output_tokens_for = {_toml_inline(s.gemini.max_output_tokens_for)}")
     lines.append("# Escalate when the cheap pass leaves mark-scheme points unaddressed.")
     lines.append(

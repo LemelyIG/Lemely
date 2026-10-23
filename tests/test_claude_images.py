@@ -116,7 +116,7 @@ class FitOnTheWireTests(_Base):
 
 
 class OutputCapTests(_Base):
-    def test_cap_follows_max_output_tokens_for(self) -> None:
+    def test_a_binder_tag_streams_at_its_32768_default_and_another_tag_keeps_16000(self) -> None:
         client, fake = self._client(_message(_VALID_MARK), _message(_VALID_MARK))
         self._read(client, [_scan_page(400, 600)], tag="binding_second_read")
         self._read(client, [_scan_page(401, 600)], tag="correction")
