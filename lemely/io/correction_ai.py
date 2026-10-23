@@ -2697,7 +2697,7 @@ def _maybe_apply_ecf_substitution(
     # them rather than the first pass's. Set on the built row, not through
     # `merged_mark`: a `model_copy` update would mark the field as set even
     # when the re-mark left it out, turning "no judgement" into "unclear".
-    return _build_ai_corrected(
+    rebuilt = _build_ai_corrected(
         question,
         student_answer,
         merged_mark,
@@ -2706,6 +2706,11 @@ def _maybe_apply_ecf_substitution(
         equivalence_gate=equivalence_gate,
         review_threshold=max(review_threshold, ai.review_threshold()),
     ).model_copy(update={"addresses_question": _addresses_judgement(mark2)})
+    # B2: the rebuilt row carries the re-mark's marks, so the citation check runs on the
+    # re-mark itself (its own quotes and point ids), not on the first pass's.
+    if ai.citations_on() and uncited(question, mark2):
+        rebuilt = flag_uncited(rebuilt)
+    return rebuilt
 
 
 def _attach_extraction_context(

@@ -886,7 +886,7 @@ class AIMarkResponseCited(AIMarkResponse):
     """
 
     evidence_quotes: list[str] = Field(
-        default_factory=list,
+        ...,
         description=(
             "For every mark awarded, the exact words of the MARK SCHEME SUBTREE it was "
             "awarded against, copied character for character. One quote per matched "
