@@ -46,6 +46,7 @@ class _FakeFiles:
         self.max_in_flight = 0
         self.hold: threading.Barrier | None = None
         self.bug_on: int | None = None  # the page whose upload raises a TypeError
+        self.wave = 6  # with a gate: uploads in flight before the failing page fails
         self.gate: threading.Event | None = None  # pages other than 1 wait for this
 
     def upload(self, *, file: tuple[str, bytes, str], expires_in_seconds: int) -> SimpleNamespace:
@@ -70,8 +71,10 @@ class _FakeFiles:
                 raise TypeError("bug")
             if self._fail_on == page:
                 if self.gate is not None:
-                    time.sleep(0.2)  # let the pool start its first wave, then fail
-                    self.gate.set()
+                    for _ in range(500):  # fail only once the first wave is in flight
+                        if self.attempts >= self.wave:
+                            break
+                        time.sleep(0.01)
                 raise OSError("upload refused")
             with self._lock:
                 self.uploads.append({"file": file, "expires_in_seconds": expires_in_seconds})
@@ -394,15 +397,25 @@ class ClaudeImageUploadsUnitTests(unittest.TestCase):
     def test_queued_pages_do_not_upload_after_a_permanent_failure(self) -> None:
         pages = [_page(10 + 20 * i) for i in range(10)]
         files = _FakeFiles(fail_on=1)
-        files.gate = threading.Event()  # later pages wait until page 1 has failed
+        files.gate = threading.Event()  # later pages wait until the stop flag is set
+
+        class _SpyEvent(threading.Event):
+            def set(self) -> None:
+                super().set()
+                files.gate.set()  # type: ignore[union-attr]  # open the gate after the flag
+
+        spy_threading = SimpleNamespace(Event=_SpyEvent, Lock=threading.Lock)
         uploads = ClaudeImageUploads(
             lambda: SimpleNamespace(files=files), pages, token_budget=95_000, floor_px=1568
         )
-        with self.assertRaisesRegex(Exception, "page 1"):
+        with (
+            patch("lemely.io.llm.claude_uploads.threading", spy_threading),
+            self.assertRaisesRegex(Exception, "page 1"),
+        ):
             uploads.ensure()
-        started = {int(u["file"][0][5:-4]) for u in files.uploads}
-        self.assertLessEqual(len(started), ClaudeImageUploads.UPLOAD_CONCURRENCY - 1)
-        self.assertLess(files.attempts, len(pages))
+        # Pages 2..6 were already in flight (waiting on the gate) and finish; 7..10 were
+        # queued and must make no upload call.
+        self.assertEqual(files.attempts, ClaudeImageUploads.UPLOAD_CONCURRENCY)
         uploads.delete()
         self.assertEqual(len(files.deleted), len(files.uploads))
 
