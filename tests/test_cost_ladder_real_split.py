@@ -46,11 +46,12 @@ def _cq(
     review: bool = False,
     conf: float = 0.9,
     reason: str | None = None,
+    max_marks: int = 2,
 ) -> CorrectedQuestion:
     return CorrectedQuestion(
         question_id=qid,
         awarded_marks=awarded,
-        maximum_marks=2,
+        maximum_marks=max_marks,
         confidence="high",
         confidence_score=conf,
         needs_teacher_review=review,
@@ -245,7 +246,7 @@ def test_summary_fields_average_two_runs_and_take_the_max_cost() -> None:
         _script("a", [_leaf("1", 2, 2), _leaf("2", 1, 1)], 0.06),
         _script("b", [_leaf("1", 0, 1)], 0.02, verdict="hold", incomplete="x"),
     ]
-    f = rs.real_summary_fields([run1, run2])
+    f = rs.real_summary_fields([run1, run2], ["a", "b"])
     assert f["real_scripts"] == ("a", "b")
     assert f["real_abs_error_by_run"] == (1.0, 1.0)
     assert f["real_abs_error"] == 1.0
@@ -262,7 +263,7 @@ def test_summary_fields_average_two_runs_and_take_the_max_cost() -> None:
 
 def test_summary_fields_need_at_least_one_run() -> None:
     with pytest.raises(ValueError):
-        rs.real_summary_fields([])
+        rs.real_summary_fields([], ["a"])
 
 
 def test_results_round_trip(tmp_path: Path) -> None:
@@ -332,5 +333,176 @@ def test_script_cost_includes_escalation_and_adjudication_for_the_cap(tmp_path: 
         escalations=[],
         cascade_enabled=False,
     )
-    fields = rs.real_summary_fields([[result]])
+    fields = rs.real_summary_fields([[result]], ["k"])
     assert dict(fields["real_usd_max_by_script"])["k"] == pytest.approx(0.12)  # type: ignore[arg-type]
+
+
+def _ok(key: str = "a") -> RealScriptResult:
+    return _script(key, [_leaf("1", 2, 2)], 0.01)
+
+
+def test_summary_flags_a_script_a_run_lacks() -> None:
+    f = rs.real_summary_fields([[_ok("a"), _ok("b")], [_ok("a")]], ["a", "b"])
+    assert f["real_scripts"] == ("a", "b")
+    assert f["real_incomplete"] == ("real-2:b (no result)",)
+
+
+def test_summary_real_scripts_are_the_expected_keys_not_the_first_run() -> None:
+    f = rs.real_summary_fields([[_ok("a")]], ["a", "b"])
+    assert f["real_scripts"] == ("a", "b")
+    assert f["real_incomplete"] == ("real-1:b (no result)",)
+
+
+@pytest.mark.parametrize(
+    ("runs", "keys"),
+    [
+        ([[]], ["a"]),
+        ([[_ok("a"), _ok("a")]], ["a"]),
+        ([[_ok("a"), _ok("z")]], ["a"]),
+        ([[_ok("a")]], []),
+        ([[_ok("a")]], ["a", "a"]),
+    ],
+)
+def test_summary_rejects_malformed_runs(
+    runs: list[list[RealScriptResult]], keys: list[str]
+) -> None:
+    with pytest.raises(ValueError):
+        rs.real_summary_fields(runs, keys)
+
+
+def test_unscored_leaves_carry_no_confidence(tmp_path: Path) -> None:
+    script = _frozen(tmp_path)
+    correction = _result(
+        _cq("1a", 2),
+        _cq("1b", 0, source="dropped", review=True, conf=0.0),
+        _cq("1c", 0, source="blank", conf=0.0),
+    )
+    result = rs.score_script(
+        script, correction, [], latency_ms=0.0, failure=None, escalations=[], cascade_enabled=False
+    )
+    by = {leaf.question_id: leaf for leaf in result.leaves}
+    for qid in ("1b", "1c"):
+        assert by[qid].confidence is None and by[qid].pre_escalation_confidence is None
+    assert by["1a"].confidence == 0.9
+
+
+def test_max_marks_mismatch_makes_the_script_incomplete(tmp_path: Path) -> None:
+    script = _frozen(tmp_path)
+    correction = _result(_cq("1a", 2, max_marks=3), _cq("1b", 1), _cq("1c", 0))
+    result = rs.score_script(
+        script, correction, [], latency_ms=0.0, failure=None, escalations=[], cascade_enabled=False
+    )
+    assert result.incomplete == "max marks differ on 1a: scheme 3, reference 2"
+
+
+def test_duplicate_question_id_makes_the_script_incomplete(tmp_path: Path) -> None:
+    script = _frozen(tmp_path)
+    correction = _result(_cq("1a", 2), _cq("1a", 0), _cq("1b", 1), _cq("1c", 0))
+    result = rs.score_script(
+        script, correction, [], latency_ms=0.0, failure=None, escalations=[], cascade_enabled=False
+    )
+    assert result.incomplete == "duplicate question_id in marking output: 1a"
+
+
+def test_loader_refuses_a_frozen_marker_that_differs_from_the_manifest(tmp_path: Path) -> None:
+    script = _frozen(tmp_path)
+    (script.reference_path.parent / ref.FROZEN_MARKER).write_text("deadbeef\n", encoding="utf-8")
+    with pytest.raises(ReferenceDrift, match=r"FROZEN marker .* differs from the manifest"):
+        rs.load_real_scripts(tmp_path / ref.MANIFEST_FILE)
+
+
+class _FakeScheme:
+    @classmethod
+    def model_validate_json(cls, text: str) -> str:
+        return f"parsed:{text}"
+
+
+def _fake_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("lemely.core.loose_schemas.MarkScheme", _FakeScheme)
+
+
+def test_mark_real_script_runs_every_stage_inside_the_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import contextlib
+    from types import SimpleNamespace
+
+    script = _frozen(tmp_path)
+    script.scheme_path.write_text("SCHEME-TEXT", encoding="utf-8")
+    _fake_scheme(monkeypatch)
+    events: list[str] = []
+    seen: dict[str, object] = {}
+
+    @contextlib.contextmanager
+    def fake_scope(settings: object, *, script_key: str):
+        seen["scope_key"] = script_key
+        events.append("enter")
+        yield
+        events.append("exit")
+
+    class FakeMeta:
+        def __init__(self, client: object) -> None:
+            seen["meta_client"] = client
+
+        def __call__(self, path: Path) -> None:
+            events.append("meta")
+            seen["meta_path"] = path
+
+    class FakeExtractor:
+        def __init__(self, client: object) -> None:
+            pass
+
+        def __call__(self, *, scan_path: Path, mark_scheme: object) -> str:
+            events.append("extract")
+            seen["scheme"] = mark_scheme
+            return "extracted"
+
+    sentinel = object()
+
+    def fake_correct(**kwargs: object) -> object:
+        events.append("correct")
+        seen["correct"] = kwargs
+        return sentinel
+
+    monkeypatch.setattr("lemely.io.gemini.script_cost_scope", fake_scope)
+    monkeypatch.setattr("lemely.io.scan_metadata.ScanMetadataExtractor", FakeMeta)
+    monkeypatch.setattr("lemely.io.answer_extraction.GeminiAnswerExtractor", FakeExtractor)
+    monkeypatch.setattr("lemely.io.correction_ai.correct_paper", fake_correct)
+    options = object()
+    settings = SimpleNamespace(grading=SimpleNamespace(marking_options=lambda: options))
+    client = object()
+
+    assert rs.mark_real_script(script, client, settings) is sentinel  # type: ignore[arg-type]
+    assert events == ["enter", "meta", "extract", "correct", "exit"]
+    assert seen["scope_key"] == "real:k" and seen["meta_path"] == script.scan_path
+    correct = seen["correct"]
+    assert isinstance(correct, dict)
+    assert correct["options"] is options and correct["extracted_answers"] == "extracted"
+    assert seen["scheme"] == "parsed:SCHEME-TEXT"
+    assert correct["mark_scheme"] is seen["scheme"] and correct["gemini_client"] is client
+
+
+def test_mark_real_script_scan_metadata_failure_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import contextlib
+    from types import SimpleNamespace
+
+    script = _frozen(tmp_path)
+    script.scheme_path.write_text("SCHEME-TEXT", encoding="utf-8")
+    _fake_scheme(monkeypatch)
+    monkeypatch.setattr(
+        "lemely.io.gemini.script_cost_scope", lambda *a, **k: contextlib.nullcontext()
+    )
+
+    class Boom:
+        def __init__(self, client: object) -> None:
+            pass
+
+        def __call__(self, path: Path) -> None:
+            raise TimeoutError("meta")
+
+    monkeypatch.setattr("lemely.io.scan_metadata.ScanMetadataExtractor", Boom)
+    settings = SimpleNamespace(grading=SimpleNamespace(marking_options=lambda: None))
+    with pytest.raises(TimeoutError):
+        rs.mark_real_script(script, object(), settings)  # type: ignore[arg-type]

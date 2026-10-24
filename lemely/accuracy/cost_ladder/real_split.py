@@ -71,6 +71,10 @@ def _frozen_marker_problems(manifest_path: Path, entries: Sequence[ManifestEntry
         f"{listed[d]}: manifest entry has no FROZEN marker in {d}"
         for d in sorted(listed.keys() - frozen)
     ]
+    for e in entries:
+        marker = Path(e.reference_path).parent / FROZEN_MARKER
+        if marker.is_file() and marker.read_text(encoding="utf-8").strip() != e.reference_sha256:
+            problems.append(f"{e.key}: FROZEN marker {marker} differs from the manifest digest")
     return problems
 
 
@@ -122,8 +126,9 @@ def mark_real_script(
     """Mark one real script the way production does: scan metadata, binder, correction.
 
     The same stages the E2E driver ran (BUILD/accuracy-runs/claude-e2e2-*/driver.py),
-    on the frozen scheme, inside one `script_cost_scope`. A failure is raised to the
-    caller, which records the script as incomplete.
+    on the frozen scheme, inside one `script_cost_scope`. Every failure, a scan-metadata
+    one included, is raised to the caller, so the script fails closed and is recorded as
+    incomplete.
     """
     from lemely.core.loose_schemas import MarkScheme
     from lemely.io.answer_extraction import GeminiAnswerExtractor
@@ -205,6 +210,13 @@ def score_script(
     """One script's leaves against its reference; every reference leaf is scored."""
     reference = read_reference(script.reference_path)
     by_id = {q.question_id: q for q in correction.questions} if correction is not None else {}
+    duplicates = (
+        sorted(
+            qid for qid, n in Counter(q.question_id for q in correction.questions).items() if n > 1
+        )
+        if correction is not None
+        else []
+    )
     escalated_ids = {
         r.question_id for r in records if r.task_tag == ESCALATION_TAG and r.question_id
     }
@@ -219,6 +231,8 @@ def score_script(
         ):
             event_confidence[qid] = float(conf)
     incomplete = failure
+    if incomplete is None and duplicates:
+        incomplete = f"duplicate question_id in marking output: {', '.join(duplicates)}"
     leaves: list[LeafOutcome] = []
     for qid in sorted(reference):
         leaf_ref = reference[qid]
@@ -228,9 +242,16 @@ def score_script(
                 incomplete = f"no marking output for {qid}"
             elif q.marker_source in _LOST_SOURCES or (q.review_reason or "").startswith(_AI_FAILED):
                 incomplete = f"marking failed on {qid}"
-        predicted = q.awarded_marks if q is not None and marker_scored(q.marker_source) else 0
+            elif q.maximum_marks != leaf_ref.max_marks:
+                incomplete = (
+                    f"max marks differ on {qid}: scheme {q.maximum_marks}, "
+                    f"reference {leaf_ref.max_marks}"
+                )
+        scored = q is not None and marker_scored(q.marker_source)
+        predicted = q.awarded_marks if q is not None and scored else 0
         escalated = qid in escalated_ids
-        final_conf = q.confidence_score if q is not None else None
+        # An unscored leaf carries no confidence: a placeholder must not reach calibration.
+        final_conf = q.confidence_score if q is not None and scored else None
         leaves.append(
             LeafOutcome(
                 question_id=qid,
@@ -283,15 +304,33 @@ def _rate(run: Sequence[RealScriptResult], hit: str) -> float:
     return sum(1 for leaf in leaves if tests[hit](leaf)) / len(leaves)
 
 
-def real_summary_fields(runs: Sequence[Sequence[RealScriptResult]]) -> dict[str, object]:
-    """The `RunSummary` real fields of a rung's runs: means over the runs, max for the cap."""
+def real_summary_fields(
+    runs: Sequence[Sequence[RealScriptResult]], expected_keys: Sequence[str]
+) -> dict[str, object]:
+    """The `RunSummary` real fields of a rung's runs: means over the runs, max for the cap.
+
+    *expected_keys* are the scripts `load_real_scripts` returned. A script a run lacks is
+    reported in ``real_incomplete`` as ``(no result)``; malformed runs raise.
+    """
     if not runs:
         raise ValueError("a rung needs at least one real run")
-    keys = [script.key for script in runs[0]]
+    keys = list(expected_keys)
+    if not keys or len(set(keys)) != len(keys):
+        raise ValueError(f"expected_keys must be non-empty and unique: {keys}")
     per_key: dict[str, list[RealScriptResult]] = {k: [] for k in keys}
-    for run in runs:
+    absent: list[str] = []
+    for i, run in enumerate(runs, start=1):
+        if not run:
+            raise ValueError(f"real run {i} has no results")
+        seen = [script.key for script in run]
+        if len(set(seen)) != len(seen):
+            raise ValueError(f"real run {i} repeats a script key: {seen}")
+        stray = sorted(set(seen) - set(keys))
+        if stray:
+            raise ValueError(f"real run {i} has keys outside the expected set: {stray}")
+        absent += [f"real-{i}:{k} (no result)" for k in keys if k not in seen]
         for script in run:
-            per_key.setdefault(script.key, []).append(script)
+            per_key[script.key].append(script)
     by_run_abs = tuple(float(sum(s.abs_error for s in run)) for run in runs)
     script_esc_rates = [s.escalated / len(s.leaves) for run in runs for s in run if s.leaves]
     triggers = Counter(
@@ -326,7 +365,8 @@ def real_summary_fields(runs: Sequence[Sequence[RealScriptResult]]) -> dict[str,
             for i, run in enumerate(runs, start=1)
             for s in run
             if s.incomplete
-        ),
+        )
+        + tuple(absent),
     }
 
 
