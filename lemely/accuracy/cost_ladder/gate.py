@@ -171,7 +171,12 @@ def escalation_notes(c: RunSummary) -> tuple[str, ...]:
 
 
 def _incomplete(candidate: RunSummary) -> list[str]:
-    return ["incomplete cases: " + ", ".join(candidate.incomplete)] if candidate.incomplete else []
+    reasons = []
+    if candidate.incomplete:
+        reasons.append("incomplete cases: " + ", ".join(candidate.incomplete))
+    if candidate.real_incomplete:
+        reasons.append("incomplete real cases: " + ", ".join(candidate.real_incomplete))
+    return reasons
 
 
 def judge_cost_lever(
@@ -205,6 +210,7 @@ def judge_cost_lever(
     if not baseline.real_scripts and not candidate.real_scripts:
         return verdict
     reasons = list(verdict.reasons) + _missing_real(baseline, candidate, "baseline")
+    reasons += [r for r in _incomplete(candidate) if r not in reasons]
     if baseline.real_scripts and candidate.real_scripts:
         rise = candidate.real_abs_error - baseline.real_abs_error
         if rise > real_aa_floor + _EPS:
@@ -243,10 +249,17 @@ def judge_accuracy_lever(
         raise ValueError(f"floors must be non-negative, got {aa_floor} and {real_aa_floor}")
     reasons = _missing_real(baseline, candidate, "baseline")
     fall = baseline.real_abs_error - candidate.real_abs_error
-    if not reasons and fall + _EPS < real_aa_floor:
-        reasons.append(
-            f"real abs error fell by {fall:.2f} marks, less than the A/A floor {real_aa_floor:.2f}"
-        )
+    if not reasons:
+        if fall <= _EPS:
+            reasons.append(
+                f"real abs error did not fall (changed by {-fall + 0.0:+.2f} marks); "
+                "a lever must reduce it"
+            )
+        elif fall + _EPS < real_aa_floor:
+            reasons.append(
+                f"real abs error fell by {fall:.2f} marks, less than the A/A floor "
+                f"{real_aa_floor:.2f}"
+            )
     extra = len(candidate.mismarked_parts - baseline.mismarked_parts)
     if extra > aa_floor:
         reasons.append(f"{extra} newly mismarked synthetic parts exceed the A/A floor {aa_floor}")
@@ -256,13 +269,18 @@ def judge_accuracy_lever(
             f"{candidate.scored_parts} (narrowed screen)"
         )
     reasons += _over_cap(candidate)
-    if baseline.real_review_rate is not None and candidate.real_review_rate is not None:
-        rise = candidate.real_review_rate - baseline.real_review_rate
-        if rise > ACCURACY_REVIEW_RISE + _EPS and not fall > _EPS:
-            reasons.append(
-                f"review rate rose {rise * 100:.1f} points (more than "
-                f"{ACCURACY_REVIEW_RISE * 100:.0f}) while real abs error did not fall"
-            )
+    if baseline.real_scripts and candidate.real_scripts:
+        if baseline.real_review_rate is None:
+            reasons.append("baseline has no review rate")
+        if candidate.real_review_rate is None:
+            reasons.append("candidate has no review rate")
+        if baseline.real_review_rate is not None and candidate.real_review_rate is not None:
+            rise = candidate.real_review_rate - baseline.real_review_rate
+            if rise > ACCURACY_REVIEW_RISE + _EPS and not fall > _EPS:
+                reasons.append(
+                    f"review rate rose {rise * 100:.1f} points (more than "
+                    f"{ACCURACY_REVIEW_RISE * 100:.0f}) while real abs error did not fall"
+                )
     reasons += _incomplete(candidate)
     return Verdict(
         passed=not reasons,
@@ -293,13 +311,26 @@ def judge_flip(gemini: RunSummary, candidate: RunSummary, *, aa_floor: int) -> V
                 f"binding passes {candidate.real_binding_passes:.1f} are below Gemini's "
                 f"{gemini.real_binding_passes:.1f}"
             )
-        cand_rate = candidate.real_review_rate or 0.0
-        gem_rate = gemini.real_review_rate or 0.0
-        if cand_rate > gem_rate + FLIP_REVIEW_MARGIN + _EPS:
+        cand_rate = candidate.real_review_rate
+        gem_rate = gemini.real_review_rate
+        if gem_rate is None:
+            reasons.append("Gemini rung has no review rate")
+        if cand_rate is None:
+            reasons.append("candidate has no review rate")
+        if (
+            cand_rate is not None
+            and gem_rate is not None
+            and cand_rate > gem_rate + FLIP_REVIEW_MARGIN + _EPS
+        ):
             reasons.append(
                 f"review rate {_pct(cand_rate)} is more than "
                 f"{FLIP_REVIEW_MARGIN * 100:.0f} points above Gemini's {_pct(gem_rate)}"
             )
+    if candidate.scored_parts != gemini.scored_parts:
+        reasons.append(
+            f"scored parts changed from {gemini.scored_parts} to "
+            f"{candidate.scored_parts} (narrowed screen)"
+        )
     extra = len(candidate.mismarked_parts - gemini.mismarked_parts)
     if extra > aa_floor:
         reasons.append(

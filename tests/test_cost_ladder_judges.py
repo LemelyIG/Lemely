@@ -97,8 +97,9 @@ def test_accuracy_lever_fails_when_any_script_passes_ten_cents() -> None:
 
 def test_review_rise_fails_only_when_abs_error_did_not_fall() -> None:
     flat = judge_accuracy_lever(_s(), _s(real_review_rate=0.36), aa_floor=0, real_aa_floor=0.0)
-    assert flat.reasons == (
-        "review rate rose 6.0 points (more than 5) while real abs error did not fall",
+    assert (
+        "review rate rose 6.0 points (more than 5) while real abs error did not fall"
+        in flat.reasons
     )
     fell = judge_accuracy_lever(
         _s(), _s(real_review_rate=0.36, real_abs_error=19.0), aa_floor=0, real_aa_floor=0.0
@@ -234,3 +235,96 @@ def test_escalation_notes_empty_without_real_split() -> None:
 def test_record_judge_passes_unless_incomplete() -> None:
     assert judge_record(_s(), _s()).passed
     assert not judge_record(_s(), _s(incomplete=("x",))).passed
+
+
+# --- fail-closed fixes ----------------------------------------------------------------
+
+
+def _cost(base: RunSummary, cand: RunSummary) -> tuple[str, ...]:
+    return judge_cost_lever(
+        base, cand, aa_floor=0, real_aa_floor=0.0, original_latency_p95_ms=1000.0
+    ).reasons
+
+
+def test_cost_lever_real_only_fails_on_incomplete_even_when_cheaper() -> None:
+    empty = {"usd_per_script_mean": 0.0, "scored_parts": 0}
+    cand = _s(**empty, real_usd_mean=0.01, incomplete=("real-1:0625_w24_41 (x)",))
+    assert "incomplete cases: real-1:0625_w24_41 (x)" in _cost(_s(**empty), cand)
+
+
+def test_cost_lever_dev_path_reports_incomplete_once() -> None:
+    cand = _s(incomplete=("k",))
+    assert _cost(_s(), cand).count("incomplete cases: k") == 1
+
+
+def test_every_judge_fails_on_real_incomplete() -> None:
+    cand = _s(real_incomplete=("real-1:0625_w24_41",), real_abs_error=10.0)
+    want = "incomplete real cases: real-1:0625_w24_41"
+    assert want in _cost(_s(), cand)
+    assert want in judge_accuracy_lever(_s(), cand, aa_floor=0, real_aa_floor=0.0).reasons
+    assert want in judge_flip(_s(), cand, aa_floor=0).reasons
+    assert not judge_record(_s(), cand).passed
+
+
+def test_cost_lever_fails_when_real_scripts_differ() -> None:
+    assert "real scripts differ from the baseline's" in _cost(
+        _s(), _s(real_scripts=("0625_w24_41",))
+    )
+
+
+def test_cost_lever_fails_when_one_side_has_no_real_split() -> None:
+    assert "baseline has no real-split results" in _cost(_s(real_scripts=()), _s())
+    assert "candidate has no real-split results" in _cost(_s(), _s(real_scripts=()))
+
+
+def test_accuracy_lever_fails_when_abs_error_is_unchanged_even_at_zero_floor() -> None:
+    v = judge_accuracy_lever(_s(), _s(real_usd_mean=0.09), aa_floor=0, real_aa_floor=0.0)
+    assert not v.passed
+    assert v.reasons == (
+        "real abs error did not fall (changed by +0.00 marks); a lever must reduce it",
+    )
+
+
+def test_accuracy_lever_fails_when_scored_parts_narrow() -> None:
+    v = judge_accuracy_lever(
+        _s(), _s(real_abs_error=15.0, scored_parts=70), aa_floor=0, real_aa_floor=0.0
+    )
+    assert v.reasons == ("scored parts changed from 78 to 70 (narrowed screen)",)
+
+
+def test_accuracy_lever_fails_when_a_review_rate_is_missing() -> None:
+    fell = {"real_abs_error": 15.0}
+    v = judge_accuracy_lever(_s(), _s(**fell, real_review_rate=None), aa_floor=0, real_aa_floor=0.0)
+    assert v.reasons == ("candidate has no review rate",)
+    v = judge_accuracy_lever(_s(real_review_rate=None), _s(**fell), aa_floor=0, real_aa_floor=0.0)
+    assert v.reasons == ("baseline has no review rate",)
+
+
+def test_flip_fails_when_a_review_rate_is_missing() -> None:
+    assert judge_flip(_s(), _s(real_review_rate=None), aa_floor=0).reasons == (
+        "candidate has no review rate",
+    )
+    assert judge_flip(_s(real_review_rate=None), _s(), aa_floor=0).reasons == (
+        "Gemini rung has no review rate",
+    )
+
+
+def test_flip_fails_when_scored_parts_narrow() -> None:
+    v = judge_flip(_s(), _s(scored_parts=70), aa_floor=0)
+    assert v.reasons == ("scored parts changed from 78 to 70 (narrowed screen)",)
+
+
+def test_flip_fails_when_either_side_has_no_real_split() -> None:
+    assert (
+        "Gemini rung has no real-split results"
+        in judge_flip(_s(real_scripts=()), _s(), aa_floor=0).reasons
+    )
+    assert (
+        "candidate has no real-split results"
+        in judge_flip(_s(), _s(real_scripts=()), aa_floor=0).reasons
+    )
+
+
+def test_flip_rejects_a_negative_floor() -> None:
+    with pytest.raises(ValueError):
+        judge_flip(_s(), _s(), aa_floor=-1)
