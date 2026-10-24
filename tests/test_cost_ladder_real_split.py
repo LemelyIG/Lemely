@@ -483,7 +483,10 @@ def test_mark_real_script_runs_every_stage_inside_the_scope(
     monkeypatch.setattr("lemely.io.answer_extraction.GeminiAnswerExtractor", FakeExtractor)
     monkeypatch.setattr("lemely.io.correction_ai.correct_paper", fake_correct)
     options = object()
-    settings = SimpleNamespace(grading=SimpleNamespace(marking_options=lambda: options))
+    settings = SimpleNamespace(
+        grading=SimpleNamespace(marking_options=lambda: options),
+        gemini=SimpleNamespace(adjudication_model=None),
+    )
     client = object()
 
     assert rs.mark_real_script(script, client, settings) is sentinel  # type: ignore[arg-type]
@@ -538,3 +541,30 @@ def test_loader_refuses_an_empty_reference(tmp_path: Path) -> None:
     )
     with pytest.raises(ReferenceDrift, match=r"reference .* has no leaves"):
         rs.load_real_scripts(tmp_path / ref.MANIFEST_FILE)
+
+
+def test_mark_real_script_passes_pages_only_with_adjudication(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lemely.accuracy.cost_ladder.runner import apply_overrides
+    from lemely.io import answer_extraction, correction_ai, rasterise, scan_metadata
+    from lemely.runtime.config import Settings
+
+    script = _frozen(tmp_path)
+    script.scheme_path.write_text("SCHEME-TEXT", encoding="utf-8")
+    _fake_scheme(monkeypatch)
+    seen: list[object] = []
+    monkeypatch.setattr(scan_metadata, "ScanMetadataExtractor", lambda client: lambda path: None)
+    monkeypatch.setattr(
+        answer_extraction,
+        "GeminiAnswerExtractor",
+        lambda client: lambda scan_path, mark_scheme: "X",
+    )
+    monkeypatch.setattr(rasterise, "rasterise_scan_to_pages", lambda path: ["PAGE"])
+    monkeypatch.setattr(
+        correction_ai, "correct_paper", lambda **kw: seen.append(kw["pages"]) or "R"
+    )
+    rs.mark_real_script(script, object(), Settings())  # type: ignore[arg-type]
+    on = apply_overrides(Settings(), {"gemini.adjudication_model": "claude-sonnet-5-5"})
+    rs.mark_real_script(script, object(), on)  # type: ignore[arg-type]
+    assert seen == [None, ["PAGE"]]

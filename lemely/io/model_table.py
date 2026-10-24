@@ -47,6 +47,8 @@ def configured_models(settings: Settings) -> dict[str, str]:
     models = {tag: g.model_for(tag) for tag in MODEL_TABLE_TAGS}
     if g.cascade_enabled and g.cascade_strong_model:
         models["cascade_strong"] = g.cascade_strong_model
+    if isinstance(g.adjudication_model, str) and g.adjudication_model:
+        models["adjudication"] = g.adjudication_model
     models.update(binding_models(settings))
     return models
 

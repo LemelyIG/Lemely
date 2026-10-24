@@ -136,17 +136,25 @@ def mark_real_script(
     from lemely.io.answer_extraction import GeminiAnswerExtractor
     from lemely.io.correction_ai import correct_paper
     from lemely.io.gemini import script_cost_scope
+    from lemely.io.rasterise import rasterise_scan_to_pages
     from lemely.io.scan_metadata import ScanMetadataExtractor
 
     scheme = MarkScheme.model_validate_json(script.scheme_path.read_text(encoding="utf-8"))
     with script_cost_scope(settings, script_key=f"real:{script.key}"):
         ScanMetadataExtractor(client)(script.scan_path)
         extracted = GeminiAnswerExtractor(client)(scan_path=script.scan_path, mark_scheme=scheme)
+        # The scan's pages are rasterised only when adjudication (lever c2) will use them.
+        pages = (
+            rasterise_scan_to_pages(script.scan_path)
+            if isinstance(settings.gemini.adjudication_model, str)
+            else None
+        )
         return correct_paper(
             mark_scheme=scheme,
             extracted_answers=extracted,
             gemini_client=client,
             options=settings.grading.marking_options(),
+            pages=pages,
         )
 
 

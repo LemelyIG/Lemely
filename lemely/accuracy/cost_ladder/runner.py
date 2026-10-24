@@ -216,6 +216,7 @@ def models_in_play(settings: Settings) -> list[str]:
         settings.binding.read_model,  # binding read and second read
         settings.binding.retry_model,
         g.cascade_strong_model,
+        g.adjudication_model,
     ]
     if g.second_reader == "cross_model":
         names.append(g.second_read_model)

@@ -9,7 +9,7 @@ import os
 import re
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import Literal, NamedTuple, TypedDict
+from typing import TYPE_CHECKING, Literal, NamedTuple, TypedDict
 
 import structlog
 
@@ -65,6 +65,9 @@ from lemely.io.validation import validate_mark_scheme
 from lemely.runtime.config import GeminiSettings, MarkingOptions
 from lemely.runtime.errors import ConfigError, CostCeilingError, LemelyError
 from lemely.runtime.events import EventType, bus
+
+if TYPE_CHECKING:
+    from lemely.io.rasterise import RasterisedPage
 
 
 def _is_leaf_marked(q: Question) -> bool:
@@ -2984,6 +2987,7 @@ def correct_paper(
     gemini_client: GeminiClient | None = None,
     mcq_only: bool = False,
     options: MarkingOptions = MarkingOptions(),  # noqa: B008 -- frozen, immutable dataclass
+    pages: Sequence[RasterisedPage] | None = None,
 ) -> CorrectionResult:
     """Hybrid paper correction: MCQ deterministic, non-MCQ via AICorrector.
 
@@ -3001,6 +3005,10 @@ def correct_paper(
             :func:`_maybe_apply_ecf_substitution` for the gate/chain rules and
             the measured activation ceiling (0 on the committed corpus by
             construction). Defaults to both off.
+        pages: the scan's pages; with ``gemini.adjudication_model`` set, the least
+            certain leaves are adjudicated from their crops (lever c2), after
+            marking and escalation, and the adjudicated mark is final. A held
+            paper is not adjudicated.
 
     Returns:
         The marked paper. When ``extracted_answers`` carries a binding
@@ -3317,5 +3325,19 @@ def correct_paper(
     result = _with_off_topic_check(
         CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected), extracted_answers
     )
+    if pages is not None and gemini_client is not None:
+        g = gemini_client._settings.gemini
+        held = result.binding is not None and result.binding.verdict == "hold"
+        if isinstance(g.adjudication_model, str) and not held:
+            from lemely.io.adjudication import adjudicate
+
+            result = adjudicate(
+                result,
+                scheme=scheme,
+                extracted=extracted_answers,
+                pages=pages,
+                client=gemini_client,
+                review_threshold=review_threshold_for(g, g.adjudication_model),
+            )
     _forget_reads_of_a_held_paper(result, extracted_answers, gemini_client)
     return result

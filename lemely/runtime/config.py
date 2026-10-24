@@ -277,6 +277,14 @@ class GeminiSettings(BaseModel):
     # Sub-project C lever c1: False skips the borderline thinking retry; a leaf still
     # below escalation_confidence_threshold goes straight to escalation.
     correction_borderline_enabled: bool = True
+    # Sub-project C lever c2: after a script is marked, this model re-marks at most
+    # adjudication_max_leaves AI-marked leaves (confidence below
+    # adjudication_confidence_threshold, or named by a failed G9 check), each from its
+    # own page crops, its scheme points and the first mark. None: off. Needs the scan
+    # pages (correct_paper's ``pages``).
+    adjudication_model: str | None = None
+    adjudication_max_leaves: int = Field(default=3, ge=0)
+    adjudication_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
 
     @field_validator("claude_cache_for")
     @classmethod
@@ -394,6 +402,7 @@ class GeminiSettings(BaseModel):
             "correction": self.correction_model,
             "correction_borderline": self.correction_model,
             "escalation": self.escalation_model,
+            "adjudication": self.adjudication_model,
             "generation": self.generation_model,
             "study_plan": self.study_plan_model,
             "scan_metadata": self.scan_metadata_model,

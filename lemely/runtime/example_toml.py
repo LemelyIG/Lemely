@@ -182,6 +182,13 @@ def render_example_toml() -> str:
     lines.append(
         f"# correction_borderline_enabled = {_toml_bool(s.gemini.correction_borderline_enabled)}"
     )
+    lines.append("# Lever c2: a stronger model re-marks the least certain leaves of a script")
+    lines.append('# from their page crops, e.g. "claude-sonnet-5-5". Unset: off.')
+    lines.append('# adjudication_model = "claude-sonnet-5-5"')
+    lines.append(f"# adjudication_max_leaves = {s.gemini.adjudication_max_leaves}")
+    lines.append(
+        f"# adjudication_confidence_threshold = {s.gemini.adjudication_confidence_threshold}"
+    )
     lines.append(
         "# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B)."
     )

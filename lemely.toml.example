@@ -104,6 +104,11 @@ model = "gemini-2.5-flash"
 # correction_terse_rationale = false
 # false skips the borderline thinking retry (lever c1).
 # correction_borderline_enabled = true
+# Lever c2: a stronger model re-marks the least certain leaves of a script
+# from their page crops, e.g. "claude-sonnet-5-5". Unset: off.
+# adjudication_model = "claude-sonnet-5-5"
+# adjudication_max_leaves = 3
+# adjudication_confidence_threshold = 0.8
 # Greyscale pages are enhanced for readability; false sends plain greyscale (A/B).
 # claude_image_enhance = true
 
