@@ -1,0 +1,246 @@
+"""Sub-project C P1: the cost-ladder CLI's real-split wiring. The runner is stubbed."""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+_SPEC = importlib.util.spec_from_file_location(
+    "cost_ladder_cli", Path(__file__).resolve().parents[1] / "scripts" / "cost_ladder.py"
+)
+assert _SPEC is not None and _SPEC.loader is not None
+cli = importlib.util.module_from_spec(_SPEC)
+sys.modules["cost_ladder_cli"] = cli
+_SPEC.loader.exec_module(cli)
+
+
+@pytest.fixture
+def seen(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    calls: dict[str, Any] = {}
+    monkeypatch.setattr(cli, "load_keys", lambda: calls.setdefault("keys", True))
+    monkeypatch.setattr(cli, "require_gemini_key", lambda env: None)
+    monkeypatch.setattr(
+        cli,
+        "load_real_scripts",
+        lambda path, only=(): calls.setdefault("scripts", (path, tuple(only))) and ["S"],
+    )
+    return calls
+
+
+def test_screen_passes_split_repeats_judge_and_scripts(
+    seen: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lemely.accuracy.cost_ladder.gate import Verdict
+
+    def fake_screen(label: str, sets: dict[str, object], **kw: Any) -> Verdict:
+        seen["screen"] = (label, sets, kw)
+        return Verdict(True, "small", 0.0, 0, 0, ())
+
+    monkeypatch.setattr(cli, "run_screen", fake_screen)
+    toml = tmp_path / "base.toml"
+    toml.write_text('[gemini]\ncorrection_model = "claude-haiku-5-5"\n')
+    code = cli.main(
+        [
+            "--out-dir",
+            str(tmp_path),
+            "--config",
+            str(toml),
+            "--split",
+            "both",
+            "--repeats",
+            "2",
+            "--only",
+            "0625_w24_41",
+            "screen",
+            "--label",
+            "b1",
+            "--judge",
+            "accuracy",
+            "--set",
+            "gemini.correction_citations=true",
+        ]
+    )
+    assert code == 0 and seen["keys"] is True
+    label, sets, kw = seen["screen"]
+    assert label == "b1" and sets == {"gemini.correction_citations": True}
+    assert kw["split"] == "both" and kw["repeats"] == 2 and kw["judge_kind"] == "accuracy"
+    assert kw["real_scripts"] == ["S"]
+    assert kw["settings"].gemini.correction_model == "claude-haiku-5-5"
+    assert seen["scripts"][1] == ("0625_w24_41",)
+
+
+def test_dev_split_loads_no_real_scripts(
+    seen: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(cli, "run_baseline", lambda **kw: seen.setdefault("baseline", kw) and 0)
+    assert cli.main(["--out-dir", str(tmp_path), "baseline"]) == 0
+    assert "scripts" not in seen and seen["baseline"]["real_scripts"] == ()
+
+
+def test_reference_rung_and_judge_flip(
+    seen: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lemely.accuracy.cost_ladder.gate import RunSummary, Verdict
+
+    monkeypatch.setattr(
+        cli,
+        "run_reference_rung",
+        lambda label, **kw: (
+            seen.setdefault("ref", (label, kw)) and RunSummary(0, 0, frozenset(), 0, 1, 1, ())
+        ),
+    )
+    monkeypatch.setattr(
+        cli, "flip_verdict", lambda out, **kw: Verdict(False, "small", 0, 0, 0, ("x",))
+    )
+    monkeypatch.setattr(cli, "write_flip", lambda out, **kw: out / "FLIP.md")
+    dev = tmp_path / "summary.json"
+    assert (
+        cli.main(
+            [
+                "--out-dir",
+                str(tmp_path),
+                "--split",
+                "real",
+                "reference-rung",
+                "--label",
+                "gemini",
+                "--dev-from",
+                str(dev),
+            ]
+        )
+        == 0
+    )
+    assert seen["ref"][0] == "gemini" and seen["ref"][1]["dev_summary_from"] == dev
+    assert (
+        cli.main(
+            ["--out-dir", str(tmp_path), "judge-flip", "--candidate", "stack", "--gemini", "gemini"]
+        )
+        == 1
+    )
+
+
+def test_load_keys_reads_files_without_overwriting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    (home / ".config" / "lemely").mkdir(parents=True)
+    (home / ".config" / "lemely" / "anthropic_key").write_text("ak-1\n")
+    (home / ".config" / "lemely" / "gemini_key").write_text("from-file\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "kept")
+    cli.load_keys()
+    import os
+
+    assert os.environ["ANTHROPIC_API_KEY"] == "ak-1"
+    assert os.environ["GEMINI_API_KEY"] == "kept"
+
+
+def test_runner_refusals_exit_2_with_message(
+    seen: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def refuse(label: str, sets: dict[str, object], **kw: Any) -> None:
+        raise ValueError("no projection for provider anthropic")
+
+    monkeypatch.setattr(cli, "run_screen", refuse)
+    code = cli.main(["--out-dir", str(tmp_path), "--split", "real", "screen", "--label", "b1"])
+    assert code == 2
+    assert "no projection for provider anthropic" in capsys.readouterr().err
+
+
+def test_ladder_state_error_and_reference_drift_exit_2(
+    seen: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from lemely.accuracy.cost_ladder.real_split import ReferenceDrift
+    from lemely.accuracy.cost_ladder.runner import LadderStateError
+
+    def not_ladder(out: Path, **kw: Any) -> None:
+        raise LadderStateError("'x' is not a ladder row")
+
+    monkeypatch.setattr(cli, "flip_verdict", not_ladder)
+    assert (
+        cli.main(["--out-dir", str(tmp_path), "judge-flip", "--candidate", "x", "--gemini", "g"])
+        == 2
+    )
+    assert "not a ladder row" in capsys.readouterr().err
+
+    def drift(path: Path, only: tuple[str, ...] = ()) -> None:
+        raise ReferenceDrift("digest mismatch")
+
+    monkeypatch.setattr(cli, "load_real_scripts", drift)
+    assert cli.main(["--out-dir", str(tmp_path), "--split", "real", "screen", "--label", "b"]) == 2
+    assert "digest mismatch" in capsys.readouterr().err
+
+
+def test_other_exceptions_are_not_swallowed(
+    seen: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import json
+
+    def corrupt(label: str, sets: dict[str, object], **kw: Any) -> None:
+        raise json.JSONDecodeError("bad", "", 0)
+
+    monkeypatch.setattr(cli, "run_screen", corrupt)
+    with pytest.raises(json.JSONDecodeError):
+        cli.main(["--out-dir", str(tmp_path), "screen", "--label", "b"])
+
+
+def test_max_run_usd_projections_reach_the_runner(
+    seen: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(cli, "run_baseline", lambda **kw: seen.setdefault("baseline", kw) and 0)
+    assert (
+        cli.main(
+            [
+                "--out-dir",
+                str(tmp_path),
+                "--max-run-usd",
+                "anthropic=0.30",
+                "--max-run-usd",
+                "gemini=0.05",
+                "baseline",
+            ]
+        )
+        == 0
+    )
+    assert seen["baseline"]["max_run_usd"] == {"anthropic": 0.30, "gemini": 0.05}
+
+
+def test_reference_rung_loads_scripts_even_on_dev_split(
+    seen: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lemely.accuracy.cost_ladder.gate import RunSummary
+
+    monkeypatch.setattr(
+        cli,
+        "run_reference_rung",
+        lambda label, **kw: (
+            seen.setdefault("ref", (label, kw)) and RunSummary(0, 0, frozenset(), 0, 1, 1, ())
+        ),
+    )
+    assert (
+        cli.main(
+            [
+                "--out-dir",
+                str(tmp_path),
+                "reference-rung",
+                "--label",
+                "g",
+                "--dev-from",
+                str(tmp_path / "s.json"),
+            ]
+        )
+        == 0
+    )
+    assert seen["scripts"] and seen["ref"][1]["repeats"] == 2
+    assert seen["ref"][1]["real_scripts"] == ["S"]
