@@ -5,10 +5,13 @@ Live runs spend Gemini budget. Keys are read inside this process from
 ~/.config/lemely/{anthropic,gemini}_key (an exported variable wins); this script never prints them.
 The default spend ledger is per worktree (repo-relative): run all ladder commands from one checkout.
 
-    cost_ladder.py [--config base.toml] [--split dev|real|both] [--repeats 1|2] baseline [--restart-baseline | --aa-only]
-    cost_ladder.py ... screen --label L --lever "..." --expected-saving 40% --judge cost|accuracy|record \\
-        --set gemini.correction_model=... [--against <label>] [--live-tags correction,...]
-    cost_ladder.py --split real --config gemini.toml reference-rung --label gemini --dev-from OLD/summary.json
+    cost_ladder.py [--config base.toml] [--split dev|real|both] [--repeats 1|2] \\
+        baseline [--restart-baseline | --aa-only]
+    cost_ladder.py ... screen --label L --lever "..." --expected-saving 40% \\
+        --judge cost|accuracy|record --set gemini.correction_model=... \\
+        [--against <label>] [--live-tags correction,...]
+    cost_ladder.py --split real --config gemini.toml reference-rung --label gemini \\
+        --dev-from OLD/summary.json
     cost_ladder.py judge-flip --candidate stack --gemini gemini
     cost_ladder.py resummarise --label L        # $0, dev runs only
     cost_ladder.py report --stop-reason "..."
@@ -17,7 +20,6 @@ The default spend ledger is per worktree (repo-relative): run all ladder command
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -32,6 +34,8 @@ from lemely.accuracy.cost_ladder.report import write_flip, write_report
 from lemely.accuracy.cost_ladder.runner import (
     BASELINE_LABEL,
     DEFAULT_LIVE_TAGS,
+    LadderStateError,
+    apply_overrides,
     flip_verdict,
     parse_override_value,
     require_gemini_key,
@@ -40,9 +44,10 @@ from lemely.accuracy.cost_ladder.runner import (
     run_reference_rung,
     run_screen,
 )
-from lemely.accuracy.cost_ladder.spend import DEFAULT_SPEND_FILE, SpendCaps
+from lemely.accuracy.cost_ladder.spend import DEFAULT_SPEND_FILE, SpendCapError, SpendCaps
 from lemely.io.gemini import UnpricedModelError
-from lemely.runtime.config import Settings, load_settings
+from lemely.io.model_table import configured_models
+from lemely.runtime.config import Settings, anthropic_key_missing_tags, load_settings
 
 if TYPE_CHECKING:
     from lemely.accuracy.cost_ladder.real_split import RealScript
@@ -75,6 +80,20 @@ def _caps(args: argparse.Namespace) -> SpendCaps:
     return SpendCaps(gemini_usd=args.cap_gemini_usd, anthropic_usd=args.cap_anthropic_usd)
 
 
+class _Refusal(Exception):
+    """A command refused before any spend; main prints it and exits 2."""
+
+
+# Everything else (a pydantic error, a corrupt file) surfaces with its traceback.
+_REFUSALS = (
+    _Refusal,
+    LadderStateError,
+    ReferenceDrift,
+    SpendCapError,
+    UnpricedModelError,
+    FileNotFoundError,
+)
+
 _KEY_FILES = (
     ("ANTHROPIC_API_KEY", "~/.config/lemely/anthropic_key"),
     ("GEMINI_API_KEY", "~/.config/lemely/gemini_key"),
@@ -99,13 +118,35 @@ def _scripts(args: argparse.Namespace) -> list[RealScript] | tuple[()]:
     return load_real_scripts(args.manifest, only=args.only)
 
 
-def _live(args: argparse.Namespace) -> None:
+def _live(args: argparse.Namespace, sets: dict[str, object] | None = None) -> Settings:
+    """Load the keys, then refuse before any spend if a configured model has no key."""
     load_keys()
-    require_gemini_key(os.environ)
+    try:
+        require_gemini_key(os.environ)
+    except RuntimeError as exc:
+        raise _Refusal(str(exc)) from exc
+    settings = _settings(args)
+    effective = apply_overrides(settings, sets or {})
+    missing = anthropic_key_missing_tags(effective, configured_models(effective))
+    if missing:
+        models = configured_models(effective)
+        raise _Refusal(
+            "no ANTHROPIC_API_KEY (set it or write ~/.config/lemely/anthropic_key) but task tag(s) "
+            + ", ".join(f"{t}={models[t]}" for t in missing)
+            + " use a claude- model"
+        )
+    return settings
+
+
+def _refuse_ladder_flags(args: argparse.Namespace) -> None:
+    if args.split != "dev" or args.repeats != 1 or args.config is not None or args.only:
+        raise _Refusal(
+            f"{args.cmd} reads stored dev runs; --split/--repeats/--config/--only do not apply"
+        )
 
 
 def _baseline(args: argparse.Namespace) -> int:
-    _live(args)
+    settings = _live(args)
     floor = run_baseline(
         out_dir=args.out_dir,
         golden_dir=args.golden,
@@ -114,7 +155,7 @@ def _baseline(args: argparse.Namespace) -> int:
         spend_file=args.spend_file,
         restart=args.restart_baseline,
         aa_only=args.aa_only,
-        settings=_settings(args),
+        settings=settings,
         split=args.split,
         repeats=args.repeats,
         real_scripts=_scripts(args),
@@ -124,11 +165,12 @@ def _baseline(args: argparse.Namespace) -> int:
 
 
 def _screen(args: argparse.Namespace) -> int:
-    _live(args)
+    sets = _parse_sets(args.set)
+    settings = _live(args, sets)
     live_tags = tuple(t.strip() for t in args.live_tags.split(",") if t.strip())
     verdict = run_screen(
         args.label,
-        _parse_sets(args.set),
+        sets,
         out_dir=args.out_dir,
         against=args.against,
         live_tags=live_tags,
@@ -138,7 +180,7 @@ def _screen(args: argparse.Namespace) -> int:
         caps=_caps(args),
         max_run_usd=_max_run_usd(args),
         spend_file=args.spend_file,
-        settings=_settings(args),
+        settings=settings,
         split=args.split,
         repeats=args.repeats,
         judge_kind=args.judge,
@@ -156,13 +198,13 @@ def _screen(args: argparse.Namespace) -> int:
 
 
 def _reference_rung(args: argparse.Namespace) -> int:
-    _live(args)
+    settings = _live(args)
     summary = run_reference_rung(
         args.label,
         out_dir=args.out_dir,
         real_scripts=_scripts(args) or load_real_scripts(args.manifest, only=args.only),
         dev_summary_from=args.dev_from,
-        settings=_settings(args),
+        settings=settings,
         repeats=2,  # the Gemini rung always runs twice (spec P4)
         caps=_caps(args),
         max_run_usd=_max_run_usd(args),
@@ -188,6 +230,7 @@ def _judge_flip(args: argparse.Namespace) -> int:
 
 def _resummarise(args: argparse.Namespace) -> int:
     # $0: stored records only. No key, no client, no spend.
+    _refuse_ladder_flags(args)
     summary = resummarise(args.label, out_dir=args.out_dir)
     print(
         f"resummarised {args.label}: ${summary.usd_per_script_mean:.4f}/script (2027), "
@@ -198,6 +241,7 @@ def _resummarise(args: argparse.Namespace) -> int:
 
 
 def _report(args: argparse.Namespace) -> int:
+    _refuse_ladder_flags(args)
     target = write_report(args.out_dir, stop_reason=args.stop_reason)
     print(f"wrote {target}")
     return 0
@@ -279,9 +323,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.fn(args))
-    except json.JSONDecodeError:
-        raise  # a corrupt file is a real error, not a refusal
-    except (RuntimeError, ValueError, FileNotFoundError, UnpricedModelError, ReferenceDrift) as exc:
+    except _REFUSALS as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except ValueError as exc:
+        if type(exc) is not ValueError:  # pydantic / JSON errors are not argument refusals
+            raise
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

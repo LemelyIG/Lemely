@@ -158,12 +158,12 @@ def case_key(case: GoldenCase) -> str:
 
 
 def require_gemini_key(environ: Mapping[str, str]) -> None:
-    """Refuse to run live without a usable wrapper-provided key. Never echoes its value."""
+    """Refuse to run live without a usable key. Never echoes its value."""
     key = environ.get("GEMINI_API_KEY")
     if not key:
         raise RuntimeError(
-            "GEMINI_API_KEY is not set; run through the wrapper that exports it "
-            "(the key is read from the environment only)."
+            "GEMINI_API_KEY is not set; export it or write ~/.config/lemely/gemini_key "
+            "(the key is read from the environment or that file)."
         )
     if key != key.strip() or any(ch.isspace() for ch in key):
         raise RuntimeError(

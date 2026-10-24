@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,9 +19,18 @@ sys.modules["cost_ladder_cli"] = cli
 _SPEC.loader.exec_module(cli)
 
 
+@pytest.fixture(autouse=True)
+def _env_restored() -> Any:
+    """Teardown check: no test in this file may leak an environment change."""
+    before = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
+    yield
+    assert {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"} == before
+
+
 @pytest.fixture
 def seen(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     calls: dict[str, Any] = {}
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic")
     monkeypatch.setattr(cli, "load_keys", lambda: calls.setdefault("keys", True))
     monkeypatch.setattr(cli, "require_gemini_key", lambda env: None)
     monkeypatch.setattr(
@@ -131,7 +141,8 @@ def test_load_keys_reads_files_without_overwriting(
     (home / ".config" / "lemely" / "anthropic_key").write_text("ak-1\n")
     (home / ".config" / "lemely" / "gemini_key").write_text("from-file\n")
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    # setenv (not delenv) so monkeypatch records an undo even when the var was absent
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
     monkeypatch.setenv("GEMINI_API_KEY", "kept")
     cli.load_keys()
     import os
@@ -244,3 +255,122 @@ def test_reference_rung_loads_scripts_even_on_dev_split(
     )
     assert seen["scripts"] and seen["ref"][1]["repeats"] == 2
     assert seen["ref"][1]["real_scripts"] == ["S"]
+
+
+def test_missing_anthropic_key_refuses_before_spend(
+    seen: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("LEMELY_ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr(cli, "run_screen", lambda *a, **kw: seen.setdefault("spent", True))
+    toml = tmp_path / "base.toml"
+    toml.write_text("[gemini]\n")
+    argv = ["--out-dir", str(tmp_path), "--config", str(toml), "screen", "--label", "b"]
+    # a claude- model reached only through --set is caught as well
+    code = cli.main([*argv, "--set", "gemini.correction_model=claude-haiku-5-5"])
+    assert code == 2 and "spent" not in seen
+    err = capsys.readouterr().err
+    assert "ANTHROPIC_API_KEY" in err and "correction=claude-haiku-5-5" in err
+
+
+def test_value_error_mid_run_is_not_a_refusal(
+    seen: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from pydantic import BaseModel
+
+    class M(BaseModel):
+        x: int
+
+    def boom(label: str, sets: dict[str, object], **kw: Any) -> None:
+        M.model_validate({"x": "nope"})
+
+    monkeypatch.setattr(cli, "run_screen", boom)
+    with pytest.raises(ValueError, match="validation error"):
+        cli.main(["--out-dir", str(tmp_path), "screen", "--label", "b"])
+
+
+def test_baseline_passes_settings_split_repeats(
+    seen: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(cli, "run_baseline", lambda **kw: seen.setdefault("baseline", kw) and 0)
+    toml = tmp_path / "base.toml"
+    toml.write_text('[gemini]\ncorrection_model = "claude-haiku-5-5"\n')
+    assert (
+        cli.main(
+            [
+                "--out-dir",
+                str(tmp_path),
+                "--config",
+                str(toml),
+                "--split",
+                "both",
+                "--repeats",
+                "2",
+                "baseline",
+            ]
+        )
+        == 0
+    )
+    kw = seen["baseline"]
+    assert kw["split"] == "both" and kw["repeats"] == 2
+    assert kw["settings"].gemini.correction_model == "claude-haiku-5-5"
+    assert kw["real_scripts"] == ["S"]
+
+
+def test_judge_flip_passes_candidate_and_gemini(
+    seen: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lemely.accuracy.cost_ladder.gate import Verdict
+
+    def flip(out: Path, **kw: Any) -> Verdict:
+        seen["flip"] = kw
+        return Verdict(True, "small", 0, 0, 0, ())
+
+    monkeypatch.setattr(cli, "flip_verdict", flip)
+    monkeypatch.setattr(cli, "write_flip", lambda out, **kw: out / "FLIP.md")
+    assert (
+        cli.main(["--out-dir", str(tmp_path), "judge-flip", "--candidate", "c1", "--gemini", "g1"])
+        == 0
+    )
+    assert seen["flip"] == {"candidate": "c1", "gemini": "g1"}
+
+
+def test_settings_load_after_keys(
+    seen: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lemely.accuracy.cost_ladder.gate import Verdict
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    def keys() -> None:
+        os.environ["ANTHROPIC_API_KEY"] = "from-file"
+
+    monkeypatch.setattr(cli, "load_keys", keys)
+    monkeypatch.setattr(
+        cli,
+        "run_screen",
+        lambda label, sets, **kw: seen.setdefault("kw", kw) and Verdict(True, "s", 0, 0, 0, ()),
+    )
+    cli.main(["--out-dir", str(tmp_path), "screen", "--label", "b"])
+    secret = seen["kw"]["settings"].anthropic_api_key
+    assert secret is not None and secret.get_secret_value() == "from-file"
+
+
+@pytest.mark.parametrize("flags", [["--split", "real"], ["--repeats", "2"], ["--only", "k"]])
+@pytest.mark.parametrize("cmd", [["resummarise", "--label", "x"], ["report", "--stop-reason", "r"]])
+def test_dev_only_commands_refuse_ladder_flags(
+    seen: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    flags: list[str],
+    cmd: list[str],
+) -> None:
+    def ran(*a: Any, **kw: Any) -> None:
+        raise AssertionError("ran despite ignored flags")
+
+    monkeypatch.setattr(cli, "resummarise", ran)
+    monkeypatch.setattr(cli, "write_report", ran)
+    assert cli.main(["--out-dir", str(tmp_path), *flags, *cmd]) == 2
