@@ -9,13 +9,15 @@ from typing import TYPE_CHECKING
 from lemely.accuracy.cost_ladder.gate import Verdict
 from lemely.accuracy.cost_ladder.runner import (
     BASELINE_LABEL,
+    FLIP_VERDICT_FILE,
     LADDER_FILE,
+    LadderStateError,
     read_summary,
     require_file,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
 
     from lemely.accuracy.cost_ladder.gate import RunSummary
@@ -34,6 +36,19 @@ HEADER = (
     "proof",
     "verdict",
     "reasons",
+)
+
+#: Real-split columns, shown when the ladder has a real split (sub-project C).
+REAL_HEADER = (
+    "real abs err",
+    "exact",
+    "within 1",
+    "real review",
+    "binding pass",
+    "max $/script",
+    "esc rate",
+    "esc $ share",
+    "notes",
 )
 
 
@@ -84,22 +99,75 @@ def _row(row: LadderRow) -> list[str]:
     ]
 
 
+def _pct(rate: float | None) -> str:
+    return "-" if rate is None else f"{rate * 100:.1f}%"
+
+
+def _escalation_share(c: RunSummary) -> float | None:
+    total = sum(usd for _, usd in c.real_usd_by_script)
+    esc = sum(usd for _, usd in c.real_escalation_usd_by_script)
+    return esc / total if total else None
+
+
+def _worst_script(c: RunSummary) -> str:
+    if not c.real_usd_max_by_script:
+        return "-"
+    key, usd = max(c.real_usd_max_by_script, key=lambda kv: kv[1])
+    return f"{key} ${usd:.4f}"
+
+
+def _incomplete_note(c: RunSummary) -> list[str]:
+    """A rung with missing real cases must read as incomplete, never as a clean result."""
+    return [f"INCOMPLETE real cases: {', '.join(c.real_incomplete)}"] if c.real_incomplete else []
+
+
+def _real_cells(c: RunSummary, v: Verdict) -> list[str]:
+    notes = "; ".join([*_incomplete_note(c), *v.notes]) or "-"
+    if not c.real_scripts:
+        return ["-"] * (len(REAL_HEADER) - 1) + [notes]
+    flag = " (incomplete)" if c.real_incomplete else ""
+    return [
+        f"{c.real_abs_error:.1f}{flag}",
+        _pct(c.real_exact_rate),
+        _pct(c.real_within1_rate),
+        _pct(c.real_review_rate),
+        f"{c.real_binding_passes:.1f}/{len(c.real_scripts)}",
+        _worst_script(c),
+        _pct(c.real_escalation_rate),
+        _pct(_escalation_share(c)),
+        notes,
+    ]
+
+
 def _vs(final: float, base: float) -> str:
     pct = f" ({(1 - final / base) * 100:.1f}% saved)" if base else ""
     return f"${final:.4f} vs ${base:.4f} per script{pct}"
 
 
 def write_ladder(
-    rows: list[LadderRow], out: Path, *, footer: LadderFooter, notes: Sequence[str] = ()
+    rows: list[LadderRow],
+    out: Path,
+    *,
+    footer: LadderFooter,
+    notes: Sequence[str] = (),
+    real: bool = False,
 ) -> None:
     lines = ["# Cost ladder", ""]
     for note in notes:
         lines += [note, ""]
+    header = HEADER + REAL_HEADER if real else HEADER
     lines += [
-        "| " + " | ".join(HEADER) + " |",
-        "|" + "|".join("---" for _ in HEADER) + "|",
+        "| " + " | ".join(header) + " |",
+        "|" + "|".join("---" for _ in header) + "|",
     ]
-    lines += ["| " + " | ".join(_cell(c) for c in _row(r)) + " |" for r in rows]
+    lines += [
+        "| "
+        + " | ".join(
+            _cell(c) for c in _row(r) + (_real_cells(r.candidate, r.verdict) if real else [])
+        )
+        + " |"
+        for r in rows
+    ]
     lines += [
         "",
         "Final against baseline at 2026 rates: "
@@ -145,6 +213,7 @@ def load_rows(out_dir: Path) -> tuple[list[LadderRow], Path]:
             extra_mismarks=v["extra_mismarks"],
             allowed_extra=v["allowed_extra"],
             reasons=tuple(v["reasons"]),
+            notes=tuple(v.get("notes", [])),
         )
         rows.append(
             LadderRow(
@@ -169,7 +238,17 @@ def write_report(out_dir: Path, *, stop_reason: str) -> Path:
     base_summary = require_file(base / "summary.json", "baseline summary (run `baseline` first)")
     rows, final = load_rows(out_dir)
     base_data = json.loads(base_summary.read_text(encoding="utf-8"))
+    base_run = read_summary(base_summary)
+    real = bool(base_run.real_scripts) or any(r.candidate.real_scripts for r in rows)
     notes: list[str] = []
+    if base_run.real_scripts:
+        notes.append(
+            f"Baseline real split: abs error {base_run.real_abs_error:.1f} marks over "
+            f"{len(base_run.real_scripts)} scripts, review {_pct(base_run.real_review_rate)}, "
+            f"escalation {_pct(base_run.real_escalation_rate)}, worst script "
+            f"{_worst_script(base_run)}."
+        )
+        notes.extend(_incomplete_note(base_run))
     if "in_run_cache_hits" in base_data:
         notes.append(
             f"Baseline in-run cache hits: {base_data['in_run_cache_hits']} "
@@ -185,5 +264,86 @@ def write_report(out_dir: Path, *, stop_reason: str) -> Path:
         stop_reason=stop_reason,
     )
     target = out_dir / "LADDER.md"
-    write_ladder(rows, target, footer=footer, notes=notes)
+    write_ladder(rows, target, footer=footer, notes=notes, real=real)
+    return target
+
+
+def write_flip(out_dir: Path, *, candidate: str, gemini: str) -> Path:
+    """``<out_dir>/FLIP.md``: the flip judgement, Gemini beside the candidate. Counts only."""
+    cand = read_summary(require_file(out_dir / candidate / "summary.json", f"rung {candidate!r}"))
+    gem = read_summary(require_file(out_dir / gemini / "summary.json", f"Gemini rung {gemini!r}"))
+    verdict = json.loads(
+        require_file(out_dir / FLIP_VERDICT_FILE, "flip verdict (run `judge-flip`)").read_text(
+            encoding="utf-8"
+        )
+    )
+    if verdict.get("candidate") != candidate or verdict.get("gemini") != gemini:
+        raise LadderStateError(
+            f"{FLIP_VERDICT_FILE} judged {verdict.get('candidate')!r} against "
+            f"{verdict.get('gemini')!r}, not {candidate!r} against {gemini!r}; re-run `judge-flip`"
+        )
+
+    def real(c: RunSummary, text: str) -> str:
+        return text if c.real_scripts else "-"
+
+    def pair(name: str, fmt: Callable[[RunSummary], str]) -> tuple[str, str, str]:
+        return (name, real(gem, fmt(gem)), real(cand, fmt(cand)))
+
+    figures = [
+        pair("real abs error (marks)", lambda c: f"{c.real_abs_error:.1f}"),
+        pair("exact leaves", lambda c: _pct(c.real_exact_rate)),
+        pair("within 1 mark", lambda c: _pct(c.real_within1_rate)),
+        pair("review rate", lambda c: _pct(c.real_review_rate)),
+        pair("binding passes", lambda c: f"{c.real_binding_passes:.1f}/{len(c.real_scripts)}"),
+        pair("mean $ per script (2027)", lambda c: f"${c.real_usd_mean:.4f}"),
+        pair("worst script", _worst_script),
+        pair("escalation rate", lambda c: _pct(c.real_escalation_rate)),
+        pair("escalation $ share", lambda c: _pct(_escalation_share(c))),
+        (
+            "incomplete real cases",
+            str(len(gem.real_incomplete)),
+            str(len(cand.real_incomplete)),
+        ),
+        (
+            "synthetic mismarked parts",
+            str(len(gem.mismarked_parts)),
+            str(len(cand.mismarked_parts)),
+        ),
+    ]
+    lines = [
+        "# Flip judgement",
+        "",
+        f"Candidate `{candidate}` against the Gemini rung `{gemini}`. Real split: the frozen "
+        "reference set, two live runs each; per-leaf marks stay uncommitted. Counts only.",
+        "",
+    ]
+    for who, run in (("Gemini", gem), ("Candidate", cand)):
+        lines += [f"{who}: {n}" for n in _incomplete_note(run)]
+    lines += [
+        "| figure | Gemini | Claude candidate |",
+        "|---|---|---|",
+        *(f"| {name} | {g} | {c} |" for name, g, c in figures),
+        "",
+        "| script | Gemini max $ | Claude max $ | Claude escalation $ |",
+        "|---|---|---|---|",
+    ]
+    gem_max = dict(gem.real_usd_max_by_script)
+    cand_esc = dict(cand.real_escalation_usd_by_script)
+    for key, cand_usd in cand.real_usd_max_by_script:
+        g_usd = f"${gem_max[key]:.4f}" if key in gem_max else "-"
+        e_usd = f"${cand_esc[key]:.4f}" if key in cand_esc else "-"
+        lines.append(f"| {key} | {g_usd} | ${cand_usd:.4f} | {e_usd} |")
+    lines += [
+        "",
+        f"Verdict: {'PASS' if verdict['passed'] else 'FAIL'}",
+        "",
+        "Reasons:",
+        *(f"- {r}" for r in verdict.get("reasons") or ["none"]),
+        "",
+        "Notes:",
+        *(f"- {n}" for n in verdict.get("notes") or ["none"]),
+        "",
+    ]
+    target = out_dir / "FLIP.md"
+    target.write_text("\n".join(lines), encoding="utf-8")
     return target
