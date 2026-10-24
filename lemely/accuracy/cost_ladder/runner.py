@@ -5,16 +5,34 @@ from __future__ import annotations
 import json
 import math
 import shutil
-from dataclasses import asdict, dataclass, fields
+import time
+from dataclasses import asdict, dataclass, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
-from lemely.accuracy.cost_ladder.gate import RunSummary, Verdict, aa_floor, judge
+from lemely.accuracy.cost_ladder.gate import (
+    RunSummary,
+    Verdict,
+    aa_floor,
+    judge_accuracy_lever,
+    judge_cost_lever,
+    judge_flip,
+    judge_record,
+)
+from lemely.accuracy.cost_ladder.real_split import (
+    RealScript,
+    RealScriptResult,
+    mark_real_script,
+    real_summary_fields,
+    score_script,
+    write_real_results,
+)
 from lemely.accuracy.cost_ladder.spend import (
     DEFAULT_SPEND_FILE,
     RUN_COST_FILE,
     CapWatch,
+    SpendCapError,
     SpendCaps,
     SpendLedger,
     check_can_start,
@@ -42,11 +60,13 @@ from lemely.io.gemini import (
     set_call_context,
 )
 from lemely.runtime.config import Settings, load_settings
+from lemely.runtime.errors import CostCeilingError
 from lemely.runtime.events import EventType, bus
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
+    from lemely.core.schemas import CorrectionResult
     from lemely.eval.records import EvalRecord
 
 PINNED_CORPUS_DIGEST = "090492b217365de4"
@@ -70,6 +90,23 @@ CACHE_SUBDIR = "cache"
 ARCHIVE_SUBDIR = "archive"
 AA_FLOOR_FILE = "aa_floor.json"
 LADDER_FILE = "ladder.json"
+REAL_RUN_PREFIX = "real-"
+REPEAT_SUFFIX = "-r2"
+FLIP_VERDICT_FILE = "flip_verdict.json"
+
+Split = Literal["dev", "real", "both"]
+JudgeKind = Literal["cost", "accuracy", "record"]
+
+#: The dev side of a real-only rung: nothing scored, nothing spent.
+EMPTY_DEV_SUMMARY = RunSummary(
+    usd_per_script_mean=0.0,
+    latency_p95_ms=0.0,
+    mismarked_parts=frozenset(),
+    scored_parts=0,
+    id_match_rate=1.0,
+    validity_rate=1.0,
+    incomplete=(),
+)
 
 CacheMode = Literal["read_write", "bypass", "refresh"]
 
@@ -166,6 +203,8 @@ def models_in_play(settings: Settings) -> list[str]:
         g.model_for("correction"),
         g.model_for("correction_borderline"),
         g.model_for("escalation"),
+        g.model_for("scan_metadata"),  # the real split's first stage
+        settings.binding.second_read_model,  # None reads the second read on read_model
         settings.binding.read_model,  # binding read and second read
         settings.binding.retry_model,
         g.cascade_strong_model,
@@ -449,6 +488,14 @@ def write_summary(
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _pairs(raw: object) -> tuple[tuple[str, float], ...]:
+    return tuple((str(k), float(v)) for k, v in raw) if isinstance(raw, list) else ()
+
+
+def _opt_float(raw: object) -> float | None:
+    return float(raw) if isinstance(raw, int | float) else None
+
+
 def read_summary(path: Path) -> RunSummary:
     data = json.loads(path.read_text(encoding="utf-8"))
     return RunSummary(
@@ -459,6 +506,24 @@ def read_summary(path: Path) -> RunSummary:
         id_match_rate=data["id_match_rate"],
         validity_rate=data["validity_rate"],
         incomplete=tuple(data["incomplete"]),
+        real_scripts=tuple(str(k) for k in data.get("real_scripts", ())),
+        real_abs_error=float(data.get("real_abs_error", 0.0)),
+        real_abs_error_by_run=tuple(float(x) for x in data.get("real_abs_error_by_run", ())),
+        real_exact_rate=_opt_float(data.get("real_exact_rate")),
+        real_within1_rate=_opt_float(data.get("real_within1_rate")),
+        real_review_rate=_opt_float(data.get("real_review_rate")),
+        real_binding_passes=float(data.get("real_binding_passes", 0.0)),
+        real_usd_mean=float(data.get("real_usd_mean", 0.0)),
+        real_usd_by_script=_pairs(data.get("real_usd_by_script")),
+        real_usd_max_by_script=_pairs(data.get("real_usd_max_by_script")),
+        real_latency_by_script=_pairs(data.get("real_latency_by_script")),
+        real_escalation_rate=_opt_float(data.get("real_escalation_rate")),
+        real_escalation_rate_max_script=_opt_float(data.get("real_escalation_rate_max_script")),
+        real_escalation_usd_by_script=_pairs(data.get("real_escalation_usd_by_script")),
+        real_escalation_triggers=tuple(
+            (str(k), int(v)) for k, v in data.get("real_escalation_triggers", ())
+        ),
+        real_incomplete=tuple(str(x) for x in data.get("real_incomplete", ())),
     )
 
 
@@ -469,6 +534,59 @@ def read_records(path: Path) -> list[CallRecord]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def pair_summaries(a: RunSummary, b: RunSummary) -> RunSummary:
+    """Two dev runs of one config as one: the mean of each figure, the union of mismarks."""
+    incomplete = list(dict.fromkeys([*a.incomplete, *b.incomplete]))
+    if a.scored_parts != b.scored_parts:
+        incomplete.append(
+            f"scored parts differ between the two runs ({a.scored_parts}, {b.scored_parts})"
+        )
+    return replace(
+        a,
+        usd_per_script_mean=(a.usd_per_script_mean + b.usd_per_script_mean) / 2,
+        latency_p95_ms=(a.latency_p95_ms + b.latency_p95_ms) / 2,
+        mismarked_parts=a.mismarked_parts | b.mismarked_parts,
+        id_match_rate=(a.id_match_rate + b.id_match_rate) / 2,
+        validity_rate=(a.validity_rate + b.validity_rate) / 2,
+        incomplete=tuple(incomplete),
+    )
+
+
+def with_real(
+    summary: RunSummary,
+    runs: Sequence[Sequence[RealScriptResult]],
+    expected_keys: Sequence[str],
+) -> RunSummary:
+    """*summary* with the real split's fields; real incompletes join ``incomplete``.
+
+    *expected_keys* are the scripts the rung was asked to mark, so one a run lacks is
+    reported incomplete rather than silently narrowing the split.
+    """
+    real = real_summary_fields(runs, expected_keys)
+    real_incomplete = cast("tuple[str, ...]", real["real_incomplete"])
+    merged = replace(summary, **real)  # type: ignore[arg-type]
+    return replace(merged, incomplete=tuple(dict.fromkeys([*summary.incomplete, *real_incomplete])))
+
+
+def _summary_extras(path: Path) -> tuple[dict[str, object], float]:
+    """The non-`RunSummary` keys of a stored summary, and its ``usd_per_script_mean_now``."""
+    data: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
+    names = {f.name for f in fields(RunSummary)} | {"usd_per_script_mean_now"}
+    now = data.get("usd_per_script_mean_now", 0.0)
+    return {k: v for k, v in data.items() if k not in names}, float(cast("float", now))
+
+
+def _rewrite_summary(path: Path, summary: RunSummary, *, usd_now: float | None = None) -> None:
+    """Replace the `RunSummary` fields of a stored summary, keeping its other keys."""
+    extra, stored_now = _summary_extras(path)
+    write_summary(
+        summary,
+        path,
+        usd_per_script_mean_now=stored_now if usd_now is None else usd_now,
+        extra=extra,
+    )
 
 
 def compose_records(
@@ -696,6 +814,157 @@ def run_config(
     return summary
 
 
+def _real_projection(out_dir: Path, max_run_usd: Mapping[str, float] | None) -> dict[str, float]:
+    """A real run's projected cost: the larger of *max_run_usd* and the latest real run's."""
+    costs = sorted(
+        out_dir.glob(f"*/{REAL_RUN_PREFIX}*/{RUN_COST_FILE}"), key=lambda p: p.stat().st_mtime
+    )
+    last: dict[str, float] = {}
+    if costs:
+        data = json.loads(costs[-1].read_text(encoding="utf-8"))
+        last = {str(k): float(v) for k, v in data.items()}
+    explicit = dict(max_run_usd or {})
+    if not last and not explicit:
+        raise SpendCapError(
+            "no real run in this out-dir to project the cost from; pass "
+            "--max-run-usd provider=usd for the first one"
+        )
+    return {
+        provider: max(last.get(provider, 0.0), explicit.get(provider, 0.0))
+        for provider in sorted(set(last) | set(explicit))
+    }
+
+
+def run_real(
+    label: str,
+    overrides: Mapping[str, object],
+    *,
+    run_index: int,
+    out_dir: Path,
+    scripts: Sequence[RealScript],
+    settings: Settings | None = None,
+    caps: SpendCaps | None = None,
+    max_run_usd: Mapping[str, float] | None = None,
+    spend_file: Path | None = None,
+    mark: Callable[[RealScript, GeminiClient, Settings], CorrectionResult] | None = None,
+    on_checks_passed: Callable[[], None] | None = None,
+) -> tuple[RealScriptResult, ...]:
+    """One live pass over the frozen real scripts under *overrides*; write and score it.
+
+    Writes ``<out_dir>/<label>/real-<run_index>/`` (records, scored results, the
+    escalation events, the run's cost). Every call is live: the client bypasses the
+    cache, under its own cache dir. Prices and the spend caps are checked before
+    anything is written (the reference digests were checked when *scripts* were
+    loaded); *on_checks_passed* runs next, and only then is the client built. Each
+    finished script is booked to the ledger by `_CapGuard`. A script whose marking
+    raised is incomplete (its reason reaches ``real_incomplete``); scripts the cap
+    stopped are "not run (spend cap)".
+    """
+    if not scripts:
+        raise LadderStateError("no real scripts: build and freeze the reference set first")
+    caps = caps or SpendCaps()
+    run_name = f"{REAL_RUN_PREFIX}{run_index}"
+    run_dir = out_dir / label / run_name
+    discipline: dict[str, object] = {
+        "gemini.cache_forget_enabled": False,
+        "paths.cache_dir": str(cache_dir_for(out_dir, f"{label}-{run_name}")),
+    }
+    effective = apply_overrides(apply_overrides(settings or load_settings(), overrides), discipline)
+    preflight_prices(effective)
+    ledger = SpendLedger(spend_file or DEFAULT_SPEND_FILE)
+    spent_before = ledger.spent()
+    check_can_start(spent_before, _real_projection(out_dir, max_run_usd), caps)
+    if on_checks_passed is not None:
+        on_checks_passed()
+    marker = mark or mark_real_script
+    gemini = GeminiClient(effective, default_cache_mode="bypass")
+    guard = _CapGuard(CapWatch(caps, spent_before), ledger, label=f"{label}/{run_name}")
+    escalations: list[dict[str, object]] = []
+    current: list[str] = []
+
+    def on_escalate(**payload: object) -> None:
+        escalations.append({"case_key": current[-1] if current else None, **payload})
+
+    outcomes: dict[str, tuple[CorrectionResult | None, float, str | None]] = {}
+    bus.subscribe(EventType.GEMINI_ESCALATE, on_escalate)
+    with record_calls():
+        reset_process_counters()
+        try:
+            for script in scripts:
+                current.append(script.key)
+                set_call_context(case_key=script.key)
+                started = time.monotonic()
+                correction: CorrectionResult | None = None
+                failure: str | None = None
+                try:
+                    correction = marker(script, gemini, effective)
+                except CostCeilingError as exc:
+                    failure = f"cost ceiling: {exc}"
+                except Exception as exc:
+                    failure = f"{type(exc).__name__}: {exc}"
+                outcomes[script.key] = (correction, (time.monotonic() - started) * 1000, failure)
+                try:
+                    guard(script.key)
+                except SpendCapReached:
+                    break
+        finally:
+            bus.unsubscribe(EventType.GEMINI_ESCALATE, on_escalate)
+            set_call_context(case_key=None)
+            records = process_call_records()
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / RUN_COST_FILE).write_text(
+                json.dumps(cost_by_provider(records), sort_keys=True) + "\n", encoding="utf-8"
+            )
+            booked = set(guard.completed)
+            ledger.add(cost_by_provider([r for r in records if r.case_key not in booked]))
+            (run_dir / "records.jsonl").write_text(
+                "".join(json.dumps(asdict(r), sort_keys=True) + "\n" for r in records),
+                encoding="utf-8",
+            )
+            (run_dir / "escalations.jsonl").write_text(
+                "".join(json.dumps(e, sort_keys=True, default=str) + "\n" for e in escalations),
+                encoding="utf-8",
+            )
+    cascade = effective.gemini.cascade_enabled is True
+    not_run: tuple[CorrectionResult | None, float, str | None] = (None, 0.0, "not run (spend cap)")
+    results = tuple(
+        score_script(
+            script,
+            outcomes.get(script.key, not_run)[0],
+            [r for r in records if r.case_key == script.key],
+            latency_ms=outcomes.get(script.key, not_run)[1],
+            failure=outcomes.get(script.key, not_run)[2],
+            escalations=[e for e in escalations if e.get("case_key") == script.key],
+            cascade_enabled=cascade,
+        )
+        for script in scripts
+    )
+    write_real_results(run_dir / "real_results.json", results)
+    return results
+
+
+def _judge(
+    kind: JudgeKind,
+    against: RunSummary,
+    candidate: RunSummary,
+    *,
+    floor: int,
+    real_floor: float,
+    original_p95: float,
+) -> Verdict:
+    if kind == "cost":
+        return judge_cost_lever(
+            against,
+            candidate,
+            aa_floor=floor,
+            real_aa_floor=real_floor,
+            original_latency_p95_ms=original_p95,
+        )
+    if kind == "accuracy":
+        return judge_accuracy_lever(against, candidate, aa_floor=floor, real_aa_floor=real_floor)
+    return judge_record(against, candidate)
+
+
 def require_file(path: Path, what: str) -> Path:
     """*path*, or a `LadderStateError` naming *what* is missing (never a bare traceback)."""
     if not path.is_file():
@@ -781,6 +1050,9 @@ def run_baseline(
     spend_file: Path | None = None,
     restart: bool = False,
     aa_only: bool = False,
+    split: Split = "dev",
+    repeats: int = 1,
+    real_scripts: Sequence[RealScript] = (),
 ) -> int:
     """Rung 0 and its A/A rerun; write and return the churn floor.
 
@@ -801,9 +1073,106 @@ def run_baseline(
     *aa_only* reruns only the A/A run against the existing, complete baseline; it
     is refused while ``ladder.json`` has rows, since a new floor would change the
     rule earlier verdicts were judged under.
+
+    *split* real or both adds two live real runs and ``real_aa_floor`` (the absolute
+    difference of the two runs' abs_error); *repeats* 2 stores the dev baseline as the
+    pair of the baseline and A/A runs.
     """
     if restart and aa_only:
         raise ValueError("--restart-baseline and --aa-only are mutually exclusive")
+    if split != "dev" and aa_only:
+        raise ValueError("--aa-only reruns the dev A/A run only; use --split dev")
+    if split != "dev" and not real_scripts:
+        raise LadderStateError("the real split needs the frozen reference scripts")
+    base_summary = out_dir / BASELINE_LABEL / "summary.json"
+    floor = 0
+    if split in ("dev", "both"):
+        floor = _dev_baseline(
+            out_dir=out_dir,
+            golden_dir=golden_dir,
+            cases=cases,
+            settings=settings,
+            caps=caps,
+            max_run_usd=max_run_usd,
+            spend_file=spend_file,
+            restart=restart,
+            aa_only=aa_only,
+        )
+        if repeats == 2:
+            _, aa_now = _summary_extras(out_dir / AA_LABEL / "summary.json")
+            _, base_now = _summary_extras(base_summary)
+            _rewrite_summary(
+                base_summary,
+                pair_summaries(
+                    read_summary(base_summary), read_summary(out_dir / AA_LABEL / "summary.json")
+                ),
+                usd_now=(base_now + aa_now) / 2,
+            )
+    if split in ("real", "both"):
+        hook: Callable[[], None] | None = None
+        if split == "real":
+            if base_summary.exists() and not restart:
+                raise RuntimeError(
+                    f"{base_summary} exists; pass --restart-baseline to replace this baseline"
+                )
+
+            def wipe_real() -> None:
+                _archive_ladder(out_dir)
+                if (out_dir / BASELINE_LABEL).exists():
+                    shutil.rmtree(out_dir / BASELINE_LABEL)
+                (out_dir / AA_FLOOR_FILE).unlink(missing_ok=True)
+
+            hook = wipe_real if restart else None
+        runs = [
+            run_real(
+                BASELINE_LABEL,
+                {},
+                run_index=index,
+                out_dir=out_dir,
+                scripts=real_scripts,
+                settings=settings,
+                caps=caps,
+                max_run_usd=max_run_usd,
+                spend_file=spend_file,
+                on_checks_passed=hook if index == 1 else None,
+            )
+            for index in (1, 2)
+        ]
+        keys = [script.key for script in real_scripts]
+        if split == "real":
+            write_summary(
+                with_real(EMPTY_DEV_SUMMARY, runs, keys),
+                base_summary,
+                usd_per_script_mean_now=0.0,
+                extra={"overrides": {}, "live_tags": [], "frozen_upstream": False, "split": "real"},
+            )
+        else:
+            _rewrite_summary(base_summary, with_real(read_summary(base_summary), runs, keys))
+        first, second = (float(sum(s.abs_error for s in run)) for run in runs)
+        floors_path = out_dir / AA_FLOOR_FILE
+        floors: dict[str, object] = (
+            json.loads(floors_path.read_text(encoding="utf-8"))
+            if split == "both" and floors_path.is_file()
+            else {"aa_floor": 0}
+        )
+        floors["real_aa_floor"] = abs(first - second)
+        floors_path.write_text(json.dumps(floors, sort_keys=True) + "\n", encoding="utf-8")
+    return floor
+
+
+def _dev_baseline(
+    *,
+    out_dir: Path,
+    golden_dir: Path,
+    cases: Sequence[GoldenCase] | None,
+    settings: Settings | None,
+    caps: SpendCaps | None,
+    max_run_usd: Mapping[str, float] | None,
+    spend_file: Path | None,
+    restart: bool,
+    aa_only: bool,
+) -> int:
+    """The dev rung 0 and its A/A rerun; write and return the churn floor."""
     base_cache = cache_dir_for(out_dir, BASELINE_LABEL)
     aa_cache = cache_dir_for(out_dir, AA_LABEL)
 
@@ -899,6 +1268,10 @@ def run_screen(
     caps: SpendCaps | None = None,
     max_run_usd: Mapping[str, float] | None = None,
     spend_file: Path | None = None,
+    split: Split = "dev",
+    judge_kind: JudgeKind = "cost",
+    repeats: int = 1,
+    real_scripts: Sequence[RealScript] = (),
 ) -> Verdict:
     """Screen one lever stacked on the *against* run, frozen upstream, and judge it.
 
@@ -914,12 +1287,22 @@ def run_screen(
     - Judging: savings, mismarks, id-match and validity against *against*;
       latency always against the rung-0 baseline's p95.
 
+    - Split: *split* real or both also runs the real scripts live *repeats* times;
+      *judge_kind* picks the judge (cost, accuracy, or record-only). *repeats* 2 on
+      the dev split reruns it as ``<label>-r2`` and judges the pair.
+
     A refused screen (missing state, a rejected *against*, a failed precondition
     in `run_config`) writes nothing. Otherwise writes ``verdict.json`` beside the
     run's summary and appends *label* to ``ladder.json``.
     """
     if label in (BASELINE_LABEL, AA_LABEL, CACHE_SUBDIR, ARCHIVE_SUBDIR):
         raise ValueError(f"{label!r} is reserved")
+    if label.endswith(REPEAT_SUFFIX):
+        raise ValueError(f"{label!r} ends in {REPEAT_SUFFIX!r}, which names a screen's second run")
+    if split != "dev" and not real_scripts:
+        raise LadderStateError("the real split needs the frozen reference scripts")
+    if repeats not in (1, 2):
+        raise ValueError(f"repeats must be 1 or 2, got {repeats}")
     if against == label:
         raise LadderStateError(f"screen {label!r} cannot stack on itself (--against {against})")
     for row in _ladder_labels(out_dir):
@@ -940,8 +1323,20 @@ def run_screen(
     floor_path = require_file(
         out_dir / AA_FLOOR_FILE, "A/A floor aa_floor.json (run `baseline` first)"
     )
-    floor = int(json.loads(floor_path.read_text(encoding="utf-8"))["aa_floor"])
-    frozen = read_records(require_file(base_dir / "records.jsonl", "baseline records"))
+    floors = json.loads(floor_path.read_text(encoding="utf-8"))
+    floor = int(floors["aa_floor"])
+    real_floor_raw = floors.get("real_aa_floor")
+    if split != "dev" and real_floor_raw is None:
+        raise LadderStateError(
+            f"{floor_path} has no real_aa_floor: the baseline has no real split. "
+            "Run `baseline --split both` first."
+        )
+    real_floor = float(real_floor_raw or 0.0)
+    frozen = (
+        read_records(require_file(base_dir / "records.jsonl", "baseline records"))
+        if split != "real"
+        else []
+    )
     against_summary_path = require_file(
         out_dir / against / "summary.json", f"--against run {against!r} summary"
     )
@@ -961,36 +1356,114 @@ def run_screen(
     run_dir = out_dir / label
     cache = cache_dir_for(out_dir, label)
 
-    def seed() -> None:
+    summary_path = run_dir / "summary.json"
+    base_cache = cache_dir_for(out_dir, BASELINE_LABEL)
+
+    def drop_stale() -> None:
         for stale in ("verdict.json", "summary.json", "results.json"):
             (run_dir / stale).unlink(missing_ok=True)
         _drop_from_ladder(out_dir, label)
+
+    def seed() -> None:
+        drop_stale()
         if cache.exists():
             shutil.rmtree(cache)
-        shutil.copytree(cache_dir_for(out_dir, BASELINE_LABEL), cache)
+        shutil.copytree(base_cache, cache)
 
-    candidate = run_config(
-        label,
-        combined,
-        out_dir=out_dir,
-        golden_dir=golden_dir,
-        cases=cases,
-        settings=settings,
-        caps=caps,
-        max_run_usd=max_run_usd,
-        cache_dir=cache,
-        cache_mode="read_write",
-        live_tags=tags,
-        frozen_upstream=frozen,
-        summary_extra={"against": against, "set": dict(sets)},
-        spend_file=spend_file,
-        on_checks_passed=seed,
-    )
-    verdict = judge(
+    candidate: RunSummary | None = None
+    usd_now: float | None = None
+    if split in ("dev", "both"):
+        candidate = run_config(
+            label,
+            combined,
+            out_dir=out_dir,
+            golden_dir=golden_dir,
+            cases=cases,
+            settings=settings,
+            caps=caps,
+            max_run_usd=max_run_usd,
+            cache_dir=cache,
+            cache_mode="read_write",
+            live_tags=tags,
+            frozen_upstream=frozen,
+            summary_extra={"against": against, "set": dict(sets)},
+            spend_file=spend_file,
+            on_checks_passed=seed,
+        )
+        if repeats == 2:
+            second_label = f"{label}{REPEAT_SUFFIX}"
+            second_cache = cache_dir_for(out_dir, second_label)
+
+            def seed_second() -> None:
+                if second_cache.exists():
+                    shutil.rmtree(second_cache)
+                shutil.copytree(base_cache, second_cache)
+
+            second = run_config(
+                second_label,
+                combined,
+                out_dir=out_dir,
+                golden_dir=golden_dir,
+                cases=cases,
+                settings=settings,
+                caps=caps,
+                max_run_usd=max_run_usd,
+                cache_dir=second_cache,
+                cache_mode="read_write",
+                live_tags=tags,
+                frozen_upstream=frozen,
+                summary_extra={"against": against, "set": dict(sets), "repeat_of": label},
+                spend_file=spend_file,
+                on_checks_passed=seed_second,
+            )
+            _, first_now = _summary_extras(summary_path)
+            _, second_now = _summary_extras(out_dir / second_label / "summary.json")
+            usd_now = (first_now + second_now) / 2
+            candidate = pair_summaries(candidate, second)
+    if split in ("real", "both"):
+        runs = [
+            run_real(
+                label,
+                combined,
+                run_index=index,
+                out_dir=out_dir,
+                scripts=real_scripts,
+                settings=settings,
+                caps=caps,
+                max_run_usd=max_run_usd,
+                spend_file=spend_file,
+                on_checks_passed=drop_stale if candidate is None and index == 1 else None,
+            )
+            for index in range(1, repeats + 1)
+        ]
+        candidate = with_real(
+            candidate or EMPTY_DEV_SUMMARY, runs, [script.key for script in real_scripts]
+        )
+    if candidate is None:
+        raise ValueError(f"split must be dev, real or both, got {split!r}")
+    if summary_path.is_file():
+        _rewrite_summary(summary_path, candidate, usd_now=usd_now)
+    else:
+        write_summary(
+            candidate,
+            summary_path,
+            usd_per_script_mean_now=0.0,
+            extra={
+                "overrides": combined,
+                "live_tags": tags,
+                "frozen_upstream": False,
+                "against": against,
+                "set": dict(sets),
+                "split": split,
+            },
+        )
+    verdict = _judge(
+        judge_kind,
         read_summary(against_summary_path),
         candidate,
-        aa_floor=floor,
-        original_latency_p95_ms=original_p95,
+        floor=floor,
+        real_floor=real_floor,
+        original_p95=original_p95,
     )
     (run_dir / "verdict.json").write_text(
         json.dumps(
@@ -1008,6 +1481,10 @@ def run_screen(
                 "extra_mismarks": verdict.extra_mismarks,
                 "allowed_extra": verdict.allowed_extra,
                 "reasons": list(verdict.reasons),
+                "judge": judge_kind,
+                "split": split,
+                "repeats": repeats,
+                "notes": list(verdict.notes),
             },
             indent=2,
             sort_keys=True,
@@ -1016,6 +1493,87 @@ def run_screen(
         encoding="utf-8",
     )
     append_ladder(out_dir, label)
+    return verdict
+
+
+def run_reference_rung(
+    label: str,
+    *,
+    out_dir: Path,
+    real_scripts: Sequence[RealScript],
+    dev_summary_from: Path,
+    settings: Settings | None = None,
+    repeats: int = 2,
+    caps: SpendCaps | None = None,
+    max_run_usd: Mapping[str, float] | None = None,
+    spend_file: Path | None = None,
+) -> RunSummary:
+    """A comparison rung (the Gemini rung `judge_flip` reads): never a ladder row.
+
+    The real split runs live *repeats* times under *settings*. The dev figures are
+    read from *dev_summary_from*, a complete earlier run of the same configuration on
+    the pinned corpus: two fresh Gemini dev runs do not fit under the Gemini cap.
+    """
+    if label in (BASELINE_LABEL, AA_LABEL, CACHE_SUBDIR, ARCHIVE_SUBDIR) or label in _ladder_labels(
+        out_dir
+    ):
+        raise LadderStateError(f"{label!r} is reserved or already a ladder row")
+    dev = require_complete(dev_summary_from, "dev summary of the reference rung")
+    runs = [
+        run_real(
+            label,
+            {},
+            run_index=index,
+            out_dir=out_dir,
+            scripts=real_scripts,
+            settings=settings,
+            caps=caps,
+            max_run_usd=max_run_usd,
+            spend_file=spend_file,
+        )
+        for index in range(1, repeats + 1)
+    ]
+    summary = with_real(dev, runs, [script.key for script in real_scripts])
+    write_summary(
+        summary,
+        out_dir / label / "summary.json",
+        usd_per_script_mean_now=0.0,
+        extra={
+            "reference_rung": True,
+            "dev_from": str(dev_summary_from),
+            "overrides": {},
+            "live_tags": [],
+        },
+    )
+    return summary
+
+
+def flip_verdict(out_dir: Path, *, candidate: str, gemini: str) -> Verdict:
+    """`judge_flip` of the *candidate* rung against the *gemini* rung; writes flip_verdict.json."""
+    cand = read_summary(require_file(out_dir / candidate / "summary.json", f"rung {candidate!r}"))
+    gem = read_summary(require_file(out_dir / gemini / "summary.json", f"Gemini rung {gemini!r}"))
+    floors = json.loads(
+        require_file(out_dir / AA_FLOOR_FILE, "A/A floor aa_floor.json").read_text(encoding="utf-8")
+    )
+    verdict = judge_flip(gem, cand, aa_floor=int(floors["aa_floor"]))
+    (out_dir / FLIP_VERDICT_FILE).write_text(
+        json.dumps(
+            {
+                "candidate": candidate,
+                "gemini": gemini,
+                "passed": verdict.passed,
+                "saving": verdict.saving,
+                "extra_mismarks": verdict.extra_mismarks,
+                "allowed_extra": verdict.allowed_extra,
+                "reasons": list(verdict.reasons),
+                "notes": list(verdict.notes),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     return verdict
 
 
@@ -1136,6 +1694,12 @@ def resummarise(label: str, *, out_dir: Path) -> RunSummary:
         raise LadderStateError(
             f"resummarise {label!r} is refused: it has a verdict.json, which would no longer "
             "match its summary. Screen the change under a new label."
+        )
+    stored = run_dir / "summary.json"
+    if stored.is_file() and json.loads(stored.read_text(encoding="utf-8")).get("real_scripts"):
+        raise LadderStateError(
+            f"resummarise {label!r} is refused: it has a real split, whose per-leaf results "
+            "are not rebuilt from records. Rescreen it instead."
         )
     results = json.loads(
         require_file(
