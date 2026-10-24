@@ -31,7 +31,7 @@ FROZEN_MARKER = "FROZEN"
 #: A reference confidence below this puts the leaf on the check-first list (spec P0).
 LOW_CONFIDENCE = 0.8
 
-Source = Literal["teacher_tick", "opus", "user_override"]
+Source = Literal["teacher_tick", "opus", "user_override", "fixture_full"]
 
 
 class ReferenceStateError(RuntimeError):

@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -267,12 +268,36 @@ def _leaf_list(scheme: MarkScheme) -> str:
     return f"Leaves to mark: {leaves}\n\nMark scheme:\n{render_paper_mark_scheme(scheme)}"
 
 
+def _mark_full(args: argparse.Namespace, script_dir: Path) -> int:
+    """$0, no client and no ledger: every scheme leaf at its maximum, on a stated basis."""
+    basis = (args.basis or "").strip()
+    if not basis:
+        raise ref.ReferenceStateError("--mode full needs --basis: why every answer is correct")
+    rows = [
+        {
+            "question_id": qid,
+            "mark": max_marks,
+            "confidence": 1.0,
+            "evidence": basis,
+            "page": None,
+            "ambiguous": False,
+        }
+        for qid, max_marks in scheme_leaves(_scheme(script_dir)).items()
+    ]
+    out = script_dir / "marks_full.json"
+    out.write_text(json.dumps({"leaves": rows, "basis": basis}, indent=1) + "\n", encoding="utf-8")
+    print(f"wrote {out} ({len(rows)} leaves at full marks, no model call)")
+    return 0
+
+
 def _mark(args: argparse.Namespace) -> int:
     from lemely.io.gemini import process_call_records, record_calls, set_call_context
 
     script_dir: Path = args.root / args.key
     if ref.is_frozen(script_dir):
         raise ref.ReferenceStateError(f"{script_dir} is frozen")
+    if args.mode == "full":
+        return _mark_full(args, script_dir)
     if args.mode in ("teacher", "mcq") and args.truth is None:
         raise ref.ReferenceStateError(f"--mode {args.mode} reads the marked copy: pass --truth")
     scheme = _scheme(script_dir)
@@ -341,8 +366,12 @@ def _adopt(args: argparse.Namespace) -> int:
     if ref.is_frozen(script_dir):
         raise ref.ReferenceStateError(f"{script_dir} is frozen")
     rows = _read_marks(script_dir / f"marks_{args.source}.json")
-    source: ref.Source = "opus" if args.source == "opus" else "teacher_tick"
+    sources: dict[str, ref.Source] = {"opus": "opus", "full": "fixture_full"}
+    source: ref.Source = sources.get(args.source, "teacher_tick")
     leaves = leaves_from_marks(rows, _scheme(script_dir), source)
+    if args.source == "full":
+        basis = json.loads((script_dir / "marks_full.json").read_text("utf-8"))["basis"]
+        leaves = [replace(leaf, note=str(basis)) for leaf in leaves]
     marked = bool(
         json.loads((script_dir / f"marks_{args.source}.json").read_text("utf-8")).get(
             "marked_input"
@@ -500,7 +529,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("mark")
     p.add_argument("key")
-    p.add_argument("--mode", choices=sorted(_SYSTEM_FOR), required=True)
+    p.add_argument("--mode", choices=[*sorted(_SYSTEM_FOR), "full"], required=True)
+    p.add_argument("--basis", help="--mode full: why every answer is correct")
     p.add_argument("--truth", type=Path)
     p.add_argument(
         "--allow-marked-input",
@@ -514,7 +544,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("adopt")
     p.add_argument("key")
-    p.add_argument("--from", dest="source", choices=sorted(_SYSTEM_FOR), required=True)
+    p.add_argument("--from", dest="source", choices=[*sorted(_SYSTEM_FOR), "full"], required=True)
     p.set_defaults(fn=_adopt)
 
     p = sub.add_parser("review-list")

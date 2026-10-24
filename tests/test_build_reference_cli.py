@@ -766,3 +766,63 @@ def test_freeze_allows_the_scan_as_a_source_only_when_marked_input_is_recorded(
     assert br.main(args) == 0
     (entry,) = ref.read_manifest(root / ref.MANIFEST_FILE)
     assert list(entry.source_sha256) == ["marked_copy_is_input=copy"]
+
+
+def _full_setup(tmp_path: Path) -> tuple[Path, Path]:
+    root = tmp_path / "ref"
+    d = root / "k"
+    d.mkdir(parents=True)
+    (d / ref.SCHEME_FILE).write_text(json.dumps(_SCHEME), encoding="utf-8")
+    _write_inputs(d, tmp_path / "s.pdf")
+    return root, d
+
+
+def test_full_mode_writes_max_for_every_leaf_and_makes_no_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, d = _full_setup(tmp_path)
+
+    def boom(*_: object) -> object:
+        raise AssertionError("full mode must not touch the client, keys or the ledger")
+
+    monkeypatch.setattr(br, "_client", boom)
+    monkeypatch.setattr(br, "_load_keys", boom)
+    monkeypatch.setattr(br, "SpendLedger", boom)
+    assert br.main(["--root", str(root), "mark", "k", "--mode", "full"]) == 2
+    assert not (d / "marks_full.json").exists()
+    assert (
+        br.main(
+            [
+                "--root",
+                str(root),
+                "mark",
+                "k",
+                "--mode",
+                "full",
+                "--basis",
+                "teacher solved every question",
+            ]
+        )
+        == 0
+    )
+    rows = json.loads((d / "marks_full.json").read_text())["leaves"]
+    assert {r["question_id"]: r["mark"] for r in rows} == {"1a": 2, "1b": 1}
+    assert br.main(["--root", str(root), "adopt", "k", "--from", "full"]) == 0
+    leaves = ref.read_reference(d / ref.REFERENCE_FILE)
+    assert {q: (x.mark, x.source, x.note) for q, x in leaves.items()} == {
+        "1a": (2, "fixture_full", "teacher solved every question"),
+        "1b": (1, "fixture_full", "teacher solved every question"),
+    }
+
+
+def test_review_list_after_adopting_full_lists_exactly_the_opus_deducted_leaves(
+    tmp_path: Path,
+) -> None:
+    root, d = _full_setup(tmp_path)
+    assert br.main(["--root", str(root), "mark", "k", "--mode", "full", "--basis", "b"]) == 0
+    _write_marks(d, "opus", [_row("1a", 2), _row("1b", 0)])
+    assert br.main(["--root", str(root), "adopt", "k", "--from", "full"]) == 0
+    assert br.main(["--root", str(root), "review-list", "k"]) == 0
+    review = (d / ref.REVIEW_FILE).read_text()
+    assert "| 1b |" in review and "disagrees with opus (0)" in review
+    assert "| 1a |" not in review

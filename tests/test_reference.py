@@ -243,3 +243,9 @@ def test_flags_list_a_leaf_with_its_reason_and_unknown_flag_ids_are_refused() ->
     assert flagged == {"1b": ["not returned by the model"]}
     with pytest.raises(ValueError, match="9z"):
         ref.check_first(reference, flags={"9z": "x"})
+
+
+def test_fixture_full_is_an_allowed_source_and_unknown_sources_are_not() -> None:
+    assert _leaf("1a", 2, source="fixture_full").source == "fixture_full"
+    with pytest.raises(ValueError, match="unknown source"):
+        ReferenceLeaf("1a", 2, 2, "made_up", "e")  # type: ignore[arg-type]
