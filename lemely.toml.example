@@ -350,6 +350,9 @@ second_read_mode = "always"
 # cache defaults of its tag unless set. Chunk calls send their pages inline, not
 # through the Files API: input tokens are unchanged, bandwidth is higher.
 # claude_chunked_read = false
+# Make the two claude- binder reads in turn even when their efforts differ
+# (lever a3; the second read hits the first's cache only if the API allows).
+# claude_cache_ignores_effort = false
 # The model the legacy binder's one retry uses, when the gate is on.
 retry_model = "gemini-3.8-flash"
 

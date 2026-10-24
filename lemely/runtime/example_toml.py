@@ -447,6 +447,11 @@ def render_example_toml() -> str:
     lines.append("# cache defaults of its tag unless set. Chunk calls send their pages inline, not")
     lines.append("# through the Files API: input tokens are unchanged, bandwidth is higher.")
     lines.append(f"# claude_chunked_read = {_toml_bool(s.binding.claude_chunked_read)}")
+    lines.append("# Make the two claude- binder reads in turn even when their efforts differ")
+    lines.append("# (lever a3; the second read hits the first's cache only if the API allows).")
+    lines.append(
+        f"# claude_cache_ignores_effort = {_toml_bool(s.binding.claude_cache_ignores_effort)}"
+    )
     lines.append("# The model the legacy binder's one retry uses, when the gate is on.")
     lines.append(f'retry_model = "{s.binding.retry_model}"')
     lines.append("")

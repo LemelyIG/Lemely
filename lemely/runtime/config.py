@@ -768,6 +768,10 @@ class BindingSettings(BaseModel):
     #: Spec §2b: a claude- read whose pages are still over the token budget at the
     #: floor is read as an overview plus chunks. Off by default; screened in C.
     claude_chunked_read: bool = False
+    #: Sub-project C lever a3: make the two binder reads in turn (so the second can read
+    #: the first's prompt cache) even when their efforts differ. Off: equal effort is
+    #: required, as the prompt-caching docs say a changed setting invalidates the cache.
+    claude_cache_ignores_effort: bool = False
     retry_model: str = Field(default="gemini-3.8-flash", min_length=1)
 
     @model_validator(mode="after")

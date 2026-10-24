@@ -558,6 +558,7 @@ def _reads_share_a_claude_cache(settings: Settings, first_model: str, second_mod
     but only once the first response has begun: so the reads are made in turn. A
     different effort invalidates the cached messages, so both tags must also resolve to
     the same effort (B3); otherwise the in-turn read would pay the write and never hit.
+    With ``binding.claude_cache_ignores_effort`` (lever a3) the effort check is skipped.
     """
     if first_model != second_model or not is_anthropic_model(first_model):
         return False
@@ -565,6 +566,8 @@ def _reads_share_a_claude_cache(settings: Settings, first_model: str, second_mod
     tags = (_FIRST_READ[0], _SECOND_READ[0])
     if not all("images" in g.claude_cache_for.get(tag, []) for tag in tags):
         return False
+    if settings.binding.claude_cache_ignores_effort is True:
+        return True
     first, second = (resolve_effort(g.claude_effort_for, g.thinking_level_for, tag) for tag in tags)
     return first == second
 
