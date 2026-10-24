@@ -284,13 +284,14 @@ def build_app(settings: Any = None) -> Any:
                 ms = MarkScheme.model_validate_json(ms_path.read_text(encoding="utf-8"))
                 reviewed = overlay_edited_answers(extracted_json, table_data)
                 client = None if mcq_only else GeminiClient(settings)
-                correction = hybrid_correct_paper(
-                    mark_scheme=ms,
-                    extracted_answers=reviewed,
-                    gemini_client=client,
-                    mcq_only=mcq_only,
-                    options=settings.grading.marking_options(),
-                )
+                with script_cost_scope(settings, script_key=f"gradio:{ms_path.stem}"):
+                    correction = hybrid_correct_paper(
+                        mark_scheme=ms,
+                        extracted_answers=reviewed,
+                        gemini_client=client,
+                        mcq_only=mcq_only,
+                        options=settings.grading.marking_options(),
+                    )
                 store = GradeBoundaryStore()
                 boundaries, boundary_source = store.resolve(correction.metadata)
                 report = AccuracyReport(

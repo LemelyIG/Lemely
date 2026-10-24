@@ -11,7 +11,7 @@ import threading
 import unittest
 from datetime import date
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from pydantic import BaseModel
 from structlog.testing import capture_logs
@@ -179,3 +179,19 @@ class CliAndBatchWiringTests(unittest.TestCase):
         tree = ast.parse(Path("lemely/app/gradio_app.py").read_text(encoding="utf-8"))
         inside = _inside_scope(tree, "extractor")
         self.assertTrue(inside and all(inside), "gradio extraction outside script_cost_scope")
+        inside = _inside_scope(tree, "hybrid_correct_paper")
+        self.assertTrue(inside and all(inside), "gradio correction outside script_cost_scope")
+
+
+class ScopeNeverRaisesTests(unittest.TestCase):
+    def test_mock_settings_do_not_raise(self) -> None:
+        with script_cost_scope(MagicMock(), script_key="t") as costs:
+            costs["x"] = 1.0
+
+    def test_exception_inside_scope_propagates_unchanged(self) -> None:
+        with (
+            self.assertRaises(ValueError),
+            script_cost_scope(MagicMock(), script_key="t") as costs,
+        ):
+            costs["x"] = 1.0
+            raise ValueError("the real error")

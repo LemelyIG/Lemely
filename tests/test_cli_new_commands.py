@@ -122,7 +122,6 @@ def test_correct_paper_record_writes_history_file() -> None:
             s.paths.output_dir = tmp_path
             s.paths.sources_dir = Path("Sources")
             s.gemini.model = "gemini-1.5-flash"
-            s.gemini.paper_cost_target_usd = 0.10
             mock_gs.return_value = s
 
             result = runner.invoke(

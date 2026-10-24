@@ -324,6 +324,11 @@ _script_cost: contextvars.ContextVar[dict[str, float] | None] = contextvars.Cont
 )
 
 
+#: `GeminiSettings.paper_cost_target_usd`'s default, used when settings carry a
+#: non-numeric target (test doubles) so the scope's `finally` never raises.
+_DEFAULT_SCRIPT_COST_TARGET_USD = 0.10
+
+
 @contextlib.contextmanager
 def script_cost_scope(settings: Settings, *, script_key: str) -> Iterator[dict[str, float]]:
     """Add up one script's paid calls by task tag; warn past ``paper_cost_target_usd``.
@@ -339,6 +344,8 @@ def script_cost_scope(settings: Settings, *, script_key: str) -> Iterator[dict[s
         _script_cost.reset(token)
         total = sum(costs.values())
         target = settings.gemini.paper_cost_target_usd
+        if not isinstance(target, (int, float)) or isinstance(target, bool):
+            target = _DEFAULT_SCRIPT_COST_TARGET_USD
         if total > target:
             structlog.get_logger().warning(
                 "script_over_cost_target",
