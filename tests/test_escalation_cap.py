@@ -6,10 +6,14 @@ import tempfile
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from lemely.core.loose_schemas import MarkScheme, QuestionType
 from lemely.core.schemas import AIMarkResponse, CorrectionResult
 from lemely.io.correction_ai import AICorrector, correct_paper
 from lemely.io.gemini import GeminiClient
+from lemely.runtime.config import MarkingOptions
+from lemely.runtime.errors import CostCeilingError, ExternalServiceError
 from lemely.runtime.events import EventType, bus
 from tests.gemini_fakes import fake_genai_client, make_settings
 from tests.test_anthropic_adapter import _VALID_MARK
@@ -172,4 +176,54 @@ def test_correct_paper_escalates_only_the_most_uncertain_before_adjudication() -
     assert tags.count("escalation") == 1
     assert call.call_args_list[-1].kwargs["question_id"] == "2a"
     assert order == ["correction", "correction", "escalation", "adjudicate"]
+    # 1a keeps its first pass (0.7 < 0.90 review threshold); 2a is judged on the escalated 0.95.
+    assert by_id["1a"].needs_teacher_review is True
+    assert by_id["2a"].needs_teacher_review is False
     assert events == [("2a", 0.6)]  # the real-split runner reads this confidence
+
+
+def test_a_failed_deferred_escalation_keeps_the_first_pass_mark() -> None:
+    client = _corrector(2)[1]
+    replies: list[AIMarkResponse | Exception] = [
+        _reply(0.7, 1),
+        _reply(0.6, 1),
+        ExternalServiceError("boom"),
+        _reply(0.95, 2),
+    ]
+    with (
+        patch("lemely.io.correction_ai.build_marker_user_prompt", return_value="u"),
+        patch.object(client, "generate_structured", side_effect=replies),
+    ):
+        result = correct_paper(_SCHEME, {"1a": "x", "2a": "y"}, gemini_client=client)
+    by_id = {q.question_id: q for q in result.questions}
+    assert by_id["2a"].awarded_marks == 1  # its escalation failed: first-pass mark kept
+    assert by_id["1a"].awarded_marks == 2  # the other leaf was still escalated
+
+
+def test_a_cost_ceiling_during_deferred_escalation_still_stops_the_run() -> None:
+    client = _corrector(1)[1]
+    replies: list[AIMarkResponse | Exception] = [_reply(0.7), _reply(0.6), CostCeilingError("cap")]
+    with (
+        patch("lemely.io.correction_ai.build_marker_user_prompt", return_value="u"),
+        patch.object(client, "generate_structured", side_effect=replies),
+        pytest.raises(CostCeilingError),
+    ):
+        correct_paper(_SCHEME, {"1a": "x", "2a": "y"}, gemini_client=client)
+
+
+def test_ecf_substitution_keeps_inline_escalation() -> None:
+    client = _corrector(1)[1]
+    replies = [_reply(0.7), _reply(0.95), _reply(0.6), _reply(0.95)]
+    with (
+        patch("lemely.io.correction_ai.build_marker_user_prompt", return_value="u"),
+        patch.object(client, "generate_structured", side_effect=replies) as call,
+    ):
+        correct_paper(
+            _SCHEME,
+            {"1a": "x", "2a": "y"},
+            gemini_client=client,
+            options=MarkingOptions(ecf_substitution=True),
+        )
+    # Inline, each low leaf escalates as it is marked (the cap of 1 is not applied).
+    tags = [c.kwargs["task_tag"] for c in call.call_args_list]
+    assert tags == ["correction", "escalation", "correction", "escalation"]

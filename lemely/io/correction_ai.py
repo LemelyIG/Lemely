@@ -421,6 +421,10 @@ class AICorrector:
         #: Leaves whose escalation the per-script cap postponed: id -> (question, system
         #: prompt, user prompt, prefix kwargs, confidence). See :meth:`escalate_deferred`.
         self.deferred: dict[str, tuple[Question, str, str, _PrefixKwargs, float]] = {}
+        #: Cleared by ``correct_paper`` when ECF substitution is on: its re-mark calls
+        #: ``mark_question`` again for the same leaf and merges into the first mark, which a
+        #: deferred escalation would overwrite. Such a run keeps the inline escalation.
+        self.defer_escalation = True
 
     def review_threshold(self) -> float:
         """The review threshold for the last mark: :func:`review_threshold_for` its model."""
@@ -708,7 +712,7 @@ class AICorrector:
             and result.confidence < g.escalation_confidence_threshold
         ):
             cap = g.escalation_cap_per_script
-            if isinstance(cap, int) and not isinstance(cap, bool):
+            if self.defer_escalation and isinstance(cap, int) and not isinstance(cap, bool):
                 # Sub-project C: decided after every leaf is marked (escalate_deferred).
                 self.deferred[question.id] = (
                     question,
@@ -768,7 +772,19 @@ class AICorrector:
         out: dict[str, AIMarkResponse] = {}
         for qid in order:
             question, system_prompt, user_prompt, prefix_kwargs, confidence = self.deferred[qid]
-            result = self._escalate(question, system_prompt, user_prompt, prefix_kwargs, confidence)
+            try:
+                result = self._escalate(
+                    question, system_prompt, user_prompt, prefix_kwargs, confidence
+                )
+            except CostCeilingError:
+                raise
+            except Exception as exc:
+                # As the inline path: a failed escalation costs that leaf its upgrade only,
+                # it keeps its first-pass mark and the paper completes.
+                structlog.get_logger().warning(
+                    "deferred_escalation_failed", question_id=qid, error=str(exc)
+                )
+                continue
             # CODE-set only, as in mark_question: the model never claims an ECF re-mark.
             if result.point_verdicts:
                 result = result.model_copy(
@@ -3149,6 +3165,10 @@ def correct_paper(
     ai = (
         AICorrector(gemini_client, mark_scheme=scheme) if (gemini_client and not mcq_only) else None
     )
+    if ai is not None and ecf_substitution is True:
+        # Escalation cap and ECF substitution do not compose (see ``defer_escalation``):
+        # a run with ECF on keeps today's inline escalation.
+        ai.defer_escalation = False
     # The marking rules every AI marking call on this paper is given: the scheme's own
     # printed principles, or, for a science scheme stored without any, the published
     # ones for its syllabus family. Never both.
@@ -3370,9 +3390,12 @@ def correct_paper(
 
     # Sub-project C: the capped escalations, most uncertain first, before adjudication.
     if gemini_client is not None and ai is not None:
+        g_esc = gemini_client._settings.gemini
         for qid, escalated_mark in ai.escalate_deferred().items():
+            # Every deferred leaf was marked in the loop above, which recorded it.
+            if qid not in pending:
+                raise LemelyError(f"deferred leaf {qid} has no pending build arguments")
             dq, d_answer, d_working, d_extraction_confidence = pending[qid]
-            g_esc = gemini_client._settings.gemini
             cq = _build_ai_corrected(
                 dq,
                 d_answer,
