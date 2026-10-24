@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING
 
 from lemely.accuracy.threshold_fit import (
     CONFIDENCE_REASON,
+    DuplicateRunNames,
     Part,
     ThresholdStats,
     case_base_usd,
@@ -154,6 +155,13 @@ def render(parts: Sequence[Part], *, target: float) -> str:
     return "\n".join(lines)
 
 
+def _no_threshold(parts: Sequence[Part]) -> str:
+    """Why the recall fit gave none: nothing to recall, or 90% recall out of reach."""
+    if evaluate(parts, 0.99).mismarked == 0:
+        return "none (no basis)"
+    return "none (unreachable)"
+
+
 def _real_report(args: argparse.Namespace) -> str:
     paths = [d / "real_results.json" for d in args.real]
     parts = parts_from_real(paths)
@@ -165,7 +173,7 @@ def _real_report(args: argparse.Namespace) -> str:
         f"review fit: leaves excluded for having no confidence (never scored): "
         f"{unscored_leaves(paths)}",
         "lowest threshold flagging >= 90% of leaves with abs_error > 0: "
-        + ("none (no basis)" if best is None else f"{best:.2f}")
+        + (_no_threshold(parts) if best is None else f"{best:.2f}")
         + ("" if stats is None else f" (review rate {stats.review_rate:.3f})"),
     ]
     if args.escalation:
@@ -185,8 +193,8 @@ def _real_report(args: argparse.Namespace) -> str:
         recall = "n/a" if fitted.recall is None else f"{fitted.recall:.3f}"
         worst = (
             "n/a"
-            if fitted.worst_script_usd is None
-            else f"{fitted.worst_script} ${fitted.worst_script_usd:.4f}"
+            if fitted.worst_case_usd is None
+            else f"{fitted.worst_case} ${fitted.worst_case_usd:.4f}"
         )
         lines += [
             f"escalation fit: AI-marked leaves excluded for having no confidence "
@@ -238,7 +246,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error(f"missing file(s): {', '.join(str(m) for m in missing)}")
         try:
             report = _real_report(args)
-        except ValueError as exc:
+        except DuplicateRunNames as exc:
             parser.error(str(exc))
         sys.stdout.write(report + "\n")
         return 0

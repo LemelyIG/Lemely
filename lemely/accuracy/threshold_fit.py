@@ -117,6 +117,10 @@ def _structural(flag: bool, reason: str | None) -> bool:
     return flag and not (isinstance(reason, str) and CONFIDENCE_REASON.match(reason) is not None)
 
 
+class DuplicateRunNames(ValueError):
+    """Two run directories share a name, so their case keys would collide."""
+
+
 def _runs(paths: Sequence[Path]) -> list[tuple[str, list[RealScriptResult]]]:
     """Each run's name (its directory) and scripts; two runs sharing a name are refused.
 
@@ -125,7 +129,7 @@ def _runs(paths: Sequence[Path]) -> list[tuple[str, list[RealScriptResult]]]:
     names = [path.parent.name for path in paths]
     duplicates = sorted({n for n in names if names.count(n) > 1})
     if duplicates:
-        raise ValueError(f"run directories must have distinct names; repeated: {duplicates}")
+        raise DuplicateRunNames(f"run directories must have distinct names; repeated: {duplicates}")
     return [(path.parent.name, read_real_results(path)) for path in paths]
 
 
@@ -207,15 +211,15 @@ REASON_RECALL_UNREACHABLE = "recall_unreachable_within_cap"  # threshold is the 
 class EscalationFit:
     """The escalation fit; ``threshold`` None means no basis, and ``reason`` says why.
 
-    ``reason`` is None only for a threshold that meets the recall target. ``worst_script``
+    ``reason`` is None only for a threshold that meets the recall target. ``worst_case``
     is the ``<run>:<script>`` case with the highest cost at the fitted threshold.
     """
 
     threshold: float | None
     recall: float | None
     escalated: int
-    worst_script: str | None
-    worst_script_usd: float | None
+    worst_case: str | None
+    worst_case_usd: float | None
     met_recall: bool
     reason: str | None = None
 

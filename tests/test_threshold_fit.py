@@ -105,7 +105,7 @@ def test_escalation_fit_picks_the_lowest_threshold_reaching_recall_within_the_ca
     ]
     fit = tf.fit_escalation_threshold(leaves, case_base_usd={"r:a": 0.05}, usd_per_escalation=0.01)
     assert fit.threshold == 0.79 and fit.escalated == 2 and fit.met_recall
-    assert fit.worst_script == "r:a" and fit.worst_script_usd == pytest.approx(0.07)
+    assert fit.worst_case == "r:a" and fit.worst_case_usd == pytest.approx(0.07)
 
 
 def test_escalation_fit_backs_off_to_the_cap() -> None:
@@ -113,7 +113,7 @@ def test_escalation_fit_backs_off_to_the_cap() -> None:
     fit = tf.fit_escalation_threshold(leaves, case_base_usd={"r:a": 0.08}, usd_per_escalation=0.01)
     # Two escalations reach $0.10; three would pass it. Recall 2/3 misses the 0.9 target.
     assert fit.escalated == 2 and not fit.met_recall
-    assert fit.worst_script_usd == pytest.approx(0.10)
+    assert fit.worst_case_usd == pytest.approx(0.10)
 
 
 def test_escalation_fit_none_when_even_no_escalation_breaches_the_cap() -> None:
@@ -152,7 +152,7 @@ def test_escalation_cap_binds_on_the_worst_run_not_the_mean() -> None:
     )
     # Escalating either leaf puts run 2 over $0.10, so nothing escalates (threshold 0.60).
     assert (fit.threshold, fit.escalated, fit.met_recall) == (0.60, 0, False)
-    assert fit.reason == tf.REASON_RECALL_UNREACHABLE and fit.worst_script == "r2:a"
+    assert fit.reason == tf.REASON_RECALL_UNREACHABLE and fit.worst_case == "r2:a"
 
 
 def test_escalation_fit_reports_the_worst_case_key() -> None:
@@ -160,7 +160,7 @@ def test_escalation_fit_reports_the_worst_case_key() -> None:
     fit = tf.fit_escalation_threshold(
         leaves, case_base_usd={"r1:a": 0.05, "r2:a": 0.08}, usd_per_escalation=0.01
     )
-    assert fit.worst_script == "r2:a" and fit.worst_script_usd == pytest.approx(0.09)
+    assert fit.worst_case == "r2:a" and fit.worst_case_usd == pytest.approx(0.09)
 
 
 def test_escalation_fit_refuses_a_rung_where_a_leaf_escalated() -> None:
@@ -315,3 +315,33 @@ def test_cli_rejects_duplicate_run_dirs(tmp_path: Path) -> None:
     two = _cli_run(tmp_path / "y", [script])
     with pytest.raises(SystemExit):
         cli.main(["--real", str(one), "--real", str(two)])
+
+
+def test_cli_says_unreachable_when_wrong_leaves_cannot_be_flagged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts import fit_review_threshold as cli
+
+    wrong = RealScriptResult("a", (_leaf("1", 1, 2, 0.995),), "pass", 0.05, 0.0, 0.0, 1.0, None)
+    assert cli.main(["--real", str(_cli_run(tmp_path / "x", [wrong]))]) == 0
+    assert "abs_error > 0: none (unreachable)" in capsys.readouterr().out
+    right = RealScriptResult("a", (_leaf("1", 2, 2, 0.9),), "pass", 0.05, 0.0, 0.0, 1.0, None)
+    assert cli.main(["--real", str(_cli_run(tmp_path / "y", [right]))]) == 0
+    assert "abs_error > 0: none (no basis)" in capsys.readouterr().out
+
+
+def test_cli_surfaces_corrupt_inputs_as_real_errors(tmp_path: Path) -> None:
+    from scripts import fit_review_threshold as cli
+
+    script = RealScriptResult("a", (_leaf("1", 1, 1, 0.9),), "pass", 0.05, 0.0, 0.0, 1.0, None)
+    run = _cli_run(tmp_path / "x", [script])
+    (run / "real_results.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError):  # JSONDecodeError, not a usage error
+        cli.main(["--real", str(run)])
+    run2 = _cli_run(tmp_path / "y", [script])
+    (run2 / "records.jsonl").write_text(
+        '{"task_tag": "escalation", "model": "claude-sonnet-5-5", "usd_2027": "abc"}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        cli.main(["--real", str(run2), "--escalation"])
