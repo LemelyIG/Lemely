@@ -239,7 +239,7 @@ def _balanced_end(text: str, start: int) -> int:
     return -1
 
 
-_JSON_VALUE_START = frozenset('{["-0123456789]}')
+_JSON_VALUE_START = frozenset('{["-0123456789]')
 _JSON_LITERALS = ("true", "false", "null")
 
 
@@ -257,7 +257,14 @@ def _opens_json(text: str, start: int) -> bool:
     if rest[0] in _JSON_VALUE_START:
         return True
     # A literal opens JSON only whole (or cut off mid-word): ``[note`` is not ``[null``.
-    return any(lit.startswith(rest) or rest.startswith(lit) for lit in _JSON_LITERALS)
+    return any(lit.startswith(rest) or _starts_with_word(rest, lit) for lit in _JSON_LITERALS)
+
+
+def _starts_with_word(rest: str, literal: str) -> bool:
+    """Whether ``rest`` starts with ``literal`` as a whole word (``null,`` yes, ``nullable`` no)."""
+    return rest.startswith(literal) and (
+        len(rest) == len(literal) or rest[len(literal)] in ",]} \t\r\n"
+    )
 
 
 def _last_object(text: str) -> str | None:
@@ -281,10 +288,12 @@ def _last_object(text: str) -> str | None:
         try:
             obj, end = decoder.raw_decode(text, pos)
         except ValueError:
-            if not _opens_json(text, pos):
-                pos += 1
-                continue
             end = _balanced_end(text, pos)
+            if not _opens_json(text, pos):
+                # Prose: a closed one is skipped whole (its inner objects are not
+                # answers); an unclosed one is skipped by its bracket alone.
+                pos = pos + 1 if end == -1 else end
+                continue
             if end == -1:
                 return None
         else:

@@ -299,3 +299,22 @@ class ProseBracketTests(unittest.TestCase):
     def test_a_truncated_final_object_is_still_incomplete(self) -> None:
         text = '{"a": 1} {"b": [1, 2'
         self.assertEqual(extract_json(text), text)
+
+    def test_a_closed_prose_bracket_is_skipped_whole(self) -> None:
+        for text in (
+            """{ 'a': 1, 'b': {"c": 2}}""",
+            """{answer: {"a": 1}}""",
+            """[see {"a": 1}]""",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(extract_json(text), text)
+
+    def test_a_truncated_json_literal_is_still_incomplete(self) -> None:
+        for text in ('{"a": 1} {"b": [true, 2', '{"a": 1} [nul', '{"a": 1} [true]  [false'):
+            with self.subTest(text=text):
+                self.assertEqual(extract_json(text), text)
+
+    def test_a_word_starting_with_a_literal_is_prose(self) -> None:
+        for word in ("nullable field", "trueness", "falsehood"):
+            with self.subTest(word=word):
+                self.assertEqual(extract_json('{"a": 1} (see [' + word), '{"a": 1}')
