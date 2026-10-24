@@ -31,9 +31,11 @@ def test_mark_outside_range_is_refused() -> None:
 
 def test_round_trip_and_total(tmp_path: Path) -> None:
     path = tmp_path / "r.json"
-    ref.write_reference(path, [_leaf("2a", 1), _leaf("1a", 2)])
+    rich = ReferenceLeaf("1a", 2, 2, "teacher_tick", "ticked twice", "n")
+    ref.write_reference(path, [_leaf("2a", 1), rich])
     loaded = ref.read_reference(path)
     assert list(loaded) == ["1a", "2a"]
+    assert loaded["1a"] == rich
     assert ref.reference_total(loaded) == 3
 
 
@@ -157,3 +159,79 @@ def test_refreeze_replaces_the_manifest_entry(tmp_path: Path) -> None:
         )
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert [e["key"] for e in data["scripts"]] == ["a", "b"]
+    ref.write_reference(tmp_path / "a" / ref.REFERENCE_FILE, [_leaf("1a", 2)])
+    ref.freeze(
+        tmp_path / "a",
+        key="a",
+        scan_path=scan,
+        sources={},
+        expected_total=None,
+        manifest_path=manifest,
+    )
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    assert [e["key"] for e in data["scripts"]] == ["a", "b"]
+    (entry_a, _) = ref.read_manifest(manifest)
+    assert entry_a.reference_sha256 == ref.sha256_file(tmp_path / "a" / ref.REFERENCE_FILE)
+
+
+def test_freeze_marker_is_written_before_the_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d = _script_dir(tmp_path, [_leaf("1a", 1)])
+    scan = tmp_path / "scan.pdf"
+    scan.write_bytes(b"x")
+    manifest = tmp_path / ref.MANIFEST_FILE
+    real = ref._write_atomic
+
+    def crash_on_manifest(path: Path, text: str) -> None:
+        if path == manifest:
+            raise OSError("disk full")
+        real(path, text)
+
+    monkeypatch.setattr(ref, "_write_atomic", crash_on_manifest)
+    with pytest.raises(OSError, match="disk full"):
+        ref.freeze(
+            d, key="k", scan_path=scan, sources={}, expected_total=None, manifest_path=manifest
+        )
+    assert ref.is_frozen(d)
+    assert not manifest.exists()
+
+
+def test_gap_no_leaf_can_hold_is_listed_on_every_leaf() -> None:
+    reference = {"1a": _leaf("1a", 2)}
+    assert ref.check_first(reference, expected_total=5) == {"1a": ["total 2 is 3 below 5"]}
+
+
+def test_read_reference_refuses_duplicate_ids(tmp_path: Path) -> None:
+    path = tmp_path / "r.json"
+    row = {"question_id": "1a", "mark": 1, "max_marks": 2, "source": "opus", "evidence": "e"}
+    path.write_text(json.dumps([row, {**row, "mark": 2}]), encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate"):
+        ref.read_reference(path)
+
+
+@pytest.mark.parametrize("mark", [True, 1.0, "1"])
+def test_non_int_mark_is_refused(mark: object) -> None:
+    with pytest.raises(ValueError, match="not an int"):
+        ReferenceLeaf("1a", mark, 2, "opus", "e")  # type: ignore[arg-type]
+
+
+def test_unknown_source_is_refused_on_read(tmp_path: Path) -> None:
+    path = tmp_path / "r.json"
+    row = {"question_id": "1a", "mark": 1, "max_marks": 2, "source": "gemini", "evidence": "e"}
+    path.write_text(json.dumps([row]), encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown source"):
+        ref.read_reference(path)
+
+
+def test_nan_confidence_is_flagged() -> None:
+    flagged = ref.check_first({"1a": _leaf("1a", 2)}, confidence={"1a": float("nan")})
+    assert flagged == {"1a": ["confidence nan below 0.8"]}
+
+
+def test_unknown_ambiguous_or_other_ids_are_refused() -> None:
+    reference = {"1a": _leaf("1a", 2)}
+    with pytest.raises(ValueError, match="9z"):
+        ref.check_first(reference, ambiguous=["9z"])
+    with pytest.raises(ValueError, match="8y"):
+        ref.check_first(reference, others=[OtherMarks("gemini", {"8y": 1})])

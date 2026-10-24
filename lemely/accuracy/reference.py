@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import os
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, get_args
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -46,7 +48,13 @@ class ReferenceLeaf:
     note: str = ""
 
     def __post_init__(self) -> None:
-        """Refuse a mark outside ``0..max_marks``."""
+        """Refuse a non-int mark, an unknown source, or a mark outside ``0..max_marks``."""
+        for name in ("mark", "max_marks"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"{self.question_id}: {name} {value!r} is not an int")
+        if self.source not in get_args(Source):
+            raise ValueError(f"{self.question_id}: unknown source {self.source!r}")
         if not 0 <= self.mark <= self.max_marks:
             raise ValueError(f"{self.question_id}: mark {self.mark} outside 0..{self.max_marks}")
 
@@ -91,6 +99,9 @@ def write_reference(path: Path, leaves: Iterable[ReferenceLeaf]) -> None:
 def read_reference(path: Path) -> dict[str, ReferenceLeaf]:
     rows = json.loads(path.read_text(encoding="utf-8"))
     leaves = [ReferenceLeaf(**row) for row in rows]
+    ids = [leaf.question_id for leaf in leaves]
+    if len(ids) != len(set(ids)):
+        raise ValueError(f"duplicate question_id in {path}")
     return {leaf.question_id: leaf for leaf in leaves}
 
 
@@ -112,10 +123,19 @@ def check_first(
     reference's confidence is below `LOW_CONFIDENCE`, or when its tick is ambiguous.
     When the reference total misses *expected_total* (the teacher's total), the gap
     sits among the listed leaves; with none listed, among every leaf that could hold
-    it (below full marks for a total that is short, above zero for one that is over).
+    it (below full marks for a total that is short, above zero for one that is over);
+    with none able to, on every leaf. A non-finite confidence counts as low. An
+    ambiguous id or another source's id that is not a leaf raises ``ValueError``.
     """
-    reasons: dict[str, list[str]] = {qid: [] for qid in reference}
     sources = list(others)
+    ambiguous = list(ambiguous)
+    unknown = sorted(
+        {q for q in ambiguous if q not in reference}
+        | {q for o in sources for q in o.marks if q not in reference}
+    )
+    if unknown:
+        raise ValueError(f"not leaves of the reference: {', '.join(unknown)}")
+    reasons: dict[str, list[str]] = {qid: [] for qid in reference}
     for qid, leaf in reference.items():
         seen = {o.name: o.marks[qid] for o in sources if qid in o.marks}
         differing = sorted(name for name, mark in seen.items() if mark != leaf.mark)
@@ -123,11 +143,12 @@ def check_first(
             reasons[qid].append(
                 "disagrees with " + ", ".join(f"{name} ({seen[name]})" for name in differing)
             )
-        if confidence is not None and qid in confidence and confidence[qid] < LOW_CONFIDENCE:
-            reasons[qid].append(f"confidence {confidence[qid]:.2f} below {LOW_CONFIDENCE}")
+        if confidence is not None and qid in confidence:
+            conf = confidence[qid]
+            if not math.isfinite(conf) or conf < LOW_CONFIDENCE:
+                reasons[qid].append(f"confidence {conf:.2f} below {LOW_CONFIDENCE}")
     for qid in ambiguous:
-        if qid in reasons:
-            reasons[qid].append("ambiguous tick")
+        reasons[qid].append("ambiguous tick")
     if expected_total is not None:
         total = reference_total(reference)
         gap = expected_total - total
@@ -137,6 +158,7 @@ def check_first(
                 for qid, leaf in reference.items()
                 if (leaf.mark < leaf.max_marks if gap > 0 else leaf.mark > 0)
             ]
+            suspects = suspects or list(reasons)
             side = "below" if gap > 0 else "above"
             for qid in suspects:
                 reasons[qid].append(f"total {total} is {abs(gap)} {side} {expected_total}")
@@ -225,9 +247,17 @@ def freeze(
     entries = [e for e in read_manifest(manifest_path) if e.key != key] + [entry]
     entries.sort(key=lambda e: e.key)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(
+    # Marker first: a crash between the writes leaves a frozen script with no manifest
+    # entry (re-freeze fixes it), never an entry for a script that can still be overridden.
+    _write_atomic(script_dir / FROZEN_MARKER, entry.reference_sha256 + "\n")
+    _write_atomic(
+        manifest_path,
         json.dumps({"scripts": [asdict(e) for e in entries]}, indent=1, sort_keys=True) + "\n",
-        encoding="utf-8",
     )
-    (script_dir / FROZEN_MARKER).write_text(entry.reference_sha256 + "\n", encoding="utf-8")
     return entry
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
