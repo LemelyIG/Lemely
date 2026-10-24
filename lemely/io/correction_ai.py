@@ -645,7 +645,10 @@ class AICorrector:
         borderline_thinking = self._resolved_thinking(
             "correction_borderline", correction_model, gate_kind
         )
-        borderline_gate = thinking_rank(borderline_thinking) > thinking_rank(correction_thinking)
+        # ``is not False``: a MagicMock settings object keeps today's behaviour.
+        borderline_gate = g.correction_borderline_enabled is not False and thinking_rank(
+            borderline_thinking
+        ) > thinking_rank(correction_thinking)
         # Spec 2026-09-26 §3 (#10): the Step-2 guard compares against the
         # call that ACTUALLY RAN LAST, not the original correction call.
         # Step 1 moves the baseline: after a borderline retry the last call

@@ -178,6 +178,10 @@ def render_example_toml() -> str:
     lines.append(
         f"# correction_terse_rationale = {_toml_bool(s.gemini.correction_terse_rationale)}"
     )
+    lines.append("# false skips the borderline thinking retry (lever c1).")
+    lines.append(
+        f"# correction_borderline_enabled = {_toml_bool(s.gemini.correction_borderline_enabled)}"
+    )
     lines.append(
         "# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B)."
     )

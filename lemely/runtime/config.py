@@ -274,6 +274,9 @@ class GeminiSettings(BaseModel):
     # and cut at 300 characters (output tokens). Screened with and without
     # correction_citations in sub-project C.
     correction_terse_rationale: bool = False
+    # Sub-project C lever c1: False skips the borderline thinking retry; a leaf still
+    # below escalation_confidence_threshold goes straight to escalation.
+    correction_borderline_enabled: bool = True
 
     @field_validator("claude_cache_for")
     @classmethod

@@ -102,6 +102,8 @@ model = "gemini-2.5-flash"
 # correction_citations = false
 # Ask the marker for a rationale of at most 25 words (cut at 300 chars).
 # correction_terse_rationale = false
+# false skips the borderline thinking retry (lever c1).
+# correction_borderline_enabled = true
 # Greyscale pages are enhanced for readability; false sends plain greyscale (A/B).
 # claude_image_enhance = true
 
