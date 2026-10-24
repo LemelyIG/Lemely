@@ -310,7 +310,12 @@ class ProseBracketTests(unittest.TestCase):
                 self.assertEqual(extract_json(text), text)
 
     def test_a_truncated_json_literal_is_still_incomplete(self) -> None:
-        for text in ('{"a": 1} {"b": [true, 2', '{"a": 1} [nul', '{"a": 1} [true]  [false'):
+        for text in (
+            '{"a": 1} [true, 2',
+            '{"a": 1} {"b": [true, 2',
+            '{"a": 1} [nul',
+            '{"a": 1} [true]  [false',
+        ):
             with self.subTest(text=text):
                 self.assertEqual(extract_json(text), text)
 
