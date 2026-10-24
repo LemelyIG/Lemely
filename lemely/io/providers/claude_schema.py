@@ -239,14 +239,36 @@ def _balanced_end(text: str, start: int) -> int:
     return -1
 
 
+_JSON_VALUE_START = frozenset('{["-0123456789]}')
+_JSON_LITERALS = ("true", "false", "null")
+
+
+def _opens_json(text: str, start: int) -> bool:
+    """Whether the bracket at ``start`` opens JSON (not prose): what follows it, past spaces.
+
+    ``{`` opens an object only before ``"`` or ``}``; ``[`` opens an array only before a
+    JSON value or ``]``. ``[note`` and ``{x`` are prose.
+    """
+    rest = text[start + 1 :].lstrip()
+    if not rest:
+        return True  # cut off right after the bracket: a truncated reply
+    if text[start] == "{":
+        return rest[0] in '"}'
+    if rest[0] in _JSON_VALUE_START:
+        return True
+    # A literal opens JSON only whole (or cut off mid-word): ``[note`` is not ``[null``.
+    return any(lit.startswith(rest) or rest.startswith(lit) for lit in _JSON_LITERALS)
+
+
 def _last_object(text: str) -> str | None:
     """Text of the last top-level JSON object in ``text``, or None.
 
     Only top-level ``{`` (and ``[``) positions are candidates, so an inner object of
     a larger object is never an answer. A candidate that decodes is kept (a top-level
     array is skipped whole); one that does not decode but closes is prose (``{x}``)
-    and is skipped; one that never closes is a truncated reply, which makes the
-    answer incomplete: None, even if an earlier object decoded. Fenced and unfenced
+    and is skipped; one that never closes is a truncated reply when it opens JSON
+    (see ``_opens_json``), which makes the answer incomplete: None, even if an
+    earlier object decoded; an unclosed bracket in prose is skipped. Fenced and unfenced
     objects are considered together; the later position wins.
     """
     decoder = json.JSONDecoder()
@@ -259,6 +281,9 @@ def _last_object(text: str) -> str | None:
         try:
             obj, end = decoder.raw_decode(text, pos)
         except ValueError:
+            if not _opens_json(text, pos):
+                pos += 1
+                continue
             end = _balanced_end(text, pos)
             if end == -1:
                 return None

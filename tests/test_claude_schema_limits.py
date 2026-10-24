@@ -286,3 +286,16 @@ class CacheKeyTests(unittest.TestCase):
 
     def test_gemini_key_unchanged(self) -> None:
         self.assertEqual(_fp("gemini-2.5-flash", _Node), "")
+
+
+class ProseBracketTests(unittest.TestCase):
+    def test_an_unclosed_bracket_in_prose_after_the_object_is_ignored(self) -> None:
+        text = 'Here it is: {"a": 1} (see [note for the reasoning'
+        self.assertEqual(extract_json(text), '{"a": 1}')
+
+    def test_an_unclosed_brace_in_prose_is_ignored(self) -> None:
+        self.assertEqual(extract_json('{"a": 1} then {x and so on'), '{"a": 1}')
+
+    def test_a_truncated_final_object_is_still_incomplete(self) -> None:
+        text = '{"a": 1} {"b": [1, 2'
+        self.assertEqual(extract_json(text), text)
