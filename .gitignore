@@ -155,3 +155,6 @@ reports/accuracy/test-touch-ledger.jsonl
 
 # Playwright MCP debug output (console/page logs from agent browser sessions)
 .playwright-mcp/
+
+# Sub-project C reference set: per-leaf marks and crops of real student scripts (student data)
+BUILD/accuracy-runs/claude-c-reference/
