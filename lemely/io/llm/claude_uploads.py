@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 import anthropic
@@ -30,6 +31,14 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 
+class _UploadFailedError(Exception):
+    """Internal: one page's upload failed; ``__cause__`` is the error, ``page`` is 1-based."""
+
+    def __init__(self, page: int) -> None:
+        super().__init__(page)
+        self.page = page
+
+
 class ClaudeImageUploads:
     """Fitted pages uploaded once, reused by every read and retry of the job."""
 
@@ -39,6 +48,9 @@ class ClaudeImageUploads:
     UPLOAD_ATTEMPTS = 3
     #: Seconds slept before try 2, 3, ... of one page.
     UPLOAD_BACKOFF_SECONDS = (0.5, 1.5)
+    #: Pages uploaded at once (and fitted at once): uploads take ~2 s each, so serial
+    #: cost grew with the page count; a small pool stays well inside API rate limits.
+    UPLOAD_CONCURRENCY = 6
 
     def __init__(
         self,
@@ -98,16 +110,48 @@ class ClaudeImageUploads:
                     token_budget=self._token_budget,
                     floor_px=self._floor_px,
                     enhance=self._enhance,
+                    workers=self.UPLOAD_CONCURRENCY,
                 )
-                for page, data in enumerate(fitted.images, start=1):
-                    self._file_ids.append(self._upload_page(self._raw, page, data))
+                self._file_ids = self._upload_all(self._raw, fitted.images)
+            except _UploadFailedError as exc:
+                self._error = exc.__cause__
+                raise ExternalServiceError(
+                    f"Claude Files API upload of page {exc.page} failed: {exc.__cause__}"
+                ) from exc.__cause__
             except (anthropic.AnthropicError, OSError, ExternalServiceError) as exc:
                 self._error = exc
-                raise ExternalServiceError(
-                    f"Claude Files API upload of page {len(self._file_ids) + 1} failed: {exc}"
-                ) from exc
+                raise ExternalServiceError(f"Claude Files API upload failed: {exc}") from exc
             self._fitted = fitted
             return fitted, tuple(self._file_ids)
+
+    def _upload_all(self, raw: anthropic.Anthropic, images: Sequence[bytes]) -> list[str]:
+        """Upload every page on a bounded pool; the ids come back in page order.
+
+        On a failure every page that did upload stays in ``self._file_ids`` so
+        :meth:`delete` removes it; the failing page (lowest number) is named.
+        """
+        ids: list[str | None] = [None] * len(images)
+        failures: list[tuple[int, BaseException]] = []
+        bug: BaseException | None = None
+
+        def run(page: int) -> None:
+            nonlocal bug
+            try:
+                ids[page - 1] = self._upload_page(raw, page, images[page - 1])
+            except (anthropic.AnthropicError, OSError, ExternalServiceError) as exc:
+                failures.append((page, exc))
+            except BaseException as exc:  # a programming error: surfaced as itself below
+                bug = bug or exc
+
+        with ThreadPoolExecutor(max_workers=min(self.UPLOAD_CONCURRENCY, len(images) or 1)) as pool:
+            list(pool.map(run, range(1, len(images) + 1)))
+        self._file_ids = [i for i in ids if i is not None]
+        if bug is not None:
+            raise bug
+        if failures:
+            page, exc = min(failures, key=lambda f: f[0])
+            raise _UploadFailedError(page) from exc
+        return [i for i in ids if i is not None]
 
     def _upload_page(self, raw: anthropic.Anthropic, page: int, data: bytes) -> str:
         """Upload one page, retrying a transient error; return its file id."""

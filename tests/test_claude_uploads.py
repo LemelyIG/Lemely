@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import tempfile
+import threading
 import unittest
 from datetime import date
 from types import SimpleNamespace
@@ -29,23 +30,41 @@ _HAIKU = "claude-haiku-5-5"
 
 
 class _FakeFiles:
+    """Uploads run on several threads, so ids come from the page number, not arrival."""
+
     def __init__(
         self, *, fail_on: int | None = None, errors: list[Exception] | None = None
     ) -> None:
         self.uploads: list[dict[str, Any]] = []
         self.deleted: list[str] = []
         self.attempts = 0
-        self._fail_on = fail_on
+        self._fail_on = fail_on  # the 1-based page whose upload is refused
         self._errors = list(errors or [])
+        self._lock = threading.Lock()
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.hold: threading.Barrier | None = None
 
     def upload(self, *, file: tuple[str, bytes, str], expires_in_seconds: int) -> SimpleNamespace:
-        self.attempts += 1
-        if self._errors:
-            raise self._errors.pop(0)
-        if self._fail_on is not None and len(self.uploads) + 1 == self._fail_on:
-            raise OSError("upload refused")
-        self.uploads.append({"file": file, "expires_in_seconds": expires_in_seconds})
-        return SimpleNamespace(id=f"file_{len(self.uploads)}")
+        page = int(file[0].removeprefix("page-").removesuffix(".png"))
+        with self._lock:
+            self.attempts += 1
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+            error = self._errors.pop(0) if self._errors else None
+        try:
+            if self.hold is not None:
+                self.hold.wait(timeout=5)
+            if error is not None:
+                raise error
+            if self._fail_on == page:
+                raise OSError("upload refused")
+            with self._lock:
+                self.uploads.append({"file": file, "expires_in_seconds": expires_in_seconds})
+            return SimpleNamespace(id=f"file_{page}")
+        finally:
+            with self._lock:
+                self.in_flight -= 1
 
     def delete(self, file_id: str) -> None:
         self.deleted.append(file_id)
@@ -242,10 +261,10 @@ class InlineFallbackTests(_Base):
 
 
 class ClaudeImageUploadsUnitTests(unittest.TestCase):
-    def _uploads(self, files: _FakeFiles, **kw: Any) -> ClaudeImageUploads:
+    def _uploads(self, files: _FakeFiles, *, pages: int = 2, **kw: Any) -> ClaudeImageUploads:
         return ClaudeImageUploads(
             lambda: SimpleNamespace(files=files),  # type: ignore[arg-type,return-value]
-            list(_PAGES),
+            list(_PAGES[:pages]),
             token_budget=95_000,
             floor_px=1568,
             **kw,
@@ -276,7 +295,7 @@ class ClaudeImageUploadsUnitTests(unittest.TestCase):
 
     def test_transient_errors_are_recorded_after_the_last_try(self) -> None:
         files = _FakeFiles(errors=[_status_error(500)] * 3)
-        uploads = self._uploads(files)
+        uploads = self._uploads(files, pages=1)
         with patch("lemely.io.llm.claude_uploads.time.sleep"):
             for _ in range(2):
                 with self.assertRaisesRegex(Exception, "upload"):
@@ -285,7 +304,7 @@ class ClaudeImageUploadsUnitTests(unittest.TestCase):
 
     def test_a_permanent_upload_error_is_not_retried(self) -> None:
         files = _FakeFiles(errors=[_status_error(400)])
-        uploads = self._uploads(files)
+        uploads = self._uploads(files, pages=1)
         with (
             patch("lemely.io.llm.claude_uploads.time.sleep") as sleep,
             self.assertRaisesRegex(Exception, "upload"),
@@ -307,12 +326,34 @@ class ClaudeImageUploadsUnitTests(unittest.TestCase):
     def test_ensure_is_idempotent_and_a_failure_is_remembered(self) -> None:
         files = _FakeFiles(fail_on=1)
         uploads = ClaudeImageUploads(
-            lambda: SimpleNamespace(files=files), list(_PAGES), token_budget=95_000, floor_px=1568
+            lambda: SimpleNamespace(files=files), _PAGES[:1], token_budget=95_000, floor_px=1568
         )
         for _ in range(2):
             with self.assertRaisesRegex(Exception, "upload"):
                 uploads.ensure()
         self.assertEqual(files.uploads, [])
+
+    def test_pages_upload_concurrently_and_ids_keep_page_order(self) -> None:
+        pages = [_page(shade) for shade in (10, 60, 110, 160)]
+        files = _FakeFiles()
+        files.hold = threading.Barrier(2)  # a serial upload would never reach the second party
+        uploads = ClaudeImageUploads(
+            lambda: SimpleNamespace(files=files), pages, token_budget=95_000, floor_px=1568
+        )
+        _fitted, ids = uploads.ensure()
+        self.assertGreater(files.max_in_flight, 1)
+        self.assertEqual(ids, ("file_1", "file_2", "file_3", "file_4"))
+
+    def test_a_failure_midway_keeps_the_uploaded_ids_for_delete(self) -> None:
+        pages = [_page(shade) for shade in (10, 60, 110, 160)]
+        files = _FakeFiles(fail_on=3)
+        uploads = ClaudeImageUploads(
+            lambda: SimpleNamespace(files=files), pages, token_budget=95_000, floor_px=1568
+        )
+        with self.assertRaisesRegex(Exception, "page 3"):
+            uploads.ensure()
+        uploads.delete()
+        self.assertEqual(sorted(files.deleted), ["file_1", "file_2", "file_4"])
 
     def test_matches_only_the_same_pages(self) -> None:
         uploads = ClaudeImageUploads(

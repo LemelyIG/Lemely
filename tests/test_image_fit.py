@@ -167,6 +167,20 @@ class EnhanceTests(unittest.TestCase):
         with Image.open(io.BytesIO(plain)) as img:
             self.assertEqual(img.getpixel((10, 10)), 220)
 
+    def test_worker_threads_leave_the_output_bytes_unchanged(self) -> None:
+        pages = [
+            _png(
+                _grey_with_lines(
+                    400, 500, paper=(200 + 5 * i, 200 + 5 * i), ink=60, rows=(100, 200)
+                )
+            )
+            for i in range(5)
+        ]
+        for enhance in (True, False):
+            serial = fit(pages, byte_limit=None, enhance=enhance)
+            threaded = fit(pages, byte_limit=None, enhance=enhance, workers=4)
+            self.assertEqual(threaded, serial)
+
     def test_cache_version_differs_between_variants(self) -> None:
         self.assertEqual(img_fit_version(), IMG_FIT_VERSION)
         self.assertEqual(img_fit_version(enhance=False), IMG_FIT_VERSION_PLAIN)
