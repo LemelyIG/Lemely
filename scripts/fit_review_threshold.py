@@ -38,13 +38,13 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from lemely.accuracy.cost_ladder.real_split import read_real_results
 from lemely.accuracy.threshold_fit import (
     CONFIDENCE_REASON,
-    ESCALATION_USD_ESTIMATE,
     Part,
     ThresholdStats,
+    case_base_usd,
     escalation_leaves,
+    escalation_price,
     evaluate,
     fit_escalation_threshold,
     leave_one_case_out,
@@ -52,6 +52,7 @@ from lemely.accuracy.threshold_fit import (
     recommend,
     recommend_for_recall,
     threshold_grid,
+    unscored_escalation_leaves,
     unscored_leaves,
 )
 
@@ -161,7 +162,8 @@ def _real_report(args: argparse.Namespace) -> str:
     lines = [
         render(parts, target=args.target),
         "",
-        f"leaves excluded for having no confidence (never scored): {unscored_leaves(paths)}",
+        f"review fit: leaves excluded for having no confidence (never scored): "
+        f"{unscored_leaves(paths)}",
         "lowest threshold flagging >= 90% of leaves with abs_error > 0: "
         + ("none (no basis)" if best is None else f"{best:.2f}")
         + ("" if stats is None else f" (review rate {stats.review_rate:.3f})"),
@@ -173,26 +175,31 @@ def _real_report(args: argparse.Namespace) -> str:
             for line in (d / "records.jsonl").read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
-        esc = [r["usd_2027"] for r in records if r.get("task_tag") == "escalation"]
-        per_call = sum(esc) / len(esc) if esc else ESCALATION_USD_ESTIMATE
-        base: dict[str, list[float]] = {}
-        for p in paths:
-            for s in read_real_results(p):
-                base.setdefault(s.key, []).append(s.usd - s.escalation_usd)
+        per_call, notes = escalation_price(records)
         fitted = fit_escalation_threshold(
             escalation_leaves(paths),
-            script_base_usd={k: sum(v) / len(v) for k, v in base.items()},
+            case_base_usd=case_base_usd(paths),
             usd_per_escalation=per_call,
             cap_usd=args.cap_usd,
         )
-        lines.append(
-            f"escalation_confidence_threshold: "
-            f"{'none (no basis)' if fitted.threshold is None else f'{fitted.threshold:.2f}'} "
-            f"(recall {fitted.recall}, escalated {fitted.escalated} leaves over the runs, "
-            f"worst script {fitted.worst_script} ${fitted.worst_script_usd}, "
-            f"per escalation ${per_call:.4f}{'' if esc else ' (estimate)'}, "
-            f"{'met' if fitted.met_recall else 'MISSED'} the recall target)"
+        recall = "n/a" if fitted.recall is None else f"{fitted.recall:.3f}"
+        worst = (
+            "n/a"
+            if fitted.worst_script_usd is None
+            else f"{fitted.worst_script} ${fitted.worst_script_usd:.4f}"
         )
+        lines += [
+            f"escalation fit: AI-marked leaves excluded for having no confidence "
+            f"(never scored): {unscored_escalation_leaves(paths)}",
+            *notes,
+            "escalation_confidence_threshold: "
+            + ("none" if fitted.threshold is None else f"{fitted.threshold:.2f}")
+            + f" (recall {recall}, escalated {fitted.escalated} leaves over the runs, "
+            f"worst case {worst}, per escalation ${per_call:.4f}, "
+            + ("recall target met" if fitted.met_recall else "recall target NOT met")
+            + (f"; reason: {fitted.reason}" if fitted.reason else "")
+            + ")",
+        ]
     return "\n".join(lines)
 
 
@@ -218,8 +225,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--cap-usd", type=float, default=0.10)
     args = parser.parse_args(argv)
+    if args.escalation and not args.real:
+        parser.error("--escalation needs --real RUN_DIR")
     if args.real:
-        sys.stdout.write(_real_report(args) + "\n")
+        missing = [
+            d / name
+            for d in args.real
+            for name in ("real_results.json", *(("records.jsonl",) if args.escalation else ()))
+            if not (d / name).is_file()
+        ]
+        if missing:
+            parser.error(f"missing file(s): {', '.join(str(m) for m in missing)}")
+        try:
+            report = _real_report(args)
+        except ValueError as exc:
+            parser.error(str(exc))
+        sys.stdout.write(report + "\n")
         return 0
     if args.results is None:
         parser.error("give a results.json or --real RUN_DIR")

@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
+    from lemely.accuracy.cost_ladder.real_split import LeafOutcome, RealScriptResult
+
 #: The reason ``lemely.io.correction_ai`` writes when confidence alone flags a part.
 CONFIDENCE_REASON = re.compile(r"^confidence \d+(?:\.\d+)? below review threshold \d+(?:\.\d+)?$")
 #: Float slack when comparing a rate with the target (2/20 must count as 10%).
@@ -115,6 +117,23 @@ def _structural(flag: bool, reason: str | None) -> bool:
     return flag and not (isinstance(reason, str) and CONFIDENCE_REASON.match(reason) is not None)
 
 
+def _runs(paths: Sequence[Path]) -> list[tuple[str, list[RealScriptResult]]]:
+    """Each run's name (its directory) and scripts; two runs sharing a name are refused.
+
+    A shared name would merge two runs' scripts under one ``<run>:<script>`` case key.
+    """
+    names = [path.parent.name for path in paths]
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+    if duplicates:
+        raise ValueError(f"run directories must have distinct names; repeated: {duplicates}")
+    return [(path.parent.name, read_real_results(path)) for path in paths]
+
+
+def _has_confidence(leaf: LeafOutcome) -> bool:
+    """The one test for "scored" in the review fit; the rest of the leaves are excluded."""
+    return leaf.confidence is not None
+
+
 def parts_from_real(paths: Sequence[Path]) -> list[Part]:
     """Every scored leaf of a real rung's runs as a `Part`; mismarked means abs_error > 0.
 
@@ -122,9 +141,8 @@ def parts_from_real(paths: Sequence[Path]) -> list[Part]:
     read as confidence 0; `unscored_leaves` counts them.
     """
     parts: list[Part] = []
-    for path in paths:
-        run = path.parent.name
-        for script in read_real_results(path):
+    for run, scripts in _runs(paths):
+        for script in scripts:
             for leaf in script.leaves:
                 if leaf.confidence is None:
                     continue
@@ -147,13 +165,24 @@ def parts_from_real(paths: Sequence[Path]) -> list[Part]:
 
 
 def unscored_leaves(paths: Sequence[Path]) -> int:
-    """How many leaves the fits exclude for having no confidence (never scored)."""
+    """How many leaves `parts_from_real` excludes for having no confidence (never scored)."""
     return sum(
         1
-        for path in paths
-        for script in read_real_results(path)
+        for _, scripts in _runs(paths)
+        for script in scripts
         for leaf in script.leaves
-        if leaf.confidence is None
+        if not _has_confidence(leaf)
+    )
+
+
+def unscored_escalation_leaves(paths: Sequence[Path]) -> int:
+    """How many AI-marked leaves `escalation_leaves` excludes for having no confidence."""
+    return sum(
+        1
+        for _, scripts in _runs(paths)
+        for script in scripts
+        for leaf in script.leaves
+        if leaf.marker_source == "ai" and leaf.pre_escalation_confidence is None
     )
 
 
@@ -163,11 +192,24 @@ class EscalationLeaf:
     script: str
     confidence: float  # the confidence the escalation decision reads
     wrong: bool  # abs_error > 0 against the reference
+    #: The leaf escalated in the source rung, so ``wrong`` is its post-escalation verdict.
+    escalated: bool = False
+
+
+#: Why an `EscalationFit` is not a clean, recall-meeting threshold.
+REASON_NO_BASIS = "no_basis"  # no leaf with a wrong mark to recall
+REASON_SOURCE_ESCALATED = "source_rung_escalated"  # wrongness is post-escalation
+REASON_CAP_BREACHED = "cap_breached_at_zero_escalations"  # base cost alone exceeds the cap
+REASON_RECALL_UNREACHABLE = "recall_unreachable_within_cap"  # threshold is the cap's best
 
 
 @dataclass(frozen=True)
 class EscalationFit:
-    """The escalation fit; ``threshold`` None means no basis (see `fit_escalation_threshold`)."""
+    """The escalation fit; ``threshold`` None means no basis, and ``reason`` says why.
+
+    ``reason`` is None only for a threshold that meets the recall target. ``worst_script``
+    is the ``<run>:<script>`` case with the highest cost at the fitted threshold.
+    """
 
     threshold: float | None
     recall: float | None
@@ -175,17 +217,21 @@ class EscalationFit:
     worst_script: str | None
     worst_script_usd: float | None
     met_recall: bool
+    reason: str | None = None
 
 
 def escalation_leaves(paths: Sequence[Path]) -> list[EscalationLeaf]:
     """AI-marked leaves with the confidence their escalation was (or would be) decided on.
 
-    A leaf with no ``pre_escalation_confidence`` (never scored) is left out.
+    A leaf with no ``pre_escalation_confidence`` (never scored) is left out. ``wrong`` is
+    the final mark's error: for a leaf that escalated that is the post-escalation mark,
+    which the stored records cannot undo (the correction call keeps no response and the
+    escalation event only the confidence), so such a leaf is flagged ``escalated`` and the
+    fit refuses it.
     """
     out: list[EscalationLeaf] = []
-    for path in paths:
-        run = path.parent.name
-        for script in read_real_results(path):
+    for run, scripts in _runs(paths):
+        for script in scripts:
             for leaf in script.leaves:
                 if leaf.marker_source == "ai" and leaf.pre_escalation_confidence is not None:
                     out.append(
@@ -194,59 +240,101 @@ def escalation_leaves(paths: Sequence[Path]) -> list[EscalationLeaf]:
                             script=script.key,
                             confidence=leaf.pre_escalation_confidence,
                             wrong=leaf.abs_error > 0,
+                            escalated=leaf.escalated,
                         )
                     )
     return out
 
 
+def case_base_usd(paths: Sequence[Path]) -> dict[str, float]:
+    """Each ``<run>:<script>`` case's cost without its escalation calls."""
+    return {
+        f"{run}:{script.key}": script.usd - script.escalation_usd
+        for run, scripts in _runs(paths)
+        for script in scripts
+    }
+
+
+#: The only model whose escalation calls price the fit: the escalation model of the flip.
+ESCALATION_MODEL = "claude-sonnet-5-5"
+
+
+def escalation_price(records: Sequence[Mapping[str, object]]) -> tuple[float, list[str]]:
+    """USD per escalation at Sonnet prices from call records, and notes on how it was got.
+
+    Only escalation records of `ESCALATION_MODEL` count; those of another model are
+    excluded with a warning. With none left the `ESCALATION_USD_ESTIMATE` is used, and
+    the notes say so.
+    """
+    notes: list[str] = []
+    esc = [r for r in records if r.get("task_tag") == "escalation"]
+    other = sorted({str(r.get("model")) for r in esc if r.get("model") != ESCALATION_MODEL})
+    if other:
+        notes.append(f"WARNING: escalation records from {other} excluded (not {ESCALATION_MODEL})")
+    usd = [float(str(r["usd_2027"])) for r in esc if r.get("model") == ESCALATION_MODEL]
+    if not usd:
+        notes.append(f"no {ESCALATION_MODEL} escalation call to price from: using the estimate")
+        return ESCALATION_USD_ESTIMATE, notes
+    return sum(usd) / len(usd), notes
+
+
 def fit_escalation_threshold(
     leaves: Sequence[EscalationLeaf],
     *,
-    script_base_usd: Mapping[str, float],
+    case_base_usd: Mapping[str, float],
     usd_per_escalation: float,
     cap_usd: float = 0.10,
     recall: float = RECALL_TARGET,
 ) -> EscalationFit:
-    """The escalation threshold: escalate the wrong leaves, keep every script under the cap.
+    """The escalation threshold: escalate the wrong leaves, keep every case under the cap.
 
-    For each grid threshold t, the leaves with confidence below t escalate. A run's
-    script then costs its base cost (without escalation) plus its escalations at
-    *usd_per_escalation*; scripts are averaged over the runs (case keys). Picks the
-    lowest t whose recall of wrong leaves reaches *recall* with every script within
-    *cap_usd*; when no such t exists, the highest t within the cap (``met_recall``
-    False); None when even no escalation breaches the cap. No leaves, or no wrong leaf
-    to recall, is no basis: the all-None fit, never a threshold.
+    For each grid threshold t, the leaves with confidence below t escalate. A case (one
+    ``<run>:<script>``) then costs its base cost (without escalation) plus its escalations
+    at *usd_per_escalation*; the cap applies to the highest-cost case, so a script is
+    judged on its worst run, not the mean. Picks the lowest t whose recall of wrong leaves
+    reaches *recall* with every case within *cap_usd*; when no such t exists, the highest
+    t within the cap (``met_recall`` False, reason `REASON_RECALL_UNREACHABLE`).
+
+    Otherwise ``threshold`` is None with a reason: no leaf is wrong (`REASON_NO_BASIS`),
+    any leaf escalated in the source rung (`REASON_SOURCE_ESCALATED`: its wrongness is
+    post-escalation, so the fit would undercount what escalation must catch), or even no
+    escalation breaches the cap (`REASON_CAP_BREACHED`).
+
+    Borderline retries (``correction_borderline``, which fire on the same threshold) are
+    not priced: they run on the cheap correction model, a small fraction of one Sonnet
+    escalation, so leaving them out moves no case across the cap by itself.
     """
-    wrong = sum(1 for leaf in leaves if leaf.wrong)
-    if wrong == 0:
-        return EscalationFit(None, None, 0, None, None, False)
-    runs_per_script: dict[str, set[str]] = {}
-    for leaf in leaves:
-        runs_per_script.setdefault(leaf.script, set()).add(leaf.case_key)
 
-    def cost(t: float) -> tuple[dict[str, float], int, float | None]:
+    def none(reason: str) -> EscalationFit:
+        return EscalationFit(None, None, 0, None, None, False, reason)
+
+    wrong = sum(1 for leaf in leaves if leaf.wrong)
+    if any(leaf.escalated for leaf in leaves):
+        return none(REASON_SOURCE_ESCALATED)
+    if wrong == 0:
+        return none(REASON_NO_BASIS)
+
+    def cost(t: float) -> tuple[dict[str, float], int, float]:
         escalate = [leaf for leaf in leaves if leaf.confidence < t]
-        per_script = {
-            s: script_base_usd.get(s, 0.0)
-            + usd_per_escalation
-            * sum(1 for leaf in escalate if leaf.script == s)
-            / max(len(runs_per_script.get(s, ())), 1)
-            for s in set(script_base_usd) | set(runs_per_script)
+        per_case = {
+            c: case_base_usd.get(c, 0.0)
+            + usd_per_escalation * sum(1 for leaf in escalate if leaf.case_key == c)
+            for c in set(case_base_usd) | {leaf.case_key for leaf in leaves}
         }
         hit = sum(1 for leaf in escalate if leaf.wrong)
-        return per_script, len(escalate), (hit / wrong if wrong else None)
+        return per_case, len(escalate), hit / wrong
 
-    best_within: tuple[float, dict[str, float], int, float | None] | None = None
+    best_within: tuple[float, dict[str, float], int, float] | None = None
     for t in threshold_grid():
-        per_script, count, got = cost(t)
-        if max(per_script.values(), default=0.0) > cap_usd + _EPS:
+        per_case, count, got = cost(t)
+        if max(per_case.values(), default=0.0) > cap_usd + _EPS:
             continue
-        best_within = (t, per_script, count, got)
-        if got is not None and got + _EPS >= recall:
-            worst = max(per_script, key=lambda s: per_script[s])
-            return EscalationFit(t, got, count, worst, per_script[worst], True)
+        best_within = (t, per_case, count, got)
+        if got + _EPS >= recall:
+            worst = max(per_case, key=lambda c: per_case[c])
+            return EscalationFit(t, got, count, worst, per_case[worst], True)
     if best_within is None:
-        return EscalationFit(None, None, 0, None, None, False)
-    t, per_script, count, got = best_within
-    worst = max(per_script, key=lambda s: per_script[s])
-    return EscalationFit(t, got, count, worst, per_script[worst], False)
+        return none(REASON_CAP_BREACHED)
+    t, per_case, count, got = best_within
+    worst = max(per_case, key=lambda c: per_case[c])
+    return EscalationFit(t, got, count, worst, per_case[worst], False, REASON_RECALL_UNREACHABLE)
