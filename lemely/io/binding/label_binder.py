@@ -389,6 +389,10 @@ class LabelBinder:
         as an overview plus chunks instead.
         """
         if self._chunked is not None and self._chunked.applies(pages, model):
+            if self._chunked.tier_guard:
+                structlog.get_logger().bind(component="label_binder").warning(
+                    "claude_tier_guard", pages=len(pages), model=model, tag=task_tag
+                )
             return self._chunked.read(
                 pages,
                 mark_scheme,

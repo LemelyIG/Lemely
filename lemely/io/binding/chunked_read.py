@@ -28,7 +28,7 @@ from lemely.io.prompts.label_binding import (
     build_chunk_user_prompt,
     build_overview_user_prompt,
 )
-from lemely.io.providers import is_anthropic_model
+from lemely.io.providers import ProviderError, is_anthropic_model
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -108,8 +108,11 @@ def merge_chunk_reads(reads: Sequence[StreamRead]) -> StreamRead:
 class ChunkedLabelReader:
     """Reads a long script as an overview plus chunks; shared by both binder reads."""
 
-    def __init__(self, client: GeminiClient) -> None:
+    def __init__(self, client: GeminiClient, *, tier_guard: bool = False) -> None:
         self._client = client
+        #: True when the reader exists only as the tier guard, with
+        #: ``binding.claude_chunked_read`` off.
+        self.tier_guard = tier_guard
         self._lock = threading.Lock()
         self._maps: dict[str, PageMap] = {}
         self._fit_locks: dict[str, threading.Lock] = {}
@@ -153,9 +156,15 @@ class ChunkedLabelReader:
         if model is None or not is_anthropic_model(model):
             return False
         g = self._client._settings.gemini
-        floor_tokens = estimate_floor_tokens(
-            [p.png_bytes for p in pages], floor_px=g.claude_image_floor_px
-        )
+        try:
+            floor_tokens = estimate_floor_tokens(
+                [p.png_bytes for p in pages], floor_px=g.claude_image_floor_px
+            )
+        except ProviderError:
+            if not self.tier_guard:
+                raise
+            # The guard adds no failure of its own: the single call's own fit reports it.
+            return False
         return floor_tokens > g.claude_image_token_budget
 
     def _page_map(

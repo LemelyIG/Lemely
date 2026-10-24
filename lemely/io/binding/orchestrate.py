@@ -87,6 +87,7 @@ from lemely.core.text_agreement import text_agreement
 from lemely.io.binding.chunked_read import ChunkedLabelReader
 from lemely.io.binding.label_binder import BoundRead, LabelBinder, to_bound_read
 from lemely.io.binding.second_read_triggers import second_read_triggers
+from lemely.io.llm.pricing import claude_row
 from lemely.io.providers import is_anthropic_model
 from lemely.io.providers.anthropic_adapter import resolve_effort
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, LemelyError
@@ -532,6 +533,24 @@ def _second_again(second: Callable[[], _Read], forget_second: Callable[[], objec
         raise ExternalServiceError(SECOND_READ_CRASH_MESSAGE) from crash
 
 
+def chunked_reader_for(client: GeminiClient, binding: BindingSettings) -> ChunkedLabelReader | None:
+    """The binder's chunked reader: on request, or as the tier guard (spec C P2.4).
+
+    With ``claude_chunked_read`` off, a reader is still built when a binder read runs on
+    a ``claude-`` model whose price has a tier (Haiku 5.5: 5x every rate past 100k
+    input tokens): a script still over the image token budget at the floor is then
+    read in chunks under the tier instead of being billed past it.
+    """
+    if binding.claude_chunked_read is True:
+        return ChunkedLabelReader(client)
+    for model in {binding.read_model, second_read_model(binding)}:
+        if model is not None and is_anthropic_model(model):
+            row = claude_row(model)
+            if row is not None and row.tier_threshold_tokens is not None:
+                return ChunkedLabelReader(client, tier_guard=True)
+    return None
+
+
 def _reads_share_a_claude_cache(settings: Settings, first_model: str, second_model: str) -> bool:
     """Both reads on one claude- model, each with a breakpoint after the pages (spec §4 B1).
 
@@ -838,7 +857,7 @@ def run_binding(
             "the label binder is not run on a scheme that is all multiple choice: "
             "binder_for keeps such a paper on the legacy binder"
         )
-    chunked = ChunkedLabelReader(client) if binding.claude_chunked_read is True else None
+    chunked = chunked_reader_for(client, binding)
     binder = LabelBinder(client, chunked=chunked)
     second_model = second_read_model(binding)
     model_for_read = {_FIRST_READ[0]: binding.read_model, _SECOND_READ[0]: second_model}
