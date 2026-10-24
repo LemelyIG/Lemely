@@ -9,6 +9,8 @@ from lemely.io.gemini import thinking_rank
 from lemely.io.providers.anthropic_adapter import AnthropicAdapter, resolve_effort
 from lemely.runtime.config import GeminiSettings
 from tests.test_anthropic_adapter import _VALID_MARK, _FakeAnthropic, _message
+from tests.test_claude_code_execution import _message as _code_message
+from tests.test_claude_code_execution import _result
 
 _HAIKU = "claude-haiku-5-5"
 
@@ -29,8 +31,16 @@ class EffortNoneTests(unittest.TestCase):
     def test_none_disables_thinking(self) -> None:
         call = self._sent("none")
         self.assertEqual(call["thinking"], {"type": "disabled"})
-        # Docs do not say effort may accompany disabled thinking: it is omitted.
-        self.assertNotIn("effort", call["output_config"])
+        self.assertEqual(call["output_config"]["effort"], "low")
+
+    def test_code_execution_none_disables_thinking(self) -> None:
+        fake = _FakeAnthropic(_code_message(_result("42\n")))
+        AnthropicAdapter(fake).complete_code_execution(  # type: ignore[arg-type]
+            model=_HAIKU, prompt="p", thinking="none"
+        )
+        call = fake.messages.calls[0]
+        self.assertEqual(call["thinking"], {"type": "disabled"})
+        self.assertEqual(call["output_config"]["effort"], "low")
 
     def test_other_efforts_stay_adaptive(self) -> None:
         call = self._sent("medium")

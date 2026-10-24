@@ -185,14 +185,15 @@ def _as_effort(value: str) -> Effort:
 def _thinking_and_effort(thinking: str | None) -> tuple[ThinkingConfigParam, SentEffort | None]:
     """The request's ``thinking`` block and ``output_config.effort`` for *thinking*.
 
-    "none" disables thinking and sends no effort (the docs do not say effort may
-    accompany disabled thinking); every other value keeps adaptive thinking at that effort.
+    "none" disables thinking and asks for the lowest effort on the visible reply (with
+    no effort the API applies its own default); every other value keeps adaptive
+    thinking at that effort.
     """
     if thinking is None:
         return {"type": "adaptive"}, None
     effort = _as_effort(thinking)
     if effort == NO_THINKING:
-        return {"type": "disabled"}, None
+        return {"type": "disabled"}, "low"
     return {"type": "adaptive"}, cast("SentEffort", effort)
 
 

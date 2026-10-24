@@ -164,9 +164,10 @@ def render_example_toml() -> str:
     lines.append('# "none" turns thinking off for the call (levers a1/a2).')
     lines.append('# e.g. { "correction:extended" = "medium" }. Unlisted: thinking_level_for.')
     lines.append(
-        "# haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept every level (docs: effort);"
+        "# haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept low..max (docs: effort);"
     )
-    lines.append("# a model that rejects one fails the call. Higher effort spends more of")
+    lines.append('# "none" works on haiku-5-5 only: sonnet-5-5, opus-5-5 and fable-5-1 reject it.')
+    lines.append("# A model that rejects a level fails the call. Higher effort spends more of")
     lines.append("# max_output_tokens_for (thinking counts toward max_tokens).")
     lines.append(f"# claude_effort_for = {_toml_inline(s.gemini.claude_effort_for)}")
     lines.append("# The marker quotes the mark scheme for every awarded mark; an unquoted or")

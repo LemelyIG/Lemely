@@ -92,8 +92,9 @@ model = "gemini-2.5-flash"
 # Claude effort (none | low | medium | high | xhigh | max) per tag or tag:kind;
 # "none" turns thinking off for the call (levers a1/a2).
 # e.g. { "correction:extended" = "medium" }. Unlisted: thinking_level_for.
-# haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept every level (docs: effort);
-# a model that rejects one fails the call. Higher effort spends more of
+# haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept low..max (docs: effort);
+# "none" works on haiku-5-5 only: sonnet-5-5, opus-5-5 and fable-5-1 reject it.
+# A model that rejects a level fails the call. Higher effort spends more of
 # max_output_tokens_for (thinking counts toward max_tokens).
 # claude_effort_for = {}
 # The marker quotes the mark scheme for every awarded mark; an unquoted or

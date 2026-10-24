@@ -257,7 +257,8 @@ _GEMINI_3X_RE = re.compile(r"^gemini-3\.\d")
 # "low" if configured with "minimal".
 _MINIMAL_THINKING_MODELS_RE = re.compile(r"^gemini-3\.(5-flash-lite|6-flash)\b")
 
-# Ordered weakest → strongest, mirrors google.genai.types.ThinkingLevel.
+# Ordered weakest → strongest, mirrors google.genai.types.ThinkingLevel. "none" is the
+# Claude-only no-thinking effort, ranked lowest; it is not a Gemini ThinkingLevel.
 _THINKING_LEVEL_ORDER = {
     "none": -1,
     "minimal": 0,
