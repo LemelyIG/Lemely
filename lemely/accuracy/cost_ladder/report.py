@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from lemely.accuracy.cost_ladder.gate import Verdict
+from lemely.accuracy.cost_ladder.gate import Verdict, escalation_notes
 from lemely.accuracy.cost_ladder.runner import (
     BASELINE_LABEL,
     FLIP_VERDICT_FILE,
@@ -103,17 +103,26 @@ def _pct(rate: float | None) -> str:
     return "-" if rate is None else f"{rate * 100:.1f}%"
 
 
+def _usd(usd: float | None) -> str:
+    return "-" if usd is None else f"${usd:.4f}"
+
+
 def _escalation_share(c: RunSummary) -> float | None:
-    total = sum(usd for _, usd in c.real_usd_by_script)
-    esc = sum(usd for _, usd in c.real_escalation_usd_by_script)
+    total = sum(usd for _, usd in c.real_usd_by_script if usd is not None)
+    esc = sum(usd for _, usd in c.real_escalation_usd_by_script if usd is not None)
     return esc / total if total else None
 
 
 def _worst_script(c: RunSummary) -> str:
-    if not c.real_usd_max_by_script:
+    known = [(k, usd) for k, usd in c.real_usd_max_by_script if usd is not None]
+    if not known:
         return "-"
-    key, usd = max(c.real_usd_max_by_script, key=lambda kv: kv[1])
+    key, usd = max(known, key=lambda kv: kv[1])
     return f"{key} ${usd:.4f}"
+
+
+def _abs_error(c: RunSummary) -> str:
+    return f"{c.real_abs_error:.1f}{' (incomplete)' if c.real_incomplete else ''}"
 
 
 def _incomplete_note(c: RunSummary) -> list[str]:
@@ -125,9 +134,8 @@ def _real_cells(c: RunSummary, v: Verdict) -> list[str]:
     notes = "; ".join([*_incomplete_note(c), *v.notes]) or "-"
     if not c.real_scripts:
         return ["-"] * (len(REAL_HEADER) - 1) + [notes]
-    flag = " (incomplete)" if c.real_incomplete else ""
     return [
-        f"{c.real_abs_error:.1f}{flag}",
+        _abs_error(c),
         _pct(c.real_exact_rate),
         _pct(c.real_within1_rate),
         _pct(c.real_review_rate),
@@ -249,6 +257,7 @@ def write_report(out_dir: Path, *, stop_reason: str) -> Path:
             f"{_worst_script(base_run)}."
         )
         notes.extend(_incomplete_note(base_run))
+        notes.extend(f"Baseline {n}" for n in escalation_notes(base_run))
     if "in_run_cache_hits" in base_data:
         notes.append(
             f"Baseline in-run cache hits: {base_data['in_run_cache_hits']} "
@@ -266,6 +275,13 @@ def write_report(out_dir: Path, *, stop_reason: str) -> Path:
     target = out_dir / "LADDER.md"
     write_ladder(rows, target, footer=footer, notes=notes, real=real)
     return target
+
+
+def _runs(*summaries: RunSummary) -> str:
+    counts = sorted({len(s.real_abs_error_by_run) for s in summaries if s.real_scripts})
+    if not counts:
+        return "no live runs recorded"
+    return f"{'/'.join(map(str, counts))} live run(s) each"
 
 
 def write_flip(out_dir: Path, *, candidate: str, gemini: str) -> Path:
@@ -290,12 +306,12 @@ def write_flip(out_dir: Path, *, candidate: str, gemini: str) -> Path:
         return (name, real(gem, fmt(gem)), real(cand, fmt(cand)))
 
     figures = [
-        pair("real abs error (marks)", lambda c: f"{c.real_abs_error:.1f}"),
+        pair("real abs error (marks)", _abs_error),
         pair("exact leaves", lambda c: _pct(c.real_exact_rate)),
         pair("within 1 mark", lambda c: _pct(c.real_within1_rate)),
         pair("review rate", lambda c: _pct(c.real_review_rate)),
         pair("binding passes", lambda c: f"{c.real_binding_passes:.1f}/{len(c.real_scripts)}"),
-        pair("mean $ per script (2027)", lambda c: f"${c.real_usd_mean:.4f}"),
+        pair("mean $ per script (2027)", lambda c: _usd(c.real_usd_mean)),
         pair("worst script", _worst_script),
         pair("escalation rate", lambda c: _pct(c.real_escalation_rate)),
         pair("escalation $ share", lambda c: _pct(_escalation_share(c))),
@@ -314,11 +330,15 @@ def write_flip(out_dir: Path, *, candidate: str, gemini: str) -> Path:
         "# Flip judgement",
         "",
         f"Candidate `{candidate}` against the Gemini rung `{gemini}`. Real split: the frozen "
-        "reference set, two live runs each; per-leaf marks stay uncommitted. Counts only.",
+        f"reference set, {_runs(gem, cand)}; per-leaf marks stay uncommitted. Counts only.",
         "",
     ]
+    detail: list[str] = []
     for who, run in (("Gemini", gem), ("Candidate", cand)):
-        lines += [f"{who}: {n}" for n in _incomplete_note(run)]
+        detail += [f"{who}: {n}" for n in _incomplete_note(run)]
+        detail += [f"{who} {n}" for n in escalation_notes(run)]
+    if detail:
+        lines += [line for d in detail for line in (d, "")]
     lines += [
         "| figure | Gemini | Claude candidate |",
         "|---|---|---|",
@@ -328,11 +348,13 @@ def write_flip(out_dir: Path, *, candidate: str, gemini: str) -> Path:
         "|---|---|---|---|",
     ]
     gem_max = dict(gem.real_usd_max_by_script)
+    cand_max = dict(cand.real_usd_max_by_script)
     cand_esc = dict(cand.real_escalation_usd_by_script)
-    for key, cand_usd in cand.real_usd_max_by_script:
-        g_usd = f"${gem_max[key]:.4f}" if key in gem_max else "-"
-        e_usd = f"${cand_esc[key]:.4f}" if key in cand_esc else "-"
-        lines.append(f"| {key} | {g_usd} | ${cand_usd:.4f} | {e_usd} |")
+    for key in dict.fromkeys([*cand_max, *gem_max]):
+        lines.append(
+            f"| {key} | {_usd(gem_max.get(key))} | {_usd(cand_max.get(key))} | "
+            f"{_usd(cand_esc.get(key))} |"
+        )
     lines += [
         "",
         f"Verdict: {'PASS' if verdict['passed'] else 'FAIL'}",

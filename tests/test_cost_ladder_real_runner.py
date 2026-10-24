@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from lemely.accuracy import reference as ref
 from lemely.accuracy.cost_ladder import runner
 from lemely.accuracy.cost_ladder.gate import RunSummary
 from lemely.accuracy.cost_ladder.real_split import RealScript, load_real_scripts
+from lemely.accuracy.cost_ladder.report import write_flip, write_report
 from lemely.accuracy.cost_ladder.runner import LadderStateError, apply_overrides
 from lemely.accuracy.cost_ladder.spend import SpendCapError, SpendCaps
 from lemely.core.schemas import CorrectedQuestion, CorrectionResult, ExamMetadata
@@ -111,7 +113,9 @@ class _Harness:
         usd: float = 0.01,
         raise_for: tuple[str, ...] = (),
         escalate: tuple[str, ...] = (),
+        raise_message: str = "boom",
     ) -> None:
+        self.raise_message = raise_message
         self.records: list[CallRecord] = []
         self.clients: list[tuple[Settings, dict[str, Any]]] = []
         self.calls: list[str] = []
@@ -132,7 +136,7 @@ class _Harness:
         self.calls.append(script.key)
         self.records.append(_rec(script.key, self.usd))
         if script.key in self.raise_for:
-            raise RuntimeError("boom")
+            raise RuntimeError(self.raise_message)
         for qid in self.escalate:
             self.records.append(_rec(script.key, 0.02, tag="escalation", qid=qid))
             bus.publish(
@@ -183,7 +187,7 @@ def test_run_real_failed_script_is_incomplete_and_the_rest_run(
         settings=Settings(),
         max_run_usd={"anthropic": 1.0, "gemini": 1.0},
     )
-    assert results[0].incomplete == "RuntimeError: boom"
+    assert results[0].incomplete == "RuntimeError"
     assert results[1].incomplete is None
 
 
@@ -448,7 +452,7 @@ def test_failed_script_reaches_real_incomplete_in_the_summary(
         max_run_usd={"anthropic": 1.0, "gemini": 1.0},
     )
     s = runner.read_summary(out / "baseline" / "summary.json")
-    assert s.real_incomplete == ("real-1:a (RuntimeError: boom)", "real-2:a (RuntimeError: boom)")
+    assert s.real_incomplete == ("real-1:a (RuntimeError)", "real-2:a (RuntimeError)")
     assert s.real_review_rate is not None
     assert set(s.real_incomplete) <= set(s.incomplete)
 
@@ -850,3 +854,37 @@ def test_a_run_cut_short_writes_no_run_cost(
 def test_resummarise_refuses_a_second_run_label(tmp_path: Path) -> None:
     with pytest.raises(LadderStateError, match="second run"):
         runner.resummarise("b1-r2", out_dir=tmp_path)
+
+
+_SECRET = "STUDENT-ANSWER-TEXT-xyzzy"
+
+
+def test_exception_text_stays_out_of_the_summary_and_the_reports(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _Harness(monkeypatch, raise_for=("a",), raise_message=f"validation error: {_SECRET}")
+    out = tmp_path / "out"
+    runner.run_baseline(
+        out_dir=out,
+        settings=Settings(),
+        split="real",
+        real_scripts=_scripts(tmp_path),
+        max_run_usd={"anthropic": 1.0, "gemini": 1.0},
+    )
+    summary = (out / "baseline" / "summary.json").read_text(encoding="utf-8")
+    assert _SECRET not in summary
+    assert "real-1:a (RuntimeError)" in summary
+    assert _SECRET in caplog.text  # the full message stays in the local log
+    for rung in ("stack", "gemini"):
+        shutil.copytree(out / "baseline", out / rung)
+    (out / runner.FLIP_VERDICT_FILE).write_text(
+        '{"candidate": "stack", "gemini": "gemini", "passed": false, "reasons": []}',
+        encoding="utf-8",
+    )
+    texts = [
+        write_report(out, stop_reason="none").read_text(encoding="utf-8"),
+        write_flip(out, candidate="stack", gemini="gemini").read_text(encoding="utf-8"),
+    ]
+    for text in texts:
+        assert _SECRET not in text
+        assert "real-1:a (RuntimeError)" in text

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import shutil
 import time
@@ -76,6 +77,8 @@ _UNSCORED_OUTCOMES = frozenset({"excluded", "unmatched"})
 #: marker_source of a placeholder leaf left by a marking or extraction that failed.
 _FAILED_MARKER_SOURCES = frozenset({"missing", "dropped"})
 MARKING_FAILED = " (marking failed)"
+
+_LOG = logging.getLogger(__name__)
 
 BASELINE_LABEL = "baseline"
 AA_LABEL = "baseline_aa"
@@ -493,8 +496,9 @@ def write_summary(
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _pairs(raw: object) -> tuple[tuple[str, float], ...]:
-    return tuple((str(k), float(v)) for k, v in raw) if isinstance(raw, list) else ()
+def _pairs(raw: object) -> tuple[tuple[str, float | None], ...]:
+    """(key, figure) pairs; a null figure stays None (a script with no result)."""
+    return tuple((str(k), _opt_float(v)) for k, v in raw) if isinstance(raw, list) else ()
 
 
 def _opt_float(raw: object) -> float | None:
@@ -936,9 +940,13 @@ def run_real(
                 try:
                     correction = marker(script, gemini, effective)
                 except CostCeilingError as exc:
-                    failure = f"cost ceiling: {exc}"
+                    failure = "cost ceiling"
+                    _LOG.warning("real script %s: cost ceiling: %s", script.key, exc)
                 except Exception as exc:
-                    failure = f"{type(exc).__name__}: {exc}"
+                    # The type only: a message can quote model output, i.e. student text, and
+                    # `failure` reaches the committed reports. The full text stays in the log.
+                    failure = type(exc).__name__
+                    _LOG.warning("real script %s: %s: %s", script.key, type(exc).__name__, exc)
                 outcomes[script.key] = (correction, (time.monotonic() - started) * 1000, failure)
                 try:
                     guard(script.key)

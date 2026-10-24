@@ -349,17 +349,20 @@ def real_summary_fields(
             [float(sum(1 for s in run if s.binding_verdict == "pass")) for run in runs]
         ),
         "real_usd_mean": _mean([s.usd for run in runs for s in run]),
-        "real_usd_by_script": tuple((k, _mean([s.usd for s in v])) for k, v in per_key.items()),
+        # A script with no result in any run is None, never 0: a missing cost is not a cheap one.
+        "real_usd_by_script": tuple(
+            (k, _mean([s.usd for s in v]) if v else None) for k, v in per_key.items()
+        ),
         "real_usd_max_by_script": tuple(
-            (k, max((s.usd for s in v), default=0.0)) for k, v in per_key.items()
+            (k, max(s.usd for s in v) if v else None) for k, v in per_key.items()
         ),
         "real_latency_by_script": tuple(
-            (k, _mean([s.latency_ms for s in v])) for k, v in per_key.items()
+            (k, _mean([s.latency_ms for s in v]) if v else None) for k, v in per_key.items()
         ),
         "real_escalation_rate": _mean([_rate(run, "escalated") for run in runs]),
         "real_escalation_rate_max_script": max(script_esc_rates, default=0.0),
         "real_escalation_usd_by_script": tuple(
-            (k, _mean([s.escalation_usd for s in v])) for k, v in per_key.items()
+            (k, _mean([s.escalation_usd for s in v]) if v else None) for k, v in per_key.items()
         ),
         "real_escalation_triggers": tuple(sorted(triggers.items())),
         "real_incomplete": tuple(

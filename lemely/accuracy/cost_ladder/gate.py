@@ -37,12 +37,12 @@ class RunSummary:
     real_review_rate: float | None = None
     real_binding_passes: float = 0.0  # mean over the runs of scripts with verdict "pass"
     real_usd_mean: float = 0.0  # 2027 USD, mean over scripts and runs
-    real_usd_by_script: tuple[tuple[str, float], ...] = ()  # mean over the runs
-    real_usd_max_by_script: tuple[tuple[str, float], ...] = ()  # highest run: the cap check
-    real_latency_by_script: tuple[tuple[str, float], ...] = ()  # wall clock ms, mean
+    real_usd_by_script: tuple[tuple[str, float | None], ...] = ()  # mean over the runs
+    real_usd_max_by_script: tuple[tuple[str, float | None], ...] = ()  # highest run: the cap check
+    real_latency_by_script: tuple[tuple[str, float | None], ...] = ()  # wall clock ms, mean
     real_escalation_rate: float | None = None  # escalated leaves / leaves, mean
     real_escalation_rate_max_script: float | None = None
-    real_escalation_usd_by_script: tuple[tuple[str, float], ...] = ()
+    real_escalation_usd_by_script: tuple[tuple[str, float | None], ...] = ()
     real_escalation_triggers: tuple[tuple[str, int], ...] = ()
     real_incomplete: tuple[str, ...] = ()
 
@@ -131,10 +131,13 @@ def _saving(base_usd: float, candidate_usd: float) -> float:
 
 
 def _over_cap(candidate: RunSummary) -> list[str]:
+    """Over-cap scripts, and scripts with no cost figure: a missing one is never under the cap."""
     return [
-        f"{key} ${usd:.4f} exceeds ${REAL_SCRIPT_CAP_USD:.2f} per script"
+        f"{key} has no cost figure (no result)"
+        if usd is None
+        else f"{key} ${usd:.4f} exceeds ${REAL_SCRIPT_CAP_USD:.2f} per script"
         for key, usd in candidate.real_usd_max_by_script
-        if usd > REAL_SCRIPT_CAP_USD + _EPS
+        if usd is None or usd > REAL_SCRIPT_CAP_USD + _EPS
     ]
 
 
@@ -160,7 +163,10 @@ def escalation_notes(c: RunSummary) -> tuple[str, ...]:
     ]
     usd = dict(c.real_usd_by_script)
     for key, esc in c.real_escalation_usd_by_script:
-        total = usd.get(key, 0.0)
+        if esc is None:
+            notes.append(f"{key} escalation - (no result)")
+            continue
+        total = usd.get(key)
         share = f"{esc / total * 100:.1f}%" if total else "-"
         notes.append(f"{key} escalation ${esc:.4f} ({share} of script)")
     if c.real_escalation_triggers:

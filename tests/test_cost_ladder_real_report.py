@@ -184,7 +184,7 @@ def test_flip_report_marks_missing_real_split_and_incomplete(tmp_path: Path) -> 
         json.dumps({"candidate": "stack", "gemini": "gemini", "passed": False, "reasons": ["x"]})
     )
     text = write_flip(tmp_path, candidate="stack", gemini="gemini").read_text()
-    assert "| real abs error (marks) | - | 12.5 |" in text
+    assert "| real abs error (marks) | - | 12.5 (incomplete) |" in text
     assert "Candidate: INCOMPLETE real cases: script-z (no result)" in text
     assert "| a | - | $0.0450 | $0.0040 |" in text
     assert "nan" not in text
@@ -237,3 +237,43 @@ def test_reports_carry_counts_only(tmp_path: Path) -> None:
         assert secret not in text
         assert "Q2b" not in text
     assert "| synthetic mismarked parts | 2 | 2 |" in flip
+
+
+def test_flip_table_shows_a_script_with_no_result_as_missing_not_zero(tmp_path: Path) -> None:
+    from lemely.accuracy.cost_ladder.real_split import real_summary_fields
+    from tests.test_cost_ladder_real_split import _ok
+
+    fields = real_summary_fields([[_ok("a")], [_ok("a")]], ["a", "b"])
+    runner.write_summary(
+        _real(**fields), tmp_path / "stack" / "summary.json", usd_per_script_mean_now=0.0
+    )
+    runner.write_summary(_real(), tmp_path / "gemini" / "summary.json", usd_per_script_mean_now=0.0)
+    (tmp_path / runner.FLIP_VERDICT_FILE).write_text(
+        json.dumps({"candidate": "stack", "gemini": "gemini", "passed": False, "reasons": ["x"]})
+    )
+    text = write_flip(tmp_path, candidate="stack", gemini="gemini").read_text()
+    assert "| b | $0.0700 | - | - |" in text
+    assert "Candidate b escalation $" not in text
+    assert "2 live run(s) each" in text
+
+
+def test_baseline_note_carries_escalation_detail(tmp_path: Path) -> None:
+    runner.write_summary(
+        _real(real_escalation_triggers=(("confidence", 3),)),
+        tmp_path / "baseline" / "summary.json",
+        usd_per_script_mean_now=0.05,
+    )
+    text = write_report(tmp_path, stop_reason="none").read_text()
+    assert "Baseline escalation rate 5.0% (max script 8.0%)" in text
+    assert "Baseline a escalation $0.0040 (10.0% of script)" in text
+    assert "Baseline triggers confidence=3" in text
+
+
+def test_flip_gemini_side_shows_its_escalation_detail(tmp_path: Path) -> None:
+    _flip_dir(tmp_path)
+    runner.write_summary(_real(), tmp_path / "gemini" / "summary.json", usd_per_script_mean_now=0.0)
+    text = write_flip(tmp_path, candidate="stack", gemini="gemini").read_text()
+    assert "Gemini escalation rate 5.0% (max script 8.0%)" in text
+    assert "Candidate escalation rate 5.0% (max script 8.0%)" in text
+    table = text.index("| figure |")
+    assert text[:table].endswith("\n\n")

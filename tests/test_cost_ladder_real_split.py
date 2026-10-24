@@ -347,6 +347,20 @@ def test_summary_flags_a_script_a_run_lacks() -> None:
     assert f["real_incomplete"] == ("real-2:b (no result)",)
 
 
+def test_a_script_with_no_result_has_no_figures_not_zero() -> None:
+    f = rs.real_summary_fields([[_ok("a")], [_ok("a")]], ["a", "b"])
+    for name in (
+        "real_usd_by_script",
+        "real_usd_max_by_script",
+        "real_latency_by_script",
+        "real_escalation_usd_by_script",
+    ):
+        figures = dict(f[name])  # type: ignore[arg-type]
+        assert list(figures) == ["a", "b"], name
+        assert figures["a"] is not None, name
+        assert figures["b"] is None, name
+
+
 def test_summary_real_scripts_are_the_expected_keys_not_the_first_run() -> None:
     f = rs.real_summary_fields([[_ok("a")]], ["a", "b"])
     assert f["real_scripts"] == ("a", "b")
