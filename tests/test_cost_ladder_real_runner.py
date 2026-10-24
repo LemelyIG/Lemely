@@ -154,7 +154,7 @@ def test_run_real_scores_writes_and_books(monkeypatch: pytest.MonkeyPatch, tmp_p
         out_dir=out,
         scripts=_scripts(tmp_path),
         settings=Settings(),
-        max_run_usd={"anthropic": 1.0},
+        max_run_usd={"anthropic": 1.0, "gemini": 1.0},
     )
     assert [r.key for r in results] == ["a", "b"]
     assert [r.abs_error for r in results] == [1, 0]
@@ -181,7 +181,7 @@ def test_run_real_failed_script_is_incomplete_and_the_rest_run(
         out_dir=tmp_path / "o",
         scripts=_scripts(tmp_path),
         settings=Settings(),
-        max_run_usd={"anthropic": 1.0},
+        max_run_usd={"anthropic": 1.0, "gemini": 1.0},
     )
     assert results[0].incomplete == "RuntimeError: boom"
     assert results[1].incomplete is None
@@ -197,7 +197,7 @@ def test_run_real_stops_at_the_cap(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
         scripts=_scripts(tmp_path, ("a", "b", "c")),
         settings=Settings(),
         caps=SpendCaps(anthropic_usd=0.025),
-        max_run_usd={"anthropic": 0.02},
+        max_run_usd={"anthropic": 0.02, "gemini": 0.0},
     )
     assert h.calls == ["a", "b"]
     assert results[2].incomplete == "not run (spend cap)"
@@ -236,7 +236,7 @@ def test_run_real_refuses_an_unpriced_model_before_any_client(
             out_dir=tmp_path / "o",
             scripts=_scripts(tmp_path),
             settings=settings,
-            max_run_usd={"anthropic": 1.0},
+            max_run_usd={"anthropic": 1.0, "gemini": 1.0},
         )
 
 
@@ -263,7 +263,7 @@ def _real_baseline(
         settings=Settings(),
         split="real",
         real_scripts=scripts,
-        max_run_usd={"anthropic": 1.0},
+        max_run_usd={"anthropic": 1.0, "gemini": 1.0},
     )
     return out, scripts
 
@@ -288,6 +288,7 @@ def test_screen_real_split_judges_accuracy(monkeypatch: pytest.MonkeyPatch, tmp_
         {"gemini.correction_citations": True},
         out_dir=out,
         settings=Settings(),
+        max_run_usd={"anthropic": 1.0, "gemini": 1.0},
         split="real",
         judge_kind="accuracy",
         repeats=2,
@@ -351,6 +352,17 @@ def test_reference_rung_takes_stored_dev_and_live_real(
     assert not (out / "ladder.json").exists()
 
 
+def _ladder_row(out: Path, label: str, *, passed: bool) -> None:
+    (out / runner.LADDER_FILE).write_text(json.dumps([label]))
+    (out / label / "verdict.json").write_text(json.dumps({"passed": passed}))
+
+
+def _reference_rung(path: Path) -> None:
+    data = json.loads(path.read_text())
+    data["reference_rung"] = True
+    path.write_text(json.dumps(data))
+
+
 def test_flip_verdict_writes_its_file(tmp_path: Path) -> None:
     base = RunSummary(
         0.05,
@@ -372,6 +384,8 @@ def test_flip_verdict_writes_its_file(tmp_path: Path) -> None:
         usd_per_script_mean_now=0.0,
     )
     (tmp_path / runner.AA_FLOOR_FILE).write_text(json.dumps({"aa_floor": 0, "real_aa_floor": 1.0}))
+    _ladder_row(tmp_path, "stack", passed=True)
+    _reference_rung(tmp_path / "gemini" / "summary.json")
     v = runner.flip_verdict(tmp_path, candidate="stack", gemini="gemini")
     assert v.passed
     data = json.loads((tmp_path / runner.FLIP_VERDICT_FILE).read_text())
@@ -431,7 +445,7 @@ def test_failed_script_reaches_real_incomplete_in_the_summary(
         settings=Settings(),
         split="real",
         real_scripts=_scripts(tmp_path),
-        max_run_usd={"anthropic": 1.0},
+        max_run_usd={"anthropic": 1.0, "gemini": 1.0},
     )
     s = runner.read_summary(out / "baseline" / "summary.json")
     assert s.real_incomplete == ("real-1:a (RuntimeError: boom)", "real-2:a (RuntimeError: boom)")
@@ -474,6 +488,7 @@ def test_screen_rung_always_has_a_review_rate(
         {},
         out_dir=out,
         settings=Settings(),
+        max_run_usd={"anthropic": 1.0, "gemini": 1.0},
         split="real",
         judge_kind="accuracy",
         real_scripts=scripts,
@@ -494,8 +509,312 @@ def test_per_script_dollars_keep_escalation(
         out_dir=out,
         scripts=_scripts(tmp_path),
         settings=Settings(),
-        max_run_usd={"anthropic": 1.0},
+        max_run_usd={"anthropic": 1.0, "gemini": 1.0},
     )
     assert results[0].usd == pytest.approx(0.03) and results[0].escalation_usd == pytest.approx(
         0.02
     )
+
+
+class _DevFake:
+    """Fake ``run_config``: writes the run's summary, honours the hooks, spends nothing."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.mismarks: dict[str, frozenset[str]] = {}
+        self.now: dict[str, float] = {}
+        self.usd: dict[str, float] = {}
+        self.labels: list[str] = []
+        monkeypatch.setattr(runner, "run_config", self)
+
+    def __call__(
+        self,
+        label: str,
+        overrides: Any,
+        *,
+        out_dir: Path,
+        cache_dir: Path | None = None,
+        on_checks_passed: Any = None,
+        summary_extra: Any = None,
+        live_tags: Any = (),
+        frozen_upstream: Any = None,
+        **_kw: Any,
+    ) -> RunSummary:
+        if on_checks_passed is not None:
+            on_checks_passed()
+        self.labels.append(label)
+        if cache_dir is not None:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        summary = RunSummary(
+            self.usd.get(label, 0.1), 10.0, self.mismarks.get(label, frozenset()), 5, 1.0, 1.0, ()
+        )
+        run_dir = out_dir / label
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "records.jsonl").write_text("")
+        runner.write_summary(
+            summary,
+            run_dir / "summary.json",
+            usd_per_script_mean_now=self.now.get(label, 0.1),
+            extra={
+                "overrides": dict(overrides),
+                "live_tags": list(live_tags),
+                "frozen_upstream": frozen_upstream is not None,
+                "cache_hits": 0,
+                **(summary_extra or {}),
+            },
+        )
+        return summary
+
+
+CAPS = {"anthropic": 1.0, "gemini": 1.0}
+
+
+def test_bad_judge_kind_and_split_are_refused_before_any_spend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    out, scripts = _real_baseline(monkeypatch, tmp_path, [PERFECT] * 2)
+    h = _Harness(monkeypatch)
+    spend = (tmp_path / "spend.json").read_text()
+    for kw in ({"judge_kind": "typo"}, {"split": "bogus"}, {"repeats": 3}):
+        with pytest.raises(ValueError):
+            runner.run_screen(
+                "b1",
+                {},
+                out_dir=out,
+                settings=Settings(),
+                real_scripts=scripts,
+                max_run_usd=CAPS,
+                **{"split": "real", **kw},
+            )  # type: ignore[arg-type]
+    assert not (out / "b1").exists() and h.clients == []
+    assert (tmp_path / "spend.json").read_text() == spend
+    with pytest.raises(ValueError, match="judge_kind"):
+        runner._judge(
+            "typo",
+            runner.EMPTY_DEV_SUMMARY,
+            runner.EMPTY_DEV_SUMMARY,  # type: ignore[arg-type]
+            floor=0,
+            real_floor=0.0,
+            original_p95=0.0,
+        )
+    with pytest.raises(ValueError, match="split"):
+        runner.run_baseline(out_dir=tmp_path / "o2", split="bogus")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="repeats"):
+        runner.run_baseline(out_dir=tmp_path / "o2", repeats=3)
+    assert not (tmp_path / "o2").exists()
+
+
+def test_aa_only_pairs_from_the_raw_baseline_not_a_pair(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dev = _DevFake(monkeypatch)
+    out = tmp_path / "out"
+    dev.mismarks = {"baseline": frozenset({"x/1"}), "baseline_aa": frozenset({"x/2"})}
+    runner.run_baseline(out_dir=out, settings=Settings(), repeats=2)
+    path = out / "baseline" / "summary.json"
+    assert runner.read_summary(path).mismarked_parts == {"x/1", "x/2"}
+    dev.mismarks["baseline_aa"] = frozenset({"x/3"})
+    runner.run_baseline(out_dir=out, settings=Settings(), repeats=2, aa_only=True)
+    assert runner.read_summary(path).mismarked_parts == {"x/1", "x/3"}
+
+
+def test_baseline_both_writes_both_floors_and_keeps_cache_stats(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _DevFake(monkeypatch)
+    _Harness(monkeypatch, marks=[PERFECT, PERFECT, {"1a": 0, "1b": 1}, PERFECT])
+    out = tmp_path / "out"
+    runner.run_baseline(
+        out_dir=out,
+        settings=Settings(),
+        split="both",
+        real_scripts=_scripts(tmp_path),
+        max_run_usd=CAPS,
+    )
+    assert json.loads((out / runner.AA_FLOOR_FILE).read_text()) == {
+        "aa_floor": 0,
+        "real_aa_floor": 2.0,
+    }
+    data = json.loads((out / "baseline" / "summary.json").read_text())
+    assert "in_run_cache_hits" in data and data["real_scripts"] == ["a", "b"]
+    assert data["split"] == "both" and data["scored_parts"] == 5
+
+
+def test_baseline_repeats_two_pairs_and_means_the_now_cost(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dev = _DevFake(monkeypatch)
+    dev.usd = {"baseline": 0.1, "baseline_aa": 0.3}
+    dev.now = {"baseline": 0.2, "baseline_aa": 0.4}
+    out = tmp_path / "out"
+    runner.run_baseline(out_dir=out, settings=Settings(), repeats=2)
+    data = json.loads((out / "baseline" / "summary.json").read_text())
+    assert data["usd_per_script_mean"] == pytest.approx(0.2)
+    assert data["usd_per_script_mean_now"] == pytest.approx(0.3)
+    assert data["split"] == "dev"
+
+
+def test_aa_only_keeps_the_real_floor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _DevFake(monkeypatch)
+    _Harness(monkeypatch)
+    out = tmp_path / "out"
+    runner.run_baseline(
+        out_dir=out,
+        settings=Settings(),
+        split="both",
+        real_scripts=_scripts(tmp_path),
+        max_run_usd=CAPS,
+    )
+    runner.run_baseline(out_dir=out, settings=Settings(), aa_only=True)
+    floors = json.loads((out / runner.AA_FLOOR_FILE).read_text())
+    assert "real_aa_floor" in floors
+    assert runner.read_summary(out / "baseline" / "summary.json").real_scripts == ("a", "b")
+
+
+def test_screen_both_with_repeats_pairs_and_records_the_split(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dev = _DevFake(monkeypatch)
+    _Harness(monkeypatch)
+    out = tmp_path / "out"
+    scripts = _scripts(tmp_path)
+    runner.run_baseline(
+        out_dir=out, settings=Settings(), split="both", real_scripts=scripts, max_run_usd=CAPS
+    )
+    dev.mismarks = {"b1": frozenset({"x/1"}), "b1-r2": frozenset({"x/2"})}
+    runner.run_screen(
+        "b1",
+        {"gemini.correction_citations": True},
+        out_dir=out,
+        settings=Settings(),
+        split="both",
+        judge_kind="record",
+        repeats=2,
+        real_scripts=scripts,
+        max_run_usd=CAPS,
+    )
+    assert (out / "b1" / "summary.json").is_file() and (out / "b1-r2" / "summary.json").is_file()
+    s = runner.read_summary(out / "b1" / "summary.json")
+    assert s.mismarked_parts == {"x/1", "x/2"} and s.real_scripts == ("a", "b")
+    verdict = json.loads((out / "b1" / "verdict.json").read_text())
+    assert verdict["split"] == "both" and verdict["judge"] == "record"
+    assert json.loads((out / "b1" / "summary.json").read_text())["split"] == "both"
+    assert (out / "b1" / "real-2" / "real_results.json").is_file()
+    assert dev.labels.count("b1-r2") == 1
+
+
+@pytest.mark.parametrize("kind", ["cost", "record"])
+def test_screen_judge_kinds_run_through(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, kind: str
+) -> None:
+    out, scripts = _real_baseline(monkeypatch, tmp_path, [PERFECT] * 2)
+    _Harness(monkeypatch)
+    v = runner.run_screen(
+        "b1",
+        {},
+        out_dir=out,
+        settings=Settings(),
+        split="real",
+        judge_kind=kind,
+        real_scripts=scripts,
+        max_run_usd=CAPS,
+    )  # type: ignore[arg-type]
+    assert v.passed, v.reasons
+    assert json.loads((out / "b1" / "verdict.json").read_text())["judge"] == kind
+    assert any("recorded" in n for n in v.notes) == (kind == "record")
+
+
+def test_flip_verdict_refuses_an_unaccepted_candidate_or_a_non_reference_rung(
+    tmp_path: Path,
+) -> None:
+    base = RunSummary(
+        0.05, 1.0, frozenset(), 10, 1.0, 1.0, (), real_scripts=("a",), real_review_rate=0.2
+    )
+    for label in ("stack", "gemini"):
+        runner.write_summary(base, tmp_path / label / "summary.json", usd_per_script_mean_now=0.0)
+    (tmp_path / runner.AA_FLOOR_FILE).write_text(json.dumps({"aa_floor": 0}))
+    with pytest.raises(LadderStateError, match="not a ladder row"):
+        runner.flip_verdict(tmp_path, candidate="stack", gemini="gemini")
+    _ladder_row(tmp_path, "stack", passed=False)
+    with pytest.raises(LadderStateError, match="did not pass"):
+        runner.flip_verdict(tmp_path, candidate="stack", gemini="gemini")
+    _ladder_row(tmp_path, "stack", passed=True)
+    with pytest.raises(LadderStateError, match="not a reference rung"):
+        runner.flip_verdict(tmp_path, candidate="stack", gemini="gemini")
+    assert not (tmp_path / runner.FLIP_VERDICT_FILE).exists()
+
+
+def test_reference_rung_drops_a_stale_summary_and_guards_its_label(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    h = _Harness(monkeypatch)
+    out = tmp_path / "out"
+    stored = tmp_path / "old" / "summary.json"
+    runner.write_summary(
+        RunSummary(0.2, 9.0, frozenset(), 78, 1.0, 1.0, ()), stored, usd_per_script_mean_now=0.2
+    )
+    scripts = _scripts(tmp_path)
+    kw: dict[str, Any] = {
+        "out_dir": out,
+        "real_scripts": scripts,
+        "dev_summary_from": stored,
+        "settings": Settings(),
+        "max_run_usd": CAPS,
+    }
+    runner.run_reference_rung("gemini", **kw)
+    stale = out / "gemini" / "summary.json"
+    seen: list[bool] = []
+    original = h.mark
+
+    def spy(script: RealScript, client: object, settings: Settings) -> CorrectionResult:
+        seen.append(stale.exists())
+        return original(script, client, settings)
+
+    monkeypatch.setattr(runner, "mark_real_script", spy)
+    runner.run_reference_rung("gemini", **kw)
+    assert seen[0] is False and stale.is_file()
+    with pytest.raises(LadderStateError, match="second run"):
+        runner.run_reference_rung("gem-r2", **kw)
+    (out / "plain").mkdir()
+    with pytest.raises(LadderStateError, match="not a reference rung"):
+        runner.run_reference_rung("plain", **kw)
+
+
+def test_run_real_requires_a_projection_for_every_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    h = _Harness(monkeypatch)
+    with pytest.raises(SpendCapError, match="gemini"):
+        runner.run_real(
+            "base",
+            {},
+            run_index=1,
+            out_dir=tmp_path / "o",
+            scripts=_scripts(tmp_path),
+            settings=Settings(),
+            max_run_usd={"anthropic": 1.0},
+        )
+    assert h.clients == [] and h.calls == []
+
+
+def test_a_run_cut_short_writes_no_run_cost(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _Harness(monkeypatch, usd=0.01)
+    out = tmp_path / "o"
+    runner.run_real(
+        "base",
+        {},
+        run_index=1,
+        out_dir=out,
+        scripts=_scripts(tmp_path, ("a", "b", "c")),
+        settings=Settings(),
+        caps=SpendCaps(anthropic_usd=0.025),
+        max_run_usd={"anthropic": 0.02, "gemini": 0.0},
+    )
+    assert not (out / "base" / "real-1" / "run_cost.json").exists()
+    assert (out / "base" / "real-1" / "records.jsonl").is_file()
+
+
+def test_resummarise_refuses_a_second_run_label(tmp_path: Path) -> None:
+    with pytest.raises(LadderStateError, match="second run"):
+        runner.resummarise("b1-r2", out_dir=tmp_path)

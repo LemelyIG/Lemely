@@ -59,6 +59,7 @@ from lemely.io.gemini import (
     reset_process_counters,
     set_call_context,
 )
+from lemely.io.providers import is_anthropic_model
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import CostCeilingError
 from lemely.runtime.events import EventType, bus
@@ -96,6 +97,10 @@ FLIP_VERDICT_FILE = "flip_verdict.json"
 
 Split = Literal["dev", "real", "both"]
 JudgeKind = Literal["cost", "accuracy", "record"]
+
+_SPLITS = ("dev", "real", "both")
+_JUDGE_KINDS = ("cost", "accuracy", "record")
+RAW_SUMMARY_FILE = "summary_raw.json"
 
 #: The dev side of a real-only rung: nothing scored, nothing spent.
 EMPTY_DEV_SUMMARY = RunSummary(
@@ -536,6 +541,20 @@ def read_records(path: Path) -> list[CallRecord]:
     ]
 
 
+def _check_split(split: str, repeats: int) -> None:
+    if split not in _SPLITS:
+        raise ValueError(f"split must be one of {_SPLITS}, got {split!r}")
+    if repeats not in (1, 2):
+        raise ValueError(f"repeats must be 1 or 2, got {repeats}")
+
+
+def _stamp_split(path: Path, split: str) -> None:
+    """Record the split a rung ran on in its ``summary.json``."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["split"] = split
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def pair_summaries(a: RunSummary, b: RunSummary) -> RunSummary:
     """Two dev runs of one config as one: the mean of each figure, the union of mismarks."""
     incomplete = list(dict.fromkeys([*a.incomplete, *b.incomplete]))
@@ -814,8 +833,16 @@ def run_config(
     return summary
 
 
-def _real_projection(out_dir: Path, max_run_usd: Mapping[str, float] | None) -> dict[str, float]:
-    """A real run's projected cost: the larger of *max_run_usd* and the latest real run's."""
+def _real_projection(
+    out_dir: Path,
+    max_run_usd: Mapping[str, float] | None,
+    providers: Sequence[str] = (),
+) -> dict[str, float]:
+    """A real run's projected cost: the larger of *max_run_usd* and the latest real run's.
+
+    Every provider in *providers* (those of the models in play) must be projected, so
+    a stage's spend (the Gemini scan metadata) is checked against its cap up front.
+    """
     costs = sorted(
         out_dir.glob(f"*/{REAL_RUN_PREFIX}*/{RUN_COST_FILE}"), key=lambda p: p.stat().st_mtime
     )
@@ -829,10 +856,17 @@ def _real_projection(out_dir: Path, max_run_usd: Mapping[str, float] | None) -> 
             "no real run in this out-dir to project the cost from; pass "
             "--max-run-usd provider=usd for the first one"
         )
-    return {
+    projected = {
         provider: max(last.get(provider, 0.0), explicit.get(provider, 0.0))
         for provider in sorted(set(last) | set(explicit))
     }
+    missing = sorted(set(providers) - set(projected))
+    if missing:
+        raise SpendCapError(
+            f"no projected cost for provider(s) {', '.join(missing)}, which the real path "
+            "calls; pass --max-run-usd provider=usd for each"
+        )
+    return projected
 
 
 def run_real(
@@ -873,7 +907,10 @@ def run_real(
     preflight_prices(effective)
     ledger = SpendLedger(spend_file or DEFAULT_SPEND_FILE)
     spent_before = ledger.spent()
-    check_can_start(spent_before, _real_projection(out_dir, max_run_usd), caps)
+    providers = sorted(
+        {"anthropic" if is_anthropic_model(m) else "gemini" for m in models_in_play(effective)}
+    )
+    check_can_start(spent_before, _real_projection(out_dir, max_run_usd, providers), caps)
     if on_checks_passed is not None:
         on_checks_passed()
     marker = mark or mark_real_script
@@ -912,9 +949,11 @@ def run_real(
             set_call_context(case_key=None)
             records = process_call_records()
             run_dir.mkdir(parents=True, exist_ok=True)
-            (run_dir / RUN_COST_FILE).write_text(
-                json.dumps(cost_by_provider(records), sort_keys=True) + "\n", encoding="utf-8"
-            )
+            if len(outcomes) == len(scripts):
+                # A run cut short is not written: it would lower the next projection.
+                (run_dir / RUN_COST_FILE).write_text(
+                    json.dumps(cost_by_provider(records), sort_keys=True) + "\n", encoding="utf-8"
+                )
             booked = set(guard.completed)
             ledger.add(cost_by_provider([r for r in records if r.case_key not in booked]))
             (run_dir / "records.jsonl").write_text(
@@ -962,7 +1001,9 @@ def _judge(
         )
     if kind == "accuracy":
         return judge_accuracy_lever(against, candidate, aa_floor=floor, real_aa_floor=real_floor)
-    return judge_record(against, candidate)
+    if kind == "record":
+        return judge_record(against, candidate)
+    raise ValueError(f"judge_kind must be one of {_JUDGE_KINDS}, got {kind!r}")
 
 
 def require_file(path: Path, what: str) -> Path:
@@ -1076,10 +1117,12 @@ def run_baseline(
 
     *split* real or both adds two live real runs and ``real_aa_floor`` (the absolute
     difference of the two runs' abs_error); *repeats* 2 stores the dev baseline as the
-    pair of the baseline and A/A runs.
+    pair of the baseline and A/A runs. The real side always runs twice, whatever
+    *repeats* is: the two runs are what ``real_aa_floor`` is.
     """
     if restart and aa_only:
         raise ValueError("--restart-baseline and --aa-only are mutually exclusive")
+    _check_split(split, repeats)
     if split != "dev" and aa_only:
         raise ValueError("--aa-only reruns the dev A/A run only; use --split dev")
     if split != "dev" and not real_scripts:
@@ -1098,16 +1141,28 @@ def run_baseline(
             restart=restart,
             aa_only=aa_only,
         )
-        if repeats == 2:
-            _, aa_now = _summary_extras(out_dir / AA_LABEL / "summary.json")
-            _, base_now = _summary_extras(base_summary)
-            _rewrite_summary(
-                base_summary,
-                pair_summaries(
-                    read_summary(base_summary), read_summary(out_dir / AA_LABEL / "summary.json")
-                ),
-                usd_now=(base_now + aa_now) / 2,
-            )
+        raw = base_summary.parent / RAW_SUMMARY_FILE
+        if not aa_only or not raw.exists():
+            # The unpaired baseline run: an --aa-only rerun pairs from it, never from a pair.
+            shutil.copyfile(base_summary, raw)
+        if repeats == 2 or aa_only:
+            current = read_summary(base_summary)
+            real_part = {
+                f.name: getattr(current, f.name)
+                for f in fields(RunSummary)
+                if f.name.startswith("real_")
+            }
+            unpaired = replace(read_summary(raw), **real_part)
+            _, base_now = _summary_extras(raw)
+            if repeats == 2:
+                _, aa_now = _summary_extras(out_dir / AA_LABEL / "summary.json")
+                _rewrite_summary(
+                    base_summary,
+                    pair_summaries(unpaired, read_summary(out_dir / AA_LABEL / "summary.json")),
+                    usd_now=(base_now + aa_now) / 2,
+                )
+            else:
+                _rewrite_summary(base_summary, unpaired, usd_now=base_now)
     if split in ("real", "both"):
         hook: Callable[[], None] | None = None
         if split == "real":
@@ -1157,6 +1212,8 @@ def run_baseline(
         )
         floors["real_aa_floor"] = abs(first - second)
         floors_path.write_text(json.dumps(floors, sort_keys=True) + "\n", encoding="utf-8")
+    if not aa_only:
+        _stamp_split(base_summary, split)
     return floor
 
 
@@ -1229,7 +1286,12 @@ def _dev_baseline(
     one(AA_LABEL, aa_cache, "bypass")
     b = require_complete(out_dir / AA_LABEL / "summary.json", "A/A summary")
     floor = aa_floor(a, b)
-    (out_dir / AA_FLOOR_FILE).write_text(json.dumps({"aa_floor": floor}) + "\n", encoding="utf-8")
+    floors_path = out_dir / AA_FLOOR_FILE
+    floors: dict[str, object] = (
+        json.loads(floors_path.read_text(encoding="utf-8")) if floors_path.is_file() else {}
+    )
+    floors["aa_floor"] = floor
+    floors_path.write_text(json.dumps(floors, sort_keys=True) + "\n", encoding="utf-8")
     return floor
 
 
@@ -1299,10 +1361,11 @@ def run_screen(
         raise ValueError(f"{label!r} is reserved")
     if label.endswith(REPEAT_SUFFIX):
         raise ValueError(f"{label!r} ends in {REPEAT_SUFFIX!r}, which names a screen's second run")
+    _check_split(split, repeats)
+    if judge_kind not in _JUDGE_KINDS:
+        raise ValueError(f"judge_kind must be one of {_JUDGE_KINDS}, got {judge_kind!r}")
     if split != "dev" and not real_scripts:
         raise LadderStateError("the real split needs the frozen reference scripts")
-    if repeats not in (1, 2):
-        raise ValueError(f"repeats must be 1 or 2, got {repeats}")
     if against == label:
         raise LadderStateError(f"screen {label!r} cannot stack on itself (--against {against})")
     for row in _ladder_labels(out_dir):
@@ -1386,7 +1449,7 @@ def run_screen(
             cache_mode="read_write",
             live_tags=tags,
             frozen_upstream=frozen,
-            summary_extra={"against": against, "set": dict(sets)},
+            summary_extra={"against": against, "set": dict(sets), "split": split},
             spend_file=spend_file,
             on_checks_passed=seed,
         )
@@ -1412,7 +1475,12 @@ def run_screen(
                 cache_mode="read_write",
                 live_tags=tags,
                 frozen_upstream=frozen,
-                summary_extra={"against": against, "set": dict(sets), "repeat_of": label},
+                summary_extra={
+                    "against": against,
+                    "set": dict(sets),
+                    "repeat_of": label,
+                    "split": split,
+                },
                 spend_file=spend_file,
                 on_checks_passed=seed_second,
             )
@@ -1439,8 +1507,8 @@ def run_screen(
         candidate = with_real(
             candidate or EMPTY_DEV_SUMMARY, runs, [script.key for script in real_scripts]
         )
-    if candidate is None:
-        raise ValueError(f"split must be dev, real or both, got {split!r}")
+    if candidate is None:  # unreachable: `_check_split` ran first
+        raise ValueError(f"split must be one of {_SPLITS}, got {split!r}")
     if summary_path.is_file():
         _rewrite_summary(summary_path, candidate, usd_now=usd_now)
     else:
@@ -1518,7 +1586,24 @@ def run_reference_rung(
         out_dir
     ):
         raise LadderStateError(f"{label!r} is reserved or already a ladder row")
+    if label.endswith(REPEAT_SUFFIX):
+        raise LadderStateError(
+            f"{label!r} ends in {REPEAT_SUFFIX!r}, which names a screen's second run"
+        )
+    if repeats not in (1, 2):
+        raise ValueError(f"repeats must be 1 or 2, got {repeats}")
+    stored = out_dir / label / "summary.json"
+    if (out_dir / label).exists() and not (
+        stored.is_file() and json.loads(stored.read_text(encoding="utf-8")).get("reference_rung")
+    ):
+        raise LadderStateError(
+            f"{out_dir / label} exists and is not a reference rung; use another label"
+        )
     dev = require_complete(dev_summary_from, "dev summary of the reference rung")
+
+    def drop_stale() -> None:
+        stored.unlink(missing_ok=True)
+
     runs = [
         run_real(
             label,
@@ -1530,6 +1615,7 @@ def run_reference_rung(
             caps=caps,
             max_run_usd=max_run_usd,
             spend_file=spend_file,
+            on_checks_passed=drop_stale if index == 1 else None,
         )
         for index in range(1, repeats + 1)
     ]
@@ -1540,6 +1626,7 @@ def run_reference_rung(
         usd_per_script_mean_now=0.0,
         extra={
             "reference_rung": True,
+            "split": "real",
             "dev_from": str(dev_summary_from),
             "overrides": {},
             "live_tags": [],
@@ -1550,8 +1637,16 @@ def run_reference_rung(
 
 def flip_verdict(out_dir: Path, *, candidate: str, gemini: str) -> Verdict:
     """`judge_flip` of the *candidate* rung against the *gemini* rung; writes flip_verdict.json."""
+    if candidate not in _ladder_labels(out_dir):
+        raise LadderStateError(f"{candidate!r} is not a ladder row")
+    cand_verdict = require_file(out_dir / candidate / "verdict.json", f"rung {candidate!r} verdict")
+    if json.loads(cand_verdict.read_text(encoding="utf-8")).get("passed") is not True:
+        raise LadderStateError(f"{candidate!r} did not pass its screen; it cannot be flipped")
     cand = read_summary(require_file(out_dir / candidate / "summary.json", f"rung {candidate!r}"))
-    gem = read_summary(require_file(out_dir / gemini / "summary.json", f"Gemini rung {gemini!r}"))
+    gem_path = require_file(out_dir / gemini / "summary.json", f"Gemini rung {gemini!r}")
+    if json.loads(gem_path.read_text(encoding="utf-8")).get("reference_rung") is not True:
+        raise LadderStateError(f"{gemini!r} is not a reference rung (run_reference_rung)")
+    gem = read_summary(gem_path)
     floors = json.loads(
         require_file(out_dir / AA_FLOOR_FILE, "A/A floor aa_floor.json").read_text(encoding="utf-8")
     )
@@ -1685,6 +1780,11 @@ def resummarise(label: str, *, out_dir: Path) -> RunSummary:
     with a ``verdict.json`` is refused (its verdict would no longer match).
     """
     run_dir = out_dir / label
+    if label.endswith(REPEAT_SUFFIX):
+        raise LadderStateError(
+            f"resummarise {label!r} is refused: it is a screen's second run, folded into the "
+            "paired summary of the screen it repeats. Rescreen that screen instead."
+        )
     if label in (BASELINE_LABEL, AA_LABEL) and _ladder_labels(out_dir):
         raise LadderStateError(
             f"resummarise {label!r} is refused while ladder.json has rows: those verdicts "
