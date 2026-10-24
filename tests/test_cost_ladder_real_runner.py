@@ -613,8 +613,40 @@ def test_aa_only_pairs_from_the_raw_baseline_not_a_pair(
     path = out / "baseline" / "summary.json"
     assert runner.read_summary(path).mismarked_parts == {"x/1", "x/2"}
     dev.mismarks["baseline_aa"] = frozenset({"x/3"})
-    runner.run_baseline(out_dir=out, settings=Settings(), repeats=2, aa_only=True)
+    floor = runner.run_baseline(out_dir=out, settings=Settings(), repeats=2, aa_only=True)
     assert runner.read_summary(path).mismarked_parts == {"x/1", "x/3"}
+    assert floor == 2
+    assert json.loads((out / runner.AA_FLOOR_FILE).read_text())["aa_floor"] == 2
+
+
+def test_aa_only_repeats_two_refuses_a_baseline_without_the_raw_summary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dev = _DevFake(monkeypatch)
+    out = tmp_path / "out"
+    runner.run_baseline(out_dir=out, settings=Settings(), repeats=2)
+    (out / "baseline" / runner.RAW_SUMMARY_FILE).unlink()
+    dev.labels.clear()
+    with pytest.raises(LadderStateError, match="summary_raw"):
+        runner.run_baseline(out_dir=out, settings=Settings(), repeats=2, aa_only=True)
+    assert dev.labels == []
+
+
+def test_a_run_where_every_script_failed_writes_no_run_cost(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _Harness(monkeypatch, raise_for=("a", "b"))
+    out = tmp_path / "o"
+    runner.run_real(
+        "base",
+        {},
+        run_index=1,
+        out_dir=out,
+        scripts=_scripts(tmp_path),
+        settings=Settings(),
+        max_run_usd=CAPS,
+    )
+    assert not (out / "base" / "real-1" / "run_cost.json").exists()
 
 
 def test_baseline_both_writes_both_floors_and_keeps_cache_stats(

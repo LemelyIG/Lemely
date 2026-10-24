@@ -949,8 +949,9 @@ def run_real(
             set_call_context(case_key=None)
             records = process_call_records()
             run_dir.mkdir(parents=True, exist_ok=True)
-            if len(outcomes) == len(scripts):
-                # A run cut short is not written: it would lower the next projection.
+            if len(outcomes) == len(scripts) and any(o[2] is None for o in outcomes.values()):
+                # A run cut short, or one where every script failed, is not written: it
+                # would lower the next projection.
                 (run_dir / RUN_COST_FILE).write_text(
                     json.dumps(cost_by_provider(records), sort_keys=True) + "\n", encoding="utf-8"
                 )
@@ -1125,6 +1126,11 @@ def run_baseline(
     _check_split(split, repeats)
     if split != "dev" and aa_only:
         raise ValueError("--aa-only reruns the dev A/A run only; use --split dev")
+    if aa_only and repeats == 2 and not (out_dir / BASELINE_LABEL / RAW_SUMMARY_FILE).exists():
+        raise LadderStateError(
+            f"--aa-only with repeats=2 needs {RAW_SUMMARY_FILE}, the unpaired baseline; this "
+            "baseline predates it and may already be a pair. Use --restart-baseline."
+        )
     if split != "dev" and not real_scripts:
         raise LadderStateError("the real split needs the frozen reference scripts")
     base_summary = out_dir / BASELINE_LABEL / "summary.json"
@@ -1281,7 +1287,11 @@ def _dev_baseline(
         data = json.loads(base_summary.read_text(encoding="utf-8"))
         data.update(_baseline_cache_stats(out_dir))
         base_summary.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", "utf-8")
+    raw = base_summary.parent / RAW_SUMMARY_FILE
+    # An --aa-only rerun measures churn against the unpaired baseline, never a pair.
     a = require_complete(base_summary, "baseline summary")
+    if aa_only and raw.exists():
+        a = require_complete(raw, "unpaired baseline summary")
     aa_cache.mkdir(parents=True, exist_ok=True)
     one(AA_LABEL, aa_cache, "bypass")
     b = require_complete(out_dir / AA_LABEL / "summary.json", "A/A summary")
