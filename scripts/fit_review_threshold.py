@@ -21,61 +21,51 @@ The fit is in-sample: it is judged on the same cases it is fitted on. The
 leave-one-case-out table shows how far the recommendation moves when any one
 case is left out, which is the only stability evidence a 12-case screen gives.
 
+Real mode (``--real RUN_DIR``, repeatable) reads each run's ``real_results.json`` and
+fits the lowest threshold that flags at least 90% of leaves with abs_error > 0;
+``--escalation`` adds the escalation-threshold fit under the per-script cap. Leaves with
+no confidence (never scored) are excluded and counted.
+
 Usage: ``python scripts/fit_review_threshold.py BUILD/.../a1-haiku/results.json``
+   or: ``python scripts/fit_review_threshold.py --real RUN_DIR [--real RUN_DIR2] [--escalation]``
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from lemely.accuracy.cost_ladder.real_split import read_real_results
+from lemely.accuracy.threshold_fit import (
+    CONFIDENCE_REASON,
+    ESCALATION_USD_ESTIMATE,
+    Part,
+    ThresholdStats,
+    escalation_leaves,
+    evaluate,
+    fit_escalation_threshold,
+    leave_one_case_out,
+    parts_from_real,
+    recommend,
+    recommend_for_recall,
+    threshold_grid,
+    unscored_leaves,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-#: The reason ``lemely.io.correction_ai`` writes when confidence alone flags a part.
-_CONFIDENCE_REASON = re.compile(r"^confidence \d+(?:\.\d+)? below review threshold \d+(?:\.\d+)?$")
-#: Float slack when comparing a rate with the target (2/20 must count as 10%).
-_EPS = 1e-9
-
-
-@dataclass(frozen=True)
-class Part:
-    """One scored part of the screen, reduced to what the review decision reads."""
-
-    case_key: str
-    question_id: str
-    confidence: float
-    mismarked: bool
-    #: True when the threshold being fitted decides this part's flag.
-    refittable: bool
-    #: The flag the run recorded; used as-is when ``refittable`` is False.
-    recorded_flag: bool
-
-
-@dataclass(frozen=True)
-class ThresholdStats:
-    threshold: float
-    scored: int
-    flagged: int
-    mismarked: int
-    flagged_mismarked: int
-
-    @property
-    def review_rate(self) -> float:
-        return self.flagged / self.scored if self.scored else 0.0
-
-    @property
-    def flag_recall(self) -> float | None:
-        return self.flagged_mismarked / self.mismarked if self.mismarked else None
-
-    @property
-    def precision(self) -> float | None:
-        return self.flagged_mismarked / self.flagged if self.flagged else None
+__all__ = [
+    "Part",
+    "ThresholdStats",
+    "evaluate",
+    "leave_one_case_out",
+    "recommend",
+    "threshold_grid",
+]
 
 
 def _escalated(records_path: Path) -> set[tuple[str, str]]:
@@ -104,7 +94,7 @@ def load_parts(results_path: Path, records_path: Path | None = None) -> list[Par
         flag = row.get("needs_teacher_review") is True
         reason = row.get("review_reason")
         structural = flag and not (
-            isinstance(reason, str) and _CONFIDENCE_REASON.match(reason) is not None
+            isinstance(reason, str) and CONFIDENCE_REASON.match(reason) is not None
         )
         refittable = (
             row.get("marker_source") == "ai" and not structural and (case_key, qid) not in escalated
@@ -120,41 +110,6 @@ def load_parts(results_path: Path, records_path: Path | None = None) -> list[Par
             )
         )
     return parts
-
-
-def _flagged(part: Part, threshold: float) -> bool:
-    return part.confidence < threshold if part.refittable else part.recorded_flag
-
-
-def evaluate(parts: Sequence[Part], threshold: float) -> ThresholdStats:
-    """Review rate, recall and precision with ``threshold`` for the refittable parts."""
-    flagged = [p for p in parts if _flagged(p, threshold)]
-    return ThresholdStats(
-        threshold=threshold,
-        scored=len(parts),
-        flagged=len(flagged),
-        mismarked=sum(p.mismarked for p in parts),
-        flagged_mismarked=sum(p.mismarked for p in flagged),
-    )
-
-
-def threshold_grid() -> list[float]:
-    """0.50, 0.51, ..., 0.99, built from integers so each value is the literal."""
-    return [c / 100 for c in range(50, 100)]
-
-
-def recommend(parts: Sequence[Part], *, target: float) -> float | None:
-    """The highest grid threshold with review rate <= ``target``; None if none is."""
-    within = [t for t in threshold_grid() if evaluate(parts, t).review_rate <= target + _EPS]
-    return max(within) if within else None
-
-
-def leave_one_case_out(parts: Sequence[Part], *, target: float) -> dict[str, float | None]:
-    """The recommendation refitted without each case in turn, keyed by the case left out."""
-    cases = sorted({p.case_key for p in parts})
-    return {
-        case: recommend([p for p in parts if p.case_key != case], target=target) for case in cases
-    }
 
 
 def _fmt(value: float | None) -> str:
@@ -198,14 +153,76 @@ def render(parts: Sequence[Part], *, target: float) -> str:
     return "\n".join(lines)
 
 
+def _real_report(args: argparse.Namespace) -> str:
+    paths = [d / "real_results.json" for d in args.real]
+    parts = parts_from_real(paths)
+    best = recommend_for_recall(parts)
+    stats = evaluate(parts, best) if best is not None else None
+    lines = [
+        render(parts, target=args.target),
+        "",
+        f"leaves excluded for having no confidence (never scored): {unscored_leaves(paths)}",
+        "lowest threshold flagging >= 90% of leaves with abs_error > 0: "
+        + ("none (no basis)" if best is None else f"{best:.2f}")
+        + ("" if stats is None else f" (review rate {stats.review_rate:.3f})"),
+    ]
+    if args.escalation:
+        records = [
+            json.loads(line)
+            for d in args.real
+            for line in (d / "records.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        esc = [r["usd_2027"] for r in records if r.get("task_tag") == "escalation"]
+        per_call = sum(esc) / len(esc) if esc else ESCALATION_USD_ESTIMATE
+        base: dict[str, list[float]] = {}
+        for p in paths:
+            for s in read_real_results(p):
+                base.setdefault(s.key, []).append(s.usd - s.escalation_usd)
+        fitted = fit_escalation_threshold(
+            escalation_leaves(paths),
+            script_base_usd={k: sum(v) / len(v) for k, v in base.items()},
+            usd_per_escalation=per_call,
+            cap_usd=args.cap_usd,
+        )
+        lines.append(
+            f"escalation_confidence_threshold: "
+            f"{'none (no basis)' if fitted.threshold is None else f'{fitted.threshold:.2f}'} "
+            f"(recall {fitted.recall}, escalated {fitted.escalated} leaves over the runs, "
+            f"worst script {fitted.worst_script} ${fitted.worst_script_usd}, "
+            f"per escalation ${per_call:.4f}{'' if esc else ' (estimate)'}, "
+            f"{'met' if fitted.met_recall else 'MISSED'} the recall target)"
+        )
+    return "\n".join(lines)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0] if __doc__ else None)
-    parser.add_argument("results", type=Path, help="a screen's results.json")
+    parser.add_argument("results", type=Path, nargs="?", help="a screen's results.json")
     parser.add_argument(
         "--records", type=Path, default=None, help="records.jsonl (default: beside results)"
     )
     parser.add_argument("--target", type=float, default=0.10, help="max review rate")
+    parser.add_argument(
+        "--real",
+        type=Path,
+        action="append",
+        default=[],
+        metavar="RUN_DIR",
+        help="a real run dir (holds real_results.json)",
+    )
+    parser.add_argument(
+        "--escalation",
+        action="store_true",
+        help="with --real: also fit escalation_confidence_threshold",
+    )
+    parser.add_argument("--cap-usd", type=float, default=0.10)
     args = parser.parse_args(argv)
+    if args.real:
+        sys.stdout.write(_real_report(args) + "\n")
+        return 0
+    if args.results is None:
+        parser.error("give a results.json or --real RUN_DIR")
     parts = load_parts(args.results, args.records)
     sys.stdout.write(render(parts, target=args.target) + "\n")
     return 0
