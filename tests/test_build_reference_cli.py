@@ -70,7 +70,7 @@ def test_scheme_leaves_lists_marked_leaves() -> None:
     assert br.scheme_leaves(_scheme()) == {"1a": 2, "1b": 1}
 
 
-def test_leaves_from_marks_clamps_nothing_and_refuses_unknown_leaf() -> None:
+def test_leaves_from_marks_keeps_marks_in_range_and_refuses_unknown_leaf() -> None:
     marks = [
         {
             "question_id": "1a",
@@ -412,3 +412,298 @@ def test_review_list_fails_clearly_on_prior_ids_that_are_not_leaves(
 def test_review_list_fails_clearly_on_a_malformed_prior_argument(tmp_path: Path) -> None:
     root, _ = _adopted(tmp_path)
     assert br.main(["--root", str(root), "review-list", "k", "--prior", "no-equals-sign"]) == 2
+
+
+def _write_inputs(d: Path, scan: Path) -> None:
+    (d / "inputs.json").write_text(json.dumps({"scan": str(scan), "scheme_source": "x"}))
+
+
+def _row(qid: str, mark: int, **extra: Any) -> dict[str, Any]:
+    return {
+        "question_id": qid,
+        "mark": mark,
+        "confidence": 0.95,
+        "evidence": "e",
+        "page": 1,
+        "ambiguous": False,
+        **extra,
+    }
+
+
+def _write_marks(d: Path, name: str, rows: list[dict[str, Any]]) -> None:
+    (d / f"marks_{name}.json").write_text(json.dumps({"leaves": rows}))
+
+
+def test_review_list_flags_a_leaf_the_model_skipped(tmp_path: Path) -> None:
+    root = tmp_path / "ref"
+    d = root / "k"
+    d.mkdir(parents=True)
+    (d / ref.SCHEME_FILE).write_text(json.dumps(_SCHEME), encoding="utf-8")
+    (d / "inputs.json").write_text(
+        json.dumps({"scan": str(tmp_path / "s.pdf"), "scheme_source": "x"})
+    )
+    _write_marks(d, "opus", [_row("1a", 2)])
+    assert br.main(["--root", str(root), "adopt", "k", "--from", "opus"]) == 0
+    assert br.main(["--root", str(root), "review-list", "k"]) == 0
+    review = (d / ref.REVIEW_FILE).read_text()
+    assert "| 1b |" in review and "not returned by the model" in review
+    assert "| 1a |" not in review
+
+
+def test_clamped_mark_is_flagged_with_the_given_and_max(tmp_path: Path) -> None:
+    (leaf,) = [
+        x
+        for x in br.leaves_from_marks([_row("1a", 5), _row("1b", 1)], _scheme(), "opus")
+        if x.question_id == "1a"
+    ]
+    assert leaf.mark == 2 and "model gave 5 above max 2" in leaf.note
+    root = tmp_path / "ref"
+    d = root / "k"
+    d.mkdir(parents=True)
+    (d / ref.SCHEME_FILE).write_text(json.dumps(_SCHEME), encoding="utf-8")
+    (d / "inputs.json").write_text(
+        json.dumps({"scan": str(tmp_path / "s.pdf"), "scheme_source": "x"})
+    )
+    _write_marks(d, "opus", [_row("1a", 5), _row("1b", 1)])
+    assert br.main(["--root", str(root), "adopt", "k", "--from", "opus"]) == 0
+    assert br.main(["--root", str(root), "review-list", "k"]) == 0
+    assert "model gave 5 above max 2" in (d / ref.REVIEW_FILE).read_text()
+
+
+def test_override_clears_the_skipped_flag(tmp_path: Path) -> None:
+    root = tmp_path / "ref"
+    d = root / "k"
+    d.mkdir(parents=True)
+    (d / ref.SCHEME_FILE).write_text(json.dumps(_SCHEME), encoding="utf-8")
+    (d / "inputs.json").write_text(
+        json.dumps({"scan": str(tmp_path / "s.pdf"), "scheme_source": "x"})
+    )
+    _write_marks(d, "opus", [_row("1a", 2)])
+    assert br.main(["--root", str(root), "adopt", "k", "--from", "opus"]) == 0
+    assert br.main(["--root", str(root), "override", "k", "--leaf", "1b", "--mark", "1"]) == 0
+    assert br.main(["--root", str(root), "review-list", "k"]) == 0
+    assert "| 1b |" not in (d / ref.REVIEW_FILE).read_text()
+
+
+def test_duplicate_question_ids_are_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(ref.ReferenceStateError, match="1a"):
+        br.leaves_from_marks([_row("1a", 1), _row("1a", 2)], _scheme(), "opus")
+    root = tmp_path / "ref"
+    d = root / "k"
+    d.mkdir(parents=True)
+    (d / ref.SCHEME_FILE).write_text(json.dumps(_SCHEME), encoding="utf-8")
+    _write_marks(d, "opus", [_row("1a", 1), _row("1a", 2), _row("1b", 1)])
+    assert br.main(["--root", str(root), "adopt", "k", "--from", "opus"]) == 2
+    assert "1a" in capsys.readouterr().err
+    prior = tmp_path / "c.json"
+    prior.write_text(
+        json.dumps(
+            {
+                "questions": [
+                    {"question_id": "1a", "awarded_marks": 1},
+                    {"question_id": "1a", "awarded_marks": 2},
+                ]
+            }
+        )
+    )
+    with pytest.raises(ref.ReferenceStateError, match="1a"):
+        br.marks_from_correction(prior)
+
+
+def test_malformed_marks_file_is_an_error_line_not_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "ref"
+    d = root / "k"
+    d.mkdir(parents=True)
+    (d / ref.SCHEME_FILE).write_text(json.dumps(_SCHEME), encoding="utf-8")
+    (d / "marks_opus.json").write_text(json.dumps({"rows": []}))
+    assert br.main(["--root", str(root), "adopt", "k", "--from", "opus"]) == 2
+    assert capsys.readouterr().err.startswith("error:")
+    (d / "marks_opus.json").write_text(json.dumps({"leaves": [{"question_id": "1a"}]}))
+    assert br.main(["--root", str(root), "adopt", "k", "--from", "opus"]) == 2
+
+
+def _mark_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake: Any) -> tuple[Path, Path]:
+    root = tmp_path / "ref"
+    d = root / "k"
+    d.mkdir(parents=True)
+    (d / ref.SCHEME_FILE).write_text(json.dumps(_SCHEME), encoding="utf-8")
+    scan = tmp_path / "scan.pdf"
+    scan.write_bytes(b"%PDF scan")
+    (d / "inputs.json").write_text(json.dumps({"scan": str(scan), "scheme_source": "x"}))
+    monkeypatch.setattr(br, "_pages", lambda path: [b"png"])
+    monkeypatch.setattr(br, "_client", lambda settings: fake)
+    monkeypatch.setattr(br, "_load_keys", lambda: None)
+    spend = tmp_path / "spend.json"
+    spend.write_text(json.dumps({"anthropic": 1.0}))
+    return root, spend
+
+
+def test_mark_books_the_spend_even_when_the_call_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import lemely.io.gemini as gem
+
+    class _Boom:
+        def generate_structured(self, **kwargs: Any) -> Any:
+            raise RuntimeError("overloaded")
+
+    root, spend = _mark_setup(tmp_path, monkeypatch, _Boom())
+    monkeypatch.setattr(gem, "process_call_records", lambda: [object()])
+    monkeypatch.setattr(br, "cost_by_provider", lambda recs: {"anthropic": 0.25})
+    assert (
+        br.main(["--root", str(root), "--spend-file", str(spend), "mark", "k", "--mode", "opus"])
+        == 2
+    )
+    assert json.loads(spend.read_text())["anthropic"] == pytest.approx(1.25)
+
+
+def test_mark_books_the_spend_and_warns_when_over_max_usd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import lemely.io.gemini as gem
+
+    fake = _FakeClient(br.ReferenceReply(leaves=[]))
+    root, spend = _mark_setup(tmp_path, monkeypatch, fake)
+    monkeypatch.setattr(gem, "process_call_records", lambda: [object()])
+    monkeypatch.setattr(br, "cost_by_provider", lambda recs: {"anthropic": 0.75})
+    assert (
+        br.main(
+            [
+                "--root",
+                str(root),
+                "--spend-file",
+                str(spend),
+                "mark",
+                "k",
+                "--mode",
+                "opus",
+                "--max-usd",
+                "0.5",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(spend.read_text())["anthropic"] == pytest.approx(1.75)
+    assert "exceeded --max-usd" in capsys.readouterr().err
+
+
+def test_max_usd_must_be_positive(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        br.main(["--root", str(tmp_path), "mark", "k", "--mode", "opus", "--max-usd", "0"])
+
+
+def test_truth_identical_to_the_scan_is_refused_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, spend = _mark_setup(tmp_path, monkeypatch, _FakeClient(br.ReferenceReply(leaves=[])))
+    same = tmp_path / "copy.pdf"
+    same.write_bytes(b"%PDF scan")
+    monkeypatch.setattr(br, "_client", lambda s: (_ for _ in ()).throw(AssertionError("no call")))
+    assert (
+        br.main(
+            [
+                "--root",
+                str(root),
+                "--spend-file",
+                str(spend),
+                "mark",
+                "k",
+                "--mode",
+                "teacher",
+                "--truth",
+                str(same),
+            ]
+        )
+        == 2
+    )
+
+
+def test_teacher_marks_file_records_the_truth_path_and_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeClient(br.ReferenceReply(leaves=[]))
+    root, spend = _mark_setup(tmp_path, monkeypatch, fake)
+    truth = tmp_path / "ticks.pdf"
+    truth.write_bytes(b"%PDF ticks")
+    assert (
+        br.main(
+            [
+                "--root",
+                str(root),
+                "--spend-file",
+                str(spend),
+                "mark",
+                "k",
+                "--mode",
+                "teacher",
+                "--truth",
+                str(truth),
+            ]
+        )
+        == 0
+    )
+    data = json.loads((root / "k" / "marks_teacher.json").read_text())
+    assert data["truth"] == {"path": str(truth), "sha256": ref.sha256_file(truth)}
+
+
+def test_freeze_refuses_a_source_that_is_the_scan_and_a_malformed_source(tmp_path: Path) -> None:
+    root, d = _adopted(tmp_path)
+    scan = tmp_path / "s.pdf"
+    scan.write_bytes(b"%PDF scan")
+    twin = tmp_path / "twin.pdf"
+    twin.write_bytes(b"%PDF scan")
+    assert br.main(["--root", str(root), "freeze", "k", "--source", f"copy={twin}"]) == 2
+    assert br.main(["--root", str(root), "freeze", "k", "--source", "no-equals"]) == 2
+    assert not ref.is_frozen(d)
+    assert br.main(["--root", str(root), "freeze", "k"]) == 0
+
+
+def test_review_list_uses_the_adopted_files_confidence_only(tmp_path: Path) -> None:
+    root = tmp_path / "ref"
+    d = root / "k"
+    d.mkdir(parents=True)
+    (d / ref.SCHEME_FILE).write_text(json.dumps(_SCHEME), encoding="utf-8")
+    (d / "inputs.json").write_text(
+        json.dumps({"scan": str(tmp_path / "s.pdf"), "scheme_source": "x"})
+    )
+    _write_marks(d, "teacher", [_row("1a", 2, confidence=0.3), _row("1b", 1)])
+    _write_marks(d, "mcq", [_row("1a", 2, confidence=0.99), _row("1b", 1)])
+    assert br.main(["--root", str(root), "adopt", "k", "--from", "teacher"]) == 0
+    assert br.main(["--root", str(root), "review-list", "k"]) == 0
+    review = (d / ref.REVIEW_FILE).read_text()
+    assert review.count("| 1a |") == 1 and "confidence 0.30" in review
+    assert br.main(["--root", str(root), "adopt", "k", "--from", "mcq"]) == 0
+    assert br.main(["--root", str(root), "review-list", "k"]) == 0
+    assert "| 1a |" not in (d / ref.REVIEW_FILE).read_text()
+
+
+def test_crop_page_out_of_range_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _ = _adopted(tmp_path)
+    import lemely.io.rasterise as ras
+
+    monkeypatch.setattr(ras, "rasterise_scan_to_pages", lambda p: [object(), object()])
+    out = tmp_path / "o.png"
+    for page in ("0", "3"):
+        assert (
+            br.main(
+                [
+                    "--root",
+                    str(root),
+                    "crop",
+                    "k",
+                    "--leaf",
+                    "1a",
+                    "--out",
+                    str(out),
+                    "--page",
+                    page,
+                ]
+            )
+            == 2
+        )

@@ -235,3 +235,11 @@ def test_unknown_ambiguous_or_other_ids_are_refused() -> None:
         ref.check_first(reference, ambiguous=["9z"])
     with pytest.raises(ValueError, match="8y"):
         ref.check_first(reference, others=[OtherMarks("gemini", {"8y": 1})])
+
+
+def test_flags_list_a_leaf_with_its_reason_and_unknown_flag_ids_are_refused() -> None:
+    reference = {"1a": _leaf("1a", 2), "1b": _leaf("1b", 0)}
+    flagged = ref.check_first(reference, flags={"1b": "not returned by the model"})
+    assert flagged == {"1b": ["not returned by the model"]}
+    with pytest.raises(ValueError, match="9z"):
+        ref.check_first(reference, flags={"9z": "x"})

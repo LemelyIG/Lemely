@@ -39,6 +39,8 @@ from lemely.accuracy.cost_ladder.spend import (
 from lemely.core.loose_schemas import MarkScheme
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from lemely.io.gemini import GeminiClient
     from lemely.runtime.config import Settings
 
@@ -94,11 +96,28 @@ def scheme_leaves(scheme: MarkScheme) -> dict[str, int]:
     return {q.id: q.marks for q in scheme.all_questions_flat() if q.marks > 0 and not q.parts}
 
 
+MISSING_NOTE = "not returned by the model"
+_CLAMP_PREFIX = "model gave "
+
+
+def _duplicates(ids: list[str]) -> list[str]:
+    return sorted({qid for qid in ids if ids.count(qid) > 1})
+
+
 def leaves_from_marks(
     marks: list[dict[str, Any]], scheme: MarkScheme, source: ref.Source
 ) -> list[ref.ReferenceLeaf]:
-    """Reference leaves from a marks file; a leaf the model left out is 0 with a note."""
+    """Reference leaves from a marks file.
+
+    A leaf the model left out is 0 with `MISSING_NOTE`; a mark above the leaf maximum is
+    clamped with a ``model gave N above max M`` note. ``flags_from_notes`` lists both
+    for review. A duplicate or unknown question id raises.
+    """
     maxima = scheme_leaves(scheme)
+    ids = [str(row["question_id"]) for row in marks]
+    duplicated = _duplicates(ids)
+    if duplicated:
+        raise ref.ReferenceStateError(f"marks repeat a question id: {', '.join(duplicated)}")
     by_id: dict[str, dict[str, Any]] = {}
     for row in marks:
         qid = str(row["question_id"])
@@ -109,22 +128,63 @@ def leaves_from_marks(
     for qid, max_marks in maxima.items():
         row = by_id.get(qid)
         if row is None:
-            leaves.append(
-                ref.ReferenceLeaf(qid, 0, max_marks, source, "-", "not returned by the model")
-            )
+            leaves.append(ref.ReferenceLeaf(qid, 0, max_marks, source, "-", MISSING_NOTE))
             continue
         note = "ambiguous" if row.get("ambiguous") else ""
-        mark = min(int(row["mark"]), max_marks)
-        if mark != int(row["mark"]):
-            note = (note + "; " if note else "") + f"model gave {row['mark']}, above the maximum"
+        given = int(row["mark"])
+        mark = min(given, max_marks)
+        if mark != given:
+            note = (note + "; " if note else "") + f"{_CLAMP_PREFIX}{given} above max {max_marks}"
         leaves.append(ref.ReferenceLeaf(qid, mark, max_marks, source, str(row["evidence"]), note))
     return leaves
 
 
+def flags_from_notes(reference: Mapping[str, ref.ReferenceLeaf]) -> dict[str, str]:
+    """Leaves whose note says the model skipped or over-marked them, with the reason."""
+    flags: dict[str, str] = {}
+    for qid, leaf in reference.items():
+        if leaf.source == "user_override":
+            continue
+        reasons = [
+            p
+            for p in (x.strip() for x in leaf.note.split(";"))
+            if p == MISSING_NOTE or p.startswith(_CLAMP_PREFIX)
+        ]
+        if reasons:
+            flags[qid] = "; ".join(reasons)
+    return flags
+
+
+def _read_marks(path: Path) -> list[dict[str, Any]]:
+    """The rows of a ``marks_<mode>.json``, checked for shape; malformed input raises."""
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))["leaves"]
+        for row in rows:
+            str(row["question_id"])
+            int(row["mark"])
+            float(row["confidence"])
+            row["evidence"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ref.ReferenceStateError(f"{path} is malformed ({type(exc).__name__}: {exc})") from exc
+    if not isinstance(rows, list):
+        raise ref.ReferenceStateError(f"{path} is malformed: 'leaves' is not a list")
+    duplicated = _duplicates([str(r["question_id"]) for r in rows])
+    if duplicated:
+        raise ref.ReferenceStateError(f"{path} repeats a question id: {', '.join(duplicated)}")
+    return list(rows)
+
+
 def marks_from_correction(path: Path) -> dict[str, int]:
     """Awarded marks per leaf from a stored ``correction.json`` (CorrectionResult)."""
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return {str(q["question_id"]): int(q["awarded_marks"]) for q in data["questions"]}
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))["questions"]
+        pairs = [(str(q["question_id"]), int(q["awarded_marks"])) for q in rows]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ref.ReferenceStateError(f"{path} is malformed ({type(exc).__name__}: {exc})") from exc
+    duplicated = _duplicates([qid for qid, _ in pairs])
+    if duplicated:
+        raise ref.ReferenceStateError(f"{path} repeats a question id: {', '.join(duplicated)}")
+    return dict(pairs)
 
 
 def _load_keys() -> None:
@@ -212,9 +272,16 @@ def _mark(args: argparse.Namespace) -> int:
     if args.mode in ("teacher", "mcq") and args.truth is None:
         raise ref.ReferenceStateError(f"--mode {args.mode} reads the marked copy: pass --truth")
     scheme = _scheme(script_dir)
-    pages_from = (
-        args.truth if args.mode in ("teacher", "mcq") else Path(_inputs(script_dir)["scan"])
-    )
+    scan = Path(_inputs(script_dir)["scan"])
+    truth_sha: str | None = None
+    if args.mode in ("teacher", "mcq"):
+        truth_sha = ref.sha256_file(args.truth)
+        if scan.is_file() and truth_sha == ref.sha256_file(scan):
+            raise ref.ReferenceStateError(
+                f"--truth {args.truth} is the prepared scan itself: the marked copy must not be "
+                "the pipeline input"
+            )
+    pages_from = args.truth if truth_sha is not None else scan
     ledger = SpendLedger(args.spend_file)
     check_can_start(ledger.spent(), {"anthropic": args.max_usd}, SpendCaps())
     _load_keys()
@@ -234,16 +301,25 @@ def _mark(args: argparse.Namespace) -> int:
                 cache_mode="read_write",
                 extra_cache_key=f"{args.key}:{args.mode}",
             )
+        except Exception as exc:
+            raise ref.ReferenceStateError(
+                f"model call failed: {type(exc).__name__}: {exc}"
+            ) from exc
         finally:
             set_call_context(case_key=None)
             spent = cost_by_provider(process_call_records())
             ledger.add(spent)
             print(f"spend this call: {spent}")
+    if spent.get("anthropic", 0.0) > args.max_usd:
+        print(
+            f"warning: anthropic spend {spent['anthropic']:.4f} exceeded --max-usd {args.max_usd}",
+            file=sys.stderr,
+        )
     out = script_dir / f"marks_{args.mode}.json"
-    out.write_text(
-        json.dumps({"leaves": [leaf.model_dump() for leaf in reply.leaves]}, indent=1) + "\n",
-        encoding="utf-8",
-    )
+    payload: dict[str, Any] = {"leaves": [leaf.model_dump() for leaf in reply.leaves]}
+    if truth_sha is not None:
+        payload["truth"] = {"path": str(args.truth), "sha256": truth_sha}
+    out.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {out} ({len(reply.leaves)} leaves)")
     return 0
 
@@ -252,9 +328,12 @@ def _adopt(args: argparse.Namespace) -> int:
     script_dir: Path = args.root / args.key
     if ref.is_frozen(script_dir):
         raise ref.ReferenceStateError(f"{script_dir} is frozen")
-    marks = json.loads((script_dir / f"marks_{args.source}.json").read_text(encoding="utf-8"))
+    rows = _read_marks(script_dir / f"marks_{args.source}.json")
     source: ref.Source = "opus" if args.source == "opus" else "teacher_tick"
-    leaves = leaves_from_marks(marks["leaves"], _scheme(script_dir), source)
+    leaves = leaves_from_marks(rows, _scheme(script_dir), source)
+    (script_dir / "adopted.json").write_text(
+        json.dumps({"from": args.source}) + "\n", encoding="utf-8"
+    )
     ref.write_reference(script_dir / ref.REFERENCE_FILE, leaves)
     print(f"reference {args.key}: {sum(x.mark for x in leaves)} marks from marks_{args.source}")
     return 0
@@ -266,14 +345,19 @@ def _review_list(args: argparse.Namespace) -> int:
     others: list[ref.OtherMarks] = []
     confidence: dict[str, float] = {}
     ambiguous: list[str] = []
+    adopted_path = script_dir / "adopted.json"
+    adopted = (
+        json.loads(adopted_path.read_text("utf-8"))["from"] if adopted_path.is_file() else None
+    )
     for marks_file in sorted(script_dir.glob("marks_*.json")):
-        rows = json.loads(marks_file.read_text(encoding="utf-8"))["leaves"]
+        rows = _read_marks(marks_file)
         name = marks_file.stem.removeprefix("marks_")
         others.append(ref.OtherMarks(name, {str(r["question_id"]): int(r["mark"]) for r in rows}))
-        source_name = "opus" if name == "opus" else "teacher_tick"
+        if name != adopted:
+            continue
         for r in rows:
             qid = str(r["question_id"])
-            if qid in reference and reference[qid].source == source_name:
+            if qid in reference and reference[qid].source != "user_override":
                 confidence[qid] = float(r["confidence"])
                 if r.get("ambiguous"):
                     ambiguous.append(qid)
@@ -294,6 +378,7 @@ def _review_list(args: argparse.Namespace) -> int:
         others=others,
         confidence=confidence,
         ambiguous=ambiguous,
+        flags=flags_from_notes(reference),
         expected_total=args.expected_total,
     )
     out = script_dir / ref.REVIEW_FILE
@@ -318,6 +403,10 @@ def _crop(args: argparse.Namespace) -> int:
                 page_index = answer["source_box"]["page"]
     if page_index is None:
         raise ref.ReferenceStateError(f"no page for {args.leaf}: pass --page or --extracted")
+    if not 0 <= page_index < len(pages):
+        raise ref.ReferenceStateError(
+            f"page {page_index + 1} is outside 1..{len(pages)} for {args.leaf}"
+        )
     page = pages[page_index]
     data = crop_and_upscale(page, box, upscale=1) if box is not None else page.png_bytes
     args.out.write_bytes(data)
@@ -333,17 +422,37 @@ def _override(args: argparse.Namespace) -> int:
 
 def _freeze(args: argparse.Namespace) -> int:
     script_dir: Path = args.root / args.key
-    sources = {name: Path(p) for name, _, p in (s.partition("=") for s in args.source)}
+    sources: dict[str, Path] = {}
+    for pair in args.source:
+        name, sep, path = pair.partition("=")
+        if not sep or not name or not path:
+            raise ref.ReferenceStateError(f"--source {pair!r} is not NAME=PATH")
+        sources[name] = Path(path)
+    scan = Path(_inputs(script_dir)["scan"])
+    if scan.is_file():
+        scan_sha = ref.sha256_file(scan)
+        for name, path in sources.items():
+            if path.is_file() and ref.sha256_file(path) == scan_sha:
+                raise ref.ReferenceStateError(
+                    f"--source {name} is the scan itself: the marked copy must not be the input"
+                )
     entry = ref.freeze(
         script_dir,
         key=args.key,
-        scan_path=Path(_inputs(script_dir)["scan"]),
+        scan_path=scan,
         sources=sources,
         expected_total=args.expected_total,
         manifest_path=args.root / ref.MANIFEST_FILE,
     )
     print(f"froze {entry.key}: reference sha256 {entry.reference_sha256[:12]}")
     return 0
+
+
+def _positive_usd(text: str) -> float:
+    value = float(text)
+    if not value > 0:
+        raise argparse.ArgumentTypeError(f"{text} is not above 0")
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -364,7 +473,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("key")
     p.add_argument("--mode", choices=sorted(_SYSTEM_FOR), required=True)
     p.add_argument("--truth", type=Path)
-    p.add_argument("--max-usd", type=float, default=1.50, help="projected Anthropic cost")
+    p.add_argument(
+        "--max-usd", type=_positive_usd, default=1.50, help="projected Anthropic cost, above 0"
+    )
     p.set_defaults(fn=_mark)
 
     p = sub.add_parser("adopt")

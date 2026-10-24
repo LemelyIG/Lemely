@@ -115,12 +115,14 @@ def check_first(
     others: Iterable[OtherMarks] = (),
     confidence: Mapping[str, float] | None = None,
     ambiguous: Iterable[str] = (),
+    flags: Mapping[str, str] | None = None,
     expected_total: int | None = None,
 ) -> dict[str, list[str]]:
     """The leaves a human checks first, each with its reasons, in question-id order.
 
     A leaf is listed when another source's mark differs from the reference, when the
-    reference's confidence is below `LOW_CONFIDENCE`, or when its tick is ambiguous.
+    reference's confidence is below `LOW_CONFIDENCE`, when its tick is ambiguous, or
+    when *flags* names it (id to reason, e.g. a leaf the model skipped or over-marked).
     When the reference total misses *expected_total* (the teacher's total), the gap
     sits among the listed leaves; with none listed, among every leaf that could hold
     it (below full marks for a total that is short, above zero for one that is over);
@@ -129,8 +131,10 @@ def check_first(
     """
     sources = list(others)
     ambiguous = list(ambiguous)
+    flags = dict(flags or {})
     unknown = sorted(
         {q for q in ambiguous if q not in reference}
+        | {q for q in flags if q not in reference}
         | {q for o in sources for q in o.marks if q not in reference}
     )
     if unknown:
@@ -149,6 +153,8 @@ def check_first(
                 reasons[qid].append(f"confidence {conf:.2f} below {LOW_CONFIDENCE}")
     for qid in ambiguous:
         reasons[qid].append("ambiguous tick")
+    for qid, reason in flags.items():
+        reasons[qid].append(reason)
     if expected_total is not None:
         total = reference_total(reference)
         gap = expected_total - total
