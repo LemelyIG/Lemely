@@ -101,6 +101,7 @@ MARKED_INPUT_REASON = (
     "the only copy of this MCQ script carries the teacher's ticks, so the marked copy is the "
     "pipeline input (user decision)"
 )
+MARKED_SOURCE = "marked_copy_is_input"
 MISSING_NOTE = "not returned by the model"
 _CLAMP_PREFIX = "model gave "
 
@@ -162,8 +163,15 @@ def flags_from_notes(reference: Mapping[str, ref.ReferenceLeaf]) -> dict[str, st
 
 def _read_marks(path: Path) -> list[dict[str, Any]]:
     """The rows of a ``marks_<mode>.json``, checked for shape; malformed input raises."""
+    rows: list[dict[str, Any]] = _read_marks_payload(path)["leaves"]
+    return rows
+
+
+def _read_marks_payload(path: Path) -> dict[str, Any]:
+    """A ``marks_<mode>.json`` parsed once and checked for shape; malformed input raises."""
     try:
-        rows = json.loads(path.read_text(encoding="utf-8"))["leaves"]
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        rows = payload["leaves"]
         for row in rows:
             str(row["question_id"])
             int(row["mark"])
@@ -176,7 +184,9 @@ def _read_marks(path: Path) -> list[dict[str, Any]]:
     duplicated = _duplicates([str(r["question_id"]) for r in rows])
     if duplicated:
         raise ref.ReferenceStateError(f"{path} repeats a question id: {', '.join(duplicated)}")
-    return list(rows)
+    if not isinstance(payload, dict):
+        raise ref.ReferenceStateError(f"{path} is malformed: not an object")
+    return dict(payload)
 
 
 def marks_from_correction(path: Path) -> dict[str, int]:
@@ -296,14 +306,16 @@ def _mark(args: argparse.Namespace) -> int:
     script_dir: Path = args.root / args.key
     if ref.is_frozen(script_dir):
         raise ref.ReferenceStateError(f"{script_dir} is frozen")
+    if args.allow_marked_input and args.mode != "mcq":
+        raise ref.ReferenceStateError("--allow-marked-input is only valid with --mode mcq")
     if args.mode == "full":
+        if args.truth is not None:
+            raise ref.ReferenceStateError("--mode full reads no copy: drop --truth")
         return _mark_full(args, script_dir)
     if args.mode in ("teacher", "mcq") and args.truth is None:
         raise ref.ReferenceStateError(f"--mode {args.mode} reads the marked copy: pass --truth")
     scheme = _scheme(script_dir)
     scan = Path(_inputs(script_dir)["scan"])
-    if args.allow_marked_input and args.mode != "mcq":
-        raise ref.ReferenceStateError("--allow-marked-input is only valid with --mode mcq")
     truth_sha: str | None = None
     marked_input = False
     if args.mode in ("teacher", "mcq"):
@@ -365,18 +377,21 @@ def _adopt(args: argparse.Namespace) -> int:
     script_dir: Path = args.root / args.key
     if ref.is_frozen(script_dir):
         raise ref.ReferenceStateError(f"{script_dir} is frozen")
-    rows = _read_marks(script_dir / f"marks_{args.source}.json")
+    payload = _read_marks_payload(script_dir / f"marks_{args.source}.json")
     sources: dict[str, ref.Source] = {"opus": "opus", "full": "fixture_full"}
     source: ref.Source = sources.get(args.source, "teacher_tick")
-    leaves = leaves_from_marks(rows, _scheme(script_dir), source)
+    leaves = leaves_from_marks(payload["leaves"], _scheme(script_dir), source)
     if args.source == "full":
-        basis = json.loads((script_dir / "marks_full.json").read_text("utf-8"))["basis"]
-        leaves = [replace(leaf, note=str(basis)) for leaf in leaves]
-    marked = bool(
-        json.loads((script_dir / f"marks_{args.source}.json").read_text("utf-8")).get(
-            "marked_input"
-        )
-    )
+        basis = payload.get("basis")
+        if not isinstance(basis, str) or not basis.strip():
+            raise ref.ReferenceStateError("marks_full.json has no basis: rerun `mark --mode full`")
+        leaves = [replace(leaf, note=basis) for leaf in leaves]
+    marked = payload.get("marked_input") is True
+    if marked:
+        stamp = f"marked copy is the model input: {payload.get('marked_input_reason', '')}"
+        leaves = [
+            replace(leaf, note=f"{leaf.note}; {stamp}" if leaf.note else stamp) for leaf in leaves
+        ]
     (script_dir / "adopted.json").write_text(
         json.dumps({"from": args.source, "marked_input": marked}) + "\n", encoding="utf-8"
     )
@@ -419,6 +434,11 @@ def _review_list(args: argparse.Namespace) -> int:
                 f"{', '.join(unmatched)}"
             )
         others.append(ref.OtherMarks(name, prior))
+    if adopted == "full" and not any(o.name == "opus" for o in others):
+        print(
+            "warning: no opus marks to compare: check-first list is empty for that reason",
+            file=sys.stderr,
+        )
     flagged = ref.check_first(
         reference,
         others=others,
@@ -466,13 +486,25 @@ def _override(args: argparse.Namespace) -> int:
     return 0
 
 
-def _marked_input_recorded(script_dir: Path) -> bool:
-    """True when adopted.json or marks_mcq.json records the user-approved marked-copy input."""
-    for name in ("adopted.json", "marks_mcq.json"):
-        path = script_dir / name
-        if path.is_file() and json.loads(path.read_text("utf-8")).get("marked_input") is True:
-            return True
-    return False
+def _marked_input_recorded(script_dir: Path, scan_sha: str) -> bool:
+    """True when the adopted marks are the MCQ ones and were made with the scan as input.
+
+    A ``marks_mcq.json`` counts only if it records ``marked_input`` and a truth sha256
+    equal to the current scan's, so a stale file from another scan does not.
+    """
+    adopted = script_dir / "adopted.json"
+    marks = script_dir / "marks_mcq.json"
+    if not adopted.is_file() or not marks.is_file():
+        return False
+    if json.loads(adopted.read_text("utf-8")).get("from") != "mcq":
+        return False
+    payload = json.loads(marks.read_text("utf-8"))
+    truth = payload.get("truth")
+    return (
+        payload.get("marked_input") is True
+        and isinstance(truth, dict)
+        and truth.get("sha256") == scan_sha
+    )
 
 
 def _freeze(args: argparse.Namespace) -> int:
@@ -486,14 +518,16 @@ def _freeze(args: argparse.Namespace) -> int:
     scan = Path(_inputs(script_dir)["scan"])
     if scan.is_file():
         scan_sha = ref.sha256_file(scan)
+        marked = _marked_input_recorded(script_dir, scan_sha)
         for name, path in list(sources.items()):
             if path.is_file() and ref.sha256_file(path) == scan_sha:
-                if not _marked_input_recorded(script_dir):
+                if not marked:
                     raise ref.ReferenceStateError(
                         f"--source {name} is the scan itself: the marked copy must not be the input"
                     )
                 del sources[name]
-                sources[f"marked_copy_is_input={name}"] = path
+        if marked:
+            sources[MARKED_SOURCE] = scan
     entry = ref.freeze(
         script_dir,
         key=args.key,

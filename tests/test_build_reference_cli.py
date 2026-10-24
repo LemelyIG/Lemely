@@ -753,7 +753,47 @@ def test_allow_marked_input_is_refused_outside_mcq_mode(
     assert not fake.calls
 
 
-def test_freeze_allows_the_scan_as_a_source_only_when_marked_input_is_recorded(
+def _mcq_marked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, flag: bool = True
+) -> tuple[Path, Path]:
+    """A script whose MCQ marks were made with the scan itself as the input."""
+    fake = _FakeClient(br.ReferenceReply(leaves=[]))
+    root, spend = _mark_setup(tmp_path, monkeypatch, fake)
+    same = tmp_path / "copy.pdf"
+    same.write_bytes(b"%PDF scan")
+    argv = [
+        "--root",
+        str(root),
+        "--spend-file",
+        str(spend),
+        "mark",
+        "k",
+        "--mode",
+        "mcq",
+        "--truth",
+        str(same),
+    ]
+    assert br.main([*argv, "--allow-marked-input"]) == 0
+    assert br.main(["--root", str(root), "adopt", "k", "--from", "mcq"]) == 0
+    return root, root / "k"
+
+
+def test_freeze_pins_marked_input_in_the_manifest_and_the_reference_without_any_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, d = _mcq_marked(tmp_path, monkeypatch)
+    assert "marked copy is the model input" in (d / ref.REFERENCE_FILE).read_text()
+    assert br.main(["--root", str(root), "freeze", "k"]) == 0
+    (entry,) = ref.read_manifest(root / ref.MANIFEST_FILE)
+    assert list(entry.source_sha256) == ["marked_copy_is_input"]
+    twin = tmp_path / "twin.pdf"
+    twin.write_bytes(b"%PDF scan")
+    assert br.main(["--root", str(root), "freeze", "k", "--source", f"copy={twin}"]) == 0
+    (entry,) = ref.read_manifest(root / ref.MANIFEST_FILE)
+    assert list(entry.source_sha256) == ["marked_copy_is_input"]
+
+
+def test_freeze_refuses_the_scan_as_a_source_when_marked_input_is_not_recorded(
     tmp_path: Path,
 ) -> None:
     root, d = _adopted(tmp_path)
@@ -763,9 +803,59 @@ def test_freeze_allows_the_scan_as_a_source_only_when_marked_input_is_recorded(
     args = ["--root", str(root), "freeze", "k", "--source", f"copy={twin}"]
     assert br.main(args) == 2
     (d / "marks_mcq.json").write_text(json.dumps({"leaves": [], "marked_input": True}))
-    assert br.main(args) == 0
-    (entry,) = ref.read_manifest(root / ref.MANIFEST_FILE)
-    assert list(entry.source_sha256) == ["marked_copy_is_input=copy"]
+    (d / "adopted.json").write_text(json.dumps({"from": "mcq", "marked_input": True}))
+    assert br.main(args) == 2
+
+
+def test_a_stale_marks_mcq_for_another_scan_does_not_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, d = _mcq_marked(tmp_path, monkeypatch)
+    (tmp_path / "scan.pdf").write_bytes(b"%PDF a different scan")
+    twin = tmp_path / "twin.pdf"
+    twin.write_bytes(b"%PDF a different scan")
+    assert br.main(["--root", str(root), "freeze", "k", "--source", f"copy={twin}"]) == 2
+    assert not ref.is_frozen(d)
+
+
+def test_marked_input_counts_only_when_the_adopted_marks_are_the_mcq_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, d = _mcq_marked(tmp_path, monkeypatch)
+    (d / "adopted.json").write_text(json.dumps({"from": "opus", "marked_input": False}))
+    twin = tmp_path / "twin.pdf"
+    twin.write_bytes(b"%PDF scan")
+    assert br.main(["--root", str(root), "freeze", "k", "--source", f"copy={twin}"]) == 2
+
+
+def test_allow_marked_input_and_truth_are_refused_in_full_mode(tmp_path: Path) -> None:
+    root, d = _full_setup(tmp_path)
+    truth = tmp_path / "t.pdf"
+    truth.write_bytes(b"%PDF")
+    base = ["--root", str(root), "mark", "k", "--mode", "full", "--basis", "b"]
+    assert br.main([*base, "--allow-marked-input"]) == 2
+    assert br.main([*base, "--truth", str(truth)]) == 2
+    assert not (d / "marks_full.json").exists()
+
+
+def test_adopt_full_without_a_basis_is_an_error_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, d = _full_setup(tmp_path)
+    _write_marks(d, "full", [_row("1a", 2), _row("1b", 1)])
+    assert br.main(["--root", str(root), "adopt", "k", "--from", "full"]) == 2
+    assert capsys.readouterr().err.startswith("error:")
+
+
+def test_review_list_warns_when_full_has_no_opus_marks_to_compare(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, d = _full_setup(tmp_path)
+    assert br.main(["--root", str(root), "mark", "k", "--mode", "full", "--basis", "b"]) == 0
+    assert br.main(["--root", str(root), "adopt", "k", "--from", "full"]) == 0
+    capsys.readouterr()
+    assert br.main(["--root", str(root), "review-list", "k"]) == 0
+    assert "no opus marks to compare" in capsys.readouterr().err
 
 
 def _full_setup(tmp_path: Path) -> tuple[Path, Path]:
