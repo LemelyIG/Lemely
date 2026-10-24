@@ -46,6 +46,7 @@ class _FakeFiles:
         self.max_in_flight = 0
         self.hold: threading.Barrier | None = None
         self.bug_on: int | None = None  # the page whose upload raises a TypeError
+        self.slow = 0.0  # seconds each upload takes
         self.wave = 6  # with a gate: uploads in flight before the failing page fails
         self.gate: threading.Event | None = None  # pages other than 1 wait for this
 
@@ -59,6 +60,7 @@ class _FakeFiles:
         try:
             if self.hold is not None:
                 self.hold.wait(timeout=5)
+            threading.Event().wait(self.slow)  # not time.sleep: tests patch that
             if self.gate is not None and page != 1:
                 self.gate.wait(timeout=5)
             if error is not None:
@@ -418,6 +420,20 @@ class ClaudeImageUploadsUnitTests(unittest.TestCase):
         self.assertEqual(files.attempts, ClaudeImageUploads.UPLOAD_CONCURRENCY)
         uploads.delete()
         self.assertEqual(len(files.deleted), len(files.uploads))
+
+    def test_the_callers_concurrency_bounds_the_uploads(self) -> None:
+        pages = [_page(10 + 30 * i) for i in range(5)]
+        files = _FakeFiles()
+        files.slow = 0.05  # overlap would show if the bound were ignored
+        uploads = ClaudeImageUploads(
+            lambda: SimpleNamespace(files=files),
+            pages,
+            token_budget=95_000,
+            floor_px=1568,
+            concurrency=1,
+        )
+        uploads.ensure()
+        self.assertEqual(files.max_in_flight, 1)
 
     def test_matches_only_the_same_pages(self) -> None:
         uploads = ClaudeImageUploads(

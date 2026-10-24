@@ -1082,6 +1082,7 @@ class ImageUploads:
                     token_budget=g.claude_image_token_budget,
                     floor_px=g.claude_image_floor_px,
                     enhance=g.claude_image_enhance is True,
+                    concurrency=self._concurrency,
                 )
             return self._claude
 

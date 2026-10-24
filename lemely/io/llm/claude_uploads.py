@@ -48,7 +48,7 @@ class ClaudeImageUploads:
     UPLOAD_ATTEMPTS = 3
     #: Seconds slept before try 2, 3, ... of one page.
     UPLOAD_BACKOFF_SECONDS = (0.5, 1.5)
-    #: Pages uploaded at once (and fitted at once): uploads take ~2 s each, so serial
+    #: Default pages uploaded at once (and fitted at once): uploads take ~2 s each, so serial
     #: cost grew with the page count; a small pool stays well inside API rate limits.
     UPLOAD_CONCURRENCY = 6
 
@@ -60,6 +60,7 @@ class ClaudeImageUploads:
         token_budget: int,
         floor_px: int,
         enhance: bool = True,
+        concurrency: int | None = None,
     ) -> None:
         # ``raw_client`` is resolved on the first upload, never earlier: a cached
         # reply is replayed without an Anthropic key, so building this must not need one.
@@ -69,6 +70,8 @@ class ClaudeImageUploads:
         self._token_budget = token_budget
         self._floor_px = floor_px
         self._enhance = enhance
+        # The caller's bound (``gemini.upload_concurrency``); the class default otherwise.
+        self._concurrency = max(1, concurrency or self.UPLOAD_CONCURRENCY)
         self._lock = threading.Lock()
         self._fitted: FittedImages | None = None
         self._inline: FittedImages | None = None
@@ -113,7 +116,7 @@ class ClaudeImageUploads:
                     token_budget=self._token_budget,
                     floor_px=self._floor_px,
                     enhance=self._enhance,
-                    workers=self.UPLOAD_CONCURRENCY,
+                    workers=self._concurrency,
                 )
                 self._page_ids = tuple(self._upload_all(self._raw, fitted.images))
             except _UploadFailedError as exc:
@@ -152,7 +155,7 @@ class ClaudeImageUploads:
                 bug = bug or exc
                 stop.set()
 
-        with ThreadPoolExecutor(max_workers=min(self.UPLOAD_CONCURRENCY, len(images) or 1)) as pool:
+        with ThreadPoolExecutor(max_workers=min(self._concurrency, len(images) or 1)) as pool:
             list(pool.map(run, range(1, len(images) + 1)))
         uploaded = [i for i in ids if i is not None]
         self._file_ids.extend(uploaded)

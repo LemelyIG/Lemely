@@ -3304,10 +3304,13 @@ def test_a_claude_second_read_sends_the_page_images_to_anthropic(
 
     uploaded: list[str] = []
     deleted: list[str] = []
+    upload_lock = threading.Lock()
 
     def upload(**kwargs: Any) -> SimpleNamespace:
-        uploaded.append(kwargs["file"][0])
-        return SimpleNamespace(id=f"file_{len(uploaded)}")
+        name = kwargs["file"][0]  # "page-N.png": ids are per-page slots, not arrival order
+        with upload_lock:
+            uploaded.append(name)
+        return SimpleNamespace(id=f"file_{name.removeprefix('page-').removesuffix('.png')}")
 
     anthropic_fake = SimpleNamespace(
         messages=SimpleNamespace(create=create),
