@@ -707,3 +707,62 @@ def test_crop_page_out_of_range_is_an_error(
             )
             == 2
         )
+
+
+def test_mcq_may_take_the_marked_copy_as_input_only_when_told_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeClient(br.ReferenceReply(leaves=[]))
+    root, spend = _mark_setup(tmp_path, monkeypatch, fake)
+    same = tmp_path / "copy.pdf"
+    same.write_bytes(b"%PDF scan")
+    base = ["--root", str(root), "--spend-file", str(spend), "mark", "k", "--truth", str(same)]
+    assert br.main([*base, "--mode", "mcq"]) == 2
+    assert not fake.calls
+    assert br.main([*base, "--mode", "mcq", "--allow-marked-input"]) == 0
+    data = json.loads((root / "k" / "marks_mcq.json").read_text())
+    assert data["marked_input"] is True and data["marked_input_reason"]
+
+
+def test_allow_marked_input_is_refused_outside_mcq_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeClient(br.ReferenceReply(leaves=[]))
+    root, spend = _mark_setup(tmp_path, monkeypatch, fake)
+    same = tmp_path / "copy.pdf"
+    same.write_bytes(b"%PDF scan")
+    for mode in ("teacher", "opus"):
+        assert (
+            br.main(
+                [
+                    "--root",
+                    str(root),
+                    "--spend-file",
+                    str(spend),
+                    "mark",
+                    "k",
+                    "--mode",
+                    mode,
+                    "--truth",
+                    str(same),
+                    "--allow-marked-input",
+                ]
+            )
+            == 2
+        )
+    assert not fake.calls
+
+
+def test_freeze_allows_the_scan_as_a_source_only_when_marked_input_is_recorded(
+    tmp_path: Path,
+) -> None:
+    root, d = _adopted(tmp_path)
+    (tmp_path / "s.pdf").write_bytes(b"%PDF scan")
+    twin = tmp_path / "twin.pdf"
+    twin.write_bytes(b"%PDF scan")
+    args = ["--root", str(root), "freeze", "k", "--source", f"copy={twin}"]
+    assert br.main(args) == 2
+    (d / "marks_mcq.json").write_text(json.dumps({"leaves": [], "marked_input": True}))
+    assert br.main(args) == 0
+    (entry,) = ref.read_manifest(root / ref.MANIFEST_FILE)
+    assert list(entry.source_sha256) == ["marked_copy_is_input=copy"]

@@ -96,6 +96,10 @@ def scheme_leaves(scheme: MarkScheme) -> dict[str, int]:
     return {q.id: q.marks for q in scheme.all_questions_flat() if q.marks > 0 and not q.parts}
 
 
+MARKED_INPUT_REASON = (
+    "the only copy of this MCQ script carries the teacher's ticks, so the marked copy is the "
+    "pipeline input (user decision)"
+)
 MISSING_NOTE = "not returned by the model"
 _CLAMP_PREFIX = "model gave "
 
@@ -273,14 +277,19 @@ def _mark(args: argparse.Namespace) -> int:
         raise ref.ReferenceStateError(f"--mode {args.mode} reads the marked copy: pass --truth")
     scheme = _scheme(script_dir)
     scan = Path(_inputs(script_dir)["scan"])
+    if args.allow_marked_input and args.mode != "mcq":
+        raise ref.ReferenceStateError("--allow-marked-input is only valid with --mode mcq")
     truth_sha: str | None = None
+    marked_input = False
     if args.mode in ("teacher", "mcq"):
         truth_sha = ref.sha256_file(args.truth)
         if scan.is_file() and truth_sha == ref.sha256_file(scan):
-            raise ref.ReferenceStateError(
-                f"--truth {args.truth} is the prepared scan itself: the marked copy must not be "
-                "the pipeline input"
-            )
+            if not args.allow_marked_input:
+                raise ref.ReferenceStateError(
+                    f"--truth {args.truth} is the prepared scan itself: the marked copy must not "
+                    "be the pipeline input (mcq only: --allow-marked-input)"
+                )
+            marked_input = True
     pages_from = args.truth if truth_sha is not None else scan
     ledger = SpendLedger(args.spend_file)
     check_can_start(ledger.spent(), {"anthropic": args.max_usd}, SpendCaps())
@@ -319,6 +328,9 @@ def _mark(args: argparse.Namespace) -> int:
     payload: dict[str, Any] = {"leaves": [leaf.model_dump() for leaf in reply.leaves]}
     if truth_sha is not None:
         payload["truth"] = {"path": str(args.truth), "sha256": truth_sha}
+    if marked_input:
+        payload["marked_input"] = True
+        payload["marked_input_reason"] = MARKED_INPUT_REASON
     out.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {out} ({len(reply.leaves)} leaves)")
     return 0
@@ -331,8 +343,13 @@ def _adopt(args: argparse.Namespace) -> int:
     rows = _read_marks(script_dir / f"marks_{args.source}.json")
     source: ref.Source = "opus" if args.source == "opus" else "teacher_tick"
     leaves = leaves_from_marks(rows, _scheme(script_dir), source)
+    marked = bool(
+        json.loads((script_dir / f"marks_{args.source}.json").read_text("utf-8")).get(
+            "marked_input"
+        )
+    )
     (script_dir / "adopted.json").write_text(
-        json.dumps({"from": args.source}) + "\n", encoding="utf-8"
+        json.dumps({"from": args.source, "marked_input": marked}) + "\n", encoding="utf-8"
     )
     ref.write_reference(script_dir / ref.REFERENCE_FILE, leaves)
     print(f"reference {args.key}: {sum(x.mark for x in leaves)} marks from marks_{args.source}")
@@ -420,6 +437,15 @@ def _override(args: argparse.Namespace) -> int:
     return 0
 
 
+def _marked_input_recorded(script_dir: Path) -> bool:
+    """True when adopted.json or marks_mcq.json records the user-approved marked-copy input."""
+    for name in ("adopted.json", "marks_mcq.json"):
+        path = script_dir / name
+        if path.is_file() and json.loads(path.read_text("utf-8")).get("marked_input") is True:
+            return True
+    return False
+
+
 def _freeze(args: argparse.Namespace) -> int:
     script_dir: Path = args.root / args.key
     sources: dict[str, Path] = {}
@@ -431,11 +457,14 @@ def _freeze(args: argparse.Namespace) -> int:
     scan = Path(_inputs(script_dir)["scan"])
     if scan.is_file():
         scan_sha = ref.sha256_file(scan)
-        for name, path in sources.items():
+        for name, path in list(sources.items()):
             if path.is_file() and ref.sha256_file(path) == scan_sha:
-                raise ref.ReferenceStateError(
-                    f"--source {name} is the scan itself: the marked copy must not be the input"
-                )
+                if not _marked_input_recorded(script_dir):
+                    raise ref.ReferenceStateError(
+                        f"--source {name} is the scan itself: the marked copy must not be the input"
+                    )
+                del sources[name]
+                sources[f"marked_copy_is_input={name}"] = path
     entry = ref.freeze(
         script_dir,
         key=args.key,
@@ -473,6 +502,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("key")
     p.add_argument("--mode", choices=sorted(_SYSTEM_FOR), required=True)
     p.add_argument("--truth", type=Path)
+    p.add_argument(
+        "--allow-marked-input",
+        action="store_true",
+        help="mcq only: the ticked copy is the script's only copy and may be the input",
+    )
     p.add_argument(
         "--max-usd", type=_positive_usd, default=1.50, help="projected Anthropic cost, above 0"
     )
