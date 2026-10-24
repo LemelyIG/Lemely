@@ -10,6 +10,7 @@ import textwrap
 import threading
 import unittest
 from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
 from pydantic import BaseModel
@@ -134,3 +135,47 @@ class WiringTests(unittest.TestCase):
                 for name in ("ScanMetadataExtractor", "resolve_mark_scheme", "grade_paper"):
                     (line,) = _call_lines(inspect.getsource(route), name)
                     self.assertTrue(scope.lineno < line <= end, f"{name} outside the scope")
+
+
+def _function(path: str, name: str) -> ast.AST:
+    tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+    (node,) = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name]
+    return node
+
+
+def _inside_scope(node: ast.AST, call: str) -> list[bool]:
+    """For every call to *call* under *node*: whether a `with script_cost_scope(...)` holds it."""
+    scopes = [
+        w
+        for w in ast.walk(node)
+        if isinstance(w, ast.With)
+        and any(
+            isinstance(i.context_expr, ast.Call)
+            and getattr(i.context_expr.func, "id", None) == "script_cost_scope"
+            for i in w.items
+        )
+    ]
+    calls = [
+        n
+        for n in ast.walk(node)
+        if isinstance(n, ast.Call)
+        and (getattr(n.func, "id", None) == call or getattr(n.func, "attr", None) == call)
+    ]
+    return [any(s.lineno < c.lineno <= (s.end_lineno or 0) for s in scopes) for c in calls]
+
+
+class CliAndBatchWiringTests(unittest.TestCase):
+    def test_cli_and_gradio_paid_calls_are_inside_a_scope(self) -> None:
+        cases = [
+            ("lemely/app/cli.py", "correct_paper_cmd", "hybrid_correct_paper"),
+            ("lemely/app/cli.py", "extract_answers_cmd", "extractor"),
+            ("lemely/app/cli.py", "extract_answers_cmd", "ScanMetadataExtractor"),
+        ]
+        for path, fn, call in cases:
+            with self.subTest(fn=fn, call=call):
+                inside = _inside_scope(_function(path, fn), call)
+                self.assertTrue(inside, f"{call} not found in {fn}")
+                self.assertTrue(all(inside), f"{call} outside script_cost_scope in {fn}")
+        tree = ast.parse(Path("lemely/app/gradio_app.py").read_text(encoding="utf-8"))
+        inside = _inside_scope(tree, "extractor")
+        self.assertTrue(inside and all(inside), "gradio extraction outside script_cost_scope")

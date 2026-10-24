@@ -188,7 +188,7 @@ def build_app(settings: Any = None) -> Any:
     from lemely.core.schemas import AccuracyReport
     from lemely.io.answer_extraction import GeminiAnswerExtractor
     from lemely.io.correction_ai import correct_paper as hybrid_correct_paper
-    from lemely.io.gemini import GeminiClient
+    from lemely.io.gemini import GeminiClient, script_cost_scope
     from lemely.io.subject import aggregate_subject
     from lemely.runtime.config import load_settings as _load_settings
 
@@ -230,7 +230,8 @@ def build_app(settings: Any = None) -> Any:
                 ms_path = parse_mark_scheme_path_from_label(ms_label)
                 ms = MarkScheme.model_validate_json(ms_path.read_text(encoding="utf-8"))
                 extractor = GeminiAnswerExtractor(GeminiClient(settings))
-                result = extractor(scan_path=Path(scan_file), mark_scheme=ms)
+                with script_cost_scope(settings, script_key=f"gradio:{Path(scan_file).name}"):
+                    result = extractor(scan_path=Path(scan_file), mark_scheme=ms)
                 result_holder["rows"] = extracted_to_table_rows(result)
                 result_holder["json"] = result.model_dump_json(indent=2)
                 result_holder["binding"] = binding_summary(result)
