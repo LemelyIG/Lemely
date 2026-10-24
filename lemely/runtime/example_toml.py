@@ -103,6 +103,10 @@ def render_example_toml() -> str:
     lines.append("# the gate compares (model, thinking) tuples, not model names alone.")
     lines.append(f'# escalation_model = "{s.gemini.escalation_model}"')
     lines.append(f"# escalation_confidence_threshold = {s.gemini.escalation_confidence_threshold}")
+    lines.append(
+        "# At most this many escalations per script, most uncertain first (unset: no cap)."
+    )
+    lines.append("# escalation_cap_per_script = 2")
     lines.append("# Per-model human-review threshold: a final AI mark from a listed model is")
     lines.append("# flagged for teacher review below its value (unlisted models: 0.90). A table")
     lines.append("# you set REPLACES the shipped one (no merge). Applies to the marking step;")

@@ -183,6 +183,9 @@ class GeminiSettings(BaseModel):
     # raising that one costs teacher time.
     escalation_model: str | None = "gemini-3.8-flash"
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+    # Sub-project C: at most this many escalation calls per script, most uncertain
+    # leaves first (decided after every leaf is marked). None: escalate inline, as before.
+    escalation_cap_per_script: int | None = Field(default=None, ge=0)
     # Per-model human-review threshold: model name -> the confidence below which
     # a FINAL AI mark from that model is flagged ``needs_teacher_review``. A model
     # missing from the map uses ``REVIEW_CONFIDENCE_THRESHOLD`` (0.90). Keyed by

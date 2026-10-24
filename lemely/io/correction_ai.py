@@ -9,7 +9,7 @@ import os
 import re
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Literal, NamedTuple, TypedDict
+from typing import TYPE_CHECKING, Literal, NamedTuple, TypedDict, cast
 
 import structlog
 
@@ -418,6 +418,9 @@ class AICorrector:
         #: The model whose response the last :meth:`mark_question` returned (the
         #: escalation model when it escalated); ``None`` before the first call.
         self.last_mark_model: str | None = None
+        #: Leaves whose escalation the per-script cap postponed: id -> (question, system
+        #: prompt, user prompt, prefix kwargs, confidence). See :meth:`escalate_deferred`.
+        self.deferred: dict[str, tuple[Question, str, str, _PrefixKwargs, float]] = {}
 
     def review_threshold(self) -> float:
         """The review threshold for the last mark: :func:`review_threshold_for` its model."""
@@ -704,29 +707,80 @@ class AICorrector:
             != last_call
             and result.confidence < g.escalation_confidence_threshold
         ):
-            bus.publish(
-                EventType.GEMINI_ESCALATE,
-                question_id=question.id,
-                confidence=result.confidence,
-                escalation_model=escalation_model,
-            )
-            result = self._client.generate_structured(
-                system_prompt=system_prompt,
-                user_prompt=(
-                    user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
-                    "Please re-evaluate carefully before responding."
+            cap = g.escalation_cap_per_script
+            if isinstance(cap, int) and not isinstance(cap, bool):
+                # Sub-project C: decided after every leaf is marked (escalate_deferred).
+                self.deferred[question.id] = (
+                    question,
+                    system_prompt,
+                    user_prompt,
+                    prefix_kwargs,
+                    result.confidence,
+                )
+                return result, last_call[0]
+            return (
+                self._escalate(
+                    question, system_prompt, user_prompt, prefix_kwargs, result.confidence
                 ),
-                response_schema=self._mark_schema(),
-                prompt_version=VERSION,
-                extra_cache_key=f"q={question.id}:escalated",
-                task_tag="escalation",
-                model=escalation_model,
-                attempt="escalation",
-                question_id=question.id,
-                **prefix_kwargs,
+                escalation_model,
             )
-            return result, escalation_model
         return result, correction_model
+
+    def _escalate(
+        self,
+        question: Question,
+        system_prompt: str,
+        user_prompt: str,
+        prefix_kwargs: _PrefixKwargs,
+        confidence: float,
+    ) -> AIMarkResponse:
+        """Step 2: the escalation call (today's prompt, cache key and tag)."""
+        g = self._client._settings.gemini
+        escalation_model = cast("str", g.escalation_model)
+        bus.publish(
+            EventType.GEMINI_ESCALATE,
+            question_id=question.id,
+            confidence=confidence,
+            escalation_model=escalation_model,
+        )
+        return self._client.generate_structured(
+            system_prompt=system_prompt,
+            user_prompt=(
+                user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
+                "Please re-evaluate carefully before responding."
+            ),
+            response_schema=self._mark_schema(),
+            prompt_version=VERSION,
+            extra_cache_key=f"q={question.id}:escalated",
+            task_tag="escalation",
+            model=escalation_model,
+            attempt="escalation",
+            question_id=question.id,
+            **prefix_kwargs,
+        )
+
+    def escalate_deferred(self) -> dict[str, AIMarkResponse]:
+        """Escalate the most uncertain deferred leaves, up to the cap; their new responses."""
+        cap = self._client._settings.gemini.escalation_cap_per_script
+        if not isinstance(cap, int) or isinstance(cap, bool):
+            return {}
+        order = sorted(self.deferred, key=lambda qid: (self.deferred[qid][4], qid))[:cap]
+        out: dict[str, AIMarkResponse] = {}
+        for qid in order:
+            question, system_prompt, user_prompt, prefix_kwargs, confidence = self.deferred[qid]
+            result = self._escalate(question, system_prompt, user_prompt, prefix_kwargs, confidence)
+            # CODE-set only, as in mark_question: the model never claims an ECF re-mark.
+            if result.point_verdicts:
+                result = result.model_copy(
+                    update={
+                        "point_verdicts": [
+                            pv.model_copy(update={"ecf_applied": False})
+                            for pv in result.point_verdicts
+                        ]
+                    }
+                )
+            out[qid] = result
+        return out
 
     def _resolved_thinking(self, tag: str, model: str, kind: str | None) -> int | str:
         """``resolved_thinking`` at the leaf kind the call runs at (tag-only when none)."""
@@ -3076,6 +3130,8 @@ def correct_paper(
         )
 
     prior_results_accumulated: dict[str, int] = {}  # question_id -> awarded_marks
+    #: Leaves whose escalation the per-script cap deferred: the arguments to rebuild them.
+    pending: dict[str, tuple[Question, str, str | None, float | None]] = {}
     # I7: for _point_was_awarded. Predates the post-loop `source_box`
     # assembly rewrite below -- every `CorrectedQuestion` stored here is the
     # pre-rewrite object, so a future reader of this dict always sees
@@ -3299,6 +3355,8 @@ def correct_paper(
         corrected.append(cq)
         prior_results_accumulated[q.id] = cq.awarded_marks
         corrected_by_id[q.id] = cq
+        if q.id in ai.deferred:
+            pending[q.id] = (q, student_answer or "", student_working, extraction_confidence)
         bus.publish(
             EventType.MARKING_PROGRESS,
             question_id=q.id,
@@ -3310,6 +3368,24 @@ def correct_paper(
             total=total_leaves,
         )
 
+    # Sub-project C: the capped escalations, most uncertain first, before adjudication.
+    if gemini_client is not None and ai is not None:
+        for qid, escalated_mark in ai.escalate_deferred().items():
+            dq, d_answer, d_working, d_extraction_confidence = pending[qid]
+            g_esc = gemini_client._settings.gemini
+            cq = _build_ai_corrected(
+                dq,
+                d_answer,
+                escalated_mark,
+                d_working,
+                d_extraction_confidence,
+                equivalence_gate=equivalence_gate,
+                review_threshold=review_threshold_for(g_esc, g_esc.escalation_model),
+            )
+            if ai.citations_on() and uncited(dq, escalated_mark):
+                cq = flag_uncited(cq)
+            corrected = [cq if c.question_id == qid else c for c in corrected]
+            corrected_by_id[qid] = cq
     corrected = [
         _attach_extraction_context(cq, answers, original, options, leaf_by_id) for cq in corrected
     ]
