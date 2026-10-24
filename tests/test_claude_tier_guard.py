@@ -16,6 +16,7 @@ from lemely.io.binding import chunked_read
 from lemely.io.binding.chunked_read import ChunkedLabelReader
 from lemely.io.binding.label_binder import LabelBinder
 from lemely.io.binding.orchestrate import chunked_reader_for
+from lemely.io.providers import ProviderError
 from tests.gemini_fakes import make_settings
 from tests.test_extraction_binding import _ROOT, _bind, _items, _Model, _run
 
@@ -60,11 +61,17 @@ def test_guarded_24_page_read_over_the_budget_is_chunked_and_logged() -> None:
         capture_logs() as logs,
     ):
         got = binder.read(
-            _PAGES, MagicMock(), uploads=MagicMock(), model="claude-haiku-5-5", extra_cache_key="k"
+            _PAGES,
+            MagicMock(),
+            uploads=MagicMock(),
+            model="claude-haiku-5-5",
+            extra_cache_key="k",
+            task_tag="extraction",
         )
     assert got is sentinel
     (line,) = [e for e in logs if e["event"] == "claude_tier_guard"]
     assert line["pages"] == 24 and line["model"] == "claude-haiku-5-5"
+    assert line["tag"] == "extraction"
     assert line["log_level"] == "warning"
 
 
@@ -74,7 +81,7 @@ def test_guarded_read_under_the_budget_is_not_chunked() -> None:
     with (
         patch.object(chunked_read, "estimate_floor_tokens", return_value=50_000),
         patch.object(ChunkedLabelReader, "read") as chunked,
-        patch.object(client, "generate_structured", return_value=MagicMock()),
+        patch.object(client, "generate_structured", return_value=MagicMock()) as single,
         capture_logs() as logs,
         # the single-call path's parsing is not under test
         contextlib.suppress(Exception),
@@ -87,6 +94,7 @@ def test_guarded_read_under_the_budget_is_not_chunked() -> None:
             extra_cache_key="k",
         )
     chunked.assert_not_called()
+    single.assert_called_once()
     assert "claude_tier_guard" not in [e["event"] for e in logs]
 
 
@@ -119,3 +127,10 @@ def test_run_binding_reads_a_haiku_script_in_chunks_with_chunking_off(
     ):
         _bind(tmp_path, scheme, model, read_model="claude-haiku-5-5", claude_chunked_read=False)
     assert "claude_tier_guard" in [e["event"] for e in logs]
+
+
+def test_an_unguarded_reader_still_raises_on_an_unreadable_page() -> None:
+    reader = ChunkedLabelReader(_client())
+    pages = [MagicMock(png_bytes=b"not a png", index=0)]
+    with pytest.raises(ProviderError):
+        reader.applies(pages, "claude-haiku-5-5")

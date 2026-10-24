@@ -543,7 +543,7 @@ def chunked_reader_for(client: GeminiClient, binding: BindingSettings) -> Chunke
     """
     if binding.claude_chunked_read is True:
         return ChunkedLabelReader(client)
-    for model in {binding.read_model, second_read_model(binding)}:
+    for model in (binding.read_model, second_read_model(binding)):
         if model is not None and is_anthropic_model(model):
             row = claude_row(model)
             if row is not None and row.tier_threshold_tokens is not None:
