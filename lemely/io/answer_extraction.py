@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import structlog
 from pydantic import BaseModel, GetJsonSchemaHandler, ValidationError
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema as pydantic_core_schema
@@ -1075,8 +1076,20 @@ class GeminiAnswerExtractor:
         (:func:`~lemely.io.run_cap.marking_run_slot`, #260, #271): a second
         call waits for the first to finish, and never fails for waiting.
         """
-        with marking_run_slot():
-            return self._extract(scan_path, mark_scheme)
+        started = time.monotonic()
+        outcome = "ok"
+        try:
+            with marking_run_slot():
+                return self._extract(scan_path, mark_scheme)
+        except BaseException as exc:
+            outcome = type(exc).__name__
+            raise
+        finally:
+            structlog.get_logger().bind(component="answer_extraction").info(
+                "extraction_stage_timing",
+                total_seconds=round(time.monotonic() - started, 3),
+                outcome=outcome,
+            )
 
     def _extract(self, scan_path: Path, mark_scheme: MarkScheme) -> ExtractedAnswers:
         """:meth:`__call__`'s work, under its run slot.
@@ -1096,7 +1109,13 @@ class GeminiAnswerExtractor:
         # PDF -- bounding boxes are documented for image inputs only, and one
         # call carrying every page keeps cross-page question context that a
         # per-page call would lose.
+        rasterise_started = time.monotonic()
         pages: list[RasterisedPage] = rasterise_scan_to_pages(scan_path)
+        structlog.get_logger().bind(component="answer_extraction").info(
+            "extraction_rasterised",
+            seconds=round(time.monotonic() - rasterise_started, 3),
+            pages=len(pages),
+        )
 
         # Carry-over from spec 2026-09-26 review: a page can be rendered
         # below EXTRACTION_DPI (lemely.io.scan_limits' downscale-on-oversize

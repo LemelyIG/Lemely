@@ -149,9 +149,21 @@ class ClaudeProvider:
         """
         if not req.images:
             return None, (), ()
+        started = time.monotonic()
+
+        def ready(route: str) -> None:
+            log.info(
+                "claude_pages_ready",
+                seconds=round(time.monotonic() - started, 3),
+                pages=len(req.images),
+                route=route,
+                tag=req.task_tag,
+            )
+
         if req.uploads is not None:
             try:
                 fitted, file_ids = req.uploads.ensure()
+                ready("files_api")
                 return fitted, (), file_ids
             except ExternalServiceError as exc:
                 log.warning("claude_files_api_fallback", error=str(exc)[:200], tag=req.task_tag)
@@ -162,6 +174,7 @@ class ClaudeProvider:
                 f"the {fitted.long_edge} px floor; one Claude request takes at most "
                 f"{image_fit.DEFAULT_BYTE_LIMIT} bytes of inline images"
             )
+        ready("inline")
         return fitted, fitted.images, ()
 
     def count_tokens(
