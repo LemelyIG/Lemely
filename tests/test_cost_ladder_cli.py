@@ -374,3 +374,92 @@ def test_dev_only_commands_refuse_ladder_flags(
     monkeypatch.setattr(cli, "resummarise", ran)
     monkeypatch.setattr(cli, "write_report", ran)
     assert cli.main(["--out-dir", str(tmp_path), *flags, *cmd]) == 2
+
+
+def test_inherited_claude_override_needs_the_key_before_spend(
+    seen: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("LEMELY_ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr(cli, "run_screen", lambda *a, **kw: seen.setdefault("spent", True))
+    b1 = tmp_path / "b1"
+    b1.mkdir()
+    (b1 / "summary.json").write_text(
+        json.dumps({"overrides": {"gemini.correction_model": "claude-haiku-5-5"}})
+    )
+    (b1 / "verdict.json").write_text(json.dumps({"passed": True}))
+    toml = tmp_path / "base.toml"
+    toml.write_text("[gemini]\n")
+    code = cli.main(
+        [
+            "--out-dir",
+            str(tmp_path),
+            "--config",
+            str(toml),
+            "screen",
+            "--label",
+            "b2",
+            "--against",
+            "b1",
+            "--set",
+            "gemini.correction_citations=true",
+        ]
+    )
+    assert code == 2 and "spent" not in seen
+    assert "correction=claude-haiku-5-5" in capsys.readouterr().err
+
+
+def test_baseline_needing_restart_exits_cleanly(
+    seen: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "baseline").mkdir()
+    (tmp_path / "baseline" / "summary.json").write_text("{}")
+    toml = tmp_path / "base.toml"
+    toml.write_text("[gemini]\n")
+    code = cli.main(
+        [
+            "--out-dir",
+            str(tmp_path),
+            "--config",
+            str(toml),
+            "--spend-file",
+            str(tmp_path / "s.json"),
+            "--max-run-usd",
+            "gemini=0.01",
+            "--max-run-usd",
+            "anthropic=0.01",
+            "--split",
+            "real",
+            "baseline",
+        ]
+    )
+    assert code == 2
+    assert "--restart-baseline" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("name", ["CorpusDigestMismatch", "UpstreamNotFrozen"])
+def test_pre_spend_runtime_refusals_exit_2(
+    seen: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    name: str,
+) -> None:
+    from lemely.accuracy.cost_ladder import runner
+
+    def refuse(label: str, sets: dict[str, object], **kw: Any) -> None:
+        if name == "UpstreamNotFrozen":
+            raise runner.UpstreamNotFrozen("b", ["correction"], ["extraction"])
+        raise runner.CorpusDigestMismatch("refused")
+
+    monkeypatch.setattr(cli, "run_screen", refuse)
+    assert cli.main(["--out-dir", str(tmp_path), "screen", "--label", "b"]) == 2
+    assert capsys.readouterr().err.startswith("error: ")

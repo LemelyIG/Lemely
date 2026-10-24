@@ -167,7 +167,7 @@ def require_gemini_key(environ: Mapping[str, str]) -> None:
         )
     if key != key.strip() or any(ch.isspace() for ch in key):
         raise RuntimeError(
-            "GEMINI_API_KEY contains whitespace; check the wrapper strips the key file's newline."
+            "GEMINI_API_KEY contains whitespace; check the exported value has no trailing newline."
         )
 
 
@@ -1181,7 +1181,7 @@ def run_baseline(
         hook: Callable[[], None] | None = None
         if split == "real":
             if base_summary.exists() and not restart:
-                raise RuntimeError(
+                raise LadderStateError(
                     f"{base_summary} exists; pass --restart-baseline to replace this baseline"
                 )
 
@@ -1283,7 +1283,7 @@ def _dev_baseline(
             base_cache.mkdir(parents=True, exist_ok=True)
 
         if not restart and base_cache.exists() and any(base_cache.iterdir()):
-            raise RuntimeError(
+            raise LadderStateError(
                 f"baseline cache {base_cache} is not empty; a baseline must start from an "
                 "empty cache so every call is live. Pass --restart-baseline to delete this "
                 "baseline (cache, baseline and A/A runs; spend is kept), or --aa-only to "

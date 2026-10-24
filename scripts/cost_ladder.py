@@ -20,6 +20,7 @@ The default spend ledger is per worktree (repo-relative): run all ladder command
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -34,7 +35,9 @@ from lemely.accuracy.cost_ladder.report import write_flip, write_report
 from lemely.accuracy.cost_ladder.runner import (
     BASELINE_LABEL,
     DEFAULT_LIVE_TAGS,
+    CorpusDigestMismatch,
     LadderStateError,
+    UpstreamNotFrozen,
     apply_overrides,
     flip_verdict,
     parse_override_value,
@@ -86,6 +89,8 @@ class _Refusal(Exception):
 
 # Everything else (a pydantic error, a corrupt file) surfaces with its traceback.
 _REFUSALS = (
+    CorpusDigestMismatch,
+    UpstreamNotFrozen,
     _Refusal,
     LadderStateError,
     ReferenceDrift,
@@ -166,7 +171,13 @@ def _baseline(args: argparse.Namespace) -> int:
 
 def _screen(args: argparse.Namespace) -> int:
     sets = _parse_sets(args.set)
-    settings = _live(args, sets)
+    # run_screen stacks on the --against rung's overrides, so the key check must see them too
+    against_summary = args.out_dir / args.against / "summary.json"
+    inherited: dict[str, object] = {}
+    if against_summary.is_file():
+        data = json.loads(against_summary.read_text(encoding="utf-8"))
+        inherited = dict(data.get("overrides") or {})
+    settings = _live(args, {**inherited, **sets})
     live_tags = tuple(t.strip() for t in args.live_tags.split(",") if t.strip())
     verdict = run_screen(
         args.label,
