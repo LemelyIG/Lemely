@@ -83,6 +83,7 @@ if TYPE_CHECKING:
         MessageParam,
         OutputConfigParam,
         TextBlockParam,
+        ThinkingConfigParam,
     )
 
 _T = TypeVar("_T", bound=BaseModel)
@@ -134,8 +135,12 @@ MAX_PAUSE_CONTINUATIONS = 3
 MAX_LEG_RETRIES = 2
 LEG_RETRY_BACKOFF_SECONDS = 1.0
 
-EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
-Effort = Literal["low", "medium", "high", "xhigh", "max"]
+EFFORTS: tuple[str, ...] = ("none", "low", "medium", "high", "xhigh", "max")
+Effort = Literal["none", "low", "medium", "high", "xhigh", "max"]
+#: An effort the API accepts: every effort but "none", which is not sent.
+SentEffort = Literal["low", "medium", "high", "xhigh", "max"]
+#: The effort that turns thinking off (sub-project C levers a1/a2).
+NO_THINKING: Effort = "none"
 
 #: Reply budget per call. A marking reply is a few hundred tokens plus
 #: thinking; 16k keeps a non-streaming request well inside the SDK's
@@ -175,6 +180,20 @@ _MediaType = Literal["image/png", "image/jpeg"]
 def _as_effort(value: str) -> Effort:
     """An effort passes as it is; a Lemely thinking level maps through effort_for."""
     return cast("Effort", value) if value in EFFORTS else effort_for(value)
+
+
+def _thinking_and_effort(thinking: str | None) -> tuple[ThinkingConfigParam, SentEffort | None]:
+    """The request's ``thinking`` block and ``output_config.effort`` for *thinking*.
+
+    "none" disables thinking and sends no effort (the docs do not say effort may
+    accompany disabled thinking); every other value keeps adaptive thinking at that effort.
+    """
+    if thinking is None:
+        return {"type": "adaptive"}, None
+    effort = _as_effort(thinking)
+    if effort == NO_THINKING:
+        return {"type": "disabled"}, None
+    return {"type": "adaptive"}, cast("SentEffort", effort)
 
 
 def resolve_effort(
@@ -476,8 +495,9 @@ class AnthropicAdapter:
                 "type": "json_schema",
                 "schema": copy.deepcopy(sendable_schema(response_schema)),
             }
-        if thinking is not None:
-            output_config["effort"] = _as_effort(thinking)
+        thinking_block, effort = _thinking_and_effort(thinking)
+        if effort is not None:
+            output_config["effort"] = effort
         system, message = _request_parts(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -492,7 +512,7 @@ class AnthropicAdapter:
             max_tokens=max_tokens,
             system=system,
             messages=[message],
-            thinking={"type": "adaptive"},
+            thinking=thinking_block,
             output_config=output_config,
         )
         text = "".join(block.text for block in response.content if block.type == "text")
@@ -514,8 +534,9 @@ class AnthropicAdapter:
         from lemely.io.llm.request import CODE_EXECUTION_TOOL
 
         extra: dict[str, object] = {}
-        if thinking is not None:
-            extra["output_config"] = {"effort": _as_effort(thinking)}
+        thinking_block, effort = _thinking_and_effort(thinking)
+        if effort is not None:
+            extra["output_config"] = {"effort": effort}
         messages: list[MessageParam] = [{"role": "user", "content": prompt}]
         usage = Usage(0, 0, 0, 0)
         ran_code = False
@@ -531,7 +552,7 @@ class AnthropicAdapter:
                     max_tokens=max_tokens,
                     messages=messages,
                     tools=[{"type": CODE_EXECUTION_TOOL, "name": "code_execution"}],
-                    thinking={"type": "adaptive"},
+                    thinking=thinking_block,
                     **extra,
                 )
             except ProviderTransientError:

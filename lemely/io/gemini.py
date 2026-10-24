@@ -258,7 +258,15 @@ _GEMINI_3X_RE = re.compile(r"^gemini-3\.\d")
 _MINIMAL_THINKING_MODELS_RE = re.compile(r"^gemini-3\.(5-flash-lite|6-flash)\b")
 
 # Ordered weakest → strongest, mirrors google.genai.types.ThinkingLevel.
-_THINKING_LEVEL_ORDER = {"minimal": 0, "low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5}
+_THINKING_LEVEL_ORDER = {
+    "none": -1,
+    "minimal": 0,
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+    "xhigh": 4,
+    "max": 5,
+}
 
 
 def thinking_rank(value: int | str) -> int:

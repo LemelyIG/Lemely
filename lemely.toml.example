@@ -89,7 +89,8 @@ model = "gemini-2.5-flash"
 # effort or thinking setting invalidates the cached messages (docs, prompt
 # caching): both binder tags must send the same effort for the second read to hit.
 # claude_cache_for = {}
-# Claude effort (low | medium | high | xhigh | max) per tag or tag:kind,
+# Claude effort (none | low | medium | high | xhigh | max) per tag or tag:kind;
+# "none" turns thinking off for the call (levers a1/a2).
 # e.g. { "correction:extended" = "medium" }. Unlisted: thinking_level_for.
 # haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept every level (docs: effort);
 # a model that rejects one fails the call. Higher effort spends more of

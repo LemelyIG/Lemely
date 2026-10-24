@@ -117,7 +117,8 @@ class LoggingSettings(BaseModel):
 # config load reject it instead.
 ThinkingLevel = Literal["minimal", "low", "medium", "high"]
 ClaudeCacheSpot = Literal["system", "documents", "images", "prefix"]
-ClaudeEffort = Literal["low", "medium", "high", "xhigh", "max"]
+# "none" (sub-project C levers a1/a2) turns thinking off for the call.
+ClaudeEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
 
 # Typed separately from the inline dict literal below: a bare `dict[str, str]`
 # literal loses the `Literal` member type on assignment, so mypy strict

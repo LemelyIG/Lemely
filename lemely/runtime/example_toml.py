@@ -160,7 +160,8 @@ def render_example_toml() -> str:
         "# caching): both binder tags must send the same effort for the second read to hit."
     )
     lines.append(f"# claude_cache_for = {_toml_inline(s.gemini.claude_cache_for)}")
-    lines.append("# Claude effort (low | medium | high | xhigh | max) per tag or tag:kind,")
+    lines.append("# Claude effort (none | low | medium | high | xhigh | max) per tag or tag:kind;")
+    lines.append('# "none" turns thinking off for the call (levers a1/a2).')
     lines.append('# e.g. { "correction:extended" = "medium" }. Unlisted: thinking_level_for.')
     lines.append(
         "# haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept every level (docs: effort);"

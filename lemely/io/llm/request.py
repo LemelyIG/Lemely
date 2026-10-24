@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 from lemely.io.providers import is_anthropic_model
 
-Effort = Literal["low", "medium", "high", "xhigh", "max"]
+Effort = Literal["none", "low", "medium", "high", "xhigh", "max"]
 CacheSpot = Literal["system", "documents", "images", "prefix"]
 #: Claude's server-side code-execution tool version (docs read 2026-10-20: latest).
 CODE_EXECUTION_TOOL = "code_execution_20260521"
