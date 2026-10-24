@@ -47,3 +47,17 @@ def test_the_switch_never_shares_across_models() -> None:
 
 def test_default_is_off() -> None:
     assert Settings().binding.claude_cache_ignores_effort is False
+
+
+def test_the_switch_still_requires_the_images_breakpoint() -> None:
+    s = _settings(ignore=True, second_effort="low")
+    g = s.gemini.model_copy(
+        update={
+            "claude_cache_for": {
+                "extraction": ["system", "images"],
+                "binding_second_read": ["system"],
+            },
+        }
+    )
+    s = s.model_copy(update={"gemini": g})
+    assert _reads_share_a_claude_cache(s, _HAIKU, _HAIKU) is False

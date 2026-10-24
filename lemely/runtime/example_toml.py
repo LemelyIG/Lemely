@@ -157,7 +157,8 @@ def render_example_toml() -> str:
     lines.append("# prefix. Unlisted tags mark system and prefix (the A1 behaviour). A changed")
     lines.append("# effort or thinking setting invalidates the cached messages (docs, prompt")
     lines.append(
-        "# caching): both binder tags must send the same effort for the second read to hit."
+        "# caching): both binder tags must send the same effort for the second read to hit"
+        " (see binding.claude_cache_ignores_effort)."
     )
     lines.append(f"# claude_cache_for = {_toml_inline(s.gemini.claude_cache_for)}")
     lines.append("# Claude effort (none | low | medium | high | xhigh | max) per tag or tag:kind;")
