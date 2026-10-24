@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import tempfile
 import threading
+import time
 import unittest
 from datetime import date
 from types import SimpleNamespace
@@ -44,6 +45,8 @@ class _FakeFiles:
         self.in_flight = 0
         self.max_in_flight = 0
         self.hold: threading.Barrier | None = None
+        self.bug_on: int | None = None  # the page whose upload raises a TypeError
+        self.gate: threading.Event | None = None  # pages other than 1 wait for this
 
     def upload(self, *, file: tuple[str, bytes, str], expires_in_seconds: int) -> SimpleNamespace:
         page = int(file[0].removeprefix("page-").removesuffix(".png"))
@@ -55,9 +58,20 @@ class _FakeFiles:
         try:
             if self.hold is not None:
                 self.hold.wait(timeout=5)
+            if self.gate is not None and page != 1:
+                self.gate.wait(timeout=5)
             if error is not None:
                 raise error
+            if self.bug_on == page:
+                for _ in range(200):  # let the other pages finish first
+                    if len(self.uploads) >= page - 1:
+                        break
+                    time.sleep(0.01)
+                raise TypeError("bug")
             if self._fail_on == page:
+                if self.gate is not None:
+                    time.sleep(0.2)  # let the pool start its first wave, then fail
+                    self.gate.set()
                 raise OSError("upload refused")
             with self._lock:
                 self.uploads.append({"file": file, "expires_in_seconds": expires_in_seconds})
@@ -353,7 +367,44 @@ class ClaudeImageUploadsUnitTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "page 3"):
             uploads.ensure()
         uploads.delete()
-        self.assertEqual(sorted(files.deleted), ["file_1", "file_2", "file_4"])
+        self.assertEqual(
+            sorted(files.deleted),
+            sorted(u["file"][0].replace("page-", "file_")[:-4] for u in files.uploads),
+        )
+        self.assertNotIn("file_3", files.deleted)
+
+    def test_ids_from_a_round_that_hit_a_bug_are_still_deleted(self) -> None:
+        pages = [_page(shade) for shade in (10, 60, 110)]
+        # Page 3's upload (after pages 1 and 2 are up) raises a programming error, so no
+        # job error is recorded; the other pages upload.
+        # The retry round uploads again; delete must remove both rounds.
+        files = _FakeFiles()
+        files.bug_on = 3
+        uploads = ClaudeImageUploads(
+            lambda: SimpleNamespace(files=files), pages, token_budget=95_000, floor_px=1568
+        )
+        with self.assertRaises(TypeError):
+            uploads.ensure()
+        files.bug_on = None
+        uploads.ensure()
+        uploads.delete()
+        self.assertEqual(len(files.uploads), 5)
+        self.assertEqual(len(files.deleted), 5)
+
+    def test_queued_pages_do_not_upload_after_a_permanent_failure(self) -> None:
+        pages = [_page(10 + 20 * i) for i in range(10)]
+        files = _FakeFiles(fail_on=1)
+        files.gate = threading.Event()  # later pages wait until page 1 has failed
+        uploads = ClaudeImageUploads(
+            lambda: SimpleNamespace(files=files), pages, token_budget=95_000, floor_px=1568
+        )
+        with self.assertRaisesRegex(Exception, "page 1"):
+            uploads.ensure()
+        started = {int(u["file"][0][5:-4]) for u in files.uploads}
+        self.assertLessEqual(len(started), ClaudeImageUploads.UPLOAD_CONCURRENCY - 1)
+        self.assertLess(files.attempts, len(pages))
+        uploads.delete()
+        self.assertEqual(len(files.deleted), len(files.uploads))
 
     def test_matches_only_the_same_pages(self) -> None:
         uploads = ClaudeImageUploads(
