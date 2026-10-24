@@ -104,6 +104,8 @@ def load_real_scripts(
                 problems.append(f"{e.key}: {what} {path} is missing")
             elif sha256_file(path) != want:
                 problems.append(f"{e.key}: {what} {path} sha256 differs from the manifest")
+            elif what == "reference" and not read_reference(path):
+                problems.append(f"{e.key}: reference {path} has no leaves")
         scripts.append(
             RealScript(
                 key=e.key,

@@ -20,7 +20,7 @@ def _frozen(tmp_path: Path, key: str = "k", marks: dict[str, int] | None = None)
     d = tmp_path / key
     leaves = [
         ref.ReferenceLeaf(qid, m, 2, "opus", "e")
-        for qid, m in (marks or {"1a": 2, "1b": 1, "1c": 0}).items()
+        for qid, m in (marks if marks is not None else {"1a": 2, "1b": 1, "1c": 0}).items()
     ]
     ref.write_reference(d / ref.REFERENCE_FILE, leaves)
     (d / ref.SCHEME_FILE).write_text("{}", encoding="utf-8")
@@ -506,3 +506,21 @@ def test_mark_real_script_scan_metadata_failure_raises(
     settings = SimpleNamespace(grading=SimpleNamespace(marking_options=lambda: None))
     with pytest.raises(TimeoutError):
         rs.mark_real_script(script, object(), settings)  # type: ignore[arg-type]
+
+
+def test_loader_refuses_an_empty_reference(tmp_path: Path) -> None:
+    d = tmp_path / "k"
+    ref.write_reference(d / ref.REFERENCE_FILE, [])
+    (d / ref.SCHEME_FILE).write_text("{}", encoding="utf-8")
+    scan = tmp_path / "k.pdf"
+    scan.write_bytes(b"%PDF k")
+    ref.freeze(
+        d,
+        key="k",
+        scan_path=scan,
+        sources={},
+        expected_total=None,
+        manifest_path=tmp_path / ref.MANIFEST_FILE,
+    )
+    with pytest.raises(ReferenceDrift, match=r"reference .* has no leaves"):
+        rs.load_real_scripts(tmp_path / ref.MANIFEST_FILE)
