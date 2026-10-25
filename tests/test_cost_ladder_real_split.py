@@ -730,3 +730,48 @@ def test_reply_log_records_stated_mark_when_present() -> None:
     )
     client.generate_structured(task_tag="correction", question_id="1b")
     assert [r.stated_mark for r in log.rows] == [2, None]
+
+
+def test_reason_first_rows_carry_the_checked_mark_and_the_stated_one() -> None:
+    from types import SimpleNamespace
+
+    from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+    from lemely.core.schemas import AIMarkResponseReasoned, PointVerdictReasoned
+
+    question = Question.model_construct(
+        id="1a",
+        marks=2,
+        type=QuestionType.EXPLANATION,
+        answer_points=[
+            AnswerPoint(id="p1", point="gravity", marks=1),
+            AnswerPoint(id="p2", point="mass", marks=1),
+        ],
+        select_count=None,
+        parts=[],
+        assessment_objectives=[],
+        rejected_answers=[],
+        ignored_answers=[],
+    )
+    reply = AIMarkResponseReasoned(
+        awarded_marks=0,  # stated 0, but both points are awarded: the sum is 2
+        confidence=0.9,
+        matched_point_ids=[],
+        feedback="f",
+        point_verdicts=[
+            PointVerdictReasoned(point_id=pid, verdict="awarded")  # type: ignore[arg-type]
+            for pid in ("p1", "p2")
+        ],
+    )
+    client = _ReplyClient(reply)
+    log = rs.ReplyLog()
+    log.reason_first = True
+    log.scheme = SimpleNamespace(get_question_by_id=lambda qid: question)  # type: ignore[assignment]
+    log.wrap(client)
+    log.current = "k"
+    out = client.generate_structured(task_tag="correction", question_id="1a", attempt="first")
+    assert out is reply and reply.awarded_marks == 0  # the log never changes the reply
+    (row,) = log.rows
+    assert (row.mark, row.stated_mark) == (2, 0)
+    log.reason_first = False  # lever off: the reply's own mark
+    client.generate_structured(task_tag="correction", question_id="1a", attempt="first")
+    assert log.rows[-1].mark == 0

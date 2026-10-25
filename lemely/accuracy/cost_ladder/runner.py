@@ -26,6 +26,7 @@ from lemely.accuracy.cost_ladder.real_split import (
     RealScript,
     RealScriptResult,
     ReplyLog,
+    load_scheme,
     mark_real_script,
     real_summary_fields,
     score_script,
@@ -1083,6 +1084,7 @@ def run_real(
         frozen_live_tags=list(live) if pinned else None,
     )
     replies = ReplyLog()
+    replies.reason_first = effective.gemini.correction_reason_first is True
     replies.wrap(gemini)
     escalations: list[dict[str, object]] = []
     current: list[str] = []
@@ -1098,6 +1100,7 @@ def run_real(
             for script in scripts:
                 current.append(script.key)
                 replies.current = script.key
+                replies.scheme = load_scheme(script) if replies.reason_first else None
                 set_call_context(case_key=script.key)
                 started = time.monotonic()
                 correction: CorrectionResult | None = None

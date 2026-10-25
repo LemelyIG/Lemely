@@ -33,7 +33,8 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from lemely.accuracy.reference import ManifestEntry
-    from lemely.core.schemas import CorrectionResult
+    from lemely.core.loose_schemas import MarkScheme
+    from lemely.core.schemas import AIMarkResponse, CorrectionResult
     from lemely.io.gemini import CallRecord, GeminiClient
     from lemely.runtime.config import Settings
 
@@ -240,6 +241,11 @@ class ReplyLog:
     def __init__(self) -> None:
         #: The script being marked; `run_real` sets it per script.
         self.current: str | None = None
+        #: H2b: with ``reason_first`` and the script's `scheme`, each row's ``mark`` is the
+        #: mark after the verdict sum check (the one the leaf holds); ``stated_mark`` stays
+        #: the model's own integer.
+        self.reason_first = False
+        self.scheme: MarkScheme | None = None
         self.rows: list[MarkReply] = []
         self._lock = threading.Lock()
 
@@ -282,13 +288,19 @@ class ReplyLog:
             model_arg if isinstance(model_arg, str) else None, tag
         )
         stated = getattr(result, "stated_mark", None)
+        mark = int(getattr(result, "awarded_marks", 0))
+        question = self.scheme.get_question_by_id(qid) if self.scheme is not None else None
+        if self.reason_first and question is not None:
+            from lemely.io.correction_ai import _verdict_checked
+
+            mark = _verdict_checked(question, cast("AIMarkResponse", result)).awarded_marks
         row = MarkReply(
             case_key=self.current,
             question_id=qid,
             task_tag=tag,
             attempt=attempt if isinstance(attempt, str) else None,
             model=str(active),
-            mark=int(getattr(result, "awarded_marks", 0)),
+            mark=mark,
             confidence=float(getattr(result, "confidence", 0.0)),
             rationale=str(rationale),
             reply=cast("BaseModel", result).model_dump(mode="json"),
@@ -302,6 +314,16 @@ class ReplyLog:
     def for_script(self, key: str) -> list[MarkReply]:
         with self._lock:
             return [r for r in self.rows if r.case_key == key]
+
+
+def load_scheme(script: RealScript) -> MarkScheme | None:
+    """The script's frozen scheme for the reply log, or None when it does not parse."""
+    from lemely.core.loose_schemas import MarkScheme
+
+    try:
+        return MarkScheme.model_validate_json(script.scheme_path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
 
 
 def write_replies(path: Path, rows: Sequence[MarkReply]) -> None:
