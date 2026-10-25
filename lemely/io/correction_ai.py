@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import statistics
 import uuid
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Literal, NamedTuple, TypedDict, cast
@@ -79,6 +80,22 @@ def _keep_higher(first: AIMarkResponse, retry: AIMarkResponse) -> AIMarkResponse
     else:
         chosen = first if first.confidence > retry.confidence else retry
         confidence = chosen.confidence
+    return chosen.model_copy(update={"confidence": confidence})
+
+
+def _median_of(samples: Sequence[AIMarkResponse]) -> AIMarkResponse:
+    """Lever H4c: the median-marked of two agreeing or three samples of one leaf."""
+    m = statistics.median_low([s.awarded_marks for s in samples])
+    chosen = samples[0]
+    for s in samples:
+        if s.awarded_marks == m and (
+            chosen.awarded_marks != m or s.confidence >= chosen.confidence
+        ):
+            chosen = s
+    if all(s.awarded_marks == m for s in samples):
+        confidence = chosen.confidence
+    else:
+        confidence = min(s.confidence for s in samples)
     return chosen.model_copy(update={"confidence": confidence})
 
 
@@ -751,8 +768,16 @@ class AICorrector:
         retry_below = g.escalation_confidence_threshold
         # ``is True`` / isinstance: a MagicMock settings object keeps today's behaviour.
         keep_higher = g.correction_retry_keep_higher is True
-        if keep_higher:
-            lever_below = g.correction_retry_keep_higher_below
+        median = g.correction_retry_median is True
+        if median and keep_higher:
+            # model_copy skips the settings validator, so the exclusion is re-checked here.
+            raise ConfigError(
+                "correction_retry_median cannot combine with correction_retry_keep_higher"
+            )
+        if keep_higher or median:
+            lever_below = (
+                g.correction_retry_median_below if median else g.correction_retry_keep_higher_below
+            )
             if isinstance(lever_below, int | float) and not isinstance(lever_below, bool):
                 retry_below = lever_below
         if result.confidence < retry_below and borderline_gate:
@@ -778,7 +803,37 @@ class AICorrector:
             )
             last_call = (correction_model, borderline_thinking)
             result = self._checked(question, result)
-            if keep_higher:
+            if median:
+                samples = [first, result]
+                if result.awarded_marks != first.awarded_marks:
+                    # The median of {a, a, x} is a, so a third draw is needed only on a split.
+                    third = self._checked(
+                        question,
+                        self._client.generate_structured(
+                            system_prompt=system_prompt,
+                            user_prompt=(
+                                user_prompt
+                                + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
+                            ),
+                            response_schema=self._mark_schema(),
+                            prompt_version=VERSION,
+                            extra_cache_key=f"q={question.id}:thinking:2",
+                            task_tag="correction_borderline",
+                            attempt="borderline",
+                            question_id=question.id,
+                            **prefix_kwargs,
+                        ),
+                    )
+                    samples.append(third)
+                result = _median_of(samples)
+                structlog.get_logger().bind(component="correction").info(
+                    "borderline_median",
+                    question_id=question.id,
+                    marks=[x.awarded_marks for x in samples],
+                    kept=result.awarded_marks,
+                    confidence=result.confidence,
+                )
+            elif keep_higher:
                 retry = result
                 result = _keep_higher(first, retry)
                 structlog.get_logger().bind(component="correction").info(

@@ -102,7 +102,7 @@ def reread_candidates(
     pages: Sequence[RasterisedPage],
     max_leaves: int,
 ) -> list[str]:
-    """H4a: AI-marked leaves whose crop re-read disagreed with the first read, lowest agreement first, capped."""
+    """H4a: AI-marked leaves whose crop re-read disagreed, lowest agreement first, capped."""
     pool: list[tuple[float, str]] = []
     for q in result.questions:
         a = answers.get(q.question_id)
