@@ -691,3 +691,42 @@ def test_old_real_results_load_without_step_marks(tmp_path: Path) -> None:
     (loaded,) = rs.read_real_results(path)
     assert loaded.leaves[0].first_pass_mark is None
     assert loaded.leaves[0].post_adjudication_mark is None
+
+
+def test_keep_higher_makes_post_borderline_the_held_mark(tmp_path: Path) -> None:
+    script = _frozen(tmp_path, marks={"1a": 2})
+    replies = [_reply("correction", 2, "1a", "first"), _reply("correction_borderline", 1, "1a")]
+    kw: dict[str, object] = {
+        "latency_ms": 5.0,
+        "failure": None,
+        "escalations": [],
+        "cascade_enabled": False,
+        "replies": replies,
+    }
+    correction = _result(_cq("1a", 2))
+    plain = rs.score_script(script, correction, [], **kw).leaves[0]  # type: ignore[arg-type]
+    kept = rs.score_script(script, correction, [], keep_higher=True, **kw).leaves[0]  # type: ignore[arg-type]
+    assert plain.post_borderline_mark == 1  # the retry replaced the first mark
+    assert kept.post_borderline_mark == 2  # H2a keeps the higher
+
+
+def test_reply_log_records_stated_mark_when_present() -> None:
+    from types import SimpleNamespace
+
+    reply = SimpleNamespace(
+        awarded_marks=1,
+        confidence=0.5,
+        feedback="f",
+        stated_mark=2,
+        model_dump=lambda mode: {"stated_mark": 2},
+    )
+    client = _ReplyClient(reply)
+    log = rs.ReplyLog()
+    log.wrap(client)
+    log.current = "k"
+    client.generate_structured(task_tag="correction", question_id="1a")
+    client.reply = SimpleNamespace(
+        awarded_marks=1, confidence=0.5, feedback="f", model_dump=lambda mode: {}
+    )
+    client.generate_structured(task_tag="correction", question_id="1b")
+    assert [r.stated_mark for r in log.rows] == [2, None]

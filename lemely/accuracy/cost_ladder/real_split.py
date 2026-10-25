@@ -229,6 +229,9 @@ class MarkReply:
     confidence: float
     rationale: str  # AIMarkResponse.feedback, AdjudicationReply.rationale
     reply: dict[str, object]  # the parsed reply, model_dump(mode="json")
+    #: The mark the model stated when the reply also carries per-point verdicts that decide
+    #: the mark (lever H2b); None when the reply has no ``stated_mark``.
+    stated_mark: int | None = None
 
 
 class ReplyLog:
@@ -278,6 +281,7 @@ class ReplyLog:
         active = cast("GeminiClient", client)._active_model(
             model_arg if isinstance(model_arg, str) else None, tag
         )
+        stated = getattr(result, "stated_mark", None)
         row = MarkReply(
             case_key=self.current,
             question_id=qid,
@@ -288,6 +292,9 @@ class ReplyLog:
             confidence=float(getattr(result, "confidence", 0.0)),
             rationale=str(rationale),
             reply=cast("BaseModel", result).model_dump(mode="json"),
+            stated_mark=stated
+            if isinstance(stated, int) and not isinstance(stated, bool)
+            else None,
         )
         with self._lock:
             self.rows.append(row)
@@ -307,7 +314,7 @@ def write_replies(path: Path, rows: Sequence[MarkReply]) -> None:
 
 
 def _step_marks(
-    replies: Sequence[MarkReply], qid: str, max_marks: int
+    replies: Sequence[MarkReply], qid: str, max_marks: int, *, keep_higher: bool = False
 ) -> tuple[int | None, int | None, int | None, int | None]:
     """A leaf's mark after the first pass, the borderline retry, escalation and adjudication."""
     mine = [r for r in replies if r.question_id == qid]
@@ -322,7 +329,11 @@ def _step_marks(
     marks = [first]
     for tag in ("correction_borderline", ESCALATION_TAG, ADJUDICATION_TAG):
         later = [r for r in mine if r.task_tag == tag]
-        marks.append(clamp(later[-1].mark) if later else marks[-1])
+        mark = clamp(later[-1].mark) if later else marks[-1]
+        if tag == "correction_borderline" and later and keep_higher:
+            # H2a: the leaf holds the higher of the first and retry marks, not the retry's own.
+            mark = max(mark, first)
+        marks.append(mark)
     return marks[0], marks[1], marks[2], marks[3]
 
 
@@ -344,6 +355,7 @@ def score_script(
     escalations: Sequence[Mapping[str, object]],
     cascade_enabled: bool,
     replies: Sequence[MarkReply] = (),
+    keep_higher: bool = False,
 ) -> RealScriptResult:
     """One script's leaves against its reference; every reference leaf is scored."""
     reference = read_reference(script.reference_path)
@@ -389,7 +401,9 @@ def score_script(
         predicted = q.awarded_marks if q is not None and scored else 0
         escalated = qid in escalated_ids
         steps = (
-            _step_marks(replies, qid, leaf_ref.max_marks) if scored else (None, None, None, None)
+            _step_marks(replies, qid, leaf_ref.max_marks, keep_higher=keep_higher)
+            if scored
+            else (None, None, None, None)
         )
         # An unscored leaf carries no confidence: a placeholder must not reach calibration.
         final_conf = q.confidence_score if q is not None and scored else None

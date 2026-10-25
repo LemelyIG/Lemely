@@ -1168,6 +1168,7 @@ def run_real(
             escalations=[e for e in escalations if e.get("case_key") == script.key],
             cascade_enabled=cascade,
             replies=replies.for_script(script.key),
+            keep_higher=effective.gemini.correction_retry_keep_higher is True,
         )
         for script in scripts
     )
