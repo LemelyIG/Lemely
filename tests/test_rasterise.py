@@ -174,6 +174,17 @@ class RasteriseScanToPagesTests(unittest.TestCase):
         pages = rasterise_scan_to_pages(pdf_path)
         self.assertEqual(len(pages), 2)
 
+    def test_max_pages_renders_only_the_first_pages(self) -> None:
+        pdf_path = Path(self.tmp) / "scan.pdf"
+        _write_pdf(pdf_path, pages=5)
+        with patch("lemely.io.rasterise._png_page", wraps=rasterise_module._png_page) as png:
+            pages = list(
+                rasterise_module.iter_scan_pages(pdf_path, rasterise_module.EXTRACTION_DPI, 2)
+            )
+        self.assertEqual([p.index for p in pages], [0, 1])
+        self.assertEqual(png.call_count, 2)
+        self.assertEqual(len(rasterise_scan_to_pages(pdf_path, max_pages=2)), 2)
+
     def test_plain_image_upload_becomes_a_single_page(self) -> None:
         image_path = Path(self.tmp) / "scan.jpg"
         Image.new("RGB", (400, 600), color="white").save(image_path, "JPEG")

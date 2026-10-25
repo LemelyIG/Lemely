@@ -1298,7 +1298,9 @@ def test_resolver_hands_a_sibling_the_parser_refuses_to_gemini(
 
     assert resolved is from_gemini
     assert sandbox.EXTRACTION_WORKER.last_outcome == "rejected"
-    assert gemini_client.generate_structured.call_args.kwargs["file_paths"] == [sibling]
+    kw = gemini_client.generate_structured.call_args.kwargs
+    assert "file_paths" not in kw
+    assert [d.source_path for d in kw["documents"]] == [sibling]
 
 
 @pytest.mark.usefixtures("sandboxed", "_forget_last_outcome")

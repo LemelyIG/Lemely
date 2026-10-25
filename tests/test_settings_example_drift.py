@@ -37,6 +37,23 @@ class ExampleTomlDriftTests(unittest.TestCase):
         self.assertEqual(s.gradio.port, 7860)
         self.assertEqual(s.gemini.model, "gemini-2.5-flash")
 
+    def test_example_shows_the_second_read_model_commented_out(self) -> None:
+        """Unset by default (the read model reads twice); uncommented, it loads."""
+        import tomllib
+
+        from lemely.runtime.config import Settings
+
+        rendered = render_example_toml()
+        line = '# second_read_model = "claude-haiku-5-5"'
+        self.assertIn(line, rendered)
+        self.assertIsNone(Settings().binding.second_read_model)
+        data = tomllib.loads(rendered.replace(line, line[2:]))
+        self.assertEqual(data["binding"]["second_read_model"], "claude-haiku-5-5")
+        self.assertEqual(
+            Settings.model_validate({"binding": data["binding"]}).binding.second_read_model,
+            "claude-haiku-5-5",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

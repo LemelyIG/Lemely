@@ -29,6 +29,11 @@ question-scope check names: doubted.
 With ``second_read`` off there is one read, and a paper-scope failure on it is a hold.
 With it on, a paper is never let out on one read: a second read that fails is made
 once more, and if it fails again the job fails as it does when the first read fails.
+``second_read_mode="on_trigger"`` reads first and makes the second read only when the
+first gives a reason for it (``second_read_triggers``); with none the paper goes on
+with the first read, exactly as with ``second_read`` off: what a second read that
+agreed with the first would have left, less the G9 check in the report. A triggered
+second read is made after the first, and retried, as above.
 The checks see part of what can go wrong: a pass means nothing was found, not that the
 binding is right.
 
@@ -79,16 +84,22 @@ from lemely.core.label_sequence import (
 )
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 from lemely.core.text_agreement import text_agreement
+from lemely.io.binding.chunked_read import ChunkedLabelReader
 from lemely.io.binding.label_binder import BoundRead, LabelBinder, to_bound_read
+from lemely.io.binding.second_read_triggers import second_read_triggers
+from lemely.io.providers import is_anthropic_model
+from lemely.io.providers.anthropic_adapter import resolve_effort
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, LemelyError
 from lemely.runtime.events import EventType, bus
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
-    from lemely.core.binding import BindingVerdict, SeenWriting
+    from lemely.core.binding import BindingVerdict, SeenWriting, StreamItem
     from lemely.core.label_sequence import BoundStream
     from lemely.core.loose_schemas import MarkScheme
+    from lemely.io.binding.label_binder import StreamRead
+    from lemely.io.binding.second_read_triggers import SecondReadTrigger
     from lemely.io.gemini import GeminiClient, ImageUploads
     from lemely.io.rasterise import RasterisedPage
     from lemely.runtime.config import BindingSettings, Settings
@@ -110,6 +121,19 @@ MARKED_FROM_OTHER_READ = "marked_from_other_read"
 # Reasons in ``StreamRead.drops`` for a reply item that was left out and may have been
 # writing. A part whose block was lost this way looks blank and is not.
 LOST_ITEM_REASONS = ("malformed_item", "unknown_type")
+
+#: A read whose bound leaves are fewer than this share of the paper's leaves is a stub.
+#: Clean reads of the 43-leaf script bound 43 of 43 in every recorded run (5 of 5, 104-111
+#: items); the two measured stubs covered 0.0 (4 items) and 0.12 (25 items). Real partial
+#: scripts, where a student stopped early, cover 0.56-0.65, so 0.3 sits between the two
+#: groups and never calls an honest partial script a stub
+#: (.superpowers/sdd/binding-investigation.md, Q1).
+#: A genuinely short script (a student who stopped early, coverage 0.26 say) also takes the
+#: stub path: one refresh, then a hold with ``stub_read`` and G5. Acceptable, as it is held
+#: either way.
+_MIN_READ_LABEL_COVERAGE = 0.3
+#: What the ``stub_read`` check says: a read that is still a stub after its one refresh.
+STUB_READ_DETAIL = "a read returned too few of the paper's question labels, twice"
 
 # Each read's task tag and the suffix its cache key takes after the paper's own key.
 _FIRST_READ = ("extraction", "|bind1")
@@ -181,13 +205,16 @@ class _Read:
     ``writings`` is the writing each bound leaf holds, by question id, and ``doubts``
     the binder's doubts on each (``label_sequence.DOUBTS``). ``stream`` is the bound
     stream itself, which is what says where a missing label lies between labels written
-    by hand (``binding_gate.skipped_parts``).
+    by hand (``binding_gate.skipped_parts``). ``items`` is the reader's list as parsed,
+    which is what ``second_read_triggers`` reads beside the bound stream.
     """
 
     bound: BoundRead
     writings: dict[str, list[SeenWriting]]
     doubts: dict[str, list[str]] = field(default_factory=dict)
     stream: BoundStream | None = None
+    items: tuple[StreamItem, ...] = ()
+    stub: bool = False
 
 
 def binder_for(
@@ -210,6 +237,17 @@ def binder_for(
     if binding.binder == "label" and all_multiple_choice(mark_scheme):
         return "legacy", True
     return binding.binder, False
+
+
+def _label_coverage(bound: BoundStream) -> float:
+    """The share of the paper's leaves whose label the read bound (1.0 for no leaves).
+
+    A leaf is bound when ``bind_stream`` aligned it to a label, whether or not it holds
+    writing: the labels are printed on the paper, so a read that saw the script finds
+    them all, answered or not.
+    """
+    total = len(bound.leaves) + len(bound.unaligned_ids)
+    return len(bound.leaves) / total if total else 1.0
 
 
 def _as_extracted(answers: list[ExtractedAnswer]) -> ExtractedAnswers:
@@ -334,6 +372,7 @@ def _publish_result(
     by_paper_shape: bool = False,
     marked_from_other_read: int = 0,
     skipped_parts_count: int = 0,
+    triggers: Iterable[SecondReadTrigger] | None = None,
 ) -> None:
     """Publish and log what the gate decided.
 
@@ -353,6 +392,14 @@ def _publish_result(
     returned read that G5 left out of its rate as parts the student skipped on a
     handwritten sheet (the answered leaf before each is not counted here); they are
     among ``unaligned``, since they still go to a teacher.
+
+    ``triggers`` is given only under ``second_read_mode="on_trigger"``: the triggers
+    that fired on the first read (empty when none did, and the second read was not
+    made). It is published as ``second_read_triggers`` beside ``second_read_mode``, so
+    that the share of scripts read twice can be counted. Under ``"always"`` neither
+    field is there, and the line and the event are what they were.
+    ``second_read_model`` is published only when the settings name one, for the same
+    reason.
 
     The event has no subscriber of its own and is never sent to a browser
     (``lemely.web.sse``), so the same fields are written as one ``binding_gate_result``
@@ -377,6 +424,11 @@ def _publish_result(
         "marked_from_other_read": marked_from_other_read,
         "skipped_parts": skipped_parts_count,
     }
+    if triggers is not None:
+        fields["second_read_mode"] = settings.second_read_mode
+        fields["second_read_triggers"] = list(triggers)
+    if settings.second_read_model is not None:
+        fields["second_read_model"] = settings.second_read_model
     structlog.get_logger().bind(component="binding_gate").info(
         "binding_gate_result",
         **fields,
@@ -455,10 +507,20 @@ def _read_both(
         return first_read, second_read
     if second_error is not None:
         _note_failed_second_read(second_error)
+    return first_read, _second_again(second, forget_second)
+
+
+def _second_again(second: Callable[[], _Read], forget_second: Callable[[], object] | None) -> _Read:
+    """The second read's one more attempt, after it failed (``_read_both``).
+
+    ``forget_second`` is called first. A ``LemelyError`` (a cost-ceiling breach
+    included) is raised as it is; any other crash is logged with its traceback and
+    raised as an ``ExternalServiceError`` that carries a fixed sentence.
+    """
     if forget_second is not None:
         forget_second()
     try:
-        return first_read, second()
+        return second()
     except CostCeilingError:
         raise
     except LemelyError:
@@ -468,6 +530,58 @@ def _read_both(
             "binding_second_read_crashed", exc_info=crash
         )
         raise ExternalServiceError(SECOND_READ_CRASH_MESSAGE) from crash
+
+
+def _reads_share_a_claude_cache(settings: Settings, first_model: str, second_model: str) -> bool:
+    """Both reads on one claude- model, each with a breakpoint after the pages (spec §4 B1).
+
+    The second read can then be served the pages from the first read's prompt cache,
+    but only once the first response has begun: so the reads are made in turn. A
+    different effort invalidates the cached messages, so both tags must also resolve to
+    the same effort (B3); otherwise the in-turn read would pay the write and never hit.
+    """
+    if first_model != second_model or not is_anthropic_model(first_model):
+        return False
+    g = settings.gemini
+    tags = (_FIRST_READ[0], _SECOND_READ[0])
+    if not all("images" in g.claude_cache_for.get(tag, []) for tag in tags):
+        return False
+    first, second = (resolve_effort(g.claude_effort_for, g.thinking_level_for, tag) for tag in tags)
+    return first == second
+
+
+def _read_second_after(
+    second: Callable[[], _Read], *, forget_second: Callable[[], object] | None = None
+) -> _Read:
+    """The second read made on its own, after the first: ``on_trigger``'s second read.
+
+    It fails as it does beside the first in ``_read_both``: a cost-ceiling breach is
+    raised at once; any other failure is published as ``SECOND_READ_FAILED`` and the
+    read is made once more (``_second_again``), whose failure fails the job.
+    """
+    try:
+        return second()
+    except CostCeilingError:
+        raise
+    except Exception as exc:  # published, then the read is made once more
+        _note_failed_second_read(exc)
+    return _second_again(second, forget_second)
+
+
+def _first_read_triggers(read: _Read, mark_scheme: MarkScheme) -> tuple[SecondReadTrigger, ...]:
+    """What, on the first read alone, calls for a second read (``second_read_triggers``).
+
+    The gate's checks are run on the read as one read is checked: nothing is excused as
+    a part the student skipped, since that takes two reads (``_skipped``).
+    """
+    if read.stream is None:  # pragma: no cover - every read made here is bound
+        raise RuntimeError("the first read has no bound stream")
+    return second_read_triggers(
+        read.items,
+        read.stream,
+        lost_items=_lost_items(read.bound.drops),
+        checks=_label_checks(read.bound, mark_scheme, GateThresholds()),
+    )
 
 
 def _in_paper_order(mark_scheme: MarkScheme, ids: list[str]) -> list[str]:
@@ -689,7 +803,9 @@ def run_binding(
     """Read ``pages`` with the label binder, check the binding, and choose a read or hold.
 
     Every call uses ``uploads``, the page uploads the caller already has, and
-    ``settings.binding.read_model``. The gate must be enforcing: the label binder is
+    ``settings.binding.read_model``, except the second read, which uses
+    ``second_read_model(settings.binding)`` (a ``claude-`` model is sent the page
+    bytes, not the uploads). The gate must be enforcing: the label binder is
     not run without its checks.
 
     A verdict other than ``pass``, or a job that fails in the reads, leaves neither
@@ -700,7 +816,13 @@ def run_binding(
     from the first read. A second read that fails otherwise is published as
     ``SECOND_READ_FAILED`` and made once more; if it fails again its error is raised
     and the job fails (``_read_both``). With ``second_read`` on, nothing is returned
-    from one read.
+    from one read, except under ``second_read_mode="on_trigger"`` when no trigger
+    fired on the first read (``second_read_triggers``): the paper then goes on with the
+    first read exactly as with ``second_read`` off, and only its key is in
+    ``read_cache_keys``. A triggered second read is made after the first, not beside
+    it, and fails and is retried as in ``_read_both``. When both reads share a Claude
+    prompt cache (``_reads_share_a_claude_cache``) the second is made after the first,
+    not beside it.
     """
     binding = settings.binding
     if binding.binder != "label":
@@ -716,23 +838,58 @@ def run_binding(
             "the label binder is not run on a scheme that is all multiple choice: "
             "binder_for keeps such a paper on the legacy binder"
         )
-    binder = LabelBinder(client)
+    chunked = ChunkedLabelReader(client) if binding.claude_chunked_read is True else None
+    binder = LabelBinder(client, chunked=chunked)
+    second_model = second_read_model(binding)
+    model_for_read = {_FIRST_READ[0]: binding.read_model, _SECOND_READ[0]: second_model}
 
-    def _read(task_tag: str, suffix: str) -> _Read:
+    def _attempt(
+        task_tag: str, suffix: str, cache_mode: Literal["refresh", "bypass"] | None
+    ) -> tuple[StreamRead, BoundStream]:
         stream = binder.read(
             pages,
             mark_scheme,
             uploads=uploads,
-            model=binding.read_model,
+            model=model_for_read[task_tag],
             extra_cache_key=manifest_key + suffix,
             task_tag=task_tag,
+            cache_mode=cache_mode,
         )
-        bound = bind_stream(stream.items, mark_scheme)
+        return stream, bind_stream(stream.items, mark_scheme)
+
+    def _read(task_tag: str, suffix: str) -> _Read:
+        stream, bound = _attempt(task_tag, suffix, None)
+        coverage = _label_coverage(bound)
+        stub = False
+        if coverage < _MIN_READ_LABEL_COVERAGE:
+            # A schema-valid reply that closed its list early: it parses, and would
+            # leave every leaf unaligned, so the cross-read check would pass on nothing.
+            log = structlog.get_logger().bind(component="binding_gate")
+            log.warning(
+                "binding_read_stub", tag=task_tag, items=len(stream.items), coverage=coverage
+            )
+            # A run that bypasses the cache must not start writing to it: the repeat
+            # is bypassed too, and refreshed only where the cache is in use.
+            effective = settings.gemini.cache_mode_for.get(task_tag, client.default_cache_mode)
+            stream, bound = _attempt(
+                task_tag, suffix, "bypass" if effective == "bypass" else "refresh"
+            )
+            coverage = _label_coverage(bound)
+            stub = coverage < _MIN_READ_LABEL_COVERAGE
+            if stub:
+                log.warning(
+                    "binding_read_stub_again",
+                    tag=task_tag,
+                    items=len(stream.items),
+                    coverage=coverage,
+                )
         return _Read(
             bound=to_bound_read(bound, page_count=len(pages), drops=stream.drops),
             writings={leaf.question_id: list(leaf.writings) for leaf in bound.leaves},
             doubts={leaf.question_id: list(leaf.doubts) for leaf in bound.leaves},
             stream=bound,
+            items=tuple(stream.items),
+            stub=stub,
         )
 
     reads = [_FIRST_READ, _SECOND_READ] if binding.second_read else [_FIRST_READ]
@@ -742,7 +899,7 @@ def run_binding(
         binder.cache_key(
             pages,
             mark_scheme,
-            model=binding.read_model,
+            model=model_for_read[task_tag],
             extra_cache_key=manifest_key + suffix,
             task_tag=task_tag,
         )
@@ -759,12 +916,37 @@ def run_binding(
         """Take the reads out of the response cache: the next run reads the scan afresh."""
         client.forget_cached(read_cache_keys)
 
+    on_trigger = binding.second_read and binding.second_read_mode == "on_trigger"
+    triggers: tuple[SecondReadTrigger, ...] | None = None
     second_read: _Read | None = None
-    if binding.second_read:
+    if on_trigger:
         try:
-            first_read, second_read = _read_both(
-                _first, _second, forget_second=lambda: client.forget_cached(read_cache_keys[1:])
-            )
+            first_read = _first()
+            triggers = _first_read_triggers(first_read, mark_scheme)
+            if triggers:
+                second_read = _read_second_after(
+                    _second, forget_second=lambda: client.forget_cached(read_cache_keys[1:])
+                )
+        except CostCeilingError:
+            raise
+        except Exception:
+            # As in ``_read_both``: the job fails with nothing known about the binding.
+            _forget_reads()
+            raise
+        if second_read is None:
+            # Only the first read was made: only its key goes on.
+            read_cache_keys = read_cache_keys[:1]
+    elif binding.second_read:
+        try:
+            if _reads_share_a_claude_cache(settings, binding.read_model, second_model):
+                first_read = _first()
+                second_read = _read_second_after(
+                    _second, forget_second=lambda: client.forget_cached(read_cache_keys[1:])
+                )
+            else:
+                first_read, second_read = _read_both(
+                    _first, _second, forget_second=lambda: client.forget_cached(read_cache_keys[1:])
+                )
         except CostCeilingError:
             raise
         except Exception:
@@ -774,6 +956,16 @@ def run_binding(
             raise
     else:
         first_read = _first()
+    # A read still a stub after its one refresh holds the paper. It is left out of the
+    # comparison: against a stub every leaf is unaligned, so the cross-read check would
+    # pass on nothing. The other read stays as the record.
+    stubbed = first_read.stub or (second_read is not None and second_read.stub)
+    second_read_made = second_read is not None
+    record_model = binding.read_model
+    if stubbed and second_read is not None:
+        if first_read.stub and not second_read.stub:
+            first_read, record_model = second_read, second_model
+        second_read = None
     first = first_read.bound
     second = second_read.bound if second_read is not None else None
 
@@ -824,6 +1016,8 @@ def run_binding(
         decided, retried = "pass", True
     else:
         decided, retried = "hold", second is not None
+    if stubbed:
+        decided, retried = "hold", second_read_made
 
     if decided != "pass":
         # A held paper has no teacher queue: running it again is the only way on, and
@@ -835,12 +1029,21 @@ def run_binding(
         # client already has.
         _forget_reads()
     checks = [*chosen_checks, *compared]
+    if stubbed:
+        checks.append(
+            BindingCheck(id="stub_read", passed=False, scope="paper", detail=STUB_READ_DETAIL)
+        )
     enforced = BindingReport(
         binder="label",
         checks=checks,
         verdict=decided,
         retried=retried,
-        model=binding.read_model,
+        # The model of the read whose answers go on.
+        model=record_model
+        if stubbed
+        else second_model
+        if chosen_read is second_read
+        else binding.read_model,
     )
     answered = {answer.question_id for answer in chosen.answers}
     # A group that shows the trace of writing listed before its label is never
@@ -927,6 +1130,7 @@ def run_binding(
         review_reasons=review_reasons,
         marked_from_other_read=len(from_other),
         skipped_parts_count=len(chosen_skipped.skipped),
+        triggers=triggers,
     )
     by_id = {
         **{a.question_id: a for a in _with_statuses(chosen.answers, unverified, cleared)},
@@ -1033,16 +1237,30 @@ def gate_legacy(
     )
 
 
+def second_read_model(binding: BindingSettings) -> str:
+    """The label binder's second read's model: ``second_read_model``, else ``read_model``."""
+    return binding.second_read_model or binding.read_model
+
+
 def binding_models(settings: Settings) -> dict[str, str]:
     """The models the binding step calls by name, for ``lemely doctor``'s model table.
 
-    ``binding_read`` is the label binder's model, for both of its reads.
-    ``binding_retry`` is the gated legacy binder's retry. The legacy binder's first
-    call is the ordinary extraction call and is already in the table as ``extraction``.
+    ``binding_read`` is the label binder's model, for both of its reads unless
+    ``second_read_model`` is set: then the second read's model is listed as
+    ``binding_second_read`` (when a second read is made), so that the Anthropic-key
+    and pricing checks see it. ``binding_retry`` is the gated legacy binder's retry.
+    The legacy binder's first call is the ordinary extraction call and is already in
+    the table as ``extraction``.
     """
     binding = settings.binding
     if binding.binder == "label":
-        return {"binding_read": binding.read_model}
+        models = {"binding_read": binding.read_model}
+        if binding.second_read and binding.second_read_model is not None:
+            models[SECOND_READ_TASK_TAG] = binding.second_read_model
+        if binding.claude_chunked_read is True:
+            # The overview pass runs on the read model (chunked_read.py), under its own tag.
+            models["binding_overview"] = binding.read_model
+        return models
     if binding.gate != "off":
         return {"binding_retry": binding.retry_model}
     return {}
@@ -1051,9 +1269,13 @@ def binding_models(settings: Settings) -> dict[str, str]:
 def binding_status(settings: Settings) -> tuple[bool, str]:
     """Advisory status for ``lemely doctor``: how answers are bound, and at what cost.
 
-    Not ok when a second read is configured and would be the first read again: both
-    go to the same model, so only how hard each thinks makes the second a second
-    opinion. For a 3.x model that is ``gemini.thinking_level_for`` (tags
+    Not ok when a second read is configured, would be the first read again, and the
+    thinking table does not name ``binding_second_read`` (a table written before the
+    binder existed). A ``second_read_model`` other than ``read_model`` is a cross-model
+    second read and always ok. Otherwise both reads share a model; the second has its
+    own task tag and cache key, so equal thinking that the table sets on purpose (the
+    shipped default since cost-ladder B1: both "low") is reported ok. For a 3.x model that is
+    ``gemini.thinking_level_for`` (tags
     ``extraction`` and ``binding_second_read``); a table for it in ``lemely.toml``
     replaces the defaults, so one written before the binder existed leaves
     ``binding_second_read`` out. A 2.5 model ignores that table and reads
@@ -1077,15 +1299,44 @@ def binding_status(settings: Settings) -> tuple[bool, str]:
     summary += " (a scheme that is all multiple choice keeps the legacy binder)"
     if not binding.second_read:
         return True, f"{summary}: one read on {model} (thinking {first})"
-    second = client.resolved_thinking(SECOND_READ_TASK_TAG, model)
+    second_model = second_read_model(binding)
+    second = client.resolved_thinking(SECOND_READ_TASK_TAG, second_model)
+    mode = (
+        "the second read runs only when the first gives a reason for it"
+        if binding.second_read_mode == "on_trigger"
+        else "two reads per extraction"
+    )
+    if second_model != model:
+        # Another model reads the second time: independent whatever the thinking.
+        return (
+            True,
+            f"{summary}: a cross-model second read, first on {model} (thinking {first}), "
+            f"second on {second_model} (thinking {second}); {mode}",
+        )
     if first == second:
         # A level is a name (3.x); a budget is a number of tokens (2.5 and earlier).
         table = "thinking_level_for" if isinstance(first, str) else "thinking_budget_for"
+        if SECOND_READ_TASK_TAG not in getattr(settings.gemini, table):
+            return (
+                False,
+                f"{summary}: both reads on {model} resolve to the same thinking ({first}), so "
+                f"the second read is the first one again ({mode}); set a different value for "
+                f"{SECOND_READ_TASK_TAG} in [gemini.{table}]",
+            )
+        # The table names the second read's tag: the same thinking is a choice (B1), not
+        # a stale table. Independence comes from the separate task tag and cache key.
         return (
-            False,
-            f"{summary}: both reads on {model} resolve to the same thinking ({first}), so the "
-            "second read is the first one again; set a different value for "
-            f"{SECOND_READ_TASK_TAG} in [gemini.{table}]",
+            True,
+            f"{summary}: both reads on {model} think {first} (cost-ladder B1: "
+            "BUILD/accuracy-runs/cost-ladder-2026-10-19/b1-second-read-low/verdict.json); the "
+            "second read is independent by its own task tag and cache key, not by thinking; "
+            f"{mode}",
+        )
+    if binding.second_read_mode == "on_trigger":
+        return (
+            True,
+            f"{summary}: one read on {model} per extraction (thinking {first}), and a second "
+            f"(thinking {second}) only when the first gives a reason for it",
         )
     return (
         True,

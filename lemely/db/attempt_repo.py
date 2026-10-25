@@ -804,6 +804,16 @@ def _source_box_columns(cq: CorrectedQuestion) -> dict[str, int | None]:
     }
 
 
+def _pg_text(text: str | None) -> str | None:
+    """Drop NUL bytes, which Postgres text and JSONB columns reject.
+
+    Model output can carry one (a reader once transcribed a degree sign as
+    U+0000), and an unstripped NUL aborts the flush and loses the whole
+    correction.
+    """
+    return None if text is None else text.replace("\x00", "")
+
+
 def _to_question_result(cq: CorrectedQuestion) -> QuestionResult:
     """Map one core :class:`CorrectedQuestion` onto a :class:`QuestionResult` row."""
     return QuestionResult(
@@ -821,19 +831,19 @@ def _to_question_result(cq: CorrectedQuestion) -> QuestionResult:
         # as "not marked" for confidence/review purposes even though it now
         # has its own label.
         marker_source=MarkerSource(cq.marker_source),
-        topic=cq.topic,
-        student_answer=cq.student_answer,
-        expected_answer=cq.expected_answer,
-        review_reason=cq.review_reason,
-        feedback=cq.feedback,
+        topic=_pg_text(cq.topic),
+        student_answer=_pg_text(cq.student_answer),
+        expected_answer=_pg_text(cq.expected_answer),
+        review_reason=_pg_text(cq.review_reason),
+        feedback=_pg_text(cq.feedback),
         # The matched mark-scheme point ids ARE the method-mark breakdown.
-        matched_point_ids=list(cq.matched_point_ids),
+        matched_point_ids=[pid.replace("\x00", "") for pid in cq.matched_point_ids],
         extraction_confidence=cq.extraction_confidence,
         # `cq.plagiarism_flagged` is deliberately NOT copied: there is no such
         # column any more (`0040_marker_source_blank`). `review_reasons_for`
         # persists the flag as a `ReviewReason.plagiarism_flag` queue row
         # instead, which `_integrity_flagged` reads back.
-        rationale=cq.rationale,
+        rationale=_pg_text(cq.rationale),
         **_source_box_columns(cq),
     )
 

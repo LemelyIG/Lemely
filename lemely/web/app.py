@@ -17,7 +17,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from lemely import __version__
-from lemely.runtime.config import log_marking_flags
+from lemely.io.model_table import configured_models
+from lemely.runtime.config import anthropic_key_missing_tags, log_marking_flags
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web.deps import get_settings, get_sweeper
 from lemely.web.routers import (
@@ -75,6 +76,14 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     settings = get_settings()
     log_marking_flags(settings.grading.marking_options())
+    # The same model table `lemely doctor` checks: every configured claude- model.
+    missing_claude = anthropic_key_missing_tags(settings, configured_models(settings))
+    if missing_claude:
+        log.error(
+            "ANTHROPIC_API_KEY is not set but task tag(s) %s use a claude- model; "
+            "those calls will fail until it is configured",
+            ", ".join(missing_claude),
+        )
     stop = asyncio.Event()
     task: asyncio.Task[None] | None = None
     if settings.notifications.sweeper_enabled:

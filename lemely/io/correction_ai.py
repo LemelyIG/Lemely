@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import math
+import os
 import re
+import uuid
 from collections.abc import Mapping, Sequence
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, TypedDict
 
 import structlog
 
 from lemely.core.binding import BindingVerdict
 from lemely.core.binding_gate import GateThresholds, check_off_topic, verdict
+from lemely.core.cited_marks import flag_uncited, uncited
 from lemely.core.correction import _exam_metadata, _load_mark_scheme
 from lemely.core.equivalence import Verdict, VerdictKind, equivalent
+from lemely.core.leaf_kind import leaf_kind
 from lemely.core.loose_schemas import (
     AnswerPoint,
     CalculatedAnswer,
@@ -34,18 +40,29 @@ from lemely.core.schemas import (
     SourceBox,
     confidence_band_for_score,
     dedupe_point_verdicts,
+    marker_response_schema,
 )
-from lemely.io.gemini import GeminiClient, thinking_rank
+from lemely.io.gemini import (
+    CallRecord,
+    GeminiClient,
+    SharedPrefix,
+    process_call_records,
+    record_calls,
+    thinking_rank,
+)
 from lemely.io.prompts.correction_ai import (
     VERSION,
     build_marker_user_prompt,
+    build_shared_prefix,
     default_marking_rules,
     marker_system_prompt,
     printed_principles,
+    render_paper_mark_scheme,
+    shared_prefix_instructions,
 )
 from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD
 from lemely.io.validation import validate_mark_scheme
-from lemely.runtime.config import MarkingOptions
+from lemely.runtime.config import GeminiSettings, MarkingOptions
 from lemely.runtime.errors import ConfigError, CostCeilingError, LemelyError
 from lemely.runtime.events import EventType, bus
 
@@ -283,11 +300,150 @@ def _dropped_question_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> fr
     return frozenset()
 
 
-class AICorrector:
-    """Marks individual non-MCQ questions via the shared GeminiClient."""
+#: Environment variable naming a JSONL file. When set and the cascade is on,
+#: every marked leaf appends one line (see :func:`_append_leaf_log`) for
+#: ``scripts/cascade_sweep.py``. Unset, nothing is written.
+CASCADE_LEAF_LOG_ENV = "LEMELY_CASCADE_LEAF_LOG"
 
-    def __init__(self, gemini_client: GeminiClient) -> None:
+#: Generated once per process and stamped on every leaf-log line, so
+#: ``scripts/cascade_sweep.py`` can refuse a file that mixes two runs.
+CASCADE_RUN_TOKEN = uuid.uuid4().hex
+
+
+def _unaddressed_point_ids(question: Question, response: AIMarkResponse) -> list[str] | None:
+    """Mark-scheme point ids ``response.point_verdicts`` gives no verdict for.
+
+    ``None`` when the response carries no point verdicts at all: the marker was
+    not asked for them, so their absence says nothing about coverage.
+    """
+    if not response.point_verdicts:
+        return None
+    addressed = {pv.point_id for pv in response.point_verdicts}
+    return [ap.id for ap in question.answer_points if ap.id not in addressed]
+
+
+def _append_leaf_log(
+    path: str,
+    entry: Mapping[str, object],
+    records: Sequence[CallRecord],
+    question_id: str,
+) -> None:
+    """Append one cascade leaf, with its calls' 2027 USD and latency, to *path*.
+
+    *records* are the call records appended while this leaf was marked; the
+    ones labelled with this ``question_id`` are summed per attempt (``first``,
+    ``borderline`` as ``pass2``, ``escalation`` as ``strong``). An attempt with
+    no record (not made, or a cache hit) is ``None``.
+
+    The file is opened for append on every leaf; an ``OSError`` from *path*
+    (missing directory, no permission) propagates and fails that leaf's marking.
+    """
+    mine = [r for r in records if r.question_id == question_id]
+    by_attempt = {"first": "first", "borderline": "pass2", "escalation": "strong"}
+    usd: dict[str, float | None] = dict.fromkeys(by_attempt.values())
+    latency: dict[str, int | None] = dict.fromkeys(by_attempt.values())
+    for r in mine:
+        slot = by_attempt.get(r.attempt or "")
+        if slot is None:
+            continue
+        usd[slot] = (usd[slot] or 0.0) + r.usd_2027
+        latency[slot] = (latency[slot] or 0) + r.latency_ms
+    line = {
+        "run_token": CASCADE_RUN_TOKEN,
+        "case_key": next((r.case_key for r in mine if r.case_key is not None), None),
+        **entry,
+        "usd_2027": usd,
+        "latency_ms": latency,
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line, sort_keys=True) + "\n")
+
+
+class _PrefixKwargs(TypedDict, total=False):
+    """``generate_structured``'s ``shared_prefix`` and ``leaf_kind`` arguments.
+
+    Each is present only when set.
+    """
+
+    shared_prefix: SharedPrefix
+    leaf_kind: str
+
+
+def review_threshold_for(gemini: GeminiSettings, model: str | None) -> float:
+    """The human-review confidence threshold for a final AI mark ``model`` gave.
+
+    ``GeminiSettings.review_confidence_threshold_for`` overrides
+    :data:`REVIEW_CONFIDENCE_THRESHOLD` per model; an unlisted or unknown model
+    (``None``) keeps the global value. A stand-in settings object without a real
+    dict also keeps it.
+    """
+    table = getattr(gemini, "review_confidence_threshold_for", None)
+    if model is None or not isinstance(table, dict):
+        return REVIEW_CONFIDENCE_THRESHOLD
+    value = table.get(model)
+    return float(value) if isinstance(value, int | float) else REVIEW_CONFIDENCE_THRESHOLD
+
+
+class AICorrector:
+    """Marks individual non-MCQ questions via the shared GeminiClient.
+
+    ``mark_scheme`` is the whole paper's scheme, given by :func:`correct_paper`.
+    It is read only with ``GeminiSettings.correction_shared_prefix`` on (cost-ladder
+    lever A3): every correction call on the paper is then sent the same system
+    prompt, :func:`build_shared_prefix`, so a provider can cache it. Without a
+    scheme, or with the flag off, prompts are what they always were.
+    """
+
+    def citations_on(self) -> bool:
+        """B2: whether marks carry evidence quotes (``correction_citations``)."""
+        return self._client._settings.gemini.correction_citations is True
+
+    def _mark_schema(self) -> type[AIMarkResponse]:
+        """The reply schema for the flags in force; ``AIMarkResponse`` with them off."""
+        g = self._client._settings.gemini
+        return marker_response_schema(
+            cited=self.citations_on(), terse=g.correction_terse_rationale is True
+        )
+
+    def __init__(
+        self, gemini_client: GeminiClient, *, mark_scheme: MarkScheme | None = None
+    ) -> None:
         self._client = gemini_client
+        self._mark_scheme = mark_scheme
+        #: Built once per value of ``reader_describes_drawings``, not once per leaf.
+        self._prefixes: dict[bool, SharedPrefix] = {}
+        #: The model whose response the last :meth:`mark_question` returned (the
+        #: escalation model when it escalated); ``None`` before the first call.
+        self.last_mark_model: str | None = None
+
+    def review_threshold(self) -> float:
+        """The review threshold for the last mark: :func:`review_threshold_for` its model."""
+        if self.last_mark_model is None:
+            return REVIEW_CONFIDENCE_THRESHOLD
+        return review_threshold_for(self._client._settings.gemini, self.last_mark_model)
+
+    def _shared_prefix(self, *, reader_describes_drawings: bool) -> SharedPrefix | None:
+        """The paper's shared prefix when lever A3 is on and the scheme is known."""
+        g = self._client._settings.gemini
+        # `is True`, not truthiness: the setting is a validated bool, and a stand-in
+        # settings object whose attributes are all truthy must not switch the lever on.
+        if g.correction_shared_prefix is not True or self._mark_scheme is None:
+            return None
+        prefix = self._prefixes.get(reader_describes_drawings)
+        if prefix is None:
+            prefix = SharedPrefix(
+                instructions=shared_prefix_instructions(
+                    reader_describes_drawings=reader_describes_drawings
+                ),
+                paper=render_paper_mark_scheme(self._mark_scheme),
+                text=build_shared_prefix(
+                    self._mark_scheme, reader_describes_drawings=reader_describes_drawings
+                ),
+                cache=g.correction_prefix_cache,
+                version=VERSION,
+            )
+            self._prefixes[reader_describes_drawings] = prefix
+        return prefix
 
     def mark_question(
         self,
@@ -342,8 +498,24 @@ class AICorrector:
         :func:`_maybe_apply_ecf_substitution`, the only caller that ever
         passes this non-empty. Not tied to ``equivalence_gate``: this
         parameter exists on every call regardless of that flag's value.
+
+        With ``correction_shared_prefix`` on and the paper's scheme given to the
+        constructor, the system prompt of this call and of every retry,
+        cascade pass and escalation it makes is the paper's shared prefix
+        (:meth:`_shared_prefix`). The prefix carries the paper's marking rules,
+        so the user prompt leaves out ``principles`` and ``default_rules`` when they
+        are the ones the prefix derived from the scheme; rules that differ from
+        those stay in the user prompt. Everything else in the user prompt is
+        leaf-specific and unchanged.
         """
         g = self._client._settings.gemini
+        shared_prefix = self._shared_prefix(reader_describes_drawings=reader_describes_drawings)
+        if shared_prefix is not None and self._mark_scheme is not None:
+            meta = self._mark_scheme.metadata
+            if principles == printed_principles(meta) and default_rules == default_marking_rules(
+                meta
+            ):
+                principles, default_rules = None, None
         user_prompt = build_marker_user_prompt(
             question,
             student_answer,
@@ -355,104 +527,58 @@ class AICorrector:
             default_rules=default_rules,
             reader_describes_drawings=reader_describes_drawings,
         )
-        system_prompt = marker_system_prompt(reader_describes_drawings=reader_describes_drawings)
-
-        result = self._client.generate_structured(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            response_schema=AIMarkResponse,
-            prompt_version=VERSION,
-            extra_cache_key=f"q={question.id}",
-            task_tag="correction",
+        system_prompt = (
+            shared_prefix.text
+            if shared_prefix is not None
+            else marker_system_prompt(reader_describes_drawings=reader_describes_drawings)
         )
-
-        # Step 1: thinking retry for borderline confidence (cheaper than Pro escalation).
-        # F1 review MUST-FIX 2 (2026-09-17): the gate now reads
-        # GeminiClient.resolved_thinking() — the single source of truth also
-        # used to build the actual API call — instead of re-deriving the
-        # thinking_level_for/thinking_budget_for defaults here. The two used
-        # to disagree: a partial TOML override
-        # (``thinking_level_for = {"correction": "low"}``, which REPLACES the
-        # whole dict rather than merging into it) left this file defaulting
-        # the missing "correction_borderline" tag to "high" while gemini.py
-        # defaulted it to "low" — the gate fired believing it would retry at
-        # HIGH, but the actual call ran at LOW. The gate fires whenever the
-        # borderline call would think strictly harder than the original
-        # correction call did, on whichever substrate (level or budget) the
-        # resolved model actually reads — this also generalises the old 2.5
-        # "budget > 0" rule (a correction tag with no configured budget
-        # defaults to 0, so "borderline > correction" reduces to the same
-        # "budget > 0" check in the common case).
-        correction_model = g.model_for("correction")
-        correction_thinking = self._client.resolved_thinking("correction", correction_model)
-        borderline_thinking = self._client.resolved_thinking(
-            "correction_borderline", correction_model
+        # Sent only when set, so a flag-off call passes exactly the arguments it did.
+        prefix_kwargs: _PrefixKwargs = (
+            {"shared_prefix": shared_prefix} if shared_prefix is not None else {}
         )
-        borderline_gate = thinking_rank(borderline_thinking) > thinking_rank(correction_thinking)
-        # Spec 2026-09-26 §3 (#10): the Step-2 guard compares against the
-        # call that ACTUALLY RAN LAST, not the original correction call.
-        # Step 1 moves the baseline: after a borderline retry the last call
-        # ran at (correction_model, borderline_thinking), and under the
-        # shipped defaults (low / high / high on one model) the escalation
-        # tuple equals that -- Step 2 would bill the identical call again.
-        last_call = (correction_model, correction_thinking)
-        if result.confidence < g.escalation_confidence_threshold and borderline_gate:
-            bus.publish(
-                EventType.GEMINI_ESCALATE,
-                question_id=question.id,
-                confidence=result.confidence,
-                escalation_model=f"{correction_model} (thinking)",
-            )
+        # B3: the leaf's kind picks a claude_effort_for["tag:kind"] effort. Sent only
+        # when that table is set, so a call without it passes exactly what it did.
+        table = getattr(g, "claude_effort_for", None)
+        # ``isinstance(..., dict)`` is the MagicMock-safe check (a stand-in settings
+        # object returns a truthy mock here), the same reason other flags use ``is True``.
+        if isinstance(table, dict) and table:
+            prefix_kwargs["leaf_kind"] = leaf_kind(question)
+
+        leaf_log = os.environ.get(CASCADE_LEAF_LOG_ENV) if g.cascade_enabled is True else None
+        # The leaf log reads this leaf's call records, which are kept only while
+        # a recorder is open; the cost-ladder runner already holds one (blocks nest).
+        recorder: contextlib.AbstractContextManager[None] = (
+            record_calls() if leaf_log else contextlib.nullcontext()
+        )
+        with recorder:
+            records_before = len(process_call_records()) if leaf_log else 0
             result = self._client.generate_structured(
                 system_prompt=system_prompt,
-                user_prompt=(
-                    user_prompt + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
-                ),
-                response_schema=AIMarkResponse,
+                user_prompt=user_prompt,
+                response_schema=self._mark_schema(),
                 prompt_version=VERSION,
-                extra_cache_key=f"q={question.id}:thinking",
-                task_tag="correction_borderline",
-            )
-            last_call = (correction_model, borderline_thinking)
-
-        # Step 2: Pro escalation if confidence still below threshold.
-        # F1 fix (4): under F1 defaults correction_model == escalation_model
-        # (both "gemini-3.8-flash"), so a bare model-name comparison would make
-        # this branch permanently unreachable — the whole point of the
-        # escalation step. The guard compares the (model, thinking) tuple the
-        # escalation call would run with against the tuple of the call that
-        # ran last (``last_call``), which Step 1 updates: same model but a
-        # higher thinking_level_for["escalation"] still counts as a genuinely
-        # different, worth-trying call. Both tuples are read via
-        # ``resolved_thinking`` (F1 review MUST-FIX 2) rather than re-derived,
-        # so an unresolved value (e.g. a stray "minimal" on a model that
-        # demotes it to "low") can never make this comparison disagree with
-        # what the call underneath actually runs at.
-        escalation_model = g.escalation_model
-        if (
-            escalation_model
-            and (escalation_model, self._client.resolved_thinking("escalation", escalation_model))
-            != last_call
-            and result.confidence < g.escalation_confidence_threshold
-        ):
-            bus.publish(
-                EventType.GEMINI_ESCALATE,
+                extra_cache_key=f"q={question.id}",
+                task_tag="correction",
+                attempt="first",
                 question_id=question.id,
-                confidence=result.confidence,
-                escalation_model=escalation_model,
+                **prefix_kwargs,
             )
-            result = self._client.generate_structured(
-                system_prompt=system_prompt,
-                user_prompt=(
-                    user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
-                    "Please re-evaluate carefully before responding."
-                ),
-                response_schema=AIMarkResponse,
-                prompt_version=VERSION,
-                extra_cache_key=f"q={question.id}:escalated",
-                task_tag="escalation",
-                model=escalation_model,
-            )
+
+            if g.cascade_enabled is True:
+                result, final_model = self._cascade(
+                    question,
+                    system_prompt,
+                    user_prompt,
+                    result,
+                    leaf_log=leaf_log,
+                    records_before=records_before,
+                    prefix_kwargs=prefix_kwargs,
+                )
+            else:
+                result, final_model = self._retry_low_confidence(
+                    question, system_prompt, user_prompt, result, prefix_kwargs=prefix_kwargs
+                )
+        self.last_mark_model = final_model
 
         # Post-I6-review Item A: ``PointVerdict.ecf_applied`` must be
         # CODE-set only -- I7's whole contract is that it records a re-mark
@@ -478,6 +604,254 @@ class AICorrector:
                 }
             )
         return result
+
+    def _retry_low_confidence(
+        self,
+        question: Question,
+        system_prompt: str,
+        user_prompt: str,
+        result: AIMarkResponse,
+        *,
+        prefix_kwargs: _PrefixKwargs,
+    ) -> tuple[AIMarkResponse, str]:
+        """The non-cascade path: a borderline thinking retry, then escalation.
+
+        Both steps fire on ``escalation_confidence_threshold``; prompts and cache
+        keys are what ``mark_question`` sent before the cascade existed.
+        ``prefix_kwargs`` is the first pass's ``shared_prefix`` argument, if any.
+        Returns the final response and the model that gave it.
+        """
+        g = self._client._settings.gemini
+        # Step 1: thinking retry for borderline confidence (cheaper than Pro escalation).
+        # F1 review MUST-FIX 2 (2026-09-17): the gate now reads
+        # GeminiClient.resolved_thinking() — the single source of truth also
+        # used to build the actual API call — instead of re-deriving the
+        # thinking_level_for/thinking_budget_for defaults here. The two used
+        # to disagree: a partial TOML override
+        # (``thinking_level_for = {"correction": "low"}``, which REPLACES the
+        # whole dict rather than merging into it) left this file defaulting
+        # the missing "correction_borderline" tag to "high" while gemini.py
+        # defaulted it to "low" — the gate fired believing it would retry at
+        # HIGH, but the actual call ran at LOW. The gate fires whenever the
+        # borderline call would think strictly harder than the original
+        # correction call did, on whichever substrate (level or budget) the
+        # resolved model actually reads — this also generalises the old 2.5
+        # "budget > 0" rule (a correction tag with no configured budget
+        # defaults to 0, so "borderline > correction" reduces to the same
+        # "budget > 0" check in the common case).
+        correction_model = g.model_for("correction")
+        gate_kind = prefix_kwargs.get("leaf_kind")
+        correction_thinking = self._resolved_thinking("correction", correction_model, gate_kind)
+        borderline_thinking = self._resolved_thinking(
+            "correction_borderline", correction_model, gate_kind
+        )
+        borderline_gate = thinking_rank(borderline_thinking) > thinking_rank(correction_thinking)
+        # Spec 2026-09-26 §3 (#10): the Step-2 guard compares against the
+        # call that ACTUALLY RAN LAST, not the original correction call.
+        # Step 1 moves the baseline: after a borderline retry the last call
+        # ran at (correction_model, borderline_thinking), and under the
+        # shipped defaults (low / high / high on one model) the escalation
+        # tuple equals that -- Step 2 would bill the identical call again.
+        last_call = (correction_model, correction_thinking)
+        if result.confidence < g.escalation_confidence_threshold and borderline_gate:
+            bus.publish(
+                EventType.GEMINI_ESCALATE,
+                question_id=question.id,
+                confidence=result.confidence,
+                escalation_model=f"{correction_model} (thinking)",
+            )
+            result = self._client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=(
+                    user_prompt + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
+                ),
+                response_schema=self._mark_schema(),
+                prompt_version=VERSION,
+                extra_cache_key=f"q={question.id}:thinking",
+                task_tag="correction_borderline",
+                attempt="borderline",
+                question_id=question.id,
+                **prefix_kwargs,
+            )
+            last_call = (correction_model, borderline_thinking)
+
+        # Step 2: Pro escalation if confidence still below threshold.
+        # F1 fix (4): under F1 defaults correction_model == escalation_model
+        # (both "gemini-3.8-flash"), so a bare model-name comparison would make
+        # this branch permanently unreachable — the whole point of the
+        # escalation step. The guard compares the (model, thinking) tuple the
+        # escalation call would run with against the tuple of the call that
+        # ran last (``last_call``), which Step 1 updates: same model but a
+        # higher thinking_level_for["escalation"] still counts as a genuinely
+        # different, worth-trying call. Both tuples are read via
+        # ``resolved_thinking`` (F1 review MUST-FIX 2) rather than re-derived,
+        # so an unresolved value (e.g. a stray "minimal" on a model that
+        # demotes it to "low") can never make this comparison disagree with
+        # what the call underneath actually runs at.
+        escalation_model = g.escalation_model
+        if (
+            escalation_model
+            and (
+                escalation_model,
+                self._resolved_thinking("escalation", escalation_model, gate_kind),
+            )
+            != last_call
+            and result.confidence < g.escalation_confidence_threshold
+        ):
+            bus.publish(
+                EventType.GEMINI_ESCALATE,
+                question_id=question.id,
+                confidence=result.confidence,
+                escalation_model=escalation_model,
+            )
+            result = self._client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=(
+                    user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
+                    "Please re-evaluate carefully before responding."
+                ),
+                response_schema=self._mark_schema(),
+                prompt_version=VERSION,
+                extra_cache_key=f"q={question.id}:escalated",
+                task_tag="escalation",
+                model=escalation_model,
+                attempt="escalation",
+                question_id=question.id,
+                **prefix_kwargs,
+            )
+            return result, escalation_model
+        return result, correction_model
+
+    def _resolved_thinking(self, tag: str, model: str, kind: str | None) -> int | str:
+        """``resolved_thinking`` at the leaf kind the call runs at (tag-only when none)."""
+        if kind is None:
+            return self._client.resolved_thinking(tag, model)
+        return self._client.resolved_thinking(tag, model, kind)
+
+    def _cascade(
+        self,
+        question: Question,
+        system_prompt: str,
+        user_prompt: str,
+        first: AIMarkResponse,
+        *,
+        leaf_log: str | None,
+        records_before: int,
+        prefix_kwargs: _PrefixKwargs,
+    ) -> tuple[AIMarkResponse, str]:
+        """Cost-ladder lever A2: keep the cheap first pass unless a trigger fires.
+
+        ``first`` came from ``correction_model``. The triggers, cheapest first,
+        so a later one is never paid for once an earlier one has fired:
+
+        - confidence below ``cascade_threshold_for`` for that model, else below
+          ``escalation_confidence_threshold``;
+        - with ``cascade_unaddressed_points``, ``first.point_verdicts`` leaves a
+          mark-scheme point unaddressed (inert when the list is empty);
+        - with ``cascade_two_pass_disagreement``, a second cheap pass
+          (``:pass2``) awards different marks.
+
+        On a trigger the strong model (``cascade_strong_model or
+        escalation_model``) re-marks the original prompt, and its response is
+        the answer. The first pass stands when no strong model is configured,
+        or when the strong call would repeat the first pass exactly (same model
+        and resolved thinking; the non-cascade ``last_call`` guard). The
+        borderline thinking retry never runs here. The leaf log's
+        ``strong_skipped_identical`` is True whenever the strong call would repeat
+        the first pass, whether or not a trigger fired: the first pass IS the
+        strong result for such a leaf.
+
+        With ``LEMELY_CASCADE_LEAF_LOG`` set, an ``OSError`` writing that file
+        fails the leaf (see :func:`_append_leaf_log`). ``prefix_kwargs`` is the
+        first pass's ``shared_prefix`` argument, sent with every pass here.
+        Returns the kept response and the model that gave it.
+        """
+        g = self._client._settings.gemini
+        cheap_model = g.model_for("correction")
+        strong_model = g.cascade_strong_model or g.escalation_model
+        threshold = g.cascade_threshold_for.get(cheap_model, g.escalation_confidence_threshold)
+
+        unaddressed_ids = _unaddressed_point_ids(question, first)
+        low_confidence = first.confidence < threshold
+        unaddressed: bool | None = None
+        if g.cascade_unaddressed_points is True and unaddressed_ids is not None:
+            unaddressed = bool(unaddressed_ids)
+        disagreement: bool | None = None
+        second: AIMarkResponse | None = None
+        if g.cascade_two_pass_disagreement is True and not low_confidence and not unaddressed:
+            second = self._client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=self._mark_schema(),
+                prompt_version=VERSION,
+                extra_cache_key=f"q={question.id}:pass2",
+                task_tag="correction",
+                attempt="borderline",
+                question_id=question.id,
+                **prefix_kwargs,
+            )
+            disagreement = second.awarded_marks != first.awarded_marks
+
+        strong: AIMarkResponse | None = None
+        repeats_first = False
+        if strong_model:
+            kind = prefix_kwargs.get("leaf_kind")
+            repeats_first = (
+                strong_model,
+                self._resolved_thinking("escalation", strong_model, kind),
+            ) == (cheap_model, self._resolved_thinking("correction", cheap_model, kind))
+        if strong_model and not repeats_first and (low_confidence or unaddressed or disagreement):
+            bus.publish(
+                EventType.GEMINI_ESCALATE,
+                question_id=question.id,
+                confidence=first.confidence,
+                escalation_model=strong_model,
+            )
+            strong = self._client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=self._mark_schema(),
+                prompt_version=VERSION,
+                extra_cache_key=f"q={question.id}:cascade",
+                task_tag="escalation",
+                model=strong_model,
+                attempt="escalation",
+                question_id=question.id,
+                **prefix_kwargs,
+            )
+
+        entry: dict[str, object] = {
+            "config": {
+                "model": cheap_model,
+                "strong_model": strong_model,
+                "threshold": threshold,
+                "two_pass_disagreement": g.cascade_two_pass_disagreement,
+                "unaddressed_points": g.cascade_unaddressed_points,
+            },
+            "question_id": question.id,
+            "model": cheap_model,
+            "strong_model": strong_model,
+            "threshold": threshold,
+            "confidence": first.confidence,
+            "awarded_marks": first.awarded_marks,
+            "pass2_awarded_marks": second.awarded_marks if second is not None else None,
+            "unaddressed_point_ids": unaddressed_ids,
+            "triggers": {
+                "low_confidence": low_confidence,
+                "disagreement": disagreement,
+                "unaddressed": unaddressed,
+            },
+            "escalated": strong is not None,
+            "strong_skipped_identical": repeats_first,
+            "strong_awarded_marks": strong.awarded_marks if strong is not None else None,
+            "strong_confidence": strong.confidence if strong is not None else None,
+        }
+        structlog.get_logger().bind(component="correction_cascade").info("cascade_leaf", **entry)
+        if leaf_log:
+            _append_leaf_log(leaf_log, entry, process_call_records()[records_before:], question.id)
+        if strong is not None and strong_model:
+            return strong, strong_model
+        return first, cheap_model
 
 
 def _build_mcq_corrected(
@@ -1247,6 +1621,8 @@ def _build_ai_corrected_from_verdicts(
     mark: AIMarkResponse,
     student_working: str | None,
     extraction_confidence: float | None,
+    *,
+    review_threshold: float = REVIEW_CONFIDENCE_THRESHOLD,
 ) -> CorrectedQuestion:
     """I6 (US-013): the point-verdict marking path.
 
@@ -1302,7 +1678,8 @@ def _build_ai_corrected_from_verdicts(
     4. `no_span` / M-point-outside-``working_out`` (:func:`_check_point_evidence`),
        queued under the `low_confidence` bucket per that function's
        docstring -- no new enum member, no new trigger.
-    5. ``mark.confidence < REVIEW_CONFIDENCE_THRESHOLD``.
+    5. ``mark.confidence < review_threshold`` (``REVIEW_CONFIDENCE_THRESHOLD``
+       unless the marking model has its own, :func:`review_threshold_for`).
     """
     totals = _awarded_from_verdicts(question, mark.point_verdicts)
     capped, matched_point_ids = totals.capped, totals.matched_point_ids
@@ -1378,7 +1755,7 @@ def _build_ai_corrected_from_verdicts(
         question, mark.point_verdicts, student_answer, student_working
     )
     no_span = evidence_reason is not None
-    low_confidence = mark.confidence < REVIEW_CONFIDENCE_THRESHOLD or no_span
+    low_confidence = mark.confidence < review_threshold or no_span
 
     reasons: list[str] = []
     if coherence_mismatch:
@@ -1392,8 +1769,7 @@ def _build_ai_corrected_from_verdicts(
             reasons.append(evidence_reason or "")
         else:
             reasons.append(
-                f"confidence {mark.confidence:.2f} below review threshold "
-                f"{REVIEW_CONFIDENCE_THRESHOLD:.2f}"
+                f"confidence {mark.confidence:.2f} below review threshold {review_threshold:.2f}"
             )
     review_reason = " | ".join(reasons) if reasons else None
 
@@ -1429,6 +1805,7 @@ def _build_ai_corrected(
     extraction_confidence: float | None = None,
     *,
     equivalence_gate: bool = False,
+    review_threshold: float = REVIEW_CONFIDENCE_THRESHOLD,
 ) -> CorrectedQuestion:
     """Convert AIMarkResponse + question metadata into a CorrectedQuestion.
 
@@ -1499,7 +1876,9 @@ def _build_ai_corrected(
 
     Four independent reasons flag a question for human review (D2.2, D2.3 for #3, M1.5 for #40):
 
-    1. ``confidence < REVIEW_CONFIDENCE_THRESHOLD`` — the marker itself is unsure.
+    1. ``confidence < review_threshold`` — the marker itself is unsure.
+       ``review_threshold`` is :data:`REVIEW_CONFIDENCE_THRESHOLD` unless the
+       model whose mark this is has its own (:func:`review_threshold_for`).
     2. The marker returned a mark outside ``[0, question.marks]``. The value is
        clamped into range either way, but a marker that asks for 4 marks on a
        3-mark question has misread the mark scheme, so the (silently corrected)
@@ -1519,7 +1898,12 @@ def _build_ai_corrected(
     """
     if equivalence_gate and mark.point_verdicts and question.answer_points:
         return _build_ai_corrected_from_verdicts(
-            question, student_answer, mark, student_working, extraction_confidence
+            question,
+            student_answer,
+            mark,
+            student_working,
+            extraction_confidence,
+            review_threshold=review_threshold,
         )
 
     clamped = max(0, min(mark.awarded_marks, question.marks))
@@ -1548,7 +1932,7 @@ def _build_ai_corrected(
         awarded = _awarded_after_backstop(
             question, clamped, set(mark.matched_point_ids), set(matched_point_ids)
         )
-    low_confidence = mark.confidence < REVIEW_CONFIDENCE_THRESHOLD
+    low_confidence = mark.confidence < review_threshold
 
     reasons: list[str] = []
     if out_of_range:
@@ -1562,8 +1946,7 @@ def _build_ai_corrected(
         reasons.append("unverified accuracy mark(s): " + "; ".join(rejections))
     if not reasons and low_confidence:
         reasons.append(
-            f"confidence {mark.confidence:.2f} below review threshold "
-            f"{REVIEW_CONFIDENCE_THRESHOLD:.2f}"
+            f"confidence {mark.confidence:.2f} below review threshold {review_threshold:.2f}"
         )
     review_reason = " | ".join(reasons) if reasons else None
 
@@ -2064,8 +2447,13 @@ def _maybe_apply_ecf_substitution(
     top_level_leaves: list[Question],
     corrected_by_id: dict[str, CorrectedQuestion],
     log: structlog.BoundLogger,
+    review_threshold: float = REVIEW_CONFIDENCE_THRESHOLD,
 ) -> CorrectedQuestion:
     """I7 (US-013) ORDER: try without substitution first.
+
+    ``review_threshold`` is the one ``cq`` was built with (the first pass's
+    model's). The merged mark carries the lower of the two passes' confidences,
+    so it is judged by the stricter of the two passes' thresholds.
 
     ``cq``/``mark`` were already marked by the caller with no substitution;
     only re-mark when a part is BELOW MAX *and* GATED *and* has a resolvable
@@ -2272,7 +2660,7 @@ def _maybe_apply_ecf_substitution(
     # Post-I7-review Critical 1 fix: the re-mark's OWN confidence/feedback
     # must replace the first pass's, not the other way round.
     # `_build_ai_corrected_from_verdicts` evaluates
-    # `mark.confidence < REVIEW_CONFIDENCE_THRESHOLD` -- if `merged_mark`
+    # `mark.confidence < review_threshold` -- if `merged_mark`
     # kept the first pass's (often HIGH) confidence, an ECF re-mark the
     # model itself was UNSURE about would ship unflagged, carrying feedback
     # that describes the first pass's rejection rather than the award that
@@ -2312,14 +2700,20 @@ def _maybe_apply_ecf_substitution(
     # them rather than the first pass's. Set on the built row, not through
     # `merged_mark`: a `model_copy` update would mark the field as set even
     # when the re-mark left it out, turning "no judgement" into "unclear".
-    return _build_ai_corrected(
+    rebuilt = _build_ai_corrected(
         question,
         student_answer,
         merged_mark,
         student_working,
         extraction_confidence,
         equivalence_gate=equivalence_gate,
+        review_threshold=max(review_threshold, ai.review_threshold()),
     ).model_copy(update={"addresses_question": _addresses_judgement(mark2)})
+    # B2: the rebuilt row carries the re-mark's marks, so the citation check runs on the
+    # re-mark itself (its own quotes and point ids), not on the first pass's.
+    if ai.citations_on() and uncited(question, mark2):
+        rebuilt = flag_uncited(rebuilt)
+    return rebuilt
 
 
 def _attach_extraction_context(
@@ -2685,7 +3079,9 @@ def correct_paper(
             "This paper contains non-MCQ questions. Pass a GeminiClient or set mcq_only=True."
         )
 
-    ai = AICorrector(gemini_client) if (gemini_client and not mcq_only) else None
+    ai = (
+        AICorrector(gemini_client, mark_scheme=scheme) if (gemini_client and not mcq_only) else None
+    )
     # The marking rules every AI marking call on this paper is given: the scheme's own
     # printed principles, or, for a science scheme stored without any, the published
     # ones for its syllabus family. Never both.
@@ -2857,6 +3253,7 @@ def correct_paper(
                 message=f"AI marking failed for q={q.id}: {exc!s}",
             )
             continue
+        review_threshold = ai.review_threshold()
         cq = _build_ai_corrected(
             q,
             student_answer or "",
@@ -2864,7 +3261,10 @@ def correct_paper(
             student_working,
             extraction_confidence,
             equivalence_gate=equivalence_gate,
+            review_threshold=review_threshold,
         )
+        if ai.citations_on() and uncited(q, mark):
+            cq = flag_uncited(cq)
         cq = _maybe_apply_ecf_substitution(
             q,
             cq,
@@ -2883,6 +3283,7 @@ def correct_paper(
             top_level_leaves=top_level_groups[_top_level_ancestor_id(q.id, all_by_id)],
             corrected_by_id=corrected_by_id,
             log=log,
+            review_threshold=review_threshold,
         )
         corrected.append(cq)
         prior_results_accumulated[q.id] = cq.awarded_marks

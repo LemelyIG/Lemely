@@ -105,8 +105,8 @@ class TestSecondReaderSettings:
     def test_f1_defaults(self) -> None:
         """F1 acceptance (1): model_for() resolves every tag to the migration defaults."""
         s = GeminiSettings()
-        assert s.model_for("correction") == "gemini-3.8-flash"
-        assert s.model_for("correction_borderline") == "gemini-3.8-flash"
+        assert s.model_for("correction") == "gemini-3.1-flash-lite"
+        assert s.model_for("correction_borderline") == "gemini-3.1-flash-lite"
         assert s.model_for("escalation") == "gemini-3.8-flash"
         assert s.model_for("extraction") == "gemini-3.5-flash-lite"
         assert s.model_for("generation") == "gemini-3.5-flash-lite"
@@ -294,9 +294,9 @@ class TestBindingSettings:
         assert s.gemini.model_for("extraction") == "gemini-3.5-flash-lite"
         assert s.binding.read_model != s.gemini.model_for("extraction")
 
-    def test_second_read_thinks_harder_than_the_first_by_default(self) -> None:
+    def test_second_read_defaults_to_low_thinking(self) -> None:
         levels = GeminiSettings().thinking_level_for
-        assert levels["binding_second_read"] == "medium"
+        assert levels["binding_second_read"] == "low"
         assert levels["extraction"] == "minimal"
 
     @pytest.mark.parametrize(
@@ -698,3 +698,16 @@ class TestRereadStageSettings:
         with pytest.raises(ValidationError) as exc_info:
             GeminiSettings(reread_budget_seconds=float("inf"))
         assert exc_info.value.errors()[0]["type"] == "finite_number"
+
+
+def test_anthropic_key_missing_tags_lists_only_claude_tags() -> None:
+    from lemely.runtime.config import Settings, anthropic_key_missing_tags
+
+    settings = Settings(anthropic_api_key=None)
+    tags = ("correction", "correction_borderline", "escalation", "extraction", "generation")
+    models = {tag: settings.gemini.model_for(tag) for tag in tags}
+    assert anthropic_key_missing_tags(settings, models) == []
+    models["correction"] = models["correction_borderline"] = "claude-haiku-5-5"
+    assert anthropic_key_missing_tags(settings, models) == ["correction", "correction_borderline"]
+    keyed = Settings(anthropic_api_key="k")  # type: ignore[arg-type]
+    assert anthropic_key_missing_tags(keyed, models) == []

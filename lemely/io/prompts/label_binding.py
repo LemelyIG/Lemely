@@ -30,6 +30,8 @@ version of the rule has been measured.
 
 from __future__ import annotations
 
+from collections.abc import Collection, Sequence
+
 from lemely.core.loose_schemas import MarkScheme, Question
 
 VERSION = "3"
@@ -245,11 +247,14 @@ def _printed_labels(mark_scheme: MarkScheme) -> list[tuple[str, int]]:
     return labels
 
 
-def build_label_binding_user_prompt(mark_scheme: MarkScheme, *, page_count: int) -> str:
+def build_label_binding_user_prompt(
+    mark_scheme: MarkScheme, *, page_count: int, labels: Collection[str] | None = None
+) -> str:
     """Build the user prompt: the page indices, the paper, and the labels to look for.
 
     From the mark scheme it carries each leaf's printed label and marks, and nothing
-    else: no id, no stem, no mark-scheme point.
+    else: no id, no stem, no mark-scheme point. ``labels`` (a chunk's mapped labels)
+    narrows the list to the scheme labels they match; no match keeps the full list.
 
     Raises:
         ValueError: ``page_count`` is less than 1.
@@ -265,9 +270,24 @@ def build_label_binding_user_prompt(mark_scheme: MarkScheme, *, page_count: int)
         )
     meta = mark_scheme.metadata
     year = meta.session_year if meta.session_year is not None else "Specimen"
+    printed = _printed_labels(mark_scheme)
+    if labels:
+        # The map is a 768 px read and can miss a label: keep each matched leaf's
+        # neighbours in scheme order too, so a missed label is still on the list.
+        hit = [
+            any(
+                label == m or label.startswith(m + "(") or m.startswith(label + "(") for m in labels
+            )
+            for label, _marks in printed
+        ]
+        keep = [
+            hit[i] or (i > 0 and hit[i - 1]) or (i + 1 < len(hit) and hit[i + 1])
+            for i in range(len(hit))
+        ]
+        wanted = [entry for entry, k in zip(printed, keep, strict=True) if k]
+        printed = wanted if any(hit) else printed
     label_list = "\n".join(
-        f"- {label} [{marks} mark{'s' if marks != 1 else ''}]"
-        for label, marks in _printed_labels(mark_scheme)
+        f"- {label} [{marks} mark{'s' if marks != 1 else ''}]" for label, marks in printed
     )
     return (
         "Read the attached scanned paper and write down its question labels and the student's "
@@ -284,3 +304,56 @@ def build_label_binding_user_prompt(mark_scheme: MarkScheme, *, page_count: int)
         "goes directly after that part's label. A label is always listed before the writing "
         "that sits under it, never after it. No item contains a question id."
     )
+
+
+OVERVIEW_VERSION = "overview-1"
+CHUNK_VERSION = f"{VERSION}+chunk1"
+
+OVERVIEW_SYSTEM_PROMPT = """You map a scanned exam script page by page.
+
+For every attached page image, list the question labels you can see on it (printed or
+handwritten, as written, for example "3(b)(ii)"), in reading order, and say whether
+the student's writing at the bottom of the page carries on onto the next page. Do not
+transcribe any answer. Return one entry per page, for every page, in order."""
+
+
+def build_overview_user_prompt(mark_scheme: MarkScheme, *, page_count: int) -> str:
+    """The overview pass's request: the page indices and the labels to look for."""
+    labels = "\n".join(f"- {label}" for label, _marks in _printed_labels(mark_scheme))
+    return (
+        f"You are given {page_count} page thumbnails, indexed 0 to {page_count - 1}.\n\n"
+        f"The printed paper's labels, for orientation only:\n{labels}\n\n"
+        'Return JSON: {"pages": [{"page": 0, "labels": ["1(a)"], "continues_to_next": '
+        "false}, ...]} with exactly one entry per page."
+    )
+
+
+def build_chunk_user_prompt(
+    mark_scheme: MarkScheme,
+    *,
+    page_count: int,
+    first_page: int,
+    total_pages: int,
+    overlap: bool,
+    page_map: str | None,
+    labels: Sequence[str] | None,
+) -> str:
+    """One chunk's binder request: the normal request, its labels, its place, the map.
+
+    ``labels`` and ``page_map`` of None (an overview that did not validate) leave the
+    full label list and no map.
+    """
+    base = build_label_binding_user_prompt(mark_scheme, page_count=page_count, labels=labels)
+    place = (
+        f"This is part of a longer script of {total_pages} pages. The attached images are "
+        f"pages {first_page + 1} to {first_page + page_count} of it, indexed 0 to "
+        f"{page_count - 1} here."
+    )
+    if overlap:
+        place += (
+            " Image 0 is the last page of the previous part, sent again only so that writing "
+            "carrying on from it makes sense: list nothing that is on image 0."
+        )
+    if page_map is None:
+        return f"{base}\n\n{place}"
+    return f"{base}\n\n{place}\n\nPage map of the whole script, from an overview read:\n{page_map}"

@@ -24,14 +24,15 @@ model = "gemini-2.5-flash"
 # Per-task model overrides (omit a key to use the global `model` above).
 # F1 (Gemini 3.x migration, 2026-09-17): these are the shipped defaults, so
 # they are commented out here purely as documentation of what you are
-# overriding if you uncomment one. correction/escalation default to
-# gemini-3.8-flash; extraction/generation/scan_metadata default to
+# overriding if you uncomment one. correction defaults to
+# gemini-3.1-flash-lite and escalation to gemini-3.8-flash;
+# extraction/generation/scan_metadata default to
 # gemini-3.5-flash-lite; mark_scheme stays on gemini-2.5-flash (its chunked
 # parser and thinking_budget tuning predate the 3.x migration, D20). Run
 # `lemely doctor` to see what model_for() actually resolves for every tag.
 # mark_scheme_model    = "gemini-2.5-flash"
 # extraction_model     = "gemini-3.5-flash-lite"
-# correction_model     = "gemini-3.8-flash"
+# correction_model     = "gemini-3.1-flash-lite"
 # generation_model     = "gemini-3.5-flash-lite"
 # scan_metadata_model  = "gemini-3.5-flash-lite"
 
@@ -40,6 +41,67 @@ model = "gemini-2.5-flash"
 # the gate compares (model, thinking) tuples, not model names alone.
 # escalation_model = "gemini-3.8-flash"
 # escalation_confidence_threshold = 0.8
+# Per-model human-review threshold: a final AI mark from a listed model is
+# flagged for teacher review below its value (unlisted models: 0.90). A table
+# you set REPLACES the shipped one (no merge). Applies to the marking step;
+# the review queue and teacher console still read the 0.90 constant.
+# review_confidence_threshold_for = {}
+
+# LLM cost-ladder levers (all default to the pre-ladder behaviour).
+# Per-task cache mode: read_write | bypass | refresh (unlisted tags read_write).
+# cache_mode_for = {}
+# False makes forget_cached a no-op so measurement runs keep every cached read.
+# cache_forget_enabled = true
+# Cascade: cheap correction pass first, escalate only when it is unsure.
+# cascade_enabled = false
+# Strong model for the cascade (unset = use escalation_model).
+# cascade_strong_model = ""  # unset = use escalation_model
+# Per-model fitted confidence threshold (missing model = escalation threshold).
+# cascade_threshold_for = {}
+# Escalate when two cheap passes disagree.
+# cascade_two_pass_disagreement = false
+# Per-task output-token cap, thinking included (unlisted tags keep the default).
+# A reply cut off at a set cap is billed, recorded unparsed, retried once
+# afresh, then fails. A table you set REPLACES the shipped caps (no merge):
+# list every entry you want kept, both extraction and binding_second_read.
+# Naming binding_second_read here pins Claude's binder cap too: on a claude-
+# model it defaults to 32768 when the tag is not named.
+# max_output_tokens_for = { "extraction" = 32768, "binding_second_read" = 16384 }
+# Escalate when the cheap pass leaves mark-scheme points unaddressed.
+# cascade_unaddressed_points = false
+# Put the question-invariant correction prompt first so it can be cached.
+# correction_shared_prefix = false
+# How the shared prefix is cached: implicit | explicit.
+# correction_prefix_cache = "implicit"
+# Claude page images: greyscaled, enhanced and stepped down from 2576 px until
+# under this many estimated tokens (95,000 keeps Haiku 5.5 under its 100k
+# price tier), never below the floor in pixels.
+# claude_image_token_budget = 95000
+# claude_image_floor_px = 1568
+# Page images for claude- calls go through Claude's Files API (1 h expiry,
+# deleted at job end; not ZDR-eligible: use a dedicated workspace key).
+# claude_files_api = true
+# A script whose model spend passes this logs script_over_cost_target
+# (split by task tag). It never blocks marking.
+# paper_cost_target_usd = 0.1
+# Claude prompt-cache breakpoints per task tag: system | documents | images |
+# prefix. Unlisted tags mark system and prefix (the A1 behaviour). A changed
+# effort or thinking setting invalidates the cached messages (docs, prompt
+# caching): both binder tags must send the same effort for the second read to hit.
+# claude_cache_for = {}
+# Claude effort (low | medium | high | xhigh | max) per tag or tag:kind,
+# e.g. { "correction:extended" = "medium" }. Unlisted: thinking_level_for.
+# haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept every level (docs: effort);
+# a model that rejects one fails the call. Higher effort spends more of
+# max_output_tokens_for (thinking counts toward max_tokens).
+# claude_effort_for = {}
+# The marker quotes the mark scheme for every awarded mark; an unquoted or
+# misquoted mark goes to review as uncited_mark.
+# correction_citations = false
+# Ask the marker for a rationale of at most 25 words (cut at 300 chars).
+# correction_terse_rationale = false
+# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B).
+# claude_image_enhance = true
 
 max_retries = 3
 backoff_seconds = 2.0
@@ -65,6 +127,7 @@ upload_concurrency = 4
 
 # gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.
 # gemini_api_key = "sk-..."
+# anthropic_api_key is a secret too — use the ANTHROPIC_API_KEY env var.
 
 # Thinking budget per task (tokens; 0 = disabled) — 2.5-and-earlier models
 # only. 3.x models read [gemini.thinking_level_for] instead (see below). NOTE:
@@ -82,13 +145,15 @@ mark_scheme = 8000
 # This table REPLACES the defaults: a key left out here falls back to
 # "low". Leaving out binding_second_read makes the binding step's second
 # read the same call as its first (see [binding]); `lemely doctor` says so.
+# binding_second_read is safe at "low" only because max_output_tokens_for caps
+# it: at "medium" second reads reached 47-65k tokens, so raise that cap first.
 [gemini.thinking_level_for]
 correction = "low"
 correction_borderline = "high"  # Step-1 retry before Step-2 escalation
 escalation = "high"
 extraction = "minimal"
 generation = "low"
-binding_second_read = "medium"  # the label binder's second read, see [binding]
+binding_second_read = "low"  # the label binder's second read, see [binding]
 
 [accuracy_eval]
 mark_accuracy_target = 0.95
@@ -256,6 +321,33 @@ read_model = "gemini-3.8-flash"
 # reads can be compared and a bad first read replaced. Doubles the cost of
 # the binding step. Read by the label binder only.
 second_read = true
+# When the second read is made. "always" -- on every script, at the same
+# time as the first. "on_trigger" -- the first read alone, then the second
+# only when the first gives a reason: a part not bound or left blank, a
+# label missing, out of place or seen twice, or a gate check that fails
+# on it. With no reason the paper goes on with the first read, as with
+# second_read off.
+# Unsafe as shipped: a first read with every label present but writing
+# under the wrong labels fires no trigger, so the G9 cross-read check is
+# lost and those answers go out verified. Not screened; keep `always`.
+# COST: its blank_leaf trigger fires on every script with a genuinely
+# skipped part (5/5 reads of the one real scan on disk), so on real
+# scripts it saves far less than on the golden set (0/20 reads).
+second_read_mode = "always"
+# The second read's model. Unset: read_model reads twice. A claude- model
+# (e.g. claude-haiku-5-5) makes it a cross-model read under the
+# binding_second_read task tag: its thinking level is the Anthropic effort
+# and its max_output_tokens_for cap applies. Claude gets the pages fitted
+# under gemini.claude_image_token_budget, never below
+# gemini.claude_image_floor_px. Needs ANTHROPIC_API_KEY; `lemely doctor`
+# checks for it.
+# second_read_model = "claude-haiku-5-5"
+# A claude- read still over the token budget at the image floor is read as
+# an overview pass plus page chunks under the budget (off until screened).
+# The binding_overview call (the 768 px map pass) uses the effort, output cap and
+# cache defaults of its tag unless set. Chunk calls send their pages inline, not
+# through the Files API: input tokens are unchanged, bandwidth is higher.
+# claude_chunked_read = false
 # The model the legacy binder's one retry uses, when the gate is on.
 retry_model = "gemini-3.8-flash"
 

@@ -69,7 +69,7 @@ from lemely.db.student_profile_repo import StudentProfileService, SubjectEnrolme
 from lemely.db.upload_repo import IDEMPOTENCY_KEY_WINDOW, StudentUploadRepository, UploadRun
 from lemely.db.xp_repo import UserZoneReader, XpService, civil_date_in_zone
 from lemely.io.det.profiles import get_profile
-from lemely.io.gemini import GeminiClient
+from lemely.io.gemini import GeminiClient, script_cost_scope
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
 from lemely.io.scan_metadata import ScanMetadataExtractor
@@ -1046,39 +1046,40 @@ def student_correct(
                     sibling_scheme = tmp_path / "mark_scheme.pdf"
                     sibling_scheme.write_bytes(scheme_bytes)
 
-                metadata: ExamMetadata | None = None
-                if settings.gemini_api_key is not None:
-                    try:
-                        metadata = ScanMetadataExtractor(gemini_client)(scan_path)
-                    except Exception as exc:
+                with script_cost_scope(settings, script_key=f"upload:{owned.id}"):
+                    metadata: ExamMetadata | None = None
+                    if settings.gemini_api_key is not None:
+                        try:
+                            metadata = ScanMetadataExtractor(gemini_client)(scan_path)
+                        except Exception as exc:
+                            bus.publish(
+                                EventType.WARNING,
+                                paper_id=payload.paperId,
+                                message=f"Could not detect scan metadata: {exc}",
+                            )
+
+                    mark_scheme = resolve_mark_scheme(
+                        sibling_scheme, corpus, settings, gemini_client, metadata=metadata
+                    )
+                    if mark_scheme is None:
                         bus.publish(
                             EventType.WARNING,
                             paper_id=payload.paperId,
-                            message=f"Could not detect scan metadata: {exc}",
+                            message="No mark scheme available for this paper; cannot mark.",
                         )
+                        upload_repo.set_status(owned.id, UploadStatus.failed)
+                        return
 
-                mark_scheme = resolve_mark_scheme(
-                    sibling_scheme, corpus, settings, gemini_client, metadata=metadata
-                )
-                if mark_scheme is None:
-                    bus.publish(
-                        EventType.WARNING,
-                        paper_id=payload.paperId,
-                        message="No mark scheme available for this paper; cannot mark.",
+                    extracted = extract_answers(scan_path, mark_scheme, gemini_client=gemini_client)
+                    ensure_binding_allows_marking(extracted)
+                    report = grade_paper(
+                        mark_scheme,
+                        extracted,
+                        gemini_client=gemini_client,
+                        student_id=None,
+                        integrity_settings=settings.integrity,
+                        options=settings.grading.marking_options(),
                     )
-                    upload_repo.set_status(owned.id, UploadStatus.failed)
-                    return
-
-                extracted = extract_answers(scan_path, mark_scheme, gemini_client=gemini_client)
-                ensure_binding_allows_marking(extracted)
-                report = grade_paper(
-                    mark_scheme,
-                    extracted,
-                    gemini_client=gemini_client,
-                    student_id=None,
-                    integrity_settings=settings.integrity,
-                    options=settings.grading.marking_options(),
-                )
                 attempt_id = attempt_repo.persist_correction(
                     user_id=auth.user_id,
                     report=report,

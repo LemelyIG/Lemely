@@ -10,8 +10,10 @@ into the records the rest of the pipeline uses.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from functools import partial
+from typing import TYPE_CHECKING, Literal, cast
 
+import structlog
 from pydantic import ConfigDict, ValidationError, create_model
 
 from lemely.core.binding import SeenLabel, SeenWriting, StreamItem, UnboundWriting
@@ -40,6 +42,7 @@ if TYPE_CHECKING:
 
     from lemely.core.binding import BindingStatus
     from lemely.core.loose_schemas import MarkScheme
+    from lemely.io.binding.chunked_read import ChunkedLabelReader
     from lemely.io.gemini import GeminiClient, ImageUploads
     from lemely.io.rasterise import RasterisedPage
 
@@ -113,6 +116,8 @@ class StreamRead:
     ``empty_label``, ``empty_answer`` (the reader reported no writing). Kept and
     repaired: ``repaired_page``, ``unreadable_answer``, ``answer_under_text`` (an
     answer item whose writing came under ``text``; see ``_parse_answer``).
+    ``reindexed_one_based`` is 1 for a read whose pages were numbered from 1 and so were
+    all shifted down (``_numbered_from_one``); it counts the read, not its items.
     """
 
     items: list[StreamItem]
@@ -249,7 +254,7 @@ def _parse_answer(
 
 
 def _parse_item(
-    raw: object, page_count: int, last_page: int
+    raw: object, page_count: int, last_page: int, *, one_based: bool = False
 ) -> tuple[StreamItem | None, list[str]]:
     """One reply item as a stream item, and every reason it was dropped or repaired.
 
@@ -257,7 +262,9 @@ def _parse_item(
     added, are not read, with one exception: the ``text`` of an answer item that has no
     ``answer`` (``_parse_answer``). An item that is recognisably a label or an answer is kept
     whatever its ``page``: order is the binding evidence, so a bad page takes
-    ``last_page`` and loses its box, which means nothing on a guessed page.
+    ``last_page`` and loses its box, which means nothing on a guessed page. With
+    ``one_based`` (``_numbered_from_one``) the page is the reader's page less one, and
+    that is not a repair.
     """
     if not isinstance(raw, dict):
         return None, ["malformed_item"]
@@ -266,7 +273,10 @@ def _parse_item(
     if item_type not in ("label", "answer"):
         return None, ["unknown_type"]
 
-    page = _coerce_page(raw.get("page"), page_count)
+    shift = 1 if one_based else 0
+    page = _coerce_page(raw.get("page"), page_count + shift)
+    if page is not None:
+        page -= shift
     page_repaired = page is None
     if page is None:
         page = last_page
@@ -284,6 +294,37 @@ def _parse_item(
     return item, reasons
 
 
+# Items on the last page number needed before a read counts as numbered from 1. No item on
+# page 0 is the normal state (page 0 is usually an unlabelled cover), so it proves nothing
+# alone, and one stray item on page ``page_count`` stays a per-item repair. A real 1-based
+# read had 14 items there (.superpowers/sdd/binding-investigation.md, 3 of 22 reads).
+_MIN_ONE_BASED_TAIL_ITEMS = 2
+
+
+def _numbered_from_one(raw_items: list[object], page_count: int) -> bool:
+    """Whether the reader numbered the pages from 1, shifting the whole read by one.
+
+    Evidence of a shift, all of it needed: no item on page 0; at least
+    ``_MIN_ONE_BASED_TAIL_ITEMS`` items on page ``page_count`` (a page that does not exist
+    counting from 0); and every item after the first one on that page is on it too, so those
+    items are the tail of the stream. Earlier backtracks in the read are allowed: a shifted
+    read still places an odd item a page early. One stray item on the last page leaves the
+    rest of the read on page 0 and up, so it is not a shifted count.
+    Evidence: 3 of 22 full-script reads of one 19-page script were numbered 1..19
+    (.superpowers/sdd/binding-investigation.md).
+    """
+    known = [
+        page
+        for raw in raw_items
+        if isinstance(raw, dict)
+        and (page := _coerce_page(raw.get("page"), page_count + 1)) is not None
+    ]
+    if 0 in known or known.count(page_count) < _MIN_ONE_BASED_TAIL_ITEMS:
+        return False
+    tail = known[known.index(page_count) :]
+    return all(page == page_count for page in tail)
+
+
 def parse_stream_items(raw_items: list[object], *, page_count: int) -> StreamRead:
     """Turn the reply's ``items`` into stream items, one at a time and in order.
 
@@ -291,14 +332,25 @@ def parse_stream_items(raw_items: list[object], *, page_count: int) -> StreamRea
     it holds no writing at all. An item that had to be repaired to be kept is counted
     in ``drops`` like one that was dropped, so nothing is changed silently. Dropping a
     label is the same as the reader missing it, which the binding is built to survive.
+
+    A read numbered from 1 (``_numbered_from_one``) is shifted by one as a whole, before
+    any item is repaired, and counted once as ``reindexed_one_based``: the order was
+    right and only the count was off, so nothing is demoted. It is logged as
+    ``binding_read_reindexed``.
     """
     if not isinstance(raw_items, list):
         raise TypeError(f"the reply's items must be a list, not {type(raw_items).__name__}")
     items: list[StreamItem] = []
     drops: dict[str, int] = {}
     last_page = 0
+    one_based = _numbered_from_one(raw_items, page_count)
+    if one_based:
+        drops["reindexed_one_based"] = 1
+        structlog.get_logger().bind(component="label_binder").warning(
+            "binding_read_reindexed", pages=page_count, items=len(raw_items)
+        )
     for raw in raw_items:
-        item, reasons = _parse_item(raw, page_count, last_page)
+        item, reasons = _parse_item(raw, page_count, last_page, one_based=one_based)
         if item is not None:
             items.append(item)
             last_page = item.page
@@ -310,8 +362,9 @@ def parse_stream_items(raw_items: list[object], *, page_count: int) -> StreamRea
 class LabelBinder:
     """Asks the model for the reading-order list of labels and writing on a script."""
 
-    def __init__(self, client: GeminiClient) -> None:
+    def __init__(self, client: GeminiClient, *, chunked: ChunkedLabelReader | None = None) -> None:
         self._client = client
+        self._chunked = chunked
 
     def read(
         self,
@@ -323,14 +376,29 @@ class LabelBinder:
         media_resolution: str = "high",
         extra_cache_key: str,
         task_tag: str = "extraction",
+        cache_mode: Literal["read_write", "bypass", "refresh"] | None = None,
     ) -> StreamRead:
         """Read every page in one call and return the list the model gave.
 
-        ``model`` overrides the configured extraction model. ``task_tag`` picks the
+        ``model`` overrides the configured extraction model. ``cache_mode`` is passed on
+        to the call when given (a read made again after a stub is made ``"refresh"``);
+        the chunked reader never reads its cache. ``task_tag`` picks the
         call's thinking level and the cost bucket it is counted in. A cost-ceiling or
-        service error from the call is not caught here.
+        service error from the call is not caught here. A script the chunked reader
+        applies to (a claude- model, pages over the token budget at the floor) is read
+        as an overview plus chunks instead.
         """
-        raw = self._client.generate_structured(
+        if self._chunked is not None and self._chunked.applies(pages, model):
+            return self._chunked.read(
+                pages,
+                mark_scheme,
+                model=cast("str", model),
+                media_resolution=media_resolution,
+                extra_cache_key=extra_cache_key,
+                task_tag=task_tag,
+            )
+        call = partial(
+            self._client.generate_structured,
             system_prompt=LABEL_BINDING_SYSTEM_PROMPT,
             user_prompt=build_label_binding_user_prompt(mark_scheme, page_count=len(pages)),
             image_parts=[page.png_bytes for page in pages],
@@ -342,6 +410,9 @@ class LabelBinder:
             extra_cache_key=extra_cache_key,
             task_tag=task_tag,
         )
+        # ``cache_mode`` is named only when set, so a read that is not a repeat sends the
+        # call it always did.
+        raw = call() if cache_mode is None else call(cache_mode=cache_mode)
         return parse_stream_items(raw.model_dump()["items"], page_count=len(pages))
 
     def cache_key(

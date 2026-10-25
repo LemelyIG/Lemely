@@ -1,0 +1,35 @@
+{
+  "cache_entries_written": 83,
+  "cache_hits": 10,
+  "cache_mode": "read_write",
+  "cacheable_live_records": 83,
+  "frozen_upstream": false,
+  "id_match_rate": 1.0,
+  "in_run_cache_hits": 10,
+  "incomplete": [],
+  "latency_p95_ms": 493044.0,
+  "live_tags": [],
+  "mismarked_parts": [
+    "0580_s23_qp_22_theory/partial/12a",
+    "0580_s23_qp_22_theory/partial/14",
+    "0580_s23_qp_22_theory/partial/19",
+    "0580_s23_qp_22_theory/partial/2",
+    "0580_s23_qp_22_theory/partial/4",
+    "0606_s23_qp_12_theory/wrong/3b",
+    "0625_s20_qp_31_theory/correct/11b"
+  ],
+  "overrides": {},
+  "resummarised": {
+    "from": [
+      "records.jsonl",
+      "results.json"
+    ],
+    "incomplete_before": [
+      "0606_s23_qp_12_theory/wrong"
+    ]
+  },
+  "scored_parts": 78,
+  "usd_per_script_mean": 0.15819525416666666,
+  "usd_per_script_mean_now": 0.07922239791666667,
+  "validity_rate": 0.9880952380952381
+}

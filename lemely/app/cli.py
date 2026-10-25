@@ -537,26 +537,58 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # F1 (Gemini 3.x migration): surface what model_for() actually resolves to
     # per task tag, so a config mistake (e.g. escalation falling back to the
     # global 2.5 model) is visible without reading lemely.toml by hand.
-    model_table_tags = (
-        "correction",
-        "correction_borderline",
-        "escalation",
-        "extraction",
-        "generation",
-        "mark_scheme",
-        "scan_metadata",
-        "study_plan",
-    )
-    configured_models = {tag: settings.gemini.model_for(tag) for tag in model_table_tags}
-    # The binding step names its models itself, not through model_for(): the label
-    # binder's reads, or the gated legacy binder's one retry. Listed with the rest
-    # so the table shows every model extraction can call and the pricing checks
-    # below cover them.
-    from lemely.io.binding.orchestrate import binding_models, binding_status
+    # The table also lists the cascade's own strong model and the binding step's
+    # models (the label binder's reads, or the gated legacy binder's one retry),
+    # which are named directly rather than through model_for(), so the pricing
+    # and key checks below cover every model a run can call. The web startup
+    # check reads the same table.
+    from lemely.io.binding.orchestrate import binding_status
+    from lemely.io.model_table import configured_models as configured_models_for
 
-    configured_models.update(binding_models(settings))
+    configured_models = configured_models_for(settings)
     model_table = ", ".join(f"{tag}={model}" for tag, model in configured_models.items())
     record("gemini_model_table", True, detail=model_table)
+
+    # Cost-ladder A1: a claude- model configured for any task tag needs
+    # ANTHROPIC_API_KEY, or every call to it fails at first use, so this is
+    # fatal (not advisory) whenever any tag in the table resolves to one.
+    from lemely.runtime.config import anthropic_key_missing_tags
+
+    claude_tags = anthropic_key_missing_tags(settings, configured_models)
+    record(
+        "anthropic_api_key",
+        not claude_tags,
+        detail=(
+            ""
+            if not claude_tags
+            else "no ANTHROPIC_API_KEY set but task tag(s) "
+            + ", ".join(f"{t}={configured_models[t]}" for t in claude_tags)
+            + " use a claude- model; set ANTHROPIC_API_KEY (or LEMELY_ANTHROPIC_API_KEY)"
+        ),
+    )
+
+    # Spec 2026-10-19 §2a: page images for claude- tags go to the Files API, which a
+    # workspace-scoped key can read back. A standard key cannot report its workspace,
+    # so this stays a static advisory.
+    # Only the calls that carry page images (extraction and the binding reads) upload.
+    if claude_tags_any := [
+        t
+        for t, m in configured_models.items()
+        if m.startswith("claude-") and (t == "extraction" or t.startswith("binding"))
+    ]:
+        record(
+            "claude_files_workspace",
+            True,
+            detail=(
+                "claude_files_api is on: page images for "
+                + ", ".join(claude_tags_any)
+                + " are uploaded (1 h expiry, deleted at job end; not ZDR-eligible). "
+                "A standard key cannot report its workspace: confirm ANTHROPIC_API_KEY "
+                "belongs to the dedicated Lemely workspace."
+                if settings.gemini.claude_files_api
+                else "claude_files_api is off: page images are sent inline"
+            ),
+        )
 
     # How answers are tied to questions and what that costs per extraction; not
     # ok when the binding step's second read would be the first read again (same
@@ -565,7 +597,7 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     record("binding", binding_ok, detail=binding_detail)
 
     # US-026: the $14 total_usd_ceiling is only as honest as the pricing table
-    # it's ledgered against — warn (advisory, never fatal) once the 3.8/3.7/
+    # it's ledgered against — warn (advisory, never fatal) once the 3.8/
     # 3.6-flash promotional rate is close to lapsing to the real, doubled
     # rate, so a developer notices before the ceiling starts guarding a stale
     # price. See FLASH_3X_PROMO_END_DATE / promo_pricing_status in gemini.py.
@@ -580,6 +612,32 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # see fallback_pricing_status's docstring in gemini.py.
     fallback_ok, fallback_detail = fallback_pricing_status(settings, configured_models)
     record("gemini_fallback_pricing", fallback_ok, detail=fallback_detail)
+
+    # Spec 2026-10-19 §3: every tag's provider, model, effort and price row. A claude-
+    # tag with no row is fatal (its calls fail closed); a Gemini tag with no row only
+    # warns (it is priced through the fallback, as gemini_fallback_pricing says).
+    from lemely.io.gemini import _today
+    from lemely.io.model_table import model_rows
+
+    rows = model_rows(settings, on=_today())
+    record(
+        "llm_price_table",
+        all(r.price is not None for r in rows),
+        detail="; ".join(
+            f"{r.tag}={r.provider}:{r.model} effort={r.effort} price={r.price or 'NO ROW'}"
+            for r in rows
+        ),
+    )
+    unpriced_claude = [r.tag for r in rows if r.provider == "anthropic" and r.price is None]
+    record(
+        "claude_price_rows",
+        not unpriced_claude,
+        detail=""
+        if not unpriced_claude
+        else "no price row for the claude- model of: "
+        + ", ".join(unpriced_claude)
+        + "; every call to it fails closed",
+    )
 
     # US-035: an unreadable gemini_spend.json already logged a warning
     # (`CostLedger._read`'s `cost_ledger_corrupt` event) but had zero code
@@ -686,12 +744,14 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # first wastes a call, it does not break extraction.
     advisory_checks = {
         "binding",
+        "claude_files_workspace",
         "gradio_extra_installed",
         "storage_backend",
         "push_transport",
         "no_removed_config_keys",
         "gemini_promo_pricing_window",
         "gemini_fallback_pricing",
+        "llm_price_table",
         "gemini_cost_ledger",
     }
     fatal_checks = [c for c in checks if c["name"] not in advisory_checks]
