@@ -775,3 +775,32 @@ def test_reason_first_rows_carry_the_checked_mark_and_the_stated_one() -> None:
     log.reason_first = False  # lever off: the reply's own mark
     client.generate_structured(task_tag="correction", question_id="1a", attempt="first")
     assert log.rows[-1].mark == 0
+
+
+def test_reason_first_logs_an_adjudication_reply_with_its_own_mark() -> None:
+    from types import SimpleNamespace
+
+    from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+    from lemely.io.adjudication import AdjudicationReply
+
+    question = Question.model_construct(
+        id="1a",
+        marks=2,
+        type=QuestionType.EXPLANATION,
+        answer_points=[AnswerPoint(id="p1", point="gravity", marks=2)],
+        select_count=None,
+        parts=[],
+        assessment_objectives=[],
+        rejected_answers=[],
+        ignored_answers=[],
+    )
+    client = _ReplyClient(AdjudicationReply(awarded_marks=1, confidence=0.8, rationale="r"))
+    log = rs.ReplyLog()
+    log.reason_first = True
+    log.scheme = SimpleNamespace(get_question_by_id=lambda qid: question)  # type: ignore[assignment]
+    log.wrap(client)
+    log.current = "k"
+    client.generate_structured(task_tag="adjudication", question_id="1a", model="sonnet-x")
+    assert log.skipped == 0
+    (row,) = log.rows
+    assert (row.task_tag, row.mark, row.rationale) == ("adjudication", 1, "r")

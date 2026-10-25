@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
     from lemely.accuracy.reference import ManifestEntry
     from lemely.core.loose_schemas import MarkScheme
-    from lemely.core.schemas import AIMarkResponse, CorrectionResult
+    from lemely.core.schemas import CorrectionResult
     from lemely.io.gemini import CallRecord, GeminiClient
     from lemely.runtime.config import Settings
 
@@ -245,6 +245,8 @@ class ReplyLog:
         #: mark after the verdict sum check (the one the leaf holds); ``stated_mark`` stays
         #: the model's own integer.
         self.reason_first = False
+        #: Replies the log failed to record (the call itself is never affected).
+        self.skipped = 0
         self.scheme: MarkScheme | None = None
         self.rows: list[MarkReply] = []
         self._lock = threading.Lock()
@@ -265,6 +267,7 @@ class ReplyLog:
             try:
                 self._record(client, kwargs, result)
             except Exception:
+                self.skipped += 1
                 _LOG.warning("reply log skipped a reply", exc_info=True)
             return result
 
@@ -291,9 +294,12 @@ class ReplyLog:
         mark = int(getattr(result, "awarded_marks", 0))
         question = self.scheme.get_question_by_id(qid) if self.scheme is not None else None
         if self.reason_first and question is not None:
+            from lemely.core.schemas import AIMarkResponse
             from lemely.io.correction_ai import _verdict_checked
 
-            mark = _verdict_checked(question, cast("AIMarkResponse", result)).awarded_marks
+            # Only a marker reply has verdicts to sum; an adjudication reply keeps its own mark.
+            if isinstance(result, AIMarkResponse):
+                mark = _verdict_checked(question, result).awarded_marks
         row = MarkReply(
             case_key=self.current,
             question_id=qid,
