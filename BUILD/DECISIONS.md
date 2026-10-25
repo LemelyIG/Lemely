@@ -14839,3 +14839,20 @@ and 10 (O-6, O-7, O-11). O-15: the marketplace has no prices or payments (row 11
 gates nothing.
 
 **Source.** Decision-log row 19; SPEC rev 3 §i.1; `docs/tutoring/REVISION-LOG.md` rev 3.
+
+## D-2026-10-25 — tutoring: execution decisions (plan rev 2)
+
+**Decision.** (1) Notification preferences for the eight new tutoring types are role-gated in the
+preference API (SPEC §a.1 table), so a type a role never receives is not a toggle it can see.
+(2) Every non-public tutoring route is `Cache-Control: private, no-store` on every status, set once
+by the shared route class. (3) `origin/develop` is merged into the feature branch, never rebased
+(117 commits behind at 2026-10-25; signed `--no-ff` merge, branch already pushed). (4) One draft PR
+against `develop` is opened at I1 so every integration push runs CI; it is marked ready at the end
+and never merged by the build. Full-suite evidence is CI on the PR head; local pytest runs named files
+only.
+
+**Why.** (1) and (2) close threat-model and review findings (P4, P12). (3) a rebase would rewrite
+pushed history. (4) `ci.yml` only runs on pull requests and on `main`, so without an open PR there
+is no full-suite evidence, and the saved rule is that the full suite is never run locally.
+
+**Source.** `BUILD/tutoring/PLAN.md` §0.10, §1.4 #10, #13; `docs/tutoring/PLAN-REVISION-LOG.md`.
