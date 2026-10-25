@@ -716,7 +716,7 @@ class AvailabilityRuleDTO(ApiModel): isoWeekday: int; startMinute: int; endMinut
 class TutorProfileDTO(TutorCardDTO): bio: str; qualificationNote: str | None
                                      otherModeNote: str | None; documentsSeen: bool
                                      availability: list[AvailabilityRuleDTO]; zone: str; zoneLabel: str
-                                     listedSince: str  # "YYYY-MM" from first_listed_at
+                                     listedSince: str | None  # "YYYY-MM" from first_listed_at; None until the first approval (never-listed profiles have no value)
 class ReplyDTO(ApiModel):        replyId: str; body: str; textState: Literal["pending", "approved", "rejected"]
                                  createdAt: str
 class ReviewDTO(ApiModel):       reviewId: str; stars: int; text: str | None
