@@ -222,6 +222,19 @@ def render_example_toml() -> str:
     )
     lines.append(f"# adjudication_drawing_max_leaves = {s.gemini.adjudication_drawing_max_leaves}")
     lines.append(
+        "# Lever H4a: adjudicate leaves whose crop re-read disagreed with the first read "
+        "(needs adjudication_model)."
+    )
+    lines.append(
+        f"# adjudication_reread_disagreed = {_toml_bool(s.gemini.adjudication_reread_disagreed)}"
+    )
+    lines.append(f"# adjudication_reread_max_leaves = {s.gemini.adjudication_reread_max_leaves}")
+    lines.append(
+        "# Lever H4c: median of three marks below this confidence (not with keep_higher)."
+    )
+    lines.append(f"# correction_retry_median = {_toml_bool(s.gemini.correction_retry_median)}")
+    lines.append(f"# correction_retry_median_below = {s.gemini.correction_retry_median_below}")
+    lines.append(
         "# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B)."
     )
     lines.append(f"# claude_image_enhance = {_toml_bool(s.gemini.claude_image_enhance)}")

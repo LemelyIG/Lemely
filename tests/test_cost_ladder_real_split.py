@@ -710,6 +710,20 @@ def test_keep_higher_makes_post_borderline_the_held_mark(tmp_path: Path) -> None
     assert kept.post_borderline_mark == 2  # H2a keeps the higher
 
 
+def test_step_marks_median() -> None:
+    def post_borderline(first: int, *borderline: int, median: bool = True) -> int | None:
+        replies = [
+            _reply("correction", first, "1a", "first"),
+            *(_reply("correction_borderline", m, "1a") for m in borderline),
+        ]
+        return rs._step_marks(replies, "1a", 2, median=median)[1]
+
+    assert post_borderline(1, 0, 2) == 1
+    assert post_borderline(1, 0, 2, median=False) == 2  # the last reply
+    assert post_borderline(0, 0) == 0
+    assert post_borderline(2, 0, 1) == 1
+
+
 def test_reply_log_records_stated_mark_when_present() -> None:
     from types import SimpleNamespace
 

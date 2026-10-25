@@ -121,6 +121,12 @@ model = "gemini-2.5-flash"
 # Lever H2d: adjudicate the reader's Drawing: leaves from their crops (needs adjudication_model).
 # adjudication_drawing_leaves = false
 # adjudication_drawing_max_leaves = 3
+# Lever H4a: adjudicate leaves whose crop re-read disagreed with the first read (needs adjudication_model).
+# adjudication_reread_disagreed = false
+# adjudication_reread_max_leaves = 3
+# Lever H4c: median of three marks below this confidence (not with keep_higher).
+# correction_retry_median = false
+# correction_retry_median_below = 0.86
 # Greyscale pages are enhanced for readability; false sends plain greyscale (A/B).
 # claude_image_enhance = true
 

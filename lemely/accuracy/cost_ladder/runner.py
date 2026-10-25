@@ -1172,6 +1172,7 @@ def run_real(
             cascade_enabled=cascade,
             replies=replies.for_script(script.key),
             keep_higher=effective.gemini.correction_retry_keep_higher is True,
+            median=effective.gemini.correction_retry_median is True,
         )
         for script in scripts
     )

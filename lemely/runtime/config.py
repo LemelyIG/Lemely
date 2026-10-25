@@ -306,6 +306,17 @@ class GeminiSettings(BaseModel):
     # `adjudication_drawing_max_leaves` per script, before the confidence candidates.
     adjudication_drawing_leaves: bool = False
     adjudication_drawing_max_leaves: int = Field(default=3, ge=0)
+    # Lever H4a: with `adjudication_model` set, AI-marked leaves whose crop re-read disagreed
+    # with the first read (`reread_agreement` below 0.8) are adjudicated from their crop first,
+    # up to `adjudication_reread_max_leaves` per script. All 14 such cells in sub-project C's
+    # runs were wrong (c-residual-errors §1, class e).
+    adjudication_reread_disagreed: bool = False
+    adjudication_reread_max_leaves: int = Field(default=3, ge=0)
+    # Lever H4c: below `correction_retry_median_below` the borderline retry runs, a second
+    # retry runs when it disagrees with the first pass, and the leaf takes the median of the
+    # three marks. Not with `correction_retry_keep_higher`.
+    correction_retry_median: bool = False
+    correction_retry_median_below: float = Field(default=0.86, ge=0.0, le=1.0)
 
     @field_validator("claude_cache_for")
     @classmethod
@@ -323,6 +334,14 @@ class GeminiSettings(BaseModel):
     def _reason_first_excludes_citations(self) -> GeminiSettings:
         if self.correction_reason_first and self.correction_citations:
             raise ValueError("correction_reason_first cannot combine with correction_citations")
+        return self
+
+    @model_validator(mode="after")
+    def _median_excludes_keep_higher(self) -> GeminiSettings:
+        if self.correction_retry_median and self.correction_retry_keep_higher:
+            raise ValueError(
+                "correction_retry_median cannot combine with correction_retry_keep_higher"
+            )
         return self
 
     # Greyscale pages for claude- calls are enhanced for readability (paper shading

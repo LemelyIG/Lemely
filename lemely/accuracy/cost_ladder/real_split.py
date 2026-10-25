@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import statistics
 import threading
 from collections import Counter
 from dataclasses import asdict, dataclass
@@ -342,7 +343,12 @@ def write_replies(path: Path, rows: Sequence[MarkReply]) -> None:
 
 
 def _step_marks(
-    replies: Sequence[MarkReply], qid: str, max_marks: int, *, keep_higher: bool = False
+    replies: Sequence[MarkReply],
+    qid: str,
+    max_marks: int,
+    *,
+    keep_higher: bool = False,
+    median: bool = False,
 ) -> tuple[int | None, int | None, int | None, int | None]:
     """A leaf's mark after the first pass, the borderline retry, escalation and adjudication."""
     mine = [r for r in replies if r.question_id == qid]
@@ -361,6 +367,10 @@ def _step_marks(
         if tag == "correction_borderline" and later and keep_higher:
             # H2a: the leaf holds the higher of the first and retry marks, not the retry's own.
             mark = max(mark, first)
+        if tag == "correction_borderline" and later and median:
+            # H4c: the median of the first mark and every borderline sample (two agreeing
+            # samples give their mark; three give the middle one).
+            mark = statistics.median_low([first, *(clamp(r.mark) for r in later)])
         marks.append(mark)
     return marks[0], marks[1], marks[2], marks[3]
 
@@ -384,6 +394,7 @@ def score_script(
     cascade_enabled: bool,
     replies: Sequence[MarkReply] = (),
     keep_higher: bool = False,
+    median: bool = False,
 ) -> RealScriptResult:
     """One script's leaves against its reference; every reference leaf is scored."""
     reference = read_reference(script.reference_path)
@@ -429,7 +440,9 @@ def score_script(
         predicted = q.awarded_marks if q is not None and scored else 0
         escalated = qid in escalated_ids
         steps = (
-            _step_marks(replies, qid, leaf_ref.max_marks, keep_higher=keep_higher)
+            _step_marks(
+                replies, qid, leaf_ref.max_marks, keep_higher=keep_higher, median=median
+            )
             if scored
             else (None, None, None, None)
         )
