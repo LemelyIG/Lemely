@@ -336,19 +336,36 @@ def file_image_blocks(file_ids: Sequence[str]) -> list[ImageBlockParam]:
 _EPHEMERAL: CacheControlEphemeralParam = {"type": "ephemeral"}
 
 
-def labelled_pictures(pictures: Sequence[ImageBlockParam]) -> list[ContentBlockParam]:
+def labelled_pictures(
+    pictures: Sequence[ImageBlockParam], sizes: Sequence[tuple[int, int]] | None = None
+) -> list[ContentBlockParam]:
     """``pictures`` with a ``Page index {i}:`` text block (0-based) before each image.
 
     Only when there is more than one picture: a lone image has no index to confuse.
     The labels sit with the images, ahead of the per-call text, so the cached
     system+images prefix is the same for every read of the same pages. The request's
     cache key carries ``PAGE_LABEL_VERSION`` for these requests (``provider_fingerprint``).
+
+    With ``sizes`` (the (width, height) in pixels of each picture, in order) every
+    picture is labelled, a lone one too, and the label states its size:
+    ``Page index {i} ({W} x {H} px):``. The reader is asked for boxes in those pixels
+    (``lemely.io.llm.box_convention``); the key then carries ``PAGE_LABEL_SIZED_VERSION``.
+
+    Raises:
+        ProviderError: ``sizes`` does not have one entry per picture.
     """
-    if len(pictures) < 2:
+    if sizes is not None:
+        if len(sizes) != len(pictures):
+            raise ProviderError(f"{len(sizes)} image sizes for {len(pictures)} images")
+    elif len(pictures) < 2:
         return list(pictures)
     labelled: list[ContentBlockParam] = []
     for index, picture in enumerate(pictures):
-        labelled.append({"type": "text", "text": f"Page index {index}:"})
+        label = f"Page index {index}:"
+        if sizes is not None:
+            width, height = sizes[index]
+            label = f"Page index {index} ({width} x {height} px):"
+        labelled.append({"type": "text", "text": label})
         labelled.append(picture)
     return labelled
 
@@ -367,6 +384,7 @@ def _request_parts(
     images: Sequence[bytes],
     image_file_ids: Sequence[str],
     cache_plan: CachePlan | None,
+    page_sizes: Sequence[tuple[int, int]] | None = None,
 ) -> tuple[list[TextBlockParam], MessageParam]:
     """System blocks and the user message, with breakpoints where the plan and size allow.
 
@@ -393,7 +411,7 @@ def _request_parts(
     running += sum(_image_tokens(i) for i in images) + CACHE_MIN_TOKENS * len(image_file_ids)
     if pictures and "images" in spots and running >= CACHE_MIN_TOKENS:
         pictures[-1]["cache_control"] = _EPHEMERAL
-    content: list[ContentBlockParam] = [*docs, *labelled_pictures(pictures)]
+    content: list[ContentBlockParam] = [*docs, *labelled_pictures(pictures, page_sizes)]
     if cache_prefix:
         running += len(cache_prefix) // CHARS_PER_TOKEN
         prefix: TextBlockParam = {"type": "text", "text": cache_prefix}
@@ -470,8 +488,12 @@ class AnthropicAdapter:
         documents: Sequence[DocumentBlockParam] = (),
         max_tokens: int = MAX_OUTPUT_TOKENS,
         cache_plan: CachePlan | None = None,
+        page_sizes: Sequence[tuple[int, int]] | None = None,
     ) -> AnthropicReply:
         """Send one request; return the unvalidated reply.
+
+        ``page_sizes`` is the pixel size of each image sent, by order; with it every
+        page label states its size (:func:`labelled_pictures`).
 
         ``documents`` are ``document`` blocks and go before everything else.
         ``images`` are already fitted (``lemely.io.llm.image_fit``) and go first, as
@@ -507,6 +529,7 @@ class AnthropicAdapter:
             images=images,
             image_file_ids=image_file_ids,
             cache_plan=cache_plan,
+            page_sizes=page_sizes,
         )
         response = self._send(
             model=model,

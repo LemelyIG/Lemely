@@ -3341,10 +3341,11 @@ def test_a_claude_second_read_sends_the_page_images_to_anthropic(
     images = [block for block in content if block["type"] == "image"]
     assert len(images) == _PAGE_COUNT
     assert content[-1]["type"] == "text"
-    # Each page image is preceded by its 0-based index label.
+    # Each page image is preceded by its 0-based index label, which states the image's size
+    # (the binder asks Claude for pixel boxes; ``_png`` makes page n (40 + n) x 60 px).
     assert [block["type"] for block in content[: 2 * _PAGE_COUNT : 2]] == ["text"] * _PAGE_COUNT
     assert [block["text"] for block in content[: 2 * _PAGE_COUNT : 2]] == [
-        f"Page index {n}:" for n in range(_PAGE_COUNT)
+        f"Page index {n} ({40 + n} x 60 px):" for n in range(_PAGE_COUNT)
     ]
     assert [block["type"] for block in content[1 : 2 * _PAGE_COUNT : 2]] == ["image"] * _PAGE_COUNT
     if files_api:

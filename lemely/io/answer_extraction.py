@@ -21,6 +21,7 @@ from pydantic_core import core_schema as pydantic_core_schema
 from lemely.core.binding import BindingReport
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers, SourceBox
+from lemely.io.binding.label_binder import box_contract
 from lemely.io.binding.orchestrate import (
     MARKED_FROM_OTHER_READ,
     LegacyRead,
@@ -945,9 +946,12 @@ class GeminiAnswerExtractor:
         With no ``model`` this is the call extraction has always made, argument for
         argument. ``model`` is passed only by the binding gate's one retry.
         """
+        system_prompt, box_kwargs = box_contract(
+            self._client, EXTRACTOR_SYSTEM_PROMPT, model=model, task_tag="extraction"
+        )
         call = functools.partial(
             self._client.generate_structured,
-            system_prompt=EXTRACTOR_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=build_extractor_user_prompt(mark_scheme, page_count=len(page_bytes)),
             image_parts=page_bytes,
             image_uploads=uploads,
@@ -956,6 +960,7 @@ class GeminiAnswerExtractor:
             prompt_version=VERSION,
             extra_cache_key=extra_cache_key,
             task_tag="extraction",
+            **box_kwargs,
         )
         raw = call() if model is None else call(model=model)
         return _convert_reply(raw.answers, len(page_bytes))
@@ -969,8 +974,11 @@ class GeminiAnswerExtractor:
         model: str | None = None,
     ) -> str:
         """The key the reply of the ``_legacy_reply`` call these arguments make is cached under."""
+        system_prompt, box_kwargs = box_contract(
+            self._client, EXTRACTOR_SYSTEM_PROMPT, model=model, task_tag="extraction"
+        )
         return self._client.structured_cache_key(
-            system_prompt=EXTRACTOR_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=build_extractor_user_prompt(mark_scheme, page_count=len(page_bytes)),
             image_parts=page_bytes,
             media_resolution=EXTRACTION_MEDIA_RESOLUTION,
@@ -979,6 +987,7 @@ class GeminiAnswerExtractor:
             model=model,
             extra_cache_key=extra_cache_key,
             task_tag="extraction",
+            **box_kwargs,
         )
 
     def _gated_legacy(

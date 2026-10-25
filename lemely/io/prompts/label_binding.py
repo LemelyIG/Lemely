@@ -34,8 +34,34 @@ from collections.abc import Collection, Sequence
 
 from lemely.core.label_sequence import collapse_numbered_items
 from lemely.core.loose_schemas import MarkScheme, Question
+from lemely.io.providers import is_anthropic_model
 
 VERSION = "3"
+
+#: Version of the box contract a Claude read is sent (``CLAUDE_BOX_ADDENDUM``) and of the
+#: conversion that follows (``lemely.io.llm.box_convention``). It joins the Claude cache
+#: key only; a Gemini read never carries it.
+CLAUDE_BOX_VERSION = "bx1"
+
+#: Appended to a reader's system prompt on a ``claude-`` model only. Claude has no trained
+#: 0-1000 box convention and drifts to the pixels of the image it sees (measured: 2-7 of 42
+#: answer boxes survived on one script), so it is asked for pixels, with the size in each
+#: page's label, and the reply is converted in code. Names both reply shapes: the binder's
+#: item ``box`` and the legacy reader's ``source_box.box``.
+CLAUDE_BOX_ADDENDUM = """
+
+## Box coordinates on this request
+
+This replaces the description of boxes above. Every page image is labelled with its size
+in pixels, "Page index N (W x H px):". Wherever a box is asked for (the "box" of an item,
+or the "box" inside "source_box"), give it as [x_min, y_min, x_max, y_max] in pixels of
+that page image exactly as you are shown it: x counts from the left edge, y counts down
+from the top edge, and x comes first. The values are pixels, not 0-1000, and not fractions:
+x is at most W and y is at most H of the page the item is on. For example, writing in the
+right half of a 1554 x 2200 px page, a third of the way down, is
+[800, 700, 1500, 760]. Use this one convention for every box in the reply, from the first
+item to the last.
+"""
 
 LABEL_BINDING_SYSTEM_PROMPT = """
 You are an expert at reading scanned CAIE (Cambridge IGCSE / O-Level / A-Level) exam scripts.
@@ -200,6 +226,18 @@ mark totals and comments (usually in a different ink, often red); scanner waterm
 label the student wrote, which is a label item. Where the student left an answer space
 blank, write nothing for it. Do not invent writing that is not on the page.
 """
+
+
+def with_claude_boxes(system_prompt: str, model: object) -> tuple[str, str | None]:
+    """``system_prompt`` for a read on ``model``, and the box version to send it with.
+
+    A ``claude-`` model gets the pixel-box addendum and ``CLAUDE_BOX_VERSION``; anything
+    else (a Gemini id, or a model that is not a name at all) gets ``system_prompt``
+    unchanged and ``None``, so that its request and cache key stay what they were.
+    """
+    if isinstance(model, str) and is_anthropic_model(model):
+        return system_prompt + CLAUDE_BOX_ADDENDUM, CLAUDE_BOX_VERSION
+    return system_prompt, None
 
 
 def _is_question_number(text: str) -> bool:

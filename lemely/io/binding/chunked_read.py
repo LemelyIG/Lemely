@@ -18,7 +18,12 @@ from typing import TYPE_CHECKING
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
-from lemely.io.binding.label_binder import StreamRead, _StreamOutput, parse_stream_items
+from lemely.io.binding.label_binder import (
+    StreamRead,
+    _StreamOutput,
+    box_contract,
+    parse_stream_items,
+)
 from lemely.io.llm.image_fit import FittedImages, estimate_floor_tokens, fit, thumbnails
 from lemely.io.prompts.label_binding import (
     CHUNK_VERSION,
@@ -208,8 +213,12 @@ class ChunkedLabelReader:
         overlap = chunk.start > 0
         first = chunk.start - 1 if overlap else chunk.start
         sent = pages[first : chunk.stop]
+        # A chunk read is always a claude- read (``applies``), so it always asks for pixels.
+        system_prompt, box_kwargs = box_contract(
+            self._client, LABEL_BINDING_SYSTEM_PROMPT, model=model, task_tag=task_tag
+        )
         raw = self._client.generate_structured(
-            system_prompt=LABEL_BINDING_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=build_chunk_user_prompt(
                 mark_scheme,
                 page_count=len(sent),
@@ -227,6 +236,7 @@ class ChunkedLabelReader:
             extra_cache_key=f"{extra_cache_key}|chunk{number}",
             task_tag=task_tag,
             cache_mode="bypass",
+            **box_kwargs,
         )
         local = parse_stream_items(raw.model_dump()["items"], page_count=len(sent))
         skip = 1 if overlap else 0
