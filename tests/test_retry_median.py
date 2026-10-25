@@ -143,3 +143,13 @@ def test_median_of_leaves_an_omitted_field_omitted() -> None:
     out = _median_of([omitted, _reply(2, 0.5)])
     assert out.confidence == 0.99
     assert "addresses_question" not in out.model_fields_set
+
+
+def test_failed_third_sample_falls_back_to_the_lower_of_two() -> None:
+    boom = RuntimeError("api down")
+    out, calls, _ = _run(
+        [_reply(2, 0.70, "A"), _reply(1, 0.90, "B"), boom],  # type: ignore[list-item]
+        **_ON,
+    )
+    assert len(calls) == 3
+    assert (out.awarded_marks, out.feedback, out.confidence) == (1, "B", 0.70)

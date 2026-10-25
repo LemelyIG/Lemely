@@ -807,24 +807,36 @@ class AICorrector:
                 samples = [first, result]
                 if result.awarded_marks != first.awarded_marks:
                     # The median of {a, a, x} is a, so a third draw is needed only on a split.
-                    third = self._checked(
-                        question,
-                        self._client.generate_structured(
-                            system_prompt=system_prompt,
-                            user_prompt=(
-                                user_prompt
-                                + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
+                    # A failed third draw (not a cost-ceiling stop) falls back to the two
+                    # samples: median_low of two is the lower mark, confidence the min.
+                    try:
+                        third = self._checked(
+                            question,
+                            self._client.generate_structured(
+                                system_prompt=system_prompt,
+                                user_prompt=(
+                                    user_prompt + "\n\nNOTE: First-pass confidence was low. "
+                                    "Re-evaluate carefully."
+                                ),
+                                response_schema=self._mark_schema(),
+                                prompt_version=VERSION,
+                                extra_cache_key=f"q={question.id}:thinking:2",
+                                task_tag="correction_borderline",
+                                attempt="borderline",
+                                question_id=question.id,
+                                **prefix_kwargs,
                             ),
-                            response_schema=self._mark_schema(),
-                            prompt_version=VERSION,
-                            extra_cache_key=f"q={question.id}:thinking:2",
-                            task_tag="correction_borderline",
-                            attempt="borderline",
+                        )
+                    except CostCeilingError:
+                        raise
+                    except Exception as exc:
+                        structlog.get_logger().warning(
+                            "borderline_median_third_failed",
                             question_id=question.id,
-                            **prefix_kwargs,
-                        ),
-                    )
-                    samples.append(third)
+                            error=str(exc),
+                        )
+                    else:
+                        samples.append(third)
                 result = _median_of(samples)
                 structlog.get_logger().bind(component="correction").info(
                     "borderline_median",
