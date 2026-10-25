@@ -17,7 +17,7 @@ from lemely.accuracy.cost_ladder.real_split import RealScript, load_real_scripts
 from lemely.accuracy.cost_ladder.report import write_flip, write_report
 from lemely.accuracy.cost_ladder.runner import LadderStateError, apply_overrides
 from lemely.accuracy.cost_ladder.spend import SpendCapError, SpendCaps
-from lemely.core.schemas import CorrectedQuestion, CorrectionResult, ExamMetadata
+from lemely.core.schemas import AIMarkResponse, CorrectedQuestion, CorrectionResult, ExamMetadata
 from lemely.io.gemini import CallRecord, UnpricedModelError
 from lemely.runtime.config import Settings
 from lemely.runtime.events import EventType, bus
@@ -102,6 +102,19 @@ def _rec(key: str, usd: float, *, tag: str = "correction", qid: str | None = Non
     )
 
 
+class _FakeClient:
+    """Stand-in for the production client: scripted marking replies, nothing on the wire."""
+
+    def __init__(self) -> None:
+        self.mark = 0
+
+    def _active_model(self, model: str | None, task_tag: str | None) -> str:
+        return model or "claude-haiku-5-5"
+
+    def generate_structured(self, **kwargs: Any) -> AIMarkResponse:
+        return AIMarkResponse(awarded_marks=self.mark, confidence=0.9, feedback="because")
+
+
 class _Harness:
     """Fake production path: bills ``usd`` per script and returns marks in call order."""
 
@@ -114,8 +127,10 @@ class _Harness:
         raise_for: tuple[str, ...] = (),
         escalate: tuple[str, ...] = (),
         raise_message: str = "boom",
+        raise_type: type[BaseException] = RuntimeError,
     ) -> None:
         self.raise_message = raise_message
+        self.raise_type = raise_type
         self.records: list[CallRecord] = []
         self.clients: list[tuple[Settings, dict[str, Any]]] = []
         self.calls: list[str] = []
@@ -130,13 +145,13 @@ class _Harness:
 
     def _client(self, settings: Settings, **kw: Any) -> object:
         self.clients.append((settings, kw))
-        return object()
+        return _FakeClient()
 
-    def mark(self, script: RealScript, client: object, settings: Settings) -> CorrectionResult:
+    def mark(self, script: RealScript, client: Any, settings: Settings) -> CorrectionResult:
         self.calls.append(script.key)
         self.records.append(_rec(script.key, self.usd))
         if script.key in self.raise_for:
-            raise RuntimeError(self.raise_message)
+            raise self.raise_type(self.raise_message)
         for qid in self.escalate:
             self.records.append(_rec(script.key, 0.02, tag="escalation", qid=qid))
             bus.publish(
@@ -145,7 +160,13 @@ class _Harness:
                 confidence=0.7,
                 escalation_model="claude-sonnet-5-5",
             )
-        return _correction(self.marks.pop(0) if self.marks else PERFECT)
+        correction = _correction(self.marks.pop(0) if self.marks else PERFECT)
+        for q in correction.questions:
+            client.mark = q.awarded_marks  # type: ignore[attr-defined]
+            client.generate_structured(  # type: ignore[attr-defined]
+                task_tag="correction", question_id=q.question_id, attempt="first"
+            )
+        return correction
 
 
 def test_run_real_scores_writes_and_books(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -172,6 +193,59 @@ def test_run_real_scores_writes_and_books(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert kw == {"default_cache_mode": "bypass"}
     assert settings.paths.cache_dir == runner.cache_dir_for(out, "base-real-1")
     assert settings.gemini.cache_forget_enabled is False
+
+
+def test_run_real_writes_replies_and_step_marks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _Harness(monkeypatch, marks=[{"1a": 2, "1b": 0}, PERFECT])
+    out = tmp_path / "out"
+    results = runner.run_real(
+        "base",
+        {},
+        run_index=1,
+        out_dir=out,
+        scripts=_scripts(tmp_path),
+        settings=Settings(),
+        max_run_usd={"anthropic": 1.0, "gemini": 1.0},
+    )
+    run_dir = out / "base" / "real-1"
+    rows = [json.loads(line) for line in (run_dir / "replies.jsonl").read_text().splitlines()]
+    assert {(r["case_key"], r["question_id"], r["mark"]) for r in rows} == {
+        ("a", "1a", 2),
+        ("a", "1b", 0),
+        ("b", "1a", 2),
+        ("b", "1b", 1),
+    }
+    assert (run_dir / "real_results.json").is_file()
+    assert [leaf.first_pass_mark for leaf in results[0].leaves] == [2, 0]
+
+
+@pytest.mark.parametrize("raise_type", [RuntimeError, KeyboardInterrupt])
+def test_replies_survive_a_failed_script(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, raise_type: type[BaseException]
+) -> None:
+    _Harness(monkeypatch, raise_for=("b",), raise_type=raise_type)
+    out = tmp_path / "out"
+    try:
+        runner.run_real(
+            "base",
+            {},
+            run_index=1,
+            out_dir=out,
+            scripts=_scripts(tmp_path),
+            settings=Settings(),
+            max_run_usd={"anthropic": 1.0, "gemini": 1.0},
+        )
+    except KeyboardInterrupt:
+        assert (
+            raise_type is KeyboardInterrupt
+        )  # an interrupt propagates; the files are still written
+    rows = [
+        json.loads(line)
+        for line in (out / "base" / "real-1" / "replies.jsonl").read_text().splitlines()
+    ]
+    assert {r["case_key"] for r in rows} == {"a"}
 
 
 def test_run_real_failed_script_is_incomplete_and_the_rest_run(

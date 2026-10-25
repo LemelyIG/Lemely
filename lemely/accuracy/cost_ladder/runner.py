@@ -22,12 +22,15 @@ from lemely.accuracy.cost_ladder.gate import (
     judge_record,
 )
 from lemely.accuracy.cost_ladder.real_split import (
+    REPLIES_FILE,
     RealScript,
     RealScriptResult,
+    ReplyLog,
     mark_real_script,
     real_summary_fields,
     score_script,
     write_real_results,
+    write_replies,
 )
 from lemely.accuracy.cost_ladder.spend import (
     DEFAULT_SPEND_FILE,
@@ -921,6 +924,8 @@ def run_real(
     marker = mark or mark_real_script
     gemini = GeminiClient(effective, default_cache_mode="bypass")
     guard = _CapGuard(CapWatch(caps, spent_before), ledger, label=f"{label}/{run_name}")
+    replies = ReplyLog()
+    replies.wrap(gemini)
     escalations: list[dict[str, object]] = []
     current: list[str] = []
 
@@ -934,6 +939,7 @@ def run_real(
         try:
             for script in scripts:
                 current.append(script.key)
+                replies.current = script.key
                 set_call_context(case_key=script.key)
                 started = time.monotonic()
                 correction: CorrectionResult | None = None
@@ -974,6 +980,7 @@ def run_real(
                 "".join(json.dumps(e, sort_keys=True, default=str) + "\n" for e in escalations),
                 encoding="utf-8",
             )
+            write_replies(run_dir / REPLIES_FILE, replies.rows)
     cascade = effective.gemini.cascade_enabled is True
     not_run: tuple[CorrectionResult | None, float, str | None] = (None, 0.0, "not run (spend cap)")
     results = tuple(
@@ -985,6 +992,7 @@ def run_real(
             failure=outcomes.get(script.key, not_run)[2],
             escalations=[e for e in escalations if e.get("case_key") == script.key],
             cascade_enabled=cascade,
+            replies=replies.for_script(script.key),
         )
         for script in scripts
     )

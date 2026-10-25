@@ -9,11 +9,13 @@ failed to mark counts as mark 0 against its reference.
 from __future__ import annotations
 
 import json
+import logging
 import math
+import threading
 from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from lemely.accuracy.reference import (
     FROZEN_MARKER,
@@ -28,14 +30,23 @@ from lemely.core.schemas import UNSCORED_MARKER_SOURCES, marker_scored
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from pydantic import BaseModel
+
     from lemely.accuracy.reference import ManifestEntry
     from lemely.core.schemas import CorrectionResult
     from lemely.io.gemini import CallRecord, GeminiClient
     from lemely.runtime.config import Settings
 
+_LOG = logging.getLogger(__name__)
 DEFAULT_MANIFEST = REFERENCE_ROOT / MANIFEST_FILE
 ESCALATION_TAG = "escalation"
 ADJUDICATION_TAG = "adjudication"
+#: Task tags whose replies carry a mark: first pass, borderline retry, escalation, adjudication.
+CORRECTION_FAMILY_TAGS = frozenset(
+    {"correction", "correction_borderline", ESCALATION_TAG, ADJUDICATION_TAG}
+)
+#: One run's saved marking replies (student data: rationales quote answers).
+REPLIES_FILE = "replies.jsonl"
 #: The review reason ``correct_paper`` writes when the marking call itself failed.
 _AI_FAILED = "AI marking failed"
 #: Unscored leaves whose marker never produced output (not a binder drop, not a student blank).
@@ -173,6 +184,14 @@ class LeafOutcome:
     #: The confidence that decided escalation: the escalation event's for an escalated
     #: leaf, the final mark's otherwise (the threshold fit reads it).
     pre_escalation_confidence: float | None
+    #: The mark after each marking step, from the saved replies. ``predicted`` stays the
+    #: final mark, which can differ from the last of these after ECF substitution or
+    #: clamping. All four are None when the leaf has no first-pass reply (MCQ, dropped,
+    #: blank) or is not marker-scored. Each step falls back to the one before it.
+    first_pass_mark: int | None = None
+    post_borderline_mark: int | None = None
+    post_escalation_mark: int | None = None
+    post_adjudication_mark: int | None = None
 
     @property
     def abs_error(self) -> int:
@@ -199,6 +218,114 @@ class RealScriptResult:
         return sum(1 for leaf in self.leaves if leaf.escalated)
 
 
+@dataclass(frozen=True)
+class MarkReply:
+    case_key: str
+    question_id: str
+    task_tag: str
+    attempt: str | None
+    model: str
+    mark: int
+    confidence: float
+    rationale: str  # AIMarkResponse.feedback, AdjudicationReply.rationale
+    reply: dict[str, object]  # the parsed reply, model_dump(mode="json")
+
+
+class ReplyLog:
+    """The correction-family replies of one real run, per script. Student data: never committed."""
+
+    def __init__(self) -> None:
+        #: The script being marked; `run_real` sets it per script.
+        self.current: str | None = None
+        self.rows: list[MarkReply] = []
+        self._lock = threading.Lock()
+
+    def wrap(self, client: object) -> None:
+        """Record every correction-family generate_structured reply that has a question_id.
+
+        Replaces the bound method on this one client instance. Production code is untouched,
+        so the Gemini golden path stays byte-identical. A stand-in client without
+        generate_structured is left as it is.
+        """
+        original = getattr(client, "generate_structured", None)
+        if not callable(original):
+            return
+
+        def recording(**kwargs: object) -> object:
+            result = original(**kwargs)
+            try:
+                self._record(client, kwargs, result)
+            except Exception:
+                _LOG.warning("reply log skipped a reply", exc_info=True)
+            return result
+
+        client.generate_structured = recording  # type: ignore[attr-defined]  # one instance
+
+    def _record(self, client: object, kwargs: dict[str, object], result: object) -> None:
+        tag, qid = kwargs.get("task_tag"), kwargs.get("question_id")
+        if (
+            not isinstance(tag, str)
+            or tag not in CORRECTION_FAMILY_TAGS
+            or not isinstance(qid, str)
+            or self.current is None
+        ):
+            return
+        rationale = getattr(result, "feedback", None)
+        if rationale is None:
+            rationale = getattr(result, "rationale", "")
+        attempt = kwargs.get("attempt")
+        model_arg = kwargs.get("model")
+        active = cast("GeminiClient", client)._active_model(
+            model_arg if isinstance(model_arg, str) else None, tag
+        )
+        row = MarkReply(
+            case_key=self.current,
+            question_id=qid,
+            task_tag=tag,
+            attempt=attempt if isinstance(attempt, str) else None,
+            model=str(active),
+            mark=int(getattr(result, "awarded_marks", 0)),
+            confidence=float(getattr(result, "confidence", 0.0)),
+            rationale=str(rationale),
+            reply=cast("BaseModel", result).model_dump(mode="json"),
+        )
+        with self._lock:
+            self.rows.append(row)
+
+    def for_script(self, key: str) -> list[MarkReply]:
+        with self._lock:
+            return [r for r in self.rows if r.case_key == key]
+
+
+def write_replies(path: Path, rows: Sequence[MarkReply]) -> None:
+    """``replies.jsonl``, one reply per row. Student data: stays in the gitignored BUILD tree."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(asdict(r), sort_keys=True, default=str) + "\n" for r in rows),
+        encoding="utf-8",
+    )
+
+
+def _step_marks(
+    replies: Sequence[MarkReply], qid: str, max_marks: int
+) -> tuple[int | None, int | None, int | None, int | None]:
+    """A leaf's mark after the first pass, the borderline retry, escalation and adjudication."""
+    mine = [r for r in replies if r.question_id == qid]
+
+    def clamp(mark: int) -> int:
+        return max(0, min(mark, max_marks))
+
+    firsts = [r for r in mine if r.task_tag == "correction" and r.attempt in (None, "first")]
+    if not firsts:
+        return None, None, None, None
+    first = clamp(firsts[0].mark)
+    marks = [first]
+    for tag in ("correction_borderline", ESCALATION_TAG, ADJUDICATION_TAG):
+        later = [r for r in mine if r.task_tag == tag]
+        marks.append(clamp(later[-1].mark) if later else marks[-1])
+    return marks[0], marks[1], marks[2], marks[3]
+
+
 def _usd(records: Sequence[CallRecord], tag: str | None = None) -> float:
     return sum(
         r.usd_2027
@@ -216,6 +343,7 @@ def score_script(
     failure: str | None,
     escalations: Sequence[Mapping[str, object]],
     cascade_enabled: bool,
+    replies: Sequence[MarkReply] = (),
 ) -> RealScriptResult:
     """One script's leaves against its reference; every reference leaf is scored."""
     reference = read_reference(script.reference_path)
@@ -260,6 +388,9 @@ def score_script(
         scored = q is not None and marker_scored(q.marker_source)
         predicted = q.awarded_marks if q is not None and scored else 0
         escalated = qid in escalated_ids
+        steps = (
+            _step_marks(replies, qid, leaf_ref.max_marks) if scored else (None, None, None, None)
+        )
         # An unscored leaf carries no confidence: a placeholder must not reach calibration.
         final_conf = q.confidence_score if q is not None and scored else None
         leaves.append(
@@ -277,6 +408,10 @@ def score_script(
                 pre_escalation_confidence=(
                     event_confidence.get(qid, final_conf) if escalated else final_conf
                 ),
+                first_pass_mark=steps[0],
+                post_borderline_mark=steps[1],
+                post_escalation_mark=steps[2],
+                post_adjudication_mark=steps[3],
             )
         )
     if correction is None and incomplete is None:

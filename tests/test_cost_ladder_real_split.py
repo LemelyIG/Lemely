@@ -568,3 +568,126 @@ def test_mark_real_script_passes_pages_only_with_adjudication(
     on = apply_overrides(Settings(), {"gemini.adjudication_model": "claude-sonnet-5-5"})
     rs.mark_real_script(script, object(), on)  # type: ignore[arg-type]
     assert seen == [None, ["PAGE"]]
+
+
+class _ReplyClient:
+    """Fake client: generate_structured returns the scripted reply for its call."""
+
+    def __init__(self, reply: object) -> None:
+        self.reply = reply
+        self.kwargs: list[dict[str, object]] = []
+
+    def _active_model(self, model: str | None, task_tag: str | None) -> str:
+        return model or f"model-for-{task_tag}"
+
+    def generate_structured(self, **kwargs: object) -> object:
+        self.kwargs.append(kwargs)
+        return self.reply
+
+
+def test_reply_log_records_correction_family_only() -> None:
+    from lemely.core.schemas import AIMarkResponse
+    from lemely.io.adjudication import AdjudicationReply
+
+    mark = AIMarkResponse(awarded_marks=1, confidence=0.6, feedback="because")
+    adj = AdjudicationReply(awarded_marks=2, confidence=0.8, rationale="sonnet says")
+    client = _ReplyClient(mark)
+    log = rs.ReplyLog()
+    log.wrap(client)
+    log.current = "k"
+    for tag, attempt in (
+        ("correction", "first"),
+        ("correction_borderline", "borderline"),
+        ("escalation", "escalation"),
+    ):
+        out = client.generate_structured(task_tag=tag, question_id="1a", attempt=attempt)
+        assert out is mark  # the return value is unchanged
+    client.reply = adj
+    client.generate_structured(task_tag="adjudication", question_id="1a", model="claude-sonnet-x")
+    # Not recorded: another stage, and a correction call with no question_id.
+    client.generate_structured(task_tag="extraction", question_id="1a")
+    client.generate_structured(task_tag="correction", question_id=None)
+    assert [r.task_tag for r in log.rows] == [
+        "correction",
+        "correction_borderline",
+        "escalation",
+        "adjudication",
+    ]
+    first, last = log.rows[0], log.rows[-1]
+    assert (first.case_key, first.question_id, first.attempt) == ("k", "1a", "first")
+    assert (first.model, first.mark, first.confidence) == ("model-for-correction", 1, 0.6)
+    assert first.rationale == "because" and first.reply["feedback"] == "because"
+    assert (last.model, last.mark, last.rationale) == ("claude-sonnet-x", 2, "sonnet says")
+    assert log.for_script("k") == log.rows and log.for_script("other") == []
+
+
+def test_reply_log_leaves_a_stand_in_client_alone() -> None:
+    stand_in = object()
+    rs.ReplyLog().wrap(stand_in)
+    assert not hasattr(stand_in, "generate_structured")
+
+
+def _reply(tag: str, mark: int, qid: str = "1a", attempt: str | None = None) -> rs.MarkReply:
+    return rs.MarkReply("k", qid, tag, attempt, "m", mark, 0.5, "r", {})
+
+
+def test_score_script_step_marks(tmp_path: Path) -> None:
+    script = _frozen(tmp_path, marks={"1a": 2, "1b": 1, "1c": 1, "1d": 1})
+    correction = _result(
+        _cq("1a", 2),
+        _cq("1b", 1),
+        _cq("1c", 0, source="dropped", review=True),
+        _cq("1d", 1),
+    )
+    replies = [
+        _reply("correction", 0, "1a", "first"),
+        _reply("correction_borderline", 1, "1a", "borderline"),
+        _reply("escalation", 2, "1a", "escalation"),
+        _reply("correction", 1, "1b", "first"),
+        _reply("correction", 1, "1c", "first"),
+        _reply("correction", 5, "1d", "first"),  # above the leaf's max marks
+    ]
+    result = rs.score_script(
+        script,
+        correction,
+        [],
+        latency_ms=5.0,
+        failure=None,
+        escalations=[],
+        cascade_enabled=False,
+        replies=replies,
+    )
+    by = {leaf.question_id: leaf for leaf in result.leaves}
+
+    def steps(qid: str) -> tuple[int | None, ...]:
+        leaf = by[qid]
+        return (
+            leaf.first_pass_mark,
+            leaf.post_borderline_mark,
+            leaf.post_escalation_mark,
+            leaf.post_adjudication_mark,
+        )
+
+    assert steps("1a") == (0, 1, 2, 2)  # adjudication absent: the previous step
+    assert steps("1b") == (1, 1, 1, 1)
+    assert steps("1c") == (None, None, None, None)  # a dropped leaf is not marker-scored
+    assert steps("1d") == (2, 2, 2, 2)  # a reply of 5 is clamped to the reference maximum, 2
+    assert by["1a"].predicted == 2
+
+
+def test_old_real_results_load_without_step_marks(tmp_path: Path) -> None:
+    path = tmp_path / "real_results.json"
+    rs.write_real_results(path, [_script("a", [_leaf("1", 2, 2)], 0.04)])
+    rows = json.loads(path.read_text())
+    for leaf in rows[0]["leaves"]:
+        for key in (
+            "first_pass_mark",
+            "post_borderline_mark",
+            "post_escalation_mark",
+            "post_adjudication_mark",
+        ):
+            del leaf[key]
+    path.write_text(json.dumps(rows))
+    (loaded,) = rs.read_real_results(path)
+    assert loaded.leaves[0].first_pass_mark is None
+    assert loaded.leaves[0].post_adjudication_mark is None
