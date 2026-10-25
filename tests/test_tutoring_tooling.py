@@ -430,6 +430,8 @@ def test_export_command_paths_exclude_reports(tmp_path: Path) -> None:
         "docs/tutoring/SPEC.md",
         # Not in the plan's list, but the review-rate gate (a STATIC step) fails without it.
         "BUILD/review-rate-baseline.json",
+        # The settings drift tests and test_tutoring_config read it from the tree root.
+        "lemely.toml.example",
     ]
     assert not [p for p in paths if "reports" in p]
     assert all((ROOT / p).exists() for p in paths), [p for p in paths if not (ROOT / p).exists()]
@@ -460,6 +462,7 @@ def mini_repo(tmp_path: Path) -> Path:
         "alembic.ini": "[alembic]\n",
         "docs/tutoring/SPEC.md": "# spec\n",
         "BUILD/review-rate-baseline.json": "{}\n",
+        "lemely.toml.example": "# example\n",
         "reports/huge.json": "{}\n",
         "web/package.json": "{}\n",
         "DESIGN.md": "# design\n",

@@ -33,7 +33,7 @@ cd "$ROOT"
 # tree and fails without it (PLAN section 0.7 omitted it).
 ARCHIVE_PATHS=(
   lemely tests corpus scripts pyproject.toml alembic.ini docs/tutoring/SPEC.md
-  BUILD/review-rate-baseline.json
+  BUILD/review-rate-baseline.json lemely.toml.example
 )
 # --web adds web/ plus the repo-root files its unit tests read (designDocs.test.ts
 # reads DESIGN.md and docs/design-canvas-notes.md; ciCopyGate.test.ts reads ci.yml).
