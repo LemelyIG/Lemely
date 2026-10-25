@@ -288,6 +288,24 @@ class GeminiSettings(BaseModel):
     adjudication_model: str | None = None
     adjudication_max_leaves: int = Field(default=3, ge=0)
     adjudication_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+    # Lever H2a: below `correction_retry_keep_higher_below` the borderline retry runs and
+    # the leaf keeps the higher of the two marks, instead of the retry replacing the
+    # first. Evidence 0.86: Claude cells at 0.85 are 18% wrong, at 0.90 7%
+    # (c-haiku-accuracy-ideas §1.3).
+    correction_retry_keep_higher: bool = False
+    correction_retry_keep_higher_below: float = Field(default=0.86, ge=0.0, le=1.0)
+    # Lever H2b: the correction reply lists per-point verdicts and the rationale before
+    # `awarded_marks`, and the mark is checked against the verdicts. Not with
+    # `correction_citations`.
+    correction_reason_first: bool = False
+    # Lever H2c: the printed 0625 Paper 4 marking conventions (C marks, formulae in any
+    # form, crossed-out work, brackets, units) go into the marking prompt.
+    correction_syllabus_conventions: bool = False
+    # Lever H2d: with `adjudication_model` set, leaves whose answer is the reader's
+    # `Drawing:` description are adjudicated from their page crops, up to
+    # `adjudication_drawing_max_leaves` per script, before the confidence candidates.
+    adjudication_drawing_leaves: bool = False
+    adjudication_drawing_max_leaves: int = Field(default=3, ge=0)
 
     @field_validator("claude_cache_for")
     @classmethod
@@ -300,6 +318,12 @@ class GeminiSettings(BaseModel):
                     f"claude_cache_for[{tag!r}]: at most 4 distinct spots, got {spots}"
                 )
         return value
+
+    @model_validator(mode="after")
+    def _reason_first_excludes_citations(self) -> GeminiSettings:
+        if self.correction_reason_first and self.correction_citations:
+            raise ValueError("correction_reason_first cannot combine with correction_citations")
+        return self
 
     # Greyscale pages for claude- calls are enhanced for readability (paper shading
     # divided out, levels stretched, light sharpening). False sends plain greyscale

@@ -194,6 +194,34 @@ def render_example_toml() -> str:
         f"# adjudication_confidence_threshold = {s.gemini.adjudication_confidence_threshold}"
     )
     lines.append(
+        "# Lever H2a: keep the higher of the first and the borderline-retry mark below this "
+        "confidence."
+    )
+    lines.append(
+        f"# correction_retry_keep_higher = {_toml_bool(s.gemini.correction_retry_keep_higher)}"
+    )
+    lines.append(
+        f"# correction_retry_keep_higher_below = {s.gemini.correction_retry_keep_higher_below}"
+    )
+    lines.append(
+        "# Lever H2b: per-point verdicts and rationale before the mark "
+        "(not with correction_citations)."
+    )
+    lines.append(f"# correction_reason_first = {_toml_bool(s.gemini.correction_reason_first)}")
+    lines.append("# Lever H2c: printed 0625 Paper 4 marking conventions in the marking prompt.")
+    lines.append(
+        f"# correction_syllabus_conventions = "
+        f"{_toml_bool(s.gemini.correction_syllabus_conventions)}"
+    )
+    lines.append(
+        "# Lever H2d: adjudicate the reader's Drawing: leaves from their crops "
+        "(needs adjudication_model)."
+    )
+    lines.append(
+        f"# adjudication_drawing_leaves = {_toml_bool(s.gemini.adjudication_drawing_leaves)}"
+    )
+    lines.append(f"# adjudication_drawing_max_leaves = {s.gemini.adjudication_drawing_max_leaves}")
+    lines.append(
         "# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B)."
     )
     lines.append(f"# claude_image_enhance = {_toml_bool(s.gemini.claude_image_enhance)}")

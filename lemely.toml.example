@@ -111,6 +111,16 @@ model = "gemini-2.5-flash"
 # adjudication_model = "claude-sonnet-5-5"
 # adjudication_max_leaves = 3
 # adjudication_confidence_threshold = 0.8
+# Lever H2a: keep the higher of the first and the borderline-retry mark below this confidence.
+# correction_retry_keep_higher = false
+# correction_retry_keep_higher_below = 0.86
+# Lever H2b: per-point verdicts and rationale before the mark (not with correction_citations).
+# correction_reason_first = false
+# Lever H2c: printed 0625 Paper 4 marking conventions in the marking prompt.
+# correction_syllabus_conventions = false
+# Lever H2d: adjudicate the reader's Drawing: leaves from their crops (needs adjudication_model).
+# adjudication_drawing_leaves = false
+# adjudication_drawing_max_leaves = 3
 # Greyscale pages are enhanced for readability; false sends plain greyscale (A/B).
 # claude_image_enhance = true
 
