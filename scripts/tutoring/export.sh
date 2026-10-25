@@ -35,6 +35,11 @@ ARCHIVE_PATHS=(
   lemely tests corpus scripts pyproject.toml alembic.ini docs/tutoring/SPEC.md
   BUILD/review-rate-baseline.json
 )
+# --web adds web/ plus the repo-root files its unit tests read (designDocs.test.ts
+# reads DESIGN.md and docs/design-canvas-notes.md; ciCopyGate.test.ts reads ci.yml).
+WEB_EXTRA_PATHS=(
+  web DESIGN.md docs/design-canvas-notes.md .github/workflows/ci.yml
+)
 USAGE="usage: export.sh <name> <rev> [--web] [--overlay <paths...>] [--delete <paths...>] | export.sh --print-paths [--web]"
 
 refuse() {
@@ -56,7 +61,7 @@ if [ "${1:-}" = "--print-paths" ]; then
   fi
   [ "$#" -eq 0 ] || usage_refuse "unexpected argument '$1'"
   printf '%s\n' "${ARCHIVE_PATHS[@]}"
-  [ "$web" -eq 1 ] && echo web
+  [ "$web" -eq 1 ] && printf '%s\n' "${WEB_EXTRA_PATHS[@]}"
   exit 0
 fi
 
@@ -153,7 +158,7 @@ done
 
 # 5. Create. From here a failure removes the half-made export.
 paths=("${ARCHIVE_PATHS[@]}")
-[ "$web" -eq 1 ] && paths+=(web)
+[ "$web" -eq 1 ] && paths+=("${WEB_EXTRA_PATHS[@]}")
 
 mkdir -p "$EXPORTS"
 mkdir "$dest"

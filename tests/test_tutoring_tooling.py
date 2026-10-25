@@ -436,7 +436,12 @@ def test_export_command_paths_exclude_reports(tmp_path: Path) -> None:
 
     with_web = _script("export.sh", "--print-paths", "--web", cwd=tmp_path)
     assert with_web.returncode == 0, with_web.stderr
-    assert with_web.stdout.split() == [*paths, "web"]
+    # web/ plus the repo-root files its unit tests read (designDocs, ciCopyGate).
+    web_extra = ["web", "DESIGN.md", "docs/design-canvas-notes.md", ".github/workflows/ci.yml"]
+    assert with_web.stdout.split() == [*paths, *web_extra]
+    assert all((ROOT / p).exists() for p in web_extra), [
+        p for p in web_extra if not (ROOT / p).exists()
+    ]
 
 
 @pytest.fixture
@@ -457,6 +462,9 @@ def mini_repo(tmp_path: Path) -> Path:
         "BUILD/review-rate-baseline.json": "{}\n",
         "reports/huge.json": "{}\n",
         "web/package.json": "{}\n",
+        "DESIGN.md": "# design\n",
+        "docs/design-canvas-notes.md": "# notes\n",
+        ".github/workflows/ci.yml": "name: ci\n",
     }
     for rel, text in files.items():
         path = repo / rel
