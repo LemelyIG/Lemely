@@ -128,6 +128,28 @@ def test_write_report_switches_real_columns_on_from_the_baseline(tmp_path: Path)
     assert "Baseline real split: abs error 12.5 marks over 2 scripts" in path.read_text()
 
 
+def test_ladder_notes_both_real_floors(tmp_path: Path) -> None:
+    runner.write_summary(
+        _real(), tmp_path / "baseline" / "summary.json", usd_per_script_mean_now=0.05
+    )
+    (tmp_path / runner.AA_FLOOR_FILE).write_text(
+        json.dumps({"aa_floor": 0, "real_aa_floor": 6.0, "real_marking_aa_floor": 2.25})
+    )
+    text = write_report(tmp_path, stop_reason="none").read_text()
+    assert (
+        "Real A/A floors: full pipeline 6.00 marks; marking only (upstream pinned) 2.25 marks."
+        in text
+    )
+
+
+def test_ladder_without_both_real_floors_adds_no_floor_note(tmp_path: Path) -> None:
+    runner.write_summary(
+        _real(), tmp_path / "baseline" / "summary.json", usd_per_script_mean_now=0.05
+    )
+    (tmp_path / runner.AA_FLOOR_FILE).write_text(json.dumps({"aa_floor": 0, "real_aa_floor": 6.0}))
+    assert "Real A/A floors" not in write_report(tmp_path, stop_reason="none").read_text()
+
+
 def test_write_report_dev_only_keeps_todays_header(tmp_path: Path) -> None:
     dev = RunSummary(1, 1, frozenset(), 1, 1, 1, ())
     runner.write_summary(dev, tmp_path / "baseline" / "summary.json", usd_per_script_mean_now=0.05)

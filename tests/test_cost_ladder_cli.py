@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
@@ -318,6 +319,22 @@ def test_baseline_passes_settings_split_repeats(
     assert kw["split"] == "both" and kw["repeats"] == 2
     assert kw["settings"].gemini.correction_model == "claude-haiku-5-5"
     assert kw["real_scripts"] == ["S"]
+
+
+def test_baseline_prints_both_real_floors(
+    seen: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(cli, "run_baseline", lambda **kw: seen.setdefault("baseline", kw) and 0)
+    (tmp_path / "aa_floor.json").write_text(
+        json.dumps({"aa_floor": 0, "real_aa_floor": 6.0, "real_marking_aa_floor": 2.5})
+    )
+    assert cli.main(["--out-dir", str(tmp_path), "--split", "real", "baseline"]) == 0
+    out = capsys.readouterr().out
+    assert "real_aa_floor: 6.00 marks" in out
+    assert "real_marking_aa_floor: 2.50 marks" in out
 
 
 def test_judge_flip_passes_candidate_and_gemini(

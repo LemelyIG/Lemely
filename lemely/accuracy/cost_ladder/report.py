@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from lemely.accuracy.cost_ladder.gate import Verdict, escalation_notes
 from lemely.accuracy.cost_ladder.runner import (
+    AA_FLOOR_FILE,
     BASELINE_LABEL,
     FLIP_VERDICT_FILE,
     LADDER_FILE,
@@ -258,6 +259,13 @@ def write_report(out_dir: Path, *, stop_reason: str) -> Path:
         )
         notes.extend(_incomplete_note(base_run))
         notes.extend(f"Baseline {n}" for n in escalation_notes(base_run))
+    floors_path = out_dir / AA_FLOOR_FILE
+    floors = json.loads(floors_path.read_text(encoding="utf-8")) if floors_path.is_file() else {}
+    if "real_aa_floor" in floors and "real_marking_aa_floor" in floors:
+        notes.append(
+            f"Real A/A floors: full pipeline {float(floors['real_aa_floor']):.2f} marks; "
+            f"marking only (upstream pinned) {float(floors['real_marking_aa_floor']):.2f} marks."
+        )
     if "in_run_cache_hits" in base_data:
         notes.append(
             f"Baseline in-run cache hits: {base_data['in_run_cache_hits']} "

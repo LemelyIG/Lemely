@@ -33,6 +33,7 @@ from lemely.accuracy.cost_ladder.real_split import (
 )
 from lemely.accuracy.cost_ladder.report import write_flip, write_report
 from lemely.accuracy.cost_ladder.runner import (
+    AA_FLOOR_FILE,
     BASELINE_LABEL,
     DEFAULT_LIVE_TAGS,
     CorpusDigestMismatch,
@@ -166,6 +167,11 @@ def _baseline(args: argparse.Namespace) -> int:
         real_scripts=_scripts(args),
     )
     print(f"A/A floor: {floor} newly mismarked parts between two baseline runs")
+    floors_path = args.out_dir / AA_FLOOR_FILE
+    floors = json.loads(floors_path.read_text(encoding="utf-8")) if floors_path.is_file() else {}
+    for key in ("real_aa_floor", "real_marking_aa_floor"):
+        if key in floors:
+            print(f"{key}: {floors[key]:.2f} marks")
     return 0
 
 
@@ -311,7 +317,12 @@ def main(argv: list[str] | None = None) -> int:
     screen.add_argument(
         "--live-tags",
         default=",".join(DEFAULT_LIVE_TAGS),
-        help="comma-separated task tags called live; all others replay the baseline cache",
+        help=(
+            "comma-separated task tags called live; all others replay the baseline cache. "
+            "On the real split the other tags replay the --against rung's pinned real cache "
+            "(a tag also makes every later stage live), and scan_metadata makes the run "
+            "fully live"
+        ),
     )
     screen.add_argument("--judge", choices=("cost", "accuracy", "record"), default="cost")
     screen.set_defaults(fn=_screen)
