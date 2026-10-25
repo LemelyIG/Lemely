@@ -78,6 +78,44 @@ def test_contact_patterns_phone_normalises_fullwidth_digits() -> None:
     assert _kinds(f"ring {fullwidth}") == ["phone"]
 
 
+@pytest.mark.parametrize(
+    ("script", "zero"),
+    [
+        ("mathematical bold", 0x1D7CE),
+        ("mathematical double-struck", 0x1D7D8),
+        ("mathematical monospace", 0x1D7F6),
+        ("devanagari", 0x0966),
+        ("bengali", 0x09E6),
+        ("thai", 0x0E50),
+        ("nko", 0x07C0),
+    ],
+)
+def test_contact_patterns_any_unicode_decimal_digit_script_is_a_digit(
+    script: str, zero: int
+) -> None:
+    digits = "".join(chr(zero + int(c)) for c in "01012345678")
+    text = f"ring {digits} now"
+    matches = find_contact_details(text)
+    assert [m.kind for m in matches] == ["phone"], script
+    # Offsets index the caller's text even where a digit is outside the BMP.
+    assert text[matches[0].start : matches[0].end] == digits
+
+
+def test_contact_patterns_superscript_digits_are_not_decimal_digits() -> None:
+    # Superscripts are numeric but not decimal; "x\u00b2" style maths must stay clean.
+    assert find_contact_details("area is 12\u00b2 and 34\u00b3") == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["online.Site", "us.Us", "@home", "5@home", "0 1 0 1 2 3 4 5 6 7 8"],
+)
+def test_contact_patterns_known_deliberate_false_positives_stay_flagged(text: str) -> None:
+    # Recorded in the module docstring: the detector prefers refusing these to missing a
+    # real number or address. This pins the choice so a loosening is a decision, not drift.
+    assert find_contact_details(text) != []
+
+
 def test_contact_patterns_mixed_scripts_in_one_number() -> None:
     mixed = "010" + _to_arabic_indic("12345") + "678"
     assert _kinds(mixed) == ["phone"]
@@ -279,6 +317,9 @@ def test_meeting_link_allowlist_rejects_userinfo_http_wa_me(url: str) -> None:
         "https://zoom.us:0/j/1",
         "https://zoom.us:99999/j/1",
         "https://zoom.us:abc/j/1",
+        "https://-.zoom.us/j/1",
+        "https://-zoom.us/j/1",
+        "https://a.-b.zoom.us/j/1",
         "https://zoom.us:/j/1",
         "https://127.0.0.1/zoom.us",
         "https://[::1]/",

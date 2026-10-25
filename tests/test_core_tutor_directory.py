@@ -191,6 +191,21 @@ def test_public_name_formats_initial(first: str, initial: str | None, expected: 
         "\U0000ff11Sara",  # fullwidth digit
         "Sara\U000000a0Lee",  # non-breaking space is not the allowed space
         "\U00000301Sara",  # a name cannot start with a bare combining accent
+        "\U00003164",  # hangul filler: renders blank
+        "Sara\U00003164",
+        "\U0000115f",  # hangul choseong filler
+        "\U00001160",  # hangul jungseong filler
+        "\U0000ffa0",  # halfwidth hangul filler
+        "Sa\U00001160ra",
+        "S" + "\U00000336" * 30,  # a stack of combining strikes hides the letter
+        "S" + "\U00000336" * 3,  # three marks on one base letter
+        "Sa \U00000301ra",  # a mark with no base letter
+        "Anne    Marie",  # runs of separators
+        "Anne  Marie",
+        "Sara--'-Lee",
+        "Mary- Jane",
+        "O''Brien",
+        "Anne -Marie",
         "-Sara",
         "Sara-",
         "'Sara",
@@ -207,8 +222,17 @@ def test_public_first_name_charset_rejects_digits_urls_bidi(first: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "initial", ["1", ".", "@", "MM", "\U0000202e", "-", " M", "\U00000661", "\U0000200f"]
-)
+    "initial",
+    [
+        "1", ".", "@", "MM", "\U0000202e", "-", " M", "\U00000661", "\U0000200f",
+        "\U00003164",  # hangul filler
+        "\U0000115f",
+        "\U00001160",
+        "\U0000ffa0",
+        "\U000002b0",  # modifier letter small h: a letter-like mark, not an initial
+        "\U00000301",  # a bare combining accent
+    ],
+)  # fmt: skip
 def test_public_last_initial_must_be_one_letter(initial: str) -> None:
     with pytest.raises(InvalidPublicNameError):
         validate_public_name("Sara", initial)
@@ -259,6 +283,32 @@ def test_student_label_never_contains_at(display_name: str) -> None:
     assert "@" not in label
     assert "\U0000ff20" not in label
     assert label.startswith("Student ")
+
+
+@pytest.mark.parametrize(
+    "display_name",
+    [
+        "Omar 01012345678",
+        "Omar 010 1234 5678",
+        "call 0101234567\U00000038",
+        "Omar on Instagram",
+        "see omar.example.com",
+        "Omar +44 7700 900123",
+    ],
+)
+def test_student_label_falls_back_when_the_name_carries_contact_details(display_name: str) -> None:
+    user_id = uuid.UUID(int=3)
+    label = student_label(display_name, user_id)
+    assert label.startswith("Student ")
+    assert re.fullmatch(r"Student [0-9A-F]{4}", label)
+
+
+def test_student_label_strips_format_characters() -> None:
+    user_id = uuid.UUID(int=4)
+    assert student_label("\U0000202eOmar", user_id) == "Omar"
+    assert student_label("Om\U0000200bar", user_id) == "Omar"
+    assert student_label("\U0000202e\U0000200b", user_id).startswith("Student ")
+    assert student_label("\U00002066 Omar Hassan \U00002069", user_id) == "Omar Hassan"
 
 
 def test_student_label_uses_trimmed_display_name() -> None:

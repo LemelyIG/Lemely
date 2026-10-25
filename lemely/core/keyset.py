@@ -26,7 +26,7 @@ import binascii
 import json
 import re
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Final
 
@@ -42,7 +42,17 @@ _TOKEN_CHARS: Final = re.compile(r"[A-Za-z0-9_-]+")
 
 # Plain decimal text only. Exponent forms ("1e999999") and NaN/Infinity are
 # valid ``Decimal`` input but never something this codec writes.
-_DECIMAL_TEXT: Final = re.compile(r"-?\d{1,30}(?:\.\d{1,30})?")
+# ASCII digits only: ``\d`` also matches Arabic-Indic and fullwidth digits, which
+# ``Decimal`` would happily parse into a value this codec never wrote.
+_DECIMAL_TEXT: Final = re.compile(r"-?[0-9]{1,30}(?:\.[0-9]{1,30})?")
+
+# Integers are bound to bigint columns, so they must fit a signed 64-bit value.
+_INT64_MIN: Final = -(2**63)
+_INT64_MAX: Final = 2**63 - 1
+
+# No sort key in the tutoring lists is text longer than this; a NUL cannot be bound to
+# a Postgres text parameter at all.
+_MAX_STRING_LENGTH: Final = 256
 
 
 class CursorError(ValueError):
@@ -127,12 +137,16 @@ def _parse_payload(token: str) -> tuple[str, list[object]]:
 def _decode_str(raw: object) -> str:
     if not isinstance(raw, str):
         raise CursorError("cursor value is not text")
+    if len(raw) > _MAX_STRING_LENGTH or "\x00" in raw:
+        raise CursorError("cursor text is too long or contains NUL")
     return raw
 
 
 def _decode_int(raw: object) -> int:
     if isinstance(raw, bool) or not isinstance(raw, int):
         raise CursorError("cursor value is not an integer")
+    if not _INT64_MIN <= raw <= _INT64_MAX:
+        raise CursorError("cursor integer is out of range")
     return raw
 
 
@@ -170,10 +184,13 @@ def _decode_datetime(raw: object) -> datetime:
         raise CursorError("cursor value is not an instant")
     try:
         parsed = datetime.fromisoformat(raw)
-    except ValueError as exc:
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise CursorError("cursor instant has no timezone")
+        # The driver converts to UTC when binding; an instant at the edge of the
+        # calendar overflows there, so prove it converts before accepting it.
+        parsed.astimezone(UTC)
+    except (ValueError, OverflowError) as exc:
         raise CursorError("cursor value is not an instant") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise CursorError("cursor instant has no timezone")
     return parsed
 
 

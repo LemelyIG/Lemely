@@ -14,13 +14,22 @@ The detector is a deliberate trade: it prefers refusing a borderline sentence
 shapes that grades, marks, times and paper codes never take ("A*", "72/80",
 "17:00", "0625/42" are tested negatives).
 
-Evasions it handles: Arabic-Indic, extended Arabic-Indic and fullwidth digits
-(all mapped one-for-one to ASCII before matching, so match offsets still index
-the caller's original text), runs of up to three separator characters between
-digits (spaces, dots, dashes, brackets, zero-width characters), the ``+20`` /
-``0020`` country prefixes with or without the trunk ``0``. What it does not
-handle: spelled-out numbers ("zero one zero ...") and spaced-out letters in
-emails. Those are the moderators' job.
+Evasions it handles: digits of any script (every Unicode decimal digit is
+mapped one-for-one to ASCII before matching, so match offsets still index the
+caller's original text), runs of up to three separator characters between
+digits (spaces, dots, dashes, underscores, brackets, zero-width characters), the
+``+20`` / ``0020`` country prefixes with or without the trunk ``0``.
+
+Known evasions it does not catch, left to the moderators: spelled-out numbers
+("zero one zero ..."), a slash, comma or Arabic comma (U+060C) between digits,
+four or more separator characters between two digits, fullwidth or styled
+*letters* in a domain or messenger name, and addresses split across words.
+
+Known false positives, kept on purpose because refusing is cheaper than missing:
+a word pair that reads as a domain on a listed TLD ("online.Site", "us.Us"), a
+bare ``@word`` or ``digit@word`` ("@home", "5@home") which reads as a handle or a
+dotless email, and any list of eleven or so single digits starting 01x written
+with spaces ("0 1 0 1 2 3 ..."). The TLD list is not widened to chase more.
 
 Pure: no I/O, no framework.
 """
@@ -28,6 +37,7 @@ Pure: no I/O, no framework.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Final, Literal
 from urllib.parse import urlsplit
@@ -42,6 +52,9 @@ MEETING_HOSTS: Final = (
     "whereby.com",
 )
 
+# A DNS host: two or more dot-separated labels, each starting with a letter or digit.
+_HOST: Final = r"[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+"
+
 # ``meeting_link`` is varchar(500) (SPEC section a.2).
 _MAX_LINK_LENGTH: Final = 500
 
@@ -55,16 +68,6 @@ class ContactMatch:
     end: int
     text: str
 
-
-# Digit scripts that read as digits to a person but not to ``\d{ASCII}``: every one
-# is a single code point mapped to a single ASCII digit, so offsets are preserved.
-_DIGIT_TABLE: Final = str.maketrans(
-    {
-        **{0x0660 + d: ord("0") + d for d in range(10)},  # Arabic-Indic
-        **{0x06F0 + d: ord("0") + d for d in range(10)},  # extended Arabic-Indic
-        **{0xFF10 + d: ord("0") + d for d in range(10)},  # fullwidth
-    }
-)
 
 # Whitespace, dot, dash, underscore, brackets, and the zero-width / bidi marks people
 # slip between digits so the number no longer looks like one.
@@ -146,7 +149,7 @@ def find_contact_details(text: str) -> list[ContactMatch]:
 
     An empty list means the text is clean. Offsets index the *original* ``text``.
     """
-    normalised = text.translate(_DIGIT_TABLE)
+    normalised = _ascii_digits(text)
     taken: list[tuple[int, int]] = []
     found: list[ContactMatch] = []
     for kind, pattern in _PATTERNS:
@@ -160,6 +163,20 @@ def find_contact_details(text: str) -> list[ContactMatch]:
             found.append(ContactMatch(kind=kind, start=start, end=end, text=text[start:end]))
     found.sort(key=lambda match: match.start)
     return found
+
+
+def _ascii_digits(text: str) -> str:
+    """Map every Unicode decimal digit (any script) to its ASCII digit, code point for code point.
+
+    ``unicodedata.decimal`` is defined for exactly the characters that read as a
+    digit 0-9 in some script (Arabic-Indic, Devanagari, mathematical bold, ...),
+    and each is a single code point, so offsets into the result are offsets into
+    ``text``. Superscripts and fractions are numeric but not decimal, and stay put.
+    """
+    return "".join(
+        str(value) if (value := unicodedata.decimal(char, None)) is not None else char
+        for char in text
+    )
 
 
 def _trim_trailing_punctuation(text: str, start: int, end: int) -> int:
@@ -195,7 +212,7 @@ def meeting_link_allowed(url: str) -> bool:
     host, has_port, port = parts.netloc.partition(":")
     if "@" in parts.netloc or (has_port and port != "443"):
         return False
-    if re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", host.lower()) is None:
+    if re.fullmatch(_HOST, host.lower()) is None:
         return False
     host = host.lower()
     return any(host == allowed or host.endswith("." + allowed) for allowed in MEETING_HOSTS)

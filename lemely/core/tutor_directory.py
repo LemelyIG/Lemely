@@ -19,6 +19,8 @@ import hashlib
 import unicodedata
 from typing import TYPE_CHECKING, Final, Literal, Protocol
 
+from lemely.core.contact_patterns import find_contact_details
+
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Mapping
@@ -37,6 +39,18 @@ TIME_OF_DAY_MINUTES: Final[Mapping[TimeOfDay, tuple[int, int]]] = {
 _MAX_FIRST_NAME_LENGTH: Final = 40
 
 _FIRST_NAME_PUNCTUATION: Final = frozenset({" ", "-", "'", "\U00002019"})
+
+# Letters (category Lo) that render as nothing: the Hangul fillers. A name made of, or
+# padded with, one of these looks blank or looks shorter than it is.
+_INVISIBLE_LETTERS: Final = frozenset({"\U0000115f", "\U00001160", "\U00003164", "\U0000ffa0"})
+
+# Combining marks allowed on one base letter. Arabic needs two (shadda plus a vowel);
+# a stack of more than that is the "zalgo" trick that hides or garbles a name.
+_MAX_MARKS_PER_LETTER: Final = 2
+
+# Uppercase, lowercase, titlecase and other letters. Not Lm (modifier letters such as a
+# superscript h), which look like a letter but are not one.
+_INITIAL_CATEGORIES: Final = frozenset({"Lu", "Ll", "Lt", "Lo"})
 
 
 class InvalidPublicNameError(ValueError):
@@ -103,41 +117,73 @@ def validate_public_name(first_name: str, last_initial: str | None) -> None:
     """Raise :class:`InvalidPublicNameError` unless the name fits the SC-25 allowlist.
 
     First name: 1 to 40 characters; Unicode letters (Arabic included) and their
-    combining marks (Arabic diacritics), single spaces U+0020, hyphen, apostrophe
-    (ASCII or U+2019) only; it must begin and end with a letter or mark. That
+    combining marks (Arabic diacritics, at most two on one letter), single
+    separators only (space U+0020, hyphen, apostrophe ASCII or U+2019, never two
+    in a row); it must begin with a letter and end with a letter or mark. That
     excludes digits in any script, punctuation that forms URLs, emails and
     handles (``. / : @``), control characters, and every invisible or direction
     character (bidi controls, zero-width characters), which are format
-    characters and not letters. Last initial: ``None`` or exactly one letter.
+    characters and not letters; the Hangul filler letters, which are letters that
+    render blank, are refused by name. Last initial: ``None`` or exactly one
+    uppercase, lowercase, titlecase or caseless letter (so not a modifier letter
+    and not a filler).
     """
     if not 1 <= len(first_name) <= _MAX_FIRST_NAME_LENGTH:
         raise InvalidPublicNameError("first name must be 1 to 40 characters")
+    previous = ""
+    marks_in_a_row = 0
     for char in first_name:
-        category = unicodedata.category(char)
-        if category[0] not in "LM" and char not in _FIRST_NAME_PUNCTUATION:
-            raise InvalidPublicNameError("first name may only contain letters, spaces, - and '")
+        if char in _INVISIBLE_LETTERS:
+            raise InvalidPublicNameError("first name contains an invisible letter")
+        kind = unicodedata.category(char)[0]
+        if kind == "M":
+            # A mark decorates the letter before it: it needs one, and at most two.
+            if unicodedata.category(previous or " ")[0] not in "LM":
+                raise InvalidPublicNameError("first name has a combining mark with no letter")
+            marks_in_a_row += 1
+            if marks_in_a_row > _MAX_MARKS_PER_LETTER:
+                raise InvalidPublicNameError("first name has too many combining marks")
+        else:
+            marks_in_a_row = 0
+            if kind != "L" and char not in _FIRST_NAME_PUNCTUATION:
+                raise InvalidPublicNameError("first name may only contain letters, spaces, - and '")
+            if char in _FIRST_NAME_PUNCTUATION and previous in _FIRST_NAME_PUNCTUATION:
+                raise InvalidPublicNameError("first name has two separators in a row")
+        previous = char
     # A name starts with a letter (never a bare combining mark) and ends with a letter or
     # a mark (Arabic names often end in a diacritic).
     if unicodedata.category(first_name[0])[0] != "L" or (
         unicodedata.category(first_name[-1])[0] not in "LM"
     ):
         raise InvalidPublicNameError("first name must start and end with a letter")
-    if last_initial is not None and not (len(last_initial) == 1 and last_initial.isalpha()):
+    if last_initial is not None and not _is_initial(last_initial):
         raise InvalidPublicNameError("last initial must be a single letter")
 
 
+def _is_initial(value: str) -> bool:
+    """One cased or caseless letter (Lu, Ll, Lt, Lo): not a modifier letter, not a filler."""
+    return (
+        len(value) == 1
+        and unicodedata.category(value) in _INITIAL_CATEGORIES
+        and value not in _INVISIBLE_LETTERS
+    )
+
+
 def student_label(display_name: str | None, user_id: uuid.UUID) -> str:
-    """The name a tutor sees for a student: the trimmed display name, else a stable alias.
+    """The name a tutor sees for a student: the cleaned display name, else a stable alias.
 
     The alias is ``"Student "`` plus the first four hex characters of
     ``sha256(str(user_id))`` upper-cased: stable for one student, unlinkable to
-    the account without the id, and never an email address (F12). A display name
-    that contains ``@`` (after Unicode compatibility folding, so the fullwidth
-    ``@`` counts) is treated as unusable, because students sometimes type their
-    email into the name field and that must not reach a tutor.
+    the account without the id, and never an email address (F12). The display
+    name is first stripped of format characters (bidi controls, zero-width
+    characters) and trimmed. It is then unusable, and the alias is used instead,
+    if it is empty, contains ``@`` (after Unicode compatibility folding, so the
+    fullwidth ``@`` counts), or carries any contact detail: students sometimes
+    type their email or phone number into the name field and that must not reach
+    a tutor.
     """
-    name = (display_name or "").strip()
-    if name and "@" not in unicodedata.normalize("NFKC", name):
+    name = "".join(c for c in (display_name or "") if unicodedata.category(c) != "Cf").strip()
+    if name and "@" not in unicodedata.normalize("NFKC", name) and not find_contact_details(name):
         return name
     digest = hashlib.sha256(str(user_id).encode("ascii")).hexdigest()
     return f"Student {digest[:4].upper()}"

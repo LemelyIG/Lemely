@@ -115,6 +115,12 @@ def test_cursor_wrong_arity_or_type_raises(values: list[object], types: list[typ
         pytest.param("1e999999", Decimal, id="decimal_exponent_form"),
         pytest.param("4,5", Decimal, id="decimal_comma"),
         pytest.param("", Decimal, id="decimal_empty"),
+        pytest.param("\U00000664.\U00000665", Decimal, id="decimal_arabic_indic_digits"),
+        pytest.param("\U0000ff14.\U0000ff15", Decimal, id="decimal_fullwidth_digits"),
+        pytest.param("a\x00b", str, id="string_with_nul"),
+        pytest.param("x" * 257, str, id="string_over_256_characters"),
+        pytest.param("9999-12-31T23:59:59-23:59", datetime, id="instant_overflowing_utc"),
+        pytest.param("0001-01-01T00:00:00+23:59", datetime, id="instant_underflowing_utc"),
         pytest.param("2026-10-25T09:30:15", datetime, id="naive_datetime"),
         pytest.param("yesterday", datetime, id="datetime_garbage"),
         pytest.param("2026-13-45", date, id="date_garbage"),
@@ -148,6 +154,22 @@ def test_cursor_bad_text_for_a_typed_slot_raises(raw: str, kind: type) -> None:
 def test_cursor_malformed_base64_raises(token: str) -> None:
     with pytest.raises(CursorError):
         decode_cursor(token, endpoint="e", types=[])
+
+
+def test_cursor_int_is_bounded_to_int64() -> None:
+    low, high = -(2**63), 2**63 - 1
+    for ok in (low, 0, high):
+        token = encode_cursor("e", [ok])
+        assert decode_cursor(token, endpoint="e", types=[int]) == (ok,)
+    for bad in (low - 1, high + 1, 10**300, -(10**300)):
+        token = encode_cursor("e", [bad])
+        with pytest.raises(CursorError):
+            decode_cursor(token, endpoint="e", types=[int])
+
+
+def test_cursor_string_up_to_256_characters_round_trips() -> None:
+    token = encode_cursor("e", ["x" * 256])
+    assert decode_cursor(token, endpoint="e", types=[str]) == ("x" * 256,)
 
 
 def test_cursor_error_is_a_value_error_so_routers_can_map_it_to_422() -> None:
