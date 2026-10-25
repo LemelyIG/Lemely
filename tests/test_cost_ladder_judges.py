@@ -190,8 +190,27 @@ def test_cost_lever_reports_real_saving_and_escalation() -> None:
 
 def test_flip_passes_when_no_worse_than_gemini() -> None:
     gemini = _s(real_abs_error=22.0, real_binding_passes=1.0, real_review_rate=0.21)
-    v = judge_flip(gemini, _s(), aa_floor=0)
+    v = judge_flip(gemini, _s(real_review_rate=0.21), aa_floor=0)
     assert v.passed, v.reasons
+
+
+@pytest.mark.parametrize(("gem_rate", "cand_rate"), [(0.10, 0.22), (0.10, 0.20), (0.50, 0.22)])
+def test_flip_review_cap_is_absolute_and_inclusive(gem_rate: float, cand_rate: float) -> None:
+    gemini = _s(real_abs_error=22.0, real_binding_passes=1.0, real_review_rate=gem_rate)
+    v = judge_flip(gemini, _s(real_review_rate=cand_rate), aa_floor=0)
+    assert v.passed, v.reasons
+
+
+def test_flip_passes_more_than_ten_points_above_gemini_when_under_the_cap() -> None:
+    gemini = _s(real_abs_error=22.0, real_binding_passes=1.0, real_review_rate=0.10)
+    v = judge_flip(gemini, _s(real_review_rate=0.22), aa_floor=0)
+    assert v.passed, v.reasons
+
+
+def test_flip_fails_just_above_the_cap() -> None:
+    gemini = _s(real_abs_error=22.0, real_binding_passes=1.0, real_review_rate=0.50)
+    v = judge_flip(gemini, _s(real_review_rate=0.2201), aa_floor=0)
+    assert v.reasons == ("review rate 22.0% is above the 22% cap (Gemini 50.0%)",)
 
 
 @pytest.mark.parametrize(
@@ -209,7 +228,7 @@ def test_flip_passes_when_no_worse_than_gemini() -> None:
         (_s(real_binding_passes=0.5), "binding passes 0.5 are below Gemini's 1.0"),
         (
             _s(real_review_rate=0.32),
-            "review rate 32.0% is more than 10 points above Gemini's 21.0%",
+            "review rate 32.0% is above the 22% cap (Gemini 21.0%)",
         ),
         (_s(incomplete=("real-2:0625_s23_22 (x)",)), "incomplete cases: real-2:0625_s23_22 (x)"),
         (_s(real_scripts=("0625_w24_41",)), "real scripts differ from Gemini's"),
@@ -310,7 +329,7 @@ def test_flip_fails_when_a_review_rate_is_missing() -> None:
 
 
 def test_flip_fails_when_scored_parts_narrow() -> None:
-    v = judge_flip(_s(), _s(scored_parts=70), aa_floor=0)
+    v = judge_flip(_s(), _s(scored_parts=70, real_review_rate=0.20), aa_floor=0)
     assert v.reasons == ("scored parts changed from 78 to 70 (narrowed screen)",)
 
 

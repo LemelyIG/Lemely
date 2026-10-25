@@ -14,8 +14,10 @@ LATENCY_FACTOR = 2.0
 REAL_SCRIPT_CAP_USD = 0.10
 #: judge_accuracy_lever: the review rate may rise this much unless abs_error fell.
 ACCURACY_REVIEW_RISE = 0.05
-#: judge_flip: the candidate's review rate may be this far above Gemini's.
-FLIP_REVIEW_MARGIN = 0.10
+#: judge_flip: absolute cap on the candidate's review rate. Claude at review
+#: threshold 0.72 flags ~21.7% of leaves and catches 65% of wrong leaves vs
+#: Gemini's 28% (user decision 2026-10-26).
+FLIP_REVIEW_CAP = 0.22
 _EPS = 1e-9
 
 
@@ -323,14 +325,10 @@ def judge_flip(gemini: RunSummary, candidate: RunSummary, *, aa_floor: int) -> V
             reasons.append("Gemini rung has no review rate")
         if cand_rate is None:
             reasons.append("candidate has no review rate")
-        if (
-            cand_rate is not None
-            and gem_rate is not None
-            and cand_rate > gem_rate + FLIP_REVIEW_MARGIN + _EPS
-        ):
+        if cand_rate is not None and gem_rate is not None and cand_rate > FLIP_REVIEW_CAP + _EPS:
             reasons.append(
-                f"review rate {_pct(cand_rate)} is more than "
-                f"{FLIP_REVIEW_MARGIN * 100:.0f} points above Gemini's {_pct(gem_rate)}"
+                f"review rate {_pct(cand_rate)} is above the {FLIP_REVIEW_CAP * 100:.0f}% cap "
+                f"(Gemini {_pct(gem_rate)})"
             )
     if candidate.scored_parts != gemini.scored_parts:
         reasons.append(
