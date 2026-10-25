@@ -91,6 +91,14 @@ PREFERENCE_FIELD_FOR_TYPE: Final[dict[NotificationType, str]] = {
     NotificationType.study_plan_reminder: "study_plan_reminder",
     NotificationType.at_risk_alert: "at_risk_alert",
     NotificationType.review_withdrawn: "review_withdrawn",
+    NotificationType.booking_request: "booking_request",
+    NotificationType.booking_update: "booking_update",
+    NotificationType.booking_note: "booking_note",
+    NotificationType.tutor_access: "tutor_access",
+    NotificationType.tutor_review: "tutor_review",
+    NotificationType.tutor_listing: "tutor_listing",
+    NotificationType.parent_link: "parent_link",
+    NotificationType.tutoring_report: "tutoring_report",
 }
 
 

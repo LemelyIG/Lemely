@@ -243,7 +243,13 @@ class ReviewReason(enum.Enum):
 
 
 class NotificationType(enum.Enum):
-    """Category of a user notification."""
+    """Category of a user notification.
+
+    The last eight members are the tutoring marketplace's (migration
+    ``0044_tutoring_enums_ext``, SPEC ``docs/tutoring/SPEC.md`` §a.1). Each has a
+    same-named ``notification_preferences`` column, pinned by
+    ``tests/test_db_schema.py``'s enum/column vocabulary test.
+    """
 
     grade_ready = "grade_ready"
     announcement = "announcement"
@@ -251,6 +257,14 @@ class NotificationType(enum.Enum):
     study_plan_reminder = "study_plan_reminder"
     at_risk_alert = "at_risk_alert"
     review_withdrawn = "review_withdrawn"
+    booking_request = "booking_request"
+    booking_update = "booking_update"
+    booking_note = "booking_note"
+    tutor_access = "tutor_access"
+    tutor_review = "tutor_review"
+    tutor_listing = "tutor_listing"
+    parent_link = "parent_link"
+    tutoring_report = "tutoring_report"
 
 
 class XpSource(enum.Enum):
@@ -439,6 +453,169 @@ class EvidenceVerdict(enum.Enum):
 
 
 # ---------------------------------------------------------------------------
+# Tutoring marketplace (migration 0044_tutoring_enums_ext, SPEC §a.1)
+#
+# Sixteen native Postgres enum types, each named exactly as SPEC §a.1 prints it.
+# Every member's name equals its value, so SQLAlchemy's default name binding is
+# correct (``tests/test_db_schema.py``'s enum-binding test guards that). The
+# pure core modules mirror ``BookingState``/``BookingParty`` as ``Literal``
+# vocabularies; a later test pins the two sides equal (PLAN §1.4 #11).
+# ---------------------------------------------------------------------------
+
+
+class TutorListingState(enum.Enum):
+    """Where a tutor profile is in the listing lifecycle (``tutorlistingstate``, SPEC §a.3)."""
+
+    draft = "draft"
+    pending_review = "pending_review"
+    listed = "listed"
+    rejected = "rejected"
+    suspended = "suspended"
+    closed = "closed"
+
+
+class TutoringMode(enum.Enum):
+    """How a tutor offers sessions, and how one booking takes place (``tutoringmode``)."""
+
+    virtual = "virtual"
+    in_person = "in_person"
+    other = "other"
+
+
+class BookingState(enum.Enum):
+    """The stored state of a tutoring booking (``bookingstate``, SPEC §a.3).
+
+    ``awaiting_outcome`` and the read-time ``expired`` of a stale request are
+    derived, never stored: see ``lemely.db.tutoring_predicates``.
+    """
+
+    requested = "requested"
+    accepted = "accepted"
+    declined = "declined"
+    cancelled = "cancelled"
+    completed = "completed"
+    no_show = "no_show"
+    expired = "expired"
+
+
+class BookingParty(enum.Enum):
+    """Who acted on a booking, a note or a report (``bookingparty``)."""
+
+    student = "student"
+    parent = "parent"
+    tutor = "tutor"
+    platform_admin = "platform_admin"
+    system = "system"
+
+
+class ModerationState(enum.Enum):
+    """Moderation of review and reply text (``moderationstate``).
+
+    ``none`` means a review with stars and no text; a reply is never ``none``.
+    """
+
+    none = "none"
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class TutorGrantScope(enum.Enum):
+    """What a student's data grant to a tutor covers (``tutorgrantscope``, decision row 3b)."""
+
+    all_subjects_derived = "all_subjects_derived"
+
+
+class GrantRevokeReason(enum.Enum):
+    """Why a data grant ended (``grantrevokereason``)."""
+
+    student = "student"
+    block = "block"
+    tutor_suspended = "tutor_suspended"
+    tutor_closed = "tutor_closed"
+
+
+class TutorAccessAction(enum.Enum):
+    """Which granted read a ``tutor_access_audit`` row records (``tutoraccessaction``)."""
+
+    list = "list"
+    detail = "detail"
+
+
+class TutorApprovalDecision(enum.Enum):
+    """A platform admin's decision on a tutor profile (``tutorapprovaldecision``)."""
+
+    approved = "approved"
+    rejected = "rejected"
+    suspended = "suspended"
+    reinstated = "reinstated"
+    closed = "closed"
+
+
+class ReportTargetType(enum.Enum):
+    """What a tutoring report points at (``reporttargettype``)."""
+
+    tutor_profile = "tutor_profile"
+    review = "review"
+    review_reply = "review_reply"
+    booking = "booking"
+    booking_note = "booking_note"
+
+
+class ReportReason(enum.Enum):
+    """Why a tutoring report was filed (``reportreason``)."""
+
+    safety_concern = "safety_concern"
+    inappropriate_content = "inappropriate_content"
+    harassment = "harassment"
+    spam = "spam"
+    fake_profile = "fake_profile"
+    disputed_outcome = "disputed_outcome"
+    other = "other"
+
+
+class ReportState(enum.Enum):
+    """Lifecycle of a tutoring report (``reportstate``)."""
+
+    open = "open"
+    dismissed = "dismissed"
+    actioned = "actioned"
+
+
+class ReportResolution(enum.Enum):
+    """What resolving a tutoring report did (``reportresolution``)."""
+
+    dismissed = "dismissed"
+    content_hidden = "content_hidden"
+    tutor_suspended = "tutor_suspended"
+    booking_cancelled = "booking_cancelled"
+    booking_completed = "booking_completed"
+
+
+class EmailOutboxStatus(enum.Enum):
+    """Delivery state of one transactional email (``emailoutboxstatus``)."""
+
+    pending = "pending"
+    sent = "sent"
+    failed = "failed"
+    skipped = "skipped"
+
+
+class ParentLinkEvent(enum.Enum):
+    """A change to a parent-child link (``parentlinkevent``, SC-1)."""
+
+    linked = "linked"
+    unlinked = "unlinked"
+
+
+class TutoringAdminAction(enum.Enum):
+    """A platform-admin read logged in ``tutoring_admin_access`` (``tutoringadminaction``)."""
+
+    report_thread_view = "report_thread_view"
+    evidence_open = "evidence_open"
+
+
+# ---------------------------------------------------------------------------
 # Shared ORM mixins
 # ---------------------------------------------------------------------------
 
@@ -472,17 +649,23 @@ __all__ = [
     "SESSION_MONTH_LABELS",
     "AttemptOrigin",
     "AuthTokenPurpose",
+    "BookingParty",
+    "BookingState",
     "BoundarySource",
     "ConfidenceBand",
     "DifficultySource",
+    "EmailOutboxStatus",
     "EvidenceVerdict",
     "ExamBoard",
     "FriendshipStatus",
+    "GrantRevokeReason",
     "InviteRole",
     "MarkerSource",
     "MembershipRole",
+    "ModerationState",
     "NotificationType",
     "PaperTier",
+    "ParentLinkEvent",
     "PlanInterval",
     "QualificationLevel",
     "QuestionDifficulty",
@@ -491,6 +674,10 @@ __all__ = [
     "QuizQuestionStatus",
     "QuizStatus",
     "QuizSubmissionStatus",
+    "ReportReason",
+    "ReportResolution",
+    "ReportState",
+    "ReportTargetType",
     "ReviewReason",
     "ReviewStatus",
     "RevisionSource",
@@ -499,6 +686,12 @@ __all__ = [
     "SessionMonth",
     "SubscriptionStatus",
     "TimestampMixin",
+    "TutorAccessAction",
+    "TutorApprovalDecision",
+    "TutorGrantScope",
+    "TutorListingState",
+    "TutoringAdminAction",
+    "TutoringMode",
     "UploadStatus",
     "XpSource",
 ]
