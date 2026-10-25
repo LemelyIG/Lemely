@@ -70,6 +70,17 @@ if TYPE_CHECKING:
     from lemely.io.rasterise import RasterisedPage
 
 
+def _keep_higher(first: AIMarkResponse, retry: AIMarkResponse) -> AIMarkResponse:
+    """Lever H2a: the higher-marked of two samples of one leaf (two only: the over-marking cap)."""
+    if first.awarded_marks != retry.awarded_marks:
+        chosen = first if first.awarded_marks > retry.awarded_marks else retry
+        confidence = min(first.confidence, retry.confidence)
+    else:
+        chosen = first if first.confidence > retry.confidence else retry
+        confidence = chosen.confidence
+    return chosen.model_copy(update={"confidence": confidence})
+
+
 def _is_leaf_marked(q: Question) -> bool:
     """Mark only leaf questions with marks > 0. Skip container/zero-mark items."""
     return q.marks > 0 and not q.parts
@@ -666,13 +677,21 @@ class AICorrector:
         # shipped defaults (low / high / high on one model) the escalation
         # tuple equals that -- Step 2 would bill the identical call again.
         last_call = (correction_model, correction_thinking)
-        if result.confidence < g.escalation_confidence_threshold and borderline_gate:
+        retry_below = g.escalation_confidence_threshold
+        # ``is True`` / isinstance: a MagicMock settings object keeps today's behaviour.
+        keep_higher = g.correction_retry_keep_higher is True
+        if keep_higher:
+            lever_below = g.correction_retry_keep_higher_below
+            if isinstance(lever_below, int | float) and not isinstance(lever_below, bool):
+                retry_below = lever_below
+        if result.confidence < retry_below and borderline_gate:
             bus.publish(
                 EventType.GEMINI_ESCALATE,
                 question_id=question.id,
                 confidence=result.confidence,
                 escalation_model=f"{correction_model} (thinking)",
             )
+            first = result
             result = self._client.generate_structured(
                 system_prompt=system_prompt,
                 user_prompt=(
@@ -687,6 +706,17 @@ class AICorrector:
                 **prefix_kwargs,
             )
             last_call = (correction_model, borderline_thinking)
+            if keep_higher:
+                retry = result
+                result = _keep_higher(first, retry)
+                structlog.get_logger().bind(component="correction").info(
+                    "borderline_kept_higher",
+                    question_id=question.id,
+                    first=first.awarded_marks,
+                    retry=retry.awarded_marks,
+                    kept=result.awarded_marks,
+                    confidence=result.confidence,
+                )
 
         # Step 2: Pro escalation if confidence still below threshold.
         # F1 fix (4): under F1 defaults correction_model == escalation_model
