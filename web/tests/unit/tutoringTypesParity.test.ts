@@ -368,6 +368,72 @@ function specDtoCount(spec: string): number {
   return blockClasses.length + adminNames.size
 }
 
+interface SpecClass {
+  base: string
+  headerComment: string
+  ownFields: string[]
+}
+
+/** Every class in SPEC §b.3's python block with its own field names. Parsed
+ * from the SPEC text, independently of the Python files, so a Python field the
+ * `parsePython` regex misses shows up as a count mismatch (T04 review R9). */
+function specClasses(spec: string): Map<string, SpecClass> {
+  const start = spec.indexOf("### b.3 DTOs")
+  const section = spec.slice(start, spec.indexOf("### b.4 ", start))
+  const code = /```python\n([\s\S]*?)```/.exec(section)
+  if (!code) throw new Error("SPEC §b.3 has no python block")
+  const bodies = new Map<string, string[]>()
+  const classes = new Map<string, SpecClass>()
+  let current: string | null = null
+  for (const line of code[1].split("\n")) {
+    const head = /^class (\w+)\((\w+)\):(.*)$/.exec(line)
+    if (head) {
+      current = head[1]
+      const hash = head[3].indexOf("#")
+      classes.set(current, {
+        base: head[2],
+        headerComment: hash >= 0 ? head[3].slice(hash + 1).trim() : "",
+        ownFields: [],
+      })
+      bodies.set(current, [stripComment(head[3])])
+    } else if (!line.startsWith(" ")) {
+      current = null
+    } else if (current) {
+      bodies.get(current)?.push(stripComment(line))
+    }
+  }
+  for (const [name, lines] of bodies) {
+    const logical: string[] = []
+    for (const text of lines.map((line) => line.trim()).filter((line) => line !== "")) {
+      if (logical.length > 0 && depth(logical[logical.length - 1]) > 0) {
+        logical[logical.length - 1] += ` ${text}`
+      } else {
+        logical.push(text)
+      }
+    }
+    for (const chunk of logical.flatMap((line) => splitTopLevel(line, ";"))) {
+      const text = chunk.trim()
+      if (text === "" || text === "pass") continue
+      const field = /^(\w+)\s*:/.exec(text)
+      if (!field) throw new Error(`unparsed SPEC field in ${name}: ${text}`)
+      classes.get(name)?.ownFields.push(field[1])
+    }
+  }
+  return classes
+}
+
+/** Field count of `name` per SPEC, inherited fields included. §b.3's one
+ * prose shorthand, "every field of Create, optional, plus:", is expanded. */
+function specFieldCount(classes: Map<string, SpecClass>, name: string): number {
+  const cls = classes.get(name)
+  if (!cls) throw new Error(`SPEC §b.3 has no class ${name}`)
+  let own = cls.ownFields.length
+  if (cls.headerComment.startsWith("every field of Create")) {
+    own += classes.get("TutorProfileCreateDTO")?.ownFields.length ?? Number.NaN
+  }
+  return own + (cls.base === "ApiModel" ? 0 : specFieldCount(classes, cls.base))
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 describe("tutoringTypes.ts mirrors the Python tutoring DTOs", () => {
@@ -396,6 +462,31 @@ describe("tutoringTypes.ts mirrors the Python tutoring DTOs", () => {
     const classLines = pythonSources.flatMap((source) => source.match(/^class \w+\(/gm) ?? [])
     expect(python.classes.size).toBe(classLines.length)
     expect(python.classes.size).toBeGreaterThanOrEqual(specDtoCount(read("docs/tutoring/SPEC.md")))
+  })
+
+  it("parses as many fields per §b.3 class as SPEC §b.3 gives it", () => {
+    /* A field the Python regex misses would drop out of both sides of the
+     * name and type checks below. SPEC is an independent count for the §b.3
+     * classes. The admin classes have no SPEC field list (and the web CI job
+     * has no Python for an AST); `test_schemas_tutoring.py::
+     * test_every_field_sits_on_a_line_the_ts_parity_parser_reads` covers every
+     * class, admin included, from the Python AST. */
+    const specSource = read("docs/tutoring/SPEC.md")
+    const spec = specClasses(specSource)
+    const blockStart = specSource.indexOf("### b.3 DTOs")
+    const block = specSource.slice(blockStart, specSource.indexOf("### b.4 ", blockStart))
+    expect(spec.size).toBe((block.match(/^class \w+\(/gm) ?? []).length)
+    const adminClasses = parsePython(read(PYTHON_FILES[1])).classes
+    let counted = 0
+    for (const name of python.classes.keys()) {
+      if (!spec.has(name)) {
+        expect(adminClasses.has(name), `${name} is neither in SPEC §b.3 nor admin`).toBe(true)
+        continue
+      }
+      expect({ [name]: pyFields(name).length }).toEqual({ [name]: specFieldCount(spec, name) })
+      counted += 1
+    }
+    expect(counted).toBe(spec.size)
   })
 
   it("every Python DTO class has a TS interface with the same field names", () => {

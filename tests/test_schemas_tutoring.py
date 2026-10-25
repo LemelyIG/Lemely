@@ -76,6 +76,17 @@ ADMIN_ONLY_FIELD_OWNERS: dict[str, str] = {
 # themselves only. Neither reaches a platform admin.
 NEVER_ON_ADMIN_DTOS = frozenset({"meetingLink", "locationDetail", "displayName", "studentId"})
 
+# SC-9: the only non-admin DTO fields whose type can hold the value "parent".
+# BookingDTO reaches tutors, so its builder maps each to "student" for a tutor
+# viewer (lead decision on the T04 review, R4). No builder exists yet.
+PARENT_VALUED_BOOKING_FIELDS = frozenset(
+    {("BookingDTO", "requestedBy"), ("BookingDTO", "cancelledBy"), ("BookingDTO", "completedBy")}
+)
+
+# The field-line shape web/tests/unit/tutoringTypesParity.test.ts reads when it
+# parses these modules as text (its `fieldLine` regex). Kept in step by hand.
+TS_PARITY_FIELD_LINE = re.compile(r"^ {4}(\w+): ")
+
 
 # ── SPEC parsing ──────────────────────────────────────────────────────────────
 
@@ -175,6 +186,25 @@ def _spec_admin_names() -> tuple[str, ...]:
     start = section.index("Admin DTOs (`schemas_tutoring_admin.py`):")
     paragraph = section[start : section.index("**", start)]
     return tuple(dict.fromkeys(re.findall(r"`(\w+DTO)`", paragraph)))
+
+
+@functools.cache
+def _spec_admin_detail_extra_fields() -> frozenset[str]:
+    """The fields §b.3 adds to ``AdminTutorDetailDTO`` on top of the own profile.
+
+    Read from "`AdminTutorDetailDTO` (TutorOwnProfileDTO fields + `a`, `b`, …)";
+    any change to that wording fails here rather than passing on a stale set.
+    """
+    match = re.search(
+        r"`AdminTutorDetailDTO` \(TutorOwnProfileDTO fields \+ ([^)]*)\)",
+        _section("### b.3 DTOs", "### b.4 "),
+    )
+    assert match, (
+        "SPEC §b.3 no longer defines AdminTutorDetailDTO as 'TutorOwnProfileDTO fields + …'"
+    )
+    fields = frozenset(re.findall(r"`(\w+)`", match.group(1)))
+    assert fields, f"no backticked field names in {match.group(1)!r}"
+    return fields
 
 
 @functools.cache
@@ -281,6 +311,16 @@ def _literal_values(annotation: object) -> tuple[object, ...]:
 
 def _field_literal(cls: type[BaseModel], field: str) -> tuple[object, ...]:
     return _literal_values(cls.model_fields[field].annotation)
+
+
+def _all_literal_values(annotation: object) -> set[object]:
+    """Every ``Literal`` value anywhere inside ``annotation``."""
+    if typing.get_origin(annotation) is typing.Literal:
+        return set(typing.get_args(annotation))
+    values: set[object] = set()
+    for arg in typing.get_args(annotation):
+        values |= _all_literal_values(arg)
+    return values
 
 
 def _expected_own_fields(name: str) -> dict[str, SpecField]:
@@ -572,8 +612,18 @@ def test_no_tutoring_dto_contains_email_field_except_admin_account_email() -> No
     assert account_email.annotation is str
 
 
-def test_idor_tutor_dto_never_reveals_parent_link_presence() -> None:
-    """SC-9 / O29: no tutor-facing DTO has a field shaped like linked parents."""
+def test_tutor_facing_dto_field_names_never_name_parents() -> None:
+    """SC-9 / O29, field names only: no tutor-facing DTO has a parent-shaped field.
+
+    This checks names, not values, so it does not prove SC-9 on its own.
+    ``BookingDTO.requestedBy``, ``cancelledBy`` and ``completedBy`` may hold
+    ``"parent"`` in the DTO type, and ``BookingDTO`` reaches tutors (T9-T15).
+    The remaining obligation is the builder's: for a tutor viewer it maps
+    ``"parent"`` to ``"student"`` in those three fields, so no tutor learns that
+    a student has a linked parent (SC-9).
+    ``test_parent_literal_value_only_in_the_three_booking_party_fields`` pins
+    where that value can appear until the builder and its own test exist.
+    """
     own = _discover(schemas_tutoring)
     scanned = _closure(own.values())
     assert len(own) == len(_spec_b3_classes())
@@ -589,6 +639,43 @@ def test_idor_tutor_dto_never_reveals_parent_link_presence() -> None:
         if "parent" in field.lower()
     ]
     assert not offenders, offenders
+
+
+def test_parent_literal_value_only_in_the_three_booking_party_fields() -> None:
+    """SC-9: the only places a non-admin DTO can say ``"parent"`` by value.
+
+    No builder exists yet (T13, T17, T18 write them). Whoever writes the
+    ``BookingDTO`` builder must map ``"parent"`` to ``"student"`` in each of
+    these three fields for a tutor viewer. A new literal that can hold
+    ``"parent"`` on any non-admin DTO fails here, so the obligation is
+    revisited rather than silently widened.
+    """
+    own = _discover(schemas_tutoring)
+    assert len(own) == len(_spec_b3_classes())
+    assert "BookingDTO" in _b2_dtos_under("Tutor")
+    scanned = _closure(own.values())
+    found = {
+        (cls.__name__, field)
+        for cls in scanned
+        for field, info in cls.model_fields.items()
+        if "parent" in _all_literal_values(info.annotation)
+    }
+    assert found == PARENT_VALUED_BOOKING_FIELDS
+    booking = schemas_tutoring.BookingDTO
+    assert _field_literal(booking, "requestedBy") == ("student", "parent")
+    assert _field_literal(booking, "cancelledBy") == (
+        "student",
+        "parent",
+        "tutor",
+        "platform_admin",
+        "system",
+    )
+    assert _field_literal(booking, "completedBy") == (
+        "student",
+        "parent",
+        "tutor",
+        "platform_admin",
+    )
 
 
 # ── O31: indexable ────────────────────────────────────────────────────────────
@@ -657,14 +744,17 @@ def test_admin_only_fields_live_only_on_their_admin_dto() -> None:
 
 
 def test_admin_tutor_detail_carries_every_own_profile_field() -> None:
-    """§b.3: ``AdminTutorDetailDTO`` = TutorOwnProfileDTO fields + four admin fields.
+    """§b.3: ``AdminTutorDetailDTO`` = TutorOwnProfileDTO fields + the admin fields.
 
-    ``evidence`` is the one field whose type changes: the admin row adds the
-    signed URL (``AdminEvidenceDTO``).
+    The admin fields are read from SPEC §b.3's own wording. ``evidence`` is
+    the one field whose type changes: the admin row adds the signed URL
+    (``AdminEvidenceDTO``).
     """
+    extra = _spec_admin_detail_extra_fields()
+    assert "evidence" in extra
     own_profile = schemas_tutoring.TutorOwnProfileDTO.model_fields
     detail = schemas_tutoring_admin.AdminTutorDetailDTO.model_fields
-    assert set(detail) == set(own_profile) | {"accountEmail", "evidence", "history", "openReports"}
+    assert set(detail) == set(own_profile) | extra, sorted(set(detail) ^ (set(own_profile) | extra))
     for name, info in own_profile.items():
         if name == "evidence":
             continue
@@ -689,6 +779,44 @@ def test_admin_evidence_signed_url_is_null_outside_a2() -> None:
     assert set(schemas_tutoring_admin.AdminEvidenceDTO.model_fields) == set(
         schemas_tutoring.EvidenceDTO.model_fields
     ) | {"signedUrl"}
+
+
+def test_every_field_sits_on_a_line_the_ts_parity_parser_reads() -> None:
+    """The TS parity test cannot drop a field from both sides unnoticed.
+
+    ``tutoringTypesParity.test.ts`` parses these modules as text, one field per
+    line of the ``TS_PARITY_FIELD_LINE`` shape. A field it missed would vanish
+    from its parsed Python and could be missing from the TS file too, and
+    parity would still pass. The vitest counts fields against SPEC §b.3, which
+    covers the §b.3 classes only (the web CI job has no Python for an AST, and
+    SPEC gives no admin fields). Here the Python AST, independent of that
+    regex, finds every annotated field in both modules, admin included,
+    matches it to pydantic's own annotations, and checks its line has the shape
+    the vitest reads.
+    """
+    checked = 0
+    for module in (schemas_tutoring, schemas_tutoring_admin):
+        assert module.__file__
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        lines = source.splitlines()
+        classes = [node for node in ast.parse(source).body if isinstance(node, ast.ClassDef)]
+        assert {node.name for node in classes} == set(_discover(module))
+        for node in classes:
+            fields = [
+                (stmt.target.id, stmt.lineno)
+                for stmt in node.body
+                if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
+            ]
+            own = list(inspect.get_annotations(getattr(module, node.name)))
+            assert [name for name, _ in fields] == own, node.name
+            for name, lineno in fields:
+                line = lines[lineno - 1]
+                shape = TS_PARITY_FIELD_LINE.match(line)
+                assert shape, f"{node.name} line {lineno}: {line!r}"
+                assert shape.group(1) == name, f"{node.name}: {line!r}"
+                checked += 1
+    assert checked == sum(len(inspect.get_annotations(cls)) for cls in _all_dtos().values())
+    assert checked > len(_all_dtos())
 
 
 def test_spec_b2_parser_sees_every_route() -> None:
