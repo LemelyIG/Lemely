@@ -81,7 +81,7 @@ def candidates(result: CorrectionResult, *, threshold: float, max_leaves: int) -
 def drawing_candidates(
     result: CorrectionResult, *, reader_ids: frozenset[str], max_leaves: int
 ) -> list[str]:
-    """H2d: AI-marked reader drawing-description leaves, most uncertain first, capped."""
+    """H2d: AI-marked reader drawing-description leaves, in question order, capped."""
     pool = [
         q
         for q in result.questions
@@ -89,16 +89,21 @@ def drawing_candidates(
         and q.question_id in reader_ids
         and _DRAWING.search(q.student_answer or "")
     ]
-    pool.sort(key=lambda q: (q.confidence_score, q.question_id))
     return [q.question_id for q in pool[: max(max_leaves, 0)]]
 
 
+def _has_crop(answer: ExtractedAnswer | None, pages: Sequence[RasterisedPage]) -> bool:
+    return (
+        answer is not None
+        and answer.source_box is not None
+        and 0 <= answer.source_box.page < len(pages)
+    )
+
+
 def _crops(answer: ExtractedAnswer | None, pages: Sequence[RasterisedPage]) -> list[bytes]:
-    if answer is None or answer.source_box is None:
+    if answer is None or answer.source_box is None or not _has_crop(answer, pages):
         return []
     box = answer.source_box
-    if not 0 <= box.page < len(pages):
-        return []
     return [crop_and_upscale(pages[box.page], box.box)]
 
 
@@ -194,7 +199,9 @@ def adjudicate(
         and not isinstance(drawing_max, bool)
     ):
         reader_ids = frozenset(
-            qid for qid, a in answers.items() if getattr(a, "binding_source", None) == "label"
+            qid
+            for qid, a in answers.items()
+            if getattr(a, "binding_source", None) == "label" and _has_crop(a, pages)
         )
         drawing = drawing_candidates(result, reader_ids=reader_ids, max_leaves=drawing_max)
     drawing_set = frozenset(drawing)

@@ -62,8 +62,8 @@ def test_drawing_candidates_need_reader_text_and_the_word() -> None:
         _drawing_cq("5a", 0.5),
     )
     reader = frozenset({"1a", "3a", "4a", "5a"})
-    assert adj.drawing_candidates(result, reader_ids=reader, max_leaves=5) == ["5a", "1a"]
-    assert adj.drawing_candidates(result, reader_ids=reader, max_leaves=1) == ["5a"]
+    assert adj.drawing_candidates(result, reader_ids=reader, max_leaves=5) == ["1a", "5a"]
+    assert adj.drawing_candidates(result, reader_ids=reader, max_leaves=1) == ["1a"]
     ai_only = _result(
         _drawing_cq("1a").model_copy(update={"marker_source": "deterministic"}),
     )
@@ -180,6 +180,28 @@ def test_drawing_prompt_lists_criteria() -> None:
     text = adj._leaf_prompt(q, _cq("1a", 0.9), drawing=True)
     assert "Drawing criteria:\n- d1 (1 mark): single line\n- d2 (1 mark): fills the box" in text
     assert "Drawing criteria" not in adj._leaf_prompt(q, _cq("1a", 0.9))
+
+
+def test_leaves_without_a_crop_do_not_take_cap_slots() -> None:
+    client, _ = _client(
+        adjudication_max_leaves=0,
+        adjudication_drawing_leaves=True,
+        adjudication_drawing_max_leaves=3,
+    )
+    result = _result(
+        *(_drawing_cq(f"{i}a", c) for i, c in ((1, 0.5), (2, 0.6), (3, 0.7), (4, 0.95)))
+    )
+    answers = _answers("1a", "2a", "3a", "4a")
+    for a in answers.answers[:3]:
+        a.source_box = None
+    answers.answers[2].source_box = SourceBox(page=7, box=[0, 0, 5, 5])  # page out of range
+    with patch.object(
+        client,
+        "generate_structured",
+        return_value=adj.AdjudicationReply(awarded_marks=2, confidence=0.9, rationale="r"),
+    ) as mock:
+        _run(client, result, answers)
+    assert [c.kwargs["question_id"] for c in mock.call_args_list] == ["4a"]
 
 
 def test_crops_are_sent_for_drawing_leaves() -> None:
