@@ -8,6 +8,10 @@ most ``adjudication_max_leaves`` leaves per script, most uncertain first. Off un
 Order with escalation: adjudication runs after marking, the borderline retry and
 escalation have all finished, on the mark they left. Its mark is final: a leaf escalated
 to Sonnet and then adjudicated is re-marked once more, and nothing re-marks it after.
+
+Lever H2d adds a second pool, off by default: AI-marked leaves whose answer is the label
+reader's ``Drawing:`` description are adjudicated from their page crop whatever their
+confidence, because the first marker saw only the description, never the drawing.
 """
 
 from __future__ import annotations
@@ -34,6 +38,8 @@ VERSION = "adjudication-v1"
 #: The reason ``correction_ai`` writes when confidence alone sends a leaf to review.
 _CONFIDENCE_REASON = re.compile(r"^confidence \d+(?:\.\d+)? below review threshold \d+(?:\.\d+)?$")
 _REASON_JOIN = " | "
+#: Same pattern as ``lemely.io.prompts.correction_ai._DRAWING_DESCRIPTION`` (pinned by a test).
+_DRAWING = re.compile(r"(?<![A-Za-z])Drawing:")
 
 SYSTEM_PROMPT = (
     "You are a senior Cambridge IGCSE examiner settling a mark another marker was unsure "
@@ -72,6 +78,21 @@ def candidates(result: CorrectionResult, *, threshold: float, max_leaves: int) -
     return [q.question_id for q in pool[: max(max_leaves, 0)]]
 
 
+def drawing_candidates(
+    result: CorrectionResult, *, reader_ids: frozenset[str], max_leaves: int
+) -> list[str]:
+    """H2d: AI-marked reader drawing-description leaves, most uncertain first, capped."""
+    pool = [
+        q
+        for q in result.questions
+        if q.marker_source == "ai"
+        and q.question_id in reader_ids
+        and _DRAWING.search(q.student_answer or "")
+    ]
+    pool.sort(key=lambda q: (q.confidence_score, q.question_id))
+    return [q.question_id for q in pool[: max(max_leaves, 0)]]
+
+
 def _crops(answer: ExtractedAnswer | None, pages: Sequence[RasterisedPage]) -> list[bytes]:
     if answer is None or answer.source_box is None:
         return []
@@ -81,19 +102,34 @@ def _crops(answer: ExtractedAnswer | None, pages: Sequence[RasterisedPage]) -> l
     return [crop_and_upscale(pages[box.page], box.box)]
 
 
-def _leaf_prompt(question: Question, first: CorrectedQuestion) -> str:
+def _leaf_prompt(question: Question, first: CorrectedQuestion, *, drawing: bool = False) -> str:
     points = "\n".join(
         f"- {p.id} ({p.marks} mark{'' if p.marks == 1 else 's'}): {p.point}"
         for p in question.answer_points
     )
-    return (
+    criteria = ""
+    if drawing and question.drawing_criteria:
+        lines = "\n".join(
+            f"- {c.id} ({c.marks} mark{'' if c.marks == 1 else 's'}): {c.requirement}"
+            for c in question.drawing_criteria
+        )
+        criteria = f"Drawing criteria:\n{lines}\n"
+    text = (
         f"Question part {question.id}, worth {question.marks} marks.\n"
-        f"Mark scheme points:\n{points}\n\n"
+        f"Mark scheme points:\n{points}\n{criteria}\n"
         f"Transcribed answer: {first.student_answer or '(none)'}\n\n"
         f"First marker: {first.awarded_marks} of {first.maximum_marks}, confidence "
         f"{first.confidence_score:.2f}.\n"
         f"First marker's reasons: {first.feedback or '(none)'}"
     )
+    if drawing:
+        text += (
+            "\n\nThis answer includes a drawing. The first marker was shown only a "
+            "reader's text description of it, never the drawing, and withheld points the "
+            "description did not mention. Judge every point from the page crop: award a "
+            "point the drawing shows even if the description is silent about it."
+        )
+    return text
 
 
 def _settled(
@@ -147,14 +183,30 @@ def adjudicate(
         or isinstance(max_leaves, bool)
     ):
         return result
-    ids = candidates(result, threshold=float(threshold), max_leaves=max_leaves)
+    # A plain mapping of answers carries no boxes, so it adjudicates nothing.
+    raw_answers = getattr(extracted, "answers", None)
+    answers = {a.question_id: a for a in raw_answers} if isinstance(raw_answers, list) else {}
+    drawing: list[str] = []
+    drawing_max = g.adjudication_drawing_max_leaves
+    if (
+        g.adjudication_drawing_leaves is True
+        and isinstance(drawing_max, int)
+        and not isinstance(drawing_max, bool)
+    ):
+        reader_ids = frozenset(
+            qid for qid, a in answers.items() if getattr(a, "binding_source", None) == "label"
+        )
+        drawing = drawing_candidates(result, reader_ids=reader_ids, max_leaves=drawing_max)
+    drawing_set = frozenset(drawing)
+    ids = drawing + [
+        qid
+        for qid in candidates(result, threshold=float(threshold), max_leaves=max_leaves)
+        if qid not in drawing_set
+    ]
     if not ids:
         return result
     log = structlog.get_logger().bind(component="adjudication")
     by_question = {q.id: q for q in scheme.all_questions_flat()}
-    # A plain mapping of answers carries no boxes, so it adjudicates nothing.
-    raw_answers = getattr(extracted, "answers", None)
-    answers = {a.question_id: a for a in raw_answers} if isinstance(raw_answers, list) else {}
     settled: dict[str, CorrectedQuestion] = {}
     for qid in ids:
         first = next(q for q in result.questions if q.question_id == qid)
@@ -165,7 +217,7 @@ def adjudicate(
             continue
         reply = client.generate_structured(
             system_prompt=SYSTEM_PROMPT,
-            user_prompt=_leaf_prompt(question, first),
+            user_prompt=_leaf_prompt(question, first, drawing=qid in drawing_set),
             image_parts=crops,
             response_schema=AdjudicationReply,
             prompt_version=VERSION,
