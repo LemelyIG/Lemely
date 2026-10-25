@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import tempfile
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -217,3 +220,53 @@ def test_a2_c1_entry_with_a_awarded_and_c_withheld_still_sums_to_two() -> None:
     assert out.awarded_marks == 2
     assert out.matched_point_ids == ["A1"]
     assert {p.id for p in scheme.questions[0].answer_points} == {"A1", "C1"}
+
+
+# The lever-off request for one leaf of the stored 0625/41 Oct/Nov 2024 scheme, as it was at
+# b80ff30b (before H2c), hashed with sha256. Pins the default correction path of 0625 Paper 4
+# (H2a, H2b and H2c off), with the shared prefix off and on.
+_PINNED_OFF = (
+    "f3c3b9df5d0c756b26335a02a86cbd66a13fb2a71b50cf3733690a3b0e2d2977",
+    "f4521c73c23722fcf12a52778936e79066ee323b57e019565f15c864f380814a",
+)
+_PINNED_PREFIX_ON = (
+    "bd59bd559dab00d7098dc0b8d9868b064e3f9b22ed3a701e272252ed31d41ff7",
+    "cb5b42ca93c94fa63428945b61992414bc227743576a2b326f0b86c994289adb",
+)
+
+
+def _request(*, prefix: bool) -> dict[str, Any]:
+    scheme = MarkScheme.model_validate(
+        json.loads(Path("corpus/mark-schemes/0625_w24_ms_41.json").read_text())
+    )
+    leaf = scheme.questions[0]
+    while leaf.parts:
+        leaf = leaf.parts[0]
+    client = _client(correction_shared_prefix=prefix)
+    meta = scheme.metadata
+    with patch.object(client, "generate_structured", return_value=_reply()) as call:
+        AICorrector(client, mark_scheme=scheme).mark_question(
+            leaf,
+            "6 N",
+            principles=printed_principles(meta),
+            default_rules=default_marking_rules(meta),
+        )
+    return dict(call.call_args.kwargs)
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def test_default_request_for_0625_paper_4_is_pinned() -> None:
+    for prefix, pinned in ((False, _PINNED_OFF), (True, _PINNED_PREFIX_ON)):
+        kw = _request(prefix=prefix)
+        assert (_sha(kw["system_prompt"]), _sha(kw["user_prompt"])) == pinned
+        assert kw["response_schema"] is AIMarkResponse
+        assert (kw["prompt_version"], kw["extra_cache_key"], kw["task_tag"], kw["attempt"]) == (
+            VERSION,
+            "q=1a_i",
+            "correction",
+            "first",
+        )
+        assert ("shared_prefix" in kw) is prefix

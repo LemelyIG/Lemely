@@ -324,7 +324,7 @@ SYLLABUS_CONVENTION_PAPERS: dict[str, frozenset[int]] = {"0625": frozenset({4})}
 PHYSICS_0625_CONVENTIONS = """\
 CAMBRIDGE IGCSE PHYSICS (0625) PAPER 4 MARKING CONVENTIONS (printed in the "Specific \
 Instructions for Marking" pages of Cambridge's 0625 Paper 4 mark schemes and restated \
-here; the stored scheme does not carry them):
+or summarised here; the stored scheme does not carry them):
   - Mark types: an A mark is the final-answer mark, for a fully correct final answer \
 including its unit. A C mark is compensatory: it may be scored when the A mark has not \
 been awarded, for example for the formula or a correct substitution in the working. \
@@ -333,7 +333,8 @@ C1 point can still earn 1. A B mark is independent of every other mark.
   - Formulae and equations: where a C, B or M mark is for quoting a formula or an \
 equation, it may be written in any form, rearranged or not, in words, symbols or \
 numbers, unless the entry says otherwise. "s = vt" earns a mark given for "v = s / t".
-  - Error carried forward applies to C marks as well as to final-answer marks.
+  - Error carried forward: where an entry allows ecf on its final answer, ecf also \
+applies to that part's C marks.
   - Units: a numerically correct final answer written without its unit earns the A mark \
 when the unit is shown correctly in the working. A wrong upper or lower case in a unit \
 symbol is accepted (pA for Pa). Unless the entry says otherwise these derived units are \
