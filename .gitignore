@@ -158,3 +158,8 @@ reports/accuracy/test-touch-ledger.jsonl
 
 # Sub-project C reference set: per-leaf marks and crops of real student scripts (student data)
 BUILD/accuracy-runs/claude-c-reference/
+
+# Sub-project C real-split runs: per-leaf marks, call records, marking replies (rationales quote
+# student answers), pins and their caches. Student data: never committed.
+BUILD/accuracy-runs/**/real-*/
+BUILD/accuracy-runs/*/cache/*-real-*/
