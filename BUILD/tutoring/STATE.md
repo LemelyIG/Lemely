@@ -12,11 +12,14 @@ Phases 0-2 DONE (recon, brainstorm LOCKED, ADRs, SPEC rev 3, threat model, plan 
 ## Wave status
 | Row | Status |
 |---|---|
-| I0 | merge + push + provision + probes done (`handoffs/I0-probes.md`); config patch + commit pending |
-| T00 | dispatched (sonnet/high) |
-| config hot patch | dispatched (sonnet/medium) |
-| T16, I0b | not started |
-| W1..W9, IF | not started |
+| I0 | DONE (merge, provision, probes, config hot patch `858e05c0`) |
+| T00 | DONE `ab28fce0` (+ export fix `7c5fd10e`, live_e2e fix `864bf9c9`) |
+| T16 | DONE `dc4dea03` |
+| I0b | DONE: live mode `dedicated`; baseline in `handoffs/I0-baseline.md` |
+| W1 (T01, T02, T03, T04) | next |
+| W2..W9, IF | not started |
+
+Live mode: dedicated. Playwright chromium-1234 installed. `npm ci` needs `PUPPETEER_SKIP_DOWNLOAD=1`.
 
 ## Standing facts
 - Evidence runs: named-file pytest only; never the whole suite locally. Full suite = CI on the draft PR head (opened at I1).

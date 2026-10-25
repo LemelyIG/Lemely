@@ -8,6 +8,6 @@ Merge: `origin/develop` merged into `feat/tutoring-marketplace` (signed, `--no-f
 | P-3 `alembic heads` against `lemely_tutoring_gate` | `0043_merge_heads (head)`: T01 chains from it |
 | P-4 `docker run --rm postgres:16 ls /usr/share/postgresql/16/extension/btree_gist.control` | exit 0, file present (the draft-PR CI run at I1 is the full proof) |
 | P-5 `_visible_students`, `_student_detail_dto`, `teacher_student_detail` | present in `lemely/web/routers/teacher.py` |
-| P-6 live DB mode | pending (I0b) |
+| P-6 live DB mode | **dedicated** (7 passed; shared `alembic_version` unchanged and verified). See `I0-baseline.md` |
 
 Provisioning: `.venv` symlink to `/home/sico/Code/Lemely/.venv`; `npm --prefix web ci` exit 0.
