@@ -8,6 +8,7 @@ fall back from 24:00 EEST to 23:00 EET at 2026-10-29 21:00Z (Thursday 29 October
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -298,3 +299,61 @@ def test_normalize_rules_rejects_overlap() -> None:
     ):
         with pytest.raises(ValueError, match="availability rule"):
             normalize_rules([bad])
+
+
+DAILY = [AvailabilityRule(day, 8 * 60, 20 * 60) for day in range(1, 8)]
+
+
+def test_slot_exactly_min_notice_ahead_is_offered() -> None:
+    now = _z(2026, 6, 1, 9, 0)  # 12:00 Cairo; 14:00 Cairo is a step of the 08:00 window
+    earliest = now + MIN_NOTICE
+    assert (earliest - _z(2026, 6, 1, 5, 0)) % SLOT_STEP == timedelta(0)
+    hour = _minutes(60)
+    slots = bookable_slots(
+        DAILY, zone=CAIRO, start=date(2026, 6, 1), days=1, duration=hour, busy=[], now=now
+    )
+    assert slots[0] == (earliest, earliest + hour)
+    assert (
+        bookable(DAILY, zone=CAIRO, starts_at=earliest, ends_at=earliest + hour, busy=[], now=now)
+        is None
+    )
+    early = earliest - SLOT_STEP
+    refusal = bookable(DAILY, zone=CAIRO, starts_at=early, ends_at=early + hour, busy=[], now=now)
+    assert refusal is not None
+    assert refusal.code == "not_bookable"
+
+
+NAIVE = datetime(2026, 6, 1, 9, 0)
+AWARE = _z(2026, 6, 1, 9, 0)
+HOUR = _minutes(60)
+
+
+def _slots(*, now: datetime, busy: list[tuple[datetime, datetime]]) -> object:
+    return bookable_slots(
+        DAILY, zone=CAIRO, start=date(2026, 6, 2), days=1, duration=HOUR, busy=busy, now=now
+    )
+
+
+def _one(*, starts_at: datetime, now: datetime, busy: list[tuple[datetime, datetime]]) -> object:
+    return bookable(
+        DAILY, zone=CAIRO, starts_at=starts_at, ends_at=starts_at + HOUR, busy=busy, now=now
+    )
+
+
+# ``occurrences`` takes a date and a zone, no instant, so it has nothing to refuse.
+_NAIVE_SLOT_CALLS = {
+    "bookable_slots now": lambda: _slots(now=NAIVE, busy=[]),
+    "bookable_slots busy": lambda: _slots(now=AWARE, busy=[(NAIVE, NAIVE + HOUR)]),
+    "bookable starts_at": lambda: _one(starts_at=NAIVE + timedelta(days=1), now=AWARE, busy=[]),
+    "bookable now": lambda: _one(starts_at=AWARE + timedelta(days=1), now=NAIVE, busy=[]),
+    "bookable all naive": lambda: _one(starts_at=NAIVE + timedelta(days=1), now=NAIVE, busy=[]),
+    "bookable busy": lambda: _one(
+        starts_at=AWARE + timedelta(days=1), now=AWARE, busy=[(NAIVE, NAIVE + HOUR)]
+    ),
+}
+
+
+@pytest.mark.parametrize("call", list(_NAIVE_SLOT_CALLS.values()), ids=list(_NAIVE_SLOT_CALLS))
+def test_naive_datetimes_refused_by_slot_functions(call: Callable[[], object]) -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        call()

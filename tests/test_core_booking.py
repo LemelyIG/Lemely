@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import fields
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import NamedTuple, get_args
 
 import pytest
@@ -302,19 +303,11 @@ def test_dataclasses_match_spec_e1(cls: type) -> None:
     assert "__slots__" in vars(cls)
 
 
-def test_target_state_per_action() -> None:
-    expected = {
-        "accept": "accepted",
-        "decline": "declined",
-        "cancel": "cancelled",
-        "complete": "completed",
-        "no_show": "no_show",
-        "expire": "expired",
-        "claim_complete": "completed",
-    }
-    assert set(expected) == set(ACTIONS)
-    for action, state in expected.items():
-        assert target_state(action) == state  # type: ignore[arg-type]
+def test_target_state_table_is_read_only() -> None:
+    assert isinstance(booking._TARGET_STATE, MappingProxyType)
+    with pytest.raises(TypeError):
+        booking._TARGET_STATE["accept"] = "declined"  # type: ignore[index]
+    assert set(booking._TARGET_STATE) == set(ACTIONS)
 
 
 # --- the transition table ---------------------------------------------------------------
@@ -847,3 +840,151 @@ def test_booking_horizon_28_days() -> None:
     slots = bookable_slots(rules, start=date(2026, 6, 1), days=35, duration=hour, **common)
     assert len(slots) > 500
     assert max(start for start, _ in slots) == edge
+
+
+# --- boundaries, unknown actions, naive datetimes -----------------------------------------
+
+# Every instant at which an effective state (or the 48-hour claim) flips, and the second before.
+BOUNDARY_TIMES = (
+    STARTS - SECOND,
+    STARTS,
+    ENDS - SECOND,
+    ENDS,
+    ENDS + OUTCOME_CLAIM_AFTER - SECOND,
+    ENDS + OUTCOME_CLAIM_AFTER,
+)
+
+
+def test_transition_guards_flip_exactly_with_the_effective_state() -> None:
+    rows: dict[str, set[bool]] = {}
+    cases = 0
+    for now in BOUNDARY_TIMES:
+        request = _spec_effective_state("requested", now)
+        session = _spec_effective_state("accepted", now)
+        before_start = request == "requested"  # the SPEC's ``starts_at > now()``
+        checks = [
+            ("tutor accepts a request", "accept", _facts("requested", "tutor"), before_start),
+            ("tutor declines a request", "decline", _facts("requested", "tutor"), before_start),
+            ("student cancels a request", "cancel", _facts("requested", "student"), before_start),
+            ("parent cancels a request", "cancel", _facts("requested", "parent"), before_start),
+            (
+                "admin cancels a request",
+                "cancel",
+                _facts("requested", "platform_admin"),
+                before_start,
+            ),
+            ("system cancels a request", "cancel", _facts("requested", "system"), before_start),
+            (
+                "system expires a request",
+                "expire",
+                _facts("requested", "system"),
+                request == "expired",
+            ),
+            (
+                "admin cancels a session",
+                "cancel",
+                _facts("accepted", "platform_admin"),
+                before_start,
+            ),
+            ("system cancels a session", "cancel", _facts("accepted", "system"), before_start),
+            (
+                "tutor completes a session",
+                "complete",
+                _facts("accepted", "tutor"),
+                session == "awaiting_outcome",
+            ),
+            (
+                "tutor marks a no-show",
+                "no_show",
+                _facts("accepted", "tutor"),
+                session == "awaiting_outcome",
+            ),
+            (
+                "admin completes a session",
+                "complete",
+                _facts("accepted", "platform_admin"),
+                session == "awaiting_outcome",
+            ),
+            (
+                "student claims completion",
+                "claim_complete",
+                _facts("accepted", "student"),
+                now >= ENDS + OUTCOME_CLAIM_AFTER,
+            ),
+        ]
+        for label, action, facts, allowed in checks:
+            got = check_transition(action, facts, now=now, has_reason=True)  # type: ignore[arg-type]
+            assert (got is None) is allowed, (label, now, got)
+            rows.setdefault(label, set()).add(got is None)
+            cases += 1
+    assert cases == len(BOUNDARY_TIMES) * 13
+    assert all(outcomes == {True, False} for outcomes in rows.values()), rows  # each one flips
+
+
+def test_expired_request_cannot_post_a_note_between_start_and_end() -> None:
+    flags = {"blocked": False, "tutor_inactive": False, "frozen": False}
+    for now in (STARTS, STARTS + timedelta(minutes=30), ENDS - SECOND):
+        effective = effective_state("requested", starts_at=STARTS, ends_at=ENDS, now=now)
+        assert effective == "expired"
+        assert not can_post_note(effective, ends_at=ENDS, now=now, **flags)
+    live = effective_state("requested", starts_at=STARTS, ends_at=ENDS, now=STARTS - SECOND)
+    assert live == "requested"
+    assert can_post_note(live, ends_at=ENDS, now=STARTS - SECOND, **flags)
+
+
+def test_unknown_action_is_refused() -> None:
+    expiring = _facts("requested", "system")  # the facts under which "expire" is legal
+    assert check_transition("expire", expiring, now=STARTS) is None
+    for bogus in ("bogus", "", "EXPIRE", "reopen"):
+        assert check_transition(bogus, expiring, now=STARTS) == Refusal(IT), bogus  # type: ignore[arg-type]
+
+
+NAIVE = datetime(2026, 11, 10, 15, 0)
+_NO_FLAGS = {"blocked": False, "tutor_inactive": False, "frozen": False}
+
+
+def _naive_facts() -> BookingFacts:
+    return BookingFacts(
+        state="accepted",
+        starts_at=NAIVE,
+        ends_at=NAIVE + timedelta(hours=1),
+        viewer="tutor",
+        viewer_is_requester=True,
+        tutor_outcome_recorded=False,
+    )
+
+
+_NAIVE_CALLS: dict[str, Callable[[], object]] = {
+    "check_transition now": lambda: check_transition("cancel", _facts(), now=NAIVE),
+    "check_transition facts": lambda: check_transition(
+        "cancel", _naive_facts(), now=NAIVE - timedelta(days=2)
+    ),
+    "effective_state all naive": lambda: effective_state(
+        "accepted", starts_at=NAIVE, ends_at=NAIVE + timedelta(hours=1), now=NAIVE
+    ),
+    "effective_state now": lambda: effective_state(
+        "accepted", starts_at=STARTS, ends_at=ENDS, now=NAIVE
+    ),
+    "is_late_cancel cancelled_at": lambda: is_late_cancel(
+        cancelled_by="tutor", cancelled_at=NAIVE, starts_at=STARTS
+    ),
+    "is_late_cancel all naive": lambda: is_late_cancel(
+        cancelled_by="tutor", cancelled_at=NAIVE, starts_at=NAIVE
+    ),
+    "can_post_note ends_at": lambda: can_post_note(
+        "completed", ends_at=NAIVE, now=STARTS, **_NO_FLAGS
+    ),
+    "can_post_note all naive": lambda: can_post_note(
+        "completed", ends_at=NAIVE, now=NAIVE, **_NO_FLAGS
+    ),
+    "allowed_actions now": lambda: allowed_actions(_facts(), now=NAIVE, **_ACTIONS_KW),
+    "allowed_actions facts": lambda: allowed_actions(
+        _naive_facts(), now=NAIVE - timedelta(days=2), **_ACTIONS_KW
+    ),
+}
+
+
+@pytest.mark.parametrize("call", list(_NAIVE_CALLS.values()), ids=list(_NAIVE_CALLS))
+def test_naive_datetimes_refused(call: Callable[[], object]) -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        call()

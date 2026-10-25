@@ -4,7 +4,9 @@ Pure by construction: no ``lemely.db``, ``web``, ``io`` or ``app`` import, no
 SQLAlchemy, no FastAPI and no clock of its own (import-linter ``forbidden``
 contract, SPEC §e.1). Every rule that depends on time takes ``now``; inside a
 write transaction the caller passes the database ``now()`` (SPEC §0 "Clock",
-BK-7), and the compare-and-set ``WHERE`` repeats the same guard.
+BK-7), and the compare-and-set ``WHERE`` repeats the same guard. Every
+instant must be timezone-aware (a ``timestamptz``); a naive one raises
+:class:`ValueError` instead of comparing as local time.
 
 **Literals are written out here on purpose.** ``BookingStateLit`` and ``Party``
 mirror the Postgres enums ``bookingstate`` and ``bookingparty``. ``core`` may
@@ -56,6 +58,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from itertools import pairwise
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 from zoneinfo import ZoneInfo
 
@@ -145,20 +148,34 @@ _OUTCOME_CLAIM_NOT_OPEN: Final = Refusal("outcome_claim_not_open")
 _BEYOND_HORIZON: Final = Refusal("beyond_horizon")
 _NOT_BOOKABLE: Final = Refusal("not_bookable")
 
-_TARGET_STATE: Final[Mapping[Action, BookingStateLit]] = {
-    "accept": "accepted",
-    "decline": "declined",
-    "cancel": "cancelled",
-    "complete": "completed",
-    "no_show": "no_show",
-    "expire": "expired",
-    "claim_complete": "completed",
-}
+_TARGET_STATE: Final[Mapping[Action, BookingStateLit]] = MappingProxyType(
+    {
+        "accept": "accepted",
+        "decline": "declined",
+        "cancel": "cancelled",
+        "complete": "completed",
+        "no_show": "no_show",
+        "expire": "expired",
+        "claim_complete": "completed",
+    }
+)
 _TUTOR_ACTIONS: Final[tuple[Action, ...]] = ("accept", "decline", "complete", "no_show")
 _DURATIONS: Final = frozenset(timedelta(minutes=minutes) for minutes in ALLOWED_DURATIONS)
 _ONE_SECOND: Final = timedelta(seconds=1)
 _MINUTES_PER_DAY: Final = 24 * 60
 _RULE_GRANULARITY: Final = 15
+
+
+def _require_aware(**instants: datetime) -> None:
+    """Refuse naive datetimes: every instant here is a UTC-comparable ``timestamptz``."""
+    for name, value in instants.items():
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{name} must be a timezone-aware datetime, got naive {value!r}")
+
+
+def _require_aware_intervals(busy: Sequence[tuple[datetime, datetime]]) -> None:
+    for lower, upper in busy:
+        _require_aware(busy_start=lower, busy_end=upper)
 
 
 # --- availability rules and slots ---------------------------------------------------------
@@ -278,8 +295,11 @@ def bookable_slots(
     absolute time, end inside the occurrence, start in
     ``[now + MIN_NOTICE, now + MAX_BOOKING_HORIZON]``, overlap no ``busy``
     interval (adjacent is fine) and have an unambiguous local start and end.
-    Raises :class:`ValueError` for a duration outside ``ALLOWED_DURATIONS``.
+    Raises :class:`ValueError` for a duration outside ``ALLOWED_DURATIONS`` or a
+    naive ``now`` or ``busy`` bound.
     """
+    _require_aware(now=now)
+    _require_aware_intervals(busy)
     if duration not in _DURATIONS:
         raise ValueError(f"duration {duration} is not one of {ALLOWED_DURATIONS} minutes")
     tz = ZoneInfo(zone)
@@ -314,8 +334,11 @@ def bookable(
 
     ``beyond_horizon`` when ``starts_at`` is later than ``now +
     MAX_BOOKING_HORIZON`` (SC-8); ``not_bookable`` for every other non-member,
-    including a duration outside ``ALLOWED_DURATIONS``.
+    including a duration outside ``ALLOWED_DURATIONS``. Raises
+    :class:`ValueError` for a naive instant.
     """
+    _require_aware(starts_at=starts_at, ends_at=ends_at, now=now)
+    _require_aware_intervals(busy)
     if starts_at > now + MAX_BOOKING_HORIZON:
         return _BEYOND_HORIZON
     duration = ends_at - starts_at
@@ -343,6 +366,7 @@ def effective_state(
     state: BookingStateLit, *, starts_at: datetime, ends_at: datetime, now: datetime
 ) -> EffectiveState:
     """Read-time state; mirrors the SQL predicates of the SPEC §a.3 table."""
+    _require_aware(starts_at=starts_at, ends_at=ends_at, now=now)
     if state == "requested":
         return "requested" if starts_at > now else "expired"
     if state == "accepted":
@@ -407,8 +431,11 @@ def check_transition(
     """``None`` when ``facts.viewer`` may apply ``action`` now; otherwise the refusal.
 
     ``has_reason``: the request carries a non-blank reason (the caller strips
-    it). It only matters for a tutor cancelling inside ``CANCEL_CUTOFF``.
+    it). It only matters for a tutor cancelling inside ``CANCEL_CUTOFF``. An
+    action outside ``Action`` is ``illegal_transition``; a naive datetime raises
+    :class:`ValueError`.
     """
+    _require_aware(now=now, starts_at=facts.starts_at, ends_at=facts.ends_at)
     if action in ("accept", "decline"):
         return _answer_request(facts, now=now)
     if action == "cancel":
@@ -417,13 +444,19 @@ def check_transition(
         return _record_outcome(action, facts, now=now)
     if action == "claim_complete":
         return _claim_complete(facts, now=now)
-    if facts.viewer == "system" and facts.state == "requested" and now >= facts.starts_at:
-        return None  # expire
+    if (
+        action == "expire"
+        and facts.viewer == "system"
+        and facts.state == "requested"
+        and now >= facts.starts_at
+    ):
+        return None
     return _ILLEGAL
 
 
 def is_late_cancel(*, cancelled_by: Party, cancelled_at: datetime, starts_at: datetime) -> bool:
     """A tutor cancelled inside ``CANCEL_CUTOFF`` of the start (``BookingDTO.cancelledLate``)."""
+    _require_aware(cancelled_at=cancelled_at, starts_at=starts_at)
     return cancelled_by == "tutor" and cancelled_at > starts_at - CANCEL_CUTOFF
 
 
@@ -451,6 +484,7 @@ def allowed_actions(
     ``tutor_inactive`` and ``frozen``, so the DTO builder adds it. Other viewers
     get nothing.
     """
+    _require_aware(now=now, starts_at=facts.starts_at, ends_at=facts.ends_at)
     if facts.viewer not in ("student", "parent", "tutor"):
         return frozenset()
     actions: set[str] = set()
@@ -492,14 +526,17 @@ def can_post_note(
 ) -> bool:
     """Whether the booking's student or tutor may post a note (SPEC §a.3 notes table, SC-8).
 
-    ``state`` is the effective state. Notes close at ``ends_at`` for a live
-    request or an upcoming session, and at ``ends_at + NOTE_POST_GRACE`` after
-    the session, the instant reviews open.
+    ``state`` must be :func:`effective_state`, never the stored state, and is
+    trusted as such: ``requested`` is a live request (``now < starts_at``) and
+    ``accepted`` a session before ``ends_at``, so both may post; an expired
+    request may not, even before its ``ends_at``. After the session notes stay
+    open until ``ends_at + NOTE_POST_GRACE``, the instant reviews open.
     """
+    _require_aware(ends_at=ends_at, now=now)
     if blocked or tutor_inactive or frozen:
         return False
     if state in ("requested", "accepted"):
-        return now < ends_at
+        return True
     if state in ("awaiting_outcome", "completed"):
         return now < ends_at + NOTE_POST_GRACE
     return False
