@@ -1,8 +1,9 @@
 # Tutoring marketplace — specification
 
-**Status:** Rev 3: open user decisions D-1, D-2 and the reading calls resolved (decision-log rows 17–19) · **Date:** 2026-10-25 · **Branch:** `feat/tutoring-marketplace` (off `develop` @ `314ef8ec`; `origin/develop` is 117 commits ahead, rebase before wave 1, §f)
+**Status:** Rev 3: open user decisions D-1, D-2 and the reading calls resolved (decision-log rows 17–19) · **Date:** 2026-10-25 · **Branch:** `feat/tutoring-marketplace` (off `develop` @ `314ef8ec`; `origin/develop` is 117 commits ahead and is **merged** into the branch before wave 1 with one signed merge commit, never rebased, because the branch is already on origin; §f)
+**Amended 2026-10-25 by PLAN rev 2** (`docs/tutoring/ADVERSARIAL-PLAN.md` P4, P5, P8, P12): §a.1 preference mirrors and their role table, §b.2 legend and §b.5 `no-store` scope, §c.1 and §f merge wording, §f PR shape. Each change is mapped in `docs/tutoring/PLAN-REVISION-LOG.md`; no locked decision row changes.
 **Locked inputs (not changed here):** `BUILD/tutoring/decision-log.md` rows 0–19 (all LOCKED; rows 13–16 are the spec-review decisions, rows 17–19 the rev 3 decisions), `BUILD/tutoring/design-summary.md`, `BUILD/tutoring/recon.md`.
-**Implementation plan:** `BUILD/tutoring/PLAN.md` (tasks, execution waves, file ownership, PR mapping). Build order follows its waves; the migration revisions and their contents in §f are unchanged.
+**Implementation plan:** `BUILD/tutoring/PLAN.md` (tasks, execution waves, file ownership, the single PR and its CI cadence). Build order follows its waves; the migration revisions and their contents in §f are unchanged.
 **Decisions:** `docs/tutoring/adr/ADR-T01..T04`, `BUILD/DECISIONS.md` entries `D-2026-10-25 — tutoring: *`.
 **Review inputs resolved here:** `docs/tutoring/THREAT-MODEL.md` (SC-1..SC-27), `docs/tutoring/ADVERSARIAL-SPEC.md` (F1..F36). Every item is mapped in `docs/tutoring/REVISION-LOG.md`.
 
@@ -78,7 +79,22 @@ owns a tutor profile or is the subject of a booking cannot be deleted
 `booking_request`, `booking_update`, `booking_note`, `tutor_access`, `tutor_review`, `tutor_listing`, `parent_link` (SC-1), `tutoring_report` (SC-10).
 
 **Additive columns on an existing table** (`notification_preferences`), one per new type, each `boolean NOT NULL DEFAULT true`, because `test_notification_type_enum_matches_preference_columns` (`tests/test_db_schema.py:182`) pins enum values to preference columns.
-Mirrors to update in the same wave: `NotificationPreferencesDTO` (`lemely/web/schemas_me.py:18`), `NotificationPreferencesUpdateDTO` (`schemas_me.py:85`), `web/src/lib/notificationTypes.ts`, `web/src/lib/notificationPrefs.ts`, `web/src/lib/staffInbox.ts` (F32).
+Mirrors to update in the same wave: `NotificationPreferencesDTO` (`lemely/web/schemas_me.py:18`), `NotificationPreferencesUpdateDTO` (`schemas_me.py:85`), `web/src/lib/notificationTypes.ts`, `web/src/lib/notificationPrefs.ts`, `web/src/lib/staffInbox.ts` (F32). **Added by PLAN rev 2 (P4):** `lemely/db/notification_prefs_repo.py` (the preferences dataclass, `set` keyword arguments, merge and model mapping; `tests/test_notification_repo.py` pins every mapped field to `DEFAULTS`), `lemely/web/routers/me.py` (`_to_dto` and the PUT role checks) and `web/src/portals/settings/NotificationSettings.tsx` (a tutoring toggle renders only when its GET value is non-null).
+
+Role gating of the 8 toggles follows the existing `atRiskAlert`/`reviewWithdrawn` pattern (`me.py:102-111`: null on GET for any other role, 422 on a PUT that supplies the field from any other role). The allowed roles are exactly the roles §b.4 sends that type to; no new product decision is made here.
+
+| Type | Allowed roles (GET non-null, PUT accepted) | §b.4 recipients it is derived from |
+|---|---|---|
+| `booking_request` | teacher | tutor |
+| `booking_update` | student, parent, teacher | student, linked parents, tutor (other party on cancel; on student or parent completion) |
+| `booking_note` | student, parent, teacher | the other participant; linked parents (tutor-authored, daily) |
+| `tutor_access` | student, parent, teacher | tutor, linked parents, student (grant ended by suspension or close) |
+| `tutor_review` | student, teacher | author student, tutor (reply moderated) |
+| `tutor_listing` | teacher | tutor |
+| `parent_link` | parent | parents |
+| `tutoring_report` | platform_admin | every `platform_admin` |
+
+`school_admin` gets none of the 8. Gating is by role, not by owning a tutor profile, so a teacher without a profile sees the teacher toggles (a teacher may create a profile at any time).
 
 Core-side `Literal` vocabularies that mirror `bookingstate`/`bookingparty` are
 pinned equal to the Python enums by a test (precedent: `PaperOrigin` ↔
@@ -562,7 +578,7 @@ All routers are included in `lemely/web/app.py` beside the existing `include_rou
 
 ### b.2 Routes
 
-Legend: **C** = cursor-paged. **V** = `require_verified_email` (403 `email_unverified`). **NS** = response carries `Cache-Control: private, no-store` (SC-26). Status codes list the non-guard outcomes; every non-PUBLIC route also returns 401 (no/invalid token) and 403 (role not in guard) from `require_role` before the handler runs.
+Legend: **C** = cursor-paged. **V** = `require_verified_email` (403 `email_unverified`). **NS** = response carries `Cache-Control: private, no-store` (SC-26). **PLAN rev 2 (P12):** the marks below and the §b.5 list disagree (§b.5 also covers notes and every `BookingDTO`/`GrantDTO`/`AccessLogPageDTO`/`ClassAccessDTO` response, several of which carry no mark), so **every non-PUBLIC tutoring route (67 of 70, including S16 and S17) is NS, on every response status**. That is a superset of both lists; the marks are kept for reference only. Status codes list the non-guard outcomes; every non-PUBLIC route also returns 401 (no/invalid token) and 403 (role not in guard) from `require_role` before the handler runs.
 
 #### Public (no auth) — `Cache-Control: public, max-age=60` on all three, and the Workers read-through cache (§b.5)
 | # | Method · Path | Request | Response | Codes |
@@ -864,7 +880,7 @@ Provider: `TransactionalEmailProvider.send(to, template, context)` (new protocol
 **Quotas (SC-15), all DB-backed COUNTs over existing indexes, no process state:** booking creations ≤ 10 per requester per 24 h; cancellations ≤ 10 per canceller per 24 h; reports ≤ 20 per reporter per 24 h.
 
 ### b.5 Caching, robots and edge rules (SC-18, SC-26, PP-7)
-- `Cache-Control: private, no-store` on every **NS** route above (T19, T20, notes, every `BookingDTO`/`GrantDTO`/`AccessLogPageDTO`/`ClassAccessDTO` response, A10). A vitest asserts no tutoring query key is on `persistAllowlist.ts` (F32).
+- `Cache-Control: private, no-store` on every **NS** route above (T19, T20, notes, every `BookingDTO`/`GrantDTO`/`AccessLogPageDTO`/`ClassAccessDTO` response, A10). Since PLAN rev 2 (P12) this means every non-PUBLIC tutoring route on every status, set once by a shared route class rather than per handler; P1–P3 alone send `public`. A vitest asserts no tutoring query key is on `persistAllowlist.ts` (F32).
 - `public, max-age=60` only on P1–P3. The worker (`web/worker/index.ts`, which proxies `/api/*` with plain `fetch()`) adds a `caches.default` read-through for `GET /api/public/tutors*` and `/api/public/tutoring-areas` only, keyed on the full URL, 60 s. This shields Postgres from repeated identical requests; it is not a rate limit. A Cloudflare WAF rate-limit rule on `/api/public/*` is the rate limit, documented in `docs/deployment.md` as an ops step **if the plan offers one (not verified, §h)**.
 - **Search indexing of tutor pages (row 17: the public card is indexable by default, per-tutor opt-out, honoured by a worker lookup).** What exists today (read 2026-10-25): production and staging serve the SPA from Workers Static Assets (`web/wrangler.jsonc`: `not_found_handling: "single-page-application"`, `run_worker_first: ["/api/*"]`, binding `ASSETS`); `web/worker/index.ts` handles `/api/*` only and sets the five security headers itself; `web/public/_headers` has one `/*` block with those five headers; `web/public/robots.txt` disallows `/api/`, `/student`, `/teacher`, `/parent`, `/admin`, `/settings`, `/join` and not `/tutors`; `web/nginx.conf` is the Docker/self-host deploy. Cloudflare's docs state that `_headers` rules are **not** applied to responses generated by Worker code when `run_worker_first` matches, so every header on a worker-served path must be set by the worker.
   - **Route.** `web/wrangler.jsonc` `run_worker_first` becomes `["/api/*", "/tutors", "/tutors/*"]`. `web/worker/index.ts` dispatches `/tutors` and `/tutors/*` to `handleTutorPage(request, env)` in a new module `web/worker/robots.ts`; `/api/*` behaviour is unchanged. `Env` gains `ASSETS: Fetcher`.
@@ -894,7 +910,7 @@ STUDENT_OR_TEACHER = frozenset({"student", "teacher"})
 TUTORING_PARTY = frozenset({"student", "parent", "teacher"})
 ```
 
-Headings must match `#\s*─+\s*([A-Z_]+)\s*\((\d+)\)` (`test_authz_matrix_complete.py:578`) and carry the count of the rows present in the section, which the section-count test checks on every run; the counts below are the **final** ones, reached when the last route lands (F23; build order in `BUILD/tutoring/PLAN.md` §3). Counts below are against `314ef8ec`; re-derive after the rebase onto `origin/develop`.
+Headings must match `#\s*─+\s*([A-Z_]+)\s*\((\d+)\)` (`test_authz_matrix_complete.py:578`) and carry the count of the rows present in the section, which the section-count test checks on every run; the counts below are the **final** ones, reached when the last route lands (F23; build order in `BUILD/tutoring/PLAN.md` §3). Counts below are against `314ef8ec`; re-derive after the wave-0 merge of `origin/develop`. Each guard has exactly one heading, whose count is that guard's **total** row count in the file (existing plus tutoring rows); adding a tutoring row updates that one heading and never adds a second heading for the same guard (`test_the_section_counts_in_this_file_match_what_it_registers`).
 
 ```python
     # ── PUBLIC (15) ──  (+3) rows 5a/5b: minimal card only, no availability filter.
@@ -1049,7 +1065,7 @@ Guards, object rules and response bodies of these routes are unchanged; the auth
 | `POST /api/auth/parent/signup` (PUBLIC; `auth.py:413`) | Creates the parent account, then redeems the invite; a redeem failure is logged and swallowed (`auth.py:475-482`) | The pre-check `_require_live_parent_invite` also returns **409 `parent_limit`** before any account is created when the child is at the cap; the redeem itself behaves as above |
 | `GET /api/teacher/students/{id}`, `GET /api/classes/{class_id}/roster` and other roster reads | — | Unchanged code. They return fewer students after a block, suspension, close or S17 removed a school-less enrolment: a data effect, not a permission change |
 
-New behaviour enters only through `ParentLinkService.link_in_session`/`unlink` (the single `parent_child_links` query, `parent_repo.py:192-224`), a new `ClassService.join_by_code_outcome()` returning `(ClassRow, newly_enrolled)` (the old `join_by_code` keeps its signature, `class_repo.py:456`), and the after-commit notify calls in the four handlers. Hot files touched: `lemely/db/parent_repo.py`, `lemely/db/invite_repo.py` (`_redeem_parent_invite`, `:783`), `lemely/db/class_repo.py`, `lemely/web/routers/{student,invites,auth,student_classes}.py`; owner: the wave-2 implementer (§f), one PR. Everything in this section ships in wave 2 (with the outbox it writes to, and before any booking or grant exists), including S16 and S17; their screen section (S-38 part 3) lands with S-38 in wave 4. Two sweeps arrive with their features: the grant half of the suspension sweep in wave 4, the block sweep in wave 5.
+New behaviour enters only through `ParentLinkService.link_in_session`/`unlink` (the single `parent_child_links` query, `parent_repo.py:192-224`), a new `ClassService.join_by_code_outcome()` returning `(ClassRow, newly_enrolled)` (the old `join_by_code` keeps its signature, `class_repo.py:456`), and the after-commit notify calls in the four handlers. Hot files touched: `lemely/db/parent_repo.py`, `lemely/db/invite_repo.py` (`_redeem_parent_invite`, `:783`), `lemely/db/class_repo.py`, `lemely/web/routers/{student,invites,auth,student_classes}.py`; owner: PLAN task T09. Everything in this section ships in wave 2 (with the outbox it writes to, and before any booking or grant exists), including S16 and S17; their screen section (S-38 part 3) lands with S-38 in wave 4. Two sweeps arrive with their features: the grant half of the suspension sweep in wave 4, the block sweep in wave 5.
 
 Tests (`tests/test_parent_link_integrity.py`, `tests/test_class_side_door.py`; each with a red case):
 - `test_unlink_notifies_unlinked_parent_inbox_and_outbox` · `test_unlink_noop_writes_no_event_and_no_notice` · `test_unlink_writes_link_event`
@@ -1438,7 +1454,7 @@ Pyramid: many pure unit tests, DB integration for every constraint and transacti
 
 ## f. Migration plan
 
-**Before wave 1 (F36):** rebase `feat/tutoring-marketplace` onto `origin/develop` (117 commits ahead of `314ef8ec` at review time; it changes `lemely/web/routers/teacher.py` and `lemely/web/app.py`), then re-run `alembic heads` (`0043_merge_heads` at review time, single head) and re-check every line citation in this SPEC. If the head moved, re-point `0044.down_revision` and renumber; migration **tests are named by content**, so renumbering touches no test name (F35).
+**Before wave 1 (F36; amended by PLAN rev 2, P5):** merge `origin/develop` into `feat/tutoring-marketplace` with one signed merge commit (117 commits ahead of `314ef8ec` at review time; it changes `lemely/web/routers/teacher.py` and `lemely/web/app.py`). The branch is already published on origin, so it is never rebased (a rebase would need a force-push). `git merge-tree --write-tree HEAD origin/develop` reported no conflict on 2026-10-25 at `e80cb9fc`. Then re-run `alembic heads` (`0043_merge_heads` at review time, single head) and re-check every line citation in this SPEC. If the head moved, re-point `0044.down_revision` and renumber; migration **tests are named by content**, so renumbering touches no test name (F35).
 
 | Revision (≤ 32 chars) | Wave | Contents (all additive) | Downgrade |
 |---|---|---|---|
@@ -1452,7 +1468,7 @@ Pyramid: many pure unit tests, DB integration for every constraint and transacti
 
 Numbers now follow wave order. `lemely tutoring recompute-ratings [--tutor <id>]` (CLI, `lemely/app/cli.py`) calls `TutorReviewRepository.recompute_ratings`, the same function every review change uses (F35, O-12).
 
-**Wave plan** (each wave = one PR with its migration, core, repo, routes, authz rows, tests, screens, and the `web/src/portals/marketing/dataHandling.ts` sentences that become true in that wave, each with its source comment as that file requires, F16):
+**Release groupings** (amended by PLAN rev 2, P8): the five groupings below say which migration, core, repo, routes, authz rows, tests and screens belong together. The feature ships as **one pull request** (base `develop`, opened by the lead as a draft at the first integration so CI runs on every integration push; never merged by an agent; PLAN §0.10). The `web/src/portals/marketing/dataHandling.ts` sentences, each with its source comment as that file requires (F16), land once, in PLAN W8, because nothing ships before that PR merges.
 1. Profiles, admin approval and close, public and logged-in directory, areas route (G-16, G-17, S-33, S-34 without results, T-15, T-16, T-17, T-21, X-04, X-05). `dataHandling.ts`: the public tutor card fields. Hot files: `lemely/db/models/__init__.py` (one import), `lemely/io/storage.py` + `storage_local.py` (`create_signed_url(..., disposition=None)`, additive, SC-22), `lemely/web/app.py`, `tests/test_authz_matrix_complete.py`, `web/nginx.conf`, `web/worker/index.ts` + new `web/worker/robots.ts`, `web/wrangler.jsonc` (row 17; `web/public/_headers` is read by a test, not edited).
 2. Booking, notes, outbox and the sweeper job, safety notice, **row 14 (§c.4)** (S-35..S-37, T-18, P-05..P-07). `dataHandling.ts`: bookings, notes readable by linked parents and by admins on report, parent-link notices. Hot files: §c.4's list, `lemely/web/scheduled_notifications.py` (one job appended in `Sweeper.sweep_once`), `lemely/web/deps.py` (`get_sweeper` wiring, provider), `lemely/runtime/config.py` (`[tutoring] email_daily_cap`), `lemely/web/schemas_me.py`, the three notification-type mirrors in `web/src/lib`.
 3. Reviews and moderation (S-34 reviews, S-37 review, T-21 replies, X-06).
@@ -1515,7 +1531,7 @@ New §5.7 text:
 **Decision points for the user:** none open. Rev 3 resolved every one (§i.1). Nothing below blocks a wave.
 
 **Not verified (each has a named check and a safe default):**
-- **O-13** `alembic heads` after the rebase onto `origin/develop` (§f). `git diff --name-only 314ef8ec origin/develop -- lemely/db/migrations/versions` was empty on 2026-10-25 (`origin/develop` @ `e80cb9fc`), so `0043_merge_heads` is expected to stay the single head; the plan's wave 0 re-runs `alembic heads` after the rebase.
+- **O-13** `alembic heads` after the wave-0 merge of `origin/develop` (§f). `git diff --name-only 314ef8ec origin/develop -- lemely/db/migrations/versions` was empty on 2026-10-25 (`origin/develop` @ `e80cb9fc`), so `0043_merge_heads` is expected to stay the single head; the plan's wave 0 re-runs `alembic heads` after the rebase.
 - **O-14** `btree_gist` on CI's Debian `postgres:16`: not run locally; the first CI run of `test_create_all_on_fresh_database_installs_btree_gist` proves or disproves it. The Supabase advisor will flag `extension_in_public`; installing into `extensions` is not portable to CI, so the warning is accepted.
 - Whether `env.ASSETS.fetch()` returns the SPA shell (200, `text/html`) for `/tutors/<id>` under `not_found_handling: "single-page-application"`. Cloudflare's "SPA shell" example implies it does; checked on staging by the §b.5 deploy checklist before release.
 - Whether `_headers` rules are applied to `env.ASSETS.fetch()` responses. The docs say they are not applied to responses generated by Worker code; the worker sets every header itself and `_headers` has no `/tutors` rule, so either answer is safe.
