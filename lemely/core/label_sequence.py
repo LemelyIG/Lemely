@@ -56,6 +56,11 @@ comments and the task report use.
    - two blocks beside a blank leaf (D10).
    A leaf with something listed under it that was not bound is not reported blank
    (D3). Each unaligned leaf is given one reason (``UNALIGNED_REASONS``).
+6. Numbered items. A part whose parts are the printed items "1." and "2." (ids
+   ``X_1``, ``X_2``) is bound as the part ``X``: the item numbers the student wrote
+   are left out of the list, ``X`` is one leaf for the alignment, and every item gets
+   the part's writing (``numbered_item_groups``, ``collapse_numbered_items``). A
+   scheme with no such part is bound exactly as before.
 
 The rules are not independent, and most of them do not "only unbind". A rule that
 ends a span earlier, drops an anchor or orphans a label changes what the rules after
@@ -190,7 +195,7 @@ from __future__ import annotations
 import re
 from bisect import bisect_left
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal, get_args
 
 from lemely.core.binding import SeenLabel, SeenWriting, UnboundReason, UnboundWriting
@@ -1491,6 +1496,192 @@ def _agreed(readings: list[_Reading]) -> _Reading:
     )
 
 
+# --------------------------------------------------------------------------------------
+# Numbered items: "7(c)(ii) 1." and "2." are bound as the part 7(c)(ii)
+# --------------------------------------------------------------------------------------
+# A printed item number after a part: "(ii) 1.", "(ii)1", "7(c)(ii) 1".
+_ITEM_TAIL = re.compile(r"[\s.:]*(\d{1,2})[\s.:)]*\Z")
+
+
+def numbered_item_groups(mark_scheme: MarkScheme) -> dict[str, list[str]]:
+    """Each container whose parts are numbered items -> their ids, in paper order.
+
+    A group is a container ``X`` a label can name whose parts are all leaves with the
+    ids ``X_1`` .. ``X_k`` (``k`` >= 2, in that order). The paper prints them as "1." and
+    "2." under a part ("7(c)(ii) 1."); no label has a level for them. No recursion.
+    """
+    candidates: list[str] = []
+    stack = list(reversed(mark_scheme.questions))
+    while stack:
+        question = stack.pop()
+        stack.extend(reversed(question.parts))
+        if len(question.parts) >= 2 and all(
+            not part.parts and part.id == f"{question.id}_{n}"
+            for n, part in enumerate(question.parts, 1)
+        ):
+            candidates.append(question.id)
+    if not candidates or _too_deep(mark_scheme):
+        return {}
+    top: dict[str, _Draft] = {}
+    _grow(mark_scheme.questions, None, top)
+    groups: dict[str, list[str]] = {}
+    walk = [(question, top) for question in reversed(mark_scheme.questions)]
+    while walk:
+        question, level = walk.pop()
+        draft = level.get(question.id)
+        if draft is None:
+            continue
+        walk.extend((part, draft.parts) for part in reversed(question.parts))
+        if question.id in candidates and draft.step is not None and not draft.doubled:
+            groups[question.id] = [part.id for part in question.parts]
+    return {x: groups[x] for x in dict.fromkeys(candidates) if x in groups}
+
+
+def collapse_numbered_items(mark_scheme: MarkScheme) -> MarkScheme:
+    """A copy of the scheme in which each numbered-item group is one leaf.
+
+    The container keeps no parts and carries the marks of its items. The copy is not
+    validated: the container has no answer points of its own. A scheme with no group
+    is returned itself.
+    """
+    groups = numbered_item_groups(mark_scheme)
+    if not groups:
+        return mark_scheme
+    done: dict[int, Question] = {}
+    stack = [(question, False) for question in reversed(mark_scheme.questions)]
+    while stack:
+        question, visited = stack.pop()
+        if not visited:
+            stack.append((question, True))
+            if question.id not in groups:
+                stack.extend((part, False) for part in reversed(question.parts))
+            continue
+        if question.id in groups:
+            done[id(question)] = question.model_copy(
+                update={"parts": [], "marks": sum(part.marks for part in question.parts)}
+            )
+        elif question.parts:
+            done[id(question)] = question.model_copy(
+                update={"parts": [done[id(part)] for part in question.parts]}
+            )
+        else:
+            done[id(question)] = question
+    return mark_scheme.model_copy(
+        update={"questions": [done[id(question)] for question in mark_scheme.questions]}
+    )
+
+
+def _without_item_labels(
+    items: Sequence[StreamItem], mark_scheme: MarkScheme, groups: dict[str, list[str]]
+) -> list[StreamItem]:
+    """The list without the item numbers the student wrote under a group's part.
+
+    A lone "1." would read as question 1, and "(ii) 1." names no step. Only a label
+    that the group's own question can own is touched, and a real next question number
+    (greater than the group's question, and a question of the scheme) never is.
+    Writing is never touched.
+    """
+    paper = _build(collapse_numbered_items(mark_scheme))
+    tokens = {x: {item.removeprefix(f"{x}_") for item in ids} for x, ids in groups.items()}
+    where: dict[str, tuple[str, tuple[LabelStep, ...]]] = {}
+    for node in paper.nodes:
+        if node.question_id in groups and node.question_id not in where:
+            steps = tuple(
+                step for index in node.path if (step := paper.nodes[index].step) is not None
+            )
+            where[node.question_id] = (paper.nodes[node.path[0]].question_id, steps)
+    out: list[StreamItem] = []
+    question: str | None = None  # the last question number placed
+    for item in items:
+        if not isinstance(item, SeenLabel):
+            out.append(item)
+            continue
+        readings = _readings(item.text)
+        if readings is not None:
+            number = next((s.token for s in readings[0] if s.level == "number"), None)
+            if len(readings) == 1 and number is not None:
+                is_item = any(
+                    where[x][0] == question and number in tokens[x] for x in groups if x in where
+                )
+                later_question = (
+                    number in paper.by_number
+                    and question is not None
+                    and (question.isdigit() and int(number) > int(question))
+                )
+                if is_item and not later_question:
+                    continue
+            if number is not None:
+                question = number
+            out.append(item)
+            continue
+        tail = _ITEM_TAIL.search(item.text)
+        rest = item.text[: tail.start()] if tail else ""
+        rest_readings = _readings(rest) if tail else None
+        owner = None
+        if tail and rest_readings is not None:
+            owner = next(
+                (
+                    x
+                    for x in groups
+                    if x in where
+                    and tail.group(1) in tokens[x]
+                    and _names_last(rest_readings, where[x][1])
+                ),
+                None,
+            )
+        if owner is None or rest_readings is None:
+            out.append(item)
+            continue
+        first = tail is not None and tail.group(1) == groups[owner][0].removeprefix(f"{owner}_")
+        twin = bool(out) and isinstance(out[-1], SeenLabel) and out[-1].text == rest
+        if first and not twin:
+            out.append(item.model_copy(update={"text": rest}))
+            first_number = next((s.token for s in rest_readings[0] if s.level == "number"), None)
+            if first_number is not None:
+                question = first_number
+    return out
+
+
+def _names_last(readings: _Readings, steps: tuple[LabelStep, ...]) -> bool:
+    """Whether ``readings`` end by naming the last of ``steps`` (and the ones before it)."""
+    if len(readings) > len(steps):
+        return False
+    tail = steps[len(steps) - len(readings) :]
+    return all(step in options for options, step in zip(readings, tail, strict=True))
+
+
+def _expanded(bound: BoundStream, groups: dict[str, list[str]]) -> BoundStream:
+    """The binding of the collapsed scheme, given back to each item of every group."""
+
+    def spread(ids: list[str]) -> list[str]:
+        return list(dict.fromkeys(i for x in ids for i in groups.get(x, [x])))
+
+    leaves = [
+        BoundLeaf(
+            question_id=item,
+            label_seen=leaf.label_seen,
+            number_inferred=leaf.number_inferred,
+            writings=leaf.writings,
+            doubts=list(leaf.doubts),
+        )
+        for leaf in bound.leaves
+        for item in groups.get(leaf.question_id, [leaf.question_id])
+    ]
+    reasons = {
+        item: reason for x, reason in bound.unaligned_reasons.items() for item in groups.get(x, [x])
+    }
+    between = {
+        item: pair for x, pair in bound.absent_between.items() for item in groups.get(x, [x])
+    }
+    return replace(
+        bound,
+        leaves=leaves,
+        unaligned_ids=spread(bound.unaligned_ids),
+        unaligned_reasons=reasons,
+        absent_between=between,
+    )
+
+
 def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundStream:
     """Decide which question each label is and which leaf each block of writing answers.
 
@@ -1503,6 +1694,15 @@ def bind_stream(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundSt
         return _nothing(items, _leaf_ids(mark_scheme), "scheme_too_deep")
     if len(items) > MAX_STREAM_ITEMS:
         return _nothing(items, _leaf_ids(mark_scheme), "list_too_long")
+    groups = numbered_item_groups(mark_scheme)
+    if not groups:
+        return _bind(items, mark_scheme)
+    stripped = _without_item_labels(items, mark_scheme, groups)
+    return _expanded(_bind(stripped, collapse_numbered_items(mark_scheme)), groups)
+
+
+def _bind(items: Sequence[StreamItem], mark_scheme: MarkScheme) -> BoundStream:
+    """``bind_stream`` after the guards, for a scheme with no numbered-item group."""
     paper = _build(mark_scheme)
     labels = _labels(items)
     kept = _anchors(paper, labels)

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 
+from lemely.core.label_sequence import collapse_numbered_items
 from lemely.core.loose_schemas import MarkScheme, Question
 
 VERSION = "3"
@@ -221,7 +222,10 @@ def _printed_labels(mark_scheme: MarkScheme) -> list[tuple[str, int]]:
     top-level id that is not a number, a part whose id does not extend its parent's, a
     piece that is not lower-case letters. A made-up label would send the reader looking
     for something the paper does not print, and ``bind_stream`` cannot bind such a leaf
-    either. No scheme in the corpus has one.
+    either. The one exception is a part printed with numbered items ("7(c)(ii) 1." and
+    "2.", ids ``7c_ii_1`` and ``7c_ii_2``): it is listed as the part, "7(c)(ii)", with the
+    marks of its items, and ``bind_stream`` binds it the same way. No other scheme in the
+    corpus has an id like these.
     """
     labels: list[tuple[str, int]] = []
 
@@ -243,7 +247,7 @@ def _printed_labels(mark_scheme: MarkScheme) -> list[tuple[str, int]]:
             else:
                 labels.append((label, question.marks))
 
-    walk(mark_scheme.questions, None, "")
+    walk(collapse_numbered_items(mark_scheme).questions, None, "")
     return labels
 
 
