@@ -219,6 +219,10 @@ bucket = "lemely-uploads"
 avatar_bucket = "lemely-avatars"
 signed_url_ttl_seconds = 3600
 avatar_max_bytes = 5242880  # 5 MiB
+# Tutor evidence documents (qualification scans) are PII: a separate private
+# bucket, opened only by an admin through a short-lived signed URL.
+tutor_evidence_bucket = "lemely-tutor-evidence"
+tutor_evidence_signed_url_ttl_seconds = 300
 # gcs_project = "my-gcp-project"  # only if ADC can't infer one
 
 [push]
@@ -406,3 +410,9 @@ sweeper_enabled = true
 sweep_poll_seconds = 60
 streak_warning_hour = 19
 study_plan_reminder_hour = 8
+
+[tutoring]
+# Tutoring-marketplace mail is sent by one sweeper job. Once this many
+# tutoring mails went out in the last 24 hours, further ones are skipped, not
+# sent. 60 sits below Resend's 100/day free quota, which account mail shares.
+email_daily_cap = 60

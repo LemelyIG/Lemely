@@ -1022,6 +1022,15 @@ class StorageSettings(BaseModel):
     # different retention/access shapes and no reason to share a namespace.
     avatar_bucket: str = Field(default="lemely-avatars", min_length=1)
     avatar_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1)
+    # Tutor evidence documents (qualification scans for admin approval) live in
+    # their own PRIVATE bucket: they are PII, are only ever opened by an admin
+    # through a short-lived signed URL, and must never share a namespace with
+    # the public-ish avatars or the student scans. `lemely-` prefix: see above.
+    tutor_evidence_bucket: str = Field(default="lemely-tutor-evidence", min_length=1)
+    # TTL of the admin evidence signed URL. Far shorter than `signed_url_ttl_seconds`
+    # on purpose: the link is minted per open, served as an attachment, and a
+    # leaked one should die in minutes.
+    tutor_evidence_signed_url_ttl_seconds: int = Field(default=300, ge=1)
     # GCP project id for the GCS client. Optional: Application Default
     # Credentials usually carry (or can infer) a project on their own; set
     # this only when ADC's own inference is wrong or absent (e.g. a
@@ -1100,6 +1109,23 @@ class NotificationsSettings(BaseModel):
     # ``study_plan_reminder`` fires once the recipient's local time is at or
     # past this hour, for every incomplete session dated today.
     study_plan_reminder_hour: int = Field(default=8, ge=0, le=23)
+
+
+class TutoringSettings(BaseModel):
+    """The tutoring marketplace (spec docs/tutoring/SPEC.md §b).
+
+    Overrides via ``lemely.toml`` under the ``[tutoring]`` section or
+    ``LEMELY_TUTORING__*`` env vars.
+
+    ``email_daily_cap`` bounds the tutoring-email outbox job: once this many
+    tutoring mails were sent in the last 24 hours, further pending rows are
+    marked ``skipped`` rather than sent. The default of 60 sits below Resend's
+    100/day free quota, which account mail (:class:`EmailSettings`) shares, so
+    a burst of bookings can never starve a verification or reset mail.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    email_daily_cap: int = Field(default=60, ge=0)
 
 
 class EmailSettings(BaseModel):
@@ -1205,6 +1231,7 @@ class Settings(BaseSettings):
     push: PushSettings = PushSettings()
     notifications: NotificationsSettings = NotificationsSettings()
     email: EmailSettings = EmailSettings()
+    tutoring: TutoringSettings = TutoringSettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()
     auth: AuthSettings = AuthSettings()
