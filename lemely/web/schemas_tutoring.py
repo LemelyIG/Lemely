@@ -1,7 +1,3 @@
-# mypy: disallow-any-explicit=False
-# Pydantic's mypy plugin injects Any into generated __init__ signatures; every
-# other `lemely.web.schemas_*` module gets this through pyproject's per-module
-# override list, which is a lead-owned hot file during the tutoring build.
 """Tutoring marketplace API DTOs (``docs/tutoring/SPEC.md`` §b.3, rev 3).
 
 Every class in SPEC §b.3's code block, with its fields, types and defaults

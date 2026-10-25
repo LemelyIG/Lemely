@@ -1567,3 +1567,28 @@ New §5.7 text:
 - **O-19** Booking emails to legacy placeholder parent addresses are skipped; SMS stays the mock (`deps.py:296`), so phone-only parents get in-app notices only.
 - A rejected reply cannot be replaced (one reply per review, RF-7).
 - Re-joining a tutor's school-less class after a block or suspension is not refused (row 14 adds no permission change to the join routes); the student's linked parents are told when it happens.
+
+### i.4 Clarifications settled during Wave 1 (2026-10-26)
+
+Written by the lead from the T02/T03/T04 task reviews. Each is the reading the code already implements, or a rule a later task must follow.
+
+**Ratings and directory (T02).**
+- `aggregate_latest_per_student` returns `(rating_sum, rating_count)`, sum first, so `bayesian_score(*aggregate_latest_per_student(rows))` works. On an exact `created_at` tie the later entry wins; the SQL equivalent (`DISTINCT ON (student_id)`) must break ties by `id` descending.
+- `rule_matches`: an empty day set or time set means no filter on that dimension. Rule and filter overlap on half-open minute ranges. The SQL mirror (T06) must do the same.
+- `student_label`: the display name is used only when, after stripping format characters (Cf) and NFKC normalisation, it contains no `@` and `find_contact_details` finds nothing; otherwise the label is `"Student " + sha256(str(user_id).encode("ascii")).hexdigest()[:4].upper()` (hyphenated, lowercase UUID text).
+- `review_edit_deadline` = `created_at + 336 elapsed hours`, in UTC. A SQL guard must use `interval '336 hours'` or a UTC session, never `interval '14 days'` in a Cairo session (wall-clock across a DST change).
+- **Rating rounding (decided):** the card shows `sum/count` rounded half-up to one decimal; `rating_avg` is stored at two decimals; the `minRating` filter compares against the same one-decimal value the card shows (`round(rating_sum::numeric / rating_count, 1) >= :min`), so a tutor never shows "4.5" yet fails `minRating=4.5`. T06 implements this and tests a 4.45 average.
+
+**Booking (T03).**
+- §a.3: `platform_admin` and `system` may cancel `requested` as well as `accepted` before the start (block, suspension and close sweeps). Guard: `now < starts_at`.
+- `allowed_actions` never returns `post_note`. The DTO builder adds it, for a student or tutor viewer only, from `can_post_note(effective_state(...))` evaluated at the same `now`. Parents never get it. `can_post_note` trusts its effective-state argument: `requested` is live only while `now < starts_at`.
+- `allowed_actions` has no suspended or closed input. The builder removes tutor write actions when the tutor profile is suspended or closed (CB-7).
+- Notes are allowed strictly before `ends_at + NOTE_POST_GRACE`, the instant reviews open (`review_open_at`).
+- Slots: a rule that starts inside the spring-forward gap starts at the jump instant, and that night's step grid re-anchors there. "Offers nothing in the gap" means nothing before the jump. A repeated hour offers no slot whose start or end label is ambiguous.
+- All instants passed to `core.booking` are timezone-aware; a naive datetime is a `ValueError`.
+- An active block withholds only `accept` from the tutor's allowed actions; a review stays allowed under an active block (O10 is silent; confirmed here as deliberate: the block ends future contact, not the right to rate a past session).
+- THREAT-MODEL SC-17's "more than 48 h" means `>= 48 h`, as in §a.3 and O23.
+
+**Booking party in DTOs (T04, SC-9).** `BookingDTO.requestedBy`, `cancelledBy` and `completedBy` may be `"parent"` in the type, but for a tutor viewer the builder maps `"parent"` to `"student"`: a tutor never learns that a parent link exists.
+
+**Report snapshots and admin notes (T04, §a.5).** `ReportDetailDTO.snapshot` stays `dict[str, JsonValue]`, built through one function with a per-`targetType` key allowlist (tutor_profile: card fields and bio; review: stars and text; review_reply: body; booking: the `AdminBookingSummaryDTO` fields; booking_note: author party and body). A student-authored note in an admin response carries the party label, never the student's name.
