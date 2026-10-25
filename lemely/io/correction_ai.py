@@ -497,6 +497,12 @@ class AICorrector:
         self._mark_scheme = mark_scheme
         # Fails the run here: raised per leaf, ``correct_paper`` would turn it into zeros.
         self._reason_first()
+        g = gemini_client._settings.gemini
+        if g.correction_retry_median is True and g.correction_retry_keep_higher is True:
+            # As above: ``model_copy`` skips the settings validator that forbids it.
+            raise ConfigError(
+                "correction_retry_median cannot combine with correction_retry_keep_higher"
+            )
         #: Built once per value of ``reader_describes_drawings``, not once per leaf.
         self._prefixes: dict[bool, SharedPrefix] = {}
         #: The model whose response the last :meth:`mark_question` returned (the
@@ -769,11 +775,6 @@ class AICorrector:
         # ``is True`` / isinstance: a MagicMock settings object keeps today's behaviour.
         keep_higher = g.correction_retry_keep_higher is True
         median = g.correction_retry_median is True
-        if median and keep_higher:
-            # model_copy skips the settings validator, so the exclusion is re-checked here.
-            raise ConfigError(
-                "correction_retry_median cannot combine with correction_retry_keep_higher"
-            )
         if keep_higher or median:
             lever_below = (
                 g.correction_retry_median_below if median else g.correction_retry_keep_higher_below

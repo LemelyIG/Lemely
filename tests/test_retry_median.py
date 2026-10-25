@@ -119,13 +119,31 @@ def test_escalation_sees_the_combined_confidence() -> None:
     assert ai.deferred["2"][4] == 0.70
 
 
-def test_median_and_keep_higher_together_are_refused_at_point_of_use() -> None:
+def test_median_and_keep_higher_fail_the_run_not_the_leaves() -> None:
     import pytest
 
+    from lemely.io.correction_ai import correct_paper
     from lemely.runtime.errors import ConfigError
+    from tests.test_escalation_cap import _SCHEME
+    from tests.test_reason_first import _client
 
+    client = _client()
+    client._settings.gemini.__dict__["correction_retry_median"] = True
+    client._settings.gemini.__dict__["correction_retry_keep_higher"] = True
     with pytest.raises(ConfigError):
-        _run([_reply(1, 0.7)], correction_retry_median=True, correction_retry_keep_higher=True)
+        AICorrector(client)
+    with pytest.raises(ConfigError):
+        correct_paper(_SCHEME, {"1a": "x", "2a": "y"}, gemini_client=client)
+
+
+def test_median_of_two_against_one_takes_the_majority_zero() -> None:
+    out = _median_of([_reply(2, 0.7, "first"), _reply(0, 0.9, "b"), _reply(0, 0.8, "c")])
+    assert (out.awarded_marks, out.feedback) == (0, "b")
+
+
+def test_median_of_a_split_vote_takes_the_minimum_confidence() -> None:
+    out = _median_of([_reply(2, 0.95), _reply(0, 0.6), _reply(2, 0.9)])
+    assert (out.awarded_marks, out.confidence) == (2, 0.6)
 
 
 def test_median_of_unanimous_takes_the_most_confident() -> None:
