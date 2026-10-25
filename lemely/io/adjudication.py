@@ -12,6 +12,9 @@ to Sonnet and then adjudicated is re-marked once more, and nothing re-marks it a
 Lever H2d adds a second pool, off by default: AI-marked leaves whose answer is the label
 reader's ``Drawing:`` description are adjudicated from their page crop whatever their
 confidence, because the first marker saw only the description, never the drawing.
+
+Lever H4a adds a third pool, off by default and adjudicated first: AI-marked leaves whose crop
+re-read disagreed with the first read, with the re-read quoted in the prompt.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ import structlog
 from pydantic import BaseModel, Field
 
 from lemely.core.schemas import CorrectionResult, confidence_band_for_score
-from lemely.io.reread import crop_and_upscale
+from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD, crop_and_upscale
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -92,6 +95,26 @@ def drawing_candidates(
     return [q.question_id for q in pool[: max(max_leaves, 0)]]
 
 
+def reread_candidates(
+    result: CorrectionResult,
+    *,
+    answers: Mapping[str, ExtractedAnswer],
+    pages: Sequence[RasterisedPage],
+    max_leaves: int,
+) -> list[str]:
+    """H4a: AI-marked leaves whose crop re-read disagreed with the first read, lowest agreement first, capped."""
+    pool: list[tuple[float, str]] = []
+    for q in result.questions:
+        a = answers.get(q.question_id)
+        if q.marker_source != "ai" or a is None or not _has_crop(a, pages):
+            continue
+        agreement = a.reread_agreement
+        if isinstance(agreement, float) and agreement < REREAD_REVIEW_AGREEMENT_THRESHOLD:
+            pool.append((agreement, q.question_id))
+    pool.sort()
+    return [qid for _, qid in pool[: max(max_leaves, 0)]]
+
+
 def _has_crop(answer: ExtractedAnswer | None, pages: Sequence[RasterisedPage]) -> bool:
     return (
         answer is not None
@@ -107,7 +130,13 @@ def _crops(answer: ExtractedAnswer | None, pages: Sequence[RasterisedPage]) -> l
     return [crop_and_upscale(pages[box.page], box.box)]
 
 
-def _leaf_prompt(question: Question, first: CorrectedQuestion, *, drawing: bool = False) -> str:
+def _leaf_prompt(
+    question: Question,
+    first: CorrectedQuestion,
+    *,
+    drawing: bool = False,
+    reread: str | None = None,
+) -> str:
     points = "\n".join(
         f"- {p.id} ({p.marks} mark{'' if p.marks == 1 else 's'}): {p.point}"
         for p in question.answer_points
@@ -133,6 +162,13 @@ def _leaf_prompt(question: Question, first: CorrectedQuestion, *, drawing: bool 
             "reader's text description of it, never the drawing, and withheld points the "
             "description did not mention. Judge every point from the page crop: award a "
             "point the drawing shows even if the description is silent about it."
+        )
+    if reread is not None:
+        quoted = repr(reread.strip()[:200]) if reread.strip() else "nothing legible"
+        text += (
+            "\n\nTwo reads of this answer disagreed. The transcribed answer above is the first "
+            f"read; a zoomed re-read of the same crop gave: {quoted}. Neither read is "
+            "authoritative: mark what the page crop shows."
         )
     return text
 
@@ -191,7 +227,17 @@ def adjudicate(
     # A plain mapping of answers carries no boxes, so it adjudicates nothing.
     raw_answers = getattr(extracted, "answers", None)
     answers = {a.question_id: a for a in raw_answers} if isinstance(raw_answers, list) else {}
+    reread: list[str] = []
+    reread_max = g.adjudication_reread_max_leaves
+    if (
+        g.adjudication_reread_disagreed is True
+        and isinstance(reread_max, int)
+        and not isinstance(reread_max, bool)
+    ):
+        reread = reread_candidates(result, answers=answers, pages=pages, max_leaves=reread_max)
+    reread_set = frozenset(reread)
     drawing: list[str] = []
+    full_drawing: frozenset[str] = frozenset()
     drawing_max = g.adjudication_drawing_max_leaves
     if (
         g.adjudication_drawing_leaves is True
@@ -203,13 +249,23 @@ def adjudicate(
             for qid, a in answers.items()
             if getattr(a, "binding_source", None) == "label" and _has_crop(a, pages)
         )
-        drawing = drawing_candidates(result, reader_ids=reader_ids, max_leaves=drawing_max)
+        drawing = drawing_candidates(
+            result, reader_ids=reader_ids - reread_set, max_leaves=drawing_max
+        )
+        full_drawing = frozenset(
+            drawing_candidates(result, reader_ids=reader_ids, max_leaves=len(result.questions))
+        )
     drawing_set = frozenset(drawing)
-    ids = drawing + [
-        qid
-        for qid in candidates(result, threshold=float(threshold), max_leaves=max_leaves)
-        if qid not in drawing_set
-    ]
+    taken = reread_set | drawing_set
+    ids = (
+        reread
+        + drawing
+        + [
+            qid
+            for qid in candidates(result, threshold=float(threshold), max_leaves=max_leaves)
+            if qid not in taken
+        ]
+    )
     if not ids:
         return result
     log = structlog.get_logger().bind(component="adjudication")
@@ -224,7 +280,12 @@ def adjudicate(
             continue
         reply = client.generate_structured(
             system_prompt=SYSTEM_PROMPT,
-            user_prompt=_leaf_prompt(question, first, drawing=qid in drawing_set),
+            user_prompt=_leaf_prompt(
+                question,
+                first,
+                drawing=qid in drawing_set or (qid in reread_set and qid in full_drawing),
+                reread=(answers[qid].answer_reread or "") if qid in reread_set else None,
+            ),
             image_parts=crops,
             response_schema=AdjudicationReply,
             prompt_version=VERSION,
