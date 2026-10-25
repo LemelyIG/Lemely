@@ -108,7 +108,8 @@ export interface AvailabilityRule {
 }
 
 /** `GET /api/tutors/{id}` (SP2): the full profile, logged-in only.
- * `listedSince` is "YYYY-MM" from the first approval. */
+ * `listedSince` is "YYYY-MM" from the first approval, and null until then
+ * (a draft, or a profile still under its first review). */
 export interface TutorProfile extends TutorCard {
   bio: string
   qualificationNote: string | null
@@ -117,7 +118,7 @@ export interface TutorProfile extends TutorCard {
   availability: AvailabilityRule[]
   zone: string
   zoneLabel: string
-  listedSince: string
+  listedSince: string | null
 }
 
 // ── Reviews (SP3, T18, T21, S6, S7) ────────────────────────────────────────

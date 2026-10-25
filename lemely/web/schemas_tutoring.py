@@ -170,8 +170,10 @@ class TutorProfileDTO(TutorCardDTO):
     availability: list[AvailabilityRuleDTO]
     zone: str
     zoneLabel: str
-    listedSince: str
-    """``"YYYY-MM"`` from ``first_listed_at``."""
+    listedSince: str | None
+    """``"YYYY-MM"`` from ``first_listed_at``; ``None`` until the first approval.
+    A never-listed profile (a draft, or one still under first review) has no
+    value, and a builder never invents one."""
 
 
 # ── Reviews (SP3, T18, T21, S6, S7) ──────────────────────────────────────────
