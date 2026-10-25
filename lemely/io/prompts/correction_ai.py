@@ -464,6 +464,7 @@ def build_marker_user_prompt(
     prior_values: dict[str, str] | None = None,
     default_rules: str | None = None,
     reader_describes_drawings: bool = False,
+    reason_first: bool = False,
 ) -> str:
     """Build the per-question marking prompt embedding the mark scheme subtree + student response.
 
@@ -540,6 +541,11 @@ def build_marker_user_prompt(
     only when non-empty, so a call that never substitutes (every call
     today, and every call with ``ecf_substitution`` off) produces a
     BYTE-IDENTICAL prompt to before this story existed.
+
+    ``reason_first`` (lever H2b, defaults False): when True, appends the block telling
+    the model to fill the reply's fields in the order of the reasoned reply schema
+    (:class:`lemely.core.schemas.AIMarkResponseReasoned`). With False the prompt is
+    byte-identical to before.
     """
     q_json = question.model_dump_json(indent=2, exclude_none=True, exclude_defaults=True)
     answer_text = student_answer if student_answer.strip() else "(blank — no response written)"
@@ -607,6 +613,28 @@ def build_marker_user_prompt(
                 "holistically) — there is no per-point id to attach a verdict to. Leave "
                 "`point_verdicts` EMPTY and report `awarded_marks` / `matched_point_ids` "
                 "exactly as you would without this section.\n"
+            )
+    if reason_first:
+        if question.answer_points:
+            parts.append(
+                "REASON BEFORE MARK: fill the reply's fields in the order they are listed, "
+                "and decide each one before writing the next: point_verdicts, feedback, "
+                "matched_point_ids, awarded_marks, confidence, addresses_question.\n"
+                "  - point_verdicts: one entry for every AnswerPoint id in the MARK SCHEME "
+                "SUBTREE above, in scheme order. For each: point_id; evidence_span, the exact "
+                "words of the STUDENT ANSWER or WORKING the point turns on, copied verbatim "
+                '("" when there are none); note, one sentence on whether that evidence meets '
+                'the point and why; then verdict: "awarded", "withheld" or "unverifiable".\n'
+                "  - feedback: one or two sentences for a teacher, as the system prompt asks.\n"
+                '  - matched_point_ids: the ids whose verdict is "awarded".\n'
+                "  - awarded_marks: the marks of the awarded points added up, within the "
+                "scheme's caps (alternatives, \"any N from\", the question's maximum). Do not "
+                "revisit a verdict here.\n"
+            )
+        else:
+            parts.append(
+                "REASON BEFORE MARK: leave point_verdicts empty; write feedback, giving your "
+                "reasons, before awarded_marks, and decide the marks from those reasons.\n"
             )
     if prior_values:
         # Post-review fix: `{value!r}` on a value containing a newline (the

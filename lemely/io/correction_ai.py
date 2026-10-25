@@ -81,6 +81,40 @@ def _keep_higher(first: AIMarkResponse, retry: AIMarkResponse) -> AIMarkResponse
     return chosen.model_copy(update={"confidence": confidence})
 
 
+def _verdict_checked(question: Question, reply: AIMarkResponse) -> AIMarkResponse:
+    """H2b: a reason-first reply's mark, made to agree with its own verdicts.
+
+    The verdicts are written before the mark, so when the stated integer disagrees with
+    their sum the sum wins (logged, not flagged for review). Only a reply that judged every
+    one of the question's points, and no other, is checked; otherwise the stated mark stays.
+    """
+    if not reply.point_verdicts or not question.answer_points:
+        return reply
+    log = structlog.get_logger().bind(component="correction")
+    judged = {pv.point_id for pv in reply.point_verdicts}
+    scheme = {p.id for p in question.answer_points}
+    if judged != scheme:
+        log.info(
+            "reason_first_verdicts_incomplete",
+            question_id=question.id,
+            missing=sorted(scheme - judged),
+            unknown=sorted(judged - scheme),
+        )
+        return reply
+    totals = _awarded_from_verdicts(question, reply.point_verdicts)
+    if totals.capped == reply.awarded_marks:
+        return reply
+    log.info(
+        "reason_first_sum_corrected",
+        question_id=question.id,
+        stated=reply.awarded_marks,
+        summed=totals.capped,
+    )
+    return reply.model_copy(
+        update={"awarded_marks": totals.capped, "matched_point_ids": totals.matched_point_ids}
+    )
+
+
 def _is_leaf_marked(q: Question) -> bool:
     """Mark only leaf questions with marks > 0. Skip container/zero-mark items."""
     return q.marks > 0 and not q.parts
@@ -416,8 +450,25 @@ class AICorrector:
         """The reply schema for the flags in force; ``AIMarkResponse`` with them off."""
         g = self._client._settings.gemini
         return marker_response_schema(
-            cited=self.citations_on(), terse=g.correction_terse_rationale is True
+            cited=self.citations_on(),
+            terse=g.correction_terse_rationale is True,
+            reason_first=self._reason_first(),
         )
+
+    def _reason_first(self) -> bool:
+        """H2b: whether the reply puts its verdicts before the mark (``correction_reason_first``).
+
+        Refused with citations: ``model_copy`` skips the settings validator that forbids it.
+        """
+        if self._client._settings.gemini.correction_reason_first is not True:
+            return False
+        if self.citations_on():
+            raise ConfigError("correction_reason_first cannot combine with correction_citations")
+        return True
+
+    def _checked(self, question: Question, reply: AIMarkResponse) -> AIMarkResponse:
+        """``reply`` made to agree with its verdicts under lever H2b; unchanged without it."""
+        return _verdict_checked(question, reply) if self._reason_first() else reply
 
     def __init__(
         self, gemini_client: GeminiClient, *, mark_scheme: MarkScheme | None = None
@@ -547,6 +598,7 @@ class AICorrector:
             prior_values=prior_values,
             default_rules=default_rules,
             reader_describes_drawings=reader_describes_drawings,
+            reason_first=self._reason_first(),
         )
         system_prompt = (
             shared_prefix.text
@@ -584,6 +636,7 @@ class AICorrector:
                 question_id=question.id,
                 **prefix_kwargs,
             )
+            result = self._checked(question, result)
 
             if g.cascade_enabled is True:
                 result, final_model = self._cascade(
@@ -706,6 +759,7 @@ class AICorrector:
                 **prefix_kwargs,
             )
             last_call = (correction_model, borderline_thinking)
+            result = self._checked(question, result)
             if keep_higher:
                 retry = result
                 result = _keep_higher(first, retry)
@@ -777,7 +831,7 @@ class AICorrector:
             confidence=confidence,
             escalation_model=escalation_model,
         )
-        return self._client.generate_structured(
+        reply = self._client.generate_structured(
             system_prompt=system_prompt,
             user_prompt=(
                 user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
@@ -792,6 +846,7 @@ class AICorrector:
             question_id=question.id,
             **prefix_kwargs,
         )
+        return self._checked(question, reply)
 
     def escalate_deferred(self) -> dict[str, AIMarkResponse]:
         """Escalate the most uncertain deferred leaves, up to the cap; their new responses."""
@@ -896,6 +951,7 @@ class AICorrector:
                 question_id=question.id,
                 **prefix_kwargs,
             )
+            second = self._checked(question, second)
             disagreement = second.awarded_marks != first.awarded_marks
 
         strong: AIMarkResponse | None = None
@@ -925,6 +981,7 @@ class AICorrector:
                 question_id=question.id,
                 **prefix_kwargs,
             )
+            strong = self._checked(question, strong)
 
         entry: dict[str, object] = {
             "config": {
