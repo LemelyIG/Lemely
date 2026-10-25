@@ -29,7 +29,7 @@ def _answers(*ids: str, source: str | None = "label") -> ExtractedAnswers:
                 question_id=i,
                 answer="x",
                 confidence=0.9,
-                binding_source=source,  # type: ignore[arg-type]
+                binding_source=source,
                 source_box=SourceBox(page=0, box=[0, 0, 500, 500]),
             )
             for i in ids
