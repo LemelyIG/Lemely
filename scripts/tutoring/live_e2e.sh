@@ -107,6 +107,12 @@ if [ "$mode" = "dedicated" ]; then
     -c "CREATE DATABASE $E2E_DB"
   export LEMELY_DATABASE__URL="postgresql+psycopg://postgres:postgres@$PG_BASE/$E2E_DB"
   database="$E2E_DB"
+  # seed_e2e.py refuses to grade without verified grade thresholds, and they are
+  # ingested from the network (scripts/ingest_thresholds.py), not seeded. Migrate
+  # the dedicated database, then copy those reference rows from the dev database.
+  "$PY" -m alembic upgrade head
+  pg_dump --data-only --table=component_thresholds --table=option_thresholds \
+    "$MAINTENANCE_URL" | psql "postgresql://postgres:postgres@$PG_BASE/$E2E_DB" -v ON_ERROR_STOP=1 -q
 fi
 
 echo "live_e2e.sh: kind=$kind mode=$mode database=$database tree=$ROOT lock-owner=$lock_owner"
