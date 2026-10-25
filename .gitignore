@@ -163,3 +163,6 @@ BUILD/accuracy-runs/claude-c-reference/
 # student answers), pins and their caches. Student data: never committed.
 BUILD/accuracy-runs/**/real-*/
 BUILD/accuracy-runs/*/cache/*-real-*/
+
+# Sub-project C live probes: caches and outputs hold reader replies (student answers).
+BUILD/accuracy-runs/claude-c-probe-*/
