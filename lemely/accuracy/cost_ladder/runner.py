@@ -1484,6 +1484,20 @@ def run_baseline(
                 )
                 for index in (1, 2)
             ]
+            # A failed pinned script scores 0 on every leaf and would inflate the floor, which
+            # the judges then treat as allowed noise: never compute a floor from incomplete runs.
+            failed = [
+                f"{AA_LABEL} real-{i}:{s.key} ({s.incomplete})"
+                for i, run in enumerate(aa_runs, start=1)
+                for s in run
+                if s.incomplete
+            ]
+            if failed:
+                raise LadderStateError(
+                    f"the marking-only A/A runs are incomplete: {'; '.join(failed)}. No "
+                    "real_marking_aa_floor was written; re-run `baseline --split real "
+                    "--restart-baseline`."
+                )
             # The mean of the per-repeat absolute differences, not the absolute mean difference:
             # two repeats whose noise cancels cannot produce a floor near 0.
             marking_floor = sum(
@@ -1874,7 +1888,8 @@ def run_screen(
             verdict,
             notes=(
                 *verdict.notes,
-                f"real upstream pinned from {against} ({pinned_count} tags replayed); {basis}; "
+                f"real upstream pinned from {against} ({pinned_count} stage tags not live, "
+                f"replayed where the rung called them); {basis}; "
                 "real latency excludes the replayed upstream",
             ),
         )

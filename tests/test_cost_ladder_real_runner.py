@@ -139,7 +139,9 @@ class _Harness:
         raise_type: type[BaseException] = RuntimeError,
         leak_upstream: bool = False,
         leak_orphan: bool = False,
+        raise_in_pinned: tuple[str, ...] = (),
     ) -> None:
+        self.raise_in_pinned = raise_in_pinned
         self.leak_upstream = leak_upstream
         self.leak_orphan = leak_orphan
         self.raise_message = raise_message
@@ -171,7 +173,7 @@ class _Harness:
         if self.leak_orphan:  # a live call made outside any script
             self.records.append(replace(_rec(script.key, 0.002, tag="extraction"), case_key=None))
         self.records.append(_rec(script.key, self.usd))
-        if script.key in self.raise_for:
+        if script.key in self.raise_for or (pinned_run and script.key in self.raise_in_pinned):
             raise self.raise_type(self.raise_message)
         for qid in self.escalate:
             self.records.append(_rec(script.key, 0.02, tag="escalation", qid=qid))
@@ -1350,3 +1352,22 @@ def test_run_real_refuses_a_pin_replay_on_a_bypass_client(
     with pytest.raises(ValueError, match="pin_from"):
         runner.run_real("x", {}, cache_mode="read_write", live_tags=("correction",), **kw)
     assert h.calls == [] and h.clients == []
+
+
+def test_incomplete_marking_aa_writes_no_floor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _Harness(monkeypatch, raise_in_pinned=("b",))
+    out = tmp_path / "out"
+    with pytest.raises(LadderStateError, match=r"baseline_aa real-1:b \(RuntimeError\)"):
+        runner.run_baseline(
+            out_dir=out,
+            settings=Settings(),
+            split="real",
+            real_scripts=_scripts(tmp_path),
+            max_run_usd=CAPS,
+        )
+    floors_path = out / runner.AA_FLOOR_FILE
+    assert not floors_path.exists() or "real_marking_aa_floor" not in json.loads(
+        floors_path.read_text()
+    )

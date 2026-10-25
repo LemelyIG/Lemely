@@ -321,7 +321,8 @@ def main(argv: list[str] | None = None) -> int:
             "comma-separated task tags called live; all others replay the baseline cache. "
             "On the real split the other tags replay the --against rung's pinned real cache "
             "(a tag also makes every later stage live), and scan_metadata makes the run "
-            "fully live"
+            "fully live. With --split both, a tag outside the real stages (dev-only) is "
+            "refused for the real runs"
         ),
     )
     screen.add_argument("--judge", choices=("cost", "accuracy", "record"), default="cost")
