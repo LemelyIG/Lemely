@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import statistics
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
@@ -67,6 +68,14 @@ class BoxStats:
     by_convention: dict[str, int] = field(default_factory=dict)
     ambiguous_kept: int = 0
     dropped: int = 0
+    #: Boxes that were empty, not four numbers, or on a page that was not sent.
+    malformed: int = 0
+    #: Undecided boxes before the reply's first decided pixel box, and how they were
+    #: resolved: read as 0-1000, dropped, or kept as pixels.
+    prefix_boxes: int = 0
+    prefix_norm: int = 0
+    prefix_dropped: int = 0
+    prefix_kept: int = 0
     mixed_reply: bool = False
     norm_reply: bool = False
 
@@ -80,6 +89,11 @@ class BoxStats:
             "norm_xyxy": self.by_convention.get("norm_xyxy", 0),
             "ambiguous_kept": self.ambiguous_kept,
             "dropped": self.dropped,
+            "malformed": self.malformed,
+            "prefix_boxes": self.prefix_boxes,
+            "prefix_norm": self.prefix_norm,
+            "prefix_dropped": self.prefix_dropped,
+            "prefix_kept": self.prefix_kept,
             "mixed_reply": self.mixed_reply,
             "norm_reply": self.norm_reply,
         }
@@ -194,7 +208,8 @@ def _collect(data: object, sizes: Sequence[tuple[int, int]]) -> tuple[list[_Ref]
             unplaceable += 1
             _drop(holder)
             continue
-        coords = [float(v) for v in box if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        numbers = [_number(v) for v in box]
+        coords = [v for v in numbers if v is not None]
         if len(box) != 4 or len(coords) != 4:
             unplaceable += 1
             _drop(holder)
@@ -204,9 +219,55 @@ def _collect(data: object, sizes: Sequence[tuple[int, int]]) -> tuple[list[_Ref]
     return refs, unplaceable
 
 
+def _number(value: object) -> float | None:
+    """``value`` as a finite number, or None. Numeric strings count, as in ``_coerce_box``."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value)
+        except ValueError:
+            return None
+    else:
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _drop(holder: dict[str, object]) -> None:
     """Take a box out of the reply: an empty list is no box to the parser (needs four numbers)."""
     holder[_KEY] = []
+
+
+def _prefix_plan(
+    refs: Sequence[_Ref],
+    options: Sequence[Sequence[Convention]],
+    evidence: set[Convention],
+    stats: BoxStats,
+) -> dict[int, Convention | None]:
+    """The convention (None: drop) for each undecided box before the first decided pixel box.
+
+    A reply that starts in 0-1000 and then drifts to pixels is the commonest drift: its
+    first boxes fit every convention, so they would be read as pixels and land shrunk
+    towards the top-left. They are told from a pure pixel reply by their reach: pixels
+    go past 1000 on a tall page within a few boxes, so a prefix of at least
+    ``_MIN_BOXES_FOR_NORM_REPLY`` boxes that never does is 0-1000. Its axis order is read
+    from the prefix's labels (``_norm_order``), and the prefix is dropped when that is
+    unclear. A shorter prefix, or one that reaches past 1000, stays as the reply's pixels.
+    """
+    if len(evidence) != 1 or not next(iter(evidence)).startswith("pixel"):
+        return {}
+    first = next(i for i, opts in enumerate(options) if len(opts) == 1)
+    stats.prefix_boxes = first
+    if first == 0:
+        return {}
+    head = refs[:first]
+    tall = all(max(ref.width, ref.height) >= _MIN_PAGE_EDGE_FOR_NORM_REPLY for ref in head)
+    if first >= _MIN_BOXES_FOR_NORM_REPLY and tall and all(max(ref.coords) <= NORM for ref in head):
+        order = _norm_order([ref for ref in head if ref.is_label])
+        return dict.fromkeys(range(first), order)
+    return {i: next(iter(evidence)) for i in range(first)}
 
 
 def convert_reply(text: str, sizes: Sequence[tuple[int, int]]) -> tuple[str, BoxStats]:
@@ -235,7 +296,7 @@ def convert_reply(text: str, sizes: Sequence[tuple[int, int]]) -> tuple[str, Box
     except ValueError:
         return text, stats
     refs, unplaceable = _collect(data, sizes)
-    stats.dropped += unplaceable
+    stats.malformed = unplaceable
     stats.boxes = len(refs) + unplaceable
     if not refs:
         return (text, stats) if not unplaceable else (json.dumps(data), stats)
@@ -257,9 +318,13 @@ def convert_reply(text: str, sizes: Sequence[tuple[int, int]]) -> tuple[str, Box
             stats.norm_reply = True
             reply_default = _norm_order([ref for ref in refs if ref.is_label])
 
-    for ref, opts in zip(refs, options, strict=True):
+    prefix = _prefix_plan(refs, options, evidence, stats)
+
+    for index, (ref, opts) in enumerate(zip(refs, options, strict=True)):
         chosen: Convention | None = None
-        if len(opts) == 1:
+        if index in prefix:
+            chosen = prefix[index]
+        elif len(opts) == 1:
             chosen = opts[0]
         elif opts and reply_default in opts:
             chosen = reply_default
@@ -267,8 +332,15 @@ def convert_reply(text: str, sizes: Sequence[tuple[int, int]]) -> tuple[str, Box
         box = _canonical(chosen, ref.coords, ref.width, ref.height) if chosen else None
         if chosen is None or box is None:
             stats.dropped += 1
+            if index in prefix:
+                stats.prefix_dropped += 1
             _drop(ref.holder)
             continue
         stats.by_convention[chosen] = stats.by_convention.get(chosen, 0) + 1
+        if index in prefix:
+            if chosen.startswith("norm"):
+                stats.prefix_norm += 1
+            else:
+                stats.prefix_kept += 1
         ref.holder[_KEY] = box
     return json.dumps(data), stats

@@ -192,6 +192,12 @@ class ClaudeProvider:
         """
         if images is None:
             images = self._fit(req, inline=True).images if req.images else ()
+        # The request labels its pages with their sizes (``complete``); so does its count.
+        sizes = (
+            tuple(box_convention.image_size(data) for data in images)
+            if req.box_convention is not None and images
+            else None
+        )
         try:
             return self._adapter.count_tokens(
                 model=req.model,
@@ -202,6 +208,7 @@ class ClaudeProvider:
                 image_file_ids=file_ids,
                 documents=documents,
                 cache_plan=req.cache_plan,
+                page_sizes=sizes,
             )
         except ExternalServiceError:
             return None
@@ -326,7 +333,11 @@ class ClaudeProvider:
         if sizes is not None:
             text, found = box_convention.convert_reply(text, sizes)
             log.info(
-                "box_convention", tag=req.task_tag, version=req.box_convention, **found.log_fields()
+                "box_convention",
+                tag=req.task_tag,
+                version=req.box_convention,
+                page_sizes=[list(size) for size in sizes],
+                **found.log_fields(),
             )
         return ProviderReply(
             text=text,

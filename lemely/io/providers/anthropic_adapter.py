@@ -634,6 +634,7 @@ class AnthropicAdapter:
         image_file_ids: Sequence[str] = (),
         documents: Sequence[DocumentBlockParam] = (),
         cache_plan: CachePlan | None = None,
+        page_sizes: Sequence[tuple[int, int]] | None = None,
     ) -> int:
         """Input tokens the request would bill, from the free count endpoint.
 
@@ -648,6 +649,7 @@ class AnthropicAdapter:
             images=images,
             image_file_ids=image_file_ids,
             cache_plan=cache_plan,
+            page_sizes=page_sizes,
         )
         try:
             counted = self._client.messages.count_tokens(

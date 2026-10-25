@@ -111,7 +111,29 @@ class PixelToNormalisedTests(unittest.TestCase):
     def test_a_box_on_a_page_that_was_not_sent_is_dropped(self) -> None:
         text, stats = convert_reply(_reply([1, 2, 30, 40], page=3), [_PORTRAIT])
         self.assertEqual(_boxes(text), [[]])
-        self.assertEqual(stats.dropped, 1)
+        self.assertEqual((stats.malformed, stats.dropped), (1, 0))
+
+    def test_empty_and_malformed_boxes_are_counted_apart_from_convention_drops(self) -> None:
+        reply = json.dumps(
+            {
+                "items": [
+                    {"type": "answer", "page": 0, "box": []},
+                    {"type": "answer", "page": 0, "box": [1, 2, 3]},
+                    {"type": "answer", "page": 0, "box": [3000, 3000, 4000, 4000]},
+                    {"type": "answer", "page": 0, "box": [777, 660, 1554, 1100]},
+                ]
+            }
+        )
+        _, stats = convert_reply(reply, [_PORTRAIT])
+        self.assertEqual((stats.boxes, stats.malformed, stats.dropped), (4, 2, 1))
+        self.assertEqual(stats.log_fields()["malformed"], 2)
+
+    def test_numeric_strings_and_floats_are_read_as_numbers(self) -> None:
+        text, stats = convert_reply(_reply(["777", 660.0, "1554", 1100]), [_PORTRAIT])  # type: ignore[list-item]
+        self.assertEqual(_boxes(text), [[300, 500, 500, 1000]])
+        self.assertEqual(stats.malformed, 0)
+        _, bad = convert_reply(_reply(["a", 1, 2, 3]), [_PORTRAIT])  # type: ignore[list-item]
+        self.assertEqual(bad.malformed, 1)
 
 
 class DriftTests(unittest.TestCase):
@@ -178,6 +200,45 @@ class DriftTests(unittest.TestCase):
         text, stats = convert_reply(_reply([100, 100, 300, 400], [100, 500, 300, 700]), [_PORTRAIT])
         self.assertFalse(stats.norm_reply)
         self.assertEqual(_boxes(text)[0], [45, 64, 182, 193])
+
+    def _prefix_reply(self, prefix: list[list[float]], labels: int = 0) -> str:
+        """``prefix`` boxes, then pixel boxes the first of which only fits pixel xyxy."""
+        return _reply(*prefix, [100, 1800, 600, 1900], [100, 1900, 600, 2000], labels=labels)
+
+    def test_a_zero_to_1000_prefix_before_pixels_is_read_as_0_1000(self) -> None:
+        rows = [(100, 220), (250, 370), (400, 520), (550, 670), (700, 820), (850, 960)]
+        prefix = [[top, 40, bottom, 120] for top, bottom in rows]  # yxyx; labels at the left
+        text, stats = convert_reply(self._prefix_reply(prefix, labels=6), [_PORTRAIT])
+        self.assertEqual(_boxes(text)[0], [100, 40, 220, 120])
+        self.assertEqual(
+            (stats.prefix_boxes, stats.prefix_norm, stats.prefix_dropped, stats.prefix_kept),
+            (6, 6, 0, 0),
+        )
+        self.assertEqual(_boxes(text)[6], [818, 64, 864, 386])
+        self.assertEqual(stats.by_convention["pixel_xyxy"], 2)
+
+    def test_a_zero_to_1000_prefix_with_no_clear_order_is_dropped_not_shrunk(self) -> None:
+        rows = [(100, 220), (250, 370), (400, 520), (550, 670), (700, 820), (850, 960)]
+        prefix = [[top, 400, bottom, 520] for top, bottom in rows]
+        text, stats = convert_reply(self._prefix_reply(prefix, labels=6), [_PORTRAIT])
+        self.assertEqual(_boxes(text)[:6], [[]] * 6)
+        self.assertEqual((stats.prefix_boxes, stats.prefix_dropped, stats.prefix_norm), (6, 6, 0))
+
+    def test_a_prefix_that_reaches_past_1000_is_pixels(self) -> None:
+        prefix = [[100, 100 * i, 300, 100 * i + 50] for i in range(1, 6)] + [[100, 1200, 300, 1250]]
+        text, stats = convert_reply(self._prefix_reply(prefix), [_PORTRAIT])
+        self.assertEqual(stats.prefix_kept, 6)
+        self.assertEqual(_boxes(text)[0], [45, 64, 68, 193])
+        self.assertEqual(stats.prefix_norm + stats.prefix_dropped, 0)
+
+    def test_a_short_prefix_stays_pixels_and_is_counted(self) -> None:
+        text, stats = convert_reply(self._prefix_reply([[100, 100, 300, 400]]), [_PORTRAIT])
+        self.assertEqual(_boxes(text)[0], [45, 64, 182, 193])
+        self.assertEqual((stats.prefix_boxes, stats.prefix_kept), (1, 1))
+
+    def test_a_pure_pixel_reply_has_no_prefix(self) -> None:
+        _, stats = convert_reply(_reply([100, 1800, 600, 1900], [100, 100, 300, 400]), [_PORTRAIT])
+        self.assertEqual(stats.prefix_boxes, 0)
 
     def test_the_event_fields_are_counts_only(self) -> None:
         _, stats = convert_reply(
@@ -287,6 +348,33 @@ class PageLabelTests(unittest.TestCase):
     def test_sizes_that_do_not_match_the_pictures_are_refused(self) -> None:
         with self.assertRaises(ProviderError):
             labelled_pictures(self._blocks(2), [(1, 1)])
+
+
+class CountTokensTests(unittest.TestCase):
+    def test_the_preflight_count_labels_the_pages_with_their_sizes(self) -> None:
+        from lemely.io.llm.claude_provider import ClaudeProvider
+        from lemely.io.providers.anthropic_adapter import AnthropicAdapter
+
+        fake = _FakeAnthropic()
+        provider = ClaudeProvider(AnthropicAdapter(fake), make_settings(tempfile.mkdtemp()))  # type: ignore[arg-type]
+        req = LLMRequest(
+            model=_HAIKU, task_tag="extraction", system="s", prompt="p",
+            response_schema=None, box_convention="bx1",
+        )  # fmt: skip
+        provider.count_tokens(req, images=(_png(30, 40), _png(50, 60)))
+        content = fake.messages.count_calls[0]["messages"][0]["content"]
+        self.assertEqual(
+            [b["text"] for b in content if b["type"] == "text" and b["text"].startswith("Page")],
+            ["Page index 0 (30 x 40 px):", "Page index 1 (50 x 60 px):"],
+        )
+        plain = LLMRequest(model=_HAIKU, task_tag="x", system="s", prompt="p", response_schema=None)
+        provider.count_tokens(plain, images=(_png(30, 40), _png(50, 60)))
+        labels = [
+            b["text"]
+            for b in fake.messages.count_calls[1]["messages"][0]["content"]
+            if b["type"] == "text" and b["text"].startswith("Page")
+        ]
+        self.assertEqual(labels, ["Page index 0:", "Page index 1:"])
 
 
 class _Base(unittest.TestCase):
