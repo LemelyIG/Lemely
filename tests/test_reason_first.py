@@ -18,12 +18,13 @@ from lemely.core.schemas import (
     PointVerdictReasoned,
     marker_response_schema,
 )
-from lemely.io.correction_ai import AICorrector, _verdict_checked
+from lemely.io.correction_ai import AICorrector, _verdict_checked, correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.io.prompts.correction_ai import build_marker_user_prompt
 from lemely.io.providers.claude_schema import prompt_json_for, sendable_schema
 from lemely.runtime.errors import ConfigError
 from tests.gemini_fakes import fake_genai_client, make_settings
+from tests.test_escalation_cap import _SCHEME
 
 _REPLY_ORDER = [
     "point_verdicts",
@@ -227,13 +228,30 @@ def test_corrector_sends_the_reasoned_schema_only_when_on() -> None:
     assert client.generate_structured.call_args.kwargs["response_schema"] is AIMarkResponse
 
 
-def test_corrector_refuses_reason_first_with_citations_at_the_point_of_use() -> None:
+def _conflicted_client() -> GeminiClient:
     client = _client(correction_reason_first=True)
     client._settings.gemini.__dict__["correction_citations"] = (
         True  # model_copy skips the validator
     )
+    return client
+
+
+def test_corrector_refuses_reason_first_with_citations_at_the_point_of_use() -> None:
     with pytest.raises(ConfigError):
-        AICorrector(client).mark_question(_two_points(), "a")
+        AICorrector(_conflicted_client())
+
+
+def test_correct_paper_raises_the_conflict_rather_than_zeroing_the_leaves() -> None:
+    with pytest.raises(ConfigError):
+        correct_paper(_SCHEME, {"1a": "x", "2a": "y"}, gemini_client=_conflicted_client())
+
+
+def test_sum_check_fixes_matched_ids_even_when_the_sum_agrees() -> None:
+    reply = _reply(1, _verdicts(p1="withheld", p2="awarded")).model_copy(
+        update={"matched_point_ids": ["p1"]}
+    )
+    out = _verdict_checked(_two_points(), reply)
+    assert (out.awarded_marks, out.matched_point_ids) == (1, ["p2"])
 
 
 def test_corrector_sum_checks_first_pass_and_retry() -> None:

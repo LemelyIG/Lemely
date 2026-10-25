@@ -103,7 +103,9 @@ def _verdict_checked(question: Question, reply: AIMarkResponse) -> AIMarkRespons
         return reply
     totals = _awarded_from_verdicts(question, reply.point_verdicts)
     if totals.capped == reply.awarded_marks:
-        return reply
+        if set(reply.matched_point_ids) == set(totals.matched_point_ids):
+            return reply
+        return reply.model_copy(update={"matched_point_ids": totals.matched_point_ids})
     log.info(
         "reason_first_sum_corrected",
         question_id=question.id,
@@ -475,6 +477,8 @@ class AICorrector:
     ) -> None:
         self._client = gemini_client
         self._mark_scheme = mark_scheme
+        # Fails the run here: raised per leaf, ``correct_paper`` would turn it into zeros.
+        self._reason_first()
         #: Built once per value of ``reader_describes_drawings``, not once per leaf.
         self._prefixes: dict[bool, SharedPrefix] = {}
         #: The model whose response the last :meth:`mark_question` returned (the
