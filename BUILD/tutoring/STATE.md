@@ -16,8 +16,9 @@ Phases 0-2 DONE (recon, brainstorm LOCKED, ADRs, SPEC rev 3, threat model, plan 
 | T00 | DONE `ab28fce0` (+ export fix `7c5fd10e`, live_e2e fix `864bf9c9`) |
 | T16 | DONE `dc4dea03` |
 | I0b | DONE: live mode `dedicated`; baseline in `handoffs/I0-baseline.md` |
-| W1 (T01, T02, T03, T04) | next |
-| W2..W9, IF | not started |
+| W1 (T01, T02, T03, T04) | DONE; I1 hot patches `553da773`; gate G1 green at `2d216d32` (see `handoffs/W1.md`); draft PR opened |
+| W2 (T05, T06, T07, T08) | next |
+| W3..W9, IF | not started |
 
 Live mode: dedicated. Playwright chromium-1234 installed. `npm ci` needs `PUPPETEER_SKIP_DOWNLOAD=1`.
 
