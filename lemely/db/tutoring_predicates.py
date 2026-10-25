@@ -19,9 +19,11 @@ Two kinds of fragment:
   ``subjects`` qualifies (none of those has such a column). Each is wrapped in
   parentheses so it composes with ``AND``/``OR`` safely.
 * **Builders** take the column or bind parameter to compare and return a
-  fragment. Arguments must be a plain or table-qualified identifier
-  (``tp.user_id``) or a named bind parameter (``:caller_id``); anything else
-  raises :class:`ValueError`, so a builder can never splice caller text into SQL.
+  fragment. The block builders accept only a table-qualified column
+  (``tp.user_id``) or a named bind parameter (``:caller_id``): an unqualified
+  name such as ``removed_at`` would bind to the subquery's own
+  ``tutoring_blocks`` row and silently match. Anything else raises
+  :class:`ValueError`, so a builder can never splice caller text into SQL.
 
 Every time comparison uses the database ``now()`` (SPEC §0: no app clock in a
 guard), which inside a transaction is that transaction's start time.
@@ -73,7 +75,9 @@ OUTCOME_MEMBERSHIP_SQL: Final = (
 )
 
 _IDENTIFIER: Final = r"[A-Za-z_][A-Za-z0-9_]*"
-_COLUMN_OR_PARAM: Final = re.compile(rf"(?:{_IDENTIFIER}\.)?{_IDENTIFIER}|:{_IDENTIFIER}")
+#: ``alias.column`` or ``:bind``. Deliberately no bare ``column``: inside the
+#: block subqueries a bare name resolves against ``tutoring_blocks`` first.
+_QUALIFIED_OR_PARAM: Final = re.compile(rf"{_IDENTIFIER}\.{_IDENTIFIER}|:{_IDENTIFIER}")
 _ALIAS: Final = re.compile(_IDENTIFIER)
 
 #: Alias of ``tutoring_blocks`` inside the block subqueries. A caller argument
@@ -82,9 +86,11 @@ _BLOCK_ALIAS: Final = "tutoring_block_pred"
 
 
 def _operand(value: str, *, name: str) -> str:
-    """Return ``value`` if it is a (qualified) column or a named bind parameter."""
-    if not _COLUMN_OR_PARAM.fullmatch(value):
-        raise ValueError(f"{name} must be a column reference or a :bind parameter, got {value!r}")
+    """Return ``value`` if it is a table-qualified column or a named bind parameter."""
+    if not _QUALIFIED_OR_PARAM.fullmatch(value):
+        raise ValueError(
+            f"{name} must be a qualified column (alias.column) or a :bind parameter, got {value!r}"
+        )
     if value.split(".", 1)[0] == _BLOCK_ALIAS:
         raise ValueError(f"{name} may not use the reserved alias {_BLOCK_ALIAS!r}")
     return value

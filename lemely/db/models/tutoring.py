@@ -27,8 +27,9 @@ user who owns a tutor profile or is the subject of a booking cannot be deleted
 
 **Timestamps.** Every table has ``created_at``/``updated_at`` through
 :class:`TimestampMixin` unless SPEC §a.2 says otherwise: ``tutor_subjects`` has
-none, and the three append-only logs (``tutor_approval_events``,
-``tutoring_admin_access``, ``parent_link_events``) have ``created_at`` only.
+none, and the four append-only logs (``tutor_approval_events``,
+``tutoring_admin_access``, ``parent_link_events``, ``tutor_access_audit``) have
+``created_at`` only.
 """
 
 from __future__ import annotations
@@ -114,6 +115,7 @@ class TutorProfile(TimestampMixin, Base):
             ),
             name="first_name_chars",
         ),
+        sa.CheckConstraint("char_length(public_last_initial) = 1", name="last_initial_len"),
         sa.CheckConstraint("char_length(btrim(headline)) >= 1", name="headline_not_blank"),
         sa.CheckConstraint("char_length(bio) <= 2000", name="bio_len"),
         sa.CheckConstraint(
@@ -369,7 +371,15 @@ class TutoringAdminAccess(Base):
     """
 
     __tablename__ = "tutoring_admin_access"
-    __table_args__ = (sa.Index("ix_tutoring_admin_access_tutor", "tutor_profile_id", "created_at"),)
+    __table_args__ = (
+        sa.Index("ix_tutoring_admin_access_tutor", "tutor_profile_id", "created_at"),
+        # Serves the SET NULL on user delete, so deleting a user never scans the log.
+        sa.Index(
+            "ix_tutoring_admin_access_admin_user_id",
+            "admin_user_id",
+            postgresql_where=sa.text("admin_user_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     admin_user_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -939,11 +949,12 @@ class TutorDataGrant(TimestampMixin, Base):
     )
 
 
-class TutorAccessAudit(TimestampMixin, Base):
+class TutorAccessAudit(Base):
     """Append-only record of every tutor read of granted data, visible to the student.
 
     ``id`` is never exposed (ID-5). ``tutor_public_name`` is a snapshot, so the
-    log still reads correctly after the profile changes.
+    log still reads correctly after the profile changes. Append-only, so it has
+    ``created_at`` and no ``updated_at`` (SPEC §a.2).
     """
 
     __tablename__ = "tutor_access_audit"
@@ -990,6 +1001,7 @@ class TutorAccessAudit(TimestampMixin, Base):
     accessed_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
+    created_at: Mapped[datetime] = _created_at()
 
 
 # ---------------------------------------------------------------------------

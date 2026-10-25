@@ -559,6 +559,25 @@ UPDATE review_queue SET status = 'dismissed' WHERE status = 'withdrawn';
 
 The safe path is always a forward fix on top of `0039`, not a rollback under it.
 
+**Rolling back past the tutoring marketplace (migrations `0044_tutoring_enums_ext` to
+`0050_tutoring_safety`) has the same shape.** Pre-0044 code cannot read the eight
+tutoring notification types (`booking_request`, `booking_update`, `booking_note`,
+`tutor_access`, `tutor_review`, `tutor_listing`, `parent_link`, `tutoring_report`), so
+anyone holding one gets a `LookupError` (500) opening their inbox. If a Cloud Run
+revision rollback across that release is unavoidable, run this **before** rolling back:
+
+```sql
+DELETE FROM notifications WHERE type IN ('booking_request','booking_update','booking_note','tutor_access',
+  'tutor_review','tutor_listing','parent_link','tutoring_report');
+```
+
+Tutoring profiles, bookings and grants are then invisible, not lost, until the
+roll-forward. A schema downgrade past `0044` also drops the eight tutoring
+notification toggles from `notification_preferences`. On the roll-forward they come
+back as `true` for everyone, so users who had opted out of one of those notices start
+receiving it again. Downgrading past `0049` destroys the tutor access audit log:
+snapshot `tutor_access_audit` first. As with `0039`, the safe path is a forward fix.
+
 ### 5.8 Answer binding: the settings, what changes on first start, the way back
 
 Marking a scanned script now ties each answer to its question by the question

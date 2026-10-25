@@ -23,8 +23,8 @@ EARLIER_TABLES = ("tutor_profiles", "tutor_subjects", "tutor_availability_rules"
 
 
 def test_spec_names_objects_for_these_tables() -> None:
-    """Non-vacuity: SPEC §a.2 names 3 objects on these tables."""
-    assert len(spec_names_for(TABLES)) >= 3
+    """Non-vacuity: SPEC §a.2 names 6 objects on these tables."""
+    assert len(spec_names_for(TABLES)) >= 6
 
 
 def test_constraints_present_by_name(migrated_sessionmaker: sessionmaker[Session]) -> None:

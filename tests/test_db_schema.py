@@ -124,11 +124,12 @@ EXPECTED_TABLES = {
 # overwritten wholesale on every stamp and ``stamped_at`` already answers
 # "when was this last touched" — see
 # ``lemely/db/models/auth_cooldowns.py``'s module docstring.
-# The four tutoring tables follow docs/tutoring/SPEC.md §a.2 as written:
+# The five tutoring tables follow docs/tutoring/SPEC.md §a.2 as written:
 # ``tutor_subjects`` is a pure (tutor, subject) key with no timestamps, and the
-# three append-only logs (``tutor_approval_events``, ``tutoring_admin_access``,
-# ``parent_link_events``) carry ``created_at`` only, because no row is ever
-# updated.
+# four append-only logs (``tutor_approval_events``, ``tutoring_admin_access``,
+# ``parent_link_events``, ``tutor_access_audit``) carry ``created_at`` only,
+# because no row is ever updated
+# (``tests/test_db_tutoring_schema.py`` asserts they have no ``updated_at``).
 TABLES_WITHOUT_TIMESTAMPS = {
     "otp_challenges",
     "auth_cooldowns",
@@ -136,6 +137,7 @@ TABLES_WITHOUT_TIMESTAMPS = {
     "tutor_approval_events",
     "tutoring_admin_access",
     "parent_link_events",
+    "tutor_access_audit",
 }
 
 

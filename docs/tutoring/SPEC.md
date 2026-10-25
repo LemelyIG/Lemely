@@ -108,10 +108,10 @@ pinned equal to the Python enums by a test (precedent: `PaperOrigin` ↔
 | `id` | uuid | PK | `pk_tutor_profiles` |
 | `user_id` | uuid | NOT NULL | FK `users.id` **ON DELETE RESTRICT**; `uq_tutor_profiles_user_id`. Service checks `users.role = teacher` at create. |
 | `public_first_name` | varchar(40) | NOT NULL | **PUBLIC, PII**. `ck_tutor_profiles_first_name_len`: `char_length(btrim(public_first_name)) BETWEEN 1 AND 40`. `ck_tutor_profiles_first_name_chars`: `public_first_name !~ '[0-9./@:]' AND public_first_name !~ '[[:cntrl:]]'`. The service enforces the full allowlist (SC-25): Unicode letters (Arabic included), space, hyphen, apostrophe; no bidi controls U+202A–202E, U+2066–2069 (`core.tutor_directory.validate_public_name`) |
-| `public_last_initial` | varchar(1) | NULL | **PUBLIC, PII**. NULL or one character; the service requires `str.isalpha()` |
-| `headline` | varchar(160) | NOT NULL | **PUBLIC** ("short bio" on the card). `char_length(btrim(headline)) >= 1` |
-| `bio` | text | NOT NULL DEFAULT `''` | logged-in only. `char_length(bio) <= 2000` |
-| `qualification_note` | text | NULL | logged-in only. `char_length <= 1000` |
+| `public_last_initial` | varchar(1) | NULL | **PUBLIC, PII**. NULL or one character: `ck_..._last_initial_len`: `char_length(public_last_initial) = 1` (NULL passes); the service requires `str.isalpha()` |
+| `headline` | varchar(160) | NOT NULL | **PUBLIC** ("short bio" on the card). `ck_..._headline_not_blank`: `char_length(btrim(headline)) >= 1` |
+| `bio` | text | NOT NULL DEFAULT `''` | logged-in only. `ck_..._bio_len`: `char_length(bio) <= 2000` |
+| `qualification_note` | text | NULL | logged-in only. `ck_..._qualification_note_len`: `char_length(qualification_note) <= 1000` |
 | `offers_virtual`, `offers_in_person`, `offers_other` | boolean | NOT NULL DEFAULT false | **PUBLIC**. `ck_..._has_mode`: at least one true |
 | `other_mode_note` | varchar(200) | NULL | logged-in only, **moderated** (F14). `ck_..._other_note`: `offers_other OR other_mode_note IS NULL` |
 | `country_code` | char(2) | NOT NULL DEFAULT `'EG'` | |
@@ -125,8 +125,8 @@ pinned equal to the Python enums by a test (precedent: `PaperOrigin` ↔
 | `closed_at` | timestamptz | NULL | set with `listing_state = 'closed'` (A12). `ck_..._closed`: `(listing_state = 'closed') = (closed_at IS NOT NULL)` |
 | `indexable` | boolean | NOT NULL DEFAULT true | **PUBLIC** (P2 only). Search engines may index this tutor's public card while true (row 17: indexable by default); the tutor opts out on T-16 through T3. Not a moderated field: changing it never sends the profile back to review. Read by the edge worker through P2 (§b.5) |
 | `documents_seen_at` | timestamptz | NULL | set by an approval with `documentsSeen=true`; **cleared** by any evidence upload or delete and by any approval with `documentsSeen=false` (F14). "Documents seen" means only this |
-| `rating_count` | integer | NOT NULL DEFAULT 0 | **distinct students** with a counted review (SC-16). `rating_count >= 0` |
-| `rating_sum` | integer | NOT NULL DEFAULT 0 | sum of each counted student's latest stars. `rating_sum BETWEEN rating_count AND 5 * rating_count` |
+| `rating_count` | integer | NOT NULL DEFAULT 0 | **distinct students** with a counted review (SC-16). `ck_..._rating_count_nonneg`: `rating_count >= 0` |
+| `rating_sum` | integer | NOT NULL DEFAULT 0 | sum of each counted student's latest stars. `ck_..._rating_sum_range`: `rating_sum BETWEEN rating_count AND 5 * rating_count` |
 | `rating_avg` | numeric(3,2) | GENERATED ALWAYS AS (`CASE WHEN rating_count = 0 THEN NULL ELSE round(rating_sum::numeric / rating_count, 2) END`) STORED | filter column |
 | `rank_score` | numeric(7,6) | NOT NULL DEFAULT 4.000000 | written by the service from `core.tutor_ratings.bayesian_score` in the same transaction as any rating change; the default equals the score of zero reviews (prior mean) |
 
@@ -151,9 +151,9 @@ Index `ix_tutor_subjects_subject_code` on `(subject_code, tutor_profile_id)`. No
 |---|---|---|
 | `id` | uuid PK | |
 | `tutor_profile_id` | uuid NOT NULL | FK CASCADE |
-| `iso_weekday` | smallint NOT NULL | `BETWEEN 1 AND 7` (Monday = 1) |
-| `start_minute` | smallint NOT NULL | `BETWEEN 0 AND 1425 AND start_minute % 15 = 0` |
-| `end_minute` | smallint NOT NULL | `BETWEEN 15 AND 1440 AND end_minute % 15 = 0 AND end_minute > start_minute` |
+| `iso_weekday` | smallint NOT NULL | `ck_..._iso_weekday_range`: `BETWEEN 1 AND 7` (Monday = 1) |
+| `start_minute` | smallint NOT NULL | `ck_..._start_minute_range`: `BETWEEN 0 AND 1425 AND start_minute % 15 = 0` |
+| `end_minute` | smallint NOT NULL | `ck_..._end_minute_range`: `BETWEEN 15 AND 1440 AND end_minute % 15 = 0 AND end_minute > start_minute` |
 | exclusion | | `excl_tutor_availability_rules_no_overlap` (§a.4) |
 
 Index `ix_tutor_availability_rules_window` on `(iso_weekday, start_minute, end_minute, tutor_profile_id)`. The exclusion's GiST index (leading `tutor_profile_id`) serves per-tutor reads and the FK. Max 42 rules per tutor. A window crossing midnight is two rules.
@@ -162,11 +162,11 @@ Index `ix_tutor_availability_rules_window` on `(iso_weekday, start_minute, end_m
 | Column | Type | Constraint / note |
 |---|---|---|
 | `id` | uuid PK | |
-| `tutor_profile_id` | uuid NOT NULL | FK CASCADE; index |
+| `tutor_profile_id` | uuid NOT NULL | FK CASCADE; index `ix_tutor_evidence_files_tutor_profile_id` |
 | `storage_path` | varchar(300) NOT NULL | **PII**. `tutor-evidence/{tutor_profile_id}/{uuid}.{ext}` in private bucket `settings.storage.tutor_evidence_bucket` (new). **A path, never a URL** (precedent `users.avatar_path`) |
 | `original_filename` | varchar(200) NOT NULL | **PII**, sanitised |
-| `content_type` | varchar(100) NOT NULL | `IN ('application/pdf','image/jpeg','image/png')`, **set from sniffed magic bytes, never from the declared type** (SC-22) |
-| `size_bytes` | integer NOT NULL | `BETWEEN 1 AND 10485760` |
+| `content_type` | varchar(100) NOT NULL | `ck_..._content_type_allowed`: `IN ('application/pdf','image/jpeg','image/png')`, **set from sniffed magic bytes, never from the declared type** (SC-22) |
+| `size_bytes` | integer NOT NULL | `ck_..._size_bytes_range`: `BETWEEN 1 AND 10485760` |
 | `description` | varchar(200) NULL | passes SC-7 |
 
 Max 5 per tutor. Images are re-encoded with Pillow (a runtime dependency, `pyproject.toml:22`) before storage, which drops EXIF and other metadata. Deleting a row deletes the object after commit (best effort; an orphan is logged with its path).
@@ -176,10 +176,10 @@ Max 5 per tutor. Images are re-encoded with Pillow (a runtime dependency, `pypro
 |---|---|---|
 | `id` | uuid PK | |
 | `tutor_profile_id` | uuid NOT NULL | FK CASCADE |
-| `admin_user_id` | uuid NULL | FK `users.id` SET NULL; index |
+| `admin_user_id` | uuid NULL | FK `users.id` SET NULL; index `ix_tutor_approval_events_admin_user_id` |
 | `decision` | tutorapprovaldecision NOT NULL | |
 | `documents_seen` | boolean NOT NULL DEFAULT false | |
-| `note` | text NULL | admin-internal except rejection/suspension note, shown to the tutor. `char_length <= 2000` |
+| `note` | text NULL | admin-internal except rejection/suspension note, shown to the tutor. `ck_..._note_len`: `char_length(note) <= 2000` |
 | `profile_snapshot` | jsonb NOT NULL | public + logged-in fields as decided |
 | `created_at` | timestamptz NOT NULL DEFAULT now() | no `updated_at` |
 
@@ -189,12 +189,12 @@ Index `ix_tutor_approval_events_tutor` on `(tutor_profile_id, created_at DESC)`.
 | Column | Type | Constraint / note |
 |---|---|---|
 | `id` | uuid PK | |
-| `admin_user_id` | uuid NULL | FK `users.id` SET NULL |
+| `admin_user_id` | uuid NULL | FK `users.id` SET NULL; partial index `ix_tutoring_admin_access_admin_user_id` WHERE `admin_user_id IS NOT NULL`, so deleting a user never scans the log |
 | `action` | tutoringadminaction NOT NULL | `report_thread_view` (A10 on a booking/note target), `evidence_open` (A2 issuing a signed URL) |
 | `tutor_profile_id`, `report_id`, `booking_id`, `evidence_id` | uuid NULL each | plain columns, **no FK**: a log row outlives its targets |
 | `created_at` | timestamptz NOT NULL DEFAULT now() | no `updated_at`; no UPDATE/DELETE path in code |
 
-Index `(tutor_profile_id, created_at)`. Written in the same transaction that loads the thread or signs the URL; a failed insert fails the request (same fail-closed rule as `tutor_access_audit`).
+Index `ix_tutoring_admin_access_tutor` on `(tutor_profile_id, created_at)`. Written in the same transaction that loads the thread or signs the URL; a failed insert fails the request (same fail-closed rule as `tutor_access_audit`).
 
 #### `parent_link_events` (0046) — append-only parent-link history (SC-1, row 14)
 | Column | Type | Constraint / note |
@@ -205,13 +205,13 @@ Index `(tutor_profile_id, created_at)`. Written in the same transaction that loa
 | `event` | parentlinkevent NOT NULL | |
 | `created_at` | timestamptz NOT NULL DEFAULT now() | no `updated_at` |
 
-Index `(child_id, created_at DESC)`, `(parent_id)`. CASCADE (not RESTRICT) because this table records every parent link in the product, not only tutoring ones, and RESTRICT would change deletion behaviour for non-tutoring users.
+Indexes `ix_parent_link_events_child` on `(child_id, created_at DESC)` and `ix_parent_link_events_parent_id` on `(parent_id)`. CASCADE (not RESTRICT) because this table records every parent link in the product, not only tutoring ones, and RESTRICT would change deletion behaviour for non-tutoring users.
 
 #### `email_outbox` (0046) — generic transactional email
 | Column | Type | Constraint / note |
 |---|---|---|
 | `id` | uuid PK | |
-| `recipient_user_id` | uuid NOT NULL | FK `users.id` **ON DELETE CASCADE**; index. The address is resolved from `users.email` **at send time**; the outbox never stores an address (F18, EM-5) |
+| `recipient_user_id` | uuid NOT NULL | FK `users.id` **ON DELETE CASCADE**; index `ix_email_outbox_recipient_user_id`. The address is resolved from `users.email` **at send time**; the outbox never stores an address (F18, EM-5) |
 | `template` | varchar(60) NOT NULL | one of §b.4's templates |
 | `context` | jsonb NOT NULL | validated against the template's typed schema (extra keys rejected, SC-25): ids, tutor public name, subject name, start instant, mode, event. **Never** note text, meeting link, location, an email address |
 | `dedupe_key` | varchar(200) NOT NULL | `uq_email_outbox_dedupe_key`. Inserted with `ON CONFLICT (dedupe_key) DO NOTHING`, so a duplicate never aborts the business transaction (F17) |
@@ -240,20 +240,20 @@ Index `ix_student_tutoring_preferences_opt_out` on `(user_id)` WHERE `outcome_st
 | `tutor_profile_id` | uuid | NOT NULL | FK **RESTRICT** |
 | `student_id` | uuid | NOT NULL | FK `users.id` **RESTRICT**. The **subject** of the booking (role student, checked by service) |
 | `requested_by_user_id` | uuid | NULL | FK `users.id` SET NULL. The **actor** (student or parent) |
-| `requested_by_party` | bookingparty | NOT NULL | `IN ('student','parent')` |
+| `requested_by_party` | bookingparty | NOT NULL | `ck_..._requested_by_party_allowed`: `IN ('student','parent')` |
 | `subject_code` | varchar | NOT NULL | FK `subjects.code` RESTRICT; one of the tutor's subjects (service) |
 | `mode` | tutoringmode | NOT NULL | offered by the tutor (service) |
 | `starts_at` | timestamptz | NOT NULL | must equal an instant produced by `core.booking.bookable_slots` for this tutor (BK-7) |
-| `ends_at` | timestamptz | NOT NULL | `ends_at > starts_at`; `ends_at - starts_at BETWEEN interval '30 minutes' AND interval '4 hours'` |
+| `ends_at` | timestamptz | NOT NULL | `ck_..._duration`, one CHECK holding both conditions: `ends_at > starts_at`; `ends_at - starts_at BETWEEN interval '30 minutes' AND interval '4 hours'` |
 | `slot` | tstzrange | GENERATED ALWAYS AS (`tstzrange(starts_at, ends_at, '[)')`) STORED | exclusion constraints and overlap reads only |
 | `state` | bookingstate | NOT NULL DEFAULT `'requested'` | §a.3 |
-| `meeting_link` | varchar(500) | NULL | **sensitive**. Set at accept for virtual; host allowlist (SC-7); served after accept to participants and linked parents. `meeting_link IS NULL OR mode = 'virtual'` |
-| `location_detail` | varchar(300) | NULL | **PII**. Exact meeting place, set at accept for in-person; passes SC-7. `location_detail IS NULL OR mode = 'in_person'` |
-| `other_mode_note` | varchar(300) | NULL | passes SC-7. `other_mode_note IS NULL OR mode = 'other'` |
+| `meeting_link` | varchar(500) | NULL | **sensitive**. Set at accept for virtual; host allowlist (SC-7); served after accept to participants and linked parents. `ck_..._meeting_link_mode`: `meeting_link IS NULL OR mode = 'virtual'` |
+| `location_detail` | varchar(300) | NULL | **PII**. Exact meeting place, set at accept for in-person; passes SC-7. `ck_..._location_detail_mode`: `location_detail IS NULL OR mode = 'in_person'` |
+| `other_mode_note` | varchar(300) | NULL | passes SC-7. `ck_..._other_mode_note_mode`: `other_mode_note IS NULL OR mode = 'other'` |
 | `decline_reason`, `cancel_reason` | varchar(300) | NULL | free text, pass SC-7, reportable. System reasons are fixed literals stored as written; tutor-facing DTOs show system cancellations as "Cancelled" (SC-11) |
 | `cancelled_by_party` | bookingparty | NULL | |
 | `cancelled_by_user_id` | uuid | NULL | FK SET NULL |
-| `completed_by_party` | bookingparty | NULL | who recorded `completed`: `tutor`, `student`, `parent`, `platform_admin` (SC-17) |
+| `completed_by_party` | bookingparty | NULL | who recorded `completed`: `tutor`, `student`, `parent`, `platform_admin` (SC-17). No CHECK limits this value: only the service guards which party may record an outcome (`completed_ts` below only requires it to be set) |
 | `notes_frozen_at` | timestamptz | NULL | set by a `safety_concern` report from a party (SC-10), cleared at report resolution |
 | `accepted_at`, `declined_at`, `cancelled_at`, `completed_at`, `no_show_marked_at`, `expired_at` | timestamptz | NULL | coherence checks below |
 
@@ -283,11 +283,11 @@ Indexes:
 |---|---|---|
 | `id` | uuid PK | |
 | `booking_id` | uuid NOT NULL | FK `tutor_bookings.id` **RESTRICT** |
-| `author_user_id` | uuid NULL | FK SET NULL; partial index |
-| `author_party` | bookingparty NOT NULL | `IN ('student','tutor')`. Parents never write notes; a parent's `firstNote` is refused with 422 (F19, SC-24) |
-| `body` | text NOT NULL | **PII, safeguarding**. `char_length(btrim(body)) BETWEEN 1 AND 2000`; passes SC-7. Immutable |
+| `author_user_id` | uuid NULL | FK SET NULL; partial index `ix_tutor_booking_notes_author_user_id` |
+| `author_party` | bookingparty NOT NULL | `ck_..._author_party_allowed`: `IN ('student','tutor')`. Parents never write notes; a parent's `firstNote` is refused with 422 (F19, SC-24) |
+| `body` | text NOT NULL | **PII, safeguarding**. `ck_..._body_len`: `char_length(btrim(body)) BETWEEN 1 AND 2000`; passes SC-7. Immutable |
 | `hidden_at` | timestamptz NULL | set by an admin via report resolution |
-| `hidden_by_user_id` | uuid NULL | FK SET NULL; partial index (F34) |
+| `hidden_by_user_id` | uuid NULL | FK SET NULL; partial index `ix_tutor_booking_notes_hidden_by_user_id` (F34) |
 
 Index `ix_tutor_booking_notes_thread` on `(booking_id, created_at, id)`.
 
@@ -296,13 +296,13 @@ Index `ix_tutor_booking_notes_thread` on `(booking_id, created_at, id)`.
 |---|---|---|
 | `id` | uuid PK | plus `uq_tutor_reviews_id_tutor (id, tutor_profile_id)` |
 | `booking_id` | uuid NOT NULL | FK RESTRICT; `uq_tutor_reviews_booking_id` — **one review per booking** |
-| `tutor_profile_id` | uuid NOT NULL | composite FK `(booking_id, tutor_profile_id) → tutor_bookings(id, tutor_profile_id)` (F34) |
-| `student_id` | uuid NOT NULL | composite FK `(booking_id, student_id) → tutor_bookings(id, student_id)`; FK `users.id` RESTRICT; index |
-| `stars` | smallint NOT NULL | `BETWEEN 1 AND 5` |
-| `body` | text NULL | `char_length <= 1000`; moderated; passes SC-7 |
-| `text_state` | moderationstate NOT NULL | `(body IS NULL) = (text_state = 'none')` |
+| `tutor_profile_id` | uuid NOT NULL | composite FK `fk_tutor_reviews_booking_tutor_tutor_bookings`: `(booking_id, tutor_profile_id) → tutor_bookings(id, tutor_profile_id)` (F34) |
+| `student_id` | uuid NOT NULL | composite FK `fk_tutor_reviews_booking_student_tutor_bookings`: `(booking_id, student_id) → tutor_bookings(id, student_id)`; FK `users.id` RESTRICT; index `ix_tutor_reviews_student_id` |
+| `stars` | smallint NOT NULL | `ck_..._stars_range`: `BETWEEN 1 AND 5` |
+| `body` | text NULL | `ck_..._body_len`: `char_length(body) <= 1000`; moderated; passes SC-7 |
+| `text_state` | moderationstate NOT NULL | `ck_..._text_state_matches_body`: `(body IS NULL) = (text_state = 'none')` |
 | `text_moderated_at` | timestamptz NULL | |
-| `text_moderated_by` | uuid NULL | FK SET NULL; partial index (F34) |
+| `text_moderated_by` | uuid NULL | FK SET NULL; partial index `ix_tutor_reviews_text_moderated_by` (F34) |
 | `removed_at` | timestamptz NULL | admin removal (excluded from aggregates and lists) |
 
 Indexes: `ix_tutor_reviews_listing` on `(tutor_profile_id, created_at DESC, id DESC)` WHERE `removed_at IS NULL`; `ix_tutor_reviews_pending` on `(created_at, id)` WHERE `text_state = 'pending' AND removed_at IS NULL`; `ix_tutor_reviews_student_latest` on `(tutor_profile_id, student_id, created_at DESC)` WHERE `removed_at IS NULL` (SC-16 aggregate).
@@ -313,11 +313,11 @@ Service invariants (tested): insert only when the booking is `completed`, `booki
 |---|---|---|
 | `id` | uuid PK | |
 | `review_id` | uuid NOT NULL | FK RESTRICT; `uq_tutor_review_replies_review_id` — **one reply** |
-| `tutor_profile_id` | uuid NOT NULL | composite FK `(review_id, tutor_profile_id) → tutor_reviews(id, tutor_profile_id)`; index |
-| `body` | text NOT NULL | `char_length(btrim(body)) BETWEEN 1 AND 1000`; passes SC-7 |
-| `text_state` | moderationstate NOT NULL DEFAULT `'pending'` | `IN ('pending','approved','rejected')` (moderation approved, row 15b) |
+| `tutor_profile_id` | uuid NOT NULL | composite FK `fk_tutor_review_replies_review_tutor_tutor_reviews`: `(review_id, tutor_profile_id) → tutor_reviews(id, tutor_profile_id)`; index `ix_tutor_review_replies_tutor_profile_id` |
+| `body` | text NOT NULL | `ck_..._body_len`: `char_length(btrim(body)) BETWEEN 1 AND 1000`; passes SC-7 |
+| `text_state` | moderationstate NOT NULL DEFAULT `'pending'` | `ck_..._text_state_allowed`: `IN ('pending','approved','rejected')` (moderation approved, row 15b) |
 | `moderated_at` | timestamptz NULL | |
-| `moderated_by` | uuid NULL | FK SET NULL; partial index |
+| `moderated_by` | uuid NULL | FK SET NULL; partial index `ix_tutor_review_replies_moderated_by` |
 
 Index `ix_tutor_review_replies_pending` on `(created_at, id)` WHERE `text_state = 'pending'`.
 
@@ -329,9 +329,9 @@ Index `ix_tutor_review_replies_pending` on `(created_at, id)` WHERE `text_state 
 | `tutor_profile_id` | uuid NOT NULL | FK RESTRICT; plain index `ix_tutor_data_grants_tutor` (F34) |
 | `scope` | tutorgrantscope NOT NULL DEFAULT `'all_subjects_derived'` | row 3b |
 | `created_at` | timestamptz NOT NULL DEFAULT now() | |
-| `expires_at` | timestamptz NULL | always NULL in v1; `expires_at IS NULL OR expires_at > created_at` |
-| `revoked_at` | timestamptz NULL | `revoked_at IS NULL OR revoked_at >= created_at` |
-| `revoke_reason` | grantrevokereason NULL | `(revoked_at IS NULL) = (revoke_reason IS NULL)` |
+| `expires_at` | timestamptz NULL | always NULL in v1; `ck_..._expires_after_created`: `expires_at IS NULL OR expires_at > created_at` |
+| `revoked_at` | timestamptz NULL | `ck_..._revoked_after_created`: `revoked_at IS NULL OR revoked_at >= created_at` |
+| `revoke_reason` | grantrevokereason NULL | `ck_..._revoke_reason_matches`: `(revoked_at IS NULL) = (revoke_reason IS NULL)` |
 
 Indexes: `uq_tutor_data_grants_live` UNIQUE on `(student_id, tutor_profile_id)` WHERE `revoked_at IS NULL`; `ix_tutor_data_grants_tutor_live` on `(tutor_profile_id, created_at DESC, id)` WHERE `revoked_at IS NULL`; `ix_tutor_data_grants_student` on `(student_id, created_at DESC)`.
 Validity is never a column: `core.tutor_grants.grant_status()` and its SQL mirror (§e.1).
@@ -346,6 +346,7 @@ Validity is never a column: `core.tutor_grants.grant_status()` and its SQL mirro
 | `tutor_public_name` | varchar(60) NOT NULL | snapshot ("Sara M.") |
 | `action` | tutoraccessaction NOT NULL | |
 | `accessed_at` | timestamptz NOT NULL DEFAULT now() | append-only |
+| `created_at` | timestamptz NOT NULL DEFAULT now() | no `updated_at`: append-only, no UPDATE path in code |
 
 Indexes: `ix_tutor_access_audit_student` on `(student_id, accessed_at DESC, id DESC)`; `ix_tutor_access_audit_tutor` on `(tutor_profile_id, accessed_at)` WHERE NOT NULL; `ix_tutor_access_audit_grant_id` on `(grant_id)` WHERE NOT NULL.
 
@@ -354,26 +355,26 @@ Indexes: `ix_tutor_access_audit_student` on `(student_id, accessed_at DESC, id D
 |---|---|---|
 | `id` | uuid PK | |
 | `reporter_user_id` | uuid NULL | FK SET NULL |
-| `reporter_party` | bookingparty NOT NULL | `IN ('student','parent','tutor')` |
+| `reporter_party` | bookingparty NOT NULL | `ck_..._reporter_party_allowed`: `IN ('student','parent','tutor')` |
 | `target_type` | reporttargettype NOT NULL | |
 | `tutor_profile_id`, `review_id`, `reply_id`, `booking_id`, `note_id` | uuid NULL each | FKs **RESTRICT** (targets are never hard-deleted). `ck_tutoring_reports_one_target`: `num_nonnulls(...) = 1`, and the non-null column matches `target_type` |
 | `target_snapshot` | jsonb NOT NULL | **PII, safeguarding**. Copy of the reported content at report time |
 | `reason` | reportreason NOT NULL | |
-| `details` | text NULL | `char_length <= 1000` |
+| `details` | text NULL | `ck_..._details_len`: `char_length(details) <= 1000` |
 | `state` | reportstate NOT NULL DEFAULT `'open'` | |
-| `resolution` | reportresolution NULL | `(state = 'open') = (resolution IS NULL)` |
-| `resolution_note` | text NULL | `char_length <= 1000` |
-| `resolved_by` | uuid NULL | FK SET NULL; partial index (F34) |
+| `resolution` | reportresolution NULL | `ck_..._resolution_matches_state`: `(state = 'open') = (resolution IS NULL)` |
+| `resolution_note` | text NULL | `ck_..._resolution_note_len`: `char_length(resolution_note) <= 1000` |
+| `resolved_by` | uuid NULL | FK SET NULL; partial index `ix_tutoring_reports_resolved_by` (F34) |
 | `resolved_at` | timestamptz NULL | |
 
-Indexes: `ix_tutoring_reports_queue` on `(state, (reason = 'safety_concern') DESC, created_at, id)` (safety first, SC-10); `uq_tutoring_reports_open_per_reporter` UNIQUE on `(reporter_user_id, target_type, COALESCE(tutor_profile_id, review_id, reply_id, booking_id, note_id))` WHERE `state = 'open'`; `ix_tutoring_reports_reporter_day` on `(reporter_user_id, created_at)` (quota); one partial index per target FK.
+Indexes: `ix_tutoring_reports_queue` on `(state, (reason = 'safety_concern') DESC, created_at, id)` (safety first, SC-10); `uq_tutoring_reports_open_per_reporter` UNIQUE on `(reporter_user_id, target_type, COALESCE(tutor_profile_id, review_id, reply_id, booking_id, note_id))` WHERE `state = 'open'`; `ix_tutoring_reports_reporter_day` on `(reporter_user_id, created_at)` (quota); one partial index per target FK, named for its column and `WHERE` it is not null: `ix_tutoring_reports_tutor_profile_id`, `_review_id`, `_reply_id`, `_booking_id`, `_note_id`.
 
 #### `tutoring_blocks` (0050)
 | Column | Type | Constraint |
 |---|---|---|
 | `blocker_user_id` | uuid NOT NULL | FK `users.id` CASCADE |
 | `blocked_user_id` | uuid NOT NULL | FK `users.id` CASCADE |
-| PK | | `(blocker_user_id, blocked_user_id)`; `blocker_user_id <> blocked_user_id` |
+| PK | | `pk_tutoring_blocks` on `(blocker_user_id, blocked_user_id)`; `ck_..._not_self`: `blocker_user_id <> blocked_user_id` |
 | `created_at` | timestamptz NOT NULL DEFAULT now() | first block of this pair |
 | `removed_at` | timestamptz NULL | unblock; re-block sets it back to NULL. Active block = `removed_at IS NULL`. Rows are never deleted, so "this student ever blocked this tutor" stays answerable (outcome exclusion, ADR-T04) |
 
@@ -1468,6 +1469,8 @@ Pyramid: many pure unit tests, DB integration for every constraint and transacti
 
 Numbers now follow wave order. `lemely tutoring recompute-ratings [--tutor <id>]` (CLI, `lemely/app/cli.py`) calls `TutorReviewRepository.recompute_ratings`, the same function every review change uses (F35, O-12).
 
+**`ADD VALUE` inside the migration transaction (0044).** Alembic runs one `alembic upgrade` in a single transaction, and 0044's eight `ALTER TYPE notificationtype ADD VALUE IF NOT EXISTS` run inside it. PostgreSQL 12+ allows that only while no later statement in the same transaction uses a new label, and nothing in 0044–0050 does. A later revision that writes or compares one of these labels (a backfill, or a partial index or CHECK naming `'booking_request'`), and can run in the same upgrade as 0044, must run that statement inside `with op.get_context().autocommit_block():`, which commits the open transaction, and with it the new labels, first. Otherwise the upgrade fails with `unsafe use of new value`.
+
 **Release groupings** (amended by PLAN rev 2, P8): the five groupings below say which migration, core, repo, routes, authz rows, tests and screens belong together. The feature ships as **one pull request** (base `develop`, opened by the lead as a draft at the first integration so CI runs on every integration push; never merged by an agent; PLAN §0.10). The `web/src/portals/marketing/dataHandling.ts` sentences, each with its source comment as that file requires (F16), land once, in PLAN W8, because nothing ships before that PR merges.
 1. Profiles, admin approval and close, public and logged-in directory, areas route (G-16, G-17, S-33, S-34 without results, T-15, T-16, T-17, T-21, X-04, X-05). `dataHandling.ts`: the public tutor card fields. Hot files: `lemely/db/models/__init__.py` (one import), `lemely/io/storage.py` + `storage_local.py` (`create_signed_url(..., disposition=None)`, additive, SC-22), `lemely/web/app.py`, `tests/test_authz_matrix_complete.py`, `web/nginx.conf`, `web/worker/index.ts` + new `web/worker/robots.ts`, `web/wrangler.jsonc` (row 17; `web/public/_headers` is read by a test, not edited).
 2. Booking, notes, outbox and the sweeper job, safety notice, **row 14 (§c.4)** (S-35..S-37, T-18, P-05..P-07). `dataHandling.ts`: bookings, notes readable by linked parents and by admins on report, parent-link notices. Hot files: §c.4's list, `lemely/web/scheduled_notifications.py` (one job appended in `Sweeper.sweep_once`), `lemely/web/deps.py` (`get_sweeper` wiring, provider), `lemely/runtime/config.py` (`[tutoring] email_daily_cap`), `lemely/web/schemas_me.py`, the three notification-type mirrors in `web/src/lib`.
@@ -1482,7 +1485,7 @@ DELETE FROM notifications WHERE type IN ('booking_request','booking_update','boo
   'tutor_review','tutor_listing','parent_link','tutoring_report');
 ```
 
-and expect tutoring data (profiles, bookings, grants) to be invisible, not lost, until the roll-forward. The forward fix stays the preferred path. A wave-0 change that makes the inbox reader skip unknown types would remove the need for the `DELETE`; it is not adopted because it changes existing notification code for a rollback convenience (noted, not required).
+and expect tutoring data (profiles, bookings, grants) to be invisible, not lost, until the roll-forward. A schema downgrade past 0044 also drops the eight `notification_preferences` toggles; they come back as `true` on the roll-forward, so a user who had turned one off receives those notices again. The forward fix stays the preferred path. A wave-0 change that makes the inbox reader skip unknown types would remove the need for the `DELETE`; it is not adopted because it changes existing notification code for a rollback convenience (noted, not required).
 
 ---
 

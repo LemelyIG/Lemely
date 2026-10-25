@@ -24,9 +24,9 @@ ACTIVE = {"requested", "accepted"}
 
 
 def test_spec_names_objects_for_these_tables() -> None:
-    """Non-vacuity: SPEC §a.2 names 22 objects here (20 on tutor_bookings, 9 coherence CHECKs)."""
+    """Non-vacuity: SPEC §a.2 names 31 objects here (25 on tutor_bookings, 14 of them CHECKs)."""
     names = spec_names_for(TABLES)
-    assert len(names) >= 22
+    assert len(names) >= 31
     assert set(EXCLUSIONS) <= names
 
 

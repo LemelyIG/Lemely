@@ -107,6 +107,10 @@ def upgrade() -> None:
             name=op.f("ck_tutor_profiles_first_name_chars"),
         ),
         sa.CheckConstraint(
+            "char_length(public_last_initial) = 1",
+            name=op.f("ck_tutor_profiles_last_initial_len"),
+        ),
+        sa.CheckConstraint(
             "char_length(btrim(headline)) >= 1", name=op.f("ck_tutor_profiles_headline_not_blank")
         ),
         sa.CheckConstraint("char_length(bio) <= 2000", name=op.f("ck_tutor_profiles_bio_len")),
@@ -339,6 +343,12 @@ def upgrade() -> None:
         "ix_tutoring_admin_access_tutor",
         "tutoring_admin_access",
         ["tutor_profile_id", "created_at"],
+    )
+    op.create_index(
+        "ix_tutoring_admin_access_admin_user_id",
+        "tutoring_admin_access",
+        ["admin_user_id"],
+        postgresql_where=sa.text("admin_user_id IS NOT NULL"),
     )
 
 

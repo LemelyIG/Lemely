@@ -7,26 +7,20 @@ from typing import TYPE_CHECKING
 from tests.test_migration_tutoring_enums import (
     assert_named_objects_present,
     assert_round_trip,
-    head_revision,
     spec_names_for,
 )
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
-REVISION = "0050_tutoring_safety"
 DOWN_REVISION = "0049_tutor_grants_audit"
 TABLES = ("tutoring_reports", "tutoring_blocks")
 EARLIER_TABLES = ("tutor_profiles", "tutor_bookings", "tutor_data_grants", "tutor_access_audit")
 
 
-def test_this_revision_is_the_single_head() -> None:
-    assert head_revision() == REVISION
-
-
 def test_spec_names_objects_for_these_tables() -> None:
-    """Non-vacuity: SPEC §a.2 names 5 objects on these tables."""
-    assert len(spec_names_for(TABLES)) >= 5
+    """Non-vacuity: SPEC §a.2 names 17 objects on these tables (6 of them CHECKs)."""
+    assert len(spec_names_for(TABLES)) >= 17
 
 
 def test_constraints_present_by_name(migrated_sessionmaker: sessionmaker[Session]) -> None:

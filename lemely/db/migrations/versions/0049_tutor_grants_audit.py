@@ -128,7 +128,10 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        *_timestamps(),
+        # Append-only: created_at, no updated_at (SPEC §a.2).
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+        ),
         sa.ForeignKeyConstraint(
             ["grant_id"],
             ["tutor_data_grants.id"],

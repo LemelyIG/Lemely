@@ -89,7 +89,7 @@ def spec_a2_sections() -> dict[str, str]:
     return dict(zip(parts[1::2], parts[2::2], strict=True))
 
 
-_NAMED = re.compile(r"(pk|uq|ix|ck|excl)_[a-z0-9_]*[a-z0-9]")
+_NAMED = re.compile(r"(pk|uq|ix|ck|fk|excl)_[a-z0-9_]*[a-z0-9]")
 
 
 def spec_named_objects(table: str) -> set[str]:

@@ -265,23 +265,76 @@ def test_live_pending_active_and_outcome_membership_predicates(engine: sa.Engine
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "bad",
-    ["", "1=1", "tp.user_id; DROP TABLE users", "tp.user_id OR true", "'x'", "a.b.c", ": x"],
-)
-def test_predicate_builders_reject_non_identifier_arguments(bad: str) -> None:
+BLOCK_BUILDERS = {
+    "active_block_between_sql": active_block_between_sql,
+    "student_ever_blocked_tutor_sql": student_ever_blocked_tutor_sql,
+}
+NOT_IDENTIFIERS = ["", "1=1", "tp.user_id; DROP TABLE users", "tp.user_id OR true", "'x'", "a.b.c"]
+#: Every column of ``tutoring_blocks`` plus common ones. Unqualified inside the
+#: block subquery, each would bind to the subquery's own row, not the caller's.
+UNQUALIFIED = [
+    "blocker_user_id",
+    "blocked_user_id",
+    "removed_at",
+    "created_at",
+    "updated_at",
+    "user_id",
+    "id",
+]
+
+
+def _call(builder: str, position: int, operand: str) -> str:
+    args = [":student", "tp.user_id"]
+    args[position] = operand
+    return BLOCK_BUILDERS[builder](*args)
+
+
+@pytest.mark.parametrize("position", [0, 1], ids=["student", "tutor"])
+@pytest.mark.parametrize("builder", list(BLOCK_BUILDERS))
+@pytest.mark.parametrize("bad", [*NOT_IDENTIFIERS, ": x"])
+def test_block_builders_reject_non_identifier_arguments(
+    builder: str, position: int, bad: str
+) -> None:
     with pytest.raises(ValueError):
-        active_block_between_sql(bad, "tp.user_id")
+        _call(builder, position, bad)
+
+
+@pytest.mark.parametrize("position", [0, 1], ids=["student", "tutor"])
+@pytest.mark.parametrize("builder", list(BLOCK_BUILDERS))
+@pytest.mark.parametrize("name", UNQUALIFIED)
+def test_block_builders_refuse_unqualified_column_names(
+    builder: str, position: int, name: str
+) -> None:
+    """Only ``alias.column`` or ``:bind`` is accepted, for both operands of both block builders.
+
+    ``removed_at`` or ``blocked_user_id`` passed bare would compare the block
+    row with itself inside the ``EXISTS`` subquery and silently match.
+    """
     with pytest.raises(ValueError):
-        active_block_between_sql(":student", bad)
-    with pytest.raises(ValueError):
-        student_ever_blocked_tutor_sql(bad, ":tutor")
+        _call(builder, position, name)
+    # The qualified spelling of the same name is accepted.
+    assert _call(builder, position, f"tp.{name}")
+
+
+@pytest.mark.parametrize("bad", [*NOT_IDENTIFIERS, "tp.user_id", ":profile"])
+def test_listed_and_not_paused_accepts_only_a_plain_alias(bad: str) -> None:
+    """The listing builder takes a table alias (``p``), so a column or a bind is refused."""
     with pytest.raises(ValueError):
         listed_and_not_paused_sql(bad)
 
 
+def test_block_builders_accept_qualified_columns_and_binds() -> None:
+    for builder in BLOCK_BUILDERS.values():
+        assert builder(":student", "tp.user_id")
+        assert builder("b.student_id", ":tutor")
+        assert builder(":student", ":tutor")
+
+
 def test_predicate_builders_refuse_the_internal_block_alias() -> None:
-    with pytest.raises(ValueError):
-        active_block_between_sql(":student", "tutoring_block_pred.blocked_user_id")
+    for builder in BLOCK_BUILDERS.values():
+        with pytest.raises(ValueError):
+            builder(":student", "tutoring_block_pred.blocked_user_id")
+        with pytest.raises(ValueError):
+            builder("tutoring_block_pred.blocker_user_id", ":tutor")
     with pytest.raises(ValueError):
         listed_and_not_paused_sql("tutoring_block_pred")

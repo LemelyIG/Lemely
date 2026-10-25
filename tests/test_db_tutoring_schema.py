@@ -43,7 +43,9 @@ from lemely.db.models.enums import BookingState
 from lemely.db.tutoring_predicates import EFFECTIVE_STATE_SQL
 from lemely.runtime.config import DatabaseSettings
 from tests.test_migration_tutoring_enums import (
+    column_names,
     extension_installed,
+    spec_a2_sections,
     spec_enum_types,
     spec_names_for,
     spec_new_notification_types,
@@ -760,6 +762,7 @@ def _base_row(conn: sa.Connection, w: World, table: str) -> dict[str, object]:
 #: (constraint, table, columns that violate exactly that constraint)
 CHECK_CASES: list[tuple[str, str, dict[str, object]]] = [
     ("ck_tutor_profiles_first_name_len", "tutor_profiles", {"public_first_name": "   "}),
+    ("ck_tutor_profiles_last_initial_len", "tutor_profiles", {"public_last_initial": ""}),
     ("ck_tutor_profiles_first_name_chars", "tutor_profiles", {"public_first_name": "Sara2"}),
     ("ck_tutor_profiles_first_name_chars", "tutor_profiles", {"public_first_name": "s@ra"}),
     ("ck_tutor_profiles_headline_not_blank", "tutor_profiles", {"headline": "  "}),
@@ -943,7 +946,14 @@ def test_every_check_constraint_rejects_its_violation(
 
 
 def test_check_cases_cover_every_check_constraint(schema_engine: sa.Engine) -> None:
-    """Non-vacuity for the test above: one case per catalogue CHECK, SPEC's named ones included."""
+    """Non-vacuity for the test above, derived from SPEC rather than from a count.
+
+    SPEC §a.2 names every CHECK it specifies (``ck_..._<short name>`` or the full
+    name). The expected set is parsed from that text; the database built each
+    way (ORM ``create_all`` and the migrations, via ``schema_engine``) must hold
+    exactly that set, and every member needs a violation case above.
+    """
+    spec_checks = {name for name in spec_names_for(TUTORING_TABLES) if name.startswith("ck_")}
     with schema_engine.connect() as conn:
         catalogue = set(
             conn.execute(
@@ -955,11 +965,37 @@ def test_check_cases_cover_every_check_constraint(schema_engine: sa.Engine) -> N
             ).scalars()
         )
     covered = {case[0] for case in CHECK_CASES}
-    spec_named_checks = {name for name in spec_names_for(TUTORING_TABLES) if name.startswith("ck_")}
-    assert covered == catalogue
-    assert spec_named_checks <= covered
-    assert len(spec_named_checks) == 15
-    assert len(covered) == 46
+    assert spec_checks, "the SPEC parser found no CHECK at all"
+    missing, unspecified = sorted(spec_checks - catalogue), sorted(catalogue - spec_checks)
+    assert (missing, unspecified) == ([], [])
+    assert sorted(spec_checks - covered) == []
+    assert sorted(covered - spec_checks) == []
+
+
+def test_append_only_logs_have_created_at_but_no_updated_at(schema_engine: sa.Engine) -> None:
+    """SPEC §a.2 marks each append-only log with "no `updated_at`"; the schema agrees."""
+    logs = {table for table, section in spec_a2_sections().items() if "no `updated_at`" in section}
+    assert "tutor_access_audit" in logs
+    assert len(logs) >= 4
+    with schema_engine.connect() as conn:
+        for table in sorted(logs):
+            columns = column_names(conn, table)
+            assert "created_at" in columns, table
+            assert "updated_at" not in columns, table
+
+
+def test_admin_access_log_has_partial_admin_user_index(schema_engine: sa.Engine) -> None:
+    """Deleting a user (SET NULL on the log) must not scan the whole admin read log."""
+    with schema_engine.connect() as conn:
+        definition = conn.execute(
+            sa.text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE indexname = 'ix_tutoring_admin_access_admin_user_id'"
+            )
+        ).scalar_one_or_none()
+    assert definition is not None
+    assert "(admin_user_id)" in definition
+    assert "WHERE (admin_user_id IS NOT NULL)" in definition
 
 
 def test_indexable_defaults_true(schema_engine: sa.Engine) -> None:
