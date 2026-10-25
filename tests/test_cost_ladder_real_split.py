@@ -724,6 +724,27 @@ def test_step_marks_median() -> None:
     assert post_borderline(2, 0, 1) == 1
 
 
+def test_median_makes_post_borderline_the_median_mark(tmp_path: Path) -> None:
+    script = _frozen(tmp_path, marks={"1a": 2})
+    replies = [
+        _reply("correction", 1, "1a", "first"),
+        _reply("correction_borderline", 0, "1a"),
+        _reply("correction_borderline", 2, "1a"),
+    ]
+    kw: dict[str, object] = {
+        "latency_ms": 5.0,
+        "failure": None,
+        "escalations": [],
+        "cascade_enabled": False,
+        "replies": replies,
+    }
+    correction = _result(_cq("1a", 2))
+    plain = rs.score_script(script, correction, [], **kw).leaves[0]  # type: ignore[arg-type]
+    med = rs.score_script(script, correction, [], median=True, **kw).leaves[0]  # type: ignore[arg-type]
+    assert plain.post_borderline_mark == 2  # the last reply
+    assert med.post_borderline_mark == 1  # median_low of 1, 0, 2
+
+
 def test_reply_log_records_stated_mark_when_present() -> None:
     from types import SimpleNamespace
 

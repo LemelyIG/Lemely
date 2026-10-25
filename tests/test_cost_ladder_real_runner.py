@@ -244,6 +244,41 @@ def test_run_real_writes_replies_and_step_marks(
     assert [leaf.first_pass_mark for leaf in results[0].leaves] == [2, 0]
 
 
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [
+        ({}, (False, False)),
+        ({"gemini.correction_retry_keep_higher": True}, (True, False)),
+        ({"gemini.correction_retry_median": True}, (False, True)),
+    ],
+)
+def test_run_real_passes_keep_higher_and_median_to_scoring(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    override: dict[str, object],
+    expected: tuple[bool, bool],
+) -> None:
+    _Harness(monkeypatch)
+    seen: list[tuple[object, object]] = []
+    real_score = runner.score_script
+
+    def spy(*args: Any, **kw: Any) -> Any:
+        seen.append((kw.get("keep_higher"), kw.get("median")))
+        return real_score(*args, **kw)
+
+    monkeypatch.setattr(runner, "score_script", spy)
+    runner.run_real(
+        "base",
+        override,
+        run_index=1,
+        out_dir=tmp_path / "out",
+        scripts=_scripts(tmp_path),
+        settings=Settings(),
+        max_run_usd={"anthropic": 1.0, "gemini": 1.0},
+    )
+    assert seen == [expected, expected]
+
+
 @pytest.mark.parametrize("raise_type", [RuntimeError, KeyboardInterrupt])
 def test_replies_survive_a_failed_script(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, raise_type: type[BaseException]
