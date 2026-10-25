@@ -309,6 +309,58 @@ def default_marking_rules(metadata: MarkSchemeMetadata) -> str | None:
     return SCIENCE_DEFAULT_RULES
 
 
+#: Syllabus code -> paper numbers whose printed "Specific Instructions for Marking" this
+#: module restates. Read: 0625/41 Oct/Nov 2024 (pages 6-8, M3 and M4) and 0625/42
+#: May/June 2025 (page 8). Paper 4 only: no other 0625 paper's instructions were read.
+SYLLABUS_CONVENTION_PAPERS: dict[str, frozenset[int]] = {"0625": frozenset({4})}
+
+#: Printed in the mark schemes but not in the stored scheme: the deterministic GMP
+#: extractor never matches "M3." / "M4.", and re-parsing would change the stored schemes.
+#: Sent IN ADDITION to whichever rules the paper already gets (its printed principles or
+#: ``SCIENCE_DEFAULT_RULES``). Left out on purpose: the missing-unit penalty (the owner's
+#: 2026-10-11 decision in the ``SCIENCE_DEFAULT_RULES`` comment keeps that case alone),
+#: significant figures (already in the science defaults), fractions (a strictness rule),
+#: and the M -> A dependency (the reference is lenient there).
+PHYSICS_0625_CONVENTIONS = """\
+CAMBRIDGE IGCSE PHYSICS (0625) PAPER 4 MARKING CONVENTIONS (printed in the "Specific \
+Instructions for Marking" pages of Cambridge's 0625 Paper 4 mark schemes and restated \
+here; the stored scheme does not carry them):
+  - Mark types: an A mark is the final-answer mark, for a fully correct final answer \
+including its unit. A C mark is compensatory: it may be scored when the A mark has not \
+been awarded, for example for the formula or a correct substitution in the working. \
+Where an entry gives A2 and C1, a fully correct final answer earns 2, and otherwise the \
+C1 point can still earn 1. A B mark is independent of every other mark.
+  - Formulae and equations: where a C, B or M mark is for quoting a formula or an \
+equation, it may be written in any form, rearranged or not, in words, symbols or \
+numbers, unless the entry says otherwise. "s = vt" earns a mark given for "v = s / t".
+  - Error carried forward applies to C marks as well as to final-answer marks.
+  - Units: a numerically correct final answer written without its unit earns the A mark \
+when the unit is shown correctly in the working. A wrong upper or lower case in a unit \
+symbol is accepted (pA for Pa). Unless the entry says otherwise these derived units are \
+accepted: J/s or Nm/s for W; N/m\u00b2 for Pa; Ns or kg m/s for momentum and for impulse; Nm \
+for J. J is not accepted as the unit of a moment.
+  - Crossed-out work: where part of an answer is crossed out, ignore the crossed-out part. \
+Work that is wholly crossed out, not replaced and still legible is marked as if it had \
+not been crossed out. A crossed-out value with a replacement written beside or after it \
+is replaced: mark the replacement.
+  - Brackets and underlining in an entry: words in brackets ( ) are not needed for the \
+mark, but a contradicting word, phrase or unit in their place loses it. An underlined \
+word, or a synonym, must be present; if it is a technical term, that term itself must be \
+there.
+The MARK SCHEME SUBTREE always wins: these conventions never loosen an entry that sets \
+its own requirement. Where this paper's own printed principles, if supplied, say \
+otherwise, they win. These conventions say nothing new about whether an A mark depends \
+on an M mark.
+"""
+
+
+def syllabus_conventions(metadata: MarkSchemeMetadata) -> str | None:
+    """The printed marking conventions of the scheme's syllabus and paper, or None."""
+    if metadata.paper_number in SYLLABUS_CONVENTION_PAPERS.get(metadata.subject_code, frozenset()):
+        return PHYSICS_0625_CONVENTIONS
+    return None
+
+
 def marker_system_prompt(*, reader_describes_drawings: bool = False) -> str:
     """The system prompt for one marking call.
 
@@ -408,7 +460,7 @@ def _paper_rules_block(metadata: MarkSchemeMetadata) -> str | None:
     return None
 
 
-def render_paper_mark_scheme(mark_scheme: MarkScheme) -> str:
+def render_paper_mark_scheme(mark_scheme: MarkScheme, *, conventions: str | None = None) -> str:
     """The paper block of the shared prefix: everything that is the same for every leaf.
 
     Deterministic: the paper code from the metadata, then every top-level
@@ -432,10 +484,13 @@ def render_paper_mark_scheme(mark_scheme: MarkScheme) -> str:
         f"{questions}\n"
     )
     rules = _paper_rules_block(meta)
-    return block if rules is None else f"{block}\n{rules}"
+    paper = block if rules is None else f"{block}\n{rules}"
+    return paper if conventions is None else f"{paper}\n{conventions}"
 
 
-def build_shared_prefix(mark_scheme: MarkScheme, *, reader_describes_drawings: bool) -> str:
+def build_shared_prefix(
+    mark_scheme: MarkScheme, *, reader_describes_drawings: bool, conventions: str | None = None
+) -> str:
     """The marking instructions followed by the paper's whole mark scheme and rules (lever A3).
 
     Sent as the system prompt of every correction call on the paper when
@@ -449,7 +504,7 @@ def build_shared_prefix(mark_scheme: MarkScheme, *, reader_describes_drawings: b
     return (
         shared_prefix_instructions(reader_describes_drawings=reader_describes_drawings)
         + SHARED_PREFIX_SEPARATOR
-        + render_paper_mark_scheme(mark_scheme)
+        + render_paper_mark_scheme(mark_scheme, conventions=conventions)
     )
 
 
@@ -465,6 +520,7 @@ def build_marker_user_prompt(
     default_rules: str | None = None,
     reader_describes_drawings: bool = False,
     reason_first: bool = False,
+    conventions: str | None = None,
 ) -> str:
     """Build the per-question marking prompt embedding the mark scheme subtree + student response.
 
@@ -546,6 +602,10 @@ def build_marker_user_prompt(
     the model to fill the reply's fields in the order of the reasoned reply schema
     (:class:`lemely.core.schemas.AIMarkResponseReasoned`). With False the prompt is
     byte-identical to before.
+
+    ``conventions`` (lever H2c, defaults None): :func:`syllabus_conventions`, appended
+    as given right after the principles / default-rules block. With None the prompt is
+    byte-identical to before.
     """
     q_json = question.model_dump_json(indent=2, exclude_none=True, exclude_defaults=True)
     answer_text = student_answer if student_answer.strip() else "(blank — no response written)"
@@ -576,6 +636,8 @@ def build_marker_user_prompt(
         )
     elif default_rules:
         parts.append(default_rules)
+    if conventions:
+        parts.append(conventions)
     if prior_results:
         prior_lines = "\n".join(
             f"  {qid}: {marks} mark(s) awarded" for qid, marks in prior_results.items()

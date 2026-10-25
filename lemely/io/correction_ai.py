@@ -59,6 +59,7 @@ from lemely.io.prompts.correction_ai import (
     printed_principles,
     render_paper_mark_scheme,
     shared_prefix_instructions,
+    syllabus_conventions,
 )
 from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD
 from lemely.io.validation import validate_mark_scheme
@@ -498,6 +499,15 @@ class AICorrector:
             return REVIEW_CONFIDENCE_THRESHOLD
         return review_threshold_for(self._client._settings.gemini, self.last_mark_model)
 
+    def _conventions(self) -> str | None:
+        """H2c: the printed marking conventions of the paper's syllabus, when the lever is on."""
+        if (
+            self._client._settings.gemini.correction_syllabus_conventions is not True
+            or self._mark_scheme is None
+        ):
+            return None
+        return syllabus_conventions(self._mark_scheme.metadata)
+
     def _shared_prefix(self, *, reader_describes_drawings: bool) -> SharedPrefix | None:
         """The paper's shared prefix when lever A3 is on and the scheme is known."""
         g = self._client._settings.gemini
@@ -511,9 +521,11 @@ class AICorrector:
                 instructions=shared_prefix_instructions(
                     reader_describes_drawings=reader_describes_drawings
                 ),
-                paper=render_paper_mark_scheme(self._mark_scheme),
+                paper=render_paper_mark_scheme(self._mark_scheme, conventions=self._conventions()),
                 text=build_shared_prefix(
-                    self._mark_scheme, reader_describes_drawings=reader_describes_drawings
+                    self._mark_scheme,
+                    reader_describes_drawings=reader_describes_drawings,
+                    conventions=self._conventions(),
                 ),
                 cache=g.correction_prefix_cache,
                 version=VERSION,
@@ -603,6 +615,8 @@ class AICorrector:
             default_rules=default_rules,
             reader_describes_drawings=reader_describes_drawings,
             reason_first=self._reason_first(),
+            # The shared prefix already carries them.
+            conventions=self._conventions() if shared_prefix is None else None,
         )
         system_prompt = (
             shared_prefix.text
