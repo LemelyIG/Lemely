@@ -440,9 +440,7 @@ def score_script(
         predicted = q.awarded_marks if q is not None and scored else 0
         escalated = qid in escalated_ids
         steps = (
-            _step_marks(
-                replies, qid, leaf_ref.max_marks, keep_higher=keep_higher, median=median
-            )
+            _step_marks(replies, qid, leaf_ref.max_marks, keep_higher=keep_higher, median=median)
             if scored
             else (None, None, None, None)
         )
