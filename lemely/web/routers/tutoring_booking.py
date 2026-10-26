@@ -17,6 +17,11 @@ Both routes are behind a verified email (SC-15) and built with
   tutor (either block direction) gets SP2's own 404 body (``tutoring_http.tutor_not_found``), so
   nobody learns that a tutor exists but is hidden, or that the tutor blocked them. The service
   still raises ``tutor_not_listed`` and ``blocked``; they are mapped here.
+* **The ends of the calendar.** A date the service's arithmetic would carry past ``date.max``
+  or ``datetime.min`` (an ``OverflowError``, a 500) is refused here first: an SP5 ``from``
+  after ``date.max`` less 28 days is 422 ``invalid_window``, and an SP6 ``startsAt`` within a
+  week of either end of the calendar is 422 ``invalid_starts_at``. Every such date is outside
+  the 28-day horizon, so no bookable request is turned away.
 * **Notices (D5.9 §1, SPEC §b.4).** The service queues the emails inside its transaction; after
   it commits, the inbox notices go out through ``send_after_commit``, whose failures are logged
   and never undo the request.
@@ -30,12 +35,13 @@ transition step and the parent's per-call link check.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated, Final
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from lemely.core.booking import MAX_BOOKING_HORIZON
 from lemely.core.keyset import CursorError
 from lemely.db.booking_repo import (
     Actor,
@@ -80,6 +86,14 @@ DEFAULT_SLOT_DAYS: Final = 14
 DEFAULT_PAGE_SIZE: Final = 20
 #: The service refusals that mean "a tutor this caller may not see" (SPEC §i.7).
 _HIDDEN_TUTOR_CODES: Final = frozenset({"tutor_not_listed", "blocked"})
+#: SP5's latest ``from``: a later one ends no window by today + 28 days, and its window end
+#: (``from + days``) would pass ``date.max``.
+_LAST_WINDOW_START: Final = date.max - MAX_BOOKING_HORIZON
+#: SP6 keeps ``startsAt`` this far inside Python's calendar, so the service's end, zone and
+#: neighbouring-day arithmetic (a two-hour session, a day either side) never overflows.
+_CALENDAR_MARGIN: Final = timedelta(days=7)
+_EARLIEST_START: Final = datetime.min.replace(tzinfo=UTC) + _CALENDAR_MARGIN
+_LATEST_START: Final = datetime.max.replace(tzinfo=UTC) - _CALENDAR_MARGIN
 
 router = APIRouter(prefix="/api", tags=["tutoring"], route_class=TutoringRoute)
 
@@ -215,6 +229,8 @@ def tutor_slots(
     days: Annotated[int, Query()] = DEFAULT_SLOT_DAYS,
 ) -> SlotsDTO:
     """SP5: the open slots of a listed, unpaused tutor the caller is not blocked from."""
+    if start > _LAST_WINDOW_START:
+        raise booking_error(BookingRefused("invalid_window", 422))
     viewer = uuid.UUID(auth.user_id)
     try:
         view = service.slots(
@@ -285,6 +301,10 @@ def create_booking(
         starts_at = datetime.fromisoformat(body.startsAt)
     except ValueError as exc:
         raise booking_error(BookingRefused("invalid_starts_at", 422)) from exc
+    # A naive instant goes on: the service refuses it with the same code.
+    aware = starts_at.utcoffset() is not None
+    if aware and not _EARLIEST_START <= starts_at <= _LATEST_START:
+        raise booking_error(BookingRefused("invalid_starts_at", 422))
     requester, student_id = _requester(auth, body.studentId, links, classes)
     try:
         row = service.create(

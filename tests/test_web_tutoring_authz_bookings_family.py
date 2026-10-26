@@ -148,16 +148,20 @@ def test_o6_sp6_subject_is_the_student_or_a_linked_child(
 
     stranger = add_parent(sm)
     act_as(client, stranger, Role.parent)
-    cases: list[tuple[dict[str, object], int, str]] = [
-        ({"studentId": str(w.student)}, 403, "not_linked"),
-        ({"studentId": str(uuid.uuid4())}, 404, "not_found"),
-        ({"studentId": "not-a-uuid"}, 404, "not_found"),
-        ({}, 422, "student_required"),
+    # An unknown child is the route's own link check (the parent routes' "Child not found."),
+    # answered before the service, whose own lookup would say "Student not found.".
+    cases: list[tuple[dict[str, object], int, str, str | None]] = [
+        ({"studentId": str(w.student)}, 403, "not_linked", None),
+        ({"studentId": str(uuid.uuid4())}, 404, "not_found", "Child not found."),
+        ({"studentId": "not-a-uuid"}, 404, "not_found", "Child not found."),
+        ({}, 422, "student_required", None),
     ]
-    for fields, status, code in cases:
+    for fields, status, code, message in cases:
         refused = client.post(BOOKINGS, json=booking_body(w, **fields))
         assert refused.status_code == status, (fields, refused.text)
         assert detail_code(refused) == code
+        if message is not None:
+            assert refused.json()["detail"]["message"] == message, fields
         assert refused.headers["cache-control"] == NO_STORE
     assert booking_count(sm) == 0
 

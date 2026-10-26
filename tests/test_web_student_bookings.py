@@ -8,14 +8,18 @@ Route-level, through ``tests.test_web_tutoring_booking.bookings_client``.
 * S2 is the caller's own booking; anyone else's is the same 404 as an unknown id (O5).
 * S3 cancels: a request any time before its start, an accepted session only until 24 hours
   before it (row 18: 409 ``cancel_window_closed`` inside that). A tutor's late cancel reason is
-  shown to the student and the linked parents in the booking.
+  shown to the student and the linked parents in the booking. Once cancelled, the meeting link
+  is ``null`` (O16), though the row keeps it.
 * S4/S5: the thread, oldest first, and a new note by the booking's student (row 16 ii: the
-  safety notice first); the tutor is told after the commit, without the note text.
-* S14: the 48-hour outcome claim (SC-17); S15 records the safety notice once, idempotently.
+  safety notice first); the tutor is told after the commit, without the note text, and a
+  failing inbox leaves the note committed (D5.9 §1).
+* S14: the 48-hour outcome claim (SC-17); S15 records the safety notice once, idempotently,
+  through S12/S13's own provider and DTO (T20), so one dependency override covers all three.
 """
 
 from __future__ import annotations
 
+import inspect
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -25,6 +29,7 @@ import structlog.testing
 
 from lemely.db.booking_repo import Actor, BookingService
 from lemely.db.models.enums import BookingState, Role
+from lemely.web.routers import student_bookings, student_tutoring_settings
 from lemely.web.schemas_tutoring import BookingDTO, NoteDTO
 from tests.test_booking_repo import (
     LINK,
@@ -45,6 +50,7 @@ from tests.test_web_tutoring_booking import (
     detail_code,
     note_count,
 )
+from tests.tutoring_app import flatten_routes
 from tests.tutoring_db import act_as, emptied_after, tutoring_database
 
 if TYPE_CHECKING:
@@ -191,6 +197,7 @@ def test_s3_cancel_tells_the_tutor_and_parents_and_a_repeat_is_200(
 ) -> None:
     parent = add_parent(sm, w.student)
     booking = add_booking(sm, w, state="accepted", starts_in=timedelta(days=3))
+    assert client.get(one(booking)).json()["meetingLink"] == LINK  # red case: accepted shows it
 
     response = client.post(f"{one(booking)}/cancel", json={"reason": "  Exams moved  "})
 
@@ -203,6 +210,12 @@ def test_s3_cancel_tells_the_tutor_and_parents_and_a_repeat_is_200(
         "Exams moved",
     )
     assert body["cancelledLate"] is False
+    # O16: a cancelled session's link is null in the cancel's answer and in a later read,
+    # though the row keeps it (only the DTO withholds it).
+    reread = client.get(one(booking)).json()
+    for shown in (body, reread):
+        assert (shown["meetingLink"], shown["locationDetail"]) == (None, None)
+    assert stored(sm, booking).meeting_link == LINK
     assert stored(sm, booking).state is BookingState.cancelled
     notices = inbox_rows(sm)
     assert sorted((user, kind) for user, kind, _, _ in notices) == sorted(
@@ -385,6 +398,26 @@ def test_s5_refusals(sm: sessionmaker[Session], client: TestClient, w: World) ->
     assert inbox_rows(sm) == []
 
 
+def test_s5_commits_when_inbox_write_raises(sm: sessionmaker[Session]) -> None:
+    """D5.9 §1 at the router: the note commits; the tutor's inbox failure is only logged."""
+    client = bookings_client(sm, notifications=BrokenNotifications())
+    w = make_world(sm)
+    add_parent(sm, w.student)  # parents hear of tutor notes only, so no notice is theirs
+    booking = add_booking(sm, w, state="accepted", starts_in=timedelta(days=2))
+    act_as(client, w.student, Role.student)
+
+    with structlog.testing.capture_logs() as logs:
+        response = client.post(f"{one(booking)}/notes", json={"body": "See you on Thursday"})
+
+    assert response.status_code == 201, response.text
+    assert note_count(sm) == 1
+    thread = client.get(f"{one(booking)}/notes").json()["items"]
+    assert [item["body"] for item in thread] == ["See you on Thursday"]
+    failures = [entry for entry in logs if entry["event"] == "notification_create_failed"]
+    assert [entry["user_id"] for entry in failures] == [str(w.tutor.user_id)]
+    assert inbox_rows(sm) == []
+
+
 # ---------------------------------------------------------------------------
 # S14
 # ---------------------------------------------------------------------------
@@ -461,3 +494,24 @@ def test_s15_safety_notice_is_idempotent_and_opens_booking(
     assert abs(acknowledged_at - datetime.now(UTC)) < timedelta(minutes=5)
     assert second.json() == settings  # the first instant is kept
     assert client.post(BOOKINGS, json=booking_body(w)).status_code == 201
+
+
+def test_s15_shares_t20s_preferences_provider_and_dto() -> None:
+    """S15 resolves S12/S13's provider and builds their DTO (T20): one override point for all.
+
+    A second provider here would need its own dependency override, and a test that overrode only
+    T20's would send S15 to the process-wide database.
+    """
+    [route] = [
+        route
+        for route in flatten_routes(student_bookings.router)
+        if route.path == SAFETY and "POST" in route.methods
+    ]
+    providers = {dependency.call for dependency in route.dependant.dependencies}
+    assert student_tutoring_settings.get_tutoring_preferences_repo in providers
+    # The endpoint builds its answer with T20's DTO function, not a copy of it.
+    referenced = inspect.getclosurevars(route.endpoint).globals
+    assert (
+        referenced.get("tutoring_settings_dto") is student_tutoring_settings.tutoring_settings_dto
+    ), sorted(referenced)
+    assert "settings_dto" not in referenced

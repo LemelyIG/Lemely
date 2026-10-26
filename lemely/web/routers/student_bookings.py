@@ -16,7 +16,9 @@ no-store`` on every status).
   while ``core.booking.can_post_note`` holds and once the safety notice is read (O9, O26).
 * **S14** the 48-hour claim: ``completed`` once the session has been awaiting an outcome for 48
   hours with none from the tutor (SC-17, O23).
-* **S15** records that the student read the safety notice; the first instant is kept.
+* **S15** records that the student read the safety notice; the first instant is kept. It uses
+  S12/S13's provider and DTO (``student_tutoring_settings``, T20), so one dependency override
+  serves all three routes.
 
 Every write sends its inbox notices after the service's commit (D5.9 §1): the tutor and the
 linked parents, never the student who acted.
@@ -25,8 +27,7 @@ linked parents, never the student who acted.
 from __future__ import annotations
 
 import uuid
-from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated, Final
+from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, Query
 
@@ -41,8 +42,9 @@ from lemely.db.models.enums import Role
 from lemely.db.notification_repo import (
     NotificationService,  # noqa: TC001 - FastAPI resolves it at runtime
 )
-from lemely.db.session import get_sessionmaker
-from lemely.db.tutoring_preferences_repo import TutoringPreferencesRepository
+from lemely.db.tutoring_preferences_repo import (
+    TutoringPreferencesRepository,  # noqa: TC001 - FastAPI resolves it at runtime
+)
 from lemely.io.tutoring_areas import AreaCatalogue  # noqa: TC001 - FastAPI resolves it at runtime
 from lemely.web.booking_view import (
     build_bookings_page_dto,
@@ -54,11 +56,14 @@ from lemely.web.deps import (
     AuthContext,
     get_notification_service,
     get_push_transport,
-    get_settings,
     require_role,
 )
 from lemely.web.deps_tutoring import get_tutoring_areas
 from lemely.web.push import NotificationTransport  # noqa: TC001 - FastAPI resolves it at runtime
+from lemely.web.routers.student_tutoring_settings import (
+    get_tutoring_preferences_repo,
+    tutoring_settings_dto,
+)
 from lemely.web.routers.tutoring_booking import (
     DEFAULT_PAGE_SIZE,
     apply_transition,
@@ -82,11 +87,8 @@ from lemely.web.schemas_tutoring import (
     NotesPageDTO,
     TutoringSettingsDTO,
 )
-from lemely.web.tutoring_http import TutoringRoute, iso_instant
+from lemely.web.tutoring_http import TutoringRoute
 from lemely.web.tutoring_notify import send_after_commit
-
-if TYPE_CHECKING:
-    from lemely.db.tutoring_preferences_repo import TutoringPreferences
 
 #: The S1 cursor tag (with ``when`` appended) and the S4 one; PA1, PA3, T9 and T16 have their own.
 LIST_ENDPOINT: Final = "student_bookings"
@@ -97,25 +99,8 @@ require_student: Final = require_role(Role.student)
 router = APIRouter(prefix="/api/student", tags=["tutoring"], route_class=TutoringRoute)
 
 
-@lru_cache(maxsize=1)
-def get_tutoring_preferences_repo() -> TutoringPreferencesRepository:
-    """The process-wide :class:`TutoringPreferencesRepository`."""
-    return TutoringPreferencesRepository(get_sessionmaker(get_settings()))
-
-
 def _student(auth: AuthContext) -> Actor:
     return Actor(user_id=uuid.UUID(auth.user_id), party="student")
-
-
-def settings_dto(preferences: TutoringPreferences) -> TutoringSettingsDTO:
-    """The student's tutoring settings (S12, S13, S15)."""
-    changed = preferences.outcome_pref_changed_at
-    acknowledged = preferences.safety_notice_acknowledged_at
-    return TutoringSettingsDTO(
-        outcomeStatsOptOut=preferences.outcome_stats_opt_out,
-        outcomePrefChangedAt=iso_instant(changed) if changed is not None else None,
-        safetyNoticeAcknowledgedAt=iso_instant(acknowledged) if acknowledged is not None else None,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -265,14 +250,12 @@ def acknowledge_safety_notice(
     preferences: Annotated[TutoringPreferencesRepository, Depends(get_tutoring_preferences_repo)],
 ) -> TutoringSettingsDTO:
     """S15: the student read the safety notice; a repeat keeps the first instant."""
-    return settings_dto(preferences.acknowledge_safety_notice(uuid.UUID(auth.user_id)))
+    return tutoring_settings_dto(preferences.acknowledge_safety_notice(uuid.UUID(auth.user_id)))
 
 
 __all__ = [
     "LIST_ENDPOINT",
     "NOTES_ENDPOINT",
-    "get_tutoring_preferences_repo",
     "require_student",
     "router",
-    "settings_dto",
 ]

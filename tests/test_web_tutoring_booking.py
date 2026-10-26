@@ -12,7 +12,9 @@ import: the client, the request body builder and the SPEC parsers.
   parsed from that row, not written out by hand.
 * O11 (SPEC §i.7): SP5 and SP6 answer SP2's own 404 body for an unknown, unlisted, paused,
   suspended, closed or blocked tutor (both block directions), so nobody learns a tutor blocked
-  them.
+  them; a parent booking for a linked child meets the same nine.
+* A date at either end of Python's calendar is 422 ``invalid_window`` (SP5) or
+  ``invalid_starts_at`` (SP6), never a 500 from an overflow in the service's arithmetic.
 * D5.9 §1: the inbox notices are written after the commit, and a raising notification service
   leaves the 201 and the committed row (with its outbox rows) in place.
 * SPEC §e.3: S1 and PA1 read a page in two statements whatever its size (PA1 adds only the
@@ -33,7 +35,7 @@ import sqlalchemy as sa
 import structlog.testing
 from fastapi.testclient import TestClient
 
-from lemely.core.booking import bookable_slots
+from lemely.core.booking import MAX_BOOKING_HORIZON, bookable_slots
 from lemely.db.booking_repo import BookingService
 from lemely.db.class_repo import ClassService
 from lemely.db.models import ParentChildLink
@@ -60,7 +62,7 @@ from lemely.web.routers import (
     tutoring_booking,
     tutoring_directory,
 )
-from lemely.web.routers.student_bookings import get_tutoring_preferences_repo
+from lemely.web.routers.student_tutoring_settings import get_tutoring_preferences_repo
 from lemely.web.routers.tutoring_booking import get_booking_service
 from tests.test_booking_repo import (
     ALL_WEEK,
@@ -298,11 +300,11 @@ def test_sp5_slots_window_duration_and_bounds(
         for item in body["slots"]
     )
 
-    def offered(now: datetime) -> set[datetime]:
+    def offered(now: datetime, busy: tuple[tuple[datetime, datetime], ...] = ()) -> set[datetime]:
         return {
             start
             for start, _ in bookable_slots(
-                RULES, zone=ZONE, start=today, days=14, duration=HOUR, busy=(), now=now
+                RULES, zone=ZONE, start=today, days=14, duration=HOUR, busy=busy, now=now
             )
         }
 
@@ -347,11 +349,20 @@ def test_sp5_slots_window_duration_and_bounds(
     ):
         assert code_of(params)[0] == 422, params
 
-    # A parent reads the same slots (row 10: parents browse and book for a linked child).
+    # A parent reads the same slots (row 10: parents browse and book for a linked child),
+    # bounded by the core's grid at either end of the parent's own call, with the request
+    # held: the student's read came a dozen requests earlier, and the clock may have passed
+    # a slot since.
     act_as(client, parent, Role.parent)
+    before_parent = datetime.now(UTC)
     as_parent = client.get(path, params={"from": today.isoformat(), "durationMinutes": 60})
+    after_parent = datetime.now(UTC)
     assert as_parent.status_code == 200
-    assert as_parent.json()["slots"] == again["slots"]
+    parent_starts = {datetime.fromisoformat(item["startsAt"]) for item in as_parent.json()["slots"]}
+    busy = ((held, held + HOUR),)
+    assert offered(after_parent, busy) <= parent_starts <= offered(before_parent, busy)
+    assert held not in parent_starts
+    assert held - HOUR in parent_starts
 
 
 # ---------------------------------------------------------------------------
@@ -542,6 +553,53 @@ def test_sp6_body_is_validated(sm: sessionmaker[Session], client: TestClient) ->
     assert booking_count(sm) == 0
 
 
+def test_sp5_sp6_dates_at_the_ends_of_the_calendar_are_422_never_500(
+    sm: sessionmaker[Session], client: TestClient
+) -> None:
+    """A date Python's calendar cannot move past is refused with the route's code, with no-store.
+
+    SP5's window end (``from + days``) and SP6's end, zone and neighbouring-day arithmetic would
+    overflow inside the service for a visible tutor (a 500 without ``Cache-Control``). Every such
+    date is outside the 28-day horizon, so SP5 answers ``invalid_window`` and SP6
+    ``invalid_starts_at``.
+    """
+    w = make_world(sm)
+    act_as(client, w.student, Role.student)
+    path = f"/api/tutors/{w.tutor.profile_id}/slots"
+    last_start = date.max - MAX_BOOKING_HORIZON  # the latest ``from`` whose 28 days fit
+    windows = [
+        (date.max, 14),
+        (date.max, 1),
+        (last_start + timedelta(days=1), 28),
+        (last_start, 28),  # fits the calendar; the service's own horizon check refuses it
+        (date.min, 1),
+    ]
+    for start, days in windows:
+        params = {"from": start.isoformat(), "days": days, "durationMinutes": 60}
+        refused = client.get(path, params=params)
+        assert refused.status_code == 422, (params, refused.text)
+        assert detail_code(refused) == "invalid_window", params
+        assert refused.headers["cache-control"] == NO_STORE, params
+
+    for starts_at in (
+        "9999-12-31T23:30:00+00:00",  # its end passes ``datetime.max``
+        "9999-12-31T20:00:00-05:00",  # its end fits locally, but not in UTC or Cairo time
+        "0001-01-01T00:00:00+05:00",  # before ``datetime.min`` in UTC
+    ):
+        refused = client.post(BOOKINGS, json=booking_body(w, startsAt=starts_at))
+        assert refused.status_code == 422, (starts_at, refused.text)
+        assert detail_code(refused) == "invalid_starts_at", starts_at
+        assert refused.headers["cache-control"] == NO_STORE, starts_at
+    # Red cases: a far but representable instant reaches the service's own refusals.
+    far = client.post(BOOKINGS, json=booking_body(w, startsAt="9000-01-01T10:00:00+00:00"))
+    assert far.status_code == 409, far.text
+    assert detail_code(far) == "beyond_horizon"
+    ancient = client.post(BOOKINGS, json=booking_body(w, startsAt="0001-06-01T10:00:00+00:00"))
+    assert ancient.status_code == 409, ancient.text
+    assert detail_code(ancient) == "not_bookable"
+    assert booking_count(sm) == 0
+
+
 def test_sp5_sp6_refused_for_unlisted_paused_or_blocked_tutor(
     sm: sessionmaker[Session], client: TestClient
 ) -> None:
@@ -597,12 +655,19 @@ def test_sp5_sp6_refused_for_unlisted_paused_or_blocked_tutor(
     assert malformed.content == sp2["unknown"].content
     assert len(hidden) == 9  # non-vacuity: every hidden kind compared
 
-    # A parent booking for a child in a block with the tutor, either direction: the same 404.
+    # A parent booking for the linked child meets every hidden kind with the same 404,
+    # including a child in a block with the tutor, either direction.
     act_as(client, parent, Role.parent)
-    for name in ("blocked_by_student", "blocked_by_tutor"):
-        refused = client.post(BOOKINGS, json=booking_body(hidden[name], studentId=str(student)))
-        assert refused.status_code == 404, refused.text
-        assert refused.content == sp2["unknown"].content
+    for name, w in hidden.items():
+        refused = client.post(BOOKINGS, json=booking_body(w, studentId=str(student)))
+        assert refused.status_code == 404, (name, refused.text)
+        assert refused.content == sp2[name].content, name
+        assert refused.headers["cache-control"] == NO_STORE
+    malformed = client.post(
+        BOOKINGS, json=booking_body(unknown, tutorId="not-a-uuid", studentId=str(student))
+    )
+    assert malformed.status_code == 404
+    assert malformed.content == sp2["unknown"].content
     assert booking_count(sm) == 0
     assert inbox_rows(sm) == []
     assert outbox_rows(sm) == []

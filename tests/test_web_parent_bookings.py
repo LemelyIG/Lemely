@@ -8,7 +8,8 @@ Route-level, through ``tests.test_web_tutoring_booking.bookings_client``.
   read, and only if it is that child's.
 * PA1-PA3 are read-only: no review fields (SC-12), ``canPost`` always false (O9).
 * PA4 and PA5 only for the parent who requested the booking (O8: 403 ``not_requester``); PA4
-  never inside 24 hours of an accepted session's start (row 18).
+  never inside 24 hours of an accepted session's start (row 18). Once cancelled, the meeting
+  place is ``null`` (O16), and a failing inbox leaves the cancel committed (D5.9 §1).
 """
 
 from __future__ import annotations
@@ -18,11 +19,13 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
+import structlog.testing
 
 from lemely.db.models.enums import BookingState, ModerationState, Role
 from lemely.db.models.tutoring import TutorReview
 from tests.test_booking_repo import (
     LINK,
+    PLACE,
     World,
     add_booking,
     add_parent,
@@ -33,7 +36,12 @@ from tests.test_booking_repo import (
     unlink,
 )
 from tests.test_tutor_grant_repo import inbox_rows, outbox_rows
-from tests.test_web_tutoring_booking import NO_STORE, bookings_client, detail_code
+from tests.test_web_tutoring_booking import (
+    NO_STORE,
+    BrokenNotifications,
+    bookings_client,
+    detail_code,
+)
 from tests.tutoring_db import act_as, emptied_after, tutoring_database
 
 if TYPE_CHECKING:
@@ -82,6 +90,7 @@ def parent_booking(
     state: str = "requested",
     starts_in: timedelta = timedelta(days=3),
     fresh_tutor: bool = True,
+    mode: str = "virtual",
 ) -> uuid.UUID:
     """A booking ``parent`` requested for ``w.student`` (with its own tutor by default)."""
     return add_booking(
@@ -89,6 +98,7 @@ def parent_booking(
         w,
         state=state,
         starts_in=starts_in,
+        mode=mode,
         requested_by=parent,
         party="parent",
         tutor=another_tutor(sm, w.subject) if fresh_tutor else None,
@@ -290,6 +300,31 @@ def test_pa4_requester_cancels_and_everyone_else_is_told(
     assert parent not in {user for user, _, _ in outbox_rows(sm)}
 
 
+def test_pa4_commits_when_inbox_write_raises(sm: sessionmaker[Session]) -> None:
+    """D5.9 §1 at the router: the cancel and its emails commit; the inbox failures are logged.
+
+    SPEC §b.4 "Cancelled": every other party and the linked parents, never the parent who acted.
+    """
+    client = bookings_client(sm, notifications=BrokenNotifications())
+    w = make_world(sm)
+    parent = add_parent(sm, w.student)
+    other_parent = add_parent(sm, w.student)
+    booking = parent_booking(sm, w, parent, state="accepted", fresh_tutor=False)
+    act_as(client, parent, Role.parent)
+
+    with structlog.testing.capture_logs() as logs:
+        response = client.post(f"{one(w.student, booking)}/cancel")
+
+    assert response.status_code == 200, response.text
+    assert stored(sm, booking).state is BookingState.cancelled
+    told = sorted([w.tutor.user_id, w.student, other_parent])
+    assert sorted(user for user, _, _ in outbox_rows(sm)) == told
+    assert {template for _, template, _ in outbox_rows(sm)} == {"booking_cancelled"}
+    failures = [entry for entry in logs if entry["event"] == "notification_create_failed"]
+    assert sorted(entry["user_id"] for entry in failures) == sorted(str(user) for user in told)
+    assert inbox_rows(sm) == []
+
+
 def test_pa4_late_cancel_409_cancel_window_closed(
     sm: sessionmaker[Session], client: TestClient, w: World
 ) -> None:
@@ -306,8 +341,17 @@ def test_pa4_late_cancel_409_cancel_window_closed(
     assert stored(sm, late).state is BookingState.accepted
     assert inbox_rows(sm) == []
     # Red case: a day further out the same parent may cancel.
-    early = parent_booking(sm, w, parent, state="accepted", starts_in=timedelta(hours=30))
-    assert client.post(f"{one(w.student, early)}/cancel").status_code == 200
+    early = parent_booking(
+        sm, w, parent, state="accepted", starts_in=timedelta(hours=30), mode="in_person"
+    )
+    assert client.get(one(w.student, early)).json()["locationDetail"] == PLACE  # accepted shows it
+    allowed = client.post(f"{one(w.student, early)}/cancel")
+    assert allowed.status_code == 200, allowed.text
+    # O16: a cancelled session's place is null in the cancel's answer and in a later read,
+    # though the row keeps it (only the DTO withholds it).
+    for shown in (allowed.json(), client.get(one(w.student, early)).json()):
+        assert (shown["meetingLink"], shown["locationDetail"]) == (None, None)
+    assert stored(sm, early).location_detail == PLACE
 
 
 def test_authz_parent_cancel_requires_requester(
