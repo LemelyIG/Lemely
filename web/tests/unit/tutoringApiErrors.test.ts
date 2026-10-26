@@ -91,14 +91,29 @@ const PARSED = parseRefusalCodes(SPEC)
 
 /** Codes the backend sends that §b.2's status column does not spell out:
  * SPEC §0 "Errors" (`email_unverified`), the tutor-route preamble
- * (`no_tutor_profile`), and `lemely/web/tutoring_http.py` /
- * `deps_tutoring.py` (`not_found`, `invalid_cursor`, `invalid_area`). */
+ * (`no_tutor_profile`), `lemely/web/tutoring_http.py` / `deps_tutoring.py`
+ * (`not_found`, `invalid_cursor`, `invalid_area`, `invalid_day`), the tutor
+ * profile repository (`lemely/db/tutor_profile_repo.py`: `not_a_teacher`,
+ * `invalid_profile`, `invalid_public_name`, `invalid_modes`, `invalid_subjects`,
+ * `invalid_rules`) and the review repository (`lemely/db/tutor_review_repo.py`:
+ * `not_pending`, `reply_empty`, `empty_update`), each sent as `detail.code`
+ * through `tutoring_error` (`routers/tutor_profile.py`, `tutoring_reviews.py`). */
 const NOT_IN_STATUS_COLUMN = [
   "email_unverified",
   "no_tutor_profile",
   "not_found",
   "invalid_cursor",
   "invalid_area",
+  "invalid_day",
+  "not_a_teacher",
+  "invalid_profile",
+  "invalid_public_name",
+  "invalid_modes",
+  "invalid_subjects",
+  "invalid_rules",
+  "not_pending",
+  "reply_empty",
+  "empty_update",
 ] as const
 
 describe("SPEC §b.2 refusal codes (the spine)", () => {

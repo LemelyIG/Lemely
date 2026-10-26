@@ -154,7 +154,12 @@ export const tutoringKeys = {
     [R, "own", "bookings", "notes", bookingId, params] as const,
   ownReviewsScope: () => [R, "own", "reviews"] as const,
   ownReviews: (params: PageParams) => [R, "own", "reviews", params] as const,
-  tutorStudentsScope: () => [R, "own", "students"] as const,
+  /**
+   * T19's lists only. Deliberately NOT `[R, "own", "students"]`: that prefix also
+   * covers every T20 detail key, and invalidating a detail refetches it (an
+   * audited read, and for an ended grant a 403 that would invalidate again).
+   */
+  tutorStudentsListScope: () => [R, "own", "students", "list"] as const,
   tutorStudents: (params: PageParams) => [R, "own", "students", "list", params] as const,
   /** T20. The one entry a 403 `access_ended` removes (see `useTutoringApi`). */
   tutorStudent: (studentId: string) => [R, "own", "students", "detail", studentId] as const,

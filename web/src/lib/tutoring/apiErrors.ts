@@ -20,10 +20,11 @@ import { ApiError } from "@/lib/api"
  * ── Codes ───────────────────────────────────────────────────────────────────
  *
  * `tests/unit/tutoringApiErrors.test.ts` reads every code out of §b.2's status
- * column and fails if one is missing here. The last five are sent by the
- * backend but not spelled out in that column: `email_unverified` (SPEC §0),
- * `no_tutor_profile` (the tutor-route preamble), and `not_found`,
- * `invalid_cursor`, `invalid_area` (`tutoring_http.py`, `deps_tutoring.py`).
+ * column and fails if one is missing here. The rest, from `email_unverified` on,
+ * are sent by the backend but not spelled out in that column: `email_unverified`
+ * (SPEC §0), `no_tutor_profile` (the tutor-route preamble), and the codes of
+ * `tutoring_http.py`, `deps_tutoring.py`, `tutor_profile_repo.py` and
+ * `tutor_review_repo.py`. The test lists them by name.
  *
  * One code can mean two things on two routes: `access_ended` is the 403 a tutor
  * gets when a student's grant has ended (T20) and the 409 a tutor gets when
@@ -84,6 +85,18 @@ export const TUTORING_ERROR_CODES = [
   "not_found",
   "invalid_cursor",
   "invalid_area",
+  "invalid_day",
+  // Tutor profile repository (T2-T5, `tutor_profile_repo.py`)
+  "not_a_teacher",
+  "invalid_profile",
+  "invalid_public_name",
+  "invalid_modes",
+  "invalid_subjects",
+  "invalid_rules",
+  // Review repository (S7, T18, A7, A8, `tutor_review_repo.py`)
+  "not_pending",
+  "reply_empty",
+  "empty_update",
 ] as const
 
 export type TutoringErrorCode = (typeof TUTORING_ERROR_CODES)[number]
@@ -151,6 +164,16 @@ export const TUTORING_ERROR_COPY: Readonly<Record<TutoringErrorCode, string>> = 
   not_found: "We couldn't find that.",
   invalid_cursor: "That page link is no longer valid. Reload the list.",
   invalid_area: "Choose an area from the list.",
+  invalid_day: "Days run from 1 (Monday) to 7 (Sunday).",
+  not_a_teacher: "Only a teacher account can have a tutor profile.",
+  invalid_profile: "Check the highlighted parts of your profile and try again.",
+  invalid_public_name: "Check the name shown on your profile.",
+  invalid_modes: "Choose at least one way of meeting.",
+  invalid_subjects: "Choose at least one subject.",
+  invalid_rules: "Check your weekly availability and try again.",
+  not_pending: "That has already been decided.",
+  reply_empty: "Write a reply first.",
+  empty_update: "Change the stars or the text first.",
 }
 
 const KNOWN: ReadonlySet<string> = new Set(TUTORING_ERROR_CODES)

@@ -1,11 +1,23 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { QueryClient } from "@tanstack/react-query"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import {
+  MutationObserver,
+  QueryClient,
+  QueryObserver,
+  dehydrate,
+  onlineManager,
+} from "@tanstack/react-query"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError, request } from "@/lib/api"
-import { isPersistableQueryKey } from "@/lib/offline/persistAllowlist"
+import { isPersistableQueryKey, shouldPersistQuery } from "@/lib/offline/persistAllowlist"
 import { tutoringKeys } from "@/lib/tutoring/queryKeys"
-import { installAccessEndedGuard, tutoringQueryString } from "@/lib/hooks/useTutoringApi"
+import * as tutoringApi from "@/lib/hooks/useTutoringApi"
+import {
+  AUDITED_READ,
+  blockInvalidationKeys,
+  installAccessEndedGuard,
+  tutoringQueryString,
+} from "@/lib/hooks/useTutoringApi"
 
 /*
  * T11: one react-query hook per tutoring route (SPEC §b.2 / §c.1), query keys
@@ -18,12 +30,61 @@ import { installAccessEndedGuard, tutoringQueryString } from "@/lib/hooks/useTut
  * rows are the spine (exactly 70, asserted before anything is compared against
  * them), §b.2's route tables cross-check them, and the hooks file is read as
  * text and scanned for the `call<T>("METHOD", "/path")` each hook makes.
+ *
+ * The hooks are also CALLED here, as plain functions: `useQuery` and
+ * `useMutation` are replaced by identity functions, so a hook returns the
+ * options it would have handed to react-query, and `useQueryClient` returns
+ * whatever `harness.client` is. That runs every query function, mutation
+ * function and `onSuccess` for real, without a DOM or a React renderer.
  */
+
+const harness = vi.hoisted(() => ({ client: undefined as unknown }))
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>()
   return { ...actual, request: vi.fn() }
 })
+
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-query")>()
+  return {
+    ...actual,
+    useQuery: (options: unknown) => options,
+    useMutation: (options: unknown) => options,
+    useQueryClient: () => harness.client,
+  }
+})
+
+/** What a hook returns once `useQuery` and `useMutation` are identities. */
+interface HookOptions {
+  queryKey?: readonly unknown[]
+  queryFn?: () => Promise<unknown>
+  mutationFn?: (variables: unknown) => Promise<unknown>
+  onSuccess?: (data: unknown, variables: unknown, ...rest: unknown[]) => unknown
+  networkMode?: string
+  staleTime?: number
+  gcTime?: number
+  refetchOnMount?: string
+  refetchOnReconnect?: boolean
+  retry?: (failureCount: number, error: Error) => boolean
+}
+
+type HookFn = (...args: unknown[]) => HookOptions
+
+/**
+ * A refusal that arrives on a later macrotask, like a real response. A mock that
+ * rejects on a microtask would let a refetch loop starve the timers the tests
+ * wait on, and hang the run instead of failing it.
+ */
+function refuseLater(error: Error): () => Promise<never> {
+  return () => new Promise((_resolve, reject) => setTimeout(() => reject(error), 1))
+}
+
+/** Call the exported hook `name` as a plain function. */
+function runHook(name: string, ...args: unknown[]): HookOptions {
+  const hook = (tutoringApi as unknown as Record<string, HookFn>)[name]
+  return hook(...args)
+}
 
 const ROOT = join(import.meta.dirname, "..", "..", "..")
 const SPEC = readFileSync(join(ROOT, "docs", "tutoring", "SPEC.md"), "utf8")
@@ -55,9 +116,26 @@ function parseSpecRoutes(spec: string): SpecRoute[] {
   return rows
 }
 
-/** `{tutor_id}` and `${tutorId}` both become `{}`: only the shape is compared. */
+function camelToSnake(name: string): string {
+  return name.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)
+}
+
+function snakeToCamel(name: string): string {
+  return name.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase())
+}
+
+/**
+ * A route as `METHOD /path` with its parameter NAMES kept, in order. The SPEC's
+ * `{tutor_id}` stays `{tutor_id}`; a hook's `${encodeURIComponent(tutorId)}`
+ * becomes `{tutor_id}`. A path id that is not wrapped in `encodeURIComponent`
+ * becomes `{BARE}`, which no SPEC path contains, so it never matches.
+ */
 function shape(method: string, path: string): string {
-  return `${method} ${path.replace(/^\/api/, "").replace(/\$\{[^}]*\}|\{[^}]*\}/g, "{}")}`
+  const named = path
+    .replace(/^\/api/, "")
+    .replace(/\$\{encodeURIComponent\((\w+)\)\}/g, (_m, name: string) => `{${camelToSnake(name)}}`)
+    .replace(/\$\{[^}]*\}/g, "{BARE}")
+  return `${method} ${named}`
 }
 
 /** §b.2's route tables: `| P1 | \`GET /api/public/tutors\` **C** | … |`. */
@@ -165,6 +243,92 @@ describe("every SPEC route has exactly one hook", () => {
     const t20 = HOOKS.filter((h) => h.calls[0]?.path.startsWith("/tutor/students/"))
     expect(t20.length).toBe(1)
     expect(t20[0].body).toContain("installAccessEndedGuard(")
+  })
+
+  it("wraps every path id in encodeURIComponent", () => {
+    const withIds = HOOKS.filter((h) => h.calls[0].path.includes("${"))
+    expect(withIds.length).toBeGreaterThan(40)
+    for (const hook of withIds) {
+      expect(hook.calls[0].path.match(/\$\{(?!encodeURIComponent\()/g), hook.name).toBeNull()
+    }
+  })
+
+  it("names the path ids as the SPEC does, in the SPEC's order", () => {
+    // `shape` keeps parameter names: `${encodeURIComponent(childId)}` is `{child_id}`.
+    const specParams = SPEC_ROUTES.map((r) => shape(r.method, r.path)).filter((s) => s.includes("{"))
+    const hookParams = HOOKS.map((h) => shape(h.calls[0].method, `/api${h.calls[0].path}`)).filter((s) =>
+      s.includes("{"),
+    )
+    expect(specParams.length).toBeGreaterThan(40)
+    expect(hookParams.sort()).toEqual(specParams.sort())
+  })
+
+  it("runs all 70 hooks against the SPEC path and method, with every id encoded", async () => {
+    harness.client = new QueryClient()
+    const idNames = new Set<string>()
+    for (const route of SPEC_ROUTES) {
+      for (const m of route.path.matchAll(/\{(\w+)\}/g)) idNames.add(m[1])
+    }
+    expect(idNames.size).toBeGreaterThanOrEqual(10)
+    const variables: Record<string, unknown> = {
+      body: {},
+      file: new Blob(["x"]),
+      description: "d",
+    }
+    for (const name of idNames) variables[snakeToCamel(name)] = `${snakeToCamel(name)}/x`
+
+    let ran = 0
+    for (const hook of HOOKS) {
+      const route = SPEC_ROUTES.find(
+        (r) => shape(r.method, r.path) === shape(hook.calls[0].method, `/api${hook.calls[0].path}`),
+      )
+      expect(route, hook.name).toBeDefined()
+      const names = [...route!.path.matchAll(/\{(\w+)\}/g)].map((m) => m[1])
+      const options = runHook(hook.name, "p1/x", "p2/x", "p3/x")
+      vi.mocked(request).mockReset()
+      vi.mocked(request).mockResolvedValue(undefined)
+      if (options.queryFn) {
+        await options.queryFn()
+      } else {
+        await options.mutationFn!(variables)
+      }
+      const [url, init] = vi.mocked(request).mock.calls[0] as [string, RequestInit]
+      const expected = route!.path
+        .replace(/^\/api/, "")
+        .replace(/\{(\w+)\}/g, (_m, name: string) => {
+          const sentinel = options.queryFn
+            ? `p${names.indexOf(name) + 1}/x`
+            : `${snakeToCamel(name)}/x`
+          return encodeURIComponent(sentinel)
+        })
+      expect(url.split("?")[0], hook.name).toBe(expected)
+      expect(init.method, hook.name).toBe(route!.method)
+      ran++
+    }
+    expect(ran).toBe(SPEC_ROUTE_COUNT)
+  })
+
+  it("builds each read's key from its own ids, in path order, with a factory that takes them", () => {
+    harness.client = new QueryClient()
+    let checked = 0
+    for (const hook of HOOKS.filter((h) => h.calls[0].method === "GET")) {
+      const idCount = [...hook.calls[0].path.matchAll(/\$\{/g)].length
+      const options = runHook(hook.name, "p1/x", "p2/x", "p3/x")
+      const flat = JSON.stringify(options.queryKey)
+      let from = 0
+      for (let i = 1; i <= idCount; i++) {
+        const at = flat.indexOf(`"p${i}/x"`, from)
+        expect(at, `${hook.name}: id ${i} missing or out of order in ${flat}`).toBeGreaterThanOrEqual(0)
+        from = at + 1
+      }
+      const factory = (tutoringKeys as unknown as Record<string, (...a: unknown[]) => readonly unknown[]>)[
+        hook.queryKeys[0]
+      ]
+      expect(JSON.stringify(factory("p1/x", "p2/x", "p3/x").slice(0, 1)), hook.name).toBe('["tutoring"]')
+      expect(factory.length, hook.name).toBeGreaterThanOrEqual(idCount)
+      checked++
+    }
+    expect(checked).toBe(SPEC_ROUTES.filter((r) => r.method === "GET").length)
   })
 })
 
@@ -326,5 +490,295 @@ describe("403 access_ended drops the tutor's cached student detail", () => {
     installAccessEndedGuard(client)
     installAccessEndedGuard(client)
     expect((cache as unknown as { listeners: Set<unknown> }).listeners.size).toBe(before)
+  })
+})
+
+describe("a mounted T20 screen whose grant has ended", () => {
+  const STUDENT = "33333333-3333-4333-8333-333333333333"
+  const DETAIL = { detail: { sentinel: true }, grantId: "g", grantedAt: "t", accessRecordedAt: "t" }
+
+  /** Mount `useTutorStudent`'s options on a real observer, the way React does. */
+  async function mountOnEndedGrant(seed: boolean): Promise<{
+    client: QueryClient
+    observer: QueryObserver
+    stop: () => void
+  }> {
+    const client = new QueryClient()
+    harness.client = client
+    vi.mocked(request).mockReset()
+    vi.mocked(request).mockImplementation(
+      refuseLater(new ApiError(403, "403 Forbidden", { code: "access_ended" })),
+    )
+    if (seed) client.setQueryData(tutoringKeys.tutorStudent(STUDENT), DETAIL)
+    const observer = new QueryObserver(client, runHook("useTutorStudent", STUDENT) as never)
+    const stop = observer.subscribe(() => {})
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    return { client, observer, stop }
+  }
+
+  it("asks the server exactly once, however the guard reacts", async () => {
+    const { stop } = await mountOnEndedGrant(false)
+    stop()
+    expect(vi.mocked(request)).toHaveBeenCalledTimes(1)
+  })
+
+  it("asks exactly once even when the screen re-renders with fresh options", async () => {
+    const { observer, stop } = await mountOnEndedGrant(false)
+    // React calls `observer.setOptions` on every render with a new options object.
+    observer.setOptions(runHook("useTutorStudent", STUDENT) as never)
+    observer.setOptions(runHook("useTutorStudent", STUDENT) as never)
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    stop()
+    expect(vi.mocked(request)).toHaveBeenCalledTimes(1)
+  })
+
+  it("ends in the error state with the student's data gone", async () => {
+    const { client, observer, stop } = await mountOnEndedGrant(true)
+    stop()
+    const result = observer.getCurrentResult()
+    expect(result.status).toBe("error")
+    expect(result.data).toBeUndefined()
+    expect(client.getQueryData(tutoringKeys.tutorStudent(STUDENT))).toBeUndefined()
+  })
+
+  it("marks only the student LIST stale, never the detail's own prefix", async () => {
+    const client = new QueryClient()
+    installAccessEndedGuard(client)
+    const spy = vi.spyOn(client, "invalidateQueries")
+    client.setQueryData(tutoringKeys.tutorStudent(STUDENT), DETAIL)
+    vi.mocked(request).mockReset()
+    vi.mocked(request).mockImplementation(
+      refuseLater(new ApiError(403, "403 Forbidden", { code: "access_ended" })),
+    )
+    await expect(
+      client.fetchQuery({
+        queryKey: tutoringKeys.tutorStudent(STUDENT),
+        queryFn: () => request("/tutor/students/x"),
+      }),
+    ).rejects.toBeInstanceOf(ApiError)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const keys = spy.mock.calls.map((call) => call[0]?.queryKey)
+    expect(keys).toEqual([tutoringKeys.tutorStudentsListScope()])
+    // The detail key must not sit under what was invalidated.
+    const detail = tutoringKeys.tutorStudent(STUDENT)
+    const invalidated = tutoringKeys.tutorStudentsListScope()
+    expect(detail.slice(0, invalidated.length)).not.toEqual([...invalidated])
+  })
+})
+
+describe("tutoring mutations are never persisted (R2)", () => {
+  const MUTATION_HOOKS = HOOKS.filter((h) => h.calls[0].method !== "GET")
+  const universal = {
+    body: {},
+    file: new Blob(["x"]),
+    description: "d",
+    bookingId: "b",
+    reviewId: "r",
+    replyId: "rp",
+    grantId: "g",
+    classId: "c",
+    evidenceId: "e",
+    counterpartId: "cp",
+    reportId: "rep",
+    tutorId: "t",
+    childId: "ch",
+  }
+
+  afterEach(() => {
+    onlineManager.setOnline(true)
+  })
+
+  it("finds the 36 write routes", () => {
+    expect(MUTATION_HOOKS.length).toBe(SPEC_ROUTES.filter((r) => r.method !== "GET").length)
+    expect(MUTATION_HOOKS.length).toBe(36)
+  })
+
+  it("sets networkMode always on every mutation, so none can pause", () => {
+    harness.client = new QueryClient()
+    for (const hook of MUTATION_HOOKS) {
+      expect(runHook(hook.name).networkMode, hook.name).toBe("always")
+    }
+  })
+
+  it("leaves nothing for the app's dehydrate to write when every mutation runs offline", async () => {
+    const main = readFileSync(join(ROOT, "web", "src", "main.tsx"), "utf8")
+    expect(main).toContain("shouldDehydrateQuery: shouldPersistQuery")
+    // The app overrides the query predicate only; mutations dehydrate while paused (the library default).
+    expect(main).not.toContain("shouldDehydrateMutation")
+
+    const client = new QueryClient()
+    harness.client = client
+    onlineManager.setOnline(false)
+    vi.mocked(request).mockReset()
+    vi.mocked(request).mockReturnValue(new Promise(() => {}))
+    for (const hook of MUTATION_HOOKS) {
+      const observer = new MutationObserver(client, runHook(hook.name) as never)
+      void observer.mutate(universal as never).catch(() => {})
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const all = client.getMutationCache().getAll()
+    expect(all.length).toBe(36)
+    expect(all.filter((m) => m.state.isPaused).length).toBe(0)
+    expect(dehydrate(client, { shouldDehydrateQuery: shouldPersistQuery }).mutations).toEqual([])
+  })
+
+  it("would catch a paused mutation (control)", async () => {
+    const client = new QueryClient()
+    harness.client = client
+    onlineManager.setOnline(false)
+    vi.mocked(request).mockReset()
+    vi.mocked(request).mockReturnValue(new Promise(() => {}))
+    const { networkMode: _dropped, ...withoutNetworkMode } = runHook("useCreateBooking")
+    void new MutationObserver(client, withoutNetworkMode as never)
+      .mutate({ tutorId: "t" } as never)
+      .catch(() => {})
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const dehydrated = dehydrate(client, { shouldDehydrateQuery: shouldPersistQuery }).mutations
+    expect(dehydrated.length).toBe(1)
+  })
+})
+
+describe("audited reads are never served from cache (R3)", () => {
+  const auditedShapes = (() => {
+    const start = SPEC.indexOf("### b.2 Routes")
+    const end = SPEC.indexOf("### b.3 DTOs")
+    const found: string[] = []
+    for (const line of SPEC.slice(start, end).split("\n")) {
+      if (!line.startsWith("|") || !/\bWrites one\b/.test(line)) continue
+      const cells = line.split(/(?<!\\)\|/).map((cell) => cell.trim())
+      const route = /`(GET|POST|PUT|PATCH|DELETE) (\/api\/\S+?)`/.exec(cells[2] ?? "")
+      if (route) found.push(shape(route[1], route[2]))
+    }
+    return found.sort()
+  })()
+
+  it("finds the four audited reads in the SPEC (T19, T20, A2, A10)", () => {
+    expect(auditedShapes).toEqual([
+      "GET /admin/tutoring/reports/{report_id}",
+      "GET /admin/tutors/{tutor_id}",
+      "GET /tutor/students",
+      "GET /tutor/students/{student_id}",
+    ])
+  })
+
+  it("gives exactly those hooks the AUDITED_READ spread", () => {
+    const spread = HOOKS.filter((h) => h.body.includes("...AUDITED_READ"))
+    expect(spread.length).toBe(4)
+    const shapes = spread.map((h) => shape(h.calls[0].method, `/api${h.calls[0].path}`)).sort()
+    expect(shapes).toEqual(auditedShapes)
+  })
+
+  it("defines AUDITED_READ as never stale, never kept, always refetched, not on reconnect", () => {
+    expect(AUDITED_READ).toEqual({
+      staleTime: 0,
+      gcTime: 0,
+      refetchOnMount: "always",
+      refetchOnReconnect: false,
+    })
+  })
+
+  it("hands exactly those four hooks' options to react-query with those settings", () => {
+    harness.client = new QueryClient()
+    const withSettings = HOOKS.filter((h) => {
+      if (h.calls[0].method !== "GET") return false
+      const options = runHook(h.name, "a", "b", "c")
+      return options.gcTime === 0 && options.refetchOnReconnect === false
+    })
+    expect(withSettings.length).toBe(4)
+  })
+
+  it("seeds no read from anything but the server", () => {
+    for (const word of ["placeholderData", "initialData", "keepPreviousData"]) {
+      expect(HOOKS_SOURCE.includes(word), word).toBe(false)
+    }
+  })
+})
+
+describe("what a block refreshes (R5)", () => {
+  const expectedKeys = (tutorId: string | null): string[] =>
+    [
+      tutoringKeys.blocks(),
+      tutoringKeys.directoryScope(),
+      tutoringKeys.studentGrants(),
+      tutoringKeys.studentBookingsScope(),
+      tutoringKeys.studentClassAccess(),
+      ["student", "classes"],
+      tutoringKeys.ownBookingsScope(),
+      tutoringKeys.tutorStudentsListScope(),
+      ...(tutorId === null ? [] : [tutoringKeys.tutorProfile(tutorId)]),
+    ]
+      .map((key) => JSON.stringify(key))
+      .sort()
+
+  it("lists blocks, directory, grants, bookings, class access, classes, own bookings, student list and the tutor's profile", () => {
+    expect(blockInvalidationKeys({ tutorId: "T1" }).map((k) => JSON.stringify(k)).sort()).toEqual(
+      expectedKeys("T1"),
+    )
+  })
+
+  it("leaves the tutor profile out when a tutor blocks a student", () => {
+    expect(blockInvalidationKeys({ studentId: "S1" }).map((k) => JSON.stringify(k)).sort()).toEqual(
+      expectedKeys(null),
+    )
+  })
+
+  it("is what the B2 hook invalidates after a block", () => {
+    const invalidateQueries = vi.fn()
+    harness.client = { invalidateQueries }
+    const options = runHook("useCreateTutoringBlock")
+    options.onSuccess!({}, { tutorId: "T1" }, undefined, undefined)
+    const sent = invalidateQueries.mock.calls.map((c) => JSON.stringify(c[0].queryKey)).sort()
+    expect(sent).toEqual(expectedKeys("T1"))
+  })
+})
+
+describe("A11 only updates a report detail that is already cached (R6)", () => {
+  const REPORT = "44444444-4444-4444-8444-444444444444"
+  const resolved = { reportId: REPORT, resolution: "dismissed" }
+
+  it("creates no entry when none exists", () => {
+    const client = new QueryClient()
+    harness.client = client
+    runHook("useResolveTutoringReport").onSuccess!(resolved, { reportId: REPORT, body: {} })
+    expect(client.getQueryCache().find({ queryKey: tutoringKeys.adminReport(REPORT) })).toBeUndefined()
+    expect(client.getQueryCache().getAll()).toEqual([])
+  })
+
+  it("replaces the data of an entry that exists, and no other", () => {
+    const client = new QueryClient()
+    harness.client = client
+    client.setQueryData(tutoringKeys.adminReport(REPORT), { old: true })
+    client.setQueryData(tutoringKeys.adminReport("other"), { old: true })
+    runHook("useResolveTutoringReport").onSuccess!(resolved, { reportId: REPORT, body: {} })
+    expect(client.getQueryData(tutoringKeys.adminReport(REPORT))).toEqual(resolved)
+    expect(client.getQueryData(tutoringKeys.adminReport("other"))).toEqual({ old: true })
+  })
+})
+
+describe("a booking action always sends a body (R7)", () => {
+  const withReason: [string, unknown[]][] = [
+    ["useCancelStudentBooking", []],
+    ["useDeclineTutorBooking", []],
+    ["useCancelTutorBooking", []],
+    ["useCancelParentChildBooking", []],
+  ]
+
+  it.each(withReason)("%s sends {} when no reason is given", async (name) => {
+    harness.client = new QueryClient()
+    vi.mocked(request).mockReset()
+    vi.mocked(request).mockResolvedValue(undefined)
+    await runHook(name).mutationFn!({ bookingId: "b1", childId: "c1" })
+    const init = vi.mocked(request).mock.calls[0][1] as RequestInit
+    expect(init.method).toBe("POST")
+    expect(init.body).toBe("{}")
+  })
+
+  it.each(withReason)("%s sends the reason it is given", async (name) => {
+    harness.client = new QueryClient()
+    vi.mocked(request).mockReset()
+    vi.mocked(request).mockResolvedValue(undefined)
+    await runHook(name).mutationFn!({ bookingId: "b1", childId: "c1", body: { reason: "Ill" } })
+    const init = vi.mocked(request).mock.calls[0][1] as RequestInit
+    expect(init.body).toBe('{"reason":"Ill"}')
   })
 })

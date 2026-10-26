@@ -171,8 +171,8 @@ function retryUnlessRefused(failureCount: number, error: Error): boolean {
   return failureCount < 1
 }
 
-/** See "Reads that are audited" in the header. */
-const AUDITED_READ = {
+/** See "Reads that are audited" in the header. Exported for its test. */
+export const AUDITED_READ = {
   staleTime: 0,
   gcTime: 0,
   refetchOnMount: "always",
@@ -212,7 +212,9 @@ export function installAccessEndedGuard(queryClient: QueryClient): void {
     if (studentIdOfDetailKey(event.query.queryKey) === null) return
     if (!isAccessEnded(event.action.error)) return
     event.query.setState({ data: undefined, dataUpdatedAt: 0 })
-    invalidateAll(queryClient, [tutoringKeys.tutorStudentsScope()])
+    // The LIST scope only. The detail's own prefix would refetch the detail that just
+    // failed, which fails again and fires this again, without end.
+    invalidateAll(queryClient, [tutoringKeys.tutorStudentsListScope()])
   })
 }
 
@@ -235,7 +237,7 @@ export function usePublicTutors(
 export function usePublicTutor(tutorId: string): UseQueryResult<PublicTutorCard, Error> {
   return useQuery({
     queryKey: tutoringKeys.publicTutor(tutorId),
-    queryFn: () => call<PublicTutorCard>("GET", `/public/tutors/${tutorId}`),
+    queryFn: () => call<PublicTutorCard>("GET", `/public/tutors/${encodeURIComponent(tutorId)}`),
     retry: retryUnlessRefused,
   })
 }
@@ -268,7 +270,7 @@ export function useTutorDirectory(
 export function useTutorProfile(tutorId: string): UseQueryResult<TutorProfile, Error> {
   return useQuery({
     queryKey: tutoringKeys.tutorProfile(tutorId),
-    queryFn: () => call<TutorProfile>("GET", `/tutors/${tutorId}`),
+    queryFn: () => call<TutorProfile>("GET", `/tutors/${encodeURIComponent(tutorId)}`),
     retry: retryUnlessRefused,
   })
 }
@@ -280,7 +282,7 @@ export function useTutorReviews(
 ): UseQueryResult<ReviewsPage, Error> {
   return useQuery({
     queryKey: tutoringKeys.tutorReviews(tutorId, params),
-    queryFn: () => call<ReviewsPage>("GET", `/tutors/${tutorId}/reviews`, { query: params }),
+    queryFn: () => call<ReviewsPage>("GET", `/tutors/${encodeURIComponent(tutorId)}/reviews`, { query: params }),
     retry: retryUnlessRefused,
   })
 }
@@ -289,7 +291,7 @@ export function useTutorReviews(
 export function useTutorOutcomes(tutorId: string): UseQueryResult<Outcomes, Error> {
   return useQuery({
     queryKey: tutoringKeys.tutorOutcomes(tutorId),
-    queryFn: () => call<Outcomes>("GET", `/tutors/${tutorId}/outcomes`),
+    queryFn: () => call<Outcomes>("GET", `/tutors/${encodeURIComponent(tutorId)}/outcomes`),
     retry: retryUnlessRefused,
   })
 }
@@ -301,7 +303,7 @@ export function useTutorSlots(
 ): UseQueryResult<Slots, Error> {
   return useQuery({
     queryKey: tutoringKeys.tutorSlots(tutorId, params),
-    queryFn: () => call<Slots>("GET", `/tutors/${tutorId}/slots`, { query: params }),
+    queryFn: () => call<Slots>("GET", `/tutors/${encodeURIComponent(tutorId)}/slots`, { query: params }),
     retry: retryUnlessRefused,
   })
 }
@@ -313,6 +315,7 @@ export function useTutorSlots(
 export function useCreateBooking(): UseMutationResult<Booking, Error, BookingCreate> {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: (body: BookingCreate) => call<Booking>("POST", "/bookings", { body }),
     onSuccess: (booking) => {
       invalidateAll(queryClient, [
@@ -354,7 +357,7 @@ export function useStudentBookings(
 export function useStudentBooking(bookingId: string): UseQueryResult<Booking, Error> {
   return useQuery({
     queryKey: tutoringKeys.studentBooking(bookingId),
-    queryFn: () => call<Booking>("GET", `/student/bookings/${bookingId}`),
+    queryFn: () => call<Booking>("GET", `/student/bookings/${encodeURIComponent(bookingId)}`),
     retry: retryUnlessRefused,
   })
 }
@@ -367,8 +370,9 @@ export function useCancelStudentBooking(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ bookingId, body }: BookingActionVariables) =>
-      call<Booking>("POST", `/student/bookings/${bookingId}/cancel`, { body }),
+      call<Booking>("POST", `/student/bookings/${encodeURIComponent(bookingId)}/cancel`, { body: body ?? {} }),
     onSuccess: (booking) => {
       invalidateAll(queryClient, [
         tutoringKeys.studentBookingsScope(),
@@ -386,7 +390,7 @@ export function useStudentBookingNotes(
   return useQuery({
     queryKey: tutoringKeys.studentBookingNotes(bookingId, params),
     queryFn: () =>
-      call<NotesPage>("GET", `/student/bookings/${bookingId}/notes`, { query: params }),
+      call<NotesPage>("GET", `/student/bookings/${encodeURIComponent(bookingId)}/notes`, { query: params }),
     retry: retryUnlessRefused,
   })
 }
@@ -399,8 +403,9 @@ export function usePostStudentBookingNote(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ bookingId, body }: { bookingId: string; body: NoteCreate }) =>
-      call<Note>("POST", `/student/bookings/${bookingId}/notes`, { body }),
+      call<Note>("POST", `/student/bookings/${encodeURIComponent(bookingId)}/notes`, { body }),
     onSuccess: (_note, { bookingId }) => {
       invalidateAll(queryClient, [tutoringKeys.studentBookingNotesScope(bookingId)])
     },
@@ -415,8 +420,9 @@ export function useCreateReview(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ bookingId, body }: { bookingId: string; body: ReviewCreate }) =>
-      call<MyReview>("POST", `/student/bookings/${bookingId}/review`, { body }),
+      call<MyReview>("POST", `/student/bookings/${encodeURIComponent(bookingId)}/review`, { body }),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.studentBookingsScope()])
     },
@@ -431,8 +437,9 @@ export function useUpdateReview(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ reviewId, body }: { reviewId: string; body: ReviewUpdate }) =>
-      call<MyReview>("PATCH", `/student/reviews/${reviewId}`, { body }),
+      call<MyReview>("PATCH", `/student/reviews/${encodeURIComponent(reviewId)}`, { body }),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.studentBookingsScope()])
     },
@@ -452,6 +459,7 @@ export function useStudentTutorGrants(): UseQueryResult<Grants, Error> {
 export function useCreateTutorGrant(): UseMutationResult<Grant, Error, GrantCreate> {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: (body: GrantCreate) => call<Grant>("POST", "/student/tutor-grants", { body }),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.studentGrants()])
@@ -467,8 +475,9 @@ export function useRevokeTutorGrant(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ grantId }: { grantId: string }) =>
-      call<Grant>("POST", `/student/tutor-grants/${grantId}/revoke`),
+      call<Grant>("POST", `/student/tutor-grants/${encodeURIComponent(grantId)}/revoke`),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.studentGrants()])
     },
@@ -503,6 +512,7 @@ export function useUpdateStudentTutoringSettings(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: (body: TutoringSettingsUpdate) =>
       call<TutoringSettings>("PUT", "/student/tutoring-settings", { body }),
     onSuccess: (settings) => {
@@ -519,8 +529,9 @@ export function useCompleteStudentBooking(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ bookingId }: BookingIdVariables) =>
-      call<Booking>("POST", `/student/bookings/${bookingId}/complete`),
+      call<Booking>("POST", `/student/bookings/${encodeURIComponent(bookingId)}/complete`),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.studentBookingsScope()])
     },
@@ -535,6 +546,7 @@ export function useAcknowledgeTutoringSafetyNotice(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: () => call<TutoringSettings>("POST", "/student/tutoring-safety-notice"),
     onSuccess: (settings) => {
       queryClient.setQueryData(tutoringKeys.studentSettings(), settings)
@@ -559,8 +571,9 @@ export function useStudentTutorAccessClasses(): UseQueryResult<ClassAccess, Erro
 export function useLeaveClass(): UseMutationResult<void, Error, { classId: string }> {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ classId }: { classId: string }) =>
-      call<void>("DELETE", `/student/classes/${classId}`),
+      call<void>("DELETE", `/student/classes/${encodeURIComponent(classId)}`),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.studentClassAccess(), ["student", "classes"]])
     },
@@ -588,6 +601,7 @@ export function useCreateTutorProfile(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: (body: TutorProfileCreate) =>
       call<TutorOwnProfile>("POST", "/tutor/profile", { body }),
     onSuccess: (profile) => {
@@ -605,6 +619,7 @@ export function useUpdateTutorProfile(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: (body: TutorProfileUpdate) =>
       call<TutorOwnProfile>("PATCH", "/tutor/profile", { body }),
     onSuccess: (profile) => {
@@ -618,6 +633,7 @@ export function useUpdateTutorProfile(): UseMutationResult<
 export function useSubmitTutorProfile(): UseMutationResult<TutorOwnProfile, Error, void> {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: () => call<TutorOwnProfile>("POST", "/tutor/profile/submit"),
     onSuccess: (profile) => {
       queryClient.setQueryData(tutoringKeys.ownProfile(), profile)
@@ -634,6 +650,7 @@ export function useReplaceTutorAvailability(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: (body: AvailabilityReplace) =>
       call<AvailabilityRule[]>("PUT", "/tutor/profile/availability", { body }),
     onSuccess: () => {
@@ -650,6 +667,7 @@ export function useUploadTutorEvidence(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ file, description }: { file: File; description?: string }) => {
       const form = new FormData()
       form.append("file", file)
@@ -670,8 +688,9 @@ export function useDeleteTutorEvidence(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ evidenceId }: { evidenceId: string }) =>
-      call<void>("DELETE", `/tutor/profile/evidence/${evidenceId}`),
+      call<void>("DELETE", `/tutor/profile/evidence/${encodeURIComponent(evidenceId)}`),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.ownProfile()])
     },
@@ -702,7 +721,7 @@ export function useTutorBookings(
 export function useTutorBooking(bookingId: string): UseQueryResult<Booking, Error> {
   return useQuery({
     queryKey: tutoringKeys.tutorBooking(bookingId),
-    queryFn: () => call<Booking>("GET", `/tutor/bookings/${bookingId}`),
+    queryFn: () => call<Booking>("GET", `/tutor/bookings/${encodeURIComponent(bookingId)}`),
     retry: retryUnlessRefused,
   })
 }
@@ -715,8 +734,9 @@ export function useAcceptTutorBooking(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ bookingId, body }: { bookingId: string; body: BookingAccept }) =>
-      call<Booking>("POST", `/tutor/bookings/${bookingId}/accept`, { body }),
+      call<Booking>("POST", `/tutor/bookings/${encodeURIComponent(bookingId)}/accept`, { body }),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.ownBookingsScope()])
     },
@@ -731,8 +751,9 @@ export function useDeclineTutorBooking(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ bookingId, body }: BookingActionVariables) =>
-      call<Booking>("POST", `/tutor/bookings/${bookingId}/decline`, { body }),
+      call<Booking>("POST", `/tutor/bookings/${encodeURIComponent(bookingId)}/decline`, { body: body ?? {} }),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.ownBookingsScope()])
     },
@@ -751,8 +772,9 @@ export function useCancelTutorBooking(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ bookingId, body }: BookingActionVariables) =>
-      call<Booking>("POST", `/tutor/bookings/${bookingId}/cancel`, { body }),
+      call<Booking>("POST", `/tutor/bookings/${encodeURIComponent(bookingId)}/cancel`, { body: body ?? {} }),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.ownBookingsScope()])
     },
@@ -767,8 +789,9 @@ export function useCompleteTutorBooking(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ bookingId }: BookingIdVariables) =>
-      call<Booking>("POST", `/tutor/bookings/${bookingId}/complete`),
+      call<Booking>("POST", `/tutor/bookings/${encodeURIComponent(bookingId)}/complete`),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.ownBookingsScope()])
     },
@@ -783,8 +806,9 @@ export function useMarkTutorBookingNoShow(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ bookingId }: BookingIdVariables) =>
-      call<Booking>("POST", `/tutor/bookings/${bookingId}/no-show`),
+      call<Booking>("POST", `/tutor/bookings/${encodeURIComponent(bookingId)}/no-show`),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.ownBookingsScope()])
     },
@@ -799,7 +823,7 @@ export function useTutorBookingNotes(
   return useQuery({
     queryKey: tutoringKeys.tutorBookingNotes(bookingId, params),
     queryFn: () =>
-      call<NotesPage>("GET", `/tutor/bookings/${bookingId}/notes`, { query: params }),
+      call<NotesPage>("GET", `/tutor/bookings/${encodeURIComponent(bookingId)}/notes`, { query: params }),
     retry: retryUnlessRefused,
   })
 }
@@ -812,8 +836,9 @@ export function usePostTutorBookingNote(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ bookingId, body }: { bookingId: string; body: NoteCreate }) =>
-      call<Note>("POST", `/tutor/bookings/${bookingId}/notes`, { body }),
+      call<Note>("POST", `/tutor/bookings/${encodeURIComponent(bookingId)}/notes`, { body }),
     onSuccess: (_note, { bookingId }) => {
       invalidateAll(queryClient, [tutoringKeys.tutorBookingNotesScope(bookingId)])
     },
@@ -828,8 +853,9 @@ export function useReplyToReview(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ reviewId, body }: { reviewId: string; body: ReplyCreate }) =>
-      call<Reply>("POST", `/tutor/reviews/${reviewId}/reply`, { body }),
+      call<Reply>("POST", `/tutor/reviews/${encodeURIComponent(reviewId)}/reply`, { body }),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.ownReviewsScope()])
     },
@@ -860,7 +886,7 @@ export function useTutorStudent(
   installAccessEndedGuard(queryClient)
   return useQuery({
     queryKey: tutoringKeys.tutorStudent(studentId),
-    queryFn: () => call<TutorStudentDetail>("GET", `/tutor/students/${studentId}`),
+    queryFn: () => call<TutorStudentDetail>("GET", `/tutor/students/${encodeURIComponent(studentId)}`),
     retry: retryUnlessRefused,
     ...AUDITED_READ,
   })
@@ -896,7 +922,7 @@ export function useParentChildBookings(
   return useQuery({
     queryKey: tutoringKeys.parentBookings(childId, params),
     queryFn: () =>
-      call<BookingsPage>("GET", `/parent/children/${childId}/bookings`, { query: params }),
+      call<BookingsPage>("GET", `/parent/children/${encodeURIComponent(childId)}/bookings`, { query: params }),
     retry: retryUnlessRefused,
   })
 }
@@ -908,7 +934,7 @@ export function useParentChildBooking(
 ): UseQueryResult<Booking, Error> {
   return useQuery({
     queryKey: tutoringKeys.parentBooking(childId, bookingId),
-    queryFn: () => call<Booking>("GET", `/parent/children/${childId}/bookings/${bookingId}`),
+    queryFn: () => call<Booking>("GET", `/parent/children/${encodeURIComponent(childId)}/bookings/${encodeURIComponent(bookingId)}`),
     retry: retryUnlessRefused,
   })
 }
@@ -922,7 +948,7 @@ export function useParentChildBookingNotes(
   return useQuery({
     queryKey: tutoringKeys.parentBookingNotes(childId, bookingId, params),
     queryFn: () =>
-      call<NotesPage>("GET", `/parent/children/${childId}/bookings/${bookingId}/notes`, {
+      call<NotesPage>("GET", `/parent/children/${encodeURIComponent(childId)}/bookings/${encodeURIComponent(bookingId)}/notes`, {
         query: params,
       }),
     retry: retryUnlessRefused,
@@ -937,9 +963,10 @@ export function useCancelParentChildBooking(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ childId, bookingId, body }: ParentBookingVariables) =>
-      call<Booking>("POST", `/parent/children/${childId}/bookings/${bookingId}/cancel`, {
-        body,
+      call<Booking>("POST", `/parent/children/${encodeURIComponent(childId)}/bookings/${encodeURIComponent(bookingId)}/cancel`, {
+        body: body ?? {},
       }),
     onSuccess: (booking, { childId }) => {
       invalidateAll(queryClient, [
@@ -958,8 +985,9 @@ export function useCompleteParentChildBooking(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ childId, bookingId }: ParentBookingVariables) =>
-      call<Booking>("POST", `/parent/children/${childId}/bookings/${bookingId}/complete`),
+      call<Booking>("POST", `/parent/children/${encodeURIComponent(childId)}/bookings/${encodeURIComponent(bookingId)}/complete`),
     onSuccess: (_booking, { childId }) => {
       invalidateAll(queryClient, [tutoringKeys.parentBookingsScope(childId)])
     },
@@ -970,7 +998,7 @@ export function useCompleteParentChildBooking(): UseMutationResult<
 export function useParentChildTutorGrants(childId: string): UseQueryResult<Grants, Error> {
   return useQuery({
     queryKey: tutoringKeys.parentGrants(childId),
-    queryFn: () => call<Grants>("GET", `/parent/children/${childId}/tutor-grants`),
+    queryFn: () => call<Grants>("GET", `/parent/children/${encodeURIComponent(childId)}/tutor-grants`),
     retry: retryUnlessRefused,
   })
 }
@@ -983,7 +1011,7 @@ export function useParentChildTutorAccessLog(
   return useQuery({
     queryKey: tutoringKeys.parentAccessLog(childId, params),
     queryFn: () =>
-      call<AccessLogPage>("GET", `/parent/children/${childId}/tutor-access-log`, {
+      call<AccessLogPage>("GET", `/parent/children/${encodeURIComponent(childId)}/tutor-access-log`, {
         query: params,
       }),
     retry: retryUnlessRefused,
@@ -1001,6 +1029,7 @@ export function useCreateTutoringReport(): UseMutationResult<
   ReportCreate
 > {
   return useMutation({
+    networkMode: "always",
     mutationFn: (body: ReportCreate) =>
       call<ReportReceipt>("POST", "/tutoring/reports", { body }),
   })
@@ -1015,13 +1044,34 @@ export function useTutoringBlocks(): UseQueryResult<Blocks, Error> {
   })
 }
 
+/**
+ * Every read a new block can change: the block list and the directory, the
+ * student's grants, bookings, class access and class list, the tutor's own
+ * bookings and student list (T19 lists only; never the detail prefix, see the
+ * guard above) and, when a student blocks, that tutor's profile page.
+ */
+export function blockInvalidationKeys(block: BlockCreate): Keys {
+  return [
+    tutoringKeys.blocks(),
+    tutoringKeys.directoryScope(),
+    tutoringKeys.studentGrants(),
+    tutoringKeys.studentBookingsScope(),
+    tutoringKeys.studentClassAccess(),
+    ["student", "classes"],
+    tutoringKeys.ownBookingsScope(),
+    tutoringKeys.tutorStudentsListScope(),
+    ...(block.tutorId ? [tutoringKeys.tutorProfile(block.tutorId)] : []),
+  ]
+}
+
 /** B2 · `POST /api/tutoring/blocks`. `tutorId` from a student, `studentId` from a tutor. */
 export function useCreateTutoringBlock(): UseMutationResult<Block, Error, BlockCreate> {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: (body: BlockCreate) => call<Block>("POST", "/tutoring/blocks", { body }),
-    onSuccess: () => {
-      invalidateAll(queryClient, [tutoringKeys.blocks(), tutoringKeys.directoryScope()])
+    onSuccess: (_block, body) => {
+      invalidateAll(queryClient, blockInvalidationKeys(body))
     },
   })
 }
@@ -1034,8 +1084,9 @@ export function useRemoveTutoringBlock(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ counterpartId }: { counterpartId: string }) =>
-      call<void>("DELETE", `/tutoring/blocks/${counterpartId}`),
+      call<void>("DELETE", `/tutoring/blocks/${encodeURIComponent(counterpartId)}`),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.blocks(), tutoringKeys.directoryScope()])
     },
@@ -1064,7 +1115,7 @@ export function useAdminTutors(
 export function useAdminTutor(tutorId: string): UseQueryResult<AdminTutorDetail, Error> {
   return useQuery({
     queryKey: tutoringKeys.adminTutor(tutorId),
-    queryFn: () => call<AdminTutorDetail>("GET", `/admin/tutors/${tutorId}`),
+    queryFn: () => call<AdminTutorDetail>("GET", `/admin/tutors/${encodeURIComponent(tutorId)}`),
     retry: retryUnlessRefused,
     ...AUDITED_READ,
   })
@@ -1088,8 +1139,9 @@ export function useApproveTutor(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ tutorId, body }: { tutorId: string; body: AdminApprove }) =>
-      call<AdminTutorDetail>("POST", `/admin/tutors/${tutorId}/approve`, { body }),
+      call<AdminTutorDetail>("POST", `/admin/tutors/${encodeURIComponent(tutorId)}/approve`, { body }),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.adminTutorsScope()])
     },
@@ -1104,8 +1156,9 @@ export function useRejectTutor(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ tutorId, body }: AdminTutorDecisionVariables) =>
-      call<AdminTutorDetail>("POST", `/admin/tutors/${tutorId}/reject`, { body }),
+      call<AdminTutorDetail>("POST", `/admin/tutors/${encodeURIComponent(tutorId)}/reject`, { body }),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.adminTutorsScope()])
     },
@@ -1120,8 +1173,9 @@ export function useSuspendTutor(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ tutorId, body }: AdminTutorDecisionVariables) =>
-      call<AdminTutorDetail>("POST", `/admin/tutors/${tutorId}/suspend`, { body }),
+      call<AdminTutorDetail>("POST", `/admin/tutors/${encodeURIComponent(tutorId)}/suspend`, { body }),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.adminTutorsScope()])
     },
@@ -1147,8 +1201,9 @@ export function useModerateReview(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ reviewId, body }: { reviewId: string; body: ReviewModerate }) =>
-      call<AdminReview>("POST", `/admin/tutoring/reviews/${reviewId}/moderate`, { body }),
+      call<AdminReview>("POST", `/admin/tutoring/reviews/${encodeURIComponent(reviewId)}/moderate`, { body }),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.adminModerationScope()])
     },
@@ -1163,8 +1218,9 @@ export function useModerateReply(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ replyId, body }: { replyId: string; body: ReplyModerate }) =>
-      call<AdminReply>("POST", `/admin/tutoring/replies/${replyId}/moderate`, { body }),
+      call<AdminReply>("POST", `/admin/tutoring/replies/${encodeURIComponent(replyId)}/moderate`, { body }),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.adminModerationScope()])
     },
@@ -1191,7 +1247,7 @@ export function useAdminTutoringReport(
 ): UseQueryResult<ReportDetail, Error> {
   return useQuery({
     queryKey: tutoringKeys.adminReport(reportId),
-    queryFn: () => call<ReportDetail>("GET", `/admin/tutoring/reports/${reportId}`),
+    queryFn: () => call<ReportDetail>("GET", `/admin/tutoring/reports/${encodeURIComponent(reportId)}`),
     retry: retryUnlessRefused,
     ...AUDITED_READ,
   })
@@ -1209,10 +1265,14 @@ export function useResolveTutoringReport(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ reportId, body }: { reportId: string; body: ReportResolve }) =>
-      call<ReportDetail>("POST", `/admin/tutoring/reports/${reportId}/resolve`, { body }),
+      call<ReportDetail>("POST", `/admin/tutoring/reports/${encodeURIComponent(reportId)}/resolve`, { body }),
     onSuccess: (report, { reportId }) => {
-      queryClient.setQueryData(tutoringKeys.adminReport(reportId), report)
+      // Only an entry that already exists: setQueryData would create one, with the
+      // default gcTime, for a read that is meant to leave the cache when unmounted.
+      const queryKey = tutoringKeys.adminReport(reportId)
+      queryClient.setQueriesData({ queryKey, exact: true }, report)
       invalidateAll(queryClient, [tutoringKeys.adminReportListScope()])
     },
   })
@@ -1226,8 +1286,9 @@ export function useCloseTutor(): UseMutationResult<
 > {
   const queryClient = useQueryClient()
   return useMutation({
+    networkMode: "always",
     mutationFn: ({ tutorId, body }: AdminTutorDecisionVariables) =>
-      call<AdminTutorDetail>("POST", `/admin/tutors/${tutorId}/close`, { body }),
+      call<AdminTutorDetail>("POST", `/admin/tutors/${encodeURIComponent(tutorId)}/close`, { body }),
     onSuccess: () => {
       invalidateAll(queryClient, [tutoringKeys.adminTutorsScope()])
     },
