@@ -41,6 +41,11 @@ if TYPE_CHECKING:
 #: ``tests/test_tutoring_email.py``); such an address is never mailed (EM-6).
 PLACEHOLDER_EMAIL_DOMAIN: Final = "@parents.lemely.local"
 
+#: Key of the transaction-scoped advisory lock that serialises the daily-cap count with the send
+#: it guards (SC-15). One fixed key for this job; the value only has to be stable and unlikely to
+#: collide with another advisory-lock user (ASCII "LEMELY" followed by 1).
+EMAIL_CAP_LOCK_KEY: Final = 0x4C454D454C59_0001
+
 #: ``email_outbox.dedupe_key`` is varchar(200).
 DEDUPE_KEY_MAX: Final = 200
 
@@ -75,6 +80,25 @@ def _preference_is_on(session: Session, user_id: uuid.UUID, field: str) -> bool:
     return bool(getattr(row, field))
 
 
+def template_enabled_in_session(session: Session, user_id: uuid.UUID, template: str) -> bool:
+    """Whether ``user_id`` still has the notification type that gates ``template`` switched on.
+
+    Used twice: when a row is written, and again at send time, because a preference changed in
+    between must stop the mail (R2).
+    """
+    field = PREFERENCE_FIELD_FOR_TYPE[EMAIL_TEMPLATES[template].notification_type]
+    return _preference_is_on(session, user_id, field)
+
+
+def lock_daily_cap_in_session(session: Session) -> None:
+    """Take the transaction-scoped advisory lock that serialises the cap count with the send.
+
+    Without it two replicas could both count 59 of 60 and both send. The lock is released when the
+    caller's transaction ends, after the row is marked ``sent`` and so counted.
+    """
+    session.execute(sa.text("SELECT pg_advisory_xact_lock(:key)"), {"key": EMAIL_CAP_LOCK_KEY})
+
+
 def enqueue_in_session(
     session: Session,
     *,
@@ -95,8 +119,7 @@ def enqueue_in_session(
     stored = validate_context(template, context)
     if not 1 <= len(dedupe_key) <= DEDUPE_KEY_MAX:
         raise ValueError("dedupe_key must be 1 to 200 characters")
-    field = PREFERENCE_FIELD_FOR_TYPE[EMAIL_TEMPLATES[template].notification_type]
-    if not _preference_is_on(session, recipient_user_id, field):
+    if not template_enabled_in_session(session, recipient_user_id, template):
         return False
     statement = (
         pg_insert(EmailOutbox)
@@ -163,13 +186,17 @@ def mark_in_session(
     last_error: str | None,
     sent_at: datetime | None,
 ) -> None:
-    """Record the single delivery attempt's outcome (``attempts`` becomes 1, never more)."""
+    """Record the row's final outcome.
+
+    ``attempts`` counts send attempts: 1 for ``sent`` and ``failed``, 0 for ``skipped``, because a
+    row that was never handed to the provider was not attempted. Never more than 1 (row 12).
+    """
     session.execute(
         sa.update(EmailOutbox)
         .where(EmailOutbox.id == outbox_id)
         .values(
             status=status,
-            attempts=1,
+            attempts=0 if status is EmailOutboxStatus.skipped else 1,
             last_error=last_error,
             sent_at=sent_at,
             updated_at=sa.func.now(),
@@ -179,12 +206,15 @@ def mark_in_session(
 
 __all__ = [
     "DEDUPE_KEY_MAX",
+    "EMAIL_CAP_LOCK_KEY",
     "PLACEHOLDER_EMAIL_DOMAIN",
     "OutboxRow",
     "Recipient",
     "claim_next_pending_in_session",
     "count_sent_since_in_session",
     "enqueue_in_session",
+    "lock_daily_cap_in_session",
     "mark_in_session",
     "recipient_in_session",
+    "template_enabled_in_session",
 ]

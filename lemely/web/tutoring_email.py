@@ -9,10 +9,13 @@ Per tick, at most ``batch`` rows are handled, **each in its own transaction**:
 
 1. ``SELECT ... WHERE status = 'pending' ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED``
    (safe across replicas);
-2. decide: a placeholder address or an unverified recipient is ``skipped``; the mock provider is
+2. decide: a placeholder address, an unverified recipient, or a recipient who has since switched
+   the template's notification type off is ``skipped``; the mock provider is
    ``skipped`` with ``last_error='mock_provider'`` and never ``sent`` (SC-6); a 24 h sent count at
-   or above ``[tutoring] email_daily_cap`` is ``skipped``;
-3. send, and mark ``sent`` or ``failed`` with ``attempts = 1``.
+   or above ``[tutoring] email_daily_cap`` is ``skipped`` (counted under an advisory lock, so
+   replicas cannot overshoot);
+3. send, and mark ``sent`` or ``failed`` with ``attempts = 1``. A ``skipped`` row keeps
+   ``attempts = 0``: it was never handed to the provider.
 
 **First attempt only: a ``failed`` row is never retried** (decision log row 12); nothing selects
 anything but ``pending``. The send happens inside the transaction, so a crash between send and
@@ -32,8 +35,10 @@ from lemely.db.email_outbox_repo import (
     PLACEHOLDER_EMAIL_DOMAIN,
     claim_next_pending_in_session,
     count_sent_since_in_session,
+    lock_daily_cap_in_session,
     mark_in_session,
     recipient_in_session,
+    template_enabled_in_session,
 )
 from lemely.db.models.enums import EmailOutboxStatus
 from lemely.io.notify_email import InvalidEmailContext, scrub_error, validate_context
@@ -103,6 +108,9 @@ def _deliver_one(
         return finish(EmailOutboxStatus.skipped, "placeholder_address")
     if not recipient.email_verified:
         return finish(EmailOutboxStatus.skipped, "unverified_recipient")
+    if not template_enabled_in_session(session, row.recipient_user_id, row.template):
+        # Switched off since the row was written (R2): the user asked not to be told.
+        return finish(EmailOutboxStatus.skipped, "preference_off")
 
     if not provider.delivers_out_of_band:
         # Nothing leaves the building, so say so (SC-6). The provider only logs id and template.
@@ -115,6 +123,8 @@ def _deliver_one(
             )
         return finish(EmailOutboxStatus.skipped, "mock_provider")
 
+    # Held until this transaction ends, i.e. until the send below is marked and so counted (R3).
+    lock_daily_cap_in_session(session)
     if count_sent_since_in_session(session, moment - CAP_WINDOW) >= daily_cap:
         return finish(EmailOutboxStatus.skipped, "daily_cap")
     try:

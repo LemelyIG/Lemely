@@ -220,6 +220,7 @@ class BookingAccepted(_Booking):
     notification_type: ClassVar[NotificationType] = NotificationType.booking_update
     subject: ClassVar[str] = "Session accepted"
     button: ClassVar[str] = "Open session"
+    allowed_audiences: ClassVar[frozenset[str]] = frozenset({"student", "parent"})
 
     def lead(self) -> str:
         return f"{self.tutor()} accepted the session for {self.subject_name} on {self.when()}."
@@ -230,6 +231,7 @@ class BookingDeclined(_Booking):
     notification_type: ClassVar[NotificationType] = NotificationType.booking_update
     subject: ClassVar[str] = "Session declined"
     button: ClassVar[str] = "Open session"
+    allowed_audiences: ClassVar[frozenset[str]] = frozenset({"student", "parent"})
 
     def lead(self) -> str:
         return (

@@ -146,6 +146,7 @@ def _every_builder_output() -> list[InboxNotice]:
                 target_id=REVIEW,
                 recipient_user_id=STUDENT,
                 outcome=outcome,  # type: ignore[arg-type]
+                revision=1,
             )
     for link_event in ("linked", "unlinked"):
         out += parent_link_notices(
@@ -440,7 +441,7 @@ def test_listing_notice_names_the_decision_and_never_the_admin_note(
 def test_idor_tutor_review_notification_has_no_booking_or_student_ref() -> None:
     """SC-12: a reply-moderation notice to the tutor holds nothing that identifies the reviewer."""
     (notice,) = review_notices(
-        kind="reply", target_id=REVIEW, recipient_user_id=TUTOR, outcome="approved"
+        kind="reply", target_id=REVIEW, recipient_user_id=TUTOR, outcome="approved", revision=0
     )
     assert notice.type is NotificationType.tutor_review
     assert notice.user_id == TUTOR
@@ -457,11 +458,53 @@ def test_idor_tutor_review_notification_has_no_booking_or_student_ref() -> None:
 
 def test_review_text_moderation_notice_goes_to_the_author_with_the_review_id() -> None:
     (notice,) = review_notices(
-        kind="review", target_id=REVIEW, recipient_user_id=STUDENT, outcome="rejected"
+        kind="review", target_id=REVIEW, recipient_user_id=STUDENT, outcome="rejected", revision=2
     )
     assert notice.user_id == STUDENT
     assert notice.payload == {"reviewId": str(REVIEW)}
-    assert notice.dedupe_key == f"review:{REVIEW}:rejected"
+    assert notice.dedupe_key == f"review:{REVIEW}:rejected:2"
+
+
+def test_re_moderating_an_edited_review_to_the_same_outcome_sends_a_second_notice(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """R5: an edit returns the text to pending (SPEC §a.3); approving it again is a new event."""
+    author = _user(pg_sessionmaker, role=Role.student)
+    service = NotificationService(pg_sessionmaker, NotificationPreferencesService(pg_sessionmaker))
+
+    def moderate(revision: int) -> None:
+        send_after_commit(
+            review_notices(
+                kind="review",
+                target_id=REVIEW,
+                recipient_user_id=author,
+                outcome="approved",
+                revision=revision,
+            ),
+            service=service,
+            transport=RecordingPushTransport(),
+        )
+
+    def rows() -> int:
+        with pg_sessionmaker() as session:
+            return int(session.scalar(sa.select(sa.func.count()).select_from(Notification)) or 0)
+
+    moderate(0)
+    moderate(0)  # the same moderation delivered twice is still one notice
+    assert rows() == 1
+    moderate(1)  # the edited text, approved again
+    assert rows() == 2
+
+
+def test_a_negative_revision_is_refused() -> None:
+    with pytest.raises(ValueError, match="revision"):
+        review_notices(
+            kind="review",
+            target_id=REVIEW,
+            recipient_user_id=STUDENT,
+            outcome="approved",
+            revision=-1,
+        )
 
 
 @pytest.mark.parametrize("event", ["linked", "unlinked"])
@@ -530,6 +573,7 @@ def test_dedupe_keys_match_spec_table() -> None:
         escaped = re.escape(template)
         escaped = escaped.replace(re.escape("{yyyy-mm-dd}"), r"\d{4}-\d{2}-\d{2}")
         escaped = re.sub(r"\\\{event\\\}", r"[a-z_]+", escaped)
+        escaped = re.sub(r"\\\{revision\\\}", r"\\d+", escaped)
         escaped = re.sub(r"\\\{[a-z_]+_id\\\}", r"[0-9a-f-]{36}", escaped)
         return re.compile(f"^{escaped}$")
 

@@ -18,6 +18,7 @@ import structlog.testing
 from lemely.db.models.enums import EmailOutboxStatus, Role
 from lemely.db.models.tutoring import EmailOutbox
 from lemely.db.models.users import User
+from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.io.notify_email import MockTransactionalEmailProvider
 from lemely.runtime.config import EmailSettings, Settings
 from lemely.web.tutoring_email import (
@@ -59,7 +60,7 @@ def test_email_mock_marks_skipped_not_sent(pg_sessionmaker: sessionmaker[Session
     (row,) = _rows(pg_sessionmaker)
     assert row.status is EmailOutboxStatus.skipped
     assert row.last_error == "mock_provider"
-    assert row.attempts == 1
+    assert row.attempts == 0  # nothing was sent, so nothing was attempted
     assert row.sent_at is None
     rendered = json.dumps(logs, default=str)
     assert str(row.id) in rendered
@@ -88,8 +89,48 @@ def test_email_skipped_for_unverified_recipient(pg_sessionmaker: sessionmaker[Se
     assert (row.status, row.last_error, row.attempts) == (
         EmailOutboxStatus.skipped,
         "unverified_recipient",
-        1,
+        0,
     )
+
+
+def test_email_skipped_when_preference_turned_off_after_enqueue(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """R2: the preference is checked again at send time, so switching a type off cancels it."""
+    user = _user(pg_sessionmaker, email="tutor@example.org")
+    assert _enqueue(pg_sessionmaker, user) is True  # booking_requested -> booking_request
+    NotificationPreferencesService(pg_sessionmaker).set(user, booking_request=False)
+    provider = RecordingProvider()
+
+    assert _run(pg_sessionmaker, provider) == 1
+
+    (row,) = _rows(pg_sessionmaker)
+    assert provider.calls == []
+    assert (row.status, row.last_error, row.attempts) == (
+        EmailOutboxStatus.skipped,
+        "preference_off",
+        0,
+    )
+
+
+def test_preference_off_wins_over_the_mock_reason(pg_sessionmaker: sessionmaker[Session]) -> None:
+    user = _user(pg_sessionmaker)
+    _enqueue(pg_sessionmaker, user)
+    NotificationPreferencesService(pg_sessionmaker).set(user, booking_request=False)
+    _run(pg_sessionmaker, MockTransactionalEmailProvider())
+    (row,) = _rows(pg_sessionmaker)
+    assert row.last_error == "preference_off"
+
+
+def test_a_different_type_switched_off_does_not_block_the_mail(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    user = _user(pg_sessionmaker)
+    _enqueue(pg_sessionmaker, user)
+    NotificationPreferencesService(pg_sessionmaker).set(user, booking_update=False)
+    provider = RecordingProvider()
+    _run(pg_sessionmaker, provider)
+    assert len(provider.calls) == 1
 
 
 def test_placeholder_parent_address_skipped(pg_sessionmaker: sessionmaker[Session]) -> None:
@@ -147,17 +188,18 @@ def test_the_sent_count_window_is_a_rolling_24_hours_from_now(
 
 
 def test_email_delivery_mode_reports_mock_without_api_key() -> None:
-    assert email_delivery_mode(Settings()) == "mock"
-    keyed = Settings(email=EmailSettings(api_key="re_test"))  # type: ignore[arg-type]
+    # Explicit [email] section: an exported LEMELY_EMAIL__API_KEY must not change the answer.
+    assert email_delivery_mode(Settings.model_construct(email=EmailSettings())) == "mock"
+    keyed = Settings.model_construct(email=EmailSettings(api_key="re_test"))  # type: ignore[arg-type]
     assert email_delivery_mode(keyed) == "provider"
 
 
 def test_doctor_lines_warn_on_mock() -> None:
-    mock_lines = doctor_lines(Settings())
+    mock_lines = doctor_lines(Settings.model_construct(email=EmailSettings()))
     assert any(MOCK_WARNING in line for line in mock_lines)
     assert any(line.startswith("WARNING") for line in mock_lines)
 
-    keyed = Settings(email=EmailSettings(api_key="re_test"))  # type: ignore[arg-type]
+    keyed = Settings.model_construct(email=EmailSettings(api_key="re_test"))  # type: ignore[arg-type]
     provider_lines = doctor_lines(keyed)
     assert provider_lines
     assert not any("WARNING" in line for line in provider_lines)

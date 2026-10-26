@@ -374,13 +374,20 @@ def review_notices(
     target_id: uuid.UUID,
     recipient_user_id: uuid.UUID,
     outcome: Literal["approved", "rejected"],
+    revision: int,
 ) -> list[InboxNotice]:
     """The author's notice that a review's text, or a tutor's reply, was moderated.
+
+    ``revision`` counts the text's versions (0 for the first). An edit returns the text to
+    pending (SPEC §a.3), so moderating the edited text to the same outcome is a new event and
+    must not collide with the first notice's dedupe key.
 
     The payload is the review or reply id alone: no booking and no student reference, so a
     notice to a tutor cannot identify who wrote the review (SC-12). There is no "new review"
     notice to tutors at all.
     """
+    if revision < 0:
+        raise ValueError("revision must be zero or more")
     noun = kind
     published = outcome == "approved"
     return [
@@ -394,7 +401,7 @@ def review_notices(
                 else f"Lemely checked your {noun} and did not publish the text."
             ),
             payload={f"{kind}Id": str(target_id)},
-            dedupe_key=f"{kind}:{target_id}:{outcome}",
+            dedupe_key=f"{kind}:{target_id}:{outcome}:{revision}",
             seam="tutoring_review",
         )
     ]

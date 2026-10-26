@@ -167,6 +167,15 @@ def test_audience_must_match_the_template() -> None:
         validate_context("booking_accepted", _booking("student", child_id=CHILD_ID))
 
 
+@pytest.mark.parametrize("template", ["booking_accepted", "booking_declined"])
+def test_accepted_and_declined_are_never_addressed_to_the_tutor(template: str) -> None:
+    """R6: the tutor is the one who accepts or declines, so those mails go to student or parent."""
+    with pytest.raises(InvalidEmailContext):
+        validate_context(template, _booking("tutor"))
+    assert validate_context(template, _booking("student"))
+    assert validate_context(template, _booking("parent", child_id=CHILD_ID))
+
+
 def test_start_instant_must_be_timezone_aware() -> None:
     naive = {**VALID["booking_accepted"], "starts_at": "2026-10-30T14:00:00"}
     with pytest.raises(InvalidEmailContext):
@@ -354,8 +363,9 @@ def test_mock_provider_does_not_deliver_and_logs_no_address_or_context() -> None
 
 
 def test_build_transactional_provider_follows_the_api_key() -> None:
-    assert isinstance(build_transactional_provider(Settings()), MockTransactionalEmailProvider)
-    keyed = Settings(email=EmailSettings(api_key="re_x"))  # type: ignore[arg-type]
+    unkeyed = Settings.model_construct(email=EmailSettings())  # skips env, .env and toml sources
+    assert isinstance(build_transactional_provider(unkeyed), MockTransactionalEmailProvider)
+    keyed = Settings.model_construct(email=EmailSettings(api_key="re_x"))  # type: ignore[arg-type]
     assert isinstance(build_transactional_provider(keyed), ResendTransactionalEmailProvider)
 
 

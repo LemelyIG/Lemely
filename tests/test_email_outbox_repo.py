@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -20,6 +21,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.base import Base
+from lemely.db.email_outbox_repo import EMAIL_CAP_LOCK_KEY as CAP_LOCK_KEY
 from lemely.db.email_outbox_repo import enqueue_in_session
 from lemely.db.models import import_all_models
 from lemely.db.models.enums import EmailOutboxStatus, NotificationType, Role
@@ -327,62 +329,129 @@ def test_deliver_handles_at_most_batch_rows_oldest_first(
     assert statuses.count(EmailOutboxStatus.pending) == 3
 
 
-def test_deliver_job_claims_with_skip_locked_across_two_workers(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    """Worker A holds row 1's lock while sending; worker B takes row 2, not waiting or doubling."""
-    first = _user(pg_sessionmaker, email="first@example.org")
-    second = _user(pg_sessionmaker, email="second@example.org")
-    _enqueue(pg_sessionmaker, first, key="w:1")
-    _enqueue(pg_sessionmaker, second, key="w:2")
-    with pg_sessionmaker.begin() as session:
-        for key, hours in (("w:1", 2), ("w:2", 1)):
+class _BlockingProvider(RecordingProvider):
+    """Holds its caller inside ``send`` (so inside the delivery transaction) until released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def send(
+        self,
+        to: str,
+        template: str,
+        context: Mapping[str, object],
+        *,
+        outbox_id: uuid.UUID | None = None,
+    ) -> None:
+        super().send(to, template, context, outbox_id=outbox_id)
+        self.entered.set()
+        assert self.release.wait(timeout=30)
+
+
+def _seed_two_pending(sm: sessionmaker[Session]) -> None:
+    for key, email, hours in (("w:1", "first@example.org", 2), ("w:2", "second@example.org", 1)):
+        _enqueue(sm, _user(sm, email=email), key=key)
+        with sm.begin() as session:
             session.execute(
                 sa.update(EmailOutbox)
                 .where(EmailOutbox.dedupe_key == key)
                 .values(created_at=NOW - timedelta(hours=hours))
             )
 
-    entered = threading.Event()
-    release = threading.Event()
-    errors: list[BaseException] = []
 
-    class _BlockingProvider(RecordingProvider):
-        def send(
-            self,
-            to: str,
-            template: str,
-            context: Mapping[str, object],
-            *,
-            outbox_id: uuid.UUID | None = None,
-        ) -> None:
-            super().send(to, template, context, outbox_id=outbox_id)
-            entered.set()
-            assert release.wait(timeout=20)
+def _advisory_waiters(sm: sessionmaker[Session]) -> int:
+    with sm() as session:
+        return int(
+            session.scalar(
+                sa.text(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
+                    "AND wait_event_type = 'Lock' AND wait_event = 'advisory'"
+                )
+            )
+            or 0
+        )
 
+
+def _cap_lock_is_free(sm: sessionmaker[Session]) -> bool:
+    with sm.begin() as session:
+        return bool(
+            session.scalar(sa.text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": CAP_LOCK_KEY})
+        )
+
+
+def _run_two_workers(
+    sm: sessionmaker[Session], *, cap: int, await_advisory_wait: bool
+) -> tuple[_BlockingProvider, RecordingProvider]:
+    """Worker A blocks inside ``send`` on the older row; worker B runs while A is blocked."""
     worker_a = _BlockingProvider()
     worker_b = RecordingProvider()
+    errors: list[BaseException] = []
 
-    def run_a() -> None:
+    def run(provider: RecordingProvider, batch: int) -> None:
         try:
-            _deliver(pg_sessionmaker, worker_a, batch=1)
+            _deliver(sm, provider, cap=cap, batch=batch)
         except BaseException as exc:  # pragma: no cover - surfaced below
             errors.append(exc)
 
-    thread = threading.Thread(target=run_a)
-    thread.start()
+    thread_a = threading.Thread(target=run, args=(worker_a, 1))
+    thread_b = threading.Thread(target=run, args=(worker_b, 20))
+    thread_a.start()
     try:
-        assert entered.wait(timeout=20)
-        handled_by_b = _deliver(pg_sessionmaker, worker_b)
+        assert worker_a.entered.wait(timeout=30)
+        assert _cap_lock_is_free(sm) is False  # A holds the cap lock while it sends
+        thread_b.start()
+        if await_advisory_wait:
+            deadline = time.monotonic() + 15
+            while _advisory_waiters(sm) < 1 and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert _advisory_waiters(sm) == 1  # B claimed its own row and queues on the lock
+            assert worker_b.calls == []
+        else:
+            thread_b.join(timeout=2)
     finally:
-        release.set()
-        thread.join(timeout=30)
-
+        worker_a.release.set()
+        thread_a.join(timeout=30)
+        if thread_b.ident is not None:
+            thread_b.join(timeout=30)
     assert errors == []
-    assert handled_by_b == 1
+    return worker_a, worker_b
+
+
+def test_deliver_job_claims_with_skip_locked_across_two_workers(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A holds row 1 while sending. B takes row 2 (SKIP LOCKED), then queues on the cap lock.
+
+    Without SKIP LOCKED, B would wait on row 1's transaction id instead of the advisory lock,
+    so the wait-event assertion in the helper fails.
+    """
+    _seed_two_pending(pg_sessionmaker)
+
+    worker_a, worker_b = _run_two_workers(pg_sessionmaker, cap=60, await_advisory_wait=True)
+
     assert [call[0] for call in worker_a.calls] == ["first@example.org"]
     assert [call[0] for call in worker_b.calls] == ["second@example.org"]
     assert {r.status for r in _rows(pg_sessionmaker)} == {EmailOutboxStatus.sent}
+    assert _cap_lock_is_free(pg_sessionmaker) is True  # released when the transactions ended
+
+
+def test_daily_cap_is_not_overshot_by_concurrent_workers(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """R3: with cap 1, two replicas must not both count zero and both send."""
+    _seed_two_pending(pg_sessionmaker)
+
+    worker_a, worker_b = _run_two_workers(pg_sessionmaker, cap=1, await_advisory_wait=False)
+
+    rows = {r.dedupe_key: r for r in _rows(pg_sessionmaker)}
+    assert rows["w:1"].status is EmailOutboxStatus.sent
+    assert (rows["w:2"].status, rows["w:2"].last_error) == (
+        EmailOutboxStatus.skipped,
+        "daily_cap",
+    )
+    assert len(worker_a.calls) + len(worker_b.calls) == 1
 
 
 def test_failed_row_never_retried(pg_sessionmaker: sessionmaker[Session]) -> None:
@@ -477,7 +546,7 @@ def test_daily_cap_skips_beyond_cap(pg_sessionmaker: sessionmaker[Session]) -> N
     assert len(by_status[EmailOutboxStatus.sent]) == 1  # 2 counted earlier + 1 = cap
     assert len(by_status[EmailOutboxStatus.skipped]) == 5
     assert {r.last_error for r in by_status[EmailOutboxStatus.skipped]} == {"daily_cap"}
-    assert all(r.sent_at is None and r.attempts == 1 for r in by_status[EmailOutboxStatus.skipped])
+    assert all(r.sent_at is None and r.attempts == 0 for r in by_status[EmailOutboxStatus.skipped])
     assert len(provider.calls) == 1
 
 
