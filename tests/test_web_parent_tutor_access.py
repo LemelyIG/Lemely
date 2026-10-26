@@ -33,9 +33,12 @@ from fastapi.testclient import TestClient
 from lemely.db.class_repo import ClassService
 from lemely.db.models.enums import GrantRevokeReason, Role, TutorAccessAction
 from lemely.db.models.tutoring import TutorAccessAudit
+from lemely.db.models.users import ParentChildLink
 from lemely.db.parent_repo import ParentLinkService
+from lemely.db.tutor_grant_repo import GrantView, TutorGrantRepository
 from lemely.db.tutoring_preferences_repo import TutoringPreferencesRepository
 from lemely.web.deps import get_parent_link_service
+from lemely.web.deps_tutoring import get_tutoring_areas
 from lemely.web.routers import (
     parent_tutor_access,
     student_tutor_access,
@@ -43,6 +46,7 @@ from lemely.web.routers import (
     tutor_students,
     tutoring_directory,
 )
+from lemely.web.routers.student_tutor_access import get_tutor_grant_repo, grant_dto
 from lemely.web.routers.student_tutoring_settings import get_tutoring_preferences_repo
 from lemely.web.tutoring_http import TutoringRoute
 from tests.test_tutor_grant_repo import (
@@ -235,6 +239,94 @@ def test_pa6_empty_for_a_child_without_grants(
     assert response.headers["cache-control"] == NO_STORE
 
 
+def test_query_budget_pa6_never_reads_the_childs_classes(
+    sm: sessionmaker[Session], client: TestClient, child: uuid.UUID, parent: uuid.UUID
+) -> None:
+    """SPEC §b.3: PA6 does not run the class lookup (``include_classes=False``).
+
+    The child's own S8 does run it (non-vacuity: the same data, the statement shows up there),
+    so the absence on PA6 is the route's choice. Mutation: ``include_classes=True`` in
+    ``child_tutor_grants`` turns this red.
+    """
+    tutor = add_tutor(sm)
+    add_grant(sm, child, tutor)
+    classes = ClassService(sm)
+    made = classes.create_class(tutor.user_id, "Physics 10A")
+    assert made.join_code is not None
+    classes.join_by_code(child, made.join_code)
+
+    act_as(client, child, Role.student)
+    with count_statements(sm) as own_seen:
+        assert client.get(S8).status_code == 200
+    assert sum("class_enrollments" in statement for statement in own_seen) == 1, own_seen
+
+    act_as(client, parent, Role.parent)
+    with count_statements(sm) as seen:
+        response = client.get(pa6(child))
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 1
+    assert not any("class_enrollments" in statement for statement in seen), seen
+    assert sum("tutor_data_grants" in statement for statement in seen) == 1
+
+
+def test_grant_dto_for_a_parent_never_carries_the_childs_classes(
+    sm: sessionmaker[Session], child: uuid.UUID
+) -> None:
+    """SPEC §b.3: even when the view holds class names, a parent's DTO has none.
+
+    Mutation: listing the view's classes for every viewer in ``grant_dto`` turns this red; the
+    route alone cannot show it, because PA6 never asks the repository for classes (the route
+    side is :func:`test_pa6_shows_no_class_even_if_the_repository_returned_one`).
+    """
+    tutor = add_tutor(sm)
+    add_grant(sm, child, tutor)
+    classes = ClassService(sm)
+    made = classes.create_class(tutor.user_id, "Physics 10A")
+    assert made.join_code is not None
+    classes.join_by_code(child, made.join_code)
+    [view] = TutorGrantRepository(sm).grants_for_student(child, include_classes=True)
+    assert view.also_teaches_classes == ("Physics 10A",)  # non-vacuity: the view holds one
+    areas = get_tutoring_areas()
+
+    assert grant_dto(view, areas, viewer="parent").alsoTeachesClasses == []
+    assert grant_dto(view, areas, viewer="student").alsoTeachesClasses == ["Physics 10A"]
+
+
+class _ClassRevealingRepo(TutorGrantRepository):
+    """A repository that always loads the child's classes, whatever the caller asks for."""
+
+    def grants_for_student(
+        self, student_id: uuid.UUID, *, include_classes: bool = True
+    ) -> list[GrantView]:
+        return super().grants_for_student(student_id, include_classes=True)
+
+
+def test_pa6_shows_no_class_even_if_the_repository_returned_one(
+    sm: sessionmaker[Session], client: TestClient, child: uuid.UUID, parent: uuid.UUID
+) -> None:
+    """Defence in depth for SPEC §b.3: the DTO builder, not only the query, drops the classes.
+
+    Mutation: ``viewer="student"`` in ``child_tutor_grants`` turns this red (with the repository
+    asked for no classes the route alone can never show it).
+    """
+    tutor = add_tutor(sm)
+    add_grant(sm, child, tutor)
+    classes = ClassService(sm)
+    made = classes.create_class(tutor.user_id, "Physics 10A")
+    assert made.join_code is not None
+    classes.join_by_code(child, made.join_code)
+    client.app.dependency_overrides[get_tutor_grant_repo] = lambda: _ClassRevealingRepo(sm)  # type: ignore[attr-defined]
+    act_as(client, child, Role.student)
+    assert client.get(S8).json()["items"][0]["alsoTeachesClasses"] == ["Physics 10A"]  # non-vacuity
+
+    act_as(client, parent, Role.parent)
+    response = client.get(pa6(child))
+
+    assert response.status_code == 200
+    assert [item["alsoTeachesClasses"] for item in response.json()["items"]] == [[]]
+    assert "Physics 10A" not in response.text
+
+
 def test_notify_grant_commit_implies_parent_inbox_rows(
     sm: sessionmaker[Session], client: TestClient, child: uuid.UUID, parent: uuid.UUID
 ) -> None:
@@ -333,6 +425,41 @@ def test_pa7_cursor_has_its_own_tag(
     back = client.get(S11, params={"cursor": pa7_cursor})
     assert back.status_code == 422
     assert back.json()["detail"]["code"] == "invalid_cursor"
+
+
+def test_pa7_cursor_is_bound_to_the_child_it_was_minted_for(
+    sm: sessionmaker[Session], client: TestClient, child: uuid.UUID, parent: uuid.UUID
+) -> None:
+    """A parent of two children cannot carry a page position from one child's log to the other's.
+
+    Mutation: tagging the cursor with ``ACCESS_LOG_ENDPOINT`` alone (not the child) turns this
+    red, because child B's PA7 then accepts child A's cursor.
+    """
+    sibling = add_student(sm, display_name="Karim")
+    with sm.begin() as session:
+        session.add(ParentChildLink(parent_id=parent, child_id=sibling))
+    tutor = add_tutor(sm)
+    for each in (child, sibling):
+        add_grant(sm, each, tutor)
+        for minutes in (1, 2, 3):
+            add_audit(sm, each, tutor, ago=timedelta(minutes=minutes))
+    act_as(client, parent, Role.parent)
+    cursors = {
+        each: client.get(pa7(each), params={"limit": 1}).json()["nextCursor"]
+        for each in (child, sibling)
+    }
+    assert None not in cursors.values()
+    assert cursors[child] != cursors[sibling]
+
+    for owner, other in ((child, sibling), (sibling, child)):
+        refused = client.get(pa7(other), params={"cursor": cursors[owner]})
+        assert refused.status_code == 422, (owner, other)
+        assert refused.json()["detail"]["code"] == "invalid_cursor"
+        assert refused.headers["cache-control"] == NO_STORE
+        # Red case: the cursor continues the log of the child it was minted for.
+        accepted = client.get(pa7(owner), params={"cursor": cursors[owner], "limit": 1})
+        assert accepted.status_code == 200, accepted.text
+        assert len(accepted.json()["items"]) == 1
 
 
 def test_pa7_query_parameters_are_validated(

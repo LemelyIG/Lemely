@@ -34,7 +34,7 @@ from lemely.web.routers.student_tutoring_settings import get_tutoring_preference
 from lemely.web.schemas_tutoring import TutoringSettingsDTO
 from lemely.web.tutoring_http import TutoringRoute
 from tests.tutoring_app import app_with_routers, flatten_routes
-from tests.tutoring_db import act_as, add_user, emptied_after, tutoring_database
+from tests.tutoring_db import act_as, add_user, anonymous, emptied_after, tutoring_database
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -256,6 +256,35 @@ def test_s12_s13_refused_for_every_other_role_and_without_a_token(
     anonymous = client.get(SETTINGS)
     assert anonymous.status_code == 401
     assert anonymous.headers["cache-control"] == NO_STORE
+    assert stored(sm, child) == before
+
+
+def test_s12_s13_anonymous_is_401_no_store_and_writes_nothing(
+    sm: sessionmaker[Session], client: TestClient
+) -> None:
+    """No token: both routes answer 401 ``private, no-store``, and the PUT changes nothing.
+
+    Mutation: a plain ``APIRoute`` on the settings router turns this red (the 401 loses
+    ``no-store``).
+    """
+    child = add_user(sm, Role.student)
+    TutoringPreferencesRepository(sm).set_opt_out(child, value=True)
+    before = stored(sm, child)
+    assert before is not None
+    act_as(client, child, Role.student)
+    assert client.get(SETTINGS).status_code == 200  # red case: with a token S12 answers
+    assert client.put(SETTINGS, json={"outcomeStatsOptOut": True}).status_code == 200
+    anonymous(client)
+
+    cases = {
+        "S12": client.get(SETTINGS),
+        "S13": client.put(SETTINGS, json={"outcomeStatsOptOut": False}),
+        "S13 no body": client.put(SETTINGS),
+    }
+    for name, response in cases.items():
+        assert response.status_code == 401, name
+        assert response.headers["cache-control"] == NO_STORE, name
+    assert len(cases) == 3  # non-vacuity: three anonymous calls were made
     assert stored(sm, child) == before
 
 

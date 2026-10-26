@@ -25,7 +25,14 @@ from lemely.db.models.enums import Role
 from lemely.db.tutoring_preferences_repo import TutoringPreferencesRepository
 from tests.test_tutor_grant_repo import add_grant, add_student, audit_rows, link_parent
 from tests.test_web_parent_tutor_access import pa6, pa7, sharing_client, tutor_reads
-from tests.tutoring_db import act_as, add_tutor, add_user, emptied_after, tutoring_database
+from tests.tutoring_db import (
+    act_as,
+    add_tutor,
+    add_user,
+    anonymous,
+    emptied_after,
+    tutoring_database,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -185,6 +192,37 @@ def test_authz_pa6_pa7_refused_for_every_other_role(
             # The guard's plain 403, not the link's ``{"code", "message"}``.
             assert not isinstance(response.json()["detail"], dict)
             assert response.headers["cache-control"] == NO_STORE
+
+
+def test_authz_pa6_pa7_anonymous_is_401_no_store(
+    sm: sessionmaker[Session], client: TestClient
+) -> None:
+    """No token: 401 ``private, no-store`` before the link check, whether the child exists or not.
+
+    The answer does not depend on the child id, so it tells an anonymous caller nothing about
+    who is linked to whom. Mutation: a plain ``APIRoute`` on the router turns this red (the 401
+    loses ``no-store``).
+    """
+    child = add_student(sm)
+    parent = link_parent(sm, child)
+    tutor = add_tutor(sm)
+    add_grant(sm, child, tutor)
+    tutor_reads(client, tutor, child)
+    audit_before = audit_rows(sm)
+    act_as(client, parent, Role.parent)
+    assert [client.get(route(child)).status_code for route in ROUTES] == [200, 200]  # red case
+    anonymous(client)
+
+    cases = 0
+    for route in ROUTES:
+        for target in (child, uuid.uuid4()):
+            response = client.get(route(target))
+            assert response.status_code == 401, (route, target)
+            assert response.headers["cache-control"] == NO_STORE
+            assert "Sara M." not in response.text
+            cases += 1
+    assert cases == 4  # non-vacuity: two routes, a linked and an unknown child each
+    assert audit_rows(sm) == audit_before
 
 
 def test_authz_parent_sharing_views_are_read_only(

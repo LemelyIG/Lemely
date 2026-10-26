@@ -16,8 +16,10 @@ revokes (row 4), so this module has no write route.
   the student's own information about their classes and is always empty here
   (SPEC §b.3), and the class lookup is not run (``include_classes=False``).
 * **PA7** is S11's log for the child, newest first, optionally for one tutor,
-  keyset-paged under its own cursor tag (O21). SPEC §e.3: the link check plus one
-  statement.
+  keyset-paged under its own cursor tag (O21), bound to the child
+  (:func:`access_log_cursor_tag`): a cursor minted for one child is ``invalid_cursor`` for
+  another, so a parent of two children cannot carry a page position across them. SPEC §e.3:
+  the link check plus one statement.
 * **No audit row.** ``tutor_access_audit`` records tutor reads only; a parent's
   reads on PA6/PA7 write nothing (SPEC §b.2, O22).
 
@@ -58,6 +60,11 @@ require_parent: Final = require_role(Role.parent)
 router = APIRouter(prefix="/api/parent", tags=["tutoring"], route_class=TutoringRoute)
 
 
+def access_log_cursor_tag(child_id: uuid.UUID) -> str:
+    """The PA7 cursor tag for one child: a parent of two children cannot swap their cursors."""
+    return f"{ACCESS_LOG_ENDPOINT}:{child_id}"
+
+
 def require_linked_child(
     auth: Annotated[AuthContext, Depends(require_parent)],
     child_id: uuid.UUID,
@@ -96,16 +103,18 @@ def child_tutor_access_log(
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
 ) -> AccessLogPageDTO:
     """PA7: every tutor read of the child's data, newest first."""
-    after = decode_access_log_cursor(cursor, ACCESS_LOG_ENDPOINT)
+    tag = access_log_cursor_tag(child)
+    after = decode_access_log_cursor(cursor, tag)
     page = repo.access_log_page(child, tutor_id=tutor_id, cursor=after, limit=limit)
     return AccessLogPageDTO(
         items=[access_log_entry_dto(entry) for entry in page.items],
-        nextCursor=next_access_log_cursor(page.next_key, ACCESS_LOG_ENDPOINT),
+        nextCursor=next_access_log_cursor(page.next_key, tag),
     )
 
 
 __all__ = [
     "ACCESS_LOG_ENDPOINT",
+    "access_log_cursor_tag",
     "require_linked_child",
     "require_parent",
     "router",
