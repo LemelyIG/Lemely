@@ -171,3 +171,8 @@ def test_failed_third_sample_falls_back_to_the_lower_of_two() -> None:
     )
     assert len(calls) == 3
     assert (out.awarded_marks, out.feedback, out.confidence) == (1, "B", 0.70)
+
+
+def test_a_client_without_settings_constructs_with_every_lever_off() -> None:
+    ai = AICorrector(MagicMock(spec=GeminiClient))
+    assert ai.escalate_deferred() == {}

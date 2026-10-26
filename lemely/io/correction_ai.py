@@ -496,13 +496,16 @@ class AICorrector:
         self._client = gemini_client
         self._mark_scheme = mark_scheme
         # Fails the run here: raised per leaf, ``correct_paper`` would turn it into zeros.
-        self._reason_first()
-        g = gemini_client._settings.gemini
-        if g.correction_retry_median is True and g.correction_retry_keep_higher is True:
-            # As above: ``model_copy`` skips the settings validator that forbids it.
-            raise ConfigError(
-                "correction_retry_median cannot combine with correction_retry_keep_higher"
-            )
+        # A client without settings (a spec'd test double) has every lever off: nothing to refuse.
+        settings = getattr(gemini_client, "_settings", None)
+        if settings is not None:
+            self._reason_first()
+            g = settings.gemini
+            if g.correction_retry_median is True and g.correction_retry_keep_higher is True:
+                # ``model_copy`` skips the settings validator that forbids it.
+                raise ConfigError(
+                    "correction_retry_median cannot combine with correction_retry_keep_higher"
+                )
         #: Built once per value of ``reader_describes_drawings``, not once per leaf.
         self._prefixes: dict[bool, SharedPrefix] = {}
         #: The model whose response the last :meth:`mark_question` returned (the
@@ -936,6 +939,8 @@ class AICorrector:
 
     def escalate_deferred(self) -> dict[str, AIMarkResponse]:
         """Escalate the most uncertain deferred leaves, up to the cap; their new responses."""
+        if not self.deferred:
+            return {}
         cap = self._client._settings.gemini.escalation_cap_per_script
         if not isinstance(cap, int) or isinstance(cap, bool):
             return {}
@@ -3563,8 +3568,8 @@ def correct_paper(
 
     # Sub-project C: the capped escalations, most uncertain first, before adjudication.
     if gemini_client is not None and ai is not None:
-        g_esc = gemini_client._settings.gemini
         for qid, escalated_mark in ai.escalate_deferred().items():
+            g_esc = gemini_client._settings.gemini
             # Every deferred leaf was marked in the loop above, which recorded it.
             if qid not in pending:
                 raise LemelyError(f"deferred leaf {qid} has no pending build arguments")
