@@ -638,6 +638,45 @@ whether it was held before marking or after, is read afresh on a re-run: its rea
 are removed from the response cache when it is held, so the same reads cannot bring
 the same hold back (the marker's cached replies are kept).
 
+### 5.9 Roll back to Gemini (config only)
+
+Since sub-project C every task tag defaults to `claude-haiku-5-5`. To run the pre-flip
+Gemini configuration with no code change and no Anthropic key, put this in `lemely.toml`
+(or set the same keys as `LEMELY_GEMINI__*` / `LEMELY_BINDING__*` variables). TOML cannot
+write `None`, so `adjudication_model = ""` is how adjudication is turned off (and
+escalation is back on, as it was). `lemely doctor` then passes without `ANTHROPIC_API_KEY`
+and needs `GEMINI_API_KEY`. `tests/test_claude_default_flip.py` loads this exact block.
+
+```toml
+[gemini]
+model = "gemini-2.5-flash"
+mark_scheme_model = "gemini-2.5-flash"
+extraction_model = "gemini-3.5-flash-lite"
+correction_model = "gemini-3.1-flash-lite"
+generation_model = "gemini-3.5-flash-lite"
+scan_metadata_model = "gemini-3.5-flash-lite"
+escalation_model = "gemini-3.8-flash"
+escalation_confidence_threshold = 0.80
+correction_shared_prefix = false
+claude_cache_for = {}
+claude_effort_for = {}
+review_confidence_threshold_for = {}
+adjudication_model = ""
+adjudication_max_leaves = 3
+adjudication_confidence_threshold = 0.80
+adjudication_drawing_leaves = false
+adjudication_drawing_max_leaves = 3
+adjudication_reread_disagreed = false
+correction_retry_median = false
+
+[binding]
+read_model = "gemini-3.8-flash"
+retry_model = "gemini-3.8-flash"
+```
+
+`correction_retry_keep_higher = true` now also needs `correction_retry_median = false`
+(median is on by default); a config with only the first fails at startup.
+
 ---
 
 ## 6. Deployment checklist

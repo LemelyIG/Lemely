@@ -178,7 +178,7 @@ function HealthPanel({ health }: { health: SystemHealth }) {
             </dd>
           </div>
           <div className="flex flex-col gap-1">
-            <dt className="text-body-sm text-ink-muted">Gemini key</dt>
+            <dt className="text-body-sm text-ink-muted">Marking API key</dt>
             <dd className="text-body-sm text-ink">
               {health.geminiKeyConfigured ? "Configured" : "Missing, so marking cannot run"}
             </dd>

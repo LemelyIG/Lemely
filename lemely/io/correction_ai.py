@@ -69,6 +69,7 @@ from lemely.runtime.errors import ConfigError, CostCeilingError, LemelyError
 from lemely.runtime.events import EventType, bus
 
 if TYPE_CHECKING:
+    from lemely.io.adjudication import PageSource
     from lemely.io.rasterise import RasterisedPage
 
 
@@ -3299,7 +3300,8 @@ def correct_paper(
     gemini_client: GeminiClient | None = None,
     mcq_only: bool = False,
     options: MarkingOptions = MarkingOptions(),  # noqa: B008 -- frozen, immutable dataclass
-    pages: Sequence[RasterisedPage] | None = None,
+    pages: Sequence[RasterisedPage] | PageSource | None = None,
+    expects_pages: bool = True,
 ) -> CorrectionResult:
     """Hybrid paper correction: MCQ deterministic, non-MCQ via AICorrector.
 
@@ -3317,7 +3319,10 @@ def correct_paper(
             :func:`_maybe_apply_ecf_substitution` for the gate/chain rules and
             the measured activation ceiling (0 on the committed corpus by
             construction). Defaults to both off.
-        pages: the scan's pages; with ``gemini.adjudication_model`` set, the least
+        expects_pages: False for a caller with no scan by nature (typed quiz answers): it
+            never logs ``adjudication_without_pages``.
+        pages: the scan's pages, or a lazy ``PageSource`` that renders them only if there is
+            something to adjudicate; with ``gemini.adjudication_model`` set, the least
             certain leaves are adjudicated from their crops (lever c2), after
             marking and escalation, and the adjudicated mark is final. A held
             paper is not adjudicated.
@@ -3681,12 +3686,12 @@ def correct_paper(
     result = _with_off_topic_check(
         CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected), extracted_answers
     )
-    if pages is None and not mcq_only:
+    if pages is None and expects_pages and not mcq_only:
         _warn_adjudication_without_pages(gemini_client)
     if pages is not None and gemini_client is not None:
         g = gemini_client._settings.gemini
         held = result.binding is not None and result.binding.verdict == "hold"
-        if isinstance(g.adjudication_model, str) and not held:
+        if isinstance(g.adjudication_model, str) and g.adjudication_model and not held:
             from lemely.io.adjudication import adjudicate
 
             result = adjudicate(

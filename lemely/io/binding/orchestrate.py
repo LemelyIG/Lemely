@@ -1299,7 +1299,8 @@ def binding_models(settings: Settings) -> dict[str, str]:
     ``binding_read`` is the label binder's model, for both of its reads unless
     ``second_read_model`` is set: then the second read's model is listed as
     ``binding_second_read`` (when a second read is made), so that the Anthropic-key
-    and pricing checks see it. ``binding_retry`` is the gated legacy binder's retry.
+    and pricing checks see it. ``binding_retry`` is the gated legacy binder's retry, also listed
+    under the label binder (a multiple-choice scheme falls back to the legacy binder).
     The legacy binder's first call is the ordinary extraction call and is already in
     the table as ``extraction``.
     """
@@ -1311,6 +1312,10 @@ def binding_models(settings: Settings) -> dict[str, str]:
         if binding.claude_chunked_read is True:
             # The overview pass runs on the read model (chunked_read.py), under its own tag.
             models["binding_overview"] = binding.read_model
+        if binding.gate != "off":
+            # A scheme that is all multiple choice keeps the legacy binder (``binder_for``),
+            # whose one retry runs on this model, so the key and price checks must see it.
+            models["binding_retry"] = binding.retry_model
         return models
     if binding.gate != "off":
         return {"binding_retry": binding.retry_model}

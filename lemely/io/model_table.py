@@ -44,7 +44,14 @@ def configured_models(settings: Settings) -> dict[str, str]:
     ``model_for``.
     """
     g = settings.gemini
-    models = {tag: g.model_for(tag) for tag in MODEL_TABLE_TAGS}
+    # ``escalation`` is off when ``escalation_model`` is unset (the default since sub-project C),
+    # though ``model_for`` would resolve it to the global model: list only what can be called.
+    # ``lemely doctor`` shows the missing row as ``escalation=(off)``.
+    models = {
+        tag: g.model_for(tag)
+        for tag in MODEL_TABLE_TAGS
+        if tag != "escalation" or g.escalation_model
+    }
     if g.cascade_enabled and g.cascade_strong_model:
         models["cascade_strong"] = g.cascade_strong_model
     if isinstance(g.adjudication_model, str) and g.adjudication_model:

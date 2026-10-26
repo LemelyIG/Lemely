@@ -42,7 +42,7 @@ from lemely.db.school_provisioning_repo import (
     SchoolSummary,
 )
 from lemely.io.grade_boundaries import GradeBoundaryStore
-from lemely.runtime.config import Settings
+from lemely.runtime.config import Settings, llm_key_configured
 from lemely.web.deps import (
     AuthContext,
     get_boundary_store,
@@ -134,7 +134,7 @@ def platform_overview(
         ),
         health=SystemHealthDTO(
             databaseReachable=True,
-            geminiKeyConfigured=settings.gemini_api_key is not None,
+            geminiKeyConfigured=llm_key_configured(settings, "extraction"),
             version=__version__,
         ),
         recentSignups=[

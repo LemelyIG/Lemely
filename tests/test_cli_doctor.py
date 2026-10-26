@@ -181,6 +181,16 @@ class DoctorTests(unittest.TestCase):
         assert check is not None
         self.assertIn("sent inline", str(check["detail"]))
 
+    def test_doctor_shows_escalation_as_off_and_the_binder_retry(self) -> None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli, ["--json", "doctor", "--no-network"], env=self._doctor_env(tmp)
+            )
+        payload = json.loads(result.output)
+        table = next(c for c in payload["checks"] if c["name"] == "gemini_model_table")["detail"]
+        self.assertIn("escalation=(off)", table)
+        self.assertIn("binding_retry=claude-sonnet-5-5", table)
+
     def test_doctor_needs_an_anthropic_key_under_default_settings(self) -> None:
         """Sub-project C: every default task tag is a claude- model."""
         with TemporaryDirectory() as tmp:

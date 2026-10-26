@@ -330,6 +330,31 @@ def test_overview_over_http_carries_no_spend_figure(
     assert body["health"]["databaseReachable"] is True
 
 
+@pytest.mark.parametrize(
+    ("anthropic", "gemini", "expected"), [(True, False, True), (False, True, False)]
+)
+def test_overview_key_flag_follows_the_provider_marking_uses(
+    pg_sessionmaker: sessionmaker[Session], anthropic: bool, gemini: bool, expected: bool
+) -> None:
+    """Marking runs on claude- models (sub-project C): the Anthropic key is the one that counts."""
+    from pydantic import SecretStr
+
+    from lemely.runtime.config import Settings
+    from lemely.web.deps import get_settings
+
+    settings = Settings().model_copy(
+        update={
+            "anthropic_api_key": SecretStr("k") if anthropic else None,
+            "gemini_api_key": SecretStr("k") if gemini else None,
+        }
+    )
+    for client in _client(pg_sessionmaker):
+        client.app.dependency_overrides[get_settings] = lambda: settings  # type: ignore[attr-defined]
+        body = client.get("/api/admin/overview").json()
+
+    assert body["health"]["geminiKeyConfigured"] is expected
+
+
 # ── X-02: the activation queue ────────────────────────────────────────────────
 
 

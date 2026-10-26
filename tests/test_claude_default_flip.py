@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from lemely.accuracy.cost_ladder import runner
 from lemely.core.loose_schemas import QuestionType
@@ -83,16 +86,12 @@ def test_every_default_model_is_priced() -> None:
     runner.preflight_prices(Settings())
 
 
-def test_default_marking_makes_no_escalation_call_with_ecf_substitution_on() -> None:
-    """The final review's I5: no Sonnet escalation, so ECF's re-mark cannot reach one either."""
-    base = Settings()
-    s = base.model_copy(
-        update={
-            "grading": base.grading.model_copy(
-                update={"equivalence_gate": True, "ecf_substitution": True}
-            )
-        }
-    )
+def test_default_marking_makes_no_escalation_call() -> None:
+    """The final review's I5: a low-confidence leaf is retried but never escalated.
+
+    ECF substitution re-marks through ``mark_question``, the same inline guard this drives.
+    """
+    s = Settings()
     client = GeminiClient(s, _genai_client=fake_genai_client(), ledger=None)
     ai = AICorrector(client)
     low = AIMarkResponse.model_validate({**_VALID_MARK, "confidence": 0.3, "awarded_marks": 1})
@@ -104,3 +103,82 @@ def test_default_marking_makes_no_escalation_call_with_ecf_substitution_on() -> 
     tags = [c.kwargs["task_tag"] for c in call.call_args_list]
     assert tags and "escalation" not in tags
     assert {c.kwargs.get("model") for c in call.call_args_list} <= {None, _HAIKU}
+
+
+def _rollback_toml() -> str:
+    import re
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[1] / "docs" / "deployment.md").read_text("utf-8")
+    section = text.split("### 5.9 Roll back to Gemini", 1)[1]
+    match = re.search(r"```toml\n(.*?)```", section, re.S)
+    assert match is not None
+    return match.group(1)
+
+
+def test_the_documented_rollback_toml_restores_the_gemini_configuration(tmp_path: Path) -> None:
+    from lemely.runtime.config import load_settings
+    from tests.gemini_fakes import PRE_FLIP_DEFAULTS
+
+    toml = tmp_path / "lemely.toml"
+    toml.write_text(_rollback_toml(), "utf-8")
+    s = load_settings(toml_path=toml, cwd=tmp_path)
+    for dotted, value in PRE_FLIP_DEFAULTS.items():
+        section, _, field = dotted.partition(".")
+        got = getattr(getattr(s, section), field)
+        if dotted == "gemini.adjudication_model":
+            assert got == ""  # TOML cannot write None; "" means off
+        else:
+            assert got == value, dotted
+
+
+def test_the_rollback_passes_doctor_without_an_anthropic_key(tmp_path: Path) -> None:
+    import json
+
+    from click.testing import CliRunner
+
+    from lemely.app.cli import cli
+
+    toml = tmp_path / "lemely.toml"
+    toml.write_text(_rollback_toml(), "utf-8")
+    (tmp_path / "Sources").mkdir()
+    (tmp_path / "outputs").mkdir()
+    result = CliRunner().invoke(
+        cli,
+        ["--json", "--config", str(toml), "doctor", "--no-network"],
+        env={
+            "GEMINI_API_KEY": "test-key",
+            "ANTHROPIC_API_KEY": None,  # type: ignore[dict-item]
+            "LEMELY_ANTHROPIC_API_KEY": None,  # type: ignore[dict-item]
+            "LEMELY_PATHS__SOURCES_DIR": str(tmp_path / "Sources"),
+            "LEMELY_PATHS__OUTPUT_DIR": str(tmp_path / "outputs"),
+            "LEMELY_PATHS__CACHE_DIR": str(tmp_path / "cache"),
+        },
+    )
+    payload = json.loads(result.output)
+    checks = {c["name"]: c for c in payload["checks"]}
+    assert checks["anthropic_api_key"]["ok"] is True, checks["anthropic_api_key"]
+    assert "adjudication" not in checks["gemini_model_table"]["detail"]
+
+
+def test_an_empty_adjudication_model_renders_and_calls_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rollback's ``adjudication_model = ""``: no pages source, no rasterise, no warning."""
+    from lemely.io import adjudication, correction_ai
+    from lemely.runtime.config import load_settings
+
+    toml = tmp_path / "lemely.toml"
+    toml.write_text(_rollback_toml(), "utf-8")
+    s = load_settings(toml_path=toml, cwd=tmp_path)
+    client = MagicMock(_settings=s)
+    rendered: list[object] = []
+    monkeypatch.setattr(
+        "lemely.io.rasterise.rasterise_scan_to_pages", lambda p: rendered.append(p) or []
+    )
+    monkeypatch.setattr(correction_ai, "_adjudication_without_pages_logged", False)
+    assert adjudication.adjudication_pages(client, tmp_path / "scan.pdf") is None
+    assert adjudication.configured_adjudication_model(client) is None
+    correction_ai._warn_adjudication_without_pages(client)
+    assert correction_ai._adjudication_without_pages_logged is False
+    assert rendered == []

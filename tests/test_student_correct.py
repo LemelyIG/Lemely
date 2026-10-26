@@ -569,6 +569,53 @@ def test_upload_flow_passes_marking_options_from_settings(
     assert isinstance(seen["scan_path"], Path)
 
 
+@pytest.mark.parametrize(
+    ("anthropic", "gemini", "detects"), [(True, False, True), (False, True, False)]
+)
+def test_upload_flow_detects_metadata_only_with_the_scan_metadata_providers_key(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+    anthropic: bool,
+    gemini: bool,
+    detects: bool,
+) -> None:
+    """The default scan_metadata model is claude-, so only the Anthropic key enables detection."""
+    from pydantic import SecretStr
+
+    api, _, _ = client
+    calls: list[object] = []
+
+    class _Detector:
+        def __init__(self, _client: object) -> None: ...
+
+        def __call__(self, scan_path: object) -> None:
+            calls.append(scan_path)
+
+    def _stop(*_a: object, **_k: object) -> None:
+        raise RuntimeError("stop after the detection step")
+
+    monkeypatch.setattr(student, "ScanMetadataExtractor", _Detector)
+    monkeypatch.setattr(student, "grade_paper", _stop)
+
+    base = cast("FastAPI", api.app).dependency_overrides[get_settings]()
+    keyed = base.model_copy(
+        update={
+            "anthropic_api_key": SecretStr("k") if anthropic else None,
+            "gemini_api_key": SecretStr("k") if gemini else None,
+        }
+    )
+    cast("FastAPI", api.app).dependency_overrides[get_settings] = lambda: keyed
+
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    assert up.status_code == 200, up.text
+    api.post("/api/student/correct", json={"paperId": up.json()["paperId"]})
+
+    assert bool(calls) is detects
+
+
 def test_correct_complete_frame_includes_full_questions(
     client: tuple[TestClient, str, StudentUploadRepository],
 ) -> None:

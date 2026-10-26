@@ -367,17 +367,14 @@ def correct_paper_cmd(
 
     from lemely.io.adjudication import adjudication_pages
 
-    with (
-        script_cost_scope(settings, script_key=f"cli:{Path(mark_scheme).stem}"),
-        adjudication_pages(client, Path(scan) if scan else None) as pages,
-    ):
+    with script_cost_scope(settings, script_key=f"cli:{Path(mark_scheme).stem}"):
         correction = hybrid_correct_paper(
             mark_scheme=ms,
             extracted_answers=extracted,  # type: ignore[arg-type]
             gemini_client=client,
             mcq_only=mcq_only,
             options=marking_options,
-            pages=pages,
+            pages=adjudication_pages(client, Path(scan) if scan else None),
         )
     from lemely.io.grade_boundaries import GradeBoundaryStore
 
@@ -559,6 +556,8 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
 
     configured_models = configured_models_for(settings)
     model_table = ", ".join(f"{tag}={model}" for tag, model in configured_models.items())
+    if "escalation" not in configured_models:
+        model_table += ", escalation=(off)"
     record("gemini_model_table", True, detail=model_table)
 
     # Sub-project C: the Gemini key is needed only when some task tag resolves to a gemini-

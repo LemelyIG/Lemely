@@ -153,15 +153,14 @@ def grade_paper(
         BindingHeldError: The correction's binding report blocks publication.
             Raised before any history record is written.
     """
-    with adjudication_pages(gemini_client, scan_path) as pages:
-        correction: CorrectionResult = correct_paper(
-            mark_scheme=mark_scheme,
-            extracted_answers=extracted_answers,
-            gemini_client=gemini_client,
-            mcq_only=mcq_only,
-            options=options,
-            pages=pages,
-        )
+    correction: CorrectionResult = correct_paper(
+        mark_scheme=mark_scheme,
+        extracted_answers=extracted_answers,
+        gemini_client=gemini_client,
+        mcq_only=mcq_only,
+        options=options,
+        pages=adjudication_pages(gemini_client, scan_path),
+    )
     if correction.binding is not None and binding_blocks_publication(correction.binding):
         raise BindingHeldError(correction.binding, "after_marking")
     correction = apply_integrity_checks(

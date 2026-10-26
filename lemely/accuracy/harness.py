@@ -1373,14 +1373,13 @@ def measure_accuracy(
             extracted_ids = set(case.ground_truth)
 
         try:
-            with adjudication_pages(gemini_client, case.scan_path) as pages:  # type: ignore[arg-type]
-                correction = correct_paper(
-                    case.mark_scheme,
-                    extracted,
-                    gemini_client=gemini_client,  # type: ignore[arg-type]
-                    options=marking_options,
-                    pages=pages,
-                )
+            correction = correct_paper(
+                case.mark_scheme,
+                extracted,
+                gemini_client=gemini_client,  # type: ignore[arg-type]
+                options=marking_options,
+                pages=adjudication_pages(gemini_client, case.scan_path),  # type: ignore[arg-type]
+            )
         except CostCeilingError as exc:
             raise _ceiling_aborted_sweep(
                 exc, case.paper_id, "marking", case_position, cases

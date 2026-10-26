@@ -7,7 +7,6 @@ scan makes ``correct_paper`` log ``adjudication_without_pages`` once.
 
 from __future__ import annotations
 
-import contextlib
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -19,7 +18,7 @@ import structlog
 from click.testing import CliRunner
 
 from lemely.core.loose_schemas import MarkScheme
-from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+from lemely.core.schemas import CorrectionResult, ExtractedAnswer, ExtractedAnswers
 from lemely.io import adjudication as adj
 from lemely.io import correction_ai
 
@@ -62,9 +61,15 @@ def _client(adjudication_model: str | None) -> MagicMock:
 class _Recorder:
     def __init__(self) -> None:
         self.kwargs: dict[str, Any] | None = None
+        self.slot_free: bool | None = None
 
     def __call__(self, *args: object, **kwargs: Any) -> object:
+        from lemely.io import run_cap
+
         self.kwargs = kwargs
+        self.slot_free = run_cap._slots.acquire(blocking=False)
+        if self.slot_free:
+            run_cap._slots.release()
         raise _Stop
 
 
@@ -77,49 +82,114 @@ def rasterise() -> Iterator[MagicMock]:
 # --- the helper -------------------------------------------------------------
 
 
-def test_helper_rasterises_once_when_adjudication_is_configured(
+def test_helper_returns_a_lazy_source_and_renders_nothing(
     rasterise: MagicMock, tmp_path: Path
 ) -> None:
-    scan = tmp_path / "scan.pdf"
-    with adj.adjudication_pages(_client(_ADJ), scan) as pages:  # type: ignore[arg-type]
-        assert pages == _PAGES
-    rasterise.assert_called_once_with(scan)
+    source = adj.adjudication_pages(_client(_ADJ), tmp_path / "scan.pdf")  # type: ignore[arg-type]
+    assert isinstance(source, adj.PageSource)
+    rasterise.assert_not_called()
 
 
 @pytest.mark.parametrize(
-    ("model", "has_scan"), [(None, True), (_ADJ, False)], ids=["unset", "no-scan"]
+    ("model", "has_scan"),
+    [(None, True), ("", True), (_ADJ, False)],
+    ids=["unset", "empty", "no-scan"],
 )
-def test_helper_yields_none_without_model_or_scan(
+def test_helper_returns_none_without_model_or_scan(
     rasterise: MagicMock, tmp_path: Path, model: str | None, has_scan: bool
 ) -> None:
-    with adj.adjudication_pages(_client(model), tmp_path / "s.pdf" if has_scan else None) as pages:  # type: ignore[arg-type]
-        assert pages is None
+    source = adj.adjudication_pages(_client(model), tmp_path / "s.pdf" if has_scan else None)  # type: ignore[arg-type]
+    assert source is None
     rasterise.assert_not_called()
 
 
-def test_helper_yields_none_without_a_client(rasterise: MagicMock, tmp_path: Path) -> None:
-    with adj.adjudication_pages(None, tmp_path / "s.pdf") as pages:
-        assert pages is None
-    rasterise.assert_not_called()
+def test_helper_returns_none_without_a_client(rasterise: MagicMock, tmp_path: Path) -> None:
+    assert adj.adjudication_pages(None, tmp_path / "s.pdf") is None
 
 
-def test_helper_holds_a_marking_run_slot_while_the_pages_are_live(
+def test_hold_takes_the_slot_around_the_render_and_releases_it(
     rasterise: MagicMock, tmp_path: Path
 ) -> None:
-    events: list[str] = []
+    from lemely.io import run_cap
 
-    @contextlib.contextmanager
-    def _slot() -> Iterator[None]:
-        events.append("enter")
-        yield
-        events.append("exit")
+    seen: list[bool] = []
 
-    with (
-        patch("lemely.io.run_cap.marking_run_slot", _slot),
-        adj.adjudication_pages(_client(_ADJ), tmp_path / "s.pdf"),  # type: ignore[arg-type]
-    ):
-        events.append("body")
-    assert events == ["enter", "body", "exit"]
+    def _render(path: object) -> list[str]:
+        free = run_cap._slots.acquire(blocking=False)
+        if free:
+            run_cap._slots.release()
+        seen.append(free)
+        return _PAGES
+
+    rasterise.side_effect = _render
+    with adj.PageSource(tmp_path / "s.pdf").hold() as pages:
+        assert pages == _PAGES
+    assert seen == [False]  # held while rendering
+    assert run_cap._slots.acquire(blocking=False)  # and given back
+    run_cap._slots.release()
+
+
+def _result_with_one_confident_ai_leaf() -> CorrectionResult:
+    from lemely.core.schemas import ConfidenceBand, CorrectedQuestion, ExamMetadata
+
+    return CorrectionResult(
+        metadata=ExamMetadata(
+            subject_code="0625",
+            paper_number=1,
+            paper_variant=2,
+            session_month="May/June",
+            session_year=2020,
+        ),
+        questions=[
+            CorrectedQuestion(
+                question_id="1",
+                awarded_marks=1,
+                maximum_marks=1,
+                confidence=ConfidenceBand.HIGH,
+                confidence_score=0.99,
+                needs_teacher_review=False,
+                marker_source="ai",
+            )
+        ],
+    )
+
+
+def test_adjudicate_renders_nothing_when_there_is_nothing_to_settle(
+    rasterise: MagicMock, tmp_path: Path
+) -> None:
+    from lemely.runtime.config import GeminiSettings
+
+    result = _result_with_one_confident_ai_leaf()
+    client = MagicMock(_settings=MagicMock(gemini=GeminiSettings(adjudication_model=_ADJ)))
+    out = adj.adjudicate(
+        result,
+        scheme=MarkScheme.model_validate(_SCHEME_DICT),
+        extracted=_EXTRACTED,
+        pages=adj.PageSource(tmp_path / "s.pdf"),
+        client=client,
+        review_threshold=0.72,
+    )
+    assert out is result
+    rasterise.assert_not_called()
+
+
+def test_adjudicate_renders_once_when_a_leaf_needs_settling(
+    rasterise: MagicMock, tmp_path: Path
+) -> None:
+    from lemely.runtime.config import GeminiSettings
+
+    result = _result_with_one_confident_ai_leaf()
+    result.questions[0] = result.questions[0].model_copy(update={"confidence_score": 0.1})
+    client = MagicMock(_settings=MagicMock(gemini=GeminiSettings(adjudication_model=_ADJ)))
+    adj.adjudicate(
+        result,
+        scheme=MarkScheme.model_validate(_SCHEME_DICT),
+        extracted=_EXTRACTED,
+        pages=adj.PageSource(tmp_path / "s.pdf"),
+        client=client,
+        review_threshold=0.72,
+    )
+    rasterise.assert_called_once()
 
 
 # --- lemely/web/services/grading.py ----------------------------------------
@@ -142,8 +212,10 @@ def test_grade_paper_passes_pages(
             scan_path=tmp_path / "scan.pdf",
         )
     assert recorder.kwargs is not None
-    assert recorder.kwargs["pages"] == expected
-    assert rasterise.call_count == (1 if expected else 0)
+    assert isinstance(recorder.kwargs["pages"], adj.PageSource) is bool(expected)
+    # Marking runs without the run slot and without a render (the pages are lazy).
+    assert recorder.slot_free is True
+    rasterise.assert_not_called()
 
 
 # --- lemely/accuracy/harness.py --------------------------------------------
@@ -167,7 +239,7 @@ def test_harness_passes_pages(
     with patch("lemely.io.correction_ai.correct_paper", recorder), pytest.raises(_Stop):
         measure_accuracy([case], gemini_client=_client(model), settings=None, arm="oracle+mark")  # type: ignore[arg-type]
     assert recorder.kwargs is not None
-    assert recorder.kwargs["pages"] == expected
+    assert isinstance(recorder.kwargs["pages"], adj.PageSource) is bool(expected)
 
 
 # --- lemely/app/cli.py -------------------------------------------------------
@@ -206,7 +278,7 @@ def test_cli_correct_paper_passes_pages(
         )
     assert isinstance(result.exception, _Stop), result.output
     assert recorder.kwargs is not None
-    assert recorder.kwargs["pages"] == expected
+    assert isinstance(recorder.kwargs["pages"], adj.PageSource) is bool(expected)
 
 
 # --- lemely/app/gradio_app.py ------------------------------------------------
@@ -243,7 +315,7 @@ def test_gradio_grade_passes_pages(
             )
         )
     assert recorder.kwargs is not None
-    assert recorder.kwargs["pages"] == expected
+    assert isinstance(recorder.kwargs["pages"], adj.PageSource) is bool(expected)
 
 
 # --- correct_paper: a caller with no scan (quiz marking, CLI without --scan) -------
@@ -274,3 +346,20 @@ def test_missing_pages_are_not_logged_when_adjudication_is_off(
 ) -> None:
     monkeypatch.setattr(correction_ai, "_adjudication_without_pages_logged", False)
     assert _mark_without_pages(None) == []
+
+
+def test_a_caller_with_no_scan_by_nature_does_not_use_up_the_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Quiz marking (typed answers) passes ``expects_pages=False``: a later scan-backed
+    caller that lost its pages still gets the one warning."""
+    monkeypatch.setattr(correction_ai, "_adjudication_without_pages_logged", False)
+    with structlog.testing.capture_logs() as logs:
+        correction_ai.correct_paper(
+            MarkScheme.model_validate(_SCHEME_DICT),
+            _EXTRACTED,
+            gemini_client=_client(_ADJ),  # type: ignore[arg-type]
+            expects_pages=False,
+        )
+    assert [e for e in logs if e["event"] == "adjudication_without_pages"] == []
+    assert len(_mark_without_pages(_ADJ)) == 1

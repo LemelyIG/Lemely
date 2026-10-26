@@ -12,9 +12,20 @@ def test_default_table_lists_every_model_for_tag_and_the_binder() -> None:
     settings = Settings()
     table = configured_models(settings)
     for tag in MODEL_TABLE_TAGS:
-        assert table[tag] == settings.gemini.model_for(tag)
+        if tag != "escalation":
+            assert table[tag] == settings.gemini.model_for(tag)
+    # Escalation is off by default (sub-project C): it is not a model that can be called.
+    assert "escalation" not in table
     assert "cascade_strong" not in table
     assert table["binding_read"] == settings.binding.read_model
+    # A multiple-choice scheme falls back to the legacy binder, whose retry is a claude- model.
+    assert table["binding_retry"] == settings.binding.retry_model
+
+
+def test_escalation_is_listed_once_a_model_is_set() -> None:
+    s = Settings().model_copy(deep=True)
+    s.gemini.escalation_model = "claude-sonnet-5-5"
+    assert configured_models(s)["escalation"] == "claude-sonnet-5-5"
 
 
 def test_cascade_strong_model_listed_only_when_the_cascade_uses_it() -> None:

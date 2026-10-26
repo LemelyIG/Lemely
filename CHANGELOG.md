@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Sub-project C default flip: every task tag defaults to `claude-haiku-5-5` (binder retry on
+  `claude-sonnet-5-5`), with Haiku adjudication and no default escalation. `ANTHROPIC_API_KEY` is
+  required; `GEMINI_API_KEY` only when a tag is configured to a `gemini-` model. Config-only rollback:
+  `docs/deployment.md` §5.9. `correction_retry_keep_higher = true` now also needs
+  `correction_retry_median = false`.
+
 Self-service sign-up (issue [#10](https://github.com/LemelyIG/Lemely/issues/10)), closing the gap
 recorded in `DELIVERY.md` §5: `POST /api/auth/signup` existed and every marketing CTA still pointed
 at `/login`. Full detail, decisions and screenshots are in `BUILD/DECISIONS.md` (`D7.1`–`D7.12`);
