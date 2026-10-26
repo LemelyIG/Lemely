@@ -9,23 +9,40 @@
  */
 
 /**
- * The six `NotificationType` values the backend can send. Kept as a union
- * rather than a `string` so a screen that routes on the type gets a compile
- * error when the backend grows a seventh, instead of silently falling through
- * to a default.
+ * Every `NotificationType` value the backend can send, in the enum's order
+ * (`lemely/db/models/enums.py`; a unit test reads that file and fails on drift).
  *
- * UI spec §G-12 also lists a "weekly summary" toggle. There is deliberately no
- * `weekly_summary` member here: the enum has no matching column, no sender
- * and no row, and offering a switch that gates nothing is what UI spec §1.4
- * forbids.
+ * A union rather than a `string` so a screen that routes on the type gets a
+ * compile error when the backend grows another, instead of silently falling
+ * through to a default. The first six predate the tutoring marketplace; the last
+ * eight are its notices (SPEC docs/tutoring/SPEC.md section a.1).
+ *
+ * UI spec section G-12 also lists a "weekly summary" toggle. There is
+ * deliberately no `weekly_summary` member here: the enum has no matching column,
+ * no sender and no row, and offering a switch that gates nothing is what UI spec
+ * section 1.4 forbids.
  */
-export type NotificationType =
-  | "grade_ready"
-  | "announcement"
-  | "streak_warning"
-  | "study_plan_reminder"
-  | "at_risk_alert"
-  | "review_withdrawn"
+export const NOTIFICATION_TYPES = [
+  "grade_ready",
+  "announcement",
+  "streak_warning",
+  "study_plan_reminder",
+  "at_risk_alert",
+  "review_withdrawn",
+  "booking_request",
+  "booking_update",
+  "booking_note",
+  "tutor_access",
+  "tutor_review",
+  "tutor_listing",
+  "parent_link",
+  "tutoring_report",
+] as const
+
+export type NotificationType = (typeof NOTIFICATION_TYPES)[number]
+
+/** The eight types the tutoring marketplace added: the tail of `NOTIFICATION_TYPES`. */
+export const TUTORING_NOTIFICATION_TYPES = NOTIFICATION_TYPES.slice(-8)
 
 export interface Notification {
   notificationId: string

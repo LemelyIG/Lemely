@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs"
+import path from "node:path"
 import { describe, expect, it } from "vitest"
 import { destinationFor, formatAge, typeLabel } from "@/portals/student/screens/Notifications"
+import { NOTIFICATION_TYPES, TUTORING_NOTIFICATION_TYPES } from "@/lib/notificationTypes"
 import {
   answerPushContentRequest,
   buildPushReply,
@@ -206,6 +209,41 @@ describe("buildPushReply", () => {
     }
     expect(buildPushReply(page, "parent")?.url).toBe("/parent/notifications")
     expect(buildPushReply(page)?.url).toBe("/")
+  })
+})
+
+/* The wire type list in `notificationTypes.ts` against the backend enum's own source. */
+describe("NOTIFICATION_TYPES", () => {
+  function backendTypes(): string[] {
+    const source = readFileSync(path.resolve(__dirname, "../../../lemely/db/models/enums.py"), "utf-8")
+    const block = /class NotificationType\(enum\.Enum\):([\s\S]*?)\n\n\nclass /.exec(source)
+    if (block === null) throw new Error("NotificationType not found in enums.py")
+    return [...block[1].matchAll(/^ {4}([a-z_]+) = "[a-z_]+"$/gm)].map((m) => m[1])
+  }
+
+  it("lists every backend notification type, in the enum's order", () => {
+    const backend = backendTypes()
+    expect(backend).toHaveLength(14) // non-vacuity: 6 original + 8 tutoring
+    expect([...NOTIFICATION_TYPES]).toEqual(backend)
+  })
+
+  it("names the eight tutoring types as the tail of that list", () => {
+    expect([...TUTORING_NOTIFICATION_TYPES]).toEqual([
+      "booking_request",
+      "booking_update",
+      "booking_note",
+      "tutor_access",
+      "tutor_review",
+      "tutor_listing",
+      "parent_link",
+      "tutoring_report",
+    ])
+    expect(NOTIFICATION_TYPES.slice(-8)).toEqual(TUTORING_NOTIFICATION_TYPES)
+  })
+
+  it("still lets an unknown type from a newer backend through as a plain notification", () => {
+    const row = notification({ type: "something_new" })
+    expect(typeLabel(row.type)).toBe("something_new")
   })
 })
 
