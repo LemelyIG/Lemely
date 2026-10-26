@@ -186,6 +186,7 @@ def build_app(settings: Any = None) -> Any:
     from lemely.core.analytics import predict_grade, summarize_weaknesses
     from lemely.core.loose_schemas import MarkScheme
     from lemely.core.schemas import AccuracyReport
+    from lemely.io.adjudication import adjudication_pages
     from lemely.io.answer_extraction import GeminiAnswerExtractor
     from lemely.io.correction_ai import correct_paper as hybrid_correct_paper
     from lemely.io.gemini import GeminiClient, script_cost_scope
@@ -269,6 +270,7 @@ def build_app(settings: Any = None) -> Any:
         table_data: list[list[str]],
         mcq_only: bool,
         extracted_json: str,
+        scan_file: str | None = None,
     ) -> Generator[tuple[dict[str, Any], str, str, str], None, None]:
         """Grade the paper via AI + deterministic marking; streams events live."""
         buf = LiveLogBuffer()
@@ -284,13 +286,17 @@ def build_app(settings: Any = None) -> Any:
                 ms = MarkScheme.model_validate_json(ms_path.read_text(encoding="utf-8"))
                 reviewed = overlay_edited_answers(extracted_json, table_data)
                 client = None if mcq_only else GeminiClient(settings)
-                with script_cost_scope(settings, script_key=f"gradio:{ms_path.stem}"):
+                with (
+                    script_cost_scope(settings, script_key=f"gradio:{ms_path.stem}"),
+                    adjudication_pages(client, Path(scan_file) if scan_file else None) as pages,
+                ):
                     correction = hybrid_correct_paper(
                         mark_scheme=ms,
                         extracted_answers=reviewed,
                         gemini_client=client,
                         mcq_only=mcq_only,
                         options=settings.grading.marking_options(),
+                        pages=pages,
                     )
                 store = GradeBoundaryStore()
                 boundaries, boundary_source = store.resolve(correction.metadata)
@@ -608,7 +614,7 @@ def build_app(settings: Any = None) -> Any:
             )
             grade_btn.click(
                 fn=_grade,
-                inputs=[ms_dropdown, answers_table, mcq_only_cb, extracted_json_state],
+                inputs=[ms_dropdown, answers_table, mcq_only_cb, extracted_json_state, scan_upload],
                 outputs=[report_out, questions_detail, live_log_t2, token_counter_t2],
             )
             save_btn.click(

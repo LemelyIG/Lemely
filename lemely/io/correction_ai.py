@@ -3276,6 +3276,22 @@ def _forget_reads_of_a_held_paper(
     )
 
 
+_adjudication_without_pages_logged = False
+
+
+def _warn_adjudication_without_pages(client: GeminiClient | None) -> None:
+    """Log once per process that adjudication is configured but a caller had no scan pages."""
+    global _adjudication_without_pages_logged
+    from lemely.io.adjudication import configured_adjudication_model
+
+    model = configured_adjudication_model(client)
+    if model is not None and not _adjudication_without_pages_logged:
+        _adjudication_without_pages_logged = True
+        structlog.get_logger().bind(component="correction").warning(
+            "adjudication_without_pages", adjudication_model=model
+        )
+
+
 def correct_paper(
     mark_scheme: MarkScheme | str | Mapping[str, object],
     extracted_answers: ExtractedAnswers | Mapping[str, str],
@@ -3665,6 +3681,8 @@ def correct_paper(
     result = _with_off_topic_check(
         CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected), extracted_answers
     )
+    if pages is None and not mcq_only:
+        _warn_adjudication_without_pages(gemini_client)
     if pages is not None and gemini_client is not None:
         g = gemini_client._settings.gemini
         held = result.binding is not None and result.binding.verdict == "hold"

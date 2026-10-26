@@ -626,6 +626,7 @@ def _run_grading_job(
                     history_store=None,
                     integrity_settings=settings.integrity,
                     options=settings.grading.marking_options(),
+                    scan_path=scan_path,
                 )
             repo.finish(paper_id, report)
     except TeacherPaperDeletedError:

@@ -538,6 +538,7 @@ def test_upload_flow_passes_marking_options_from_settings(
 
     def _grade(*_a: object, **kwargs: object) -> AccuracyReport:
         seen["options"] = kwargs.get("options")
+        seen["scan_path"] = kwargs.get("scan_path")
         return report
 
     monkeypatch.setattr(student, "grade_paper", _grade)
@@ -563,6 +564,8 @@ def test_upload_flow_passes_marking_options_from_settings(
     assert resp.status_code == 200
 
     assert seen["options"] == MarkingOptions(equivalence_gate=True, ecf_substitution=True)
+    # The scan reaches grade_paper, which rasterises it for adjudication (sub-project C P4).
+    assert isinstance(seen["scan_path"], Path)
 
 
 def test_correct_complete_frame_includes_full_questions(

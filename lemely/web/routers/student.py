@@ -1079,6 +1079,7 @@ def student_correct(
                         student_id=None,
                         integrity_settings=settings.integrity,
                         options=settings.grading.marking_options(),
+                        scan_path=scan_path,
                     )
                 attempt_id = attempt_repo.persist_correction(
                     user_id=auth.user_id,

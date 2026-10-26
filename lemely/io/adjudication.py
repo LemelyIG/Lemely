@@ -19,6 +19,7 @@ re-read disagreed with the first read, with the re-read quoted in the prompt.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from typing import TYPE_CHECKING
 
@@ -30,7 +31,8 @@ from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD, crop_and_upscale
 from lemely.runtime.errors import CostCeilingError
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
+    from pathlib import Path
 
     from lemely.core.loose_schemas import MarkScheme, Question
     from lemely.core.schemas import CorrectedQuestion, ExtractedAnswer, ExtractedAnswers
@@ -198,6 +200,37 @@ def _settled(
             f"{first.awarded_marks})",
         }
     )
+
+
+def configured_adjudication_model(client: GeminiClient | None) -> str | None:
+    """``gemini.adjudication_model`` of ``client``'s settings; None when off or unreadable.
+
+    Reads ``getattr`` so a spec'd test double without ``_settings`` means "off".
+    """
+    gemini = getattr(getattr(client, "_settings", None), "gemini", None)
+    model = getattr(gemini, "adjudication_model", None)
+    return model if isinstance(model, str) else None
+
+
+@contextlib.contextmanager
+def adjudication_pages(
+    client: GeminiClient | None, scan_path: Path | None
+) -> Iterator[list[RasterisedPage] | None]:
+    """The scan's pages for ``correct_paper(pages=)``: rasterised once, only when needed.
+
+    ``None`` when adjudication is off or the caller has no scan; ``correct_paper`` then
+    logs ``adjudication_without_pages`` if adjudication is configured. The pages are the
+    memory ``lemely.io.run_cap`` bounds, so a marking-run slot is held while they are
+    yielded: wrap the ``correct_paper`` call, not just the render.
+    """
+    if scan_path is None or configured_adjudication_model(client) is None:
+        yield None
+        return
+    from lemely.io.rasterise import rasterise_scan_to_pages
+    from lemely.io.run_cap import marking_run_slot
+
+    with marking_run_slot():
+        yield rasterise_scan_to_pages(scan_path)
 
 
 def adjudicate(

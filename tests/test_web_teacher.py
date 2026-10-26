@@ -1101,6 +1101,7 @@ def test_upload_with_mark_scheme_grades_instead_of_stalling_at_queued(
 
     def _grade(mark_scheme: object, _extracted: object, **_kwargs: object) -> AccuracyReport:
         marked_with["scheme"] = mark_scheme
+        marked_with["scan_path"] = _kwargs.get("scan_path")
         return report
 
     monkeypatch.setattr(grading_service, "grade_paper", _grade)
@@ -1131,6 +1132,8 @@ def test_upload_with_mark_scheme_grades_instead_of_stalling_at_queued(
 
     # The resolved scheme is what actually reached the marker.
     assert marked_with["scheme"] is scheme
+    # The scan reaches grade_paper, which rasterises it for adjudication (sub-project C P4).
+    assert isinstance(marked_with["scan_path"], Path)
 
     # The paper left the queue, and the console's counters move with it.
     assert teacher._row_kind(row) == "graded"

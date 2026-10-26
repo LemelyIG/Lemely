@@ -316,6 +316,14 @@ def parse_mark_schemes_cmd(
 @click.option(
     "--record", is_flag=True, help="Append result to student history (requires --student-id)."
 )
+@click.option(
+    "--scan",
+    "scan",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="The scan the answers were read from; its pages go to adjudication when "
+    "gemini.adjudication_model is set.",
+)
 @click.pass_context
 def correct_paper_cmd(
     ctx: click.Context,
@@ -325,6 +333,7 @@ def correct_paper_cmd(
     on_error: str,
     student_id: str | None,
     record: bool,
+    scan: str | None,
 ) -> None:
     import json as _json
 
@@ -356,13 +365,19 @@ def correct_paper_cmd(
     log_marking_flags(marking_options)
     client = None if mcq_only else GeminiClient(settings)
 
-    with script_cost_scope(settings, script_key=f"cli:{Path(mark_scheme).stem}"):
+    from lemely.io.adjudication import adjudication_pages
+
+    with (
+        script_cost_scope(settings, script_key=f"cli:{Path(mark_scheme).stem}"),
+        adjudication_pages(client, Path(scan) if scan else None) as pages,
+    ):
         correction = hybrid_correct_paper(
             mark_scheme=ms,
             extracted_answers=extracted,  # type: ignore[arg-type]
             gemini_client=client,
             mcq_only=mcq_only,
             options=marking_options,
+            pages=pages,
         )
     from lemely.io.grade_boundaries import GradeBoundaryStore
 
