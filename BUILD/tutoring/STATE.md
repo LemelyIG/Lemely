@@ -17,8 +17,11 @@ Phases 0-2 DONE (recon, brainstorm LOCKED, ADRs, SPEC rev 3, threat model, plan 
 | T16 | DONE `dc4dea03` |
 | I0b | DONE: live mode `dedicated`; baseline in `handoffs/I0-baseline.md` |
 | W1 (T01, T02, T03, T04) | DONE; I1 hot patches `553da773`; gate G1 green at `2d216d32` (see `handoffs/W1.md`); draft PR opened |
-| W2 (T05, T06, T07, T08) | next |
-| W3..W9, IF | not started |
+| W2 (T05, T06, T07, T08) | DONE; I2 hot patches `c83f8f38`; gate G2 green (see `handoffs/W2.md`) |
+| W3 (T09, T10, T11, T12) | dispatched 2026-10-26 (briefs carry the W1/W2 obligations) |
+| W4..W9, IF | not started |
+
+CI: PR #324. Wave 1 CI green (run 40253907923). Runs take ~60 min; do not push while one is in progress.
 
 Live mode: dedicated. Playwright chromium-1234 installed. `npm ci` needs `PUPPETEER_SKIP_DOWNLOAD=1`.
 
