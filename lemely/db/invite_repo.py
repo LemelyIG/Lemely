@@ -42,7 +42,9 @@ Four rules are binding throughout this module:
    could take in the interval between "the code was handed out" and
    "someone typed it in".
 3. **Redemption of anything class-shaped goes through**
-   :meth:`~lemely.db.class_repo.ClassService.join_by_code`, never a second,
+   :meth:`~lemely.db.class_repo.ClassService.join_by_code_with_notice` (the
+   same enrolment as :meth:`~lemely.db.class_repo.ClassService.join_by_code`,
+   plus the tutoring class-join outbox rows, SPEC §c.4), never a second,
    hand-rolled ``ClassEnrollment`` insert — that method's own docstring asks
    callers not to write one, and this holds whether the code arrived as an
    ``invites.code`` pointing at a class or as a bare ``classes.join_code``
@@ -91,7 +93,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -106,11 +108,13 @@ from lemely.db.class_repo import (
 )
 from lemely.db.models import Invite, School, SchoolClass, SchoolMembership, Seat, User
 from lemely.db.models.enums import InviteRole, MembershipRole, Role, SeatStatus
+from lemely.db.parent_repo import MAX_LINKED_PARENTS, ParentLimitReachedError
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
-    from lemely.db.parent_repo import ParentLinkService
+    from lemely.db.class_repo import TutorClassJoin
+    from lemely.db.parent_repo import ParentLinkChange, ParentLinkService
 
 
 PARENT_INVITE_TTL = timedelta(days=7)
@@ -151,6 +155,17 @@ class InviteAlreadyRedeemedError(InviteError):
 
 class InviteLimitReachedError(InviteError):
     """The child holds :data:`MAX_LIVE_PARENT_LINKS` live single-use parent links (→ 409)."""
+
+
+class InviteParentLimitError(InviteError):
+    """A parent invite's child already has the most linked parents allowed (→ 409 ``parent_limit``).
+
+    Raised by :meth:`InviteService.redeem` for a parent who is not already
+    linked when the child holds
+    :data:`~lemely.db.parent_repo.MAX_LINKED_PARENTS` links (tutoring SPEC
+    §c.4). The redemption's transaction rolls back, so a single-use link stays
+    unredeemed and usable once the child frees a place.
+    """
 
 
 class InviteRoleMismatchError(InviteError):
@@ -204,6 +219,21 @@ class InvitePreview:
 
 
 @dataclass(frozen=True, slots=True)
+class ParentInvitePreview(InvitePreview):
+    """The preview of a ``role=parent`` invite: :class:`InvitePreview` plus the cap flag.
+
+    ``parent_limit_reached`` is true when the child already has
+    :data:`~lemely.db.parent_repo.MAX_LINKED_PARENTS` linked parents. It is
+    never serialised by the public preview route; ``POST
+    /api/auth/parent/signup`` reads it to refuse with 409 ``parent_limit``
+    before any account exists (tutoring SPEC §c.4), the refusal the
+    redemption would give anyway.
+    """
+
+    parent_limit_reached: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class RedeemResult:
     """What redeeming a code produced, for the router to report back.
 
@@ -214,12 +244,21 @@ class RedeemResult:
     one directly (a class invite never does — see the module docstring).
     ``child_id`` is set only for a parent invite, mirroring
     :attr:`~lemely.db.models.invites.Invite.child_id`.
+
+    The last two fields carry what the router's after-commit notices need
+    (tutoring SPEC §c.4, §b.4) and are never part of the response body:
+    ``link_change`` for a parent invite that created a new link,
+    ``class_join`` for a new enrolment in a school-less class whose teacher
+    holds a tutor profile. They are left out of equality, so an idempotent
+    replay still compares equal to the redemption that did the work.
     """
 
     role: InviteRole
     school_id: uuid.UUID | None
     class_id: uuid.UUID | None
     child_id: uuid.UUID | None
+    link_change: ParentLinkChange | None = field(default=None, compare=False)
+    class_join: TutorClassJoin | None = field(default=None, compare=False)
 
 
 class InviteService:
@@ -691,8 +730,8 @@ class InviteService:
         provisions: a seat invite assigns the seat :meth:`mint_seat_invite`
         already reserved; a class invite or a bare ``classes.join_code``
         enrols the caller via
-        :meth:`~lemely.db.class_repo.ClassService.join_by_code`, reused
-        rather than re-implemented per that method's own docstring.
+        :meth:`~lemely.db.class_repo.ClassService.join_by_code_with_notice`,
+        reused rather than re-implemented per that method's own docstring.
 
         **Idempotent for the same caller, refused for a different one** — the
         test that matters most for this module. An ``invites`` row is
@@ -705,11 +744,22 @@ class InviteService:
         by design, unlimited-use (D3.1) — that is unchanged, existing
         behaviour; this single-use rule applies only to an ``invites.code``.
 
+        **What the router must announce after commit** (tutoring SPEC §c.4)
+        travels back on the result: ``link_change`` when a parent invite
+        created a new link (every parent already linked is told), and
+        ``class_join`` when a class code newly enrolled the caller in a
+        school-less class whose teacher holds a tutor profile (the caller's
+        linked parents are told). Both events' email outbox rows are written
+        in the transaction that made the change.
+
         Raises:
             InviteNotFoundError: ``code`` matches neither a live invite nor a
                 class join code (→ 404).
             InviteAlreadyRedeemedError: The invite was already redeemed by a
                 different user (→ 409).
+            InviteParentLimitError: ``code`` is a parent invite whose child
+                already has the most linked parents allowed and the caller is
+                not one of them (→ 409 ``parent_limit``).
             InviteRoleMismatchError: ``code`` is a parent invite and
                 ``caller_role`` is not
                 :attr:`~lemely.db.models.enums.Role.parent`, or ``code`` is
@@ -751,11 +801,15 @@ class InviteService:
                 f"Code {code!r} is a class join code, not a parent invite; caller is a parent"
             )
         try:
-            row = self._class_service.join_by_code(user_uuid, code)
+            joined = self._class_service.join_by_code_with_notice(user_uuid, code)
         except JoinCodeError as exc:
             raise InviteNotFoundError(str(exc)) from exc
         return RedeemResult(
-            role=InviteRole.student, school_id=row.school_id, class_id=row.class_id, child_id=None
+            role=InviteRole.student,
+            school_id=joined.row.school_id,
+            class_id=joined.row.class_id,
+            child_id=None,
+            class_join=joined.tutor_join,
         )
 
     def _redeem_invite(
@@ -766,6 +820,7 @@ class InviteService:
             raise InviteAlreadyRedeemedError(f"Invite {invite.code!r} has already been redeemed")
         school_id = invite.school_id
         class_id = invite.class_id
+        class_join: TutorClassJoin | None = None
         if invite.seat_id is not None:
             self._assign_seat(session, invite.seat_id, user_uuid)
         if invite.class_id is not None:
@@ -773,12 +828,19 @@ class InviteService:
             if cls is not None:  # pragma: no cover - class_id is FK-guaranteed to resolve
                 join_code = cls.join_code
                 if join_code is not None:  # pragma: no cover - create_class always sets one
-                    self._class_service.join_by_code(user_uuid, join_code)
+                    joined = self._class_service.join_by_code_with_notice(user_uuid, join_code)
+                    class_join = joined.tutor_join
                 school_id = school_id or cls.school_id
         if invite.redeemed_by is None:
             invite.redeemed_by = user_uuid
             invite.redeemed_at = datetime.now(UTC)
-        return RedeemResult(role=invite.role, school_id=school_id, class_id=class_id, child_id=None)
+        return RedeemResult(
+            role=invite.role,
+            school_id=school_id,
+            class_id=class_id,
+            child_id=None,
+            class_join=class_join,
+        )
 
     def _redeem_parent_invite(
         self, session: Session, invite: Invite, user_uuid: uuid.UUID
@@ -791,17 +853,29 @@ class InviteService:
         untouched by any redemption. The single-use link, by contrast,
         behaves exactly like :meth:`_redeem_invite`: idempotent for the
         parent who already redeemed it, refused for a different one.
+
+        The link's cap, event row and the other parents' emails are
+        :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session`'s, in
+        this same transaction. A refusal at the cap raises before the invite is
+        marked, and the caller's transaction rolls back.
         """
         if invite.redeemed_by is not None and invite.redeemed_by != user_uuid:
             raise InviteAlreadyRedeemedError(f"Invite {invite.code!r} has already been redeemed")
         if invite.child_id is None:  # pragma: no cover - mint_parent_invite always sets it
             return RedeemResult(role=invite.role, school_id=None, class_id=None, child_id=None)
-        self._parent_link_service.link_in_session(session, user_uuid, invite.child_id)
+        try:
+            change = self._parent_link_service.link_in_session(session, user_uuid, invite.child_id)
+        except ParentLimitReachedError as exc:
+            raise InviteParentLimitError(str(exc)) from exc
         if not invite.reusable and invite.redeemed_by is None:
             invite.redeemed_by = user_uuid
             invite.redeemed_at = datetime.now(UTC)
         return RedeemResult(
-            role=invite.role, school_id=None, class_id=None, child_id=invite.child_id
+            role=invite.role,
+            school_id=None,
+            class_id=None,
+            child_id=invite.child_id,
+            link_change=change,
         )
 
     def _assign_seat(self, session: Session, seat_id: uuid.UUID, user_uuid: uuid.UUID) -> None:
@@ -878,18 +952,26 @@ class InviteService:
         ``child_id`` is FK-guaranteed to resolve to a live ``users`` row for
         the lifetime of the invite (``ON DELETE CASCADE`` deletes the invite
         alongside the child, rather than leaving a dangling reference).
+        ``parent_limit_reached`` is for the parent-signup pre-check only (see
+        :class:`ParentInvitePreview`).
         """
         child_name = "your child"
+        at_limit = False
         if invite.child_id is not None:
             child = session.get(User, invite.child_id)
             if child is not None:  # pragma: no cover - child_id is FK-guaranteed to resolve
                 child_name = child.display_name or "your child"
-        return InvitePreview(
+            linked = self._parent_link_service.linked_parent_ids_in_session(
+                session, invite.child_id
+            )
+            at_limit = len(linked) >= MAX_LINKED_PARENTS
+        return ParentInvitePreview(
             role=InviteRole.parent,
             school_name=None,
             class_name=None,
             teacher_name=None,
             child_name=child_name,
+            parent_limit_reached=at_limit,
         )
 
     def _school_name(self, session: Session, school_id: uuid.UUID | None) -> str | None:
@@ -1039,9 +1121,11 @@ __all__ = [
     "InviteLimitReachedError",
     "InviteNotFoundError",
     "InviteOwnershipError",
+    "InviteParentLimitError",
     "InvitePreview",
     "InviteQuotaExceededError",
     "InviteRoleMismatchError",
     "InviteService",
+    "ParentInvitePreview",
     "RedeemResult",
 ]
