@@ -5,9 +5,10 @@ Route-level, through ``tests.test_tutor_grant_repo.grants_client`` (``app_with_r
 * S8 lists live grants first, then ended ones, newest first, each with its status
   and, for the student only, the classes the tutor also teaches them (SC-2e).
 * S9 needs a verified email; it creates (201) or returns the live grant (200), and
-  is refused for a tutor who is not listed-and-unpaused or is in a block with the
-  student (O11). A new grant tells the tutor and every linked parent; the parents'
-  email is queued in the grant's transaction (SPEC §b.4).
+  answers SP2's own 404 for a tutor who is not listed-and-unpaused or is in a block
+  with the student, either direction (O11; lead decision at the T14 review). A new
+  grant tells the tutor and every linked parent; the parents' email is queued in
+  the grant's transaction (SPEC §b.4).
 * S10 is idempotent and only for the student's own grant (O5); the tutor is told,
   in generic words, that access ended (SC-11).
 * S11 is the student's own log, newest first, filterable by tutor, keyset-paged.
@@ -186,29 +187,40 @@ def test_s9_requires_verified_email(sm: sessionmaker[Session], client: TestClien
 def test_s9_refused_for_unlisted_paused_or_blocked_tutor(
     sm: sessionmaker[Session], client: TestClient, student: uuid.UUID
 ) -> None:
-    not_found = [str(uuid.uuid4()), "not-a-uuid"]
-    for tutor_id in not_found:
+    """O11: every tutor a student may not see is SP2's own 404, byte for byte.
+
+    A distinct answer would tell a student that a tutor exists but is hidden, or
+    (``blocked``) that the tutor blocked them. The expected body is whatever SP2
+    answers for the same id, so this test is not judged against a body written here.
+    """
+    hidden = {
+        state: add_tutor(sm, state=state)
+        for state in ("draft", "pending_review", "rejected", "suspended", "closed")
+    }
+    hidden["paused"] = add_tutor(sm, paused=True)
+    hidden["blocked_by_student"] = add_tutor(sm)
+    add_block(sm, student, hidden["blocked_by_student"].user_id)
+    hidden["blocked_by_tutor"] = add_tutor(sm)
+    add_block(sm, hidden["blocked_by_tutor"].user_id, student)
+    ids = {name: str(tutor.profile_id) for name, tutor in hidden.items()}
+    ids["unknown"] = str(uuid.uuid4())
+
+    directory_404 = {name: client.get(f"/api/tutors/{tutor_id}") for name, tutor_id in ids.items()}
+    assert {name: r.status_code for name, r in directory_404.items()} == dict.fromkeys(ids, 404)
+    for name, tutor_id in ids.items():
         response = client.post(GRANTS, json={"tutorId": tutor_id})
-        assert response.status_code == 404, tutor_id
-        assert response.json()["detail"]["code"] == "not_found"
+        assert response.status_code == 404, name
+        assert response.content == directory_404[name].content, name
         assert response.headers["cache-control"] == NO_STORE
-    hidden = [
-        add_tutor(sm, state=s)
-        for s in ("draft", "pending_review", "rejected", "suspended", "closed")
-    ]
-    hidden.append(add_tutor(sm, paused=True))
-    for tutor in hidden:
-        response = client.post(GRANTS, json={"tutorId": str(tutor.profile_id)})
-        assert response.status_code == 409
-        assert response.json()["detail"]["code"] == "tutor_not_listed"
-    blocked_by_student = add_tutor(sm)
-    add_block(sm, student, blocked_by_student.user_id)
-    blocked_by_tutor = add_tutor(sm)
-    add_block(sm, blocked_by_tutor.user_id, student)
-    for tutor in (blocked_by_student, blocked_by_tutor):
-        response = client.post(GRANTS, json={"tutorId": str(tutor.profile_id)})
-        assert response.status_code == 409
-        assert response.json()["detail"]["code"] == "blocked"
+    # A malformed id is no tutor at all: the same body as an unknown one.
+    malformed = client.post(GRANTS, json={"tutorId": "not-a-uuid"})
+    assert malformed.status_code == 404
+    assert malformed.content == directory_404["unknown"].content
+    # Non-vacuity: nine ids compared (plus the malformed one), and they are all one body.
+    assert len(ids) == 9
+    assert len({r.content for r in directory_404.values()}) == 1
+    # Red case: SP2 does show a listed, unblocked tutor, so its 404s above are real refusals.
+    assert client.get(f"/api/tutors/{add_tutor(sm).profile_id}").status_code == 200
     with sm() as session:
         assert session.execute(sa.text("SELECT count(*) FROM tutor_data_grants")).scalar_one() == 0
     assert inbox_rows(sm) == []

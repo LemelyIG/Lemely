@@ -14,14 +14,18 @@ What is proved here (ADR-T02, O2, O3):
   request with no data (fail closed);
 * T19 writes exactly one ``list`` row per student on the page, in three
   statements whatever the page size (no N+1);
-* a 403 or a 404 writes no audit row; ``studentShared`` writes none either.
+* a 403 or a 404 writes no audit row; ``studentShared`` writes none either;
+* the pair lock is booking_repo's one implementation, keyed exactly as SPEC §a.4b
+  prints it.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -31,6 +35,7 @@ from fastapi.testclient import TestClient
 from lemely.core.history import PaperRecord
 from lemely.core.keyset import CursorError
 from lemely.core.schemas import ExamMetadata, WeakArea
+from lemely.db import booking_repo, tutor_grant_repo
 from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.class_repo import ClassService
 from lemely.db.history_repo import DbHistoryStore
@@ -40,6 +45,7 @@ from lemely.db.models.users import ParentChildLink
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.notification_repo import NotificationService
 from lemely.db.student_profile_repo import StudentProfileService
+from lemely.db.tutor_directory_repo import TutorDirectoryRepository
 from lemely.db.tutor_grant_repo import (
     AccessEnded,
     AccessLogKey,
@@ -66,9 +72,9 @@ from lemely.web.deps import (
     get_student_profile_service,
     get_user_mirror,
 )
-from lemely.web.deps_tutoring import get_tutor_profile_repo
+from lemely.web.deps_tutoring import get_tutor_directory_repo, get_tutor_profile_repo
 from lemely.web.push import RecordingPushTransport
-from lemely.web.routers import student_tutor_access, tutor_students
+from lemely.web.routers import student_tutor_access, tutor_students, tutoring_directory
 from lemely.web.routers.student_tutor_access import get_tutor_grant_repo
 from tests.test_tutor_review_repo import add_booking
 from tests.tutoring_app import app_with_routers
@@ -93,6 +99,22 @@ if TYPE_CHECKING:
 
 #: The tutor's public name every seeded tutor gets ("Sara" + "M"), as SPEC §e.1 formats it.
 SARA = "Sara M."
+SPEC = Path(__file__).resolve().parents[1] / "docs" / "tutoring" / "SPEC.md"
+
+
+def spec_pair_lock_key_sql() -> str:
+    """The pair-lock key exactly as SPEC §a.4b step 3 prints it, with the two ids made bindable.
+
+    Read from the SPEC text, never from the code under test, so a key the code
+    changed on its own no longer matches.
+    """
+    section = SPEC.read_text(encoding="utf-8").split("### a.4b", 1)[1].split("\n### ", 1)[0]
+    [expression] = re.findall(r"`pg_advisory_xact_lock\((hashtextextended\([^`]*\))\)`", section)
+    assert "student_id" in expression
+    assert "tutor_profile_id" in expression
+    return expression.replace("student_id", "CAST(:student_id AS uuid)").replace(
+        "tutor_profile_id", "CAST(:tutor_profile_id AS uuid)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -230,16 +252,20 @@ def paper(
 def grants_client(
     sm: sessionmaker[Session], transport: RecordingPushTransport | None = None
 ) -> TestClient:
-    """S8-S11, T19 and T20 (plus ``create_app``'s teacher router) wired to the test database.
+    """S8-S11, T19, T20 and SP2 (plus ``create_app``'s teacher router) on the test database.
 
     Built through ``app_with_routers`` (a lane never edits ``lemely/web/app.py``).
     The history store, target grades, classes and at-risk acknowledgements all read
-    the same throwaway database, so the teacher route and T20 see one world.
+    the same throwaway database, so the teacher route and T20 see one world; SP2 is
+    there so S9's refusals can be compared with the directory's own 404 (O11).
     """
-    app = app_with_routers(student_tutor_access.router, tutor_students.router)
+    app = app_with_routers(
+        student_tutor_access.router, tutor_students.router, tutoring_directory.router
+    )
     classes = ClassService(sm)
     push = transport if transport is not None else RecordingPushTransport()
     app.dependency_overrides[get_tutor_profile_repo] = lambda: TutorProfileRepository(sm)
+    app.dependency_overrides[get_tutor_directory_repo] = lambda: TutorDirectoryRepository(sm)
     app.dependency_overrides[get_tutor_grant_repo] = lambda: TutorGrantRepository(sm)
     app.dependency_overrides[get_user_mirror] = lambda: DbMirror(sm)
     app.dependency_overrides[get_notification_service] = lambda: NotificationService(
@@ -395,20 +421,29 @@ def test_one_live_grant_returns_existing_200(
 def test_create_refused_unknown_unlisted_paused_or_blocked(
     sm: sessionmaker[Session], repo: TutorGrantRepository, student: uuid.UUID
 ) -> None:
-    with pytest.raises(TutorNotFound):
+    """O11: each reason is told apart here, and every one carries the one ``not_found`` code."""
+    refusals: list[TutorNotFound] = []
+    with pytest.raises(TutorNotFound) as unknown:
         repo.create(student, uuid.uuid4())
+    refusals.append(unknown.value)
     for state in ("draft", "pending_review", "rejected", "suspended", "closed"):
-        with pytest.raises(TutorNotListed):
+        with pytest.raises(TutorNotListed) as hidden:
             repo.create(student, add_tutor(sm, state=state).profile_id)
-    with pytest.raises(TutorNotListed):
+        refusals.append(hidden.value)
+    with pytest.raises(TutorNotListed) as paused:
         repo.create(student, add_tutor(sm, paused=True).profile_id)
+    refusals.append(paused.value)
     blocked_by_student = add_tutor(sm)
     add_block(sm, student, blocked_by_student.user_id)
     blocked_by_tutor = add_tutor(sm)
     add_block(sm, blocked_by_tutor.user_id, student)
     for blocked in (blocked_by_student, blocked_by_tutor):
-        with pytest.raises(TutorBlocked):
+        with pytest.raises(TutorBlocked) as refused:
             repo.create(student, blocked.profile_id)
+        refusals.append(refused.value)
+    assert len(refusals) == 9  # unknown, five hidden states, paused, two block directions
+    assert {refusal.code for refusal in refusals} == {"not_found"}
+    assert all(isinstance(refusal, TutorNotFound) for refusal in refusals)
     with sm() as session:
         assert session.execute(sa.text("SELECT count(*) FROM tutor_data_grants")).scalar_one() == 0
     assert outbox_rows(sm) == []
@@ -495,6 +530,34 @@ def test_revoke_live_in_session_sweeps_only_live_grants_of_that_tutor(
             student_id=None,
             reason=GrantRevokeReason.student,
         )
+
+
+def test_pair_lock_is_the_booking_one_keyed_as_the_spec_prints_it(
+    sm: sessionmaker[Session], tutor: SeededTutor, student: uuid.UUID
+) -> None:
+    """SPEC §a.4b step 3: one implementation for every pair path, and its key is the SPEC's.
+
+    The function the grant writes call is read from the module the repository
+    runs in, so a private copy (or a re-keyed one) fails here.
+    """
+    used_by_grants = vars(tutor_grant_repo)["lock_pair_in_session"]
+    assert used_by_grants is booking_repo.lock_pair_in_session
+    params = {"student_id": student, "tutor_profile_id": tutor.profile_id}
+    with sm.begin() as session:
+        expected = session.execute(sa.text(f"SELECT {spec_pair_lock_key_sql()}"), params)
+        key = expected.scalar_one()
+        used_by_grants(session, student_id=student, tutor_profile_id=tutor.profile_id)
+        held = (
+            session.execute(
+                sa.text(
+                    "SELECT (classid::bigint << 32) | objid::bigint FROM pg_locks "
+                    "WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND objsubid = 1"
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert held == [key]
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,11 @@ SQL path against the pure functions:
 6 x 2 x 5 x 3 x 4 = 720 grants. The oracle is ``grant_is_valid`` /
 ``grant_status`` on facts written down here, not read back through the code
 under test.
+
+The expiry boundary is checked on its own: a grant is valid while
+``now < expires_at`` (half-open), so ``expires_at == now()`` must already be
+expired in SQL, as in the core. The generated set cannot reach that instant;
+one transaction can, because ``now()`` is fixed for its length.
 """
 
 from __future__ import annotations
@@ -31,8 +36,9 @@ from lemely.core.tutor_grants import GrantFacts, grant_is_valid, grant_status
 from lemely.db.models.enums import GrantRevokeReason, Role, TutorListingState
 from lemely.db.models.tutoring import TutorDataGrant, TutoringBlock, TutorProfile
 from lemely.db.models.users import User
-from lemely.db.tutor_grant_repo import AccessEnded, TutorGrantRepository
-from tests.tutoring_db import NOW, emptied_after, tutoring_database
+from lemely.db.tutor_grant_repo import AccessEnded, TutorGrantRepository, grant_valid_sql
+from tests.test_tutor_grant_repo import add_grant, add_student
+from tests.tutoring_db import NOW, add_tutor, emptied_after, tutoring_database
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -187,6 +193,49 @@ def test_sql_grant_validity_equals_core_over_generated_inputs(sm: sessionmaker[S
         except AccessEnded:
             continue
     assert gated == expected
+
+
+def test_sql_grant_validity_is_half_open_at_expires_at(sm: sessionmaker[Session]) -> None:
+    """``expires_at`` one microsecond before, exactly at, and one after the database ``now()``."""
+    tutor = add_tutor(sm)
+    grant = add_grant(sm, add_student(sm), tutor)
+    outcomes: dict[str, tuple[bool, bool]] = {}
+    for label, offset in (
+        ("before", -timedelta(microseconds=1)),
+        ("at", timedelta(0)),
+        ("after", timedelta(microseconds=1)),
+    ):
+        with sm.begin() as session:  # one transaction: now() is the same instant throughout
+            session.execute(
+                sa.text("UPDATE tutor_data_grants SET expires_at = now() + :offset WHERE id = :g"),
+                {"offset": offset, "g": grant},
+            )
+            row = session.execute(
+                sa.text(
+                    "SELECT g.created_at, g.expires_at, now() AS db_now, "  # noqa: S608 - constant
+                    f"{grant_valid_sql('g', 'tp')} AS valid FROM tutor_data_grants g "
+                    "JOIN tutor_profiles tp ON tp.id = g.tutor_profile_id WHERE g.id = :g"
+                ),
+                {"g": grant},
+            ).one()
+        facts = GrantFacts(
+            created_at=row.created_at,
+            revoked_at=None,
+            revoke_reason=None,
+            expires_at=row.expires_at,
+            tutor_listing_state="listed",
+            blocked=False,
+        )
+        assert row.expires_at - row.db_now == offset, label  # the instant really is the boundary
+        outcomes[label] = (bool(row.valid), grant_is_valid(facts, now=row.db_now))
+
+    assert all(sql == core for sql, core in outcomes.values()), outcomes
+    # Non-vacuity: both answers occur, and equality is the expired side.
+    assert {label: core for label, (_, core) in outcomes.items()} == {
+        "before": False,
+        "at": False,
+        "after": True,
+    }
 
 
 def test_grant_status_shown_to_the_student_equals_core(sm: sessionmaker[Session]) -> None:

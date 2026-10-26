@@ -6,11 +6,12 @@ Route-level. Apps are built with ``tests.tutoring_app.app_with_routers`` through
 parity test reads ``GET /api/teacher/students/{id}`` from the same app.
 
 * T20's ``detail`` is the teacher route's response with acknowledgements removed,
-  passed through ``project_for_tutor`` (SPEC §e.2: the route-level parity test
-  that replaced the old one, F31).
-* T20's JSON carries no key outside ``TutorStudentDetailDTO``; the allowed keys
-  come from the DTO classes themselves and from the core at-risk evidence models
-  (camel-cased), never from a list written here.
+  passed through ``project_for_tutor`` at the request's instant (SPEC §e.2: the
+  route-level parity test that replaced the old one, F31). The teacher route's
+  own day counts stay elapsed days: only the tutor's copy is recounted.
+* T20's JSON has exactly the key paths of SPEC §b.3 ``TutorStudentDetailDTO`` and
+  ``schemas_analytics.StudentDetailDTO``, written out below by hand: a field added
+  to any nested DTO the route serialises through is a new key, and a red test.
 * Every ended grant answers one 403 ``access_ended`` with the same body (SC-11).
 * A teacher without a tutor profile gets 404 ``no_tutor_profile`` on both (O1).
 """
@@ -20,26 +21,18 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, get_args, get_origin
+from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
-from pydantic import BaseModel
 
-from lemely.core.at_risk import (
-    BelowTargetEvidence,
-    DecliningTrendEvidence,
-    InactivityEvidence,
-    assess_at_risk,
-    flag_fingerprint,
-)
+from lemely.core.at_risk import assess_at_risk, flag_fingerprint
 from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.class_repo import ClassService
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import GrantRevokeReason, Role
 from lemely.db.models.profiles import StudentSubjectEnrolment
 from lemely.web.schemas_analytics import StudentDetailDTO
-from lemely.web.schemas_tutoring import TutorStudentDetailDTO
 from lemely.web.student_detail_view import project_for_tutor
 from tests.test_tutor_grant_repo import (
     add_grant,
@@ -136,19 +129,30 @@ def test_t20_equals_projection_of_teacher_route(
     )
     act_as(client, teacher, Role.teacher)
 
+    before = _now()
     teacher_view = client.get(f"/api/teacher/students/{student}")
     tutor_view = client.get(f"/api/tutor/students/{student}")
+    after = _now()
 
     assert teacher_view.status_code == 200, teacher_view.text
     assert tutor_view.status_code == 200, tutor_view.text
     teacher_json = teacher_view.json()
     assert any(f["acknowledged"] is not None for f in teacher_json["atRiskFlags"])  # red case
+    # The teacher route still counts elapsed 24-hour days (teacher.py is untouched).
+    last_active = datetime.fromisoformat(teacher_json["engagement"]["lastActiveAt"])
+    elapsed = {(before - last_active).days, (after - last_active).days}
+    assert teacher_json["engagement"]["daysSinceLastSubmission"] in elapsed
     for item in teacher_json["atRiskFlags"]:
         item["acknowledged"] = None
-    expected = project_for_tutor(
-        StudentDetailDTO.model_validate(teacher_json), zone="Africa/Cairo"
-    ).model_dump(mode="json")
-    assert tutor_view.json()["detail"] == expected
+    # T20 read its own clock between ``before`` and ``after``; the projection only uses
+    # that instant's day in the tutor's zone, so one of the two must match.
+    expected = [
+        project_for_tutor(
+            StudentDetailDTO.model_validate(teacher_json), zone="Africa/Cairo", now=instant
+        ).model_dump(mode="json")
+        for instant in (before, after)
+    ]
+    assert tutor_view.json()["detail"] in expected
     # Non-vacuity: the compared detail has every part populated.
     detail = tutor_view.json()["detail"]
     assert detail["attempts"] and detail["trend"] and detail["weaknesses"] and detail["subjects"]
@@ -170,66 +174,85 @@ def _now() -> datetime:
 # ---------------------------------------------------------------------------
 
 
-def _model_of(annotation: object) -> type[BaseModel] | None:
-    """The pydantic model inside ``annotation`` (``X``, ``X | None``, ``list[X]``), if any."""
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return annotation
-    for arg in get_args(annotation):
-        found = _model_of(arg)
-        if found is not None:
-            return found
-    return None
-
-
-def _is_plain_dict(annotation: object) -> bool:
-    if get_origin(annotation) is dict:
-        return True
-    return any(_is_plain_dict(arg) for arg in get_args(annotation))
-
-
-def _camel(name: str) -> str:
-    head, *rest = name.split("_")
-    return head + "".join(part.title() for part in rest)
-
-
-#: Keys of the at-risk ``evidence`` dict: the core evidence models' fields, camel-cased
-#: (the wire form ``_at_risk_flag_dto`` writes). Derived, not listed.
-EVIDENCE_KEYS = frozenset(
-    _camel(name)
-    for model in (DecliningTrendEvidence, BelowTargetEvidence, InactivityEvidence)
-    for name in model.model_fields
+#: Every key path T20 may send, copied by hand at b8aae9c5 from SPEC §b.3
+#: (``TutorStudentDetailDTO``) and ``lemely/web/schemas_analytics.py``
+#: (``StudentDetailDTO`` and the DTOs nested in it), plus the at-risk ``evidence``
+#: keys ``teacher._at_risk_flag_dto`` writes. ``[]`` marks a list element. Deliberately
+#: not read from the DTO classes the route serialises through: a field added to any of
+#: them must fail here until someone decides a tutor may see it. ``acknowledged`` is
+#: always null for a tutor, so no ``AtRiskAcknowledgementDTO`` key may appear.
+T20_KEY_PATHS: frozenset[str] = frozenset(
+    {
+        # TutorStudentDetailDTO (SPEC §b.3)
+        "detail",
+        "grantId",
+        "grantedAt",
+        "accessRecordedAt",
+        # StudentDetailDTO
+        "detail.studentId",
+        "detail.displayName",
+        "detail.subjects",
+        "detail.attempts",
+        "detail.weaknesses",
+        "detail.trend",
+        "detail.isAtRisk",
+        "detail.atRiskFlags",
+        "detail.engagement",
+        # SubjectPredictionDTO
+        "detail.subjects[].subjectCode",
+        "detail.subjects[].predictedGrade",
+        "detail.subjects[].latestPercentage",
+        "detail.subjects[].paperCount",
+        # AttemptDTO
+        "detail.attempts[].paperId",
+        "detail.attempts[].subjectCode",
+        "detail.attempts[].paperNumber",
+        "detail.attempts[].paperVariant",
+        "detail.attempts[].awardedMarks",
+        "detail.attempts[].maximumMarks",
+        "detail.attempts[].percentage",
+        "detail.attempts[].grade",
+        "detail.attempts[].recordedAt",
+        # StudentWeaknessDTO
+        "detail.weaknesses[].topic",
+        "detail.weaknesses[].lostMarks",
+        "detail.weaknesses[].maximumMarks",
+        "detail.weaknesses[].accuracy",
+        "detail.weaknesses[].questionIds",
+        # StudentTrendPointDTO
+        "detail.trend[].recordedAt",
+        "detail.trend[].percentage",
+        # AtRiskFlagDTO
+        "detail.atRiskFlags[].reason",
+        "detail.atRiskFlags[].summary",
+        "detail.atRiskFlags[].evidence",
+        "detail.atRiskFlags[].acknowledged",
+        # at-risk evidence: declining_trend, below_target, inactive
+        "detail.atRiskFlags[].evidence.percentages",
+        "detail.atRiskFlags[].evidence.targetGrade",
+        "detail.atRiskFlags[].evidence.predictedGrade",
+        "detail.atRiskFlags[].evidence.positionsBelow",
+        "detail.atRiskFlags[].evidence.daysInactive",
+        "detail.atRiskFlags[].evidence.lastActiveAt",
+        # StudentEngagementDTO
+        "detail.engagement.totalPapers",
+        "detail.engagement.lastActiveAt",
+        "detail.engagement.daysSinceLastSubmission",
+    }
 )
 
 
-def _check_keys(
-    value: object, model: type[BaseModel], compared: dict[str, int], path: str
-) -> list[str]:
-    """Every key of ``value`` outside ``model``'s fields, walking nested DTOs."""
-    if not isinstance(value, dict):
-        return [f"{path}: not an object"]
-    problems = [f"{path}.{key}" for key in value if key not in model.model_fields]
-    compared[model.__name__] = compared.get(model.__name__, 0) + len(value)
-    for name, field in model.model_fields.items():
-        if name not in value or value[name] is None:
-            continue
-        nested = _model_of(field.annotation)
-        item = value[name]
-        if nested is not None:
-            for index, element in enumerate(item if isinstance(item, list) else [item]):
-                problems += _check_keys(element, nested, compared, f"{path}.{name}[{index}]")
-        elif _is_plain_dict(field.annotation):
-            problems += [f"{path}.{name}.{k}" for k in item if k not in EVIDENCE_KEYS]
-            compared["evidence"] = compared.get("evidence", 0) + len(item)
-    return problems
-
-
-def _nested_models(model: type[BaseModel], seen: set[str]) -> set[str]:
-    seen.add(model.__name__)
-    for field in model.model_fields.values():
-        nested = _model_of(field.annotation)
-        if nested is not None and nested.__name__ not in seen:
-            _nested_models(nested, seen)
-    return seen
+def key_paths(value: object, prefix: str = "") -> set[str]:
+    """Every object key in a decoded JSON value, as a dotted path (``[]`` for list elements)."""
+    if isinstance(value, dict):
+        paths: set[str] = set()
+        for key, item in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            paths |= {path, *key_paths(item, path)}
+        return paths
+    if isinstance(value, list):
+        return {path for item in value for path in key_paths(item, f"{prefix}[]")}
+    return set()
 
 
 def test_t20_json_has_no_key_outside_dto(sm: sessionmaker[Session], client: TestClient) -> None:
@@ -242,18 +265,29 @@ def test_t20_json_has_no_key_outside_dto(sm: sessionmaker[Session], client: Test
         teacher, Role.teacher, student, flag.reason, flag_fingerprint(flag)
     )
 
-    body = client.get(f"/api/tutor/students/{student}").json()
+    response = client.get(f"/api/tutor/students/{student}")
+    assert response.status_code == 200, response.text
 
-    compared: dict[str, int] = {}
-    assert _check_keys(body, TutorStudentDetailDTO, compared, "$") == []
-    # Non-vacuity: at least one key compared in every nested DTO the response can carry,
-    # except the teacher-only acknowledgement, which the projection always nulls.
-    expected_models = _nested_models(TutorStudentDetailDTO, set()) - {"AtRiskAcknowledgementDTO"}
-    assert expected_models <= set(compared)
-    assert all(compared[name] >= 1 for name in expected_models)
-    assert compared["evidence"] >= 1
-    assert len(expected_models) >= 8
-    assert {"lastActiveAt", "percentages", "targetGrade"} <= EVIDENCE_KEYS
+    seen = key_paths(response.json())
+    assert seen - T20_KEY_PATHS == set()  # nothing the SPEC does not name
+    assert seen == T20_KEY_PATHS  # and every named path was really compared
+    # Non-vacuity: >= 1 key compared in each of the nine objects the response nests.
+    parents = {
+        "",
+        "detail",
+        "detail.subjects[]",
+        "detail.attempts[]",
+        "detail.weaknesses[]",
+        "detail.trend[]",
+        "detail.atRiskFlags[]",
+        "detail.atRiskFlags[].evidence",
+        "detail.engagement",
+    }
+    per_parent = {parent: 0 for parent in parents}
+    for path in seen:
+        per_parent[path.rpartition(".")[0]] += 1
+    assert all(count >= 1 for count in per_parent.values()), per_parent
+    assert len(T20_KEY_PATHS) == 46
 
 
 # ---------------------------------------------------------------------------

@@ -15,8 +15,26 @@ edited, never copied), then minimised by :func:`project_for_tutor`:
 * ``weaknesses[].questionIds`` are emptied (a tutor has no question routes);
 * teacher acknowledgements are never carried (they name a teacher and a note).
 
+**Day counts are calendar days** (lead decision at the T14 review). The teacher's
+``engagement.daysSinceLastSubmission`` and the inactive flag's ``daysInactive``
+count elapsed 24-hour periods, so their value changes at the hour of the last
+activity, and a tutor who reads twice a day could bisect that hour from the
+audited reads. For the tutor both are the difference between two calendar days
+in the tutor's zone, today's (from ``now``, the instant the route read) and the
+last activity's, so every read on one tutor day gives the same DTO. The inactive
+flag follows that count alone: the tutor sees it exactly when the count is at
+least :data:`TUTOR_INACTIVE_DAYS` (15), rebuilt from the projected day and count.
+Fifteen calendar days are 14 elapsed days or more at any hour, except across a
+spring-forward night, where they can fall short by the size of the clock change
+(an hour in Cairo); the teacher's flag has then not fired yet, so the tutor's
+flag is rebuilt rather than kept or dropped (copying the teacher's would make it
+appear between two reads of one day and date the activity to the minute).
+``isAtRisk`` is recomputed from the flags the tutor sees. The teacher route's own
+numbers are untouched: this module works on a copy of the teacher DTO.
+
 An instant that cannot be placed on a day in the tutor's zone (unparseable, or
-without an offset) is shown as ``""``: nothing about it is passed on.
+without an offset) is shown as ``""`` and counts nothing: nothing about it is
+passed on.
 
 The route-level test ``test_t20_equals_projection_of_teacher_route`` proves that
 T20's ``detail`` is :func:`project_for_tutor` of the teacher route's response
@@ -26,11 +44,12 @@ T20's ``detail`` is :func:`project_for_tutor` of the teacher route's response
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 from zoneinfo import ZoneInfo
 
 from lemely.db.class_repo import RosterEntry
 from lemely.web.routers.teacher import _student_detail_dto
+from lemely.web.schemas_teacher import AtRiskFlagDTO
 
 if TYPE_CHECKING:
     import uuid
@@ -38,7 +57,12 @@ if TYPE_CHECKING:
 
     from lemely.core.history import StudentHistory
     from lemely.web.schemas_analytics import StudentDetailDTO
-    from lemely.web.schemas_teacher import AtRiskFlagDTO
+
+#: The tutor sees the inactive flag once this many tutor-zone calendar days have
+#: passed since the last activity (the core rule's 14 elapsed days, as a day count).
+TUTOR_INACTIVE_DAYS: Final = 15
+#: ``core.at_risk.AtRiskReason.INACTIVE`` as the DTO carries it.
+_INACTIVE: Final = "inactive"
 
 
 def build_student_detail_for_tutor(
@@ -53,7 +77,8 @@ def build_student_detail_for_tutor(
     """T-05's DTO for a granted tutor: the teacher builder's output, then the tutor projection.
 
     ``display_name`` must already be ``core.tutor_directory.student_label(...)``
-    (F12: never the email fallback the roster uses). ``zone`` is the tutor's.
+    (F12: never the email fallback the roster uses). ``zone`` is the tutor's;
+    ``now`` is the request's instant, passed to both steps.
     """
     dto = _student_detail_dto(
         RosterEntry(student_id=student_id, display_name=display_name),
@@ -62,15 +87,27 @@ def build_student_detail_for_tutor(
         acks={},
         targets=targets,
     )
-    return project_for_tutor(dto, zone=zone)
+    return project_for_tutor(dto, zone=zone, now=now)
 
 
-def project_for_tutor(dto: StudentDetailDTO, *, zone: str) -> StudentDetailDTO:
-    """``dto`` with instants cut to days in ``zone``, no question ids and no acknowledgements.
+def project_for_tutor(dto: StudentDetailDTO, *, zone: str, now: datetime) -> StudentDetailDTO:
+    """``dto`` with instants cut to days and day counts recounted in ``zone`` as of ``now``.
 
-    Returns a new DTO; ``dto`` is left unchanged.
+    Also empties question ids and drops acknowledgements. Returns a new DTO;
+    ``dto`` is left unchanged.
+
+    Raises:
+        ValueError: ``now`` has no offset (its day in ``zone`` would be a guess).
     """
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError(f"now must be a timezone-aware datetime, got naive {now!r}")
     tz = ZoneInfo(zone)
+    last_active = dto.engagement.lastActiveAt
+    last_day = tutor_day(last_active, tz) if last_active is not None else None
+    days = calendar_days_between(last_active, now, tz) if last_active is not None else None
+    flags = [_project_flag(flag, tz) for flag in dto.atRiskFlags if flag.reason != _INACTIVE]
+    if days is not None and last_day and days >= TUTOR_INACTIVE_DAYS:
+        flags.append(_inactive_flag(days, last_day))
     return dto.model_copy(
         update={
             "attempts": [
@@ -84,15 +121,10 @@ def project_for_tutor(dto: StudentDetailDTO, *, zone: str) -> StudentDetailDTO:
             "weaknesses": [
                 weakness.model_copy(update={"questionIds": []}) for weakness in dto.weaknesses
             ],
-            "atRiskFlags": [_project_flag(flag, tz) for flag in dto.atRiskFlags],
+            "isAtRisk": bool(flags),
+            "atRiskFlags": flags,
             "engagement": dto.engagement.model_copy(
-                update={
-                    "lastActiveAt": (
-                        tutor_day(dto.engagement.lastActiveAt, tz)
-                        if dto.engagement.lastActiveAt is not None
-                        else None
-                    )
-                }
+                update={"lastActiveAt": last_day, "daysSinceLastSubmission": days}
             ),
         }
     )
@@ -102,6 +134,18 @@ def tutor_day(value: str, tz: ZoneInfo) -> str:
     """The ISO calendar day of instant ``value`` in ``tz``; ``""`` when it cannot be placed."""
     instant = _instant(value)
     return instant.astimezone(tz).date().isoformat() if instant is not None else ""
+
+
+def calendar_days_between(value: str, now: datetime, tz: ZoneInfo) -> int | None:
+    """Calendar days from instant ``value``'s day to ``now``'s day, both in ``tz``.
+
+    ``None`` when ``value`` cannot be placed. The same for any two instants on the
+    same pair of days, whatever their hours.
+    """
+    instant = _instant(value)
+    if instant is None:
+        return None
+    return (now.astimezone(tz).date() - instant.astimezone(tz).date()).days
 
 
 def _instant(value: str) -> datetime | None:
@@ -124,6 +168,16 @@ def _looks_like_time(value: str) -> bool:
     return True
 
 
+def _inactive_flag(days: int, last_day: str) -> AtRiskFlagDTO:
+    """The inactive flag as the tutor sees it: the tutor-day count and the tutor day only."""
+    return AtRiskFlagDTO(
+        reason=_INACTIVE,
+        summary=f"No papers submitted in {days} days (last active {last_day}).",
+        evidence={"daysInactive": days, "lastActiveAt": last_day},
+        acknowledged=None,
+    )
+
+
 def _project_flag(flag: AtRiskFlagDTO, tz: ZoneInfo) -> AtRiskFlagDTO:
     """One at-risk flag with its instants cut to days, in the evidence and in the summary."""
     evidence: dict[str, float | int | str | list[float]] = {}
@@ -142,4 +196,10 @@ def _project_flag(flag: AtRiskFlagDTO, tz: ZoneInfo) -> AtRiskFlagDTO:
     return flag.model_copy(update={"evidence": evidence, "summary": summary, "acknowledged": None})
 
 
-__all__ = ["build_student_detail_for_tutor", "project_for_tutor", "tutor_day"]
+__all__ = [
+    "TUTOR_INACTIVE_DAYS",
+    "build_student_detail_for_tutor",
+    "calendar_days_between",
+    "project_for_tutor",
+    "tutor_day",
+]

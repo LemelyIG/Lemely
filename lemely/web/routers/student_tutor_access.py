@@ -7,12 +7,15 @@ routers), never here (decision row 4: the student alone grants and revokes).
   (at most 200), each with its status from ``core.tutor_grants.grant_status`` and
   the names of the caller's classes the tutor also teaches (SC-2e, student only).
 * **S9** (verified email, SC-15) creates a grant, or returns the live one with 200.
-  The tutor must be listed and not paused, with no active block either way (O11):
-  an unknown tutor is 404, a hidden one 409 ``tutor_not_listed``, a block 409
-  ``blocked`` (SPEC §b.2). The linked parents' email is queued inside the grant's
-  transaction; after it commits the tutor and every linked parent get an inbox
-  notice (``tutoring_notify.grant_notices``), and a failure there is logged and
-  never fails the grant (D5.9 section 1).
+  The tutor must be listed and not paused, with no active block either way (O11).
+  An unknown, unlisted, paused, suspended, closed or blocked tutor (either block
+  direction) gets SP2's own 404 (``tutoring_http.tutor_not_found``), so S9 never
+  tells a student that a tutor exists but is hidden, or that the tutor blocked
+  them (lead decision at the T14 review; it replaces the 409 ``tutor_not_listed``
+  and ``blocked`` of SPEC §b.2 rev 3). The linked parents' email is queued inside
+  the grant's transaction; after it commits the tutor and every linked parent get
+  an inbox notice (``tutoring_notify.grant_notices``), and a failure there is
+  logged and never fails the grant (D5.9 section 1).
 * **S10** revokes the caller's own grant (O5: anyone else's is the same 404 as an
   unknown id). It is idempotent; the first revoke tells the tutor, in generic
   words, that access ended (SC-11). Effective on the tutor's next read.
@@ -44,10 +47,8 @@ from lemely.db.tutor_grant_repo import (
     AccessLogKey,
     GrantError,
     GrantNotFound,
-    TutorBlocked,
     TutorGrantRepository,
     TutorNotFound,
-    TutorNotListed,
     access_log_cursor,
     parse_access_log_cursor,
 )
@@ -148,15 +149,15 @@ def next_access_log_cursor(key: AccessLogKey | None, endpoint: str) -> str | Non
 
 
 def grant_http_error(exc: GrantError) -> HTTPException:
-    """Map a repository refusal on S9/S10 to its SPEC §b.2 status and body."""
+    """Map a repository refusal on S9/S10 to its status and body.
+
+    Every S9 refusal (``TutorNotFound`` and its not-listed and blocked subclasses)
+    is SP2's one 404 (O11), whatever the reason.
+    """
     if isinstance(exc, TutorNotFound):
         return tutor_not_found()
     if isinstance(exc, GrantNotFound):
         return tutoring_error(404, exc.code, "Grant not found.")
-    if isinstance(exc, TutorNotListed):
-        return tutoring_error(409, exc.code, "This tutor isn't taking new students right now.")
-    if isinstance(exc, TutorBlocked):
-        return tutoring_error(409, exc.code, "You can't share your progress with this tutor.")
     raise exc
 
 

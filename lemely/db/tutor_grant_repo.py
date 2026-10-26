@@ -19,10 +19,11 @@ function over generated inputs. S8 shows the student the reason through
 **The gate (T20, O2, O3, O18).** :meth:`TutorGrantRepository.require_valid_grant`
 takes the caller's own profile id, resolved by the route from ``auth.user_id``,
 and nothing else that names a tutor. In one transaction it takes the tutor row
-``FOR SHARE`` (SPEC §a.4b step 1), locks the pair's live grant row ``FOR SHARE``
+``FOR SHARE`` (SPEC §a.4b step 1), the student's ``users`` row ``FOR KEY SHARE``
+(step 2, see "Lock order" below), then the pair's live grant row ``FOR SHARE``
 (so a revoke that is still in flight is waited for, and once it has committed no
-read succeeds: ``test_race_revoke_vs_t20_no_200_after_revoke_commit``), checks
-validity, and writes the ``detail`` audit row. Only then, still in that
+read succeeds: ``test_t20_waits_for_an_inflight_revoke_and_then_refuses``),
+checks validity, and writes the ``detail`` audit row. Only then, still in that
 transaction, is the student's label read; the route loads the history after the
 commit. An ended grant raises :class:`AccessEnded` and no grant ever for the pair
 raises :class:`NoGrant`; neither writes a row. A failure anywhere in that
@@ -33,14 +34,28 @@ with no body (fail closed, SPEC §b.4 point 3).
 names, in three statements whatever the page size (SPEC §e.3: validity and rows;
 one audit insert; names and upcoming-session counts).
 
-**Writes (S9, S10).** Create takes the tutor row ``FOR SHARE`` then the pair's
-advisory lock (SPEC §a.4b: ``hashtextextended(student_id::text || ':' ||
-tutor_profile_id::text, 0)``), re-checks listing and blocks after the lock, and
-returns the live grant when one exists (``uq_tutor_data_grants_live`` maps to
-"return the existing grant", SPEC §a.4). The linked parents' email is queued in
-the same transaction (``email_outbox_repo.enqueue_in_session``); the inbox
-notices are the router's, after commit. Revoke takes the same two locks and is
-a compare-and-set on ``revoked_at IS NULL``, so a repeat changes nothing.
+**Writes (S9, S10).** Create takes the tutor row ``FOR SHARE``, the student's
+``users`` row ``FOR KEY SHARE``, then the pair lock
+(``booking_repo.lock_pair_in_session``, the one implementation of SPEC §a.4b step
+3), re-checks blocks after the locks, and returns the live grant when one exists
+(``uq_tutor_data_grants_live`` maps to "return the existing grant", SPEC §a.4).
+Every refusal (unknown, not listed, paused, blocked) is a :class:`TutorNotFound`,
+which the route answers with SP2's own 404 (O11): a student is never told that a
+tutor is hidden, or that a tutor blocked them. The linked parents' email is
+queued in the same transaction (``email_outbox_repo.enqueue_in_session``); the
+inbox notices are the router's, after commit. Revoke takes the tutor row and the
+pair lock and is a compare-and-set on ``revoked_at IS NULL``, so a repeat changes
+nothing; it inserts no row that references the student, so it needs no step 2.
+
+**Lock order (SPEC §a.4b, §i.6).** A booking create holds the student's ``users``
+row ``FOR UPDATE`` and then waits for the pair lock. S9's grant insert and T20's
+audit insert reference that row, and their foreign-key checks take ``KEY SHARE``
+on it; taken there, late, S9 would hold the pair lock while it waited for the
+create (a two-way deadlock), and T20 would hold the live grant row that a revoke
+holding the pair lock waits for (T20, revoke, create: a three-way one). Both
+therefore take ``FOR KEY SHARE`` on the student right after the tutor row, before
+anything a create or a revoke could wait for. ``KEY SHARE`` stays compatible with
+the ``FOR NO KEY UPDATE`` an unlink takes on the same row (T09).
 
 Every value reaches SQL as a bound parameter; the only text spliced into a
 statement is a fragment built here or in ``tutoring_predicates`` from constants.
@@ -61,6 +76,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from lemely.core.keyset import CursorError, decode_cursor, encode_cursor
 from lemely.core.tutor_directory import public_name, student_label
 from lemely.core.tutor_grants import GrantFacts, grant_status
+from lemely.db.booking_repo import lock_pair_in_session
 from lemely.db.email_outbox_repo import enqueue_in_session
 from lemely.db.models.enums import GrantRevokeReason
 from lemely.db.parent_repo import ParentLinkService
@@ -103,11 +119,6 @@ _MODE_COLUMN: Final[Mapping[str, str]] = {
     "in_person": "offers_in_person",
     "other": "offers_other",
 }
-#: SPEC §a.4b step 3, written exactly as the SPEC prints it; every pair lock must use this key.
-_PAIR_LOCK: Final = (
-    "SELECT pg_advisory_xact_lock(hashtextextended("
-    "CAST(:student_id AS uuid)::text || ':' || CAST(:tutor_profile_id AS uuid)::text, 0))"
-)
 
 
 # ---------------------------------------------------------------------------
@@ -144,21 +155,21 @@ class GrantNotFound(GrantError):
 
 
 class TutorNotFound(GrantError):
-    """S9: no tutor profile has this id."""
+    """S9: no tutor this student may see has this id (O11: one 404, SP2's).
+
+    The subclasses name the reason for logs and tests only; they share this code,
+    so the answer never tells a student which reason applied.
+    """
 
     code = "not_found"
 
 
-class TutorNotListed(GrantError):
-    """S9: the tutor is not listed, or is paused (O11)."""
-
-    code = "tutor_not_listed"
+class TutorNotListed(TutorNotFound):
+    """S9: the tutor is not listed, or is paused."""
 
 
-class TutorBlocked(GrantError):
-    """S9: an active block between the student and the tutor, in either direction (O11)."""
-
-    code = "blocked"
+class TutorBlocked(TutorNotFound):
+    """S9: an active block between the student and the tutor, in either direction."""
 
 
 class AuditUnavailable(GrantError):
@@ -351,12 +362,17 @@ def grant_valid_sql(grant_alias: str, profile_alias: str) -> str:
     )
 
 
-def lock_pair_in_session(
-    session: Session, *, student_id: uuid.UUID, tutor_profile_id: uuid.UUID
-) -> None:
-    """Take the pair lock of SPEC §a.4b step 3 for the caller's transaction."""
+def _key_share_student(session: Session, student_id: uuid.UUID) -> None:
+    """SPEC §a.4b step 2 for a write that inserts a row referencing the student.
+
+    ``FOR KEY SHARE`` is what the insert's foreign-key check would take anyway;
+    taking it here, before the pair lock or the grant row, keeps the global order
+    (module docstring, "Lock order"). A missing row locks nothing; the caller's own
+    checks decide what that means.
+    """
     session.execute(
-        sa.text(_PAIR_LOCK), {"student_id": student_id, "tutor_profile_id": tutor_profile_id}
+        sa.text("SELECT 1 FROM users WHERE id = :student_id FOR KEY SHARE"),
+        {"student_id": student_id},
     )
 
 
@@ -499,7 +515,7 @@ class TutorGrantRepository:
     def create(self, student_id: uuid.UUID, tutor_profile_id: uuid.UUID) -> GrantCreated:
         """S9: grant the tutor access, or return the live grant (``created`` false).
 
-        Raises:
+        Raises (all :class:`TutorNotFound`, one ``not_found`` code, O11):
             TutorNotFound: no profile has this id.
             TutorNotListed: the tutor is not listed, or is paused.
             TutorBlocked: an active block exists between the pair.
@@ -518,6 +534,8 @@ class TutorGrantRepository:
             if not tutor._mapping["visible"]:
                 raise TutorNotListed("This tutor is not taking new students.")
             tutor_user_id = _as_uuid(tutor._mapping["user_id"])
+            # §a.4b step 2 before step 3: the grant insert references the student.
+            _key_share_student(session, student_id)
             lock_pair_in_session(session, student_id=student_id, tutor_profile_id=tutor_profile_id)
             # After the locks: a block committed before them is visible to this statement.
             blocked = session.execute(
@@ -642,6 +660,8 @@ class TutorGrantRepository:
                 ).first()
                 if tutor is None:
                     raise NoGrant("No grant for this student.")
+                # §a.4b step 2, before the grant row: the audit insert references the student.
+                _key_share_student(session, student_id)
                 # Waits for a revoke still in flight on the live row; after it commits the
                 # row no longer matches ``revoked_at IS NULL`` and nothing is locked.
                 live = session.execute(
@@ -1025,7 +1045,6 @@ __all__ = [
     "TutorStudentsPage",
     "access_log_cursor",
     "grant_valid_sql",
-    "lock_pair_in_session",
     "parse_access_log_cursor",
     "parse_tutor_students_cursor",
     "revoke_live_in_session",
