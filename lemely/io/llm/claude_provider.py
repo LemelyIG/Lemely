@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import anthropic
 
-from lemely.io.llm import image_fit
+from lemely.io.llm import box_convention, image_fit
 from lemely.io.llm.errors import TransientCallError
 from lemely.io.llm.pricing import CODE_EXECUTION_MIN_BILLED_SECONDS
 from lemely.io.llm.provider import ProviderReply, Usage
@@ -149,9 +149,21 @@ class ClaudeProvider:
         """
         if not req.images:
             return None, (), ()
+        started = time.monotonic()
+
+        def ready(route: str) -> None:
+            log.info(
+                "claude_pages_ready",
+                seconds=round(time.monotonic() - started, 3),
+                pages=len(req.images),
+                route=route,
+                tag=req.task_tag,
+            )
+
         if req.uploads is not None:
             try:
                 fitted, file_ids = req.uploads.ensure()
+                ready("files_api")
                 return fitted, (), file_ids
             except ExternalServiceError as exc:
                 log.warning("claude_files_api_fallback", error=str(exc)[:200], tag=req.task_tag)
@@ -162,6 +174,7 @@ class ClaudeProvider:
                 f"the {fitted.long_edge} px floor; one Claude request takes at most "
                 f"{image_fit.DEFAULT_BYTE_LIMIT} bytes of inline images"
             )
+        ready("inline")
         return fitted, fitted.images, ()
 
     def count_tokens(
@@ -179,6 +192,12 @@ class ClaudeProvider:
         """
         if images is None:
             images = self._fit(req, inline=True).images if req.images else ()
+        # The request labels its pages with their sizes (``complete``); so does its count.
+        sizes = (
+            tuple(box_convention.image_size(data) for data in images)
+            if req.box_convention is not None and images
+            else None
+        )
         try:
             return self._adapter.count_tokens(
                 model=req.model,
@@ -189,6 +208,7 @@ class ClaudeProvider:
                 image_file_ids=file_ids,
                 documents=documents,
                 cache_plan=req.cache_plan,
+                page_sizes=sizes,
             )
         except ExternalServiceError:
             return None
@@ -277,6 +297,13 @@ class ClaudeProvider:
                         counted_tokens=counted,
                         tag=req.task_tag,
                     )
+        # The sizes of the very images sent (the uploaded bytes on the Files API route, the
+        # inline ones otherwise): the labels state them and the reply is converted by them.
+        sizes = (
+            tuple(box_convention.image_size(data) for data in fitted.images)
+            if req.box_convention is not None and fitted is not None
+            else None
+        )
         t0 = time.monotonic()
         try:
             reply = self._adapter.complete(
@@ -291,6 +318,7 @@ class ClaudeProvider:
                 documents=documents,
                 max_tokens=req.max_output_tokens,
                 cache_plan=req.cache_plan,
+                page_sizes=sizes,
             )
         except ProviderTransientError as exc:
             raise TransientCallError(str(exc)) from exc
@@ -301,8 +329,18 @@ class ClaudeProvider:
             # SDK and I/O failures only: a programming error propagates as itself.
             raise ExternalServiceError(str(exc)) from exc
         latency_ms = int((time.monotonic() - t0) * 1000)
+        text = reply.text
+        if sizes is not None:
+            text, found = box_convention.convert_reply(text, sizes)
+            log.info(
+                "box_convention",
+                tag=req.task_tag,
+                version=req.box_convention,
+                page_sizes=[list(size) for size in sizes],
+                **found.log_fields(),
+            )
         return ProviderReply(
-            text=reply.text,
+            text=text,
             usage_response=usage_as_gemini_response(reply.usage),
             stop_reason=reply.stop_reason,
             stop_detail=str(reply.stop_reason),

@@ -117,7 +117,8 @@ class LoggingSettings(BaseModel):
 # config load reject it instead.
 ThinkingLevel = Literal["minimal", "low", "medium", "high"]
 ClaudeCacheSpot = Literal["system", "documents", "images", "prefix"]
-ClaudeEffort = Literal["low", "medium", "high", "xhigh", "max"]
+# "none" (sub-project C levers a1/a2) turns thinking off for the call.
+ClaudeEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
 
 # Typed separately from the inline dict literal below: a bare `dict[str, str]`
 # literal loses the `Literal` member type on assignment, so mypy strict
@@ -182,6 +183,9 @@ class GeminiSettings(BaseModel):
     # raising that one costs teacher time.
     escalation_model: str | None = "gemini-3.8-flash"
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+    # Sub-project C: at most this many escalation calls per script, most uncertain
+    # leaves first (decided after every leaf is marked). None: escalate inline, as before.
+    escalation_cap_per_script: int | None = Field(default=None, ge=0)
     # Per-model human-review threshold: model name -> the confidence below which
     # a FINAL AI mark from that model is flagged ``needs_teacher_review``. A model
     # missing from the map uses ``REVIEW_CONFIDENCE_THRESHOLD`` (0.90). Keyed by
@@ -273,6 +277,46 @@ class GeminiSettings(BaseModel):
     # and cut at 300 characters (output tokens). Screened with and without
     # correction_citations in sub-project C.
     correction_terse_rationale: bool = False
+    # Sub-project C lever c1: False skips the borderline thinking retry; a leaf still
+    # below escalation_confidence_threshold goes straight to escalation.
+    correction_borderline_enabled: bool = True
+    # Sub-project C lever c2: after a script is marked, this model re-marks at most
+    # adjudication_max_leaves AI-marked leaves (confidence below
+    # adjudication_confidence_threshold, or named by a failed G9 check), each from its
+    # own page crops, its scheme points and the first mark. None: off. Needs the scan
+    # pages (correct_paper's ``pages``).
+    adjudication_model: str | None = None
+    adjudication_max_leaves: int = Field(default=3, ge=0)
+    adjudication_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+    # Lever H2a: below `correction_retry_keep_higher_below` the borderline retry runs and
+    # the leaf keeps the higher of the two marks, instead of the retry replacing the
+    # first. Evidence 0.86: Claude cells at 0.85 are 18% wrong, at 0.90 7%
+    # (c-haiku-accuracy-ideas §1.3).
+    correction_retry_keep_higher: bool = False
+    correction_retry_keep_higher_below: float = Field(default=0.86, ge=0.0, le=1.0)
+    # Lever H2b: the correction reply lists per-point verdicts and the rationale before
+    # `awarded_marks`, and the mark is checked against the verdicts. Not with
+    # `correction_citations`.
+    correction_reason_first: bool = False
+    # Lever H2c: the printed 0625 Paper 4 marking conventions (C marks, formulae in any
+    # form, crossed-out work, brackets, units) go into the marking prompt.
+    correction_syllabus_conventions: bool = False
+    # Lever H2d: with `adjudication_model` set, leaves whose answer is the reader's
+    # `Drawing:` description are adjudicated from their page crops, up to
+    # `adjudication_drawing_max_leaves` per script, before the confidence candidates.
+    adjudication_drawing_leaves: bool = False
+    adjudication_drawing_max_leaves: int = Field(default=3, ge=0)
+    # Lever H4a: with `adjudication_model` set, AI-marked leaves whose crop re-read disagreed
+    # with the first read (`reread_agreement` below 0.8) are adjudicated from their crop first,
+    # up to `adjudication_reread_max_leaves` per script. All 14 such cells in sub-project C's
+    # runs were wrong (c-residual-errors §1, class e).
+    adjudication_reread_disagreed: bool = False
+    adjudication_reread_max_leaves: int = Field(default=3, ge=0)
+    # Lever H4c: below `correction_retry_median_below` the borderline retry runs, a second
+    # retry runs when it disagrees with the first pass, and the leaf takes the median of the
+    # three marks. Not with `correction_retry_keep_higher`.
+    correction_retry_median: bool = False
+    correction_retry_median_below: float = Field(default=0.86, ge=0.0, le=1.0)
 
     @field_validator("claude_cache_for")
     @classmethod
@@ -285,6 +329,20 @@ class GeminiSettings(BaseModel):
                     f"claude_cache_for[{tag!r}]: at most 4 distinct spots, got {spots}"
                 )
         return value
+
+    @model_validator(mode="after")
+    def _reason_first_excludes_citations(self) -> GeminiSettings:
+        if self.correction_reason_first and self.correction_citations:
+            raise ValueError("correction_reason_first cannot combine with correction_citations")
+        return self
+
+    @model_validator(mode="after")
+    def _median_excludes_keep_higher(self) -> GeminiSettings:
+        if self.correction_retry_median and self.correction_retry_keep_higher:
+            raise ValueError(
+                "correction_retry_median cannot combine with correction_retry_keep_higher"
+            )
+        return self
 
     # Greyscale pages for claude- calls are enhanced for readability (paper shading
     # divided out, levels stretched, light sharpening). False sends plain greyscale
@@ -390,6 +448,7 @@ class GeminiSettings(BaseModel):
             "correction": self.correction_model,
             "correction_borderline": self.correction_model,
             "escalation": self.escalation_model,
+            "adjudication": self.adjudication_model,
             "generation": self.generation_model,
             "study_plan": self.study_plan_model,
             "scan_metadata": self.scan_metadata_model,
@@ -767,6 +826,10 @@ class BindingSettings(BaseModel):
     #: Spec §2b: a claude- read whose pages are still over the token budget at the
     #: floor is read as an overview plus chunks. Off by default; screened in C.
     claude_chunked_read: bool = False
+    #: Sub-project C lever a3: make the two binder reads in turn (so the second can read
+    #: the first's prompt cache) even when their efforts differ. Off: equal effort is
+    #: required, as the prompt-caching docs say a changed setting invalidates the cache.
+    claude_cache_ignores_effort: bool = False
     retry_model: str = Field(default="gemini-3.8-flash", min_length=1)
 
     @model_validator(mode="after")

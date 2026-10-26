@@ -257,8 +257,17 @@ _GEMINI_3X_RE = re.compile(r"^gemini-3\.\d")
 # "low" if configured with "minimal".
 _MINIMAL_THINKING_MODELS_RE = re.compile(r"^gemini-3\.(5-flash-lite|6-flash)\b")
 
-# Ordered weakest → strongest, mirrors google.genai.types.ThinkingLevel.
-_THINKING_LEVEL_ORDER = {"minimal": 0, "low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5}
+# Ordered weakest → strongest, mirrors google.genai.types.ThinkingLevel. "none" is the
+# Claude-only no-thinking effort, ranked lowest; it is not a Gemini ThinkingLevel.
+_THINKING_LEVEL_ORDER = {
+    "none": -1,
+    "minimal": 0,
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+    "xhigh": 4,
+    "max": 5,
+}
 
 
 def thinking_rank(value: int | str) -> int:
@@ -318,10 +327,20 @@ _call_labels: contextvars.ContextVar[tuple[_Attempt | None, str | None]] = conte
 _call_leaf_kind: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "lemely_call_leaf_kind", default=None
 )
+#: The pixel-box version of the structured call in progress (a Claude request that asks
+#: for pixel boxes and has them converted); None outside one, and on every Gemini call.
+_call_box_convention: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "lemely_call_box_convention", default=None
+)
 #: The per-script cost accumulator `script_cost_scope` opens; None outside one.
 _script_cost: contextvars.ContextVar[dict[str, float] | None] = contextvars.ContextVar(
     "lemely_script_cost", default=None
 )
+
+
+#: `GeminiSettings.paper_cost_target_usd`'s default, used when settings carry a
+#: non-numeric target (test doubles) so the scope's `finally` never raises.
+_DEFAULT_SCRIPT_COST_TARGET_USD = 0.10
 
 
 @contextlib.contextmanager
@@ -339,6 +358,8 @@ def script_cost_scope(settings: Settings, *, script_key: str) -> Iterator[dict[s
         _script_cost.reset(token)
         total = sum(costs.values())
         target = settings.gemini.paper_cost_target_usd
+        if not isinstance(target, (int, float)) or isinstance(target, bool):
+            target = _DEFAULT_SCRIPT_COST_TARGET_USD
         if total > target:
             structlog.get_logger().warning(
                 "script_over_cost_target",
@@ -1066,6 +1087,7 @@ class ImageUploads:
                     token_budget=g.claude_image_token_budget,
                     floor_px=g.claude_image_floor_px,
                     enhance=g.claude_image_enhance is True,
+                    concurrency=self._concurrency,
                 )
             return self._claude
 
@@ -1411,6 +1433,7 @@ class GeminiClient:
                 image_enhance=self._settings.gemini.claude_image_enhance is True,
                 response_schema=response_schema,
                 image_count=n_images,
+                box_convention=_call_box_convention.get(),
             )
         return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
@@ -1597,6 +1620,7 @@ class GeminiClient:
         extra_cache_key: str = "",
         task_tag: str | None = None,
         leaf_kind: str | None = None,
+        box_convention: str | None = None,
     ) -> str:
         """The key the reply of the structured call these arguments make is cached under.
 
@@ -1606,6 +1630,7 @@ class GeminiClient:
         images, and gives it to :meth:`forget_cached`.
         """
         token = _call_leaf_kind.set(leaf_kind)
+        box_token = _call_box_convention.set(box_convention)
         try:
             _model, cache_key = self._structured_cache_key(
                 system_prompt=system_prompt,
@@ -1621,6 +1646,7 @@ class GeminiClient:
                 task_tag=task_tag,
             )
         finally:
+            _call_box_convention.reset(box_token)
             _call_leaf_kind.reset(token)
         return cache_key
 
@@ -1676,14 +1702,20 @@ class GeminiClient:
         question_id: str | None = None,
         shared_prefix: SharedPrefix | None = None,
         leaf_kind: str | None = None,
+        box_convention: str | None = None,
     ) -> _T:
         """I1: send per-page images instead of uploading a whole file.
 
         See :meth:`_generate_structured` for the arguments. ``leaf_kind`` (B3) picks a
         ``claude_effort_for["tag:kind"]`` effort on a claude- model; Gemini ignores
         it. It reaches the cache key only through the effort it selects.
+        ``box_convention`` is the version of the pixel-box contract the caller put in a
+        Claude request's system prompt (``prompts.label_binding.with_claude_boxes``): the
+        pages are labelled with their sizes, the reply's boxes are converted to the 0-1000
+        convention, and the version joins the cache key. Only a ``claude-`` call passes it.
         """
         token = _call_leaf_kind.set(leaf_kind)
+        box_token = _call_box_convention.set(box_convention)
         try:
             return self._generate_structured(
                 system_prompt=system_prompt,
@@ -1704,6 +1736,7 @@ class GeminiClient:
                 shared_prefix=shared_prefix,
             )
         finally:
+            _call_box_convention.reset(box_token)
             _call_leaf_kind.reset(token)
 
     def _generate_structured(
@@ -2423,6 +2456,7 @@ class GeminiClient:
             media_resolution=media_resolution,
             uploads=image_uploads,
             shared_prefix=None if on_claude else shared_prefix,
+            box_convention=_call_box_convention.get() if on_claude else None,
         )
 
     def _check_stop(self, reply: ProviderReply, req: LLMRequest) -> None:

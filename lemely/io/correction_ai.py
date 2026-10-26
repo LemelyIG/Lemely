@@ -7,9 +7,10 @@ import json
 import math
 import os
 import re
+import statistics
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import Literal, NamedTuple, TypedDict
+from typing import TYPE_CHECKING, Literal, NamedTuple, TypedDict, cast
 
 import structlog
 
@@ -59,12 +60,123 @@ from lemely.io.prompts.correction_ai import (
     printed_principles,
     render_paper_mark_scheme,
     shared_prefix_instructions,
+    syllabus_conventions,
 )
 from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD
 from lemely.io.validation import validate_mark_scheme
 from lemely.runtime.config import GeminiSettings, MarkingOptions
 from lemely.runtime.errors import ConfigError, CostCeilingError, LemelyError
 from lemely.runtime.events import EventType, bus
+
+if TYPE_CHECKING:
+    from lemely.io.rasterise import RasterisedPage
+
+
+def _keep_higher(first: AIMarkResponse, retry: AIMarkResponse) -> AIMarkResponse:
+    """Lever H2a: the higher-marked of two samples of one leaf (two only: the over-marking cap)."""
+    if first.awarded_marks != retry.awarded_marks:
+        chosen = first if first.awarded_marks > retry.awarded_marks else retry
+        confidence = min(first.confidence, retry.confidence)
+    else:
+        chosen = first if first.confidence > retry.confidence else retry
+        confidence = chosen.confidence
+    return chosen.model_copy(update={"confidence": confidence})
+
+
+def _median_of(samples: Sequence[AIMarkResponse]) -> AIMarkResponse:
+    """Lever H4c: the median-marked of two agreeing or three samples of one leaf."""
+    m = statistics.median_low([s.awarded_marks for s in samples])
+    chosen = samples[0]
+    for s in samples:
+        if s.awarded_marks == m and (
+            chosen.awarded_marks != m or s.confidence >= chosen.confidence
+        ):
+            chosen = s
+    if all(s.awarded_marks == m for s in samples):
+        confidence = chosen.confidence
+    else:
+        confidence = min(s.confidence for s in samples)
+    return chosen.model_copy(update={"confidence": confidence})
+
+
+def _verdict_checked(question: Question, reply: AIMarkResponse) -> AIMarkResponse:
+    """H2b: a reason-first reply's mark, made to agree with its own verdicts.
+
+    The verdicts are written before the mark, so when the stated integer disagrees with
+    their sum the sum wins (logged, not flagged for review). Only a reply that judged every
+    one of the question's points, and no other, is checked; otherwise the stated mark stays.
+    """
+    if not reply.point_verdicts or not question.answer_points:
+        return reply
+    log = structlog.get_logger().bind(component="correction")
+    judged = {pv.point_id for pv in reply.point_verdicts}
+    scheme = {p.id for p in question.answer_points}
+    if judged != scheme:
+        log.info(
+            "reason_first_verdicts_incomplete",
+            question_id=question.id,
+            missing=sorted(scheme - judged),
+            unknown=sorted(judged - scheme),
+        )
+        return reply
+    totals = _awarded_from_verdicts(question, reply.point_verdicts)
+    if totals.capped == reply.awarded_marks:
+        if set(reply.matched_point_ids) == set(totals.matched_point_ids):
+            return reply
+        return reply.model_copy(update={"matched_point_ids": totals.matched_point_ids})
+    log.info(
+        "reason_first_sum_corrected",
+        question_id=question.id,
+        stated=reply.awarded_marks,
+        summed=totals.capped,
+    )
+    return reply.model_copy(
+        update={"awarded_marks": totals.capped, "matched_point_ids": totals.matched_point_ids}
+    )
+
+
+def _log_noop_levers(g: object) -> None:
+    """Log once per corrector each lever combination that is on but cannot take effect.
+
+    Reads defensively (``getattr``, ``is True``, ``isinstance``) and never raises: a
+    settings double or an odd value logs nothing.
+    """
+
+    def on(name: str) -> bool:
+        return getattr(g, name, None) is True
+
+    def number(name: str) -> float | None:
+        value = getattr(g, name, None)
+        return None if isinstance(value, bool) or not isinstance(value, int | float) else value
+
+    notes: list[str] = []
+    retry = [n for n in ("correction_retry_keep_higher", "correction_retry_median") if on(n)]
+    if retry and getattr(g, "correction_borderline_enabled", None) is False:
+        notes.append(f"{retry[0]} needs correction_borderline_enabled")
+    if retry and on("cascade_enabled"):
+        notes.append(f"{retry[0]} does not apply while cascade_enabled")
+    adjudication_model = getattr(g, "adjudication_model", None)
+    if not (isinstance(adjudication_model, str) and adjudication_model):
+        notes.extend(
+            f"{n} needs adjudication_model"
+            for n in ("adjudication_drawing_leaves", "adjudication_reread_disagreed")
+            if on(n)
+        )
+    escalation = number("escalation_confidence_threshold")
+    for flag, below in (
+        ("correction_retry_keep_higher", "correction_retry_keep_higher_below"),
+        ("correction_retry_median", "correction_retry_median_below"),
+    ):
+        lever_below = number(below)
+        if (
+            on(flag)
+            and escalation is not None
+            and lever_below is not None
+            and lever_below < escalation
+        ):
+            notes.append(f"{below} is under escalation_confidence_threshold")
+    if notes:
+        structlog.get_logger().warning("lever_no_op", notes=notes)
 
 
 def _is_leaf_marked(q: Question) -> bool:
@@ -402,25 +514,72 @@ class AICorrector:
         """The reply schema for the flags in force; ``AIMarkResponse`` with them off."""
         g = self._client._settings.gemini
         return marker_response_schema(
-            cited=self.citations_on(), terse=g.correction_terse_rationale is True
+            cited=self.citations_on(),
+            terse=g.correction_terse_rationale is True,
+            reason_first=self._reason_first(),
         )
+
+    def _reason_first(self) -> bool:
+        """H2b: whether the reply puts its verdicts before the mark (``correction_reason_first``).
+
+        Refused with citations: ``model_copy`` skips the settings validator that forbids it.
+        """
+        if self._client._settings.gemini.correction_reason_first is not True:
+            return False
+        if self.citations_on():
+            raise ConfigError("correction_reason_first cannot combine with correction_citations")
+        return True
+
+    def _checked(self, question: Question, reply: AIMarkResponse) -> AIMarkResponse:
+        """``reply`` made to agree with its verdicts under lever H2b; unchanged without it."""
+        return _verdict_checked(question, reply) if self._reason_first() else reply
 
     def __init__(
         self, gemini_client: GeminiClient, *, mark_scheme: MarkScheme | None = None
     ) -> None:
         self._client = gemini_client
         self._mark_scheme = mark_scheme
+        # Fails the run here: raised per leaf, ``correct_paper`` would turn it into zeros.
+        # A client without settings (a spec'd test double) has every lever off: nothing to refuse.
+        settings = getattr(gemini_client, "_settings", None)
+        if settings is not None:
+            self._reason_first()
+            g = settings.gemini
+            if g.correction_retry_median is True and g.correction_retry_keep_higher is True:
+                # ``model_copy`` skips the settings validator that forbids it.
+                raise ConfigError(
+                    "correction_retry_median cannot combine with correction_retry_keep_higher"
+                )
+            _log_noop_levers(g)
         #: Built once per value of ``reader_describes_drawings``, not once per leaf.
         self._prefixes: dict[bool, SharedPrefix] = {}
         #: The model whose response the last :meth:`mark_question` returned (the
         #: escalation model when it escalated); ``None`` before the first call.
         self.last_mark_model: str | None = None
+        #: Leaves whose escalation the per-script cap postponed: id -> (question, system
+        #: prompt, user prompt, prefix kwargs, confidence). See :meth:`escalate_deferred`.
+        self.deferred: dict[str, tuple[Question, str, str, _PrefixKwargs, float]] = {}
+        #: Deferred leaves whose escalation call failed; ``correct_paper`` sends them to review.
+        self.failed_deferred: set[str] = set()
+        #: Cleared by ``correct_paper`` when ECF substitution is on: its re-mark calls
+        #: ``mark_question`` again for the same leaf and merges into the first mark, which a
+        #: deferred escalation would overwrite. Such a run keeps the inline escalation.
+        self.defer_escalation = True
 
     def review_threshold(self) -> float:
         """The review threshold for the last mark: :func:`review_threshold_for` its model."""
         if self.last_mark_model is None:
             return REVIEW_CONFIDENCE_THRESHOLD
         return review_threshold_for(self._client._settings.gemini, self.last_mark_model)
+
+    def _conventions(self) -> str | None:
+        """H2c: the printed marking conventions of the paper's syllabus, when the lever is on."""
+        if (
+            self._client._settings.gemini.correction_syllabus_conventions is not True
+            or self._mark_scheme is None
+        ):
+            return None
+        return syllabus_conventions(self._mark_scheme.metadata)
 
     def _shared_prefix(self, *, reader_describes_drawings: bool) -> SharedPrefix | None:
         """The paper's shared prefix when lever A3 is on and the scheme is known."""
@@ -435,9 +594,11 @@ class AICorrector:
                 instructions=shared_prefix_instructions(
                     reader_describes_drawings=reader_describes_drawings
                 ),
-                paper=render_paper_mark_scheme(self._mark_scheme),
+                paper=render_paper_mark_scheme(self._mark_scheme, conventions=self._conventions()),
                 text=build_shared_prefix(
-                    self._mark_scheme, reader_describes_drawings=reader_describes_drawings
+                    self._mark_scheme,
+                    reader_describes_drawings=reader_describes_drawings,
+                    conventions=self._conventions(),
                 ),
                 cache=g.correction_prefix_cache,
                 version=VERSION,
@@ -526,6 +687,9 @@ class AICorrector:
             prior_values=prior_values,
             default_rules=default_rules,
             reader_describes_drawings=reader_describes_drawings,
+            reason_first=self._reason_first(),
+            # The shared prefix already carries them.
+            conventions=self._conventions() if shared_prefix is None else None,
         )
         system_prompt = (
             shared_prefix.text
@@ -563,6 +727,7 @@ class AICorrector:
                 question_id=question.id,
                 **prefix_kwargs,
             )
+            result = self._checked(question, result)
 
             if g.cascade_enabled is True:
                 result, final_model = self._cascade(
@@ -645,7 +810,10 @@ class AICorrector:
         borderline_thinking = self._resolved_thinking(
             "correction_borderline", correction_model, gate_kind
         )
-        borderline_gate = thinking_rank(borderline_thinking) > thinking_rank(correction_thinking)
+        # ``is not False``: a MagicMock settings object keeps today's behaviour.
+        borderline_gate = g.correction_borderline_enabled is not False and thinking_rank(
+            borderline_thinking
+        ) > thinking_rank(correction_thinking)
         # Spec 2026-09-26 §3 (#10): the Step-2 guard compares against the
         # call that ACTUALLY RAN LAST, not the original correction call.
         # Step 1 moves the baseline: after a borderline retry the last call
@@ -653,13 +821,24 @@ class AICorrector:
         # shipped defaults (low / high / high on one model) the escalation
         # tuple equals that -- Step 2 would bill the identical call again.
         last_call = (correction_model, correction_thinking)
-        if result.confidence < g.escalation_confidence_threshold and borderline_gate:
+        retry_below = g.escalation_confidence_threshold
+        # ``is True`` / isinstance: a MagicMock settings object keeps today's behaviour.
+        keep_higher = g.correction_retry_keep_higher is True
+        median = g.correction_retry_median is True
+        if keep_higher or median:
+            lever_below = (
+                g.correction_retry_median_below if median else g.correction_retry_keep_higher_below
+            )
+            if isinstance(lever_below, int | float) and not isinstance(lever_below, bool):
+                retry_below = lever_below
+        if result.confidence < retry_below and borderline_gate:
             bus.publish(
                 EventType.GEMINI_ESCALATE,
                 question_id=question.id,
                 confidence=result.confidence,
                 escalation_model=f"{correction_model} (thinking)",
             )
+            first = result
             result = self._client.generate_structured(
                 system_prompt=system_prompt,
                 user_prompt=(
@@ -674,6 +853,60 @@ class AICorrector:
                 **prefix_kwargs,
             )
             last_call = (correction_model, borderline_thinking)
+            result = self._checked(question, result)
+            if median:
+                samples = [first, result]
+                if result.awarded_marks != first.awarded_marks:
+                    # The median of {a, a, x} is a, so a third draw is needed only on a split.
+                    # A failed third draw (not a cost-ceiling stop) falls back to the two
+                    # samples: median_low of two is the lower mark, confidence the min.
+                    try:
+                        third = self._checked(
+                            question,
+                            self._client.generate_structured(
+                                system_prompt=system_prompt,
+                                user_prompt=(
+                                    user_prompt + "\n\nNOTE: First-pass confidence was low. "
+                                    "Re-evaluate carefully."
+                                ),
+                                response_schema=self._mark_schema(),
+                                prompt_version=VERSION,
+                                extra_cache_key=f"q={question.id}:thinking:2",
+                                task_tag="correction_borderline",
+                                attempt="borderline",
+                                question_id=question.id,
+                                **prefix_kwargs,
+                            ),
+                        )
+                    except CostCeilingError:
+                        raise
+                    except Exception as exc:
+                        structlog.get_logger().warning(
+                            "borderline_median_third_failed",
+                            question_id=question.id,
+                            error=str(exc),
+                        )
+                    else:
+                        samples.append(third)
+                result = _median_of(samples)
+                structlog.get_logger().bind(component="correction").info(
+                    "borderline_median",
+                    question_id=question.id,
+                    marks=[x.awarded_marks for x in samples],
+                    kept=result.awarded_marks,
+                    confidence=result.confidence,
+                )
+            elif keep_higher:
+                retry = result
+                result = _keep_higher(first, retry)
+                structlog.get_logger().bind(component="correction").info(
+                    "borderline_kept_higher",
+                    question_id=question.id,
+                    first=first.awarded_marks,
+                    retry=retry.awarded_marks,
+                    kept=result.awarded_marks,
+                    confidence=result.confidence,
+                )
 
         # Step 2: Pro escalation if confidence still below threshold.
         # F1 fix (4): under F1 defaults correction_model == escalation_model
@@ -698,29 +931,96 @@ class AICorrector:
             != last_call
             and result.confidence < g.escalation_confidence_threshold
         ):
-            bus.publish(
-                EventType.GEMINI_ESCALATE,
-                question_id=question.id,
-                confidence=result.confidence,
-                escalation_model=escalation_model,
-            )
-            result = self._client.generate_structured(
-                system_prompt=system_prompt,
-                user_prompt=(
-                    user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
-                    "Please re-evaluate carefully before responding."
+            cap = g.escalation_cap_per_script
+            if self.defer_escalation and isinstance(cap, int) and not isinstance(cap, bool):
+                # Sub-project C: decided after every leaf is marked (escalate_deferred).
+                self.deferred[question.id] = (
+                    question,
+                    system_prompt,
+                    user_prompt,
+                    prefix_kwargs,
+                    result.confidence,
+                )
+                return result, last_call[0]
+            return (
+                self._escalate(
+                    question, system_prompt, user_prompt, prefix_kwargs, result.confidence
                 ),
-                response_schema=self._mark_schema(),
-                prompt_version=VERSION,
-                extra_cache_key=f"q={question.id}:escalated",
-                task_tag="escalation",
-                model=escalation_model,
-                attempt="escalation",
-                question_id=question.id,
-                **prefix_kwargs,
+                escalation_model,
             )
-            return result, escalation_model
         return result, correction_model
+
+    def _escalate(
+        self,
+        question: Question,
+        system_prompt: str,
+        user_prompt: str,
+        prefix_kwargs: _PrefixKwargs,
+        confidence: float,
+    ) -> AIMarkResponse:
+        """Step 2: the escalation call (today's prompt, cache key and tag)."""
+        g = self._client._settings.gemini
+        escalation_model = cast("str", g.escalation_model)
+        bus.publish(
+            EventType.GEMINI_ESCALATE,
+            question_id=question.id,
+            confidence=confidence,
+            escalation_model=escalation_model,
+        )
+        reply = self._client.generate_structured(
+            system_prompt=system_prompt,
+            user_prompt=(
+                user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
+                "Please re-evaluate carefully before responding."
+            ),
+            response_schema=self._mark_schema(),
+            prompt_version=VERSION,
+            extra_cache_key=f"q={question.id}:escalated",
+            task_tag="escalation",
+            model=escalation_model,
+            attempt="escalation",
+            question_id=question.id,
+            **prefix_kwargs,
+        )
+        return self._checked(question, reply)
+
+    def escalate_deferred(self) -> dict[str, AIMarkResponse]:
+        """Escalate the most uncertain deferred leaves, up to the cap; their new responses."""
+        if not self.deferred:
+            return {}
+        cap = self._client._settings.gemini.escalation_cap_per_script
+        if not isinstance(cap, int) or isinstance(cap, bool):
+            return {}
+        order = sorted(self.deferred, key=lambda qid: (self.deferred[qid][4], qid))[:cap]
+        out: dict[str, AIMarkResponse] = {}
+        for qid in order:
+            question, system_prompt, user_prompt, prefix_kwargs, confidence = self.deferred[qid]
+            try:
+                result = self._escalate(
+                    question, system_prompt, user_prompt, prefix_kwargs, confidence
+                )
+            except CostCeilingError:
+                raise
+            except Exception as exc:
+                # Unlike the inline path (which fails the leaf), the paper completes with
+                # the first-pass mark; ``correct_paper`` flags the leaf for review.
+                structlog.get_logger().warning(
+                    "deferred_escalation_failed", question_id=qid, error_type=type(exc).__name__
+                )
+                self.failed_deferred.add(qid)
+                continue
+            # CODE-set only, as in mark_question: the model never claims an ECF re-mark.
+            if result.point_verdicts:
+                result = result.model_copy(
+                    update={
+                        "point_verdicts": [
+                            pv.model_copy(update={"ecf_applied": False})
+                            for pv in result.point_verdicts
+                        ]
+                    }
+                )
+            out[qid] = result
+        return out
 
     def _resolved_thinking(self, tag: str, model: str, kind: str | None) -> int | str:
         """``resolved_thinking`` at the leaf kind the call runs at (tag-only when none)."""
@@ -790,6 +1090,7 @@ class AICorrector:
                 question_id=question.id,
                 **prefix_kwargs,
             )
+            second = self._checked(question, second)
             disagreement = second.awarded_marks != first.awarded_marks
 
         strong: AIMarkResponse | None = None
@@ -819,6 +1120,7 @@ class AICorrector:
                 question_id=question.id,
                 **prefix_kwargs,
             )
+            strong = self._checked(question, strong)
 
         entry: dict[str, object] = {
             "config": {
@@ -2981,6 +3283,7 @@ def correct_paper(
     gemini_client: GeminiClient | None = None,
     mcq_only: bool = False,
     options: MarkingOptions = MarkingOptions(),  # noqa: B008 -- frozen, immutable dataclass
+    pages: Sequence[RasterisedPage] | None = None,
 ) -> CorrectionResult:
     """Hybrid paper correction: MCQ deterministic, non-MCQ via AICorrector.
 
@@ -2998,6 +3301,10 @@ def correct_paper(
             :func:`_maybe_apply_ecf_substitution` for the gate/chain rules and
             the measured activation ceiling (0 on the committed corpus by
             construction). Defaults to both off.
+        pages: the scan's pages; with ``gemini.adjudication_model`` set, the least
+            certain leaves are adjudicated from their crops (lever c2), after
+            marking and escalation, and the adjudicated mark is final. A held
+            paper is not adjudicated.
 
     Returns:
         The marked paper. When ``extracted_answers`` carries a binding
@@ -3065,6 +3372,8 @@ def correct_paper(
         )
 
     prior_results_accumulated: dict[str, int] = {}  # question_id -> awarded_marks
+    #: Leaves whose escalation the per-script cap deferred: the arguments to rebuild them.
+    pending: dict[str, tuple[Question, str, str | None, float | None]] = {}
     # I7: for _point_was_awarded. Predates the post-loop `source_box`
     # assembly rewrite below -- every `CorrectedQuestion` stored here is the
     # pre-rewrite object, so a future reader of this dict always sees
@@ -3082,6 +3391,10 @@ def correct_paper(
     ai = (
         AICorrector(gemini_client, mark_scheme=scheme) if (gemini_client and not mcq_only) else None
     )
+    if ai is not None and ecf_substitution is True:
+        # Escalation cap and ECF substitution do not compose (see ``defer_escalation``):
+        # a run with ECF on keeps today's inline escalation.
+        ai.defer_escalation = False
     # The marking rules every AI marking call on this paper is given: the scheme's own
     # printed principles, or, for a science scheme stored without any, the published
     # ones for its syllabus family. Never both.
@@ -3288,6 +3601,8 @@ def correct_paper(
         corrected.append(cq)
         prior_results_accumulated[q.id] = cq.awarded_marks
         corrected_by_id[q.id] = cq
+        if q.id in ai.deferred:
+            pending[q.id] = (q, student_answer or "", student_working, extraction_confidence)
         bus.publish(
             EventType.MARKING_PROGRESS,
             question_id=q.id,
@@ -3299,6 +3614,42 @@ def correct_paper(
             total=total_leaves,
         )
 
+    # Sub-project C: the capped escalations, most uncertain first, before adjudication.
+    if gemini_client is not None and ai is not None:
+        for qid, escalated_mark in ai.escalate_deferred().items():
+            g_esc = gemini_client._settings.gemini
+            # Every deferred leaf was marked in the loop above, which recorded it.
+            if qid not in pending:
+                raise LemelyError(f"deferred leaf {qid} has no pending build arguments")
+            dq, d_answer, d_working, d_extraction_confidence = pending[qid]
+            cq = _build_ai_corrected(
+                dq,
+                d_answer,
+                escalated_mark,
+                d_working,
+                d_extraction_confidence,
+                equivalence_gate=equivalence_gate,
+                review_threshold=review_threshold_for(g_esc, g_esc.escalation_model),
+            )
+            if ai.citations_on() and uncited(dq, escalated_mark):
+                cq = flag_uncited(cq)
+            corrected = [cq if c.question_id == qid else c for c in corrected]
+            corrected_by_id[qid] = cq
+        for qid in sorted(ai.failed_deferred):
+            flagged = [
+                c.model_copy(
+                    update={
+                        "needs_teacher_review": True,
+                        "review_reason": _join_reason(c.review_reason, "escalation failed"),
+                    }
+                )
+                if c.question_id == qid
+                else c
+                for c in corrected
+            ]
+            corrected = flagged
+            if qid in corrected_by_id:
+                corrected_by_id[qid] = next(c for c in corrected if c.question_id == qid)
     corrected = [
         _attach_extraction_context(cq, answers, original, options, leaf_by_id) for cq in corrected
     ]
@@ -3314,5 +3665,19 @@ def correct_paper(
     result = _with_off_topic_check(
         CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected), extracted_answers
     )
+    if pages is not None and gemini_client is not None:
+        g = gemini_client._settings.gemini
+        held = result.binding is not None and result.binding.verdict == "hold"
+        if isinstance(g.adjudication_model, str) and not held:
+            from lemely.io.adjudication import adjudicate
+
+            result = adjudicate(
+                result,
+                scheme=scheme,
+                extracted=extracted_answers,
+                pages=pages,
+                client=gemini_client,
+                review_threshold=review_threshold_for(g, g.adjudication_model),
+            )
     _forget_reads_of_a_held_paper(result, extracted_answers, gemini_client)
     return result

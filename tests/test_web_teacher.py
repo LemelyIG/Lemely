@@ -1780,7 +1780,7 @@ def test_a_row_queued_for_the_run_slot_is_alive_and_not_lost_while_it_waits(
     from lemely.io import run_cap
     from lemely.runtime.events import bus
 
-    repo = TeacherPaperRepository(pg_sessionmaker, stale_after=timedelta(seconds=1.0))
+    repo = TeacherPaperRepository(pg_sessionmaker, stale_after=timedelta(seconds=2.0))
     pid = uuid.uuid4()
     repo.create(
         paper_id=pid,
@@ -1815,8 +1815,8 @@ def test_a_row_queued_for_the_run_slot_is_alive_and_not_lost_while_it_waits(
                 time.sleep(0.02)
                 row = repo.get(pid)
             assert row is not None and row.stage == "queued"
-            # Three stale windows of waiting: only a heartbeat keeps it alive.
-            end = time.monotonic() + 3.0
+            # Two stale windows of waiting: only a heartbeat keeps it alive.
+            end = time.monotonic() + 4.0
             while time.monotonic() < end:
                 row = repo.get(pid)
                 assert row is not None

@@ -36,11 +36,12 @@ _SCAN_ROOTS = ("lemely", "scripts")
 # Gradio call site once read "_grade" here, but the call is inside the
 # nested `_run` closure defined within `_grade`), fails loudly instead of
 # the guard silently agreeing as long as the number of sites is unchanged.
-# 7 real callers (CLI, both web grading flows, quiz marking, the accuracy
-# harness, Gradio, and this accuracy script) plus one internal forward --
-# `grade_paper` calling `correct_paper` -- makes 8.
+# 8 real callers (CLI, both web grading flows, quiz marking, the accuracy
+# harness, the cost-ladder real split, Gradio, and this accuracy script) plus one
+# internal forward -- `grade_paper` calling `correct_paper` -- makes 9.
 _KNOWN_CALL_SITES = frozenset(
     {
+        "lemely/accuracy/cost_ladder/real_split.py:mark_real_script",  # cost-ladder real split
         "lemely/accuracy/harness.py:measure_accuracy",  # accuracy harness caller
         "lemely/app/cli.py:correct_paper_cmd",  # CLI caller
         "lemely/app/gradio_app.py:_run",  # Gradio caller (nested inside _grade)

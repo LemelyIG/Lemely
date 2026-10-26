@@ -1319,6 +1319,10 @@ def _refreshed(model: _Model) -> list[bool]:
     return [call.get("cache_mode") == "refresh" for call in model.calls]
 
 
+def _keys_of(model: _Model, which: str) -> list[str]:
+    return [c["extra_cache_key"] for c in model.calls if model.key(c) == which]
+
+
 def test_a_clean_read_is_made_once_and_asked_for_nothing_extra(
     tmp_path: Path, scheme: MarkScheme
 ) -> None:
@@ -1336,8 +1340,8 @@ def test_a_stub_first_read_is_made_again_afresh_and_the_clean_one_is_used(
         outcome = _bind(tmp_path, scheme, model)
     assert model.made() == ["first", "first", "second"]
     firsts = [c for c in model.calls if model.key(c) == "first"]
-    assert ["cache_mode" in c for c in firsts] == [False, True]
-    assert firsts[1]["cache_mode"] == "refresh"
+    assert all("cache_mode" not in c for c in firsts)  # an ordinary call under its own key
+    assert _keys_of(model, "first") == ["scan-1|bind1", "scan-1|bind1|stub1"]
     assert firsts[1]["task_tag"] == firsts[0]["task_tag"]
     assert firsts[1]["model"] == firsts[0]["model"]
     assert outcome.report.verdict == "pass"
@@ -1353,10 +1357,8 @@ def test_a_stub_second_read_is_made_again_afresh_and_compared(
     with _events(EventType.SECOND_READ_FAILED) as seen:
         outcome = _bind(tmp_path, scheme, model)
     assert model.made() == ["first", "second", "second"]
-    assert [c.get("cache_mode") for c in model.calls if model.key(c) == "second"] == [
-        None,
-        "refresh",
-    ]
+    assert _keys_of(model, "second") == ["scan-1|bind2", "scan-1|bind2|stub1"]
+    assert all("cache_mode" not in c for c in model.calls)
     assert seen[EventType.SECOND_READ_FAILED] == []  # one retry inside the read, not a failure
     assert [c.id for c in outcome.report.checks] == ["G1", "G2", "G5", "G6", "G7", "G9"]
 
@@ -1365,12 +1367,12 @@ def test_a_second_read_that_is_a_stub_twice_holds_the_paper_on_the_first_read(
     tmp_path: Path, scheme: MarkScheme
 ) -> None:
     """Never a vacuous G9, and never a crash: the teacher is told to check the pages."""
-    model = _Model(first=_items(_run(1)), second=[_stub()] * 4)
+    model = _Model(first=_items(_run(1)), second=[_stub()] * 4)  # only three are asked for
     with _events(EventType.SECOND_READ_FAILED, EventType.BINDING_GATE_RESULT) as seen:
         outcome = _bind(tmp_path, scheme, model)
-    # One read and its one refresh: the stub is a held paper, not a failed read, so the
+    # One read and its two repeats: the stub is a held paper, not a failed read, so the
     # second read is not made over again.
-    assert model.made() == ["first", "second", "second"]
+    assert model.made() == ["first", "second", "second", "second"]
     assert outcome.report.verdict == "hold"
     assert outcome.report.retried is True
     failed = [c for c in outcome.report.checks if not c.passed]
@@ -1385,18 +1387,18 @@ def test_a_second_read_that_is_a_stub_twice_holds_the_paper_on_the_first_read(
 def test_a_first_read_that_is_a_stub_twice_holds_on_the_second_read(
     tmp_path: Path, scheme: MarkScheme
 ) -> None:
-    model = _Model(first=[_stub(), _stub()], second=_items(_run(2)))
+    model = _Model(first=[_stub()] * 3, second=_items(_run(2)))
     outcome = _bind(tmp_path, scheme, model)
-    assert model.made() == ["first", "first", "second"]
+    assert model.made() == ["first", "first", "first", "second"]
     assert outcome.report.verdict == "hold"
     assert [c.id for c in outcome.report.checks if not c.passed] == ["stub_read"]
     assert len(outcome.answers) > 30  # the clean second read is the record
 
 
 def test_a_single_read_that_is_a_stub_twice_holds(tmp_path: Path, scheme: MarkScheme) -> None:
-    model = _Model(first=[_stub(), _stub()])
+    model = _Model(first=[_stub()] * 3)
     outcome = _bind(tmp_path, scheme, model, second_read=False)
-    assert model.made() == ["first", "first"]
+    assert model.made() == ["first", "first", "first"]
     assert outcome.report.verdict == "hold"
     assert "stub_read" in [c.id for c in outcome.report.checks if not c.passed]
 
@@ -1414,11 +1416,9 @@ def test_a_script_with_its_last_pages_missing_holds_without_raising(
     assert "stub_read" not in [c.id for c in outcome.report.checks]
 
 
-@pytest.mark.parametrize(
-    ("default_mode", "expected"), [("bypass", "bypass"), ("read_write", "refresh")]
-)
+@pytest.mark.parametrize(("default_mode", "expected"), [("bypass", "bypass"), ("read_write", None)])
 def test_a_stub_retry_follows_the_effective_cache_mode(
-    tmp_path: Path, scheme: MarkScheme, default_mode: str, expected: str
+    tmp_path: Path, scheme: MarkScheme, default_mode: str, expected: str | None
 ) -> None:
     model = _Model(first=[_stub(), _items(_run(1))], second=_items(_run(2)))
     client, _genai = _client(tmp_path)
@@ -1437,7 +1437,69 @@ def test_a_stub_retry_follows_the_effective_cache_mode(
             manifest_key="scan-1",
         )
     firsts = [c for c in model.calls if model.key(c) == "first"]
-    assert firsts[1]["cache_mode"] == expected
+    assert firsts[1].get("cache_mode") == expected
+
+
+def test_a_second_read_that_is_a_stub_once_more_is_made_a_third_time_and_compared(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    """About one s25_42 read in five is a stub; two repeats cut the holds it causes."""
+    model = _Model(first=_items(_run(1)), second=[_stub(), _stub(), _items(_run(2))])
+    outcome = _bind(tmp_path, scheme, model)
+    assert model.made() == ["first", "second", "second", "second"]
+    assert _keys_of(model, "second") == [
+        "scan-1|bind2",
+        "scan-1|bind2|stub1",
+        "scan-1|bind2|stub2",
+    ]
+    assert outcome.report.verdict == "pass"
+    assert "stub_read" not in [c.id for c in outcome.report.checks]
+    # The repeats are cached beside the read, so the caller can forget them with it.
+    assert len(outcome.read_cache_keys) == 4
+    assert len(set(outcome.read_cache_keys)) == 4
+
+
+def test_a_clean_read_has_the_keys_it_always_had(tmp_path: Path, scheme: MarkScheme) -> None:
+    model = _Model(first=_items(_run(1)), second=_items(_run(2)))
+    outcome = _bind(tmp_path, scheme, model)
+    assert _keys_of(model, "first") == ["scan-1|bind1"]
+    assert _keys_of(model, "second") == ["scan-1|bind2"]
+    assert len(outcome.read_cache_keys) == 2
+
+
+def _stub_client(tmp: Path, **gemini: Any) -> tuple[GeminiClient, MagicMock]:
+    client, genai = _client(tmp, second_read=False)
+    settings = client._settings
+    settings = settings.model_copy(update={"gemini": settings.gemini.model_copy(update=gemini)})
+    client = GeminiClient(settings, _genai_client=genai)
+    genai.models.generate_content.return_value = _sdk_reply(_stub())
+    return client, genai
+
+
+def test_a_pinned_run_that_recorded_stubs_replays_to_the_same_hold_with_no_live_call(
+    tmp_path: Path, scheme: MarkScheme
+) -> None:
+    """The A/A that raised UpstreamNotFrozen: a recorded stub retry must replay."""
+    client, genai = _stub_client(tmp_path, cache_forget_enabled=False)
+    first = _bind_for_real(client, scheme)
+    assert first.report.verdict == "hold"
+    assert "stub_read" in [c.id for c in first.report.checks if not c.passed]
+    calls = genai.models.generate_content.call_count
+    assert calls == 3  # the read and its two repeats, each cached under its own key
+
+    again = _bind_for_real(client, scheme)
+    assert again.report.verdict == "hold"
+    assert "stub_read" in [c.id for c in again.report.checks if not c.passed]
+    assert genai.models.generate_content.call_count == calls  # no live call
+
+
+def test_a_held_stub_forgets_the_repeats_with_the_read(tmp_path: Path, scheme: MarkScheme) -> None:
+    client, genai = _stub_client(tmp_path)
+    held = _bind_for_real(client, scheme)
+    assert held.report.verdict == "hold"
+    assert genai.models.generate_content.call_count == 3
+    cache_dir = client._settings.paths.cache_dir / "gemini"
+    assert list(cache_dir.glob("*.json")) == []
 
 
 def test_label_coverage_is_the_share_of_the_papers_leaves_whose_label_was_bound(
@@ -3152,18 +3214,19 @@ def _forgotten_on_hold(
 
 
 def _read_keys(client: GeminiClient, scheme: MarkScheme, first: str, second: str) -> list[str]:
+    """The keys a hold forgets: both reads, then the stub repeats of the first, of the second."""
     binder = LabelBinder(client)
+
+    def key(model: str, suffix: str, tag: str) -> str:
+        return binder.cache_key(
+            _pages(), scheme, model=model, extra_cache_key="k" + suffix, task_tag=tag
+        )
+
     return [
-        binder.cache_key(
-            _pages(), scheme, model=first, extra_cache_key="k|bind1", task_tag="extraction"
-        ),
-        binder.cache_key(
-            _pages(),
-            scheme,
-            model=second,
-            extra_cache_key="k|bind2",
-            task_tag="binding_second_read",
-        ),
+        key(first, "|bind1", "extraction"),
+        key(second, "|bind2", "binding_second_read"),
+        *(key(first, f"|bind1|stub{n}", "extraction") for n in (1, 2)),
+        *(key(second, f"|bind2|stub{n}", "binding_second_read") for n in (1, 2)),
     ]
 
 
@@ -3304,10 +3367,13 @@ def test_a_claude_second_read_sends_the_page_images_to_anthropic(
 
     uploaded: list[str] = []
     deleted: list[str] = []
+    upload_lock = threading.Lock()
 
     def upload(**kwargs: Any) -> SimpleNamespace:
-        uploaded.append(kwargs["file"][0])
-        return SimpleNamespace(id=f"file_{len(uploaded)}")
+        name = kwargs["file"][0]  # "page-N.png": ids are per-page slots, not arrival order
+        with upload_lock:
+            uploaded.append(name)
+        return SimpleNamespace(id=f"file_{name.removeprefix('page-').removesuffix('.png')}")
 
     anthropic_fake = SimpleNamespace(
         messages=SimpleNamespace(create=create),
@@ -3338,10 +3404,11 @@ def test_a_claude_second_read_sends_the_page_images_to_anthropic(
     images = [block for block in content if block["type"] == "image"]
     assert len(images) == _PAGE_COUNT
     assert content[-1]["type"] == "text"
-    # Each page image is preceded by its 0-based index label.
+    # Each page image is preceded by its 0-based index label, which states the image's size
+    # (the binder asks Claude for pixel boxes; ``_png`` makes page n (40 + n) x 60 px).
     assert [block["type"] for block in content[: 2 * _PAGE_COUNT : 2]] == ["text"] * _PAGE_COUNT
     assert [block["text"] for block in content[: 2 * _PAGE_COUNT : 2]] == [
-        f"Page index {n}:" for n in range(_PAGE_COUNT)
+        f"Page index {n} ({40 + n} x 60 px):" for n in range(_PAGE_COUNT)
     ]
     assert [block["type"] for block in content[1 : 2 * _PAGE_COUNT : 2]] == ["image"] * _PAGE_COUNT
     if files_api:

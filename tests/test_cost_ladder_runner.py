@@ -45,6 +45,14 @@ def _spend_file_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture(autouse=True)
+def _isolated_key_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``script.main`` loads the real key files into ``os.environ``; keep that from later tests."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+
 def _qr(
     qid: str,
     predicted: int,
@@ -1978,3 +1986,19 @@ def test_script_cap_defaults_match_spend_caps(
     monkeypatch.setattr(script, "run_baseline", fake_baseline)
     assert script.main(["--out-dir", str(tmp_path), "baseline"]) == 0
     assert seen["caps"] == SpendCaps()
+
+
+def test_report_proof_column_is_never_an_absolute_path(tmp_path: Path) -> None:
+    from lemely.accuracy.cost_ladder.report import write_report
+
+    runner.write_summary(
+        _summary(usd_per_script_mean=1.0),
+        tmp_path / "baseline" / "summary.json",
+        usd_per_script_mean_now=2.0,
+    )
+    _write_run(tmp_path, "alpha", passed=True, usd=0.6, against="baseline")
+    runner.append_ladder(tmp_path, "alpha")
+    text = write_report(tmp_path, stop_reason="done").read_text()
+    assert str(tmp_path) not in text
+    assert "| alpha | baseline |" in text
+    assert f"{tmp_path.name}/alpha | ACCEPT" in text

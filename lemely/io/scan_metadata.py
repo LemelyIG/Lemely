@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
+
+import structlog
 
 from lemely.core.schemas import ExamMetadata
 from lemely.io.prompts.scan_metadata import (
@@ -53,8 +56,10 @@ class ScanMetadataExtractor:
         user_prompt = build_scan_meta_user_prompt(scan_path)
         model = self._client.model_for_tag("scan_metadata")
         if isinstance(model, str) and is_anthropic_model(model):
+            started = time.monotonic()
             pages = rasterise_scan_to_pages(scan_path, max_pages=_METADATA_PAGES)
-            return self._client.generate_structured(
+            rasterised = time.monotonic()
+            result = self._client.generate_structured(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 image_parts=[page.png_bytes for page in pages],
@@ -63,6 +68,13 @@ class ScanMetadataExtractor:
                 task_tag="scan_metadata",
                 extra_cache_key=scan_path.name,
             )
+            structlog.get_logger().bind(component="scan_metadata").info(
+                "scan_metadata_timing",
+                rasterise_seconds=round(rasterised - started, 3),
+                call_seconds=round(time.monotonic() - rasterised, 3),
+                pages=len(pages),
+            )
+            return result
         return self._client.generate_structured(
             system_prompt=system_prompt,
             user_prompt=user_prompt,

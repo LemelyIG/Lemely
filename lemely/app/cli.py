@@ -330,7 +330,7 @@ def correct_paper_cmd(
 
     from lemely.core.loose_schemas import MarkScheme
     from lemely.io.correction_ai import correct_paper as hybrid_correct_paper
-    from lemely.io.gemini import GeminiClient
+    from lemely.io.gemini import GeminiClient, script_cost_scope
     from lemely.runtime.config import log_marking_flags
 
     ms = MarkScheme.model_validate(_load_json_file(mark_scheme))
@@ -356,13 +356,14 @@ def correct_paper_cmd(
     log_marking_flags(marking_options)
     client = None if mcq_only else GeminiClient(settings)
 
-    correction = hybrid_correct_paper(
-        mark_scheme=ms,
-        extracted_answers=extracted,  # type: ignore[arg-type]
-        gemini_client=client,
-        mcq_only=mcq_only,
-        options=marking_options,
-    )
+    with script_cost_scope(settings, script_key=f"cli:{Path(mark_scheme).stem}"):
+        correction = hybrid_correct_paper(
+            mark_scheme=ms,
+            extracted_answers=extracted,  # type: ignore[arg-type]
+            gemini_client=client,
+            mcq_only=mcq_only,
+            options=marking_options,
+        )
     from lemely.io.grade_boundaries import GradeBoundaryStore
 
     store = GradeBoundaryStore()
@@ -791,29 +792,30 @@ def extract_answers_cmd(
 ) -> None:
     from lemely.core.loose_schemas import MarkScheme
     from lemely.io.answer_extraction import GeminiAnswerExtractor
-    from lemely.io.gemini import GeminiClient
+    from lemely.io.gemini import GeminiClient, script_cost_scope
 
     settings = _get_settings(ctx)
     client = GeminiClient(settings)
     ms = MarkScheme.model_validate(_load_json_file(mark_scheme))
 
-    if detect_metadata and ms.metadata is not None:
-        from lemely.core.schemas import ExamMetadata
-        from lemely.io.scan_metadata import ScanMetadataExtractor, cross_check_metadata
+    with script_cost_scope(settings, script_key=f"cli:{Path(scan).name}"):
+        if detect_metadata and ms.metadata is not None:
+            from lemely.core.schemas import ExamMetadata
+            from lemely.io.scan_metadata import ScanMetadataExtractor, cross_check_metadata
 
-        scan_meta = ScanMetadataExtractor(client)(Path(scan))
-        raw_month = ms.metadata.session_month
-        ms_exam_meta = ExamMetadata(
-            subject_code=ms.metadata.subject_code or "",
-            paper_number=ms.metadata.paper_number or 0,
-            paper_variant=ms.metadata.paper_variant or 0,
-            session_month=raw_month.value if raw_month is not None else "May/June",
-            session_year=ms.metadata.session_year,
-        )
-        cross_check_metadata(scan_meta, ms_exam_meta)
+            scan_meta = ScanMetadataExtractor(client)(Path(scan))
+            raw_month = ms.metadata.session_month
+            ms_exam_meta = ExamMetadata(
+                subject_code=ms.metadata.subject_code or "",
+                paper_number=ms.metadata.paper_number or 0,
+                paper_variant=ms.metadata.paper_variant or 0,
+                session_month=raw_month.value if raw_month is not None else "May/June",
+                session_year=ms.metadata.session_year,
+            )
+            cross_check_metadata(scan_meta, ms_exam_meta)
 
-    extractor = GeminiAnswerExtractor(client)
-    result = extractor(scan_path=Path(scan), mark_scheme=ms)
+        extractor = GeminiAnswerExtractor(client)
+        result = extractor(scan_path=Path(scan), mark_scheme=ms)
     _print_result(ctx, result)
 
 

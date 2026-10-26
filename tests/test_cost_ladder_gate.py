@@ -6,7 +6,14 @@ from dataclasses import replace
 
 import pytest
 
-from lemely.accuracy.cost_ladder.gate import RunSummary, Verdict, aa_floor, judge
+from lemely.accuracy.cost_ladder.gate import (
+    RunSummary,
+    Verdict,
+    _over_cap,
+    aa_floor,
+    escalation_notes,
+    judge,
+)
 
 ORIG_LAT = 1000.0
 
@@ -187,3 +194,22 @@ def test_minimal_id_match_drop_fails() -> None:
 def test_negative_aa_floor_raises() -> None:
     with pytest.raises(ValueError, match="aa_floor"):
         judge(_run(), _run(), aa_floor=-1, original_latency_p95_ms=ORIG_LAT)
+
+
+def test_a_script_with_no_cost_figure_is_never_under_the_cap() -> None:
+    c = _run(
+        real_scripts=("a", "b"),
+        real_usd_max_by_script=(("a", 0.05), ("b", None)),
+    )
+    assert _over_cap(c) == ["b has no cost figure (no result)"]
+
+
+def test_escalation_notes_survive_a_missing_script() -> None:
+    c = _run(
+        real_scripts=("a", "b"),
+        real_escalation_rate=0.1,
+        real_escalation_rate_max_script=0.2,
+        real_usd_by_script=(("a", 0.05), ("b", None)),
+        real_escalation_usd_by_script=(("a", 0.01), ("b", None)),
+    )
+    assert "b escalation - (no result)" in escalation_notes(c)

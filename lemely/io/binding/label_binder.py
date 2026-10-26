@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, TypedDict, cast
 
 import structlog
 from pydantic import ConfigDict, ValidationError, create_model
@@ -35,6 +35,7 @@ from lemely.io.prompts.label_binding import (
     LABEL_BINDING_SYSTEM_PROMPT,
     VERSION,
     build_label_binding_user_prompt,
+    with_claude_boxes,
 )
 
 if TYPE_CHECKING:
@@ -146,6 +147,26 @@ class BoundRead:
     review_ids: list[str]
     drops: dict[str, int]
     unaligned_reasons: dict[str, UnalignedReason] = field(default_factory=dict)
+
+
+class BoxKwargs(TypedDict, total=False):
+    """The one keyword a Claude read adds to ``GeminiClient.generate_structured``."""
+
+    box_convention: str
+
+
+def box_contract(
+    client: GeminiClient, system_prompt: str, *, model: str | None, task_tag: str | None
+) -> tuple[str, BoxKwargs]:
+    """``system_prompt`` for the model the call resolves to, and the call kwargs that go with it.
+
+    On a ``claude-`` model the prompt asks for pixel boxes and the kwargs name the box
+    version (``GeminiClient.generate_structured(box_convention=...)``); on any other
+    model both are what they were, so a Gemini request and key do not move.
+    """
+    active = model if model is not None else client.model_for_tag(task_tag or "")
+    prompt, version = with_claude_boxes(system_prompt, active)
+    return prompt, ({} if version is None else {"box_convention": version})
 
 
 def _usable_box(box: object, page: int | None, page_count: int) -> SourceBox | None:
@@ -381,14 +402,18 @@ class LabelBinder:
         """Read every page in one call and return the list the model gave.
 
         ``model`` overrides the configured extraction model. ``cache_mode`` is passed on
-        to the call when given (a read made again after a stub is made ``"refresh"``);
-        the chunked reader never reads its cache. ``task_tag`` picks the
-        call's thinking level and the cost bucket it is counted in. A cost-ceiling or
-        service error from the call is not caught here. A script the chunked reader
-        applies to (a claude- model, pages over the token budget at the floor) is read
-        as an overview plus chunks instead.
+        to the call when given (a stub read is repeated under its own cache key,
+        ``"bypass"`` when the run bypasses); the chunked reader never reads its cache.
+        ``task_tag`` picks the call's thinking level and the cost bucket it is counted in.
+        A cost-ceiling or service error from the call is not caught here. A script the
+        chunked reader applies to (a claude- model, pages over the token budget at the floor)
+        is read as an overview plus chunks instead.
         """
         if self._chunked is not None and self._chunked.applies(pages, model):
+            if self._chunked.tier_guard:
+                structlog.get_logger().bind(component="label_binder").warning(
+                    "claude_tier_guard", pages=len(pages), model=model, tag=task_tag
+                )
             return self._chunked.read(
                 pages,
                 mark_scheme,
@@ -397,9 +422,12 @@ class LabelBinder:
                 extra_cache_key=extra_cache_key,
                 task_tag=task_tag,
             )
+        system_prompt, box_kwargs = box_contract(
+            self._client, LABEL_BINDING_SYSTEM_PROMPT, model=model, task_tag=task_tag
+        )
         call = partial(
             self._client.generate_structured,
-            system_prompt=LABEL_BINDING_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=build_label_binding_user_prompt(mark_scheme, page_count=len(pages)),
             image_parts=[page.png_bytes for page in pages],
             image_uploads=uploads,
@@ -409,6 +437,7 @@ class LabelBinder:
             model=model,
             extra_cache_key=extra_cache_key,
             task_tag=task_tag,
+            **box_kwargs,
         )
         # ``cache_mode`` is named only when set, so a read that is not a repeat sends the
         # call it always did.
@@ -433,8 +462,11 @@ class LabelBinder:
         list. The arguments that decide the key are the same as ``read``'s, in the same
         form.
         """
+        system_prompt, box_kwargs = box_contract(
+            self._client, LABEL_BINDING_SYSTEM_PROMPT, model=model, task_tag=task_tag
+        )
         return self._client.structured_cache_key(
-            system_prompt=LABEL_BINDING_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=build_label_binding_user_prompt(mark_scheme, page_count=len(pages)),
             image_parts=[page.png_bytes for page in pages],
             media_resolution=media_resolution,
@@ -443,6 +475,7 @@ class LabelBinder:
             model=model,
             extra_cache_key=extra_cache_key,
             task_tag=task_tag,
+            **box_kwargs,
         )
 
 

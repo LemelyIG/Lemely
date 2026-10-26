@@ -188,7 +188,7 @@ def build_app(settings: Any = None) -> Any:
     from lemely.core.schemas import AccuracyReport
     from lemely.io.answer_extraction import GeminiAnswerExtractor
     from lemely.io.correction_ai import correct_paper as hybrid_correct_paper
-    from lemely.io.gemini import GeminiClient
+    from lemely.io.gemini import GeminiClient, script_cost_scope
     from lemely.io.subject import aggregate_subject
     from lemely.runtime.config import load_settings as _load_settings
 
@@ -230,7 +230,8 @@ def build_app(settings: Any = None) -> Any:
                 ms_path = parse_mark_scheme_path_from_label(ms_label)
                 ms = MarkScheme.model_validate_json(ms_path.read_text(encoding="utf-8"))
                 extractor = GeminiAnswerExtractor(GeminiClient(settings))
-                result = extractor(scan_path=Path(scan_file), mark_scheme=ms)
+                with script_cost_scope(settings, script_key=f"gradio:{Path(scan_file).name}"):
+                    result = extractor(scan_path=Path(scan_file), mark_scheme=ms)
                 result_holder["rows"] = extracted_to_table_rows(result)
                 result_holder["json"] = result.model_dump_json(indent=2)
                 result_holder["binding"] = binding_summary(result)
@@ -283,13 +284,14 @@ def build_app(settings: Any = None) -> Any:
                 ms = MarkScheme.model_validate_json(ms_path.read_text(encoding="utf-8"))
                 reviewed = overlay_edited_answers(extracted_json, table_data)
                 client = None if mcq_only else GeminiClient(settings)
-                correction = hybrid_correct_paper(
-                    mark_scheme=ms,
-                    extracted_answers=reviewed,
-                    gemini_client=client,
-                    mcq_only=mcq_only,
-                    options=settings.grading.marking_options(),
-                )
+                with script_cost_scope(settings, script_key=f"gradio:{ms_path.stem}"):
+                    correction = hybrid_correct_paper(
+                        mark_scheme=ms,
+                        extracted_answers=reviewed,
+                        gemini_client=client,
+                        mcq_only=mcq_only,
+                        options=settings.grading.marking_options(),
+                    )
                 store = GradeBoundaryStore()
                 boundaries, boundary_source = store.resolve(correction.metadata)
                 report = AccuracyReport(
