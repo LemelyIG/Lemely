@@ -125,6 +125,27 @@ def active_block_between_sql(student_user_col: str, tutor_user_col: str) -> str:
     )
 
 
+def active_block_since_sql(student_user_col: str, tutor_user_col: str) -> str:
+    """When the pair's active block began, or NULL when none is active (SC-11, SPEC §i.8).
+
+    The earliest ``updated_at`` among the active blocks between the pair, in either
+    direction; NULL exactly when :func:`active_block_between_sql` is false. A block row
+    is written when it is made, lifted (``removed_at`` set) or renewed (``removed_at``
+    cleared), each time with ``updated_at = now()``, so an active row's ``updated_at``
+    is the instant it last became active. ``created_at`` would name the first block,
+    which a lifted and renewed block outlives. Operands are ``users.id`` values, as in
+    :func:`active_block_between_sql`.
+    """
+    student = _operand(student_user_col, name="student_user_col")
+    tutor = _operand(tutor_user_col, name="tutor_user_col")
+    b = _BLOCK_ALIAS
+    return (
+        f"(SELECT min({b}.updated_at) FROM tutoring_blocks {b} WHERE {b}.removed_at IS NULL "  # noqa: S608 - operands validated above
+        f"AND (({b}.blocker_user_id = {student} AND {b}.blocked_user_id = {tutor}) OR "
+        f"({b}.blocker_user_id = {tutor} AND {b}.blocked_user_id = {student})))"
+    )
+
+
 def student_ever_blocked_tutor_sql(student_user_col: str, tutor_user_col: str) -> str:
     """True when the student has ever blocked the tutor's user, removed blocks included.
 
@@ -163,6 +184,7 @@ __all__ = [
     "LIVE_PENDING_SQL",
     "OUTCOME_MEMBERSHIP_SQL",
     "active_block_between_sql",
+    "active_block_since_sql",
     "listed_and_not_paused_sql",
     "student_block_of_tutor_created_at_sql",
     "student_ever_blocked_tutor_sql",

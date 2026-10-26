@@ -7,7 +7,8 @@ Pure: every case builds a ``BookingRow`` by hand and serialises it for one viewe
 * ``review``/``reviewOpensAt`` to the student only (SC-12); ``studentShared`` to the tutor only;
 * a system or platform cancellation reason reads "Cancelled" to the tutor, and a block's
   ``system`` cancellation reads as a platform one to the student and parents (SC-11, §i.7);
-* a block that alone closes the notes reads as a safety freeze to the tutor (SC-11);
+* a block that alone closes the notes reads as a safety freeze to the tutor (SC-11), judged at
+  the instants of the block, not at the read: like a freeze, it never ends on its own (§i.8);
 * a tutor never sees the party ``parent`` (SC-9, SPEC §i.4);
 * ``post_note`` is added by the builder, for a student or tutor viewer, from ``can_post_note``;
   ``core.booking.allowed_actions`` never returns it (SPEC §i.4);
@@ -88,6 +89,12 @@ STATE_FIELDS: dict[str, dict[str, object]] = {
 }
 
 
+#: When a seeded outcome is recorded, by default: an hour after the session ends.
+OUTCOME_AFTER_END = timedelta(hours=1)
+#: The column each recorded outcome stamps (``ck_tutor_bookings_completed_ts``/``no_show_ts``).
+OUTCOME_COLUMN = {"completed": "completed_at", "no_show": "no_show_marked_at"}
+
+
 def make_row(
     *,
     state: str = "accepted",
@@ -121,16 +128,30 @@ def make_row(
         "cancelled_by_party": None,
         "cancelled_at": None,
         "completed_by_party": None,
+        "completed_at": None,
+        "no_show_marked_at": None,
         "notes_frozen": False,
         "accepted_at": None,
         "created_at": NOW - timedelta(days=5),
         "review": None,
         "has_review": False,
-        "blocked": False,
+        "blocked_since": None,
     }
     fields.update(STATE_FIELDS[state])
+    if state in OUTCOME_COLUMN:
+        fields[OUTCOME_COLUMN[state]] = starts_at + duration + OUTCOME_AFTER_END
     fields.update(overrides)
     return BookingRow(**fields)  # type: ignore[arg-type]
+
+
+def blocked_since(row: BookingRow, since: datetime = NOW - timedelta(hours=1)) -> BookingRow:
+    """``row`` with an active block between its pair that began at ``since``."""
+    return replace(row, blocked_since=since)
+
+
+def frozen(row: BookingRow) -> BookingRow:
+    """``row`` with a safety freeze and no block."""
+    return replace(row, notes_frozen=True)
 
 
 def dto_for(row: BookingRow, viewer: Actor, *, shared: bool | None = None) -> dict[str, object]:
@@ -327,8 +348,8 @@ def test_post_note_is_added_by_the_builder_for_student_and_tutor_only() -> None:
     assert "post_note" in dto_for(row, AS_TUTOR)["allowedActions"]
     assert "post_note" not in dto_for(row, AS_PARENT)["allowedActions"]
     for closed in (
-        replace(row, notes_frozen=True),
-        replace(row, blocked=True),
+        frozen(row),
+        blocked_since(row),
         make_row(state="declined"),
         make_row(state="completed", starts_at=NOW - timedelta(days=8)),
     ):
@@ -341,7 +362,8 @@ def test_tutor_reads_a_block_that_alone_closes_notes_as_a_freeze() -> None:
 
     A block closes notes the window would keep open; a tutor reading closed notes with
     ``notesFrozen: false`` on a listed profile could only be looking at a block. The tutor reads
-    that closure as a safety freeze. Where notes are closed anyway, a block changes nothing.
+    that closure as a safety freeze. Where notes were closed anyway when the block began, a
+    block changes nothing.
     """
     open_notes = (
         make_row(state="completed", starts_at=NOW - timedelta(days=2)),  # inside the 7 days
@@ -349,25 +371,99 @@ def test_tutor_reads_a_block_that_alone_closes_notes_as_a_freeze() -> None:
     )
     for row in open_notes:
         assert "post_note" in dto_for(row, AS_TUTOR)["allowedActions"]  # red case: open
-        blocked = dto_for(replace(row, blocked=True), AS_TUTOR)
-        frozen = dto_for(replace(row, notes_frozen=True), AS_TUTOR)
-        assert blocked == frozen, row.state
-        frozen_actions = frozen["allowedActions"]
-        assert isinstance(frozen_actions, list)
-        assert (frozen["notesFrozen"], "post_note" in frozen_actions) == (True, False)
+        blocked = dto_for(blocked_since(row), AS_TUTOR)
+        freeze = dto_for(frozen(row), AS_TUTOR)
+        assert blocked == freeze, row.state
+        freeze_actions = freeze["allowedActions"]
+        assert isinstance(freeze_actions, list)
+        assert (freeze["notesFrozen"], "post_note" in freeze_actions) == (True, False)
         for viewer in (AS_STUDENT, AS_PARENT):  # the family keeps the stored flag
-            assert dto_for(replace(row, blocked=True), viewer)["notesFrozen"] is False
+            assert dto_for(blocked_since(row), viewer)["notesFrozen"] is False
+    # Changed on purpose by F5-A2 (SPEC §i.8): this list used to hold a session completed nine
+    # days ago, blocked at no stated instant, reading ``notesFrozen: false``. A block made while
+    # its notes were open reads as a freeze for as long as it lasts
+    # (test_a_block_made_inside_the_window_still_reads_as_a_freeze_after_it_closes); only a
+    # block made after the window closed changes nothing, which the first row now states.
+    nine_days_ago = make_row(state="completed", starts_at=NOW - timedelta(days=9))
+    window_closed_at = nine_days_ago.ends_at + timedelta(days=7)
     closed_anyway = (
-        make_row(state="completed", starts_at=NOW - timedelta(days=9)),  # window over
-        make_row(state="declined"),
-        make_row(state="cancelled"),
-        make_row(
-            state="completed", starts_at=NOW - timedelta(days=2), tutor_listing_state="closed"
-        ),
+        (nine_days_ago, window_closed_at),  # blocked the instant the window closed
+        (nine_days_ago, NOW - timedelta(hours=1)),
+        (make_row(state="declined"), NOW - timedelta(hours=1)),
+        (make_row(state="cancelled"), NOW - timedelta(hours=1)),
+        (make_row(state="no_show", starts_at=NOW - timedelta(days=2)), NOW - timedelta(hours=1)),
     )
-    for row in closed_anyway:
-        assert dto_for(replace(row, blocked=True), AS_TUTOR) == dto_for(row, AS_TUTOR), row.state
-        assert dto_for(replace(row, blocked=True), AS_TUTOR)["notesFrozen"] is False
+    for row, since in closed_anyway:
+        blocked = dto_for(blocked_since(row, since), AS_TUTOR)
+        assert blocked == dto_for(row, AS_TUTOR), (row.state, since)
+        assert blocked["notesFrozen"] is False
+
+
+def test_a_block_made_inside_the_window_still_reads_as_a_freeze_after_it_closes() -> None:
+    """F5-A2 (SPEC §i.8, SC-11): a freeze never ends on its own, so neither does the mask.
+
+    A session completed nine days ago: its notes closed two days ago. Blocked five days ago,
+    while they were open, it must read exactly as if it had been frozen then, now and at every
+    later read; judged at the read, it would flip back to ``notesFrozen: false`` once the
+    window closed, which only a block does.
+    """
+    row = make_row(state="completed", starts_at=NOW - timedelta(days=9))
+    since = NOW - timedelta(days=5)
+    assert since < row.ends_at + timedelta(days=7) < NOW  # blocked inside, read after
+    for read_at in (since, NOW - timedelta(days=3), NOW, NOW + timedelta(days=60)):
+        blocked = build_booking_dto(
+            blocked_since(row, since), viewer=AS_TUTOR, now=read_at, student_shared=False
+        ).model_dump()
+        freeze = build_booking_dto(
+            frozen(row), viewer=AS_TUTOR, now=read_at, student_shared=False
+        ).model_dump()
+        assert blocked["notesFrozen"] is True, read_at
+        assert blocked == freeze, read_at
+
+
+def test_the_mask_outlives_whatever_follows_the_block() -> None:
+    """Nothing after the block's start turns the mask off, as nothing turns a freeze off.
+
+    * the tutor marks a no-show after the block, on a session whose notes were open then;
+    * the tutor is suspended or closed after the block (the listing is not judged: a freeze
+      outlives a suspension, and the listing at the block's start is not recorded);
+    * an admin completes a no-show after the block, reopening notes the block keeps closed.
+
+    Each blocked row must read exactly as the same row frozen.
+    """
+    ended = NOW - timedelta(days=1)  # the session ran a day ago; its notes are open for a week
+    no_show_after = make_row(
+        state="no_show", starts_at=ended, no_show_marked_at=NOW - timedelta(hours=2)
+    )
+    completed = make_row(state="completed", starts_at=NOW - timedelta(days=2))
+    reopened = make_row(
+        state="completed",
+        starts_at=ended,
+        no_show_marked_at=ended + timedelta(hours=2),
+        completed_at=NOW - timedelta(hours=2),
+    )
+    cases = {
+        "no-show marked after the block": (no_show_after, NOW - timedelta(hours=12)),
+        "suspended after the block": (
+            replace(completed, tutor_listing_state="suspended"),
+            NOW - timedelta(hours=12),
+        ),
+        "closed after the block": (
+            replace(completed, tutor_listing_state="closed"),
+            NOW - timedelta(hours=12),
+        ),
+        "a no-show completed after the block": (reopened, NOW - timedelta(hours=12)),
+    }
+    for name, (row, since) in cases.items():
+        assert row.ends_at <= since  # the session was over when the block began
+        blocked = dto_for(blocked_since(row, since), AS_TUTOR)
+        assert blocked["notesFrozen"] is True, name
+        assert blocked == dto_for(frozen(row), AS_TUTOR), name
+    # Control: a no-show marked before the block had closed the notes; the block changes nothing.
+    early_no_show = replace(no_show_after, no_show_marked_at=NOW - timedelta(hours=13))
+    blocked = dto_for(blocked_since(early_no_show, NOW - timedelta(hours=12)), AS_TUTOR)
+    assert blocked == dto_for(early_no_show, AS_TUTOR)
+    assert blocked["notesFrozen"] is False
 
 
 @pytest.mark.parametrize("listing", ["suspended", "closed"])
@@ -385,7 +481,7 @@ def test_tutor_write_actions_stripped_when_suspended_or_closed(listing: str) -> 
 
 def test_accept_withheld_when_blocked_or_listing_cannot_accept() -> None:
     pending = make_row(state="requested")
-    assert "accept" not in dto_for(replace(pending, blocked=True), AS_TUTOR)["allowedActions"]
+    assert "accept" not in dto_for(blocked_since(pending), AS_TUTOR)["allowedActions"]
     for listing in ("draft", "rejected"):
         actions = dto_for(replace(pending, tutor_listing_state=listing), AS_TUTOR)["allowedActions"]
         assert "accept" not in actions

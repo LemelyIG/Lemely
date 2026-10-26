@@ -48,6 +48,7 @@ from lemely.db.models.tutoring import (
     StudentTutoringPreferences,
     TutorBooking,
     TutorBookingNote,
+    TutoringBlock,
     TutorReview,
 )
 from lemely.web.booking_view import booking_notices_for
@@ -1650,6 +1651,71 @@ def test_get_for_viewer_is_scoped_and_carries_review_and_block(
     ]
     for viewer in strangers:
         assert service.get_for_viewer(booking, viewer) is None
+
+
+def _block_row_at(
+    sm: sessionmaker[Session], blocker: uuid.UUID, blocked: uuid.UUID, *, at: datetime
+) -> None:
+    with sm.begin() as session:
+        session.add(
+            TutoringBlock(
+                blocker_user_id=blocker, blocked_user_id=blocked, created_at=at, updated_at=at
+            )
+        )
+
+
+def test_rows_carry_when_the_active_block_began_and_the_outcome_instants(
+    sm: sessionmaker[Session], service: BookingService, w: World
+) -> None:
+    """SPEC §i.8 (F5-A2): every read row carries ``blocked_since``, the earliest ``updated_at``
+    of an active block between the pair in either direction (``None`` without one, and then
+    ``blocked`` is false), and the stored ``completed_at`` and ``no_show_marked_at``."""
+    completed = add_booking(sm, w, state="completed", starts_in=-timedelta(days=9))
+    no_show = add_booking(sm, w, state="no_show", starts_in=-timedelta(days=3))
+
+    def read(booking: uuid.UUID) -> BookingRow:
+        row = service.get_for_viewer(booking, w.tutor_actor)
+        assert row is not None
+        return row
+
+    def listed() -> dict[uuid.UUID, BookingRow]:
+        page = service.list_for_tutor(w.tutor.profile_id, when="past", after=None, limit=20)
+        return {row.id: row for row in page.items}
+
+    for booking, column in ((completed, "completed_at"), (no_show, "no_show_marked_at")):
+        row = read(booking)
+        assert (row.blocked_since, row.blocked) == (None, False)
+        assert getattr(row, column) == getattr(stored(sm, booking), column)
+        assert getattr(row, column) is not None
+    assert read(completed).no_show_marked_at is None
+    assert read(no_show).completed_at is None
+
+    first = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
+    _block_row_at(sm, w.tutor.user_id, w.student, at=first)
+    _block_row_at(sm, w.student, w.tutor.user_id, at=first + timedelta(days=2))
+    other_pair = make_world(sm)
+    _block_row_at(sm, other_pair.student, w.tutor.user_id, at=first - timedelta(days=5))
+    for row in (read(completed), read(no_show), *listed().values()):
+        assert (row.blocked_since, row.blocked) == (first, True)  # the earlier of the two
+    set_block_removed(sm, w.tutor.user_id, w.student)  # the tutor lifts theirs
+    assert read(completed).blocked_since == first + timedelta(days=2)
+    set_block_removed(sm, w.student, w.tutor.user_id)
+    assert (read(completed).blocked_since, read(completed).blocked) == (None, False)
+    # A renewal through the ORM clears removed_at and stamps updated_at: the block starts again.
+    with sm.begin() as session:
+        block = session.get(TutoringBlock, (w.student, w.tutor.user_id))
+        assert block is not None
+        block.removed_at = None
+    with sm() as session:
+        renewed = session.execute(
+            sa.select(TutoringBlock.updated_at, TutoringBlock.created_at).where(
+                TutoringBlock.blocker_user_id == w.student,
+                TutoringBlock.blocked_user_id == w.tutor.user_id,
+            )
+        ).one()
+    assert renewed.created_at == first + timedelta(days=2)
+    assert renewed.updated_at > renewed.created_at
+    assert read(completed).blocked_since == renewed.updated_at
 
 
 # ---------------------------------------------------------------------------

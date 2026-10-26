@@ -27,8 +27,14 @@ their pages builds it here, so the disclosure rules live in one place:
   only ``accept`` and ``post_note`` (SPEC §i.4), and a freeze withholds ``post_note``, so the
   tutor's DTO, T16's ``canPost: false`` and T17's 409 ``notes_closed`` match a freeze exactly
   wherever the notes would otherwise be open (a block on a live request, which also loses
-  ``accept``, cannot outlast the block's own sweep). Where notes are closed anyway, a block
-  changes nothing the tutor reads;
+  ``accept``, cannot outlast the block's own sweep). A freeze never ends on its own, so the
+  mask is judged at the block's own instants, never at the read (SPEC §i.8, F5-A2): it is on
+  when state and window alone would have kept the notes open at the instant the block began
+  (``BookingRow.blocked_since``) or at an outcome recorded after it, and then it stays on for
+  as long as the block lasts, after the window closes, after a no-show, after a suspension.
+  The listing is not judged: a freeze outlives a suspension, and the listing at the block's
+  start is not recorded. Where notes were closed when the block began and stayed closed, a
+  block changes nothing the tutor reads;
 * ``allowedActions`` is ``core.booking.allowed_actions`` plus ``post_note``, which the core never
   returns: the builder adds it for a student or tutor viewer from ``can_post_note`` over the
   effective state at the same ``now`` (SPEC §i.4). A suspended or closed tutor gets no write
@@ -73,7 +79,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
-    from lemely.core.booking import EffectiveState, Party
+    from lemely.core.booking import BookingStateLit, EffectiveState, Party
     from lemely.db.booking_repo import Actor, BookingRow, NoteRow, NotesPage, SlotsView
     from lemely.io.tutoring_areas import AreaCatalogue
     from lemely.web.tutoring_notify import InboxNotice
@@ -107,6 +113,8 @@ _FAMILY_PARTY: Final[Mapping[str, str]] = MappingProxyType({"system": "platform_
 _FAMILY: Final = frozenset({"student", "parent"})
 _ACCEPT_LISTINGS: Final = frozenset({"listed", "pending_review"})
 _INACTIVE_LISTINGS: Final = frozenset({"suspended", "closed"})
+#: The stored states an outcome writes (``completed_at``/``no_show_marked_at``).
+_OUTCOMES: Final = frozenset({"completed", "no_show"})
 
 
 def _party_for(viewer: Actor, party: Party | str | None) -> str | None:
@@ -138,26 +146,61 @@ def _cancel_reason_for(viewer: Actor, view: BookingRow) -> str | None:
     return view.cancel_reason
 
 
-def _notes_frozen_for(
-    view: BookingRow, viewer: Actor, *, now: datetime, effective: EffectiveState
-) -> bool:
-    """``notesFrozen`` as ``viewer`` may read it (SC-11; module docstring).
+def _state_at(view: BookingRow, instant: datetime) -> BookingStateLit:
+    """The stored state ``view`` had at ``instant``, rewound across a later outcome.
 
-    The stored freeze for everyone; for the tutor also a block that alone closes notes the
-    window, the state and the listing would keep open.
+    Only an outcome can change a blocked pair's booking after the block began: the block's
+    sweep cancels every live request and future session in the block's own transaction, and a
+    blocked pair cannot accept. An outcome is stamped (``completed_at``, ``no_show_marked_at``),
+    so the state at ``instant`` is the latest outcome recorded by then, or ``accepted`` before
+    the first one (an admin may complete a no-show: both stamps are kept).
+    """
+    stamps: tuple[tuple[datetime | None, BookingStateLit], ...] = (
+        (view.no_show_marked_at, "no_show"),
+        (view.completed_at, "completed"),
+    )
+    recorded: list[tuple[datetime, BookingStateLit]] = [
+        (at, state) for at, state in stamps if at is not None and at <= instant
+    ]
+    if recorded:
+        return max(recorded, key=lambda stamp: stamp[0])[1]
+    if view.state in _OUTCOMES:
+        return "accepted"
+    return view.state
+
+
+def _notes_open_at(view: BookingRow, instant: datetime) -> bool:
+    """Whether state and window alone kept the notes open at ``instant``.
+
+    No block, freeze or listing is judged: this is what a freeze made then would have closed.
+    """
+    state = _state_at(view, instant)
+    return can_post_note(
+        effective_state(state, starts_at=view.starts_at, ends_at=view.ends_at, now=instant),
+        ends_at=view.ends_at,
+        now=instant,
+        blocked=False,
+        tutor_inactive=False,
+        frozen=False,
+    )
+
+
+def _notes_frozen_for(view: BookingRow, viewer: Actor) -> bool:
+    """``notesFrozen`` as ``viewer`` may read it (SC-11, SPEC §i.8; module docstring).
+
+    The stored freeze for everyone. For the tutor also an active block, when state and window
+    alone kept the notes open at the instant it began, or at an outcome recorded since (an
+    admin completing a no-show reopens them). Judged at those instants and never at the read,
+    the mask does not end on its own, as a freeze does not.
     """
     if view.notes_frozen:
         return True
-    if viewer.party != "tutor" or not view.blocked:
+    since = view.blocked_since
+    if viewer.party != "tutor" or since is None:
         return False
-    return can_post_note(
-        effective,
-        ends_at=view.ends_at,
-        now=now,
-        blocked=False,
-        tutor_inactive=view.tutor_listing_state in _INACTIVE_LISTINGS,
-        frozen=False,
-    )
+    outcomes = (view.no_show_marked_at, view.completed_at)
+    instants = (since, *(at for at in outcomes if at is not None and at > since))
+    return any(_notes_open_at(view, instant) for instant in instants)
 
 
 def _actions(
@@ -263,7 +306,7 @@ def build_booking_dto(
             "cancelledBy": _party_for(viewer, view.cancelled_by_party),
             "cancelledLate": cancelled_late,
             "completedBy": _party_for(viewer, view.completed_by_party),
-            "notesFrozen": _notes_frozen_for(view, viewer, now=now, effective=effective),
+            "notesFrozen": _notes_frozen_for(view, viewer),
             "allowedActions": _actions(view, viewer, now=now, effective=effective),
             "review": review,
             "reviewOpensAt": iso_instant(review_open_at(view.ends_at)) if reviews_open else None,

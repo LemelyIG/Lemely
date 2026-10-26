@@ -4,8 +4,10 @@
 routers), never here (decision row 4: the student alone grants and revokes).
 
 * **S8** lists the caller's grants, live ones first, then ended ones, newest first
-  (at most 200), each with its status from ``core.tutor_grants.grant_status`` and
-  the names of the caller's classes the tutor also teaches (SC-2e, student only).
+  (at most 200), each with its status from
+  ``core.tutor_grants.grant_status_for_student`` (a tutor's block, a suspension and
+  a close all read ``tutor_unavailable``; SPEC §i.8, SC-11) and the names of the
+  caller's classes the tutor also teaches (SC-2e, student only).
 * **S9** (verified email, SC-15) creates a grant, or returns the live one with 200.
   The tutor must be listed and not paused, with no active block either way (O11).
   An unknown, unlisted, paused, suspended, closed or blocked tutor (either block
@@ -105,10 +107,13 @@ def get_tutor_grant_repo() -> TutorGrantRepository:
 def grant_dto(
     view: GrantView, areas: AreaCatalogue, *, viewer: Literal["student", "parent"]
 ) -> GrantDTO:
-    """One grant as its student sees it, or (read-only) a linked parent.
+    """One grant as its student sees it, or (read-only) a linked parent (S8, S9, S10, PA6).
 
-    ``alsoTeachesClasses`` is the student's own information about their classes
-    (SC-2e) and is always empty for a parent (SPEC §b.3).
+    ``status`` is ``view.status``, already masked for the family
+    (``core.tutor_grants.grant_status_for_student``), so every tutor-side end of a
+    grant reads as one whole DTO. ``alsoTeachesClasses`` is the student's own
+    information about their classes (SC-2e) and is always empty for a parent
+    (SPEC §b.3).
     """
     grant = view.grant
     return GrantDTO.model_validate(

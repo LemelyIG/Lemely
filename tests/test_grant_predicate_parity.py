@@ -3,7 +3,8 @@
 Every repository read that decides whether a tutor may see a student (T19's list,
 T20's gate, ``studentShared``) runs the SQL mirror; S8 and PA6 show the status
 ``core.tutor_grants.grant_status`` computes from the row, with a ``blocked`` the
-student did not cause read as ``tutor_unavailable`` (SPEC §i.7, SC-11). This test
+student did not cause, a suspension and a close all read as ``tutor_unavailable``
+(SPEC §i.7, §i.8, SC-11). This test
 builds one grant for every combination of the inputs validity depends on and
 checks each SQL path against the pure functions:
 
@@ -151,16 +152,23 @@ def seed_cases(sm: sessionmaker[Session]) -> list[Case]:
     return cases
 
 
+#: SPEC §i.8: the tutor-side ends a student and their parents read as ``tutor_unavailable``.
+TUTOR_SIDE_ENDS = frozenset({"tutor_suspended", "tutor_closed"})
+
+
 def shown_to_student(case: Case, now: datetime) -> str:
-    """What S8/PA6 must show, written from SPEC §i.7 and SC-11, not read from the code.
+    """What S8/PA6 must show, written from SPEC §i.7, §i.8 and SC-11, not read from the code.
 
     ``core.tutor_grants.grant_status`` gives the reason; a ``blocked`` the student did not cause
     (no block of theirs, made while the grant was live) reads as the tutor being unavailable,
-    so a student never learns that a tutor blocked them.
+    so a student never learns that a tutor blocked them, and so do a suspension and a close,
+    so a revoked ``tutor_unavailable`` grant cannot single out a tutor's block.
     """
     status = grant_status(case.facts, now=now)
     students_own = case.block in ("student_blocks_tutor", "removed")
     if status == "blocked" and not students_own:
+        return "tutor_unavailable"
+    if status in TUTOR_SIDE_ENDS:
         return "tutor_unavailable"
     return status
 
@@ -264,27 +272,26 @@ def test_grant_status_shown_to_the_student_equals_core(sm: sessionmaker[Session]
     now = db_now(sm)
     assert isinstance(now, datetime)
     seen: set[str] = set()
-    masked = kept = 0
+    masked = kept = sanctions = 0
     for case in cases:
         [view] = repo.grants_for_student(case.student_id, include_classes=False)
         assert view.grant.id == case.grant_id
         assert view.status == shown_to_student(case, now), case
         seen.add(view.status)
-        if grant_status(case.facts, now=now) == "blocked":
+        core = grant_status(case.facts, now=now)
+        if core == "blocked":
             masked += view.status == "tutor_unavailable"
             kept += view.status == "blocked"
+        sanctions += core in TUTOR_SIDE_ENDS and view.status == "tutor_unavailable"
     # Non-vacuity: a tutor's block is masked and a student's own is kept, many times each
     # (revoked for a block, or live under an active block, in every listing state).
     assert masked > 0
     assert kept > 0
     assert masked + kept == sum(grant_status(c.facts, now=now) == "blocked" for c in cases)
-    # Every status the SPEC names occurs in the generated set.
-    assert seen == {
-        "active",
-        "revoked",
-        "expired",
-        "blocked",
-        "tutor_suspended",
-        "tutor_closed",
-        "tutor_unavailable",
-    }
+    # Every grant a suspension or a close revoked (2 reasons x 12 profiles x 3 expiries x 4
+    # blocks) reads as the tutor being unavailable.
+    assert sanctions == sum(grant_status(c.facts, now=now) in TUTOR_SIDE_ENDS for c in cases)
+    assert sanctions == 2 * 12 * 3 * 4
+    # Every status a student or parent may read occurs in the generated set; the two
+    # tutor-side ends never do (SPEC §i.8).
+    assert seen == {"active", "revoked", "expired", "blocked", "tutor_unavailable"}

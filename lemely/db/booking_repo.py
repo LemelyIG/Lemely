@@ -100,6 +100,7 @@ from lemely.db.tutoring_predicates import (
     EFFECTIVE_STATE_SQL,
     LIVE_PENDING_SQL,
     active_block_between_sql,
+    active_block_since_sql,
     listed_and_not_paused_sql,
 )
 
@@ -319,10 +320,14 @@ class BookingRow:
     """One booking as its readers see it: the stored facts plus what the DTO builder needs.
 
     ``tutor`` is the public card (``tutor_id`` is the profile id, never a ``users.id``);
-    ``tutor_user_id`` is for notices only and never serialised. ``blocked`` is an active block
-    between the pair, read with the row. ``has_review`` counts a removed review too (one review
-    per booking, ever); ``review`` is the live one. ``notice`` is set only on the row a write
-    returns, when that write changed something.
+    ``tutor_user_id`` is for notices only and never serialised. ``blocked_since`` is when the
+    pair's active block began (``tutoring_predicates.active_block_since_sql``), read with the
+    row, and ``None`` without one; :attr:`blocked` follows from it. ``completed_at`` and
+    ``no_show_marked_at`` are the stored outcome instants; with ``blocked_since`` they let the
+    tutor's ``notesFrozen`` be judged at the block's instants rather than the read's (SPEC §i.8).
+    ``has_review`` counts a removed review too (one review per booking, ever); ``review`` is the
+    live one. ``notice`` is set only on the row a write returns, when that write changed
+    something.
     """
 
     id: uuid.UUID
@@ -349,13 +354,20 @@ class BookingRow:
     cancelled_by_party: Party | None
     cancelled_at: datetime | None
     completed_by_party: Party | None
+    completed_at: datetime | None
+    no_show_marked_at: datetime | None
     notes_frozen: bool
     accepted_at: datetime | None
     created_at: datetime
     review: ReviewRef | None
     has_review: bool
-    blocked: bool
+    blocked_since: datetime | None
     notice: BookingNotice | None = None
+
+    @property
+    def blocked(self) -> bool:
+        """An active block exists between the pair, in either direction (O11)."""
+        return self.blocked_since is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -518,14 +530,15 @@ _ROW_SQL: Final = (
     "b.mode::text AS mode, b.starts_at, b.ends_at, b.state::text AS state, b.meeting_link, "
     "b.location_detail, b.other_mode_note, b.decline_reason, b.cancel_reason, "
     "b.cancelled_by_party::text AS cancelled_by_party, b.cancelled_at, "
-    "b.completed_by_party::text AS completed_by_party, b.notes_frozen_at, b.accepted_at, "
+    "b.completed_by_party::text AS completed_by_party, b.completed_at, b.no_show_marked_at, "
+    "b.notes_frozen_at, b.accepted_at, "
     "b.created_at, tp.user_id AS tutor_user_id, tp.listing_state::text AS listing_state, "
     "tp.zone, tp.public_first_name, tp.public_last_initial, tp.headline, tp.offers_virtual, "
     "tp.offers_in_person, tp.offers_other, tp.area_code, tp.rating_sum, tp.rating_count, "
     "u.display_name AS student_display_name, u.created_at AS student_created_at, "
     "r.id AS review_id, r.stars AS review_stars, r.text_state::text AS review_text_state, "
     "r.created_at AS review_created_at, r.removed_at AS review_removed_at, "
-    f"{_BLOCK_B} AS blocked "
+    f"{active_block_since_sql('b.student_id', 'tp.user_id')} AS blocked_since "
     "FROM tutor_bookings b "
     "JOIN tutor_profiles tp ON tp.id = b.tutor_profile_id "
     "JOIN users u ON u.id = b.student_id "
@@ -961,12 +974,14 @@ def _booking_row(m: RowMapping, card: TutorCard) -> BookingRow:
         cancelled_by_party=_party(m["cancelled_by_party"]),
         cancelled_at=_opt_instant(m["cancelled_at"]),
         completed_by_party=_party(m["completed_by_party"]),
+        completed_at=_opt_instant(m["completed_at"]),
+        no_show_marked_at=_opt_instant(m["no_show_marked_at"]),
         notes_frozen=m["notes_frozen_at"] is not None,
         accepted_at=_opt_instant(m["accepted_at"]),
         created_at=_instant(m["created_at"]),
         review=_review_ref(m),
         has_review=m["review_id"] is not None,
-        blocked=bool(m["blocked"]),
+        blocked_since=_opt_instant(m["blocked_since"]),
     )
 
 

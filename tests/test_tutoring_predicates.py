@@ -23,6 +23,7 @@ from lemely.db.tutoring_predicates import (
     LIVE_PENDING_SQL,
     OUTCOME_MEMBERSHIP_SQL,
     active_block_between_sql,
+    active_block_since_sql,
     listed_and_not_paused_sql,
     student_block_of_tutor_created_at_sql,
     student_ever_blocked_tutor_sql,
@@ -211,6 +212,113 @@ def test_student_block_created_at_is_directional_and_keeps_removed_blocks(
         assert read(w.student, w.tutor_user2) is None
 
 
+def _block_written_at(
+    conn: sa.Connection,
+    blocker: uuid.UUID,
+    blocked: uuid.UUID,
+    *,
+    created: datetime,
+    updated: datetime | None = None,
+    removed: datetime | None = None,
+) -> None:
+    """A block row with its instants written out: first made, last written, lifted."""
+    _insert(
+        conn,
+        "tutoring_blocks",
+        {
+            "blocker_user_id": blocker,
+            "blocked_user_id": blocked,
+            "created_at": created,
+            "updated_at": updated or created,
+            "removed_at": removed,
+        },
+    )
+
+
+def test_active_block_since_is_the_earliest_active_rows_last_write(engine: sa.Engine) -> None:
+    """When the pair's active block began (SC-11, SPEC §i.8): the earliest ``updated_at`` of an
+    active row, either direction; a lifted row never counts, and a renewed one counts from its
+    renewal (its ``updated_at``), not from the first block (``created_at``)."""
+    t0 = datetime(2026, 3, 1, 9, 0, tzinfo=UTC)
+    sql = active_block_since_sql(":student", ":tutor")
+    with _rolled_back(engine) as conn:
+        w = _world(conn)
+        others = [_user(conn, "student") for _ in range(3)]
+
+        def since(student: uuid.UUID, tutor: uuid.UUID) -> object:
+            params = {"student": student, "tutor": tutor}
+            return conn.execute(sa.text(f"SELECT {sql}"), params).scalar_one()
+
+        # student -> tutor, active.
+        _block_written_at(conn, w.student, w.tutor_user, created=t0)
+        # tutor -> student, active and written later; the pair's block began at the earlier one.
+        _block_written_at(conn, w.tutor_user, w.student, created=t0 + timedelta(days=2))
+        # tutor -> student only: the direction does not matter.
+        _block_written_at(conn, w.tutor_user2, w.student2, created=t0 + timedelta(days=1))
+        # Lifted: never a start, even though it is the oldest row of its pair.
+        _block_written_at(
+            conn,
+            others[0],
+            w.tutor_user,
+            created=t0 - timedelta(days=9),
+            removed=t0 - timedelta(days=8),
+        )
+        # Block, lift, renew: the renewal wrote updated_at and cleared removed_at.
+        _block_written_at(
+            conn,
+            others[1],
+            w.tutor_user,
+            created=t0 - timedelta(days=30),
+            updated=t0 + timedelta(days=4),
+        )
+
+        assert since(w.student, w.tutor_user) == t0
+        assert since(w.student2, w.tutor_user2) == t0 + timedelta(days=1)
+        assert since(others[0], w.tutor_user) is None
+        assert since(others[1], w.tutor_user) == t0 + timedelta(days=4)
+        assert since(others[2], w.tutor_user) is None  # never blocked
+        assert since(w.student, w.tutor_user2) is None  # another pair's blocks
+
+
+def test_active_block_since_is_null_exactly_when_no_block_is_active(engine: sa.Engine) -> None:
+    """Parity with :func:`active_block_between_sql` over every block shape of one pair."""
+    t0 = datetime(2026, 3, 1, 9, 0, tzinfo=UTC)
+    shapes = {
+        "none": (),
+        "student_active": (("student", None),),
+        "tutor_active": (("tutor", None),),
+        "both_active": (("student", None), ("tutor", None)),
+        "student_lifted": (("student", t0),),
+        "tutor_lifted": (("tutor", t0),),
+        "lifted_and_active": (("student", t0), ("tutor", None)),
+        "both_lifted": (("student", t0), ("tutor", t0)),
+    }
+    with _rolled_back(engine) as conn:
+        w = _world(conn)
+        checked: dict[str, bool] = {}
+        for name, blocks in shapes.items():
+            student = _user(conn, "student")
+            for side, removed in blocks:
+                blocker, blocked = (
+                    (student, w.tutor_user) if side == "student" else (w.tutor_user, student)
+                )
+                _block_written_at(
+                    conn, blocker, blocked, created=t0 - timedelta(days=1), removed=removed
+                )
+            between, since = conn.execute(
+                sa.text(
+                    f"SELECT {active_block_between_sql(':student', ':tutor')}, "
+                    f"{active_block_since_sql(':student', ':tutor')}"
+                ),
+                {"student": student, "tutor": w.tutor_user},
+            ).one()
+            assert bool(between) is (since is not None), name
+            checked[name] = bool(between)
+    # Non-vacuity: all eight shapes, both answers.
+    assert len(checked) == 8
+    assert set(checked.values()) == {True, False}
+
+
 # ---------------------------------------------------------------------------
 # Booking-state constants
 # ---------------------------------------------------------------------------
@@ -298,6 +406,7 @@ BLOCK_BUILDERS = {
     "active_block_between_sql": active_block_between_sql,
     "student_ever_blocked_tutor_sql": student_ever_blocked_tutor_sql,
     "student_block_of_tutor_created_at_sql": student_block_of_tutor_created_at_sql,
+    "active_block_since_sql": active_block_since_sql,
 }
 NOT_IDENTIFIERS = ["", "1=1", "tp.user_id; DROP TABLE users", "tp.user_id OR true", "'x'", "a.b.c"]
 #: Every column of ``tutoring_blocks`` plus common ones. Unqualified inside the

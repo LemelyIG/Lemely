@@ -29,14 +29,23 @@ wins:
 5. ``active``.
 
 **What the student and their parents read** (:func:`grant_status_for_student`,
-S8, S9, S10, PA6; SPEC §i.7, SC-11). The same status, except that ``blocked``
-names a block, and a student must never learn that a tutor blocked them. It stays
-``blocked`` only when the student's own block explains it: their first block of
-this tutor fell inside the grant's life, from ``created_at`` to its revoke (a
-block's sweep revokes the live grant in the block's own transaction, so the two
-instants are equal), or to ``now`` for a live grant. Any other block is the
-tutor's, and it reads ``tutor_unavailable``, the status of a grant whose tutor is
-not listed. Validity is unchanged: neither status is ``active``.
+S8, S9, S10, PA6; SPEC §i.7, §i.8, SC-11). The same status, except where it would
+tell them that the tutor blocked them:
+
+* ``blocked`` stays only when the student's own block explains it: their first
+  block of this tutor fell inside the grant's life, from ``created_at`` to its
+  revoke (a block's sweep revokes the live grant in the block's own transaction,
+  so the two instants are equal), or to ``now`` for a live grant. Any other block
+  is the tutor's, and it reads ``tutor_unavailable``, the status of a grant whose
+  tutor is not listed.
+* ``tutor_suspended`` and ``tutor_closed`` read ``tutor_unavailable`` too. A
+  revoked grant reading ``tutor_unavailable`` could otherwise only be a tutor's
+  block; with every tutor-side end of a grant (the tutor's block, a suspension, a
+  close) read the same, the status and ``revokedAt`` together say only that the
+  tutor ended it. The student's own revoke (``revoked``) and their own block
+  (``blocked``) keep their names.
+
+Validity is unchanged: none of these statuses is ``active``.
 
 **Literals are written out here on purpose.** ``core`` may not import
 ``lemely.db``, so the revoke reasons and listing states below are pinned to
@@ -64,6 +73,8 @@ GrantStatus = Literal[
     "tutor_closed",
     "tutor_unavailable",
 ]
+#: The statuses :func:`grant_status_for_student` can return: never a tutor-side end's name.
+StudentGrantStatus = Literal["active", "revoked", "expired", "blocked", "tutor_unavailable"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +101,17 @@ _REVOKED_STATUS: Final[Mapping[str, GrantStatus]] = MappingProxyType(
         "block": "blocked",
         "tutor_suspended": "tutor_suspended",
         "tutor_closed": "tutor_closed",
+    }
+)
+#: Every status but ``blocked`` -> what the student and their parents read (SPEC §i.8).
+_SHOWN_TO_STUDENT: Final[Mapping[GrantStatus, StudentGrantStatus]] = MappingProxyType(
+    {
+        "active": "active",
+        "revoked": "revoked",
+        "expired": "expired",
+        "tutor_suspended": "tutor_unavailable",
+        "tutor_closed": "tutor_unavailable",
+        "tutor_unavailable": "tutor_unavailable",
     }
 )
 #: ``tutorlistingstate``; any other value can only come from a bug.
@@ -155,19 +177,20 @@ def grant_status(facts: GrantFacts, *, now: datetime) -> GrantStatus:
 
 def grant_status_for_student(
     facts: GrantFacts, *, now: datetime, student_blocked_at: datetime | None
-) -> GrantStatus:
-    """The status the student and their linked parents read (module docstring, SPEC §i.7).
+) -> StudentGrantStatus:
+    """The status the student and their linked parents read (module docstring, SPEC §i.8).
 
     ``student_blocked_at`` is when the student first blocked the tutor's user (a lifted
-    block counts; ``None`` if they never did). A ``blocked`` status the student's own block
-    does not explain reads ``tutor_unavailable``; every other status is :func:`grant_status`.
+    block counts; ``None`` if they never did). Every tutor-side end reads
+    ``tutor_unavailable``: a ``blocked`` status the student's own block does not explain,
+    ``tutor_suspended`` and ``tutor_closed``. Every other status is :func:`grant_status`.
 
     Raises :class:`ValueError` for a naive instant, as :func:`grant_status` does.
     """
+    _require_aware(student_blocked_at=student_blocked_at)
     status = grant_status(facts, now=now)
     if status != "blocked":
-        return status
-    _require_aware(student_blocked_at=student_blocked_at)
+        return _SHOWN_TO_STUDENT[status]
     end = facts.revoked_at if facts.revoked_at is not None else now
     if student_blocked_at is not None and (
         _utc(facts.created_at) <= _utc(student_blocked_at) <= _utc(end)

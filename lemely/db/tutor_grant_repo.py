@@ -17,9 +17,11 @@ function over generated inputs. S8, S9, S10 and PA6 show the student (and their
 parents) the reason through ``core.tutor_grants.grant_status_for_student`` on the
 same row: ``blocked`` only when the student's own block explains it, read from
 the instant of their first block of the tutor
-(``tutoring_predicates.student_block_of_tutor_created_at_sql``); a tutor's block
-reads ``tutor_unavailable``, so a student never learns that a tutor blocked them
-(SPEC §i.7, SC-11).
+(``tutoring_predicates.student_block_of_tutor_created_at_sql``); a tutor's block,
+a suspension and a close all read ``tutor_unavailable``, so a student never learns
+that a tutor blocked them (SPEC §i.7, §i.8, SC-11). The list order (live first,
+then newest first) reads neither the status nor the revoke reason, so a grant
+keeps its place whichever tutor-side end revoked it.
 
 **The gate (T20, O2, O3, O18).** :meth:`TutorGrantRepository.require_valid_grant`
 takes the caller's own profile id, resolved by the route from ``auth.user_id``,
@@ -99,7 +101,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Row
     from sqlalchemy.orm import Session, sessionmaker
 
-    from lemely.core.tutor_grants import GrantStatus
+    from lemely.core.tutor_grants import StudentGrantStatus
     from lemely.db.tutor_directory_repo import Mode
 
 log = structlog.get_logger(__name__)
@@ -241,14 +243,15 @@ class GrantView:
     """A grant as S8/PA6 show it: the tutor's public card and the status.
 
     ``status`` is what the student and their parents may read
-    (``core.tutor_grants.grant_status_for_student``: a tutor's block reads
-    ``tutor_unavailable``). ``also_teaches_classes`` names the student's own
-    classes whose teacher is the tutor's user (SC-2e); empty when not asked for.
+    (``core.tutor_grants.grant_status_for_student``: a tutor's block, a suspension
+    and a close read ``tutor_unavailable``). ``also_teaches_classes`` names the
+    student's own classes whose teacher is the tutor's user (SC-2e); empty when not
+    asked for.
     """
 
     grant: GrantRow
     tutor: TutorCard
-    status: GrantStatus
+    status: StudentGrantStatus
     also_teaches_classes: tuple[str, ...]
 
 
