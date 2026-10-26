@@ -72,6 +72,7 @@ from lemely.io.evidence_judge import GeminiEvidenceJudge
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
+from lemely.io.notify_email import build_transactional_provider
 from lemely.io.storage import StorageBackend
 from lemely.io.storage_gcs import GcsStorageBackend
 from lemely.io.storage_local import LocalFileStorageBackend
@@ -808,6 +809,8 @@ def get_sweeper() -> Sweeper:
         settings=settings.notifications,
         storage=get_storage_backend(),
         bucket=settings.storage.bucket,
+        email_provider=build_transactional_provider(settings),
+        email_daily_cap=settings.tutoring.email_daily_cap,
     )
 
 
@@ -1205,3 +1208,8 @@ def reset_singletons() -> None:
     # PR 1 chunk C: the client-error rate limiters — same reasoning as the two
     # comments above, the promise is *all* cached singletons.
     get_client_error_limiters.cache_clear()
+    # Tutoring marketplace providers live in their own module (T06 onward); the
+    # promise above is *all* cached singletons.
+    from lemely.web.deps_tutoring import reset_tutoring_singletons
+
+    reset_tutoring_singletons()

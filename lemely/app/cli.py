@@ -534,6 +534,13 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     has_key = bool((settings.gemini_api_key is not None) or os.environ.get("GEMINI_API_KEY"))
     record("gemini_api_key", has_key)
 
+    # Tutoring booking email: a mock provider is a warning, never a failure, so
+    # dev and CI keep a passing doctor (`ok=True`; the line carries the warning).
+    from lemely.web.tutoring_email import doctor_lines
+
+    for line in doctor_lines(settings):
+        record("tutoring_email", True, line)
+
     # F1 (Gemini 3.x migration): surface what model_for() actually resolves to
     # per task tag, so a config mistake (e.g. escalation falling back to the
     # global 2.5 model) is visible without reading lemely.toml by hand.

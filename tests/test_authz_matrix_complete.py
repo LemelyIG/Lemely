@@ -67,15 +67,26 @@ SCHOOL_ADMIN = frozenset({"school_admin"})
 PLATFORM_ADMIN = frozenset({"platform_admin"})
 TEACHER_OR_SCHOOL_ADMIN = frozenset({"teacher", "school_admin"})
 STAFF = frozenset({"teacher", "school_admin", "platform_admin"})
+# Tutoring (docs/tutoring/SPEC.md §c.1): decision-log row 10, parents browse and
+# book for a linked child.
+STUDENT_OR_PARENT = frozenset({"student", "parent"})
 
 ALL_ROLES = frozenset(role.value for role in Role)
 
 # (method, path) → the guard that route must carry. Reviewed, not inferred.
 EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
-    # ── TEACHER (3) ────────────────────
+    # ── TEACHER (8) ────────────────────
     ("POST", "/api/classes"): TEACHER,
     ("DELETE", "/api/classes/{class_id}"): TEACHER,
     ("PATCH", "/api/classes/{class_id}"): TEACHER,
+    # Tutoring T1-T5 (SPEC §c.1). ADR-T01: role half only; "owns a tutor
+    # profile" is object-level (tests/test_web_tutor.py,
+    # tests/test_web_tutoring_authz_profiles.py), invisible to this sweep.
+    ("GET", "/api/tutor/profile"): TEACHER,
+    ("POST", "/api/tutor/profile"): TEACHER,
+    ("PATCH", "/api/tutor/profile"): TEACHER,
+    ("POST", "/api/tutor/profile/submit"): TEACHER,
+    ("PUT", "/api/tutor/profile/availability"): TEACHER,
     # ── SCHOOL_ADMIN (8) ────────────────────
     ("GET", "/api/school/seats"): SCHOOL_ADMIN,
     ("POST", "/api/school/seats/invite"): SCHOOL_ADMIN,
@@ -138,7 +149,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/parent/children/{child_id}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/subjects/{code}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/weaknesses"): PARENT,
-    # ── PUBLIC (12) ────────────────────
+    # ── PUBLIC (15) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     # spec §4: the child-issued parent signup, replacing the retired
     # `/api/auth/otp/*` pair. Public by the same necessity as `/auth/signup`
@@ -175,6 +186,15 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # disclosure precisely because this route carries no bearer token at all
     # (see its own docstring for the "no id, no roster, no count" rule).
     ("GET", "/api/invites/{code}"): PUBLIC,
+    # Tutoring P1-P3 (SPEC §c.1, rows 5a/5b): the minimal public card only, no
+    # availability filter; `public, max-age=60` and `X-Robots-Tag: noindex`.
+    ("GET", "/api/public/tutors"): PUBLIC,
+    ("GET", "/api/public/tutors/{tutor_id}"): PUBLIC,
+    ("GET", "/api/public/tutoring-areas"): PUBLIC,
+    # ── STUDENT_OR_PARENT (2) ────────────────────
+    # Tutoring SP1-SP2 (SPEC §c.1, row 10). SP2 also needs a verified email.
+    ("GET", "/api/tutors"): STUDENT_OR_PARENT,
+    ("GET", "/api/tutors/{tutor_id}"): STUDENT_OR_PARENT,
     # ── AUTH_ANY (19) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
@@ -513,7 +533,15 @@ def test_disallowed_role_is_403(app: FastAPI, method: str, path: str, role: str)
 # chain (header → decode → claim extraction → role compare) is exercised.
 _REPRESENTATIVE = {
     guard: next((m, p) for m, p in ROUTES if EXPECTED[(m, p)] == guard)
-    for guard in (STUDENT, PARENT, TEACHER, SCHOOL_ADMIN, TEACHER_OR_SCHOOL_ADMIN, STAFF)
+    for guard in (
+        STUDENT,
+        PARENT,
+        TEACHER,
+        SCHOOL_ADMIN,
+        TEACHER_OR_SCHOOL_ADMIN,
+        STAFF,
+        STUDENT_OR_PARENT,
+    )
 }
 _REAL_TOKEN_CASES = [
     (method, path, role)
@@ -558,10 +586,11 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     # `/api/auth/otp/*` routes, plus spec §4's three `/api/auth/parent/*`
     # routes, plus issue #10's verify-email, password-reset/request,
     # password-reset/confirm) + /api/health + invite preview + PR 1 chunk C's
-    # client-error sink.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 12
+    # client-error sink + the three public tutoring routes (P1 directory, P2
+    # card, P3 areas).
+    assert len(_NON_PUBLIC) == len(ROUTES) - 15
     assert len(_ROLE_GATED) > 300
-    assert len(_REPRESENTATIVE) == 6
+    assert len(_REPRESENTATIVE) == 7
     assert len(_REAL_TOKEN_CASES) >= 20
 
 

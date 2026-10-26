@@ -385,6 +385,7 @@ module = [
   "lemely.web.schemas_widget",
   "lemely.web.schemas_tutoring",
   "lemely.web.schemas_tutoring_admin",
+  "lemely.io.notify_email",
   # httpx `.json()` and pyjwt `decode()` return Any at the trust boundary; these
   # modules parse those payloads defensively into typed dataclasses/Claims.
   "lemely.auth.gotrue",
@@ -471,6 +472,8 @@ source_modules = [
   "lemely.core.tutor_directory",
   "lemely.core.tutor_ratings",
   "lemely.core.booking",
+  "lemely.core.tutor_grants",
+  "lemely.core.tutor_outcomes",
 ]
 forbidden_modules = [
   "lemely.db",
