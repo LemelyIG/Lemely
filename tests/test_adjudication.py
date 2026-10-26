@@ -5,12 +5,15 @@ from __future__ import annotations
 import tempfile
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from lemely.core.binding import BindingCheck, BindingReport
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import CorrectedQuestion, CorrectionResult, ExamMetadata
 from lemely.io import adjudication as adj
 from lemely.io.gemini import GeminiClient, _reset_process_counters, record_calls, script_cost_scope
 from lemely.io.model_table import configured_models
+from lemely.runtime.errors import CostCeilingError, ExternalServiceError
 from tests.test_anthropic_adapter import _FakeAnthropic, _image, _message, _settings
 
 _SONNET = "claude-sonnet-5-5"
@@ -303,3 +306,53 @@ def test_a_magicmock_settings_object_is_off() -> None:
     )
     client.generate_structured.assert_not_called()
     assert out.questions[0].awarded_marks == 1
+
+
+def test_a_failed_adjudication_call_flags_that_leaf_and_the_paper_completes() -> None:
+    client, _ = _client()
+    real = client.generate_structured
+    calls: list[str] = []
+
+    def flaky(**kwargs: object) -> object:
+        calls.append(str(kwargs["question_id"]))
+        if kwargs["question_id"] == "1a":
+            raise ExternalServiceError("provider down: student said F = 6 N")
+        return real(**kwargs)  # type: ignore[arg-type]
+
+    result = _result(_cq("1a", 0.5), _cq("2a", 0.6))
+    with (
+        patch.object(client, "generate_structured", side_effect=flaky),
+        patch.object(adj, "crop_and_upscale", return_value=_image(40, 40)),
+    ):
+        out = adj.adjudicate(
+            result,
+            scheme=_SCHEME,
+            extracted=_extracted(),
+            pages=[MagicMock()],
+            client=client,
+            review_threshold=0.90,
+        )
+    assert calls == ["1a", "2a"]
+    failed, adjudicated = out.questions
+    assert failed.awarded_marks == 1 and failed.needs_teacher_review is True
+    assert "adjudication failed" in (failed.review_reason or "")
+    assert adjudicated.awarded_marks == 2 and "adjudication failed" not in (
+        adjudicated.review_reason or ""
+    )
+
+
+def test_a_cost_ceiling_during_adjudication_still_propagates() -> None:
+    client, _ = _client()
+    with (
+        patch.object(client, "generate_structured", side_effect=CostCeilingError("cap")),
+        patch.object(adj, "crop_and_upscale", return_value=_image(40, 40)),
+        pytest.raises(CostCeilingError),
+    ):
+        adj.adjudicate(
+            _result(_cq("1a", 0.5)),
+            scheme=_SCHEME,
+            extracted=_extracted(),
+            pages=[MagicMock()],
+            client=client,
+            review_threshold=0.90,
+        )

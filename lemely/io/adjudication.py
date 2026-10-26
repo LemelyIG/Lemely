@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from lemely.core.schemas import CorrectionResult, confidence_band_for_score
 from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD, crop_and_upscale
+from lemely.runtime.errors import CostCeilingError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -41,6 +42,7 @@ VERSION = "adjudication-v1"
 #: The reason ``correction_ai`` writes when confidence alone sends a leaf to review.
 _CONFIDENCE_REASON = re.compile(r"^confidence \d+(?:\.\d+)? below review threshold \d+(?:\.\d+)?$")
 _REASON_JOIN = " | "
+_FAILED_REASON = "adjudication failed"
 #: Same pattern as ``lemely.io.prompts.correction_ai._DRAWING_DESCRIPTION`` (pinned by a test).
 _DRAWING = re.compile(r"(?<![A-Za-z])Drawing:")
 
@@ -274,26 +276,44 @@ def adjudicate(
     for qid in ids:
         first = next(q for q in result.questions if q.question_id == qid)
         question = by_question.get(qid)
-        crops = _crops(answers.get(qid), pages)
-        if question is None or not crops:
-            log.info("adjudication_skipped", question_id=qid, reason="no crop or no scheme leaf")
+        try:
+            crops = _crops(answers.get(qid), pages)
+            if question is None or not crops:
+                log.info(
+                    "adjudication_skipped", question_id=qid, reason="no crop or no scheme leaf"
+                )
+                continue
+            reply = client.generate_structured(
+                system_prompt=SYSTEM_PROMPT,
+                user_prompt=_leaf_prompt(
+                    question,
+                    first,
+                    drawing=qid in drawing_set or (qid in reread_set and qid in full_drawing),
+                    reread=(answers[qid].answer_reread or "") if qid in reread_set else None,
+                ),
+                image_parts=crops,
+                response_schema=AdjudicationReply,
+                prompt_version=VERSION,
+                model=model,
+                task_tag=ADJUDICATION_TASK_TAG,
+                question_id=qid,
+                extra_cache_key=f"q={qid}:adjudicated",
+            )
+        except CostCeilingError:
+            raise
+        except Exception as exc:
+            # An optional refinement must not cost the paper: keep the first mark and
+            # send the leaf to a teacher. The type only is logged (no student text).
+            log.warning("adjudication_failed", question_id=qid, error_type=type(exc).__name__)
+            settled[qid] = first.model_copy(
+                update={
+                    "needs_teacher_review": True,
+                    "review_reason": _REASON_JOIN.join(
+                        [*filter(None, [first.review_reason]), _FAILED_REASON]
+                    ),
+                }
+            )
             continue
-        reply = client.generate_structured(
-            system_prompt=SYSTEM_PROMPT,
-            user_prompt=_leaf_prompt(
-                question,
-                first,
-                drawing=qid in drawing_set or (qid in reread_set and qid in full_drawing),
-                reread=(answers[qid].answer_reread or "") if qid in reread_set else None,
-            ),
-            image_parts=crops,
-            response_schema=AdjudicationReply,
-            prompt_version=VERSION,
-            model=model,
-            task_tag=ADJUDICATION_TASK_TAG,
-            question_id=qid,
-            extra_cache_key=f"q={qid}:adjudicated",
-        )
         settled[qid] = _settled(first, reply, model=model, review_threshold=review_threshold)
         log.info(
             "adjudication",
