@@ -124,3 +124,37 @@ describe("design rules in the new components", () => {
     }
   })
 })
+
+describe("pre-emit critique stamps", () => {
+  // `hallmarkStamp.test.ts` checks that a stamp exists and scores 3 or better. It
+  // cannot tell a critique from a copy, so this reads each stamp's own line: the
+  // six scores, then a rationale saying what was checked in THIS file.
+  const LINE = /^\/\* Hallmark · pre-emit critique: (P[1-5] H[1-5] E[1-5] S[1-5] R[1-5] V[1-5]) — (.+) \*\/$/
+
+  const stamps = OWNED_COMPONENTS.map((file) => {
+    const first = readFileSync(join(WEB, "src", file), "utf8").split("\n", 1)[0]
+    return { file, match: LINE.exec(first), first }
+  })
+
+  it("every new component carries a stamp with a rationale on its first line", () => {
+    for (const { file, match, first } of stamps) {
+      expect(match, `${file}: ${first}`).not.toBeNull()
+      expect(match?.[2].length ?? 0, `${file}: rationale too short`).toBeGreaterThanOrEqual(40)
+    }
+  })
+
+  it("no two components share a rationale, and the scores are not one stamp copied around", () => {
+    const rationales = stamps.map((s) => s.match?.[2])
+    expect(new Set(rationales).size).toBe(stamps.length)
+    const scores = stamps.map((s) => s.match?.[1])
+    expect(new Set(scores).size).toBeGreaterThanOrEqual(5)
+  })
+
+  it("scores every axis at 3 or better, as the stamp gate requires", () => {
+    for (const { file, match } of stamps) {
+      for (const axis of (match?.[1] ?? "").split(" ")) {
+        expect(Number(axis.slice(1)), `${file}: ${axis}`).toBeGreaterThanOrEqual(3)
+      }
+    }
+  })
+})

@@ -1,17 +1,21 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S3 R3 V3 — fixed lines kept word for word; the frozen banner, composer, parents line and report line stack densely, and it has not been seen in a browser. */
 import { useState, type ReactNode } from "react"
 import { EyeSlash, Flag, PauseCircle } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { SkeletonBlock } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
-import { TUTORING_ERROR_COPY } from "@/lib/tutoring/apiErrors"
+import { TUTORING_ERROR_COPY, isTutoringError } from "@/lib/tutoring/apiErrors"
 import {
+  NOTES_CONTACT_DETAILS_MESSAGE,
   NOTES_FIXED_LINE,
   NOTES_FROZEN_LINE,
   NOTES_HIDDEN_PLACEHOLDER,
   NOTES_TUTOR_PARENTS_LINE,
+  notesComposerState,
   safetyActionError,
+  sendNoteDraft,
+  type NotesViewer,
 } from "@/lib/tutoring/safetyNoticeCopy"
 import { formatTutorInstant } from "@/lib/tutoring/slotGroups"
 import { cn } from "@/lib/utils"
@@ -37,10 +41,17 @@ import type { Note } from "@/lib/tutoringTypes"
  *     student or tutor is told that, in the API's own words.
  *   - The fixed lines are the SPEC's: the report line always, and for a tutor
  *     composer "This student's parents can read these notes." (SC-9).
+ *   - What the foot of the thread shows (composer, parents line, frozen line,
+ *     closed line) is decided by `notesComposerState`, which is tested; this file
+ *     only draws it. The draft is cleared when `onPost` resolves and kept when
+ *     it rejects (`sendNoteDraft`).
  *
  * The first-note safety notice (C-24) is the screen's to show before it mounts a
- * student's composer. A contact-details refusal is worded for notes here (the
- * generic sentence points people at the notes, which would be circular).
+ * student's composer. A refused contact detail is worded for notes here, with
+ * `NOTES_CONTACT_DETAILS_MESSAGE`: the sentence every other free-text screen
+ * shows points people at the session notes, which would be circular in the
+ * notes themselves. Only that refusal sits on the field; any other failure is
+ * an alert line under it.
  */
 
 const SENT_FALLBACK = "We couldn't send your note. Try again."
@@ -48,7 +59,7 @@ const SENT_FALLBACK = "We couldn't send your note. Try again."
 export interface NotesThreadProps {
   notes: readonly Note[]
   /** Who is looking. A parent reads and reports; they never write. */
-  viewer: "student" | "tutor" | "parent"
+  viewer: NotesViewer
   /** `NotesPage.canPost`, as the API computed it for this viewer. */
   canPost: boolean
   /** `Booking.notesFrozen`. */
@@ -56,8 +67,11 @@ export interface NotesThreadProps {
   /** The tutor's zone and its label, for the time on each note. */
   zone: string
   zoneLabel: string
-  /** Sends a note. Return the promise so the box keeps the text if it fails. */
-  onPost?: (body: string) => void | Promise<unknown>
+  /**
+   * Sends a note. It must return the promise (`mutateAsync`, not `mutate`): the
+   * box clears when it resolves and keeps the author's text when it rejects.
+   */
+  onPost?: (body: string) => Promise<unknown>
   posting?: boolean
   /** The error from the last post, as the hook gave it. */
   postError?: unknown
@@ -94,18 +108,17 @@ export function NotesThread({
 }: NotesThreadProps) {
   const [draft, setDraft] = useState("")
   const trimmed = draft.trim()
-  const composerOpen = canPost && !frozen && viewer !== "parent" && onPost !== undefined
+  const foot = notesComposerState({ viewer, canPost, frozen, loading, canSend: onPost !== undefined })
 
-  const errorText = safetyActionError(postError, SENT_FALLBACK)
+  const errorText = safetyActionError(postError, SENT_FALLBACK, NOTES_CONTACT_DETAILS_MESSAGE)
+  // The refusal is about what was typed, so it sits on the field. A busy server
+  // or a closed thread is not, and is told apart in an alert line.
+  const contactRefused = isTutoringError(postError, "contact_details_not_allowed")
 
   async function send() {
     if (!onPost || trimmed.length === 0 || posting) return
-    try {
-      await onPost(trimmed)
-      setDraft("")
-    } catch {
-      // The hook reports the failure through `postError`; the text stays in the box.
-    }
+    // The hook reports a failure through `postError`; a refused post keeps the text.
+    if (await sendNoteDraft(onPost, trimmed)) setDraft("")
   }
 
   return (
@@ -169,7 +182,7 @@ export function NotesThread({
         </div>
       ) : null}
 
-      {frozen ? (
+      {foot.frozenLine ? (
         <p
           role="status"
           className="m-0 flex items-start gap-2 rounded-md border border-rule bg-info-wash px-3 py-2.5 text-body-sm text-ink"
@@ -179,7 +192,7 @@ export function NotesThread({
         </p>
       ) : null}
 
-      {composerOpen ? (
+      {foot.composer ? (
         <form
           className="flex flex-col gap-2"
           onSubmit={(event) => {
@@ -194,11 +207,16 @@ export function NotesThread({
             rows={3}
             autoResize
             onChange={(event) => setDraft(event.target.value)}
-            error={errorText ?? undefined}
+            error={contactRefused ? (errorText ?? undefined) : undefined}
           />
+          {errorText && !contactRefused ? (
+            <p role="alert" className="m-0 text-body-sm text-err">
+              {errorText}
+            </p>
+          ) : null}
           {/* Always shown with a tutor's composer, error or not (SC-9), so it is
               a line of its own rather than the field's hint, which an error replaces. */}
-          {viewer === "tutor" ? (
+          {foot.tutorParentsLine ? (
             <p className="m-0 text-body-sm text-ink-muted">{NOTES_TUTOR_PARENTS_LINE}</p>
           ) : null}
           <div className="flex justify-end">
@@ -207,7 +225,7 @@ export function NotesThread({
             </Button>
           </div>
         </form>
-      ) : !frozen && viewer !== "parent" && !loading && !canPost ? (
+      ) : foot.closedLine ? (
         <p className="m-0 text-body-sm text-ink-muted">{TUTORING_ERROR_COPY.notes_closed}</p>
       ) : null}
 

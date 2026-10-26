@@ -27,7 +27,7 @@ export type BookingStatusIcon =
   | "XCircle"
   | "Prohibit"
   | "UserMinus"
-  | "ClockCountdown"
+  | "CalendarX"
 
 export type BookingStatusTone = "info" | "ok" | "warn" | "neutral"
 
@@ -57,7 +57,7 @@ export const BOOKING_STATUS: Record<EffectiveState, BookingStatus> = {
   declined: { label: "Declined", icon: "XCircle", tone: "neutral" },
   cancelled: { label: "Cancelled", icon: "Prohibit", tone: "neutral" },
   no_show: { label: "No-show", icon: "UserMinus", tone: "warn" },
-  expired: { label: "Expired", icon: "ClockCountdown", tone: "neutral" },
+  expired: { label: "Expired", icon: "CalendarX", tone: "neutral" },
 }
 
 export function bookingStatusOf(state: EffectiveState): BookingStatus {

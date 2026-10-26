@@ -6,6 +6,7 @@ import {
   GRADE_CHANGE_TITLE,
   gradeChangeAriaLabel,
   gradeChangeCaption,
+  gradeChangeHidden,
   gradeChangeTableRows,
   layoutGradeChange,
 } from "@/lib/tutoring/gradeChange"
@@ -103,6 +104,81 @@ describe("text alternative", () => {
     expect(gradeChangeCaption(8)).toContain("8 students")
     expect(gradeChangeCaption(1)).toContain("1 student")
     expect(gradeChangeCaption(1)).not.toContain("1 students")
+  })
+})
+
+describe("gradeChangeHidden", () => {
+  const sufficient = (nPaired: number | null, k = 5, counts = { lower: 0, same: 0, higher: 0 }) => ({
+    state: "sufficient" as const,
+    k,
+    nPaired,
+    ...counts,
+  })
+
+  it("is hidden when the server says insufficient", () => {
+    expect(
+      gradeChangeHidden({ state: "insufficient", k: 5, nPaired: null, lower: null, same: null, higher: null }),
+    ).toBe(true)
+  })
+
+  it("is hidden when the server says sufficient but fewer than k students are paired", () => {
+    expect(gradeChangeHidden(sufficient(4, 5, { lower: 1, same: 1, higher: 2 }))).toBe(true)
+    expect(gradeChangeHidden(sufficient(0))).toBe(true)
+  })
+
+  it("is shown at exactly k and above", () => {
+    expect(gradeChangeHidden(sufficient(5, 5, { lower: 1, same: 1, higher: 3 }))).toBe(false)
+  })
+
+  it("falls back to the three counts when nPaired is missing", () => {
+    expect(gradeChangeHidden(sufficient(null, 5, { lower: 1, same: 1, higher: 1 }))).toBe(true)
+    expect(gradeChangeHidden(sufficient(null, 5, { lower: 2, same: 2, higher: 1 }))).toBe(false)
+  })
+})
+
+describe("hidden state never shows counts", () => {
+  it("the component decides before it lays anything out, and the hidden branch reads only k", () => {
+    const source = stripComments(
+      readFileSync(
+        join(import.meta.dirname, "..", "..", "src", "components", "ui", "grade-change-summary.tsx"),
+        "utf8",
+      ),
+    )
+    const guard = source.indexOf("if (gradeChangeHidden(")
+    const layoutAt = source.indexOf("const layout = layoutGradeChange(change)")
+    expect(guard).toBeGreaterThan(-1)
+    expect(layoutAt).toBeGreaterThan(guard)
+    const hiddenBranch = source.slice(guard, layoutAt)
+    expect(hiddenBranch).toContain("insufficientResultsBody(change.k)")
+    expect(hiddenBranch).not.toMatch(/nPaired|\.lower|\.same|\.higher|\.count|layout|parts/)
+  })
+})
+
+describe("component source (C-18), no colour-only encoding", () => {
+  const source = stripComments(
+    readFileSync(
+      join(import.meta.dirname, "..", "..", "src", "components", "ui", "grade-change-summary.tsx"),
+      "utf8",
+    ),
+  )
+
+  it("ties each segment of the bar to its icon, label and count with a swatch of the segment's own fill", () => {
+    expect(source).toContain("partSwatch")
+    // Every swatch class is the segment's fill under a background name.
+    expect(source).toMatch(/lower: "bg-rule-strong"/)
+    expect(source).toMatch(/same: "bg-ink-faint"/)
+    expect(source).toMatch(/higher: "bg-ink-muted"/)
+    expect(source).toMatch(/lower: "fill-rule-strong"/)
+    expect(source).toMatch(/same: "fill-ink-faint"/)
+    expect(source).toMatch(/higher: "fill-ink-muted"/)
+  })
+
+  it("keeps the icon, the word and the count in the same item as the swatch", () => {
+    const item = source.slice(source.indexOf("layout.parts.map((part) => {"), source.indexOf("<figcaption"))
+    expect(item).toContain("partSwatch[part.key]")
+    expect(item).toContain("<PartIcon")
+    expect(item).toContain("part.label")
+    expect(item).toContain("part.count")
   })
 })
 

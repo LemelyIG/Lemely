@@ -7,15 +7,20 @@ import {
   CONTACT_DETAILS_MESSAGE,
   NOTES_FIXED_LINE,
   NOTES_FROZEN_LINE,
+  NOTES_CONTACT_DETAILS_MESSAGE,
   NOTES_HIDDEN_PLACEHOLDER,
   NOTES_TUTOR_PARENTS_LINE,
+  REPORT_DETAILS_MAX,
   REPORT_REASONS,
   SAFETY_NOTICE_BUTTON,
   SAFETY_NOTICE_PARAGRAPHS,
   SAFETY_NOTICE_TITLE,
   blockCopy,
+  notesComposerState,
   reportReasonsFor,
+  reportShowsHelpline,
   safetyActionError,
+  sendNoteDraft,
 } from "@/lib/tutoring/safetyNoticeCopy"
 
 /*
@@ -87,8 +92,127 @@ describe("C-21 fixed lines", () => {
 })
 
 describe("contact details refusal", () => {
+  const refused = (): ApiError =>
+    new ApiError(422, "HTTP 422", { code: "contact_details_not_allowed", message: "x" })
+
   it("is the sentence SPEC section d prescribes", () => {
     expect(SPEC).toContain(`"${CONTACT_DETAILS_MESSAGE}"`)
+  })
+
+  it("has a notes variant that is that sentence without its pointer to the notes", () => {
+    expect(NOTES_CONTACT_DETAILS_MESSAGE).not.toBe(CONTACT_DETAILS_MESSAGE)
+    expect(CONTACT_DETAILS_MESSAGE.startsWith(NOTES_CONTACT_DETAILS_MESSAGE)).toBe(true)
+    expect(NOTES_CONTACT_DETAILS_MESSAGE).not.toMatch(/notes/i)
+  })
+
+  it("a safety sheet shows the SPEC sentence for a refused contact detail", () => {
+    expect(safetyActionError(refused(), "fallback")).toBe(CONTACT_DETAILS_MESSAGE)
+  })
+
+  it("the notes composer's variant replaces it, and only for that code", () => {
+    expect(safetyActionError(refused(), "fallback", NOTES_CONTACT_DETAILS_MESSAGE)).toBe(
+      NOTES_CONTACT_DETAILS_MESSAGE,
+    )
+    const other = new ApiError(409, "HTTP 409", { code: "report_exists", message: "x" })
+    expect(safetyActionError(other, "fallback", NOTES_CONTACT_DETAILS_MESSAGE)).toBe(
+      "You have already reported this.",
+    )
+  })
+})
+
+describe("C-21 foot of the thread", () => {
+  const base = { viewer: "student", canPost: true, frozen: false, loading: false, canSend: true } as const
+
+  it("a frozen thread has no composer, whoever is looking and whatever the API allows", () => {
+    for (const viewer of ["student", "tutor", "parent"] as const) {
+      const state = notesComposerState({ ...base, viewer, frozen: true })
+      expect(state.composer, viewer).toBe(false)
+      expect(state.tutorParentsLine, viewer).toBe(false)
+      expect(state.frozenLine, viewer).toBe(true)
+    }
+  })
+
+  it("the parents-can-read line goes with a tutor's composer and with nobody else's", () => {
+    expect(notesComposerState({ ...base, viewer: "tutor" })).toMatchObject({
+      composer: true,
+      tutorParentsLine: true,
+    })
+    expect(notesComposerState({ ...base, viewer: "student" })).toMatchObject({
+      composer: true,
+      tutorParentsLine: false,
+    })
+    expect(notesComposerState({ ...base, viewer: "parent" })).toMatchObject({
+      composer: false,
+      tutorParentsLine: false,
+    })
+  })
+
+  it("the line is tied to the composer: a tutor who cannot post sees no line about parents", () => {
+    const state = notesComposerState({ ...base, viewer: "tutor", canPost: false })
+    expect(state.composer).toBe(false)
+    expect(state.tutorParentsLine).toBe(false)
+    expect(state.closedLine).toBe(true)
+  })
+
+  it("a parent never gets a composer or a closed-notes line, only the thread", () => {
+    expect(notesComposerState({ ...base, viewer: "parent", canPost: false })).toEqual({
+      composer: false,
+      tutorParentsLine: false,
+      frozenLine: false,
+      closedLine: false,
+    })
+  })
+
+  it("a thread with no way to post shows no composer and no closed line when posting is allowed", () => {
+    expect(notesComposerState({ ...base, canSend: false })).toMatchObject({
+      composer: false,
+      closedLine: false,
+    })
+  })
+
+  it("keeps the author's words when a post is refused, and lets them go when it succeeds", async () => {
+    await expect(sendNoteDraft(() => Promise.resolve("ok"), "hello")).resolves.toBe(true)
+    await expect(sendNoteDraft(() => Promise.reject(new Error("refused")), "hello")).resolves.toBe(false)
+  })
+
+  it("hands the post the text it was given", async () => {
+    const seen: string[] = []
+    await sendNoteDraft((body) => {
+      seen.push(body)
+      return Promise.resolve()
+    }, "a note")
+    expect(seen).toEqual(["a note"])
+  })
+})
+
+describe("report details limit", () => {
+  const migration = readFileSync(
+    join(import.meta.dirname, "..", "..", "..", "lemely", "db", "migrations", "versions", "0050_tutoring_safety.py"),
+    "utf8",
+  )
+  const model = readFileSync(
+    join(import.meta.dirname, "..", "..", "..", "lemely", "db", "models", "tutoring.py"),
+    "utf8",
+  )
+
+  it("is the limit of ck_tutoring_reports_details_len in migration 0050", () => {
+    const limit = /char_length\(details\) <= (\d+)",\s*name=op\.f\("ck_tutoring_reports_details_len"\)/.exec(migration)?.[1]
+    expect(limit).toBeDefined()
+    expect(REPORT_DETAILS_MAX).toBe(Number(limit))
+  })
+
+  it("is the limit the model's CHECK states", () => {
+    const limit = /char_length\(details\) <= (\d+)", name="details_len"/.exec(model)?.[1]
+    expect(limit).toBeDefined()
+    expect(REPORT_DETAILS_MAX).toBe(Number(limit))
+  })
+
+  it("shows the helpline beside a safety concern and on its receipt, and for nothing else", () => {
+    expect(reportShowsHelpline("safety_concern")).toBe(true)
+    expect(reportShowsHelpline(null)).toBe(false)
+    for (const reason of REPORT_REASONS.map((r) => r.value).filter((v) => v !== "safety_concern")) {
+      expect(reportShowsHelpline(reason), reason).toBe(false)
+    }
   })
 })
 
@@ -146,6 +270,40 @@ describe("block copy", () => {
     expect(lines).not.toMatch(/you leave/i)
   })
 
+  // What a block removes is the SPEC's own list (section a.2, "tutoring_blocks"):
+  // the live grant and the school-less enrolments. School classes are untouched.
+  const BLOCK_ROW = SPEC.split("\n").find((line) => line.includes("Effects of a new or renewed block")) ?? ""
+
+  it("finds the SPEC's list of what a block deletes", () => {
+    expect(BLOCK_ROW).toContain("revoke the live grant")
+    expect(BLOCK_ROW).toContain("classes.school_id IS NULL")
+    expect(SPEC).toContain("so they still see your class progress there")
+  })
+
+  it("does not say a block ends all sight of the student's progress: school classes keep theirs", () => {
+    const student = blockCopy("student", "X").effects
+    const sight = student.find((line) => /seeing your progress/i.test(line)) ?? ""
+    expect(sight).toContain("through Lemely's tutoring pages")
+    expect(sight).toContain("If they teach one of your school classes, they still see your progress there.")
+
+    const tutor = blockCopy("tutor", "X").effects
+    const tutorSight = tutor.find((line) => /seeing their progress/i.test(line)) ?? ""
+    expect(tutorSight).toContain("through Lemely's tutoring pages")
+    expect(tutorSight).toContain("If they are in one of your school classes, you still see their progress there.")
+  })
+
+  it("never claims the sight stops outright", () => {
+    for (const viewer of ["student", "tutor"] as const) {
+      const lines = blockCopy(viewer, "X").effects.join(" ")
+      expect(lines).not.toMatch(/(?:They|You) stop seeing (?:your|their) progress[,.]/)
+    }
+  })
+
+  it("tells a student their grades stop counting, which a student's own block does and a tutor's does not", () => {
+    expect(blockCopy("student", "X").effects).toContain("Your grades stop counting in their results.")
+    expect(blockCopy("tutor", "X").effects.join(" ")).not.toMatch(/grades/i)
+  })
+
   it("says unblocking restores nothing, as route B3 does", () => {
     for (const viewer of ["student", "tutor"] as const) {
       expect(blockCopy(viewer, "X").effects.at(-1)).toMatch(/unblock/i)
@@ -170,6 +328,8 @@ describe("copy rule", () => {
       NOTES_TUTOR_PARENTS_LINE,
       NOTES_FROZEN_LINE,
       NOTES_HIDDEN_PLACEHOLDER,
+      CONTACT_DETAILS_MESSAGE,
+      NOTES_CONTACT_DETAILS_MESSAGE,
       ...REPORT_REASONS.map((r) => r.label),
       ...blockCopy("student", "X").effects,
       ...blockCopy("tutor", "X").effects,
@@ -207,6 +367,52 @@ describe("component sources", () => {
     expect(source).toContain("hideCloseButton")
     expect(source).toContain("onAcknowledge")
     expect(source).toContain("SAFETY_NOTICE_PARAGRAPHS")
+  })
+
+  it("C-24 sheet puts the five paragraphs in the Modal's description, so a screen reader hears them before the button", () => {
+    const source = read("components", "ui", "safety-notice-sheet.tsx")
+    const description = source.indexOf("description={")
+    const paragraphs = source.indexOf("SAFETY_NOTICE_PARAGRAPHS.map")
+    const footer = source.indexOf("footer={")
+    expect(description).toBeGreaterThan(-1)
+    expect(paragraphs).toBeGreaterThan(description)
+    expect(footer).toBeGreaterThan(paragraphs)
+  })
+
+  it("C-21 asks the shared rules what to show and wires the notes variant of the contact-details refusal", () => {
+    const source = read("components", "ui", "notes-thread.tsx")
+    expect(source).toContain("notesComposerState(")
+    expect(source).toContain("sendNoteDraft(")
+    expect(source).toContain("NOTES_CONTACT_DETAILS_MESSAGE")
+    expect(source).toMatch(/onPost\?: \(body: string\) => Promise<unknown>/)
+    // The line about parents is drawn from the rule, never from the viewer directly.
+    expect(source).toMatch(/\.tutorParentsLine\s*\?/)
+    expect(source).not.toMatch(/viewer === "tutor"/)
+  })
+
+  it("C-21 shows a refused contact detail on the field and any other failure as an alert", () => {
+    const source = read("components", "ui", "notes-thread.tsx")
+    expect(source).toContain('isTutoringError(postError, "contact_details_not_allowed")')
+    expect(source).toContain('role="alert"')
+  })
+
+  it("every other free-text sheet keeps the SPEC sentence: none overrides it", () => {
+    for (const file of ["report-sheet.tsx", "block-sheet.tsx"]) {
+      const source = read("components", "tutoring", file)
+      expect(source, file).not.toContain("NOTES_CONTACT_DETAILS_MESSAGE")
+    }
+    expect(read("components", "ui", "safety-notice-sheet.tsx")).not.toContain("NOTES_CONTACT_DETAILS_MESSAGE")
+  })
+
+  it("the report sheet reports a failure in an alert, not on the optional field, and keeps the helpline on its receipt", () => {
+    const source = read("components", "tutoring", "report-sheet.tsx")
+    expect(source).toContain('role="alert"')
+    const textarea = source.slice(source.indexOf("<Textarea"), source.indexOf("/>", source.indexOf("<Textarea")))
+    expect(textarea).not.toMatch(/\berror=/)
+    expect(source.match(/reportShowsHelpline\(/g)?.length).toBeGreaterThanOrEqual(2)
+    // The receipt (the `sent` view) comes first in the file and must carry the line too.
+    const receipt = source.slice(source.indexOf("if (sent)"), source.indexOf("const trimmed"))
+    expect(receipt).toContain("HELPLINE_LINE")
   })
 
   it("the report and block sheets live in components/tutoring and use the shared Modal", () => {

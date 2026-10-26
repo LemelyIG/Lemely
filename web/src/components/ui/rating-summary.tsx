@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* Hallmark · pre-emit critique: P4 H4 E5 S4 R5 V3 — one star and a number, never five stars; the sentence label is read once and the glyph is hidden from assistive technology. */
 import { Star } from "@phosphor-icons/react"
 import { Chip } from "@/components/ui/chip"
 import { cn } from "@/lib/utils"

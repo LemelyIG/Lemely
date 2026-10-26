@@ -1,9 +1,15 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V3 */
-import { useId, useState } from "react"
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R3 V3 — native radios keep arrow keys honest; execution is a 3 because the refetch and clock-change paths are reasoned and unit-tested, not yet seen in a browser. */
+import { useEffect, useId, useRef, useState } from "react"
 import { Check } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { SkeletonBlock } from "@/components/ui/skeleton"
-import { dayChipSummary, groupSlotsByDay, windowDays } from "@/lib/tutoring/slotGroups"
+import {
+  dayChipSummary,
+  groupSlotsByDay,
+  isSelectionStale,
+  resolveActiveDay,
+  windowDays,
+} from "@/lib/tutoring/slotGroups"
 import type { Slot, Slots } from "@/lib/tutoringTypes"
 
 /*
@@ -19,7 +25,14 @@ import type { Slot, Slots } from "@/lib/tutoringTypes"
  * Choosing does not hide the others. A day with no times is still a chip, says
  * "No times", and shows "No times on this day." when chosen, so a gap in the
  * tutor's week is visible rather than silently skipped. Whatever is selected is
- * marked with a check as well as colour, and repeated in words under the picker.
+ * marked with a check as well as colour, on the day chip and on the time, and
+ * repeated in words under the picker.
+ *
+ * The slots can change under a chosen time (a refetch, or someone else booked
+ * it). Then the chosen time is dropped and the screen is told with
+ * `onChange(null)`, so a request is never sent for a time that is no longer
+ * offered; a chosen time that is still offered is kept, and so is the day the
+ * student was looking at while that day is still in the window.
  *
  * Grouping, ordering, the repeated hour when the clocks go back, and every
  * label come from `lib/tutoring/slotGroups.ts`; this file does no date
@@ -36,7 +49,8 @@ export interface SlotPickerProps {
   slots: Slots | undefined
   /** `startsAt` of the chosen slot, or null. */
   value: string | null
-  onChange: (slot: Slot) => void
+  /** The chosen slot, or null when the chosen time is no longer offered. */
+  onChange: (slot: Slot | null) => void
   loading?: boolean
   disabled?: boolean
   /** Why the picker is disabled, in words ("You're offline."). */
@@ -62,6 +76,17 @@ export function SlotPicker({
 }: SlotPickerProps) {
   const id = useId()
   const [chosenDay, setChosenDay] = useState<string | null>(null)
+
+  // While a refetch is in flight the old slots may still be here: judge only
+  // settled data, or a slow refetch would drop a time that is about to be offered again.
+  const stale = !loading && slots !== undefined && isSelectionStale(value, slots.slots)
+  const onChangeRef = useRef(onChange)
+  useEffect(() => {
+    onChangeRef.current = onChange
+  })
+  useEffect(() => {
+    if (stale) onChangeRef.current(null)
+  }, [stale, value])
 
   if (loading || !slots) {
     return (
@@ -95,7 +120,12 @@ export function SlotPicker({
   const selected = value ? withTimes.flatMap((d) => d.slots).find((s) => s.startsAt === value) : undefined
   const dayOfValue = selected ? withTimes.find((d) => d.slots.includes(selected))?.dayKey : undefined
   const firstWithTimes = days.find((d) => d.slots.length > 0)?.dayKey
-  const activeKey = chosenDay ?? dayOfValue ?? firstWithTimes ?? days[0]?.dayKey
+  const activeKey = resolveActiveDay(
+    days.map((d) => d.dayKey),
+    chosenDay,
+    dayOfValue,
+    firstWithTimes,
+  )
   const active = days.find((d) => d.dayKey === activeKey)
 
   if (slots.slots.length === 0) {
@@ -125,6 +155,12 @@ export function SlotPicker({
                 <span className="text-label">{day.chipLabel}</span>
                 <span className="text-body-sm text-ink-muted">{dayChipSummary(day.slots.length)}</span>
               </span>
+              <Check
+                size={14}
+                weight="bold"
+                aria-hidden
+                className="absolute end-1.5 top-1.5 hidden text-accent-ink peer-checked:block"
+              />
             </label>
           ))}
         </div>

@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S3 R4 V3 — the name's link covers the whole card and modes carry icon plus word; a generic directory card, so specificity is a 3. */
 import { DotsThreeCircle, MapPin, Users, VideoCamera, type Icon } from "@phosphor-icons/react"
 import { Link } from "react-router-dom"
 import { Card } from "@/components/ui/card"

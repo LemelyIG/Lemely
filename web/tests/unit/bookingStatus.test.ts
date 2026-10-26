@@ -78,9 +78,13 @@ describe("every effective state has an icon and text", () => {
   })
 
   it("aria-label is a phrase that names the state", () => {
-    expect(bookingStatusAriaLabel("awaiting_outcome")).toBe(
-      `Session status: ${BOOKING_STATUS.awaiting_outcome.label}`,
-    )
+    expect(bookingStatusAriaLabel("awaiting_outcome")).toBe("Session status: Awaiting outcome")
+    expect(bookingStatusAriaLabel("no_show")).toBe("Session status: No-show")
+  })
+
+  it("an expired request reads as a calendar date that passed, not as a running clock", () => {
+    expect(BOOKING_STATUS.expired.icon).toBe("CalendarX")
+    expect(Object.values(BOOKING_STATUS).map((s) => s.icon)).not.toContain("ClockCountdown")
   })
 
   it("labels avoid the words the tutoring copy rule bans", () => {
@@ -108,6 +112,7 @@ describe("component source (C-20)", () => {
   it("maps every icon name the pure module uses", () => {
     const names = new Set(Object.values(BOOKING_STATUS).map((s) => s.icon))
     for (const name of names) expect(read()).toContain(`${name}:`)
-    expect(names.size).toBe(8)
+    expect(names.size).toBe(SPEC_STATES.length)
+    expect(read()).not.toContain("ClockCountdown")
   })
 })

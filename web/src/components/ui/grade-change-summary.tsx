@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* Hallmark · pre-emit critique: P5 H4 E4 S4 R4 V3 — neutral ink ramp on purpose (a lower grade is not a mark against the tutor); each segment now has a swatch, icon, word and count beside it. */
 import { useId, useState } from "react"
 import { ArrowDown, ArrowUp, Equals, EyeSlash, type Icon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -10,6 +10,7 @@ import {
   GRADE_CHANGE_TITLE,
   gradeChangeAriaLabel,
   gradeChangeCaption,
+  gradeChangeHidden,
   gradeChangeTableRows,
   layoutGradeChange,
   type GradeChangeKey,
@@ -31,10 +32,14 @@ import type { OutcomeChange } from "@/lib/tutoringTypes"
  * grade-band colours and not green or red: a lower grade is a fact about a
  * student, not a mark against the tutor, and colouring it red would say
  * otherwise. Direction is carried by an arrow, an equals sign, and the words,
- * so the figure survives greyscale and a screen reader.
+ * so the figure survives greyscale and a screen reader. A swatch in each list
+ * item repeats its segment's fill, so the bar is read through the item and not
+ * through lightness alone.
  *
- * Empty parts stay listed with 0. Below the figure threshold it draws nothing
- * and says why (C-11 empty family). The same numbers are available as a table.
+ * Empty parts stay listed with 0. Below the figure threshold (the server's
+ * `insufficient`, or fewer than `k` students paired whatever the state says) it
+ * draws nothing and says why (C-11 empty family), with no count. The same
+ * numbers are available as a table.
  * Loading is a skeleton; error and offline belong to the fetching screen.
  */
 
@@ -51,6 +56,15 @@ const partFill: Record<GradeChangeKey, string> = {
   lower: "fill-rule-strong",
   same: "fill-ink-faint",
   higher: "fill-ink-muted",
+}
+
+/* The same three tokens as backgrounds: the swatch beside each part's icon, word
+   and count in the list, which is what ties a segment of the bar to its name.
+   Lightness alone never has to tell the segments apart. */
+const partSwatch: Record<GradeChangeKey, string> = {
+  lower: "bg-rule-strong",
+  same: "bg-ink-faint",
+  higher: "bg-ink-muted",
 }
 
 export interface GradeChangeSummaryProps {
@@ -87,7 +101,9 @@ export function GradeChangeSummary({
     )
   }
 
-  if (change.state === "insufficient") {
+  // Hidden on the server's say-so or on a paired count under k. This branch
+  // reads `k` and nothing else: no count of any part.
+  if (gradeChangeHidden(change)) {
     return (
       <div className={cn("flex flex-col gap-3", className)}>
         {title}
@@ -139,6 +155,10 @@ export function GradeChangeSummary({
           const PartIcon = partIcon[part.key]
           return (
             <li key={part.key} className="flex items-center gap-2 text-body-md text-ink">
+              <span
+                aria-hidden
+                className={cn("h-3 w-3 shrink-0 rounded-sm border border-rule-strong", partSwatch[part.key])}
+              />
               <PartIcon size={16} weight="bold" className="shrink-0 text-ink-muted" aria-hidden />
               <span>{part.label}</span>
               <span className="text-data-md">{part.count}</span>

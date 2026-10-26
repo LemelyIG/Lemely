@@ -158,6 +158,25 @@ export function distributionTableRows(layout: OrdinalLayout): string[][] {
   return layout.rungs.map((rung) => [rung.grade, String(rung.count)])
 }
 
+/**
+ * Whether the figure must be hidden. The server's `state` is the rule; the count
+ * is a second, independent guard: a figure that says "sufficient" but carries
+ * fewer than `k` graded students is hidden too, because drawing it would show
+ * the very small group the threshold exists to protect. When `nGraded` is
+ * missing the buckets are counted instead. A hidden figure shows `k` and no count.
+ */
+export function distributionHidden(distribution: {
+  state: "insufficient" | "sufficient"
+  k: number
+  nGraded: number | null
+  buckets: readonly OrdinalBucket[]
+}): boolean {
+  if (distribution.state === "insufficient") return true
+  const n =
+    distribution.nGraded ?? distribution.buckets.reduce((sum, bucket) => sum + Math.max(0, bucket.count), 0)
+  return n < distribution.k
+}
+
 /** The first sentence of S-34's insufficient-results copy. */
 export const INSUFFICIENT_RESULTS_HEADING = "Results are hidden for now"
 

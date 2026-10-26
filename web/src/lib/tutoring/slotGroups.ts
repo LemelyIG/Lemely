@@ -201,6 +201,31 @@ export function windowDays(
   return days
 }
 
+/**
+ * Whether the chosen time has gone from what the API now offers (a refetch, or
+ * someone else took it). Nothing chosen is never stale. The picker tells the
+ * screen with `onChange(null)`, so a request is never sent for a time that is
+ * no longer on offer.
+ */
+export function isSelectionStale(value: string | null, offered: readonly Slot[]): boolean {
+  return value !== null && !offered.some((slot) => slot.startsAt === value)
+}
+
+/**
+ * The day whose times are shown. The day the student chose stays while it is
+ * still in the window; otherwise the day of the chosen time, then the first day
+ * that has times, then the first day. A day a refetch removed cannot stay chosen.
+ */
+export function resolveActiveDay(
+  dayKeys: readonly string[],
+  chosen: string | null,
+  dayOfSelected: string | undefined,
+  firstWithTimes: string | undefined,
+): string | undefined {
+  if (chosen !== null && dayKeys.includes(chosen)) return chosen
+  return dayOfSelected ?? firstWithTimes ?? dayKeys[0]
+}
+
 /** The count line under a day chip. Words, so the chip never relies on colour. */
 export function dayChipSummary(count: number): string {
   if (count <= 0) return "No times"

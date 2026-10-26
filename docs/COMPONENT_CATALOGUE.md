@@ -190,7 +190,10 @@ in all of these files.
   `<table>` with a caption. The chart is `role="img"` with a full-sentence
   label that speaks every rung.
 - `state: "insufficient"` renders the C-11 compact empty state with S-34's copy,
-  `k` taken from the figure. Logic: `lib/tutoring/ordinalLayout.ts`.
+  `k` taken from the figure. So does a "sufficient" figure whose graded count
+  (`nGraded`, else the buckets) is under `k`: a second guard, so a bad payload
+  cannot show a small group. The hidden state shows `k` and never a count.
+  Logic: `lib/tutoring/ordinalLayout.ts` (`distributionHidden`).
 
 ## C-18 — Grade change summary
 `grade-change-summary.tsx` — `GradeChangeSummary({ change, headingAs, loading })`
@@ -199,8 +202,11 @@ in all of these files.
   table toggle. Title fixed in code ("Change in grade while with this tutor"),
   not a prop.
 - Neutral by design: a light-to-dark ink ramp, no grade-band, green or red
-  colour, so a lower grade is not drawn as a mark against the tutor.
-- Insufficient state as C-17. Logic: `lib/tutoring/gradeChange.ts`.
+  colour, so a lower grade is not drawn as a mark against the tutor. Each list
+  item pairs a swatch of its segment's fill with its icon, word and count, so
+  the segments are not told apart by lightness alone.
+- Insufficient state as C-17, including the second guard on `nPaired` under `k`.
+  Logic: `lib/tutoring/gradeChange.ts` (`gradeChangeHidden`).
 
 ## C-19 — Slot picker
 `slot-picker.tsx` — `SlotPicker({ slots, value, onChange, loading, disabled, disabledReason })`
@@ -209,8 +215,14 @@ in all of these files.
   tutor's calendar day in the tutor's zone, with the zone label in the legend;
   a day without times is still a chip ("No times") and shows "No times on this
   day." when chosen. A repeated hour when the clocks go back carries its UTC
-  offset, so no label stands for two instants. The chosen time shows a check
-  and is repeated in words. Logic: `lib/tutoring/slotGroups.ts`.
+  offset, so no label stands for two instants. The chosen day and the chosen
+  time each show a check, and the time is repeated in words.
+- `onChange` takes `Slot | null`: when a refetch no longer offers the chosen
+  time, the picker calls `onChange(null)` (judged only on settled data, not
+  while `loading`), so a request is never sent for a time that is gone. A time
+  still offered is kept, and so is the day being looked at while it is in the
+  window. Logic: `lib/tutoring/slotGroups.ts` (`isSelectionStale`,
+  `resolveActiveDay`).
 
 ## C-20 — Booking status
 `booking-status.tsx` — `BookingStatus({ state })`
@@ -227,7 +239,15 @@ in all of these files.
   one is reported."; a tutor's composer always adds "This student's parents can
   read these notes."; a frozen thread shows "Notes are paused while Lemely looks
   at a report." and no composer. A parent's thread is read-only but reportable.
-  Copy: `lib/tutoring/safetyNoticeCopy.ts`.
+  What the foot shows is decided by `notesComposerState` (tested), not by the
+  component. `onPost` must return a promise (`mutateAsync`): the box clears on
+  success and keeps the text on a rejection.
+- A refused contact detail reads "To keep everyone safe, keep contact details
+  off Lemely." in the composer (the SPEC §d sentence points at the session
+  notes, which would be circular here) and sits on the field; any other
+  failure is an alert line under it. Every other free-text sheet uses the SPEC
+  §d sentence. Copy: `lib/tutoring/safetyNoticeCopy.ts`
+  (`NOTES_CONTACT_DETAILS_MESSAGE`, `CONTACT_DETAILS_MESSAGE`).
 
 ## C-22 — Rating summary
 `rating-summary.tsx` — `RatingSummary({ rating })`
@@ -247,19 +267,26 @@ in all of these files.
 - The first-booking notice on `Modal`, not dismissible: no close control, no
   Escape, no scrim click; the one "I understand" button calls `onAcknowledge`
   (S15). Title, five paragraphs and button are fixed by the SPEC and parsed from
-  it by `safetyNotice.test.ts`.
+  it by `safetyNotice.test.ts`. The five paragraphs are the `Modal`
+  `description` (the dialog's `aria-describedby`), because `Modal` focuses the
+  button on open and a screen-reader user must hear the notice first.
 
 ## Report and block sheets (T15)
 - `web/src/components/tutoring/report-sheet.tsx` —
   `ReportSheet({ open, onClose, targetType, targetLabel, onSubmit, pending, error, sent })`.
   One sheet for every Report: reason (required, the seven `reportreason`
   values; the disputed outcome only on a booking), optional words (1000
-  characters, the database limit), the helpline beside a safety concern, a
-  "Report sent" view.
+  characters, the database limit, tested against migration 0050), the helpline
+  beside a safety concern, a "Report sent" view that keeps the helpline after a
+  safety concern. A failed send (duplicate report, rate limit) is an alert line,
+  not an error on the optional words.
 - `web/src/components/tutoring/block-sheet.tsx` —
   `BlockSheet({ open, viewer, counterpartName, onConfirm, onCancel, pending, error })`.
   Lists the effects of a block (SPEC §a.2) before the button; not dismissible
-  by accident; "Block" and "Don't block". Both built on `Modal` (focus moves in,
+  by accident; "Block" and "Don't block". A block ends sight of progress
+  through the tutoring pages only: the copy says that a school class the tutor
+  teaches still shows the class progress, and a student is told their grades
+  stop counting in that tutor's results. Both built on `Modal` (focus moves in,
   is trapped, and returns on close), with copy in `safetyNoticeCopy.ts`.
 
 ## Known follow-ups for the P2.5.3 retrofit

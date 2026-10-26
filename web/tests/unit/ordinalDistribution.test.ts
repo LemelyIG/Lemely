@@ -5,6 +5,7 @@ import {
   INSUFFICIENT_RESULTS_HEADING,
   distributionAriaLabel,
   distributionCaption,
+  distributionHidden,
   distributionTableRows,
   insufficientResultsBody,
   layoutOrdinal,
@@ -187,6 +188,60 @@ describe("insufficient state copy", () => {
       "Results are hidden for now. We show them only when at least 5 students have a marked paper from their time with this tutor, and only when no one's grade could be worked out from them.",
     )
     expect(insufficientResultsBody(7)).toContain("at least 7 students")
+  })
+})
+
+describe("distributionHidden", () => {
+  const sufficient = (nGraded: number | null, k = 5, buckets: { grade: string; count: number }[] = []) => ({
+    state: "sufficient" as const,
+    k,
+    nGraded,
+    buckets,
+  })
+
+  it("is hidden whenever the server says insufficient", () => {
+    expect(distributionHidden({ state: "insufficient", k: 5, nGraded: null, buckets: [] })).toBe(true)
+  })
+
+  it("is hidden when the server says sufficient but fewer than k students are graded", () => {
+    expect(distributionHidden(sufficient(4))).toBe(true)
+    expect(distributionHidden(sufficient(0))).toBe(true)
+  })
+
+  it("is shown at exactly k and above", () => {
+    expect(distributionHidden(sufficient(5))).toBe(false)
+    expect(distributionHidden(sufficient(40))).toBe(false)
+  })
+
+  it("falls back to the buckets when nGraded is missing, and hides when they fall short of k", () => {
+    expect(distributionHidden(sufficient(null, 5, [{ grade: "A", count: 2 }]))).toBe(true)
+    expect(distributionHidden(sufficient(null, 5, [{ grade: "A", count: 3 }, { grade: "B", count: 2 }]))).toBe(false)
+    expect(distributionHidden(sufficient(null))).toBe(true)
+  })
+})
+
+describe("hidden state never shows counts", () => {
+  it("its sentence carries k and no other number", () => {
+    for (const k of [1, 5, 12]) {
+      const text = `${INSUFFICIENT_RESULTS_HEADING}. ${insufficientResultsBody(k)}`
+      expect(text.replace(String(k), "")).not.toMatch(/\d/)
+    }
+  })
+
+  it("the component decides before it lays anything out, and the hidden branch reads only k", () => {
+    const source = stripComments(
+      readFileSync(
+        join(import.meta.dirname, "..", "..", "src", "components", "ui", "ordinal-distribution.tsx"),
+        "utf8",
+      ),
+    )
+    const guard = source.indexOf("if (distributionHidden(")
+    const layoutAt = source.indexOf("const layout = layoutOrdinal(ladder")
+    expect(guard).toBeGreaterThan(-1)
+    expect(layoutAt).toBeGreaterThan(guard)
+    const hiddenBranch = source.slice(guard, layoutAt)
+    expect(hiddenBranch).toContain("insufficientResultsBody(distribution.k)")
+    expect(hiddenBranch).not.toMatch(/nGraded|nWithoutGrade|buckets|\.count|layout|rungs/)
   })
 })
 

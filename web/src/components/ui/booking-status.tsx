@@ -1,9 +1,9 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* Hallmark · pre-emit critique: P4 H3 E4 S4 R5 V3 — one chip, eight distinct icon and word pairs; the chip is the whole job, so hierarchy has little to do. */
 import {
   CalendarCheck,
+  CalendarX,
   CheckCircle,
   ClipboardText,
-  ClockCountdown,
   HourglassMedium,
   Prohibit,
   UserMinus,
@@ -37,7 +37,7 @@ const ICONS: Record<BookingStatusIcon, Icon> = {
   XCircle: XCircle,
   Prohibit: Prohibit,
   UserMinus: UserMinus,
-  ClockCountdown: ClockCountdown,
+  CalendarX: CalendarX,
 }
 
 export interface BookingStatusProps {

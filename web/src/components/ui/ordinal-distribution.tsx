@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V3 */
+/* Hallmark · pre-emit critique: P5 H4 E4 S4 R3 V3 — bar, rung list and table are one datum in three forms; the outside-label leader lines are the one fussy part. */
 import { useId, useState } from "react"
 import { EyeSlash } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -11,6 +11,7 @@ import {
   INSUFFICIENT_RESULTS_HEADING,
   distributionAriaLabel,
   distributionCaption,
+  distributionHidden,
   distributionTableRows,
   insufficientResultsBody,
   layoutOrdinal,
@@ -30,9 +31,12 @@ import type { OutcomeDistribution } from "@/lib/tutoringTypes"
  *     and count, and the list below names every rung.
  *   - The ladder comes from the API (`OutcomesDTO.ladder`); nothing here knows
  *     what grades exist.
- *   - Under the figure threshold (`state: "insufficient"`) it draws nothing and
- *     says why, in the C-11 empty family. It does not draw an empty bar: an
- *     empty bar reads as "no one did well", which is a claim.
+ *   - Under the figure threshold it draws nothing and says why, in the C-11
+ *     empty family. That is `state: "insufficient"`, and also a "sufficient"
+ *     figure whose graded count is under `k` (a second guard, so a bad payload
+ *     cannot show a small group). It does not draw an empty bar: an empty bar
+ *     reads as "no one did well", which is a claim. The hidden state never
+ *     shows a count.
  *   - Pure SVG, laid out in percentages so it scales with its container; text is
  *     real SVG text in the data face. Layout decisions (which labels move
  *     outside, how far apart) are in `lib/tutoring/ordinalLayout.ts`.
@@ -96,7 +100,9 @@ export function OrdinalDistribution({
     )
   }
 
-  if (distribution.state === "insufficient") {
+  // Hidden on the server's say-so or on a count under k, whichever comes first.
+  // This branch reads `k` and nothing else: no count, no bucket, no rung.
+  if (distributionHidden(distribution)) {
     return (
       <StateView
         compact

@@ -43,11 +43,87 @@ export const NOTES_TUTOR_PARENTS_LINE = "This student's parents can read these n
 export const NOTES_FROZEN_LINE = "Notes are paused while Lemely looks at a report."
 export const NOTES_HIDDEN_PLACEHOLDER = "Removed by Lemely"
 
+export type NotesViewer = "student" | "tutor" | "parent"
+
+export interface NotesComposerInput {
+  viewer: NotesViewer
+  /** `NotesPage.canPost`, as the API computed it for this viewer. */
+  canPost: boolean
+  /** `Booking.notesFrozen`. */
+  frozen: boolean
+  loading: boolean
+  /** Whether the screen gave the thread a way to post at all. */
+  canSend: boolean
+}
+
+export interface NotesComposerState {
+  /** The text box and its Send button. */
+  composer: boolean
+  /** "This student's parents can read these notes." (SC-9): with a tutor's composer, always. */
+  tutorParentsLine: boolean
+  /** "Notes are paused while Lemely looks at a report." */
+  frozenLine: boolean
+  /** The API's own "Notes on this booking are closed." for a viewer who cannot post. */
+  closedLine: boolean
+}
+
+/**
+ * What the foot of a notes thread shows. Decided here, not in the component, so
+ * the rules are tested: a frozen thread has no composer; the parents line goes
+ * with a tutor's composer and with nobody else's; a parent never writes.
+ */
+export function notesComposerState({
+  viewer,
+  canPost,
+  frozen,
+  loading,
+  canSend,
+}: NotesComposerInput): NotesComposerState {
+  const composer = canPost && !frozen && viewer !== "parent" && canSend
+  return {
+    composer,
+    tutorParentsLine: composer && viewer === "tutor",
+    frozenLine: frozen,
+    closedLine: !composer && !frozen && viewer !== "parent" && !loading && !canPost,
+  }
+}
+
+/**
+ * Sends a note and says whether it went. The draft is cleared only when this
+ * returns true: a rejected post keeps the author's words in the box.
+ */
+export async function sendNoteDraft(
+  post: (body: string) => Promise<unknown>,
+  body: string,
+): Promise<boolean> {
+  try {
+    await post(body)
+    return true
+  } catch {
+    return false
+  }
+}
+
 // ── Free text that carries a phone number, an email or a handle ───────────
 
-/** Shown on a 422 `contact_details_not_allowed` wherever free text is entered (SPEC §d rules). */
+/**
+ * Shown on a 422 `contact_details_not_allowed` on every free-text screen except
+ * the notes composer (SPEC §d rules). It points people at the session notes, so
+ * it cannot be shown in the notes themselves.
+ */
 export const CONTACT_DETAILS_MESSAGE =
   "To keep everyone safe, keep contact details off Lemely. Use the session notes instead."
+
+/** The same refusal inside the notes composer, where "use the session notes" would be circular. */
+export const NOTES_CONTACT_DETAILS_MESSAGE = "To keep everyone safe, keep contact details off Lemely."
+
+/**
+ * Whether a report is a safety concern, which is when the helpline goes beside
+ * it (before sending) and stays on the receipt (after).
+ */
+export function reportShowsHelpline(reason: ReportReason | null): boolean {
+  return reason === "safety_concern"
+}
 
 // ── Reports ────────────────────────────────────────────────────────────────
 
@@ -99,7 +175,9 @@ export function blockCopy(viewer: "student" | "tutor", name: string): BlockCopy 
       intro: "Blocking ends contact with this tutor.",
       effects: [
         "Your future sessions with this tutor are cancelled, even ones less than 24 hours away.",
-        "They stop seeing your progress, and neither of you can send new requests or notes.",
+        "They stop seeing your progress through Lemely's tutoring pages. If they teach one of your school classes, they still see your progress there.",
+        "Your grades stop counting in their results.",
+        "Neither of you can send new requests or notes.",
         "If they teach an independent class you joined, you leave that class.",
         "Notes you already have stay readable, and you can still report them.",
         "You can unblock them later. That won't bring any of this back.",
@@ -113,7 +191,8 @@ export function blockCopy(viewer: "student" | "tutor", name: string): BlockCopy 
     intro: "Blocking ends contact with this student.",
     effects: [
       "Your future sessions with this student are cancelled, even ones less than 24 hours away.",
-      "You stop seeing their progress, and neither of you can send new requests or notes.",
+      "You stop seeing their progress through Lemely's tutoring pages. If they are in one of your school classes, you still see their progress there.",
+      "Neither of you can send new requests or notes.",
       "If they joined one of your independent classes, they leave that class.",
       "Notes you already have stay readable, and either of you can still report them.",
       "You can unblock them later. That won't bring any of this back.",
@@ -129,8 +208,17 @@ export function blockCopy(viewer: "student" | "tutor", name: string): BlockCopy 
  * The sentence a safety sheet shows for a failed call: the tutoring API's own
  * wording for a code it sent on purpose (`report_exists`, `too_many_requests`),
  * otherwise `fallback`. Null when nothing failed. Never the raw `error.message`.
+ *
+ * A refused contact detail is worded by the SPEC §d sentence
+ * (`CONTACT_DETAILS_MESSAGE`); the notes composer passes its own variant.
  */
-export function safetyActionError(error: unknown, fallback: string): string | null {
+export function safetyActionError(
+  error: unknown,
+  fallback: string,
+  contactDetailsMessage: string = CONTACT_DETAILS_MESSAGE,
+): string | null {
   if (error === null || error === undefined) return null
-  return tutoringErrorOf(error)?.message ?? fallback
+  const typed = tutoringErrorOf(error)
+  if (typed?.code === "contact_details_not_allowed") return contactDetailsMessage
+  return typed?.message ?? fallback
 }

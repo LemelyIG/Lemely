@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* Hallmark · pre-emit critique: P5 H4 E4 S4 R4 V3 — says what a block does and no more (school classes keep their view), and the safe button reads as a sentence. */
 import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/modal"
 import { blockCopy, safetyActionError } from "@/lib/tutoring/safetyNoticeCopy"
@@ -8,8 +8,11 @@ import { blockCopy, safetyActionError } from "@/lib/tutoring/safetyNoticeCopy"
  * before a student blocks a tutor, or a tutor blocks a student.
  *
  * A block is not light: it cancels the pair's future sessions (the 24-hour
- * window does not apply), ends the student's sharing, removes the student from
- * the tutor's independent classes and closes new requests and notes. So the
+ * window does not apply), ends the student's sharing through the tutoring pages,
+ * removes the student from the tutor's independent classes and closes new
+ * requests and notes. It does not touch a school class the tutor teaches, where
+ * the tutor still sees the class progress, and the copy says so rather than
+ * promising that all sight of the student ends. So the
  * sheet lists those effects, in words, before the button, and the button is
  * named for what it does ("Block"), not "OK". Unblocking restores none of it
  * and the sheet says so.

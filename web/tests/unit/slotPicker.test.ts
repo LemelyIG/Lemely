@@ -6,6 +6,8 @@ import {
   formatSlotRange,
   formatTutorInstant,
   groupSlotsByDay,
+  isSelectionStale,
+  resolveActiveDay,
   windowDays,
 } from "@/lib/tutoring/slotGroups"
 import type { Slot } from "@/lib/tutoringTypes"
@@ -146,6 +148,75 @@ describe("formatTutorInstant", () => {
     expect(formatTutorInstant("2026-10-30T15:05:00Z", ZONE, LABEL)).toBe(
       "Fri 30 Oct · 17:05 Cairo time",
     )
+  })
+})
+
+describe("isSelectionStale", () => {
+  const offered = [
+    slot("2026-11-02T09:00:00Z", "2026-11-02T10:00:00Z"),
+    slot("2026-11-02T10:00:00Z", "2026-11-02T11:00:00Z"),
+  ]
+
+  it("nothing chosen is never stale", () => {
+    expect(isSelectionStale(null, offered)).toBe(false)
+    expect(isSelectionStale(null, [])).toBe(false)
+  })
+
+  it("a chosen time that is still offered is kept", () => {
+    expect(isSelectionStale("2026-11-02T10:00:00Z", offered)).toBe(false)
+  })
+
+  it("a chosen time the refetch no longer offers is stale", () => {
+    expect(isSelectionStale("2026-11-02T12:00:00Z", offered)).toBe(true)
+  })
+
+  it("every slot gone makes any chosen time stale", () => {
+    expect(isSelectionStale("2026-11-02T09:00:00Z", [])).toBe(true)
+  })
+})
+
+describe("resolveActiveDay", () => {
+  const keys = ["2026-11-01", "2026-11-02", "2026-11-03"]
+
+  it("keeps the day the student chose while it is still in the window", () => {
+    expect(resolveActiveDay(keys, "2026-11-03", "2026-11-02", "2026-11-01")).toBe("2026-11-03")
+  })
+
+  it("drops a chosen day the refetch removed, and follows the selected time instead", () => {
+    expect(resolveActiveDay(keys, "2026-12-01", "2026-11-02", "2026-11-01")).toBe("2026-11-02")
+  })
+
+  it("with no choice, shows the selected time's day, else the first day that has times, else the first day", () => {
+    expect(resolveActiveDay(keys, null, "2026-11-02", "2026-11-03")).toBe("2026-11-02")
+    expect(resolveActiveDay(keys, null, undefined, "2026-11-03")).toBe("2026-11-03")
+    expect(resolveActiveDay(keys, null, undefined, undefined)).toBe("2026-11-01")
+  })
+
+  it("has no day when the window has none", () => {
+    expect(resolveActiveDay([], null, undefined, undefined)).toBeUndefined()
+    expect(resolveActiveDay([], "2026-11-02", undefined, undefined)).toBeUndefined()
+  })
+})
+
+describe("component source (C-19), stale selection and the chosen day", () => {
+  const source = stripComments(
+    readFileSync(join(import.meta.dirname, "..", "..", "src", "components", "ui", "slot-picker.tsx"), "utf8"),
+  )
+
+  it("tells the screen when the chosen time is gone, instead of keeping a hidden selection", () => {
+    expect(source).toMatch(/onChange: \(slot: Slot \| null\) => void/)
+    expect(source).toContain("isSelectionStale(")
+    expect(source).toMatch(/onChange(?:Ref\.current)?\(null\)/)
+  })
+
+  it("resolves the shown day through the pure rule, so a removed day cannot stay chosen", () => {
+    expect(source).toContain("resolveActiveDay(")
+  })
+
+  it("marks the chosen day with a check as well as colour", () => {
+    const dayChip = source.slice(source.indexOf("days.map((day)"), source.indexOf("<fieldset", source.indexOf("days.map((day)")))
+    expect(dayChip).toContain("<Check")
+    expect(dayChip).toContain("peer-checked:block")
   })
 })
 

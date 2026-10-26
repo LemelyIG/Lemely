@@ -60,6 +60,25 @@ export function layoutGradeChange(change: {
   return { n, parts }
 }
 
+/**
+ * Whether the figure must be hidden: the server says insufficient, or says
+ * sufficient while fewer than `k` students are paired (a second, independent
+ * guard, as for `distributionHidden`). When `nPaired` is missing the three
+ * counts are added up instead. A hidden figure shows `k` and no count.
+ */
+export function gradeChangeHidden(change: {
+  state: "insufficient" | "sufficient"
+  k: number
+  nPaired: number | null
+  lower: number | null
+  same: number | null
+  higher: number | null
+}): boolean {
+  if (change.state === "insufficient") return true
+  const n = change.nPaired ?? layoutGradeChange(change).n
+  return n < change.k
+}
+
 function students(n: number): string {
   return `${n} ${n === 1 ? "student" : "students"}`
 }

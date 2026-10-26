@@ -18,10 +18,20 @@ const SPEC = readFileSync(
 const rated = (average: number, count: number): Rating => ({ state: "rated", average, count })
 const fresh = (count: number): Rating => ({ state: "new", average: null, count })
 
+// The number of students below which a tutor is "New", read out of SPEC section d
+// ('"New" below 3 students, never stars'), so no literal 3 stands in this file.
+const SPEC_THRESHOLD = Number(/"New" below (\d+) students/.exec(SPEC)?.[1])
+
 describe("threshold", () => {
-  it("is the three students the SPEC names, read from its text", () => {
-    expect(SPEC).toContain(`"New" below 3 students`)
-    expect(MIN_RATED_STUDENTS).toBe(3)
+  it("is the number of students the SPEC names, read from its text", () => {
+    expect(Number.isInteger(SPEC_THRESHOLD)).toBe(true)
+    expect(SPEC_THRESHOLD).toBeGreaterThan(1)
+    expect(MIN_RATED_STUDENTS).toBe(SPEC_THRESHOLD)
+  })
+
+  it("separates New from rated exactly at that number", () => {
+    expect(ratingDisplay(rated(4.5, SPEC_THRESHOLD - 1)).kind).toBe("new")
+    expect(ratingDisplay(rated(4.5, SPEC_THRESHOLD)).kind).toBe("rated")
   })
 })
 
@@ -51,8 +61,8 @@ describe("rated tutors", () => {
 })
 
 describe("new tutors", () => {
-  it("shows New and no number, whatever the count below three", () => {
-    for (const count of [0, 1, 2]) {
+  it("shows New and no number, whatever the count below the threshold", () => {
+    for (let count = 0; count < SPEC_THRESHOLD; count++) {
       const d = ratingDisplay(fresh(count))
       expect(d.kind).toBe("new")
       expect(d.text).toBe("New")
@@ -62,13 +72,13 @@ describe("new tutors", () => {
 
   it("aria-label is a full sentence that says why", () => {
     const label = ratingDisplay(fresh(1)).ariaLabel
-    expect(label).toBe("New tutor. Fewer than 3 students have rated this tutor so far.")
+    expect(label).toBe(`New tutor. Fewer than ${SPEC_THRESHOLD} students have rated this tutor so far.`)
     expect(label).toMatch(/^[A-Z]/)
     expect(label.endsWith(".")).toBe(true)
   })
 
-  it("does not trust a rated state that carries fewer than three students", () => {
-    expect(ratingDisplay(rated(5, 2)).kind).toBe("new")
+  it("does not trust a rated state that carries fewer students than the threshold", () => {
+    expect(ratingDisplay(rated(5, SPEC_THRESHOLD - 1)).kind).toBe("new")
   })
 
   it("does not trust a rated state with no average, which would invent a number", () => {

@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 — reason first and details optional so reporting is never hard; the helpline rides beside a safety concern and stays on the receipt; failures get their own alert line. */
 import { useState } from "react"
 import { CheckCircle } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,7 @@ import {
   HELPLINE_LINE,
   REPORT_DETAILS_MAX,
   reportReasonsFor,
+  reportShowsHelpline,
   safetyActionError,
   type ReportReason,
   type ReportTargetType,
@@ -28,8 +29,12 @@ import {
  *     booking, because that is the only report an admin can act on that way.
  *   - A failure names its cause when the API gave one ("You have already
  *     reported this.") and otherwise says plainly that it did not send. It never
- *     shows a raw error message.
+ *     shows a raw error message. It is an alert line of its own: a duplicate
+ *     report or a rate limit is not a fault in the optional words, so it is not
+ *     hung on that field.
  *   - Once it has gone through, the sheet says so and the screen can close it.
+ *     After a safety concern the receipt keeps the helpline, because the person
+ *     reads it after they press Send, not before.
  *
  * Free text is plain text and is length-limited to what the database accepts.
  */
@@ -90,10 +95,17 @@ export function ReportSheet({
           </Button>
         }
       >
-        <p className="m-0 flex items-start gap-2 text-body-md text-ink">
-          <CheckCircle size={20} weight="bold" className="mt-0.5 shrink-0 text-ok" aria-hidden />
-          Thank you. Lemely has your report about {targetLabel}.
-        </p>
+        <div className="flex flex-col gap-3">
+          <p className="m-0 flex items-start gap-2 text-body-md text-ink">
+            <CheckCircle size={20} weight="bold" className="mt-0.5 shrink-0 text-ok" aria-hidden />
+            Thank you. Lemely has your report about {targetLabel}.
+          </p>
+          {reportShowsHelpline(reason) ? (
+            <p role="note" className="m-0 rounded-md border border-rule bg-warn-wash px-3 py-2.5 text-body-sm text-ink">
+              {HELPLINE_LINE}
+            </p>
+          ) : null}
+        </div>
       </Modal>
     )
   }
@@ -136,7 +148,7 @@ export function ReportSheet({
           ))}
         </RadioGroup>
 
-        {reason === "safety_concern" ? (
+        {reportShowsHelpline(reason) ? (
           <p role="note" className="m-0 rounded-md border border-rule bg-warn-wash px-3 py-2.5 text-body-sm text-ink">
             {HELPLINE_LINE}
           </p>
@@ -149,8 +161,13 @@ export function ReportSheet({
           rows={3}
           disabled={pending}
           onChange={(event) => setDetails(event.target.value)}
-          error={errorText ?? undefined}
         />
+
+        {errorText ? (
+          <p role="alert" className="m-0 text-body-sm text-err">
+            {errorText}
+          </p>
+        ) : null}
       </div>
     </Modal>
   )
