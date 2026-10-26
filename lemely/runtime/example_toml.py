@@ -84,12 +84,13 @@ def render_example_toml() -> str:
     lines.append(f'model = "{s.gemini.model}"')
     lines.append("")
     lines.append("# Per-task model overrides (omit a key to use the global `model` above).")
+    lines.append("# Sub-project C: every tag but mark_scheme defaults to claude-haiku-5-5 (needs")
     lines.append(
-        "# Sub-project C: every tag defaults to claude-haiku-5-5 (needs ANTHROPIC_API_KEY),"
+        "# ANTHROPIC_API_KEY); mark_scheme stays on gemini-2.5-flash (Haiku's parse failed"
     )
-    lines.append("# so these are commented out here purely as documentation of what you are")
-    lines.append("# overriding if you uncomment one. A gemini- model (e.g. gemini-3.1-flash-lite")
-    lines.append("# for correction) needs GEMINI_API_KEY. Run `lemely doctor` to see what")
+    lines.append("# parity with the deterministic parser). These are commented out here purely as")
+    lines.append("# documentation of what you are overriding if you uncomment one. A gemini- model")
+    lines.append("# needs GEMINI_API_KEY. Run `lemely doctor` to see what")
     lines.append("# model_for() actually resolves for every tag.")
     lines.append(f'# mark_scheme_model    = "{s.gemini.mark_scheme_model}"')
     lines.append(f'# extraction_model     = "{s.gemini.extraction_model}"')

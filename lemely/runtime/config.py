@@ -164,16 +164,19 @@ def _shipped_claude_effort_for() -> dict[str, ClaudeEffort]:
 
 class GeminiSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    # Sub-project C flip: every task tag defaults to claude-haiku-5-5. The screened tags
-    # (mark_scheme, extraction, correction, scan_metadata, the binder) passed the real-split
+    # Sub-project C flip: every task tag but mark_scheme defaults to claude-haiku-5-5. The
+    # screened tags (extraction, correction, scan_metadata, the binder) passed the real-split
     # judgement (BUILD/accuracy-runs/claude-c-2026-10-26-live3/FLIP.md); generation, study_plan,
     # self_review_judge and question_validity (the `model` fallback) passed a live smoke
     # test (.superpowers/sdd/c-p4-smoke.md). The Gemini names these replaced:
-    # gemini-2.5-flash (model, mark_scheme), gemini-3.5-flash-lite (extraction, generation,
+    # gemini-2.5-flash (model), gemini-3.5-flash-lite (extraction, generation,
     # scan_metadata), gemini-3.1-flash-lite (correction). A gemini- model still works, by config.
     model: str = "claude-haiku-5-5"
     # Per-task model overrides — each falls back to `model` when unset.
-    mark_scheme_model: str | None = "claude-haiku-5-5"
+    # Stays on Gemini: Haiku's LLM parse did not match the deterministic parser on theory
+    # schemes (total 83 vs 80 after a failed first attempt; an extra leaf), so the parity
+    # check failed (.superpowers/sdd/c-p4-ms-parity.md). Needs GEMINI_API_KEY.
+    mark_scheme_model: str | None = "gemini-2.5-flash"
     extraction_model: str | None = "claude-haiku-5-5"
     correction_model: str | None = "claude-haiku-5-5"
     generation_model: str | None = "claude-haiku-5-5"

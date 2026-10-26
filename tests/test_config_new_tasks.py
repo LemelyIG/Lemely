@@ -74,7 +74,7 @@ class TestModelForNewTags:
     def test_existing_tags_still_work(self) -> None:
         s = GeminiSettings(correction_model="gemini-2.5-pro")
         assert s.model_for("correction") == "gemini-2.5-pro"
-        assert s.model_for("mark_scheme") == "claude-haiku-5-5"
+        assert s.model_for("mark_scheme") == "gemini-2.5-flash"  # stays on Gemini (parity)
 
     def test_self_review_judge_override(self) -> None:
         s = GeminiSettings(self_review_judge_model="gemini-2.5-flash-lite")

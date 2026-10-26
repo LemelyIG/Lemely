@@ -22,7 +22,6 @@ _HAIKU, _SONNET = "claude-haiku-5-5", "claude-sonnet-5-5"
 def test_every_task_tag_defaults_to_haiku() -> None:
     g = Settings().gemini
     for tag in (
-        "mark_scheme",
         "extraction",
         "correction",
         "correction_borderline",
@@ -35,6 +34,11 @@ def test_every_task_tag_defaults_to_haiku() -> None:
         assert g.model_for(tag) == _HAIKU, tag
     # The fallback of every tag with no model of its own (question_validity among them).
     assert g.model == _HAIKU
+
+
+def test_mark_scheme_parsing_stays_on_gemini() -> None:
+    """Haiku's LLM parse failed parity with the deterministic parser (c-p4-ms-parity.md)."""
+    assert Settings().gemini.model_for("mark_scheme") == "gemini-2.5-flash"
 
 
 def test_there_is_no_default_escalation() -> None:

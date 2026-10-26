@@ -221,12 +221,29 @@ class DoctorTests(unittest.TestCase):
             result = self.runner.invoke(
                 cli,
                 ["--json", "doctor", "--no-network"],
-                env=self._doctor_env(tmp, GEMINI_API_KEY=None),
+                env=self._doctor_env(
+                    tmp, GEMINI_API_KEY=None, LEMELY_GEMINI__MARK_SCHEME_MODEL="claude-haiku-5-5"
+                ),
             )
         self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.output)
         check = next(c for c in payload["checks"] if c["name"] == "gemini_api_key")
         self.assertTrue(check["ok"])
+
+    def test_doctor_lists_mark_scheme_under_the_gemini_key_by_default(self) -> None:
+        """Mark-scheme parsing stays on Gemini, so a default install needs the Gemini key."""
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env=self._doctor_env(tmp, GEMINI_API_KEY=None),
+            )
+        self.assertEqual(result.exit_code, 3, msg=result.output)
+        payload = json.loads(result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_api_key")
+        self.assertFalse(check["ok"])
+        self.assertEqual(check["detail"].count("="), 1)
+        self.assertIn("mark_scheme=gemini-2.5-flash", check["detail"])
 
     def test_doctor_fails_the_gemini_key_check_for_one_gemini_tag_and_no_key(self) -> None:
         with TemporaryDirectory() as tmp:
