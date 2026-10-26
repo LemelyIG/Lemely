@@ -253,6 +253,8 @@ def _run_in(
     repeat: int,
 ) -> dict[str, Any]:
     settings = make_settings(str(tmp))
+    # Sub-project C P4: the golden pins the Gemini path, whatever the defaults are.
+    assert settings.gemini.model_for("correction").startswith("gemini-"), settings.gemini.model
     genai = fake_genai_client()
     genai.caches.create.return_value = MagicMock(
         usage_metadata=MagicMock(total_token_count=_PREFIX_CACHE_TOKENS)
