@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { isPersistableQueryKey, shouldPersistQuery } from "@/lib/offline/persistAllowlist"
+import { tutoringKeys } from "@/lib/tutoring/queryKeys"
 
 /**
  * Task 10 (B6b). The allowlist's literal segments are re-grepped from the
@@ -99,5 +102,53 @@ describe("shouldPersistQuery", () => {
     expect(
       shouldPersistQuery({ queryKey: ["student", "overview"], state: { status: "success" } }),
     ).toBe(false)
+  })
+})
+
+/**
+ * T11 (SPEC §b.5, F32). Every tutoring response is `private, no-store`: a
+ * booking carries a meeting link, a grant names who may read a child's marks.
+ * None of it may be written to IndexedDB, so no tutoring key may match an
+ * allowlist prefix. Checked three ways, so the test cannot pass by only
+ * looking where the allowlist is not: the keys the hooks really use, the root
+ * every one of them shares, and the allowlist's own source text.
+ */
+describe("excludes tutoring query keys", () => {
+  const factories = tutoringKeys as unknown as Record<string, unknown>
+  const names = Object.keys(factories)
+
+  /** Every key the module can build, functions called with sample ids. */
+  const keys: (readonly unknown[])[] = names.map((name) => {
+    const value = factories[name]
+    return typeof value === "function"
+      ? (value as (...args: string[]) => readonly unknown[])("id-1", "id-2", "id-3")
+      : (value as readonly unknown[])
+  })
+
+  it("enumerates a meaningful number of keys (at least 35)", () => {
+    expect(keys.length).toBeGreaterThanOrEqual(35)
+  })
+
+  it("never persists any key tutoringKeys builds", () => {
+    for (const [i, key] of keys.entries()) {
+      expect(isPersistableQueryKey(key), names[i]).toBe(false)
+    }
+  })
+
+  it("never persists the tutoring root or a successful tutoring query", () => {
+    expect(isPersistableQueryKey(["tutoring"])).toBe(false)
+    for (const [i, key] of keys.entries()) {
+      expect(shouldPersistQuery({ queryKey: key, state: { status: "success" } }), names[i]).toBe(false)
+    }
+  })
+
+  it("keeps the tutoring root out of the allowlist's source", () => {
+    const source = readFileSync(
+      join(import.meta.dirname, "..", "..", "src", "lib", "offline", "persistAllowlist.ts"),
+      "utf8",
+    )
+    const entries = source.slice(source.indexOf("const ALLOWLIST"), source.indexOf("/** Whether a query key"))
+    expect(entries.match(/\[/g)?.length ?? 0).toBeGreaterThan(7)
+    expect(entries).not.toMatch(/tutor/i)
   })
 })
