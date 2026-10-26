@@ -5,7 +5,9 @@ answers one identical 404 when the tutor is unlisted, paused or blocked from the
 caller (O11). A review shows its stars from the moment it is written, its text
 only once approved, and the tutor's reply only once approved. The period is the
 quarter in the tutor's zone (such as "Jul-Sep 2026", printed with an en dash): no
-name, no date, no booking (SC-12).
+name, no date, no booking (SC-12). For the same reason the page cursor names the
+last review served and nothing else; a cursor whose review is not one of this
+tutor's is 422 ``invalid_cursor``.
 
 This module also holds what the other review routers share, so the error shape and
 the DTO builders are written once: the repository provider
@@ -67,11 +69,12 @@ def review_http_error(exc: ReviewError | TutorProfileError) -> HTTPException:
     if isinstance(exc, ReviewNotFoundError):
         status = 404
     elif isinstance(exc, ReviewValidationError):
-        status = 422
+        status = 422  # including invalid_cursor for a review-list anchor that is not the tutor's
     else:
         # Not found aside, every other refusal is a state or policy conflict (SPEC §0 "Errors"):
         # not_completed, review_not_open_yet, account_too_new, review_exists,
-        # edit_window_closed, reply_exists, not_pending, tutor_suspended, tutor_closed.
+        # edit_window_closed, reply_exists, not_pending, text_changed, tutor_suspended,
+        # tutor_closed.
         status = 409
     return tutoring_error(status, exc.code, exc.message)
 
@@ -135,9 +138,12 @@ def list_tutor_reviews(
 ) -> ReviewsPageDTO:
     """SP3: reviews of a listed, unpaused, unblocked tutor, newest first."""
     after = decode_review_cursor(cursor, REVIEWS_ENDPOINT)
-    page = repo.reviews_for_viewer(
-        tutor_id, uuid.UUID(auth.user_id), auth.role, after=after, limit=limit
-    )
+    try:
+        page = repo.reviews_for_viewer(
+            tutor_id, uuid.UUID(auth.user_id), auth.role, after=after, limit=limit
+        )
+    except ReviewError as exc:
+        raise review_http_error(exc) from exc
     if page is None:
         raise tutor_not_found()
     return ReviewsPageDTO(

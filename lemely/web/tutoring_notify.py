@@ -378,9 +378,12 @@ def review_notices(
 ) -> list[InboxNotice]:
     """The author's notice that a review's text, or a tutor's reply, was moderated.
 
-    ``revision`` counts the text's versions (0 for the first). An edit returns the text to
-    pending (SPEC §a.3), so moderating the edited text to the same outcome is a new event and
-    must not collide with the first notice's dedupe key.
+    ``revision`` is the decision's stored moderation instant (``text_moderated_at`` for a
+    review, ``moderated_at`` for a reply) in epoch microseconds, as the repository reads it
+    back from the moderating ``UPDATE``. An edit returns the text to pending (SPEC §a.3), so
+    moderating the edited text to the same outcome is a new event with its own instant and
+    never collides with the first notice's dedupe key; an idempotent repeat writes no instant
+    and sends nothing.
 
     The payload is the review or reply id alone: no booking and no student reference, so a
     notice to a tutor cannot identify who wrote the review (SC-12). There is no "new review"

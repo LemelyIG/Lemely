@@ -1193,7 +1193,8 @@ export function useAdminModeration(
   })
 }
 
-/** A7 · `POST /api/admin/tutoring/reviews/{review_id}/moderate`. */
+/** A7 · `POST /api/admin/tutoring/reviews/{review_id}/moderate`. The body carries the
+ * `revision` A6 showed; a text edited since is a 409 `text_changed`, so reload the queue. */
 export function useModerateReview(): UseMutationResult<
   AdminReview,
   Error,

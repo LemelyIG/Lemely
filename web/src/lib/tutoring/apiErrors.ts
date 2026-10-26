@@ -74,6 +74,8 @@ export const TUTORING_ERROR_CODES = [
   "evidence_limit",
   // Grants (T11, T20)
   "access_ended",
+  // Moderation (A7)
+  "text_changed",
   // Reports and admin (R1, A11, A12)
   "report_exists",
   "already_resolved",
@@ -155,7 +157,8 @@ export const TUTORING_ERROR_COPY: Readonly<Record<TutoringErrorCode, string>> = 
   overlapping_rules: "Some of your weekly availability times overlap.",
   evidence_limit: "You can upload up to five files. Delete one to add another.",
   access_ended: "You no longer have access to this.",
-  report_exists: "You have already reported this.",
+  text_changed: "This text was changed after you opened the list. Reload it and read the new text.",
+  report_exists:"You have already reported this.",
   already_resolved: "This report has already been resolved.",
   resolution_not_applicable: "That resolution does not apply to this report.",
   already_closed: "This tutor is already closed.",

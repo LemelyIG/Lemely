@@ -7,6 +7,8 @@ mutation proofs are recorded in the task's return).
 
 from __future__ import annotations
 
+import base64
+import json
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -30,8 +32,9 @@ from tests.test_tutor_review_repo import (
     add_review_row,
     add_student,
     review_row,
+    sha_revision,
 )
-from tests.test_web_tutor_reviews import NO_STORE, Setup, review_client
+from tests.test_web_tutor_reviews import NO_STORE, Setup, decoded_cursor, review_client
 from tests.tutoring_app import flatten_routes
 from tests.tutoring_db import (
     act_as,
@@ -340,9 +343,11 @@ def test_a7_a8_ids_are_not_interchangeable(
         ).status_code
         == 404
     )
+    # The reply's own revision, so only the id can be what refuses it.
     assert (
         client.post(
-            f"/api/admin/tutoring/reviews/{reply}/moderate", json={"decision": "approved"}
+            f"/api/admin/tutoring/reviews/{reply}/moderate",
+            json={"decision": "approved", "revision": sha_revision("Thank you for the feedback.")},
         ).status_code
         == 404
     )
@@ -350,7 +355,8 @@ def test_a7_a8_ids_are_not_interchangeable(
     # Positive controls: each id works on its own path.
     assert (
         client.post(
-            f"/api/admin/tutoring/reviews/{review}/moderate", json={"decision": "approved"}
+            f"/api/admin/tutoring/reviews/{review}/moderate",
+            json={"decision": "approved", "revision": sha_revision("text")},
         ).status_code
         == 200
     )
@@ -372,7 +378,8 @@ def test_moderation_is_platform_admin_only(
     responses = [
         client.get("/api/admin/tutoring/moderation"),
         client.post(
-            f"/api/admin/tutoring/reviews/{review}/moderate", json={"decision": "approved"}
+            f"/api/admin/tutoring/reviews/{review}/moderate",
+            json={"decision": "approved", "revision": sha_revision("text")},
         ),
         client.post(f"/api/admin/tutoring/replies/{reply}/moderate", json={"decision": "approved"}),
     ]
@@ -460,6 +467,53 @@ def test_o21_cursors_are_not_interchangeable_between_lists(
         assert refused.headers["cache-control"] == NO_STORE
 
 
+def _forged_cursor(tag: object, review_id: uuid.UUID) -> str:
+    """A well-formed cursor of list ``tag`` naming ``review_id``, built without the codec."""
+    raw = json.dumps({"e": tag, "k": [str(review_id)]}, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def test_o21_a_review_cursor_must_name_a_review_of_the_listed_tutor(
+    client: TestClient, sm: sessionmaker[Session], s: Setup
+) -> None:
+    """The anchor is read server-side, so a forged anchor must not choose the position.
+
+    The rival's review is the newest of all: were it accepted as an anchor, it would
+    page this tutor's older reviews instead of being refused.
+    """
+    now = datetime.now(UTC)
+    for days in (1, 2):
+        s.seeded_review(created_at=now - timedelta(days=days))
+    other_subject = add_subject(sm)
+    rival = add_tutor(sm, subjects=(other_subject,))
+    rival_student = add_student(sm)
+    rival_review = add_review_row(
+        sm,
+        booking=add_booking(sm, student=rival_student, tutor=rival, subject=other_subject),
+        tutor_id=rival.profile_id,
+        student=rival_student,
+        created_at=now - timedelta(hours=1),
+    )
+    lists = (
+        (s.viewer, Role.student, f"/api/tutors/{s.tutor.profile_id}/reviews"),
+        (s.tutor.user_id, Role.teacher, "/api/tutor/reviews"),
+    )
+    refusals = 0
+    for viewer, role, url in lists:
+        act_as(client, viewer, role)
+        genuine = client.get(url, params={"limit": 1}).json()["nextCursor"]
+        assert genuine is not None
+        tag = decoded_cursor(genuine)["e"]
+        assert len(client.get(url, params={"cursor": genuine}).json()["items"]) == 1
+        for anchor in (rival_review, uuid.uuid4()):
+            refused = client.get(url, params={"cursor": _forged_cursor(tag, anchor)})
+            assert refused.status_code == 422, (url, anchor)
+            assert refused.json()["detail"]["code"] == "invalid_cursor"
+            assert refused.headers["cache-control"] == NO_STORE
+            refusals += 1
+    assert refusals == 4
+
+
 # ---------------------------------------------------------------------------
 # SC-12: nothing that identifies the reviewer
 # ---------------------------------------------------------------------------
@@ -483,8 +537,10 @@ def test_sc12_public_and_tutor_views_carry_no_reviewer_or_booking_reference(
     own = client.get("/api/tutor/reviews")
     act_as(client, s.admin, Role.platform_admin)
     admin = client.post(
-        f"/api/admin/tutoring/reviews/{review}/moderate", json={"decision": "approved"}
+        f"/api/admin/tutoring/reviews/{review}/moderate",
+        json={"decision": "approved", "revision": sha_revision("Great.")},
     )
+    assert admin.status_code == 200
     for response in (public, own):
         assert response.status_code == 200
         assert student_id not in response.text

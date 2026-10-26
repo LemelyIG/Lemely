@@ -3,10 +3,12 @@
 Both routes resolve the caller's own profile from ``auth.user_id`` through
 ``deps_tutoring`` (O1) and take no tutor id. T21 lists the caller's reviews, newest
 first: review text only once approved, the caller's own reply in any moderation
-state. T18 writes the one reply (it starts ``pending`` and is public once an admin
-approves it) and is refused with 409 ``tutor_suspended`` / ``tutor_closed`` for a
-suspended or closed profile (CB-7); T21 is a read and still works for them. A
-review of another tutor, a removed one and an unknown one are the same 404 (O4).
+state. T21's cursor carries the last review's id and no instant (SC-12: paging one
+review at a time must not date each review). T18 writes the one reply (it starts
+``pending`` and is public once an admin approves it) and is refused with 409
+``tutor_suspended`` / ``tutor_closed`` for a suspended or closed profile (CB-7);
+T21 is a read and still works for them. A review of another tutor, a removed one
+and an unknown one are the same 404 (O4).
 Built with :class:`~lemely.web.tutoring_http.TutoringRoute`.
 """
 
@@ -54,9 +56,12 @@ def list_own_reviews(
     cursor: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
 ) -> TutorReviewsPageDTO:
-    """T21: the caller's reviews, newest first."""
+    """T21: the caller's reviews, newest first; the cursor names a review, never its instant."""
     after = decode_review_cursor(cursor, OWN_REVIEWS_ENDPOINT)
-    page = repo.own_reviews(profile.id, after=after, limit=limit)
+    try:
+        page = repo.own_reviews(profile.id, after=after, limit=limit)
+    except ReviewError as exc:
+        raise review_http_error(exc) from exc
     return TutorReviewsPageDTO(
         items=[
             TutorReviewItemDTO.model_validate(

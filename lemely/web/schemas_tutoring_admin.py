@@ -144,6 +144,10 @@ class ModerationItemDTO(ApiModel):
     """The review id (A7) or the reply id (A8), as ``kind`` says."""
     text: str
     createdAt: str
+    revision: str
+    """The first 16 hex characters of the SHA-256 of ``text`` (RF-7). A7 sends it
+    back, so a review text edited after this page was loaded is never approved
+    unseen."""
 
 
 class ModerationPageDTO(ApiModel):
@@ -157,10 +161,13 @@ class ReviewModerateDTO(ApiModel):
     """A7 body."""
 
     decision: Literal["approved", "rejected"]
+    revision: str
+    """The ``ModerationItemDTO.revision`` the admin was shown. Compared with the
+    stored text under the row lock: a mismatch is 409 ``text_changed``."""
 
 
 class ReplyModerateDTO(ApiModel):
-    """A8 body."""
+    """A8 body. No revision: a reply cannot be edited (RF-7)."""
 
     decision: Literal["approved", "rejected"]
 

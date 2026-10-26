@@ -10,6 +10,9 @@ rules (O10, O11, O27, IDOR) are in ``test_web_tutoring_authz_reviews.py``.
 
 from __future__ import annotations
 
+import base64
+import json
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -41,6 +44,8 @@ from tests.test_tutor_review_repo import (
     add_student,
     review_row,
     set_review_created,
+    sha_revision,
+    stored_micros,
 )
 from tests.tutoring_app import app_with_routers
 from tests.tutoring_db import (
@@ -66,6 +71,7 @@ EN_DASH = chr(0x2013)  # SPEC §b.3 prints the quarter with an en dash
 QUARTER_Q3_2026 = f"Jul{EN_DASH}Sep 2026"
 QUARTER_Q1_2026 = f"Jan{EN_DASH}Mar 2026"
 QUARTER_Q4_2026 = f"Oct{EN_DASH}Dec 2026"
+QUEUE = "/api/admin/tutoring/moderation"
 
 
 def review_client(factory: sessionmaker[Session]) -> TestClient:
@@ -193,13 +199,14 @@ def test_review_text_public_only_after_approval(
     assert [(i["text"], i["textState"]) for i in own.json()["items"]] == [(None, "pending")]
 
     act_as(client, s.admin, Role.platform_admin)
-    queue = client.get("/api/admin/tutoring/moderation")
+    queue = client.get(QUEUE)
     assert queue.status_code == 200
     assert [(i["kind"], i["itemId"], i["text"]) for i in queue.json()["items"]] == [
         ("review", review_id, "Very patient teacher.")
     ]
     approved = client.post(
-        f"/api/admin/tutoring/reviews/{review_id}/moderate", json={"decision": "approved"}
+        f"/api/admin/tutoring/reviews/{review_id}/moderate",
+        json={"decision": "approved", "revision": queue.json()["items"][0]["revision"]},
     )
     assert approved.status_code == 200, approved.text
     assert approved.headers["cache-control"] == NO_STORE
@@ -229,8 +236,10 @@ def test_review_text_public_only_after_approval(
     )
 
     act_as(client, s.admin, Role.platform_admin)
+    (requeued,) = client.get(QUEUE).json()["items"]
     rejected = client.post(
-        f"/api/admin/tutoring/reviews/{review_id}/moderate", json={"decision": "rejected"}
+        f"/api/admin/tutoring/reviews/{review_id}/moderate",
+        json={"decision": "rejected", "revision": requeued["revision"]},
     )
     assert rejected.json()["textState"] == "rejected"
     act_as(client, s.viewer, Role.student)
@@ -239,30 +248,88 @@ def test_review_text_public_only_after_approval(
     )
 
 
-def test_moderation_notifies_the_author_with_a_growing_revision(
+def test_moderation_notifies_the_author_once_per_decision(
     client: TestClient, sm: sessionmaker[Session], s: Setup
 ) -> None:
+    """The notice key's revision is the decision's stored ``text_moderated_at`` (microseconds)."""
     act_as(client, s.student, Role.student)
     review_id = client.post(
         f"/api/student/bookings/{s.booking()}/review", json={"stars": 5, "text": "First words."}
     ).json()["reviewId"]
     act_as(client, s.admin, Role.platform_admin)
     url = f"/api/admin/tutoring/reviews/{review_id}/moderate"
-    assert client.post(url, json={"decision": "approved"}).status_code == 200
-    assert client.post(url, json={"decision": "approved"}).status_code == 200  # idempotent repeat
+    body = {"decision": "approved", "revision": sha_revision("First words.")}
+    assert client.post(url, json=body).status_code == 200
+    first_key = (
+        f"review:{review_id}:approved:"
+        f"{stored_micros(sm, 'tutor_reviews', 'text_moderated_at', uuid.UUID(review_id))}"
+    )
+    assert client.post(url, json=body).status_code == 200  # idempotent repeat: no second notice
     first = notifications(sm, s.student)
-    assert [n.dedupe_key for n in first] == [f"review:{review_id}:approved:0"]
+    assert [n.dedupe_key for n in first] == [first_key]
     assert first[0].payload == {"reviewId": review_id}
 
     act_as(client, s.student, Role.student)
     client.patch(f"/api/student/reviews/{review_id}", json={"text": "Second words."})
     act_as(client, s.admin, Role.platform_admin)
-    assert client.post(url, json={"decision": "approved"}).status_code == 200
-    assert [n.dedupe_key for n in notifications(sm, s.student)] == [
-        f"review:{review_id}:approved:0",
-        f"review:{review_id}:approved:1",
-    ]
+    body = {"decision": "approved", "revision": sha_revision("Second words.")}
+    assert client.post(url, json=body).status_code == 200
+    second_key = (
+        f"review:{review_id}:approved:"
+        f"{stored_micros(sm, 'tutor_reviews', 'text_moderated_at', uuid.UUID(review_id))}"
+    )
+    assert second_key != first_key  # the same outcome on an edited text is a new event
+    assert [n.dedupe_key for n in notifications(sm, s.student)] == [first_key, second_key]
     assert notifications(sm, s.tutor.user_id) == []  # no "new review" notice to the tutor (SC-12)
+
+
+def test_a7_refuses_text_edited_after_queue_load(
+    client: TestClient, sm: sessionmaker[Session], s: Setup
+) -> None:
+    """RF-7: A7 decides the text the admin was shown in A6, never words written since."""
+    act_as(client, s.student, Role.student)
+    review_id = client.post(
+        f"/api/student/bookings/{s.booking()}/review", json={"stars": 5, "text": "First words."}
+    ).json()["reviewId"]
+    act_as(client, s.admin, Role.platform_admin)
+    (shown,) = client.get(QUEUE).json()["items"]
+    assert shown.get("revision") == sha_revision("First words.")
+
+    act_as(client, s.student, Role.student)
+    edited = client.patch(f"/api/student/reviews/{review_id}", json={"text": "Written later."})
+    assert edited.status_code == 200
+
+    act_as(client, s.admin, Role.platform_admin)
+    url = f"/api/admin/tutoring/reviews/{review_id}/moderate"
+    for decision in ("approved", "rejected"):
+        stale = client.post(url, json={"decision": decision, "revision": shown["revision"]})
+        assert stale.status_code == 409, stale.text
+        assert stale.json()["detail"]["code"] == "text_changed"
+        assert stale.headers["cache-control"] == NO_STORE
+    row = review_row(sm, uuid.UUID(review_id))
+    assert (row.body, row.text_state, row.text_moderated_by) == ("Written later.", "pending", None)
+    assert notifications(sm, s.student) == []
+    assert client.post(url, json={"decision": "approved"}).status_code == 422  # revision required
+
+    (fresh,) = client.get(QUEUE).json()["items"]
+    assert fresh["revision"] == sha_revision("Written later.") != shown["revision"]
+    body = {"decision": "approved", "revision": fresh["revision"]}
+    approved = client.post(url, json=body)
+    assert (approved.status_code, approved.json()["text"], approved.json()["textState"]) == (
+        200,
+        "Written later.",
+        "approved",
+    )
+    assert client.post(url, json=body).status_code == 200  # the same text again: idempotent
+    assert len(notifications(sm, s.student)) == 1
+
+    act_as(client, s.student, Role.student)
+    client.patch(f"/api/student/reviews/{review_id}", json={"text": "Changed once approved."})
+    act_as(client, s.admin, Role.platform_admin)
+    late = client.post(url, json=body)
+    assert late.status_code == 409, late.text
+    assert late.json()["detail"]["code"] == "text_changed"
+    assert review_row(sm, uuid.UUID(review_id)).text_state == "pending"
 
 
 def test_reply_moderated_before_public(
@@ -288,9 +355,14 @@ def test_reply_moderated_before_public(
     assert (own_reply["replyId"], own_reply["textState"]) == (reply["replyId"], "pending")
 
     act_as(client, s.admin, Role.platform_admin)
-    queue = client.get("/api/admin/tutoring/moderation", params={"kind": "reply"}).json()
-    assert [(i["kind"], i["itemId"], i["text"]) for i in queue["items"]] == [
-        ("reply", reply["replyId"], "Thank you for the kind words.")
+    queue = client.get(QUEUE, params={"kind": "reply"}).json()
+    assert [(i["kind"], i["itemId"], i["text"], i["revision"]) for i in queue["items"]] == [
+        (
+            "reply",
+            reply["replyId"],
+            "Thank you for the kind words.",
+            sha_revision("Thank you for the kind words."),
+        )
     ]
     approved = client.post(
         f"/api/admin/tutoring/replies/{reply['replyId']}/moderate", json={"decision": "approved"}
@@ -306,7 +378,8 @@ def test_reply_moderated_before_public(
     assert (shown["body"], shown["textState"]) == ("Thank you for the kind words.", "approved")
 
     notice = notifications(sm, s.tutor.user_id)
-    assert [n.dedupe_key for n in notice] == [f"reply:{reply['replyId']}:approved:0"]
+    micros = stored_micros(sm, "tutor_review_replies", "moderated_at", uuid.UUID(reply["replyId"]))
+    assert [n.dedupe_key for n in notice] == [f"reply:{reply['replyId']}:approved:{micros}"]
     assert notice[0].payload == {"replyId": reply["replyId"]}
     assert str(review_id) not in str(
         notice[0].payload
@@ -631,6 +704,53 @@ def test_sp3_pages_newest_first_with_an_opaque_cursor(client: TestClient, s: Set
         assert refused.headers["cache-control"] == NO_STORE
 
 
+ISO_INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def decoded_cursor(token: str) -> dict[str, object]:
+    """The JSON inside an opaque cursor (base64url without padding)."""
+    payload = json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
+    assert isinstance(payload, dict)
+    return payload
+
+
+def test_sp3_and_t21_cursors_carry_the_review_id_and_no_instant(
+    client: TestClient, s: Setup
+) -> None:
+    """SC-12: a cursor holding ``created_at`` hands a tutor paging one review at a time every
+    review's exact instant, enough to match it to a session and to a student."""
+    now = datetime.now(UTC)
+    ids = [
+        s.seeded_review(stars=5, created_at=now - timedelta(days=days, minutes=17))
+        for days in (1, 2, 3)
+    ]
+    lists = (
+        (s.viewer, Role.student, f"/api/tutors/{s.tutor.profile_id}/reviews"),
+        (s.tutor.user_id, Role.teacher, "/api/tutor/reviews"),
+    )
+    cursors = 0
+    for viewer, role, url in lists:
+        act_as(client, viewer, role)
+        served: list[str] = []
+        params: dict[str, str | int] = {"limit": 1}
+        while True:
+            page = client.get(url, params=params).json()
+            served.extend(item["reviewId"] for item in page["items"])
+            token = page["nextCursor"]
+            if token is None:
+                break
+            payload = decoded_cursor(token)
+            assert set(payload) == {"e", "k"}
+            assert payload["k"] == [served[-1]], payload  # the last review's id and nothing else
+            rest = json.dumps(payload).replace(served[-1], "")
+            assert not ISO_INSTANT.search(rest), rest
+            assert not re.search(r"\d", rest), rest  # no number that could be a timestamp
+            cursors += 1
+            params = {"limit": 1, "cursor": token}
+        assert served == [str(review) for review in ids]
+    assert cursors == 4  # non-vacuity: two cursors per list were decoded
+
+
 def test_a6_filters_by_kind_and_pages_oldest_first(
     client: TestClient, sm: sessionmaker[Session], s: Setup
 ) -> None:
@@ -645,14 +765,14 @@ def test_a6_filters_by_kind_and_pages_oldest_first(
         created_at=now - timedelta(days=3),
     )
     act_as(client, s.admin, Role.platform_admin)
-    url = "/api/admin/tutoring/moderation"
+    url = QUEUE
     everything = client.get(url)
     assert everything.status_code == 200
     assert everything.headers["cache-control"] == NO_STORE
-    assert [(i["kind"], i["text"]) for i in everything.json()["items"]] == [
-        ("review", "old text"),
-        ("reply", "a reply"),
-        ("review", "new text"),
+    assert [(i["kind"], i["text"], i["revision"]) for i in everything.json()["items"]] == [
+        ("review", "old text", sha_revision("old text")),
+        ("reply", "a reply", sha_revision("a reply")),
+        ("review", "new text", sha_revision("new text")),
     ]
     assert [i["itemId"] for i in client.get(url, params={"kind": "review"}).json()["items"]] == [
         str(old),
@@ -676,24 +796,28 @@ def test_a7_a8_refusals(client: TestClient, sm: sessionmaker[Session], s: Setup)
     reply = add_reply_row(sm, review=review, tutor_id=s.tutor.profile_id, state="pending")
     act_as(client, s.admin, Role.platform_admin)
 
-    def moderate(kind: str, item: uuid.UUID, decision: str) -> tuple[int, object]:
-        response = client.post(
-            f"/api/admin/tutoring/{kind}/{item}/moderate", json={"decision": decision}
-        )
+    def moderate(
+        kind: str, item: uuid.UUID, decision: str, shown: str = "text"
+    ) -> tuple[int, object]:
+        body = {"decision": decision}
+        if kind == "reviews":
+            body["revision"] = sha_revision(shown)
+        response = client.post(f"/api/admin/tutoring/{kind}/{item}/moderate", json=body)
         assert response.headers["cache-control"] == NO_STORE
         detail = response.json().get("detail")
         return response.status_code, detail.get("code") if isinstance(detail, dict) else detail
 
     assert moderate("reviews", uuid.uuid4(), "approved") == (404, "not_found")
     assert moderate("replies", uuid.uuid4(), "approved") == (404, "not_found")
-    assert moderate("reviews", stars_only, "approved") == (409, "not_pending")
-    assert (
-        client.post(
-            f"/api/admin/tutoring/reviews/{review}/moderate", json={"decision": "maybe"}
-        ).status_code
-        == 422
-    )
-    assert client.post(f"/api/admin/tutoring/reviews/{review}/moderate", json={}).status_code == 422
+    assert moderate("reviews", stars_only, "approved", shown="") == (409, "text_changed")
+    assert moderate("reviews", review, "approved", shown="other text") == (409, "text_changed")
+    url = f"/api/admin/tutoring/reviews/{review}/moderate"
+    revision = sha_revision("text")
+    assert client.post(url, json={"decision": "maybe", "revision": revision}).status_code == 422
+    assert client.post(url, json={"revision": revision}).status_code == 422
+    assert client.post(url, json={"decision": "approved", "revision": 7}).status_code == 422
+    assert client.post(url, json={}).status_code == 422
+    assert review_row(sm, review).text_state == "pending"
     assert moderate("reviews", review, "rejected")[0] == 200
     assert moderate("reviews", review, "approved") == (409, "not_pending")
     assert moderate("replies", reply, "approved")[0] == 200

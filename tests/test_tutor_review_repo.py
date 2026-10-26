@@ -8,10 +8,15 @@ used to build the world it is judged against.
 ``expected_ratings`` is the independent oracle: it reads the raw review rows and
 feeds them to ``core.tutor_ratings``, so a SQL rule that drifted from the core
 rule (latest per student, ties to the later entry, removed excluded) is caught.
+``sha_revision`` is the SPEC §b.3 text revision computed here with ``hashlib``,
+never imported from the repository; ``stored_micros`` reads a moderation instant
+as epoch microseconds in SQL, so the notice revision is checked against the
+database rather than against Python arithmetic the code shares.
 """
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -23,6 +28,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker as sessionmaker_factory
 
 from lemely.core.tutor_ratings import aggregate_latest_per_student, bayesian_score
+from lemely.db import tutor_review_repo
 from lemely.db.models.enums import (
     BookingParty,
     BookingState,
@@ -42,11 +48,13 @@ from lemely.db.tutor_review_repo import (
     NotCompletedError,
     NotPendingError,
     ReplyExistsError,
+    ReviewCursorError,
     ReviewExistsError,
     ReviewKey,
     ReviewNotFoundError,
     ReviewNotOpenYetError,
     ReviewValidationError,
+    TextChangedError,
     TutorReviewRepository,
 )
 from lemely.web.push import RecordingPushTransport
@@ -158,6 +166,7 @@ def add_review_row(
     removed: bool = False,
     review_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
+    """A review row as written: a backdated row was also last changed then (``updated_at``)."""
     rid = review_id or uuid.uuid4()
     state = text_state or ("none" if text is None else "pending")
     with sm.begin() as session:
@@ -173,6 +182,7 @@ def add_review_row(
         )
         if created_at is not None:
             review.created_at = created_at
+            review.updated_at = created_at
         session.add(review)
     return rid
 
@@ -197,8 +207,32 @@ def add_reply_row(
         )
         if created_at is not None:
             reply.created_at = created_at
+            reply.updated_at = created_at
         session.add(reply)
     return rid
+
+
+def sha_revision(text: str) -> str:
+    """SPEC §b.3: the text revision is the first 16 hex characters of the text's SHA-256."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def stored_micros(sm: sessionmaker[Session], table: str, column: str, row_id: uuid.UUID) -> int:
+    """A stored moderation instant as epoch microseconds, computed by Postgres."""
+    assert (table, column) in {
+        ("tutor_reviews", "text_moderated_at"),
+        ("tutor_review_replies", "moderated_at"),
+    }
+    with sm() as session:
+        value = session.execute(
+            sa.text(
+                f"SELECT (extract(epoch FROM {column}) * 1000000)::bigint "  # noqa: S608 - allowlisted
+                f"FROM {table} WHERE id = :r"
+            ),
+            {"r": row_id},
+        ).scalar_one()
+    assert value is not None, f"{table}.{column} is not set"
+    return int(value)
 
 
 def stored_ratings(sm: sessionmaker[Session], tutor_id: uuid.UUID) -> tuple[int, int, Decimal]:
@@ -454,7 +488,9 @@ def test_edit_returns_text_to_pending_and_closes_after_14_days(
 ) -> None:
     created = repo.create_review(w.student, completed(sm, w), stars=4, text="Good lessons.")
     admin = add_user(sm, Role.platform_admin)
-    repo.moderate_review(created.review_id, admin, "approved")
+    repo.moderate_review(
+        created.review_id, admin, "approved", revision=sha_revision("Good lessons.")
+    )
     assert review_row(sm, created.review_id).text_state == "approved"
 
     edited = repo.update_review(
@@ -481,7 +517,12 @@ def test_a_stars_only_edit_leaves_the_text_state_alone(
     sm: sessionmaker[Session], repo: TutorReviewRepository, w: World
 ) -> None:
     created = repo.create_review(w.student, completed(sm, w), stars=4, text="Good lessons.")
-    repo.moderate_review(created.review_id, add_user(sm, Role.platform_admin), "approved")
+    repo.moderate_review(
+        created.review_id,
+        add_user(sm, Role.platform_admin),
+        "approved",
+        revision=sha_revision("Good lessons."),
+    )
     repo.update_review(w.student, created.review_id, stars=2, text=None, clear_text=False)
     assert review_row(sm, created.review_id).text_state == "approved"
     repo.update_review(
@@ -706,6 +747,49 @@ def test_recompute_in_session_rolls_back_with_the_caller(
 def test_recompute_unknown_tutor_is_refused(repo: TutorReviewRepository) -> None:
     with pytest.raises(ReviewNotFoundError):
         repo.recompute_ratings(uuid.uuid4())
+
+
+def test_a_failing_rating_write_rolls_back_create_edit_and_remove(
+    sm: sessionmaker[Session],
+    repo: TutorReviewRepository,
+    w: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SC-16: the aggregate is written in the review change's own transaction.
+
+    If the rating write fails, the review change must not survive it: a stored
+    review whose stars the aggregate never counted is exactly the drift the
+    single-transaction rule exists to prevent.
+    """
+    kept = repo.create_review(w.student, completed(sm, w), stars=4, text="Kind and clear.")
+    ratings = stored_ratings(sm, w.tutor.profile_id)
+    assert ratings[:2] == (4, 1)
+    newcomer = add_student(sm)
+    unreviewed = add_booking(sm, student=newcomer, tutor=w.tutor, subject=w.subject)
+
+    def failing_score(*_: object) -> Decimal:
+        raise RuntimeError("rating write failed")
+
+    monkeypatch.setattr(tutor_review_repo, "bayesian_score", failing_score)
+
+    with pytest.raises(RuntimeError, match="rating write failed"):
+        repo.create_review(newcomer, unreviewed, stars=1, text=None)
+    with pytest.raises(RuntimeError, match="rating write failed"):
+        repo.update_review(
+            w.student, kept.review_id, stars=1, text="Rewritten words.", clear_text=False
+        )
+    with pytest.raises(RuntimeError, match="rating write failed"), sm.begin() as session:
+        repo.remove_review_in_session(session, kept.review_id, uuid.uuid4())
+
+    assert review_count(sm) == 1
+    row = review_row(sm, kept.review_id)
+    assert (row.stars, row.body, row.text_state, row.removed_at) == (
+        4,
+        "Kind and clear.",
+        "pending",
+        None,
+    )
+    assert stored_ratings(sm, w.tutor.profile_id) == ratings
 
 
 # ---------------------------------------------------------------------------
@@ -977,6 +1061,65 @@ def test_reviews_page_newest_first_with_a_keyset_and_removed_excluded(
     assert second.next_key is None
 
 
+def test_review_keyset_is_anchored_on_a_review_id_of_this_tutor_only(
+    sm: sessionmaker[Session], repo: TutorReviewRepository, w: World
+) -> None:
+    """SC-12: the key is the last review's id; the server reads where that review sits.
+
+    A removed anchor still marks a position (the tutor may have paged past it before
+    it went), but an anchor that is not a review of this tutor is refused rather than
+    answered with an empty page.
+    """
+    now = datetime.now(UTC)
+    ids: list[uuid.UUID] = []
+    for days in (1, 2, 3):
+        student = add_student(sm)
+        ids.append(
+            add_review_row(
+                sm,
+                booking=add_booking(sm, student=student, tutor=w.tutor, subject=w.subject),
+                tutor_id=w.tutor.profile_id,
+                student=student,
+                created_at=now - timedelta(days=days),
+            )
+        )
+    first = repo.own_reviews(w.tutor.profile_id, after=None, limit=1)
+    assert first.next_key == ReviewKey(review_id=ids[0])
+    middle = repo.own_reviews(w.tutor.profile_id, after=ReviewKey(review_id=ids[1]), limit=5)
+    assert [i.review_id for i in middle.items] == [ids[2]]
+    last = repo.own_reviews(w.tutor.profile_id, after=ReviewKey(review_id=ids[2]), limit=5)
+    assert (last.items, last.next_key) == ((), None)  # the end of the list, not a refusal
+
+    with sm.begin() as session:
+        repo.remove_review_in_session(session, ids[1], uuid.uuid4())
+    after_removed = repo.own_reviews(w.tutor.profile_id, after=ReviewKey(review_id=ids[1]), limit=5)
+    assert [i.review_id for i in after_removed.items] == [ids[2]]
+
+    other_subject = add_subject(sm)
+    rival = add_tutor(sm, subjects=(other_subject,))
+    rival_student = add_student(sm)
+    rival_review = add_review_row(
+        sm,
+        booking=add_booking(sm, student=rival_student, tutor=rival, subject=other_subject),
+        tutor_id=rival.profile_id,
+        student=rival_student,
+        created_at=now - timedelta(days=10),
+    )
+    viewer = add_user(sm, Role.student)
+    for anchor in (rival_review, uuid.uuid4()):
+        with pytest.raises(ReviewCursorError) as own_refused:
+            repo.own_reviews(w.tutor.profile_id, after=ReviewKey(review_id=anchor), limit=5)
+        assert own_refused.value.code == "invalid_cursor"
+        with pytest.raises(ReviewCursorError):
+            repo.reviews_for_viewer(
+                w.tutor.profile_id,
+                viewer,
+                Role.student,
+                after=ReviewKey(review_id=anchor),
+                limit=5,
+            )
+
+
 # ---------------------------------------------------------------------------
 # Moderation (A6-A8, SPEC §a.3)
 # ---------------------------------------------------------------------------
@@ -987,7 +1130,8 @@ def test_moderate_review_approve_reject_and_idempotent_repeat(
 ) -> None:
     admin = add_user(sm, Role.platform_admin)
     created = repo.create_review(w.student, completed(sm, w), stars=5, text="Lovely.")
-    approved = repo.moderate_review(created.review_id, admin, "approved")
+    shown = sha_revision("Lovely.")
+    approved = repo.moderate_review(created.review_id, admin, "approved", revision=shown)
     assert (approved.changed, approved.text_state, approved.text, approved.stars) == (
         True,
         "approved",
@@ -999,10 +1143,10 @@ def test_moderate_review_approve_reject_and_idempotent_repeat(
     assert (row.text_state, row.text_moderated_by) == ("approved", admin)
     assert row.text_moderated_at is not None
 
-    again = repo.moderate_review(created.review_id, admin, "approved")
-    assert (again.changed, again.text_state) == (False, "approved")
+    again = repo.moderate_review(created.review_id, admin, "approved", revision=shown)
+    assert (again.changed, again.text_state, again.revision) == (False, "approved", None)
     with pytest.raises(NotPendingError):
-        repo.moderate_review(created.review_id, admin, "rejected")
+        repo.moderate_review(created.review_id, admin, "rejected", revision=shown)
 
 
 def test_moderate_review_without_text_or_unknown_or_removed(
@@ -1010,10 +1154,10 @@ def test_moderate_review_without_text_or_unknown_or_removed(
 ) -> None:
     admin = add_user(sm, Role.platform_admin)
     stars_only = repo.create_review(w.student, completed(sm, w), stars=3, text=None)
-    with pytest.raises(NotPendingError):
-        repo.moderate_review(stars_only.review_id, admin, "approved")
+    with pytest.raises(TextChangedError):  # no text: nothing the admin saw is there to decide
+        repo.moderate_review(stars_only.review_id, admin, "approved", revision=sha_revision(""))
     with pytest.raises(ReviewNotFoundError):
-        repo.moderate_review(uuid.uuid4(), admin, "approved")
+        repo.moderate_review(uuid.uuid4(), admin, "approved", revision=sha_revision("Hmm."))
     other = add_student(sm)
     gone = repo.create_review(
         other,
@@ -1024,7 +1168,38 @@ def test_moderate_review_without_text_or_unknown_or_removed(
     with sm.begin() as session:
         repo.remove_review_in_session(session, gone.review_id, admin)
     with pytest.raises(ReviewNotFoundError):
-        repo.moderate_review(gone.review_id, admin, "approved")
+        repo.moderate_review(gone.review_id, admin, "approved", revision=sha_revision("Hmm."))
+
+
+def test_moderate_review_refuses_text_edited_after_the_admin_saw_it(
+    sm: sessionmaker[Session], repo: TutorReviewRepository, w: World
+) -> None:
+    """RF-7: a decision applies to the words the admin read, never to words written since."""
+    admin = add_user(sm, Role.platform_admin)
+    created = repo.create_review(w.student, completed(sm, w), stars=5, text="First words.")
+    (queued,) = repo.moderation_page("review", after=None, limit=5).items
+    assert queued.revision == sha_revision("First words.")
+    repo.update_review(
+        w.student, created.review_id, stars=None, text="Second words.", clear_text=False
+    )
+
+    for decision in ("approved", "rejected"):
+        with pytest.raises(TextChangedError) as refused:
+            repo.moderate_review(created.review_id, admin, decision, revision=queued.revision)
+        assert refused.value.code == "text_changed"
+    row = review_row(sm, created.review_id)
+    assert (row.body, row.text_state, row.text_moderated_by) == ("Second words.", "pending", None)
+
+    approved = repo.moderate_review(
+        created.review_id, admin, "approved", revision=sha_revision("Second words.")
+    )
+    assert (approved.changed, approved.text) == (True, "Second words.")
+    repo.update_review(w.student, created.review_id, stars=None, text="Third.", clear_text=False)
+    with pytest.raises(TextChangedError):  # approved once, edited since: the old revision is stale
+        repo.moderate_review(
+            created.review_id, admin, "approved", revision=sha_revision("Second words.")
+        )
+    assert review_row(sm, created.review_id).text_state == "pending"
 
 
 def test_moderate_reply_and_hide_reply(
@@ -1041,7 +1216,11 @@ def test_moderate_reply_and_hide_reply(
         None,
     )
     assert outcome.recipient_user_id == w.tutor.user_id
-    assert repo.moderate_reply(reply.reply_id, admin, "approved").changed is False
+    assert outcome.revision == stored_micros(
+        sm, "tutor_review_replies", "moderated_at", reply.reply_id
+    )
+    repeat = repo.moderate_reply(reply.reply_id, admin, "approved")
+    assert (repeat.changed, repeat.revision) == (False, None)
     with pytest.raises(NotPendingError):
         repo.moderate_reply(reply.reply_id, admin, "rejected")
     with pytest.raises(ReviewNotFoundError):
@@ -1062,27 +1241,37 @@ def test_moderate_reply_and_hide_reply(
     assert (state, by) == ("rejected", admin)
 
 
-def test_moderation_revision_counts_the_text_versions_for_the_notice(
+def test_notice_revision_is_the_stored_moderation_instant(
     sm: sessionmaker[Session], repo: TutorReviewRepository, w: World
 ) -> None:
-    """The notice dedupe key needs a revision that grows with every moderated text version."""
+    """The notice dedupe revision is the decision's own ``text_moderated_at``, in microseconds.
+
+    Each decision on each text version gets its own key, so moderating an edited text
+    to the same outcome is a new notice; an idempotent repeat writes nothing and has no
+    revision, so it can send nothing.
+    """
     admin = add_user(sm, Role.platform_admin)
     service = notification_service(sm)
     created = repo.create_review(w.student, completed(sm, w), stars=5, text="First words.")
+    keys: list[str] = []
 
-    def moderate_and_notify(decision: str) -> int:
-        outcome = repo.moderate_review(created.review_id, admin, decision)  # type: ignore[arg-type]
-        send_after_commit(
-            review_notices(
+    def moderate_and_notify(decision: str, text: str) -> int | None:
+        outcome = repo.moderate_review(
+            created.review_id,
+            admin,
+            decision,  # type: ignore[arg-type]
+            revision=sha_revision(text),
+        )
+        if outcome.revision is not None:
+            notices = review_notices(
                 kind="review",
                 target_id=outcome.item_id,
                 recipient_user_id=outcome.recipient_user_id,
                 outcome=decision,  # type: ignore[arg-type]
                 revision=outcome.revision,
-            ),
-            service=service,
-            transport=RecordingPushTransport(),
-        )
+            )
+            keys.extend(notice.dedupe_key for notice in notices)
+            send_after_commit(notices, service=service, transport=RecordingPushTransport())
         return outcome.revision
 
     def notice_count() -> int:
@@ -1095,18 +1284,28 @@ def test_moderation_revision_counts_the_text_versions_for_the_notice(
                 ).scalar_one()
             )
 
-    assert moderate_and_notify("approved") == 0
+    def moderated_micros() -> int:
+        return stored_micros(sm, "tutor_reviews", "text_moderated_at", created.review_id)
+
+    first = moderate_and_notify("approved", "First words.")
+    assert first == moderated_micros()
+    assert moderate_and_notify("approved", "First words.") is None  # idempotent repeat
     assert notice_count() == 1
     repo.update_review(
         w.student, created.review_id, stars=None, text="Second words.", clear_text=False
     )
-    assert moderate_and_notify("approved") == 1
+    second = moderate_and_notify("approved", "Second words.")
+    assert second == moderated_micros()
     assert notice_count() == 2  # the same outcome on edited text is a new event
     repo.update_review(
         w.student, created.review_id, stars=None, text="Third words.", clear_text=False
     )
-    assert moderate_and_notify("rejected") == 2
+    third = moderate_and_notify("rejected", "Third words.")
+    assert third == moderated_micros()
     assert notice_count() == 3
+    assert first is not None and second is not None and third is not None
+    assert first < second < third
+    assert len(set(keys)) == len(keys) == 3
 
 
 def test_moderation_queue_is_oldest_first_filtered_and_paged(
@@ -1161,6 +1360,9 @@ def test_moderation_queue_is_oldest_first_filtered_and_paged(
         ("reply", "reply text"),
     ]
     assert everything.items[2].item_id == reply
+    assert [i.revision for i in everything.items] == [
+        sha_revision(text) for text in ("text 5", "text 3", "reply text")
+    ]
     assert [i.item_id for i in repo.moderation_page("review", after=None, limit=20).items] == [
         review_ids[0],
         review_ids[1],
@@ -1173,3 +1375,52 @@ def test_moderation_queue_is_oldest_first_filtered_and_paged(
     second = repo.moderation_page("all", after=first.next_key, limit=2)
     assert [i.kind for i in second.items] == ["reply"]
     assert second.next_key is None
+
+
+def test_an_edited_review_requeues_behind_an_admin_who_paged_past_it(
+    sm: sessionmaker[Session], repo: TutorReviewRepository, w: World
+) -> None:
+    """A review text queues from its last submission, so an edit is seen again (RF-7).
+
+    Ordered by ``created_at``, an edited text keeps its original place, which an admin
+    paging oldest first may already have passed: the new words would wait until the
+    admin started the queue over. Both a pending text edited while the admin pages and
+    an approved text edited back to pending must come round after the cursor.
+    """
+    now = datetime.now(UTC)
+    author: dict[uuid.UUID, uuid.UUID] = {}
+
+    def seed(days: int, state: str) -> uuid.UUID:
+        student = add_student(sm)
+        review_id = add_review_row(
+            sm,
+            booking=add_booking(sm, student=student, tutor=w.tutor, subject=w.subject),
+            tutor_id=w.tutor.profile_id,
+            student=student,
+            text=f"text {days}",
+            text_state=state,
+            created_at=now - timedelta(days=days),
+        )
+        author[review_id] = student
+        return review_id
+
+    approved_earlier = seed(6, "approved")
+    oldest, middle, newest = seed(5, "pending"), seed(4, "pending"), seed(3, "pending")
+
+    first = repo.moderation_page("review", after=None, limit=1)
+    assert [i.item_id for i in first.items] == [oldest]
+    for review_id, text in ((oldest, "text 5, rewritten"), (approved_earlier, "text 6, revised")):
+        repo.update_review(author[review_id], review_id, stars=None, text=text, clear_text=False)
+
+    seen: list[tuple[uuid.UUID, str]] = []
+    key = first.next_key
+    while key is not None:
+        page = repo.moderation_page("review", after=key, limit=1)
+        seen.extend((item.item_id, item.text) for item in page.items)
+        key = page.next_key
+    assert seen == [
+        (middle, "text 4"),
+        (newest, "text 3"),
+        (oldest, "text 5, rewritten"),
+        (approved_earlier, "text 6, revised"),
+    ]

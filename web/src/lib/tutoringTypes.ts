@@ -578,6 +578,8 @@ export interface ModerationItem {
   itemId: string
   text: string
   createdAt: string
+  /** First 16 hex characters of the SHA-256 of `text`; send it back on A7. */
+  revision: string
 }
 
 export interface ModerationPage {
@@ -585,8 +587,11 @@ export interface ModerationPage {
   nextCursor: string | null
 }
 
+/** A7 body. `revision` is the one A6 showed with the text: a review text edited
+ * since is refused with 409 `text_changed`, never approved unseen (RF-7). */
 export interface ReviewModerate {
   decision: "approved" | "rejected"
+  revision: string
 }
 
 export interface ReplyModerate {

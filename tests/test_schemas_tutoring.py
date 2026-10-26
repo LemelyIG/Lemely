@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ast
 import functools
+import hashlib
 import inspect
 import re
 import types
@@ -31,6 +32,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from lemely.db.tutor_review_repo import text_revision
 from lemely.web import schemas_tutoring, schemas_tutoring_admin
 from lemely.web.schemas import ApiModel
 from lemely.web.schemas_analytics import StudentDetailDTO
@@ -186,6 +188,20 @@ def _spec_admin_names() -> tuple[str, ...]:
     start = section.index("Admin DTOs (`schemas_tutoring_admin.py`):")
     paragraph = section[start : section.index("**", start)]
     return tuple(dict.fromkeys(re.findall(r"`(\w+DTO)`", paragraph)))
+
+
+def _spec_admin_note(name: str) -> str:
+    """The parenthesised note §b.3's admin paragraph gives ``name``."""
+    match = re.search(rf"`{name}` \(([^)]*)\)", _section("### b.3 DTOs", "### b.4 "))
+    assert match, f"SPEC §b.3 gives {name} no field note"
+    return match.group(1)
+
+
+def _note_fields(note: str) -> frozenset[str]:
+    """The backticked field names a note declares: those before its first colon."""
+    fields = frozenset(re.findall(r"`(\w+)`", note.partition(":")[0]))
+    assert fields, f"no backticked field names in {note!r}"
+    return fields
 
 
 @functools.cache
@@ -779,6 +795,39 @@ def test_admin_evidence_signed_url_is_null_outside_a2() -> None:
     assert set(schemas_tutoring_admin.AdminEvidenceDTO.model_fields) == set(
         schemas_tutoring.EvidenceDTO.model_fields
     ) | {"signedUrl"}
+
+
+def test_moderation_dtos_carry_the_spec_text_revision() -> None:
+    """RF-7: A6 shows each text's revision and A7 must send it back (§b.3 admin notes).
+
+    The field names, their required-ness and the hash length are read from SPEC
+    §b.3's wording; A8 has no revision because a reply cannot be edited.
+    """
+    a = schemas_tutoring_admin
+    item_note = _spec_admin_note("ModerationItemDTO")
+    assert item_note.startswith("+ "), item_note  # added to the derived A6 item fields
+    added = _note_fields(item_note)
+    assert added == {"revision"}
+    assert added <= set(a.ModerationItemDTO.model_fields), sorted(a.ModerationItemDTO.model_fields)
+    for name in added:
+        assert a.ModerationItemDTO.model_fields[name].annotation is str
+        assert a.ModerationItemDTO.model_fields[name].is_required()
+
+    review_note = _spec_admin_note("ReviewModerateDTO")
+    review_fields = _note_fields(review_note)
+    assert set(a.ReviewModerateDTO.model_fields) == review_fields == {"decision", "revision"}
+    assert "required" in review_note.partition(":")[2]
+    assert all(a.ReviewModerateDTO.model_fields[name].is_required() for name in review_fields)
+    assert a.ReviewModerateDTO.model_fields["revision"].annotation is str
+
+    reply_note = _spec_admin_note("ReplyModerateDTO")
+    assert set(a.ReplyModerateDTO.model_fields) == _note_fields(reply_note) == {"decision"}
+
+    length = re.search(r"first (\d+) hex characters of the SHA-256", item_note)
+    assert length, item_note
+    for text in ("Clear and patient.", "", "شكرا"):
+        expected = hashlib.sha256(text.encode("utf-8")).hexdigest()[: int(length.group(1))]
+        assert text_revision(text) == expected
 
 
 def test_every_field_sits_on_a_line_the_ts_parity_parser_reads() -> None:

@@ -29,20 +29,36 @@ session zone, so a clock change inside a window cannot shorten or lengthen it
 **Visibility (SC-12).** A review's stars are public from the moment it is written;
 its text only once an admin approved it, and an edit sends the text back to
 ``pending``. A reply is public only when approved. A tutor sees their own reply in
-any state. Nothing here returns the reviewer's id or the booking id.
+any state. Nothing here returns the reviewer's id or the booking id, and the SP3
+and T21 cursors name the last review served and nothing else: the server reads
+that review's position itself. A cursor that carried the sort key would hand a
+tutor paging one review at a time every review's exact ``created_at``, enough to
+match a review to a session and so to a student.
 
-**Moderation revisions.** Notices about a moderated text are deduplicated on a
-revision number (``tutoring_notify.review_notices``). No column stores a text
-version, so the revision is the number of moderation notices already written to
-that recipient for that review or reply: 0 for the first, 1 once an edit has been
-moderated again, and so on.
+**The moderation queue (A6).** Oldest first by when each text was last submitted:
+a reply from its creation (a reply cannot be edited), a review text from the row's
+``updated_at``. An edit sends a text back to ``pending`` and moves it behind every
+cursor already handed out, so an admin who has paged past its old place still
+reaches it. (A later stars-only edit of a pending text also moves it back, never
+out.)
+
+**Moderation revisions.** There are two, for two different jobs. The *text
+revision* (:func:`text_revision`, the first 16 hex characters of the text's
+SHA-256) is shown with each text in A6 and sent back by A7; under the row lock it
+must still match the stored text, so words written after the admin loaded the
+queue are never approved unseen (RF-7). The *notice revision* deduplicates the
+author's notice (``tutoring_notify.review_notices``): it is the decision's stored
+moderation instant (``text_moderated_at`` / ``moderated_at``, read back from the
+``UPDATE``) in epoch microseconds, so every decision on every text version has its
+own key, while an idempotent repeat writes nothing and has no notice revision.
 """
 
 from __future__ import annotations
 
+import hashlib
 import uuid
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -68,6 +84,9 @@ log = structlog.get_logger(__name__)
 MAX_PAGE_SIZE: Final = 50
 MAX_REVIEW_TEXT: Final = 1000  # ck_tutor_reviews_body_len
 MAX_REPLY_TEXT: Final = 1000  # ck_tutor_review_replies_body_len
+TEXT_REVISION_LENGTH: Final = 16  # SPEC §b.3 ModerationItemDTO.revision
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+_MICROSECOND: Final = timedelta(microseconds=1)
 _MIN_STARS: Final = 1
 _MAX_STARS: Final = 5
 
@@ -138,6 +157,12 @@ class NotPendingError(ReviewError):
     code = "not_pending"
 
 
+class TextChangedError(ReviewError):
+    """The stored text is not the one the admin was shown (RF-7): decide it after reading it."""
+
+    code = "text_changed"
+
+
 class ReviewValidationError(ReviewError):
     """A 422: ``code`` names the rule, ``field`` the input."""
 
@@ -145,6 +170,13 @@ class ReviewValidationError(ReviewError):
         super().__init__(message)
         self.code = code
         self.field = field
+
+
+class ReviewCursorError(ReviewValidationError):
+    """A review-list cursor whose anchor is not a review of this tutor (O21): a 422."""
+
+    def __init__(self) -> None:
+        super().__init__("invalid_cursor", "cursor", "This page link is not valid.")
 
 
 # ---------------------------------------------------------------------------
@@ -176,9 +208,12 @@ class ReviewView:
 
 @dataclass(frozen=True, slots=True)
 class ReviewKey:
-    """Keyset position in a review list: newest first."""
+    """Keyset anchor in a review list (newest first): the last review served.
 
-    created_at: datetime
+    Only its id: the page query reads where that review sits, so no cursor carries
+    a review's ``created_at`` (SC-12).
+    """
+
     review_id: uuid.UUID
 
 
@@ -205,19 +240,25 @@ class MyReview:
 
 @dataclass(frozen=True, slots=True)
 class ModerationItem:
-    """One text awaiting moderation. No reviewer, no booking (SC-12)."""
+    """One text awaiting moderation. No reviewer, no booking (SC-12).
+
+    ``queued_at`` is when the text was last submitted (the queue's sort key);
+    ``revision`` is :func:`text_revision` of ``text``, which A7 must send back.
+    """
 
     kind: ModerationKind
     item_id: uuid.UUID
     text: str
     created_at: datetime
+    queued_at: datetime
+    revision: str
 
 
 @dataclass(frozen=True, slots=True)
 class ModerationKey:
-    """Keyset position in the moderation queue: oldest first."""
+    """Keyset position in the moderation queue: oldest submission first."""
 
-    created_at: datetime
+    queued_at: datetime
     kind: str
     item_id: uuid.UUID
 
@@ -236,7 +277,9 @@ class ModerationOutcome:
 
     ``recipient_user_id`` is the author to notify (the student for a review, the
     tutor's user for a reply). ``changed`` is false for an idempotent repeat, which
-    must not send a second notice. ``revision`` is the notice's dedupe revision.
+    must not send a second notice. ``revision`` is the notice's dedupe revision: the
+    stored moderation instant of this decision in epoch microseconds, ``None``
+    exactly when ``changed`` is false.
     """
 
     kind: ModerationKind
@@ -247,7 +290,7 @@ class ModerationOutcome:
     created_at: datetime
     recipient_user_id: uuid.UUID
     changed: bool
-    revision: int
+    revision: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,37 +321,56 @@ class RatingRecompute:
 
 
 def review_cursor(endpoint: str, key: ReviewKey) -> str:
-    """The opaque cursor for the page that follows ``key`` in list ``endpoint``."""
-    return encode_cursor(endpoint, [key.created_at, key.review_id])
+    """The opaque cursor for the page after ``key`` in list ``endpoint``: the review id only."""
+    return encode_cursor(endpoint, [key.review_id])
 
 
 def parse_review_cursor(token: str, endpoint: str) -> ReviewKey:
-    """Decode a review-list cursor; :class:`CursorError` unless minted for ``endpoint``."""
-    created_at, review_id = decode_cursor(token, endpoint=endpoint, types=(datetime, uuid.UUID))
-    if not isinstance(created_at, datetime) or not isinstance(review_id, uuid.UUID):
+    """Decode a review-list cursor; :class:`CursorError` unless minted for ``endpoint``.
+
+    Whether the id names a review of the listed tutor is the page query's check
+    (:class:`ReviewCursorError`), since only the database knows.
+    """
+    (review_id,) = decode_cursor(token, endpoint=endpoint, types=(uuid.UUID,))
+    if not isinstance(review_id, uuid.UUID):
         raise CursorError("cursor has the wrong value types")  # pragma: no cover - decoder-typed
-    return ReviewKey(created_at=created_at, review_id=review_id)
+    return ReviewKey(review_id=review_id)
 
 
 def moderation_cursor(endpoint: str, key: ModerationKey) -> str:
-    """The opaque cursor for the page that follows ``key`` in the moderation queue."""
-    return encode_cursor(endpoint, [key.created_at, key.kind, key.item_id])
+    """The opaque cursor for the page that follows ``key`` in the moderation queue.
+
+    It carries the sort key itself, unlike the review lists: an admin cursor
+    reveals nothing the admin cannot already see, and an anchor read back from
+    the database would jump ahead, skipping the texts in between, whenever the
+    anchor's own text was edited.
+    """
+    return encode_cursor(endpoint, [key.queued_at, key.kind, key.item_id])
 
 
 def parse_moderation_cursor(token: str, endpoint: str) -> ModerationKey:
     """Decode a moderation-queue cursor; :class:`CursorError` for anything not minted for it."""
-    created_at, kind, item_id = decode_cursor(
+    queued_at, kind, item_id = decode_cursor(
         token, endpoint=endpoint, types=(datetime, str, uuid.UUID)
     )
     if (
-        not isinstance(created_at, datetime)
+        not isinstance(queued_at, datetime)
         or not isinstance(kind, str)
         or not isinstance(item_id, uuid.UUID)
     ):
         raise CursorError("cursor has the wrong value types")  # pragma: no cover - decoder-typed
     if kind not in ("review", "reply"):
         raise CursorError("cursor names an unknown kind")
-    return ModerationKey(created_at=created_at, kind=kind, item_id=item_id)
+    return ModerationKey(queued_at=queued_at, kind=kind, item_id=item_id)
+
+
+def text_revision(text: str) -> str:
+    """The revision of a text awaiting moderation: its UTF-8 SHA-256, first 16 hex characters.
+
+    A6 shows it with the text and A7 sends it back, so a decision is applied only to
+    the words the admin read (RF-7, SPEC §b.3).
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:TEXT_REVISION_LENGTH]
 
 
 # ---------------------------------------------------------------------------
@@ -424,18 +486,16 @@ def _recompute(session: Session, tutor_profile_id: uuid.UUID) -> RatingRecompute
     return result
 
 
-def _moderation_revision(
-    session: Session, kind: ModerationKind, target_id: uuid.UUID, recipient: uuid.UUID
-) -> int:
-    """How many moderation notices this recipient already has for this review or reply."""
-    count = session.execute(
-        sa.text(
-            "SELECT count(*) FROM notifications "
-            "WHERE user_id = :recipient AND dedupe_key LIKE :prefix"
-        ),
-        {"recipient": recipient, "prefix": f"{kind}:{target_id}:%"},
-    ).scalar_one()
-    return int(count)
+def _notice_revision(moderated_at: datetime | None) -> int:
+    """A decision's notice revision: its stored moderation instant in epoch microseconds.
+
+    ``moderated_at`` is the ``RETURNING`` value of the ``UPDATE`` that set it to
+    ``now()``; the column is nullable, so ``None`` here is a bug, not a state.
+    Integer arithmetic on the timedelta, not ``timestamp()``, so no float rounding.
+    """
+    if moderated_at is None:
+        raise RuntimeError("the moderating UPDATE returned no moderation instant")
+    return (moderated_at - _EPOCH) // _MICROSECOND
 
 
 def _my_review(review: TutorReview) -> MyReview:
@@ -487,8 +547,12 @@ class TutorReviewRepository:
     """Review, reply and moderation reads and writes over a ``sessionmaker``.
 
     Each public method is one transaction. The ``*_in_session`` helpers are
-    static: they run inside the caller's transaction (the report-resolution
-    path of T25) and take the same tutor-row lock first.
+    static and run inside the caller's transaction (the report-resolution path
+    of T25). The two that move the aggregate, ``recompute_ratings_in_session``
+    and ``remove_review_in_session``, take the tutor-row lock first, as every
+    aggregate writer does. ``hide_reply_in_session`` takes no tutor-row lock and
+    needs none: hiding a reply changes no aggregate, and its one guarded
+    ``UPDATE`` is atomic on the reply row.
     """
 
     def __init__(self, sessionmaker: sessionmaker[Session]) -> None:
@@ -741,33 +805,44 @@ class TutorReviewRepository:
         after: ModerationKey | None,
         limit: int,
     ) -> ModerationPage:
-        """A6: texts awaiting moderation, oldest first (review texts and replies)."""
+        """A6: texts awaiting moderation, oldest submission first (review texts and replies).
+
+        A review text queues from the row's ``updated_at``, so an edit moves it behind
+        the cursors already handed out (see the module notes); a reply cannot be
+        edited and queues from its creation. The pending-review index is on
+        ``created_at``, so this sort reads the pending rows without it: the queue is
+        the backlog of unmoderated texts, small by design.
+        """
         _check_limit(limit)
         parts: list[str] = []
         if kind in ("review", "all"):
             parts.append(
                 "SELECT CAST('review' AS text) AS kind, r.id AS item_id, r.body AS text, "
-                "r.created_at AS created_at FROM tutor_reviews r "
+                "r.created_at AS created_at, r.updated_at AS queued_at FROM tutor_reviews r "
                 "WHERE r.text_state = 'pending' AND r.removed_at IS NULL"
             )
         if kind in ("reply", "all"):
             # A reply to a removed review is never public, so it needs no moderator.
             parts.append(
                 "SELECT CAST('reply' AS text) AS kind, p.id AS item_id, p.body AS text, "
-                "p.created_at AS created_at FROM tutor_review_replies p "
+                "p.created_at AS created_at, p.created_at AS queued_at "
+                "FROM tutor_review_replies p "
                 "WHERE p.text_state = 'pending' AND EXISTS (SELECT 1 FROM tutor_reviews rr "
                 "WHERE rr.id = p.review_id AND rr.removed_at IS NULL)"
             )
-        sql = f"SELECT q.kind, q.item_id, q.text, q.created_at FROM ({' UNION ALL '.join(parts)}) q"  # noqa: S608 - constants
+        sql = (
+            "SELECT q.kind, q.item_id, q.text, q.created_at, q.queued_at "  # noqa: S608 - constants
+            f"FROM ({' UNION ALL '.join(parts)}) q"
+        )
         params: dict[str, object] = {"limit": limit + 1}
         if after is not None:
-            sql += " WHERE (q.created_at, q.kind, q.item_id) > (:after_at, :after_kind, :after_id)"
+            sql += " WHERE (q.queued_at, q.kind, q.item_id) > (:after_at, :after_kind, :after_id)"
             params |= {
-                "after_at": after.created_at,
+                "after_at": after.queued_at,
                 "after_kind": after.kind,
                 "after_id": after.item_id,
             }
-        sql += " ORDER BY q.created_at, q.kind, q.item_id LIMIT :limit"
+        sql += " ORDER BY q.queued_at, q.kind, q.item_id LIMIT :limit"
         with self._sessionmaker() as session:
             rows = session.execute(sa.text(sql), params).all()
         page = rows[:limit]
@@ -777,12 +852,14 @@ class TutorReviewRepository:
                 item_id=row.item_id,
                 text=str(row.text),
                 created_at=_utc(row.created_at),
+                queued_at=_utc(row.queued_at),
+                revision=text_revision(str(row.text)),
             )
             for row in page
         )
         next_key = (
             ModerationKey(
-                created_at=items[-1].created_at, kind=items[-1].kind, item_id=items[-1].item_id
+                queued_at=items[-1].queued_at, kind=items[-1].kind, item_id=items[-1].item_id
             )
             if len(rows) > limit
             else None
@@ -790,14 +867,24 @@ class TutorReviewRepository:
         return ModerationPage(items=items, next_key=next_key)
 
     def moderate_review(
-        self, review_id: uuid.UUID, admin_user_id: uuid.UUID, decision: Decision
+        self,
+        review_id: uuid.UUID,
+        admin_user_id: uuid.UUID,
+        decision: Decision,
+        *,
+        revision: str,
     ) -> ModerationOutcome:
-        """A7: approve or reject a review's pending text.
+        """A7: approve or reject a review's pending text, as the admin read it.
 
-        Repeating the decision that already holds is a no-op (``changed`` false);
-        any other state is :class:`NotPendingError`; an unknown or removed review
-        is :class:`ReviewNotFoundError`. The stars are not touched: they count
-        from insert (SPEC §a.3).
+        ``revision`` is the :func:`text_revision` A6 showed with the text. Under the
+        row lock it must still match the stored text, or the call is refused with
+        :class:`TextChangedError` (RF-7): words written after the admin loaded the
+        queue are never decided unseen, and a review whose text was removed has
+        nothing left to decide. On the same text, repeating the decision that
+        already holds is a no-op (``changed`` false, no notice revision); any other
+        state is :class:`NotPendingError`; an unknown or removed review is
+        :class:`ReviewNotFoundError`. The stars are not touched: they count from
+        insert (SPEC §a.3).
         """
         target = ModerationState(decision)
         with self._sessionmaker.begin() as session:
@@ -806,31 +893,37 @@ class TutorReviewRepository:
             ).scalar_one_or_none()
             if review is None or review.removed_at is not None:
                 raise ReviewNotFoundError("Review not found.")
-            revision = _moderation_revision(session, "review", review_id, review.student_id)
-            changed = review.text_state is ModerationState.pending
-            if not changed and review.text_state is not target:
-                raise NotPendingError("This review text is not waiting for moderation.")
-            if changed:
-                session.execute(
-                    sa.update(TutorReview)
-                    .where(TutorReview.id == review_id)
-                    .values(
-                        text_state=target,
-                        text_moderated_at=sa.func.now(),
-                        text_moderated_by=admin_user_id,
-                    )
+            body = review.body
+            if body is None or text_revision(body) != revision:
+                raise TextChangedError(
+                    "This review text changed after the queue was loaded. Reload and read it."
                 )
-            return ModerationOutcome(
+            outcome = ModerationOutcome(
                 kind="review",
                 item_id=review_id,
                 stars=review.stars,
-                text=review.body or "",
+                text=body,
                 text_state=target.value,
                 created_at=_utc(review.created_at),
                 recipient_user_id=review.student_id,
-                changed=changed,
-                revision=revision,
+                changed=False,
+                revision=None,
             )
+            if review.text_state is not ModerationState.pending:
+                if review.text_state is not target:
+                    raise NotPendingError("This review text is not waiting for moderation.")
+                return outcome
+            moderated_at = session.execute(
+                sa.update(TutorReview)
+                .where(TutorReview.id == review_id)
+                .values(
+                    text_state=target,
+                    text_moderated_at=sa.func.now(),
+                    text_moderated_by=admin_user_id,
+                )
+                .returning(TutorReview.text_moderated_at)
+            ).scalar_one()
+            return replace(outcome, changed=True, revision=_notice_revision(moderated_at))
 
     def moderate_reply(
         self, reply_id: uuid.UUID, admin_user_id: uuid.UUID, decision: Decision
@@ -851,21 +944,7 @@ class TutorReviewRepository:
             ).one_or_none()
             if row is None:
                 raise ReviewNotFoundError("Reply not found.")
-            revision = _moderation_revision(session, "reply", reply_id, row.recipient)
-            changed = row.text_state == ModerationState.pending.value
-            if not changed and row.text_state != target.value:
-                raise NotPendingError("This reply is not waiting for moderation.")
-            if changed:
-                session.execute(
-                    sa.update(TutorReviewReply)
-                    .where(TutorReviewReply.id == reply_id)
-                    .values(
-                        text_state=target,
-                        moderated_at=sa.func.now(),
-                        moderated_by=admin_user_id,
-                    )
-                )
-            return ModerationOutcome(
+            outcome = ModerationOutcome(
                 kind="reply",
                 item_id=reply_id,
                 stars=None,
@@ -873,9 +952,24 @@ class TutorReviewRepository:
                 text_state=target.value,
                 created_at=_utc(row.created_at),
                 recipient_user_id=row.recipient,
-                changed=changed,
-                revision=revision,
+                changed=False,
+                revision=None,
             )
+            if row.text_state != ModerationState.pending.value:
+                if row.text_state != target.value:
+                    raise NotPendingError("This reply is not waiting for moderation.")
+                return outcome
+            moderated_at = session.execute(
+                sa.update(TutorReviewReply)
+                .where(TutorReviewReply.id == reply_id)
+                .values(
+                    text_state=target,
+                    moderated_at=sa.func.now(),
+                    moderated_by=admin_user_id,
+                )
+                .returning(TutorReviewReply.moderated_at)
+            ).scalar_one()
+            return replace(outcome, changed=True, revision=_notice_revision(moderated_at))
 
     # -- the aggregate ------------------------------------------------------
 
@@ -965,8 +1059,14 @@ class TutorReviewRepository:
         after_filter = ""
         params: dict[str, object] = {"tutor_id": tutor_id, "limit": limit + 1}
         if after is not None:
-            after_filter = " AND (r.created_at, r.id) < (:after_at, :after_id)"
-            params |= {"after_at": after.created_at, "after_id": after.review_id}
+            # The anchor's position is read here, never taken from the client (SC-12).
+            # A removed anchor still marks a place; one that is not a review of this
+            # tutor leaves the subquery empty, the comparison NULL and the page empty.
+            after_filter = (
+                " AND (r.created_at, r.id) < (SELECT a.created_at, a.id FROM tutor_reviews a "
+                "WHERE a.id = :after_id AND a.tutor_profile_id = :tutor_id)"
+            )
+            params["after_id"] = after.review_id
         rows = session.execute(
             sa.text(
                 "SELECT r.id, r.stars, r.body, r.text_state::text AS text_state, r.created_at, "  # noqa: S608 - constants
@@ -977,13 +1077,23 @@ class TutorReviewRepository:
             ),
             params,
         ).all()
+        # A row came back only if the anchor exists for this tutor, so only an empty
+        # page needs the second look that tells the end of the list from a bad anchor.
+        if after is not None and not rows and not _is_review_of(session, after, tutor_id):
+            raise ReviewCursorError
         items = tuple(_review_view(row) for row in rows[:limit])
-        next_key = (
-            ReviewKey(created_at=items[-1].created_at, review_id=items[-1].review_id)
-            if len(rows) > limit
-            else None
-        )
+        next_key = ReviewKey(review_id=items[-1].review_id) if len(rows) > limit else None
         return ReviewsPage(items=items, next_key=next_key, zone=zone)
+
+
+def _is_review_of(session: Session, key: ReviewKey, tutor_id: uuid.UUID) -> bool:
+    """Whether ``key`` names a review (removed or not) of ``tutor_id``."""
+    found = session.execute(
+        sa.select(TutorReview.id).where(
+            TutorReview.id == key.review_id, TutorReview.tutor_profile_id == tutor_id
+        )
+    ).first()
+    return found is not None
 
 
 def _check_limit(limit: int) -> None:
@@ -995,6 +1105,7 @@ __all__ = [
     "MAX_PAGE_SIZE",
     "MAX_REPLY_TEXT",
     "MAX_REVIEW_TEXT",
+    "TEXT_REVISION_LENGTH",
     "AccountTooNewError",
     "Decision",
     "EditWindowClosedError",
@@ -1009,6 +1120,7 @@ __all__ = [
     "RatingRecompute",
     "ReplyExistsError",
     "ReplyView",
+    "ReviewCursorError",
     "ReviewError",
     "ReviewExistsError",
     "ReviewKey",
@@ -1017,9 +1129,11 @@ __all__ = [
     "ReviewValidationError",
     "ReviewView",
     "ReviewsPage",
+    "TextChangedError",
     "TutorReviewRepository",
     "moderation_cursor",
     "parse_moderation_cursor",
     "parse_review_cursor",
     "review_cursor",
+    "text_revision",
 ]
