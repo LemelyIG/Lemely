@@ -289,6 +289,38 @@ in all of these files.
   stop counting in that tutor's results. Both built on `Modal` (focus moves in,
   is trapped, and returns on close), with copy in `safetyNoticeCopy.ts`.
 
+## Session view, review form and stop-sharing sheet (T23)
+- `web/src/components/tutoring/session-detail-view.tsx` —
+  `SessionDetailView({ booking, viewer, tutorHref, countingHref, cancel, complete, reviews, notes, safetyNotice })`.
+  S-37 and P-06 (SPEC §d) share it: it draws one booking for a `"student"` or
+  `"parent"` viewer, and every role-specific write comes in as a prop (`cancel`,
+  `complete`, `reviews`, `notes.post`, `safetyNotice`), so the parent screen
+  supplies the parent hooks and leaves out what a parent does not have. Controls
+  come from `sessionActions` (`allowedActions`; a parent also needs
+  `requestedBy === "parent"`), never from the state. Inside 24 hours it says why
+  there is no Cancel; a tutor's late cancellation shows their reason as plain
+  text; a system cancellation reads "This session was cancelled by Lemely." and
+  never the stored reason (SPEC §i.8). A meeting link is an anchor only for an
+  http(s) address, with `rel="noopener noreferrer"`. Reporting (R1) is inside the
+  view. C-21 is composed with the C-24 gate: a student's first note waits for the
+  notice when the settings say it is unread (the draft stays in the box), and
+  the server's 409 `safety_notice_required` brings the sheet up as well. Offline,
+  Cancel and Mark as completed are disabled with the reason. Exports its prop
+  types (`SessionAction`, `SessionReviewActions`, `SessionNotesInput`,
+  `SessionSafetyNotice`). Logic and every sentence: `lib/tutoring/sessionView.ts` (including the
+  `usePagedItems` "show more" hook shared by S-36, the notes and the S-38 log).
+- `web/src/components/tutoring/review-form.tsx` —
+  `ReviewForm({ mode: "create" | "edit", initialStars, hasText, onSubmit, onCancel, pending, error })`.
+  Native radio group for the stars (44 px targets, filled shape plus "n of 5
+  stars", arrow keys), optional text (1000 characters), the SPEC privacy line.
+  Edit sends only what changed (the booking carries the stars, not the old text,
+  so the box means "replace" and "Remove my review text" clears it).
+- `web/src/components/tutoring/stop-sharing-sheet.tsx` —
+  `StopSharingSheet({ open, grant, onConfirm, onCancel, pending, error })`.
+  Not dismissible by accident; the class line appears only when
+  `alsoTeachesClasses` has a name in it, and the "still counted in their results"
+  line is always there (SPEC §d S-38). Copy: `lib/tutoring/accessView.ts`.
+
 ## Known follow-ups for the P2.5.3 retrofit
 - Two pre-token-system components duplicate new library components and
   should be deleted in favor of the new ones once screens are retrofitted:

@@ -38,6 +38,15 @@ interface SmokeRow {
 const ROWS: readonly SmokeRow[] = [
   // Control row: T-02, the teacher's class list, long-standing and seeded.
   { role: "teacher", path: "/teacher/classes", heading: "Classes" },
+  // I6: T22 to T24. Rows that need a seeded tutor or booking id (S-34, S-35, S-37, T-18)
+  // and the public G-16/G-17 pages join when T29 seeds them.
+  { role: "student", path: "/student/tutors", heading: "Tutors" },
+  { role: "student", path: "/student/sessions", heading: "My sessions" },
+  { role: "student", path: "/student/tutor-access", heading: "Tutors & your data" },
+  { role: "teacher", path: "/teacher/tutoring", heading: "Tutoring" },
+  { role: "teacher", path: "/teacher/tutoring/profile", heading: "Tutor profile" },
+  { role: "teacher", path: "/teacher/tutoring/availability", heading: "Weekly availability" },
+  { role: "teacher", path: "/teacher/tutoring/preview", heading: "Profile preview and reviews" },
 ]
 
 const ROLE_ACCOUNT: Record<SmokeRole, (seed: SeedContract) => SeedAccount> = {

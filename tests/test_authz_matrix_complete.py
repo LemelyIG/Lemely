@@ -70,6 +70,9 @@ STAFF = frozenset({"teacher", "school_admin", "platform_admin"})
 # Tutoring (docs/tutoring/SPEC.md §c.1): decision-log row 10, parents browse and
 # book for a linked child.
 STUDENT_OR_PARENT = frozenset({"student", "parent"})
+# Tutoring blocks B1-B3 (SPEC §c.1): a student or a tutor blocks the other side;
+# parents hold no blocks (O-18).
+STUDENT_OR_TEACHER = frozenset({"student", "teacher"})
 
 ALL_ROLES = frozenset(role.value for role in Role)
 
@@ -132,7 +135,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/school/teachers"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/{teacher_id}/remove"): SCHOOL_ADMIN,
-    # ── PLATFORM_ADMIN (16) ────────────────────
+    # ── PLATFORM_ADMIN (18) ────────────────────
     # P4.7 (UI spec X-01/X-02/X-03), and the first routes in the product gated
     # to this role. Note what the 403 sweep below therefore proves here: a
     # `school_admin` is denied every one of them. There is no super-role, and
@@ -157,6 +160,10 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/admin/tutors/{tutor_id}"): PLATFORM_ADMIN,
     ("POST", "/api/admin/tutors/{tutor_id}/approve"): PLATFORM_ADMIN,
     ("POST", "/api/admin/tutors/{tutor_id}/reject"): PLATFORM_ADMIN,
+    # Tutoring A5, A12 (SPEC §c.1): suspend and close, each one transaction with its
+    # sweep (grants, future sessions, school-less enrolments; SPEC §a.3).
+    ("POST", "/api/admin/tutors/{tutor_id}/suspend"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/tutors/{tutor_id}/close"): PLATFORM_ADMIN,
     # Tutoring A6-A8 (SPEC §c.1): the review and reply moderation queue.
     ("GET", "/api/admin/tutoring/moderation"): PLATFORM_ADMIN,
     ("POST", "/api/admin/tutoring/reviews/{review_id}/moderate"): PLATFORM_ADMIN,
@@ -252,6 +259,12 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # books only for a linked child (O6).
     ("GET", "/api/tutors/{tutor_id}/slots"): STUDENT_OR_PARENT,
     ("POST", "/api/bookings"): STUDENT_OR_PARENT,
+    # ── STUDENT_OR_TEACHER (3) ────────────────────
+    # Tutoring B1-B3 (SPEC §c.1): a student blocks by tutor profile id, a tutor by
+    # student id (SC-19, O13, O28); "owns a tutor profile" is object-level, as for TEACHER.
+    ("GET", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
+    ("POST", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
+    ("DELETE", "/api/tutoring/blocks/{counterpart_id}"): STUDENT_OR_TEACHER,
     # ── AUTH_ANY (19) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
@@ -626,6 +639,7 @@ _REPRESENTATIVE = {
         TEACHER_OR_SCHOOL_ADMIN,
         STAFF,
         STUDENT_OR_PARENT,
+        STUDENT_OR_TEACHER,
     )
 }
 _REAL_TOKEN_CASES = [
@@ -675,7 +689,7 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     # card, P3 areas).
     assert len(_NON_PUBLIC) == len(ROUTES) - 15
     assert len(_ROLE_GATED) > 300
-    assert len(_REPRESENTATIVE) == 7
+    assert len(_REPRESENTATIVE) == 8
     assert len(_REAL_TOKEN_CASES) >= 20
 
 

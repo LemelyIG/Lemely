@@ -23,6 +23,7 @@ import {
   Gear,
   List,
   Trash,
+  GraduationCap,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -120,6 +121,23 @@ const InstallSettingsSection = lazy(() =>
   })),
 )
 
+// T-15..T-18 and T-21 (tutoring marketplace): the teacher's own tutoring screens.
+const TutoringHome = lazy(() =>
+  import("./screens/tutoring/TutoringHome").then((m) => ({ default: m.TutoringHome })),
+)
+const TutorProfileEditor = lazy(() =>
+  import("./screens/tutoring/TutorProfileEditor").then((m) => ({ default: m.TutorProfileEditor })),
+)
+const Availability = lazy(() =>
+  import("./screens/tutoring/Availability").then((m) => ({ default: m.Availability })),
+)
+const TutorSessionDetail = lazy(() =>
+  import("./screens/tutoring/TutorSessionDetail").then((m) => ({ default: m.TutorSessionDetail })),
+)
+const PreviewReviews = lazy(() =>
+  import("./screens/tutoring/PreviewReviews").then((m) => ({ default: m.PreviewReviews })),
+)
+
 const NAV_ICON: Record<NavItem["icon"], Icon> = {
   overview: SquaresFour,
   grading: FileText,
@@ -131,6 +149,7 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
   atRisk: Warning,
   schemes: Books,
   quizzes: Sparkle,
+  tutoring: GraduationCap,
   announcements: Megaphone,
   notifications: Bell,
   settings: Gear,
@@ -729,6 +748,31 @@ export const teacherRoute: RouteObject = {
       path: "quizzes/:quizId/assignments/:assignmentId/results",
       element: <QuizResults />,
       handle: { title: "Quiz results", skeleton: "page-header" },
+    },
+    {
+      path: "tutoring",
+      element: <TutoringHome />,
+      handle: { title: "Tutoring", skeleton: "list" },
+    },
+    {
+      path: "tutoring/profile",
+      element: <TutorProfileEditor />,
+      handle: { title: "Tutor profile", skeleton: "page-header" },
+    },
+    {
+      path: "tutoring/availability",
+      element: <Availability />,
+      handle: { title: "Weekly availability", skeleton: "page-header" },
+    },
+    {
+      path: "tutoring/sessions/:bookingId",
+      element: <TutorSessionDetail />,
+      handle: { title: "Tutoring session", skeleton: "page-header" },
+    },
+    {
+      path: "tutoring/preview",
+      element: <PreviewReviews />,
+      handle: { title: "Profile preview and reviews", skeleton: "page-header" },
     },
     {
       path: "announcements",

@@ -92,6 +92,16 @@ const Notifications = lazy(() =>
   import("./screens/Notifications").then((m) => ({ default: m.Notifications })),
 )
 const Friends = lazy(() => import("./screens/Friends").then((m) => ({ default: m.Friends })))
+// S-33, S-34, S-35 (tutor marketplace, T22).
+const FindTutor = lazy(() =>
+  import("./screens/tutoring/FindTutor").then((m) => ({ default: m.FindTutor })),
+)
+const TutorProfile = lazy(() =>
+  import("./screens/tutoring/TutorProfile").then((m) => ({ default: m.TutorProfile })),
+)
+const BookSession = lazy(() =>
+  import("./screens/tutoring/BookSession").then((m) => ({ default: m.BookSession })),
+)
 const Profile = lazy(() => import("./screens/Profile").then((m) => ({ default: m.Profile })))
 const Onboarding = lazy(() => import("./screens/Onboarding").then((m) => ({ default: m.Onboarding })))
 const PlacementInvite = lazy(() =>
@@ -127,6 +137,16 @@ const FlashcardReview = lazy(() =>
 const Parents = lazy(() => import("./screens/Parents").then((m) => ({ default: m.Parents })))
 const RecentlyDeleted = lazy(() =>
   import("./screens/RecentlyDeleted").then((m) => ({ default: m.RecentlyDeleted })),
+)
+// Tutoring marketplace, T23 (SPEC §d S-36, S-37, S-38).
+const Sessions = lazy(() =>
+  import("./screens/tutoring/Sessions").then((m) => ({ default: m.Sessions })),
+)
+const SessionDetail = lazy(() =>
+  import("./screens/tutoring/SessionDetail").then((m) => ({ default: m.SessionDetail })),
+)
+const TutorAccess = lazy(() =>
+  import("./screens/tutoring/TutorAccess").then((m) => ({ default: m.TutorAccess })),
 )
 // Settings' three screens mount here too, alongside every other lazy screen
 // in this portal — see `data.ts`'s `navGroups` and the route registration
@@ -989,6 +1009,18 @@ export const studentRoute: RouteObject = {
       handle: { title: "Notifications", skeleton: "list" },
     },
     { path: "friends", element: <Friends />, handle: { title: "Friends", skeleton: "list" } },
+    // S-33, S-34, S-35 (tutor marketplace, T22).
+    { path: "tutors", element: <FindTutor />, handle: { title: "Tutors", skeleton: "list" } },
+    {
+      path: "tutors/:tutorId",
+      element: <TutorProfile />,
+      handle: { title: "Tutor profile", skeleton: "page-header" },
+    },
+    {
+      path: "tutors/:tutorId/book",
+      element: <BookSession />,
+      handle: { title: "Book a session", skeleton: "page-header" },
+    },
     {
       path: "profile",
       element: <Profile />,
@@ -999,6 +1031,21 @@ export const studentRoute: RouteObject = {
       path: "parents",
       element: <Parents />,
       handle: { title: "Parent access", skeleton: "page-header" },
+    },
+    {
+      path: "sessions",
+      element: <Sessions />,
+      handle: { title: "My sessions", skeleton: "list" },
+    },
+    {
+      path: "sessions/:bookingId",
+      element: <SessionDetail />,
+      handle: { title: "Session details", skeleton: "page-header" },
+    },
+    {
+      path: "tutor-access",
+      element: <TutorAccess />,
+      handle: { title: "Tutors & your data", skeleton: "list" },
     },
     {
       path: "recently-deleted",

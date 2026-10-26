@@ -120,6 +120,13 @@ const PasswordResetConfirm = lazy(() =>
 const JoinWithCode = lazy(() =>
   import("@/portals/auth/JoinWithCode").then((m) => ({ default: m.JoinWithCode })),
 )
+// G-16 and G-17 (tutor marketplace, T22): public, indexable by the tutor's choice (row 17).
+const TutorDirectory = lazy(() =>
+  import("@/portals/marketing/tutors/TutorDirectory").then((m) => ({ default: m.TutorDirectory })),
+)
+const TutorPublicCard = lazy(() =>
+  import("@/portals/marketing/tutors/TutorPublicCard").then((m) => ({ default: m.TutorPublicCard })),
+)
 
 const STUDENT_ROLES = ["student"] as const
 const PARENT_ROLES = ["parent"] as const
@@ -355,6 +362,45 @@ export const appRoutes: RouteObject[] = [
    * not have an account yet.
    */
   { ...dataHandlingRoute, path: "/data", errorElement },
+  /*
+   * G-16 and G-17 (tutor marketplace, T22). Public, no `RequireAuth`. Both carry a
+   * description, as every signed-out route does (`documentMeta.test.ts` pins which).
+   * Both screens render their own `MarketingFrame` and set `<meta name="robots">`
+   * themselves (row 17); `/tutors/*` is served by the edge worker, which sends the
+   * matching `X-Robots-Tag`. The screens refuse any spelling of the address other
+   * than the canonical one (`lib/tutoring/robotsMeta.ts`), so the router's
+   * case-insensitive match cannot render a card the worker left unmarked.
+   */
+  {
+    path: "/tutors",
+    errorElement,
+    handle: {
+      title: "Tutor directory",
+      description:
+        "Browse tutors for Cambridge IGCSE subjects. Each card shows the subjects taught, how the tutor is rated and how past students did.",
+      skeleton: "page-header",
+    } satisfies PageMeta,
+    element: (
+      <Suspense fallback={<RouteSkeleton />}>
+        <TutorDirectory />
+      </Suspense>
+    ),
+  },
+  {
+    path: "/tutors/:tutorId",
+    errorElement,
+    handle: {
+      title: "Tutor card",
+      description:
+        "A tutor's subjects, rating, reviews and how past students did, with the choice to sign in and book a session.",
+      skeleton: "page-header",
+    } satisfies PageMeta,
+    element: (
+      <Suspense fallback={<RouteSkeleton />}>
+        <TutorPublicCard />
+      </Suspense>
+    ),
+  },
   {
     path: "/login",
     errorElement,
