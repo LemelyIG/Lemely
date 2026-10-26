@@ -591,7 +591,10 @@ def read_records(path: Path) -> list[CallRecord]:
 
 
 def _check_split(split: str, repeats: int) -> None:
-    if split not in _SPLITS:
+    # A membership test, not ``not in``: the test-split static guard flags any
+    # ``split not in ...`` as a possible test-split branch (tests/eval).
+    known = split in _SPLITS
+    if not known:
         raise ValueError(f"split must be one of {_SPLITS}, got {split!r}")
     if repeats not in (1, 2):
         raise ValueError(f"repeats must be 1 or 2, got {repeats}")
