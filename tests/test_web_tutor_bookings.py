@@ -236,13 +236,14 @@ def test_t9_state_filter_uses_effective_predicates(
     assert refused.status_code == 422
 
 
-def test_query_budget_t9_two_statements(
+def test_query_budget_t9_three_repository_statements_plus_guard(
     sm: sessionmaker[Session], client: TestClient, w: World
 ) -> None:
-    """SPEC §e.3: the list is two statements (rows, subjects) whatever the page holds.
+    """SPEC §e.3: the page costs three repository statements whatever it holds, plus the guard.
 
-    The route adds the profile guard and one ``studentShared`` statement for the whole page
-    (F13: the grant predicate, never the audited gate), both independent of the row count too.
+    Rows and subjects (the booking list proper) plus one ``studentShared`` statement for the
+    whole page (F13: the grant predicate, never the audited gate), and the profile guard before
+    them: four statements in all, none of them growing with the row count.
     """
     add_grant(sm, w.student, w.tutor)
     add_booking(sm, w, state="accepted", starts_in=timedelta(days=1))

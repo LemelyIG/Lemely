@@ -18,8 +18,12 @@
   cancel reason, ``not_ended``, the notes table) is the booking service's, refused with
   :class:`~lemely.db.booking_repo.BookingRefused` and sent as ``tutoring_error(status, code,
   message)``. Unlike the family routes, a tutor accepting on an unlisted profile reads
-  ``tutor_not_listed`` (in the tutor's own words) and a blocked pair reads ``access_ended``:
-  the tutor is told about their own profile and their own block, never about a hidden tutor.
+  ``tutor_not_listed`` (in the tutor's own words): the tutor is told about their own profile,
+  never about a hidden tutor. A tutor is never told *who* ended a pair's access: when the
+  student blocked, the tutor learns nothing about the block. T21's sweep cancels the pair's
+  open requests in the block's own transaction, so a blocked pair's accept is normally
+  unreachable; the service's ``access_ended`` refusal is the backstop for a request that
+  survives (it names no one).
 * **After the commit (D5.9 §1).** The email rows were queued inside the change's transaction;
   the inbox notices are sent here, after it, with ``send_after_commit``. A failing inbox write
   is logged and never turns the committed change into an error.

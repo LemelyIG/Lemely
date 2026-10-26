@@ -364,6 +364,25 @@ def test_authz_suspended_tutor_write_routes_409(
     assert allowed.status_code in (200, 201), allowed.text
 
 
+@pytest.mark.parametrize("listing", ["suspended", "closed"])
+def test_authz_t9_list_stays_readable_when_suspended_or_closed(
+    sm: sessionmaker[Session], client: TestClient, w: World, listing: str
+) -> None:
+    """CB-7 withholds writes only: a suspended or closed tutor still reads their own bookings.
+
+    T9 uses ``require_tutor_profile`` (not the writable variant), so the list answers 200 with
+    the booking in it. Mutation: refusing a suspended or closed profile on T9 turns this red.
+    """
+    booking = add_booking(sm, w, state="accepted", starts_in=timedelta(days=2))
+    set_listing(sm, w.tutor, listing)
+    as_tutor(client, w)
+
+    listed = client.get("/api/tutor/bookings", params={"when": "upcoming"})
+    assert listed.status_code == 200, listed.text
+    assert listed.headers["cache-control"] == NO_STORE
+    assert [item["bookingId"] for item in listed.json()["items"]] == [str(booking)]
+
+
 def test_authz_suspended_tutor_cannot_post_note_on_completed_booking(
     sm: sessionmaker[Session], client: TestClient, w: World
 ) -> None:
