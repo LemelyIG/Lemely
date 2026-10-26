@@ -142,6 +142,21 @@ def student_ever_blocked_tutor_sql(student_user_col: str, tutor_user_col: str) -
     )
 
 
+def student_block_of_tutor_created_at_sql(student_user_col: str, tutor_user_col: str) -> str:
+    """The ``created_at`` of the student's block of the tutor's user, or NULL.
+
+    Removed blocks count. Rows are never deleted and a re-block keeps
+    ``created_at``, so this is the first block (ADR-T04 hold, SC-13d).
+    """
+    student = _operand(student_user_col, name="student_user_col")
+    tutor = _operand(tutor_user_col, name="tutor_user_col")
+    b = _BLOCK_ALIAS
+    return (
+        f"(SELECT min({b}.created_at) FROM tutoring_blocks {b} "  # noqa: S608 - operands validated above
+        f"WHERE {b}.blocker_user_id = {student} AND {b}.blocked_user_id = {tutor})"
+    )
+
+
 __all__ = [
     "ACTIVE_STATES_SQL",
     "EFFECTIVE_STATE_SQL",
@@ -149,5 +164,6 @@ __all__ = [
     "OUTCOME_MEMBERSHIP_SQL",
     "active_block_between_sql",
     "listed_and_not_paused_sql",
+    "student_block_of_tutor_created_at_sql",
     "student_ever_blocked_tutor_sql",
 ]
