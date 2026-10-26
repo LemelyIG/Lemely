@@ -402,12 +402,12 @@ class LabelBinder:
         """Read every page in one call and return the list the model gave.
 
         ``model`` overrides the configured extraction model. ``cache_mode`` is passed on
-        to the call when given (a read made again after a stub is made ``"refresh"``);
-        the chunked reader never reads its cache. ``task_tag`` picks the
-        call's thinking level and the cost bucket it is counted in. A cost-ceiling or
-        service error from the call is not caught here. A script the chunked reader
-        applies to (a claude- model, pages over the token budget at the floor) is read
-        as an overview plus chunks instead.
+        to the call when given (a stub read is repeated under its own cache key,
+        ``"bypass"`` when the run bypasses); the chunked reader never reads its cache.
+        ``task_tag`` picks the call's thinking level and the cost bucket it is counted in.
+        A cost-ceiling or service error from the call is not caught here. A script the
+        chunked reader applies to (a claude- model, pages over the token budget at the floor)
+        is read as an overview plus chunks instead.
         """
         if self._chunked is not None and self._chunked.applies(pages, model):
             if self._chunked.tier_guard:

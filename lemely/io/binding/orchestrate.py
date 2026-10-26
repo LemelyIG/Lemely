@@ -131,8 +131,8 @@ LOST_ITEM_REASONS = ("malformed_item", "unknown_type")
 #: groups and never calls an honest partial script a stub
 #: (.superpowers/sdd/binding-investigation.md, Q1).
 #: A genuinely short script (a student who stopped early, coverage 0.26 say) also takes the
-#: stub path: one refresh, then a hold with ``stub_read`` and G5. Acceptable, as it is held
-#: either way.
+#: stub path: up to ``_STUB_RETRIES`` repeats, then a hold with ``stub_read`` and G5.
+#: Acceptable, as it is held either way.
 _MIN_READ_LABEL_COVERAGE = 0.3
 #: How many times a stub read is made again, each under its own cache key. Two, because
 #: about one s25_42 read in five is a stub: one retry held ~8% of papers, two hold ~1.6%
@@ -1007,9 +1007,9 @@ def run_binding(
             raise
     else:
         first_read = _first()
-    # A read still a stub after its one refresh holds the paper. It is left out of the
-    # comparison: against a stub every leaf is unaligned, so the cross-read check would
-    # pass on nothing. The other read stays as the record.
+    # A read still a stub after its repeats (``_STUB_RETRIES``) holds the paper. It is left
+    # out of the comparison: against a stub every leaf is unaligned, so the cross-read check
+    # would pass on nothing. The other read stays as the record.
     stubbed = first_read.stub or (second_read is not None and second_read.stub)
     second_read_made = second_read is not None
     record_model = binding.read_model
