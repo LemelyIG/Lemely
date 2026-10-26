@@ -43,6 +43,7 @@ import {
   buildCreateBody,
   buildUpdateBody,
   canAddEvidence,
+  displayInitial,
   evidenceFileError,
   evidenceUploadStatusMessage,
   listingBanner,
@@ -164,7 +165,7 @@ function previewCard(
   areaNames: Map<string, string>,
 ): TutorCardData {
   const first = values.publicFirstName.trim()
-  const initial = values.publicLastInitial.trim().toUpperCase()
+  const initial = displayInitial(values.publicLastInitial)
   return {
     tutorId: profile?.tutorId ?? "preview",
     publicName: first === "" ? "Your name" : initial ? `${first} ${initial}.` : first,
@@ -552,7 +553,7 @@ function EvidenceStep({ profile }: { profile: TutorOwnProfile }) {
   }
 
   const uploadFailure = upload.isError
-    ? (evidenceUploadStatusMessage(upload.error) ??
+    ? (evidenceUploadStatusMessage(upload.error, upload.variables?.file.size) ??
       tutorActionFailureMessage(upload.error, "We couldn't upload that file. Try again."))
     : null
 

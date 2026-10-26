@@ -29,6 +29,7 @@ import {
   OUTCOMES_CAPTION,
   REPLY_CHECKED_LINE,
   REPLY_MAX,
+  replyLength,
   formatListedSince,
   listingBanner,
   replyStateView,
@@ -294,7 +295,7 @@ function ReplyComposer({
         rows={3}
         value={body}
         autoFocus
-        error={tried || body.length > REPLY_MAX ? (problem ?? undefined) : undefined}
+        error={tried || replyLength(body) > REPLY_MAX ? (problem ?? undefined) : undefined}
         onChange={(event) => {
           setBody(event.target.value)
           if (reply.isError) reply.reset()

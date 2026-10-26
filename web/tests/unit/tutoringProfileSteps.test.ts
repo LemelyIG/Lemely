@@ -27,6 +27,8 @@ import {
   validateReply,
   valuesFromProfile,
   evidenceUploadStatusMessage,
+  displayInitial,
+  replyLength,
   buildCreateBody,
   buildUpdateBody,
   changeNeedsReview,
@@ -512,6 +514,15 @@ describe("evidence upload failures", () => {
     expect(evidenceUploadStatusMessage(new ApiError(409, "x", { code: "evidence_limit" }))).toBeNull()
     expect(evidenceUploadStatusMessage(new Error("network"))).toBeNull()
   })
+
+  it("does not call a file over 10 MB the cause when the file was smaller (the check worker can also run out of memory)", () => {
+    const small = evidenceUploadStatusMessage(new ApiError(413, "x", null), EVIDENCE_MAX_BYTES - 1)
+    expect(small).toContain("too large or complex")
+    expect(small).not.toContain("10 MB")
+    expect(evidenceUploadStatusMessage(new ApiError(413, "x", null), EVIDENCE_MAX_BYTES + 1)).toContain("10 MB")
+    expect(evidenceUploadStatusMessage(new ApiError(413, "x", null), EVIDENCE_MAX_BYTES)).toContain("too large or complex")
+    expect(evidenceUploadStatusMessage(new ApiError(415, "x", null), 10)).toContain("PDF")
+  })
 })
 
 describe("the last initial is shown in upper case, so it is compared and sent that way", () => {
@@ -528,5 +539,38 @@ describe("the last initial is shown in upper case, so it is compared and sent th
     expect(buildUpdateBody({ ...filled, publicLastInitial: "K" }, { ...filled, publicLastInitial: "m" })).toEqual({
       publicLastInitial: "M",
     })
+  })
+})
+
+describe("the initial follows the server's public-name rule (lemely/core/tutor_directory.py)", () => {
+  it("upper-cases an initial only when that stays one character", () => {
+    expect(displayInitial("k")).toBe("K")
+    expect(displayInitial(" k ")).toBe("K")
+    expect(displayInitial("ß")).toBe("ß")
+    expect(displayInitial("")).toBe("")
+    expect(displayInitial("ع")).toBe("ع")
+  })
+
+  it("sends a sharp s as typed, so the server does not refuse it as two letters", () => {
+    expect(buildCreateBody({ ...filled, publicLastInitial: "ß" }).publicLastInitial).toBe("ß")
+    expect(buildUpdateBody({ ...filled, publicLastInitial: "K" }, { ...filled, publicLastInitial: "ß" })).toEqual({
+      publicLastInitial: "ß",
+    })
+    expect(validateStep("card", { ...filled, publicLastInitial: "ß" }).publicLastInitial).toBeUndefined()
+  })
+
+  it("keeps the Python rule it mirrors", () => {
+    const directory = readFileSync(join(REPO, "lemely", "core", "tutor_directory.py"), "utf8")
+    expect(directory).toContain("upper if len(upper) == 1 else initial")
+  })
+})
+
+describe("the reply limit counts code points, as validateReply does", () => {
+  it("counts a character outside the BMP once", () => {
+    expect(replyLength("a\u{1F600}b")).toBe(3)
+    const emoji = "\u{1F600}".repeat(REPLY_MAX)
+    expect(replyLength(emoji)).toBe(REPLY_MAX)
+    expect(validateReply(emoji)).toBeNull()
+    expect(validateReply(emoji + "x")).not.toBeNull()
   })
 })

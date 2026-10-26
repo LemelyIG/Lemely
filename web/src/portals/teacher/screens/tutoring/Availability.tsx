@@ -95,6 +95,7 @@ function RangeRow({
           value={String(range.startMinute)}
           disabled={readOnly}
           onChange={(event) => onChange({ startMinute: Number(event.target.value) })}
+          aria-describedby={problem ? `${range.id}-problem` : undefined}
           wrapperClassName="w-32"
         >
           {startOptions().map((minute) => (

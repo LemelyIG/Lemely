@@ -227,9 +227,20 @@ function clean(value: string): string {
   return value.trim()
 }
 
+/**
+ * The initial as the card shows it: upper case when that stays one character.
+ * Mirrors `public_name` in `lemely/core/tutor_directory.py`: "ß" upper-cases to
+ * "SS", which the server refuses as two letters, so it is kept as typed.
+ */
+export function displayInitial(raw: string): string {
+  const initial = raw.trim()
+  const upper = initial.toUpperCase()
+  return [...upper].length === 1 ? upper : initial
+}
+
 /** The server shows the initial in upper case, so it is compared and sent that way. */
 function initialOf(values: ProfileFormValues): string {
-  return clean(values.publicLastInitial).toUpperCase()
+  return displayInitial(values.publicLastInitial)
 }
 
 /** The note only exists for a tutor who offers another way to meet. */
@@ -326,6 +337,11 @@ const INITIAL = /^\p{L}$/u
 
 function length(value: string): number {
   return [...value].length
+}
+
+/** Length in code points, the unit `validateReply` and the server's limit use. */
+export function replyLength(value: string): number {
+  return length(value)
 }
 
 function nameErrors(values: ProfileFormValues, errors: FieldErrors): void {
@@ -516,13 +532,20 @@ export function evidenceFileError(file: { size: number }, existing: readonly Evi
 }
 
 /**
- * Why an evidence upload failed. 413, 415 and 503 are the statuses of T6 that carry
+ * Why an evidence upload failed. `fileSize` is the size of the file that was sent,
+ * when the caller knows it. 413, 415 and 503 are the statuses of T6 that carry
  * no code `tutoringErrorOf` knows, so they are read from the status; the typed
  * refusals (`evidence_limit`, a suspended profile) are the caller's to word.
  */
-export function evidenceUploadStatusMessage(error: unknown): string | null {
+export function evidenceUploadStatusMessage(error: unknown, fileSize?: number): string | null {
   if (!(error instanceof ApiError)) return null
-  if (error.status === 413) return "That file is over 10 MB. Choose a smaller one."
+  if (error.status === 413) {
+    // The router also sends 413 when the check worker runs out of memory, so a
+    // file under the limit was refused for its complexity, not its size.
+    return fileSize !== undefined && fileSize <= EVIDENCE_MAX_BYTES
+      ? "That file is too large or complex to check. Try a smaller or simpler file."
+      : "That file is over 10 MB. Choose a smaller one."
+  }
   if (error.status === 415) return "Lemely can read PDF, JPEG and PNG files. Choose one of those."
   if (error.status === 503) return "We couldn't check or store that file just now. Try again in a minute."
   return null

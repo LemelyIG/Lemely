@@ -30,7 +30,9 @@
  * request, the screen says "the student".
  */
 
-import { tutoringErrorOf } from "@/lib/tutoring/apiErrors"
+import { ApiError } from "@/lib/api"
+import { isTutoringError, tutoringErrorOf } from "@/lib/tutoring/apiErrors"
+import type { ListingState } from "@/lib/tutoring/profileSteps"
 import { CONTACT_DETAILS_MESSAGE } from "@/lib/tutoring/safetyNoticeCopy"
 import { describeQueryFailure } from "@/lib/queryFailure"
 import type { Booking, BookingAccept, BookingReason, TutoringMode, ViewerAction } from "@/lib/tutoringTypes"
@@ -62,6 +64,56 @@ export function cancelRequiresReason(allowed: readonly ViewerAction[]): boolean 
   return allowed.includes("cancel_with_reason")
 }
 
+// ── Which sessions the home draws ───────────────────────────────────────────
+
+export interface SessionQueuesView {
+  /** Draw the three queues (requests, upcoming, waiting for an outcome). */
+  show: boolean
+  /** A line to show instead of, or above, the queues; null when none is needed. */
+  note: string | null
+}
+
+/**
+ * T-15: what to draw under the listing banner for a profile in `state`.
+ *
+ * A profile that exists and has been through review can hold requests, accepted
+ * sessions and sessions awaiting an outcome whatever state it is in now: a
+ * rejection cancels nothing (SPEC §a.3), and those students, often minors, are
+ * still waiting. So the queues are drawn for every state but `draft`, which has
+ * never been listed and so cannot have a booking. Which buttons a row gets is
+ * `Booking.allowedActions`, which already drops the write actions for a
+ * suspended or closed profile (the server answers 409 to them anyway).
+ */
+export function sessionQueuesView(state: ListingState): SessionQueuesView {
+  switch (state) {
+    case "draft":
+      return { show: false, note: "Requests and sessions will appear here once your profile is listed." }
+    case "suspended":
+      return { show: true, note: "Your profile is suspended, so you can't act on these requests and sessions." }
+    case "closed":
+      return { show: true, note: "Your profile is closed, so you can't act on these requests and sessions." }
+    default:
+      return { show: true, note: null }
+  }
+}
+
+/**
+ * A 422 `reason_required` from a plain cancel means the 24-hour line passed
+ * after the page loaded: the reason sheet is the next step, not an error.
+ */
+export function lateCancelNeeded(error: unknown): boolean {
+  return isTutoringError(error, "reason_required")
+}
+
+/**
+ * A 409 or 422 on an action means the booking changed under the page (the 24-hour
+ * line, a start time, a block, another viewer's action), so the cached booking is
+ * stale and the buttons drawn from it may be wrong. Reload it.
+ */
+export function shouldRefetchBooking(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 409 || error.status === 422)
+}
+
 // ── Cancel and decline ──────────────────────────────────────────────────────
 
 /** SPEC T-18: the sentence above the reason box of the late-cancel sheet. */
@@ -73,6 +125,11 @@ export const CANCEL_REASON_MAX = 300
 
 function chars(value: string): number {
   return [...value].length
+}
+
+/** Length in code points, the unit `validateCancelReason` and the server's limit use. */
+export function reasonLength(value: string): number {
+  return chars(value)
 }
 
 /** An error sentence for a reason that cannot be sent, or null. */

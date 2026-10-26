@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 — the facts first, then only the actions the API allowed, the notes thread last; the late-cancel sheet leads with the SPEC sentence and refuses a blank reason; not yet seen in a browser. */
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import { CaretLeft, Prohibit } from "@phosphor-icons/react"
 import { BookingStatus } from "@/components/ui/booking-status"
@@ -30,6 +31,7 @@ import {
 } from "@/lib/hooks/useTutoringApi"
 import { useOnlineStatus } from "@/lib/online"
 import { isTutoringError } from "@/lib/tutoring/apiErrors"
+import { tutoringKeys } from "@/lib/tutoring/queryKeys"
 import { formatSlotRange } from "@/lib/tutoring/slotGroups"
 import {
   ACCEPT_SERVICES,
@@ -42,10 +44,13 @@ import {
   cancelBody,
   cancelRequiresReason,
   declineBody,
+  lateCancelNeeded,
   meetingLinkError,
   notesFreezeView,
+  reasonLength,
   requestedByLabel,
   sessionOutcomeLine,
+  shouldRefetchBooking,
   tutorActionFailureMessage,
   tutorActions,
   tutorLoadFailureMessage,
@@ -101,6 +106,21 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
+/**
+ * A 409 or 422 on an action means the booking changed under this page (the
+ * 24-hour line passed, the start time passed, a block). The cached booking is
+ * stale and the buttons drawn from it may be wrong, and nothing else would
+ * reload it, so every retry would fail until the page was reloaded.
+ */
+function useRefetchBookingOnConflict(bookingId: string): (error: unknown) => void {
+  const queryClient = useQueryClient()
+  return (error) => {
+    if (shouldRefetchBooking(error)) {
+      void queryClient.invalidateQueries({ queryKey: tutoringKeys.tutorBooking(bookingId) })
+    }
+  }
+}
+
 const LINK = "rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent break-all"
 
 // ── Accept ──────────────────────────────────────────────────────────────────
@@ -116,6 +136,7 @@ function AcceptPanel({
 }) {
   const accept = useAcceptTutorBooking()
   const decline = useDeclineTutorBooking()
+  const refetchOnConflict = useRefetchBookingOnConflict(booking.bookingId)
   const detail = acceptDetailFor(booking.mode)
   const [values, setValues] = useState({ meetingLink: "", locationDetail: "" })
   const [errors, setErrors] = useState<AcceptErrors>({})
@@ -137,8 +158,9 @@ function AcceptPanel({
     }
     try {
       await accept.mutateAsync({ bookingId: booking.bookingId, body: acceptBody(booking.mode, values) })
-    } catch {
+    } catch (error) {
       // Shown under the field or the button below.
+      refetchOnConflict(error)
     }
   }
 
@@ -147,8 +169,9 @@ function AcceptPanel({
     if (validateCancelReason(reason, false) !== null) return
     try {
       await decline.mutateAsync({ bookingId: booking.bookingId, body: declineBody(reason) })
-    } catch {
+    } catch (error) {
       // Shown under the button below.
+      refetchOnConflict(error)
     }
   }
 
@@ -305,7 +328,7 @@ function LateCancelSheet({
         hint={`Required. Up to ${CANCEL_REASON_MAX} characters.`}
         rows={4}
         value={reason}
-        error={tried || reason.length > CANCEL_REASON_MAX ? (problem ?? undefined) : undefined}
+        error={tried || reasonLength(reason) > CANCEL_REASON_MAX ? (problem ?? undefined) : undefined}
         onChange={(event) => setReason(event.target.value)}
       />
       {error ? (
@@ -323,9 +346,13 @@ function ActionsPanel({ booking, online }: { booking: Booking; online: boolean }
   const cancel = useCancelTutorBooking()
   const complete = useCompleteTutorBooking()
   const noShow = useMarkTutorBookingNoShow()
+  const refetchOnConflict = useRefetchBookingOnConflict(booking.bookingId)
   const [sheet, setSheet] = useState<"cancel" | "no_show" | null>(null)
+  // The 24-hour line can pass while the page is open. The server's 422 then
+  // switches the sheet to the reason form at once, without waiting for the reload.
+  const [reasonDemanded, setReasonDemanded] = useState(false)
   const actions = tutorActions(booking.allowedActions)
-  const needsReason = cancelRequiresReason(booking.allowedActions)
+  const needsReason = reasonDemanded || cancelRequiresReason(booking.allowedActions)
   const canCancel = actions.includes("cancel") || actions.includes("cancel_with_reason")
   const canComplete = actions.includes("complete")
   const canNoShow = actions.includes("no_show")
@@ -340,8 +367,10 @@ function ActionsPanel({ booking, online }: { booking: Booking; online: boolean }
     try {
       await cancel.mutateAsync({ bookingId: booking.bookingId, body: cancelBody(reason, needsReason) })
       setSheet(null)
-    } catch {
+    } catch (error) {
       // The sheet shows the error and stays open, with the reason kept.
+      if (lateCancelNeeded(error)) setReasonDemanded(true)
+      refetchOnConflict(error)
     }
   }
 
@@ -349,8 +378,9 @@ function ActionsPanel({ booking, online }: { booking: Booking; online: boolean }
     try {
       await noShow.mutateAsync({ bookingId: booking.bookingId })
       setSheet(null)
-    } catch {
+    } catch (error) {
       // The dialog shows the error.
+      refetchOnConflict(error)
     }
   }
 
@@ -365,7 +395,7 @@ function ActionsPanel({ booking, online }: { booking: Booking; online: boolean }
             variant="primary"
             loading={complete.isPending}
             disabled={!online || busy}
-            onClick={() => void complete.mutateAsync({ bookingId: booking.bookingId }).catch(() => undefined)}
+            onClick={() => void complete.mutateAsync({ bookingId: booking.bookingId }).catch(refetchOnConflict)}
           >
             Completed
           </Button>

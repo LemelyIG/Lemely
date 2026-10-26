@@ -36,6 +36,7 @@ import { formatSlotRange } from "@/lib/tutoring/slotGroups"
 import {
   CANCEL_REASON_MAX,
   declineBody,
+  sessionQueuesView,
   tutorActionFailureMessage,
   tutorActions,
   tutorLoadFailureMessage,
@@ -57,8 +58,10 @@ import type { Booking, TutorOwnProfile, TutoringMode } from "@/lib/tutoringTypes
  *   - sessions that have ended with no outcome (`awaiting_outcome`): Completed,
  *     or No-show behind a confirmation.
  * Every button is drawn only when the API listed that action for the booking
- * (`tutorActions`). A profile that is not yet listed or under review has no
- * sessions, so the queues are not drawn for it.
+ * (`tutorActions`), so a suspended or closed profile gets rows with no buttons.
+ * The queues are drawn for every profile that has been through review, rejected,
+ * suspended and closed included, because its students' requests and sessions
+ * outlive the listing (`sessionQueuesView`); only a draft has none.
  *
  * States: loading (a skeleton of the banner and the queues), error and offline
  * (`QueryState`, per queue so one failing list does not hide the others), no
@@ -425,8 +428,8 @@ function Home({ profile }: { profile: TutorOwnProfile | null }) {
   const requestsHeading = useRef<HTMLHeadingElement>(null)
   const outcomeHeading = useRef<HTMLHeadingElement>(null)
 
-  const state = profile?.listingState ?? null
-  const showSessions = profile !== null && (state === "listed" || state === "pending_review")
+  const view = profile ? sessionQueuesView(profile.listingState) : null
+  const showSessions = view?.show ?? false
 
   const ctx: QueueContext | null = profile
     ? {
@@ -506,13 +509,10 @@ function Home({ profile }: { profile: TutorOwnProfile | null }) {
               </ol>
             </section>
           ) : !showSessions ? (
-            <p className="m-0 text-body-md text-ink-muted">
-              {state === "suspended" || state === "closed"
-                ? "Sessions and requests are not available while your profile is not listed."
-                : "Requests and sessions will appear here once your profile is listed."}
-            </p>
+            <p className="m-0 text-body-md text-ink-muted">{view?.note}</p>
           ) : ctx ? (
             <>
+              {view?.note ? <p className="m-0 text-body-md text-ink-muted">{view.note}</p> : null}
               {!online ? (
                 <p className="m-0 text-body-sm text-ink-muted">
                   You're offline. Replies and outcomes need a connection.

@@ -15,12 +15,16 @@ import {
   meetingLinkError,
   notesFreezeView,
   requestedByLabel,
+  sessionQueuesView,
   sessionOutcomeLine,
   tutorActionFailureMessage,
   tutorLoadFailureMessage,
   tutorActions,
   validateAccept,
   validateCancelReason,
+  lateCancelNeeded,
+  reasonLength,
+  shouldRefetchBooking,
 } from "@/lib/tutoring/tutorSessionActions"
 import { ApiError } from "@/lib/api"
 import { CONTACT_DETAILS_MESSAGE } from "@/lib/tutoring/safetyNoticeCopy"
@@ -360,5 +364,65 @@ describe("how a session ended, as the tutor reads it", () => {
     for (const state of ["declined", "expired", "cancelled", "completed", "no_show", "awaiting_outcome"] as const) {
       expect(sessionOutcomeLine({ ...base, effectiveState: state })?.length, state).toBeGreaterThan(10)
     }
+  })
+})
+
+describe("which sessions the tutoring home draws for each listing state", () => {
+  const states = ["draft", "pending_review", "listed", "rejected", "suspended", "closed"] as const
+
+  it("draws the queues for every state a profile can have bookings in", () => {
+    // A rejected, suspended or closed profile can still hold requests, accepted
+    // sessions and sessions awaiting an outcome (SPEC §a.3: rejection cancels nothing).
+    for (const state of ["pending_review", "listed", "rejected", "suspended", "closed"] as const) {
+      expect(sessionQueuesView(state).show, state).toBe(true)
+    }
+  })
+
+  it("draws no queues for a draft, which has never been listed", () => {
+    expect(sessionQueuesView("draft")).toEqual({
+      show: false,
+      note: "Requests and sessions will appear here once your profile is listed.",
+    })
+  })
+
+  it("explains a suspended or closed profile and says nothing for the others", () => {
+    expect(sessionQueuesView("suspended").note).toContain("suspended")
+    expect(sessionQueuesView("closed").note).toContain("closed")
+    for (const state of states.filter((s) => !["draft", "suspended", "closed"].includes(s))) {
+      expect(sessionQueuesView(state).note, state).toBeNull()
+    }
+  })
+
+  it("covers every listing state in the SPEC", () => {
+    const spec = /\| `tutorlistingstate` \| ([^|]*)\|/.exec(SPEC)
+    const named = [...(spec?.[1] ?? "").matchAll(/`([a-z_]+)`/g)].map((m) => m[1])
+    expect(named.sort()).toEqual([...states].sort())
+  })
+})
+
+describe("a refusal that means the session page is out of date", () => {
+  it("reads 422 reason_required as the late-cancel case", () => {
+    expect(lateCancelNeeded(new ApiError(422, "x", { code: "reason_required", message: "m" }))).toBe(true)
+    expect(lateCancelNeeded(new ApiError(422, "x", { code: "contact_details_not_allowed" }))).toBe(false)
+    expect(lateCancelNeeded(new ApiError(409, "x", { code: "illegal_transition" }))).toBe(false)
+    expect(lateCancelNeeded(new Error("network"))).toBe(false)
+  })
+
+  it("refetches the booking after a 409 or 422, and not after other failures", () => {
+    expect(shouldRefetchBooking(new ApiError(409, "x", { code: "illegal_transition" }))).toBe(true)
+    expect(shouldRefetchBooking(new ApiError(422, "x", { code: "reason_required" }))).toBe(true)
+    expect(shouldRefetchBooking(new ApiError(500, "x", null))).toBe(false)
+    expect(shouldRefetchBooking(new ApiError(429, "x", null))).toBe(false)
+    expect(shouldRefetchBooking(new Error("network"))).toBe(false)
+  })
+})
+
+describe("reason limits count code points, as validateCancelReason does", () => {
+  it("counts a character outside the BMP once", () => {
+    expect(reasonLength("a\u{1F600}b")).toBe(3)
+    expect(reasonLength("")).toBe(0)
+    const emoji = "\u{1F600}".repeat(CANCEL_REASON_MAX)
+    expect(validateCancelReason(emoji, true)).toBeNull()
+    expect(reasonLength(emoji)).toBe(CANCEL_REASON_MAX)
   })
 })
