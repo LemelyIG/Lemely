@@ -1,0 +1,148 @@
+"""Tutor data-grant validity (SPEC §a.2 ``tutor_data_grants``, §a.3, §e.1; ADR-T02; SC-3).
+
+A grant is a student's consent for one tutor to read their derived analytics.
+Validity is never stored: it is worked out on every read from the grant row,
+the tutor's listing state and whether the pair has an active block, so a revoke,
+a block or a delisting takes effect on the very next read (decision row 3b).
+The repositories use the SQL mirror of :func:`grant_is_valid`, pinned to it by a
+parity test.
+
+Pure by construction: no ``lemely.db``, ``web``, ``io`` or ``app`` import, no
+SQLAlchemy, no FastAPI and no clock of its own (import-linter ``forbidden``
+contract, SPEC §e.1). Every instant must be timezone-aware; a naive one raises
+:class:`ValueError`.
+
+**Precedence** (:func:`grant_status`, SPEC §e.1). The first rule that applies
+wins:
+
+1. ``revoke_reason``: ``student`` -> ``revoked``, ``block`` -> ``blocked``,
+   ``tutor_suspended`` -> ``tutor_suspended``, ``tutor_closed`` ->
+   ``tutor_closed``. A revoked grant stays revoked whatever happens afterwards:
+   reinstating a suspended tutor, or removing the block, restores nothing (CB-5);
+   the student must grant again.
+2. ``expired``: ``expires_at`` is set and ``now >= expires_at`` (always NULL in
+   v1; the grant is valid while ``now < expires_at``).
+3. ``blocked``: an active block between the two users.
+4. ``tutor_unavailable``: the tutor's listing state is neither ``listed`` nor
+   ``pending_review`` (CB-4). A paused tutor is still ``listed``: ``paused_at``
+   is orthogonal to the listing state and is not an input here (SC-3).
+5. ``active``.
+
+**Literals are written out here on purpose.** ``core`` may not import
+``lemely.db``, so the revoke reasons and listing states below are pinned to
+``GrantRevokeReason`` and ``TutorListingState`` in
+``tests/test_tutoring_cross_pins.py`` (PLAN §1.4 #11), which also pins
+:data:`GrantStatus` to the API's ``GrantStatusLit``.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Final, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from datetime import datetime
+
+GrantStatus = Literal[
+    "active",
+    "revoked",
+    "expired",
+    "blocked",
+    "tutor_suspended",
+    "tutor_closed",
+    "tutor_unavailable",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class GrantFacts:
+    """One ``tutor_data_grants`` row plus the two facts about the tutor its validity reads.
+
+    ``tutor_listing_state`` is ``tutor_profiles.listing_state``; ``blocked`` is
+    whether an active block exists between the student and the tutor's user, in
+    either direction.
+    """
+
+    created_at: datetime
+    revoked_at: datetime | None
+    revoke_reason: str | None
+    expires_at: datetime | None
+    tutor_listing_state: str
+    blocked: bool
+
+
+#: ``grantrevokereason`` value -> the status a grant revoked for it reads as.
+_REVOKED_STATUS: Final[Mapping[str, GrantStatus]] = MappingProxyType(
+    {
+        "student": "revoked",
+        "block": "blocked",
+        "tutor_suspended": "tutor_suspended",
+        "tutor_closed": "tutor_closed",
+    }
+)
+#: ``tutorlistingstate``; any other value can only come from a bug.
+_LISTING_STATES: Final = frozenset(
+    {"draft", "pending_review", "listed", "rejected", "suspended", "closed"}
+)
+#: Listing states that keep a grant valid (SC-3: re-review keeps it, paused or not).
+_VALID_LISTING_STATES: Final = frozenset({"listed", "pending_review"})
+
+
+def _require_aware(**instants: datetime | None) -> None:
+    for name, value in instants.items():
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError(f"{name} must be a timezone-aware datetime, got naive {value!r}")
+
+
+def _check_facts(facts: GrantFacts, now: datetime) -> None:
+    """Refuse facts the ``tutor_data_grants`` CHECKs would refuse: they can only come from a bug."""
+    _require_aware(
+        now=now,
+        created_at=facts.created_at,
+        revoked_at=facts.revoked_at,
+        expires_at=facts.expires_at,
+    )
+    if (facts.revoked_at is None) != (facts.revoke_reason is None):
+        raise ValueError(
+            "revoked_at and revoke_reason must be both set or both NULL, got "
+            f"{facts.revoked_at!r} and {facts.revoke_reason!r}"
+        )
+    if facts.revoke_reason is not None and facts.revoke_reason not in _REVOKED_STATUS:
+        raise ValueError(f"unknown revoke_reason {facts.revoke_reason!r}")
+    if facts.tutor_listing_state not in _LISTING_STATES:
+        raise ValueError(f"unknown tutor_listing_state {facts.tutor_listing_state!r}")
+    if facts.expires_at is not None and facts.expires_at <= facts.created_at:
+        raise ValueError("expires_at must be later than created_at")
+    if facts.revoked_at is not None and facts.revoked_at < facts.created_at:
+        raise ValueError("revoked_at must not be earlier than created_at")
+
+
+def grant_status(facts: GrantFacts, *, now: datetime) -> GrantStatus:
+    """The grant's status at ``now``, by the precedence in the module docstring.
+
+    Raises :class:`ValueError` for a naive instant or for facts the table's
+    CHECKs and enums would refuse.
+    """
+    _check_facts(facts, now)
+    if facts.revoke_reason is not None:
+        return _REVOKED_STATUS[facts.revoke_reason]
+    if facts.expires_at is not None and now >= facts.expires_at:
+        return "expired"
+    if facts.blocked:
+        return "blocked"
+    if facts.tutor_listing_state not in _VALID_LISTING_STATES:
+        return "tutor_unavailable"
+    return "active"
+
+
+def grant_is_valid(facts: GrantFacts, *, now: datetime) -> bool:
+    """Whether the tutor may read the student's data now: the status is ``active``.
+
+    The SQL mirror used by T19/T20/S8/PA6 is
+    ``revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())``, no
+    active block between the pair, and ``listing_state IN ('listed',
+    'pending_review')``.
+    """
+    return grant_status(facts, now=now) == "active"
