@@ -30,7 +30,7 @@ from lemely.io.gemini import (
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus
-from tests.gemini_fakes import fake_genai_client
+from tests.gemini_fakes import fake_genai_client, pin_pre_flip
 
 
 class _SimpleSchema(BaseModel):
@@ -201,7 +201,7 @@ class _IsolatedEnv:
 
 def _make_settings(tmp: str, **gemini_overrides: object):
     with _IsolatedEnv():
-        s = load_settings(toml_path=None, cwd=Path(tmp))
+        s = pin_pre_flip(load_settings(toml_path=None, cwd=Path(tmp)))
     # Redirect output_dir (persistent ledger lives here) and cache_dir into the
     # tmp dir so the cross-run gemini_spend.json never touches the real repo.
     s = s.model_copy(

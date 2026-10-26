@@ -14,24 +14,39 @@ from click.testing import CliRunner
 from lemely.app.cli import cli
 from lemely.runtime.config import Settings
 
+#: Settings that put every task tag and the binder on Gemini, for the tests of the Gemini path.
+_ALL_GEMINI: dict[str, str | None] = {
+    "LEMELY_GEMINI__MODEL": "gemini-2.5-flash",
+    "LEMELY_GEMINI__MARK_SCHEME_MODEL": "gemini-2.5-flash",
+    "LEMELY_GEMINI__EXTRACTION_MODEL": "gemini-3.5-flash-lite",
+    "LEMELY_GEMINI__CORRECTION_MODEL": "gemini-3.1-flash-lite",
+    "LEMELY_GEMINI__GENERATION_MODEL": "gemini-3.5-flash-lite",
+    "LEMELY_GEMINI__SCAN_METADATA_MODEL": "gemini-3.5-flash-lite",
+    "LEMELY_GEMINI__ADJUDICATION_MODEL": "gemini-3.8-flash",
+    "LEMELY_BINDING__READ_MODEL": "gemini-3.8-flash",
+    "LEMELY_BINDING__RETRY_MODEL": "gemini-3.8-flash",
+}
+
 
 class DoctorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.runner = CliRunner()
-        snapshot = {
-            k: v for k, v in os.environ.items() if k.startswith("LEMELY_") or k == "GEMINI_API_KEY"
-        }
+        keys = ("GEMINI_API_KEY", "ANTHROPIC_API_KEY")
+        snapshot = {k: v for k, v in os.environ.items() if k.startswith("LEMELY_") or k in keys}
 
         def restore() -> None:
             for k in list(os.environ):
-                if k.startswith("LEMELY_") or k == "GEMINI_API_KEY":
+                if k.startswith("LEMELY_") or k in keys:
                     del os.environ[k]
             os.environ.update(snapshot)
 
         self.addCleanup(restore)
         for k in list(os.environ):
-            if k.startswith("LEMELY_") or k == "GEMINI_API_KEY":
+            if k.startswith("LEMELY_") or k in keys:
                 del os.environ[k]
+        # Every default task tag is claude- since sub-project C, so a healthy install has
+        # an Anthropic key; the tests that need it absent say so (ANTHROPIC_API_KEY=None).
+        os.environ["ANTHROPIC_API_KEY"] = "test-anthropic-key-not-validated"
 
     def test_doctor_fails_without_gemini_api_key(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -40,18 +55,23 @@ class DoctorTests(unittest.TestCase):
             result = self.runner.invoke(
                 cli,
                 ["--json", "doctor", "--no-network"],
-                env={"LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources")},
+                env={
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    **_ALL_GEMINI,
+                },
             )
         self.assertEqual(result.exit_code, 3, msg=result.output)
         payload = json.loads(result.output)
         self.assertFalse(payload["all_passed"])
-        self.assertIn("gemini_api_key", json.dumps(payload))
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_api_key")
+        self.assertFalse(check["ok"])
 
     def _doctor_env(self, tmp: str, **extra: str | None) -> dict[str, str | None]:
         (Path(tmp) / "Sources").mkdir()
         (Path(tmp) / "outputs").mkdir()
         return {
             "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+            "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
             "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
             "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
             "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -147,7 +167,11 @@ class DoctorTests(unittest.TestCase):
         self.assertIn("dedicated Lemely workspace", detail)
 
     def test_doctor_skips_the_workspace_check_when_no_image_call_is_on_claude(self) -> None:
-        self.assertIsNone(self._workspace_check(LEMELY_GEMINI__CORRECTION_MODEL="claude-haiku-5-5"))
+        self.assertIsNone(
+            self._workspace_check(
+                **{**_ALL_GEMINI, "LEMELY_GEMINI__CORRECTION_MODEL": "claude-haiku-5-5"}
+            )
+        )
 
     def test_doctor_says_inline_when_the_files_api_is_off(self) -> None:
         check = self._workspace_check(
@@ -157,17 +181,60 @@ class DoctorTests(unittest.TestCase):
         assert check is not None
         self.assertIn("sent inline", str(check["detail"]))
 
-    def test_doctor_does_not_need_an_anthropic_key_under_default_settings(self) -> None:
+    def test_doctor_needs_an_anthropic_key_under_default_settings(self) -> None:
+        """Sub-project C: every default task tag is a claude- model."""
         with TemporaryDirectory() as tmp:
             result = self.runner.invoke(
                 cli,
                 ["--json", "doctor", "--no-network"],
                 env=self._doctor_env(tmp, ANTHROPIC_API_KEY=None),
             )
+        self.assertEqual(result.exit_code, 3, msg=result.output)
+        payload = json.loads(result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "anthropic_api_key")
+        self.assertFalse(check["ok"])
+
+    def test_doctor_does_not_need_an_anthropic_key_when_every_tag_is_on_gemini(self) -> None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env=self._doctor_env(tmp, ANTHROPIC_API_KEY=None, **_ALL_GEMINI),
+            )
         self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.output)
         check = next(c for c in payload["checks"] if c["name"] == "anthropic_api_key")
         self.assertTrue(check["ok"])
+
+    def test_doctor_passes_the_gemini_key_check_with_no_key_when_every_tag_is_claude(self) -> None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env=self._doctor_env(tmp, GEMINI_API_KEY=None),
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_api_key")
+        self.assertTrue(check["ok"])
+
+    def test_doctor_fails_the_gemini_key_check_for_one_gemini_tag_and_no_key(self) -> None:
+        with TemporaryDirectory() as tmp:
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env=self._doctor_env(
+                    tmp,
+                    GEMINI_API_KEY=None,
+                    LEMELY_GEMINI__SCAN_METADATA_MODEL="gemini-3.5-flash-lite",
+                ),
+            )
+        self.assertEqual(result.exit_code, 3, msg=result.output)
+        payload = json.loads(result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_api_key")
+        self.assertFalse(check["ok"])
+        self.assertIn("scan_metadata=gemini-3.5-flash-lite", check["detail"])
+        self.assertNotIn("extraction=", check["detail"])
 
     def test_doctor_succeeds_with_valid_env(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -178,6 +245,7 @@ class DoctorTests(unittest.TestCase):
                 ["--json", "doctor", "--no-network"],
                 env={
                     "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -193,6 +261,9 @@ class DoctorTests(unittest.TestCase):
             ["--json", "doctor"],  # no --no-network: exercises the live ping
             env={
                 "GEMINI_API_KEY": "test-key",
+                "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
+                # One Gemini tag, so the live Gemini ping is the check under test.
+                "LEMELY_GEMINI__EXTRACTION_MODEL": "gemini-3.5-flash-lite",
                 "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                 "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                 "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -242,6 +313,7 @@ class DoctorTests(unittest.TestCase):
                 ["--json", "doctor", "--no-network"],
                 env={
                     "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -266,6 +338,7 @@ class DoctorTests(unittest.TestCase):
                 ["--json", "doctor", "--no-network"],
                 env={
                     "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -306,6 +379,7 @@ class DoctorTests(unittest.TestCase):
                         ["--json", "--config", str(toml_path), "doctor", "--no-network"],
                         env={
                             "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                            "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                             "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                             "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                             "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -339,6 +413,7 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
                 ["--json", "--config", str(toml_path), "doctor", "--no-network"],
                 env={
                     "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -363,6 +438,7 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
                 ["--json", "--config", str(toml_path), "doctor", "--no-network"],
                 env={
                     "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -392,6 +468,7 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
                     ["--json", "doctor", "--no-network"],
                     env={
                         "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                        "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                         "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                         "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                         "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -421,6 +498,7 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
                     ["--json", "doctor", "--no-network"],
                     env={
                         "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                        "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                         "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                         "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                         "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -444,6 +522,7 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
                 ["--json", "doctor", "--no-network"],
                 env={
                     "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(outputs),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -467,6 +546,7 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
                 ["--json", "doctor", "--no-network"],
                 env={
                     "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(outputs),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -490,6 +570,7 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
                 ["--json", "doctor", "--no-network"],
                 env={
                     "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(outputs),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -526,6 +607,7 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
                     ["--json", "--config", str(toml_path), "doctor", "--no-network"],
                     env={
                         "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                        "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                         "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                         "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                         "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -554,6 +636,7 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
                 ["--json", "--config", str(toml_path), "doctor", "--no-network"],
                 env={
                     "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -586,6 +669,7 @@ class US034FallbackPricingVisibilityTests(unittest.TestCase):
                 ["--json", "doctor", "--no-network"],
                 env={
                     "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -610,6 +694,7 @@ class US034FallbackPricingVisibilityTests(unittest.TestCase):
                 ["--json", "doctor", "--no-network"],
                 env={
                     "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -639,6 +724,7 @@ class DoctorBindingTests(unittest.TestCase):
                 ["--json", "doctor", "--no-network"],
                 env={
                     "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "ANTHROPIC_API_KEY": "test-anthropic-key-not-validated",
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
@@ -652,7 +738,7 @@ class DoctorBindingTests(unittest.TestCase):
 
     def test_doctor_shows_the_binder_its_model_and_both_reads(self) -> None:
         checks = self._doctor()
-        self.assertIn("binding_read=gemini-3.8-flash", checks["gemini_model_table"]["detail"])
+        self.assertIn("binding_read=claude-haiku-5-5", checks["gemini_model_table"]["detail"])
         binding = checks["binding"]
         self.assertTrue(binding["ok"], msg=binding)
         # Both reads think "low" since cost-ladder B1; the table names the second read's
@@ -661,14 +747,17 @@ class DoctorBindingTests(unittest.TestCase):
         for expected in (
             "binder=label",
             "gate=enforce",
-            "both reads on gemini-3.8-flash think low",
+            "both reads on claude-haiku-5-5 think low",
             "b1-second-read-low/verdict.json",
             "own task tag and cache key",
         ):
             self.assertIn(expected, binding["detail"])
 
     def test_doctor_reports_a_cross_model_second_read(self) -> None:
+        # The first read is pinned to Gemini: the default read model is claude-haiku-5-5 now,
+        # which would make the second read the same model rather than a cross-model one.
         checks = self._doctor(
+            LEMELY_BINDING__READ_MODEL="gemini-3.8-flash",
             LEMELY_BINDING__SECOND_READ_MODEL="claude-haiku-5-5",
             ANTHROPIC_API_KEY="test-key-not-validated-with-no-network",
         )
@@ -718,7 +807,7 @@ class DoctorBindingTests(unittest.TestCase):
 
     def test_doctor_shows_the_legacy_binder_and_its_retry_model(self) -> None:
         checks = self._doctor(LEMELY_BINDING__BINDER="legacy")
-        self.assertIn("binding_retry=gemini-3.8-flash", checks["gemini_model_table"]["detail"])
+        self.assertIn("binding_retry=claude-sonnet-5-5", checks["gemini_model_table"]["detail"])
         self.assertNotIn("binding_read=", checks["gemini_model_table"]["detail"])
         self.assertIn("binder=legacy", checks["binding"]["detail"])
 

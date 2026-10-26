@@ -54,7 +54,7 @@ from lemely.io.prompts import (
 from lemely.io.rasterise import RasterisedPage
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
-from tests.gemini_fakes import fake_genai_client
+from tests.gemini_fakes import fake_genai_client, pin_pre_flip
 
 _ROOT = Path(__file__).resolve().parent.parent
 _SCHEMES = _ROOT / "corpus" / "mark-schemes"
@@ -118,7 +118,7 @@ def _client(tmp: Path, body: dict[str, Any]) -> tuple[GeminiClient, MagicMock]:
         usage_metadata=MagicMock(prompt_token_count=5, candidates_token_count=30),
     )
     with _IsolatedEnv():
-        settings = load_settings(toml_path=None, cwd=tmp)
+        settings = pin_pre_flip(load_settings(toml_path=None, cwd=tmp))
     settings = settings.model_copy(
         update={"paths": PathsSettings(cache_dir=tmp / ".cache", output_dir=tmp / "outputs")}
     )
@@ -1178,7 +1178,9 @@ def test_model_override_reaches_the_client(tmp_path: Path) -> None:
     assert spy.call_args.kwargs["model"] == "gemini-override"
 
     with _IsolatedEnv():
-        configured = load_settings(toml_path=None, cwd=tmp_path).gemini.model_for("extraction")
+        configured = pin_pre_flip(load_settings(toml_path=None, cwd=tmp_path)).gemini.model_for(
+            "extraction"
+        )
     _, genai, spy = _read(tmp_path / "b", [_label("1")])
     assert spy.call_args.kwargs["model"] is None
     assert genai.models.generate_content.call_args.kwargs["model"] == configured

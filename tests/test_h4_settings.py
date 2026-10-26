@@ -14,11 +14,12 @@ H4_NAMES = (
 )
 
 
-def test_h4_defaults_are_off() -> None:
+def test_h4_defaults() -> None:
     s = GeminiSettings()
-    assert s.adjudication_reread_disagreed is False
+    # Sub-project C flipped both levers on (the final rung, FLIP.md).
+    assert s.adjudication_reread_disagreed is True
     assert s.adjudication_reread_max_leaves == 3
-    assert s.correction_retry_median is False
+    assert s.correction_retry_median is True
     assert s.correction_retry_median_below == 0.86
 
 
@@ -40,7 +41,9 @@ def test_median_refuses_keep_higher() -> None:
         GeminiSettings(correction_retry_median=True, correction_retry_keep_higher=True)
     assert "correction_retry_keep_higher" in str(err.value)
     assert GeminiSettings(correction_retry_median=True).correction_retry_median is True
-    assert GeminiSettings(correction_retry_keep_higher=True).correction_retry_keep_higher is True
+    # Median is on by default, so keep-higher needs it off.
+    kept = GeminiSettings(correction_retry_keep_higher=True, correction_retry_median=False)
+    assert kept.correction_retry_keep_higher is True
 
 
 @pytest.mark.parametrize("name", H4_NAMES)

@@ -49,7 +49,8 @@ def _with_gemini(**gemini: object) -> Settings:
 
 
 def test_model_rows_one_per_configured_tag_with_provider_effort_and_price() -> None:
-    s = _with_gemini(correction_model="claude-haiku-5-5")
+    # Extraction is pinned to Gemini: every default tag is claude- since sub-project C.
+    s = _with_gemini(correction_model="claude-haiku-5-5", extraction_model="gemini-3.5-flash-lite")
     rows = model_rows(s, on=date(2026, 10, 19))
     assert [r.tag for r in rows] == list(configured_models(s))
     correction = next(r for r in rows if r.tag == "correction")

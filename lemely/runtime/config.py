@@ -141,27 +141,44 @@ _THINKING_LEVEL_FOR_DEFAULTS: dict[str, ThinkingLevel] = {
 }
 
 
+def _shipped_claude_cache_for() -> dict[str, list[ClaudeCacheSpot]]:
+    """The sub-project C cache plan (FLIP.md, rung F's base config)."""
+    return {
+        "extraction": ["system", "images"],
+        "binding_second_read": ["system", "images"],
+        "correction": ["system", "prefix"],
+        "correction_borderline": ["system", "prefix"],
+        "escalation": ["system", "prefix"],
+    }
+
+
+def _shipped_claude_effort_for() -> dict[str, ClaudeEffort]:
+    """The sub-project C effort table (FLIP.md, rung F's base config)."""
+    return {
+        "correction:mcq": "low",
+        "correction:numeric": "low",
+        "correction:short": "low",
+        "correction:extended": "medium",
+    }
+
+
 class GeminiSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    model: str = "gemini-2.5-flash"
+    # Sub-project C flip: every task tag defaults to claude-haiku-5-5. The screened tags
+    # (mark_scheme, extraction, correction, scan_metadata, the binder) passed the real-split
+    # judgement (BUILD/accuracy-runs/claude-c-2026-10-26-live3/FLIP.md); generation, study_plan,
+    # self_review_judge and question_validity (the `model` fallback) passed a live smoke
+    # test (.superpowers/sdd/c-p4-smoke.md). The Gemini names these replaced:
+    # gemini-2.5-flash (model, mark_scheme), gemini-3.5-flash-lite (extraction, generation,
+    # scan_metadata), gemini-3.1-flash-lite (correction). A gemini- model still works, by config.
+    model: str = "claude-haiku-5-5"
     # Per-task model overrides — each falls back to `model` when unset.
-    # F1 (Gemini 3.x migration): correction/escalation move to 3.8-flash;
-    # extraction/generation/scan_metadata move to 3.5-flash-lite (thinking_level
-    # replaces thinking_budget on these tags, see thinking_level_for below);
-    # mark_scheme_model stays on 2.5-flash (thinking_budget, D20) — its chunked
-    # parser tuning predates the 3.x migration and is out of scope here.
-    mark_scheme_model: str | None = "gemini-2.5-flash"
-    extraction_model: str | None = "gemini-3.5-flash-lite"
-    # Cost-ladder A1: gemini-3.1-flash-lite passed its live screen
-    # (BUILD/accuracy-runs/cost-ladder-2026-10-19/a1-flash-lite/verdict.json:
-    # 50.5% saving vs the B12 config, identical mismark set, id-match 1.0, 0/78
-    # parts flagged for review). claude-haiku-5-5 is development-only, via config:
-    # its screen (a1-haiku) passed but flagged 20.5% of parts for review, and
-    # review-threshold calibration failed.
-    correction_model: str | None = "gemini-3.1-flash-lite"
-    generation_model: str | None = "gemini-3.5-flash-lite"
+    mark_scheme_model: str | None = "claude-haiku-5-5"
+    extraction_model: str | None = "claude-haiku-5-5"
+    correction_model: str | None = "claude-haiku-5-5"
+    generation_model: str | None = "claude-haiku-5-5"
     study_plan_model: str | None = None
-    scan_metadata_model: str | None = "gemini-3.5-flash-lite"
+    scan_metadata_model: str | None = "claude-haiku-5-5"
     # develop's self-review evidence judge. Left on the `model` fallback
     # (``None``) as develop shipped it — F1's per-task migration predates the
     # judge and made no ruling about it, and inventing one here would be a
@@ -181,7 +198,10 @@ class GeminiSettings(BaseModel):
     # operator-tunable. The two were coincidentally equal (0.80) before D2.2 and
     # are now free to move independently: raising this one costs Gemini dollars,
     # raising that one costs teacher time.
-    escalation_model: str | None = "gemini-3.8-flash"
+    # Sub-project C flip: no default escalation (final review I5). Haiku with the borderline
+    # retry, adjudication and a 0.72 review threshold beat the Gemini rung without it
+    # (FLIP.md); a Sonnet escalation added cost for no measured accuracy. None: off.
+    escalation_model: str | None = None
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
     # Sub-project C: at most this many escalation calls per script, most uncertain
     # leaves first (decided after every leaf is marked). None: escalate inline, as before.
@@ -193,10 +213,11 @@ class GeminiSettings(BaseModel):
     # model's threshold. Post-processing only: no prompt or cache key reads it.
     # Applies in ``lemely.io.correction_ai`` alone; the db/web layers still read
     # the 0.90 constant from the persisted ``confidence_score``.
+    # Haiku's 0.72 is the fitted one (FLIP.md); the review-rate gate is 22%.
     review_confidence_threshold_for: dict[str, Annotated[float, Field(ge=0.0, le=1.0)]] = Field(
-        default_factory=dict
+        default_factory=lambda: {"claude-haiku-5-5": 0.72}
     )
-    # LLM cost-ladder levers. Every default reproduces the pre-ladder behaviour.
+    # LLM cost-ladder levers. The `cache_mode_for`/cascade ones reproduce the pre-ladder behaviour.
     # Per-task-tag cache mode (unlisted tags behave as "read_write"). A tag mapped
     # to "refresh" overwrites existing entries (e.g. a frozen baseline).
     cache_mode_for: dict[str, Literal["read_write", "bypass", "refresh"]] = Field(
@@ -243,7 +264,7 @@ class GeminiSettings(BaseModel):
     )
     cascade_unaddressed_points: bool = False
     # Put the question-invariant correction prompt first so providers can cache it.
-    correction_shared_prefix: bool = False
+    correction_shared_prefix: bool = True
     correction_prefix_cache: Literal["implicit", "explicit"] = "implicit"
     # Claude page images (spec 2026-10-19 §2): greyscaled and enhanced, stepped
     # down from 2576 px until the request is under this many estimated tokens
@@ -264,11 +285,13 @@ class GeminiSettings(BaseModel):
     # "images" after the binder's pages lets its second read hit the first's cache;
     # with it on both binder tags and both reads on one claude- model, the reads run
     # one after the other. At most 4 spots per tag.
-    claude_cache_for: dict[str, list[ClaudeCacheSpot]] = Field(default_factory=dict)
+    claude_cache_for: dict[str, list[ClaudeCacheSpot]] = Field(
+        default_factory=_shipped_claude_cache_for
+    )
     # Spec §4 B3: Anthropic effort per task tag, or per "tag:kind" (kind: mcq,
     # numeric, short, extended, from the leaf's question type). Lookup: tag:kind,
     # then tag, then thinking_level_for[tag] mapped to effort. Claude calls only.
-    claude_effort_for: dict[str, ClaudeEffort] = Field(default_factory=dict)
+    claude_effort_for: dict[str, ClaudeEffort] = Field(default_factory=_shipped_claude_effort_for)
     # Spec §4 B2 (fallback; native citations cannot combine with structured output):
     # the marker quotes the mark-scheme words each awarded mark rests on, and a mark
     # without a valid quote goes to review as "uncited_mark". Both providers.
@@ -285,13 +308,15 @@ class GeminiSettings(BaseModel):
     # adjudication_confidence_threshold, or named by a failed G9 check), each from its
     # own page crops, its scheme points and the first mark. None: off. Needs the scan
     # pages (correct_paper's ``pages``).
-    adjudication_model: str | None = None
-    adjudication_max_leaves: int = Field(default=3, ge=0)
-    adjudication_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+    # Flipped on in sub-project C (FLIP.md, rung F): Haiku adjudicates up to 6 leaves below
+    # 0.86 and needs the scan pages, which every marking path with a scan passes.
+    adjudication_model: str | None = "claude-haiku-5-5"
+    adjudication_max_leaves: int = Field(default=6, ge=0)
+    adjudication_confidence_threshold: float = Field(default=0.86, ge=0.0, le=1.0)
     # Lever H2a: below `correction_retry_keep_higher_below` the borderline retry runs and
     # the leaf keeps the higher of the two marks, instead of the retry replacing the
-    # first. Evidence 0.86: Claude cells at 0.85 are 18% wrong, at 0.90 7%
-    # (c-haiku-accuracy-ideas §1.3).
+    # first. Not with `correction_retry_median` (on by default). Evidence 0.86: Claude cells
+    # at 0.85 are 18% wrong, at 0.90 7% (c-haiku-accuracy-ideas §1.3).
     correction_retry_keep_higher: bool = False
     correction_retry_keep_higher_below: float = Field(default=0.86, ge=0.0, le=1.0)
     # Lever H2b: the correction reply lists per-point verdicts and the rationale before
@@ -304,18 +329,18 @@ class GeminiSettings(BaseModel):
     # Lever H2d: with `adjudication_model` set, leaves whose answer is the reader's
     # `Drawing:` description are adjudicated from their page crops, up to
     # `adjudication_drawing_max_leaves` per script, before the confidence candidates.
-    adjudication_drawing_leaves: bool = False
-    adjudication_drawing_max_leaves: int = Field(default=3, ge=0)
+    adjudication_drawing_leaves: bool = True
+    adjudication_drawing_max_leaves: int = Field(default=6, ge=0)
     # Lever H4a: with `adjudication_model` set, AI-marked leaves whose crop re-read disagreed
     # with the first read (`reread_agreement` below 0.8) are adjudicated from their crop first,
     # up to `adjudication_reread_max_leaves` per script. All 14 such cells in sub-project C's
     # runs were wrong (c-residual-errors §1, class e).
-    adjudication_reread_disagreed: bool = False
+    adjudication_reread_disagreed: bool = True
     adjudication_reread_max_leaves: int = Field(default=3, ge=0)
     # Lever H4c: below `correction_retry_median_below` the borderline retry runs, a second
     # retry runs when it disagrees with the first pass, and the leaf takes the median of the
     # three marks. Not with `correction_retry_keep_higher`.
-    correction_retry_median: bool = False
+    correction_retry_median: bool = True
     correction_retry_median_below: float = Field(default=0.86, ge=0.0, le=1.0)
 
     @field_validator("claude_cache_for")
@@ -786,7 +811,9 @@ class BindingSettings(BaseModel):
 
     ``read_model`` is the label binder's model. It is passed on every call and is not
     ``gemini.extraction_model``: only ``gemini-3.8-flash`` returned a usable list when
-    this was measured, and the extraction default is a cheaper model that did not.
+    this was measured on Gemini, and the Gemini extraction default was a cheaper model that
+    did not. Since the sub-project C flip (FLIP.md) the binder reads on ``claude-haiku-5-5``
+    and its one retry runs on ``claude-sonnet-5-5``.
     ``second_read`` reads the script a second time on that model, under the task tag
     ``binding_second_read`` (its own thinking level, see
     ``gemini.thinking_level_for``), so that two reads can be compared and a bad first
@@ -819,7 +846,7 @@ class BindingSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     binder: Literal["label", "legacy"] = "label"
     gate: Literal["enforce", "observe", "off"] = "enforce"
-    read_model: str = Field(default="gemini-3.8-flash", min_length=1)
+    read_model: str = Field(default="claude-haiku-5-5", min_length=1)
     second_read: bool = True
     second_read_mode: Literal["always", "on_trigger"] = "always"
     second_read_model: str | None = Field(default=None, min_length=1)
@@ -830,7 +857,7 @@ class BindingSettings(BaseModel):
     #: the first's prompt cache) even when their efforts differ. Off: equal effort is
     #: required, as the prompt-caching docs say a changed setting invalidates the cache.
     claude_cache_ignores_effort: bool = False
-    retry_model: str = Field(default="gemini-3.8-flash", min_length=1)
+    retry_model: str = Field(default="claude-sonnet-5-5", min_length=1)
 
     @model_validator(mode="after")
     def _label_binder_requires_the_gate(self) -> BindingSettings:

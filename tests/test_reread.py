@@ -22,6 +22,7 @@ from lemely.io.reread import (
     should_reread,
 )
 from lemely.runtime.config import PathsSettings, load_settings
+from tests.gemini_fakes import pin_pre_flip
 
 
 def _page(width: int = 1000, height: int = 1000) -> RasterisedPage:
@@ -157,7 +158,7 @@ def _client_returning(tmp: str, answer_text: str) -> tuple[GeminiClient, MagicMo
         if k.startswith("LEMELY_"):
             del os.environ[k]
     try:
-        settings = load_settings(toml_path=None, cwd=Path(tmp))
+        settings = pin_pre_flip(load_settings(toml_path=None, cwd=Path(tmp)))
     finally:
         os.environ.clear()
         os.environ.update(snap)

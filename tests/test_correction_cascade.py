@@ -20,6 +20,7 @@ from lemely.io.correction_ai import CASCADE_LEAF_LOG_ENV, AICorrector
 from lemely.io.gemini import GeminiClient, reset_process_counters, set_call_context
 from lemely.runtime.config import GeminiSettings, PathsSettings, Settings, load_settings
 from scripts import cascade_sweep
+from tests.gemini_fakes import pin_pre_flip, pre_flip_gemini
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -86,7 +87,9 @@ def _cascade(**overrides: Any) -> GeminiSettings:
         "escalation_model": "gemini-3.8-flash",
         "escalation_confidence_threshold": 0.80,
     }
-    return GeminiSettings(**{**base, **overrides})
+    # Pre-flip defaults: the fake client's resolved_thinking takes no leaf kind, and the
+    # shipped claude_effort_for (sub-project C) puts one on every correction call.
+    return pre_flip_gemini(**{**base, **overrides})
 
 
 def _run(
@@ -133,7 +136,7 @@ def isolated_env() -> Iterator[None]:
 
 
 def _real_settings(tmp: Path, **gemini: Any) -> Settings:
-    s = load_settings(toml_path=None, cwd=tmp)
+    s = pin_pre_flip(load_settings(toml_path=None, cwd=tmp))
     # The mocks and fitted thresholds here are for the pre-A1 correction model,
     # gemini-3.8-flash; the pin holds that model for them (the shipped default
     # is now gemini-3.1-flash-lite).

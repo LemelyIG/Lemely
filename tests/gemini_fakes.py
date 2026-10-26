@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 
 from google.genai import types
 
-from lemely.runtime.config import PathsSettings, Settings, load_settings
+from lemely.runtime.config import GeminiSettings, PathsSettings, Settings, load_settings
 
 
 @dataclass
@@ -122,6 +122,19 @@ def _pinned(settings: Settings, values: Mapping[str, object]) -> Settings:
             }
         )
     return settings
+
+
+def pre_flip_gemini(**overrides: Any) -> GeminiSettings:
+    """``GeminiSettings`` at the pre-flip defaults, with ``overrides`` on top."""
+    pinned = {
+        k.partition(".")[2]: v for k, v in PRE_FLIP_DEFAULTS.items() if k.startswith("gemini.")
+    }
+    return GeminiSettings(**{**pinned, **overrides})
+
+
+def pin_pre_flip(settings: Settings) -> Settings:
+    """``settings`` with the pre-flip Gemini defaults (:data:`PRE_FLIP_DEFAULTS`) put back."""
+    return _pinned(settings, PRE_FLIP_DEFAULTS)
 
 
 def make_settings(tmp: str) -> Settings:

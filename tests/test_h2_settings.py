@@ -16,14 +16,15 @@ H2_NAMES = (
 )
 
 
-def test_h2_defaults_are_off() -> None:
+def test_h2_defaults() -> None:
     s = GeminiSettings()
     assert s.correction_retry_keep_higher is False
     assert s.correction_retry_keep_higher_below == 0.86
     assert s.correction_reason_first is False
     assert s.correction_syllabus_conventions is False
-    assert s.adjudication_drawing_leaves is False
-    assert s.adjudication_drawing_max_leaves == 3
+    # Sub-project C flipped the drawing pool on, with the final rung's cap of 6.
+    assert s.adjudication_drawing_leaves is True
+    assert s.adjudication_drawing_max_leaves == 6
 
 
 @pytest.mark.parametrize(

@@ -1983,6 +1983,8 @@ def test_script_cap_defaults_match_spend_caps(
         return 0
 
     monkeypatch.setattr(script, "require_gemini_key", lambda env: None)
+    # Every default task tag is claude- since sub-project C, so the script wants this key.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-not-used")
     monkeypatch.setattr(script, "run_baseline", fake_baseline)
     assert script.main(["--out-dir", str(tmp_path), "baseline"]) == 0
     assert seen["caps"] == SpendCaps()

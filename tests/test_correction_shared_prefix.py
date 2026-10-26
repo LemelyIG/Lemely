@@ -42,6 +42,7 @@ from lemely.io.prompts.correction_ai import (
 )
 from lemely.io.providers.anthropic_adapter import AnthropicReply, Usage
 from lemely.runtime.config import GeminiSettings, PathsSettings, Settings, load_settings
+from tests.gemini_fakes import pin_pre_flip, pre_flip_gemini
 
 _GOLDEN = Path(__file__).parent / "golden"
 
@@ -93,7 +94,7 @@ def _settings(**overrides: Any) -> GeminiSettings:
         "escalation_model": "gemini-3.8-flash",
         "escalation_confidence_threshold": 0.80,
     }
-    return GeminiSettings(**{**base, **overrides})
+    return pre_flip_gemini(**{**base, **overrides})
 
 
 @pytest.fixture
@@ -117,7 +118,7 @@ def recording() -> Iterator[None]:
 
 
 def _real_settings(tmp: Path, **gemini: Any) -> Settings:
-    s = load_settings(toml_path=None, cwd=tmp)
+    s = pin_pre_flip(load_settings(toml_path=None, cwd=tmp))
     return s.model_copy(
         update={
             "paths": PathsSettings(cache_dir=tmp / ".cache", output_dir=tmp / "outputs"),
