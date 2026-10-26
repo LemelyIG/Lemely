@@ -75,7 +75,7 @@ ALL_ROLES = frozenset(role.value for role in Role)
 
 # (method, path) → the guard that route must carry. Reviewed, not inferred.
 EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
-    # ── TEACHER (14) ────────────────────
+    # ── TEACHER (24) ────────────────────
     ("POST", "/api/classes"): TEACHER,
     ("DELETE", "/api/classes/{class_id}"): TEACHER,
     ("PATCH", "/api/classes/{class_id}"): TEACHER,
@@ -100,6 +100,21 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # (tests/test_web_tutoring_authz_grants.py).
     ("GET", "/api/tutor/students"): TEACHER,
     ("GET", "/api/tutor/students/{student_id}"): TEACHER,
+    # Tutoring T8 (SPEC §c.1): the caller's own profile as students see it; outcomes
+    # only while listed or in review (tests/test_web_tutoring_outcomes.py).
+    ("GET", "/api/tutor/profile/preview"): TEACHER,
+    # Tutoring T9-T17 (SPEC §c.1): role half only; the own-booking rule (O4), the
+    # notes table (O9) and the suspended/closed refusal are object-level
+    # (tests/test_web_tutoring_authz_bookings_tutor.py).
+    ("GET", "/api/tutor/bookings"): TEACHER,
+    ("GET", "/api/tutor/bookings/{booking_id}"): TEACHER,
+    ("POST", "/api/tutor/bookings/{booking_id}/accept"): TEACHER,
+    ("POST", "/api/tutor/bookings/{booking_id}/decline"): TEACHER,
+    ("POST", "/api/tutor/bookings/{booking_id}/cancel"): TEACHER,
+    ("POST", "/api/tutor/bookings/{booking_id}/complete"): TEACHER,
+    ("POST", "/api/tutor/bookings/{booking_id}/no-show"): TEACHER,
+    ("GET", "/api/tutor/bookings/{booking_id}/notes"): TEACHER,
+    ("POST", "/api/tutor/bookings/{booking_id}/notes"): TEACHER,
     # ── SCHOOL_ADMIN (8) ────────────────────
     ("GET", "/api/school/seats"): SCHOOL_ADMIN,
     ("POST", "/api/school/seats/invite"): SCHOOL_ADMIN,
@@ -166,11 +181,23 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # unshared state visible again. Same guard, same reasoning — the two
     # roles that manage a class, never platform_admin.
     ("GET", "/api/classes/{class_id}/papers"): TEACHER_OR_SCHOOL_ADMIN,
-    # ── PARENT (4) ────────────────────
+    # ── PARENT (11) ────────────────────
     ("GET", "/api/parent/children"): PARENT,
     ("GET", "/api/parent/children/{child_id}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/subjects/{code}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/weaknesses"): PARENT,
+    # Tutoring PA1-PA5 (SPEC §c.1): the child link is checked on every call (O7);
+    # cancel and complete only for the parent who requested the booking (O8).
+    ("GET", "/api/parent/children/{child_id}/bookings"): PARENT,
+    ("GET", "/api/parent/children/{child_id}/bookings/{booking_id}"): PARENT,
+    ("GET", "/api/parent/children/{child_id}/bookings/{booking_id}/notes"): PARENT,
+    ("POST", "/api/parent/children/{child_id}/bookings/{booking_id}/cancel"): PARENT,
+    ("POST", "/api/parent/children/{child_id}/bookings/{booking_id}/complete"): PARENT,
+    # Tutoring PA6, PA7 (SPEC §c.1): read-only (decision row 16 i); the link is
+    # object-level and re-checked on every call (O7, O22:
+    # tests/test_web_tutoring_authz_parent_sharing.py).
+    ("GET", "/api/parent/children/{child_id}/tutor-grants"): PARENT,
+    ("GET", "/api/parent/children/{child_id}/tutor-access-log"): PARENT,
     # ── PUBLIC (15) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     # spec §4: the child-issued parent signup, replacing the retired
@@ -213,12 +240,18 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/public/tutors"): PUBLIC,
     ("GET", "/api/public/tutors/{tutor_id}"): PUBLIC,
     ("GET", "/api/public/tutoring-areas"): PUBLIC,
-    # ── STUDENT_OR_PARENT (3) ────────────────────
+    # ── STUDENT_OR_PARENT (6) ────────────────────
     # Tutoring SP1-SP2 (SPEC §c.1, row 10). SP2 also needs a verified email.
     ("GET", "/api/tutors"): STUDENT_OR_PARENT,
     ("GET", "/api/tutors/{tutor_id}"): STUDENT_OR_PARENT,
     # SP3: reviews, behind a verified email.
     ("GET", "/api/tutors/{tutor_id}/reviews"): STUDENT_OR_PARENT,
+    # SP4: outcome figures (ADR-T04), behind a verified email; SP2's 404 when hidden (O11).
+    ("GET", "/api/tutors/{tutor_id}/outcomes"): STUDENT_OR_PARENT,
+    # SP5, SP6: slots and the booking request, behind a verified email; a parent
+    # books only for a linked child (O6).
+    ("GET", "/api/tutors/{tutor_id}/slots"): STUDENT_OR_PARENT,
+    ("POST", "/api/bookings"): STUDENT_OR_PARENT,
     # ── AUTH_ANY (19) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
@@ -327,7 +360,20 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,
-    # ── STUDENT (71) ────────────────────
+    # ── STUDENT (80) ────────────────────
+    # Tutoring S1-S5, S14, S15 (SPEC §c.1): the caller's own bookings only (O5); a
+    # parent reads them through PA1-PA3. S15 records the safety notice (row 16 ii).
+    ("GET", "/api/student/bookings"): STUDENT,
+    ("GET", "/api/student/bookings/{booking_id}"): STUDENT,
+    ("POST", "/api/student/bookings/{booking_id}/cancel"): STUDENT,
+    ("GET", "/api/student/bookings/{booking_id}/notes"): STUDENT,
+    ("POST", "/api/student/bookings/{booking_id}/notes"): STUDENT,
+    ("POST", "/api/student/bookings/{booking_id}/complete"): STUDENT,
+    ("POST", "/api/student/tutoring-safety-notice"): STUDENT,
+    # Tutoring S12, S13 (SPEC §c.1): the outcome-figure opt-out is the student's
+    # own row (SPEC §a.5); a parent can neither read nor change it.
+    ("GET", "/api/student/tutoring-settings"): STUDENT,
+    ("PUT", "/api/student/tutoring-settings"): STUDENT,
     # Tutoring S6, S7 (SPEC §c.1): a parent cannot review (locked row 7).
     ("POST", "/api/student/bookings/{booking_id}/review"): STUDENT,
     ("PATCH", "/api/student/reviews/{review_id}"): STUDENT,

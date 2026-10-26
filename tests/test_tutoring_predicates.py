@@ -24,6 +24,7 @@ from lemely.db.tutoring_predicates import (
     OUTCOME_MEMBERSHIP_SQL,
     active_block_between_sql,
     listed_and_not_paused_sql,
+    student_block_of_tutor_created_at_sql,
     student_ever_blocked_tutor_sql,
 )
 from tests.test_db_tutoring_schema import (
@@ -182,6 +183,34 @@ def test_student_ever_blocked_tutor_is_directional_and_counts_removed_rows(
         )
 
 
+def test_student_block_created_at_is_directional_and_keeps_removed_blocks(
+    engine: sa.Engine,
+) -> None:
+    stamp = datetime(2026, 3, 1, 9, 30, tzinfo=UTC)
+    with _rolled_back(engine) as conn:
+        w = _world(conn)
+        _insert(
+            conn,
+            "tutoring_blocks",
+            {
+                "blocker_user_id": w.student,
+                "blocked_user_id": w.tutor_user,
+                "removed_at": datetime.now(UTC),
+                "created_at": stamp,
+            },
+        )
+        _block(conn, w.tutor_user2, w.student2)  # tutor -> student: not the student's block
+        sql = student_block_of_tutor_created_at_sql(":student", ":tutor")
+
+        def read(student: uuid.UUID, tutor: uuid.UUID) -> object:
+            params = {"student": student, "tutor": tutor}
+            return conn.execute(sa.text(f"SELECT {sql}"), params).scalar_one()
+
+        assert read(w.student, w.tutor_user) == stamp
+        assert read(w.student2, w.tutor_user2) is None
+        assert read(w.student, w.tutor_user2) is None
+
+
 # ---------------------------------------------------------------------------
 # Booking-state constants
 # ---------------------------------------------------------------------------
@@ -268,6 +297,7 @@ def test_live_pending_active_and_outcome_membership_predicates(engine: sa.Engine
 BLOCK_BUILDERS = {
     "active_block_between_sql": active_block_between_sql,
     "student_ever_blocked_tutor_sql": student_ever_blocked_tutor_sql,
+    "student_block_of_tutor_created_at_sql": student_block_of_tutor_created_at_sql,
 }
 NOT_IDENTIFIERS = ["", "1=1", "tp.user_id; DROP TABLE users", "tp.user_id OR true", "'x'", "a.b.c"]
 #: Every column of ``tutoring_blocks`` plus common ones. Unqualified inside the
