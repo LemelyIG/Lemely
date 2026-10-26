@@ -1,14 +1,16 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@/lib/api"
 import {
   ACCOUNT_TOO_NEW_LINE,
   CANCEL_RULE_LINE,
   COMPLETE_HINT,
   COUNTING_NOTICE,
+  REVIEW_EDIT_RECHECK_LINE,
   REVIEW_PRIVACY_LINE,
   REVIEW_TEXT_MAX,
+  REVIEW_UNAVAILABLE_LINE,
   REASON_LABEL,
   SESSION_ZONE_LABEL,
   cancelledNotice,
@@ -18,6 +20,7 @@ import {
   noteNeedsSafetyNotice,
   parentNotesFootnote,
   reviewCreateBody,
+  reviewEditHint,
   reviewStatusLine,
   reviewUpdateBody,
   reviewView,
@@ -66,6 +69,17 @@ function quotedAfter(block: string, anchor: string): string {
   expect(close).toBeGreaterThan(open)
   return block.slice(open + 1, close)
 }
+
+// Labels with no year are right only in the current year (Cairo zone). The
+// fixtures are all January 2026, so the clock the label compares against is
+// pinned inside that year; tests of the year rule pass their own `nowMs`.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ["Date"] })
+  vi.setSystemTime(new Date("2026-01-05T09:00:00Z"))
+})
+afterAll(() => {
+  vi.useRealTimers()
+})
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -427,13 +441,23 @@ describe("reviewView", () => {
     expect(formatTutorDate("2026-07-15T21:30:00Z")).toBe("16 Jul 2026")
   })
 
-  it("once the window is open, a missing Review action means the account is too new", () => {
+  it("once the window is open, a missing Review action is not explained by guessing", () => {
+    // The server withholds Review for a young account, but also after an admin
+    // removed the review. A line naming the account would be false for the
+    // second student, so the view says only what is certain.
     const opened = booking({ ...done, allowedActions: [], reviewOpensAt: "2026-01-15T16:00:00Z" })
-    expect(reviewView(opened, "student", Date.parse("2026-01-20T00:00:00Z"))).toEqual({
-      kind: "tooNew",
-      line: ACCOUNT_TOO_NEW_LINE,
-    })
+    const got = reviewView(opened, "student", Date.parse("2026-01-20T00:00:00Z"))
+    expect(got).toEqual({ kind: "unavailable", line: REVIEW_UNAVAILABLE_LINE })
+    expect(REVIEW_UNAVAILABLE_LINE).toBe("You can't review this session right now.")
+    expect(JSON.stringify(got)).not.toMatch(/account|14 days/i)
     expect(reviewView(opened, "parent", Date.parse("2026-01-20T00:00:00Z"))).toBeNull()
+  })
+
+  it("the account line is reserved for the server's 409 account_too_new, and stays the SPEC's", () => {
+    expect(sessionActionError(coded(409, "account_too_new"), "review")).toBe(ACCOUNT_TOO_NEW_LINE)
+    const opened = booking({ ...done, allowedActions: [], reviewOpensAt: "2026-01-15T16:00:00Z" })
+    const got = reviewView(opened, "student", Date.parse("2026-01-20T00:00:00Z"))
+    expect(got && "line" in got ? got.line : "").not.toBe(ACCOUNT_TOO_NEW_LINE)
   })
 
   it("an existing review can be changed until editableUntil, and only by the student", () => {
@@ -579,6 +603,57 @@ describe("notes and the safety notice (C-21, C-24)", () => {
 
 // ── List rows, times, paging ──────────────────────────────────────────────
 
+describe("sessionTimeLabel: the year appears when it is not this year (Cairo zone)", () => {
+  const b = booking()
+
+  it("omits the year in the current year and adds it for another", () => {
+    expect(sessionTimeLabel(b, "Africa/Cairo", "Cairo time", Date.parse("2026-06-01T00:00:00Z"))).toBe(
+      "Thu 8 Jan · 17:00–18:00 Cairo time",
+    )
+    expect(sessionTimeLabel(b, "Africa/Cairo", "Cairo time", Date.parse("2027-01-02T00:00:00Z"))).toBe(
+      "Thu 8 Jan 2026 · 17:00–18:00 Cairo time",
+    )
+    expect(sessionTimeLabel(b, "Africa/Cairo", "Cairo time", Date.parse("2025-03-01T00:00:00Z"))).toBe(
+      "Thu 8 Jan 2026 · 17:00–18:00 Cairo time",
+    )
+  })
+
+  it("compares years on the Cairo calendar, not UTC's", () => {
+    // 22:30 UTC on 31 Dec 2026 is already 1 Jan 2027 in Cairo.
+    const newYear = booking({ startsAt: "2026-12-31T22:30:00Z", endsAt: "2026-12-31T23:30:00Z" })
+    expect(sessionTimeLabel(newYear, "Africa/Cairo", "Cairo time", Date.parse("2026-12-31T21:30:00Z"))).toBe(
+      "Fri 1 Jan 2027 · 00:30–01:30 Cairo time",
+    )
+    expect(sessionTimeLabel(newYear, "Africa/Cairo", "Cairo time", Date.parse("2027-02-01T00:00:00Z"))).toBe(
+      "Fri 1 Jan · 00:30–01:30 Cairo time",
+    )
+  })
+
+  it("row labels carry the year too, since they use the same function", () => {
+    const old = booking({ startsAt: "2025-12-04T15:00:00Z", endsAt: "2025-12-04T16:00:00Z" })
+    expect(sessionRowView(old).timeLabel).toBe("Thu 4 Dec 2025 · 17:00–18:00 Cairo time")
+  })
+})
+
+describe("reviewEditHint", () => {
+  it("warns only when an approved review's text is being replaced", () => {
+    expect(REVIEW_EDIT_RECHECK_LINE).toBe("Editing your review sends it back for checking.")
+    expect(reviewEditHint("approved", "A better sentence.")).toBe(REVIEW_EDIT_RECHECK_LINE)
+    expect(reviewEditHint("approved", "   ")).toBeNull()
+    expect(reviewEditHint("approved", "")).toBeNull()
+    expect(reviewEditHint("pending", "New text")).toBeNull()
+    expect(reviewEditHint("none", "New text")).toBeNull()
+    expect(reviewEditHint("rejected", "New text")).toBeNull()
+  })
+
+  it("the edit form asks for the hint and is told the text state", () => {
+    const form = stripComments(readFileSync(join(WEB, "src/components/tutoring/review-form.tsx"), "utf8"))
+    expect(form).toContain("reviewEditHint(props.textState, text)")
+    const view = stripComments(readFileSync(join(WEB, "src/components/tutoring/session-detail-view.tsx"), "utf8"))
+    expect(view).toContain("textState={view.textState}")
+  })
+})
+
 describe("sessionTimeLabel and sessionRowView", () => {
   it("is the SPEC's shape: weekday, day, month, range, zone label", () => {
     expect(SESSION_ZONE_LABEL).toBe("Cairo time")
@@ -700,7 +775,8 @@ describe("what the owned files must not do", () => {
   it("the session view draws its controls from sessionActions, not from the state", () => {
     const view = source("src/components/tutoring/session-detail-view.tsx")
     expect(view).toContain("sessionActions(")
-    expect(view).not.toMatch(/allowedActions\.includes/)
-    expect(view).not.toMatch(/effectiveState\s*===\s*["']accepted["'][^\n]*(?:Cancel|onCancel)/)
+    // Not one read of allowedActions in the view itself: every control goes through
+    // sessionActions. (The render tests in tutoringSessionScreens.test.ts prove what it draws.)
+    expect(view).not.toContain("allowedActions")
   })
 })

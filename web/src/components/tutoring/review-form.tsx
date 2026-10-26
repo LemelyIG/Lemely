@@ -9,11 +9,12 @@ import {
   REVIEW_PRIVACY_LINE,
   REVIEW_TEXT_MAX,
   reviewCreateBody,
+  reviewEditHint,
   reviewUpdateBody,
   sessionActionError,
 } from "@/lib/tutoring/sessionView"
 import { cn } from "@/lib/utils"
-import type { ReviewCreate, ReviewUpdate } from "@/lib/tutoringTypes"
+import type { MyReview, ReviewCreate, ReviewUpdate } from "@/lib/tutoringTypes"
 
 /*
  * Review form (SPEC §d S-37, routes S6 and S7). Stars, optional text, and the
@@ -51,6 +52,8 @@ export interface ReviewCreateFormProps extends BaseProps {
 export interface ReviewEditFormProps extends BaseProps {
   mode: "edit"
   initialStars: number
+  /** Where the current text stands; an approved review warns before its text is replaced. */
+  textState: MyReview["textState"]
   /** Whether the review has text that "Remove my review text" could clear. */
   hasText: boolean
   onSubmit: (body: ReviewUpdate) => void
@@ -127,6 +130,8 @@ export function ReviewForm(props: ReviewFormProps) {
 
   const errorText = sessionActionError(error, "review")
   const contactRefused = isTutoringError(error, "contact_details_not_allowed")
+  const recheck = props.mode === "edit" ? reviewEditHint(props.textState, text) : null
+  const editHint = recheck ?? (edit ? "Leave it empty to keep what you wrote." : undefined)
   const update = props.mode === "edit" ? reviewUpdateBody({ initialStars, stars, text, clearText }) : null
 
   function submit() {
@@ -162,7 +167,7 @@ export function ReviewForm(props: ReviewFormProps) {
           disabled={pending || clearText}
           onChange={(event) => setText(event.target.value)}
           error={contactRefused ? (errorText ?? undefined) : undefined}
-          hint={edit ? "Leave it empty to keep what you wrote." : undefined}
+          hint={editHint}
         />
         {props.mode === "edit" && props.hasText ? (
           <Checkbox

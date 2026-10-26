@@ -11,6 +11,7 @@ import {
   GRANT_STATUS_VIEW,
   SHARING_EXPLAINER,
   SHARING_PARENTS_LINE,
+  UNBLOCK_NOTE,
   accessLogView,
   blockRowView,
   classAccessView,
@@ -20,6 +21,7 @@ import {
   leaveClassCopy,
   splitGrants,
   stopSharingCopy,
+  unblockSheetCopy,
 } from "@/lib/tutoring/accessView"
 import type { AccessLogEntry, ClassAccessItem, Grant, GrantStatus } from "@/lib/tutoringTypes"
 import { stripComments } from "./support/jsxSource"
@@ -300,6 +302,36 @@ describe("blocked tutors", () => {
     const row = blockRowView({ counterpartId: "t9", displayName: "Omar K.", createdAt: "2026-01-09T09:00:00Z" })
     expect(row).toMatchObject({ name: "Omar K.", unblockLabel: "Unblock Omar K.", sinceLine: "Blocked 9 Jan 2026" })
     expect(EMPTY_BLOCKS_LINE).toBe("You haven't blocked any tutors.")
+  })
+
+  it("Unblock asks first, and the sheet carries what unblocking does not undo", () => {
+    const copy = unblockSheetCopy({ displayName: "Omar K." })
+    expect(copy.title).toBe("Unblock Omar K.?")
+    expect(copy.consequence).toBe(UNBLOCK_NOTE)
+    expect(UNBLOCK_NOTE).toBe("Unblocking doesn't bring back sharing or cancelled sessions.")
+    expect(copy.confirmLabel).toBe("Unblock")
+    expect(copy.cancelLabel).toBe("Keep blocked")
+  })
+
+  it("a block's name is returned as given", () => {
+    expect(unblockSheetCopy({ displayName: "<b>Omar</b>" }).title).toBe("Unblock <b>Omar</b>?")
+  })
+
+  it("the screen never calls the unblock mutation straight from the button", () => {
+    const screen = stripComments(readFileSync(join(WEB, "src/portals/student/screens/tutoring/TutorAccess.tsx"), "utf8"))
+    const at = screen.indexOf("function BlocksSection")
+    expect(at).toBeGreaterThan(-1)
+    const section = screen.slice(at, screen.indexOf("export function TutorAccess", at))
+    // The row button opens the sheet; only the sheet's confirm removes the block.
+    const calls = [...section.matchAll(/remove\.mutateAsync\(/g)]
+    expect(calls).toHaveLength(1)
+    const mutate = calls[0].index ?? 0
+    const buttonAt = section.indexOf("Unblock\n")
+    expect(buttonAt).toBeGreaterThan(-1)
+    expect(section.slice(section.lastIndexOf("<Button", buttonAt), buttonAt)).not.toContain("unblock(")
+    expect(section).toContain("ConfirmModal")
+    expect(section.indexOf("ConfirmModal")).toBeGreaterThan(-1)
+    expect(mutate).toBeLessThan(section.indexOf("<ConfirmModal"))
   })
 })
 

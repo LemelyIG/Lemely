@@ -67,13 +67,38 @@ export function formatTutorDate(iso: string, zone: string = SESSION_ZONE): strin
   return `${part("day")} ${month} ${part("year")}`
 }
 
-/** "Thu 30 Oct · 17:00–18:00 Cairo time". */
+const yearFormatters = new Map<string, Intl.DateTimeFormat>()
+
+/** The calendar year of an instant in `zone`, or null for a date that does not parse. */
+function yearIn(at: Date, zone: string): number | null {
+  if (Number.isNaN(at.getTime())) return null
+  let formatter = yearFormatters.get(zone)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", { timeZone: zone, year: "numeric" })
+    yearFormatters.set(zone, formatter)
+  }
+  const year = Number(formatter.formatToParts(at).find((p) => p.type === "year")?.value)
+  return Number.isNaN(year) ? null : year
+}
+
+/**
+ * "Thu 30 Oct · 17:00–18:00 Cairo time". A session outside the current year
+ * (in the zone, so New Year's Eve evening is not read as the wrong year) names
+ * its year: "Thu 8 Jan 2026 · 17:00–18:00 Cairo time". `nowMs` is for tests.
+ */
 export function sessionTimeLabel(
   booking: Pick<Booking, "startsAt" | "endsAt">,
   zone: string = SESSION_ZONE,
   zoneLabel: string = SESSION_ZONE_LABEL,
+  nowMs: number = Date.now(),
 ): string {
-  return formatSlotRange(booking.startsAt, booking.endsAt, zone, zoneLabel)
+  const label = formatSlotRange(booking.startsAt, booking.endsAt, zone, zoneLabel)
+  const year = yearIn(new Date(booking.startsAt), zone)
+  const thisYear = yearIn(new Date(nowMs), zone)
+  if (label === "" || year === null || year === thisYear) return label
+  // The slot label is "<weekday> <day> <month> · <times> <zone>"; the year goes after the date.
+  const at = label.indexOf(" · ")
+  return at < 0 ? label : `${label.slice(0, at)} ${year}${label.slice(at)}`
 }
 
 export const MODE_LABEL: Record<TutoringMode, string> = {
@@ -114,7 +139,11 @@ export const CANCEL_RULE_LINE = "You can cancel up to 24 hours before the start.
 export const COMPLETE_HINT =
   "Your tutor hasn't recorded this session. If it took place, you can mark it completed."
 export const EXPIRED_LINE = "The tutor didn't reply before the start time."
+/** Said only when the server refuses a review with 409 `account_too_new`; never inferred from a missing Review action. */
 export const ACCOUNT_TOO_NEW_LINE = "You can review once your account is 14 days old."
+/** A completed session whose review window is open and which offers no Review: the reason is not known to the client. */
+export const REVIEW_UNAVAILABLE_LINE = "You can't review this session right now."
+export const REVIEW_EDIT_RECHECK_LINE = "Editing your review sends it back for checking."
 export const REVIEW_PRIVACY_LINE =
   "Your review text is checked by Lemely before others see it. Reviews show the season, not the date or your name."
 export const COUNTING_NOTICE =
@@ -243,13 +272,16 @@ export const REVIEW_TEXT_MAX = 1000
 export type ReviewView =
   | { kind: "write" }
   | { kind: "opens"; line: string }
-  | { kind: "tooNew"; line: string }
+  | { kind: "unavailable"; line: string }
   | { kind: "existing"; stars: number; textState: MyReview["textState"]; canEdit: boolean }
 
 /**
  * What the review area of S-37 shows. A review that exists is shown (and
  * editable until `editableUntil`); a new one only when the API lists `review`;
- * before that, when it opens; and once it has opened without a `review`, why.
+ * before that, when it opens; and once it has opened without a `review`, a
+ * neutral line. The API withholds Review for a young account (O10) and also
+ * when an admin removed the student's review, and the booking does not say
+ * which, so no reason is guessed: the account sentence belongs to the 409.
  */
 export function reviewView(
   booking: Pick<Booking, "allowedActions" | "requestedBy" | "effectiveState" | "review" | "reviewOpensAt">,
@@ -271,10 +303,15 @@ export function reviewView(
   if (nowMs < Date.parse(booking.reviewOpensAt)) {
     return { kind: "opens", line: `You can review this session from ${formatTutorDate(booking.reviewOpensAt)}.` }
   }
-  // The window is open and no Review is offered. The API withholds it from a
-  // completed, unreviewed session for one reason only: the account is under
-  // 14 days old (`core.booking.allowed_actions`, O10).
-  return { kind: "tooNew", line: ACCOUNT_TOO_NEW_LINE }
+  return { kind: "unavailable", line: REVIEW_UNAVAILABLE_LINE }
+}
+
+/**
+ * The line beside the text box when an approved review's text is being
+ * replaced: new text goes through Lemely's check again before it shows.
+ */
+export function reviewEditHint(textState: MyReview["textState"], typedText: string): string | null {
+  return textState === "approved" && typedText.trim() !== "" ? REVIEW_EDIT_RECHECK_LINE : null
 }
 
 export function reviewCreateBody(stars: number, text: string): ReviewCreate {

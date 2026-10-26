@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S3 R4 V3 — five sections in the SPEC's order, each with its own loading, empty and error, sections separated by hairlines with plain lists inside; long, so structure does the work and expression stays low. Seen in a mock-API browser harness at 320 to 1440 px, light and dark, axe clean. */
-import { useState, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import {
   CaretDown,
@@ -14,6 +14,7 @@ import { StopSharingSheet } from "@/components/tutoring/stop-sharing-sheet"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Chip } from "@/components/ui/chip"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { Modal } from "@/components/ui/modal"
 import { QueryState } from "@/components/ui/query-state"
@@ -48,12 +49,13 @@ import {
   grantRowView,
   leaveClassCopy,
   splitGrants,
+  unblockSheetCopy,
   type GrantStatusIcon,
   type GrantRowView,
 } from "@/lib/tutoring/accessView"
 import { usePagedItems } from "@/lib/tutoring/sessionView"
 import { safetyActionError } from "@/lib/tutoring/safetyNoticeCopy"
-import type { AccessLogEntry, AccessLogPage, ClassAccessItem, Grant } from "@/lib/tutoringTypes"
+import type { AccessLogEntry, AccessLogPage, Block, ClassAccessItem, Grant } from "@/lib/tutoringTypes"
 
 /*
  * S-38 · Tutors & your data (`/student/tutor-access`, SPEC §d). The student's
@@ -84,9 +86,33 @@ const GRANT_ICONS: Record<GrantStatusIcon, Icon> = {
   UserMinus,
 }
 
+/** Section headings can take programmatic focus (not a tab stop), for where focus lands when a row leaves the page. */
+function focusHeading(id: string) {
+  document.getElementById(id)?.focus()
+}
+
+/**
+ * Moves focus to the heading `target` once the page has really dropped the row
+ * an action removed (`markRemoved(id)` after the action succeeds). Waiting for
+ * the data, not for the mutation, fixes the order: the sheet that held the
+ * row's button hands focus back to it when it unmounts, which happens in an
+ * earlier commit's cleanup than this effect, so the heading focus always wins
+ * and focus never drops to the page body.
+ */
+function useFocusWhenRowGone(presentIds: readonly string[] | undefined, target: string) {
+  const [removedId, setRemovedId] = useState<string | null>(null)
+  const gone = removedId !== null && presentIds !== undefined && !presentIds.includes(removedId)
+  useEffect(() => {
+    if (!gone) return
+    focusHeading(target)
+    setRemovedId(null)
+  }, [gone, target])
+  return setRemovedId
+}
+
 function SectionHeading({ id, children }: { id: string; children: string }) {
   return (
-    <h2 id={id} className="m-0 text-display-sm text-ink">
+    <h2 id={id} tabIndex={-1} className="m-0 text-display-sm text-ink">
       {children}
     </h2>
   )
@@ -305,11 +331,22 @@ function ClassesSection() {
   const [target, setTarget] = useState<ClassAccessItem | null>(null)
   const [open, setOpen] = useState(false)
 
+  // Leaving the last class removes the whole section, so focus goes on to the next one.
+  // `remaining` is read after the refetch, when the left class is already gone.
+  const remaining = classes.data?.items.length ?? 0
+  const markLeft = useFocusWhenRowGone(
+    classes.data?.items.map((item) => item.classId),
+    remaining > 0 ? "tutor-access-classes" : "tutor-access-counting",
+  )
+
   async function confirmLeave() {
     if (!target) return
     try {
       await leave.mutateAsync({ classId: target.classId })
+      markLeft(target.classId)
       setOpen(false)
+      // Unmount the sheet now: its focus return then runs before the heading focus.
+      setTarget(null)
     } catch {
       // Shown inside the sheet from `leave.error`.
     }
@@ -447,16 +484,28 @@ function CountingSection() {
 function BlocksSection() {
   const blocks = useTutoringBlocks()
   const remove = useRemoveTutoringBlock()
-  const [failed, setFailed] = useState<string | null>(null)
+  // The block stays in state while the sheet animates out; `open` is what closes it.
+  const [target, setTarget] = useState<Block | null>(null)
+  const [open, setOpen] = useState(false)
+  const markUnblocked = useFocusWhenRowGone(
+    blocks.data?.items.map((block) => block.counterpartId),
+    "tutor-access-blocks",
+  )
 
-  async function unblock(counterpartId: string) {
-    setFailed(null)
+  async function unblock() {
+    if (!target) return
     try {
-      await remove.mutateAsync({ counterpartId })
-    } catch (error) {
-      setFailed(safetyActionError(error, "We couldn't unblock them. Try again."))
+      await remove.mutateAsync({ counterpartId: target.counterpartId })
+      markUnblocked(target.counterpartId)
+      setOpen(false)
+      // Unmount the sheet now: its focus return then runs before the heading focus.
+      setTarget(null)
+    } catch {
+      // Shown inside the sheet from `remove.error`.
     }
   }
+
+  const copy = target ? unblockSheetCopy(target) : null
 
   return (
     <Section id="tutor-access-blocks" title="Blocked tutors">
@@ -480,8 +529,11 @@ function BlocksSection() {
                         variant="secondary"
                         size="sm"
                         aria-label={row.unblockLabel}
-                        loading={remove.isPending && remove.variables?.counterpartId === row.counterpartId}
-                        onClick={() => void unblock(row.counterpartId)}
+                        onClick={() => {
+                          remove.reset()
+                          setTarget(block)
+                          setOpen(true)
+                        }}
                       >
                         Unblock
                       </Button>
@@ -492,14 +544,23 @@ function BlocksSection() {
               })}
             </List>
             <p className="m-0 text-body-sm text-ink-muted">{UNBLOCK_NOTE}</p>
-            {failed ? (
-              <p role="alert" className="m-0 text-body-sm text-err">
-                {failed}
-              </p>
-            ) : null}
           </div>
         )}
       </QueryState>
+      {copy ? (
+        <ConfirmModal
+          open={open}
+          title={copy.title}
+          consequence={copy.consequence}
+          confirmLabel={copy.confirmLabel}
+          pendingLabel={copy.pendingLabel}
+          cancelLabel={copy.cancelLabel}
+          pending={remove.isPending}
+          error={remove.isError ? safetyActionError(remove.error, "We couldn't unblock them. Try again.") : null}
+          onConfirm={() => void unblock()}
+          onCancel={() => setOpen(false)}
+        />
+      ) : null}
     </Section>
   )
 }

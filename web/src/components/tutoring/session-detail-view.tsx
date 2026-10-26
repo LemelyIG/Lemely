@@ -190,7 +190,7 @@ function ReviewArea({
   if (view === null) return null
 
   let body: ReactNode = null
-  if (view.kind === "opens" || view.kind === "tooNew") {
+  if (view.kind === "opens" || view.kind === "unavailable") {
     body = <p className="m-0 text-body-md text-ink-muted">{view.line}</p>
   } else if (view.kind === "write" && reviews) {
     body = (
@@ -209,6 +209,7 @@ function ReviewArea({
       <ReviewForm
         mode="edit"
         initialStars={view.stars}
+        textState={view.textState}
         hasText={view.textState !== "none"}
         pending={reviews.update.pending}
         error={reviews.update.error}
@@ -273,20 +274,35 @@ export function SessionDetailView({
   const insideLine = insideCancelWindowNotice(booking, viewer, nowMs)
   const place = sessionPlace(booking)
 
-  // ── Focus follows a state change (a cancel or a completion removes its own button) ──
-  const headingRef = useRef<HTMLHeadingElement>(null)
-  const lastState = useRef(booking.effectiveState)
-  useEffect(() => {
-    if (lastState.current === booking.effectiveState) return
-    lastState.current = booking.effectiveState
-    headingRef.current?.focus()
-  }, [booking.effectiveState])
-
   // ── Cancel and complete confirmations ──
   const [confirm, setConfirm] = useState<"cancel" | "complete" | null>(null)
   const [openConfirm, setOpenConfirm] = useState(false)
-  const confirming = confirm === "cancel" ? cancel : complete
+  const confirming = confirm === "cancel" ? cancel : confirm === "complete" ? complete : undefined
   const confirmCopy = confirm === "complete" ? completeSheetCopy(booking) : cancelSheetCopy(booking)
+
+  // ── Focus follows a state change (a cancel or a completion removes its own button) ──
+  // The sheet gives focus back to the button that opened it when it unmounts, and
+  // that would race a heading focus made while it is still there. So a change of
+  // state only marks the heading as owed; the sheet is unmounted first (its
+  // focus return runs in that commit's cleanup, ahead of every effect), and the
+  // heading is focused in the render after that. The heading always wins.
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  const lastState = useRef(booking.effectiveState)
+  const [headingOwed, setHeadingOwed] = useState(false)
+  useEffect(() => {
+    if (lastState.current === booking.effectiveState) return
+    lastState.current = booking.effectiveState
+    setHeadingOwed(true)
+  }, [booking.effectiveState])
+  useEffect(() => {
+    if (!headingOwed || openConfirm) return
+    if (confirm !== null) {
+      setConfirm(null)
+      return
+    }
+    headingRef.current?.focus()
+    setHeadingOwed(false)
+  }, [headingOwed, openConfirm, confirm])
 
   function ask(which: "cancel" | "complete") {
     const action = which === "cancel" ? cancel : complete
@@ -363,7 +379,7 @@ export function SessionDetailView({
           </h1>
           <BookingStatus state={booking.effectiveState} />
         </div>
-        <p className="m-0 text-body-md text-ink-muted">{sessionTimeLabel(booking, SESSION_ZONE, SESSION_ZONE_LABEL)}</p>
+        <p className="m-0 text-body-md text-ink-muted">{sessionTimeLabel(booking, SESSION_ZONE, SESSION_ZONE_LABEL, nowMs)}</p>
       </header>
 
       {/* Announces a change of state (cancelled, completed) without moving focus again. */}

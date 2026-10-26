@@ -275,6 +275,25 @@ export interface BlockRowView {
   unblockLabel: string
 }
 
+export interface UnblockSheetCopy {
+  title: string
+  consequence: string
+  confirmLabel: string
+  pendingLabel: string
+  cancelLabel: string
+}
+
+/** The sheet before Unblock acts: what it does not undo is said before the button. */
+export function unblockSheetCopy(block: Pick<Block, "displayName">): UnblockSheetCopy {
+  return {
+    title: `Unblock ${block.displayName}?`,
+    consequence: UNBLOCK_NOTE,
+    confirmLabel: "Unblock",
+    pendingLabel: "Unblocking",
+    cancelLabel: "Keep blocked",
+  }
+}
+
 export function blockRowView(block: Block): BlockRowView {
   return {
     counterpartId: block.counterpartId,
