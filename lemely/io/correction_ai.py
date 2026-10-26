@@ -135,6 +135,50 @@ def _verdict_checked(question: Question, reply: AIMarkResponse) -> AIMarkRespons
     )
 
 
+def _log_noop_levers(g: object) -> None:
+    """Log once per corrector each lever combination that is on but cannot take effect.
+
+    Reads defensively (``getattr``, ``is True``, ``isinstance``) and never raises: a
+    settings double or an odd value logs nothing.
+    """
+
+    def on(name: str) -> bool:
+        return getattr(g, name, None) is True
+
+    def number(name: str) -> float | None:
+        value = getattr(g, name, None)
+        return None if isinstance(value, bool) or not isinstance(value, int | float) else value
+
+    notes: list[str] = []
+    retry = [n for n in ("correction_retry_keep_higher", "correction_retry_median") if on(n)]
+    if retry and getattr(g, "correction_borderline_enabled", None) is False:
+        notes.append(f"{retry[0]} needs correction_borderline_enabled")
+    if retry and on("cascade_enabled"):
+        notes.append(f"{retry[0]} does not apply while cascade_enabled")
+    adjudication_model = getattr(g, "adjudication_model", None)
+    if not (isinstance(adjudication_model, str) and adjudication_model):
+        notes.extend(
+            f"{n} needs adjudication_model"
+            for n in ("adjudication_drawing_leaves", "adjudication_reread_disagreed")
+            if on(n)
+        )
+    escalation = number("escalation_confidence_threshold")
+    for flag, below in (
+        ("correction_retry_keep_higher", "correction_retry_keep_higher_below"),
+        ("correction_retry_median", "correction_retry_median_below"),
+    ):
+        lever_below = number(below)
+        if (
+            on(flag)
+            and escalation is not None
+            and lever_below is not None
+            and lever_below < escalation
+        ):
+            notes.append(f"{below} is under escalation_confidence_threshold")
+    if notes:
+        structlog.get_logger().warning("lever_no_op", notes=notes)
+
+
 def _is_leaf_marked(q: Question) -> bool:
     """Mark only leaf questions with marks > 0. Skip container/zero-mark items."""
     return q.marks > 0 and not q.parts
@@ -506,6 +550,7 @@ class AICorrector:
                 raise ConfigError(
                     "correction_retry_median cannot combine with correction_retry_keep_higher"
                 )
+            _log_noop_levers(g)
         #: Built once per value of ``reader_describes_drawings``, not once per leaf.
         self._prefixes: dict[bool, SharedPrefix] = {}
         #: The model whose response the last :meth:`mark_question` returned (the
@@ -514,6 +559,8 @@ class AICorrector:
         #: Leaves whose escalation the per-script cap postponed: id -> (question, system
         #: prompt, user prompt, prefix kwargs, confidence). See :meth:`escalate_deferred`.
         self.deferred: dict[str, tuple[Question, str, str, _PrefixKwargs, float]] = {}
+        #: Deferred leaves whose escalation call failed; ``correct_paper`` sends them to review.
+        self.failed_deferred: set[str] = set()
         #: Cleared by ``correct_paper`` when ECF substitution is on: its re-mark calls
         #: ``mark_question`` again for the same leaf and merges into the first mark, which a
         #: deferred escalation would overwrite. Such a run keeps the inline escalation.
@@ -955,11 +1002,12 @@ class AICorrector:
             except CostCeilingError:
                 raise
             except Exception as exc:
-                # As the inline path: a failed escalation costs that leaf its upgrade only,
-                # it keeps its first-pass mark and the paper completes.
+                # Unlike the inline path (which fails the leaf), the paper completes with
+                # the first-pass mark; ``correct_paper`` flags the leaf for review.
                 structlog.get_logger().warning(
-                    "deferred_escalation_failed", question_id=qid, error=str(exc)
+                    "deferred_escalation_failed", question_id=qid, error_type=type(exc).__name__
                 )
+                self.failed_deferred.add(qid)
                 continue
             # CODE-set only, as in mark_question: the model never claims an ECF re-mark.
             if result.point_verdicts:
@@ -3587,6 +3635,21 @@ def correct_paper(
                 cq = flag_uncited(cq)
             corrected = [cq if c.question_id == qid else c for c in corrected]
             corrected_by_id[qid] = cq
+        for qid in sorted(ai.failed_deferred):
+            flagged = [
+                c.model_copy(
+                    update={
+                        "needs_teacher_review": True,
+                        "review_reason": _join_reason(c.review_reason, "escalation failed"),
+                    }
+                )
+                if c.question_id == qid
+                else c
+                for c in corrected
+            ]
+            corrected = flagged
+            if qid in corrected_by_id:
+                corrected_by_id[qid] = next(c for c in corrected if c.question_id == qid)
     corrected = [
         _attach_extraction_context(cq, answers, original, options, leaf_by_id) for cq in corrected
     ]

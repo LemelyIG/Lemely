@@ -198,6 +198,9 @@ def test_a_failed_deferred_escalation_keeps_the_first_pass_mark() -> None:
     by_id = {q.question_id: q for q in result.questions}
     assert by_id["2a"].awarded_marks == 1  # its escalation failed: first-pass mark kept
     assert by_id["1a"].awarded_marks == 2  # the other leaf was still escalated
+    assert by_id["2a"].needs_teacher_review is True
+    assert "escalation failed" in (by_id["2a"].review_reason or "")
+    assert "escalation failed" not in (by_id["1a"].review_reason or "")
 
 
 def test_a_cost_ceiling_during_deferred_escalation_still_stops_the_run() -> None:
@@ -227,3 +230,28 @@ def test_ecf_substitution_keeps_inline_escalation() -> None:
     # Inline, each low leaf escalates as it is marked (the cap of 1 is not applied).
     tags = [c.kwargs["task_tag"] for c in call.call_args_list]
     assert tags == ["correction", "escalation", "correction", "escalation"]
+
+
+def _logged_notes(**update: object) -> list[str]:
+    from structlog.testing import capture_logs
+
+    s = make_settings(tempfile.mkdtemp())
+    s = s.model_copy(update={"gemini": s.gemini.model_copy(update=update)})
+    client = GeminiClient(s, _genai_client=fake_genai_client(), ledger=None)
+    with capture_logs() as logs:
+        AICorrector(client)
+    return [n for e in logs if e["event"] == "lever_no_op" for n in e["notes"]]
+
+
+def test_a_retry_lever_that_cannot_fire_is_logged_once() -> None:
+    notes = _logged_notes(correction_retry_keep_higher=True, correction_borderline_enabled=False)
+    assert notes == ["correction_retry_keep_higher needs correction_borderline_enabled"]
+
+
+def test_adjudication_flags_without_a_model_are_logged() -> None:
+    notes = _logged_notes(adjudication_drawing_leaves=True)
+    assert notes == ["adjudication_drawing_leaves needs adjudication_model"]
+
+
+def test_default_settings_log_no_lever_no_op() -> None:
+    assert _logged_notes() == []
