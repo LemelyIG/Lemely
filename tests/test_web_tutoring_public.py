@@ -1,8 +1,8 @@
 """Public tutoring routes P1-P3 (SPEC §b.2 "Public", §a.5 row 5b, row 17, §b.5, PP-6).
 
 Every app here is built with ``tests.tutoring_app.app_with_routers`` (the lead
-mounts the routers in ``lemely/web/app.py``; a lane never edits it). The web
-helpers in this module are shared with the other T06 route-test modules.
+mounts the routers in ``lemely/web/app.py``; a lane never edits it), through the
+shared helpers in ``tests/tutoring_db.py``.
 """
 
 from __future__ import annotations
@@ -13,84 +13,28 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pytest
-from fastapi.testclient import TestClient
 
-from lemely.db.models.enums import Role
-from lemely.db.models.users import User
-from lemely.db.tutor_directory_repo import TutorDirectoryRepository
-from lemely.db.tutor_profile_repo import TutorProfileRepository
 from lemely.io.tutoring_areas import (
     AREAS_FILE,
     AreaCatalogueError,
     load_tutoring_areas,
     parse_tutoring_areas,
 )
-from lemely.web.deps import AuthContext, get_auth_context, get_user_mirror
-from lemely.web.deps_tutoring import get_tutor_directory_repo, get_tutor_profile_repo
-from lemely.web.routers import tutor_profile, tutoring_directory, tutoring_public
 from tests.test_schemas_tutoring import ROW_5B_PUBLIC_FIELDS
-from tests.test_tutor_directory_repo import (
+from tests.tutoring_db import (
     add_subject,
     add_tutor,
     emptied_after,
+    json_keys,
+    tutoring_client,
     tutoring_database,
 )
-from tests.tutoring_app import app_with_routers
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from fastapi.testclient import TestClient
     from sqlalchemy.orm import Session, sessionmaker
-
-
-# ---------------------------------------------------------------------------
-# Shared web helpers
-# ---------------------------------------------------------------------------
-
-
-class DbMirror:
-    """The one ``UserMirror`` method ``require_verified_email`` reads, over the test database."""
-
-    def __init__(self, factory: sessionmaker[Session]) -> None:
-        self._factory = factory
-
-    def get_by_id(self, user_id: uuid.UUID) -> User | None:
-        with self._factory() as session:
-            return session.get(User, user_id)
-
-
-def tutoring_client(factory: sessionmaker[Session]) -> TestClient:
-    """The three T06 routers on a fresh app, wired to the test database."""
-    app = app_with_routers(tutoring_public.router, tutoring_directory.router, tutor_profile.router)
-    app.dependency_overrides[get_tutor_profile_repo] = lambda: TutorProfileRepository(factory)
-    app.dependency_overrides[get_tutor_directory_repo] = lambda: TutorDirectoryRepository(factory)
-    app.dependency_overrides[get_user_mirror] = lambda: DbMirror(factory)
-    return TestClient(app)
-
-
-def act_as(client: TestClient, user_id: uuid.UUID, role: Role | str) -> None:
-    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[attr-defined]
-        user_id=str(user_id), role=Role(role).value
-    )
-
-
-def anonymous(client: TestClient) -> None:
-    client.app.dependency_overrides.pop(get_auth_context, None)  # type: ignore[attr-defined]
-
-
-def json_keys(value: object) -> set[str]:
-    """Every object key anywhere in a decoded JSON value."""
-    if isinstance(value, dict):
-        keys = set(value)
-        for item in value.values():
-            keys |= json_keys(item)
-        return keys
-    if isinstance(value, list):
-        keys = set()
-        for item in value:
-            keys |= json_keys(item)
-        return keys
-    return set()
 
 
 # ---------------------------------------------------------------------------

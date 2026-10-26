@@ -289,7 +289,16 @@ def min_rating_sql(profile_alias: str, param: str = "min_rating") -> str:
 
 
 def _after_sql(key: DirectoryKey) -> tuple[str, dict[str, object]]:
-    """Rows strictly after ``key`` in :data:`_ORDER` (NULL ``first_listed_at`` sorts last)."""
+    """Rows strictly after ``key`` in :data:`_ORDER` (NULL ``first_listed_at`` sorts last).
+
+    The OR-expanded predicate is exact but no index can seek on it, because the
+    order mixes ``rank_score DESC`` with ascending columns. The leading
+    ``tp.rank_score <= :k_rank`` is implied by it (so it changes no result) and is
+    an index condition on ``rank_score DESC``, so a later page starts at the
+    cursor's rank instead of filtering from the top. Both branches carry it: a
+    cursor on a row without a first approval (the NULL-flag branch) still sits at
+    one rank, and every row after it ranks no higher.
+    """
     params: dict[str, object] = {"k_rank": key.rank_score, "k_id": key.tutor_id}
     if key.first_listed_at is None:
         tie = "(tp.first_listed_at IS NULL AND tp.id > :k_id)"
@@ -299,7 +308,8 @@ def _after_sql(key: DirectoryKey) -> tuple[str, dict[str, object]]:
             "OR (tp.first_listed_at = :k_first AND tp.id > :k_id))"
         )
         params["k_first"] = key.first_listed_at
-    return f"(tp.rank_score < :k_rank OR (tp.rank_score = :k_rank AND {tie}))", params
+    exact = f"(tp.rank_score < :k_rank OR (tp.rank_score = :k_rank AND {tie}))"
+    return f"(tp.rank_score <= :k_rank AND {exact})", params
 
 
 def _filter_sql(filters: DirectoryFilters) -> tuple[list[str], dict[str, object]]:

@@ -34,8 +34,10 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException, Request, Response
 from fastapi.routing import APIRoute
 
+from lemely.core.keyset import CursorError
 from lemely.core.tutor_directory import public_name, zone_label
 from lemely.core.tutor_ratings import rating_display
+from lemely.db.tutor_directory_repo import parse_directory_cursor
 from lemely.web.schemas_tutoring import (
     AreaRefDTO,
     AvailabilityRuleDTO,
@@ -51,6 +53,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Iterable, Mapping
 
     from lemely.db.tutor_directory_repo import (
+        DirectoryKey,
         Facets,
         PublicCard,
         SubjectRef,
@@ -144,6 +147,20 @@ def tutoring_error(status_code: int, code: str, message: str) -> HTTPException:
 def tutor_not_found() -> HTTPException:
     """The one 404 for a tutor the caller may not see (PP-6: identical for every reason)."""
     return tutoring_error(404, "not_found", "Tutor not found.")
+
+
+def decode_directory_cursor(cursor: str | None, endpoint: str) -> DirectoryKey | None:
+    """The page start from a client cursor; 422 ``invalid_cursor`` for anything not minted here.
+
+    ``endpoint`` is the list's cursor tag (P1 ``public_tutors``, SP1 ``tutors``),
+    so one list's cursor is refused by the other (O21).
+    """
+    if cursor is None:
+        return None
+    try:
+        return parse_directory_cursor(cursor, endpoint)
+    except CursorError as exc:
+        raise tutoring_error(422, "invalid_cursor", "This page link is not valid.") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +262,7 @@ __all__ = [
     "PublicTutoringRoute",
     "TutoringRoute",
     "area_ref_dto",
+    "decode_directory_cursor",
     "facets_dto",
     "iso_instant",
     "listed_since",

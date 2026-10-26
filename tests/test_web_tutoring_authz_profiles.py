@@ -17,16 +17,18 @@ import pytest
 from lemely.core.keyset import encode_cursor
 from lemely.db.models.enums import Role
 from lemely.web.routers import tutor_profile
-from tests.test_tutor_directory_repo import (
+from tests.tutoring_app import flatten_routes
+from tests.tutoring_db import (
+    act_as,
     add_block,
     add_subject,
     add_tutor,
     add_user,
+    anonymous,
     emptied_after,
+    tutoring_client,
     tutoring_database,
 )
-from tests.test_web_tutoring_public import act_as, anonymous, tutoring_client
-from tests.tutoring_app import flatten_routes
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

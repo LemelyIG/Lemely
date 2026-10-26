@@ -9,25 +9,29 @@ accept, (c) ``email_unverified`` on the one **V** route (T4), (d)
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
+from fastapi.testclient import TestClient
 
+import lemely.db.tutor_profile_repo as tutor_profile_repo
 from lemely.db.models.enums import Role
-from tests.test_tutor_directory_repo import (
+from tests.tutoring_db import (
+    act_as,
     add_subject,
     add_tutor,
     add_user,
+    anonymous,
     emptied_after,
+    tutoring_client,
     tutoring_database,
 )
-from tests.test_web_tutoring_public import act_as, anonymous, tutoring_client
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from fastapi.testclient import TestClient
     from sqlalchemy.orm import Session, sessionmaker
 
 
@@ -115,6 +119,50 @@ def test_t2_profile_exists_409(client: TestClient, sm: sessionmaker[Session]) ->
     assert again.status_code == 409
     assert again.json()["detail"]["code"] == "profile_exists"
     assert again.headers["cache-control"] == "private, no-store"
+    assert _profile_count(sm) == 1
+
+
+def test_t2_concurrent_creates_one_201_one_409(
+    client: TestClient, sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T06 review R3: two simultaneous T2 calls for one teacher make one profile.
+
+    A barrier inside ``create``, after its existence check and before its
+    INSERT, holds both requests until each has passed the check, so the loser
+    can only be stopped by ``uq_tutor_profiles_user_id``: its IntegrityError must
+    come back as 409 ``profile_exists``, never a 500.
+    """
+    subject = add_subject(sm)
+    teacher = add_user(sm, Role.teacher)
+    act_as(client, teacher, Role.teacher)
+    barrier = threading.Barrier(2, timeout=15)
+    original = tutor_profile_repo._subject_codes
+
+    def after_the_existence_check(session: Session, codes: object) -> tuple[str, ...]:
+        barrier.wait()
+        return original(session, codes)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(tutor_profile_repo, "_subject_codes", after_the_existence_check)
+    results: list[tuple[int, str]] = []
+    lock = threading.Lock()
+
+    def create() -> None:
+        racer = TestClient(client.app, raise_server_exceptions=False)
+        response = racer.post("/api/tutor/profile", json=create_body(subject))
+        with lock:
+            results.append((response.status_code, response.text))
+
+    threads = [threading.Thread(target=create) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+    assert not any(thread.is_alive() for thread in threads)
+
+    assert sorted(status for status, _ in results) == [201, 409], results
+    (conflict,) = [body for status, body in results if status == 409]
+    assert '"code":"profile_exists"' in conflict
+    assert barrier.broken is False
     assert _profile_count(sm) == 1
 
 

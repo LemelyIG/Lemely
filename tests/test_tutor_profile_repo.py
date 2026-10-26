@@ -1,7 +1,7 @@
 """The tutor profile repository (SPEC §b.2 T1-T5, §a.3 tutor listing, §a.4b CB-7, SC-7, SC-25).
 
 DB-backed against a ``create_all`` database (helpers from
-``tests/test_tutor_directory_repo.py``). Every write is one transaction that
+``tests/tutoring_db.py``). Every write is one transaction that
 locks the profile row and re-checks the listing state inside it, so these tests
 drive the repository directly; the route tests in ``tests/test_web_tutor.py``
 cover the HTTP mapping of each error.
@@ -32,7 +32,7 @@ from lemely.db.tutor_profile_repo import (
     TutorProfileRepository,
     TutorSuspendedError,
 )
-from tests.test_tutor_directory_repo import (
+from tests.tutoring_db import (
     add_subject,
     add_tutor,
     add_user,

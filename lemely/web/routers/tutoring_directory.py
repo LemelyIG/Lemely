@@ -33,10 +33,10 @@ from lemely.web.deps_tutoring import (
     logged_in_directory_filters,
     require_student_or_parent,
 )
-from lemely.web.routers.tutoring_public import decode_directory_cursor
 from lemely.web.schemas_tutoring import DirectoryPageDTO, TutorProfileDTO
 from lemely.web.tutoring_http import (
     TutoringRoute,
+    decode_directory_cursor,
     facets_dto,
     tutor_card_dto,
     tutor_not_found,

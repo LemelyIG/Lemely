@@ -20,14 +20,11 @@ from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, Query
 
-from lemely.core.keyset import CursorError
 from lemely.db.tutor_directory_repo import (
     MAX_PAGE_SIZE,
     DirectoryFilters,
-    DirectoryKey,
     TutorDirectoryRepository,
     directory_cursor,
-    parse_directory_cursor,
 )
 from lemely.io.tutoring_areas import AreaCatalogue  # noqa: TC001 - FastAPI resolves it at runtime
 from lemely.web.deps_tutoring import (
@@ -43,11 +40,11 @@ from lemely.web.schemas_tutoring import (
 )
 from lemely.web.tutoring_http import (
     PublicTutoringRoute,
+    decode_directory_cursor,
     facets_dto,
     public_tutor_card_dto,
     tutor_card_dto,
     tutor_not_found,
-    tutoring_error,
 )
 
 #: The P1 cursor tag: a P1 cursor is refused on any other list (O21).
@@ -55,16 +52,6 @@ PUBLIC_DIRECTORY_ENDPOINT: Final = "public_tutors"
 _DEFAULT_PAGE_SIZE: Final = 20
 
 router = APIRouter(prefix="/api/public", tags=["tutoring"], route_class=PublicTutoringRoute)
-
-
-def decode_directory_cursor(cursor: str | None, endpoint: str) -> DirectoryKey | None:
-    """The page start from a client cursor; 422 ``invalid_cursor`` for anything not minted here."""
-    if cursor is None:
-        return None
-    try:
-        return parse_directory_cursor(cursor, endpoint)
-    except CursorError as exc:
-        raise tutoring_error(422, "invalid_cursor", "This page link is not valid.") from exc
 
 
 @router.get("/tutors", response_model=PublicDirectoryPageDTO)
@@ -110,4 +97,4 @@ def list_tutoring_areas(
     return AreaListDTO(items=[AreaRefDTO(code=area.code, name=area.name) for area in areas.areas])
 
 
-__all__ = ["PUBLIC_DIRECTORY_ENDPOINT", "decode_directory_cursor", "router"]
+__all__ = ["PUBLIC_DIRECTORY_ENDPOINT", "router"]

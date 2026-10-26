@@ -2,8 +2,8 @@
 
 DB-backed: one throwaway database per module, built with
 ``Base.metadata.create_all`` (the tutoring models install ``btree_gist``
-themselves), emptied after every test. The seeding helpers here are shared with
-the other T06 test modules, which import them.
+themselves), emptied after every test; the database and seeding helpers live in
+``tests/tutoring_db.py``.
 
 What these tests pin:
 
@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import itertools
 import uuid
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -31,24 +30,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy import create_engine
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.core.tutor_directory import TIME_OF_DAY_MINUTES, rule_matches
-from lemely.core.tutor_ratings import bayesian_score, rating_display
-from lemely.db.base import Base
-from lemely.db.models import import_all_models
-from lemely.db.models.academic import Subject
-from lemely.db.models.enums import Role, TutorListingState
-from lemely.db.models.tutoring import (
-    TutorAvailabilityRule,
-    TutoringBlock,
-    TutorProfile,
-    TutorSubject,
-)
-from lemely.db.models.users import User
+from lemely.core.tutor_ratings import rating_display
+from lemely.db.models.enums import Role
 from lemely.db.tutor_directory_repo import (
     DirectoryFilters,
     DirectoryKey,
@@ -58,52 +43,22 @@ from lemely.db.tutor_directory_repo import (
     min_rating_sql,
     parse_directory_cursor,
 )
-from lemely.runtime.config import DatabaseSettings
+from tests.tutoring_db import (
+    NOW,
+    add_block,
+    add_subject,
+    add_tutor,
+    add_user,
+    count_statements,
+    emptied_after,
+    set_block_removed,
+    tutoring_database,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
-import_all_models()
-
-NOW = datetime.now(UTC)
-_UNSET = object()
-
-
-# ---------------------------------------------------------------------------
-# Database (shared with the other T06 test modules)
-# ---------------------------------------------------------------------------
-
-
-@contextmanager
-def tutoring_database() -> Iterator[sessionmaker[Session]]:
-    """A fresh ``create_all`` database for one test module."""
-    base = make_url(DatabaseSettings().url)
-    admin = create_engine(base.set(database="postgres"), isolation_level="AUTOCOMMIT")
-    try:
-        with admin.connect():
-            pass
-    except OperationalError:
-        admin.dispose()
-        pytest.skip("local Postgres not reachable")
-    name = f"lemely_test_{uuid.uuid4().hex[:12]}"
-    with admin.connect() as conn:
-        conn.execute(sa.text(f'CREATE DATABASE "{name}"'))
-    engine = create_engine(base.set(database=name))
-    try:
-        Base.metadata.create_all(engine)
-        yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
-    finally:
-        engine.dispose()
-        with admin.connect() as conn:
-            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
-        admin.dispose()
-
-
-def emptied_after(factory: sessionmaker[Session]) -> Iterator[sessionmaker[Session]]:
-    """Yield ``factory``, then empty every table that references users or subjects."""
-    yield factory
-    with factory.begin() as session:
-        session.execute(sa.text("TRUNCATE users, subjects CASCADE"))
+    from sqlalchemy.orm import Session, sessionmaker
 
 
 @pytest.fixture(scope="module")
@@ -115,154 +70,6 @@ def tutoring_db() -> Iterator[sessionmaker[Session]]:
 @pytest.fixture
 def sm(tutoring_db: sessionmaker[Session]) -> Iterator[sessionmaker[Session]]:
     yield from emptied_after(tutoring_db)
-
-
-@contextmanager
-def count_statements(factory: sessionmaker[Session]) -> Iterator[list[str]]:
-    """Collect every statement sent to the database inside the block."""
-    engine = factory.kw["bind"]
-    seen: list[str] = []
-
-    def on_execute(*args: object) -> None:
-        seen.append(str(args[2]))
-
-    sa.event.listen(engine, "before_cursor_execute", on_execute)
-    try:
-        yield seen
-    finally:
-        sa.event.remove(engine, "before_cursor_execute", on_execute)
-
-
-# ---------------------------------------------------------------------------
-# Seeding (shared with the other T06 test modules)
-# ---------------------------------------------------------------------------
-
-
-def add_user(
-    factory: sessionmaker[Session],
-    role: Role | str = Role.student,
-    *,
-    verified: bool = True,
-    display_name: str | None = None,
-) -> uuid.UUID:
-    uid = uuid.uuid4()
-    with factory.begin() as session:
-        session.add(
-            User(
-                id=uid,
-                email=f"{uid}@example.com",
-                role=Role(role),
-                display_name=display_name,
-                email_verified_at=NOW - timedelta(days=60) if verified else None,
-            )
-        )
-    return uid
-
-
-def add_subject(
-    factory: sessionmaker[Session], code: str | None = None, name: str = "Mathematics"
-) -> str:
-    code = code or f"S{uuid.uuid4().hex[:7]}"
-    with factory.begin() as session:
-        session.add(Subject(code=code, name=name))
-    return code
-
-
-@dataclass(frozen=True)
-class SeededTutor:
-    profile_id: uuid.UUID
-    user_id: uuid.UUID
-
-
-def add_tutor(
-    factory: sessionmaker[Session],
-    *,
-    state: str = "listed",
-    paused: bool = False,
-    first_name: str = "Sara",
-    initial: str | None = "M",
-    headline: str = "IGCSE Mathematics, patient and exam focused",
-    bio: str = "",
-    qualification_note: str | None = None,
-    other_mode_note: str | None = None,
-    subjects: Sequence[str] = (),
-    modes: Sequence[str] = ("virtual",),
-    area: str = "cairo",
-    rating: tuple[int, int] = (0, 0),
-    rank: Decimal | None = None,
-    first_listed_at: object = _UNSET,
-    indexable: bool = True,
-    rules: Sequence[tuple[int, int, int]] = ((4, 1020, 1200),),
-    verified: bool = True,
-    documents_seen: bool = False,
-) -> SeededTutor:
-    user_id = add_user(factory, Role.teacher, verified=verified)
-    profile_id = uuid.uuid4()
-    if first_listed_at is _UNSET:
-        first_listed_at = NOW - timedelta(days=30) if state == "listed" else None
-    with factory.begin() as session:
-        session.add(
-            TutorProfile(
-                id=profile_id,
-                user_id=user_id,
-                public_first_name=first_name,
-                public_last_initial=initial,
-                headline=headline,
-                bio=bio,
-                qualification_note=qualification_note,
-                offers_virtual="virtual" in modes,
-                offers_in_person="in_person" in modes,
-                offers_other="other" in modes,
-                other_mode_note=other_mode_note,
-                area_code=area,
-                listing_state=TutorListingState(state),
-                paused_at=NOW - timedelta(days=1) if paused else None,
-                closed_at=NOW - timedelta(days=1) if state == "closed" else None,
-                submitted_at=NOW - timedelta(days=40) if state != "draft" else None,
-                first_listed_at=first_listed_at,
-                indexable=indexable,
-                rating_sum=rating[0],
-                rating_count=rating[1],
-                rank_score=rank if rank is not None else bayesian_score(*rating),
-                documents_seen_at=NOW - timedelta(days=20) if documents_seen else None,
-            )
-        )
-        session.flush()
-        for code in subjects:
-            session.add(TutorSubject(tutor_profile_id=profile_id, subject_code=code))
-        for day, start, end in rules:
-            session.add(
-                TutorAvailabilityRule(
-                    tutor_profile_id=profile_id, iso_weekday=day, start_minute=start, end_minute=end
-                )
-            )
-    return SeededTutor(profile_id=profile_id, user_id=user_id)
-
-
-def add_block(
-    factory: sessionmaker[Session],
-    blocker: uuid.UUID,
-    blocked: uuid.UUID,
-    *,
-    removed: bool = False,
-) -> None:
-    with factory.begin() as session:
-        session.add(
-            TutoringBlock(
-                blocker_user_id=blocker,
-                blocked_user_id=blocked,
-                removed_at=NOW if removed else None,
-            )
-        )
-
-
-def set_block_removed(
-    factory: sessionmaker[Session], blocker: uuid.UUID, blocked: uuid.UUID
-) -> None:
-    with factory.begin() as session:
-        row = session.get(TutoringBlock, (blocker, blocked))
-        assert row is not None
-        row.removed_at = NOW
 
 
 def _ids(page_items: Sequence[object]) -> list[uuid.UUID]:
@@ -340,6 +147,62 @@ def test_directory_cursor_round_trip_keeps_a_missing_first_listed_at() -> None:
         rank_score=Decimal("4.000000"), first_listed_at=NOW, tutor_id=uuid.uuid4()
     )
     assert parse_directory_cursor(directory_cursor("tutors", stamped), "tutors") == stamped
+
+
+def _page_statement(statements: list[str]) -> str:
+    (listing,) = [s for s in statements if "FROM tutor_profiles tp" in s and "ORDER BY" in s]
+    return listing
+
+
+def test_later_pages_carry_a_seekable_rank_bound(sm: sessionmaker[Session]) -> None:
+    """T06 review R2: a later page bounds ``rank_score <= :k_rank`` so the index can seek.
+
+    The OR-expanded keyset predicate alone is exact but not an index condition;
+    the redundant bound is. Pages are unchanged, for a cursor on a row with a
+    first approval and for one on a row without (the NULL-flag branch).
+    """
+    repo = TutorDirectoryRepository(sm)
+    early, late = NOW - timedelta(days=90), NOW - timedelta(days=10)
+    plan = [
+        ("A", Decimal("4.900000"), late),
+        ("B", Decimal("4.800000"), late),
+        ("C", Decimal("4.800000"), None),
+        ("D", Decimal("4.500000"), early),
+        ("F", Decimal("4.500000"), late),
+        ("G", Decimal("4.000000"), early),
+    ]
+    ids = {
+        label: add_tutor(sm, rank=rank, first_listed_at=first).profile_id
+        for label, rank, first in plan
+    }
+    repo.list_public(DirectoryFilters(), after=None, limit=2)  # warm the pool
+
+    def page_after(after: DirectoryKey, limit: int) -> tuple[list[str], DirectoryKey | None, str]:
+        with count_statements(sm) as statements:
+            page = repo.list_public(DirectoryFilters(), after=after, limit=limit)
+        assert len(statements) == 2, statements  # SPEC §e.3 budget kept
+        labels = [next(k for k, v in ids.items() if v == card.tutor_id) for card in page.items]
+        return labels, page.next_key, _page_statement(statements)
+
+    first = repo.list_public(DirectoryFilters(), after=None, limit=2)
+    assert first.next_key is not None and first.next_key.first_listed_at is not None
+    second, key, sql = page_after(first.next_key, 2)
+    assert second == ["C", "D"]
+    assert "tp.rank_score <=" in sql
+    assert key is not None
+    third, key, sql = page_after(key, 2)
+    assert third == ["F", "G"]
+    assert key is None
+    assert "tp.rank_score <=" in sql
+
+    # A cursor resting on the row without a first approval (C).
+    first_of_three = repo.list_public(DirectoryFilters(), after=None, limit=3)
+    assert first_of_three.next_key is not None
+    assert first_of_three.next_key.first_listed_at is None
+    rest, key, sql = page_after(first_of_three.next_key, 3)
+    assert rest == ["D", "F", "G"]
+    assert key is None
+    assert "tp.rank_score <=" in sql
 
 
 # ---------------------------------------------------------------------------
