@@ -187,6 +187,7 @@ def settings(tmp_path: Path) -> Settings:
     data["paths"]["output_dir"] = tmp_path / "outputs"
     # Force the no-key branch so ScanMetadataExtractor is never invoked.
     data["gemini_api_key"] = None
+    data["anthropic_api_key"] = None  # the default scan_metadata model is claude-
     return Settings.model_validate(data)
 
 

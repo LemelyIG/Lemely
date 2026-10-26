@@ -134,6 +134,8 @@ def settings(tmp_path: Path) -> Settings:
         update={
             "paths": base.paths.model_copy(update={"output_dir": tmp_path / "outputs"}),
             "gemini_api_key": None,
+            # Every default task tag is claude- since sub-project C: its key gates detection.
+            "anthropic_api_key": None,
         }
     )
 
@@ -569,7 +571,9 @@ def _key_settings(settings: Settings) -> Settings:
     """
     from pydantic import SecretStr
 
-    return settings.model_copy(update={"gemini_api_key": SecretStr("test-key")})
+    return settings.model_copy(
+        update={"gemini_api_key": SecretStr("test-key"), "anthropic_api_key": SecretStr("test-key")}
+    )
 
 
 def test_upload_filename_cannot_escape_sandbox(

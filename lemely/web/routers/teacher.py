@@ -108,7 +108,7 @@ from lemely.io.scheme_parse import SCHEME_READ_FAILED_MESSAGE, parse_scheme_in_w
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.io.teacher_quiz import TeacherQuizBuilder
 from lemely.runtime import sandbox
-from lemely.runtime.config import Settings
+from lemely.runtime.config import Settings, llm_key_configured
 from lemely.runtime.events import Event, EventType, bus, current_run_id
 from lemely.web.deps import (
     AuthContext,
@@ -729,8 +729,8 @@ def _paper_kind(report: AccuracyReport | None) -> PaperKind:
 
 
 def _detection_available(settings: Settings) -> bool:
-    """Whether scan-metadata detection can run at all (an API key is configured)."""
-    return settings.gemini_api_key is not None
+    """Whether scan-metadata detection can run at all (its model's provider key is configured)."""
+    return llm_key_configured(settings, "scan_metadata")
 
 
 def _mean(values: list[float]) -> float | None:
@@ -1673,7 +1673,7 @@ def _build_quiz(
     existing = _existing_questions(bank_service, caller_id, school_ids, resolved_subject)
     reused_prompts = {q.prompt for q in existing}
 
-    if settings.gemini_api_key is None:
+    if not llm_key_configured(settings, "generation"):
         # No generation possible: return whatever the existing pool can supply.
         builder = TeacherQuizBuilder(
             QuestionGenerator(gemini_client),

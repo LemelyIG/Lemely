@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from lemely.runtime.config import Settings
+from lemely.runtime.config import Settings, llm_key_configured
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web.deps import get_boundary_store, get_settings
 from lemely.web.schemas import HealthDTO, StorageHealthDTO
@@ -114,7 +114,7 @@ def health(settings: Annotated[Settings, Depends(get_settings)]) -> HealthDTO:
             _boundary_read_failing = True
         grade_boundaries_loaded = False
     return HealthDTO(
-        apiKeyConfigured=settings.gemini_api_key is not None,
+        apiKeyConfigured=llm_key_configured(settings, "extraction"),
         gradeBoundariesLoaded=grade_boundaries_loaded,
         # Unset and empty both mean "not on Cloud Run"; ``or None`` folds them.
         revision=os.environ.get("K_REVISION") or None,

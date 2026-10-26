@@ -1356,6 +1356,20 @@ def anthropic_key_missing_tags(settings: Settings, models: Mapping[str, str]) ->
     return [tag for tag, model in models.items() if model.startswith("claude-")]
 
 
+def llm_key_configured(settings: Settings, task_tag: str) -> bool:
+    """Whether the API key of the provider ``task_tag``'s model needs is set.
+
+    A ``claude-`` model needs the Anthropic key, any other the Gemini key. The web gates that
+    switch a feature off without a key (scan-metadata detection, the self-review judge, quiz
+    generation, ``/api/health``) read this, so a Claude-only deployment keeps them on.
+    """
+    if settings.gemini.model_for(task_tag).startswith("claude-"):
+        key = settings.anthropic_api_key
+    else:
+        key = settings.gemini_api_key
+    return key is not None and bool(key.get_secret_value())
+
+
 def _discover_toml(cwd: Path) -> Path | None:
     cwd_toml = cwd / "lemely.toml"
     if cwd_toml.is_file():

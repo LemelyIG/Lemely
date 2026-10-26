@@ -75,7 +75,7 @@ from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
 from lemely.io.scan_metadata import ScanMetadataExtractor
 from lemely.io.scheme_parse import WorkerSchemeParser
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
-from lemely.runtime.config import Settings
+from lemely.runtime.config import Settings, llm_key_configured
 from lemely.web.deps import (
     AuthContext,
     get_attempt_repo,
@@ -1048,7 +1048,7 @@ def student_correct(
 
                 with script_cost_scope(settings, script_key=f"upload:{owned.id}"):
                     metadata: ExamMetadata | None = None
-                    if settings.gemini_api_key is not None:
+                    if llm_key_configured(settings, "scan_metadata"):
                         try:
                             metadata = ScanMetadataExtractor(gemini_client)(scan_path)
                         except Exception as exc:
