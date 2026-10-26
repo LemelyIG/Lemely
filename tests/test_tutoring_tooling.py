@@ -441,7 +441,13 @@ def test_export_command_paths_exclude_reports(tmp_path: Path) -> None:
     with_web = _script("export.sh", "--print-paths", "--web", cwd=tmp_path)
     assert with_web.returncode == 0, with_web.stderr
     # web/ plus the repo-root files its unit tests read (designDocs, ciCopyGate).
-    web_extra = ["web", "DESIGN.md", "docs/design-canvas-notes.md", ".github/workflows/ci.yml"]
+    web_extra = [
+        "web",
+        "DESIGN.md",
+        "docs/design-canvas-notes.md",
+        "docs/COMPONENT_CATALOGUE.md",
+        ".github/workflows/ci.yml",
+    ]
     assert with_web.stdout.split() == [*paths, *web_extra]
     assert all((ROOT / p).exists() for p in web_extra), [
         p for p in web_extra if not (ROOT / p).exists()

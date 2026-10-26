@@ -75,7 +75,7 @@ ALL_ROLES = frozenset(role.value for role in Role)
 
 # (method, path) → the guard that route must carry. Reviewed, not inferred.
 EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
-    # ── TEACHER (12) ────────────────────
+    # ── TEACHER (14) ────────────────────
     ("POST", "/api/classes"): TEACHER,
     ("DELETE", "/api/classes/{class_id}"): TEACHER,
     ("PATCH", "/api/classes/{class_id}"): TEACHER,
@@ -94,6 +94,12 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # object-level (tests/test_web_tutoring_authz_reviews.py).
     ("POST", "/api/tutor/reviews/{review_id}/reply"): TEACHER,
     ("GET", "/api/tutor/reviews"): TEACHER,
+    # Tutoring T19, T20 (SPEC §c.1): grant-gated and audit-logged on every read
+    # (ADR-T02); school_admin and platform_admin are denied by the guard, so there
+    # is no admin path to granted data. The grant rule is object-level
+    # (tests/test_web_tutoring_authz_grants.py).
+    ("GET", "/api/tutor/students"): TEACHER,
+    ("GET", "/api/tutor/students/{student_id}"): TEACHER,
     # ── SCHOOL_ADMIN (8) ────────────────────
     ("GET", "/api/school/seats"): SCHOOL_ADMIN,
     ("POST", "/api/school/seats/invite"): SCHOOL_ADMIN,
@@ -321,10 +327,16 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,
-    # ── STUDENT (67) ────────────────────
+    # ── STUDENT (71) ────────────────────
     # Tutoring S6, S7 (SPEC §c.1): a parent cannot review (locked row 7).
     ("POST", "/api/student/bookings/{booking_id}/review"): STUDENT,
     ("PATCH", "/api/student/reviews/{review_id}"): STUDENT,
+    # Tutoring S8-S11 (SPEC §c.1): the student alone grants and revokes (rows 2+3a,
+    # 4); a parent reads grants and the log only through PA6/PA7.
+    ("GET", "/api/student/tutor-grants"): STUDENT,
+    ("POST", "/api/student/tutor-grants"): STUDENT,
+    ("POST", "/api/student/tutor-grants/{grant_id}/revoke"): STUDENT,
+    ("GET", "/api/student/tutor-access-log"): STUDENT,
     # Tutoring S17 (SPEC §c.4, SC-2c): leave a school-less class. New route on
     # the existing student_classes router.
     ("DELETE", "/api/student/classes/{class_id}"): STUDENT,

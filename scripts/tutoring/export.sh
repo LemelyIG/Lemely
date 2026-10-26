@@ -39,7 +39,7 @@ ARCHIVE_PATHS=(
 # --web adds web/ plus the repo-root files its unit tests read (designDocs.test.ts
 # reads DESIGN.md and docs/design-canvas-notes.md; ciCopyGate.test.ts reads ci.yml).
 WEB_EXTRA_PATHS=(
-  web DESIGN.md docs/design-canvas-notes.md .github/workflows/ci.yml
+  web DESIGN.md docs/design-canvas-notes.md docs/COMPONENT_CATALOGUE.md .github/workflows/ci.yml
 )
 USAGE="usage: export.sh <name> <rev> [--web] [--overlay <paths...>] [--delete <paths...>] | export.sh --print-paths [--web]"
 
