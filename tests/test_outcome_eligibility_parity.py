@@ -176,7 +176,15 @@ def test_attempt_fragment_refuses_unqualified_or_spliced_operands() -> None:
 VERIFICATION = ("never", "day_before", "at_start", "just_after")
 AGE = ("old", "exactly_30_days", "a_second_short")
 PREFS = ("none", "in_old", "out_old", "out_recent", "in_recent")
-BLOCKS = ("none", "active_old", "removed_old", "recent", "tutor_blocked_student")
+BLOCKS = (
+    "none",
+    "active_old",
+    "removed_old",
+    "recent",
+    "removed_recent",  # created 10 days ago, removed 5 days ago: removal does not lift the hold
+    "tutor_blocked_student",
+    "other_tutor_blocked",  # the student's recent block of a *different* tutor: not this pair's
+)
 GRANTS = ("none", "live", "revoked")
 
 
@@ -194,6 +202,7 @@ class Facts:
 def _seed_student(
     sm: sessionmaker[Session],
     tutor: SeededTutor,
+    other_tutor: SeededTutor,
     start: datetime,
     combo: tuple[str, str, str, str, str],
 ) -> tuple[uuid.UUID, Facts]:
@@ -229,14 +238,27 @@ def _seed_student(
                     outcome_pref_changed_at=pref_changed_at,
                 )
             )
-        if block in ("active_old", "removed_old", "recent"):
-            student_block_created_at = now - (10 * DAY if block == "recent" else 200 * DAY)
+        if block in ("active_old", "removed_old", "recent", "removed_recent"):
+            student_block_created_at = now - (
+                10 * DAY if block in ("recent", "removed_recent") else 200 * DAY
+            )
+            removed_at = {"removed_old": now - 150 * DAY, "removed_recent": now - 5 * DAY}.get(
+                block
+            )
             session.add(
                 TutoringBlock(
                     blocker_user_id=student,
                     blocked_user_id=tutor.user_id,
                     created_at=student_block_created_at,
-                    removed_at=now - 150 * DAY if block == "removed_old" else None,
+                    removed_at=removed_at,
+                )
+            )
+        if block == "other_tutor_blocked":  # recent, but of another tutor: no fact for this pair
+            session.add(
+                TutoringBlock(
+                    blocker_user_id=student,
+                    blocked_user_id=other_tutor.user_id,
+                    created_at=now - 10 * DAY,
                 )
             )
         if block == "tutor_blocked_student":  # recent, but the tutor's: neither excludes nor holds
@@ -270,14 +292,20 @@ def _seed_student(
 
 def test_sql_cohort_facts_equal_core_over_generated_inputs(sm: sessionmaker[Session]) -> None:
     tutor = outcome_world(sm)
+    other_tutor = add_tutor(sm, subjects=(SUBJECT,))
     base = utc_now() - 150 * DAY
     seeded: dict[uuid.UUID, Facts] = {}
+    block_grant_pairs: set[tuple[str, str]] = set()
     combos = itertools.product(VERIFICATION, AGE, PREFS, BLOCKS)
     for index, (verification, age, prefs, block) in enumerate(combos):
-        grant = GRANTS[index % len(GRANTS)]
+        # ``index % 3`` alone would equal ``block % 3`` (every other stride is a multiple of
+        # 3), pairing each block with one grant kind; the second term breaks that.
+        grant = GRANTS[(index + index // len(BLOCKS)) % len(GRANTS)]
+        block_grant_pairs.add((block, grant))
         student, facts = _seed_student(
             sm,
             tutor,
+            other_tutor,
             base - index * timedelta(minutes=5),
             (verification, age, prefs, block, grant),
         )
@@ -309,15 +337,18 @@ def test_sql_cohort_facts_equal_core_over_generated_inputs(sm: sessionmaker[Sess
         assert member == expected, (student, facts)
 
     # Non-vacuity: every combination is present and every flag takes both values.
-    assert len(seeded) == len(VERIFICATION) * len(AGE) * len(PREFS) * len(BLOCKS) == 300
+    assert len(seeded) == len(VERIFICATION) * len(AGE) * len(PREFS) * len(BLOCKS) == 420
+    # Every block kind meets every grant kind (the grant is not a function of the block).
+    assert len(block_grant_pairs) == len(BLOCKS) * len(GRANTS)
     members = [entry.member for entry in entries]
     assert len({m.ref for m in members}) == len(members)  # refs are unique
     for flag in ("eligible", "ever_granted", "recent_change"):
         assert {getattr(m, flag) for m in members} == {True, False}, flag
     # Eligible by the ADR-T04 definition, counted from the dimensions above: verified by S
     # (day before, at start: 2) x 30 days old at S (old, exactly: 2) x counted (no row,
-    # in_old, in_recent: 3) x never blocked the tutor (none, the tutor's own block: 2).
-    assert sum(m.eligible for m in members) == 2 * 2 * 3 * 2
+    # in_old, in_recent: 3) x never blocked the tutor (none, the tutor's own block, a block of
+    # another tutor: 3).
+    assert sum(m.eligible for m in members) == 2 * 2 * 3 * 3
 
 
 # ---------------------------------------------------------------------------
@@ -482,7 +513,10 @@ def test_ineligible_members_are_listed_in_the_cohort(sm: sessionmaker[Session]) 
     """An opted-out member is still a member: their recent change must be able to hide."""
     tutor = outcome_world(sm)
     start = utc_now() - 150 * DAY
-    student, _ = _seed_student(sm, tutor, start, ("never", "old", "out_recent", "none", "none"))
+    other_tutor = add_tutor(sm, subjects=(SUBJECT,))
+    student, _ = _seed_student(
+        sm, tutor, other_tutor, start, ("never", "old", "out_recent", "none", "none")
+    )
     _, entries = cohort(sm, tutor)
     [entry] = entries
     assert entry.student_id == student

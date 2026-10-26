@@ -409,7 +409,7 @@ def test_cancelled_declined_expired_and_unended_sessions_never_count(
     # Red case: the same kind of student with one accepted, ended session does count.
     x_member(sm, tutor, state="accepted")
     assert_with_x(figures(read(repo, tutor)))
-    assert members  # the base members are untouched
+    assert len(members) == OUTCOME_K_MIN  # the base cohort X was added to
 
 
 # ---------------------------------------------------------------------------
@@ -678,6 +678,38 @@ def test_student_block_hides_both_figures_for_90_days_then_leaves_the_student_ou
     assert_base(figures(read(repo, tutor)))
 
 
+def test_removing_a_student_block_does_not_lift_the_hold(
+    sm: sessionmaker[Session], repo: TutorOutcomesRepository
+) -> None:
+    """The hold dates the *first* block and removed blocks count (ADR-T04, SC-13d).
+
+    A student who blocks and then unblocks the tutor is still a recent change for 90 days, and
+    still excluded from the cohort after it. Mutation: reading only active blocks (``removed_at
+    IS NULL``) in ``student_block_of_tutor_created_at_sql`` turns this red.
+    """
+    tutor = outcome_world(sm)
+    five_members(sm, tutor)
+    x = x_member(sm, tutor)
+    assert_with_x(figures(read(repo, tutor)))
+    with sm.begin() as session:
+        session.add(TutoringBlock(blocker_user_id=x.student, blocked_user_id=tutor.user_id))
+    assert_hidden(figures(read(repo, tutor)))
+    execute(
+        sm,
+        "UPDATE tutoring_blocks SET removed_at = now() WHERE blocker_user_id = :u",
+        u=x.student,
+    )
+    assert_hidden(figures(read(repo, tutor)))  # removed: the hold still applies
+    shift = (
+        "UPDATE tutoring_blocks SET created_at = now() - make_interval(secs => :s) "
+        "WHERE blocker_user_id = :u"
+    )
+    execute(sm, shift, s=HOLD_SECONDS - 60, u=x.student)
+    assert_hidden(figures(read(repo, tutor)))
+    execute(sm, shift, s=HOLD_SECONDS + 60, u=x.student)
+    assert_base(figures(read(repo, tutor)))  # the hold ends; the removed block still excludes X
+
+
 def test_a_recent_change_hides_only_the_subjects_the_student_is_in(
     sm: sessionmaker[Session], repo: TutorOutcomesRepository
 ) -> None:
@@ -726,6 +758,49 @@ def test_never_granted_count_between_1_and_k_minus_1_hides_the_figures(
     assert_base(figures(read(repo, tutor)))  # 0 never granted: shown
 
 
+def test_ever_granted_counts_this_tutors_grants_only(
+    sm: sessionmaker[Session], repo: TutorOutcomesRepository
+) -> None:
+    """A grant to another tutor is not this tutor's ``ever_granted`` (SC-14 i).
+
+    Five contributors: one granted to this tutor, four granted only to other tutors. Four have
+    never been granted to *this* tutor, which is between 1 and k-1, so the figures hide. Counting
+    the other tutors' grants would read 0 never granted and show them. Mutation: dropping
+    ``g.tutor_profile_id = :tutor_id`` from the cohort statement turns this red.
+    """
+    tutor = outcome_world(sm)
+    other_tutor = add_tutor(sm, subjects=(SUBJECT,))
+    members = five_members(sm, tutor)
+    assert_base(figures(read(repo, tutor)))  # none granted to anyone: 5 never granted, shown
+    created = utc_now() - 10 * DAY
+    with sm.begin() as session:
+        session.add(
+            TutorDataGrant(
+                student_id=members[0].student, tutor_profile_id=tutor.profile_id, created_at=created
+            )
+        )
+        for member in members[1:]:
+            session.add(
+                TutorDataGrant(
+                    student_id=member.student,
+                    tutor_profile_id=other_tutor.profile_id,
+                    created_at=created,
+                )
+            )
+    item = figures(read(repo, tutor))
+    assert item.outcome.distribution.state == "insufficient"  # 4 never granted: hidden
+    assert item.outcome.change.state == "insufficient"
+    # Red case: the four's grants to this tutor too leave 0 never granted: shown again.
+    with sm.begin() as session:
+        for member in members[1:]:
+            session.add(
+                TutorDataGrant(
+                    student_id=member.student, tutor_profile_id=tutor.profile_id, created_at=created
+                )
+            )
+    assert_base(figures(read(repo, tutor)))
+
+
 def test_outcomes_for_viewer_hides_unlisted_paused_and_blocked_tutors(
     sm: sessionmaker[Session], repo: TutorOutcomesRepository
 ) -> None:
@@ -740,6 +815,43 @@ def test_outcomes_for_viewer_hides_unlisted_paused_and_blocked_tutors(
     assert repo.outcomes_for_viewer(tutor.profile_id, uuid.uuid4(), Role.parent) is not None
     execute(sm, "UPDATE tutor_profiles SET paused_at = now() WHERE id = :t", t=tutor.profile_id)
     assert repo.outcomes_for_viewer(tutor.profile_id, uuid.uuid4(), Role.parent) is None
+
+
+def test_query_budget_a_hold_over_every_subject_skips_the_observations_statement(
+    sm: sessionmaker[Session], repo: TutorOutcomesRepository
+) -> None:
+    """When the hold hides every subject no grade is read: profile check and cohort only.
+
+    Mutation: reading observations for the hidden subjects too (the ``if not any(...
+    recent_change ...)`` guard in ``_figures`` always true) makes it three statements.
+    """
+    tutor = outcome_world(sm)
+    five_members(sm, tutor)
+    five_members(sm, tutor, subject=OTHER_SUBJECT, base=closed_base() + DAY)
+    prefs = TutoringPreferencesRepository(sm)
+    physics = x_member(sm, tutor)
+    chemistry = add_member(
+        sm,
+        tutor,
+        start=closed_base() - 2 * DAY,
+        before="A*",
+        during="A*",
+        subject=OTHER_SUBJECT,
+    )
+    with count_statements(sm) as seen:
+        outcomes = read(repo, tutor)
+    assert len(seen) == 3  # nothing held yet: the observations statement runs
+    assert_with_x(figures(outcomes, SUBJECT))
+
+    prefs.set_opt_out(physics.student, True)
+    prefs.set_opt_out(chemistry.student, True)
+    with count_statements(sm) as seen:
+        outcomes = read(repo, tutor)
+    assert [item.subject.code for item in outcomes.subjects] == [OTHER_SUBJECT, SUBJECT]
+    for item in outcomes.subjects:
+        assert_hidden(item)
+    assert len(seen) == 2, seen
+    assert not any("FROM attempts" in sql or "JOIN attempts" in sql for sql in seen)
 
 
 def test_query_budget_outcomes_three_statements(
