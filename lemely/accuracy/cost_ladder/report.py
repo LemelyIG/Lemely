@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from lemely.accuracy.cost_ladder.gate import Verdict, escalation_notes
@@ -19,7 +20,6 @@ from lemely.accuracy.cost_ladder.runner import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
-    from pathlib import Path
 
     from lemely.accuracy.cost_ladder.gate import RunSummary
 
@@ -203,6 +203,22 @@ def _now_usd(run_dir: Path) -> float:
     return float(data["usd_per_script_mean_now"])
 
 
+def _display_proof(proof: str, out_dir: Path) -> str:
+    """*proof* as a path relative to the repo root (the working directory), else to *out_dir*.
+
+    A report is committed and read elsewhere, so it never carries an absolute path.
+    """
+    path = Path(proof)
+    if not path.is_absolute():
+        return proof
+    for base in (Path.cwd(), out_dir.resolve().parent):
+        try:
+            return path.relative_to(base).as_posix()
+        except ValueError:
+            continue
+    return path.name
+
+
 def load_rows(out_dir: Path) -> tuple[list[LadderRow], Path]:
     """Rows in ``ladder.json`` append order, and the run dir of the last accepted row.
 
@@ -230,7 +246,7 @@ def load_rows(out_dir: Path) -> tuple[list[LadderRow], Path]:
                 expected_saving=v["expected_saving"],
                 candidate=read_summary(run_dir / "summary.json"),
                 verdict=verdict,
-                proof=v["proof"],
+                proof=_display_proof(v["proof"], out_dir),
                 stacked_on=v.get("against", BASELINE_LABEL),
                 overrides=v.get("overrides", {}),
                 review_rate=_review_rate(run_dir),
