@@ -10,10 +10,13 @@ the guard is the fast answer, not the only one.
 
 from __future__ import annotations
 
+import contextlib
+import threading
 import uuid
 from io import BytesIO
 from typing import TYPE_CHECKING
 
+import pymupdf
 import pytest
 import sqlalchemy as sa
 import structlog.testing
@@ -28,10 +31,17 @@ from lemely.db.tutor_evidence_repo import (
     TutorEvidenceRepository,
 )
 from lemely.db.tutor_profile_repo import TutorClosedError, TutorSuspendedError
-from lemely.io.evidence_files import MAX_EVIDENCE_BYTES
+from lemely.io.evidence_files import EVIDENCE_PREPARE_TARGET, MAX_EVIDENCE_BYTES
+from lemely.runtime import sandbox
+from lemely.runtime.config import SandboxSettings
 from lemely.runtime.errors import ExternalServiceError
 from lemely.web.routers.tutor_evidence import get_tutor_evidence_repo
+from tests.sandbox_fixtures import in_process_sandbox, sandboxed  # noqa: F401
 from tests.storage_fakes import FakeStorageBackend
+from tests.test_evidence_files import (
+    pdf_with_open_action_and_attachments,
+    pdf_with_scripted_widget,
+)
 from tests.test_web_admin_tutoring import PDF, admin_tutoring_client, evidence_bucket
 from tests.tutoring_db import act_as, add_tutor, add_user, emptied_after, tutoring_database
 
@@ -81,6 +91,14 @@ def _rows(sm: sessionmaker[Session]) -> list[TutorEvidenceFile]:
         return list(session.scalars(sa.select(TutorEvidenceFile)))
 
 
+def _pages(data: bytes) -> int:
+    doc = pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
+    try:
+        return int(doc.page_count)
+    finally:
+        doc.close()  # type: ignore[no-untyped-call]
+
+
 def _objects(storage: FakeStorageBackend) -> dict[tuple[str, str], bytes]:
     return dict(storage._objects)
 
@@ -112,8 +130,9 @@ def test_t6_stores_a_pdf_under_a_server_path_and_returns_201(
     client: TestClient, sm: sessionmaker[Session], storage: FakeStorageBackend
 ) -> None:
     profile_id = _tutor(client, sm)
+    uploaded = pdf_with_open_action_and_attachments()
 
-    response = _upload(client, description="  BSc certificate  ")
+    response = _upload(client, uploaded, description="  BSc certificate  ")
 
     assert response.status_code == 201, response.text
     assert response.headers["cache-control"] == NO_STORE
@@ -128,12 +147,20 @@ def test_t6_stores_a_pdf_under_a_server_path_and_returns_201(
     }
     assert body["filename"] == "degree.pdf"
     assert body["contentType"] == "application/pdf"
-    assert body["sizeBytes"] == len(PDF)
     assert body["description"] == "BSc certificate"
     [row] = _rows(sm)
     assert str(row.id) == body["evidenceId"]
     assert row.storage_path == f"tutor-evidence/{profile_id}/{row.id}.pdf"
-    assert _objects(storage) == {(evidence_bucket(), row.storage_path): PDF}
+    [(key, stored)] = _objects(storage).items()
+    assert key == (evidence_bucket(), row.storage_path)
+    # R1: what is stored is MuPDF's pages-only rewrite, not the uploaded bytes.
+    assert b"/OpenAction" in uploaded
+    assert b"/EmbeddedFiles" in uploaded
+    assert stored.startswith(b"%PDF-")
+    for gone in (b"/OpenAction", b"JavaScript", b"EmbeddedFile"):
+        assert gone not in stored, gone
+    assert _pages(stored) == 1
+    assert body["sizeBytes"] == row.size_bytes == len(stored)
 
 
 def test_t6_sniffed_type_and_reencode_decide_what_is_stored(
@@ -165,11 +192,13 @@ def test_t6_refusals_413_and_415_store_nothing(
     too_big = _upload(client, PDF + b"\x00" * (MAX_EVIDENCE_BYTES + 1 - len(PDF)))
     gif = _upload(client, b"GIF89a\x01\x00\x01\x00\x00\x00\x00;", filename="a.gif")
     polyglot = _upload(client, b"%PDF-1.7\n%<script>alert(1)</script>\n" + PDF[9:])
+    junk = _upload(client, b"%PDF-1.7\n" + b"not a pdf " * 200)
+    scripted = _upload(client, pdf_with_scripted_widget())
 
     assert too_big.status_code == 413
     assert too_big.json()["detail"]["code"] == "evidence_too_large"
     assert too_big.headers["cache-control"] == NO_STORE
-    for refused in (gif, polyglot):
+    for refused in (gif, polyglot, junk, scripted):
         assert refused.status_code == 415
         assert refused.json()["detail"]["code"] == "unsupported_evidence_type"
     assert _rows(sm) == []
@@ -255,6 +284,140 @@ def test_evidence_limit_rechecked_in_the_write_transaction(
     assert raced.json()["detail"]["code"] == "evidence_limit"
     assert len(_rows(sm)) == MAX_EVIDENCE_FILES
     assert _objects(storage) == {}  # the uploaded object was deleted again
+
+
+def test_evidence_limit_holds_under_concurrent_adds_at_four(sm: sessionmaker[Session]) -> None:
+    """T10 review R5: two adds race at four files; the profile row lock lets exactly one in.
+
+    Each racer is held just before its commit until the other arrives (or 2 s pass). With
+    the ``FOR UPDATE`` lock the second racer cannot even count until the first commits, so
+    it never arrives and then sees five; without it both count four and both commit.
+    """
+    tutor = add_tutor(sm, state="listed")
+    repo = TutorEvidenceRepository(sm)
+
+    def add() -> None:
+        evidence_id = uuid.uuid4()
+        repo.add(
+            tutor.profile_id,
+            evidence_id=evidence_id,
+            storage_path=f"tutor-evidence/{tutor.profile_id}/{evidence_id}.pdf",
+            filename="race.pdf",
+            content_type="application/pdf",
+            size_bytes=10,
+            description=None,
+        )
+
+    for _ in range(MAX_EVIDENCE_FILES - 1):
+        add()
+    start = threading.Barrier(2, timeout=10)
+    before_commit = threading.Barrier(2, timeout=2)
+    outcomes: dict[str, str] = {}
+
+    def hold(_session: Session) -> None:
+        if threading.current_thread().name.startswith("evidence-race"):
+            # Broken after 2 s when the other racer is blocked on the row lock: commit alone.
+            with contextlib.suppress(threading.BrokenBarrierError):
+                before_commit.wait()
+
+    def race() -> None:
+        start.wait()
+        try:
+            add()
+            outcomes[threading.current_thread().name] = "added"
+        except EvidenceLimitError as exc:
+            outcomes[threading.current_thread().name] = exc.code
+
+    sa.event.listen(sm, "before_commit", hold)
+    try:
+        racers = [threading.Thread(target=race, name=f"evidence-race-{n}") for n in range(2)]
+        for racer in racers:
+            racer.start()
+        for racer in racers:
+            racer.join(timeout=30)
+    finally:
+        sa.event.remove(sm, "before_commit", hold)
+
+    assert sorted(outcomes.values()) == ["added", "evidence_limit"]
+    assert len(_rows(sm)) == MAX_EVIDENCE_FILES
+
+
+@pytest.mark.usefixtures("sandboxed")
+def test_t6_checks_each_file_in_the_extraction_worker_one_at_a_time(
+    client: TestClient,
+    sm: sessionmaker[Session],
+    storage: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T10 review R2: the decode and the PDF rewrite run in the memory-limited worker.
+
+    Its lock admits one check at a time, so while another call holds it an upload
+    waits out the upload-check timeout and is told to try again (503), storing nothing.
+    """
+    _tutor(client, sm)
+    monkeypatch.setattr(
+        sandbox,
+        "sandbox_settings",
+        lambda: SandboxSettings(enabled=True, upload_check_timeout_seconds=0.5),
+    )
+
+    with sandbox.EXTRACTION_WORKER._lock:
+        busy = _upload(client, _png_with_text(), filename="a.png", declared="image/png")
+
+    assert busy.status_code == 503
+    assert busy.json()["detail"]["code"] == "evidence_check_unavailable"
+    assert busy.headers["cache-control"] == NO_STORE
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "busy"
+    assert _rows(sm) == []
+    assert _objects(storage) == {}
+
+    freed = _upload(client, _png_with_text(), filename="a.png", declared="image/png")
+    assert freed.status_code == 201, freed.text
+    assert sandbox.EXTRACTION_WORKER.last_outcome == "ok"
+    assert sandbox.EXTRACTION_WORKER.pid() is not None
+
+
+@pytest.mark.parametrize(
+    ("failure", "status", "code"),
+    [
+        (sandbox.SandboxUnavailable("down", "unavailable"), 503, "evidence_check_unavailable"),
+        (sandbox.SandboxBusy(), 503, "evidence_check_unavailable"),
+        (sandbox.SandboxMemory("out of memory", "memory"), 413, "evidence_too_large"),
+        (sandbox.SandboxTimeout("too slow", "timeout"), 415, "unsupported_evidence_type"),
+        (sandbox.SandboxCrash("gone", "crash"), 415, "unsupported_evidence_type"),
+        (sandbox.SandboxError("ValueError()", "error"), 415, "unsupported_evidence_type"),
+    ],
+    ids=["unavailable", "busy", "memory", "timeout", "crash", "error"],
+)
+def test_t6_worker_failures_map_to_fixed_answers(
+    client: TestClient,
+    sm: sessionmaker[Session],
+    storage: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: sandbox.SandboxFailure,
+    status: int,
+    code: str,
+) -> None:
+    _tutor(client, sm)
+    targets: list[str] = []
+
+    def call(target: str, *args: object, **kwargs: object) -> object:
+        targets.append(target)
+        raise failure
+
+    monkeypatch.setattr(sandbox.EXTRACTION_WORKER, "call", call)
+    with structlog.testing.capture_logs() as logs:
+        response = _upload(client)
+
+    assert targets == [EVIDENCE_PREPARE_TARGET]
+    assert response.status_code == status
+    assert response.json()["detail"]["code"] == code
+    assert str(failure) not in response.text  # a worker's own text is for the logs only
+    assert [
+        entry["reason"] for entry in logs if entry["event"] == "tutor_evidence_check_failed"
+    ] == [failure.reason]
+    assert _rows(sm) == []
+    assert _objects(storage) == {}
 
 
 def test_t6_storage_failure_503_writes_no_row(

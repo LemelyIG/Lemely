@@ -300,6 +300,51 @@ def test_signed_url_without_disposition_passes_no_response_disposition() -> None
     assert blob.generate_signed_url.call_args.kwargs["response_disposition"] == "attachment"
 
 
+def test_signed_url_content_type() -> None:
+    """T10 review R8: ``content_type`` is signed in as ``response-content-type``.
+
+    Signed for real, offline, like the disposition test above: GCS then answers
+    with the DB row's sniffed type whatever the object's stored metadata says,
+    and an edited type fails the V4 signature. Without one the URL has none.
+    """
+    from urllib.parse import parse_qs, urlsplit
+
+    from google.cloud import storage
+
+    client = storage.Client(project="a-project", credentials=_real_service_account_credentials())
+    backend = GcsStorageBackend(_client=client)
+
+    typed = parse_qs(
+        urlsplit(
+            backend.create_signed_url(
+                "lemely-tutor-evidence",
+                "tutor-evidence/t/e.png",
+                300,
+                disposition="attachment",
+                content_type="image/png",
+            )
+        ).query
+    )
+    plain = parse_qs(urlsplit(backend.create_signed_url("avatars", "x.png", 3600)).query)
+
+    assert typed["response-content-type"] == ["image/png"]
+    assert typed["response-content-disposition"] == ["attachment"]
+    assert "response-content-type" not in plain
+
+
+def test_signed_url_content_type_call_shape() -> None:
+    """The mocked call shape: ``response_type`` only when a type is asked for."""
+    client, blob = _client_with_credentials(_real_service_account_credentials())
+    blob.generate_signed_url.return_value = "https://signed.example/x"
+    backend = GcsStorageBackend(_client=client)
+
+    backend.create_signed_url("avatars", "x.png", 3600)
+    assert "response_type" not in blob.generate_signed_url.call_args.kwargs
+
+    backend.create_signed_url("ev", "e.pdf", 300, content_type="application/pdf")
+    assert blob.generate_signed_url.call_args.kwargs["response_type"] == "application/pdf"
+
+
 def test_signed_url_for_user_adc_raises_rather_than_attribute_error() -> None:
     """`gcloud auth application-default login` credentials cannot sign at all.
 

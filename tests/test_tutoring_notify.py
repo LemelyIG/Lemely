@@ -46,7 +46,7 @@ from lemely.web.tutoring_notify import (
 )
 from tests import test_email_outbox_repo as _outbox
 from tests.test_email_outbox_repo import NOW, _user
-from tests.test_notify_email import VALID, spec_b4_rows
+from tests.test_notify_email import VALID, spec_b4_rows, spec_listing_copy
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
@@ -70,6 +70,18 @@ ENROLMENT = uuid.UUID("b0000000-0000-4000-8000-000000000007")
 REPORT = uuid.UUID("b0000000-0000-4000-8000-000000000008")
 
 PARENTS = [PARENT_1, PARENT_2]
+
+#: Where each decision may leave a profile (SPEC §a.3; only a reinstatement can end either way).
+LISTED_AFTER: dict[TutorApprovalDecision, tuple[bool, ...]] = {
+    TutorApprovalDecision.approved: (True,),
+    TutorApprovalDecision.rejected: (False,),
+    TutorApprovalDecision.suspended: (False,),
+    TutorApprovalDecision.reinstated: (True, False),
+    TutorApprovalDecision.closed: (False,),
+}
+LISTING_CASES = [
+    (decision, listed) for decision, values in LISTED_AFTER.items() for listed in values
+]
 
 
 def _booking(event: str, *, actor: uuid.UUID | None, late: bool = False) -> list[InboxNotice]:
@@ -137,8 +149,10 @@ def _every_builder_output() -> list[InboxNotice]:
             linked_parent_ids=PARENTS,
             ended_reason=reason,
         )
-    for decision in TutorApprovalDecision:
-        out += listing_notices(approval_event_id=EVENT, tutor_user_id=TUTOR, decision=decision)
+    for decision, listed in LISTING_CASES:
+        out += listing_notices(
+            approval_event_id=EVENT, tutor_user_id=TUTOR, decision=decision, listed=listed
+        )
     for kind in ("review", "reply"):
         for outcome in ("approved", "rejected"):
             out += review_notices(
@@ -426,16 +440,53 @@ def test_an_ended_grant_without_a_reason_is_refused() -> None:
         _grant("ended", None)
 
 
-@pytest.mark.parametrize("decision", list(TutorApprovalDecision))
+@pytest.mark.parametrize(("decision", "listed"), LISTING_CASES)
 def test_listing_notice_names_the_decision_and_never_the_admin_note(
-    decision: TutorApprovalDecision,
+    decision: TutorApprovalDecision, listed: bool
 ) -> None:
-    (notice,) = listing_notices(approval_event_id=EVENT, tutor_user_id=TUTOR, decision=decision)
+    (notice,) = listing_notices(
+        approval_event_id=EVENT, tutor_user_id=TUTOR, decision=decision, listed=listed
+    )
     assert notice.user_id == TUTOR
     assert notice.type is NotificationType.tutor_listing
     assert notice.dedupe_key == f"listing:{EVENT}"
     assert notice.payload == {"approvalEventId": str(EVENT)}
     assert not {n for n in inspect.signature(listing_notices).parameters if "note" in n}
+
+
+def test_every_decision_is_covered_by_the_listing_cases() -> None:
+    assert set(LISTED_AFTER) == set(TutorApprovalDecision)
+    assert len(LISTING_CASES) == 6  # non-vacuity: five decisions, reinstatement both ways
+
+
+@pytest.mark.parametrize(("listed", "outcome"), [(True, "listed"), (False, "pending_review")])
+def test_reinstatement_notice_says_where_the_profile_went(listed: bool, outcome: str) -> None:
+    """T10 EXTRA: back to review is "back in review", never "listed again" (SPEC §b.4)."""
+    (notice,) = listing_notices(
+        approval_event_id=EVENT,
+        tutor_user_id=TUTOR,
+        decision=TutorApprovalDecision.reinstated,
+        listed=listed,
+    )
+    assert notice.title == spec_listing_copy()[outcome]
+
+
+@pytest.mark.parametrize(
+    ("decision", "listed"),
+    [
+        (decision, listed)
+        for decision in TutorApprovalDecision
+        for listed in (True, False)
+        if listed not in LISTED_AFTER[decision]
+    ],
+)
+def test_a_listing_notice_that_would_be_false_is_refused(
+    decision: TutorApprovalDecision, listed: bool
+) -> None:
+    with pytest.raises(ValueError, match="listed"):
+        listing_notices(
+            approval_event_id=EVENT, tutor_user_id=TUTOR, decision=decision, listed=listed
+        )
 
 
 def test_idor_tutor_review_notification_has_no_booking_or_student_ref() -> None:

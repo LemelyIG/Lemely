@@ -61,6 +61,7 @@ class LocalFileStorageBackend:
         expires_in: int,
         *,
         disposition: str | None = None,
+        content_type: str | None = None,
     ) -> str:
         """Return a ``data:`` URL carrying the object's bytes inline.
 
@@ -80,6 +81,8 @@ class LocalFileStorageBackend:
         Its closest equivalent is the media type: with any ``disposition`` the
         URL is ``application/octet-stream``, which no browser renders inline, so
         an evidence file is downloaded here as it is from a signed GCS link.
+        Without a disposition the media type is ``content_type`` when the caller
+        gives one (the type the GCS backend signs in), else guessed from the key.
 
         The response is `settings.storage.avatar_max_bytes` at most, inflated
         about a third by base64, and it rides in the profile JSON — fine at
@@ -91,6 +94,8 @@ class LocalFileStorageBackend:
         data = self.download(bucket, object_path)
         if disposition is not None:
             media_type = "application/octet-stream"
+        elif content_type is not None:
+            media_type = content_type
         else:
             media_type = mimetypes.guess_type(object_path)[0] or "application/octet-stream"
         return f"data:{media_type};base64,{base64.b64encode(data).decode('ascii')}"

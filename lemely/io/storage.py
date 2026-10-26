@@ -61,6 +61,7 @@ class StorageBackend(Protocol):
         expires_in: int,
         *,
         disposition: str | None = None,
+        content_type: str | None = None,
     ) -> str:
         """Return a URL that reads ``object_path`` for ``expires_in`` seconds.
 
@@ -74,7 +75,10 @@ class StorageBackend(Protocol):
         ``disposition`` is a ``Content-Disposition`` value the response must
         carry (``attachment; filename=...`` for evidence, so a browser saves the
         file rather than rendering it). ``None`` leaves the response as the
-        object is stored, which is what avatars need.
+        object is stored, which is what avatars need. ``content_type`` is the
+        ``Content-Type`` the response must carry whatever the object's stored
+        metadata says (SC-22: an evidence file's type from its database row,
+        which was sniffed from its bytes); ``None`` leaves the stored type.
 
         Raises :class:`~lemely.runtime.errors.ExternalServiceError` when the
         configured credentials cannot sign. Callers that merely *display* an

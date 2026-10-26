@@ -280,17 +280,34 @@ class TutorListingDecision(EmailContext):
 
     approval_event_id: uuid.UUID
     decision: Literal["approved", "rejected", "suspended", "reinstated", "closed"]
+    #: Whether the profile is listed once the decision has applied (SPEC §b.4). Only a
+    #: reinstatement can end either way; it picks that decision's copy.
+    listed: bool
 
-    _LEADS: ClassVar[dict[str, str]] = {
-        "approved": "Your tutor profile was approved and is now listed.",
-        "rejected": "Your tutor profile was not approved. Open it to see the note from Lemely.",
-        "suspended": "Your tutor profile has been suspended. Open it to see the note from Lemely.",
-        "reinstated": "Your tutor profile is listed again.",
-        "closed": "Your tutor profile has been closed.",
+    _LEADS: ClassVar[dict[tuple[str, bool], str]] = {
+        ("approved", True): "Your tutor profile was approved and is now listed.",
+        ("rejected", False): (
+            "Your tutor profile was not approved. Open it to see the note from Lemely."
+        ),
+        ("suspended", False): (
+            "Your tutor profile has been suspended. Open it to see the note from Lemely."
+        ),
+        ("reinstated", True): "Your tutor profile is listed again.",
+        ("reinstated", False): (
+            "Your tutor profile is back in review. Lemely will check it before it is listed."
+        ),
+        ("closed", False): "Your tutor profile has been closed.",
     }
 
+    @model_validator(mode="after")
+    def _check_listed(self) -> TutorListingDecision:
+        """Refuse a pair that cannot happen: its copy would be false (T10 review)."""
+        if (self.decision, self.listed) not in self._LEADS:
+            raise ValueError("listed does not fit the decision")
+        return self
+
     def lead(self) -> str:
-        return self._LEADS[self.decision]
+        return self._LEADS[(self.decision, self.listed)]
 
     def detail(self) -> str | None:
         return None

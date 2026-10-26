@@ -67,6 +67,7 @@ class FakeStorageBackend:
         expires_in: int,
         *,
         disposition: str | None = None,
+        content_type: str | None = None,
     ) -> str:
         """Return a deterministic stand-in URL.
 
@@ -76,11 +77,14 @@ class FakeStorageBackend:
         production would fail. A ``disposition`` travels as a percent-encoded
         ``disposition`` query parameter (GCS signs it as
         ``response-content-disposition``), so a test can read back what a real
-        URL would make the response carry.
+        URL would make the response carry; a ``content_type`` likewise travels
+        as ``content_type`` (GCS: ``response-content-type``).
         """
         url = f"fake://{bucket}/{object_path}?expires_in={expires_in}"
         if disposition is not None:
             url += f"&disposition={quote(disposition, safe='')}"
+        if content_type is not None:
+            url += f"&content_type={quote(content_type, safe='')}"
         return url
 
 

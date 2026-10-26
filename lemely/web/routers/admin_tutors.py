@@ -10,16 +10,20 @@ refused like everyone else). Built with ``TutoringRoute``, so every response is
   really leaves (``provider``) or is recorded as skipped (``mock``, SC-6).
 * **A2** ``GET /api/admin/tutors/{tutor_id}``: X-05's application. The only
   route that issues evidence URLs: 300 s (``tutor_evidence_signed_url_ttl_seconds``),
-  ``Content-Disposition: attachment`` (SC-22), each one logged as an
-  ``evidence_open`` row in the same transaction; if the log cannot be written
-  the request fails and no URL leaves (SC-23). A file the backend cannot sign
-  is listed with ``signedUrl: null`` and logs nothing.
+  ``Content-Disposition: attachment`` and the row's sniffed ``Content-Type``
+  (SC-22, T10 review R8), each one logged as an ``evidence_open`` row in the
+  same transaction; if the log cannot be written the request fails and no URL
+  leaves (SC-23). A file the backend cannot sign is listed with
+  ``signedUrl: null`` and logs nothing.
 * **A3** approve, or reinstate a suspended tutor (to ``listed`` if approved
-  before, else back to ``pending_review``: the lead's ruling on decision row 5a);
-  **A4** reject, with a note the tutor reads. Both answer with the A2 shape and
-  ``signedUrl: null`` on every file (only A2 issues URLs; T04 hand-off), and tell
-  the tutor through the inbox after the commit (D5.9 §1); the email was queued
-  inside the decision's transaction.
+  before with no edit waiting, else back to ``pending_review``: the lead's
+  ruling on decision row 5a, T10 review R4). ``documentsSeen: true`` needs every
+  file opened through A2 since its upload, else 409 ``documents_not_opened``
+  (R3). **A4** reject, with a note the tutor reads. Both answer with the A2
+  shape and ``signedUrl: null`` on every file (only A2 issues URLs; T04
+  hand-off), and tell the tutor through the inbox after the commit (D5.9 §1),
+  with the copy for where the profile went (``listed``, SPEC §b.4); the email
+  was queued inside the decision's transaction.
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ from lemely.db.tutor_approval_repo import (
     AdminTutorFacts,
     ApprovalError,
     ApprovalOutcome,
+    DocumentsNotOpenedError,
     IllegalApprovalTransitionError,
     NoteRequiredError,
     NoteTooLongError,
@@ -103,6 +108,7 @@ ListingStateLit = Literal["draft", "pending_review", "listed", "rejected", "susp
 _STATUS: Final[dict[type[ApprovalError], int]] = {
     TutorNotFoundError: 404,
     IllegalApprovalTransitionError: 409,
+    DocumentsNotOpenedError: 409,
     NoteRequiredError: 422,
     NoteTooLongError: 422,
 }
@@ -188,16 +194,16 @@ def _detail_without_urls(
 def _tell_tutor(
     outcome: ApprovalOutcome, service: NotificationService, transport: NotificationTransport
 ) -> None:
-    if outcome.notify_tutor:
-        send_after_commit(
-            listing_notices(
-                approval_event_id=outcome.event_id,
-                tutor_user_id=outcome.tutor_user_id,
-                decision=outcome.decision,
-            ),
-            service=service,
-            transport=transport,
-        )
+    send_after_commit(
+        listing_notices(
+            approval_event_id=outcome.event_id,
+            tutor_user_id=outcome.tutor_user_id,
+            decision=outcome.decision,
+            listed=outcome.listed,
+        ),
+        service=service,
+        transport=transport,
+    )
 
 
 @router.get("", response_model=AdminTutorPageDTO)
@@ -255,7 +261,11 @@ def tutor_detail(
     def sign(item: StoredEvidence) -> str | None:
         try:
             return storage.create_signed_url(
-                bucket, item.storage_path, ttl, disposition=attachment_disposition(item.filename)
+                bucket,
+                item.storage_path,
+                ttl,
+                disposition=attachment_disposition(item.filename),
+                content_type=item.content_type,
             )
         except Exception as exc:
             # Signing failed, so no URL is issued and nothing is logged for this file.

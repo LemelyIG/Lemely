@@ -195,8 +195,9 @@ def test_o17_a3_and_a4_send_no_url_and_log_no_access(
     seed_evidence(sm, storage, approved.profile_id)
     seed_evidence(sm, storage, rejected.profile_id)
 
+    # documentsSeen false: true needs A2 to have issued (and logged) a link first (R3).
     a3 = client.post(
-        f"/api/admin/tutors/{approved.profile_id}/approve", json={"documentsSeen": True}
+        f"/api/admin/tutors/{approved.profile_id}/approve", json={"documentsSeen": False}
     )
     a4 = client.post(f"/api/admin/tutors/{rejected.profile_id}/reject", json={"note": "Unclear."})
 

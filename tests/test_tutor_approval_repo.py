@@ -25,6 +25,7 @@ from lemely.db.models.enums import Role, TutorApprovalDecision, TutorListingStat
 from lemely.db.models.tutoring import EmailOutbox, TutorApprovalEvent, TutorProfile
 from lemely.db.tutor_approval_repo import (
     MAX_NOTE_LENGTH,
+    DocumentsNotOpenedError,
     IllegalApprovalTransitionError,
     NoteRequiredError,
     NoteTooLongError,
@@ -33,7 +34,7 @@ from lemely.db.tutor_approval_repo import (
     parse_queue_cursor,
     queue_cursor,
 )
-from lemely.db.tutor_evidence_repo import TutorEvidenceRepository
+from lemely.db.tutor_evidence_repo import StoredEvidence, TutorEvidenceRepository
 from lemely.db.tutor_profile_repo import ProfileChanges, TutorProfileRepository
 from tests.tutoring_db import (
     NOW,
@@ -100,6 +101,32 @@ def _admin(sm: sessionmaker[Session]) -> uuid.UUID:
     return add_user(sm, Role.platform_admin)
 
 
+def _upload(
+    sm: sessionmaker[Session], profile_id: uuid.UUID, *, filename: str = "cert.png"
+) -> uuid.UUID:
+    """One evidence row through the repository (no bytes: the repository never sees them)."""
+    evidence_id = uuid.uuid4()
+    TutorEvidenceRepository(sm).add(
+        profile_id,
+        evidence_id=evidence_id,
+        storage_path=f"tutor-evidence/{profile_id}/{evidence_id}.png",
+        filename=filename,
+        content_type="image/png",
+        size_bytes=10,
+        description=None,
+    )
+    return evidence_id
+
+
+def _open_all(sm: sessionmaker[Session], profile_id: uuid.UUID, admin: uuid.UUID) -> None:
+    """What A2 does: sign every file's URL and log one ``evidence_open`` row each."""
+
+    def sign(item: StoredEvidence) -> str:
+        return f"fake://{item.storage_path}"
+
+    TutorEvidenceRepository(sm).issue_admin_urls(profile_id, admin_user_id=admin, sign=sign)
+
+
 # ---------------------------------------------------------------------------
 # A3 approve (pending_review -> listed)
 # ---------------------------------------------------------------------------
@@ -155,16 +182,19 @@ def test_approve_records_event_snapshot_and_listing_email(
         qualification_note="BSc Physics",
         rules=((2, 600, 720),),
     )
+    evidence_id = uuid.uuid4()
+    filename = "Sara Mansour BSc degree 2014.pdf"
     TutorEvidenceRepository(sm).add(
         tutor.profile_id,
-        evidence_id=uuid.uuid4(),
-        storage_path=f"tutor-evidence/{tutor.profile_id}/{uuid.uuid4()}.pdf",
-        filename="degree.pdf",
+        evidence_id=evidence_id,
+        storage_path=f"tutor-evidence/{tutor.profile_id}/{evidence_id}.pdf",
+        filename=filename,
         content_type="application/pdf",
         size_bytes=1234,
         description="BSc certificate",
     )
     admin = _admin(sm)
+    _open_all(sm, tutor.profile_id, admin)
 
     outcome = repo.approve(
         tutor.profile_id, admin_user_id=admin, documents_seen=True, note="Checked the degree."
@@ -183,16 +213,36 @@ def test_approve_records_event_snapshot_and_listing_email(
     assert snapshot["qualification_note"] == "BSc Physics"
     assert snapshot["subject_codes"] == [subject]
     assert snapshot["availability"] == [[2, 600, 720]]
-    assert [item["filename"] for item in snapshot["evidence"]] == ["degree.pdf"]
     assert "storage_path" not in json.dumps(snapshot)
 
-    assert outcome.notify_tutor is True
     assert outcome.tutor_user_id == tutor.user_id
     [mail] = _outbox(sm)
     assert mail.recipient_user_id == tutor.user_id
     assert mail.template == "tutor_listing_decision"
     assert mail.dedupe_key == f"listing:{event.id}"
-    assert mail.context == {"approval_event_id": str(event.id), "decision": "approved"}
+    assert mail.context == {
+        "approval_event_id": str(event.id),
+        "decision": "approved",
+        "listed": True,
+    }
+
+
+def test_snapshot_records_evidence_by_id_type_and_size_only(
+    sm: sessionmaker[Session], repo: TutorApprovalRepository
+) -> None:
+    """T10 review R6: the original filename is PII (§a.2) and stays out of the append-only log."""
+    tutor = add_tutor(sm, state="pending_review")
+    evidence_id = _upload(sm, tutor.profile_id, filename="Sara Mansour national ID.png")
+
+    repo.approve(tutor.profile_id, admin_user_id=_admin(sm), documents_seen=False, note=None)
+
+    [event] = _events(sm, tutor.profile_id)
+    assert event.profile_snapshot["evidence"] == [
+        {"evidence_id": str(evidence_id), "content_type": "image/png", "size_bytes": 10}
+    ]
+    flat = json.dumps(event.profile_snapshot)
+    assert "national ID" not in flat
+    assert "filename" not in flat
 
 
 @pytest.mark.parametrize("state", ["draft", "listed", "rejected", "closed"])
@@ -257,6 +307,7 @@ def test_documents_seen_cleared_by_upload_delete_and_false_approval(
     assert not seen()
 
     back_to_review()
+    _open_all(sm, tutor.profile_id, admin)  # R3: "seen" needs the new file opened first
     repo.approve(tutor.profile_id, admin_user_id=admin, documents_seen=True, note=None)
     assert seen()
 
@@ -273,6 +324,134 @@ def test_documents_seen_cleared_by_upload_delete_and_false_approval(
     repo.approve(tutor.profile_id, admin_user_id=admin, documents_seen=False, note=None)
     assert not seen()
     assert [e.documents_seen for e in _events(sm, tutor.profile_id)] == [True, True, True, False]
+
+
+# ---------------------------------------------------------------------------
+# documentsSeen needs every file opened after its upload (T10 review R3)
+# ---------------------------------------------------------------------------
+
+
+def _assert_refused_unchanged(
+    sm: sessionmaker[Session], repo: TutorApprovalRepository, profile_id: uuid.UUID
+) -> None:
+    before = _profile(sm, profile_id)
+    events_before = len(_events(sm, profile_id))
+    with pytest.raises(DocumentsNotOpenedError) as excinfo:
+        repo.approve(profile_id, admin_user_id=_admin(sm), documents_seen=True, note=None)
+    assert excinfo.value.code == "documents_not_opened"
+    after = _profile(sm, profile_id)
+    assert after.listing_state is before.listing_state
+    assert after.documents_seen_at == before.documents_seen_at
+    assert len(_events(sm, profile_id)) == events_before
+
+
+def test_documents_seen_refused_until_every_file_is_opened(
+    sm: sessionmaker[Session], repo: TutorApprovalRepository
+) -> None:
+    tutor = add_tutor(sm, state="pending_review")
+    admin = _admin(sm)
+    _upload(sm, tutor.profile_id)
+
+    _assert_refused_unchanged(sm, repo, tutor.profile_id)
+    assert _outbox(sm) == []
+
+    _open_all(sm, tutor.profile_id, admin)
+    outcome = repo.approve(tutor.profile_id, admin_user_id=admin, documents_seen=True, note=None)
+    assert outcome.listing_state is TutorListingState.listed
+    assert _profile(sm, tutor.profile_id).documents_seen_at is not None
+
+
+def test_documents_seen_refused_for_a_file_uploaded_after_the_open(
+    sm: sessionmaker[Session], repo: TutorApprovalRepository
+) -> None:
+    tutor = add_tutor(sm, state="pending_review")
+    admin = _admin(sm)
+    _upload(sm, tutor.profile_id, filename="first.png")
+    _open_all(sm, tutor.profile_id, admin)
+    _upload(sm, tutor.profile_id, filename="second.png")  # nobody has opened this one
+
+    _assert_refused_unchanged(sm, repo, tutor.profile_id)
+
+    _open_all(sm, tutor.profile_id, admin)
+    repo.approve(tutor.profile_id, admin_user_id=admin, documents_seen=True, note=None)
+
+
+def test_documents_seen_refused_when_the_only_open_predates_the_upload(
+    sm: sessionmaker[Session], repo: TutorApprovalRepository
+) -> None:
+    """An access row counts only if it was written after the file it names was uploaded."""
+    tutor = add_tutor(sm, state="pending_review")
+    admin = _admin(sm)
+    evidence_id = _upload(sm, tutor.profile_id)
+    with sm.begin() as session:
+        session.execute(
+            sa.text(
+                "INSERT INTO tutoring_admin_access (id, admin_user_id, action, tutor_profile_id, "
+                "evidence_id, created_at) VALUES (:id, :admin, 'evidence_open', :p, :e, "
+                "(SELECT created_at - interval '1 minute' FROM tutor_evidence_files "
+                "WHERE id = :e))"
+            ),
+            {"id": uuid.uuid4(), "admin": admin, "p": tutor.profile_id, "e": evidence_id},
+        )
+
+    _assert_refused_unchanged(sm, repo, tutor.profile_id)
+
+
+def test_documents_seen_refused_for_a_file_whose_link_could_not_be_signed(
+    sm: sessionmaker[Session], repo: TutorApprovalRepository
+) -> None:
+    """A2 logs no row for a file it could not sign, so that file was never opened."""
+    tutor = add_tutor(sm, state="pending_review")
+    admin = _admin(sm)
+    signed = _upload(sm, tutor.profile_id, filename="ok.png")
+    _upload(sm, tutor.profile_id, filename="broken.png")
+
+    def sign(item: StoredEvidence) -> str | None:
+        return "fake://ok" if item.id == signed else None
+
+    TutorEvidenceRepository(sm).issue_admin_urls(tutor.profile_id, admin_user_id=admin, sign=sign)
+
+    _assert_refused_unchanged(sm, repo, tutor.profile_id)
+
+
+def test_documents_seen_with_no_files_and_documents_unseen_stay_allowed(
+    sm: sessionmaker[Session], repo: TutorApprovalRepository
+) -> None:
+    """Evidence is optional: nothing to open is not a refusal; ``false`` is never one."""
+    no_files = add_tutor(sm, state="pending_review")
+    unopened = add_tutor(sm, state="pending_review")
+    _upload(sm, unopened.profile_id)
+    admin = _admin(sm)
+
+    repo.approve(no_files.profile_id, admin_user_id=admin, documents_seen=True, note=None)
+    repo.approve(unopened.profile_id, admin_user_id=admin, documents_seen=False, note=None)
+
+    assert _profile(sm, no_files.profile_id).documents_seen_at is not None
+    assert _profile(sm, unopened.profile_id).documents_seen_at is None
+    assert _profile(sm, unopened.profile_id).listing_state is TutorListingState.listed
+
+
+def test_documents_seen_rule_applies_to_a_reinstatement(
+    sm: sessionmaker[Session], repo: TutorApprovalRepository
+) -> None:
+    tutor = add_tutor(sm, state="suspended", first_listed_at=NOW - timedelta(days=30))
+    _upload_while_suspended(sm, tutor.profile_id)
+
+    _assert_refused_unchanged(sm, repo, tutor.profile_id)
+
+
+def _upload_while_suspended(sm: sessionmaker[Session], profile_id: uuid.UUID) -> None:
+    """A file kept from before the suspension (uploads are refused while suspended)."""
+    evidence_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.execute(
+            sa.text(
+                "INSERT INTO tutor_evidence_files (id, tutor_profile_id, storage_path, "
+                "original_filename, content_type, size_bytes) VALUES (:id, :p, :path, "
+                "'kept.png', 'image/png', 10)"
+            ),
+            {"id": evidence_id, "p": profile_id, "path": f"tutor-evidence/{profile_id}/x.png"},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -370,9 +549,13 @@ def test_reinstate_never_approved_returns_to_pending_review(
     assert profile.first_listed_at is None
     assert profile.listed_at is None
     assert [e.decision for e in _events(sm, tutor.profile_id)] == [TutorApprovalDecision.reinstated]
-    # The fixed "listed again" copy would be false here, so the tutor is not told.
-    assert outcome.notify_tutor is False
-    assert _outbox(sm) == []
+    # T10 EXTRA: the tutor is told, with the "back in review" copy (``listed`` false).
+    [mail] = _outbox(sm)
+    assert mail.context == {
+        "approval_event_id": str(outcome.event_id),
+        "decision": "reinstated",
+        "listed": False,
+    }
 
 
 def test_reinstate_previously_listed_returns_to_listed(
@@ -380,6 +563,13 @@ def test_reinstate_previously_listed_returns_to_listed(
 ) -> None:
     first_listed = NOW - timedelta(days=90)
     tutor = add_tutor(sm, state="suspended", first_listed_at=first_listed)
+    # As an approval leaves it: submitted, then approved (listed_at after submitted_at).
+    _set(
+        sm,
+        tutor.profile_id,
+        submitted_at=first_listed - timedelta(days=1),
+        listed_at=first_listed,
+    )
 
     outcome = repo.approve(
         tutor.profile_id, admin_user_id=_admin(sm), documents_seen=False, note=None
@@ -392,9 +582,46 @@ def test_reinstate_previously_listed_returns_to_listed(
     assert profile.first_listed_at == first_listed
     assert profile.listed_at is not None
     assert profile.listed_at > first_listed
-    assert outcome.notify_tutor is True
     [mail] = _outbox(sm)
-    assert mail.context == {"approval_event_id": str(outcome.event_id), "decision": "reinstated"}
+    assert mail.context == {
+        "approval_event_id": str(outcome.event_id),
+        "decision": "reinstated",
+        "listed": True,
+    }
+
+
+def test_reinstate_with_a_moderated_edit_waiting_returns_to_pending_review(
+    sm: sessionmaker[Session], repo: TutorApprovalRepository
+) -> None:
+    """T10 review R4: listed, then edited (back to review), then suspended: the edit is unreviewed.
+
+    Reinstating straight to ``listed`` would publish text no admin approved.
+    """
+    subject = add_subject(sm)
+    tutor = add_tutor(sm, state="pending_review", subjects=[subject])
+    admin = _admin(sm)
+    repo.approve(tutor.profile_id, admin_user_id=admin, documents_seen=False, note=None)
+    _, re_review = TutorProfileRepository(sm).update(
+        tutor.profile_id, ProfileChanges(headline="A new headline nobody has reviewed")
+    )
+    assert re_review is True
+    _set(sm, tutor.profile_id, listing_state=TutorListingState.suspended)  # what A5 leaves
+    edited = _profile(sm, tutor.profile_id)
+    assert edited.first_listed_at is not None
+    assert edited.listed_at is not None
+    assert edited.submitted_at is not None
+    assert edited.submitted_at > edited.listed_at
+
+    outcome = repo.approve(tutor.profile_id, admin_user_id=admin, documents_seen=False, note=None)
+
+    profile = _profile(sm, tutor.profile_id)
+    assert outcome.decision is TutorApprovalDecision.reinstated
+    assert outcome.listing_state is TutorListingState.pending_review
+    assert profile.listing_state is TutorListingState.pending_review
+    assert profile.listed_at == edited.listed_at  # no approval happened
+    assert profile.first_listed_at == edited.first_listed_at
+    mails = _outbox(sm)
+    assert mails[-1].context["listed"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +654,6 @@ def test_reject_with_note_is_shown_to_the_tutor(
 
     assert outcome.decision is TutorApprovalDecision.rejected
     assert outcome.listing_state is TutorListingState.rejected
-    assert outcome.notify_tutor is True
     assert _profile(sm, tutor.profile_id).listing_state is TutorListingState.rejected
     [event] = _events(sm, tutor.profile_id)
     assert event.note == note.strip()
@@ -435,7 +661,11 @@ def test_reject_with_note_is_shown_to_the_tutor(
     assert own is not None
     assert own.review_note == note.strip()
     [mail] = _outbox(sm)
-    assert mail.context == {"approval_event_id": str(event.id), "decision": "rejected"}
+    assert mail.context == {
+        "approval_event_id": str(event.id),
+        "decision": "rejected",
+        "listed": False,
+    }
     assert "degree" not in json.dumps(mail.context)  # the note never travels by email
 
 

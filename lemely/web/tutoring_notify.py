@@ -323,24 +323,31 @@ def grant_notices(
 # Listing, reviews, parent links, class joins, reports
 # ---------------------------------------------------------------------------
 
-_LISTING_COPY: Final[dict[TutorApprovalDecision, tuple[str, str]]] = {
-    TutorApprovalDecision.approved: (
+#: The copy for each (decision, listed afterwards) pair that can happen (SPEC §a.3, §b.4). Only a
+#: reinstatement ends either way: back to ``listed``, or to ``pending_review`` for a profile that
+#: was never approved or has an edit waiting (T10 review R4), where "listed again" would be false.
+_LISTING_COPY: Final[dict[tuple[TutorApprovalDecision, bool], tuple[str, str]]] = {
+    (TutorApprovalDecision.approved, True): (
         "Your tutor profile is listed",
         "Your profile was approved and is now visible to students.",
     ),
-    TutorApprovalDecision.rejected: (
+    (TutorApprovalDecision.rejected, False): (
         "Your tutor profile was not approved",
         "Open your profile to see the note from Lemely.",
     ),
-    TutorApprovalDecision.suspended: (
+    (TutorApprovalDecision.suspended, False): (
         "Your tutor profile is suspended",
         "Open your profile to see the note from Lemely.",
     ),
-    TutorApprovalDecision.reinstated: (
+    (TutorApprovalDecision.reinstated, True): (
         "Your tutor profile is listed again",
         "Your profile is visible to students again.",
     ),
-    TutorApprovalDecision.closed: (
+    (TutorApprovalDecision.reinstated, False): (
+        "Your tutor profile is back in review",
+        "Lemely will check your profile before students can see it.",
+    ),
+    (TutorApprovalDecision.closed, False): (
         "Your tutor profile is closed",
         "Your profile is no longer visible to students.",
     ),
@@ -352,9 +359,20 @@ def listing_notices(
     approval_event_id: uuid.UUID,
     tutor_user_id: uuid.UUID,
     decision: TutorApprovalDecision,
+    listed: bool,
 ) -> list[InboxNotice]:
-    """The tutor's notice for an approval decision. The admin's note is never copied in."""
-    title, body = _LISTING_COPY[decision]
+    """The tutor's notice for an approval decision. The admin's note is never copied in.
+
+    ``listed`` is whether the profile is listed once the decision has applied; it picks the copy
+    for a reinstatement. Raises ``ValueError`` for a pair that cannot happen (an approval that
+    leaves the profile unlisted, a rejection, suspension or close that leaves it listed), whose
+    copy would be false.
+    """
+    copy = _LISTING_COPY.get((decision, listed))
+    if copy is None:
+        state = "listed" if listed else "not listed"
+        raise ValueError(f"a {decision.value} decision never leaves a profile {state}")
+    title, body = copy
     return [
         InboxNotice(
             user_id=tutor_user_id,

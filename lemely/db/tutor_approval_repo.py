@@ -5,29 +5,40 @@ admin's listing transitions:
 
 * ``pending_review`` to ``listed`` (A3 approve):
   ``first_listed_at = COALESCE(first_listed_at, now())``, ``listed_at = now()``;
-* ``suspended`` to ``listed`` (A3 reinstate) when ``first_listed_at`` is set;
-* ``suspended`` to ``pending_review`` (A3 reinstate) when ``first_listed_at`` is NULL;
+* ``suspended`` to ``listed`` (A3 reinstate) when the profile was approved before
+  and nothing was submitted after its last approval;
+* ``suspended`` to ``pending_review`` (A3 reinstate) otherwise;
 * ``pending_review`` to ``rejected`` (A4): a note is required and shown to the tutor.
 
-**Reinstatement (lead ruling, T06 review).** A profile suspended while it was
-``pending_review`` or ``rejected`` was never approved (``first_listed_at`` NULL);
-reinstating it returns it to ``pending_review``, never straight to ``listed``,
-because decision row 5a puts an admin approval before any listing. A profile
-approved at least once returns to ``listed``. Either way reinstatement restores
-nothing (SPEC §a.3, SC-3): grants stay revoked, bookings stay cancelled,
-enrolments stay removed. This module touches none of those tables.
+**Reinstatement (lead ruling, T06 review; T10 review R4).** A profile suspended
+while it was ``pending_review`` or ``rejected`` before any approval has
+``first_listed_at`` NULL; reinstating it returns it to ``pending_review``, never
+straight to ``listed``, because decision row 5a puts an admin approval before
+any listing. So does a profile approved before whose moderated edit was waiting
+for review when it was suspended (``submitted_at`` after ``listed_at``): listing
+it would publish text no admin approved. Any other profile approved at least
+once returns to ``listed``. Either way reinstatement restores nothing (SPEC
+§a.3, SC-3): grants stay revoked, bookings stay cancelled, enrolments stay
+removed. This module touches none of those tables.
 
 **documents_seen_at (F14).** Every A3 call sets it from ``documentsSeen``:
 ``now()`` when true, NULL when false. An evidence upload or delete clears it
-(:mod:`lemely.db.tutor_evidence_repo`).
+(:mod:`lemely.db.tutor_evidence_repo`). ``documentsSeen=true`` is accepted only
+when every current evidence file has an ``evidence_open`` row (A2 issued its
+link) written at or after that file's upload; otherwise 409
+``documents_not_opened`` (T10 review R3). With no files it is accepted:
+evidence is optional. The files are read after the profile lock, which every
+upload and delete also takes first, so none can arrive between the check and
+the decision.
 
 **One transaction per decision**, which locks the profile row first (SPEC §a.4b),
 writes the state, the approval event (with a snapshot of what was decided on,
 taken inside :meth:`TutorApprovalRepository.record_event_in_session`) and the
 tutor's ``tutor_listing_decision`` email in the outbox (SPEC §b.4: the outbox row
 commits or rolls back with the change). The inbox notice is the router's job,
-after commit. A reinstatement back to review sends neither: the fixed
-"listed again" copy (``tutoring_notify``, ``notify_email``) would be false.
+after commit. Both carry ``listed`` (whether the profile is listed after the
+decision), so a reinstatement back to review reads "back in review", not
+"listed again" (SPEC §b.4).
 
 **Reads.** :meth:`TutorApprovalRepository.queue` pages A1 by
 ``(COALESCE(submitted_at, created_at), id)``, oldest first, with a cursor bound
@@ -102,6 +113,12 @@ class NoteTooLongError(ApprovalError):
     code = "note_too_long"
 
 
+class DocumentsNotOpenedError(ApprovalError):
+    """``documentsSeen`` claimed for a file no admin has opened since its upload (409, R3)."""
+
+    code = "documents_not_opened"
+
+
 # ---------------------------------------------------------------------------
 # Read models
 # ---------------------------------------------------------------------------
@@ -109,13 +126,17 @@ class NoteTooLongError(ApprovalError):
 
 @dataclass(frozen=True, slots=True)
 class ApprovalOutcome:
-    """What one decision did. ``notify_tutor`` says whether the router sends the inbox notice."""
+    """What one decision did; the router tells the tutor from it after commit."""
 
     event_id: uuid.UUID
     decision: TutorApprovalDecision
     listing_state: TutorListingState
     tutor_user_id: uuid.UUID
-    notify_tutor: bool
+
+    @property
+    def listed(self) -> bool:
+        """Whether the profile is listed after the decision (the notices' ``listed`` flag)."""
+        return self.listing_state is TutorListingState.listed
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,8 +232,9 @@ def _clean_note(note: str | None) -> str | None:
 def _snapshot(session: Session, tutor_profile_id: uuid.UUID) -> dict[str, object]:
     """The public and logged-in fields the decision was made on, plus the evidence it saw.
 
-    One statement. Evidence is recorded by id, name, type and size, never by its
-    storage path.
+    One statement. Evidence is recorded by id, type and size only: never by its
+    storage path, and never by its original filename, which is PII (SPEC §a.2)
+    and would outlive the file in this append-only log (T10 review R6).
     """
     row = session.execute(
         sa.text(
@@ -231,7 +253,7 @@ def _snapshot(session: Session, tutor_profile_id: uuid.UUID) -> dict[str, object
             "r.start_minute, r.end_minute) ORDER BY r.iso_weekday, r.start_minute), '[]'::json) "
             "FROM tutor_availability_rules r WHERE r.tutor_profile_id = tp.id), "
             "'evidence', (SELECT coalesce(json_agg(json_build_object('evidence_id', e.id, "
-            "'filename', e.original_filename, 'content_type', e.content_type, "
+            "'content_type', e.content_type, "
             "'size_bytes', e.size_bytes) ORDER BY e.created_at, e.id), '[]'::json) "
             "FROM tutor_evidence_files e WHERE e.tutor_profile_id = tp.id)"
             ") FROM tutor_profiles tp WHERE tp.id = :p"
@@ -252,6 +274,48 @@ def _lock(session: Session, tutor_profile_id: uuid.UUID) -> TutorProfile:
 
 def _illegal(action: str, state: TutorListingState) -> IllegalApprovalTransitionError:
     return IllegalApprovalTransitionError(f"A {state.value} profile cannot be {action}.")
+
+
+def _reinstated_state(profile: TutorProfile) -> TutorListingState:
+    """Where A3 puts a suspended profile: ``listed`` only if nothing awaits an approval.
+
+    ``pending_review`` for a profile never approved (``first_listed_at`` NULL) and
+    for one with a submission after its last approval (a moderated edit sends a
+    listed profile back to review with ``submitted_at = now()``). A submission
+    with no ``listed_at`` to compare with counts as waiting.
+    """
+    if profile.first_listed_at is None:
+        return TutorListingState.pending_review
+    submitted, approved = profile.submitted_at, profile.listed_at
+    if submitted is not None and (approved is None or submitted > approved):
+        return TutorListingState.pending_review
+    return TutorListingState.listed
+
+
+#: The evidence files of a profile that no admin has opened since they were
+#: uploaded: no ``evidence_open`` row for the file (A2 writes one per link it
+#: issues) created at or after the file's row. ``tutor_profile_id`` on the access
+#: row lets ``ix_tutoring_admin_access_tutor`` serve the probe.
+_UNOPENED_EVIDENCE_SQL: Final = (
+    "SELECT count(*) FROM tutor_evidence_files e WHERE e.tutor_profile_id = :p "
+    "AND NOT EXISTS (SELECT 1 FROM tutoring_admin_access a "
+    "WHERE a.tutor_profile_id = e.tutor_profile_id AND a.evidence_id = e.id "
+    "AND a.action = 'evidence_open' AND a.created_at >= e.created_at)"
+)
+
+
+def _check_documents_opened(session: Session, tutor_profile_id: uuid.UUID) -> None:
+    """Refuse ``documentsSeen=true`` while any current file is unopened (T10 review R3).
+
+    Run under the profile lock, which uploads and deletes also take first.
+    """
+    unopened = session.execute(
+        sa.text(_UNOPENED_EVIDENCE_SQL), {"p": tutor_profile_id}
+    ).scalar_one()
+    if unopened:
+        raise DocumentsNotOpenedError(
+            "Open every document before you confirm that you looked at them."
+        )
 
 
 _OPEN_REPORTS_SQL: Final = (
@@ -325,7 +389,9 @@ class TutorApprovalRepository:
         """A3: approve a ``pending_review`` profile, or reinstate a ``suspended`` one.
 
         Raises :class:`TutorNotFoundError`, :class:`IllegalApprovalTransitionError`
-        (any other state) or :class:`NoteTooLongError`.
+        (any other state), :class:`DocumentsNotOpenedError` (``documents_seen``
+        with a file no admin has opened since its upload) or
+        :class:`NoteTooLongError`.
         """
         cleaned = _clean_note(note)
         with self._sessionmaker.begin() as session:
@@ -334,14 +400,11 @@ class TutorApprovalRepository:
             if state is TutorListingState.pending_review:
                 decision, target = TutorApprovalDecision.approved, TutorListingState.listed
             elif state is TutorListingState.suspended:
-                decision = TutorApprovalDecision.reinstated
-                target = (
-                    TutorListingState.listed
-                    if profile.first_listed_at is not None
-                    else TutorListingState.pending_review
-                )
+                decision, target = TutorApprovalDecision.reinstated, _reinstated_state(profile)
             else:
                 raise _illegal("approved", state)
+            if documents_seen:
+                _check_documents_opened(session, profile.id)
             profile.listing_state = target
             profile.documents_seen_at = sa.func.now() if documents_seen else None
             if target is TutorListingState.listed:
@@ -357,7 +420,6 @@ class TutorApprovalRepository:
                 admin_user_id=admin_user_id,
                 documents_seen=documents_seen,
                 note=cleaned,
-                notify_tutor=target is TutorListingState.listed,
             )
 
     def reject(
@@ -384,7 +446,6 @@ class TutorApprovalRepository:
                 admin_user_id=admin_user_id,
                 documents_seen=False,
                 note=cleaned,
-                notify_tutor=True,
             )
 
     def _decided(
@@ -396,8 +457,8 @@ class TutorApprovalRepository:
         admin_user_id: uuid.UUID,
         documents_seen: bool,
         note: str | None,
-        notify_tutor: bool,
     ) -> ApprovalOutcome:
+        """Record the event and queue the tutor's email: every A3 and A4 decision is told."""
         event_id = self.record_event_in_session(
             session,
             tutor_profile_id=profile.id,
@@ -406,21 +467,24 @@ class TutorApprovalRepository:
             documents_seen=documents_seen,
             note=note,
         )
-        if notify_tutor:
-            enqueue_in_session(
-                session,
-                recipient_user_id=profile.user_id,
-                template=LISTING_TEMPLATE,
-                context={"approval_event_id": event_id, "decision": decision.value},
-                dedupe_key=f"listing:{event_id}",
-            )
-        return ApprovalOutcome(
+        outcome = ApprovalOutcome(
             event_id=event_id,
             decision=decision,
             listing_state=profile.listing_state,
             tutor_user_id=profile.user_id,
-            notify_tutor=notify_tutor,
         )
+        enqueue_in_session(
+            session,
+            recipient_user_id=profile.user_id,
+            template=LISTING_TEMPLATE,
+            context={
+                "approval_event_id": event_id,
+                "decision": decision.value,
+                "listed": outcome.listed,
+            },
+            dedupe_key=f"listing:{event_id}",
+        )
+        return outcome
 
     # -- A1, A2 reads -------------------------------------------------------
 
@@ -505,6 +569,7 @@ __all__ = [
     "ApprovalError",
     "ApprovalHistoryEntry",
     "ApprovalOutcome",
+    "DocumentsNotOpenedError",
     "IllegalApprovalTransitionError",
     "NoteRequiredError",
     "NoteTooLongError",

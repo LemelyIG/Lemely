@@ -41,7 +41,9 @@ from lemely.web.push import RecordingPushTransport
 from lemely.web.routers import admin_tutors, tutor_evidence, tutor_profile
 from lemely.web.routers.admin_tutors import get_tutor_approval_repo
 from lemely.web.routers.tutor_evidence import get_tutor_evidence_repo
+from tests.pdf_fakes import born_digital_text_pdf
 from tests.storage_fakes import FakeStorageBackend
+from tests.test_notify_email import spec_listing_copy
 from tests.tutoring_app import app_with_routers
 from tests.tutoring_db import NOW, act_as, add_subject, add_tutor, add_user, emptied_after
 from tests.tutoring_db import tutoring_database as _tutoring_database
@@ -53,7 +55,8 @@ if TYPE_CHECKING:
 
     from lemely.io.storage import StorageBackend
 
-PDF = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< >>\n%%EOF\n"
+#: A real one-page PDF: T6 stores the pages-only rewrite and refuses a PDF without pages.
+PDF = born_digital_text_pdf(pages=1)
 NO_STORE = "private, no-store"
 
 
@@ -267,6 +270,8 @@ def test_idor_a2_evidence_url_ttl_300_and_attachment(
     [disposition] = query["disposition"]
     assert disposition.startswith('attachment; filename="degree.pdf"')
     assert "filename*=UTF-8''degree.pdf" in disposition
+    # T10 review R8: the response type is the row's sniffed type, signed into the URL.
+    assert query["content_type"] == ["application/pdf"]
 
     # Only a platform admin reaches A2: the profile's own tutor and a student are refused.
     for role, user in ((Role.teacher, tutor.user_id), (Role.student, add_user(sm, Role.student))):
@@ -332,11 +337,19 @@ class _SigningFailsFor(FakeStorageBackend):
         self.failing_path = failing_path
 
     def create_signed_url(
-        self, bucket: str, object_path: str, expires_in: int, *, disposition: str | None = None
+        self,
+        bucket: str,
+        object_path: str,
+        expires_in: int,
+        *,
+        disposition: str | None = None,
+        content_type: str | None = None,
     ) -> str:
         if object_path == self.failing_path:
             raise ExternalServiceError("cannot sign")
-        return super().create_signed_url(bucket, object_path, expires_in, disposition=disposition)
+        return super().create_signed_url(
+            bucket, object_path, expires_in, disposition=disposition, content_type=content_type
+        )
 
 
 def test_a2_unsigned_file_has_no_url_and_no_access_row(
@@ -422,6 +435,8 @@ def test_a3_approves_and_tells_the_tutor_after_commit(
 ) -> None:
     tutor = add_tutor(sm, state="pending_review")
     seed_evidence(sm, storage, tutor.profile_id)
+    assert client.get(f"/api/admin/tutors/{tutor.profile_id}").status_code == 200  # opened
+    opened = access_rows(sm)
 
     response = client.post(
         f"/api/admin/tutors/{tutor.profile_id}/approve",
@@ -435,7 +450,7 @@ def test_a3_approves_and_tells_the_tutor_after_commit(
     assert body["documentsSeen"] is True
     assert body["listedSince"] is not None
     assert [item["signedUrl"] for item in body["evidence"]] == [None]  # only A2 issues URLs
-    assert access_rows(sm) == []
+    assert access_rows(sm) == opened  # A3 logs nothing of its own
     assert body["history"][0]["decision"] == "approved"
     assert body["history"][0]["note"] == "Degree checked."
 
@@ -446,13 +461,58 @@ def test_a3_approves_and_tells_the_tutor_after_commit(
         [mail] = session.scalars(sa.select(EmailOutbox)).all()
     assert notice.dedupe_key == mail.dedupe_key
     assert mail.context["decision"] == "approved"
+    assert mail.context["listed"] is True
+
+
+def test_a3_documents_seen_needs_every_file_opened_409(
+    client: TestClient, sm: sessionmaker[Session], storage: FakeStorageBackend, admin: uuid.UUID
+) -> None:
+    """T10 review R3: "Documents seen" is refused until A2 has issued a link to every file."""
+    tutor = add_tutor(sm, state="pending_review")
+    seed_evidence(sm, storage, tutor.profile_id)
+    approve = f"/api/admin/tutors/{tutor.profile_id}/approve"
+
+    refused = client.post(approve, json={"documentsSeen": True})
+
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["code"] == "documents_not_opened"
+    assert refused.headers["cache-control"] == NO_STORE
+    with sm() as session:
+        profile = session.get(TutorProfile, tutor.profile_id)
+        assert profile is not None
+        assert profile.listing_state is TutorListingState.pending_review
+        assert session.scalars(sa.select(EmailOutbox)).all() == []
+    assert _notifications(sm, tutor.user_id) == []
+
+    assert client.get(f"/api/admin/tutors/{tutor.profile_id}").status_code == 200
+    accepted = client.post(approve, json={"documentsSeen": True})
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["documentsSeen"] is True
 
 
 def test_a3_reinstates_by_the_lead_ruling(
     client: TestClient, sm: sessionmaker[Session], admin: uuid.UUID
 ) -> None:
+    """§i.5 and T10 review R4: back to ``listed`` only when approved before with no edit waiting.
+
+    The tutor is told either way, with the copy SPEC §b.4 gives each outcome.
+    """
+    copy = spec_listing_copy()
     never_approved = add_tutor(sm, state="suspended", first_listed_at=None)
     was_listed = add_tutor(sm, state="suspended", first_listed_at=NOW - timedelta(days=60))
+    _set(
+        sm,
+        was_listed.profile_id,
+        submitted_at=NOW - timedelta(days=61),
+        listed_at=NOW - timedelta(days=60),
+    )
+    edit_waiting = add_tutor(sm, state="suspended", first_listed_at=NOW - timedelta(days=60))
+    _set(
+        sm,
+        edit_waiting.profile_id,
+        listed_at=NOW - timedelta(days=60),
+        submitted_at=NOW - timedelta(days=2),
+    )
 
     queued = client.post(
         f"/api/admin/tutors/{never_approved.profile_id}/approve", json={"documentsSeen": False}
@@ -460,16 +520,30 @@ def test_a3_reinstates_by_the_lead_ruling(
     relisted = client.post(
         f"/api/admin/tutors/{was_listed.profile_id}/approve", json={"documentsSeen": False}
     )
+    held = client.post(
+        f"/api/admin/tutors/{edit_waiting.profile_id}/approve", json={"documentsSeen": False}
+    )
 
-    assert queued.status_code == 200
-    assert queued.json()["listingState"] == "pending_review"
-    assert queued.json()["history"][0]["decision"] == "reinstated"
-    assert _notifications(sm, never_approved.user_id) == []
     assert relisted.status_code == 200
     assert relisted.json()["listingState"] == "listed"
     assert relisted.json()["history"][0]["decision"] == "reinstated"
     [notice] = _notifications(sm, was_listed.user_id)
-    assert notice.title == "Your tutor profile is listed again"
+    assert notice.title == copy["listed"]
+    for response, tutor in ((queued, never_approved), (held, edit_waiting)):
+        assert response.status_code == 200, response.text
+        assert response.json()["listingState"] == "pending_review"
+        assert response.json()["history"][0]["decision"] == "reinstated"
+        [notice] = _notifications(sm, tutor.user_id)
+        assert notice.title == copy["pending_review"]
+    with sm() as session:
+        mails = {
+            mail.recipient_user_id: mail.context for mail in session.scalars(sa.select(EmailOutbox))
+        }
+    assert {user: context["listed"] for user, context in mails.items()} == {
+        was_listed.user_id: True,
+        never_approved.user_id: False,
+        edit_waiting.user_id: False,
+    }
 
 
 def test_a3_refusals(client: TestClient, sm: sessionmaker[Session], admin: uuid.UUID) -> None:

@@ -55,6 +55,32 @@ def spec_b4_rows() -> list[list[str]]:
     return rows
 
 
+def _spec_b4_text() -> str:
+    text = SPEC.read_text(encoding="utf-8")
+    start = text.index("### b.4 Side effects")
+    return text[start : text.index("### b.5", start)]
+
+
+def spec_listing_copy() -> dict[str, str]:
+    """The two reinstatement titles SPEC §b.4's listing-decision line gives, by resulting state."""
+    line = next(
+        line for line in _spec_b4_text().splitlines() if line.startswith("**Listing decision copy")
+    )
+    copy = dict(re.findall(r'to `(listed|pending_review)` is titled "([^"]+)"', line))
+    assert set(copy) == {"listed", "pending_review"}, line  # non-vacuity: both outcomes named
+    return copy
+
+
+def spec_listing_context_keys() -> set[str]:
+    """The ``tutor_listing_decision`` context keys SPEC §b.4's listing-decision line names."""
+    line = next(
+        line for line in _spec_b4_text().splitlines() if line.startswith("**Listing decision copy")
+    )
+    match = re.search(r"context is ((?:`[a-z_]+`(?:, | and )?)+)", line)
+    assert match is not None, line
+    return set(re.findall(r"`([a-z_]+)`", match.group(1)))
+
+
 def _booking(audience: str = "tutor", *, child_id: uuid.UUID | None = None) -> dict[str, object]:
     return {
         "booking_id": str(BOOKING_ID),
@@ -81,7 +107,11 @@ VALID: dict[str, dict[str, object]] = {
         "tutor_first_name": "Sara",
         "tutor_last_initial": "M",
     },
-    "tutor_listing_decision": {"approval_event_id": str(EVENT_ID), "decision": "approved"},
+    "tutor_listing_decision": {
+        "approval_event_id": str(EVENT_ID),
+        "decision": "approved",
+        "listed": True,
+    },
     "parent_unlinked": {"event_id": str(EVENT_ID)},
     "parent_linked": {"event_id": str(EVENT_ID)},
     "class_joined_tutor": {
@@ -244,6 +274,57 @@ def test_email_context_never_contains_note_link_location_or_address() -> None:
     allowed_names = {"tutor_first_name", "subject_name"}
     offenders = {f for f in fields if forbidden.search(f) and f not in allowed_names}
     assert offenders == set()
+
+
+def test_listing_decision_context_keys_are_the_spec_ones() -> None:
+    keys = spec_listing_context_keys()
+    assert len(keys) == 3  # non-vacuity: approval_event_id, decision, listed
+    assert EMAIL_TEMPLATES["tutor_listing_decision"].context_fields == keys  # type: ignore[attr-defined]
+    assert set(VALID["tutor_listing_decision"]) == keys
+
+
+@pytest.mark.parametrize(
+    ("decision", "listed", "allowed"),
+    [
+        ("approved", True, True),
+        ("approved", False, False),
+        ("reinstated", True, True),
+        ("reinstated", False, True),
+        ("rejected", False, True),
+        ("rejected", True, False),
+        ("suspended", False, True),
+        ("suspended", True, False),
+        ("closed", False, True),
+        ("closed", True, False),
+    ],
+)
+def test_listing_decision_listed_must_fit_the_decision(
+    decision: str, listed: bool, allowed: bool
+) -> None:
+    """Only a reinstatement may end either way; any other pair would be false copy."""
+    context = {"approval_event_id": str(EVENT_ID), "decision": decision, "listed": listed}
+    if allowed:
+        assert validate_context("tutor_listing_decision", context)["listed"] is listed
+    else:
+        with pytest.raises(InvalidEmailContext):
+            validate_context("tutor_listing_decision", context)
+
+
+@pytest.mark.parametrize(("listed", "outcome"), [(True, "listed"), (False, "pending_review")])
+def test_reinstatement_mail_says_where_the_profile_went(listed: bool, outcome: str) -> None:
+    """T10 EXTRA: a reinstatement back to review never says "listed again" (SPEC §b.4)."""
+    copy = spec_listing_copy()
+    context = {"approval_event_id": str(EVENT_ID), "decision": "reinstated", "listed": listed}
+
+    subject, html_body, text_body = render_email(
+        "tutor_listing_decision", context, app_base_url=BASE_URL
+    )
+
+    other = "pending_review" if outcome == "listed" else "listed"
+    lead = text_body.split("\n\n")[1]
+    assert lead.startswith(copy[outcome])
+    assert copy[other] not in html_body + text_body
+    assert subject == "Your tutor profile"
 
 
 def test_rendered_cancellation_carries_no_reason_text() -> None:

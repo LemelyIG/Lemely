@@ -20,11 +20,20 @@ word:
 * **Images are re-encoded.** A PNG or JPEG is decoded with Pillow and written
   again from its pixels alone, so EXIF (camera, owner, GPS), comments, text
   chunks, XMP and ICC profiles are dropped. The EXIF orientation is applied
-  first, so dropping it does not turn the page. Dimensions over
-  :data:`~lemely.io.scan_limits.MAX_DECODE_PX` (the app's one decode ceiling)
-  are refused from the header, before any pixel is decoded. A PDF is stored
-  byte for byte: it is never parsed here, only sniffed, because nothing renders
-  it (the admin downloads it as an attachment).
+  first, so dropping it does not turn the page. An image over its pixel cap is
+  refused from the header, before any pixel is decoded: the lower of
+  :data:`MAX_EVIDENCE_PX` and the scan path's per-mode ceiling
+  (:func:`~lemely.io.scan_limits.decode_pixel_cap`, T10 review R2).
+* **PDFs are checked as scans are and stored as their pages** (T10 review R1).
+  :func:`~lemely.io.scan_limits.canonical_pdf_bytes` runs the bounded pre-scan
+  and content check, then writes MuPDF's pages-only rewrite, which is what is
+  stored: the catalog (``/OpenAction``, document JavaScript, embedded files),
+  page actions and links are not carried over. Annotations and form widgets
+  are, with what they hold, so a stored PDF that still names an additional
+  action (``/AA``), script (``/JS``, ``/JavaScript``), a program launch
+  (``/Launch``), an attached file (``/EF``, ``/EmbeddedFile``) or an XFA form
+  (``/XFA``) is refused with 415. The admin downloads the result as an
+  attachment and opens it in a local reader, which would honour all of these.
 * **Sizes.** Both the upload and the stored bytes must fit
   :data:`MAX_EVIDENCE_BYTES` (10 MiB, the column CHECK), else 413.
 * **Filenames are display text, never a path.** :func:`sanitise_filename` keeps
@@ -33,9 +42,17 @@ word:
   forces the sniffed type's extension and fits the 200-character column.
   :func:`attachment_disposition` turns it into a header value that is ASCII
   only, with the full name in RFC 5987 ``filename*``.
+* **The decode and the PDF work run in a worker** (T10 review R2).
+  :func:`prepare_evidence` is pure (bytes in, bytes out, no logging) and is the
+  target :func:`prepare_evidence_in_worker` runs in
+  :data:`~lemely.runtime.sandbox.EXTRACTION_WORKER`, the memory-limited child
+  the scan upload check uses (``SCAN_CHECK_TARGET`` in
+  :mod:`lemely.web.upload_utils`): one call at a time, killed past its timeout,
+  so a hostile file costs the child, not the web process. The re-encode holds
+  up to three copies of an image (the decode, the EXIF turn, a mode change),
+  which is why :data:`MAX_EVIDENCE_PX` sits below the scan ceilings.
 
-Pure apart from logging: bytes in, bytes out. The repository and the routes
-decide where the result goes.
+The repository and the routes decide where the result goes.
 """
 
 from __future__ import annotations
@@ -50,7 +67,17 @@ from urllib.parse import quote
 import structlog
 from PIL import Image, ImageOps
 
-from lemely.io.scan_limits import MAX_DECODE_PX, PDF_MAGIC
+from lemely.io.scan_limits import (
+    MAX_SCAN_PAGES,
+    PDF_MAGIC,
+    ScanRejectedError,
+    ScanTooLargeError,
+    canonical_pdf_bytes,
+    decode_pixel_cap,
+    open_checked_pdf,
+)
+from lemely.runtime import sandbox
+from lemely.runtime.errors import LemelyError
 
 if TYPE_CHECKING:
     import uuid
@@ -70,6 +97,20 @@ MAX_EVIDENCE_BYTES: Final = 10 * 1024 * 1024
 
 #: ``tutor_evidence_files.original_filename`` is varchar(200).
 MAX_FILENAME_LENGTH: Final = 200
+
+#: The most pixels an evidence image may have (T10 review R2). Below the scan
+#: ceilings (:data:`~lemely.io.scan_limits.MAX_DECODE_PX`, 40 Mpx colour), because
+#: the re-encode holds more than one full copy of the image where the scan
+#: upload check decodes none. Measured 2026-10-26 (Pillow 12.2, one process per
+#: file): a 6000 x 4000 RGB, CMYK or RGBA image with EXIF orientation 6 grows the
+#: process by 185 MiB (VmHWM 263 MiB from a 78 MiB baseline), inside the
+#: extraction worker's 640 MiB; at the old flat 40 Mpx it is about 310 MiB. It
+#: admits a phone camera's usual output (12 to 24 Mpx) and an A4 page at 500 dpi.
+MAX_EVIDENCE_PX: Final = 24_000_000
+
+#: The worker's name for :func:`prepare_evidence`. Read at each call, so a test
+#: can point it at a stand-in target.
+EVIDENCE_PREPARE_TARGET = "lemely.io.evidence_files.prepare_evidence"
 
 #: The stored extension of each type; the first entry of :data:`_SUFFIXES` per type.
 EXTENSIONS: Final[Mapping[str, str]] = {PDF: "pdf", JPEG: "jpg", PNG: "png"}
@@ -105,14 +146,26 @@ _MARKUP: Final = re.compile(
     re.IGNORECASE,
 )
 
+#: Names that, in a dictionary of the stored (rewritten) PDF, make it act or
+#: carry something besides its pages: see the module docstring. Matched only as
+#: whole names: the next character must end a PDF name (whitespace or a
+#: delimiter), so ``/AAAAAA+Arial``, a subset font's name, is not ``/AA``.
+_ACTIVE_CONTENT: Final = re.compile(
+    r"/(?:AA|JS|JavaScript|Launch|EF|EmbeddedFile|XFA)(?![^\s()<>\[\]{}/%])"
+)
+
 _JPEG_QUALITY: Final = 90
 #: Characters a filesystem or a ``Content-Disposition`` value treats specially.
 _RESERVED: Final = frozenset('"<>|:*?\\/')
 _FALLBACK_STEM: Final = "evidence"
 
 
-class EvidenceFileError(Exception):
-    """An upload this module refuses; ``status`` and ``code`` are what the route sends."""
+class EvidenceFileError(LemelyError):
+    """An upload this module refuses; ``status`` and ``code`` are what the route sends.
+
+    A :class:`~lemely.runtime.errors.LemelyError`, so a refusal raised in the
+    worker crosses the pipe intact; it pickles from its ``args`` (the message).
+    """
 
     status: ClassVar[int] = 422
     code: ClassVar[str] = "invalid_evidence"
@@ -123,14 +176,14 @@ class EvidenceFileError(Exception):
 
 
 class EvidenceTooLargeError(EvidenceFileError):
-    """Over 10 MiB, uploaded or stored, or more pixels than the decode ceiling."""
+    """Over 10 MiB, uploaded or stored; more pixels than the cap; a PDF past the size bounds."""
 
     status: ClassVar[int] = 413
     code: ClassVar[str] = "evidence_too_large"
 
 
 class UnsupportedEvidenceError(EvidenceFileError):
-    """Not a PDF, JPEG or PNG by its bytes, a polyglot, or an image that will not decode."""
+    """Not a PDF, JPEG or PNG by its bytes, a polyglot, undecodable, or a PDF that acts."""
 
     status: ClassVar[int] = 415
     code: ClassVar[str] = "unsupported_evidence_type"
@@ -157,6 +210,16 @@ def _unsupported() -> UnsupportedEvidenceError:
 
 def _too_large() -> EvidenceTooLargeError:
     return EvidenceTooLargeError("Each file can be at most 10 MB.")
+
+
+def _too_many_pixels() -> EvidenceTooLargeError:
+    return EvidenceTooLargeError("This image is too large to process. Save it smaller and retry.")
+
+
+def _pdf_too_large() -> EvidenceTooLargeError:
+    return EvidenceTooLargeError(
+        f"This PDF is too large to check. Upload one of at most {MAX_SCAN_PAGES} pages."
+    )
 
 
 def sniff_content_type(data: bytes) -> str:
@@ -204,8 +267,9 @@ def _reencode(data: bytes, content_type: str) -> bytes:
             if img.format not in _PIL_FORMATS[content_type]:
                 raise _unsupported()
             width, height = img.size
-            if width * height > MAX_DECODE_PX:
-                raise _too_large()
+            # Both caps are read per call, so a test can patch MAX_EVIDENCE_PX.
+            if width * height > min(MAX_EVIDENCE_PX, decode_pixel_cap(img.mode, img.format)):
+                raise _too_many_pixels()
             img.load()
             clean = _pixels_only(img, content_type)
             if content_type == JPEG:
@@ -213,41 +277,119 @@ def _reencode(data: bytes, content_type: str) -> bytes:
             else:
                 clean.save(out, format="PNG")
     except Image.DecompressionBombError as exc:
-        raise _too_large() from exc
+        raise _too_many_pixels() from exc
     except (OSError, ValueError, SyntaxError) as exc:
         raise _unsupported() from exc
     return out.getvalue()
 
 
-def prepare_evidence(
-    data: bytes, *, filename: str | None, declared_type: str | None
-) -> PreparedEvidence:
-    """Check, sniff and (for images) re-encode one upload.
+def _pages_only(data: bytes) -> bytes:
+    """The PDF ``data`` as MuPDF's pages-only rewrite, after the scan checks bounded it.
 
-    ``declared_type`` is the client's multipart content type: logged when it
-    disagrees with the sniffed type, never used.
+    :func:`~lemely.io.scan_limits.canonical_pdf_bytes` runs the raw object-stream
+    pre-scan and the whole-document content check (page cap, content and object
+    bounds, optional-content bounds) on ``data`` before it copies anything, so
+    nothing it refuses is ever parsed further: a size or complexity refusal is
+    413, anything else it cannot check (garbage behind ``%PDF-``, a password, no
+    pages) is 415.
+    """
+    try:
+        return canonical_pdf_bytes(data)
+    except ScanTooLargeError as exc:
+        raise _pdf_too_large() from exc
+    except (ScanRejectedError, ValueError) as exc:
+        raise _unsupported() from exc
+
+
+def _refuse_active_content(pdf: bytes) -> None:
+    """415 when an object of the stored PDF ``pdf`` names an action, a script or a file.
+
+    Each object's dictionary is read as MuPDF prints it: names decoded (``/J#53``
+    is ``/JS``) and stream data left out, so an image's bytes cannot match by
+    chance. A file MuPDF cannot reopen is refused too.
+    """
+    try:
+        doc = open_checked_pdf(pdf)
+    except Exception as exc:
+        raise _unsupported() from exc
+    try:
+        for xref in range(1, int(doc.xref_length())):  # type: ignore[no-untyped-call]
+            printed: str = doc.xref_object(xref, compressed=True)  # type: ignore[no-untyped-call]
+            if _ACTIVE_CONTENT.search(printed):
+                raise _unsupported()
+    except EvidenceFileError:
+        raise
+    except Exception as exc:
+        raise _unsupported() from exc
+    finally:
+        doc.close()  # type: ignore[no-untyped-call]
+
+
+def prepare_evidence(data: bytes, filename: str | None) -> PreparedEvidence:
+    """Check, sniff and rewrite one upload: the worker's target (:data:`EVIDENCE_PREPARE_TARGET`).
+
+    Pure and positional, as a sandbox target must be; it logs nothing, because the
+    worker's log lines would not reach the app's. :func:`prepare_evidence_in_worker`
+    is how the web process calls it.
 
     Raises:
-        EvidenceTooLargeError: the upload or the re-encoded image is over
-            :data:`MAX_EVIDENCE_BYTES`, or the image has too many pixels.
-        UnsupportedEvidenceError: no allowed signature, a polyglot, or an image
-            that does not decode.
+        EvidenceTooLargeError: the upload or the stored bytes are over
+            :data:`MAX_EVIDENCE_BYTES`, an image has more pixels than its cap, or
+            a PDF is past the scan check's size bounds.
+        UnsupportedEvidenceError: no allowed signature, a polyglot, an image that
+            does not decode, a PDF that cannot be checked or rewritten, or a
+            stored PDF that still names an action, a script or an attached file.
     """
     if len(data) > MAX_EVIDENCE_BYTES:
         raise _too_large()
     content_type = sniff_content_type(data)
     _reject_polyglot(data, content_type)
-    if declared_type is not None and declared_type != content_type:
-        log.info("evidence_declared_type_mismatch", declared=declared_type, sniffed=content_type)
-    stored = data if content_type == PDF else _reencode(data, content_type)
+    stored = _pages_only(data) if content_type == PDF else _reencode(data, content_type)
     if not 1 <= len(stored) <= MAX_EVIDENCE_BYTES:
         raise _too_large()
+    if content_type == PDF:
+        _refuse_active_content(stored)
     return PreparedEvidence(
         data=stored,
         content_type=content_type,
         extension=EXTENSIONS[content_type],
         filename=sanitise_filename(filename, content_type),
     )
+
+
+def prepare_evidence_in_worker(
+    data: bytes, *, filename: str | None, declared_type: str | None, timeout: float
+) -> PreparedEvidence:
+    """:func:`prepare_evidence` run in :data:`~lemely.runtime.sandbox.EXTRACTION_WORKER`.
+
+    Blocks for up to ``timeout`` seconds, counting any wait for the worker (one
+    call at a time: a scan extraction, an upload check or another evidence file
+    may hold it); call it off the event loop. An upload over
+    :data:`MAX_EVIDENCE_BYTES` is refused here, before it crosses the pipe.
+    ``declared_type`` (the client's multipart type) is compared with the sniffed
+    type here, in the web process, and a mismatch is logged
+    (``evidence_declared_type_mismatch``); it is never used.
+
+    Raises the worker's :class:`EvidenceFileError` as it was raised, or a
+    :class:`~lemely.runtime.sandbox.SandboxFailure`. With the sandbox disabled
+    the target runs in this process and its exceptions propagate unchanged.
+    """
+    if len(data) > MAX_EVIDENCE_BYTES:
+        raise _too_large()
+    prepared = sandbox.EXTRACTION_WORKER.call(
+        EVIDENCE_PREPARE_TARGET,
+        data,
+        filename,
+        timeout=timeout,
+        result_type=PreparedEvidence,
+    )
+    if declared_type is not None and declared_type != prepared.content_type:
+        log.info(
+            "evidence_declared_type_mismatch",
+            declared=declared_type,
+            sniffed=prepared.content_type,
+        )
+    return prepared
 
 
 def _display_chars(text: str) -> str:
@@ -311,9 +453,11 @@ def evidence_object_path(
 
 __all__ = [
     "ALLOWED_CONTENT_TYPES",
+    "EVIDENCE_PREPARE_TARGET",
     "EXTENSIONS",
     "JPEG",
     "MAX_EVIDENCE_BYTES",
+    "MAX_EVIDENCE_PX",
     "MAX_FILENAME_LENGTH",
     "PDF",
     "PNG",
@@ -324,6 +468,7 @@ __all__ = [
     "attachment_disposition",
     "evidence_object_path",
     "prepare_evidence",
+    "prepare_evidence_in_worker",
     "sanitise_filename",
     "sniff_content_type",
 ]

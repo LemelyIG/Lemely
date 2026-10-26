@@ -7,11 +7,20 @@ The caller's own profile only (O1): both routes resolve it through
 
 **T6 upload**, in this order: the five-file pre-check (cheap, before any bytes
 are stored), at most 10 MiB + 1 read from the spooled upload, the description
-(SC-7), :func:`~lemely.io.evidence_files.prepare_evidence` (magic-byte sniff,
-polyglot refusal, image re-encode; 413/415), the object written under
+(SC-7), :func:`~lemely.io.evidence_files.prepare_evidence_in_worker` (magic-byte
+sniff, polyglot refusal, image re-encode, the PDF scan check and pages-only
+rewrite; 413/415), the object written under
 ``tutor-evidence/{profile}/{uuid}.{ext}`` in the private evidence bucket, then
 the row. If the row is refused (a race past the pre-check, a suspension) the
 object is deleted again; a storage failure is a 503 with no row.
+
+The check runs in the extraction worker (T10 review R2), within the scan upload
+check's timeout (``upload_check_timeout_seconds``, counting any wait for the
+worker), so Pillow and MuPDF never decode an upload in the web process. A
+worker that gives no verdict is logged (``tutor_evidence_check_failed``, with
+its reason) and answered with fixed text: 503 ``evidence_check_unavailable``
+when it is busy or cannot start (try again), 413 when the file ran it out of
+memory, 415 for a timeout, a crash or an error.
 
 **T7 delete** removes the row (scoped to the caller's profile, O20) and commits,
 then deletes the object, best effort: a failure is logged as
@@ -51,10 +60,13 @@ from lemely.db.tutor_profile_repo import (
 from lemely.io.evidence_files import (
     MAX_EVIDENCE_BYTES,
     EvidenceFileError,
+    EvidenceTooLargeError,
+    UnsupportedEvidenceError,
     evidence_object_path,
-    prepare_evidence,
+    prepare_evidence_in_worker,
 )
 from lemely.io.storage import StorageBackend  # noqa: TC001 - FastAPI resolves it at runtime
+from lemely.runtime import sandbox
 from lemely.runtime.config import Settings  # noqa: TC001 - FastAPI resolves it at runtime
 from lemely.runtime.errors import ExternalServiceError
 from lemely.web.deps import get_settings, get_storage_backend
@@ -102,6 +114,30 @@ def evidence_dto(item: EvidenceFile) -> EvidenceDTO:
     )
 
 
+def _check_failed(exc: sandbox.SandboxFailure, *, byte_size: int) -> HTTPException:
+    """The answer when the worker gave no verdict on a file; its own text goes to the log only."""
+    log.warning(
+        "tutor_evidence_check_failed", reason=exc.reason, error=str(exc), byte_size=byte_size
+    )
+    if isinstance(exc, sandbox.SandboxUnavailable):
+        return tutoring_error(
+            503,
+            "evidence_check_unavailable",
+            "Could not check the file just now. Try again in a moment.",
+        )
+    if isinstance(exc, sandbox.SandboxMemory):
+        return tutoring_error(
+            EvidenceTooLargeError.status,
+            EvidenceTooLargeError.code,
+            "This file is too large to check. Upload a smaller file.",
+        )
+    return tutoring_error(
+        UnsupportedEvidenceError.status,
+        UnsupportedEvidenceError.code,
+        "This file could not be checked. Upload a PDF, JPEG or PNG file.",
+    )
+
+
 def _delete_quietly(storage: StorageBackend, bucket: str, path: str) -> None:
     """Remove an object, logging (never raising) a failure as an orphan with its path."""
     try:
@@ -129,11 +165,18 @@ def upload_evidence(
     data = file.file.read(MAX_EVIDENCE_BYTES + 1)
     try:
         cleaned = clean_description(description)
-        prepared = prepare_evidence(data, filename=file.filename, declared_type=file.content_type)
+        prepared = prepare_evidence_in_worker(
+            data,
+            filename=file.filename,
+            declared_type=file.content_type,
+            timeout=sandbox.sandbox_settings().upload_check_timeout_seconds,
+        )
     except EvidenceValidationError as exc:
         raise _http(exc) from exc
     except EvidenceFileError as exc:
         raise tutoring_error(exc.status, exc.code, exc.message) from exc
+    except sandbox.SandboxFailure as exc:
+        raise _check_failed(exc, byte_size=len(data)) from exc
     evidence_id = uuid.uuid4()
     bucket = settings.storage.tutor_evidence_bucket
     path = evidence_object_path(profile.id, evidence_id, prepared.content_type)
