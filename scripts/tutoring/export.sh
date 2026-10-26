@@ -34,6 +34,7 @@ cd "$ROOT"
 ARCHIVE_PATHS=(
   lemely tests corpus scripts pyproject.toml alembic.ini docs/tutoring/SPEC.md
   BUILD/review-rate-baseline.json lemely.toml.example
+  Sources/Physics/MarkingSchemes
 )
 # --web adds web/ plus the repo-root files its unit tests read (designDocs.test.ts
 # reads DESIGN.md and docs/design-canvas-notes.md; ciCopyGate.test.ts reads ci.yml).

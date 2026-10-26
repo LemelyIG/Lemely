@@ -432,6 +432,8 @@ def test_export_command_paths_exclude_reports(tmp_path: Path) -> None:
         "BUILD/review-rate-baseline.json",
         # The settings drift tests and test_tutoring_config read it from the tree root.
         "lemely.toml.example",
+        # test_web_teacher and test_student_correct read the tracked scheme PDFs.
+        "Sources/Physics/MarkingSchemes",
     ]
     assert not [p for p in paths if "reports" in p]
     assert all((ROOT / p).exists() for p in paths), [p for p in paths if not (ROOT / p).exists()]
@@ -463,6 +465,7 @@ def mini_repo(tmp_path: Path) -> Path:
         "docs/tutoring/SPEC.md": "# spec\n",
         "BUILD/review-rate-baseline.json": "{}\n",
         "lemely.toml.example": "# example\n",
+        "Sources/Physics/MarkingSchemes/x.pdf": "pdf\n",
         "reports/huge.json": "{}\n",
         "web/package.json": "{}\n",
         "DESIGN.md": "# design\n",

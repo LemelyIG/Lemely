@@ -75,7 +75,7 @@ ALL_ROLES = frozenset(role.value for role in Role)
 
 # (method, path) → the guard that route must carry. Reviewed, not inferred.
 EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
-    # ── TEACHER (8) ────────────────────
+    # ── TEACHER (12) ────────────────────
     ("POST", "/api/classes"): TEACHER,
     ("DELETE", "/api/classes/{class_id}"): TEACHER,
     ("PATCH", "/api/classes/{class_id}"): TEACHER,
@@ -87,6 +87,13 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("PATCH", "/api/tutor/profile"): TEACHER,
     ("POST", "/api/tutor/profile/submit"): TEACHER,
     ("PUT", "/api/tutor/profile/availability"): TEACHER,
+    # Tutoring T6-T7 (SPEC §c.1): evidence is scoped to the caller's profile (O20).
+    ("POST", "/api/tutor/profile/evidence"): TEACHER,
+    ("DELETE", "/api/tutor/profile/evidence/{evidence_id}"): TEACHER,
+    # Tutoring T18, T21 (SPEC §c.1): role half only; the own-profile rule is
+    # object-level (tests/test_web_tutoring_authz_reviews.py).
+    ("POST", "/api/tutor/reviews/{review_id}/reply"): TEACHER,
+    ("GET", "/api/tutor/reviews"): TEACHER,
     # ── SCHOOL_ADMIN (8) ────────────────────
     ("GET", "/api/school/seats"): SCHOOL_ADMIN,
     ("POST", "/api/school/seats/invite"): SCHOOL_ADMIN,
@@ -104,7 +111,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/school/teachers"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/{teacher_id}/remove"): SCHOOL_ADMIN,
-    # ── PLATFORM_ADMIN (9) ────────────────────
+    # ── PLATFORM_ADMIN (16) ────────────────────
     # P4.7 (UI spec X-01/X-02/X-03), and the first routes in the product gated
     # to this role. Note what the 403 sweep below therefore proves here: a
     # `school_admin` is denied every one of them. There is no super-role, and
@@ -124,6 +131,15 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/admin/schools"): PLATFORM_ADMIN,
     ("PATCH", "/api/admin/schools/{school_id}"): PLATFORM_ADMIN,
     ("POST", "/api/admin/schools/{school_id}/admins"): PLATFORM_ADMIN,
+    # Tutoring A1-A4 (SPEC §c.1): A2 alone issues logged evidence URLs (SC-22, SC-23).
+    ("GET", "/api/admin/tutors"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/tutors/{tutor_id}"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/tutors/{tutor_id}/approve"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/tutors/{tutor_id}/reject"): PLATFORM_ADMIN,
+    # Tutoring A6-A8 (SPEC §c.1): the review and reply moderation queue.
+    ("GET", "/api/admin/tutoring/moderation"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/tutoring/reviews/{review_id}/moderate"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/tutoring/replies/{reply_id}/moderate"): PLATFORM_ADMIN,
     # ── TEACHER_OR_SCHOOL_ADMIN (7) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
@@ -191,10 +207,12 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/public/tutors"): PUBLIC,
     ("GET", "/api/public/tutors/{tutor_id}"): PUBLIC,
     ("GET", "/api/public/tutoring-areas"): PUBLIC,
-    # ── STUDENT_OR_PARENT (2) ────────────────────
+    # ── STUDENT_OR_PARENT (3) ────────────────────
     # Tutoring SP1-SP2 (SPEC §c.1, row 10). SP2 also needs a verified email.
     ("GET", "/api/tutors"): STUDENT_OR_PARENT,
     ("GET", "/api/tutors/{tutor_id}"): STUDENT_OR_PARENT,
+    # SP3: reviews, behind a verified email.
+    ("GET", "/api/tutors/{tutor_id}/reviews"): STUDENT_OR_PARENT,
     # ── AUTH_ANY (19) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
@@ -303,7 +321,16 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,
-    # ── STUDENT (63) ────────────────────
+    # ── STUDENT (67) ────────────────────
+    # Tutoring S6, S7 (SPEC §c.1): a parent cannot review (locked row 7).
+    ("POST", "/api/student/bookings/{booking_id}/review"): STUDENT,
+    ("PATCH", "/api/student/reviews/{review_id}"): STUDENT,
+    # Tutoring S17 (SPEC §c.4, SC-2c): leave a school-less class. New route on
+    # the existing student_classes router.
+    ("DELETE", "/api/student/classes/{class_id}"): STUDENT,
+    # Tutoring S16 (SPEC §c.4, SC-2e): the teachers who see the caller's
+    # progress through a class roster. New route on the existing student router.
+    ("GET", "/api/student/tutor-access/classes"): STUDENT,
     ("GET", "/api/me/student-profile"): STUDENT,
     ("PATCH", "/api/me/student-profile"): STUDENT,
     ("POST", "/api/me/student-profile/complete-onboarding"): STUDENT,

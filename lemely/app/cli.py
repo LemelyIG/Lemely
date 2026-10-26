@@ -1054,6 +1054,31 @@ def audit_bindings_cmd(
     )
 
 
+@cli.group("tutoring")
+def tutoring_group() -> None:
+    """Tutoring marketplace maintenance."""
+
+
+@tutoring_group.command("recompute-ratings")
+@click.option(
+    "--tutor",
+    "tutor",
+    default=None,
+    help="Recompute only this tutor profile id (default: every tutor).",
+)
+@click.pass_context
+def tutoring_recompute_ratings_cmd(ctx: click.Context, tutor: str | None) -> None:
+    """Rewrite stored tutor ratings (rating_sum, rating_count, rank_score) from reviews."""
+    from lemely.app.tutoring_cli import recompute_ratings_command
+    from lemely.db.session import get_sessionmaker
+
+    recompute_ratings_command(
+        get_sessionmaker(_get_settings(ctx)),
+        tutor=tutor,
+        json_output=bool(ctx.obj.get("json_output", False)),
+    )
+
+
 @cli.group("question-bank")
 def question_bank_group() -> None:
     """Question-bank survey and generated-question import (P3.5 chunk B)."""

@@ -24,6 +24,8 @@ from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web.deps import get_settings, get_sweeper
 from lemely.web.routers import (
     admin,
+    admin_tutoring_moderation,
+    admin_tutors,
     announcements,
     auth,
     classes,
@@ -47,12 +49,16 @@ from lemely.web.routers import (
     student_announcements,
     student_classes,
     student_deletion,
+    student_reviews,
     student_self_review,
     study_plan,
     teacher,
+    tutor_evidence,
     tutor_profile,
+    tutor_reviews,
     tutoring_directory,
     tutoring_public,
+    tutoring_reviews,
     widget,
     xp,
 )
@@ -184,6 +190,12 @@ def create_app() -> FastAPI:
     app.include_router(tutoring_public.router)
     app.include_router(tutoring_directory.router)
     app.include_router(tutor_profile.router)
+    app.include_router(tutor_evidence.router)
+    app.include_router(admin_tutors.router)
+    app.include_router(tutoring_reviews.router)
+    app.include_router(student_reviews.router)
+    app.include_router(tutor_reviews.router)
+    app.include_router(admin_tutoring_moderation.router)
 
     @app.exception_handler(EmptyGradeBoundaryStoreError)
     async def _thresholds_not_ingested(
