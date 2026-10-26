@@ -166,3 +166,10 @@ BUILD/accuracy-runs/*/cache/*-real-*/
 
 # Sub-project C live probes: caches and outputs hold reader replies (student answers).
 BUILD/accuracy-runs/claude-c-probe-*/
+
+# Sub-project C run directories: everything is ignored (dev-split output is synthetic, real-split
+# output is student data) except the reports and configs at the top level of each out-dir.
+BUILD/accuracy-runs/claude-c-*/**
+!BUILD/accuracy-runs/claude-c-*/LADDER.md
+!BUILD/accuracy-runs/claude-c-*/FLIP.md
+!BUILD/accuracy-runs/claude-c-*/*.toml

@@ -46,7 +46,16 @@ def test_real_run_nested_and_cache_paths_are_ignored() -> None:
 
 @pytest.mark.parametrize(
     "name",
-    ["LADDER.md", "FLIP.md", "base.toml", "cache/baseline/gemini/k.json"],
+    ["LADDER.md", "FLIP.md", "base.toml", "gemini.toml"],
 )
 def test_committed_ladder_files_stay_trackable(name: str) -> None:
     assert not _ignored(f"{OUT}/{name}")
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["cache/baseline/gemini/k.json", "baseline/records.jsonl", "ladder.json", "F/results.json"],
+)
+def test_dev_split_output_is_ignored_too(name: str) -> None:
+    """Synthetic, but 1,500 files: only the reports and configs are committed."""
+    assert _ignored(f"{OUT}/{name}")
