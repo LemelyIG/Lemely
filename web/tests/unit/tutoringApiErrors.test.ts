@@ -102,6 +102,11 @@ const PARSED = parseRefusalCodes(SPEC)
  * `invalid_duration`), each sent as `detail.code` through `tutoring_error`
  * (`routers/tutor_profile.py`, `tutoring_reviews.py`, the booking routes). */
 const NOT_IN_STATUS_COLUMN = [
+  // Sent to a TUTOR on accept (draft or rejected profile; an active block). The
+  // student routes return the directory's 404 instead, so SPEC §i.7 removed both
+  // from the status column.
+  "tutor_not_listed",
+  "blocked",
   "email_unverified",
   "no_tutor_profile",
   "not_found",
