@@ -14,14 +14,21 @@ inside one transaction so ``now()`` is one instant on both sides:
 
 The generated rows sit on every boundary the rules have: exactly 24 hours before the start, the
 start itself, the end itself and exactly 48 hours after the end.
+
+The guards are also compared in a session whose time zone is ``Africa/Cairo``, at instants either
+side of Cairo's autumn clock change, so that "24 hours before the start" and "48 hours after the
+end" straddle it. There a calendar-day interval (``'1 day'``, which is what a ``timedelta`` bind
+becomes) is 25 wall-clock hours, while the core, the row-18 CHECK and SPEC §i.4 count elapsed
+time.
 """
 
 from __future__ import annotations
 
 import itertools
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import pytest
 import sqlalchemy as sa
@@ -36,6 +43,8 @@ from lemely.core.booking import (
 from lemely.db.booking_repo import (
     BOOKING_WHEN_SQL,
     GUARD_BINDS,
+    QUOTA_BINDS,
+    QUOTA_SINCE_SQL,
     live_pending_count_in_session,
     transition_guard_sql,
 )
@@ -145,35 +154,133 @@ def db_now(session: Session) -> datetime:
     return value
 
 
-def test_transition_guards_match_check_transition(sm: sessionmaker[Session]) -> None:
+#: Every guard, reason and generated row: what one full comparison covers.
+GUARD_COMPARISONS = len(GUARDED) * len(REASONS) * len(STATES) * len(STARTS_IN) * len(REQUESTERS)
+CAIRO = "Africa/Cairo"
+#: How every guard reads the database clock.
+NOW_SQL = "now()"
+
+
+def cairo_autumn_change(year: int) -> datetime:
+    """The UTC instant Cairo's clocks go back in ``year``, found with ``zoneinfo``."""
+    zone = ZoneInfo(CAIRO)
+    step = timedelta(minutes=15)
+    instant = datetime(year, 9, 1, tzinfo=UTC)
+    while instant < datetime(year, 12, 1, tzinfo=UTC):
+        before = instant.astimezone(zone).utcoffset()
+        after = (instant + step).astimezone(zone).utcoffset()
+        if before is not None and after is not None and after < before:
+            return instant + step
+        instant += step
+    raise AssertionError(f"Cairo has no autumn clock change in {year}")
+
+
+def at_instant(fragment: str) -> str:
+    """``fragment`` reading its clock from the bind ``:at`` instead of the database ``now()``."""
+    assert NOW_SQL in fragment, fragment
+    return fragment.replace(NOW_SQL, "CAST(:at AS timestamptz)")
+
+
+def compare_guards(session: Session, now: datetime, *, pinned: bool) -> int:
+    """Every guard against ``check_transition`` over :func:`generated_rows` at ``now``.
+
+    ``pinned``: the guards read the clock from ``:at`` (= ``now``) rather than ``now()``, so
+    ``now`` may be any instant. Returns how many (guard, reason, row) cases were compared.
+    """
+    rows = generated_rows(now)
     compared = 0
-    with sm.begin() as session:
-        now = db_now(session)
-        rows = generated_rows(now)
-        for (action, party), reason in itertools.product(GUARDED, REASONS):
-            sql = evaluate(
-                session,
-                transition_guard_sql(action, party),  # type: ignore[arg-type]
-                rows,
-                {**GUARD_BINDS, "actor_id": ACTOR_PARENT, "reason": reason},
+    for (action, party), reason in itertools.product(GUARDED, REASONS):
+        fragment = transition_guard_sql(action, party)  # type: ignore[arg-type]
+        params: dict[str, object] = {**GUARD_BINDS, "actor_id": ACTOR_PARENT, "reason": reason}
+        if pinned:
+            fragment = at_instant(fragment)
+            params["at"] = now
+        sql = evaluate(session, fragment, rows, params)
+        outcomes = set()
+        for row_id, state, starts_at, ends_at, requested_party, requester in rows:
+            facts = BookingFacts(
+                state=state,  # type: ignore[arg-type]
+                starts_at=starts_at,
+                ends_at=ends_at,
+                viewer=party,  # type: ignore[arg-type]
+                viewer_is_requester=(requested_party == "parent" and requester == ACTOR_PARENT),
+                tutor_outcome_recorded=state in {"completed", "no_show"},
             )
-            outcomes = set()
-            for row_id, state, starts_at, ends_at, requested_party, requester in rows:
-                facts = BookingFacts(
-                    state=state,  # type: ignore[arg-type]
-                    starts_at=starts_at,
-                    ends_at=ends_at,
-                    viewer=party,  # type: ignore[arg-type]
-                    viewer_is_requester=(requested_party == "parent" and requester == ACTOR_PARENT),
-                    tutor_outcome_recorded=state in {"completed", "no_show"},
-                )
-                has_reason = reason is not None and bool(reason.strip())
-                core = check_transition(action, facts, now=now, has_reason=has_reason) is None  # type: ignore[arg-type]
-                assert sql[row_id] is core, (action, party, reason, state, starts_at - now)
-                outcomes.add(core)
-                compared += 1
-            assert outcomes == {True, False}, (action, party, reason)  # each guard can go both ways
-    assert compared == len(GUARDED) * len(REASONS) * len(STATES) * len(STARTS_IN) * len(REQUESTERS)
+            has_reason = reason is not None and bool(reason.strip())
+            core = check_transition(action, facts, now=now, has_reason=has_reason) is None  # type: ignore[arg-type]
+            assert sql[row_id] is core, (action, party, reason, state, starts_at - now, now)
+            outcomes.add(core)
+            compared += 1
+        assert outcomes == {True, False}, (action, party, reason)  # each guard can go both ways
+    return compared
+
+
+def test_transition_guards_match_check_transition(sm: sessionmaker[Session]) -> None:
+    with sm.begin() as session:
+        compared = compare_guards(session, db_now(session), pinned=False)
+    assert compared == GUARD_COMPARISONS
+
+
+def test_transition_guards_count_elapsed_time_across_cairo_dst(sm: sessionmaker[Session]) -> None:
+    """SPEC §i.4: in a Cairo session the guards still count elapsed hours, as the core does.
+
+    At two hours before Cairo's 2026 autumn clock change, "24 hours before the start" of the
+    rows starting about a day later lies across the change; at two hours after it, so does
+    "48 hours after the end" of the rows that ended two days earlier. A calendar-day bind
+    (``'1 day'``, ``'2 days'``) would move each of those thresholds by an hour there.
+    """
+    change = cairo_autumn_change(2026)
+    compared = 0
+    calendar_differs = {"cutoff": 0, "claim": 0}
+    with sm.begin() as session:
+        session.execute(sa.text(f"SET LOCAL TIME ZONE '{CAIRO}'"))
+        assert session.execute(sa.text("SHOW timezone")).scalar_one() == CAIRO
+        for now in (change - timedelta(hours=2), change + timedelta(hours=2)):
+            compared += compare_guards(session, now, pinned=True)
+            # Non-vacuity: this session does tell a calendar day from 24 hours for these rows.
+            rows = generated_rows(now)
+            for name, check in (
+                ("cutoff", "b.starts_at - interval '1 day' <> b.starts_at - interval '24 hours'"),
+                ("claim", "b.ends_at + interval '2 days' <> b.ends_at + interval '48 hours'"),
+            ):
+                calendar_differs[name] += sum(evaluate(session, check, rows, {}).values())
+    assert compared == 2 * GUARD_COMPARISONS
+    assert all(count > 0 for count in calendar_differs.values()), calendar_differs
+
+
+def test_quota_window_is_24_elapsed_hours_across_cairo_dst(sm: sessionmaker[Session]) -> None:
+    """SC-15's window ("10 per 24 h", SPEC §a.3) starts 24 elapsed hours back, in any session."""
+    change = cairo_autumn_change(2026)
+    window = timedelta(hours=24)
+    offsets = (-timedelta(hours=2), timedelta(hours=2), timedelta(hours=23))
+    instants = [change + offset for offset in offsets]
+
+    def utc(value: object) -> datetime:
+        # Compared in UTC: the session renders Cairo time, and Python's == between zones is
+        # always False for a wall time inside the repeated hour (PEP 495).
+        assert isinstance(value, datetime)
+        return value.astimezone(UTC)
+
+    with sm.begin() as session:
+        session.execute(sa.text(f"SET LOCAL TIME ZONE '{CAIRO}'"))
+        assert session.execute(sa.text("SHOW timezone")).scalar_one() == CAIRO
+        for at in instants:
+            since = session.execute(
+                sa.text(f"SELECT {at_instant(QUOTA_SINCE_SQL)}"), {**QUOTA_BINDS, "at": at}
+            ).scalar_one()
+            assert utc(since) == at - window, (at, since)
+        # Non-vacuity: a calendar day back from the later instants crosses the change.
+        crossing = [
+            at
+            for at in instants
+            if utc(
+                session.execute(
+                    sa.text("SELECT CAST(:at AS timestamptz) - interval '1 day'"), {"at": at}
+                ).scalar_one()
+            )
+            != at - window
+        ]
+    assert crossing == instants[1:], crossing
 
 
 def test_every_guard_rejects_actions_the_core_never_allows() -> None:

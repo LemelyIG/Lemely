@@ -96,8 +96,11 @@ const PARSED = parseRefusalCodes(SPEC)
  * profile repository (`lemely/db/tutor_profile_repo.py`: `not_a_teacher`,
  * `invalid_profile`, `invalid_public_name`, `invalid_modes`, `invalid_subjects`,
  * `invalid_rules`) and the review repository (`lemely/db/tutor_review_repo.py`:
- * `not_pending`, `reply_empty`, `empty_update`), each sent as `detail.code`
- * through `tutoring_error` (`routers/tutor_profile.py`, `tutoring_reviews.py`). */
+ * `not_pending`, `reply_empty`, `empty_update`) and the booking service
+ * (`lemely/db/booking_repo.py`: `location_required`, `text_too_long`,
+ * `note_empty`, `student_required`, `invalid_starts_at`, `invalid_window`,
+ * `invalid_duration`), each sent as `detail.code` through `tutoring_error`
+ * (`routers/tutor_profile.py`, `tutoring_reviews.py`, the booking routes). */
 const NOT_IN_STATUS_COLUMN = [
   "email_unverified",
   "no_tutor_profile",
@@ -114,6 +117,13 @@ const NOT_IN_STATUS_COLUMN = [
   "not_pending",
   "reply_empty",
   "empty_update",
+  "location_required",
+  "text_too_long",
+  "note_empty",
+  "student_required",
+  "invalid_starts_at",
+  "invalid_window",
+  "invalid_duration",
 ] as const
 
 describe("SPEC §b.2 refusal codes (the spine)", () => {

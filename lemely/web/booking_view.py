@@ -14,6 +14,9 @@ their pages builds it here, so the disclosure rules live in one place:
   fixed reason never tells a tutor that a block or a sanction was the cause;
 * a tutor never sees the party ``parent``: ``requestedBy``, ``cancelledBy`` and ``completedBy``
   read ``student`` instead (SC-9, SPEC §i.4), so no tutor-facing DTO reveals a parent link;
+* a tutor never sees the party ``system`` either: only a block's sweep cancels as ``system``, so
+  it would tell the tutor that the child blocked them. It reads ``platform_admin``, which with
+  the "Cancelled" reason makes a block's cancellation identical to a suspension's (SC-11);
 * ``allowedActions`` is ``core.booking.allowed_actions`` plus ``post_note``, which the core never
   returns: the builder adds it for a student or tutor viewer from ``can_post_note`` over the
   effective state at the same ``now`` (SPEC §i.4). A suspended or closed tutor gets no write
@@ -27,6 +30,7 @@ The notices (D5.9 §1) are built from the ``notice`` facts a write returns, afte
 
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
 from lemely.core.booking import (
@@ -52,7 +56,7 @@ from lemely.web.tutoring_http import area_ref_dto, iso_instant, tutor_card_dto
 from lemely.web.tutoring_notify import booking_notices, note_notices
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    from collections.abc import Collection, Mapping, Sequence
     from datetime import datetime
     from uuid import UUID
 
@@ -81,14 +85,22 @@ _TUTOR_WRITE_ACTIONS: Final = frozenset(
 _LINK_STATES: Final = frozenset({"accepted", "completed", "no_show"})
 _VIEWERS: Final = frozenset({"student", "tutor", "parent"})
 _SYSTEM_PARTIES: Final = frozenset({"system", "platform_admin"})
+#: The parties a tutor viewer reads in place of the stored ones (SC-9, SC-11).
+_TUTOR_PARTY: Final[Mapping[str, str]] = MappingProxyType(
+    {"parent": "student", "system": "platform_admin"}
+)
 _ACCEPT_LISTINGS: Final = frozenset({"listed", "pending_review"})
 _INACTIVE_LISTINGS: Final = frozenset({"suspended", "closed"})
 
 
 def _party_for(viewer: Actor, party: Party | str | None) -> str | None:
-    """A booking party as ``viewer`` may read it: a tutor never sees ``parent`` (SC-9)."""
-    if party == "parent" and viewer.party == "tutor":
-        return "student"
+    """A booking party as ``viewer`` may read it.
+
+    A tutor never sees ``parent`` (SC-9) nor ``system`` (SC-11: only a block cancels as
+    ``system``); they read ``student`` and ``platform_admin``.
+    """
+    if viewer.party == "tutor":
+        return _TUTOR_PARTY.get(party, party) if party is not None else None
     return party
 
 

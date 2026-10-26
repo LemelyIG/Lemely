@@ -14,6 +14,8 @@ Two kinds of proof, as in ``tests/test_tutoring_concurrency_reviews.py``:
 ``test_race_pending_limit_concurrent_requests_at_most_5`` is the proof for the student's
 ``users`` row ``FOR UPDATE`` in create (BK-2, SC-24). ``test_race_unlink_vs_parent_booking_create``
 proves both orders of a parent's request and the child unlinking them (BK-3, SPEC §i.6).
+``test_race_sweep_vs_create_for_the_same_student_never_deadlocks`` proves that a suspension's or a
+block's cancellations take the affected students' rows before touching a booking (§a.4b step 2).
 """
 
 from __future__ import annotations
@@ -251,6 +253,82 @@ def test_race_unlink_vs_parent_booking_create(
     assert isinstance(create2.error, BookingRefused), create2.error
     assert create2.error.code == "not_linked"
     assert live_requests(sm, w2.student) == 0
+
+
+def _sweep(service: BookingService, session: Session, w: World, kind: str) -> list[uuid.UUID]:
+    """The caller's part of a suspension or a block (§a.4b), then the booking sweep itself."""
+    session.execute(
+        sa.text("SELECT 1 FROM tutor_profiles WHERE id = :t FOR UPDATE"),
+        {"t": w.tutor.profile_id},
+    )
+    if kind == "suspension":
+        return service.cancel_future_for_tutor_in_session(
+            session, tutor_profile_id=w.tutor.profile_id
+        )
+    booking_repo.lock_pair_in_session(
+        session, student_id=w.student, tutor_profile_id=w.tutor.profile_id
+    )
+    return service.cancel_future_for_pair_in_session(
+        session,
+        tutor_profile_id=w.tutor.profile_id,
+        student_id=w.student,
+        actor_user_id=w.tutor.user_id,  # the tutor blocks: the student is emailed
+    )
+
+
+@pytest.mark.parametrize("kind", ["suspension", "block"])
+def test_race_sweep_vs_create_for_the_same_student_never_deadlocks(
+    sm: sessionmaker[Session],
+    service: BookingService,
+    w: World,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    """A sweep and a create for one student queue behind each other; they never deadlock.
+
+    The create (with a second tutor, at the time of the student's booking with the swept tutor)
+    is paused holding the student's row ``FOR UPDATE``. The sweep must then queue *before* it
+    touches that booking. If it cancelled the booking first and only took the student row for
+    the foreign key of the student's email, the create's student-slot exclusion check would wait
+    for the half-cancelled row while the sweep waited for the student row: Postgres would kill
+    one of them (``40P01``). Queued first, the create finds the booking still active and is
+    refused ``student_busy``, and the sweep then cancels it.
+    """
+    start = slot(timedelta(days=3))
+    swept = add_booking(sm, w, state="accepted", starts_at=start)
+    second_tutor = another_tutor(sm, w.subject)
+    pause = PauseFirstCall(booking_repo.live_pending_count_in_session)
+    monkeypatch.setattr(booking_repo, "live_pending_count_in_session", pause)
+
+    create = _Paused(lambda: request(service, w, tutor=second_tutor, starts_at=start))
+    assert pause.reached.wait(timeout=30), "the create never reached its pending count"
+
+    def sweep() -> list[uuid.UUID]:
+        with sm.begin() as session:
+            return _sweep(service, session, w, kind)
+
+    sweeper = _Paused(sweep)
+    try:
+        _wait_until_a_backend_waits_on_a_lock(sm)  # the sweep queues on the student row
+    finally:
+        pause.release()
+        create.join()
+        sweeper.join()
+
+    assert sweeper.error is None, sweeper.error
+    assert sweeper.result == [swept]
+    assert isinstance(create.error, BookingRefused), create.error
+    assert create.error.code == "student_busy"
+    with sm() as session:
+        states = (
+            session.execute(
+                sa.text("SELECT state::text FROM tutor_bookings WHERE student_id = :s"),
+                {"s": w.student},
+            )
+            .scalars()
+            .all()
+        )
+    assert states == ["cancelled"]
 
 
 @pytest.fixture

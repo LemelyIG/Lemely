@@ -717,14 +717,26 @@ def test_tutor_late_cancel_persists_reason_and_party(
     )
 
 
+#: The compare-and-set statement of every booking transition.
+UPDATE_BOOKINGS = re.compile(r"\s*UPDATE\s+tutor_bookings\b", re.IGNORECASE)
+
+
 @pytest.mark.parametrize("reason", [None, "", "   "])
 def test_tutor_late_cancel_without_reason_refused_by_core_422(
     sm: sessionmaker[Session], service: BookingService, w: World, reason: str | None
 ) -> None:
+    """The service's own core check refuses before the compare-and-set is even tried.
+
+    The code alone cannot tell the layers apart: without that check the ``UPDATE`` matches no
+    row and ``_missed`` re-runs the core, giving the same 422. So the proof is that no
+    ``UPDATE tutor_bookings`` statement was sent.
+    """
     booking = add_booking(sm, w, state="accepted", starts_in=timedelta(hours=10))
-    with pytest.raises(BookingRefused) as excinfo:
+    with count_statements(sm) as seen, pytest.raises(BookingRefused) as excinfo:
         service.transition(booking_id=booking, actor=w.tutor_actor, action="cancel", reason=reason)
     assert refused(excinfo) == ("reason_required", 422)
+    assert any("FROM tutor_bookings" in statement for statement in seen)  # non-vacuity
+    assert [statement for statement in seen if UPDATE_BOOKINGS.match(statement)] == []
     assert stored(sm, booking).state is BookingState.accepted
     assert outbox(sm) == []
 
@@ -851,8 +863,18 @@ def test_authz_parent_actions_refused_after_unlink(
 
 
 def test_failed_transition_writes_no_outbox_row(
-    sm: sessionmaker[Session], service: BookingService, w: World
+    sm: sessionmaker[Session],
+    service: BookingService,
+    w: World,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A refusal writes nothing, and neither does a change that fails after queueing its emails.
+
+    The refusals all raise before any email is queued, so on their own they cannot show where the
+    outbox rows are written. The second half fails the transition *after* both emails were queued
+    (``is_late_cancel`` runs in ``_announce`` after ``_enqueue_emails``): nothing may remain,
+    because the rows belong to the change's own transaction (SPEC §b.4, D5.9 §1).
+    """
     add_parent(sm, w.student)
     booking = add_booking(sm, w, state="accepted", starts_in=timedelta(hours=10))
     refusals = [
@@ -866,6 +888,30 @@ def test_failed_transition_writes_no_outbox_row(
             service.transition(booking_id=booking, actor=actor, action=action, reason=reason)  # type: ignore[arg-type]
     assert outbox(sm) == []
     assert stored(sm, booking).state is BookingState.accepted
+
+    early = add_booking(sm, w, state="accepted", starts_in=timedelta(hours=30))
+    queued: list[object] = []
+    real_enqueue = booking_repo.enqueue_in_session
+
+    def counting_enqueue(*args: object, **kwargs: object) -> bool:
+        queued.append(kwargs["template"])
+        return real_enqueue(*args, **kwargs)  # type: ignore[arg-type]
+
+    def failing_late_check(**_: object) -> bool:
+        raise RuntimeError("failed after the emails were queued")
+
+    monkeypatch.setattr(booking_repo, "enqueue_in_session", counting_enqueue)
+    monkeypatch.setattr(booking_repo, "is_late_cancel", failing_late_check)
+    with pytest.raises(RuntimeError, match="after the emails were queued"):
+        service.transition(booking_id=early, actor=w.student_actor, action="cancel")
+    assert queued == ["booking_cancelled", "booking_cancelled"]  # the tutor and the parent
+    assert outbox(sm) == []
+    db = stored(sm, early)
+    assert (db.state, db.cancelled_at, db.cancelled_by_user_id) == (
+        BookingState.accepted,
+        None,
+        None,
+    )
 
 
 def test_cancel_quota_429_after_10_per_day(
@@ -936,6 +982,50 @@ def test_accept_in_person_needs_a_contact_free_location(
     assert (row.state, row.location_detail, row.meeting_link) == ("accepted", PLACE, None)
 
 
+DISALLOWED_LINK = "http://zoom.us/j/1"
+CONTACT_PLACE = "Ring me at 01001234567 at the gate"
+
+
+@pytest.mark.parametrize(
+    ("mode", "details", "kept"),
+    [
+        ("virtual", AcceptDetails(meeting_link=LINK, location_detail=CONTACT_PLACE), (LINK, None)),
+        ("virtual", AcceptDetails(meeting_link=LINK, location_detail="x" * 400), (LINK, None)),
+        (
+            "in_person",
+            AcceptDetails(location_detail=PLACE, meeting_link=DISALLOWED_LINK),
+            (None, PLACE),
+        ),
+        (
+            "other",
+            AcceptDetails(meeting_link=DISALLOWED_LINK, location_detail=CONTACT_PLACE),
+            (None, None),
+        ),
+    ],
+    ids=["virtual-contact-place", "virtual-long-place", "in-person-bad-link", "other-both-bad"],
+)
+def test_accept_checks_only_the_detail_its_mode_keeps(
+    sm: sessionmaker[Session],
+    service: BookingService,
+    w: World,
+    mode: str,
+    details: AcceptDetails,
+    kept: tuple[str | None, str | None],
+) -> None:
+    """A detail the session's mode does not use is dropped unread (SPEC §a.3, SC-7).
+
+    It is never stored (the ``meeting_link_mode``/``location_detail_mode`` CHECKs), so it can
+    carry no contact detail anywhere, and it must not refuse the accept either.
+    """
+    booking = add_booking(sm, w, state="requested", mode=mode, starts_in=timedelta(days=2))
+    row = service.transition(
+        booking_id=booking, actor=w.tutor_actor, action="accept", accept=details
+    )
+    assert (row.state, row.meeting_link, row.location_detail) == ("accepted", *kept)
+    db = stored(sm, booking)
+    assert (db.meeting_link, db.location_detail) == kept
+
+
 @pytest.mark.parametrize("blocker", ["student", "tutor"])
 def test_authz_accept_refused_when_blocked(
     sm: sessionmaker[Session], service: BookingService, w: World, blocker: str
@@ -988,11 +1078,12 @@ def test_authz_tutor_writes_refused_when_suspended_or_closed(
     assert stored(sm, booking).state is BookingState(state)
 
 
+@pytest.mark.parametrize("listing", ["draft", "rejected"])
 def test_accept_refused_for_a_rejected_listing(
-    sm: sessionmaker[Session], service: BookingService, w: World
+    sm: sessionmaker[Session], service: BookingService, w: World, listing: str
 ) -> None:
     booking = add_booking(sm, w, state="requested", starts_in=timedelta(days=2))
-    set_listing(sm, w.tutor, "rejected")
+    set_listing(sm, w.tutor, listing)
     with pytest.raises(BookingRefused) as excinfo:
         service.transition(
             booking_id=booking,
@@ -1001,6 +1092,10 @@ def test_accept_refused_for_a_rejected_listing(
             accept=AcceptDetails(meeting_link=LINK),
         )
     assert refused(excinfo) == ("tutor_not_listed", 409)
+    # The tutor is told about their own profile, not "this tutor" as a family is (SP6).
+    message = excinfo.value.message.lower()
+    assert "your" in message, message
+    assert "this tutor" not in message, message
     set_listing(sm, w.tutor, "pending_review")  # pending review may still accept (§a.3)
     row = service.transition(
         booking_id=booking,

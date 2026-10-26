@@ -23,7 +23,10 @@ states, live pending requests, listing visibility and blocks are the fragments o
    student (an outbox row, a note, ``cancelled_by_user_id``), and those foreign-key checks take
    ``KEY SHARE`` on the student row. Taken late, that check would wait on a create holding the
    row ``FOR UPDATE`` while the create waits on this write's pair lock: a deadlock. ``KEY SHARE``
-   does not conflict with the child row's ``FOR NO KEY UPDATE`` that an unlink takes (T09);
+   does not conflict with the child row's ``FOR NO KEY UPDATE`` that an unlink takes (T09). The
+   sweeps (block, suspension, close) follow the same rule for every student they cancel for:
+   they take those rows ``FOR KEY SHARE``, in id order, before their ``UPDATE`` (see
+   ``BookingService._cancel_future``);
 3. the pair lock, ``pg_advisory_xact_lock(hashtextextended(student_id || ':' || tutor_profile_id,
    0))`` (:func:`lock_pair_in_session`, shared with the grant and block paths);
 4. a parent actor's link, ``ParentLinkService.lock_link_in_session`` (``FOR SHARE``), always
@@ -136,9 +139,22 @@ SYSTEM_CANCEL_REASON: Final = "This session was cancelled."
 ADMIN_CANCEL_REASON: Final = "This session was cancelled by Lemely."
 
 #: The binds every :func:`transition_guard_sql` fragment may name besides ``actor_id`` and
-#: ``reason``: the row-18 cutoff and the outcome-claim delay, from ``core.booking``.
+#: ``reason``: the row-18 cutoff and the outcome-claim delay from ``core.booking``, as elapsed
+#: seconds (SPEC §i.4). Never bind a ``timedelta`` here: psycopg sends ``timedelta(hours=24)`` as
+#: ``'1 day'``, a calendar day, and in a session whose time zone keeps daylight saving
+#: (``Africa/Cairo``) ``starts_at - interval '1 day'`` is 23 or 25 hours across a clock change,
+#: so the guard would disagree with the core and with the CHECK's literal ``'24 hours'``.
 GUARD_BINDS: Final[Mapping[str, object]] = MappingProxyType(
-    {"cancel_cutoff": CANCEL_CUTOFF, "claim_after": OUTCOME_CLAIM_AFTER}
+    {
+        "cancel_cutoff_s": CANCEL_CUTOFF.total_seconds(),
+        "claim_after_s": OUTCOME_CLAIM_AFTER.total_seconds(),
+    }
+)
+#: The start of the SC-15 quota window, :data:`QUOTA_WINDOW` of elapsed time before ``now()``.
+QUOTA_SINCE_SQL: Final = "now() - make_interval(secs => CAST(:quota_window_s AS double precision))"
+#: The bind :data:`QUOTA_SINCE_SQL` names, in seconds for the reason given at :data:`GUARD_BINDS`.
+QUOTA_BINDS: Final[Mapping[str, object]] = MappingProxyType(
+    {"quota_window_s": QUOTA_WINDOW.total_seconds()}
 )
 
 # ---------------------------------------------------------------------------
@@ -208,6 +224,11 @@ _MESSAGES: Final[Mapping[str, str]] = MappingProxyType(
         "tutor_closed": "Your tutor profile is closed.",
         "access_ended": "You can't accept this request.",
     }
+)
+#: ``tutor_not_listed`` as the tutor reads it when accepting on a draft or rejected profile: the
+#: message above is the family's (SP6) and speaks of "this tutor".
+_TUTOR_NOT_LISTED_FOR_TUTOR: Final = (
+    "Your tutor profile is not listed right now, so you can't accept requests."
 )
 
 
@@ -419,11 +440,14 @@ _ALIAS: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _REQUESTER: Final = (
     "{b}.requested_by_party = 'parent' AND {b}.requested_by_user_id = CAST(:actor_id AS uuid)"
 )
+#: ``CANCEL_CUTOFF`` and ``OUTCOME_CLAIM_AFTER`` as elapsed-time intervals (:data:`GUARD_BINDS`).
+_CUTOFF: Final = "make_interval(secs => CAST(:cancel_cutoff_s AS double precision))"
+_CLAIM_AFTER: Final = "make_interval(secs => CAST(:claim_after_s AS double precision))"
 _FAMILY_CANCEL: Final = (
     "(({b}.state = 'requested' AND now() < {b}.starts_at) OR "
-    "({b}.state = 'accepted' AND now() <= {b}.starts_at - CAST(:cancel_cutoff AS interval)))"
+    f"({{b}}.state = 'accepted' AND now() <= {{b}}.starts_at - {_CUTOFF}))"
 )
-_CLAIM: Final = "({b}.state = 'accepted' AND now() >= {b}.ends_at + CAST(:claim_after AS interval))"
+_CLAIM: Final = f"({{b}}.state = 'accepted' AND now() >= {{b}}.ends_at + {_CLAIM_AFTER})"
 _BEFORE_START_ACTIVE: Final = "({b}.state IN ('requested', 'accepted') AND now() < {b}.starts_at)"
 _ENDED_ACCEPTED: Final = "({b}.state = 'accepted' AND now() >= {b}.ends_at)"
 _ANSWERABLE: Final = "({b}.state = 'requested' AND now() < {b}.starts_at)"
@@ -439,7 +463,7 @@ _GUARDS: Final[Mapping[tuple[str, str], str]] = MappingProxyType(
         # Row 18: until the start, and inside CANCEL_CUTOFF only with a non-blank reason.
         ("cancel", "tutor"): (
             "({b}.state = 'accepted' AND now() < {b}.starts_at AND "
-            "(now() <= {b}.starts_at - CAST(:cancel_cutoff AS interval) OR "
+            f"(now() <= {{b}}.starts_at - {_CUTOFF} OR "
             "(CAST(:reason AS text) IS NOT NULL "
             "AND char_length(btrim(CAST(:reason AS text))) >= 1)))"
         ),
@@ -459,9 +483,10 @@ def transition_guard_sql(action: Action, party: Party, alias: str = "b") -> str:
     """The compare-and-set ``WHERE`` fragment for ``party`` applying ``action`` to ``alias``.
 
     Exactly the state, time and requester rules of ``core.booking.check_transition`` (SPEC §a.3),
-    against the database ``now()``. Binds: ``:cancel_cutoff`` and ``:claim_after``
-    (:data:`GUARD_BINDS`), ``:actor_id`` (a parent's own id) and ``:reason`` (the trimmed reason,
-    or NULL). Raises :class:`ValueError` for a pair the core never allows, or a bad alias.
+    against the database ``now()``. Binds: ``:cancel_cutoff_s`` and ``:claim_after_s``
+    (:data:`GUARD_BINDS`, elapsed seconds), ``:actor_id`` (a parent's own id) and ``:reason``
+    (the trimmed reason, or NULL). Raises :class:`ValueError` for a pair the core never allows,
+    or a bad alias.
     """
     if _ALIAS.fullmatch(alias) is None:
         raise ValueError(f"alias must be a plain SQL alias, got {alias!r}")
@@ -531,7 +556,7 @@ _CREATE_FACTS_SQL: Final = (
     "EXISTS (SELECT 1 FROM student_tutoring_preferences p WHERE p.user_id = :student_id "
     "AND p.safety_notice_acknowledged_at IS NOT NULL) AS acknowledged, "
     "(SELECT count(*) FROM tutor_bookings q WHERE q.requested_by_user_id = :requester_id "
-    "AND q.created_at > now() - CAST(:quota_window AS interval)) AS created_recently, "
+    f"AND q.created_at > {QUOTA_SINCE_SQL}) AS created_recently, "
     "(SELECT coalesce(json_agg(json_build_array(r.iso_weekday, r.start_minute, r.end_minute)), "
     "'[]'::json) FROM tutor_availability_rules r WHERE r.tutor_profile_id = tp.id) AS rules "
     "FROM tutor_profiles tp WHERE tp.id = :tutor_profile_id"
@@ -1129,11 +1154,11 @@ class BookingService:
             session.execute(
                 sa.text(_CREATE_FACTS_SQL),
                 {
+                    **QUOTA_BINDS,
                     "tutor_profile_id": tutor_profile_id,
                     "student_id": student_id,
                     "requester_id": requester.user_id,
                     "subject_code": subject_code,
-                    "quota_window": QUOTA_WINDOW,
                 },
             )
             .mappings()
@@ -1208,19 +1233,12 @@ class BookingService:
         ``complete`` from a student or parent is the 48-hour claim (``claim_complete``).
         ``reason`` is the decline or cancel reason (trimmed; required from a tutor inside 24 h
         of the start, row 18). ``accept`` carries the meeting link (virtual) or place (in
-        person); a value the mode does not use is dropped. Raises :class:`BookingRefused`; an
-        idempotent repeat returns the row with ``notice=None``.
+        person); only the one the booking's mode keeps is checked, and the other is dropped
+        unread (:meth:`_accept_values`). Raises :class:`BookingRefused`; an idempotent repeat
+        returns the row with ``notice=None``.
         """
         resolved = self._resolve_action(actor, action)
         clean_reason = _clean_text(reason, limit=MAX_REASON_LENGTH, what="A reason")
-        link = (accept.meeting_link or "").strip() or None if accept is not None else None
-        place = (
-            _clean_text(accept.location_detail, limit=MAX_LOCATION_LENGTH, what="The place")
-            if accept is not None
-            else None
-        )
-        if resolved == "accept" and link is not None and not meeting_link_allowed(link):
-            raise _refuse("meeting_link_not_allowed")
         with self._sessionmaker.begin() as session:
             tutor_profile_id, student_id = self._locate(session, booking_id, actor)
             self._lock_for_change(
@@ -1242,8 +1260,9 @@ class BookingService:
             )
             if refusal is not None:
                 raise _refuse(refusal.code)
-            if resolved == "accept":
-                link, place = self._accept_values(facts, link, place)
+            link, place = (
+                self._accept_values(facts, accept) if resolved == "accept" else (None, None)
+            )
             if resolved == "cancel":
                 self._check_cancel_quota(session, actor.user_id)
             changed = self._compare_and_set(
@@ -1318,20 +1337,33 @@ class BookingService:
 
     @staticmethod
     def _accept_values(
-        facts: _ChangeFacts, link: str | None, place: str | None
+        facts: _ChangeFacts, accept: AcceptDetails | None
     ) -> tuple[str | None, str | None]:
-        """The accept guards beyond the core's (SPEC §a.3, BK-4) and the details the mode keeps."""
+        """The accept guards beyond the core's (SPEC §a.3, BK-4), then ``(link, place)`` to store.
+
+        Only the detail the booking's mode keeps is read and checked: a virtual session needs an
+        allowlisted meeting link, an in-person one a place free of contact details (SC-7). The
+        other detail is dropped unread, so it is never stored (the ``meeting_link_mode`` and
+        ``location_detail_mode`` CHECKs) and cannot refuse the accept; mode ``other`` keeps
+        neither.
+        """
         if facts.blocked:
             raise _refuse("access_ended")
         if facts.listing_state not in _ACCEPT_LISTINGS:
-            raise _refuse("tutor_not_listed")
+            raise _refuse("tutor_not_listed", _TUTOR_NOT_LISTED_FOR_TUTOR)
         if not facts.subject_is_student:
             raise _refuse("illegal_transition")
         if facts.mode == "virtual":
-            if link is None:
+            link = (accept.meeting_link or "").strip() if accept is not None else ""
+            if not link or not meeting_link_allowed(link):
                 raise _refuse("meeting_link_not_allowed")
             return link, None
         if facts.mode == "in_person":
+            place = _clean_text(
+                accept.location_detail if accept is not None else None,
+                limit=MAX_LOCATION_LENGTH,
+                what="The place",
+            )
             if place is None:
                 raise _refuse("location_required")
             return None, place
@@ -1341,10 +1373,10 @@ class BookingService:
     def _check_cancel_quota(session: Session, user_id: uuid.UUID) -> None:
         count = session.execute(
             sa.text(
-                "SELECT count(*) FROM tutor_bookings WHERE cancelled_by_user_id = :u "
-                "AND cancelled_at > now() - CAST(:quota_window AS interval)"
+                "SELECT count(*) FROM tutor_bookings WHERE cancelled_by_user_id = :u "  # noqa: S608 - constant
+                f"AND cancelled_at > {QUOTA_SINCE_SQL}"
             ),
-            {"u": user_id, "quota_window": QUOTA_WINDOW},
+            {**QUOTA_BINDS, "u": user_id},
         ).scalar_one()
         if int(count) >= CANCEL_QUOTA:
             raise _refuse("too_many_requests")
@@ -1888,12 +1920,35 @@ class BookingService:
         actor_user_id: uuid.UUID | None,
         tell_tutor: bool,
     ) -> list[uuid.UUID]:
+        """Cancel the active bookings ``where`` selects that have not started, then queue emails.
+
+        **Lock rule (SPEC §a.4b step 2, §i.6).** Before any booking row is touched, the ``users``
+        rows of every student this sweep will cancel for are taken ``FOR KEY SHARE``, in id
+        order. The emails queued afterwards reference those students, and their foreign-key
+        checks take that same lock; taken only then, after the ``UPDATE``, it deadlocks against a
+        booking create for one of those students with another tutor. The create holds the
+        student row ``FOR UPDATE`` (step 2) and its student-slot exclusion check waits for this
+        transaction's half-cancelled row, while this transaction waits for the student row
+        (``40P01``). Taken first, the sweep simply queues behind the create, or the create behind
+        the sweep. The set of students cannot grow between the lock and the ``UPDATE``: the
+        caller holds the tutor row ``FOR UPDATE`` (step 1), so no booking with this tutor can be
+        created meanwhile, and ``now()`` is fixed for the transaction.
+        """
+        bound = {**GUARD_BINDS, **params, "party": party, "cancelled_by": None, "reason": reason}
+        guard = transition_guard_sql("cancel", party)
+        session.execute(
+            sa.text(
+                "SELECT 1 FROM users WHERE id IN (SELECT b.student_id FROM tutor_bookings b "  # noqa: S608 - constants
+                f"WHERE {where} AND {guard}) ORDER BY id FOR KEY SHARE"
+            ),
+            bound,
+        )
         cancelled = session.execute(
             sa.text(
                 f"UPDATE tutor_bookings AS b SET {_SET['cancel']}, updated_at = now() "  # noqa: S608 - constants
-                f"WHERE {where} AND {transition_guard_sql('cancel', party)} RETURNING b.id"
+                f"WHERE {where} AND {guard} RETURNING b.id"
             ),
-            {**GUARD_BINDS, **params, "party": party, "cancelled_by": None, "reason": reason},
+            bound,
         ).all()
         ids = [_uuid(found[0]) for found in cancelled]
         if not ids:
@@ -1987,6 +2042,8 @@ __all__ = [
     "MAX_NOTE_LENGTH",
     "MAX_PAGE_SIZE",
     "MAX_REASON_LENGTH",
+    "QUOTA_BINDS",
+    "QUOTA_SINCE_SQL",
     "QUOTA_WINDOW",
     "SYSTEM_CANCEL_REASON",
     "AcceptDetails",

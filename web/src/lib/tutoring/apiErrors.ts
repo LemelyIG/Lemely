@@ -23,8 +23,8 @@ import { ApiError } from "@/lib/api"
  * column and fails if one is missing here. The rest, from `email_unverified` on,
  * are sent by the backend but not spelled out in that column: `email_unverified`
  * (SPEC §0), `no_tutor_profile` (the tutor-route preamble), and the codes of
- * `tutoring_http.py`, `deps_tutoring.py`, `tutor_profile_repo.py` and
- * `tutor_review_repo.py`. The test lists them by name.
+ * `tutoring_http.py`, `deps_tutoring.py`, `tutor_profile_repo.py`,
+ * `tutor_review_repo.py` and `booking_repo.py`. The test lists them by name.
  *
  * One code can mean two things on two routes: `access_ended` is the 403 a tutor
  * gets when a student's grant has ended (T20) and the 409 a tutor gets when
@@ -99,6 +99,14 @@ export const TUTORING_ERROR_CODES = [
   "not_pending",
   "reply_empty",
   "empty_update",
+  // Booking service (SP5, SP6, S3, S5, T11-T13, T17, PA4, `booking_repo.py`), all 422
+  "location_required",
+  "text_too_long",
+  "note_empty",
+  "student_required",
+  "invalid_starts_at",
+  "invalid_window",
+  "invalid_duration",
 ] as const
 
 export type TutoringErrorCode = (typeof TUTORING_ERROR_CODES)[number]
@@ -177,6 +185,13 @@ export const TUTORING_ERROR_COPY: Readonly<Record<TutoringErrorCode, string>> = 
   not_pending: "That has already been decided.",
   reply_empty: "Write a reply first.",
   empty_update: "Change the stars or the text first.",
+  location_required: "Add where the session will take place.",
+  text_too_long: "That text is too long. Shorten it and try again.",
+  note_empty: "Write a note first.",
+  student_required: "Choose which child the session is for.",
+  invalid_starts_at: "That start time can't be used. Choose a time from the list.",
+  invalid_window: "Choose dates from today up to 28 days ahead.",
+  invalid_duration: "Choose a session length of 45, 60, 90 or 120 minutes.",
 }
 
 const KNOWN: ReadonlySet<string> = new Set(TUTORING_ERROR_CODES)

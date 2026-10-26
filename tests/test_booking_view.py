@@ -162,21 +162,40 @@ def test_meeting_link_never_reaches_a_viewer_outside_the_booking() -> None:
 
 
 @pytest.mark.parametrize(
-    ("party", "stored", "tutor_sees"),
+    ("party", "stored", "tutor_sees", "tutor_party"),
     [
-        ("system", "This session was cancelled.", "Cancelled"),
-        ("platform_admin", "This session was cancelled by Lemely.", "Cancelled"),
-        ("student", "Exam clash", "Exam clash"),
-        ("tutor", "I am unwell", "I am unwell"),
+        ("system", "This session was cancelled.", "Cancelled", "platform_admin"),
+        ("platform_admin", "This session was cancelled by Lemely.", "Cancelled", "platform_admin"),
+        ("student", "Exam clash", "Exam clash", "student"),
+        ("tutor", "I am unwell", "I am unwell", "tutor"),
     ],
 )
 def test_system_cancel_reason_shows_cancelled_to_tutor(
-    party: str, stored: str, tutor_sees: str
+    party: str, stored: str, tutor_sees: str, tutor_party: str
 ) -> None:
+    """SC-11: only a block's sweep cancels as ``system``, so a tutor who reads ``system`` learns
+    that the child blocked them. The tutor reads a platform cancellation instead, worded and
+    attributed exactly as a suspension's; the family keeps the stored party and reason."""
     row = make_row(state="cancelled", cancelled_by_party=party, cancel_reason=stored)
-    assert dto_for(row, AS_TUTOR)["cancelReason"] == tutor_sees
-    assert dto_for(row, AS_STUDENT)["cancelReason"] == stored
-    assert dto_for(row, AS_PARENT)["cancelReason"] == stored
+    tutor = dto_for(row, AS_TUTOR)
+    assert (tutor["cancelReason"], tutor["cancelledBy"]) == (tutor_sees, tutor_party)
+    for viewer in (AS_STUDENT, AS_PARENT):
+        family = dto_for(row, viewer)
+        assert (family["cancelReason"], family["cancelledBy"]) == (stored, party)
+
+
+def test_tutor_cannot_tell_a_block_from_a_platform_cancellation() -> None:
+    """Everything a tutor's DTO says about a block's cancellation equals a suspension's (SC-11)."""
+    swept = make_row(
+        state="cancelled", cancelled_by_party="system", cancel_reason="This session was cancelled."
+    )
+    by_platform = replace(
+        swept,
+        cancelled_by_party="platform_admin",
+        cancel_reason="This session was cancelled by Lemely.",
+    )
+    assert dto_for(swept, AS_TUTOR) == dto_for(by_platform, AS_TUTOR)
+    assert dto_for(swept, AS_STUDENT) != dto_for(by_platform, AS_STUDENT)  # non-vacuity
 
 
 def test_review_fields_student_viewer_only() -> None:
