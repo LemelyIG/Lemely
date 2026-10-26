@@ -166,6 +166,102 @@ hardcoded routes.
   affordance before the first interaction, so an unmoved slider never reads
   as an answer the student gave.
 
+## Tutoring marketplace components (C-17..C-24, T15)
+
+Defined in `docs/tutoring/SPEC.md` §d. Pure layout and copy logic lives in
+`web/src/lib/tutoring/` so the node-only unit runner can test it; the
+components are thin. All are token-only and use logical properties. The shared
+rules: every chart has a real table alternative, no meaning is carried by
+colour alone, ordinal data stays ordered, an under-threshold figure says it is
+hidden instead of drawing an empty chart, and `loading` is a skeleton of the
+same shape. Error and offline states belong to the fetching screen (C-11, via
+`QueryState`). The copy rule (`check:copy`) bans "improvement" and "verified"
+in all of these files.
+
+## C-17 — Ordinal distribution
+`ordinal-distribution.tsx` — `OrdinalDistribution({ ladder, distribution, subjectName, loading })`
+- Horizontal stacked bar over the ordered ladder from `Outcomes.ladder`
+  (never declared in the frontend). Pure SVG in percentages. Segments take the
+  grade-band colours of C-1 via `gradeBand`; each is labelled with grade and
+  count, and a label moves below the bar (with a leader line, spread apart)
+  when its segment is too narrow to hold it.
+- Every rung is listed under the bar, a rung nobody reached as 0. Caption
+  states `n` (and how many more have no grade). "Show as table" toggles a real
+  `<table>` with a caption. The chart is `role="img"` with a full-sentence
+  label that speaks every rung.
+- `state: "insufficient"` renders the C-11 compact empty state with S-34's copy,
+  `k` taken from the figure. Logic: `lib/tutoring/ordinalLayout.ts`.
+
+## C-18 — Grade change summary
+`grade-change-summary.tsx` — `GradeChangeSummary({ change, headingAs, loading })`
+- Three-part bar, "Lower grade · Same grade · Higher grade", with
+  `ArrowDown` / `Equals` / `ArrowUp` and a count each, `n` caption and the same
+  table toggle. Title fixed in code ("Change in grade while with this tutor"),
+  not a prop.
+- Neutral by design: a light-to-dark ink ramp, no grade-band, green or red
+  colour, so a lower grade is not drawn as a mark against the tutor.
+- Insufficient state as C-17. Logic: `lib/tutoring/gradeChange.ts`.
+
+## C-19 — Slot picker
+`slot-picker.tsx` — `SlotPicker({ slots, value, onChange, loading, disabled, disabledReason })`
+- Day chips (wrapping) and the times of the chosen day, both native radio
+  groups, so arrow keys move within each group. Slots are grouped by the
+  tutor's calendar day in the tutor's zone, with the zone label in the legend;
+  a day without times is still a chip ("No times") and shows "No times on this
+  day." when chosen. A repeated hour when the clocks go back carries its UTC
+  offset, so no label stands for two instants. The chosen time shows a check
+  and is repeated in words. Logic: `lib/tutoring/slotGroups.ts`.
+
+## C-20 — Booking status
+`booking-status.tsx` — `BookingStatus({ state })`
+- Icon and word for each of the eight effective states (SPEC §a.3), on the
+  status `Chip`; every state has its own label and its own icon. Renders the
+  state the API computed; never derives one from times. Logic:
+  `lib/tutoring/bookingStatus.ts`.
+
+## C-21 — Notes thread
+`notes-thread.tsx` — `NotesThread({ notes, viewer, canPost, frozen, zone, zoneLabel, onPost, onReport, ... })`
+- Notes oldest first with author label and tutor-zone time; plain text only,
+  never auto-linked. A hidden note reads "Removed by Lemely" and has no Report
+  button. Fixed line "Notes can be reported. Lemely staff read notes only when
+  one is reported."; a tutor's composer always adds "This student's parents can
+  read these notes."; a frozen thread shows "Notes are paused while Lemely looks
+  at a report." and no composer. A parent's thread is read-only but reportable.
+  Copy: `lib/tutoring/safetyNoticeCopy.ts`.
+
+## C-22 — Rating summary
+`rating-summary.tsx` — `RatingSummary({ rating })`
+- "4.6 · 12 students" (one decimal) with one star glyph, or a "New" pill below
+  three students; never a row of stars. The whole thing is one `role="img"`
+  with a full-sentence label. A "rated" rating with no average or fewer than
+  three students is shown as New. Logic: `lib/tutoring/ratingLabel.ts`.
+
+## C-23 — Tutor card
+`tutor-card.tsx` — `TutorCard({ tutor, to, headingAs })`
+- Public name, headline, C-22, subject tags (`SubjectTag`), ways to meet as
+  icon plus word, and the area. With `to`, the name is a link stretched over the
+  whole card. Shows only `TutorCard` fields, so it is safe on the open web.
+
+## C-24 — Safety notice sheet
+`safety-notice-sheet.tsx` — `SafetyNoticeSheet({ open, onAcknowledge, pending, error })`
+- The first-booking notice on `Modal`, not dismissible: no close control, no
+  Escape, no scrim click; the one "I understand" button calls `onAcknowledge`
+  (S15). Title, five paragraphs and button are fixed by the SPEC and parsed from
+  it by `safetyNotice.test.ts`.
+
+## Report and block sheets (T15)
+- `web/src/components/tutoring/report-sheet.tsx` —
+  `ReportSheet({ open, onClose, targetType, targetLabel, onSubmit, pending, error, sent })`.
+  One sheet for every Report: reason (required, the seven `reportreason`
+  values; the disputed outcome only on a booking), optional words (1000
+  characters, the database limit), the helpline beside a safety concern, a
+  "Report sent" view.
+- `web/src/components/tutoring/block-sheet.tsx` —
+  `BlockSheet({ open, viewer, counterpartName, onConfirm, onCancel, pending, error })`.
+  Lists the effects of a block (SPEC §a.2) before the button; not dismissible
+  by accident; "Block" and "Don't block". Both built on `Modal` (focus moves in,
+  is trapped, and returns on close), with copy in `safetyNoticeCopy.ts`.
+
 ## Known follow-ups for the P2.5.3 retrofit
 - Two pre-token-system components duplicate new library components and
   should be deleted in favor of the new ones once screens are retrofitted:
