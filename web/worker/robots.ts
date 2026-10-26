@@ -20,7 +20,15 @@
 // 2. A `caches.default` read-through for the public, unauthenticated GETs
 //    (P1-P3), shared by the /api/* proxy and the card lookup. It shields
 //    Postgres from repeated identical requests; it is not a rate limit.
+//
+// Responses that `fetch()`, a binding or the cache hand back have immutable
+// headers, so nothing here edits one in place: a header change is always made
+// on a copy (`new Response(res.body, res)`).
 import type { Env } from "./index";
+
+/** The one ExecutionContext method this module needs: stores run after the
+ * response, via `ctx.waitUntil`, never on the request path. */
+export type BackgroundWork = Pick<ExecutionContext, "waitUntil">;
 
 /** `X-Robots-Tag` for the directory page. */
 export const DIRECTORY_ROBOTS_TAG = "noindex, follow";
@@ -53,17 +61,40 @@ export function isPublicCacheablePath(pathname: string): boolean {
 }
 
 /**
+ * Whether an upstream response may be shared from the edge cache: a 200 that
+ * says `public`, carries no `Set-Cookie`, and does not also say `private`,
+ * `no-store`, `no-cache` or a zero `max-age`/`s-maxage`. Anything the backend
+ * did not explicitly mark shareable is never shared.
+ */
+function isStorable(res: Response): boolean {
+	if (res.status !== 200 || res.headers.has("Set-Cookie")) return false;
+	const directives = (res.headers.get("Cache-Control") ?? "")
+		.toLowerCase()
+		.split(",")
+		.map((directive) => directive.trim())
+		.filter((directive) => directive !== "");
+	if (!directives.includes("public")) return false;
+	return directives.every((directive) => {
+		const [name, value] = directive.split("=").map((part) => part.trim());
+		if (name === "private" || name === "no-store" || name === "no-cache") return false;
+		if (name === "max-age" || name === "s-maxage") return Number(value) > 0;
+		return true;
+	});
+}
+
+/**
  * Read-through over `caches.default`, keyed on `cacheUrl` alone.
  *
  * The key is a bare GET with no headers, so nothing the client sends
- * (`If-None-Match`, `Range`, cookies) can shape what the cache answers. A
- * response is stored only when it is a 200 that does not mark itself
- * `private` or `no-store`, and it is stored with this module's own TTL. A
- * cache that fails to read or write never fails the request.
+ * (`If-None-Match`, `Range`, cookies) can shape what the cache answers. Only
+ * a storable response (`isStorable`) is kept, with this module's own TTL, and
+ * the store runs in `ctx.waitUntil` after the response has gone back. A cache
+ * that fails to read or write never fails the request.
  */
 export async function readThroughPublicCache(
 	cacheUrl: string,
 	fetchUpstream: () => Promise<Response>,
+	ctx: BackgroundWork,
 ): Promise<Response> {
 	const cache = caches.default;
 	const key = new Request(cacheUrl, { method: "GET" });
@@ -74,26 +105,27 @@ export async function readThroughPublicCache(
 		// An unreadable cache is a miss.
 	}
 	const res = await fetchUpstream();
-	const cacheControl = res.headers.get("Cache-Control") ?? "";
-	if (res.status === 200 && !/\b(?:private|no-store)\b/i.test(cacheControl)) {
+	if (isStorable(res)) {
+		// `res` is immutable; the stored copy gets its own headers.
 		const copy = res.clone();
 		const stored = new Response(copy.body, copy);
 		stored.headers.set("Cache-Control", `public, max-age=${PUBLIC_CACHE_TTL_SECONDS}`);
-		try {
-			await cache.put(key, stored);
-		} catch {
-			// Not stored; the next request asks the backend again.
-		}
+		// A failed store is not an error: the next request asks the backend.
+		ctx.waitUntil(cache.put(key, stored).catch(() => undefined));
 	}
 	return res;
 }
 
 /** The `X-Robots-Tag` a tutor page gets, or `null` for an indexable card. */
-async function robotsTagFor(url: URL, env: Pick<Env, "BACKEND_URL">): Promise<string | null> {
+async function robotsTagFor(
+	url: URL,
+	env: Pick<Env, "BACKEND_URL">,
+	ctx: BackgroundWork,
+): Promise<string | null> {
 	if (url.pathname === "/tutors") return DIRECTORY_ROBOTS_TAG;
 	const card = CARD_PATH.exec(url.pathname);
 	if (!card) return NOINDEX_ROBOTS_TAG;
-	return (await lookupIndexable(card[1], url, env)) ? null : NOINDEX_ROBOTS_TAG;
+	return (await lookupIndexable(card[1], url, env, ctx)) ? null : NOINDEX_ROBOTS_TAG;
 }
 
 /**
@@ -109,6 +141,7 @@ async function lookupIndexable(
 	tutorId: string,
 	pageUrl: URL,
 	env: Pick<Env, "BACKEND_URL">,
+	ctx: BackgroundWork,
 ): Promise<boolean> {
 	const path = `/api/public/tutors/${tutorId}`;
 	const controller = new AbortController();
@@ -121,14 +154,17 @@ async function lookupIndexable(
 	});
 	const answer = (async (): Promise<boolean> => {
 		try {
-			const res = await readThroughPublicCache(new URL(path, pageUrl).href, () =>
-				fetch(
-					new Request(new URL(path, env.BACKEND_URL).href, {
-						method: "GET",
-						redirect: "manual",
-						signal: controller.signal,
-					}),
-				),
+			const res = await readThroughPublicCache(
+				new URL(path, pageUrl).href,
+				() =>
+					fetch(
+						new Request(new URL(path, env.BACKEND_URL).href, {
+							method: "GET",
+							redirect: "manual",
+							signal: controller.signal,
+						}),
+					),
+				ctx,
 			);
 			if (res.status !== 200) return false;
 			const body: unknown = await res.json();
@@ -153,9 +189,10 @@ async function lookupIndexable(
 export async function handleTutorPage(
 	request: Request,
 	env: Pick<Env, "ASSETS" | "BACKEND_URL">,
+	ctx: BackgroundWork,
 ): Promise<Response> {
 	const [robotsTag, asset] = await Promise.all([
-		robotsTagFor(new URL(request.url), env),
+		robotsTagFor(new URL(request.url), env, ctx),
 		env.ASSETS.fetch(request),
 	]);
 	// A binding's response has immutable headers; copy it to change them.

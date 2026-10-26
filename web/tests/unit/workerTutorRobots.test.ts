@@ -12,32 +12,19 @@ import worker, { type Env } from "../../worker/index.ts"
  * indexed. `/api/public/tutors*` and `/api/public/tutoring-areas` get a
  * 60-second `caches.default` read-through; nothing else under `/api/*` does.
  *
- * Node environment, as SPEC §b.5 says: `ASSETS`, `fetch` and `caches` are
- * stubbed and the worker's default export is driven directly. Every expected
- * value comes from somewhere other than the worker source: header values,
- * the timeout, the TTL, the lookup path and the `run_worker_first` list are
- * parsed out of SPEC §b.5's own text, and the five security headers out of
- * `public/_headers`.
+ * Node environment, as SPEC §b.5 says: `ASSETS`, `fetch`, `caches` and the
+ * ExecutionContext are stubbed and the worker's default export is driven
+ * directly. Every response a stub hands the worker has immutable headers, as
+ * real Workers responses from `fetch()`, a binding or the cache do. Every
+ * expected value comes from somewhere other than the worker source: header
+ * values, the timeout, the TTL, the lookup path and the `run_worker_first`
+ * list are parsed out of SPEC §b.5's own text, and the five security headers
+ * out of `public/_headers`.
+ *
+ * The Workers-only names the worker source uses (`Fetcher`, `ExecutionContext`,
+ * `caches.default`, `ExportedHandler`) are declared for this project in
+ * `support/workersRuntime.d.ts`.
  */
-
-/*
- * The Workers runtime names the worker source uses. The worker project
- * (`worker/tsconfig.json`) typechecks them against @cloudflare/workers-types;
- * this project compiles with the DOM lib, whose globals conflict with that
- * package (see the worker tsconfig's own comment), so it declares the slices
- * the stubs below provide instead.
- */
-declare global {
-  interface CacheStorage {
-    readonly default: Cache
-  }
-  interface Fetcher {
-    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>
-  }
-  interface ExportedHandler<Env = unknown> {
-    fetch?: (request: Request, env: Env) => Response | Promise<Response>
-  }
-}
 
 const WEB = join(import.meta.dirname, "..", "..")
 const REPO = join(WEB, "..")
@@ -110,32 +97,50 @@ interface SeenRequest {
   body: string | null
 }
 
+/**
+ * What the Workers runtime hands a Worker from `fetch()`, a binding or the
+ * cache: a response whose headers refuse every change (and whose clones do
+ * too). A handler that edits such a response in place throws there, so it
+ * throws here.
+ */
+function immutable(res: Response): Response {
+  const refuse = (): never => {
+    throw new TypeError("Can't modify immutable headers.")
+  }
+  for (const method of ["set", "delete", "append"] as const) {
+    Object.defineProperty(res.headers, method, { value: refuse, configurable: true })
+  }
+  const clone = res.clone.bind(res)
+  Object.defineProperty(res, "clone", { value: () => immutable(clone()), configurable: true })
+  return res
+}
+
 function asRequest(input: RequestInfo | URL, init?: RequestInit): Request {
   return input instanceof Request && init === undefined ? input : new Request(input, init)
 }
 
 /** An in-memory `caches.default`: keyed on the key's URL, GET only, and a
- * stored response is read back as a fresh copy, as the platform does. */
+ * stored response is read back as a fresh immutable copy, as the platform
+ * does. `gate`, when set, holds every `put` until it resolves. */
 class MemoryCache {
   readonly stored = new Map<string, { body: ArrayBuffer; status: number; headers: [string, string][] }>()
   readonly keys: SeenRequest[] = []
+  gate: Promise<void> | null = null
 
   readonly match = vi.fn(async (key: RequestInfo | URL): Promise<Response | undefined> => {
     const request = asRequest(key)
     this.keys.push(await snapshot(request))
     const hit = request.method === "GET" ? this.stored.get(request.url) : undefined
-    return hit && new Response(hit.body, { status: hit.status, headers: hit.headers })
+    return hit && immutable(new Response(hit.body, { status: hit.status, headers: hit.headers }))
   })
 
   readonly put = vi.fn(async (key: RequestInfo | URL, response: Response): Promise<void> => {
     const request = asRequest(key)
     this.keys.push(await snapshot(request))
     if (request.method !== "GET") throw new TypeError("Cache.put accepts GET requests only")
-    this.stored.set(request.url, {
-      body: await response.arrayBuffer(),
-      status: response.status,
-      headers: [...response.headers],
-    })
+    const body = await response.arrayBuffer()
+    if (this.gate) await this.gate
+    this.stored.set(request.url, { body, status: response.status, headers: [...response.headers] })
   })
 }
 
@@ -155,17 +160,30 @@ let backendCalls: SeenRequest[]
 let respond: (request: Request) => Response | Promise<Response>
 let assetsFetch: ReturnType<typeof vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>>
 let env: Env
+let background: Promise<unknown>[]
+let ctx: { waitUntil: ReturnType<typeof vi.fn<(promise: Promise<unknown>) => void>> }
 
 const backendFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const request = asRequest(input, init)
   backendCalls.push(await snapshot(request))
-  return respond(request)
+  return immutable(await respond(request))
 })
 
-function json(body: unknown, status = 200): Response {
+/** Let every `ctx.waitUntil` promise so far settle (the stores finish). */
+async function drainBackground(): Promise<void> {
+  while (background.length > 0) await Promise.all(background.splice(0))
+}
+
+/** Settle the background stores, then empty the cache. */
+async function resetCache(): Promise<void> {
+  await drainBackground()
+  cache.stored.clear()
+}
+
+function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json", "cache-control": "public, max-age=60" },
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=60", ...headers },
   })
 }
 
@@ -178,35 +196,50 @@ function page(path: string, init?: RequestInit): Request {
 }
 
 function shell(extraHeaders: Record<string, string> = {}): Response {
-  return new Response(SHELL, {
-    status: 200,
-    headers: {
-      "content-type": "text/html; charset=utf-8",
-      "cache-control": SHELL_CACHE_CONTROL,
-      ...extraHeaders,
-    },
-  })
+  return immutable(
+    new Response(SHELL, {
+      status: 200,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": SHELL_CACHE_CONTROL,
+        ...extraHeaders,
+      },
+    }),
+  )
+}
+
+/** Resolves with the response, or with "blocked" if it takes longer than
+ * `ms` (real timers). */
+function within<T>(promise: Promise<T>, ms: number): Promise<T | "blocked"> {
+  return Promise.race([promise, new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), ms))])
 }
 
 beforeEach(() => {
   cache = new MemoryCache()
   backendCalls = []
+  background = []
   respond = () => new Response("no backend response configured", { status: 599 })
   backendFetch.mockClear()
   assetsFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => shell())
   env = { BACKEND_URL: BACKEND, ASSETS: { fetch: assetsFetch } }
+  ctx = {
+    waitUntil: vi.fn((promise: Promise<unknown>) => {
+      background.push(promise)
+    }),
+  }
   vi.stubGlobal("fetch", backendFetch)
   vi.stubGlobal("caches", { default: cache })
 })
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers()
+  await drainBackground()
   vi.unstubAllGlobals()
 })
 
 const lookupUrl = (id: string): string => `${BACKEND}${LOOKUP_PATH_TEMPLATE.replace("{id}", id)}`
 
-// ── the parsed sources are what this file thinks they are ───────────────────
+// ── the parsed sources and the stubs are what this file thinks they are ─────
 
 describe("expectations parsed from SPEC §b.5 and public/_headers", () => {
   it("found every value it needs (non-vacuity)", () => {
@@ -220,6 +253,18 @@ describe("expectations parsed from SPEC §b.5 and public/_headers", () => {
     // SPEC §b.5: "the five security headers".
     expect(SECURITY_HEADERS.length).toBe(5)
   })
+
+  it("the stub responses refuse header edits, clones included (canary)", () => {
+    const res = immutable(new Response("x", { headers: { a: "1" } }))
+    expect(() => res.headers.set("a", "2")).toThrow(TypeError)
+    expect(() => res.headers.delete("a")).toThrow(TypeError)
+    expect(() => res.headers.append("b", "1")).toThrow(TypeError)
+    expect(() => res.clone().headers.set("a", "2")).toThrow(TypeError)
+    // A copy made the way a Worker must make one is editable.
+    const copy = new Response(res.body, res)
+    copy.headers.set("a", "2")
+    expect(copy.headers.get("a")).toBe("2")
+  })
 })
 
 // ── tutor pages ─────────────────────────────────────────────────────────────
@@ -229,7 +274,7 @@ describe("tutor pages (row 17)", () => {
     for (const path of ["/tutors", "/tutors?subject=physics&mode=online"]) {
       assetsFetch.mockClear()
       const request = page(path)
-      const res = await worker.fetch(request, env)
+      const res = await worker.fetch(request, env, ctx)
 
       expect(res.status).toBe(200)
       expect(await res.text()).toBe(SHELL)
@@ -254,8 +299,8 @@ describe("tutor pages (row 17)", () => {
       [`/tutors/${TUTOR_ID}`, { method: "HEAD" }],
     ]
     for (const [path, init] of cases) {
-      cache.stored.clear()
-      const res = await worker.fetch(page(path, init), env)
+      await resetCache()
+      const res = await worker.fetch(page(path, init), env, ctx)
       expect(res.status).toBe(200)
       expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8")
       expect(res.headers.has("X-Robots-Tag"), `${init?.method ?? "GET"} ${path}`).toBe(false)
@@ -265,14 +310,14 @@ describe("tutor pages (row 17)", () => {
     // Even if the platform ever applied a header rule to the asset response,
     // an indexable card still leaves without X-Robots-Tag.
     assetsFetch.mockImplementation(async () => shell({ "X-Robots-Tag": "noindex" }))
-    const res = await worker.fetch(page(`/tutors/${TUTOR_ID}`), env)
+    const res = await worker.fetch(page(`/tutors/${TUTOR_ID}`), env, ctx)
     expect(res.headers.has("X-Robots-Tag")).toBe(false)
     expect(await res.text()).toBe(SHELL)
   })
 
   it("sends noindex, nofollow when the tutor opted out", async () => {
     respond = () => json(card(false))
-    const res = await worker.fetch(page(`/tutors/${TUTOR_ID}`), env)
+    const res = await worker.fetch(page(`/tutors/${TUTOR_ID}`), env, ctx)
 
     expect(res.headers.get("X-Robots-Tag")).toBe(CARD_NOINDEX_TAG)
     expect(res.status).toBe(200)
@@ -284,7 +329,7 @@ describe("tutor pages (row 17)", () => {
     // P2's one predicate: unknown, unlisted, paused, suspended and closed all
     // answer the same 404 body.
     respond = () => json({ detail: "Not Found" }, 404)
-    const res = await worker.fetch(page(`/tutors/${TUTOR_ID}`), env)
+    const res = await worker.fetch(page(`/tutors/${TUTOR_ID}`), env, ctx)
 
     expect(res.headers.get("X-Robots-Tag")).toBe(CARD_NOINDEX_TAG)
     // The page itself is still the SPA shell; the SPA renders its own 404.
@@ -310,10 +355,10 @@ describe("tutor pages (row 17)", () => {
       ["JSON true", () => json(true)],
     ]
     for (const [name, outcome] of outcomes) {
-      cache.stored.clear()
+      await resetCache()
       backendFetch.mockClear()
       respond = outcome
-      const res = await worker.fetch(page(`/tutors/${TUTOR_ID}`), env)
+      const res = await worker.fetch(page(`/tutors/${TUTOR_ID}`), env, ctx)
       expect(res.headers.get("X-Robots-Tag"), name).toBe(CARD_NOINDEX_TAG)
       expect(await res.text(), name).toBe(SHELL)
       expect(backendFetch, name).toHaveBeenCalledTimes(1)
@@ -321,7 +366,7 @@ describe("tutor pages (row 17)", () => {
 
     // Timeout: a lookup that never answers is abandoned at the SPEC's limit,
     // not before, and the subrequest is cancelled.
-    cache.stored.clear()
+    await resetCache()
     backendCalls = []
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
     respond = (request) =>
@@ -329,7 +374,7 @@ describe("tutor pages (row 17)", () => {
         request.signal.addEventListener("abort", () => reject(new Error("aborted")))
       })
     let settled = false
-    const pending = worker.fetch(page(`/tutors/${TUTOR_ID}`), env).then((res) => {
+    const pending = worker.fetch(page(`/tutors/${TUTOR_ID}`), env, ctx).then((res) => {
       settled = true
       return res
     })
@@ -361,7 +406,7 @@ describe("tutor pages (row 17)", () => {
     ]
     for (const path of paths) {
       assetsFetch.mockClear()
-      const res = await worker.fetch(page(path), env)
+      const res = await worker.fetch(page(path), env, ctx)
       expect(res.headers.get("X-Robots-Tag"), path).toBe(CARD_NOINDEX_TAG)
       expect(await res.text(), path).toBe(SHELL)
       expect(assetsFetch, path).toHaveBeenCalledTimes(1)
@@ -388,8 +433,9 @@ describe("tutor pages (row 17)", () => {
     expect(inbound.headers.get("cookie")).not.toBeNull()
     expect(inbound.headers.get("authorization")).not.toBeNull()
 
-    const res = await worker.fetch(inbound, env)
+    const res = await worker.fetch(inbound, env, ctx)
     expect(res.headers.has("X-Robots-Tag")).toBe(false)
+    await drainBackground()
 
     expect(backendCalls).toHaveLength(1)
     const lookup = backendCalls[0]
@@ -414,10 +460,10 @@ describe("tutor pages (row 17)", () => {
   })
 
   it("sets the five security headers on /tutors responses", async () => {
-    respond = (request) => json(card(!request.url.endsWith(TUTOR_ID.replace("3f", "4f"))))
     const optedOut = TUTOR_ID.replace("3f", "4f")
+    respond = (request) => json(card(!request.url.endsWith(optedOut)))
     for (const path of ["/tutors", `/tutors/${TUTOR_ID}`, `/tutors/${optedOut}`, "/tutors/not-a-uuid"]) {
-      const res = await worker.fetch(page(path), env)
+      const res = await worker.fetch(page(path), env, ctx)
       expect(await res.text(), path).toBe(SHELL)
       for (const [name, value] of SECURITY_HEADERS) {
         expect(res.headers.get(name), `${name} on ${path}`).toBe(value)
@@ -494,7 +540,7 @@ describe("/api/* proxy", () => {
         "CF-Connecting-IP": "198.51.100.4",
       },
     })
-    const res = await worker.fetch(inbound, env)
+    const res = await worker.fetch(inbound, env, ctx)
 
     expect(backendCalls).toHaveLength(1)
     const proxied = backendCalls[0]
@@ -519,6 +565,7 @@ describe("/api/* proxy", () => {
     expect(assetsFetch).not.toHaveBeenCalled()
     expect(cache.match).not.toHaveBeenCalled()
     expect(cache.put).not.toHaveBeenCalled()
+    expect(ctx.waitUntil).not.toHaveBeenCalled()
   })
 
   it("/api/public/tutors read-through serves the cached response on the second call", async () => {
@@ -534,8 +581,9 @@ describe("/api/* proxy", () => {
     ]
     for (const path of paths) {
       backendFetch.mockClear()
-      const first = await worker.fetch(new Request(`${ORIGIN}${path}`, { headers: { authorization: "Bearer a" } }), env)
-      const second = await worker.fetch(new Request(`${ORIGIN}${path}`), env)
+      const first = await worker.fetch(new Request(`${ORIGIN}${path}`, { headers: { authorization: "Bearer a" } }), env, ctx)
+      await drainBackground()
+      const second = await worker.fetch(new Request(`${ORIGIN}${path}`), env, ctx)
       expect(backendFetch, path).toHaveBeenCalledTimes(1)
 
       const firstBody = await first.text()
@@ -554,18 +602,108 @@ describe("/api/* proxy", () => {
 
     // A different query string is a different key.
     backendFetch.mockClear()
-    await worker.fetch(new Request(`${ORIGIN}/api/public/tutors?subject=chemistry`), env)
+    await worker.fetch(new Request(`${ORIGIN}/api/public/tutors?subject=chemistry`), env, ctx)
     expect(backendFetch).toHaveBeenCalledTimes(1)
 
     // The card lookup reads through the same cache as P2: the page view after
     // the P2 call above needs no backend request of its own.
     respond = () => json(card(true))
-    cache.stored.clear()
+    await resetCache()
     backendFetch.mockClear()
-    await worker.fetch(new Request(`${ORIGIN}/api/public/tutors/${TUTOR_ID}`), env)
-    const cardPage = await worker.fetch(page(`/tutors/${TUTOR_ID}`), env)
+    await worker.fetch(new Request(`${ORIGIN}/api/public/tutors/${TUTOR_ID}`), env, ctx)
+    await drainBackground()
+    const cardPage = await worker.fetch(page(`/tutors/${TUTOR_ID}`), env, ctx)
     expect(cardPage.headers.has("X-Robots-Tag")).toBe(false)
     expect(backendFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it("the public read-through forwards no cookie, authorization or other client header upstream", async () => {
+    respond = () => json({ items: [] })
+    const inbound = new Request(`${ORIGIN}/api/public/tutors?subject=physics`, {
+      headers: {
+        cookie: "sb-access-token=secret",
+        authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.e30.sig",
+        "accept-language": "ar-EG",
+        "if-none-match": '"abc"',
+        "user-agent": "Mozilla/5.0",
+        "CF-Connecting-IP": "198.51.100.9",
+      },
+    })
+    expect(inbound.headers.get("cookie")).not.toBeNull()
+    await worker.fetch(inbound, env, ctx)
+
+    // A response that may be served to everyone is fetched as nobody: only
+    // the proxy hop's own X-Forwarded-* headers go upstream.
+    expect(backendCalls).toHaveLength(1)
+    const upstream = backendCalls[0]
+    expect(upstream.url).toBe(`${BACKEND}/api/public/tutors?subject=physics`)
+    expect(upstream.method).toBe("GET")
+    expect(upstream.headers.get("cookie")).toBeNull()
+    expect(upstream.headers.get("authorization")).toBeNull()
+    expect([...upstream.headers.keys()].sort()).toEqual(["x-forwarded-for", "x-forwarded-proto"])
+    expect(upstream.headers.get("x-forwarded-for")).toBe("198.51.100.9")
+    expect(upstream.headers.get("x-forwarded-proto")).toBe("https")
+    expect(upstream.body).toBeNull()
+  })
+
+  it("stores a public response only when it is a 200 marked public with no Set-Cookie", async () => {
+    const refused: [string, () => Response][] = [
+      ["500", () => json({ detail: "boom" }, 500)],
+      ["422", () => json({ detail: "bad cursor" }, 422)],
+      ["no Cache-Control", () => new Response("{}", { status: 200 })],
+      ["no-cache", () => new Response("{}", { status: 200, headers: { "cache-control": "no-cache" } })],
+      ["max-age=0", () => new Response("{}", { status: 200, headers: { "cache-control": "max-age=0" } })],
+      ["public, max-age=0", () => new Response("{}", { status: 200, headers: { "cache-control": "public, max-age=0" } })],
+      ["public, no-cache", () => new Response("{}", { status: 200, headers: { "cache-control": "public, no-cache" } })],
+      ["private", () => new Response("{}", { status: 200, headers: { "cache-control": "private, no-store" } })],
+      ["Set-Cookie", () => json({ items: [] }, 200, { "set-cookie": "session=abc; HttpOnly" })],
+    ]
+    for (const [name, outcome] of refused) {
+      respond = outcome
+      backendFetch.mockClear()
+      await worker.fetch(new Request(`${ORIGIN}/api/public/tutors?case=${encodeURIComponent(name)}`), env, ctx)
+      await drainBackground()
+      await worker.fetch(new Request(`${ORIGIN}/api/public/tutors?case=${encodeURIComponent(name)}`), env, ctx)
+      expect(backendFetch, name).toHaveBeenCalledTimes(2)
+    }
+    expect(cache.put).not.toHaveBeenCalled()
+    expect(cache.stored.size).toBe(0)
+
+    // The control: the shape P1-P3 actually send is stored.
+    respond = () => json({ items: [] })
+    await worker.fetch(new Request(`${ORIGIN}/api/public/tutors?case=control`), env, ctx)
+    await drainBackground()
+    expect(cache.stored.size).toBe(1)
+  })
+
+  it("stores in the background: the response does not wait for cache.put", async () => {
+    let release = (): void => undefined
+    cache.gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    respond = (request) => (request.url.includes("/api/public/tutors/") ? json(card(true)) : json({ areas: [] }))
+
+    try {
+      // A proxied public GET and a card page both answer while their store
+      // is still in flight, and each hands the store to ctx.waitUntil.
+      const proxied = await within(
+        worker.fetch(new Request(`${ORIGIN}/api/public/tutoring-areas`), env, ctx),
+        250,
+      )
+      expect(proxied, "the /api/public response waited for cache.put").not.toBe("blocked")
+      const cardPage = await within(worker.fetch(page(`/tutors/${TUTOR_ID}`), env, ctx), 250)
+      expect(cardPage, "the card page waited for cache.put").not.toBe("blocked")
+      if (cardPage !== "blocked") expect(cardPage.headers.has("X-Robots-Tag")).toBe(false)
+
+      expect(ctx.waitUntil).toHaveBeenCalledTimes(2)
+      for (const [promise] of ctx.waitUntil.mock.calls) expect(promise).toBeInstanceOf(Promise)
+      expect(cache.stored.size, "stored before the gate opened").toBe(0)
+    } finally {
+      // Never leave a store parked behind the gate, pass or fail.
+      release()
+    }
+    await drainBackground()
+    expect(cache.stored.size).toBe(2)
   })
 
   it("/api/* other paths are not cached", async () => {
@@ -580,30 +718,12 @@ describe("/api/* proxy", () => {
     ]
     for (const [path, init] of requests) {
       backendFetch.mockClear()
-      await worker.fetch(new Request(`${ORIGIN}${path}`, init), env)
-      await worker.fetch(new Request(`${ORIGIN}${path}`, init), env)
+      await worker.fetch(new Request(`${ORIGIN}${path}`, init), env, ctx)
+      await worker.fetch(new Request(`${ORIGIN}${path}`, init), env, ctx)
       expect(backendFetch, `${init?.method ?? "GET"} ${path}`).toHaveBeenCalledTimes(2)
     }
     expect(cache.match).not.toHaveBeenCalled()
     expect(cache.put).not.toHaveBeenCalled()
-
-    // A public path is stored only when it answered 200 and did not mark
-    // itself private.
-    const refused: [string, () => Response][] = [
-      ["500", () => json({ detail: "boom" }, 500)],
-      ["422", () => json({ detail: "bad cursor" }, 422)],
-      [
-        "private",
-        () => new Response("{}", { status: 200, headers: { "cache-control": "private, no-store" } }),
-      ],
-    ]
-    for (const [name, outcome] of refused) {
-      respond = outcome
-      backendFetch.mockClear()
-      await worker.fetch(new Request(`${ORIGIN}/api/public/tutors?case=${name}`), env)
-      await worker.fetch(new Request(`${ORIGIN}/api/public/tutors?case=${name}`), env)
-      expect(backendFetch, name).toHaveBeenCalledTimes(2)
-    }
-    expect(cache.stored.size).toBe(0)
+    expect(ctx.waitUntil).not.toHaveBeenCalled()
   })
 })

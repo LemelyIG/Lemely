@@ -22,8 +22,10 @@
 // pipeline's SSE progress endpoints need (web/nginx.conf sets
 // `proxy_buffering off` for the same reason). The one exception is the
 // public tutoring GETs (P1-P3), which read through `caches.default` for 60 s
-// (robots.ts `readThroughPublicCache`); they are small JSON, never SSE.
+// (robots.ts `readThroughPublicCache`); they are small JSON, never SSE, and
+// the cache store runs in `ctx.waitUntil` after the response has gone back.
 import {
+	type BackgroundWork,
 	handleTutorPage,
 	isPublicCacheablePath,
 	isTutorPagePath,
@@ -66,52 +68,74 @@ function applySecurityHeaders(headers: Headers): void {
 	);
 }
 
+/** The proxy hop for every /api/* request except the public reads below. */
+function proxyRequestFor(request: Request, target: URL, clientIp: string | null): Request {
+	// `new Request(url, request)` clones method/headers/body from `request`
+	// (standard Fetch API constructor behaviour) while pointing at the new
+	// URL; the resulting `.headers` is a fresh, independently-mutable
+	// Headers instance, so the deletes/sets below don't touch the original.
+	const proxyRequest = new Request(target, request);
+
+	// Drop the inbound Host header rather than forward
+	// "lemelyig.com"/"staging.lemelyig.com" to Cloud Run — omitting it lets
+	// fetch() set the correct Host for `target` itself (the backend's
+	// *.run.app hostname), which is what Cloud Run's front end routes on.
+	proxyRequest.headers.delete("host");
+
+	// Mirror what nginx.conf sets for the same reverse-proxy hop, so the
+	// backend sees an equivalent client IP / scheme regardless of which
+	// proxy fronts it. CF-Connecting-IP is Cloudflare's edge-verified
+	// client IP (request.headers can't be spoofed past the edge).
+	if (clientIp) {
+		proxyRequest.headers.set("X-Real-IP", clientIp);
+		proxyRequest.headers.set("X-Forwarded-For", clientIp);
+	}
+	proxyRequest.headers.set("X-Forwarded-Proto", "https");
+	return proxyRequest;
+}
+
+/**
+ * The upstream request for a public read (P1-P3), built from scratch. Its
+ * answer may be cached and served to every visitor, so it is fetched as
+ * nobody: method GET, no cookie, no `Authorization`, no client header, only
+ * the hop's own `X-Forwarded-*`. A redirect is passed back, not followed.
+ */
+function publicUpstreamRequest(target: URL, clientIp: string | null): Request {
+	const headers = new Headers({ "X-Forwarded-Proto": "https" });
+	if (clientIp) headers.set("X-Forwarded-For", clientIp);
+	return new Request(target, { method: "GET", redirect: "manual", headers });
+}
+
 export default {
-	async fetch(request: Request, env: Env): Promise<Response> {
+	async fetch(request: Request, env: Env, ctx: BackgroundWork): Promise<Response> {
 		const url = new URL(request.url);
 
 		if (isTutorPagePath(url.pathname)) {
-			const page = await handleTutorPage(request, env);
+			const page = await handleTutorPage(request, env, ctx);
 			applySecurityHeaders(page.headers);
 			return page;
 		}
 
 		const target = new URL(url.pathname + url.search, env.BACKEND_URL);
-
-		// `new Request(url, request)` clones method/headers/body from `request`
-		// (standard Fetch API constructor behaviour) while pointing at the new
-		// URL; the resulting `.headers` is a fresh, independently-mutable
-		// Headers instance, so the deletes/sets below don't touch the original.
-		const proxyRequest = new Request(target, request);
-
-		// Drop the inbound Host header rather than forward
-		// "lemelyig.com"/"staging.lemelyig.com" to Cloud Run — omitting it lets
-		// fetch() set the correct Host for `target` itself (the backend's
-		// *.run.app hostname), which is what Cloud Run's front end routes on.
-		proxyRequest.headers.delete("host");
-
-		// Mirror what nginx.conf sets for the same reverse-proxy hop, so the
-		// backend sees an equivalent client IP / scheme regardless of which
-		// proxy fronts it. CF-Connecting-IP is Cloudflare's edge-verified
-		// client IP (request.headers can't be spoofed past the edge).
 		const clientIp = request.headers.get("CF-Connecting-IP");
-		if (clientIp) {
-			proxyRequest.headers.set("X-Real-IP", clientIp);
-			proxyRequest.headers.set("X-Forwarded-For", clientIp);
-		}
-		proxyRequest.headers.set("X-Forwarded-Proto", "https");
 
 		// P1-P3 are public and identical for every caller, so a GET of one of
 		// them reads through the edge cache, keyed on the full public URL
 		// (SPEC §b.5). No other /api/* path is ever cached.
 		const res =
 			request.method === "GET" && isPublicCacheablePath(url.pathname)
-				? await readThroughPublicCache(url.href, () => fetch(proxyRequest))
-				: await fetch(proxyRequest);
+				? await readThroughPublicCache(
+						url.href,
+						() => fetch(publicUpstreamRequest(target, clientIp)),
+						ctx,
+					)
+				: await fetch(proxyRequestFor(request, target, clientIp));
 
 		// `new Response(res.body, res)` streams `res.body` through unread rather
 		// than buffering it, so the SSE progress endpoints this comment block
-		// already describes keep streaming — only the header set changes.
+		// already describes keep streaming — only the header set changes. It is
+		// also the copy that makes the headers editable: a fetched or cached
+		// response's own headers are immutable.
 		const out = new Response(res.body, res);
 		applySecurityHeaders(out.headers);
 		return out;
