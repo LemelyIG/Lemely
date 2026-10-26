@@ -476,6 +476,7 @@ def mini_repo(tmp_path: Path) -> Path:
         "web/package.json": "{}\n",
         "DESIGN.md": "# design\n",
         "docs/design-canvas-notes.md": "# notes\n",
+        "docs/COMPONENT_CATALOGUE.md": "# catalogue\n",
         ".github/workflows/ci.yml": "name: ci\n",
     }
     for rel, text in files.items():
