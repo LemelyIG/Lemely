@@ -38,12 +38,12 @@ wins:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from datetime import datetime
 
 GrantStatus = Literal[
     "active",
@@ -96,6 +96,11 @@ def _require_aware(**instants: datetime | None) -> None:
             raise ValueError(f"{name} must be a timezone-aware datetime, got naive {value!r}")
 
 
+def _utc(value: datetime) -> datetime:
+    """Compare instants in UTC: two datetimes sharing a zone compare by wall time, ignoring fold."""
+    return value.astimezone(UTC)
+
+
 def _check_facts(facts: GrantFacts, now: datetime) -> None:
     """Refuse facts the ``tutor_data_grants`` CHECKs would refuse: they can only come from a bug."""
     _require_aware(
@@ -113,9 +118,10 @@ def _check_facts(facts: GrantFacts, now: datetime) -> None:
         raise ValueError(f"unknown revoke_reason {facts.revoke_reason!r}")
     if facts.tutor_listing_state not in _LISTING_STATES:
         raise ValueError(f"unknown tutor_listing_state {facts.tutor_listing_state!r}")
-    if facts.expires_at is not None and facts.expires_at <= facts.created_at:
+    created = _utc(facts.created_at)
+    if facts.expires_at is not None and _utc(facts.expires_at) <= created:
         raise ValueError("expires_at must be later than created_at")
-    if facts.revoked_at is not None and facts.revoked_at < facts.created_at:
+    if facts.revoked_at is not None and _utc(facts.revoked_at) < created:
         raise ValueError("revoked_at must not be earlier than created_at")
 
 
@@ -128,7 +134,7 @@ def grant_status(facts: GrantFacts, *, now: datetime) -> GrantStatus:
     _check_facts(facts, now)
     if facts.revoke_reason is not None:
         return _REVOKED_STATUS[facts.revoke_reason]
-    if facts.expires_at is not None and now >= facts.expires_at:
+    if facts.expires_at is not None and _utc(now) >= _utc(facts.expires_at):
         return "expired"
     if facts.blocked:
         return "blocked"

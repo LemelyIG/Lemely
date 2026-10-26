@@ -61,10 +61,15 @@ Show, per tutor and subject, on the logged-in profile only (row 5b):
   of the last session; that let a new session drop a closed member back out of
   the figure, and let the tutor time a member's entry by when they marked
   completion.)
-- **Eligible member:** a student with a counted session who has
-  `email_verified_at`, whose account is at least 30 days old at `S`, who has not
+- **Eligible member:** a student with a counted session whose email was
+  verified by `S` (`email_verified_at <= S`, the first verification; a later
+  verification does not move it, so a student who first verifies after `S`
+  never counts), whose account is at least 30 days old at `S`, who has not
   opted out, and who has **never blocked this tutor** (any `tutoring_blocks`
   row from the student to the tutor's user, active or removed; row 13).
+  Verification after `S` is excluded because such a student would join with an
+  early close instant and displace a published member, a one-member swap of
+  the figure outside any step of k (T05 review).
 - **Published set P:** eligible members with `now >= C`, ordered by
   `(C, opaque ref)`; P is the first `floor(n_closed / k) * k` of them, so the
   set only ever grows by k members at a time.
@@ -149,6 +154,8 @@ Computation: per request, three statements (profile check; cohort; observations)
 | R5 | **Differencing across a step (row 13; ADVERSARIAL F1, residual)** | Steps of k, window-close entry, the never-granted rule on the whole set, the 90-day hold. Not enough to stop the scenario below |
 | R6 | A grant revoked before a member's window closed still counts as "granted" for rule 2, although the tutor may not have seen that member's during grade | Rule 2 counts any grant row; tightening it to "a grant live at or after C" is a later option. Low likelihood (needs a revoke inside the window plus the R5 conditions) |
 | R7 | A sock-puppet with a known grade pads the cohort | Verified email, 30-day account age at S, real-time sessions, Gemini spend per graded paper |
+| R8 | **The 90-day hold does not hide an opt-out for good** (T05 review, residual like R5). If no step of k happens in between, a reading taken before a student's opt-out change and one taken after the hold ends differ only by that student, so the difference still shows the student's bucket (and, in the change figure, their direction) | The hold stops a reading straight after the change; steps of k when they happen; the never-granted and homogeneity rules on the whole set. Not enough to stop the scenario |
+| R9 | **Grades are not frozen at the close instant** (T05 review, residual). Deleting or restoring an attempt (`deletion_repo`), or a self-review or teacher regrade (`review_repo`), changes a published member's before or during grade after C, outside any hold, so readings before and after the change show that member's new bucket | Only exact-boundary past papers count; the never-granted and homogeneity rules on the whole set. Freezing grades at C would need stored state, which row 13 declined |
 
 **R5, the exact scenario.** Tutor T has 5 published members in 0625, none of
 whom ever granted access (rule 2: 5 ≥ k, so the figure is shown). Five more

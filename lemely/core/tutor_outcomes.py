@@ -24,9 +24,10 @@ or an interval in hours, never ``interval '120 days'`` in a Cairo session).
 - *S*: the start of the student's first counted session in the subject.
 - *Window*: ``[S, S + DURING_WINDOW)``; the member **closes** at
   ``S + DURING_WINDOW`` (:func:`close_instant`). Later sessions never reopen it.
-- *Eligible member* (:func:`is_member_eligible`): verified email, an account at
-  least ``MIN_MEMBER_ACCOUNT_AGE`` old at S, not opted out, and never blocked
-  this tutor (SC-13e, row 13).
+- *Eligible member* (:func:`is_member_eligible`): email verified by S (the
+  first verification; a later one does not count), an account at least
+  ``MIN_MEMBER_ACCOUNT_AGE`` old at S, not opted out, and never blocked this
+  tutor (SC-13e, row 13).
 - *Published set* (:func:`published_members`): the closed eligible members in
   ``(close instant, ref)`` order, cut to a whole multiple of k, so the set only
   ever grows k members at a time (SC-13c).
@@ -94,7 +95,8 @@ class CohortMember:
     first_session_start: datetime
     """S: the start of the first counted session in this subject."""
     eligible: bool
-    """:func:`is_member_eligible`."""
+    """:func:`is_member_eligible`: verified by S (first verification), account 30 days
+    old at S, not opted out, never blocked this tutor."""
     ever_granted: bool
     """Any ``tutor_data_grants`` row for the pair, live or revoked."""
     recent_change: bool
@@ -205,26 +207,37 @@ def is_counted_session(
     dispute leaves the answer unchanged (F1).
     """
     _require_aware(accepted_at=accepted_at, ends_at=ends_at, now=now)
-    return accepted_at is not None and state in _COUNTED_STATES and ends_at <= now
+    return accepted_at is not None and state in _COUNTED_STATES and _utc(ends_at) <= _utc(now)
 
 
 def is_member_eligible(
     *,
     first_session_start: datetime,
-    email_verified: bool,
+    email_verified_at: datetime | None,
     account_created_at: datetime,
     opted_out: bool,
     ever_blocked_tutor: bool,
 ) -> bool:
     """``CohortMember.eligible``: may this student count in the tutor's figures (SC-13e)?
 
-    A verified email, an account at least ``MIN_MEMBER_ACCOUNT_AGE`` old at S
+    The email verified by S (``email_verified_at <= S``, the student's **first**
+    verification), an account at least ``MIN_MEMBER_ACCOUNT_AGE`` old at S
     (elapsed time), not opted out, and no block of this tutor ever (removed
-    blocks included, row 13).
+    blocks included, row 13). A later verification never makes the student
+    eligible: it would let a member with an early close instant join late and
+    displace a published member, a one-member swap of the figure (T05 review R1).
+    The caller passes the first verification instant; a re-verification must
+    not move it.
     """
-    _require_aware(first_session_start=first_session_start, account_created_at=account_created_at)
-    old_enough = _utc(first_session_start) - _utc(account_created_at) >= MIN_MEMBER_ACCOUNT_AGE
-    return email_verified and old_enough and not opted_out and not ever_blocked_tutor
+    _require_aware(
+        first_session_start=first_session_start,
+        email_verified_at=email_verified_at,
+        account_created_at=account_created_at,
+    )
+    start = _utc(first_session_start)
+    verified_by_start = email_verified_at is not None and _utc(email_verified_at) <= start
+    old_enough = start - _utc(account_created_at) >= MIN_MEMBER_ACCOUNT_AGE
+    return verified_by_start and old_enough and not opted_out and not ever_blocked_tutor
 
 
 def is_recent_change(
@@ -284,7 +297,7 @@ def published_members(
     _require_aware(now=now)
     _check_k(k)
     closed = sorted(
-        (m for m in members if m.eligible and now >= close_instant(m)),
+        (m for m in members if m.eligible and _utc(now) >= close_instant(m)),
         key=lambda m: (close_instant(m), m.ref),
     )
     return closed[: len(closed) // k * k]
@@ -297,20 +310,20 @@ def _latest_in(
     lower: datetime,
     upper: datetime,
 ) -> str | None:
-    """The member's latest on-ladder grade recorded in ``[lower, upper)``; ties keep the lower."""
-    best: GradeObservation | None = None
+    """The member's latest on-ladder grade recorded in ``[lower, upper)``; ties keep the lower.
+
+    ``lower`` and ``upper`` are UTC; every ``recorded_at`` is moved to UTC before
+    it is compared, because two instants sharing a zone compare by wall time.
+    """
+    best: tuple[datetime, int, str] | None = None
     for observation in obs:
         _require_aware(recorded_at=observation.recorded_at)
         if observation.ref != m.ref or observation.grade not in rank:
             continue
-        if not lower <= observation.recorded_at < upper:
-            continue
-        if best is None or (observation.recorded_at, rank[observation.grade]) > (
-            best.recorded_at,
-            rank[best.grade],
-        ):
-            best = observation
-    return None if best is None else best.grade
+        candidate = (_utc(observation.recorded_at), rank[observation.grade], observation.grade)
+        if lower <= candidate[0] < upper and (best is None or candidate[:2] > best[:2]):
+            best = candidate
+    return None if best is None else best[2]
 
 
 def before_grade(
@@ -370,6 +383,8 @@ def outcome_for_subject(
     refs = [m.ref for m in members]
     if len(set(refs)) != len(refs):
         raise ValueError("cohort refs must be unique")
+    for m in members:  # every member, eligible or not, before the hold can return early
+        _require_aware(first_session_start=m.first_session_start)
     for observation in obs:
         _require_aware(recorded_at=observation.recorded_at)
     if any(m.recent_change for m in members):

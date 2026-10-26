@@ -1323,7 +1323,7 @@ MIN_MEMBER_ACCOUNT_AGE: Final = timedelta(days=30)   # SC-13e
 class CohortMember:
     ref: int                       # opaque; never a user id
     first_session_start: datetime  # S: start of the first counted session in this subject
-    eligible: bool                 # verified email, account >= 30 d at S, not opted out, never blocked this tutor
+    eligible: bool                 # email verified by S (email_verified_at <= S, the FIRST verification), account >= 30 d at S, not opted out, never blocked this tutor
     ever_granted: bool             # any tutor_data_grants row for (student, tutor), live or revoked
     recent_change: bool            # opt-out changed, or a student->tutor block created, within OPT_CHANGE_HOLD
 @dataclass(frozen=True, slots=True)

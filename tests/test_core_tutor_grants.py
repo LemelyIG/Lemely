@@ -252,6 +252,18 @@ def test_grant_status_compares_instants_across_zones() -> None:
     assert grant_status(facts, now=expires.astimezone(cairo)) == "expired"
 
 
+def test_grant_expiry_in_the_repeated_hour() -> None:
+    # Cairo repeats 23:00-24:00 on 2026-10-29. Two instants sharing a tzinfo
+    # compare by wall time in Python, ignoring fold: 23:15 (second pass, 21:15Z)
+    # is after 23:30 (first pass, 20:30Z).
+    cairo = ZoneInfo("Africa/Cairo")
+    expires = datetime(2026, 10, 29, 23, 30, tzinfo=cairo)
+    now = datetime(2026, 10, 29, 23, 15, tzinfo=cairo, fold=1)
+    assert now.astimezone(UTC) > expires.astimezone(UTC)
+    facts = replace(_facts(), created_at=expires - timedelta(days=30), expires_at=expires)
+    assert grant_status(facts, now=now) == "expired"
+
+
 # --- facts the database CHECKs refuse can only come from a bug ------------------------------
 
 

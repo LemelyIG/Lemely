@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import inspect
 import itertools
+import operator
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import fields, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -368,6 +369,37 @@ def test_outcomes_published_set_moves_in_steps_of_k() -> None:
     assert len(published_members(members[:8], now=NOW, k=3)) == 6
 
 
+# (ref, day index of S): refs unrelated to start order, descending and shuffled,
+# with a tie on day 5 where the larger ref is listed first.
+SHUFFLED = (
+    (57, 0), (91, 1), (3, 2), (44, 3), (12, 4), (99, 5), (8, 5),
+    (23, 6), (64, 7), (1, 8), (30, 9), (77, 10), (15, 11),
+)  # fmt: skip
+
+
+def test_published_order_is_close_instant_then_ref() -> None:
+    # R2: the published set is a prefix of the (close instant, ref) order, worked
+    # out here from S + DURING_WINDOW, and it never changes between steps of k.
+    members = [_member(ref, start=S0 + day * DAY) for ref, day in SHUFFLED]
+    closes = {m.ref: m.first_session_start + DURING_WINDOW for m in members}
+    order = sorted(closes, key=lambda ref: (closes[ref], ref))
+    times = sorted({at + delta for at in closes.values() for delta in (-SECOND, timedelta(0))})
+    previous: list[int] = []
+    steps = 0
+    for now in times:
+        closed = sum(at <= now for at in closes.values())
+        published = [m.ref for m in published_members(members, now=now, k=K)]
+        assert published == order[: closed // K * K], now
+        if len(published) == len(previous):
+            assert published == previous, now  # no change without a step of k
+        else:
+            assert published[: len(previous)] == previous, now
+            steps += 1
+        previous = published
+    assert steps == 2
+    assert previous == order[:10]
+
+
 def test_outcomes_single_completion_causes_no_visible_change() -> None:
     members, observations = _cohort(BASE)
     base = outcome_for_subject(members, observations, now=NOW)
@@ -423,41 +455,83 @@ def test_outcomes_opt_out_hold_90_days() -> None:
             assert outcome == base
 
 
+def _spec_verified_by() -> Callable[[datetime, datetime], bool]:
+    """The ``email_verified_at`` vs S comparison in the §e.1 ``eligible`` comment (R1)."""
+    comment = re.search(r"^\s+eligible: bool\s+# (.*)$", _E1_OUTCOMES, re.M)
+    assert comment, "SPEC §e.1 CohortMember has no eligible comment"
+    rule = re.search(r"email_verified_at (<=|<) S\b", comment.group(1))
+    assert rule, comment.group(1)
+    assert "FIRST verification" in comment.group(1)
+    return {"<=": operator.le, "<": operator.lt}[rule.group(1)]
+
+
+VERIFIED_BY = _spec_verified_by()
+
+
+def _eligible(
+    *,
+    start: datetime = S0,
+    verified_at: datetime | None = S0 - DAY,
+    age: timedelta = MIN_MEMBER_ACCOUNT_AGE + DAY,
+    opted_out: bool = False,
+    blocked: bool = False,
+) -> bool:
+    return is_member_eligible(
+        first_session_start=start,
+        email_verified_at=verified_at,
+        account_created_at=start - age,
+        opted_out=opted_out,
+        ever_blocked_tutor=blocked,
+    )
+
+
 def test_outcomes_member_requires_verified_and_30_day_account() -> None:
-    start = S0
+    verifications = (None, S0 - DAY, S0, S0 + SECOND)
     ages = (MIN_MEMBER_ACCOUNT_AGE - SECOND, MIN_MEMBER_ACCOUNT_AGE, MIN_MEMBER_ACCOUNT_AGE + DAY)
-    rows = list(itertools.product((False, True), ages, (False, True), (False, True)))
-    assert len(rows) == 24
+    rows = list(itertools.product(verifications, ages, (False, True), (False, True)))
+    assert len(rows) == 48
     eligible_rows = 0
-    for verified, age, opted_out, blocked in rows:
-        expected = verified and age >= MIN_MEMBER_ACCOUNT_AGE and not opted_out and not blocked
-        got = is_member_eligible(
-            first_session_start=start,
-            email_verified=verified,
-            account_created_at=start - age,
-            opted_out=opted_out,
-            ever_blocked_tutor=blocked,
+    for verified_at, age, opted_out, blocked in rows:
+        expected = (
+            verified_at is not None
+            and VERIFIED_BY(verified_at, S0)
+            and age >= MIN_MEMBER_ACCOUNT_AGE
+            and not opted_out
+            and not blocked
         )
-        assert got is expected, (verified, age, opted_out, blocked)
+        got = _eligible(verified_at=verified_at, age=age, opted_out=opted_out, blocked=blocked)
+        assert got is expected, (verified_at, age, opted_out, blocked)
         eligible_rows += expected
-    assert eligible_rows == 2
+    assert eligible_rows == 4  # verified at S or a day before, account 30 d or 31 d old
 
     # An account one second short of 30 days at S never enters the set, even
     # though it closes before every eligible member.
-    members, observations = _cohort(BASE)
+    members, _ = _cohort(BASE)
     young = _member(
         6,
         start=S0 - DAY,
-        eligible=is_member_eligible(
-            first_session_start=S0 - DAY,
-            email_verified=True,
-            account_created_at=S0 - DAY - MIN_MEMBER_ACCOUNT_AGE + SECOND,
-            opted_out=False,
-            ever_blocked_tutor=False,
-        ),
+        eligible=_eligible(start=S0 - DAY, age=MIN_MEMBER_ACCOUNT_AGE - SECOND),
     )
     published = published_members([*members, young], now=NOW, k=K)
     assert [m.ref for m in published] == [1, 2, 3, 4, 5]
+
+
+@pytest.mark.parametrize(
+    ("verified_at", "enters"),
+    [(None, False), (S0 - DAY - SECOND, True), (S0 - DAY + SECOND, False)],
+    ids=["never-verified", "verified-exactly-at-S", "verified-1s-after-S"],
+)
+def test_late_verification_never_enters_the_published_set(
+    verified_at: datetime | None, enters: bool
+) -> None:
+    # R1: a member who verifies after S would otherwise join with an early close
+    # instant and displace a published member, a one-member swap of the figure.
+    # The sixth member starts first; its S is S0 - DAY - 1 s.
+    start = S0 - DAY - SECOND
+    late = _member(6, start=start, eligible=_eligible(start=start, verified_at=verified_at))
+    members, _ = _cohort(BASE)
+    published = [m.ref for m in published_members([*members, late], now=NOW, k=K)]
+    assert published == ([6, 1, 2, 3, 4] if enters else [1, 2, 3, 4, 5])
 
 
 def _first_session_start(sessions: Sequence[tuple[str, datetime | None, datetime]]) -> datetime:
@@ -527,6 +601,26 @@ def test_never_granted_counts_contributors_only() -> None:
     outcome = outcome_for_subject(members, observations, now=NOW)
     assert outcome.distribution.state == "sufficient"
     assert (outcome.distribution.n_graded, outcome.distribution.n_without_grade) == (5, 5)
+
+
+@pytest.mark.parametrize("never_granted", range(1, K))
+def test_never_granted_is_counted_per_figure(never_granted: int) -> None:
+    # R3: five granted pairs, plus 1..k-1 never-granted members with a during grade
+    # and no before grade (padded to 2k published with ungraded granted members).
+    # They are distribution contributors only: the distribution is hidden by the
+    # never-granted rule, the change (granted pairs only) is shown.
+    rows: list[Row] = [
+        *BASE,
+        *[(None, "C", False)] * never_granted,
+        *[(None, None, True)] * (K - never_granted),
+    ]
+    members, observations = _cohort(rows)
+    assert len(published_members(members, now=NOW, k=K)) == 2 * K
+    outcome = outcome_for_subject(members, observations, now=NOW)
+    assert outcome.distribution.state == "insufficient"
+    assert outcome.change.state == "sufficient"
+    change = outcome.change
+    assert (change.n_paired, change.higher, change.same, change.lower) == (5, 2, 1, 2)
 
 
 @pytest.mark.parametrize(
@@ -682,8 +776,30 @@ def test_windows_and_holds_are_elapsed_time_across_dst() -> None:
     assert first_session.astimezone(UTC) - created.astimezone(UTC) < MIN_MEMBER_ACCOUNT_AGE
     assert not is_member_eligible(
         first_session_start=first_session,
-        email_verified=True,
+        email_verified_at=created,
         account_created_at=created,
+        opted_out=False,
+        ever_blocked_tutor=False,
+    )
+
+
+def test_instants_in_the_repeated_hour_compare_as_instants() -> None:
+    # Cairo repeats 23:00-24:00 on 2026-10-29. Python compares two instants that
+    # share a tzinfo by wall time, ignoring fold; every comparison here is by instant.
+    cairo = ZoneInfo("Africa/Cairo")
+    first_pass = datetime(2026, 10, 29, 23, 30, tzinfo=cairo)  # 20:30Z
+    second_pass = datetime(2026, 10, 29, 23, 15, tzinfo=cairo, fold=1)  # 21:15Z
+    assert second_pass.astimezone(UTC) > first_pass.astimezone(UTC)
+    assert is_counted_session(
+        state="accepted", accepted_at=first_pass - DAY, ends_at=first_pass, now=second_pass
+    )
+    member = _member(1, start=datetime(2026, 10, 1, tzinfo=UTC))
+    observations = [GradeObservation(1, "A", first_pass), GradeObservation(1, "C", second_pass)]
+    assert during_grade(member, observations, GRADE_ORDER) == "C"
+    assert not is_member_eligible(
+        first_session_start=first_pass,
+        email_verified_at=second_pass,
+        account_created_at=first_pass - 40 * DAY,
         opted_out=False,
         ever_blocked_tutor=False,
     )
@@ -716,12 +832,22 @@ NAIVE = datetime(2026, 1, 5, 15, 0)
         pytest.param(
             lambda: is_member_eligible(
                 first_session_start=S0,
-                email_verified=True,
+                email_verified_at=S0 - DAY,
                 account_created_at=NAIVE,
                 opted_out=False,
                 ever_blocked_tutor=False,
             ),
             id="eligible-naive-created",
+        ),
+        pytest.param(
+            lambda: is_member_eligible(
+                first_session_start=S0,
+                email_verified_at=NAIVE,
+                account_created_at=S0 - 40 * DAY,
+                opted_out=False,
+                ever_blocked_tutor=False,
+            ),
+            id="eligible-naive-verified",
         ),
         pytest.param(lambda: published_members(*_cohort(BASE)[:1], now=NOW, k=0), id="k-zero"),
         pytest.param(
@@ -744,3 +870,13 @@ def test_bad_inputs_refused(call: object) -> None:
     assert callable(call)
     with pytest.raises(ValueError):
         call()
+
+
+@pytest.mark.parametrize("recent", [False, True], ids=["no-hold", "behind-the-hold"])
+def test_naive_start_on_an_ineligible_member_refused(recent: bool) -> None:
+    # R4: every member's S is checked, not only the eligible ones published_members
+    # reaches, and before the recent-change early return.
+    members, observations = _cohort(BASE)
+    naive = _member(9, start=NAIVE, eligible=False, granted=False, recent=recent)
+    with pytest.raises(ValueError):
+        outcome_for_subject([*members, naive], observations, now=NOW)
