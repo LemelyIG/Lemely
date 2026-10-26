@@ -5,7 +5,9 @@ Pure: every case builds a ``BookingRow`` by hand and serialises it for one viewe
 * ``meetingLink``/``locationDetail`` only once the booking was accepted, to its student, its tutor
   and linked parents (O16);
 * ``review``/``reviewOpensAt`` to the student only (SC-12); ``studentShared`` to the tutor only;
-* a system or platform cancellation reason reads "Cancelled" to the tutor (SC-11);
+* a system or platform cancellation reason reads "Cancelled" to the tutor, and a block's
+  ``system`` cancellation reads as a platform one to the student and parents (SC-11, §i.7);
+* a block that alone closes the notes reads as a safety freeze to the tutor (SC-11);
 * a tutor never sees the party ``parent`` (SC-9, SPEC §i.4);
 * ``post_note`` is added by the builder, for a student or tutor viewer, from ``can_post_note``;
   ``core.booking.allowed_actions`` never returns it (SPEC §i.4);
@@ -161,41 +163,62 @@ def test_meeting_link_never_reaches_a_viewer_outside_the_booking() -> None:
     assert dto.allowedActions == []
 
 
+PLATFORM_REASON = "This session was cancelled by Lemely."
+
+
 @pytest.mark.parametrize(
-    ("party", "stored", "tutor_sees", "tutor_party"),
+    ("party", "stored", "tutor_sees", "tutor_party", "family_sees", "family_party"),
     [
-        ("system", "This session was cancelled.", "Cancelled", "platform_admin"),
-        ("platform_admin", "This session was cancelled by Lemely.", "Cancelled", "platform_admin"),
-        ("student", "Exam clash", "Exam clash", "student"),
-        ("tutor", "I am unwell", "I am unwell", "tutor"),
+        (
+            "system",
+            "This session was cancelled.",
+            "Cancelled",
+            "platform_admin",
+            PLATFORM_REASON,
+            "platform_admin",
+        ),
+        (
+            "platform_admin",
+            PLATFORM_REASON,
+            "Cancelled",
+            "platform_admin",
+            PLATFORM_REASON,
+            "platform_admin",
+        ),
+        ("student", "Exam clash", "Exam clash", "student", "Exam clash", "student"),
+        ("tutor", "I am unwell", "I am unwell", "tutor", "I am unwell", "tutor"),
     ],
 )
-def test_system_cancel_reason_shows_cancelled_to_tutor(
-    party: str, stored: str, tutor_sees: str, tutor_party: str
+def test_system_cancel_reads_as_a_platform_cancellation_to_every_viewer(
+    party: str,
+    stored: str,
+    tutor_sees: str,
+    tutor_party: str,
+    family_sees: str,
+    family_party: str,
 ) -> None:
-    """SC-11: only a block's sweep cancels as ``system``, so a tutor who reads ``system`` learns
-    that the child blocked them. The tutor reads a platform cancellation instead, worded and
-    attributed exactly as a suspension's; the family keeps the stored party and reason."""
+    """SC-11, SPEC §i.7: only a block's sweep cancels as ``system``, so whoever reads ``system``
+    learns that one side blocked the other. The tutor reads "Cancelled" by ``platform_admin``;
+    the student and their parents read a platform cancellation, party and reason exactly as a
+    suspension's (``This session was cancelled by Lemely.``). Every other party is unchanged."""
     row = make_row(state="cancelled", cancelled_by_party=party, cancel_reason=stored)
     tutor = dto_for(row, AS_TUTOR)
     assert (tutor["cancelReason"], tutor["cancelledBy"]) == (tutor_sees, tutor_party)
     for viewer in (AS_STUDENT, AS_PARENT):
         family = dto_for(row, viewer)
-        assert (family["cancelReason"], family["cancelledBy"]) == (stored, party)
+        assert (family["cancelReason"], family["cancelledBy"]) == (family_sees, family_party)
 
 
-def test_tutor_cannot_tell_a_block_from_a_platform_cancellation() -> None:
-    """Everything a tutor's DTO says about a block's cancellation equals a suspension's (SC-11)."""
+def test_no_viewer_can_tell_a_block_from_a_platform_cancellation() -> None:
+    """Everything any viewer's DTO says about a block's cancellation equals a suspension's."""
     swept = make_row(
         state="cancelled", cancelled_by_party="system", cancel_reason="This session was cancelled."
     )
-    by_platform = replace(
-        swept,
-        cancelled_by_party="platform_admin",
-        cancel_reason="This session was cancelled by Lemely.",
-    )
-    assert dto_for(swept, AS_TUTOR) == dto_for(by_platform, AS_TUTOR)
-    assert dto_for(swept, AS_STUDENT) != dto_for(by_platform, AS_STUDENT)  # non-vacuity
+    by_platform = replace(swept, cancelled_by_party="platform_admin", cancel_reason=PLATFORM_REASON)
+    by_student = replace(swept, cancelled_by_party="student", cancel_reason="Exam clash")
+    for viewer in VIEWERS:
+        assert dto_for(swept, viewer) == dto_for(by_platform, viewer), viewer.party
+        assert dto_for(swept, viewer) != dto_for(by_student, viewer), viewer.party  # non-vacuity
 
 
 def test_review_fields_student_viewer_only() -> None:
@@ -311,6 +334,40 @@ def test_post_note_is_added_by_the_builder_for_student_and_tutor_only() -> None:
     ):
         for viewer in VIEWERS:
             assert "post_note" not in dto_for(closed, viewer)["allowedActions"]
+
+
+def test_tutor_reads_a_block_that_alone_closes_notes_as_a_freeze() -> None:
+    """SC-11: a tutor must not learn that the student blocked them from closed notes.
+
+    A block closes notes the window would keep open; a tutor reading closed notes with
+    ``notesFrozen: false`` on a listed profile could only be looking at a block. The tutor reads
+    that closure as a safety freeze. Where notes are closed anyway, a block changes nothing.
+    """
+    open_notes = (
+        make_row(state="completed", starts_at=NOW - timedelta(days=2)),  # inside the 7 days
+        make_row(state="accepted", starts_at=NOW - timedelta(hours=3)),  # awaiting outcome
+    )
+    for row in open_notes:
+        assert "post_note" in dto_for(row, AS_TUTOR)["allowedActions"]  # red case: open
+        blocked = dto_for(replace(row, blocked=True), AS_TUTOR)
+        frozen = dto_for(replace(row, notes_frozen=True), AS_TUTOR)
+        assert blocked == frozen, row.state
+        frozen_actions = frozen["allowedActions"]
+        assert isinstance(frozen_actions, list)
+        assert (frozen["notesFrozen"], "post_note" in frozen_actions) == (True, False)
+        for viewer in (AS_STUDENT, AS_PARENT):  # the family keeps the stored flag
+            assert dto_for(replace(row, blocked=True), viewer)["notesFrozen"] is False
+    closed_anyway = (
+        make_row(state="completed", starts_at=NOW - timedelta(days=9)),  # window over
+        make_row(state="declined"),
+        make_row(state="cancelled"),
+        make_row(
+            state="completed", starts_at=NOW - timedelta(days=2), tutor_listing_state="closed"
+        ),
+    )
+    for row in closed_anyway:
+        assert dto_for(replace(row, blocked=True), AS_TUTOR) == dto_for(row, AS_TUTOR), row.state
+        assert dto_for(replace(row, blocked=True), AS_TUTOR)["notesFrozen"] is False
 
 
 @pytest.mark.parametrize("listing", ["suspended", "closed"])

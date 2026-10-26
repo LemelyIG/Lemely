@@ -28,6 +28,16 @@ wins:
    is orthogonal to the listing state and is not an input here (SC-3).
 5. ``active``.
 
+**What the student and their parents read** (:func:`grant_status_for_student`,
+S8, S9, S10, PA6; SPEC §i.7, SC-11). The same status, except that ``blocked``
+names a block, and a student must never learn that a tutor blocked them. It stays
+``blocked`` only when the student's own block explains it: their first block of
+this tutor fell inside the grant's life, from ``created_at`` to its revoke (a
+block's sweep revokes the live grant in the block's own transaction, so the two
+instants are equal), or to ``now`` for a live grant. Any other block is the
+tutor's, and it reads ``tutor_unavailable``, the status of a grant whose tutor is
+not listed. Validity is unchanged: neither status is ``active``.
+
 **Literals are written out here on purpose.** ``core`` may not import
 ``lemely.db``, so the revoke reasons and listing states below are pinned to
 ``GrantRevokeReason`` and ``TutorListingState`` in
@@ -141,6 +151,29 @@ def grant_status(facts: GrantFacts, *, now: datetime) -> GrantStatus:
     if facts.tutor_listing_state not in _VALID_LISTING_STATES:
         return "tutor_unavailable"
     return "active"
+
+
+def grant_status_for_student(
+    facts: GrantFacts, *, now: datetime, student_blocked_at: datetime | None
+) -> GrantStatus:
+    """The status the student and their linked parents read (module docstring, SPEC §i.7).
+
+    ``student_blocked_at`` is when the student first blocked the tutor's user (a lifted
+    block counts; ``None`` if they never did). A ``blocked`` status the student's own block
+    does not explain reads ``tutor_unavailable``; every other status is :func:`grant_status`.
+
+    Raises :class:`ValueError` for a naive instant, as :func:`grant_status` does.
+    """
+    status = grant_status(facts, now=now)
+    if status != "blocked":
+        return status
+    _require_aware(student_blocked_at=student_blocked_at)
+    end = facts.revoked_at if facts.revoked_at is not None else now
+    if student_blocked_at is not None and (
+        _utc(facts.created_at) <= _utc(student_blocked_at) <= _utc(end)
+    ):
+        return "blocked"
+    return "tutor_unavailable"
 
 
 def grant_is_valid(facts: GrantFacts, *, now: datetime) -> bool:

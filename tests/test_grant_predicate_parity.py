@@ -2,9 +2,10 @@
 
 Every repository read that decides whether a tutor may see a student (T19's list,
 T20's gate, ``studentShared``) runs the SQL mirror; S8 and PA6 show the status
-``core.tutor_grants.grant_status`` computes from the row. This test builds one
-grant for every combination of the inputs validity depends on and checks each
-SQL path against the pure functions:
+``core.tutor_grants.grant_status`` computes from the row, with a ``blocked`` the
+student did not cause read as ``tutor_unavailable`` (SPEC §i.7, SC-11). This test
+builds one grant for every combination of the inputs validity depends on and
+checks each SQL path against the pure functions:
 
 * the tutor's listing state (all six) and whether the profile is paused;
 * the revoke reason (none, or each of the four);
@@ -26,7 +27,7 @@ from __future__ import annotations
 import itertools
 import uuid
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -58,6 +59,7 @@ class Case:
     student_id: uuid.UUID
     grant_id: uuid.UUID
     facts: GrantFacts
+    block: str
 
 
 @pytest.fixture(scope="module")
@@ -124,6 +126,9 @@ def seed_cases(sm: sessionmaker[Session]) -> list[Case]:
                         TutoringBlock(
                             blocker_user_id=blocker,
                             blocked_user_id=blocked,
+                            # Made while the grant was live: at its revoke, as a block's sweep
+                            # does in its own transaction, or a day in for a live grant.
+                            created_at=revoked_at or created_at + timedelta(days=1),
                             removed_at=NOW - timedelta(hours=1) if block == "removed" else None,
                         )
                     )
@@ -140,9 +145,24 @@ def seed_cases(sm: sessionmaker[Session]) -> list[Case]:
                             tutor_listing_state=state,
                             blocked=block in ("student_blocks_tutor", "tutor_blocks_student"),
                         ),
+                        block=block,
                     )
                 )
     return cases
+
+
+def shown_to_student(case: Case, now: datetime) -> str:
+    """What S8/PA6 must show, written from SPEC §i.7 and SC-11, not read from the code.
+
+    ``core.tutor_grants.grant_status`` gives the reason; a ``blocked`` the student did not cause
+    (no block of theirs, made while the grant was live) reads as the tutor being unavailable,
+    so a student never learns that a tutor blocked them.
+    """
+    status = grant_status(case.facts, now=now)
+    students_own = case.block in ("student_blocks_tutor", "removed")
+    if status == "blocked" and not students_own:
+        return "tutor_unavailable"
+    return status
 
 
 def db_now(sm: sessionmaker[Session]) -> object:
@@ -242,13 +262,23 @@ def test_grant_status_shown_to_the_student_equals_core(sm: sessionmaker[Session]
     cases = seed_cases(sm)
     repo = TutorGrantRepository(sm)
     now = db_now(sm)
+    assert isinstance(now, datetime)
     seen: set[str] = set()
+    masked = kept = 0
     for case in cases:
         [view] = repo.grants_for_student(case.student_id, include_classes=False)
         assert view.grant.id == case.grant_id
-        assert view.status == grant_status(case.facts, now=now), case  # type: ignore[arg-type]
+        assert view.status == shown_to_student(case, now), case
         seen.add(view.status)
-    # Non-vacuity: every status the SPEC names occurs in the generated set.
+        if grant_status(case.facts, now=now) == "blocked":
+            masked += view.status == "tutor_unavailable"
+            kept += view.status == "blocked"
+    # Non-vacuity: a tutor's block is masked and a student's own is kept, many times each
+    # (revoked for a block, or live under an active block, in every listing state).
+    assert masked > 0
+    assert kept > 0
+    assert masked + kept == sum(grant_status(c.facts, now=now) == "blocked" for c in cases)
+    # Every status the SPEC names occurs in the generated set.
     assert seen == {
         "active",
         "revoked",

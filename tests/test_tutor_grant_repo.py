@@ -15,6 +15,8 @@ What is proved here (ADR-T02, O2, O3):
 * T19 writes exactly one ``list`` row per student on the page, in three
   statements whatever the page size (no N+1);
 * a 403 or a 404 writes no audit row; ``studentShared`` writes none either;
+* S8/PA6 read ``blocked`` only for the student's own block; a tutor's block reads
+  ``tutor_unavailable`` (SPEC §i.7, SC-11);
 * the pair lock is booking_repo's one implementation, keyed exactly as SPEC §a.4b
   prints it.
 """
@@ -40,7 +42,7 @@ from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.class_repo import ClassService
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import GrantRevokeReason, Role
-from lemely.db.models.tutoring import TutorDataGrant
+from lemely.db.models.tutoring import TutorDataGrant, TutoringBlock
 from lemely.db.models.users import ParentChildLink
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.notification_repo import NotificationService
@@ -816,7 +818,10 @@ def test_grants_for_student_live_first_with_status_and_also_teaches(
     views = repo.grants_for_student(student)
 
     assert [v.grant.id for v in views] == [newest_live, older_live, ended_grant]
-    assert [v.status for v in views] == ["active", "tutor_unavailable", "blocked"]
+    # The block that ended ``ended_grant`` is not the student's (they never blocked Lina), so it
+    # reads as the tutor being unavailable (SPEC §i.7, SC-11); the student's own block keeps
+    # ``blocked`` (test_grant_status_reads_blocked_only_for_the_students_own_block).
+    assert [v.status for v in views] == ["active", "tutor_unavailable", "tutor_unavailable"]
     assert views[0].also_teaches_classes == ("Physics 10A", "Physics 10B")
     assert views[1].also_teaches_classes == ()
     assert views[0].tutor.tutor_id == listed.profile_id
@@ -824,6 +829,122 @@ def test_grants_for_student_live_first_with_status_and_also_teaches(
     assert repo.grant_view(student, older_live) == views[1]
     assert repo.grant_view(add_student(sm), older_live) is None
     assert audit_rows(sm) == []
+
+
+def add_block_at(
+    sm: sessionmaker[Session],
+    blocker: uuid.UUID,
+    blocked: uuid.UUID,
+    *,
+    created_at: datetime,
+    removed_at: datetime | None = None,
+) -> None:
+    """A ``tutoring_blocks`` row whose first-block instant is ``created_at``."""
+    with sm.begin() as session:
+        session.add(
+            TutoringBlock(
+                blocker_user_id=blocker,
+                blocked_user_id=blocked,
+                created_at=created_at,
+                removed_at=removed_at,
+            )
+        )
+
+
+def grant_end(sm: sessionmaker[Session], grant_id: uuid.UUID) -> datetime:
+    with sm() as session:
+        revoked_at = session.execute(
+            sa.text("SELECT revoked_at FROM tutor_data_grants WHERE id = :g"), {"g": grant_id}
+        ).scalar_one()
+    assert isinstance(revoked_at, datetime)
+    return revoked_at
+
+
+def test_grant_status_reads_blocked_only_for_the_students_own_block(
+    sm: sessionmaker[Session], repo: TutorGrantRepository, student: uuid.UUID
+) -> None:
+    """S8/PA6 (SPEC §i.7, SC-11): ``blocked`` only when the student's own first block fell inside
+    the grant's life (its revoke instant, or now for a live grant); any other block, the tutor's,
+    reads ``tutor_unavailable``, so a student never learns that a tutor blocked them."""
+    tutors = {
+        name: add_tutor(sm, first_name=first_name)
+        for name, first_name in (
+            ("own_block_ended_it", "Amal"),
+            ("tutor_block_ended_it", "Badr"),
+            ("old_lifted_own_block", "Dina"),
+            ("own_block_came_after", "Fady"),
+            ("live_own_block", "Hoda"),
+            ("live_tutor_block", "Karim"),
+        )
+    }
+    ended = {
+        name: add_grant(sm, student, tutors[name], revoked=GrantRevokeReason.block)
+        for name in (
+            "own_block_ended_it",
+            "tutor_block_ended_it",
+            "old_lifted_own_block",
+            "own_block_came_after",
+        )
+    }
+    at = {name: grant_end(sm, grant) for name, grant in ended.items()}
+    created_at = NOW - timedelta(days=10)  # add_grant's default ``created_ago``
+    add_block_at(
+        sm, student, tutors["own_block_ended_it"].user_id, created_at=at["own_block_ended_it"]
+    )
+    add_block_at(
+        sm, tutors["tutor_block_ended_it"].user_id, student, created_at=at["tutor_block_ended_it"]
+    )
+    # Blocked once before this grant, lifted, re-shared; the tutor's block ended this one.
+    add_block_at(
+        sm,
+        student,
+        tutors["old_lifted_own_block"].user_id,
+        created_at=created_at - timedelta(days=20),
+        removed_at=created_at - timedelta(days=15),
+    )
+    add_block_at(
+        sm,
+        tutors["old_lifted_own_block"].user_id,
+        student,
+        created_at=at["old_lifted_own_block"],
+    )
+    # The tutor's block ended the grant; the student blocked only later.
+    add_block_at(
+        sm,
+        tutors["own_block_came_after"].user_id,
+        student,
+        created_at=at["own_block_came_after"],
+    )
+    add_block_at(
+        sm,
+        student,
+        tutors["own_block_came_after"].user_id,
+        created_at=at["own_block_came_after"] + timedelta(hours=1),
+    )
+    # Live grants under an active block (no sweep ran): the active rule of grant_status.
+    for name in ("live_own_block", "live_tutor_block"):
+        add_grant(sm, student, tutors[name])
+    add_block_at(sm, student, tutors["live_own_block"].user_id, created_at=NOW - timedelta(days=1))
+    add_block_at(
+        sm, tutors["live_tutor_block"].user_id, student, created_at=NOW - timedelta(days=1)
+    )
+
+    by_tutor = {view.tutor.tutor_id: view.status for view in repo.grants_for_student(student)}
+    shown = {name: by_tutor[tutor.profile_id] for name, tutor in tutors.items()}
+
+    assert shown == {
+        "own_block_ended_it": "blocked",
+        "tutor_block_ended_it": "tutor_unavailable",
+        "old_lifted_own_block": "tutor_unavailable",
+        "own_block_came_after": "tutor_unavailable",
+        "live_own_block": "blocked",
+        "live_tutor_block": "tutor_unavailable",
+    }
+    # One grant, one read path: grant_view (S9/S10's answer) agrees with the list.
+    for name, grant in ended.items():
+        view = repo.grant_view(student, grant)
+        assert view is not None
+        assert view.status == shown[name], name
 
 
 def test_access_log_page_newest_first_with_tutor_filter_and_cursor(

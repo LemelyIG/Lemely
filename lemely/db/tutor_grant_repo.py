@@ -13,8 +13,13 @@ one roster read, :meth:`TutorGrantRepository.grants_for_student`'s
 ``pending_review`` (paused is fine), and no active block between the pair in
 either direction (``tutoring_predicates.active_block_between_sql``, keyed on
 ``users.id``). ``tests/test_grant_predicate_parity.py`` pins it to the core
-function over generated inputs. S8 shows the student the reason through
-``core.tutor_grants.grant_status`` on the same row.
+function over generated inputs. S8, S9, S10 and PA6 show the student (and their
+parents) the reason through ``core.tutor_grants.grant_status_for_student`` on the
+same row: ``blocked`` only when the student's own block explains it, read from
+the instant of their first block of the tutor
+(``tutoring_predicates.student_block_of_tutor_created_at_sql``); a tutor's block
+reads ``tutor_unavailable``, so a student never learns that a tutor blocked them
+(SPEC §i.7, SC-11).
 
 **The gate (T20, O2, O3, O18).** :meth:`TutorGrantRepository.require_valid_grant`
 takes the caller's own profile id, resolved by the route from ``auth.user_id``,
@@ -75,7 +80,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from lemely.core.keyset import CursorError, decode_cursor, encode_cursor
 from lemely.core.tutor_directory import public_name, student_label
-from lemely.core.tutor_grants import GrantFacts, grant_status
+from lemely.core.tutor_grants import GrantFacts, grant_status_for_student
 from lemely.db.booking_repo import lock_pair_in_session
 from lemely.db.email_outbox_repo import enqueue_in_session
 from lemely.db.models.enums import GrantRevokeReason
@@ -85,6 +90,7 @@ from lemely.db.tutoring_predicates import (
     EFFECTIVE_STATE_SQL,
     active_block_between_sql,
     listed_and_not_paused_sql,
+    student_block_of_tutor_created_at_sql,
 )
 
 if TYPE_CHECKING:
@@ -234,8 +240,10 @@ class GrantRevoked:
 class GrantView:
     """A grant as S8/PA6 show it: the tutor's public card and the status.
 
-    ``also_teaches_classes`` names the student's own classes whose teacher is the
-    tutor's user (SC-2e); empty when not asked for.
+    ``status`` is what the student and their parents may read
+    (``core.tutor_grants.grant_status_for_student``: a tutor's block reads
+    ``tutor_unavailable``). ``also_teaches_classes`` names the student's own
+    classes whose teacher is the tutor's user (SC-2e); empty when not asked for.
     """
 
     grant: GrantRow
@@ -962,7 +970,8 @@ class TutorGrantRepository:
                 f"SELECT {_GRANT_COLUMNS}, {_CARD_COLUMNS}, tp.user_id AS tutor_user_id, "  # noqa: S608
                 "tp.listing_state::text AS listing_state, "
                 f"{active_block_between_sql('g.student_id', 'tp.user_id')} AS blocked, "
-                "now() AS db_now FROM tutor_data_grants g "
+                f"{student_block_of_tutor_created_at_sql('g.student_id', 'tp.user_id')} "
+                "AS student_blocked_at, now() AS db_now FROM tutor_data_grants g "
                 "JOIN tutor_profiles tp ON tp.id = g.tutor_profile_id "
                 f"WHERE g.student_id = :student_id{only} "
                 "ORDER BY (g.revoked_at IS NULL) DESC, g.created_at DESC, g.id DESC LIMIT :limit"
@@ -1001,7 +1010,11 @@ class TutorGrantRepository:
                 GrantView(
                     grant=grant,
                     tutor=_card(row, subjects.get(grant.tutor_profile_id, ())),
-                    status=grant_status(facts, now=_instant(mapping["db_now"])),
+                    status=grant_status_for_student(
+                        facts,
+                        now=_instant(mapping["db_now"]),
+                        student_blocked_at=_optional_instant(mapping["student_blocked_at"]),
+                    ),
                     also_teaches_classes=tuple(classes.get(_as_uuid(mapping["tutor_user_id"]), ())),
                 )
             )

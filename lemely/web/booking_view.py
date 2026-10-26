@@ -17,6 +17,18 @@ their pages builds it here, so the disclosure rules live in one place:
 * a tutor never sees the party ``system`` either: only a block's sweep cancels as ``system``, so
   it would tell the tutor that the child blocked them. It reads ``platform_admin``, which with
   the "Cancelled" reason makes a block's cancellation identical to a suspension's (SC-11);
+* nor does the student or a parent: a ``system`` cancellation would tell a student that a
+  tutor blocked them (SPEC §i.7). They read it as a platform cancellation, party
+  ``platform_admin`` and the platform's reason (``booking_repo.ADMIN_CANCEL_REASON``), so a
+  tutor's block, the student's own block, a suspension and a close read the same;
+* a tutor reads a block that alone closes the notes as a safety freeze (``notesFrozen: true``,
+  SC-11): notes the window would keep open, closed with ``notesFrozen: false`` on a profile
+  that is not suspended, could only mean that the student blocked them. The block withholds
+  only ``accept`` and ``post_note`` (SPEC §i.4), and a freeze withholds ``post_note``, so the
+  tutor's DTO, T16's ``canPost: false`` and T17's 409 ``notes_closed`` match a freeze exactly
+  wherever the notes would otherwise be open (a block on a live request, which also loses
+  ``accept``, cannot outlast the block's own sweep). Where notes are closed anyway, a block
+  changes nothing the tutor reads;
 * ``allowedActions`` is ``core.booking.allowed_actions`` plus ``post_note``, which the core never
   returns: the builder adds it for a student or tutor viewer from ``can_post_note`` over the
   effective state at the same ``now`` (SPEC §i.4). A suspended or closed tutor gets no write
@@ -43,6 +55,7 @@ from lemely.core.booking import (
 )
 from lemely.core.tutor_directory import public_name, student_label, zone_label
 from lemely.core.tutor_ratings import REVIEW_MIN_ACCOUNT_AGE, review_edit_deadline
+from lemely.db.booking_repo import ADMIN_CANCEL_REASON
 from lemely.io.tutoring_areas import load_tutoring_areas
 from lemely.web.schemas_tutoring import (
     BookingDTO,
@@ -89,6 +102,9 @@ _SYSTEM_PARTIES: Final = frozenset({"system", "platform_admin"})
 _TUTOR_PARTY: Final[Mapping[str, str]] = MappingProxyType(
     {"parent": "student", "system": "platform_admin"}
 )
+#: The parties a student or parent viewer reads in place of the stored ones (SPEC §i.7).
+_FAMILY_PARTY: Final[Mapping[str, str]] = MappingProxyType({"system": "platform_admin"})
+_FAMILY: Final = frozenset({"student", "parent"})
 _ACCEPT_LISTINGS: Final = frozenset({"listed", "pending_review"})
 _INACTIVE_LISTINGS: Final = frozenset({"suspended", "closed"})
 
@@ -97,11 +113,51 @@ def _party_for(viewer: Actor, party: Party | str | None) -> str | None:
     """A booking party as ``viewer`` may read it.
 
     A tutor never sees ``parent`` (SC-9) nor ``system`` (SC-11: only a block cancels as
-    ``system``); they read ``student`` and ``platform_admin``.
+    ``system``); they read ``student`` and ``platform_admin``. The student and their parents
+    never see ``system`` either (SPEC §i.7); they read ``platform_admin``.
     """
+    if party is None:
+        return None
     if viewer.party == "tutor":
-        return _TUTOR_PARTY.get(party, party) if party is not None else None
+        return _TUTOR_PARTY.get(party, party)
+    if viewer.party in _FAMILY:
+        return _FAMILY_PARTY.get(party, party)
     return party
+
+
+def _cancel_reason_for(viewer: Actor, view: BookingRow) -> str | None:
+    """``cancelReason`` as ``viewer`` may read it (SC-11, SPEC §i.7).
+
+    A system or platform reason reads "Cancelled" to the tutor; a block's ``system`` reason
+    reads as the platform's own reason to the student and their parents.
+    """
+    if viewer.party == "tutor" and view.cancelled_by_party in _SYSTEM_PARTIES:
+        return TUTOR_SYSTEM_CANCEL_TEXT
+    if viewer.party in _FAMILY and view.cancelled_by_party == "system":
+        return ADMIN_CANCEL_REASON
+    return view.cancel_reason
+
+
+def _notes_frozen_for(
+    view: BookingRow, viewer: Actor, *, now: datetime, effective: EffectiveState
+) -> bool:
+    """``notesFrozen`` as ``viewer`` may read it (SC-11; module docstring).
+
+    The stored freeze for everyone; for the tutor also a block that alone closes notes the
+    window, the state and the listing would keep open.
+    """
+    if view.notes_frozen:
+        return True
+    if viewer.party != "tutor" or not view.blocked:
+        return False
+    return can_post_note(
+        effective,
+        ends_at=view.ends_at,
+        now=now,
+        blocked=False,
+        tutor_inactive=view.tutor_listing_state in _INACTIVE_LISTINGS,
+        frozen=False,
+    )
 
 
 def _actions(
@@ -165,9 +221,6 @@ def build_booking_dto(
     as_tutor = viewer.party == "tutor"
     effective = effective_state(view.state, starts_at=view.starts_at, ends_at=view.ends_at, now=now)
     shows_place = viewer.party in _VIEWERS and view.state in _LINK_STATES
-    cancel_reason = view.cancel_reason
-    if as_tutor and view.cancelled_by_party in _SYSTEM_PARTIES:
-        cancel_reason = TUTOR_SYSTEM_CANCEL_TEXT
     cancelled_late = (
         view.state == "cancelled"
         and view.cancelled_by_party is not None
@@ -206,11 +259,11 @@ def build_booking_dto(
             "locationDetail": view.location_detail if shows_place else None,
             "otherModeNote": view.other_mode_note,
             "declineReason": view.decline_reason,
-            "cancelReason": cancel_reason,
+            "cancelReason": _cancel_reason_for(viewer, view),
             "cancelledBy": _party_for(viewer, view.cancelled_by_party),
             "cancelledLate": cancelled_late,
             "completedBy": _party_for(viewer, view.completed_by_party),
-            "notesFrozen": view.notes_frozen,
+            "notesFrozen": _notes_frozen_for(view, viewer, now=now, effective=effective),
             "allowedActions": _actions(view, viewer, now=now, effective=effective),
             "review": review,
             "reviewOpensAt": iso_instant(review_open_at(view.ends_at)) if reviews_open else None,
