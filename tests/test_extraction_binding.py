@@ -3214,18 +3214,19 @@ def _forgotten_on_hold(
 
 
 def _read_keys(client: GeminiClient, scheme: MarkScheme, first: str, second: str) -> list[str]:
+    """The keys a hold forgets: both reads, then the stub repeats of the first, of the second."""
     binder = LabelBinder(client)
+
+    def key(model: str, suffix: str, tag: str) -> str:
+        return binder.cache_key(
+            _pages(), scheme, model=model, extra_cache_key="k" + suffix, task_tag=tag
+        )
+
     return [
-        binder.cache_key(
-            _pages(), scheme, model=first, extra_cache_key="k|bind1", task_tag="extraction"
-        ),
-        binder.cache_key(
-            _pages(),
-            scheme,
-            model=second,
-            extra_cache_key="k|bind2",
-            task_tag="binding_second_read",
-        ),
+        key(first, "|bind1", "extraction"),
+        key(second, "|bind2", "binding_second_read"),
+        *(key(first, f"|bind1|stub{n}", "extraction") for n in (1, 2)),
+        *(key(second, f"|bind2|stub{n}", "binding_second_read") for n in (1, 2)),
     ]
 
 
