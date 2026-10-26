@@ -80,6 +80,18 @@ class PixelToNormalisedTests(unittest.TestCase):
         self.assertEqual(stats.by_convention, {"pixel_xyxy": 1})
         self.assertEqual(stats.dropped, 0)
 
+    def test_a_reply_wrapped_in_prose_and_fences_is_converted_too(self) -> None:
+        wrapped = "Here you go:\n```json\n" + _reply([777, 660, 1554, 1100]) + "\n```\nDone."
+        text, stats = convert_reply(wrapped, [_PORTRAIT])
+        self.assertEqual(_boxes(text), [[300, 500, 500, 1000]])
+        self.assertEqual(stats.unparsed, 0)
+
+    def test_a_reply_with_no_json_is_counted_as_unparsed(self) -> None:
+        text, stats = convert_reply("I could not read the page.", [_PORTRAIT])
+        self.assertEqual(text, "I could not read the page.")
+        self.assertEqual(stats.unparsed, 1)
+        self.assertEqual(stats.log_fields()["unparsed"], 1)
+
     def test_the_size_used_is_that_of_the_page_the_box_is_on(self) -> None:
         items = [
             {"type": "answer", "page": 0, "box": [100, 200, 300, 400]},

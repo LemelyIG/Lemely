@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING, Literal
 
 from PIL import Image
 
+from lemely.io.providers.claude_schema import extract_json
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -78,6 +80,8 @@ class BoxStats:
     prefix_kept: int = 0
     mixed_reply: bool = False
     norm_reply: bool = False
+    #: Replies that held no JSON even after extraction, so their boxes (if any) stayed as sent.
+    unparsed: int = 0
 
     def log_fields(self) -> dict[str, object]:
         """The fields of the ``box_convention`` log event."""
@@ -96,6 +100,7 @@ class BoxStats:
             "prefix_kept": self.prefix_kept,
             "mixed_reply": self.mixed_reply,
             "norm_reply": self.norm_reply,
+            "unparsed": self.unparsed,
         }
 
 
@@ -294,7 +299,12 @@ def convert_reply(text: str, sizes: Sequence[tuple[int, int]]) -> tuple[str, Box
     try:
         data = json.loads(text)
     except ValueError:
-        return text, stats
+        # Prose or fences around the object: read it as the parse path does.
+        try:
+            data = json.loads(extract_json(text))
+        except ValueError:
+            stats.unparsed = 1
+            return text, stats
     refs, unplaceable = _collect(data, sizes)
     stats.malformed = unplaceable
     stats.boxes = len(refs) + unplaceable
