@@ -45,6 +45,14 @@ def _spend_file_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture(autouse=True)
+def _isolated_key_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``script.main`` loads the real key files into ``os.environ``; keep that from later tests."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+
 def _qr(
     qid: str,
     predicted: int,
