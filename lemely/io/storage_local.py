@@ -54,7 +54,14 @@ class LocalFileStorageBackend:
         except FileNotFoundError as exc:
             raise StorageObjectNotFoundError(f"No object at {bucket}/{object_path}") from exc
 
-    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+    def create_signed_url(
+        self,
+        bucket: str,
+        object_path: str,
+        expires_in: int,
+        *,
+        disposition: str | None = None,
+    ) -> str:
         """Return a ``data:`` URL carrying the object's bytes inline.
 
         A local directory has nothing to sign and no origin to serve from, so
@@ -69,6 +76,11 @@ class LocalFileStorageBackend:
         backend is dev, Compose and CI; the bytes never leave the machine that
         already has them on disk. The GCS backend is the one that signs.
 
+        A ``data:`` URL has no headers, so ``disposition`` cannot travel as one.
+        Its closest equivalent is the media type: with any ``disposition`` the
+        URL is ``application/octet-stream``, which no browser renders inline, so
+        an evidence file is downloaded here as it is from a signed GCS link.
+
         The response is `settings.storage.avatar_max_bytes` at most, inflated
         about a third by base64, and it rides in the profile JSON — fine at
         dev scale, and another reason this backend is not a deployment target.
@@ -77,7 +89,10 @@ class LocalFileStorageBackend:
         import mimetypes
 
         data = self.download(bucket, object_path)
-        media_type = mimetypes.guess_type(object_path)[0] or "application/octet-stream"
+        if disposition is not None:
+            media_type = "application/octet-stream"
+        else:
+            media_type = mimetypes.guess_type(object_path)[0] or "application/octet-stream"
         return f"data:{media_type};base64,{base64.b64encode(data).decode('ascii')}"
 
     def delete(self, bucket: str, object_path: str) -> None:

@@ -252,6 +252,54 @@ def test_signed_url_reports_missing_adc_when_minting_the_signing_token(
         GcsStorageBackend(_client=client).create_signed_url("avatars", "x.png", 3600)
 
 
+def test_signed_url_disposition_attachment() -> None:
+    """``disposition`` is signed into the URL as ``response-content-disposition`` (SC-22).
+
+    Signed for real, offline, with a generated service-account key and a real
+    ``storage.Client`` (explicit credentials: no network, no ADC), so the test
+    reads the parameter out of the URL GCS would honour rather than out of a
+    mock's call arguments. Without a disposition the URL carries none, so the
+    avatar links are unchanged.
+    """
+    from urllib.parse import parse_qs, urlsplit
+
+    from google.cloud import storage
+
+    client = storage.Client(project="a-project", credentials=_real_service_account_credentials())
+    backend = GcsStorageBackend(_client=client)
+    disposition = "attachment; filename=\"degree.pdf\"; filename*=UTF-8''degree.pdf"
+
+    attached = parse_qs(
+        urlsplit(
+            backend.create_signed_url(
+                "lemely-tutor-evidence", "tutor-evidence/t/e.pdf", 300, disposition=disposition
+            )
+        ).query
+    )
+    plain = parse_qs(urlsplit(backend.create_signed_url("avatars", "x.png", 3600)).query)
+
+    # V4 signs the whole canonical query string, so this parameter is covered
+    # by X-Goog-Signature: an edited disposition fails GCS's signature check.
+    assert attached["response-content-disposition"] == [disposition]
+    assert attached["X-Goog-Expires"] == ["300"]
+    assert attached["X-Goog-Signature"][0]
+    assert "response-content-disposition" not in plain
+    assert plain["X-Goog-Expires"] == ["3600"]
+
+
+def test_signed_url_without_disposition_passes_no_response_disposition() -> None:
+    """The mocked call shape: no ``response_disposition`` kwarg unless one is asked for."""
+    client, blob = _client_with_credentials(_real_service_account_credentials())
+    blob.generate_signed_url.return_value = "https://signed.example/x"
+    backend = GcsStorageBackend(_client=client)
+
+    backend.create_signed_url("avatars", "x.png", 3600)
+    assert "response_disposition" not in blob.generate_signed_url.call_args.kwargs
+
+    backend.create_signed_url("ev", "e.pdf", 300, disposition="attachment")
+    assert blob.generate_signed_url.call_args.kwargs["response_disposition"] == "attachment"
+
+
 def test_signed_url_for_user_adc_raises_rather_than_attribute_error() -> None:
     """`gcloud auth application-default login` credentials cannot sign at all.
 

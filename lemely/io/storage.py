@@ -54,14 +54,27 @@ class StorageBackend(Protocol):
         """Remove ``object_path`` from ``bucket``. A missing object is not an error."""
         ...
 
-    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+    def create_signed_url(
+        self,
+        bucket: str,
+        object_path: str,
+        expires_in: int,
+        *,
+        disposition: str | None = None,
+    ) -> str:
         """Return a URL that reads ``object_path`` for ``expires_in`` seconds.
 
-        Exists for profile pictures: the browser fetches the image directly,
-        so the bytes must be reachable without the caller's session, and the
-        reachability must expire. Every other consumer downloads through the
-        backend instead, which is why this is the only read that produces a
-        URL rather than bytes.
+        Exists for two consumers whose bytes must be reachable without the
+        caller's session, for a limited time: profile pictures (the browser
+        fetches the image directly) and tutor evidence files, which a platform
+        admin downloads through a 300 s link (SPEC §b.2 A2, THREAT-MODEL SC-22).
+        Every other consumer downloads through the backend instead, which is
+        why this is the only read that produces a URL rather than bytes.
+
+        ``disposition`` is a ``Content-Disposition`` value the response must
+        carry (``attachment; filename=...`` for evidence, so a browser saves the
+        file rather than rendering it). ``None`` leaves the response as the
+        object is stored, which is what avatars need.
 
         Raises :class:`~lemely.runtime.errors.ExternalServiceError` when the
         configured credentials cannot sign. Callers that merely *display* an

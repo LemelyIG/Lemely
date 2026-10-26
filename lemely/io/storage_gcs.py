@@ -151,8 +151,22 @@ class GcsStorageBackend:
         token: str = signing_credentials.token
         return token
 
-    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+    def create_signed_url(
+        self,
+        bucket: str,
+        object_path: str,
+        expires_in: int,
+        *,
+        disposition: str | None = None,
+    ) -> str:
         """Create a V4 signed URL for ``{bucket}/{object_path}``.
+
+        ``disposition`` becomes the signed ``response-content-disposition``
+        query parameter, so GCS answers with that ``Content-Disposition``
+        header and the value cannot be edited without breaking the signature
+        (evidence downloads use ``attachment``, SC-22). ``None`` adds nothing,
+        so avatar URLs are unchanged. The response ``Content-Type`` is the
+        object's stored metadata, which the uploader sets from the sniffed type.
 
         A service-account JSON key credential exposes a ``signer`` and can sign
         entirely locally; ``google-cloud-storage`` uses it automatically. A
@@ -187,6 +201,8 @@ class GcsStorageBackend:
         try:
             blob = client.bucket(bucket).blob(object_path)
             sign_kwargs: dict[str, Any] = {}
+            if disposition is not None:
+                sign_kwargs["response_disposition"] = disposition
             if credentials is not None and not hasattr(credentials, "signer"):
                 if not hasattr(credentials, "service_account_email"):
                     raise ExternalServiceError(

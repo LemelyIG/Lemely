@@ -7,6 +7,8 @@ double, mirroring the role ``tests/auth_fakes.py`` plays for
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from lemely.io.storage import StorageObjectNotFoundError
 from lemely.runtime.errors import ExternalServiceError
 
@@ -58,15 +60,28 @@ class FakeStorageBackend:
         """
         self._objects.pop((bucket, object_path), None)
 
-    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+    def create_signed_url(
+        self,
+        bucket: str,
+        object_path: str,
+        expires_in: int,
+        *,
+        disposition: str | None = None,
+    ) -> str:
         """Return a deterministic stand-in URL.
 
         Deliberately does not check that the object exists: real GCS will sign
         a URL for a key that was never written (the 404 arrives when someone
         follows it), and a fake that raised here would let a test pass that
-        production would fail.
+        production would fail. A ``disposition`` travels as a percent-encoded
+        ``disposition`` query parameter (GCS signs it as
+        ``response-content-disposition``), so a test can read back what a real
+        URL would make the response carry.
         """
-        return f"fake://{bucket}/{object_path}?expires_in={expires_in}"
+        url = f"fake://{bucket}/{object_path}?expires_in={expires_in}"
+        if disposition is not None:
+            url += f"&disposition={quote(disposition, safe='')}"
+        return url
 
 
 __all__ = ["FakeStorageBackend", "StorageObjectNotFoundError"]
