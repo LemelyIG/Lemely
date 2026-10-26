@@ -44,6 +44,15 @@ export const PUBLIC_CACHE_TTL_SECONDS = 60;
 // under /tutors/ never reaches the backend.
 const CARD_PATH = /^\/tutors\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
+/**
+ * The tutor id when `pathname` is exactly `/tutors/{uuid}` (the only path whose
+ * card can be indexed), else `null`. The client's path guard
+ * (`src/lib/tutoring/robotsMeta.ts`) is tested against this.
+ */
+export function tutorCardId(pathname: string): string | null {
+	return CARD_PATH.exec(pathname)?.[1] ?? null;
+}
+
 /** The pages wrangler.jsonc's `run_worker_first` sends here: `/tutors` and
  * `/tutors/*`, matched exactly as those two patterns match. */
 export function isTutorPagePath(pathname: string): boolean {
@@ -123,9 +132,9 @@ async function robotsTagFor(
 	ctx: BackgroundWork,
 ): Promise<string | null> {
 	if (url.pathname === "/tutors") return DIRECTORY_ROBOTS_TAG;
-	const card = CARD_PATH.exec(url.pathname);
-	if (!card) return NOINDEX_ROBOTS_TAG;
-	return (await lookupIndexable(card[1], url, env, ctx)) ? null : NOINDEX_ROBOTS_TAG;
+	const tutorId = tutorCardId(url.pathname);
+	if (tutorId === null) return NOINDEX_ROBOTS_TAG;
+	return (await lookupIndexable(tutorId, url, env, ctx)) ? null : NOINDEX_ROBOTS_TAG;
 }
 
 /**

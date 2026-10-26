@@ -9,8 +9,8 @@ import {
   VideoCamera,
   type Icon,
 } from "@phosphor-icons/react"
-import { useNavigate } from "react-router-dom"
-import { Button } from "@/components/ui/button"
+import { Link, useNavigate } from "react-router-dom"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { GradeChangeSummary } from "@/components/ui/grade-change-summary"
 import { OrdinalDistribution } from "@/components/ui/ordinal-distribution"
@@ -446,10 +446,11 @@ export function TutorFailure({
   const refusal = bookingRefusalOf(error)
   if (refusal?.action === "tutor_unavailable") {
     return (
-      <EmptyState
-        heading={unavailableHeading}
-        action={{ label: "Find a tutor", onClick: () => navigate(directoryPath) }}
-      />
+      <EmptyState heading={unavailableHeading}>
+        <Link to={directoryPath} className={buttonVariants({ variant: "accent", size: "sm" })}>
+          Find a tutor
+        </Link>
+      </EmptyState>
     )
   }
   if (refusal?.action === "verify_email") {

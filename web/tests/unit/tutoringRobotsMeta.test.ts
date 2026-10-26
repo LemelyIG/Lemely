@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { DIRECTORY_ROBOTS_TAG, NOINDEX_ROBOTS_TAG } from "../../worker/robots.ts"
+import { DIRECTORY_ROBOTS_TAG, NOINDEX_ROBOTS_TAG, isTutorPagePath, tutorCardId } from "../../worker/robots.ts"
 import {
   DIRECTORY_ROBOTS,
   NOINDEX_ROBOTS,
@@ -112,9 +112,9 @@ describe("which address a page may answer to", () => {
   })
 
   it("agrees with the worker about what a card path is", () => {
-    // The worker's own pattern, restated from its source comment: exactly one
-    // segment of canonical 8-4-4-4-12 hex in either case.
-    const workerCard = /^\/tutors\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    // The worker's own predicates, imported: a change to its card pattern or its routes changes this
+    // expectation. A path is a worker card only if the route sends it to the worker (the lowercase
+    // `/tutors/` prefix) and its pattern then accepts it.
     const paths = [
       `/tutors/${ID}`,
       `/tutors/${ID.toUpperCase()}`,
@@ -122,9 +122,17 @@ describe("which address a page may answer to", () => {
       "/tutors/12345678-1234-1234-1234-123456789abg",
       "/tutors/1234567812341234123412345678",
       "/tutors/abc",
+      `/tutors/${ID}/`,
+      `/Tutors/${ID}`,
+      `/tutors/${ID}/extra`,
+      "/tutors",
     ]
+    let cards = 0
     for (const path of paths) {
-      expect(classifyTutorPath(path).kind === "card", path).toBe(workerCard.test(path))
+      const isWorkerCard = isTutorPagePath(path) && tutorCardId(path) !== null
+      if (isWorkerCard) cards += 1
+      expect(classifyTutorPath(path).kind === "card", path).toBe(isWorkerCard)
     }
+    expect(cards).toBe(3)
   })
 })

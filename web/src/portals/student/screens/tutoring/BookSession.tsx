@@ -52,6 +52,7 @@ function Booking({ tutor }: { tutor: TutorProfile }) {
         directoryPath="/student/tutors"
         bookedPath={(booking) => `/student/sessions/${booking.bookingId}`}
         onSafetyNoticeRequired={() => setServerWantsNotice(true)}
+        safetyNoticeOpen={needsNotice}
       />
       <SafetyNoticeSheet
         open={needsNotice}

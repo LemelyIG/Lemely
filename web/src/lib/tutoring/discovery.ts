@@ -183,19 +183,6 @@ export function hasActiveFilters(filters: DirectoryFilterState, audience: Audien
 
 // ── Lists ───────────────────────────────────────────────────────────────────
 
-/** `next` appended to `items`, skipping any whose key is already there (a tutor can move between pages). */
-export function appendUnique<T>(items: readonly T[], next: readonly T[], keyOf: (item: T) => string): T[] {
-  const seen = new Set(items.map(keyOf))
-  const merged = [...items]
-  for (const item of next) {
-    const key = keyOf(item)
-    if (seen.has(key)) continue
-    seen.add(key)
-    merged.push(item)
-  }
-  return merged
-}
-
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 /** "Mar 2026" from the API's "2026-03", or null (a profile not yet through its first review). */
@@ -233,6 +220,16 @@ export function availabilityRows(rules: readonly AvailabilityRule[]): Availabili
 }
 
 // ── Booking window ──────────────────────────────────────────────────────────
+
+/**
+ * The chosen time after the Length control changes. A slot's `endsAt` was cut
+ * for the length it was fetched with, so a different length drops the choice
+ * (and the picker shows the times for the new length); choosing the same
+ * length again keeps it.
+ */
+export function slotAfterLengthChange<T>(slot: T | null, from: number, to: number): T | null {
+  return from === to ? slot : null
+}
 
 /** SP5 `days`: 14 by default, up to 28 behind "Show later dates". */
 export function slotWindow(showLater: boolean): 14 | 28 {
@@ -314,3 +311,15 @@ export const SHARE_EXPLAINER =
   "Your grades, predicted grades, target grades, papers' marks, weak topics, trend, at-risk warnings and the days you were active, for all subjects. Never your answer sheets, and never the time of day you used Lemely."
 export const SHARE_PARENTS_LINE =
   "Your linked parents can see who you share with and each time a tutor looked."
+/** S-34 "Share my progress": linked parents are told when sharing starts. */
+export const SHARE_PARENTS_TOLD_LINE = "Your linked parents are told when sharing starts."
+
+/** The sheet's list, in the order S-34 gives it. */
+export function shareSheetLines(tutorName: string): string[] {
+  return [
+    "This covers all your subjects until you stop sharing.",
+    `Every time ${tutorName} looks, it is recorded and you can see it in Tutors & your data.`,
+    SHARE_PARENTS_TOLD_LINE,
+    SHARE_PARENTS_LINE,
+  ]
+}

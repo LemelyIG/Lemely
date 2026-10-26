@@ -10,6 +10,8 @@ import {
   bookingRefusalFor,
   bookingRefusalOf,
   isTutorHidden,
+  noteFieldTargets,
+  refusalIsCurrent,
 } from "@/lib/tutoring/bookingErrors"
 
 /*
@@ -129,11 +131,69 @@ describe("the SP6 refusals", () => {
     expect(bookingRefusalFor("contact_details_not_allowed").field).toBe("note")
     expect(bookingRefusalFor("note_not_allowed_for_parent").field).toBe("note")
     // S-35 says the already-pending refusal links to the request; the link text is the screen's.
-    expect(S35_PENDING_MENTIONS_LINK).toBe(true)
+    // The expected action is derived from the SPEC sentence, the actual one is the code's.
+    const specLinksToRequest = /`already_pending`: link to the request/.test(s35Interactions())
+    expect(specLinksToRequest).toBe(true)
+    expect(bookingRefusalFor("already_pending").action).toBe(specLinksToRequest ? "open_requests" : "none")
   })
 })
 
-const S35_PENDING_MENTIONS_LINK = /`already_pending`: link to the request/.test(s35Interactions())
+describe("which note a contact-details refusal belongs to", () => {
+  it("names the first note when only it is filled, the other-mode note when only that is", () => {
+    expect(noteFieldTargets({ audience: "student", firstNote: "hi", mode: "other", otherNote: "" })).toEqual({
+      first: true,
+      other: false,
+    })
+    expect(noteFieldTargets({ audience: "student", firstNote: " ", mode: "other", otherNote: "call me" })).toEqual({
+      first: false,
+      other: true,
+    })
+  })
+
+  it("names both when both are filled, since the server does not say which was refused", () => {
+    expect(noteFieldTargets({ audience: "student", firstNote: "hi", mode: "other", otherNote: "call me" })).toEqual({
+      first: true,
+      other: true,
+    })
+  })
+
+  it("ignores an other-mode note the request will not carry, and a parent has no first note", () => {
+    expect(noteFieldTargets({ audience: "student", firstNote: "hi", mode: "virtual", otherNote: "stale" })).toEqual({
+      first: true,
+      other: false,
+    })
+    expect(noteFieldTargets({ audience: "parent", firstNote: "typed", mode: "other", otherNote: "x" })).toEqual({
+      first: false,
+      other: true,
+    })
+  })
+
+  it("falls back to the field the reader can see when neither holds text", () => {
+    expect(noteFieldTargets({ audience: "student", firstNote: "", mode: "virtual", otherNote: "" })).toEqual({
+      first: true,
+      other: false,
+    })
+    expect(noteFieldTargets({ audience: "parent", firstNote: "", mode: "other", otherNote: "" })).toEqual({
+      first: false,
+      other: true,
+    })
+  })
+})
+
+describe("a refusal that has been dealt with", () => {
+  it("drops the safety-notice sentence once the notice is no longer open", () => {
+    const refusal = bookingRefusalFor("safety_notice_required")
+    expect(refusalIsCurrent(refusal, true)).toBe(true)
+    expect(refusalIsCurrent(refusal, false)).toBe(false)
+    expect(refusalIsCurrent(refusal, undefined)).toBe(true)
+  })
+
+  it("never drops any other refusal, whatever the notice is doing", () => {
+    for (const code of ["slot_taken", "already_pending", "contact_details_not_allowed", "email_unverified"] as const) {
+      expect(refusalIsCurrent(bookingRefusalFor(code), false), code).toBe(true)
+    }
+  })
+})
 
 describe("a tutor who is hidden from the student", () => {
   const spec = SPEC.slice(SPEC.indexOf("**S-34 ·"))

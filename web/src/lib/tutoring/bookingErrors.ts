@@ -166,3 +166,41 @@ export function bookingRefusalOf(error: unknown): BookingRefusal | null {
   if (typed.retryAfter !== undefined) refusal.retryAfter = typed.retryAfter
   return refusal
 }
+
+/**
+ * Whether a refusal should still be on the screen. "Read the safety notice
+ * before you continue" only says why the notice sheet opened; once the student
+ * has acknowledged it (`safetyNoticeOpen === false`) the sentence is stale and
+ * the next press of "Send request" starts clean. A screen that does not say
+ * whether the sheet is open (`undefined`) keeps every refusal.
+ */
+export function refusalIsCurrent(refusal: BookingRefusal, safetyNoticeOpen: boolean | undefined): boolean {
+  return !(refusal.action === "show_safety_notice" && safetyNoticeOpen === false)
+}
+
+/** Which of the form's two free-text notes a refused note belongs to. */
+export interface NoteFieldTargets {
+  /** The student's first note. */
+  first: boolean
+  /** The "How would you like to meet?" note of the Other way of meeting. */
+  other: boolean
+}
+
+/**
+ * The server refuses "the note" without saying which text it read, so the
+ * sentence goes on every note field that holds text: one when one is filled,
+ * both when both are. A field the request does not carry (a parent has no first
+ * note; the other-mode note is only sent for mode `other`) never counts. With
+ * nothing typed, the one field the reader can see.
+ */
+export function noteFieldTargets(input: {
+  audience: "student" | "parent"
+  firstNote: string
+  mode: string
+  otherNote: string
+}): NoteFieldTargets {
+  const first = input.audience === "student" && input.firstNote.trim() !== ""
+  const other = input.mode === "other" && input.otherNote.trim() !== ""
+  if (first || other) return { first, other }
+  return input.audience === "student" ? { first: true, other: false } : { first: false, other: true }
+}

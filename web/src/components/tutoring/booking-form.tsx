@@ -14,12 +14,15 @@ import { describeQueryFailure } from "@/lib/queryFailure"
 import {
   bookingRefusalOf,
   isTutorHidden,
+  noteFieldTargets,
+  refusalIsCurrent,
   type BookingRefusal,
 } from "@/lib/tutoring/bookingErrors"
 import {
   FEES_LINE,
   MODE_OPTIONS,
   countingNotice,
+  slotAfterLengthChange,
   slotWindow,
   todayInZone,
 } from "@/lib/tutoring/discovery"
@@ -84,6 +87,12 @@ export interface BookingFormProps {
   bookedPath: (booking: Booking) => string
   /** Called when the server says the safety notice has not been read. */
   onSafetyNoticeRequired?: () => void
+  /**
+   * Whether the screen's safety notice sheet is open. When it closes after an
+   * acknowledgement, the "read the safety notice" refusal is dropped instead of
+   * waiting for the next submit.
+   */
+  safetyNoticeOpen?: boolean
   className?: string
 }
 
@@ -106,6 +115,16 @@ function CountingNotice({ audience, childName }: { audience: "student" | "parent
         </>
       )}
     </p>
+  )
+}
+
+/** One line of the request summary: the term at a fixed width, the answer beside it. */
+function SummaryRow({ term, children }: { term: string; children: ReactNode }) {
+  return (
+    <div className="flex gap-x-4">
+      <dt className="w-20 shrink-0 text-ink-muted">{term}</dt>
+      <dd className="m-0 min-w-0 text-ink">{children}</dd>
+    </div>
   )
 }
 
@@ -136,6 +155,7 @@ export function BookingForm({
   directoryPath,
   bookedPath,
   onSafetyNoticeRequired,
+  safetyNoticeOpen,
   className,
 }: BookingFormProps) {
   const navigate = useNavigate()
@@ -162,7 +182,8 @@ export function BookingForm({
     durationMinutes: duration,
   })
   const create = useCreateBooking()
-  const refusal = create.isError ? bookingRefusalOf(create.error) : null
+  const raised = create.isError ? bookingRefusalOf(create.error) : null
+  const refusal = raised && refusalIsCurrent(raised, safetyNoticeOpen) ? raised : null
 
   if (isTutorHidden(slots.error) || isTutorHidden(create.error)) {
     return (
@@ -226,7 +247,7 @@ export function BookingForm({
     })
   }
 
-  const noteTarget: "first" | "other" = audience === "student" && note.trim() !== "" ? "first" : "other"
+  const noteTargets = noteFieldTargets({ audience, firstNote: note, mode, otherNote })
   const noteError = refusal?.field === "note" ? refusal.message : undefined
   const slotRefusal = refusal?.field === "slot" ? refusal : null
   const generalRefusal = refusal && refusal.field !== "note" && refusal.field !== "slot" ? refusal : null
@@ -292,7 +313,7 @@ export function BookingForm({
               maxLength={300}
               value={otherNote}
               onChange={(e) => setOtherNote(e.target.value)}
-              error={noteTarget === "other" ? noteError : undefined}
+              error={noteTargets.other ? noteError : undefined}
             />
           </div>
         ) : null}
@@ -302,7 +323,12 @@ export function BookingForm({
         label="Length"
         orientation="horizontal"
         value={String(duration)}
-        onValueChange={(value) => setDuration(Number(value) as Duration)}
+        onValueChange={(value) => {
+          const next = Number(value) as Duration
+          // The chosen time was cut for the old length; the picker refetches for the new one.
+          setSlot((current) => slotAfterLengthChange(current, duration, next))
+          setDuration(next)
+        }}
       >
         {DURATIONS.map((d) => (
           <Radio key={d} value={String(d)} label={`${d} minutes`} className="min-h-11 items-center" />
@@ -358,7 +384,7 @@ export function BookingForm({
           maxLength={2000}
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          error={noteTarget === "first" ? noteError : undefined}
+          error={noteTargets.first ? noteError : undefined}
         />
       ) : null}
 
@@ -366,19 +392,14 @@ export function BookingForm({
         <h2 id="booking-summary" className="m-0 text-display-sm text-ink">
           Your request
         </h2>
-        <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-body-md">
-          <dt className="text-ink-muted">Tutor</dt>
-          <dd className="m-0 text-ink">{tutor.publicName}</dd>
-          <dt className="text-ink-muted">Subject</dt>
-          <dd className="m-0 text-ink">{subject?.name ?? "Not chosen yet"}</dd>
-          <dt className="text-ink-muted">How</dt>
-          <dd className="m-0 text-ink">{modeLabel ?? "Not chosen yet"}</dd>
-          <dt className="text-ink-muted">Length</dt>
-          <dd className="m-0 text-ink">{duration} minutes</dd>
-          <dt className="text-ink-muted">When</dt>
-          <dd className="m-0 text-ink">
+        <dl className="m-0 flex flex-col gap-y-1 text-body-md">
+          <SummaryRow term="Tutor">{tutor.publicName}</SummaryRow>
+          <SummaryRow term="Subject">{subject?.name ?? "Not chosen yet"}</SummaryRow>
+          <SummaryRow term="How">{modeLabel ?? "Not chosen yet"}</SummaryRow>
+          <SummaryRow term="Length">{duration} minutes</SummaryRow>
+          <SummaryRow term="When">
             {slot ? formatSlotRange(slot.startsAt, slot.endsAt, tutor.zone, tutor.zoneLabel) : "Not chosen yet"}
-          </dd>
+          </SummaryRow>
         </dl>
         <p className="m-0 text-body-sm text-ink-muted">{FEES_LINE}</p>
         <CountingNotice audience={audience} childName={student?.name} />

@@ -18,12 +18,16 @@
  *
  * ── The address guard ───────────────────────────────────────────────────────
  *
- * The worker only treats the exact path `/tutors` and `/tutors/{uuid}` (the
- * lowercase prefix, one segment) as tutor pages. The router is more forgiving:
- * it also matches `/Tutors`, `/tutors/` and `/tutors/{id}/`. The worker serves
- * those variants as a plain static page with no robots header at all, so a
- * page that rendered a card at one of them would be indexable without the
- * tutor's choice having been asked. `classifyTutorPath` therefore answers, for
+ * The worker lets a card be indexed only at the exact path `/tutors/{uuid}`
+ * (the lowercase prefix, one segment). Every other path under `/tutors/`
+ * (`/tutors/`, `/tutors/{id}/`, an id that is not a UUID) still reaches the
+ * worker and gets `noindex, nofollow`. Only a case variant of the
+ * prefix, such as `/Tutors`, is outside the worker's route patterns: it is
+ * served as a plain static page with no robots header at all. The router is
+ * more forgiving than either: it matches all of these spellings. So a page that
+ * rendered a card at a variant the worker did not decide would be indexable
+ * without the tutor's choice having been asked, or would carry a header that
+ * says something the page does not. `classifyTutorPath` therefore answers, for
  * the raw pathname: render, redirect to the canonical spelling, or do not
  * render. The id keeps the case it came with: the worker accepts either case.
  */

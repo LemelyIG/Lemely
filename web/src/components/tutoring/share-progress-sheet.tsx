@@ -4,7 +4,7 @@ import { Link } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Modal } from "@/components/ui/modal"
 import { bookingRefusalOf } from "@/lib/tutoring/bookingErrors"
-import { SHARE_EXPLAINER, SHARE_PARENTS_LINE } from "@/lib/tutoring/discovery"
+import { SHARE_EXPLAINER, shareSheetLines } from "@/lib/tutoring/discovery"
 import { cn } from "@/lib/utils"
 
 /*
@@ -99,11 +99,11 @@ export function ShareProgressSheet({
       <div className="flex flex-col gap-3">
         <p className="m-0 text-body-md text-ink">{SHARE_EXPLAINER}</p>
         <ul className="m-0 flex list-none flex-col gap-2 p-0">
-          <li className="text-body-md text-ink">This covers all your subjects until you stop sharing.</li>
-          <li className="text-body-md text-ink">
-            Every time {tutorName} looks, it is recorded and you can see it in Tutors &amp; your data.
-          </li>
-          <li className="text-body-md text-ink">{SHARE_PARENTS_LINE}</li>
+          {shareSheetLines(tutorName).map((line) => (
+            <li key={line} className="text-body-md text-ink">
+              {line}
+            </li>
+          ))}
         </ul>
         {errorText ? (
           <p role="alert" className="m-0 text-body-sm text-err">

@@ -16,9 +16,9 @@ import {
   RATING_OPTIONS,
   SHARE_EXPLAINER,
   SHARE_PARENTS_LINE,
+  SHARE_PARENTS_TOLD_LINE,
   TIME_OF_DAY_OPTIONS,
   activeFilterCount,
-  appendUnique,
   availabilityRows,
   countingNotice,
   directoryQuery,
@@ -28,6 +28,8 @@ import {
   listedSinceLabel,
   minuteLabel,
   resultsCaption,
+  shareSheetLines,
+  slotAfterLengthChange,
   slotWindow,
   todayInZone,
   type DirectoryFilterState,
@@ -247,15 +249,53 @@ describe("fixed copy, parsed from the SPEC", () => {
     expect(SHARE_EXPLAINER).toBe(quotedAfter(s38, "Explainer (F29): "))
     expect(SHARE_PARENTS_LINE).toBe(quotedAfter(s38, SHARE_EXPLAINER + '" '))
   })
+
+  it("the share sheet tells the student their linked parents are told when sharing starts (S-34)", () => {
+    const interactions = screen("S-34").slice(screen("S-34").indexOf("**Interactions.**"))
+    expect(interactions).toMatch(/their linked parents are told and can see who they share with/)
+    const lines = shareSheetLines("Sara M.")
+    expect(lines).toContain(SHARE_PARENTS_TOLD_LINE)
+    expect(lines).toContain(SHARE_PARENTS_LINE)
+    expect(SHARE_PARENTS_TOLD_LINE).toMatch(/linked parents are told/)
+    expect(SHARE_PARENTS_TOLD_LINE).toMatch(/sharing starts/)
+    expect(lines.some((line) => line.includes("Sara M."))).toBe(true)
+    expect(lines.length).toBe(4)
+  })
+
+  it("the share sheet renders the lines of shareSheetLines, not a copy of them", () => {
+    const source = readFileSync(
+      join(import.meta.dirname, "..", "..", "src", "components", "tutoring", "share-progress-sheet.tsx"),
+      "utf8",
+    )
+    expect(source).toContain("shareSheetLines(")
+    expect(source).not.toContain("SHARE_PARENTS_LINE")
+  })
+})
+
+describe("the booking form's length", () => {
+  const slot = { startsAt: "2026-11-02T17:00:00+03:00", endsAt: "2026-11-02T18:00:00+03:00" }
+
+  it("drops a chosen time when the length changes, so the end can't disagree with the length", () => {
+    for (const [from, to] of [[60, 120], [60, 45], [45, 90], [120, 60]] as const) {
+      expect(slotAfterLengthChange(slot, from, to), `${from} -> ${to}`).toBeNull()
+    }
+  })
+
+  it("keeps the chosen time when the length is chosen again unchanged", () => {
+    expect(slotAfterLengthChange(slot, 60, 60)).toBe(slot)
+    expect(slotAfterLengthChange(null, 60, 120)).toBeNull()
+  })
+
+  it("is what the Length control calls", () => {
+    const source = readFileSync(
+      join(import.meta.dirname, "..", "..", "src", "components", "tutoring", "booking-form.tsx"),
+      "utf8",
+    )
+    expect(source).toMatch(/slotAfterLengthChange\(/)
+  })
 })
 
 describe("the lists on the page", () => {
-  it("appends a page without repeating a tutor that moved between pages", () => {
-    const card = (tutorId: string) => ({ tutorId })
-    const merged = appendUnique([card("a"), card("b")], [card("b"), card("c")], (c) => c.tutorId)
-    expect(merged.map((c) => c.tutorId)).toEqual(["a", "b", "c"])
-  })
-
   it("writes 'Listed since' as a month and year, and says nothing before a first approval", () => {
     expect(listedSinceLabel("2026-03")).toBe("Mar 2026")
     expect(listedSinceLabel("2025-12")).toBe("Dec 2025")
