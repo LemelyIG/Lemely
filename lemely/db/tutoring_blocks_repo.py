@@ -9,9 +9,12 @@ id, a tutor by the student's id.
 **Rows are never deleted.** A lift (B3) sets ``removed_at``; a renewal (B2 on a lifted row)
 clears it and keeps ``created_at``, the first block, which the outcome exclusion and its hold
 read (ADR-T04). ``updated_at`` is the instant the row last became active (SPEC §i.8,
-``tutoring_predicates.active_block_since_sql``): the INSERT takes the server default ``now()``,
-in the same transaction as the sweep; a lift and a renewal set ``updated_at = now()`` themselves
-(raw SQL skips the ORM ``onupdate``). **A block request on a row that is already active writes
+``tutoring_predicates.active_block_since_sql``). Every write of the row is stamped with the
+sweep's one instant, the clock read once the tutor row is held ``FOR UPDATE``
+(``LockedTutor.locked_at``, ``tutoring_sweeps`` module docstring): the INSERT sets
+``created_at`` and ``updated_at`` to it and passes it to the sweep, which cancels and revokes
+with it; a renewal sets ``updated_at`` to it, and a lift ``removed_at`` and ``updated_at`` (raw
+SQL skips the ORM ``onupdate``). **A block request on a row that is already active writes
 nothing** (the upsert's ``DO UPDATE ... WHERE tutoring_blocks.removed_at IS NOT NULL`` matches no
 row): a repeated press after the note window closed must not move ``blocked_since`` and switch
 the tutor's ``notesFrozen`` off while the block stands. A lift of a lifted row writes nothing
@@ -59,12 +62,13 @@ if TYPE_CHECKING:
 BlockerParty = Literal["student", "tutor"]
 
 #: The upsert of SPEC §i.8: a new row, or a lifted row made active again; never a write to a row
-#: that is already active.
+#: that is already active. ``:at`` is the sweep's instant (``LockedTutor.locked_at``).
 _UPSERT_SQL: Final = (
-    "INSERT INTO tutoring_blocks (blocker_user_id, blocked_user_id) VALUES (:blocker, :blocked) "
+    "INSERT INTO tutoring_blocks (blocker_user_id, blocked_user_id, created_at, updated_at) "
+    "VALUES (:blocker, :blocked, CAST(:at AS timestamptz), CAST(:at AS timestamptz)) "
     "ON CONFLICT (blocker_user_id, blocked_user_id) DO UPDATE "
-    "SET removed_at = NULL, updated_at = now() WHERE tutoring_blocks.removed_at IS NOT NULL "
-    "RETURNING updated_at"
+    "SET removed_at = NULL, updated_at = CAST(:at AS timestamptz) "
+    "WHERE tutoring_blocks.removed_at IS NOT NULL RETURNING updated_at"
 )
 
 #: O13 for a student caller, over ``tutor_profiles tp`` (``:student_id`` is the caller).
@@ -252,9 +256,10 @@ class TutoringBlocksRepository:
         lock_pair_in_session(
             session, student_id=resolved.student_id, tutor_profile_id=resolved.tutor.profile_id
         )
+        at = resolved.tutor.locked_at
         written = session.execute(
             sa.text(_UPSERT_SQL),
-            {"blocker": resolved.blocker_user_id, "blocked": resolved.blocked_user_id},
+            {"blocker": resolved.blocker_user_id, "blocked": resolved.blocked_user_id, "at": at},
         ).first()
         if written is None:
             existing = session.execute(
@@ -270,6 +275,7 @@ class TutoringBlocksRepository:
             student_id=resolved.student_id,
             tutor_profile_id=resolved.tutor.profile_id,
             actor_user_id=caller.user_id,
+            at=at,
         )
         return BlockOutcome(created=True, block=self._view(resolved, written[0]), sweep=sweep)
 
@@ -283,35 +289,46 @@ class TutoringBlocksRepository:
         for that counterpart, whoever else may have one (O28).
         """
         with self._sessionmaker.begin() as session:
-            try:
-                resolved = self._resolve(session, caller, counterpart_id, for_block=False)
-            except NotBlockable as exc:
-                raise NoBlockRow("Block not found.") from exc
-            lock_pair_in_session(
-                session,
-                student_id=resolved.student_id,
-                tutor_profile_id=resolved.tutor.profile_id,
-            )
-            found = session.execute(
-                sa.text(
-                    "SELECT removed_at FROM tutoring_blocks WHERE blocker_user_id = :blocker "
-                    "AND blocked_user_id = :blocked FOR UPDATE"
-                ),
-                {"blocker": resolved.blocker_user_id, "blocked": resolved.blocked_user_id},
-            ).first()
-            if found is None:
-                raise NoBlockRow("Block not found.")
-            if found[0] is not None:
-                return False
-            session.execute(
-                sa.text(
-                    "UPDATE tutoring_blocks SET removed_at = now(), updated_at = now() "
-                    "WHERE blocker_user_id = :blocker AND blocked_user_id = :blocked "
-                    "AND removed_at IS NULL"
-                ),
-                {"blocker": resolved.blocker_user_id, "blocked": resolved.blocked_user_id},
-            )
-            return True
+            return self.unblock_in_session(session, caller, counterpart_id)
+
+    def unblock_in_session(
+        self, session: Session, caller: BlockCaller, counterpart_id: uuid.UUID
+    ) -> bool:
+        """B3's body in the caller's transaction (see :meth:`unblock`)."""
+        try:
+            resolved = self._resolve(session, caller, counterpart_id, for_block=False)
+        except NotBlockable as exc:
+            raise NoBlockRow("Block not found.") from exc
+        lock_pair_in_session(
+            session,
+            student_id=resolved.student_id,
+            tutor_profile_id=resolved.tutor.profile_id,
+        )
+        found = session.execute(
+            sa.text(
+                "SELECT removed_at FROM tutoring_blocks WHERE blocker_user_id = :blocker "
+                "AND blocked_user_id = :blocked FOR UPDATE"
+            ),
+            {"blocker": resolved.blocker_user_id, "blocked": resolved.blocked_user_id},
+        ).first()
+        if found is None:
+            raise NoBlockRow("Block not found.")
+        if found[0] is not None:
+            return False
+        session.execute(
+            sa.text(
+                "UPDATE tutoring_blocks SET removed_at = CAST(:at AS timestamptz), "
+                "updated_at = CAST(:at AS timestamptz) "
+                "WHERE blocker_user_id = :blocker AND blocked_user_id = :blocked "
+                "AND removed_at IS NULL"
+            ),
+            {
+                "blocker": resolved.blocker_user_id,
+                "blocked": resolved.blocked_user_id,
+                "at": resolved.tutor.locked_at,
+            },
+        )
+        return True
 
     # -- Resolution (O13, O28) ----------------------------------------------
 

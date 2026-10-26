@@ -1856,6 +1856,41 @@ def test_cancel_future_for_tutor_in_session_cancels_every_future_active_booking(
     }
 
 
+def test_cancel_future_in_session_reads_the_sweeps_instant_or_now(
+    sm: sessionmaker[Session], service: BookingService, w: World
+) -> None:
+    """A sweep passes ``at``, the clock it read after the tutor row lock (SPEC §a.4b): the
+    "not yet started" guard and both stamps read it. Without ``at`` they read ``now()``."""
+    soon = add_booking(sm, w, state="accepted", starts_in=timedelta(minutes=30))
+    later = add_booking(sm, w, starts_in=timedelta(days=3))
+    theirs = add_booking(sm, w, student=add_student(sm), starts_in=timedelta(days=2))
+    with sm.begin() as session:
+        at = session.execute(sa.text("SELECT now()")).scalar_one() + timedelta(hours=1)
+        for_pair = service.cancel_future_for_pair_in_session(
+            session, tutor_profile_id=w.tutor.profile_id, student_id=w.student, at=at
+        )
+    assert for_pair == [later]  # ``soon`` has started by ``at``: not the sweep's to cancel
+    assert (stored(sm, later).cancelled_at, stored(sm, later).updated_at) == (at, at)
+    assert stored(sm, soon).state is BookingState.accepted
+
+    with sm.begin() as session:
+        now = session.execute(sa.text("SELECT now()")).scalar_one()
+        for_tutor = service.cancel_future_for_tutor_in_session(
+            session, tutor_profile_id=w.tutor.profile_id
+        )
+    assert for_tutor == [soon, theirs]
+    for booking in for_tutor:
+        assert (stored(sm, booking).cancelled_at, stored(sm, booking).updated_at) == (now, now)
+
+    again = add_booking(sm, w, starts_in=timedelta(days=4))
+    with sm.begin() as session:
+        at = session.execute(sa.text("SELECT now()")).scalar_one() + timedelta(minutes=5)
+        assert service.cancel_future_for_tutor_in_session(
+            session, tutor_profile_id=w.tutor.profile_id, at=at
+        ) == [again]
+    assert stored(sm, again).cancelled_at == at
+
+
 def test_admin_cancel_in_session_only_before_the_start(
     sm: sessionmaker[Session], service: BookingService, w: World
 ) -> None:

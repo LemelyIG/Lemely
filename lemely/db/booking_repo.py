@@ -600,6 +600,16 @@ _SET: Final[Mapping[str, str]] = MappingProxyType(
     }
 )
 
+#: A sweep's one instant (SPEC §a.4b): ``:at``, the clock its caller read once the tutor row was
+#: held ``FOR UPDATE``; NULL keeps the transaction's ``now()``.
+_SWEEP_AT: Final = "COALESCE(CAST(:at AS timestamptz), now())"
+#: ``_SET["cancel"]`` and ``updated_at``, both stamped with the sweep's instant.
+_SWEEP_CANCEL_SET: Final = (
+    f"state = 'cancelled', cancelled_at = {_SWEEP_AT}, "
+    "cancelled_by_party = CAST(:party AS bookingparty), "
+    f"cancelled_by_user_id = :cancelled_by, cancel_reason = :reason, updated_at = {_SWEEP_AT}"
+)
+
 #: A tutor's write needs a profile that is neither suspended nor closed (CB-7).
 _TUTOR_ACTIVE: Final = (
     "EXISTS (SELECT 1 FROM tutor_profiles g WHERE g.id = b.tutor_profile_id "
@@ -1887,13 +1897,15 @@ class BookingService:
         tutor_profile_id: uuid.UUID,
         student_id: uuid.UUID,
         actor_user_id: uuid.UUID | None = None,
+        at: datetime | None = None,
     ) -> list[uuid.UUID]:
         """A block's cancellations (SPEC §a.2 blocks): the pair's active bookings not yet started.
 
         Overrides the 24-hour window (row 15a); party ``system``, reason
         :data:`SYSTEM_CANCEL_REASON`, no ``cancelled_by_user_id``. The caller holds the tutor
         row ``FOR UPDATE`` and the pair lock (§a.4b, Block). Emails go to every party and linked
-        parent except ``actor_user_id`` (the blocker). Returns the ids, earliest start first.
+        parent except ``actor_user_id`` (the blocker). ``at`` is the sweep's instant (see
+        :meth:`_cancel_future`). Returns the ids, earliest start first.
         """
         return self._cancel_future(
             session,
@@ -1903,16 +1915,18 @@ class BookingService:
             reason=SYSTEM_CANCEL_REASON,
             actor_user_id=actor_user_id,
             tell_tutor=True,
+            at=at,
         )
 
     def cancel_future_for_tutor_in_session(
-        self, session: Session, *, tutor_profile_id: uuid.UUID
+        self, session: Session, *, tutor_profile_id: uuid.UUID, at: datetime | None = None
     ) -> list[uuid.UUID]:
         """A suspension's or close's cancellations (SPEC §a.3): every active booking not started.
 
         Party ``platform_admin``, reason :data:`ADMIN_CANCEL_REASON`. The caller holds the tutor
         row ``FOR UPDATE``. Emails go to each student and their linked parents, not to the
-        tutor (who is told about the listing decision instead). Earliest start first.
+        tutor (who is told about the listing decision instead). ``at`` is the sweep's instant
+        (see :meth:`_cancel_future`). Earliest start first.
         """
         return self._cancel_future(
             session,
@@ -1922,6 +1936,7 @@ class BookingService:
             reason=ADMIN_CANCEL_REASON,
             actor_user_id=None,
             tell_tutor=False,
+            at=at,
         )
 
     def _cancel_future(
@@ -1934,8 +1949,15 @@ class BookingService:
         reason: str,
         actor_user_id: uuid.UUID | None,
         tell_tutor: bool,
+        at: datetime | None,
     ) -> list[uuid.UUID]:
         """Cancel the active bookings ``where`` selects that have not started, then queue emails.
+
+        **The instant (SPEC §a.4b, review F6-21 F1).** A sweep passes ``at``, the clock it read
+        once the tutor row was held ``FOR UPDATE``; "not yet started", ``cancelled_at`` and
+        ``updated_at`` all read it, so no cancellation precedes the booking it ends (a create
+        that began after the sweep's transaction can commit before the lock is granted). Without
+        ``at`` they read the transaction's ``now()``.
 
         **Lock rule (SPEC §a.4b step 2, §i.6).** Before any booking row is touched, the ``users``
         rows of every student this sweep will cancel for are taken ``FOR KEY SHARE``, in id
@@ -1947,10 +1969,17 @@ class BookingService:
         (``40P01``). Taken first, the sweep simply queues behind the create, or the create behind
         the sweep. The set of students cannot grow between the lock and the ``UPDATE``: the
         caller holds the tutor row ``FOR UPDATE`` (step 1), so no booking with this tutor can be
-        created meanwhile, and ``now()`` is fixed for the transaction.
+        created meanwhile, and both statements read one fixed instant.
         """
-        bound = {**GUARD_BINDS, **params, "party": party, "cancelled_by": None, "reason": reason}
-        guard = transition_guard_sql("cancel", party)
+        bound = {
+            **GUARD_BINDS,
+            **params,
+            "party": party,
+            "cancelled_by": None,
+            "reason": reason,
+            "at": at,
+        }
+        guard = f"({transition_guard_sql('cancel', party)} AND {_SWEEP_AT} < b.starts_at)"
         session.execute(
             sa.text(
                 "SELECT 1 FROM users WHERE id IN (SELECT b.student_id FROM tutor_bookings b "  # noqa: S608 - constants
@@ -1960,7 +1989,7 @@ class BookingService:
         )
         cancelled = session.execute(
             sa.text(
-                f"UPDATE tutor_bookings AS b SET {_SET['cancel']}, updated_at = now() "  # noqa: S608 - constants
+                f"UPDATE tutor_bookings AS b SET {_SWEEP_CANCEL_SET} "  # noqa: S608 - constants
                 f"WHERE {where} AND {guard} RETURNING b.id"
             ),
             bound,

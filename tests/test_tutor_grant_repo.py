@@ -534,6 +534,43 @@ def test_revoke_live_in_session_sweeps_only_live_grants_of_that_tutor(
         )
 
 
+def test_revoke_live_in_session_stamps_the_sweeps_instant_or_now(
+    sm: sessionmaker[Session], tutor: SeededTutor
+) -> None:
+    """A sweep passes ``at``, the clock it read after the tutor row lock (SPEC §a.4b); without
+    it the revoke keeps the transaction's ``now()``."""
+    first, second = add_student(sm), add_student(sm)
+    swept, plain = add_grant(sm, first, tutor), add_grant(sm, second, tutor)
+    with sm.begin() as session:
+        now = session.execute(sa.text("SELECT now()")).scalar_one()
+        at = now + timedelta(minutes=5)
+        assert revoke_live_in_session(
+            session,
+            tutor_profile_id=tutor.profile_id,
+            student_id=first,
+            reason=GrantRevokeReason.block,
+            at=at,
+        ) == [swept]
+        assert revoke_live_in_session(
+            session,
+            tutor_profile_id=tutor.profile_id,
+            student_id=second,
+            reason=GrantRevokeReason.block,
+        ) == [plain]
+    with sm() as session:
+        stamps = {
+            row[0]: (row[1], row[2])
+            for row in session.execute(
+                sa.text(
+                    "SELECT id, revoked_at, updated_at FROM tutor_data_grants "
+                    "WHERE id = ANY(CAST(:ids AS uuid[]))"
+                ),
+                {"ids": [swept, plain]},
+            ).all()
+        }
+    assert stamps == {swept: (at, at), plain: (now, now)}
+
+
 def test_pair_lock_is_the_booking_one_keyed_as_the_spec_prints_it(
     sm: sessionmaker[Session], tutor: SeededTutor, student: uuid.UUID
 ) -> None:

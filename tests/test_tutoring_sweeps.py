@@ -2,8 +2,8 @@
 
 SPEC ``docs/tutoring/SPEC.md`` §a.2 (a block's effects), §a.3 (suspension and close, "restores
 nothing"), §a.4b (the locks), §c.4 and THREAT-MODEL SC-2 (school-less class enrolments), SC-3
-(grants), SC-11 (notes stay readable and reportable), §i.8 (one ``now()`` for the block row, the
-cancellations and the revokes; residual (f)).
+(grants), SC-11 (notes stay readable and reportable), §i.8 (one instant for the block row, the
+cancellations and the revokes, read after the tutor row lock; residual (f)).
 
 Each sweep is run the way the routes run it: a block through
 ``TutoringBlocksRepository.block`` (the tutor row ``FOR UPDATE``, the pair lock, the block row,
@@ -591,8 +591,9 @@ def test_block_sweeps_only_the_pair_and_emails_everyone_but_the_blocker(
 
 @pytest.mark.parametrize("by", SIDES)
 def test_block_insert_cancel_and_revoke_share_one_now(sm: sessionmaker[Session], by: Side) -> None:
-    """SPEC §i.8: the block row takes the server-default ``now()`` in the transaction that
-    revokes and cancels, so ``blocked_since`` equals the revoke and cancel instants."""
+    """SPEC §i.8, §a.4b: the block row, the revokes and the cancellations carry one instant, the
+    clock read once the tutor row is held ``FOR UPDATE``, so ``blocked_since`` equals the revoke
+    and cancel instants."""
     w = make_world(sm)
     grant = add_grant(sm, w.student, w.tutor)
     upcoming = add_booking(sm, w, state="accepted", starts_in=timedelta(days=2))
@@ -603,8 +604,45 @@ def test_block_insert_cancel_and_revoke_share_one_now(sm: sessionmaker[Session],
     assert row is not None
     created_at, updated_at, removed_at, _ = row
     revoked_at, _ = grant_state(sm, grant)
+    cancelled = stored(sm, upcoming)
     assert removed_at is None
-    assert created_at == updated_at == revoked_at == stored(sm, upcoming).cancelled_at
+    assert created_at == updated_at == revoked_at == cancelled.cancelled_at == cancelled.updated_at
+
+
+@pytest.mark.parametrize("reason", ["tutor_suspended", "tutor_closed"])
+def test_sanction_stamps_every_row_with_one_instant(
+    sm: sessionmaker[Session], reason: Reason
+) -> None:
+    """SPEC §a.4b: a suspension or close stamps its cancellations, revokes, listing change and
+    approval event with one instant, the clock read once the tutor row is held."""
+    w = make_world(sm)
+    grant = add_grant(sm, w.student, w.tutor)
+    upcoming = add_booking(sm, w, state="accepted", starts_in=timedelta(days=2))
+
+    result = sanction(sm, w.tutor, reason)
+
+    with sm() as session:
+        profile = session.get(TutorProfile, w.tutor.profile_id)
+        event = session.get(TutorApprovalEvent, result.approval_event_id)
+        grant_updated_at = session.execute(
+            sa.text("SELECT updated_at FROM tutor_data_grants WHERE id = :g"), {"g": grant}
+        ).scalar_one()
+    assert profile is not None
+    assert event is not None
+    revoked_at, _ = grant_state(sm, grant)
+    cancelled = stored(sm, upcoming)
+    instants = {
+        revoked_at,
+        grant_updated_at,
+        cancelled.cancelled_at,
+        cancelled.updated_at,
+        profile.updated_at,
+        event.created_at,
+    }
+    if reason == "tutor_closed":
+        instants.add(profile.closed_at)
+    assert len(instants) == 1
+    assert None not in instants
 
 
 # ---------------------------------------------------------------------------

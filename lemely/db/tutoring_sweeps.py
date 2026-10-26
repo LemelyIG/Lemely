@@ -7,7 +7,7 @@ cancellations through ``BookingService``, the tutor's listing decision here), so
 roll back with the change (SPEC §b.4 point 1).
 
 **A block** (SPEC §a.2 ``tutoring_blocks``, row 15a). After the block row is written (by
-:mod:`lemely.db.tutoring_blocks_repo`, in the same transaction and so with the same ``now()``,
+:mod:`lemely.db.tutoring_blocks_repo`, in the same transaction and with the same instant,
 SPEC §i.8), :meth:`TutoringSweeps.sweep_block_in_session`:
 
 1. cancels the pair's active sessions not yet started, inside the 24-hour window too
@@ -40,12 +40,24 @@ lock (``booking_repo.lock_pair_in_session``); both are taken again here, which c
 inside one transaction and keeps this method safe for a caller that forgot them. The
 cancellation helpers take the affected students' rows ``FOR KEY SHARE`` themselves, in id
 order, before their ``UPDATE``.
+
+**One instant, read after the lock (SPEC §a.4b, §i.8; review F6-21 F1).** PostgreSQL fixes
+``now()`` when the transaction begins, which can be before a ``FOR SHARE`` writer that began
+later commits: a share lock is granted beside a share holder, past a queued ``FOR UPDATE``. So
+:func:`lock_tutor_for_sweep` reads ``clock_timestamp()`` once the lock is granted
+(:attr:`LockedTutor.locked_at`), and every row a sweep writes carries that instant: the block
+row's ``created_at``/``updated_at``, the cancellations (and their "not yet started" guard), the
+revokes, the listing's ``updated_at``/``closed_at`` and the approval event. Every row a sweep
+ends was committed before the lock was granted, so no stamp precedes the row's ``created_at``
+(the grant CHECK ``revoked_at >= created_at`` holds), and a sanction's approval event sorts after
+every decision committed before it.
 """
 
 from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, replace
+from datetime import datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -118,12 +130,17 @@ _SANCTIONS: Final[Mapping[str, _Sanction]] = MappingProxyType(
 
 @dataclass(frozen=True, slots=True)
 class LockedTutor:
-    """The tutor row a sweep holds ``FOR UPDATE``: who the tutor is and their listing now."""
+    """The tutor row a sweep holds ``FOR UPDATE``: who the tutor is and their listing now.
+
+    ``locked_at`` is the database clock read right after the lock was granted: the one instant
+    the sweep stamps every row it writes with (module docstring, "One instant").
+    """
 
     profile_id: uuid.UUID
     user_id: uuid.UUID
     listing_state: TutorListingState
     public_name: str
+    locked_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,8 +186,10 @@ class SweepResult:
 def lock_tutor_for_sweep(session: Session, tutor_profile_id: uuid.UUID) -> LockedTutor | None:
     """§a.4b step 1 for a block, a suspension or a close: the tutor row ``FOR UPDATE``.
 
-    ``None`` when there is no such profile. Taking it again later in the same transaction is a
-    no-op.
+    ``None`` when there is no such profile. ``locked_at`` is read by a second statement: in the
+    locking one, the projection may be computed before the row lock is waited for. Taking the
+    lock again later in the same transaction waits for nothing and reads a later clock, so a
+    sweep that runs after its caller's lock stamps with the caller's instant.
     """
     row = session.execute(
         sa.text(
@@ -181,11 +200,15 @@ def lock_tutor_for_sweep(session: Session, tutor_profile_id: uuid.UUID) -> Locke
     ).first()
     if row is None:
         return None
+    locked_at = session.execute(sa.text("SELECT clock_timestamp()")).scalar_one()
+    if not isinstance(locked_at, datetime):  # pragma: no cover - timestamptz is a datetime
+        raise TypeError(f"clock_timestamp() is not a datetime: {locked_at!r}")
     return LockedTutor(
         profile_id=_as_uuid(row.id),
         user_id=_as_uuid(row.user_id),
         listing_state=TutorListingState(str(row.listing_state)),
         public_name=public_name(str(row.public_first_name), row.public_last_initial),
+        locked_at=locked_at,
     )
 
 
@@ -255,11 +278,13 @@ class TutoringSweeps:
         student_id: uuid.UUID,
         tutor_profile_id: uuid.UUID,
         actor_user_id: uuid.UUID,
+        at: datetime,
     ) -> SweepResult:
         """The effects of a new or renewed block between the pair, in the caller's transaction.
 
-        Call it right after writing the block row, in that transaction (SPEC §i.8: one
-        ``now()`` for the row, the cancellations and the revoke). ``actor_user_id`` is the
+        Call it right after writing the block row, in that transaction. ``at`` is the instant
+        the row was written with, the caller's :attr:`LockedTutor.locked_at` (SPEC §i.8: one
+        instant for the row, the cancellations and the revoke). ``actor_user_id`` is the
         blocker, who gets no email for their own action. Raises ``LookupError`` for an unknown
         profile (the caller resolved it under the same lock, so this means a programming
         error).
@@ -274,12 +299,14 @@ class TutoringSweeps:
             tutor_profile_id=tutor_profile_id,
             student_id=student_id,
             actor_user_id=actor_user_id,
+            at=at,
         )
         revoked = revoke_live_in_session(
             session,
             tutor_profile_id=tutor_profile_id,
             student_id=student_id,
             reason=GrantRevokeReason.block,
+            at=at,
         )
         removed = self._classes.remove_school_less_enrolments_in_session(
             session, teacher_user_id=tutor.user_id, student_ids=[student_id]
@@ -324,12 +351,17 @@ class TutoringSweeps:
             raise IllegalApprovalTransitionError(
                 f"A {tutor.listing_state.value} profile cannot be {rule.target.value}."
             )
+        at = tutor.locked_at
         lock_users_for_insert(session, [tutor.user_id])  # the listing email references it
         cancelled = self._bookings.cancel_future_for_tutor_in_session(
-            session, tutor_profile_id=tutor_profile_id
+            session, tutor_profile_id=tutor_profile_id, at=at
         )
         revoked = revoke_live_in_session(
-            session, tutor_profile_id=tutor_profile_id, student_id=None, reason=rule.revoke_reason
+            session,
+            tutor_profile_id=tutor_profile_id,
+            student_id=None,
+            reason=rule.revoke_reason,
+            at=at,
         )
         if reason == "tutor_closed":
             removed = self._classes.remove_all_school_less_enrolments_in_session(
@@ -344,10 +376,10 @@ class TutoringSweeps:
         session.execute(
             sa.text(
                 "UPDATE tutor_profiles SET listing_state = CAST(:state AS tutorlistingstate), "
-                "closed_at = CASE WHEN :state = 'closed' THEN now() ELSE closed_at END, "
-                "updated_at = now() WHERE id = :t"
+                "closed_at = CASE WHEN :state = 'closed' THEN CAST(:at AS timestamptz) "
+                "ELSE closed_at END, updated_at = CAST(:at AS timestamptz) WHERE id = :t"
             ),
-            {"state": rule.target.value, "t": tutor_profile_id},
+            {"state": rule.target.value, "t": tutor_profile_id, "at": at},
         )
         event_id = self._approvals.record_event_in_session(
             session,
@@ -356,6 +388,16 @@ class TutoringSweeps:
             decision=rule.decision,
             documents_seen=False,
             note=cleaned,
+        )
+        # The shared writer stamps the server default; the event takes the sweep's instant
+        # before anything reads it (the commit is still ahead), so no committed row of the
+        # append-only log is ever changed.
+        session.execute(
+            sa.text(
+                "UPDATE tutor_approval_events SET created_at = CAST(:at AS timestamptz) "
+                "WHERE id = :e"
+            ),
+            {"at": at, "e": event_id},
         )
         enqueue_in_session(
             session,

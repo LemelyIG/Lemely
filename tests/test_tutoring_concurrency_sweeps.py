@@ -14,6 +14,11 @@ Each race is shown two ways:
   around a create that is still inserting).
 * **Barrier rounds.** Both sides released together, a few rounds each; the invariant is checked
   over whatever order the database chose, and any deadlock (``40P01``) surfaces as an error.
+* **The stamp instant** (review F6-21 F1). PostgreSQL fixes ``now()`` when a transaction begins,
+  and a ``FOR SHARE`` writer that began later can still commit before the sweep's
+  ``FOR UPDATE`` is granted (a share lock is granted beside a share holder, past a queued
+  update). The sweep's transaction is begun first, the write is committed from another session,
+  and only then does the sweep run: every stamp it writes must still follow the row it ends.
 
 Each race runs once here; the lead's RACE loop runs the file five times at I6.
 """
@@ -21,8 +26,8 @@ Each race runs once here; the lead's RACE loop runs the file five times at I6.
 from __future__ import annotations
 
 import time
-from datetime import timedelta
-from typing import TYPE_CHECKING
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 import sqlalchemy as sa
@@ -36,6 +41,7 @@ from lemely.db.booking_repo import (
 )
 from lemely.db.models.enums import BookingParty, BookingState, Role, TutorListingState
 from lemely.db.models.tutoring import TutorProfile
+from lemely.db.tutor_approval_repo import TutorApprovalRepository
 from lemely.db.tutor_grant_repo import GrantCreated, TutorBlocked, TutorGrantRepository
 from lemely.db.tutoring_sweeps import TutoringSweeps
 from tests._concurrency import _Paused
@@ -50,7 +56,7 @@ from tests.test_booking_repo import (
 from tests.test_tutor_grant_repo import live_grant_count
 from tests.test_tutoring_concurrency_reviews import run_together
 from tests.test_tutoring_sweeps import block, block_row, blocks, student_caller
-from tests.tutoring_db import add_user, emptied_after, tutoring_database
+from tests.tutoring_db import add_tutor, add_user, emptied_after, tutoring_database
 
 if TYPE_CHECKING:
     import uuid
@@ -403,3 +409,172 @@ def test_race_grant_create_vs_block_grant_never_valid(sm: sessionmaker[Session])
         assert errors[1] is None, errors
         assert errors[0] is None or isinstance(errors[0], TutorBlocked), errors
         assert live_grant_count(sm, r.student, r.tutor.profile_id) == 0
+
+
+# ---------------------------------------------------------------------------
+# The stamp instant: the clock after the lock, not the transaction's start (F6-21 F1)
+# ---------------------------------------------------------------------------
+
+Sweep = Literal["block", "tutor_suspended", "tutor_closed"]
+Write = Literal["grant", "booking"]
+
+
+def _begin(session: Session) -> datetime:
+    """Begin ``session``'s transaction and return its ``now()``, fixed from here on."""
+    began = session.execute(sa.text("SELECT now()")).scalar_one()
+    assert isinstance(began, datetime)
+    return began
+
+
+def _write(sm: sessionmaker[Session], w: World, write: Write) -> uuid.UUID:
+    """S9 or a booking create, each committed in a transaction of its own."""
+    if write == "grant":
+        return _grant(sm, w).grant.id
+    made = request(BookingService(sm), w)
+    assert isinstance(made, BookingRow)
+    return made.id
+
+
+def _ended(
+    sm: sessionmaker[Session], write: Write, row_id: uuid.UUID
+) -> tuple[datetime, datetime | None, datetime, str]:
+    """``(created_at, revoked_at or cancelled_at, updated_at, reason or state)`` of the row."""
+    statement = (
+        "SELECT created_at, revoked_at, updated_at, coalesce(revoke_reason::text, 'live') "
+        "FROM tutor_data_grants WHERE id = :id"
+        if write == "grant"
+        else "SELECT created_at, cancelled_at, updated_at, state::text FROM tutor_bookings "
+        "WHERE id = :id"
+    )
+    with sm() as session:
+        row = session.execute(sa.text(statement), {"id": row_id}).one()
+    return row[0], row[1], row[2], row[3]
+
+
+@pytest.mark.parametrize("write", ["grant", "booking"])
+@pytest.mark.parametrize("sweep", ["block", "tutor_suspended", "tutor_closed"])
+def test_sweep_stamps_follow_a_write_committed_after_its_transaction_began(
+    sm: sessionmaker[Session], sweep: Sweep, write: Write
+) -> None:
+    """The sweep ends a grant or a booking whose transaction began after the sweep's own did.
+
+    Stamped with the transaction's ``now()``, the revoke breaks the CHECK
+    ``revoked_at >= created_at`` (migration 0049, a 500 and a rollback) and the cancellation
+    precedes the booking it ends. Stamped with the clock read after ``FOR UPDATE``, both follow
+    the row, and one instant still covers every row the sweep writes (SPEC §i.8).
+    """
+    admin = add_user(sm, Role.platform_admin)
+    w = make_world(sm)
+    held = sm()
+    try:
+        began = _begin(held)
+        written = _write(sm, w, write)
+        if sweep == "block":
+            outcome = blocks(sm).block_in_session(
+                held, student_caller(w.student), w.tutor.profile_id
+            )
+            assert outcome.created
+        else:
+            TutoringSweeps(sm).sweep_sanction_in_session(
+                held,
+                tutor_profile_id=w.tutor.profile_id,
+                reason=sweep,
+                admin_user_id=admin,
+                note=None,
+            )
+        held.commit()
+    finally:
+        held.close()
+
+    created_at, ended_at, updated_at, outcome_label = _ended(sm, write, written)
+    assert created_at > began  # the write really began inside the sweep's transaction
+    assert ended_at is not None
+    assert ended_at >= created_at
+    assert updated_at == ended_at
+    if write == "booking":
+        assert outcome_label == "cancelled"
+    else:
+        assert outcome_label == sweep
+    if sweep == "block":
+        made = block_row(sm, w.student, w.tutor.user_id)
+        assert made is not None
+        assert made[0] == made[1] == ended_at  # the block row, the cancel and the revoke
+        return
+    with sm() as session:
+        profile = session.get(TutorProfile, w.tutor.profile_id)
+        event_at = session.execute(
+            sa.text("SELECT created_at FROM tutor_approval_events WHERE tutor_profile_id = :t"),
+            {"t": w.tutor.profile_id},
+        ).scalar_one()
+    assert profile is not None
+    assert profile.updated_at == event_at == ended_at
+    assert profile.closed_at == (ended_at if sweep == "tutor_closed" else None)
+
+
+def test_sanction_event_follows_an_approval_committed_after_its_transaction_began(
+    sm: sessionmaker[Session],
+) -> None:
+    """A3 lands while a suspension's transaction is open but not yet locked. The suspension
+    happened second, so its event sorts second: T1 reads the latest event and A2 lists the
+    history by ``created_at``."""
+    admin = add_user(sm, Role.platform_admin)
+    tutor = add_tutor(sm, state="pending_review")
+    held = sm()
+    try:
+        began = _begin(held)
+        TutorApprovalRepository(sm).approve(
+            tutor.profile_id, admin_user_id=admin, documents_seen=False, note=None
+        )
+        result = TutoringSweeps(sm).sweep_sanction_in_session(
+            held,
+            tutor_profile_id=tutor.profile_id,
+            reason="tutor_suspended",
+            admin_user_id=admin,
+            note=None,
+        )
+        held.commit()
+    finally:
+        held.close()
+
+    with sm() as session:
+        events = session.execute(
+            sa.text(
+                "SELECT id, decision::text AS decision, created_at FROM tutor_approval_events "
+                "WHERE tutor_profile_id = :t ORDER BY created_at, id"
+            ),
+            {"t": tutor.profile_id},
+        ).all()
+    by_decision = {row.decision: row for row in events}
+    assert by_decision["approved"].created_at > began  # A3 committed inside the gap
+    assert [row.decision for row in events] == ["approved", "suspended"]
+    assert by_decision["suspended"].id == result.approval_event_id
+
+
+def test_lift_stamps_follow_a_renewal_committed_after_its_transaction_began(
+    sm: sessionmaker[Session],
+) -> None:
+    """B3 lifts a block renewed after the lift's transaction began: the lift happened second,
+    so ``removed_at`` and ``updated_at`` may not precede the renewal's ``updated_at`` (the
+    instant the row last became active, ``active_block_since_sql``)."""
+    w = make_world(sm)
+    me = student_caller(w.student)
+    repo = blocks(sm)
+    repo.block(me, w.tutor.profile_id)
+    assert repo.unblock(me, w.tutor.profile_id) is True
+    held = sm()
+    try:
+        began = _begin(held)
+        assert repo.block(me, w.tutor.profile_id).created  # the renewal, committed
+        renewed = block_row(sm, w.student, w.tutor.user_id)
+        assert repo.unblock_in_session(held, me, w.tutor.profile_id) is True
+        held.commit()
+    finally:
+        held.close()
+
+    lifted = block_row(sm, w.student, w.tutor.user_id)
+    assert renewed is not None
+    assert lifted is not None
+    assert renewed[1] > began  # the renewal really began inside the lift's transaction
+    assert lifted[2] is not None
+    assert lifted[1] == lifted[2]
+    assert lifted[2] > renewed[1]

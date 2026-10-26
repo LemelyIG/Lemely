@@ -415,24 +415,37 @@ def revoke_live_in_session(
     tutor_profile_id: uuid.UUID,
     student_id: uuid.UUID | None,
     reason: GrantRevokeReason,
+    at: datetime | None = None,
 ) -> list[uuid.UUID]:
     """End the tutor's live grants (one student's, or all) for a sweep; return their ids.
 
     For the block, suspension and close sweeps (SPEC §a.2, §a.3, SC-3), which hold
     the §a.4b locks themselves. A student's own revoke goes through
     :meth:`TutorGrantRepository.revoke`, so ``reason`` may not be ``student``.
+
+    ``at`` is the sweep's instant, the clock read once the tutor row was held
+    ``FOR UPDATE`` (SPEC §a.4b): every grant it ends was committed before that, so
+    ``revoked_at = at`` never precedes ``created_at`` (the 0049 CHECK). The
+    transaction's ``now()`` can: an S9 that began after the sweep's transaction may
+    commit before the lock is granted. Without ``at`` the revoke reads ``now()``.
     """
     if reason is GrantRevokeReason.student:
         raise ValueError("a student revokes through TutorGrantRepository.revoke, not a sweep")
-    params: dict[str, object] = {"tutor_profile_id": tutor_profile_id, "reason": reason.value}
+    params: dict[str, object] = {
+        "tutor_profile_id": tutor_profile_id,
+        "reason": reason.value,
+        "at": at,
+    }
     only_student = ""
     if student_id is not None:
         only_student = " AND student_id = :student_id"
         params["student_id"] = student_id
     rows = session.execute(
         sa.text(
-            "UPDATE tutor_data_grants SET revoked_at = now(), "  # noqa: S608 - constant fragments
-            "revoke_reason = CAST(:reason AS grantrevokereason), updated_at = now() "
+            "UPDATE tutor_data_grants "  # noqa: S608 - constant fragments
+            "SET revoked_at = COALESCE(CAST(:at AS timestamptz), now()), "
+            "revoke_reason = CAST(:reason AS grantrevokereason), "
+            "updated_at = COALESCE(CAST(:at AS timestamptz), now()) "
             f"WHERE tutor_profile_id = :tutor_profile_id{only_student} AND revoked_at IS NULL "
             "RETURNING id"
         ),
