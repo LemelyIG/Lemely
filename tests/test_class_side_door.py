@@ -10,8 +10,11 @@ What each test pins:
   a tutor profile, and a re-join that enrols nobody new tell nobody.
 * ``DELETE /api/student/classes/{class_id}`` (S17) removes only the caller's own enrolment,
   only in a school-less class; everything else is 404.
-* ``ClassService.remove_school_less_enrolments_in_session`` (used by the block, suspension
-  and close sweeps) touches only that teacher's school-less classes.
+* ``ClassService.remove_school_less_enrolments_in_session`` (named students; an empty list
+  removes nothing) and ``remove_all_school_less_enrolments_in_session`` (every student), used
+  by the block, suspension and close sweeps, touch only that teacher's school-less classes.
+* ``ClassService.join_by_code`` writes the same class-join outbox rows as the join routes,
+  and the notice goes out whatever state the teacher's tutor profile is in.
 * ``GET /api/student/tutor-access/classes`` (S16) lists exactly the caller's classes, with
   ``leavable`` and ``teacherIsYourTutor`` (a booking or a grant with the class teacher's
   tutor profile), and never an email address.
@@ -111,10 +114,14 @@ def _client(sm: sessionmaker[Session]) -> TestClient:
 
 
 def _tutor_teacher(
-    sm: sessionmaker[Session], display_name: str | None = "Ms Sara"
+    sm: sessionmaker[Session],
+    display_name: str | None = "Ms Sara",
+    *,
+    state: str = "listed",
+    paused: bool = False,
 ) -> tuple[uuid.UUID, uuid.UUID]:
     """A teacher who holds a tutor profile: ``(user_id, profile_id)``."""
-    tutor = add_tutor(sm, first_name="Sara", initial="M")
+    tutor = add_tutor(sm, first_name="Sara", initial="M", state=state, paused=paused)
     with sm.begin() as session:
         user = session.get(User, tutor.user_id)
         assert user is not None
@@ -321,6 +328,78 @@ def test_rejoin_is_idempotent_no_second_notice(sm: sessionmaker[Session], route:
     assert _enrolled_classes(sm, student) == {class_id}
 
 
+#: ``(listing state, paused)`` per profile state, or ``None`` for a teacher with no profile.
+_PROFILE_STATES: dict[str, tuple[str, bool] | None] = {
+    "draft": ("draft", False),
+    "pending_review": ("pending_review", False),
+    "listed": ("listed", False),
+    "paused": ("listed", True),
+    "rejected": ("rejected", False),
+    "suspended": ("suspended", False),
+    "closed": ("closed", False),
+    "no_profile": None,
+}
+
+
+@pytest.mark.parametrize("profile", list(_PROFILE_STATES))
+def test_class_join_notice_in_every_tutor_profile_state(
+    sm: sessionmaker[Session], profile: str
+) -> None:
+    """Owning a tutor profile, in any state, makes a school-less class a side door (SC-2d)."""
+    state = _PROFILE_STATES[profile]
+    if state is None:
+        teacher = add_user(sm, Role.teacher, display_name="Mr Plain")
+    else:
+        teacher, _ = _tutor_teacher(sm, state=state[0], paused=state[1])
+    class_id, code = _class(sm, teacher)
+    student, parents = _student_with_parents(sm, 2)
+    client = _client(sm)
+    act_as(client, student, Role.student)
+
+    assert _join(client, sm, "student_join", code, class_id, teacher) == 200
+
+    enrollment = _enrollment_id(sm, class_id, student)
+    assert enrollment is not None
+    expected = set() if state is None else set(parents)
+    assert {row[0] for row in _outbox(sm)} == expected
+    assert {row[1] for row in _outbox(sm)} <= {"class_joined_tutor"}
+    assert {row[0] for row in _inbox(sm)} == expected
+    assert {row[1] for row in _inbox(sm)} <= {NotificationType.tutor_access}
+
+
+def test_join_by_code_queues_the_class_join_notice(sm: sessionmaker[Session]) -> None:
+    """The older ``join_by_code`` entry point writes the same outbox rows: no side door."""
+    teacher, _ = _tutor_teacher(sm)
+    class_id, code = _class(sm, teacher)
+    student, parents = _student_with_parents(sm, 2)
+
+    row = ClassService(sm).join_by_code(student, code)
+    again = ClassService(sm).join_by_code(student, code)
+
+    assert row.class_id == class_id
+    assert row.student_count == 1
+    assert again == row
+    enrollment = _enrollment_id(sm, class_id, student)
+    assert enrollment is not None
+    assert sorted(_outbox(sm), key=lambda item: str(item[0])) == sorted(
+        (
+            (
+                parent,
+                "class_joined_tutor",
+                {
+                    "tutor_first_name": "Sara",
+                    "tutor_last_initial": "M",
+                    "enrollment_id": str(enrollment),
+                    "child_id": str(student),
+                },
+                f"class-join:{enrollment}:{parent}",
+            )
+            for parent in parents
+        ),
+        key=lambda item: str(item[0]),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Leaving a school-less class (S17, SC-2c, O24)
 # ---------------------------------------------------------------------------
@@ -405,37 +484,74 @@ def test_remove_school_less_enrolments_only_school_less(sm: sessionmaker[Session
     _enrol(sm, group_a, second)
     service = ClassService(sm)
 
+    # An empty list removes nothing: it never widens to "every student".
     with sm.begin() as session:
         none_removed = service.remove_school_less_enrolments_in_session(
             session, teacher_user_id=teacher, student_ids=[]
         )
+    assert none_removed == 0
+    assert _enrolled_classes(sm, first) == {group_a, group_b, school_class, elsewhere}
+    assert _enrolled_classes(sm, second) == {group_a}
+
+    with sm.begin() as session:
         removed = service.remove_school_less_enrolments_in_session(
             session, teacher_user_id=teacher, student_ids=[first]
         )
-    assert none_removed == 0
     assert removed == 2
     assert _enrolled_classes(sm, first) == {school_class, elsewhere}
     assert _enrolled_classes(sm, second) == {group_a}
 
-    with sm.begin() as session:
-        removed_all = service.remove_school_less_enrolments_in_session(
-            session, teacher_user_id=teacher, student_ids=None
-        )
-    assert removed_all == 1
-    assert _enrolled_classes(sm, second) == set()
-    assert _enrolled_classes(sm, first) == {school_class, elsewhere}
-
     # It writes in the caller's transaction: a rollback keeps the enrolment.
-    _enrol(sm, group_a, second)
     with sm() as session:
         assert (
             service.remove_school_less_enrolments_in_session(
-                session, teacher_user_id=teacher, student_ids=None
+                session, teacher_user_id=teacher, student_ids=[second]
             )
             == 1
         )
         session.rollback()
     assert _enrolled_classes(sm, second) == {group_a}
+
+
+def test_remove_all_school_less_enrolments_only_that_teachers_school_less(
+    sm: sessionmaker[Session],
+) -> None:
+    """The close/suspend sweep: every student of the teacher's school-less classes, nothing else."""
+    teacher = add_user(sm, Role.teacher)
+    other_teacher = add_user(sm, Role.teacher)
+    group_a, _ = _class(sm, teacher, name="A")
+    group_b, _ = _class(sm, teacher, name="B")
+    school_class, _ = _class(sm, teacher, school_id=_school_for(sm, teacher), name="C")
+    elsewhere, _ = _class(sm, other_teacher, name="D")
+    first, second = add_user(sm, Role.student), add_user(sm, Role.student)
+    for class_id in (group_a, group_b, school_class, elsewhere):
+        _enrol(sm, class_id, first)
+    _enrol(sm, group_b, second)
+    _enrol(sm, elsewhere, second)
+    service = ClassService(sm)
+
+    # In the caller's transaction: a rollback keeps every enrolment.
+    with sm() as session:
+        assert (
+            service.remove_all_school_less_enrolments_in_session(session, teacher_user_id=teacher)
+            == 3
+        )
+        session.rollback()
+    assert _enrolled_classes(sm, first) == {group_a, group_b, school_class, elsewhere}
+
+    with sm.begin() as session:
+        removed = service.remove_all_school_less_enrolments_in_session(
+            session, teacher_user_id=teacher
+        )
+    assert removed == 3
+    assert _enrolled_classes(sm, first) == {school_class, elsewhere}
+    assert _enrolled_classes(sm, second) == {elsewhere}
+
+    with sm.begin() as session:
+        assert (
+            service.remove_all_school_less_enrolments_in_session(session, teacher_user_id=teacher)
+            == 0
+        )
 
 
 # ---------------------------------------------------------------------------

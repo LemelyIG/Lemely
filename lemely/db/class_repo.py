@@ -34,7 +34,9 @@ call any route:
   the router sends the inbox notices after commit);
 * a student may leave a school-less class (:meth:`ClassService.leave_school_less_class`);
 * the block, suspension and close sweeps remove a teacher's school-less
-  enrolments (:meth:`ClassService.remove_school_less_enrolments_in_session`);
+  enrolments (:meth:`ClassService.remove_school_less_enrolments_in_session` for
+  named students, :meth:`ClassService.remove_all_school_less_enrolments_in_session`
+  for every student);
 * a student can list the teachers who see their progress through a class
   (:meth:`ClassService.class_access_for_student`).
 
@@ -50,7 +52,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, true
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -64,6 +66,7 @@ from lemely.db.parent_repo import ParentLinkService
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from sqlalchemy import ColumnElement
     from sqlalchemy.orm import Session, sessionmaker
 
 #: The teacher name S16 shows when the account's display name is blank or holds an
@@ -603,27 +606,25 @@ class ClassService:
         Identity is always the authenticated student (never a caller-supplied
         id, per D1.6) — the router passes ``auth.user_id``.
 
+        The same enrolment as :meth:`join_by_code_with_notice`, which this
+        delegates to, so the tutoring class-join outbox rows are written here
+        too: no entry point enrols a student in a tutor's school-less class
+        without telling their parents (SPEC §c.4, SC-2d). Only the after-commit
+        inbox notices are left out; the routes use the ``_with_notice`` form.
+
         Raises:
             JoinCodeError: No class carries ``join_code``.
         """
-        student_uuid = _as_uuid(student_id)
-        with self._sessionmaker() as session, session.begin():
-            cls = session.scalars(
-                select(SchoolClass).where(SchoolClass.join_code == join_code)
-            ).first()
-            if cls is None:
-                raise JoinCodeError("Unknown join code")
-            self._enrol_if_absent(session, cls.id, student_uuid)
-            return self._to_class_row(session, cls)
+        return self.join_by_code_with_notice(student_id, join_code).row
 
     def join_by_code_outcome(
         self, student_id: uuid.UUID | str, join_code: str
     ) -> tuple[ClassRow, bool]:
         """Self-enrol via a join code: ``(class, newly_enrolled)``. Idempotent.
 
-        The same enrolment as :meth:`join_by_code`, plus the tutoring class-join
-        outbox rows (see :meth:`join_by_code_with_notice`, which this delegates
-        to). ``newly_enrolled`` is ``False`` when the student was already in the
+        The same enrolment and tutoring class-join outbox rows as
+        :meth:`join_by_code_with_notice`, which this delegates to.
+        ``newly_enrolled`` is ``False`` when the student was already in the
         class.
 
         Raises:
@@ -707,28 +708,36 @@ class ClassService:
         session: Session,
         *,
         teacher_user_id: uuid.UUID,
-        student_ids: Sequence[uuid.UUID] | None,
+        student_ids: Sequence[uuid.UUID],
     ) -> int:
-        """Delete enrolments in ``teacher_user_id``'s school-less classes; the count removed.
+        """Delete these students' enrolments in ``teacher_user_id``'s school-less classes.
 
         For the safeguarding sweeps (SPEC §c.4, SC-2 a and b), inside the
         caller's transaction: a block passes the one blocked student, a
-        suspension the students who ever booked or granted the tutor, a close
-        ``None`` (every student). An empty sequence removes nothing. Classes
+        suspension the students who ever booked or granted the tutor. Returns
+        the count removed. An empty sequence removes nothing: it never widens
+        to every student (that sweep is
+        :meth:`remove_all_school_less_enrolments_in_session`, by name). Classes
         with a school, and other teachers' classes, are never touched.
         """
-        if student_ids is not None and not student_ids:
+        if not student_ids:
             return 0
-        teacher_school_less = select(SchoolClass.id).where(
-            SchoolClass.teacher_id == teacher_user_id, SchoolClass.school_id.is_(None)
+        return self._delete_school_less_enrolments(
+            session,
+            teacher_user_id,
+            ClassEnrollment.student_id.in_(list(student_ids)),
         )
-        statement = delete(ClassEnrollment).where(ClassEnrollment.class_id.in_(teacher_school_less))
-        if student_ids is not None:
-            statement = statement.where(ClassEnrollment.student_id.in_(list(student_ids)))
-        removed = session.scalars(
-            statement.returning(ClassEnrollment.id).execution_options(synchronize_session=False)
-        ).all()
-        return len(removed)
+
+    def remove_all_school_less_enrolments_in_session(
+        self, session: Session, *, teacher_user_id: uuid.UUID
+    ) -> int:
+        """Delete every enrolment in ``teacher_user_id``'s school-less classes; the count removed.
+
+        For a sweep that removes every student, such as a close (SPEC §c.4,
+        SC-2), inside the caller's transaction. Classes with a school, and
+        other teachers' classes, are never touched.
+        """
+        return self._delete_school_less_enrolments(session, teacher_user_id, true())
 
     def remove_student(
         self,
@@ -759,6 +768,24 @@ class ClassService:
             )
 
     # -- Internals ------------------------------------------------------------
+
+    def _delete_school_less_enrolments(
+        self,
+        session: Session,
+        teacher_user_id: uuid.UUID,
+        students: ColumnElement[bool],
+    ) -> int:
+        """Delete the ``students`` enrolments in the teacher's school-less classes; the count."""
+        teacher_school_less = select(SchoolClass.id).where(
+            SchoolClass.teacher_id == teacher_user_id, SchoolClass.school_id.is_(None)
+        )
+        removed = session.scalars(
+            delete(ClassEnrollment)
+            .where(ClassEnrollment.class_id.in_(teacher_school_less), students)
+            .returning(ClassEnrollment.id)
+            .execution_options(synchronize_session=False)
+        ).all()
+        return len(removed)
 
     def _queue_tutor_class_join(
         self,

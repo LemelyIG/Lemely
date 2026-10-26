@@ -9,7 +9,9 @@ while the column is ``NULL``.
 
 Runs :class:`~lemely.auth.mirror.DbUserMirror` against a throwaway database, through
 ``Settings`` pointed at it, and the resend case through a real
-:class:`~lemely.auth.service.AuthService` on that mirror.
+:class:`~lemely.auth.service.AuthService` on that mirror. The in-memory
+``tests.auth_fakes.FakeUserMirror``, which the auth service and router tests run on, is held
+to the same first-instant rule.
 """
 
 from __future__ import annotations
@@ -35,7 +37,12 @@ from lemely.db.models import User
 from lemely.db.models.enums import Role
 from lemely.db.session import get_engine
 from lemely.runtime.config import DatabaseSettings, Settings
-from tests.auth_fakes import FakeAuthTokenService, FakeEmailProvider, FakeGoTrueBackend
+from tests.auth_fakes import (
+    FakeAuthTokenService,
+    FakeEmailProvider,
+    FakeGoTrueBackend,
+    FakeUserMirror,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -119,6 +126,25 @@ def test_second_verification_keeps_the_first_instant(
 
     assert _verified_at(factory, user) == FIRST
     assert _verified_at(factory, untouched) is None
+
+
+def test_fake_mirror_second_verification_keeps_the_first_instant() -> None:
+    """The in-memory mirror the auth tests run on keeps the same rule as ``DbUserMirror``."""
+    mirror = FakeUserMirror()
+    user, untouched = uuid.uuid4(), uuid.uuid4()
+    mirror.upsert(user, email="first@example.com", role=Role.student)
+    mirror.upsert(untouched, email="second@example.com", role=Role.student)
+
+    mirror.mark_email_verified(user, verified_at=FIRST)
+    mirror.mark_email_verified(user, verified_at=LATER)
+    mirror.mark_email_verified(uuid.uuid4(), verified_at=LATER)  # unknown user: a no-op
+
+    verified = mirror.get_by_id(user)
+    other = mirror.get_by_id(untouched)
+    assert verified is not None
+    assert other is not None
+    assert verified.email_verified_at == FIRST
+    assert other.email_verified_at is None
 
 
 def test_resend_verification_for_verified_user_leaves_it(

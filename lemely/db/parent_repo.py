@@ -348,17 +348,27 @@ class ParentLinkService:
         commits or rolls back with the delete. ``None`` (and nothing written)
         when the pair was not linked.
 
-        **Lock order (SPEC §a.4b).** The child's ``users`` row is locked
-        ``FOR UPDATE`` before the link row is touched, the same order
-        :meth:`link_in_session` and a booking create use (the student row, then
-        the link). Deleting first would hold the link row while the event
-        insert's foreign-key check waits for the child row, which a booking
-        create holds while it waits for the link: a deadlock.
+        **Lock order (SPEC §a.4b).** The child's ``users`` row is locked before
+        the link row is touched, the same order :meth:`link_in_session` and a
+        booking create use (the student row, then the link). Deleting first
+        would hold the link row while the event insert's foreign-key check
+        waits for the child row, which a booking create holds while it waits
+        for the link: a deadlock.
+
+        The child-row lock is ``FOR NO KEY UPDATE``, not ``FOR UPDATE``. It
+        still queues behind (and blocks) the ``FOR UPDATE`` that
+        :meth:`link_in_session` and a booking create take, but it does not
+        block the key-share lock a foreign-key check takes. A parent's cancel
+        or complete holds the link ``FOR SHARE`` (step 4) and then inserts rows
+        that reference the child; under ``FOR UPDATE`` here that insert would
+        wait for this unlink while this unlink waits for its link: a deadlock.
         """
         student_uuid = _as_uuid(student_id)
         parent_uuid = _as_uuid(parent_id)
         with self._sessionmaker() as session, session.begin():
-            session.execute(select(User.id).where(User.id == student_uuid).with_for_update())
+            session.execute(
+                select(User.id).where(User.id == student_uuid).with_for_update(key_share=True)
+            )
             removed = session.scalars(
                 delete(ParentChildLink)
                 .where(

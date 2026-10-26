@@ -12,9 +12,12 @@ What changes, and what each test pins:
 * ``POST /api/auth/parent/signup`` refuses with the same 409 before any account exists.
 * The cap holds under concurrency: the child's ``users`` row is locked ``FOR UPDATE``.
 * ``ParentLinkService.lock_link_in_session`` (``FOR SHARE``) makes a concurrent unlink wait,
-  and ``linked_parent_ids_in_session`` reads the links in the caller's transaction.
-* The guards of the four changed routes are exactly the ones SPEC §c.4 names (no permission
-  change).
+  and ``linked_parent_ids_in_session`` reads the links in the caller's transaction. An unlink
+  locks the child row ``FOR NO KEY UPDATE``, so it deadlocks neither with a booking create
+  (child row, then link) nor with a link holder inserting rows that reference the child.
+* The guards of the four changed routes are exactly the ones SPEC §c.4 names, and their
+  dependency trees are the ones they had before this task plus the two notification seams
+  (no permission change).
 
 Symbols this task adds are imported inside the tests that need them, so the file still
 collects, and its behaviour tests fail on assertions, against the code before the change.
@@ -566,6 +569,50 @@ def test_unlink_takes_the_child_row_lock_before_the_link_so_a_booking_cannot_dea
     assert _linked_parents(sm, child) == set()
 
 
+def test_unlink_does_not_deadlock_with_a_link_holder_inserting_a_row_for_the_child(
+    sm: sessionmaker[Session],
+) -> None:
+    """A parent's cancel or complete holds the link ``FOR SHARE``, then writes child rows.
+
+    SPEC §a.4b step 4, then an outbox (or booking) insert whose foreign key to ``users`` takes
+    a key-share lock on the child's row. An unlink racing it holds the child row and waits for
+    the link. If that child-row lock were ``FOR UPDATE`` it would block the key-share lock and
+    Postgres would abort one side with ``DeadlockDetected``; ``FOR NO KEY UPDATE`` lets the
+    holder's insert through, the holder commits, and the unlink then completes.
+    """
+    from lemely.db.email_outbox_repo import enqueue_in_session
+
+    child, (parent,) = _child_with_parents(sm, 1)
+    service = ParentLinkService(sm)
+    outcomes: list[object] = []
+
+    def unlink() -> None:
+        try:
+            outcomes.append(service.unlink(child, parent))
+        except Exception as exc:  # recorded and asserted below
+            outcomes.append(exc)
+
+    worker = threading.Thread(target=unlink)
+    with sm() as holder:
+        assert service.lock_link_in_session(holder, parent, child) is True
+        worker.start()
+        _wait_for_lock_waiters(sm, 1)  # the unlink holds the child row, waiting for the link
+        queued = enqueue_in_session(
+            holder,
+            recipient_user_id=child,
+            template="parent_linked",
+            context={"event_id": uuid.uuid4()},
+            dedupe_key=f"deadlock-probe:{child}",
+        )
+        holder.commit()
+    worker.join(timeout=30)
+    assert not worker.is_alive()
+    assert queued is True
+    assert outcomes == [True]
+    assert _linked_parents(sm, child) == set()
+    assert [(p, e) for _, p, e in _events(sm)] == [(parent, ParentLinkEvent.unlinked)]
+
+
 def test_linked_parent_ids_in_session(sm: sessionmaker[Session]) -> None:
     child, parents = _child_with_parents(sm, 2)
     other_child, (unrelated,) = _child_with_parents(sm, 1)
@@ -643,15 +690,79 @@ def _wired_guard(route: APIRoute) -> str:
     return "AUTH_ANY" if authenticated else "PUBLIC"
 
 
+#: The notification seams the four handlers gained for their after-commit notices (SPEC §c.4:
+#: "the after-commit notify calls in the four handlers"). They resolve services, never refuse.
+_NOTIFY_DEPENDENCIES = frozenset({"get_notification_service", "get_push_transport"})
+
+#: Every dependency callable of the four routes at ``b540af94^`` (the commit before T09),
+#: read from ``create_app()`` on an export of that revision: a guard added or removed
+#: anywhere in a route's dependency tree (``require_verified_email``, a second role check)
+#: changes its set.
+_DEPENDENCIES_BEFORE_T09: dict[tuple[str, str], frozenset[str]] = {
+    ("DELETE", "/api/student/parent-links/{parent_id}"): frozenset(
+        {
+            "HTTPBearer",
+            "get_auth_context",
+            "get_device_registry",
+            "get_parent_link_service",
+            "get_settings",
+            "require_role.<locals>._guard",
+        }
+    ),
+    ("POST", "/api/invites/{code}/redeem"): frozenset(
+        {
+            "HTTPBearer",
+            "get_auth_context",
+            "get_device_registry",
+            "get_invite_service",
+            "get_settings",
+        }
+    ),
+    ("POST", "/api/student/classes/join"): frozenset(
+        {
+            "HTTPBearer",
+            "get_auth_context",
+            "get_class_service",
+            "get_device_registry",
+            "get_settings",
+            "require_role.<locals>._guard",
+        }
+    ),
+    ("POST", "/api/auth/parent/signup"): frozenset(
+        {"get_auth_service", "get_invite_service", "get_settings"}
+    ),
+}
+
+
+def _dependency_names(route: APIRoute) -> frozenset[str]:
+    """The qualified name of every callable in ``route``'s dependency tree (endpoint excluded)."""
+    found: set[str] = set()
+    pending = list(route.dependant.dependencies)
+    while pending:
+        dependant = pending.pop()
+        pending.extend(dependant.dependencies)
+        call = dependant.call
+        if call is not None:
+            found.add(getattr(call, "__qualname__", type(call).__qualname__))
+    return frozenset(found)
+
+
 def test_existing_route_guards_unchanged() -> None:
     declared = _c4_routes()
     assert len(declared) == 4, declared  # parent-links DELETE, redeem, classes/join, parent signup
-    wired = {
-        (method, route.path): _wired_guard(route)
+    routes = {
+        (method, route.path): route
         for route in flatten_routes(create_app().router)
         for method in route.methods
         if (method, route.path) in declared
     }
+    wired = {key: _wired_guard(route) for key, route in routes.items()}
     matrix = _matrix_rows()
     assert wired == declared
     assert {key: matrix.get(key) for key in declared} == declared
+
+    assert set(_DEPENDENCIES_BEFORE_T09) == set(declared)
+    dependencies = {
+        key: _dependency_names(route) - _NOTIFY_DEPENDENCIES for key, route in routes.items()
+    }
+    assert dependencies == _DEPENDENCIES_BEFORE_T09
