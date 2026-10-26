@@ -20,8 +20,9 @@ Phases 0-2 DONE (recon, brainstorm LOCKED, ADRs, SPEC rev 3, threat model, plan 
 | W2 (T05, T06, T07, T08) | DONE; I2 hot patches `c83f8f38`; gate G2 green (see `handoffs/W2.md`) |
 | W3 (T09, T10, T11, T12) | DONE incl. review fixes; I3 hot patches `43a349b6`; gate G3 running (see `handoffs/W3.md`) |
 | W4 (T13, T14, T15) | DONE incl. review fixes; I4 hot patches `4ef4e0a8`; gate G4 green (see `handoffs/W4.md`) |
-| W5 (T17, T18, T19, T20) | next |
-| W6..W9, IF | not started |
+| W5 (T17, T18, T19, T20) | DONE incl. review fixes and block-masking lanes F5-A/F5-A2; I5a hot patches `7c5e596a`; gate G5 green (STATIC all PASS; Python 1,980; SCAN-PY 472; web 3,847; RACE 5/5); see `handoffs/W5.md` |
+| W6 (T21, T22, T23, T24) | next |
+| W7..W9, IF | not started |
 
 Rules: every new task and review = fresh agent with a minimal brief (memory `lean-context-fresh-agents`); fix rounds = fresh agent with findings + SHA; resume only after a rate-limit stop.
 
