@@ -10,10 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Tutoring marketplace (branch `feat/tutoring-marketplace`)
 
 A tutor marketplace for the existing teacher, student, parent and platform-admin
-portals. It is built and covered by unit and API tests. End-to-end journeys,
-accessibility and screenshot runs, and the staging search-indexing check had not run
-when this entry was written; `BUILD/tutoring/handoffs/DELIVERY-draft.md` lists what
-is unverified. Specification: `docs/tutoring/SPEC.md`. No prices appear anywhere and
+portals. It is covered by unit and API tests and was run live: the five tutoring
+journeys pass, and 62 of 63 Playwright tests pass (the one failure is a pre-existing
+student-journey expectation, not part of this change). On the tutoring routes axe
+reports zero violations and Lighthouse accessibility is 100; performance is 80 to 87
+on the gated routes (a few ungated routes score lower, 74 to 79). The whole-product
+audit still fails on 21 violations in older screens, which are not part of this change
+(`BUILD/tutoring/handoffs/live-I8.md`, `live-I9-audit.md`). The staging
+search-indexing check had not run when this entry was written;
+`BUILD/tutoring/handoffs/DELIVERY-final.md` lists what is unverified. Specification: `docs/tutoring/SPEC.md`. No prices appear anywhere and
 Lemely takes no payments; fees are agreed outside it.
 
 #### Added
@@ -46,7 +51,7 @@ Lemely takes no payments; fees are agreed outside it.
 - **Email.** A transactional outbox delivered by the existing 60-second sweeper, once
   per row, capped at 60 a day. Without an email provider key rows are recorded as
   skipped and the admin queue says "Email delivery: mock". See `docs/email-delivery.md`.
-- Eight notification types and toggles; migrations `0044` to `0050` (the first
+- Eight notification types and toggles; migrations `0044` to `0051` (the first
   creates the `btree_gist` extension); `lemely tutoring recompute-ratings`; the
   setting `LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET` and `[tutoring] email_daily_cap`.
 
@@ -63,8 +68,10 @@ Lemely takes no payments; fees are agreed outside it.
 
 #### Known limits
 
-- No evidence bucket is created by `scripts/gcp-bootstrap.sh` or set by `deploy.yml`
-  yet; see `docs/deployment.md` section 5.9.
+- Operator step for the evidence bucket: re-run `scripts/gcp-bootstrap.sh`, which
+  creates it private; `deploy.yml` sets it per environment and checks it is private
+  and owned by this project. Confirm `GCP_WORKLOAD_IDENTITY_PROVIDER` starts with
+  `projects/<number>/`. See `docs/deployment.md` section 5.9.
 - Rolling back a Cloud Run revision across this release needs a `DELETE` on
   `notifications` first (`docs/deployment.md` section 5.7).
 - No per-IP rate limit on the public directory in the application, no sitemap, no

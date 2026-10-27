@@ -122,7 +122,7 @@ for ENV in staging production; do
   fi
 
   # Scans and mark schemes in one bucket, profile pictures in another, tutors'
-  # ID and qualification documents in a third: they have different retention
+  # qualification documents in a third: they have different retention
   # and access shapes, and the 90-day lifecycle below must reach neither
   # avatars nor evidence, which are meant to persist. deploy.yml derives the
   # same three names (tests/test_deploy_evidence_bucket.py checks the

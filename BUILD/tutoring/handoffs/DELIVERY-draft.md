@@ -1,3 +1,5 @@
+**Superseded by `DELIVERY-final.md`; kept for history.**
+
 # DELIVERY.md draft rows: tutoring marketplace (T31)
 
 **This is a draft.** The lead edits `DELIVERY.md` at the final step (IF); nothing here has been applied. Every status below is `Built (unverified: ...)`: the unit and API tests listed exist and passed at wave gates G1 to G7, but the items named in each status have not run. When a gate runs, the lead replaces the status with `Delivered` or `Delivered (limited)` and keeps the limit in the feature cell, as `DELIVERY.md` §3 does.

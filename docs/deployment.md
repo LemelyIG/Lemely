@@ -703,11 +703,11 @@ retry_model = "gemini-3.8-flash"
 
 ### 5.9 Tutoring marketplace: what a deploy needs
 
-The feature ships as migrations `0044` to `0050` and adds no new service. What it
+The feature ships as migrations `0044` to `0051` and adds no new service. What it
 asks of a deploy, in the order you will meet it:
 
 **Run the bootstrap script before the first deploy: it creates the evidence
-bucket.** Tutors upload ID and qualification documents to a private bucket named
+bucket.** Tutors upload qualification documents and evidence of teaching (not identity documents) to a private bucket named
 by `LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET`. `.github/workflows/deploy.yml` sets it
 per environment to `<project-id>-tutor-evidence-<env>`, the same rule as the other
 two buckets (override with the `GCS_TUTOR_EVIDENCE_BUCKET` environment variable).
@@ -807,7 +807,8 @@ does not, the 60-second cache is the only protection. The threshold is not decid
 **Retention: there is none.** No job deletes tutoring records. The tutor access
 audit log (`tutor_access_audit`), the platform-admin read log
 (`tutoring_admin_access`), `parent_link_events` and `email_outbox` grow without
-bound; tutor profiles are closed, never deleted; blocks and reports are kept; and
+bound; `tutor_evidence_uploads` (the append-only log of upload attempts, no personal
+data) is never pruned either; tutor profiles are closed, never deleted; blocks and reports are kept; and
 an account that owns a tutor profile or is part of a booking cannot be deleted
 until an offboarding procedure exists. A retention period for these tables is
 undecided (ADR-T02). Evidence files stay in the bucket; a schema downgrade does
