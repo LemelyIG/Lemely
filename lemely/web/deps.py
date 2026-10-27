@@ -193,6 +193,7 @@ def get_storage_backend() -> StorageBackend:
         return GcsStorageBackend(
             project=settings.storage.gcs_project,
             tutor_evidence_bucket=settings.storage.tutor_evidence_bucket,
+            project_number=settings.storage.gcs_project_number,
         )
     return LocalFileStorageBackend(settings.paths.output_dir / "storage")
 

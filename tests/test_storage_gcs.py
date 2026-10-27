@@ -802,3 +802,27 @@ def test_get_storage_backend_hands_the_evidence_bucket_to_gcs(
     finally:
         monkeypatch.undo()
         reset_singletons()
+
+
+def test_get_storage_backend_hands_the_project_number_to_gcs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The deps getter hands over the project number, so a configured deploy can use evidence.
+
+    Without it every evidence operation is refused as "not set" (fail closed); with the
+    number configured and the bucket private and ours, an upload goes through.
+    """
+    from lemely.web.deps import get_storage_backend, reset_singletons
+
+    client, blob = _evidence_client(_bucket_metadata("enforced", uniform=True))
+    monkeypatch.setattr("google.cloud.storage.Client", lambda **_: client)
+    monkeypatch.setenv("LEMELY_STORAGE__BACKEND", "gcs")
+    monkeypatch.setenv("LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET", _EVIDENCE)
+    monkeypatch.setenv("LEMELY_STORAGE__GCS_PROJECT_NUMBER", str(_PROJECT_NUMBER))
+    reset_singletons()
+    try:
+        _EVIDENCE_OPS["upload"](get_storage_backend())
+        blob.upload_from_string.assert_called_once()
+    finally:
+        monkeypatch.undo()
+        reset_singletons()
