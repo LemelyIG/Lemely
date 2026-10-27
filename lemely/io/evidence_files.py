@@ -48,7 +48,9 @@ word:
   4. The flattened bytes, which are what is stored, are scanned again
      (:data:`_INTERACTIVE`): any annotation list, form, widget, open or
      additional action, URI, name tree, outline or action dictionary left is
-     refused with 415.
+     refused with 415, an action's type named in it (``/S /ImportData``) or
+     referenced (``/S 9 0 R``, object 9 the name), wherever it hangs (a
+     layer's dictionary in the kept ``/OCProperties`` included).
 * **Sizes.** Both the upload and the stored bytes must fit
   :data:`MAX_EVIDENCE_BYTES` (10 MiB, the column CHECK), else 413.
 * **Filenames are display text, never a path.** :func:`sanitise_filename` keeps
@@ -205,10 +207,18 @@ _ACTION_TYPES: Final = (
 #: or an outline item's action, is not matched as a name: glyph and resource
 #: names (``/Differences``, a Type 3 font's ``/CharProcs``, ``/Font << /A ...``)
 #: use it too, and the dictionary it holds is matched by its ``/S`` instead.
+#:
+#: The ``/S`` may also be a reference (``/S 9 0 R``, object 9 the name
+#: ``/ImportData``), which a reader resolves: so an object that is nothing but an
+#: action type's name is refused wherever it hangs (the last alternative, matched
+#: against one object as printed). Wave 8 review finding 4: ``/OCProperties`` is
+#: kept so that a layer hidden by default stays hidden, and with it every key of
+#: each layer's dictionary, which is how such an action reached the stored file.
 _INTERACTIVE: Final = re.compile(
     r"/(?:AA|JS|JavaScript|Launch|EF|EmbeddedFile|XFA|OpenAction|AcroForm|Annots|Widget|URI"
     rf"|Names|Outlines|RichMedia){_NAME_END}"
     rf"|/S\s*/(?:{'|'.join(_ACTION_TYPES)}){_NAME_END}"
+    rf"|\A\s*/(?:{'|'.join(_ACTION_TYPES)})\s*\Z"
 )
 
 #: The catalog entries a flattened PDF keeps: its page tree, and the

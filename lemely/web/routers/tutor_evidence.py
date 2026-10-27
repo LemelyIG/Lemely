@@ -8,8 +8,10 @@ The caller's own profile only (O1): both routes resolve it through
 **T6 upload**, in this order: the attempt quota (T30 F30-5: the attempt is
 recorded and committed first, so one the check refuses still counts and a T7
 delete gives none back; past 20 attempts in 24 elapsed hours the answer is 429
-``too_many_requests`` with ``Retry-After``, before any bytes are read or checked),
-the five-file pre-check (cheap, before any bytes
+``too_many_requests`` with ``Retry-After``, before any bytes are read or checked;
+the same 429 past 200 attempts from every profile together in 60 elapsed
+minutes, Wave 8 finding 2, logged as ``tutor_evidence_upload_ceiling`` because
+it refuses every tutor), the five-file pre-check (cheap, before any bytes
 are stored), at most 10 MiB + 1 read from the spooled upload, the description
 (SC-7), :func:`~lemely.io.evidence_files.prepare_evidence_in_worker` (magic-byte
 sniff, polyglot refusal, image re-encode, the PDF scan check and pages-only
@@ -46,6 +48,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Upl
 from lemely.db.session import get_sessionmaker
 from lemely.db.tutor_evidence_repo import (
     MAX_EVIDENCE_FILES,
+    EvidenceCeilingError,
     EvidenceError,
     EvidenceLimitError,
     EvidenceNotFoundError,
@@ -171,6 +174,8 @@ def upload_evidence(
     try:
         repo.record_upload_attempt(profile.id)
     except EvidenceQuotaError as exc:
+        if isinstance(exc, EvidenceCeilingError):
+            log.warning("tutor_evidence_upload_ceiling", retry_after=exc.retry_after)
         raise _http(exc) from exc
     if repo.count(profile.id) >= MAX_EVIDENCE_FILES:
         raise _http(

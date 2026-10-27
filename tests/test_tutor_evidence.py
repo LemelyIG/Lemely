@@ -26,8 +26,11 @@ from PIL import Image, PngImagePlugin
 from lemely.db.models.enums import Role
 from lemely.db.models.tutoring import TutorEvidenceFile, TutorEvidenceUpload
 from lemely.db.tutor_evidence_repo import (
+    GLOBAL_UPLOAD_ATTEMPT_CEILING,
+    GLOBAL_UPLOAD_WINDOW_SECONDS,
     MAX_EVIDENCE_FILES,
     UPLOAD_ATTEMPT_QUOTA,
+    EvidenceCeilingError,
     EvidenceLimitError,
     EvidenceQuotaError,
     TutorEvidenceRepository,
@@ -160,6 +163,80 @@ def _aged_attempts(
             ),
             {"p": profile_id, "age": age_seconds, "n": count},
         )
+
+
+def _all_attempts(sm: sessionmaker[Session]) -> int:
+    """Committed T6 attempts of every profile together."""
+    with sm() as session:
+        total = session.scalar(sa.select(sa.func.count()).select_from(TutorEvidenceUpload))
+        return int(total or 0)
+
+
+def _all_profiles_with_attempts(sm: sessionmaker[Session]) -> dict[uuid.UUID, int]:
+    """Committed T6 attempts per profile, for every profile that has any."""
+    with sm() as session:
+        rows = session.execute(
+            sa.select(TutorEvidenceUpload.tutor_profile_id, sa.func.count()).group_by(
+                TutorEvidenceUpload.tutor_profile_id
+            )
+        ).all()
+        return {profile_id: int(total) for profile_id, total in rows}
+
+
+def _fill_platform(sm: sessionmaker[Session], attempts: int, *, age_seconds: int) -> None:
+    """``attempts`` made ``age_seconds`` ago, spread over new draft tutors each under its own quota.
+
+    Each tutor gets at most ``UPLOAD_ATTEMPT_QUOTA - 1`` of them, so no profile's
+    own quota can be what refuses the next attempt.
+    """
+    per_tutor = UPLOAD_ATTEMPT_QUOTA - 1
+    while attempts > 0:
+        tutor = add_tutor(sm, state="draft")
+        share = min(per_tutor, attempts)
+        _aged_attempts(sm, tutor.profile_id, count=share, age_seconds=age_seconds)
+        attempts -= share
+
+
+def _race_attempts(sm: sessionmaker[Session], profile_ids: list[uuid.UUID]) -> list[str]:
+    """One attempt per profile, in parallel; each outcome is ``recorded`` or the refusal code.
+
+    Each racer is held just before its commit until the other arrives (or 2 s pass).
+    With a lock both racers take, the second cannot count until the first commits,
+    so it never arrives and then sees the first's row; without one both count the
+    same rows and both commit.
+    """
+    repo = TutorEvidenceRepository(sm)
+    start = threading.Barrier(len(profile_ids), timeout=10)
+    before_commit = threading.Barrier(len(profile_ids), timeout=2)
+    outcomes: dict[str, str] = {}
+
+    def hold(_session: Session) -> None:
+        if threading.current_thread().name.startswith("attempt-race"):
+            # Broken after 2 s when the other racer waits on the lock: commit alone.
+            with contextlib.suppress(threading.BrokenBarrierError):
+                before_commit.wait()
+
+    def race(profile_id: uuid.UUID) -> None:
+        start.wait()
+        try:
+            repo.record_upload_attempt(profile_id)
+            outcomes[threading.current_thread().name] = "recorded"
+        except EvidenceQuotaError as exc:
+            outcomes[threading.current_thread().name] = exc.code
+
+    sa.event.listen(sm, "before_commit", hold)
+    try:
+        racers = [
+            threading.Thread(target=race, args=(profile_id,), name=f"attempt-race-{n}")
+            for n, profile_id in enumerate(profile_ids)
+        ]
+        for racer in racers:
+            racer.start()
+        for racer in racers:
+            racer.join(timeout=30)
+    finally:
+        sa.event.remove(sm, "before_commit", hold)
+    return sorted(outcomes.values())
 
 
 def _assert_too_many_requests(response: Response) -> int:
@@ -676,59 +753,153 @@ def test_evidence_upload_quota_window_is_elapsed_time(
 def test_evidence_upload_quota_holds_under_concurrent_attempts_at_nineteen(
     sm: sessionmaker[Session],
 ) -> None:
-    """Two attempts race at 19; the profile's advisory lock lets exactly one in (20 in all).
+    """Two attempts of one profile race at 19; its advisory lock lets exactly one in (20 in all).
 
-    Each racer is held just before its commit until the other arrives (or 2 s pass).
-    With the lock the second racer cannot count until the first commits, so it never
-    arrives and then sees 20; without it both count 19 and both commit (21).
+    Without a lock both count 19 and both commit (21); see :func:`_race_attempts`.
     """
     tutor = add_tutor(sm, state="draft")
     repo = TutorEvidenceRepository(sm)
     for _ in range(UPLOAD_ATTEMPT_QUOTA - 1):
         repo.record_upload_attempt(tutor.profile_id)
-    start = threading.Barrier(2, timeout=10)
-    before_commit = threading.Barrier(2, timeout=2)
-    outcomes: dict[str, str] = {}
 
-    def hold(_session: Session) -> None:
-        if threading.current_thread().name.startswith("attempt-race"):
-            # Broken after 2 s when the other racer waits on the lock: commit alone.
-            with contextlib.suppress(threading.BrokenBarrierError):
-                before_commit.wait()
+    outcomes = _race_attempts(sm, [tutor.profile_id, tutor.profile_id])
 
-    def race() -> None:
-        start.wait()
-        try:
-            repo.record_upload_attempt(tutor.profile_id)
-            outcomes[threading.current_thread().name] = "recorded"
-        except EvidenceQuotaError as exc:
-            outcomes[threading.current_thread().name] = exc.code
-
-    sa.event.listen(sm, "before_commit", hold)
-    try:
-        racers = [threading.Thread(target=race, name=f"attempt-race-{n}") for n in range(2)]
-        for racer in racers:
-            racer.start()
-        for racer in racers:
-            racer.join(timeout=30)
-    finally:
-        sa.event.remove(sm, "before_commit", hold)
-
-    assert sorted(outcomes.values()) == ["recorded", "too_many_requests"]
+    assert outcomes == ["recorded", "too_many_requests"]
     assert _attempts(sm, tutor.profile_id) == UPLOAD_ATTEMPT_QUOTA
 
 
-def test_evidence_upload_attempt_lock_is_the_first_statement(sm: sessionmaker[Session]) -> None:
-    """The quota transaction takes the profile's own advisory key before anything else."""
+def test_evidence_upload_attempt_locks_are_the_first_statements(
+    sm: sessionmaker[Session],
+) -> None:
+    """The quota transaction takes the global key, then the profile's key, before anything else.
+
+    Then the profile's count, the platform's count and the insert (Wave 8 finding 2).
+    """
     tutor = add_tutor(sm, state="draft")
     with count_statements(sm) as statements:
         TutorEvidenceRepository(sm).record_upload_attempt(tutor.profile_id)
 
-    assert len(statements) == 3  # lock, count, insert
-    assert "pg_advisory_xact_lock(hashtextextended('tutoring_evidence_upload:'" in statements[0]
-    assert statements[1].lstrip().upper().startswith("SELECT")
-    assert "tutor_evidence_uploads" in statements[1]
-    assert statements[2].lstrip().upper().startswith("INSERT INTO TUTOR_EVIDENCE_UPLOADS")
+    assert len(statements) == 5  # global lock, profile lock, profile count, global count, insert
+    assert (
+        "pg_advisory_xact_lock(hashtextextended('tutoring_evidence_upload_global', 0))"
+        in statements[0]
+    )
+    assert "pg_advisory_xact_lock(hashtextextended('tutoring_evidence_upload:'" in statements[1]
+    for count in statements[2:4]:
+        assert count.lstrip().upper().startswith("SELECT")
+        assert "tutor_evidence_uploads" in count
+    assert "tutor_profile_id" in statements[2]
+    assert "tutor_profile_id" not in statements[3]  # every profile's attempts
+    assert statements[4].lstrip().upper().startswith("INSERT INTO TUTOR_EVIDENCE_UPLOADS")
+
+
+# ---------------------------------------------------------------------------
+# T6 global upload-attempt ceiling (Wave 8 review finding 2)
+# ---------------------------------------------------------------------------
+
+
+def test_evidence_upload_ceiling_constants() -> None:
+    """At most 200 attempts from every profile together in any 60 elapsed minutes."""
+    assert GLOBAL_UPLOAD_ATTEMPT_CEILING == 200
+    assert GLOBAL_UPLOAD_WINDOW_SECONDS == 60 * 60
+    # A profile alone can never reach the ceiling: it takes more than one tutor.
+    assert UPLOAD_ATTEMPT_QUOTA < GLOBAL_UPLOAD_ATTEMPT_CEILING
+
+
+def test_evidence_upload_ceiling_429_across_profiles(
+    client: TestClient, sm: sessionmaker[Session], storage: FakeStorageBackend
+) -> None:
+    """Many profiles, each under its own quota, together reach the ceiling: the next is 429.
+
+    The loop finding 2 closes: unverified throwaway teacher accounts, 20 checks a day
+    each, all on the one extraction worker that marking shares. The refused attempt
+    is not recorded, for the platform or for its profile, and ``Retry-After`` is when
+    the oldest attempt counted leaves the 60-minute window (10 minutes old here).
+    """
+    _fill_platform(sm, GLOBAL_UPLOAD_ATTEMPT_CEILING - 1, age_seconds=600)
+    profiles = _all_profiles_with_attempts(sm)
+    assert len(profiles) > 1  # non-vacuity: no single profile could have been refused
+    assert max(profiles.values()) < UPLOAD_ATTEMPT_QUOTA
+    last = _tutor(client, sm, state="draft")
+
+    admitted = _upload(client)  # the ceiling-th attempt
+
+    assert admitted.status_code == 201, admitted.text
+    assert _all_attempts(sm) == GLOBAL_UPLOAD_ATTEMPT_CEILING
+    refused_profile = _tutor(client, sm, state="draft")
+    with structlog.testing.capture_logs() as logs:
+        over = _upload(client)
+
+    retry_after = _assert_too_many_requests(over)
+    assert (
+        GLOBAL_UPLOAD_WINDOW_SECONDS - 600 - 60 < retry_after <= GLOBAL_UPLOAD_WINDOW_SECONDS - 600
+    )
+    assert _all_attempts(sm) == GLOBAL_UPLOAD_ATTEMPT_CEILING  # the refusal is not recorded
+    assert _attempts(sm, refused_profile) == 0  # nor taken from the profile's own quota
+    assert _attempts(sm, last) == 1
+    assert [row.tutor_profile_id for row in _rows(sm)] == [last]
+    assert [entry["event"] for entry in logs] == ["tutor_evidence_upload_ceiling"]
+    assert logs[0]["log_level"] == "warning"
+    assert logs[0]["retry_after"] == retry_after
+
+
+def test_evidence_upload_ceiling_counts_only_its_window(
+    client: TestClient, sm: sessionmaker[Session], storage: FakeStorageBackend
+) -> None:
+    """Attempts 60 min + 1 s old no longer count toward the ceiling; 59 min old ones still do."""
+    _fill_platform(sm, GLOBAL_UPLOAD_ATTEMPT_CEILING, age_seconds=GLOBAL_UPLOAD_WINDOW_SECONDS + 1)
+    _tutor(client, sm, state="draft")
+
+    admitted = _upload(client)
+
+    assert admitted.status_code == 201, admitted.text
+    # Non-vacuity: as many attempts inside the window do refuse, and Retry-After is when
+    # the oldest of them leaves it (60 s from now at most).
+    _fill_platform(
+        sm, GLOBAL_UPLOAD_ATTEMPT_CEILING - 1, age_seconds=GLOBAL_UPLOAD_WINDOW_SECONDS - 60
+    )
+    refused_profile = _tutor(client, sm, state="draft")
+    retry_after = _assert_too_many_requests(_upload(client))
+    assert retry_after <= 60
+    assert _attempts(sm, refused_profile) == 0
+    assert _all_attempts(sm) == 2 * GLOBAL_UPLOAD_ATTEMPT_CEILING
+
+
+def test_evidence_upload_ceiling_refusal_is_typed_and_records_nothing(
+    sm: sessionmaker[Session],
+) -> None:
+    """The repository's ceiling refusal is an :class:`EvidenceQuotaError` (one 429 path)."""
+    _fill_platform(sm, GLOBAL_UPLOAD_ATTEMPT_CEILING, age_seconds=60)
+    tutor = add_tutor(sm, state="draft")
+
+    with pytest.raises(EvidenceCeilingError) as excinfo:
+        TutorEvidenceRepository(sm).record_upload_attempt(tutor.profile_id)
+
+    assert isinstance(excinfo.value, EvidenceQuotaError)
+    assert excinfo.value.code == "too_many_requests"
+    retry_after = excinfo.value.retry_after
+    assert GLOBAL_UPLOAD_WINDOW_SECONDS - 120 < retry_after <= GLOBAL_UPLOAD_WINDOW_SECONDS - 60
+    assert _attempts(sm, tutor.profile_id) == 0
+    assert _all_attempts(sm) == GLOBAL_UPLOAD_ATTEMPT_CEILING
+
+
+def test_evidence_upload_ceiling_holds_under_concurrent_attempts_at_one_below(
+    sm: sessionmaker[Session],
+) -> None:
+    """Two profiles race with the platform one below the ceiling: the global key lets one in.
+
+    Each profile is far under its own quota and the two profiles' keys differ, so only
+    the global key serialises them; without it both count 199 and both commit (201).
+    """
+    _fill_platform(sm, GLOBAL_UPLOAD_ATTEMPT_CEILING - 1, age_seconds=60)
+    first = add_tutor(sm, state="draft")
+    second = add_tutor(sm, state="draft")
+
+    outcomes = _race_attempts(sm, [first.profile_id, second.profile_id])
+
+    assert outcomes == ["recorded", "too_many_requests"]
+    assert _all_attempts(sm) == GLOBAL_UPLOAD_ATTEMPT_CEILING
+    assert _attempts(sm, first.profile_id) + _attempts(sm, second.profile_id) == 1
 
 
 # ---------------------------------------------------------------------------

