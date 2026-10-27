@@ -154,11 +154,11 @@ export function GradeChangeSummary({
         </svg>
       )}
 
-      <ul className="m-0 grid list-none grid-cols-1 gap-2 p-0 sm:grid-cols-3">
+      <ul className="m-0 flex list-none flex-wrap gap-x-5 gap-y-2 p-0">
         {layout.parts.map((part) => {
           const PartIcon = partIcon[part.key]
           return (
-            <li key={part.key} className="flex items-center gap-2 text-body-md text-ink">
+            <li key={part.key} className="flex items-center gap-2 whitespace-nowrap text-body-md text-ink">
               <span
                 aria-hidden
                 className={cn("h-3 w-3 shrink-0 rounded-sm border", partSwatch[part.key])}
