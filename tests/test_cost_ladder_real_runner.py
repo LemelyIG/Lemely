@@ -29,6 +29,7 @@ from lemely.core.schemas import AIMarkResponse, CorrectedQuestion, CorrectionRes
 from lemely.io.gemini import CallRecord, UnpricedModelError
 from lemely.runtime.config import Settings
 from lemely.runtime.events import EventType, bus
+from tests.gemini_fakes import pin_pre_flip
 
 PERFECT = {"1a": 2, "1b": 1}
 
@@ -247,9 +248,12 @@ def test_run_real_writes_replies_and_step_marks(
 @pytest.mark.parametrize(
     ("override", "expected"),
     [
-        ({}, (False, False)),
-        ({"gemini.correction_retry_keep_higher": True}, (True, False)),
-        ({"gemini.correction_retry_median": True}, (False, True)),
+        ({}, (False, True)),  # median is on by default since sub-project C
+        ({"gemini.correction_retry_median": False}, (False, False)),
+        (
+            {"gemini.correction_retry_median": False, "gemini.correction_retry_keep_higher": True},
+            (True, False),
+        ),
     ],
 )
 def test_run_real_passes_keep_higher_and_median_to_scoring(
@@ -951,6 +955,12 @@ def test_reference_rung_drops_a_stale_summary_and_guards_its_label(
         runner.run_reference_rung("plain", **kw)
 
 
+def _gemini_with_claude_correction() -> Settings:
+    settings = pin_pre_flip(Settings())
+    gemini = settings.gemini.model_copy(update={"correction_model": "claude-haiku-5-5"})
+    return settings.model_copy(update={"gemini": gemini})
+
+
 def test_run_real_requires_a_projection_for_every_provider(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -962,7 +972,8 @@ def test_run_real_requires_a_projection_for_every_provider(
             run_index=1,
             out_dir=tmp_path / "o",
             scripts=_scripts(tmp_path),
-            settings=Settings(),
+            # Both providers in play: Gemini everywhere but correction on Claude.
+            settings=_gemini_with_claude_correction(),
             max_run_usd={"anthropic": 1.0},
         )
     assert h.clients == [] and h.calls == []

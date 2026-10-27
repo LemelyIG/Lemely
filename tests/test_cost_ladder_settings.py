@@ -25,6 +25,7 @@ _NEW_KEYS = (
 
 
 def test_defaults_reproduce_current_behaviour() -> None:
+    # The cost-ladder levers other than the sub-project C flip's stay off by default.
     g = GeminiSettings()
     assert g.cache_mode_for == {}
     assert g.cache_forget_enabled is True
@@ -34,9 +35,9 @@ def test_defaults_reproduce_current_behaviour() -> None:
     assert g.cascade_two_pass_disagreement is False
     assert g.max_output_tokens_for == {"extraction": 32768, "binding_second_read": 16384}
     assert g.cascade_unaddressed_points is False
-    assert g.correction_shared_prefix is False
+    assert g.correction_shared_prefix is True  # flipped in sub-project C (FLIP.md)
     assert g.correction_prefix_cache == "implicit"
-    assert g.correction_model == "gemini-3.1-flash-lite"
+    assert g.correction_model == "claude-haiku-5-5"
 
 
 def test_example_toml_lists_new_keys() -> None:

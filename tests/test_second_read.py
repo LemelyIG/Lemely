@@ -27,6 +27,7 @@ from lemely.io.second_read import (
     text_agreement,
 )
 from lemely.runtime.config import GeminiSettings, PathsSettings, load_settings
+from tests.gemini_fakes import pin_pre_flip
 
 
 class _IsolatedEnv:
@@ -53,7 +54,7 @@ def _resp(body: dict) -> MagicMock:
 def _client(tmp: str, mock_genai: MagicMock) -> GeminiClient:
     mock_genai.files.upload.return_value = MagicMock()
     with _IsolatedEnv():
-        settings = load_settings(toml_path=None, cwd=Path(tmp))
+        settings = pin_pre_flip(load_settings(toml_path=None, cwd=Path(tmp)))
     settings = settings.model_copy(
         update={
             "paths": PathsSettings(

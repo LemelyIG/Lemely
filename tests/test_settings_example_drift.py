@@ -35,7 +35,7 @@ class ExampleTomlDriftTests(unittest.TestCase):
         finally:
             os.environ.update(snapshot)
         self.assertEqual(s.gradio.port, 7860)
-        self.assertEqual(s.gemini.model, "gemini-2.5-flash")
+        self.assertEqual(s.gemini.model, "claude-haiku-5-5")
 
     def test_example_shows_the_second_read_model_commented_out(self) -> None:
         """Unset by default (the read model reads twice); uncommented, it loads."""

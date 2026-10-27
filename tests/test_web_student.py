@@ -1354,6 +1354,7 @@ def test_correct_succeeds_once_verified(
     data = base.model_dump()
     data["paths"]["output_dir"] = tmp_path / "outputs"
     data["gemini_api_key"] = None  # forces the no-key branch; no ScanMetadataExtractor call
+    data["anthropic_api_key"] = None  # the default scan_metadata model is claude-
     settings = Settings.model_validate(data)
 
     monkeypatch.setattr(student_router_module, "resolve_mark_scheme", lambda *a, **k: _mcq_scheme())

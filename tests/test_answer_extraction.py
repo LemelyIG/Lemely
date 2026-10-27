@@ -26,7 +26,7 @@ from lemely.io.second_read import REREAD_AGREEMENT_THRESHOLD
 from lemely.runtime.config import BindingSettings, PathsSettings, load_settings
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus, current_run_id
-from tests.gemini_fakes import fake_genai_client
+from tests.gemini_fakes import fake_genai_client, pin_pre_flip
 
 # Every test in this file is about the legacy extraction call: one call in which the
 # model hands out question ids, with no binding gate over it. That is no longer the
@@ -147,7 +147,7 @@ def _client_with_response(tmp: str, body: dict, **gemini_overrides: object) -> G
     )
     mock_genai.models.generate_content.return_value = resp
     with _IsolatedEnv():
-        settings = load_settings(toml_path=None, cwd=Path(tmp))
+        settings = pin_pre_flip(load_settings(toml_path=None, cwd=Path(tmp)))
     settings = settings.model_copy(
         update={
             "binding": _LEGACY_UNGATED,
@@ -183,7 +183,7 @@ def _client_with_responses(
         for body in bodies
     ]
     with _IsolatedEnv():
-        settings = load_settings(toml_path=None, cwd=Path(tmp))
+        settings = pin_pre_flip(load_settings(toml_path=None, cwd=Path(tmp)))
     settings = settings.model_copy(
         update={
             "binding": _LEGACY_UNGATED,
@@ -911,7 +911,7 @@ class MalformedSourceBoxCoordinateTests(unittest.TestCase):
         )
         mock_genai.models.generate_content.return_value = resp
         with _IsolatedEnv():
-            settings = load_settings(toml_path=None, cwd=Path(self.tmp))
+            settings = pin_pre_flip(load_settings(toml_path=None, cwd=Path(self.tmp)))
         settings = settings.model_copy(
             update={
                 "binding": _LEGACY_UNGATED,
@@ -995,7 +995,7 @@ class MalformedSourceBoxCoordinateTests(unittest.TestCase):
         )
         mock_genai.models.generate_content.return_value = resp
         with _IsolatedEnv():
-            settings = load_settings(toml_path=None, cwd=Path(self.tmp))
+            settings = pin_pre_flip(load_settings(toml_path=None, cwd=Path(self.tmp)))
         settings = settings.model_copy(
             update={
                 "binding": _LEGACY_UNGATED,

@@ -564,7 +564,8 @@ def test_mark_real_script_passes_pages_only_with_adjudication(
     monkeypatch.setattr(
         correction_ai, "correct_paper", lambda **kw: seen.append(kw["pages"]) or "R"
     )
-    rs.mark_real_script(script, object(), Settings())  # type: ignore[arg-type]
+    off = apply_overrides(Settings(), {"gemini.adjudication_model": None})
+    rs.mark_real_script(script, object(), off)  # type: ignore[arg-type]
     on = apply_overrides(Settings(), {"gemini.adjudication_model": "claude-sonnet-5-5"})
     rs.mark_real_script(script, object(), on)  # type: ignore[arg-type]
     assert seen == [None, ["PAGE"]]

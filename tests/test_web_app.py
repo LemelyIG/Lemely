@@ -715,20 +715,49 @@ def _startup_claude_errors(
     ]
 
 
+def _pin_every_tag_to_gemini(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every task tag and the binder on a gemini- model (the shipped ones are claude-)."""
+    for name, model in {
+        "LEMELY_GEMINI__MODEL": "gemini-2.5-flash",
+        "LEMELY_GEMINI__MARK_SCHEME_MODEL": "gemini-2.5-flash",
+        "LEMELY_GEMINI__EXTRACTION_MODEL": "gemini-3.5-flash-lite",
+        "LEMELY_GEMINI__CORRECTION_MODEL": "gemini-3.1-flash-lite",
+        "LEMELY_GEMINI__GENERATION_MODEL": "gemini-3.5-flash-lite",
+        "LEMELY_GEMINI__SCAN_METADATA_MODEL": "gemini-3.5-flash-lite",
+        "LEMELY_GEMINI__ADJUDICATION_MODEL": "gemini-3.8-flash",
+        "LEMELY_BINDING__READ_MODEL": "gemini-3.8-flash",
+        "LEMELY_BINDING__RETRY_MODEL": "gemini-3.8-flash",
+    }.items():
+        monkeypatch.setenv(name, model)
+
+
 @pytest.mark.usefixtures("_fresh_settings")
-def test_startup_logs_nothing_about_anthropic_with_default_models(
+def test_startup_logs_nothing_about_anthropic_when_every_tag_is_on_gemini(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
+    _pin_every_tag_to_gemini(monkeypatch)
     assert _startup_claude_errors(monkeypatch, caplog) == []
+
+
+@pytest.mark.usefixtures("_fresh_settings")
+def test_startup_names_every_default_tag_when_the_anthropic_key_is_missing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Sub-project C: every default task tag is a claude- model."""
+    (message,) = _startup_claude_errors(monkeypatch, caplog)
+    for tag in ("correction", "extraction", "scan_metadata", "adjudication", "binding_read"):
+        assert tag in message
 
 
 @pytest.mark.usefixtures("_fresh_settings")
 def test_startup_logs_an_error_for_a_claude_tag_without_a_key(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
+    _pin_every_tag_to_gemini(monkeypatch)
     monkeypatch.setenv("LEMELY_GEMINI__CORRECTION_MODEL", "claude-haiku-5-5")
     (message,) = _startup_claude_errors(monkeypatch, caplog)
     assert "correction" in message
+    assert "extraction" not in message
 
 
 @pytest.mark.usefixtures("_fresh_settings")
@@ -736,6 +765,7 @@ def test_startup_checks_the_cascade_strong_model(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The same table as ``lemely doctor``: tags outside the old four are checked too."""
+    _pin_every_tag_to_gemini(monkeypatch)
     monkeypatch.setenv("LEMELY_GEMINI__CASCADE_ENABLED", "true")
     monkeypatch.setenv("LEMELY_GEMINI__CASCADE_STRONG_MODEL", "claude-haiku-5-5")
     (message,) = _startup_claude_errors(monkeypatch, caplog)

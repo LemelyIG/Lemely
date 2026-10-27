@@ -23,6 +23,7 @@ from lemely.web.deps import build_self_review_judge, get_self_review_service, ge
 def _settings(*, key: str | None) -> Settings:
     data = Settings().model_dump()
     data["gemini_api_key"] = key
+    data["anthropic_api_key"] = key  # the default self_review_judge model is claude-
     return Settings.model_validate(data)
 
 
@@ -47,7 +48,7 @@ def test_the_service_singleton_carries_the_judge(monkeypatch: pytest.MonkeyPatch
     """
     get_self_review_service.cache_clear()
     get_settings.cache_clear()
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     try:
         assert isinstance(get_self_review_service()._judge, GeminiEvidenceJudge)
     finally:
@@ -71,6 +72,8 @@ def test_the_service_singleton_carries_no_judge_without_a_key(
     monkeypatch.delenv("LEMELY_GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("LEMELY_ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr(deps, "load_settings", lambda: load_settings(cwd=tmp_path))
     try:

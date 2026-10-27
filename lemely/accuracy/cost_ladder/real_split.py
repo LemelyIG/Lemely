@@ -160,6 +160,7 @@ def mark_real_script(
         pages = (
             rasterise_scan_to_pages(script.scan_path)
             if isinstance(settings.gemini.adjudication_model, str)
+            and settings.gemini.adjudication_model
             else None
         )
         return correct_paper(

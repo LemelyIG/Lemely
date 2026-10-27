@@ -84,14 +84,14 @@ def render_example_toml() -> str:
     lines.append(f'model = "{s.gemini.model}"')
     lines.append("")
     lines.append("# Per-task model overrides (omit a key to use the global `model` above).")
-    lines.append("# F1 (Gemini 3.x migration, 2026-09-17): these are the shipped defaults, so")
-    lines.append("# they are commented out here purely as documentation of what you are")
-    lines.append("# overriding if you uncomment one. correction defaults to")
-    lines.append("# gemini-3.1-flash-lite and escalation to gemini-3.8-flash;")
-    lines.append("# extraction/generation/scan_metadata default to")
-    lines.append("# gemini-3.5-flash-lite; mark_scheme stays on gemini-2.5-flash (its chunked")
-    lines.append("# parser and thinking_budget tuning predate the 3.x migration, D20). Run")
-    lines.append("# `lemely doctor` to see what model_for() actually resolves for every tag.")
+    lines.append("# Sub-project C: every tag but mark_scheme defaults to claude-haiku-5-5 (needs")
+    lines.append(
+        "# ANTHROPIC_API_KEY); mark_scheme stays on gemini-2.5-flash (Haiku's parse failed"
+    )
+    lines.append("# parity with the deterministic parser). These are commented out here purely as")
+    lines.append("# documentation of what you are overriding if you uncomment one. A gemini- model")
+    lines.append("# needs GEMINI_API_KEY. Run `lemely doctor` to see what")
+    lines.append("# model_for() actually resolves for every tag.")
     lines.append(f'# mark_scheme_model    = "{s.gemini.mark_scheme_model}"')
     lines.append(f'# extraction_model     = "{s.gemini.extraction_model}"')
     lines.append(f'# correction_model     = "{s.gemini.correction_model}"')
@@ -100,8 +100,9 @@ def render_example_toml() -> str:
     lines.append("")
     lines.append("# Escalation: re-mark with a stronger/thinking-harder model when confidence <")
     lines.append("# threshold. Reachable even when escalation_model == correction_model (F1):")
-    lines.append("# the gate compares (model, thinking) tuples, not model names alone.")
-    lines.append(f'# escalation_model = "{s.gemini.escalation_model}"')
+    lines.append("# the gate compares (model, thinking) tuples, not model names alone. Unset")
+    lines.append("# (the default since sub-project C): no escalation.")
+    lines.append('# escalation_model = "claude-sonnet-5-5"')
     lines.append(f"# escalation_confidence_threshold = {s.gemini.escalation_confidence_threshold}")
     lines.append(
         "# At most this many escalations per script, most uncertain first (unset: no cap)."
@@ -187,8 +188,10 @@ def render_example_toml() -> str:
         f"# correction_borderline_enabled = {_toml_bool(s.gemini.correction_borderline_enabled)}"
     )
     lines.append("# Lever c2: a stronger model re-marks the least certain leaves of a script")
-    lines.append('# from their page crops, e.g. "claude-sonnet-5-5". Unset: off.')
-    lines.append('# adjudication_model = "claude-sonnet-5-5"')
+    lines.append(
+        "# from their page crops. On by default (claude-haiku-5-5); needs the scan's pages."
+    )
+    lines.append(f'# adjudication_model = "{s.gemini.adjudication_model}"')
     lines.append(f"# adjudication_max_leaves = {s.gemini.adjudication_max_leaves}")
     lines.append(
         f"# adjudication_confidence_threshold = {s.gemini.adjudication_confidence_threshold}"
@@ -463,9 +466,9 @@ def render_example_toml() -> str:
     lines.append("# exactly as it was before either existed.")
     lines.append(f'gate = "{s.binding.gate}"')
     lines.append("# The label binder's model, passed on every one of its calls. It is NOT")
-    lines.append("# gemini.extraction_model: only gemini-3.8-flash returned a usable list when")
-    lines.append("# this was measured, and the extraction default is a cheaper model that did")
-    lines.append("# not. COST: with the label binder every extraction makes its calls on this")
+    lines.append("# gemini.extraction_model: on Gemini only gemini-3.8-flash returned a usable")
+    lines.append("# list when this was measured; since sub-project C it is claude-haiku-5-5.")
+    lines.append("# COST: with the label binder every extraction makes its calls on this")
     lines.append("# model in place of one call on extraction_model.")
     lines.append(f'read_model = "{s.binding.read_model}"')
     lines.append("# Read the script a second time on the same model, at the thinking level")

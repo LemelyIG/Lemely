@@ -19,7 +19,9 @@ re-read disagreed with the first read, with the re-read quoted in the prompt.
 
 from __future__ import annotations
 
+import contextlib
 import re
+import sys
 from typing import TYPE_CHECKING
 
 import structlog
@@ -30,12 +32,14 @@ from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD, crop_and_upscale
 from lemely.runtime.errors import CostCeilingError
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
+    from pathlib import Path
 
     from lemely.core.loose_schemas import MarkScheme, Question
     from lemely.core.schemas import CorrectedQuestion, ExtractedAnswer, ExtractedAnswers
     from lemely.io.gemini import GeminiClient
     from lemely.io.rasterise import RasterisedPage
+    from lemely.runtime.config import GeminiSettings
 
 ADJUDICATION_TASK_TAG = "adjudication"
 VERSION = "adjudication-v1"
@@ -200,32 +204,63 @@ def _settled(
     )
 
 
-def adjudicate(
+def configured_adjudication_model(client: GeminiClient | None) -> str | None:
+    """``gemini.adjudication_model`` of ``client``'s settings; None when off or unreadable.
+
+    Reads ``getattr`` so a spec'd test double without ``_settings`` means "off".
+    """
+    gemini = getattr(getattr(client, "_settings", None), "gemini", None)
+    model = getattr(gemini, "adjudication_model", None)
+    return model if isinstance(model, str) and model else None
+
+
+class PageSource:
+    """A scan whose pages are rasterised only when adjudication has leaves to settle.
+
+    Marking holds no pages and no ``lemely.io.run_cap`` slot: :meth:`hold` takes the slot,
+    renders, and gives both back when ``adjudicate`` is done with the crops.
+    """
+
+    def __init__(self, scan_path: Path) -> None:
+        self.scan_path = scan_path
+
+    @contextlib.contextmanager
+    def hold(self) -> Iterator[list[RasterisedPage]]:
+        from lemely.io.rasterise import rasterise_scan_to_pages
+        from lemely.io.run_cap import marking_run_slot
+
+        with marking_run_slot():
+            yield rasterise_scan_to_pages(self.scan_path)
+
+
+class _AnyPage:
+    """Stands in for the pages to ask which leaves *could* be adjudicated, with none rendered."""
+
+    def __len__(self) -> int:
+        return sys.maxsize
+
+
+def adjudication_pages(client: GeminiClient | None, scan_path: Path | None) -> PageSource | None:
+    """The ``correct_paper(pages=)`` argument: a lazy :class:`PageSource`, or None.
+
+    None when adjudication is off or the caller has no scan; ``correct_paper`` then logs
+    ``adjudication_without_pages`` for a scan-backed caller when adjudication is configured.
+    Nothing is rendered here.
+    """
+    if scan_path is None or configured_adjudication_model(client) is None:
+        return None
+    return PageSource(scan_path)
+
+
+def _plan(
     result: CorrectionResult,
-    *,
-    scheme: MarkScheme,
+    g: GeminiSettings,
     extracted: ExtractedAnswers | Mapping[str, str],
     pages: Sequence[RasterisedPage],
-    client: GeminiClient,
-    review_threshold: float,
-) -> CorrectionResult:
-    """*result* with up to ``adjudication_max_leaves`` leaves re-marked by the adjudication model.
-
-    A leaf with no page crop (no source box) is skipped and logged. Totals are recomputed.
-    """
-    g = client._settings.gemini
-    model = g.adjudication_model
-    if not isinstance(model, str) or not model:
-        return result
-    threshold = g.adjudication_confidence_threshold
-    max_leaves = g.adjudication_max_leaves
-    if (
-        not isinstance(threshold, (int, float))
-        or isinstance(threshold, bool)
-        or not isinstance(max_leaves, int)
-        or isinstance(max_leaves, bool)
-    ):
-        return result
+    threshold: float,
+    max_leaves: int,
+) -> tuple[dict[str, ExtractedAnswer], frozenset[str], frozenset[str], frozenset[str], list[str]]:
+    """The leaves to adjudicate, in order, and the pools they came from."""
     # A plain mapping of answers carries no boxes, so it adjudicates nothing.
     raw_answers = getattr(extracted, "answers", None)
     answers = {a.question_id: a for a in raw_answers} if isinstance(raw_answers, list) else {}
@@ -264,10 +299,54 @@ def adjudicate(
         + drawing
         + [
             qid
-            for qid in candidates(result, threshold=float(threshold), max_leaves=max_leaves)
+            for qid in candidates(result, threshold=threshold, max_leaves=max_leaves)
             if qid not in taken
         ]
     )
+    return answers, reread_set, drawing_set, full_drawing, ids
+
+
+def adjudicate(
+    result: CorrectionResult,
+    *,
+    scheme: MarkScheme,
+    extracted: ExtractedAnswers | Mapping[str, str],
+    pages: Sequence[RasterisedPage] | PageSource,
+    client: GeminiClient,
+    review_threshold: float,
+) -> CorrectionResult:
+    """*result* with up to ``adjudication_max_leaves`` leaves re-marked by the adjudication model.
+
+    A leaf with no page crop (no source box) is skipped and logged. Totals are recomputed.
+    """
+    g = client._settings.gemini
+    model = g.adjudication_model
+    if not isinstance(model, str) or not model:
+        return result
+    threshold = g.adjudication_confidence_threshold
+    max_leaves = g.adjudication_max_leaves
+    if (
+        not isinstance(threshold, (int, float))
+        or isinstance(threshold, bool)
+        or not isinstance(max_leaves, int)
+        or isinstance(max_leaves, bool)
+    ):
+        return result
+    if isinstance(pages, PageSource):
+        # Nothing to settle: render nothing and take no slot.
+        if not _plan(result, g, extracted, _AnyPage(), float(threshold), max_leaves)[4]:  # type: ignore[arg-type]
+            return result
+        with pages.hold() as rendered:
+            return adjudicate(
+                result,
+                scheme=scheme,
+                extracted=extracted,
+                pages=rendered,
+                client=client,
+                review_threshold=review_threshold,
+            )
+    plan = _plan(result, g, extracted, pages, float(threshold), max_leaves)
+    answers, reread_set, drawing_set, full_drawing, ids = plan
     if not ids:
         return result
     log = structlog.get_logger().bind(component="adjudication")

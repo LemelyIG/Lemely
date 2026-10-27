@@ -28,6 +28,7 @@ from lemely.core.schemas import (
     ExtractedAnswers,
 )
 from lemely.db.attempt_repo import fill_correction_topics
+from lemely.io.adjudication import adjudication_pages
 from lemely.io.answer_extraction import GeminiAnswerExtractor
 from lemely.io.correction_ai import correct_paper
 from lemely.io.gemini import GeminiClient
@@ -116,6 +117,7 @@ def grade_paper(
     boundary_store: GradeBoundaryStore | None = None,
     integrity_settings: IntegritySettings,
     options: MarkingOptions = MarkingOptions(),  # noqa: B008 -- frozen, immutable dataclass
+    scan_path: Path | None = None,
 ) -> AccuracyReport:
     """Grade a paper and optionally record it to a student's history.
 
@@ -141,6 +143,8 @@ def grade_paper(
         options: The marking flags, forwarded to `correct_paper`. Defaults to
             both off, so behaviour is unchanged unless a caller opts in.
             Callers pass `settings.grading.marking_options()`.
+        scan_path: The scan being marked. With ``gemini.adjudication_model`` set it is
+            rasterised once and its pages go to `correct_paper` for adjudication.
 
     Returns:
         The assembled accuracy report.
@@ -155,6 +159,7 @@ def grade_paper(
         gemini_client=gemini_client,
         mcq_only=mcq_only,
         options=options,
+        pages=adjudication_pages(gemini_client, scan_path),
     )
     if correction.binding is not None and binding_blocks_publication(correction.binding):
         raise BindingHeldError(correction.binding, "after_marking")

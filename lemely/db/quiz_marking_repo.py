@@ -268,6 +268,7 @@ class QuizMarkingService:
                 extracted_answers=extracted,
                 gemini_client=self._gemini_client,
                 options=self._marking_options,
+                expects_pages=False,  # typed answers: there is no scan to adjudicate from
             )
             correction = apply_integrity_checks(
                 correction,

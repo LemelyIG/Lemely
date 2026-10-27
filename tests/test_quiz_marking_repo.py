@@ -73,6 +73,7 @@ from lemely.db.quiz_taking_repo import QuizTakingService
 from lemely.db.review_repo import ReviewService
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import DatabaseSettings, PathsSettings, load_settings
+from tests.gemini_fakes import pin_pre_flip
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -301,7 +302,8 @@ def _gemini_client_and_mock(
     mock_genai = MagicMock()
     mock_genai.models.generate_content.side_effect = responses
     mock_genai.files.upload.return_value = MagicMock()
-    settings = load_settings(toml_path=None, cwd=tmp_path)
+    # The scripted replies are Gemini ones; the shipped task models are claude- now.
+    settings = pin_pre_flip(load_settings(toml_path=None, cwd=tmp_path))
     settings = settings.model_copy(
         update={
             "paths": PathsSettings(cache_dir=tmp_path / ".cache", output_dir=tmp_path / "outputs")

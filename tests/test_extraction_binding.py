@@ -46,12 +46,13 @@ from lemely.runtime.config import BindingSettings, PathsSettings, Settings, load
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus
 from lemely.web.services import grading
-from tests.gemini_fakes import fake_genai_client
+from tests.gemini_fakes import fake_genai_client, pin_pre_flip
 
 _ROOT = Path(__file__).resolve().parent.parent
 _FIXTURES = _ROOT / "tests" / "fixtures" / "binding" / "0625_w24_41"
 _PAGE_COUNT = 19
 _READ_MODEL = "gemini-3.8-flash"
+_GEMINI_BINDER = {"read_model": _READ_MODEL, "retry_model": _READ_MODEL}
 
 
 # --------------------------------------------------------------------------------------
@@ -173,11 +174,12 @@ class _IsolatedEnv:
 
 def _settings(tmp: Path, **binding: Any) -> Settings:
     with _IsolatedEnv():
-        settings = load_settings(toml_path=None, cwd=tmp)
+        settings = pin_pre_flip(load_settings(toml_path=None, cwd=tmp))
     return settings.model_copy(
         update={
             "paths": PathsSettings(cache_dir=tmp / ".cache", output_dir=tmp / "outputs"),
-            "binding": BindingSettings(**binding),
+            # The Gemini reads these tests script; the shipped binder models are claude-.
+            "binding": BindingSettings(**{**_GEMINI_BINDER, **binding}),
         }
     )
 
@@ -341,7 +343,7 @@ def test_clean_first_read_passes_and_carries_a_report(
 def test_binder_calls_use_the_configured_read_model_not_the_extraction_default(
     tmp_path: Path, scheme: MarkScheme
 ) -> None:
-    assert BindingSettings().read_model == _READ_MODEL
+    assert BindingSettings().read_model == "claude-haiku-5-5"  # the sub-project C default
     model = _Model(first=_items(_run(1)), second=_items(_run(1)))
     outcome = _bind(tmp_path, scheme, model, read_model="gemini-read-under-test")
 

@@ -14,6 +14,7 @@ from lemely.runtime.config import (
     find_removed_config_keys,
     load_settings,
 )
+from tests.gemini_fakes import pre_flip_gemini
 
 
 def _reenable_dot_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -30,10 +31,11 @@ def _reenable_dot_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestModelForNewTags:
-    def test_generation_default_is_f1_3x(self) -> None:
-        """F1: generation_model has its own explicit 3.x default, not a fallback."""
+    def test_generation_default_is_haiku(self) -> None:
+        """Sub-project C: generation_model has its own explicit default, not a fallback."""
         s = GeminiSettings()
-        assert s.model_for("generation") == "gemini-3.5-flash-lite"
+        assert s.generation_model == "claude-haiku-5-5"
+        assert s.model_for("generation") == "claude-haiku-5-5"
 
     def test_generation_falls_back_to_global_when_unset(self) -> None:
         s = GeminiSettings(model="gemini-2.5-flash", generation_model=None)
@@ -51,10 +53,11 @@ class TestModelForNewTags:
         s = GeminiSettings(study_plan_model="gemini-2.5-pro")
         assert s.model_for("study_plan") == "gemini-2.5-pro"
 
-    def test_scan_metadata_default_is_f1_3x(self) -> None:
-        """F1: scan_metadata_model has its own explicit 3.x default, not a fallback."""
+    def test_scan_metadata_default_is_haiku(self) -> None:
+        """Sub-project C: scan_metadata_model has its own explicit default, not a fallback."""
         s = GeminiSettings()
-        assert s.model_for("scan_metadata") == "gemini-3.5-flash-lite"
+        assert s.scan_metadata_model == "claude-haiku-5-5"
+        assert s.model_for("scan_metadata") == "claude-haiku-5-5"
 
     def test_scan_metadata_falls_back_to_global_when_unset(self) -> None:
         s = GeminiSettings(model="gemini-2.5-flash", scan_metadata_model=None)
@@ -71,7 +74,7 @@ class TestModelForNewTags:
     def test_existing_tags_still_work(self) -> None:
         s = GeminiSettings(correction_model="gemini-2.5-pro")
         assert s.model_for("correction") == "gemini-2.5-pro"
-        assert s.model_for("mark_scheme") == "gemini-2.5-flash"
+        assert s.model_for("mark_scheme") == "gemini-2.5-flash"  # stays on Gemini (parity)
 
     def test_self_review_judge_override(self) -> None:
         s = GeminiSettings(self_review_judge_model="gemini-2.5-flash-lite")
@@ -103,8 +106,11 @@ class TestSecondReaderSettings:
         assert GeminiSettings(second_reader="structural").second_reader == "structural"
 
     def test_f1_defaults(self) -> None:
-        """F1 acceptance (1): model_for() resolves every tag to the migration defaults."""
-        s = GeminiSettings()
+        """F1 acceptance (1): model_for() resolves every tag to the migration defaults.
+
+        Held at the pre-flip Gemini defaults (sub-project C moved the shipped ones to Claude).
+        """
+        s = pre_flip_gemini()
         assert s.model_for("correction") == "gemini-3.1-flash-lite"
         assert s.model_for("correction_borderline") == "gemini-3.1-flash-lite"
         assert s.model_for("escalation") == "gemini-3.8-flash"
@@ -278,9 +284,9 @@ class TestBindingSettings:
         s = BindingSettings()
         assert s.binder == "label"
         assert s.gate == "enforce"
-        assert s.read_model == "gemini-3.8-flash"
+        assert s.read_model == "claude-haiku-5-5"
         assert s.second_read is True
-        assert s.retry_model == "gemini-3.8-flash"
+        assert s.retry_model == "claude-sonnet-5-5"
 
     def test_wired_on_settings(self) -> None:
         from lemely.runtime.config import BindingSettings
@@ -288,10 +294,11 @@ class TestBindingSettings:
         assert Settings().binding == BindingSettings()
 
     def test_read_model_is_not_the_extraction_default(self) -> None:
-        """The binder's model is passed on every call. The extraction default is a
-        cheaper model that did not return a usable list when it was measured."""
-        s = Settings()
-        assert s.gemini.model_for("extraction") == "gemini-3.5-flash-lite"
+        """The binder's model is its own setting, passed on every call: moving the
+        extraction model (the Gemini one did not return a usable list when it was
+        measured) does not move it."""
+        s = Settings(gemini=GeminiSettings(extraction_model="gemini-3.5-flash-lite"))
+        assert s.binding.read_model == "claude-haiku-5-5"
         assert s.binding.read_model != s.gemini.model_for("extraction")
 
     def test_second_read_defaults_to_low_thinking(self) -> None:
@@ -705,7 +712,7 @@ def test_anthropic_key_missing_tags_lists_only_claude_tags() -> None:
 
     settings = Settings(anthropic_api_key=None)
     tags = ("correction", "correction_borderline", "escalation", "extraction", "generation")
-    models = {tag: settings.gemini.model_for(tag) for tag in tags}
+    models = {tag: pre_flip_gemini().model_for(tag) for tag in tags}
     assert anthropic_key_missing_tags(settings, models) == []
     models["correction"] = models["correction_borderline"] = "claude-haiku-5-5"
     assert anthropic_key_missing_tags(settings, models) == ["correction", "correction_borderline"]

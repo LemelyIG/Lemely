@@ -1876,8 +1876,12 @@ class RunManifestTests(unittest.TestCase):
             settings = load_settings(toml_path=None, cwd=Path(tempfile.mkdtemp()))
         # The pinned fingerprint predates cost-ladder A1; hold the correction model
         # at its pre-A1 value so this still isolates the binder's effect.
+        # It also predates sub-project C: hold every flipped default at its Gemini value.
+        from tests.gemini_fakes import pin_pre_flip
+
+        settings = pin_pre_flip(settings.model_copy(update={"binding": BindingSettings(**binding)}))
         gemini = settings.gemini.model_copy(update={"correction_model": "gemini-3.8-flash"})
-        return settings.model_copy(update={"binding": BindingSettings(**binding), "gemini": gemini})
+        return settings.model_copy(update={"gemini": gemini})
 
     def _with_second_read_level(self, settings, level: str | None):
         levels = {

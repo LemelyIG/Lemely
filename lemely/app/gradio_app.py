@@ -186,6 +186,7 @@ def build_app(settings: Any = None) -> Any:
     from lemely.core.analytics import predict_grade, summarize_weaknesses
     from lemely.core.loose_schemas import MarkScheme
     from lemely.core.schemas import AccuracyReport
+    from lemely.io.adjudication import adjudication_pages
     from lemely.io.answer_extraction import GeminiAnswerExtractor
     from lemely.io.correction_ai import correct_paper as hybrid_correct_paper
     from lemely.io.gemini import GeminiClient, script_cost_scope
@@ -269,6 +270,7 @@ def build_app(settings: Any = None) -> Any:
         table_data: list[list[str]],
         mcq_only: bool,
         extracted_json: str,
+        scan_file: str | None = None,
     ) -> Generator[tuple[dict[str, Any], str, str, str], None, None]:
         """Grade the paper via AI + deterministic marking; streams events live."""
         buf = LiveLogBuffer()
@@ -291,6 +293,7 @@ def build_app(settings: Any = None) -> Any:
                         gemini_client=client,
                         mcq_only=mcq_only,
                         options=settings.grading.marking_options(),
+                        pages=adjudication_pages(client, Path(scan_file) if scan_file else None),
                     )
                 store = GradeBoundaryStore()
                 boundaries, boundary_source = store.resolve(correction.metadata)
@@ -608,7 +611,7 @@ def build_app(settings: Any = None) -> Any:
             )
             grade_btn.click(
                 fn=_grade,
-                inputs=[ms_dropdown, answers_table, mcq_only_cb, extracted_json_state],
+                inputs=[ms_dropdown, answers_table, mcq_only_cb, extracted_json_state, scan_upload],
                 outputs=[report_out, questions_detail, live_log_t2, token_counter_t2],
             )
             save_btn.click(

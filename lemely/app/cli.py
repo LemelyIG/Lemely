@@ -316,6 +316,14 @@ def parse_mark_schemes_cmd(
 @click.option(
     "--record", is_flag=True, help="Append result to student history (requires --student-id)."
 )
+@click.option(
+    "--scan",
+    "scan",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="The scan the answers were read from; its pages go to adjudication when "
+    "gemini.adjudication_model is set.",
+)
 @click.pass_context
 def correct_paper_cmd(
     ctx: click.Context,
@@ -325,6 +333,7 @@ def correct_paper_cmd(
     on_error: str,
     student_id: str | None,
     record: bool,
+    scan: str | None,
 ) -> None:
     import json as _json
 
@@ -356,6 +365,8 @@ def correct_paper_cmd(
     log_marking_flags(marking_options)
     client = None if mcq_only else GeminiClient(settings)
 
+    from lemely.io.adjudication import adjudication_pages
+
     with script_cost_scope(settings, script_key=f"cli:{Path(mark_scheme).stem}"):
         correction = hybrid_correct_paper(
             mark_scheme=ms,
@@ -363,6 +374,7 @@ def correct_paper_cmd(
             gemini_client=client,
             mcq_only=mcq_only,
             options=marking_options,
+            pages=adjudication_pages(client, Path(scan) if scan else None),
         )
     from lemely.io.grade_boundaries import GradeBoundaryStore
 
@@ -531,10 +543,6 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         _print_result(ctx, {"all_passed": False, "checks": checks})
         raise click.exceptions.Exit(ConfigError.exit_code) from exc
 
-    # Accept GEMINI_API_KEY (standard) or LEMELY_GEMINI_API_KEY (prefixed).
-    has_key = bool((settings.gemini_api_key is not None) or os.environ.get("GEMINI_API_KEY"))
-    record("gemini_api_key", has_key)
-
     # F1 (Gemini 3.x migration): surface what model_for() actually resolves to
     # per task tag, so a config mistake (e.g. escalation falling back to the
     # global 2.5 model) is visible without reading lemely.toml by hand.
@@ -548,7 +556,26 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
 
     configured_models = configured_models_for(settings)
     model_table = ", ".join(f"{tag}={model}" for tag, model in configured_models.items())
+    if "escalation" not in configured_models:
+        model_table += ", escalation=(off)"
     record("gemini_model_table", True, detail=model_table)
+
+    # Sub-project C: the Gemini key is needed only when some task tag resolves to a gemini-
+    # model (every tag defaults to claude- now). Accept GEMINI_API_KEY (standard) or
+    # LEMELY_GEMINI_API_KEY (prefixed).
+    gemini_tags = [t for t, m in configured_models.items() if m.startswith("gemini-")]
+    has_key = bool((settings.gemini_api_key is not None) or os.environ.get("GEMINI_API_KEY"))
+    record(
+        "gemini_api_key",
+        has_key or not gemini_tags,
+        detail=(
+            ""
+            if has_key or not gemini_tags
+            else "no GEMINI_API_KEY set but task tag(s) "
+            + ", ".join(f"{t}={configured_models[t]}" for t in gemini_tags)
+            + " use a gemini- model"
+        ),
+    )
 
     # Cost-ladder A1: a claude- model configured for any task tag needs
     # ANTHROPIC_API_KEY, or every call to it fails at first use, so this is
@@ -721,7 +748,9 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         )
 
     if not no_network:
-        if not has_key:
+        if not gemini_tags:
+            record("gemini_reachable", True, "no task tag uses a gemini- model; not checked")
+        elif not has_key:
             record(
                 "gemini_reachable",
                 False,

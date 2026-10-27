@@ -74,6 +74,8 @@ class _IsolatedEnv:
         # correction model, gemini-3.8-flash; the pin holds that model for the
         # mocks (the shipped default is now gemini-3.1-flash-lite).
         os.environ["LEMELY_GEMINI__CORRECTION_MODEL"] = "gemini-3.8-flash"
+        # Escalation is off by default since sub-project C; these tests exercise it.
+        os.environ["LEMELY_GEMINI__ESCALATION_MODEL"] = "gemini-3.8-flash"
         return self
 
     def __exit__(self, *_: object) -> None:
