@@ -137,6 +137,8 @@ field are ignored by pydantic-settings, so a typo'd *env var* is silent — chec
 | `LEMELY_STORAGE__BACKEND` | `local` | Set `gcs` for any deploy that isn't local dev/Compose/CI — see [§5.1](#51-the-single-replica-constraint-is-lifted). `local` writes under `paths.output_dir/storage` on the container's own disk. There is no Supabase Storage backend; that code was deleted (DS7). |
 | `LEMELY_STORAGE__BUCKET` | `lemely-uploads` | **Always on a real deploy.** The bucket (`gcs`) or directory name (`local`) for scans and mark schemes. `deploy.yml` sets it per environment to `<project-id>-uploads-<env>`; GCS bucket names are one global namespace, so the default is a placeholder no project owns. **The bucket must already exist** — no application code path creates it; `scripts/gcp-bootstrap.sh` does. Empty is rejected at startup. |
 | `LEMELY_STORAGE__AVATAR_BUCKET` | `lemely-avatars` | Same rules, for profile pictures — a separate bucket because avatars are meant to persist and the uploads bucket carries a 90-day delete rule. `deploy.yml` sets `<project-id>-avatars-<env>`. |
+| `LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET` | `lemely-tutor-evidence` | **Always on a real deploy that lets tutors upload documents.** A separate private bucket for tutor qualification documents (personal data, opened only by a platform admin through a `LEMELY_STORAGE__TUTOR_EVIDENCE_SIGNED_URL_TTL_SECONDS` (default `300`) link). Same rules as the other buckets: it must already exist, and the default is a placeholder no project owns. **As of this change `scripts/gcp-bootstrap.sh` does not create it and `deploy.yml` does not set it**; see §5.9. |
+| `LEMELY_TUTORING__EMAIL_DAILY_CAP` | `60` | At most this many tutoring emails are sent in any 24 hours, because the free Resend tier allows 100 a day and shares them with sign-up mail. Sent rows beyond it are recorded as skipped. See §5.9 and `docs/email-delivery.md`. |
 | `LEMELY_STORAGE__SIGNED_URL_TTL_SECONDS` | `3600` | How long an avatar URL stays readable. Ignored by the `local` backend, which returns the bytes inline and so has nothing to expire. |
 | `LEMELY_STORAGE__GCS_PROJECT` | `None` | Only if Application Default Credentials cannot infer a project on their own (rare — a workload identity usually carries one). |
 | `LEMELY_GEMINI__TOTAL_USD_CEILING` | `8.0` | **CLI/Gradio only** — to change the hard spend cap those surfaces enforce (MISSION §8). The web process enforces no cap; see [§5.4](#54-performance-and-cost). |
@@ -659,6 +661,76 @@ the same hold back (the marker's cached replies are kept).
 
 ---
 
+### 5.9 Tutoring marketplace: what a deploy needs
+
+The feature ships as migrations `0044` to `0050` and adds no new service. What it
+asks of a deploy, in the order you will meet it:
+
+**The evidence bucket does not exist yet.** Tutors upload qualification documents
+to a private bucket named by `LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET`. Checked by
+reading the files: `scripts/gcp-bootstrap.sh` creates only the uploads and avatars
+buckets, and `.github/workflows/deploy.yml` does not pass this variable, so a
+deployed service would use the default name `lemely-tutor-evidence`, which is not
+a bucket your project owns. Until the script and the workflow are extended, create
+one private bucket per environment by hand (uniform access, public access
+prevention, and the same `roles/storage.objectAdmin` binding for the runtime service
+account that the script gives the other buckets; the script's 90-day delete rule
+is applied to uploads only) and set the variable to its name. The signed links use
+the same signing path as avatars, which the script already enables with
+`roles/iam.serviceAccountTokenCreator` on the runtime account. Without a working
+bucket, document uploads and the admin's document links fail.
+
+**Email is in mock mode until a key is set.** Without `[email] api_key`
+(`RESEND_API_KEY` in the pipeline), queued tutoring emails are recorded as
+`skipped` with reason `mock_provider`, startup logs a warning, and the admin
+approval queue (X-04) shows "Email delivery: mock". A deploy can look healthy while
+no booking email goes out. At most `[tutoring] email_daily_cap` (60) are sent a
+day; a failed email is not retried; delivery is one more job on the in-process
+sweeper (§5.2), so at `--min-instances=0` queued emails wait for the next
+instance. See `docs/email-delivery.md`.
+
+**Search indexing needs a staging check after the first deploy with the worker
+change (decision-log row 17; checklist not yet run).** Tutor cards are indexable by
+default and the edge worker decides per card; the directory page is never indexed.
+After deploying `web/worker/robots.ts` and the `run_worker_first` change in
+`web/wrangler.jsonc` to staging, with one seeded tutor who is indexable and one who
+opted out, run:
+
+```bash
+curl -sI https://staging.lemelyig.com/tutors                       # expect X-Robots-Tag: noindex, follow
+curl -sI https://staging.lemelyig.com/tutors/<indexable-tutor-id>  # expect no X-Robots-Tag; content-type: text/html
+curl -sI https://staging.lemelyig.com/tutors/<opted-out-tutor-id>  # expect X-Robots-Tag: noindex, nofollow
+curl -sI https://staging.lemelyig.com/tutors/not-a-uuid            # expect X-Robots-Tag: noindex, nofollow
+curl -s  https://staging.lemelyig.com/robots.txt                   # expect no Disallow line for /tutors
+```
+
+If the indexable card carries a `noindex` header, the worker lookup is failing and
+the card is failing closed; check the API's `GET /api/public/tutors/<id>` first. A
+`web/public/_headers` rule for `/tutors` would mark every card `noindex` and is
+deliberately absent. The self-hosted nginx deploy (`web/nginx.conf`) cannot look
+tutors up, so it marks every `/tutors` page `noindex, nofollow`. There is no
+sitemap. An opt-out reaches the edge within 60 seconds, but a search engine drops
+a card only when it next visits it, which can take weeks.
+
+**Rate limiting the public directory is an ops step, not application code.** The
+application has no per-IP limit on `/api/public/*` (its limiter is process-local).
+The worker caches `GET /api/public/tutors*` and `/api/public/tutoring-areas` for 60
+seconds, which spares the database but does not slow a scraper. Add a Cloudflare
+WAF rate-limiting rule on `/api/public/*`. Whether the Cloudflare plan in use offers
+rate-limiting rules has not been checked (`docs/tutoring/SPEC.md` section h); if it
+does not, the 60-second cache is the only protection. The threshold is not decided.
+
+**Retention: there is none.** No job deletes tutoring records. The tutor access
+audit log (`tutor_access_audit`), the platform-admin read log
+(`tutoring_admin_access`), `parent_link_events` and `email_outbox` grow without
+bound; tutor profiles are closed, never deleted; blocks and reports are kept; and
+an account that owns a tutor profile or is part of a booking cannot be deleted
+until an offboarding procedure exists. A retention period for these tables is
+undecided (ADR-T02). Evidence files stay in the bucket; a schema downgrade does
+not delete storage objects.
+
+Rollback across the release is in §5.7.
+
 ## 6. Deployment checklist
 
 Copy this. Every line maps to something above. It's written for the generic
@@ -683,6 +755,10 @@ replaces it).
 [ ] A spend guard exists on the Gemini project (a billing budget or equivalent) --
     the web process itself enforces no USD cap (§5.4)
 [ ] RESEND_API_KEY set (or accept the mock provider and no mail sent)
+[ ] Tutoring: a private evidence bucket exists and LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET
+    names it (gcp-bootstrap.sh does not create it, §5.9)
+[ ] Tutoring: the staging curl -sI checklist in §5.9 run after the first worker deploy
+[ ] Tutoring: a Cloudflare WAF rate-limit rule on /api/public/* (or accept the 60 s cache only)
 [ ] scripts/gcp-bootstrap.sh run once (creates both buckets per environment,
     grants objectAdmin, grants serviceAccountTokenCreator for avatar signed
     URLs, applies the 90-day rule to uploads, and creates the billing budget)

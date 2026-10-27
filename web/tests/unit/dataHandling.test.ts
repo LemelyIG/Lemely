@@ -9,6 +9,7 @@ import {
   dataHandlingIntro,
   dataHandlingSections,
   deletion,
+  tutoringSections,
 } from "@/portals/marketing/dataHandling"
 
 /*
@@ -68,8 +69,16 @@ const nonDeletionCopy = [
   dataHandlingClose,
 ].join("\n")
 
+/**
+ * The tutoring marketplace sentences. Kept apart from `nonDeletionCopy` on
+ * purpose: the "no retention number outside the deletion panel" test below
+ * guards the six original sections, and the tutoring day counts are facts
+ * pinned to Python constants in the last describe of this file.
+ */
+const tutoringCopy = tutoringSections.flatMap((s) => [s.heading, s.body]).join("\n")
+
 /** Every sentence a reader can see on the page, flattened. */
-const allCopy = [nonDeletionCopy, ...Object.values(deletion)].join("\n")
+const allCopy = [nonDeletionCopy, ...Object.values(deletion), tutoringCopy].join("\n")
 
 describe("the data page is public and reachable — P6.5", () => {
   it("mounts /data at the top level", () => {
@@ -428,5 +437,208 @@ describe("the disclosure page describes deletion truthfully — Task 15", () => 
       "utf8",
     )
     expect(source).not.toMatch(/\bnotYetBuilt\b/)
+  })
+})
+
+/*
+ * The tutoring marketplace sentences (SPEC section f, release groupings 1, 2 and 4,
+ * plus reviews and reports from groupings 3 and 5).
+ *
+ * Same rule as every other panel: a sentence here is a statement about a named
+ * module, and the module is named in a comment beside it. The tests below do
+ * three things the copy alone cannot:
+ *
+ *   1. They read the source comment of each section and check that every file
+ *      it cites exists, so a renamed module turns this red rather than leaving
+ *      a comment that points at nothing.
+ *   2. They pin each number in the copy to the Python constant behind it.
+ *   3. They count what they scanned, so an empty array cannot pass.
+ */
+describe("the tutoring sentences carry a source and match the code: SPEC f", () => {
+  const read = (p: string) => fs.readFileSync(path.join(repoRoot, p), "utf8")
+  const section = (heading: string) => {
+    const found = tutoringSections.find((s) => s.heading === heading)
+    expect(found, `no tutoring section headed "${heading}"`).toBeDefined()
+    return found!
+  }
+
+  /** `NAME: Final = 5` or `NAME: Final[int] = 5`. */
+  const pyInt = (file: string, name: string): number => {
+    const m = read(file).match(new RegExp(`^${name}\\s*(?::[^=\\n]+)?=\\s*(\\d+)\\s*(?:#.*)?$`, "m"))
+    expect(m, `${name} not found in ${file}`).not.toBeNull()
+    return Number(m![1])
+  }
+  /** `NAME: Final = timedelta(days=90)`: returns the whole number and its unit. */
+  const pyDelta = (file: string, name: string): { n: number; unit: string } => {
+    const m = read(file).match(
+      new RegExp(`^${name}\\s*(?::[^=\\n]+)?=\\s*timedelta\\((hours|days)=(\\d+)\\)`, "m"),
+    )
+    expect(m, `${name} not found in ${file}`).not.toBeNull()
+    return { n: Number(m![2]), unit: m![1] }
+  }
+  const pyDefault = (file: string, field: string): number => {
+    const m = read(file).match(new RegExp(`${field}:\\s*int\\s*=\\s*Field\\(default=(\\d+)`))
+    expect(m, `${field} default not found in ${file}`).not.toBeNull()
+    return Number(m![1])
+  }
+
+  const EXPECTED_HEADINGS = [
+    "Tutors on the public directory",
+    "Documents a tutor uploads",
+    "Booking a session",
+    "Notes between a student and a tutor",
+    "Emails about bookings",
+    "Reviews of a tutor",
+    "Parent links and class joins",
+    "Sharing your progress with a tutor",
+    "Past-student results and counting",
+    "Reports and blocks",
+    "Teachers who can see your progress through a class",
+  ]
+
+  it("has one section for each grouping, so it cannot pass by being empty", () => {
+    expect(tutoringSections.map((s) => s.heading)).toEqual(EXPECTED_HEADINGS)
+    for (const s of tutoringSections) expect(s.body.length).toBeGreaterThan(80)
+  })
+
+  /*
+   * Walks the source text, not the module: a comment is not visible at runtime.
+   * Each section's comment is the text between the previous section's closing
+   * `},` and its own `body:`.
+   */
+  const sourceCommentsByHeading = (): Map<string, string> => {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, "../../src/portals/marketing/dataHandling.ts"),
+      "utf8",
+    )
+    const start = source.indexOf("export const tutoringSections")
+    expect(start).toBeGreaterThan(-1)
+    const end = source.indexOf("\n]\n", start)
+    const block = source.slice(start, end)
+    const out = new Map<string, string>()
+    for (const m of block.matchAll(/heading:\s*"([^"]+)",([\s\S]*?)\n\s*body:/g)) {
+      out.set(m[1], m[2])
+    }
+    return out
+  }
+
+  it("gives every section a comment that cites at least one file that exists", () => {
+    const comments = sourceCommentsByHeading()
+    expect(comments.size).toBe(EXPECTED_HEADINGS.length)
+    let cited = 0
+    for (const heading of EXPECTED_HEADINGS) {
+      const comment = comments.get(heading) ?? ""
+      const files = Array.from(
+        comment.matchAll(/\b((?:lemely|web)\/[\w./-]+\.(?:py|ts|tsx))\b/g),
+        (m) => m[1],
+      )
+      expect(files.length, `"${heading}" cites no source file`).toBeGreaterThan(0)
+      for (const f of files) {
+        expect(fs.existsSync(path.join(repoRoot, f)), `"${heading}" cites ${f}, which does not exist`).toBe(true)
+        cited += 1
+      }
+    }
+    expect(cited).toBeGreaterThanOrEqual(EXPECTED_HEADINGS.length)
+  })
+
+  it("uses neither of the two words the tutoring copy rule bans", () => {
+    expect(tutoringCopy).not.toMatch(/\bimprovement\b/i)
+    expect(tutoringCopy).not.toMatch(/\bverified\b/i)
+  })
+
+  it("promises no price, payment or fee handling", () => {
+    expect(tutoringCopy).not.toMatch(/[$£]|\bEGP\b|\bpay(s|ment|ments)?\b/i)
+  })
+
+  it("says what 'documents seen' is not", () => {
+    const body = section("Documents a tutor uploads").body
+    expect(body).toMatch(/not an identity check/i)
+    expect(body).toMatch(/criminal-records check/i)
+  })
+
+  it("pins the evidence limits to the code", () => {
+    const body = section("Documents a tutor uploads").body
+    const files = pyInt("lemely/db/tutor_evidence_repo.py", "MAX_EVIDENCE_FILES")
+    expect(body).toContain(`${files} files`)
+    expect(read("lemely/io/evidence_files.py")).toMatch(/^MAX_EVIDENCE_BYTES: Final = 10 \* 1024 \* 1024/m)
+    expect(body).toContain("10 MiB")
+    const ttl = pyDefault("lemely/runtime/config.py", "tutor_evidence_signed_url_ttl_seconds")
+    expect(body).toContain(`${ttl} seconds`)
+  })
+
+  it("pins the 24-hour cancel cutoff to CANCEL_CUTOFF", () => {
+    const { n, unit } = pyDelta("lemely/core/booking.py", "CANCEL_CUTOFF")
+    expect({ n, unit }).toEqual({ n: 24, unit: "hours" })
+    expect(section("Booking a session").body).toContain(`${n} ${unit}`)
+  })
+
+  it("pins the note window to NOTE_POST_GRACE", () => {
+    const { n, unit } = pyDelta("lemely/core/booking.py", "NOTE_POST_GRACE")
+    expect(section("Notes between a student and a tutor").body).toContain(`${n} ${unit}`)
+  })
+
+  it("says linked parents can read notes and that staff read them only on a report", () => {
+    const body = section("Notes between a student and a tutor").body
+    expect(body).toMatch(/linked parents can read/i)
+    expect(body).toMatch(/only when (someone|a note) (reports|is reported)/i)
+    expect(body).toMatch(/logged/i)
+  })
+
+  it("pins the email cap and the mock-provider behaviour", () => {
+    const body = section("Emails about bookings").body
+    const cap = pyDefault("lemely/runtime/config.py", "email_daily_cap")
+    expect(body).toContain(`${cap} a day`)
+    expect(body).toMatch(/skipped/i)
+    expect(body).toMatch(/not retried|never retried|once/i)
+    expect(read("lemely/web/tutoring_email.py")).toMatch(/last_error='mock_provider'/)
+  })
+
+  it("pins the review rules to the rating constants", () => {
+    const body = section("Reviews of a tutor").body
+    const edit = pyDelta("lemely/core/tutor_ratings.py", "REVIEW_EDIT_WINDOW")
+    expect(body).toContain(`${edit.n} ${edit.unit}`)
+    expect(body).toMatch(/before .* (public|others see)/i)
+    expect(body).toMatch(/A student/)
+  })
+
+  it("pins the parent cap to MAX_LINKED_PARENTS", () => {
+    const body = section("Parent links and class joins").body
+    const cap = pyInt("lemely/db/parent_repo.py", "MAX_LINKED_PARENTS")
+    expect(body).toContain(`${cap} linked parents`)
+  })
+
+  it("says a student alone grants access, all subjects, derived data, and every look is logged", () => {
+    const body = section("Sharing your progress with a tutor").body
+    expect(body).toMatch(/only the student/i)
+    expect(body).toMatch(/all subjects/i)
+    expect(body).toMatch(/never see answer sheets/i)
+    expect(body).toMatch(/every time a tutor looks/i)
+    expect(body).toMatch(/linked parents can see who/i)
+  })
+
+  it("pins the outcome rules to the core constants", () => {
+    const body = section("Past-student results and counting").body
+    const k = pyInt("lemely/core/tutor_outcomes.py", "OUTCOME_K_MIN")
+    expect(body).toContain(`${k} students`)
+    const hold = pyDelta("lemely/core/tutor_outcomes.py", "OPT_CHANGE_HOLD")
+    expect(body).toContain(`${hold.n} ${hold.unit}`)
+    const during = pyDelta("lemely/core/tutor_outcomes.py", "DURING_WINDOW")
+    expect(body).toContain(`${during.n} ${during.unit}`)
+    expect(body).toMatch(/is counted unless they opt out/i)
+    expect(body).toMatch(/automatic marking/i)
+    expect(body).toMatch(/does not show what the tutor caused/i)
+  })
+
+  it("names the class-teacher path and the student's way out", () => {
+    const body = section("Teachers who can see your progress through a class").body
+    expect(body).toMatch(/class/i)
+    expect(body).toMatch(/leave/i)
+  })
+
+  it("says reports are read by staff and blocks end sharing", () => {
+    const body = section("Reports and blocks").body
+    expect(body).toMatch(/report/i)
+    expect(body).toMatch(/block/i)
+    expect(body).toMatch(/sharing ends|ends sharing|ends the sharing/i)
   })
 })
