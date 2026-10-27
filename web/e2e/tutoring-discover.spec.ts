@@ -98,7 +98,7 @@ test.describe("E2E 1: a student discovers a tutor, books a session, the tutor ac
       await expect(page.getByRole("link", { name: amira.publicName })).toBeVisible({ timeout: 15_000 })
       await expect(page.getByRole("link", { name: omar.publicName })).toBeVisible()
 
-      await page.getByLabel("Subject").selectOption({ label: subjectName })
+      await page.getByLabel("Subject", { exact: true }).selectOption({ label: subjectName })
       // Saturday evening: Amira teaches every day 15:00-21:00, Omar weekdays 16:00-19:00 only.
       await page.getByRole("checkbox", { name: "Saturday" }).check()
       await page.getByRole("checkbox", { name: /^Evening/ }).check()
@@ -163,7 +163,7 @@ test.describe("E2E 1: a student discovers a tutor, books a session, the tutor ac
       await expect(page.locator("h1")).toHaveText(`${subjectName} with ${amira.publicName}`, {
         timeout: 15_000,
       })
-      await expect(page.getByLabel("Session status: Waiting for reply")).toBeVisible()
+      await expect(page.getByText("Waiting for reply", { exact: true })).toBeVisible()
     })
 
     await test.step("the request is listed under My sessions", async () => {
@@ -194,7 +194,7 @@ test.describe("E2E 1: a student discovers a tutor, books a session, the tutor ac
     await page.getByLabel("Meeting link").fill(MEETING_LINK)
     await page.getByRole("button", { name: "Accept request" }).click()
 
-    await expect(page.getByLabel("Session status: Confirmed")).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText("Confirmed", { exact: true })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByRole("link", { name: MEETING_LINK })).toBeVisible()
 
     // The accepted session is under the tutor's Upcoming list.
@@ -220,7 +220,7 @@ test.describe("E2E 1: a student discovers a tutor, books a session, the tutor ac
     await expect(page.locator("h1")).toHaveText(`${subjectName} with ${tutors.sufficient.publicName}`, {
       timeout: 15_000,
     })
-    await expect(page.getByLabel("Session status: Confirmed")).toBeVisible()
+    await expect(page.getByText("Confirmed", { exact: true })).toBeVisible()
     const link = page.getByRole("link", { name: /Open the meeting link/ })
     await expect(link).toHaveAttribute("href", MEETING_LINK)
     await expect(link).toHaveAttribute("rel", /noopener/)

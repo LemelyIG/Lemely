@@ -114,7 +114,7 @@ test("two students race for one slot: exactly one request goes through", async (
       baseURL: BACKEND_URL,
       extraHTTPHeaders: { Authorization: `Bearer ${racer.who.accessToken}` },
     })
-    const response = await request.get("/api/student/bookings")
+    const response = await request.get("/api/student/bookings", { params: { when: "upcoming" } })
     expect(response.status()).toBe(200)
     const page = (await response.json()) as {
       items: { startsAt: string; effectiveState: string; tutor: { tutorId: string } }[]

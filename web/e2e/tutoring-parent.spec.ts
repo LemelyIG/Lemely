@@ -86,7 +86,7 @@ test.describe("E2E 4: a parent books a session for their child", () => {
       await expect(page.locator("h1")).toHaveText(`${subjectName} with ${omar.publicName}`, {
         timeout: 15_000,
       })
-      await expect(page.getByLabel("Session status: Waiting for reply")).toBeVisible()
+      await expect(page.getByText("Waiting for reply", { exact: true })).toBeVisible()
       await expect(page.getByText(`Notes are between ${child.displayName} and the tutor.`)).toBeVisible()
       await expect(page.getByLabel("Write a note")).toHaveCount(0)
       await expect(page.getByRole("button", { name: "Send note" })).toHaveCount(0)
