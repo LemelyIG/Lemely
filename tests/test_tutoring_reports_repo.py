@@ -4,7 +4,9 @@ SPEC ``docs/tutoring/SPEC.md`` §a.2 (one open report per reporter and target, t
 ``target_snapshot``), §a.3 ("Resolution clears ``tutor_bookings.notes_frozen_at``"), §a.4b (the
 locks), §b.4 (the quota and the admin notice), §i.4 (the per-``targetType`` snapshot key
 allowlist), §i.6 (the tutor row ``FOR UPDATE`` before the review helpers) and THREAT-MODEL SC-10
-(the safety freeze). Route behaviour is in ``tests/test_web_tutoring_reports.py`` and
+(the safety freeze), SC-15 (the quota, under concurrency). Fix lane F7-25 adds the safety
+upgrade of an open report (#1), the reporter lock on the quota (#2) and what the booking summary
+shows an admin (#3). Route behaviour is in ``tests/test_web_tutoring_reports.py`` and
 ``tests/test_web_admin_tutoring_reports.py``; object-level visibility (O12, O19) in
 ``tests/test_web_tutoring_authz_reports.py``.
 
@@ -25,7 +27,7 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
 from lemely.core.keyset import CursorError
-from lemely.db.booking_repo import BookingService
+from lemely.db.booking_repo import ADMIN_CANCEL_REASON, SYSTEM_CANCEL_REASON, BookingService
 from lemely.db.class_repo import ClassService
 from lemely.db.models.enums import (
     BookingParty,
@@ -44,9 +46,11 @@ from lemely.db.tutor_evidence_repo import TutorEvidenceRepository
 from lemely.db.tutor_grant_repo import TutorGrantRepository
 from lemely.db.tutor_profile_repo import TutorProfileRepository
 from lemely.db.tutoring_reports_repo import (
+    MAX_DETAILS_LENGTH,
     REPORT_QUOTA,
     SNAPSHOT_KEYS,
     STUDENT_AUTHOR_LABEL,
+    FiledReport,
     Reporter,
     ReportRefused,
     ReportsKey,
@@ -78,8 +82,11 @@ from lemely.web.routers.admin_tutors import get_tutor_approval_repo
 from lemely.web.routers.student_tutor_access import get_tutor_grant_repo
 from lemely.web.routers.tutor_evidence import get_tutor_evidence_repo
 from lemely.web.schemas_tutoring import TutorCardDTO
-from tests.test_booking_repo import World, add_booking, add_parent, make_world
+from tests._concurrency import _Paused
+from tests.test_booking_repo import PLACE, World, add_booking, add_parent, make_world
 from tests.test_tutor_review_repo import add_reply_row, add_review_row
+from tests.test_tutoring_concurrency_reviews import run_together
+from tests.test_tutoring_concurrency_sweeps import _hold_pair, _wait_for_waiters
 from tests.test_tutoring_sweeps import add_note
 from tests.tutoring_app import app_with_routers
 from tests.tutoring_db import (
@@ -241,6 +248,16 @@ def stored_snapshot(sm: sessionmaker[Session], report_id: uuid.UUID) -> dict[str
     return value
 
 
+def stored_reason(sm: sessionmaker[Session], report_id: uuid.UUID) -> tuple[str, str | None]:
+    """``(reason, details)`` of one report row."""
+    with sm() as session:
+        row = session.execute(
+            sa.text("SELECT reason::text, details FROM tutoring_reports WHERE id = :r"),
+            {"r": report_id},
+        ).one()
+    return str(row[0]), row[1]
+
+
 def frozen(sm: sessionmaker[Session], booking_id: uuid.UUID) -> bool:
     with sm() as session:
         value = session.execute(
@@ -393,6 +410,87 @@ def test_snapshot_copies_the_content_as_reported(sm: sessionmaker[Session]) -> N
     assert profile["rating"] == {"state": "new", "average": None, "count": 0}
 
 
+#: The booking-summary keys F7-25 #3 adds, and what each booking below must show in them.
+_TUTOR_WORDS = ("declineReason", "cancelReason", "locationDetail", "otherModeNote")
+
+
+def test_booking_summary_shows_the_tutors_words_and_the_place_never_the_link(
+    sm: sessionmaker[Session], repo: TutoringReportsRepository
+) -> None:
+    """An admin judging a booking report sees what the tutor wrote on it: a decline or cancel
+    reason, the place of an in-person session, the note on an "other" session (F7-25 #3).
+    A platform or system cancellation reads as Lemely's fixed text; a student's or parent's
+    own cancel reason is not the tutor's and is not shown. The meeting link never is (§a.5).
+    Both the stored snapshot (R1) and the A10 summary carry the same values."""
+    w = make_world(sm)
+    reporter = student_reporter(w.student)
+
+    def cancelled(party: BookingParty, reason: str) -> uuid.UUID:
+        return add_booking(
+            sm,
+            w,
+            state="cancelled",
+            meeting_link=MEETING_LINK,
+            cancelled_by_party=party,
+            cancel_reason=reason,
+        )
+
+    bookings: dict[str, tuple[uuid.UUID, tuple[str | None, ...]]] = {
+        "declined": (
+            add_booking(sm, w, state="declined", decline_reason="I only teach in the evening."),
+            ("I only teach in the evening.", None, None, None),
+        ),
+        "tutor cancel": (
+            cancelled(BookingParty.tutor, "Message me on WhatsApp instead."),
+            (None, "Message me on WhatsApp instead.", None, None),
+        ),
+        "system cancel": (
+            cancelled(BookingParty.system, SYSTEM_CANCEL_REASON),
+            (None, ADMIN_CANCEL_REASON, None, None),
+        ),
+        "student cancel": (
+            cancelled(BookingParty.student, "My exams moved."),
+            (None, None, None, None),
+        ),
+        "in person": (
+            add_booking(sm, w, state="accepted", mode="in_person", starts_in=timedelta(days=2)),
+            (None, None, PLACE, None),
+        ),
+        "other mode": (
+            add_booking(
+                sm,
+                w,
+                state="requested",
+                mode="other",
+                other_mode_note="At the club on Road 9",
+                starts_in=timedelta(days=5),
+            ),
+            (None, None, None, "At the club on Road 9"),
+        ),
+        "virtual": (
+            add_booking(sm, w, state="accepted", starts_in=timedelta(days=8)),
+            (None, None, None, None),
+        ),
+    }
+    admin = add_user(sm, Role.platform_admin)
+
+    for name, (booking, expected) in bookings.items():
+        report_id = file_report(sm, reporter, "booking", booking)
+        snapshot = stored_snapshot(sm, report_id)
+        assert tuple(snapshot[key] for key in _TUTOR_WORDS) == expected, name
+        assert MEETING_LINK not in json.dumps(snapshot), name
+        detail = repo.detail_for_admin(report_id, admin_user_id=admin)
+        assert detail is not None and detail.booking is not None
+        summary = detail.booking
+        assert (
+            summary.decline_reason,
+            summary.cancel_reason,
+            summary.location_detail,
+            summary.other_mode_note,
+        ) == expected, name
+        assert MEETING_LINK not in repr(summary), name
+
+
 # ---------------------------------------------------------------------------
 # One open report per reporter and target; the quota (SPEC §a.2, §b.4)
 # ---------------------------------------------------------------------------
@@ -471,6 +569,226 @@ def test_details_are_trimmed_and_bounded(sm: sessionmaker[Session]) -> None:
         add_booking(sm, w, state="declined"),
         details="He asked me to call 01012345678",
     )
+
+
+# ---------------------------------------------------------------------------
+# A safety concern upgrades the reporter's open report (SC-10; F7-25 #1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("target_type", "first_reason"),
+    [
+        ("booking", "harassment"),
+        ("booking_note", "inappropriate_content"),
+        ("tutor_profile", "fake_profile"),
+    ],
+)
+def test_safety_re_report_upgrades_the_open_report_in_place(
+    sm: sessionmaker[Session], target_type: str, first_reason: str
+) -> None:
+    """A student who first reported harassment and later reports a safety concern on the same
+    target is heard. The unique index allows one open report per reporter and target, so the
+    open one becomes the safety concern in place: same id and filing time, the earlier words
+    kept and the new ones added, a booking's notes frozen, every platform admin named. Before
+    F7-25 this was 409 ``report_exists``: nothing frozen, nobody told, the details lost."""
+    w = make_world(sm)
+    admins = {add_user(sm, Role.platform_admin) for _ in range(2)}
+    booking = add_booking(sm, w, state="accepted", starts_in=timedelta(days=2))
+    note = add_note(sm, booking, w.tutor.user_id, "tutor", "Come on your own")
+    target = {"booking": booking, "booking_note": note, "tutor_profile": w.tutor.profile_id}[
+        target_type
+    ]
+    repo = repo_for(sm)
+    reporter = student_reporter(w.student)
+    first = repo.file(
+        reporter,
+        target_type=ReportTargetType(target_type),
+        target_id=target,
+        reason=ReportReason(first_reason),
+        details="He was rude.",
+    )
+    assert first.admin_user_ids == ()
+    assert not frozen(sm, booking)
+
+    upgraded = repo.file(
+        reporter,
+        target_type=ReportTargetType(target_type),
+        target_id=target,
+        reason=ReportReason.safety_concern,
+        details="  He asked me to meet him alone.  ",
+    )
+
+    assert (upgraded.report_id, upgraded.created_at) == (first.report_id, first.created_at)
+    assert upgraded.reason is ReportReason.safety_concern
+    assert set(upgraded.admin_user_ids) == admins
+    assert report_count(sm) == 1
+    assert stored_reason(sm, first.report_id) == (
+        "safety_concern",
+        "He was rude.\n\nHe asked me to meet him alone.",
+    )
+    freezes = target_type != "tutor_profile"  # SC-10: only a booking or a note freezes
+    assert upgraded.froze_notes is freezes
+    assert frozen(sm, booking) is freezes
+    assert repo.queue(ReportState.open, after=None, limit=5).items[0].reason is (
+        ReportReason.safety_concern
+    )
+
+
+def test_re_report_without_a_new_safety_concern_is_still_report_exists(
+    sm: sessionmaker[Session],
+) -> None:
+    """Only a safety concern upgrades: another reason, or a safety concern over a safety
+    concern, stays 409 ``report_exists`` and changes nothing (no freeze, no new words)."""
+    w = make_world(sm)
+    reporter = student_reporter(w.student)
+    booking = add_booking(sm, w, state="accepted", starts_in=timedelta(days=2))
+    harassment = file_report(sm, reporter, "booking", booking, details="Rude.")
+    with pytest.raises(ReportRefused) as excinfo:
+        file_report(sm, reporter, "booking", booking, reason="spam", details="And spam.")
+    assert refused(excinfo) == ("report_exists", 409)
+    assert stored_reason(sm, harassment) == ("harassment", "Rude.")
+    assert not frozen(sm, booking)
+
+    other = add_booking(sm, w, state="accepted", starts_in=timedelta(days=4))
+    safety = file_report(sm, reporter, "booking", other, reason="safety_concern")
+    with pytest.raises(ReportRefused) as excinfo:
+        file_report(sm, reporter, "booking", other, reason="safety_concern", details="Again.")
+    assert refused(excinfo) == ("report_exists", 409)
+    assert stored_reason(sm, safety) == ("safety_concern", None)
+    assert report_count(sm) == 2
+
+
+def test_upgrade_details_keep_the_new_words_whole(sm: sessionmaker[Session]) -> None:
+    """The upgrade's words are never lost: when the earlier and the new details do not both fit
+    in 1000 characters, the earlier ones are cut to fit and end with an ellipsis; when the
+    upgrade brings no words, the earlier ones stay as they were."""
+    w = make_world(sm)
+    reporter = student_reporter(w.student)
+    long_report = file_report(
+        sm, reporter, "booking", add_booking(sm, w, state="declined"), details="x" * 990
+    )
+    quiet_report = file_report(
+        sm, reporter, "booking", add_booking(sm, w, state="cancelled"), details="Rude."
+    )
+    added = "He asked for my home address."
+    by_report = {
+        long_report: added,
+        quiet_report: None,
+    }
+    with sm() as session:
+        targets = dict(
+            session.execute(
+                sa.text("SELECT id, booking_id FROM tutoring_reports WHERE id IN (:a, :b)"),
+                {"a": long_report, "b": quiet_report},
+            ).all()
+        )
+
+    for report_id, details in by_report.items():
+        file_report(
+            sm, reporter, "booking", targets[report_id], reason="safety_concern", details=details
+        )
+
+    kept = stored_reason(sm, long_report)[1]
+    assert kept is not None
+    assert len(kept) == MAX_DETAILS_LENGTH
+    assert kept.endswith(f"\n\n{added}")
+    assert kept.startswith("x" * 900)
+    assert kept[: -len(added) - 2].endswith("x…")
+    assert stored_reason(sm, quiet_report) == ("safety_concern", "Rude.")
+
+
+# ---------------------------------------------------------------------------
+# The quota under concurrency (SC-15; F7-25 #2)
+# ---------------------------------------------------------------------------
+
+RACERS = 4
+ROUNDS = 3
+
+
+def test_race_one_reporter_cannot_pass_the_daily_quota(sm: sessionmaker[Session]) -> None:
+    """R1's first statement takes the reporter's advisory lock, so one reporter's quota COUNT
+    and INSERT never interleave with another of their own reports.
+
+    Deterministic: a holder keeps the pair lock that a safety concern on a booking takes after
+    the COUNT. Without the reporter lock every racer counts 19 and queues on the pair lock, and
+    all of them insert once it is released (19 + RACERS reports, every one telling the admins).
+    With it, one racer counts and queues; the others queue on the reporter lock and count 20."""
+    w = make_world(sm)
+    admin = add_user(sm, Role.platform_admin)
+    for _ in range(REPORT_QUOTA - 1):
+        add_report_row(
+            sm,
+            reporter=w.student,
+            target_type="booking",
+            target_id=add_booking(sm, w, state="cancelled"),
+        )
+    targets = [add_booking(sm, w, state="cancelled") for _ in range(RACERS)]
+    reporter = student_reporter(w.student)
+
+    def racer(target: uuid.UUID) -> _Paused:
+        return _Paused(
+            lambda: repo_for(sm).file(
+                reporter,
+                target_type=ReportTargetType.booking,
+                target_id=target,
+                reason=ReportReason.safety_concern,
+                details=None,
+            )
+        )
+
+    holder = _hold_pair(sm, w)
+    try:
+        racers = [racer(target) for target in targets]
+        _wait_for_waiters(sm, RACERS)
+        holder.commit()
+    finally:
+        holder.close()
+    for each in racers:
+        each.join()
+
+    filed = [each.result for each in racers if each.error is None]
+    errors = [each.error for each in racers if each.error is not None]
+    assert len(filed) == 1, errors
+    assert all(isinstance(e, ReportRefused) and e.code == "too_many_requests" for e in errors)
+    assert report_count(sm) == REPORT_QUOTA
+    assert isinstance(filed[0], FiledReport)
+    assert filed[0].admin_user_ids == (admin,)
+
+
+def test_race_barrier_rounds_keep_one_reporter_within_the_quota(
+    sm: sessionmaker[Session],
+) -> None:
+    """The same race released together, a few rounds: whatever order the database picks, a
+    reporter two short of the quota gets exactly two reports in, and no round deadlocks."""
+    w = make_world(sm)
+    reporter = student_reporter(w.student)
+    for _ in range(ROUNDS):
+        with sm.begin() as session:
+            session.execute(sa.text("DELETE FROM tutoring_reports"))
+        for _ in range(REPORT_QUOTA - 2):
+            add_report_row(
+                sm,
+                reporter=w.student,
+                target_type="booking",
+                target_id=add_booking(sm, w, state="cancelled"),
+            )
+        targets = [add_booking(sm, w, state="cancelled") for _ in range(RACERS)]
+
+        errors = run_together(
+            *(
+                (lambda target=target: file_report(sm, reporter, "booking", target))
+                for target in targets
+            )
+        )
+
+        assert report_count(sm) == REPORT_QUOTA
+        assert sum(error is None for error in errors) == 2, errors
+        assert all(
+            error is None
+            or (isinstance(error, ReportRefused) and error.code == "too_many_requests")
+            for error in errors
+        ), errors
 
 
 # ---------------------------------------------------------------------------

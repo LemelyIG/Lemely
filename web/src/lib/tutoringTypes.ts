@@ -627,8 +627,9 @@ export interface ReportPage {
   nextCursor: string | null
 }
 
-/** The booking a booking or note report concerns. No student, no meeting
- * link and no place (SPEC §a.5, O16). */
+/** The booking a booking or note report concerns. No student and no meeting
+ * link (SPEC §a.5, O16); the tutor's own words on the booking and where an
+ * in-person session meets, which is what a booking report is usually about. */
 export interface AdminBookingSummary {
   bookingId: string
   subject: SubjectRef
@@ -638,15 +639,26 @@ export interface AdminBookingSummary {
   effectiveState: EffectiveState
   completedBy: "student" | "parent" | "tutor" | "platform_admin" | null
   notesFrozen: boolean
+  /** The tutor's reason for declining. */
+  declineReason: string | null
+  /** The tutor's own reason; Lemely's fixed text for a platform or system
+   * cancellation; null for a student's or parent's. */
+  cancelReason: string | null
+  /** Where an in-person session meets. */
+  locationDetail: string | null
+  otherModeNote: string | null
 }
 
 /** X-07 report detail. `notes` is the only admin path to a thread, and each
- * view is logged; hidden note bodies are visible here. */
+ * view is logged; hidden note bodies are visible here. The A11 answer has no
+ * note text: `notes` is empty and a note target's snapshot has no `body`. */
 export interface ReportDetail extends ReportItem {
   reporterParty: "student" | "parent" | "tutor"
   details: string | null
   tutorId: string
   tutorName: string
+  /** Offer "Suspend the tutor" only from pending_review, listed or rejected. */
+  tutorListingState: "draft" | "pending_review" | "listed" | "rejected" | "suspended" | "closed"
   snapshot: Record<string, JsonValue>
   bookingSummary: AdminBookingSummary | null
   notes: Note[]

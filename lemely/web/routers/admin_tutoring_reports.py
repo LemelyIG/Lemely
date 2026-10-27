@@ -8,17 +8,22 @@ so every response is ``private, no-store`` whatever its status. The rules live i
   concerns first, then oldest first (SC-10), keyset-paged with a cursor bound to that state
   (422 ``invalid_cursor`` otherwise, O21).
 * **A10** ``GET /api/admin/tutoring/reports/{report_id}``: the report, the tutor its target
-  belongs to, the snapshot (through the §i.4 allowlist) and, for a booking or note target, the
-  booking summary and the whole notes thread, hidden notes included, a student named by party.
-  The only admin path to notes (O15): each such view writes one ``report_thread_view`` row
-  first, and a failed write fails the request with no body (SC-23). 404 ``not_found``.
+  belongs to and that tutor's listing state, the snapshot (through the §i.4 allowlist) and, for
+  a booking or note target, the booking summary (no meeting link; the in-person place and the
+  tutor's own words on the booking) and the whole notes thread, hidden notes included, a
+  student named by party. The only admin path to notes (O15): each such view writes one
+  ``report_thread_view`` row first, and a failed write fails the request with no body (SC-23).
+  404 ``not_found``.
 * **A11** ``POST /api/admin/tutoring/reports/{report_id}/resolve``: one of the five
   resolutions and an optional note (admin-internal, at most 1000 characters, 422
-  ``note_too_long``). 404, 409 ``already_resolved`` or ``resolution_not_applicable``. It answers
-  with the resolved report and **no** thread (``notes: []``): O15 keeps notes to A10, whose
-  views are logged; a screen that keeps showing the thread reads A10 again. After the commit:
-  a cancelled or completed session tells its parties (``booking_view.booking_notices_for``); a
-  ``tutor_suspended`` resolution sends A5's notices (``listing_notices(..., listed=False)`` and
+  ``note_too_long``). 404, 409 ``already_resolved`` or ``resolution_not_applicable``; an action
+  that already happened (a tutor already suspended or closed, a session the platform already
+  cancelled, content already down) is 200 ``actioned`` with nothing more done and no notice. It
+  answers with the resolved report and **no** note text (``notes: []``, and no ``body`` in a
+  note target's snapshot): O15 keeps notes to A10, whose views are logged; a screen that keeps
+  showing the thread reads A10 again. After the commit: a cancelled or completed session tells
+  its parties (``booking_view.booking_notices_for``); a ``tutor_suspended`` resolution that ran
+  the sweep sends A5's notices (``listing_notices(..., listed=False)`` and
   ``tutoring_blocks.sweep_notices``). No notice carries the admin's note.
 """
 
@@ -95,6 +100,7 @@ def _detail_dto(detail: ReportDetail) -> ReportDetailDTO:
             "details": detail.details,
             "tutorId": str(detail.tutor_profile_id),
             "tutorName": detail.tutor_name,
+            "tutorListingState": detail.tutor_listing_state.value,
             "snapshot": dict(detail.snapshot),
             "bookingSummary": (
                 None
@@ -108,6 +114,10 @@ def _detail_dto(detail: ReportDetail) -> ReportDetailDTO:
                     "effectiveState": summary.effective_state,
                     "completedBy": summary.completed_by,
                     "notesFrozen": summary.notes_frozen,
+                    "declineReason": summary.decline_reason,
+                    "cancelReason": summary.cancel_reason,
+                    "locationDetail": summary.location_detail,
+                    "otherModeNote": summary.other_mode_note,
                 }
             ),
             "notes": [

@@ -7,7 +7,10 @@ admin path to notes, each view logged as ``report_thread_view``; fail closed, §
 ``resolution_not_applicable``), §a.3 (a resolution clears the freeze; ``booking_completed``
 only on a ``disputed_outcome`` report targeting the booking), §a.4b (a ``tutor_suspended``
 resolution is the A5 sweep, in the resolution's own transaction, under the tutor row
-``FOR UPDATE``), §i.4 (snapshot allowlist, party labels), O15 (notes only through A10).
+``FOR UPDATE``, every stamp at the sweep's one instant), §i.4 (snapshot allowlist, party
+labels), O15 (notes only through A10: A11 carries no note text). Fix lane F7-25: what the
+booking summary shows (#3), A11 accepting an action that already happened (#4), and the
+tutor's listing state on A10/A11 (#9).
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
-from lemely.db.booking_repo import ADMIN_CANCEL_REASON
+from lemely.db.booking_repo import ADMIN_CANCEL_REASON, SYSTEM_CANCEL_REASON
 from lemely.db.models.enums import BookingParty, BookingState, ReportTargetType, Role
 from lemely.db.tutor_profile_repo import TutorProfileRepository
 from lemely.db.tutor_review_repo import TutorReviewRepository
@@ -33,10 +36,12 @@ from lemely.web.schemas_tutoring_admin import (
 )
 from tests.test_booking_repo import (
     LINK,
+    PLACE,
     add_booking,
     add_parent,
     add_student,
     make_world,
+    set_listing,
     stored,
 )
 from tests.test_tutor_grant_repo import add_grant
@@ -230,6 +235,7 @@ def test_a10_shows_snapshot_summary_and_thread_with_party_labels(
     assert body["details"] == "He keeps asking"
     assert body["tutorId"] == str(w.tutor.profile_id)
     assert body["tutorName"] == "Sara M."
+    assert body["tutorListingState"] == "listed"
     assert body["snapshot"] == {"authorParty": "student", "body": "Is the address right?"}
     assert set(body["snapshot"]) <= SNAPSHOT_KEYS[ReportTargetType.booking_note]
     summary = body["bookingSummary"]
@@ -246,6 +252,49 @@ def test_a10_shows_snapshot_summary_and_thread_with_party_labels(
     text = json.dumps(body)
     for secret in (STUDENT_NAME, str(w.student), "@example.com", LINK):
         assert secret not in text
+
+
+def test_a10_booking_summary_shows_the_place_and_the_tutors_words_never_the_link(
+    sm: sessionmaker[Session], client: TestClient, admin: uuid.UUID
+) -> None:
+    """F7-25 #3: what a booking report is about. An in-person session's place (an admin may need
+    it for a safety concern), the reason a tutor gave for cancelling; a platform or system
+    cancellation as Lemely's fixed text. Never the meeting link, even on a virtual session
+    that has one."""
+    w = make_world(sm)
+    in_person = add_booking(sm, w, state="accepted", mode="in_person", starts_in=timedelta(days=2))
+    tutor_cancelled = add_booking(
+        sm,
+        w,
+        state="cancelled",
+        meeting_link=LINK,
+        cancelled_by_party=BookingParty.tutor,
+        cancel_reason="Call me on 0100 instead.",
+    )
+    system_cancelled = add_booking(
+        sm,
+        w,
+        state="cancelled",
+        meeting_link=LINK,
+        cancelled_by_party=BookingParty.system,
+        cancel_reason=SYSTEM_CANCEL_REASON,
+    )
+    reporter = student_reporter(w.student)
+    expected = {
+        in_person: (PLACE, None),
+        tutor_cancelled: (None, "Call me on 0100 instead."),
+        system_cancelled: (None, ADMIN_CANCEL_REASON),
+    }
+
+    for booking, (place, reason) in expected.items():
+        report_id = file_report(sm, reporter, "booking", booking, reason="safety_concern")
+        response = client.get(f"{A9}/{report_id}")
+        assert response.status_code == 200, response.text
+        summary = response.json()["bookingSummary"]
+        assert set(summary) == set(AdminBookingSummaryDTO.model_fields)
+        assert (summary["locationDetail"], summary["cancelReason"]) == (place, reason)
+        assert summary["declineReason"] is None and summary["otherModeNote"] is None
+        assert LINK not in response.text
 
 
 def test_a10_writes_report_thread_view_and_fails_closed(
@@ -334,6 +383,7 @@ def test_a11_dismiss_closes_the_report_and_lifts_the_freeze(
 ) -> None:
     w = make_world(sm)
     booking = add_booking(sm, w, state="accepted", starts_in=timedelta(days=2))
+    add_note(sm, booking, w.tutor.user_id, "tutor", "Keep this between us")
     report_id = file_report(
         sm, student_reporter(w.student), "booking", booking, reason="safety_concern"
     )
@@ -347,11 +397,35 @@ def test_a11_dismiss_closes_the_report_and_lifts_the_freeze(
     assert body["resolution"] == "dismissed"
     assert body["resolutionNote"] == "Talked to both families."
     assert body["resolvedAt"] is not None
-    assert body["notes"] == []  # O15: the thread only through A10
+    assert body["notes"] == []  # O15: the booking has a thread, but only A10 shows it
+    assert "Keep this between us" not in json.dumps(body)
     assert body["bookingSummary"]["notesFrozen"] is False
     assert not frozen(sm, booking)
     assert access_rows(sm) == []  # A11 shows no thread, so it logs no view
     assert stored(sm, booking).state is BookingState.accepted
+
+
+def test_a11_answer_on_a_note_report_carries_no_note_text(
+    sm: sessionmaker[Session], client: TestClient, admin: uuid.UUID
+) -> None:
+    """O15, SC-23 (F7-25 #5): A10 is the one logged path to a note's words. A11 logs nothing,
+    so its answer drops the note's body from the snapshot too: only the author party stays."""
+    w = make_world(sm)
+    booking = add_booking(sm, w, state="accepted", starts_in=timedelta(days=2))
+    note = add_note(sm, booking, w.tutor.user_id, "tutor", "Send me a photo of you")
+    report_id = file_report(sm, student_reporter(w.student), "booking_note", note)
+    viewed = client.get(f"{A9}/{report_id}").json()
+    assert viewed["snapshot"] == {"authorParty": "tutor", "body": "Send me a photo of you"}
+    logged = access_rows(sm)
+    assert len(logged) == 1
+
+    result = resolve(client, report_id, "content_hidden")
+
+    assert result["status"] == 200, result
+    assert result["body"]["snapshot"] == {"authorParty": "tutor"}
+    assert result["body"]["notes"] == []
+    assert "Send me a photo" not in json.dumps(result["body"])
+    assert access_rows(sm) == logged
 
 
 def test_a11_content_hidden_hides_the_note_review_or_reply(
@@ -444,6 +518,7 @@ def _not_applicable_case(sm: sessionmaker[Session], w: World, case: str) -> tupl
             lambda: row("booking", booking("accepted", -timedelta(minutes=30))),
             "booking_cancelled",
         ),
+        # Cancelled by the student: the session is off, but the platform never cancelled it.
         "cancel_already_cancelled": (
             lambda: row("booking", booking("cancelled", timedelta(days=2))),
             "booking_cancelled",
@@ -511,11 +586,11 @@ def test_a11_resolution_not_applicable_cases(
     assert after == before  # a refusal writes nothing
 
 
-@pytest.mark.parametrize("state", ["draft", "suspended", "closed"])
-def test_a11_suspend_not_applicable_unless_the_tutor_can_be_suspended(
-    sm: sessionmaker[Session], client: TestClient, admin: uuid.UUID, state: str
+def test_a11_suspend_not_applicable_to_a_draft_profile(
+    sm: sessionmaker[Session], client: TestClient, admin: uuid.UUID
 ) -> None:
-    tutor = add_tutor(sm, state=state)
+    """A draft was never listed: there is nothing to suspend, and it has not happened either."""
+    tutor = add_tutor(sm, state="draft")
     reporter = add_student(sm)
     report_id = add_report_row(
         sm, reporter=reporter, target_type="tutor_profile", target_id=tutor.profile_id
@@ -527,6 +602,166 @@ def test_a11_suspend_not_applicable_unless_the_tutor_can_be_suspended(
     assert result["body"]["detail"]["code"] == "resolution_not_applicable"
     assert report_state(sm, report_id) == ("open", None)
     assert inbox(sm, tutor.user_id) == []
+
+
+def _approval_events(sm: sessionmaker[Session], tutor_profile_id: uuid.UUID) -> int:
+    with sm() as session:
+        return int(
+            session.execute(
+                sa.text("SELECT count(*) FROM tutor_approval_events WHERE tutor_profile_id = :t"),
+                {"t": tutor_profile_id},
+            ).scalar_one()
+        )
+
+
+@pytest.mark.parametrize("state", ["suspended", "closed"])
+def test_a11_suspend_is_actioned_without_a_sweep_once_the_tutor_is_out(
+    sm: sessionmaker[Session], client: TestClient, admin: uuid.UUID, state: str
+) -> None:
+    """F7-25 #4: the tutor was suspended (or closed) after the report came in, say from A5. The
+    admin's ``tutor_suspended`` records what was done: the report is actioned and its freeze
+    lifted, with no second sweep, no approval event and no notice. Before, this was 409 and
+    the admin had to file the report as ``dismissed``."""
+    w = make_world(sm)
+    parent = add_parent(sm, w.student)
+    grant = add_grant(sm, w.student, w.tutor)
+    upcoming = add_booking(sm, w, state="accepted", starts_in=timedelta(days=2))
+    report_id = file_report(
+        sm, student_reporter(w.student), "booking", upcoming, reason="safety_concern"
+    )
+    set_listing(sm, w.tutor, state)
+
+    result = resolve(client, report_id, "tutor_suspended", "Already suspended from X-05.")
+
+    assert result["status"] == 200, result
+    body = result["body"]
+    assert (body["state"], body["resolution"]) == ("actioned", "tutor_suspended")
+    assert body["tutorListingState"] == state
+    assert report_state(sm, report_id) == ("actioned", "tutor_suspended")
+    assert stored(sm, upcoming).state is BookingState.accepted  # no sweep ran
+    assert grant_state(sm, grant) == (None, None)
+    assert _approval_events(sm, w.tutor.profile_id) == 0
+    assert not frozen(sm, upcoming)
+    for user in (w.tutor.user_id, w.student, parent):
+        assert inbox(sm, user) == [], user
+
+
+@pytest.mark.parametrize("party", ["platform_admin", "system"])
+def test_a11_cancel_is_actioned_without_a_change_once_the_platform_cancelled(
+    sm: sessionmaker[Session], client: TestClient, admin: uuid.UUID, party: str
+) -> None:
+    """F7-25 #4: a suspension sweep (``platform_admin``) or a block (``system``) already
+    cancelled the session. ``booking_cancelled`` is accepted as actioned: the booking row and
+    its cancellation stay as they were, and nobody is told again."""
+    w = make_world(sm)
+    parent = add_parent(sm, w.student)
+    reason = ADMIN_CANCEL_REASON if party == "platform_admin" else SYSTEM_CANCEL_REASON
+    booking = add_booking(
+        sm,
+        w,
+        state="cancelled",
+        starts_in=timedelta(days=2),
+        cancelled_by_party=BookingParty(party),
+        cancel_reason=reason,
+    )
+    report_id = file_report(
+        sm, student_reporter(w.student), "booking", booking, reason="safety_concern"
+    )
+    before = stored(sm, booking)
+
+    result = resolve(client, report_id, "booking_cancelled")
+
+    assert result["status"] == 200, result
+    assert (result["body"]["state"], result["body"]["resolution"]) == (
+        "actioned",
+        "booking_cancelled",
+    )
+    after = stored(sm, booking)
+    assert (
+        after.state,
+        after.cancelled_at,
+        after.cancelled_by_party,
+        after.cancelled_by_user_id,
+        after.cancel_reason,
+    ) == (
+        before.state,
+        before.cancelled_at,
+        before.cancelled_by_party,
+        before.cancelled_by_user_id,
+        before.cancel_reason,
+    )
+    assert after.notes_frozen_at is None  # the resolution still lifts the freeze
+    for user in (w.tutor.user_id, w.student, parent):
+        assert inbox(sm, user) == [], user
+
+
+def test_a11_content_hidden_is_actioned_without_a_change_once_hidden(
+    sm: sessionmaker[Session], client: TestClient, admin: uuid.UUID
+) -> None:
+    """F7-25 #4: the note, review or reply is already down (an earlier report or moderation).
+    ``content_hidden`` is accepted as actioned; the first hiding is kept as it was (who hid the
+    note, the reply's moderation stamp) and the rating is not recomputed."""
+    w = make_world(sm)
+    first_admin = add_user(sm, Role.platform_admin)
+    booking = add_booking(sm, w, state="completed", starts_in=-timedelta(days=9))
+    note = add_note(sm, booking, w.tutor.user_id, "tutor", "Add me on Instagram")
+    review = add_review_row(
+        sm, booking=booking, tutor_id=w.tutor.profile_id, student=w.student, stars=1, removed=True
+    )
+    other_student = add_student(sm)
+    other_booking = add_booking(
+        sm, w, student=other_student, state="completed", starts_in=-timedelta(days=12)
+    )
+    kept = add_review_row(
+        sm, booking=other_booking, tutor_id=w.tutor.profile_id, student=other_student, stars=5
+    )
+    reply = add_reply_row(sm, review=kept, tutor_id=w.tutor.profile_id, state="rejected")
+    TutorReviewRepository(sm).recompute_ratings(w.tutor.profile_id)
+    with sm.begin() as session:
+        session.execute(
+            sa.text(
+                "UPDATE tutor_booking_notes SET hidden_at = now() - interval '1 day', "
+                "hidden_by_user_id = :a WHERE id = :n"
+            ),
+            {"a": first_admin, "n": note},
+        )
+        session.execute(
+            sa.text("UPDATE tutor_profiles SET rating_sum = 30, rating_count = 9 WHERE id = :t"),
+            {"t": w.tutor.profile_id},  # a recompute would put (5, 1) back
+        )
+
+    def down_state() -> tuple[object, ...]:
+        with sm() as session:
+            return tuple(
+                session.execute(
+                    sa.text(
+                        "SELECT (SELECT row(hidden_at, hidden_by_user_id)::text "
+                        "FROM tutor_booking_notes WHERE id = :n), "
+                        "(SELECT removed_at FROM tutor_reviews WHERE id = :r), "
+                        "(SELECT row(text_state, moderated_at, moderated_by)::text "
+                        "FROM tutor_review_replies WHERE id = :p)"
+                    ),
+                    {"n": note, "r": review, "p": reply},
+                ).one()
+            )
+
+    before = down_state()
+    reports = [
+        add_report_row(sm, reporter=w.student, target_type=target_type, target_id=target)
+        for target_type, target in (
+            ("booking_note", note),
+            ("review", review),
+            ("review_reply", reply),
+        )
+    ]
+
+    for report_id in reports:
+        result = resolve(client, report_id, "content_hidden")
+        assert result["status"] == 200, result
+        assert report_state(sm, report_id) == ("actioned", "content_hidden")
+
+    assert down_state() == before
+    assert stored_ratings(sm, w.tutor.profile_id)[:2] == (30, 9)
 
 
 def test_a11_already_resolved_unknown_and_note_too_long(
@@ -626,6 +861,18 @@ def test_a11_suspend_resolution_runs_sanction_sweep(
     assert result["body"]["state"] == "actioned"
     assert result["body"]["resolution"] == "tutor_suspended"
     assert result["body"]["resolutionNote"] == internal
+    assert result["body"]["tutorListingState"] == "suspended"
+    # §a.4b "one instant for a sweep": the freeze is lifted at the sweep's post-lock instant,
+    # so the booking's updated_at never falls behind the cancellation the sweep stamped.
+    with sm() as session:
+        stamps = session.execute(
+            sa.text(
+                "SELECT b.cancelled_at, b.updated_at, tp.updated_at FROM tutor_bookings b "
+                "JOIN tutor_profiles tp ON tp.id = b.tutor_profile_id WHERE b.id = :b"
+            ),
+            {"b": upcoming},
+        ).one()
+    assert stamps[0] == stamps[1] == stamps[2]
     profile = TutorProfileRepository(sm).own_profile(w.tutor.profile_id)
     assert profile is not None
     assert profile.listing_state.value == "suspended"

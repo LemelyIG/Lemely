@@ -10,15 +10,18 @@ path (SPEC §b.2 R1, the SC-15 exception). Built with ``TutoringRoute``, so ever
   report changed (SC-11).
 * 404 ``not_found``, one body for an unknown target and for one the caller may not see
   (O12, O19; the rule is in ``lemely.db.tutoring_reports_repo``).
-* 409 ``report_exists``: the caller already has an open report on that target.
+* 409 ``report_exists``: the caller already has an open report on that target. Not for a
+  ``safety_concern`` over an open report with another reason: that report becomes the safety
+  concern and the answer is 201 with its receipt (the same id and filing time).
 * 422: a ``targetId`` that is not a UUID (``invalid_target``), ``details`` longer than 1000
   characters (``text_too_long``), or FastAPI's own for an unknown ``targetType`` or ``reason``.
-* 429 ``too_many_requests``: more than 20 reports in 24 hours (SC-15).
+* 429 ``too_many_requests``: more than 20 reports in 24 hours (SC-15), counted under the
+  reporter's own lock, so parallel requests cannot pass it.
 
 A ``safety_concern`` on a booking or a note freezes that booking's notes in the filing
 transaction (SC-10). After the commit, every platform admin gets the fixed-copy
-``tutoring_report`` notice for a ``safety_concern`` (SPEC §b.4); a failed notice is logged and
-never fails the report (D5.9 §1).
+``tutoring_report`` notice for a ``safety_concern``, a new one or an upgrade (SPEC §b.4); a
+failed notice is logged and never fails the report (D5.9 §1).
 """
 
 from __future__ import annotations

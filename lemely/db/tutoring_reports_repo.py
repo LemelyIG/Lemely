@@ -9,37 +9,52 @@ rows, never from anything the client sends but the target's id: a note through i
 reply through its review and that review's booking, a review through its booking. A booking or
 a note is visible to its parties: the student, the tutor (``tutor_profiles.user_id``) and a
 linked parent of the student (``ParentLinkService``, the single link query, F32). A tutor
-profile is visible to a party to any booking with that tutor, in any listing state (SC-10:
-pausing must not dodge a report), and to any student or parent while it is listed and not
-paused; a teacher never reports a profile (a tutor cannot report themself). A review is visible
-to a student or parent as SP3 shows it (listed, not paused, not removed; a student in an active
-block with the tutor sees nothing) and to the tutor it is about, in any listing state; a reply
-only to a student or parent, only when approved and under such a review. Anything else is
-:data:`NOT_FOUND`, one body for every reason (no existence oracle). A block never hides a
-booking or a note from its parties (SC-11), and nothing a reporter receives says whether one
-exists: R1 answers with a receipt.
+profile is visible to a student tied to that tutor by any booking or any grant (live or ended),
+and to a linked parent of one, in any listing state (SC-10: pausing must not dodge a report),
+and to any student or parent while it is listed and not paused; a teacher never reports a
+profile (a tutor cannot report themself, and another tutor is no party). A review is visible to
+a student or parent as P3 shows it (listed, not paused, not removed), a student in a block with
+the tutor included: the text is public, and refusing them would tell them a block exists; and
+to the tutor it is about, in any listing state. A reply is visible only to a student or parent,
+only when approved and under such a review. Anything else is :data:`NOT_FOUND`, one body for
+every reason (no existence oracle). A block never hides a booking or a note from its parties
+(SC-11), and nothing a reporter receives says whether one exists: R1 answers with a receipt.
 
 **What is stored (§a.2, §i.4).** ``target_snapshot`` is built here, inside the filing
 transaction, through :func:`allowed_snapshot` and its per-``targetType`` key allowlist
 (:data:`SNAPSHOT_KEYS`): a tutor profile's card fields and bio; a review's stars and text; a
-reply's body; a booking's admin summary (no student, no meeting link, no place); a note's
-author party and body. The same function filters the snapshot again when A10 reads it.
-``details`` is trimmed and at most 1000 characters; it is not run through
-``core.contact_patterns``: SC-7 lists no report field, and a safety report may need to quote
-the contact details a tutor sent.
+reply's body; a booking's admin summary (:class:`BookingSummary`: no student and no meeting
+link, but the in-person place and the tutor's own words on the booking, which is what a booking
+report is usually about); a note's author party and body. The same function filters the
+snapshot again when A10 reads it. ``details`` is trimmed and at most 1000 characters; it is not
+run through ``core.contact_patterns``: SC-7 lists no report field, and a safety report may need
+to quote the contact details a tutor sent.
 
-**Limits (§a.2, §b.4, SC-15).** One open report per reporter and target
-(``uq_tutoring_reports_open_per_reporter`` -> 409 ``report_exists``), at most
-:data:`REPORT_QUOTA` per reporter in 24 elapsed hours (429 ``too_many_requests``; a COUNT over
-``ix_tutoring_reports_reporter_day``, the same window as the booking quotas). No verified email
-is needed: a report is a safety path.
+**Limits (§a.2, §b.4, SC-15).** R1's first statement is the reporter's advisory lock
+(:func:`_lock_reporter`), so one reporter's quota COUNT and INSERT never interleave with another
+report of theirs; only R1 takes it, so it comes before the §a.4b locks without forming a cycle.
+At most :data:`REPORT_QUOTA` reports per reporter in 24 elapsed hours (429
+``too_many_requests``; a COUNT over ``ix_tutoring_reports_reporter_day``, the same window as the
+booking quotas). One open report per reporter and target
+(``uq_tutoring_reports_open_per_reporter``): a second is 409 ``report_exists``, except the
+upgrade below. No verified email is needed: a report is a safety path.
+
+**A safety concern upgrades an open report (SC-10).** When the reporter already has an open
+report on the target for another reason, a ``safety_concern`` is not refused: that row becomes
+the safety concern in place, in the filing transaction and under the same locks as a new one.
+Its reason is set, the new ``details`` follow the earlier ones (:func:`_merged_details`: the new
+words are kept whole), the booking's notes are frozen, every platform admin is named, and R1
+answers with that report's receipt (its id and first filing time). Its snapshot stays the
+content as first reported. Another reason, or a safety concern over a safety concern, is 409.
 
 **The safety freeze (SC-10).** A ``safety_concern`` on a booking or a note (whose reporter is a
 party by the rule above) sets ``tutor_bookings.notes_frozen_at`` in the filing transaction,
 under the §a.4b locks a note post takes (the tutor row ``FOR SHARE``, the reporter's ``users``
 row ``FOR KEY SHARE`` before the pair lock, §i.7, then the pair lock), so no note is posted after
-the report commits. Resolving a report clears the freeze unless another open ``safety_concern``
-on the same booking or one of its notes still holds it: each report freezes "until resolution".
+the report commits. The reporter's open report row is locked ``FOR UPDATE`` only after those, as
+A11 locks it after the tutor row. Resolving a report clears the freeze unless another open
+``safety_concern`` on the same booking or one of its notes still holds it: each report freezes
+"until resolution".
 
 **A10 (SC-23, O15).** For a booking or note target, one ``report_thread_view`` row is written
 before the thread is read, in the same transaction; if it cannot be written the read fails and
@@ -60,7 +75,16 @@ or a note's booking that is active and not started (``BookingService.admin_cance
 ``booking_completed`` only to a ``disputed_outcome`` report on the booking itself, ended and
 awaiting an outcome or marked ``no_show`` (``admin_complete_in_session``). Those helpers run
 before the freeze is lifted and before the report row is written, all in one transaction, so a
-refusal (409 ``resolution_not_applicable``) or a failure writes nothing.
+refusal (409 ``resolution_not_applicable``) or a failure writes nothing. A suspension lifts the
+freeze at the sweep's one instant (§a.4b), not at ``now()``.
+
+**An action that already happened (A11).** It is accepted as ``actioned`` and does nothing
+more, so no notice is sent: ``tutor_suspended`` once the tutor is suspended or closed,
+``booking_cancelled`` once the platform or the system cancelled the session, ``content_hidden``
+once the note is hidden, the review removed or the reply down (the helpers then change
+nothing). A ``draft`` tutor, another party's cancellation, a target with no such content and
+every ``booking_completed`` rule stay 409. A11's answer carries no note text: no thread, and no
+``body`` in a note target's snapshot (O15: A10 is the only logged path to notes).
 """
 
 from __future__ import annotations
@@ -81,6 +105,7 @@ from lemely.core.keyset import CursorError, decode_cursor, encode_cursor
 from lemely.core.tutor_directory import public_name
 from lemely.core.tutor_ratings import rating_display
 from lemely.db.booking_repo import (
+    ADMIN_CANCEL_REASON,
     QUOTA_BINDS,
     QUOTA_SINCE_SQL,
     BookingRefused,
@@ -94,13 +119,14 @@ from lemely.db.models.enums import (
     ReportState,
     ReportTargetType,
     TutoringAdminAction,
+    TutorListingState,
 )
 from lemely.db.models.tutoring import TutoringAdminAccess
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.tutor_approval_repo import IllegalApprovalTransitionError
 from lemely.db.tutor_directory_repo import MODES, subjects_by_tutor
 from lemely.db.tutor_review_repo import TutorReviewRepository
-from lemely.db.tutoring_predicates import active_block_between_sql, listed_and_not_paused_sql
+from lemely.db.tutoring_predicates import listed_and_not_paused_sql
 from lemely.db.tutoring_sweeps import (
     SweepResult,
     TutoringSweeps,
@@ -133,6 +159,15 @@ STUDENT_AUTHOR_LABEL: Final = "Student"
 #: The suspension note an A11 ``tutor_suspended`` records, which the tutor reads (SPEC §a.2).
 #: Fixed copy: the admin's resolution note stays on the report, since it may name the reporter.
 REPORT_SUSPENSION_NOTE: Final = "Lemely suspended your tutor profile."
+#: Between a report's earlier ``details`` and the words a safety upgrade adds.
+_DETAILS_JOIN: Final = "\n\n"
+#: Ends earlier ``details`` cut short to make room for an upgrade's.
+_ELLIPSIS: Final = "…"
+#: Listing states in which A11 ``tutor_suspended`` has already happened: nothing to sweep.
+_ALREADY_OUT: Final = frozenset({TutorListingState.suspended, TutorListingState.closed})
+#: Cancelling parties whose cancellation is the platform's: its reason is a fixed literal, and
+#: A11 ``booking_cancelled`` on it has already happened.
+_PLATFORM_CANCELLERS: Final = frozenset({"platform_admin", "system"})
 
 #: SPEC §i.4: the keys ``target_snapshot`` may hold, per target type. Pinned to the SPEC
 #: sentence by ``tests/test_tutoring_reports_repo.py``.
@@ -153,6 +188,10 @@ SNAPSHOT_KEYS: Final[Mapping[ReportTargetType, frozenset[str]]] = MappingProxyTy
                 "effectiveState",
                 "completedBy",
                 "notesFrozen",
+                "declineReason",
+                "cancelReason",
+                "locationDetail",
+                "otherModeNote",
             }
         ),
         ReportTargetType.booking_note: frozenset({"authorParty", "body"}),
@@ -270,8 +309,14 @@ class ReportsPage:
 class BookingSummary:
     """The booking a booking or note report concerns, as an admin sees it.
 
-    No student, no meeting link and no place (§a.5); ``effective_state`` is read at the
-    database clock.
+    No student and no meeting link (§a.5); ``effective_state`` is read at the database clock.
+    What a booking report is usually about is here (F7-25 #3): the place of an in-person
+    session (an admin may need it for a safety concern), the other-mode note and the tutor's
+    own words, a decline reason and a cancel reason. ``cancel_reason`` is the tutor's text when
+    the tutor cancelled, :data:`~lemely.db.booking_repo.ADMIN_CANCEL_REASON` when the platform
+    or the system did (their reasons are fixed literals: Lemely's text), and ``None`` for a
+    student's or parent's cancellation. ``cancelled_by`` decides that and A11's idempotent
+    cancel; it is not sent.
     """
 
     booking_id: uuid.UUID
@@ -283,6 +328,11 @@ class BookingSummary:
     effective_state: EffectiveState
     completed_by: str | None
     notes_frozen: bool
+    decline_reason: str | None
+    cancel_reason: str | None
+    location_detail: str | None
+    other_mode_note: str | None
+    cancelled_by: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,13 +349,18 @@ class AdminNote:
 
 @dataclass(frozen=True, slots=True)
 class ReportDetail:
-    """A10 and A11: the report, the tutor its target belongs to, and what the target was."""
+    """A10 and A11: the report, the tutor its target belongs to, and what the target was.
+
+    ``tutor_listing_state`` is read with the rest, so X-07 offers ``tutor_suspended`` only where
+    it does something (``pending_review``, ``listed``, ``rejected``).
+    """
 
     item: ReportItem
     reporter_party: ReporterParty
     details: str | None
     tutor_profile_id: uuid.UUID
     tutor_name: str
+    tutor_listing_state: TutorListingState
     snapshot: Mapping[str, object]
     booking: BookingSummary | None
     notes: tuple[AdminNote, ...]
@@ -335,6 +390,16 @@ class _Located:
     student_id: uuid.UUID | None
     live: bool
     listed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenReport:
+    """The reporter's open report on a target: what a safety upgrade reads (R1)."""
+
+    report_id: uuid.UUID
+    reason: ReportReason
+    details: str | None
+    created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -556,37 +621,130 @@ def _locate(
     )
 
 
-def _blocked(session: Session, student_id: uuid.UUID, tutor_user_id: uuid.UUID) -> bool:
-    """An active block between the pair, either way (as SP3 hides a tutor's reviews, O11)."""
-    sql = f"SELECT {active_block_between_sql(':student_id', ':tutor_user_id')}"
-    return bool(
-        session.execute(
-            sa.text(sql), {"student_id": student_id, "tutor_user_id": tutor_user_id}
-        ).scalar_one()
-    )
-
-
-def _booked_with(
+def _tied_to_tutor(
     session: Session, tutor_profile_id: uuid.UUID, students: Sequence[uuid.UUID]
 ) -> bool:
-    """Any booking, in any state, between the tutor and one of ``students``."""
+    """Any booking or any grant, in any state, between the tutor and one of ``students``.
+
+    Each such student is a party for SC-10, whom pausing must not stop reporting the profile; a
+    grant counts live or ended.
+    """
     if not students:
         return False
     return bool(
         session.execute(
             sa.text(
                 "SELECT EXISTS (SELECT 1 FROM tutor_bookings b WHERE b.tutor_profile_id = :t "
-                "AND b.student_id = ANY(CAST(:students AS uuid[])))"
+                "AND b.student_id = ANY(CAST(:students AS uuid[]))) "
+                "OR EXISTS (SELECT 1 FROM tutor_data_grants g WHERE g.tutor_profile_id = :t "
+                "AND g.student_id = ANY(CAST(:students AS uuid[])))"
             ),
             {"t": tutor_profile_id, "students": list(students)},
         ).scalar_one()
     )
 
 
+def _lock_reporter(session: Session, reporter_id: uuid.UUID) -> None:
+    """R1's first statement: the reporter's transaction-scoped advisory lock (SC-15).
+
+    ``pg_advisory_xact_lock(hashtextextended('tutoring_report:' || user_id, 0))`` serialises one
+    reporter's R1 calls, so the quota COUNT and the INSERT (or a safety upgrade) of two of them
+    never interleave and each ``safety_concern`` past the quota is refused, not announced.
+    Only R1 takes this key, so taking it before the §a.4b locks cannot form a cycle.
+    """
+    session.execute(
+        sa.text(
+            "SELECT pg_advisory_xact_lock(hashtextextended("
+            "'tutoring_report:' || CAST(CAST(:u AS uuid) AS text), 0))"
+        ),
+        {"u": reporter_id},
+    )
+
+
+def _open_report(
+    session: Session, reporter_id: uuid.UUID, target_type: ReportTargetType, target_id: uuid.UUID
+) -> _OpenReport | None:
+    """The reporter's open report on the target, ``FOR UPDATE``; at most one (the unique index).
+
+    R1 takes it after any §a.4b lock of its own, as A11 takes the report row after the tutor
+    row, so the two never wait on each other in a cycle.
+    """
+    m = (
+        session.execute(
+            sa.text(
+                "SELECT id, reason::text AS reason, details, created_at FROM tutoring_reports "  # noqa: S608 - column from a constant map
+                "WHERE reporter_user_id = :u AND target_type = CAST(:tt AS reporttargettype) "
+                f"AND {_TARGET_COLUMN[target_type]} = :t AND state = 'open' FOR UPDATE"
+            ),
+            {"u": reporter_id, "tt": target_type.value, "t": target_id},
+        )
+        .mappings()
+        .first()
+    )
+    if m is None:
+        return None
+    return _OpenReport(
+        report_id=_uuid(m["id"]),
+        reason=ReportReason(str(m["reason"])),
+        details=_opt_str(m["details"]),
+        created_at=_instant(m["created_at"]),
+    )
+
+
+def _merged_details(earlier: str | None, added: str | None) -> str | None:
+    """A safety upgrade's ``details``: the earlier words, then the added ones, kept whole.
+
+    When both do not fit in :data:`MAX_DETAILS_LENGTH`, the earlier words are cut to fit and end
+    with an ellipsis: the safety concern is what the admin must read. No added words keep the
+    earlier ones as they were.
+    """
+    if added is None or added == earlier:
+        return earlier
+    if earlier is None:
+        return added
+    joined = f"{earlier}{_DETAILS_JOIN}{added}"
+    if len(joined) <= MAX_DETAILS_LENGTH:
+        return joined
+    room = MAX_DETAILS_LENGTH - len(added) - len(_DETAILS_JOIN) - len(_ELLIPSIS)
+    if room <= 0:
+        return added
+    return f"{earlier[:room].rstrip()}{_ELLIPSIS}{_DETAILS_JOIN}{added}"
+
+
+def _admin_cancel_reason(cancelled_by: str | None, stored: str | None) -> str | None:
+    """The cancel reason an admin reads (see :class:`BookingSummary`)."""
+    if cancelled_by == "tutor":
+        return stored
+    if cancelled_by in _PLATFORM_CANCELLERS:
+        return ADMIN_CANCEL_REASON
+    return None
+
+
 def _lock_tutor_share(session: Session, tutor_profile_id: uuid.UUID) -> None:
     """§a.4b step 1 for a write on one booking: the tutor row ``FOR SHARE``."""
     session.execute(
         sa.text("SELECT 1 FROM tutor_profiles WHERE id = :t FOR SHARE"), {"t": tutor_profile_id}
+    )
+
+
+def _freeze_if(session: Session, located: _Located, *, freeze: bool) -> bool:
+    """SC-10: freeze the target booking's notes when ``freeze``; ``True`` if this call did."""
+    if not freeze or located.booking_id is None:
+        return False
+    return BookingService.freeze_notes_in_session(session, located.booking_id)
+
+
+def _upgrade_to_safety(session: Session, existing: _OpenReport, added: str | None) -> None:
+    """Make the reporter's open report the ``safety_concern`` it now is (R1, SC-10).
+
+    The row is held ``FOR UPDATE`` by :func:`_open_report`, so it is still open here.
+    """
+    session.execute(
+        sa.text(
+            "UPDATE tutoring_reports SET reason = 'safety_concern', details = :details, "
+            "updated_at = now() WHERE id = :r AND state = 'open'"
+        ),
+        {"r": existing.report_id, "details": _merged_details(existing.details, added)},
     )
 
 
@@ -597,7 +755,9 @@ def _booking_summary(session: Session, booking_id: uuid.UUID) -> BookingSummary:
                 "SELECT b.id, b.subject_code, s.name AS subject_name, b.mode::text AS mode, "
                 "b.starts_at, b.ends_at, b.state::text AS state, "
                 "b.completed_by_party::text AS completed_by, "
-                "(b.notes_frozen_at IS NOT NULL) AS frozen, now() AS db_now "
+                "(b.notes_frozen_at IS NOT NULL) AS frozen, b.decline_reason, b.cancel_reason, "
+                "b.cancelled_by_party::text AS cancelled_by, b.location_detail, "
+                "b.other_mode_note, now() AS db_now "
                 "FROM tutor_bookings b JOIN subjects s ON s.code = b.subject_code "
                 "WHERE b.id = :b"
             ),
@@ -607,6 +767,7 @@ def _booking_summary(session: Session, booking_id: uuid.UUID) -> BookingSummary:
         .one()
     )
     starts_at, ends_at = _instant(m["starts_at"]), _instant(m["ends_at"])
+    cancelled_by = _opt_str(m["cancelled_by"])
     return BookingSummary(
         booking_id=_uuid(m["id"]),
         subject_code=str(m["subject_code"]),
@@ -622,6 +783,11 @@ def _booking_summary(session: Session, booking_id: uuid.UUID) -> BookingSummary:
         ),
         completed_by=_opt_str(m["completed_by"]),
         notes_frozen=bool(m["frozen"]),
+        decline_reason=_opt_str(m["decline_reason"]),
+        cancel_reason=_admin_cancel_reason(cancelled_by, _opt_str(m["cancel_reason"])),
+        location_detail=_opt_str(m["location_detail"]),
+        other_mode_note=_opt_str(m["other_mode_note"]),
+        cancelled_by=cancelled_by,
     )
 
 
@@ -636,6 +802,10 @@ def _summary_fields(summary: BookingSummary) -> dict[str, object]:
         "effectiveState": summary.effective_state,
         "completedBy": summary.completed_by,
         "notesFrozen": summary.notes_frozen,
+        "declineReason": summary.decline_reason,
+        "cancelReason": summary.cancel_reason,
+        "locationDetail": summary.location_detail,
+        "otherModeNote": summary.other_mode_note,
     }
 
 
@@ -693,10 +863,14 @@ class TutoringReportsRepository:
     ) -> FiledReport:
         """R1: file a report on a target the reporter can see (O12, O19).
 
-        Raises :class:`ReportRefused`: 422 ``text_too_long``, 429 ``too_many_requests``,
-        404 ``not_found`` (one body whatever the reason), 409 ``report_exists``.
+        A ``safety_concern`` on a target the reporter already has an open report on, for
+        another reason, upgrades that report in place and returns its receipt (see the module
+        docstring). Raises :class:`ReportRefused`: 422 ``text_too_long``, 429
+        ``too_many_requests``, 404 ``not_found`` (one body whatever the reason), 409
+        ``report_exists``.
         """
         cleaned = _clean_text(details, limit=MAX_DETAILS_LENGTH, code="text_too_long")
+        safety = reason is ReportReason.safety_concern
         children: tuple[uuid.UUID, ...] = ()
         if reporter.party == "parent" and target_type is ReportTargetType.tutor_profile:
             children = tuple(
@@ -704,11 +878,12 @@ class TutoringReportsRepository:
             )
         try:
             with self._sessionmaker.begin() as session:
+                _lock_reporter(session, reporter.user_id)
                 self._check_quota(session, reporter.user_id)
                 located = _locate(session, target_type, target_id)
                 if located is None or not self._visible(session, reporter, located, children):
                     raise _refuse("not_found")
-                freeze = reason is ReportReason.safety_concern and located.booking_id is not None
+                freeze = safety and located.booking_id is not None
                 if freeze and located.student_id is not None:
                     _lock_tutor_share(session, located.tutor_profile_id)
                     lock_users_for_insert(session, [reporter.user_id])
@@ -717,33 +892,27 @@ class TutoringReportsRepository:
                         student_id=located.student_id,
                         tutor_profile_id=located.tutor_profile_id,
                     )
-                snapshot = self._snapshot(session, located)
-                froze = (
-                    BookingService.freeze_notes_in_session(session, located.booking_id)
-                    if freeze and located.booking_id is not None
-                    else False
-                )
-                inserted = session.execute(
-                    sa.text(
-                        "INSERT INTO tutoring_reports (reporter_user_id, reporter_party, "  # noqa: S608 - column from a constant map
-                        f"target_type, {_TARGET_COLUMN[target_type]}, target_snapshot, reason, "
-                        "details) VALUES (:reporter, CAST(:party AS bookingparty), "
-                        "CAST(:target_type AS reporttargettype), :target, "
-                        "CAST(:snapshot AS jsonb), CAST(:reason AS reportreason), :details) "
-                        "RETURNING id, created_at"
-                    ),
-                    {
-                        "reporter": reporter.user_id,
-                        "party": reporter.party,
-                        "target_type": target_type.value,
-                        "target": target_id,
-                        "snapshot": json.dumps(snapshot),
-                        "reason": reason.value,
-                        "details": cleaned,
-                    },
-                ).one()
+                existing = _open_report(session, reporter.user_id, target_type, target_id)
+                if existing is None:
+                    snapshot = self._snapshot(session, located)  # as it was before any freeze
+                    froze = _freeze_if(session, located, freeze=freeze)
+                    report_id, created_at = self._insert(
+                        session,
+                        reporter,
+                        target_type=target_type,
+                        target_id=target_id,
+                        snapshot=snapshot,
+                        reason=reason,
+                        details=cleaned,
+                    )
+                elif safety and existing.reason is not ReportReason.safety_concern:
+                    froze = _freeze_if(session, located, freeze=freeze)
+                    _upgrade_to_safety(session, existing, cleaned)
+                    report_id, created_at = existing.report_id, existing.created_at
+                else:
+                    raise _refuse("report_exists")
                 admins: tuple[uuid.UUID, ...] = ()
-                if reason is ReportReason.safety_concern:
+                if safety:
                     admins = tuple(
                         _uuid(value)
                         for value in session.scalars(
@@ -752,17 +921,51 @@ class TutoringReportsRepository:
                             )
                         )
                     )
-        except IntegrityError as exc:
+        except IntegrityError as exc:  # pragma: no cover - a backstop: the reporter lock and
+            # _open_report already rule out a second open row from R1 itself
             if _constraint(exc) == _OPEN_PER_REPORTER:
                 raise _refuse("report_exists") from exc
             raise
         return FiledReport(
-            report_id=_uuid(inserted[0]),
-            created_at=_instant(inserted[1]),
+            report_id=report_id,
+            created_at=created_at,
             reason=reason,
             froze_notes=froze,
             admin_user_ids=admins,
         )
+
+    @staticmethod
+    def _insert(
+        session: Session,
+        reporter: Reporter,
+        *,
+        target_type: ReportTargetType,
+        target_id: uuid.UUID,
+        snapshot: dict[str, object],
+        reason: ReportReason,
+        details: str | None,
+    ) -> tuple[uuid.UUID, datetime]:
+        """Insert a new report; its id and filing time."""
+        inserted = session.execute(
+            sa.text(
+                "INSERT INTO tutoring_reports (reporter_user_id, reporter_party, "  # noqa: S608 - column from a constant map
+                f"target_type, {_TARGET_COLUMN[target_type]}, target_snapshot, reason, "
+                "details) VALUES (:reporter, CAST(:party AS bookingparty), "
+                "CAST(:target_type AS reporttargettype), :target, "
+                "CAST(:snapshot AS jsonb), CAST(:reason AS reportreason), :details) "
+                "RETURNING id, created_at"
+            ),
+            {
+                "reporter": reporter.user_id,
+                "party": reporter.party,
+                "target_type": target_type.value,
+                "target": target_id,
+                "snapshot": json.dumps(snapshot),
+                "reason": reason.value,
+                "details": details,
+            },
+        ).one()
+        return _uuid(inserted[0]), _instant(inserted[1])
 
     @staticmethod
     def _check_quota(session: Session, reporter_id: uuid.UUID) -> None:
@@ -791,18 +994,15 @@ class TutoringReportsRepository:
             if reporter.party == "tutor":
                 return False
             students = (reporter.user_id,) if reporter.party == "student" else tuple(children)
-            return located.listed or _booked_with(session, located.tutor_profile_id, students)
+            return located.listed or _tied_to_tutor(session, located.tutor_profile_id, students)
         if not located.live:
             return False
         if reporter.party == "tutor":
             return (
                 target_type is ReportTargetType.review and located.tutor_user_id == reporter.user_id
             )
-        if not located.listed:
-            return False
-        return reporter.party == "parent" or not _blocked(
-            session, reporter.user_id, located.tutor_user_id
-        )
+        # A review or reply is public on P3: a block hides nothing here, and must not be told.
+        return located.listed
 
     def _is_party(self, session: Session, reporter: Reporter, located: _Located) -> bool:
         """The booking's student, its tutor or a linked parent of its student."""
@@ -959,26 +1159,36 @@ class TutoringReportsRepository:
     def _detail(
         self, session: Session, head: _Head, located: _Located, *, with_notes: bool
     ) -> ReportDetail:
-        names = session.execute(
+        """The A10 or A11 read model of one report.
+
+        A10 passes ``with_notes`` (the thread, logged by the caller); A11 carries no note text
+        at all: no thread, and no ``body`` in a note target's snapshot (O15).
+        """
+        tutor = session.execute(
             sa.text(
-                "SELECT public_first_name, public_last_initial FROM tutor_profiles WHERE id = :t"
+                "SELECT public_first_name, public_last_initial, listing_state::text "
+                "FROM tutor_profiles WHERE id = :t"
             ),
             {"t": located.tutor_profile_id},
         ).one()
-        tutor_name = public_name(str(names[0]), _opt_str(names[1]))
+        tutor_name = public_name(str(tutor[0]), _opt_str(tutor[1]))
         summary = None
         notes: tuple[AdminNote, ...] = ()
         if located.booking_id is not None:
             summary = _booking_summary(session, located.booking_id)
             if with_notes:
                 notes = self._thread(session, located.booking_id, tutor_name)
+        snapshot = allowed_snapshot(head.target_type, head.snapshot)
+        if not with_notes and head.target_type is ReportTargetType.booking_note:
+            snapshot.pop("body", None)
         return ReportDetail(
             item=head.item,
             reporter_party=head.reporter_party,
             details=head.details,
             tutor_profile_id=located.tutor_profile_id,
             tutor_name=tutor_name,
-            snapshot=allowed_snapshot(head.target_type, head.snapshot),
+            tutor_listing_state=TutorListingState(str(tutor[2])),
+            snapshot=snapshot,
             booking=summary,
             notes=notes,
             resolution=head.resolution,
@@ -1023,7 +1233,8 @@ class TutoringReportsRepository:
     ) -> ResolveOutcome:
         """A11: resolve an open report with ``resolution`` in one transaction (see the module).
 
-        Raises :class:`ReportRefused`: 422 ``note_too_long``, 404 ``not_found``, 409
+        An action that already happened is accepted with nothing more done. Raises
+        :class:`ReportRefused`: 422 ``note_too_long``, 404 ``not_found``, 409
         ``already_resolved`` or ``resolution_not_applicable``. A refusal writes nothing.
         """
         cleaned = _clean_text(note, limit=MAX_RESOLUTION_NOTE_LENGTH, code="note_too_long")
@@ -1034,13 +1245,27 @@ class TutoringReportsRepository:
             if head.state is not ReportState.open:
                 raise _refuse("already_resolved")
             located = self._located(session, head)
-            lock_tutor_for_sweep(session, located.tutor_profile_id)
+            tutor = lock_tutor_for_sweep(session, located.tutor_profile_id)
+            if tutor is None:  # pragma: no cover - every target FK is RESTRICT
+                raise LookupError(f"report {report_id} lost its tutor")
             head = _head(session, report_id, lock=True)
             if head is None or head.state is not ReportState.open:
                 raise _refuse("already_resolved")
-            booking_change, sweep = self._act(session, head, located, resolution, admin_user_id)
+            booking_change, sweep = self._act(
+                session,
+                head,
+                located,
+                resolution,
+                admin_user_id,
+                listing_state=tutor.listing_state,
+            )
             if located.booking_id is not None:
-                self._release_freeze(session, located.booking_id, report_id)
+                self._release_freeze(
+                    session,
+                    located.booking_id,
+                    report_id,
+                    at=None if sweep is None else _sweep_instant(session, sweep),
+                )
             session.execute(
                 sa.text(
                     "UPDATE tutoring_reports SET state = CAST(:state AS reportstate), "
@@ -1073,14 +1298,23 @@ class TutoringReportsRepository:
         located: _Located,
         resolution: ReportResolution,
         admin_user_id: uuid.UUID,
+        *,
+        listing_state: TutorListingState,
     ) -> tuple[BookingRow | None, SweepResult | None]:
-        """Run ``resolution``'s action; ``resolution_not_applicable`` where it has none."""
+        """Run ``resolution``'s action, or nothing where it has already happened.
+
+        See the module's "An action that already happened"; ``resolution_not_applicable``
+        where the resolution has no action. ``listing_state`` is the tutor's, read under the
+        caller's ``FOR UPDATE``.
+        """
         if resolution is ReportResolution.dismissed:
             return None, None
         if resolution is ReportResolution.content_hidden:
             self._hide(session, located, admin_user_id)
             return None, None
         if resolution is ReportResolution.tutor_suspended:
+            if listing_state in _ALREADY_OUT:
+                return None, None
             try:
                 sweep = self._sweeps.sweep_sanction_in_session(
                     session,
@@ -1097,6 +1331,11 @@ class TutoringReportsRepository:
         summary = _booking_summary(session, located.booking_id)
         try:
             if resolution is ReportResolution.booking_cancelled:
+                if (
+                    summary.effective_state == "cancelled"
+                    and summary.cancelled_by in _PLATFORM_CANCELLERS
+                ):
+                    return None, None
                 if summary.effective_state not in {"requested", "accepted"} or not (
                     _db_now(session) < summary.starts_at
                 ):
@@ -1137,8 +1376,17 @@ class TutoringReportsRepository:
             raise _refuse("resolution_not_applicable")
 
     @staticmethod
-    def _release_freeze(session: Session, booking_id: uuid.UUID, report_id: uuid.UUID) -> None:
-        """Lift the freeze unless another open safety report on the booking or a note holds it."""
+    def _release_freeze(
+        session: Session,
+        booking_id: uuid.UUID,
+        report_id: uuid.UUID,
+        *,
+        at: datetime | None,
+    ) -> None:
+        """Lift the freeze unless another open safety report on the booking or a note holds it.
+
+        ``at`` is a suspension sweep's instant, which the lift stamps too (§a.4b).
+        """
         held = session.execute(
             sa.text(
                 f"SELECT EXISTS (SELECT 1 FROM tutoring_reports r WHERE r.state = 'open' "  # noqa: S608 - constant
@@ -1148,11 +1396,28 @@ class TutoringReportsRepository:
             {"r": report_id, "b": booking_id},
         ).scalar_one()
         if not held:
-            BookingService.unfreeze_notes_in_session(session, booking_id)
+            BookingService.unfreeze_notes_in_session(session, booking_id, at=at)
 
 
 def _db_now(session: Session) -> datetime:
     return _instant(session.execute(sa.text("SELECT now()")).scalar_one())
+
+
+def _sweep_instant(session: Session, sweep: SweepResult) -> datetime:
+    """The one instant A5's sweep stamped every row with (§a.4b), read from its approval event.
+
+    The sweep takes the tutor row again and reads its own post-lock clock, later than this
+    transaction's first lock; ``SweepResult`` does not carry it, and the event's ``created_at``
+    is set to it before anything reads the row.
+    """
+    if sweep.approval_event_id is None:  # pragma: no cover - a suspension records its event
+        raise LookupError("a suspension sweep recorded no approval event")
+    return _instant(
+        session.execute(
+            sa.text("SELECT created_at FROM tutor_approval_events WHERE id = :e"),
+            {"e": sweep.approval_event_id},
+        ).scalar_one()
+    )
 
 
 __all__ = [

@@ -1,9 +1,11 @@
 """Object-level rules on R1 (PLAN T25; SPEC §c.3 O12, O19; THREAT-MODEL SC-10, SC-11, SC-15).
 
 O12: the reporter must see the target. Booking and note: a party (the student, the tutor, a
-linked parent of the student). Tutor profile: any party to any booking with that tutor in any
-listing state, or any student or parent while it is listed. Review and reply: any student or
-parent while the tutor is listed; the tutor for reviews of themself. O19: visibility is
+linked parent of the student). Tutor profile: a student with any booking or any grant (live or
+ended) with that tutor, or their linked parent, in any listing state, or any student or parent
+while it is listed. Review and reply: any student or parent while the tutor is listed, a
+blocked student included (the text is public on P3); the tutor for reviews of themself. O19:
+visibility is
 resolved on the server from the target's own parent rows (note -> booking -> participants,
 reply -> review -> tutor, review -> booking); nothing the client sends but the target id is
 trusted. Every refusal is the same 404 (no existence oracle).
@@ -24,8 +26,9 @@ import pytest
 import sqlalchemy as sa
 
 from lemely.db.models import ParentChildLink
-from lemely.db.models.enums import Role
+from lemely.db.models.enums import GrantRevokeReason, Role
 from tests.test_booking_repo import add_booking, add_parent, add_student, make_world, set_listing
+from tests.test_tutor_grant_repo import add_grant
 from tests.test_tutor_review_repo import add_reply_row, add_review_row
 from tests.test_tutoring_reports_repo import report_count, reports_client
 from tests.test_tutoring_sweeps import add_note, block
@@ -213,6 +216,35 @@ def test_authz_report_tutor_profile_allowed_for_participant_when_paused(
         )
 
 
+def test_authz_report_tutor_profile_allowed_for_a_student_tied_only_by_a_grant(
+    sm: sessionmaker[Session], client: TestClient
+) -> None:
+    """F7-25 #7: a student linked to the tutor by a grant alone (live or ended, no booking) is a
+    party for SC-10, so pausing or any later listing state does not dodge their report; nor
+    their linked parent's. A stranger still sees only a listed, unpaused profile."""
+    w = make_world(sm, paused=True)
+    live = add_student(sm)
+    ended = add_student(sm)
+    add_grant(sm, live, w.tutor)
+    add_grant(sm, ended, w.tutor, revoked=GrantRevokeReason.student)
+    live_parent = add_parent(sm, live)
+    stranger = add_student(sm)
+
+    for state in ("listed", "pending_review", "rejected", "suspended", "closed"):
+        if state != "listed":
+            set_listing(sm, w.tutor, state)
+        with sm.begin() as session:
+            session.execute(sa.text("DELETE FROM tutoring_reports"))
+        for user, role in ((live, Role.student), (ended, Role.student), (live_parent, Role.parent)):
+            assert report(client, user, role, "tutor_profile", w.tutor.profile_id) == 201, (
+                state,
+                role,
+            )
+        assert report(client, stranger, Role.student, "tutor_profile", w.tutor.profile_id) == 404, (
+            state
+        )
+
+
 def test_authz_report_tutor_profile_listed_open_to_students_and_parents_only(
     sm: sessionmaker[Session], client: TestClient
 ) -> None:
@@ -276,9 +308,10 @@ def test_idor_report_reply_requires_visible_review(
 
 
 def test_idor_report_review_visibility(sm: sessionmaker[Session], client: TestClient) -> None:
-    """Review: students and parents while the tutor is listed (as SP3 shows it: a student in an
-    active block with the tutor does not see it); the tutor for reviews of themself, in any
-    listing state; never a removed review."""
+    """Review: students and parents while the tutor is listed, a student in an active block with
+    the tutor included (the text is public on P3, and a refusal would tell them a block exists,
+    F7-25 #6); the tutor for reviews of themself, in any listing state; never a removed
+    review."""
     w = make_world(sm)
     booking = add_booking(sm, w, state="completed", starts_in=-timedelta(days=9))
     review = add_review_row(sm, booking=booking, tutor_id=w.tutor.profile_id, student=w.student)
@@ -289,7 +322,7 @@ def test_idor_report_review_visibility(sm: sessionmaker[Session], client: TestCl
 
     assert report(client, add_student(sm), Role.student, "review", review) == 201
     assert report(client, add_user(sm, Role.parent), Role.parent, "review", review) == 201
-    assert report(client, blocked_student, Role.student, "review", review) == 404
+    assert report(client, blocked_student, Role.student, "review", review) == 201
     assert report(client, other_tutor.user_id, Role.teacher, "review", review) == 404
     set_listing(sm, w.tutor, "suspended")
     assert report(client, add_student(sm), Role.student, "review", review) == 404
@@ -300,6 +333,27 @@ def test_idor_report_review_visibility(sm: sessionmaker[Session], client: TestCl
         sm, booking=second, tutor_id=w.tutor.profile_id, student=w.student, removed=True
     )
     assert report(client, w.tutor.user_id, Role.teacher, "review", removed) == 404
+
+
+@pytest.mark.parametrize("by", ["student", "tutor"])
+def test_authz_blocked_student_still_reports_the_tutors_reply_to_their_review(
+    sm: sessionmaker[Session], client: TestClient, by: str
+) -> None:
+    """F7-25 #6: a block, either way, never stops a student reporting what the tutor wrote under
+    their review; the answer is the same receipt as without a block (SC-11)."""
+    w = make_world(sm)
+    booking = add_booking(sm, w, state="completed", starts_in=-timedelta(days=9))
+    review = add_review_row(sm, booking=booking, tutor_id=w.tutor.profile_id, student=w.student)
+    reply = add_reply_row(sm, review=review, tutor_id=w.tutor.profile_id, state="approved")
+    block(sm, w.tutor, w.student, by="student" if by == "student" else "tutor")
+
+    act_as(client, w.student, Role.student)
+    response = client.post(
+        R1, json={"targetType": "review_reply", "targetId": str(reply), "reason": "harassment"}
+    )
+
+    assert response.status_code == 201, response.text
+    assert set(response.json()) == {"reportId", "createdAt"}
 
 
 # ---------------------------------------------------------------------------

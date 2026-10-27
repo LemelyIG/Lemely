@@ -1486,6 +1486,26 @@ def test_freeze_and_unfreeze_notes_in_session(
     )
 
 
+def test_unfreeze_notes_in_session_stamps_the_sweeps_instant(
+    sm: sessionmaker[Session], w: World
+) -> None:
+    """A report resolved by a suspension lifts the freeze at the sweep's one instant (§a.4b,
+    F7-25 #8); without ``at`` the stamp is the transaction's ``now()``, as before."""
+    swept = add_booking(sm, w, state="accepted", starts_in=timedelta(days=2))
+    plain = add_booking(sm, w, state="accepted", starts_in=timedelta(days=4))
+    at = datetime(2026, 10, 27, 9, 30, 15, 123456, tzinfo=UTC)
+    with sm.begin() as session:
+        for booking in (swept, plain):
+            assert BookingService.freeze_notes_in_session(session, booking) is True
+    with sm.begin() as session:
+        assert BookingService.unfreeze_notes_in_session(session, swept, at=at) is True
+        assert BookingService.unfreeze_notes_in_session(session, plain) is True
+        now = session.execute(sa.text("SELECT now()")).scalar_one()
+    assert stored(sm, swept).updated_at == at
+    assert stored(sm, plain).updated_at == now
+    assert stored(sm, swept).notes_frozen_at is None
+
+
 # ---------------------------------------------------------------------------
 # Reads (S1, S2, T9, T10, PA1, PA2)
 # ---------------------------------------------------------------------------

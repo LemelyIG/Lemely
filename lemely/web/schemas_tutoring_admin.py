@@ -11,9 +11,11 @@ every field with the SPEC line it comes from. The rule throughout is SPEC
   nowhere else. Each signed URL and each report-thread read is logged in
   ``tutoring_admin_access`` by the route that issues it (SC-23).
 * **Never to an admin.** No field of ``StudentDetailDTO`` (ADR-T03), no meeting
-  link or place (O16), no student name or id (§a.5: a student's name goes to
-  their tutor, their parents and themselves only), no admin user id and no log
-  row id (ID-5).
+  link (O16), no student name or id (§a.5: a student's name goes to their
+  tutor, their parents and themselves only), no admin user id and no log row id
+  (ID-5). The one place an admin reads is a reported booking's
+  ``AdminBookingSummaryDTO.locationDetail``: an in-person safety concern may
+  need it (fix lane F7-25).
 """
 
 from __future__ import annotations
@@ -225,7 +227,9 @@ class AdminBookingSummaryDTO(ApiModel):
     What X-07's resolutions turn on: the start (cancel before start only), the
     effective state (mark completed only from ``awaiting_outcome`` or
     ``no_show``), who recorded completion (SC-17) and the notes freeze (SC-10).
-    No student, no meeting link and no place (§a.5, O16).
+    And what a booking report is usually about: the tutor's own words on the
+    booking and where an in-person session meets. No student and no meeting
+    link (§a.5, O16).
     """
 
     bookingId: str
@@ -236,6 +240,17 @@ class AdminBookingSummaryDTO(ApiModel):
     effectiveState: EffectiveStateLit
     completedBy: Literal["student", "parent", "tutor", "platform_admin"] | None
     notesFrozen: bool
+    declineReason: str | None
+    """The tutor's reason for declining the request."""
+    cancelReason: str | None
+    """The tutor's own reason when the tutor cancelled; "This session was
+    cancelled by Lemely." when the platform or the system did (fixed literals);
+    ``None`` for a student's or parent's cancellation."""
+    locationDetail: str | None
+    """Where an in-person session meets (an in-person safety concern may need
+    it). Never the meeting link of a virtual one."""
+    otherModeNote: str | None
+    """The note on an "other" session."""
 
 
 class ReportDetailDTO(ReportItemDTO):
@@ -254,13 +269,21 @@ class ReportDetailDTO(ReportItemDTO):
     resolution suspends."""
     tutorName: str
     """That tutor's public name."""
+    tutorListingState: Literal[
+        "draft", "pending_review", "listed", "rejected", "suspended", "closed"
+    ]
+    """That tutor's listing state now: X-07 offers ``tutor_suspended`` only from
+    ``pending_review``, ``listed`` or ``rejected`` (A11 accepts it as already
+    done once ``suspended`` or ``closed``)."""
     snapshot: dict[str, JsonValue]
     """``target_snapshot``: the reported content as it was when reported
-    (admin only, §a.5)."""
+    (admin only, §a.5). A11's answer leaves out a note target's ``body``: A10 is
+    the one logged path to notes (O15)."""
     bookingSummary: AdminBookingSummaryDTO | None
     """Booking and note targets only."""
     notes: list[NoteDTO]
-    """The booking's thread for booking and note targets; empty otherwise."""
+    """The booking's thread for booking and note targets on A10; empty otherwise,
+    and always empty on A11."""
     resolution: ReportResolutionLit | None
     resolutionNote: str | None
     resolvedAt: str | None

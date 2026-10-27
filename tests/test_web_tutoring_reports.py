@@ -5,8 +5,8 @@ What the route adds to the repository (``tests/test_tutoring_reports_repo.py``):
 receipt and nothing else, 404 with one body for every target the caller may not see, 409
 ``report_exists``, 422, 429 after 20 a day), ``private, no-store`` on every status, and the
 after-commit inbox notice to every platform admin for a ``safety_concern`` (D5.9 §1: a failed
-notice never fails the report). Object-level visibility (O12, O19) is
-``tests/test_web_tutoring_authz_reports.py``.
+notice never fails the report), including one that upgrades the caller's open report (F7-25
+#1). Object-level visibility (O12, O19) is ``tests/test_web_tutoring_authz_reports.py``.
 """
 
 from __future__ import annotations
@@ -115,6 +115,47 @@ def test_r1_second_open_report_on_the_same_target_is_409(
     assert again.json()["detail"]["code"] == "report_exists"
     assert again.headers["Cache-Control"] == NO_STORE
     assert report_count(sm) == 1
+
+
+def test_r1_safety_re_report_upgrades_the_open_report_and_tells_the_admins(
+    sm: sessionmaker[Session], client: TestClient
+) -> None:
+    """F7-25 #1 at the route: a safety concern on a target the caller already reported for
+    another reason is 201 with the same receipt (the open report, now a safety concern), the
+    notes are frozen and every platform admin is told once. A safety concern on top of that is
+    409 ``report_exists`` and tells nobody again."""
+    w = make_world(sm)
+    admins = [add_user(sm, Role.platform_admin) for _ in range(2)]
+    booking = add_booking(sm, w, state="accepted", starts_in=timedelta(days=2))
+    act_as(client, w.student, Role.student)
+    first = client.post(R1, json={**body_for("booking", booking), "details": "Rude."})
+    assert first.status_code == 201, first.text
+    assert all(inbox(sm, admin) == [] for admin in admins)
+
+    upgraded = client.post(
+        R1, json={**body_for("booking", booking, "safety_concern"), "details": "He asked to meet"}
+    )
+
+    assert upgraded.status_code == 201, upgraded.text
+    assert upgraded.headers["Cache-Control"] == NO_STORE
+    assert upgraded.json() == first.json()
+    assert report_count(sm) == 1
+    assert frozen(sm, booking)
+    report_id = first.json()["reportId"]
+    notice = (
+        "tutoring_report",
+        "New safety report",
+        "A safety concern was reported. Open the reports queue.",
+        f"report:{report_id}",
+    )
+    for admin in admins:
+        assert inbox(sm, admin) == [notice]
+
+    again = client.post(R1, json=body_for("booking", booking, "safety_concern"))
+    assert again.status_code == 409, again.text
+    assert again.json()["detail"]["code"] == "report_exists"
+    for admin in admins:
+        assert inbox(sm, admin) == [notice]
 
 
 def test_r1_unknown_and_hidden_targets_share_one_404(

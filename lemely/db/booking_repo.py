@@ -1861,15 +1861,23 @@ class BookingService:
         )
 
     @staticmethod
-    def unfreeze_notes_in_session(session: Session, booking_id: uuid.UUID) -> bool:
-        """Clear the freeze at report resolution; ``True`` if this call did."""
+    def unfreeze_notes_in_session(
+        session: Session, booking_id: uuid.UUID, *, at: datetime | None = None
+    ) -> bool:
+        """Clear the freeze at report resolution; ``True`` if this call did.
+
+        ``at`` is the sweep's instant when a suspension resolves the report (SPEC §a.4b "One
+        instant for a sweep"), so ``updated_at`` matches the cancellation the sweep stamped;
+        the transaction's ``now()`` otherwise.
+        """
         return (
             session.execute(
                 sa.text(
-                    "UPDATE tutor_bookings SET notes_frozen_at = NULL, updated_at = now() "
+                    "UPDATE tutor_bookings SET notes_frozen_at = NULL, "
+                    "updated_at = COALESCE(CAST(:at AS timestamptz), now()) "
                     "WHERE id = :b AND notes_frozen_at IS NOT NULL RETURNING id"
                 ),
-                {"b": booking_id},
+                {"b": booking_id, "at": at},
             ).first()
             is not None
         )
