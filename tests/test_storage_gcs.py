@@ -7,17 +7,25 @@ the not-found mapping, deferred credential failure — without a network.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from google.api_core.exceptions import GoogleAPICallError, NotFound, PreconditionFailed
+from google.api_core.exceptions import (
+    Forbidden,
+    GoogleAPICallError,
+    NotFound,
+    PreconditionFailed,
+)
 from google.auth.exceptions import DefaultCredentialsError
+from google.cloud import storage
 from google.cloud.storage.retry import DEFAULT_RETRY_IF_GENERATION_SPECIFIED
 
 from lemely.io.storage import StorageObjectNotFoundError
 from lemely.io.storage_gcs import GcsStorageBackend
-from lemely.runtime.errors import ExternalServiceError
+from lemely.runtime.config import StorageSettings
+from lemely.runtime.errors import ConfigError, ExternalServiceError
 
 
 def _client_with_blob() -> tuple[MagicMock, MagicMock]:
@@ -365,3 +373,138 @@ def test_signed_url_for_user_adc_raises_rather_than_attribute_error() -> None:
 
     with pytest.raises(ExternalServiceError, match="signed URL"):
         GcsStorageBackend(_client=client).create_signed_url("avatars", "x.png", 3600)
+
+
+# ---------------------------------------------------------------------------
+# The tutor evidence bucket (SC-22). GCS bucket names are global, so the
+# settings default `lemely-tutor-evidence` is a name anyone can create: the gcs
+# backend refuses it outright, and before its first use of whichever evidence
+# bucket it is given it reads that bucket's settings and refuses one that does
+# not enforce public access prevention and uniform bucket-level access. The
+# bucket metadata below is a real `storage.Bucket` parsed from a buckets.get
+# resource, so the attribute names are the SDK's, not a mock's.
+# ---------------------------------------------------------------------------
+
+_EVIDENCE = "proj-1234-tutor-evidence-staging"
+_EVIDENCE_PATH = "tutor-evidence/t/e.pdf"
+
+_EVIDENCE_OPS: dict[str, Callable[[GcsStorageBackend], object]] = {
+    "upload": lambda b: b.upload(_EVIDENCE, _EVIDENCE_PATH, b"%PDF-1.4", "application/pdf"),
+    "download": lambda b: b.download(_EVIDENCE, _EVIDENCE_PATH),
+    "delete": lambda b: b.delete(_EVIDENCE, _EVIDENCE_PATH),
+    "create_signed_url": lambda b: b.create_signed_url(
+        _EVIDENCE, _EVIDENCE_PATH, 300, disposition="attachment"
+    ),
+}
+
+
+def _bucket_metadata(public_access_prevention: str | None, *, uniform: bool) -> storage.Bucket:
+    """What ``Client.get_bucket`` returns for a bucket with these two settings, offline."""
+    iam_configuration: dict[str, object] = {"uniformBucketLevelAccess": {"enabled": uniform}}
+    if public_access_prevention is not None:
+        iam_configuration["publicAccessPrevention"] = public_access_prevention
+    bucket = storage.Bucket(MagicMock(), name=_EVIDENCE)
+    bucket._set_properties({"name": _EVIDENCE, "iamConfiguration": iam_configuration})
+    return bucket
+
+
+def _evidence_client(metadata: storage.Bucket) -> tuple[MagicMock, MagicMock]:
+    client, blob = _client_with_blob()
+    client.get_bucket.return_value = metadata
+    blob.download_as_bytes.return_value = b"%PDF-1.4"
+    blob.generate_signed_url.return_value = "https://signed.example/e.pdf"
+    return client, blob
+
+
+@pytest.mark.parametrize("spell", [str, lambda name: f" {name} ", str.upper])
+def test_gcs_backend_refuses_default_evidence_bucket(spell: Callable[[str], str]) -> None:
+    """The settings default, however it is written, is refused when the backend is built."""
+    default = StorageSettings().tutor_evidence_bucket
+    client = MagicMock()
+    with pytest.raises(ConfigError, match="LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET") as caught:
+        GcsStorageBackend(tutor_evidence_bucket=spell(default), _client=client)
+    assert default in str(caught.value)
+    # Refused before anything is built or called.
+    assert client.mock_calls == []
+
+
+def test_gcs_backend_accepts_a_project_owned_evidence_bucket_without_touching_it() -> None:
+    """Construction stays offline (``get_storage_backend`` relies on it): nothing is called."""
+    client = MagicMock()
+    GcsStorageBackend(project="proj-1234", tutor_evidence_bucket=_EVIDENCE, _client=client)
+    assert client.mock_calls == []
+
+
+@pytest.mark.parametrize(
+    ("public_access_prevention", "uniform"),
+    [("unspecified", True), ("inherited", True), (None, True), ("enforced", False)],
+)
+@pytest.mark.parametrize("op", sorted(_EVIDENCE_OPS))
+def test_evidence_bucket_public_access_prevention_enforced(
+    op: str, public_access_prevention: str | None, uniform: bool
+) -> None:
+    client, blob = _evidence_client(_bucket_metadata(public_access_prevention, uniform=uniform))
+    backend = GcsStorageBackend(tutor_evidence_bucket=_EVIDENCE, _client=client)
+
+    with pytest.raises(
+        ExternalServiceError, match=f"Refusing to use the tutor evidence bucket {_EVIDENCE}"
+    ):
+        _EVIDENCE_OPS[op](backend)
+
+    client.get_bucket.assert_called_once_with(_EVIDENCE, timeout=30.0)
+    # Fail closed: no object operation reached the bucket.
+    client.bucket.assert_not_called()
+    assert blob.mock_calls == []
+
+
+@pytest.mark.parametrize("op", sorted(_EVIDENCE_OPS))
+def test_private_evidence_bucket_is_checked_once_then_used(op: str) -> None:
+    client, blob = _evidence_client(_bucket_metadata("enforced", uniform=True))
+    backend = GcsStorageBackend(tutor_evidence_bucket=_EVIDENCE, _client=client)
+
+    _EVIDENCE_OPS[op](backend)
+    _EVIDENCE_OPS[op](backend)
+
+    client.get_bucket.assert_called_once_with(_EVIDENCE, timeout=30.0)
+    assert client.bucket.call_count == 2
+    assert all(c.args == (_EVIDENCE,) for c in client.bucket.call_args_list)
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (NotFound("no such bucket"), "does not exist"),
+        (Forbidden("caller lacks storage.buckets.get"), "storage.buckets.get"),
+    ],
+)
+def test_unreadable_evidence_bucket_fails_closed_and_is_checked_again(
+    error: GoogleAPICallError, message: str
+) -> None:
+    """A missing or unreadable bucket refuses the operation, and nothing is cached.
+
+    Not cached so that once the operator runs ``scripts/gcp-bootstrap.sh`` the
+    next upload succeeds without a restart.
+    """
+    client, blob = _client_with_blob()
+    client.get_bucket.side_effect = error
+    backend = GcsStorageBackend(tutor_evidence_bucket=_EVIDENCE, _client=client)
+
+    for _ in range(2):
+        with pytest.raises(ExternalServiceError, match=message):
+            _EVIDENCE_OPS["upload"](backend)
+
+    assert client.get_bucket.call_count == 2
+    client.bucket.assert_not_called()
+
+
+def test_evidence_check_leaves_the_other_buckets_alone() -> None:
+    """Regression guard: uploads and avatars are not checked (their routes are unchanged)."""
+    client, blob = _evidence_client(_bucket_metadata("unspecified", uniform=False))
+    backend = GcsStorageBackend(tutor_evidence_bucket=_EVIDENCE, _client=client)
+
+    backend.upload("proj-1234-avatars-staging", "a.png", b"png", "image/png")
+    backend.download("proj-1234-uploads-staging", "k/scan.pdf")
+    backend.delete("proj-1234-uploads-staging", "k/scan.pdf")
+
+    client.get_bucket.assert_not_called()
+    assert client.bucket.call_count == 3

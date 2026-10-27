@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from lemely.io.storage_local import LocalFileStorageBackend
 from lemely.runtime.config import Settings, StorageSettings, TutoringSettings
 
 _EXAMPLE = Path(__file__).resolve().parent.parent / "lemely.toml.example"
@@ -22,6 +23,20 @@ def test_storage_evidence_defaults() -> None:
     assert storage.tutor_evidence_bucket == "lemely-tutor-evidence"
     assert storage.tutor_evidence_signed_url_ttl_seconds == 300
     assert storage.tutor_evidence_bucket not in {storage.bucket, storage.avatar_bucket}
+
+
+def test_local_backend_keeps_default_evidence_bucket(tmp_path: Path) -> None:
+    """Only the gcs backend refuses the default name (SC-22): for ``local`` it is a directory.
+
+    Dev, Compose and CI run on ``local`` with no evidence bucket configured, so the
+    default must keep working there.
+    """
+    storage = StorageSettings()
+    assert storage.backend == "local"
+    backend = LocalFileStorageBackend(tmp_path)
+    backend.upload(storage.tutor_evidence_bucket, "tutor-evidence/t/e.pdf", b"%PDF-1.4", None)
+    assert backend.download(storage.tutor_evidence_bucket, "tutor-evidence/t/e.pdf") == b"%PDF-1.4"
+    assert (tmp_path / storage.tutor_evidence_bucket / "tutor-evidence/t/e.pdf").is_file()
 
 
 def test_tutoring_forbids_extra_keys() -> None:

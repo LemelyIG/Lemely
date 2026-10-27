@@ -981,6 +981,13 @@ class SandboxSettings(BaseModel):
         return self
 
 
+#: The placeholder default of ``StorageSettings.tutor_evidence_bucket``. A
+#: directory name for the ``local`` backend; for ``gcs`` it is a bucket name in
+#: Google's global namespace that no Lemely project owns, so
+#: :class:`~lemely.io.storage_gcs.GcsStorageBackend` refuses it (SC-22).
+DEFAULT_TUTOR_EVIDENCE_BUCKET = "lemely-tutor-evidence"
+
+
 class StorageSettings(BaseModel):
     """Object storage for uploads (P2.5) and profile pictures (spec 2026-09-03, DS7/DS12).
 
@@ -1004,9 +1011,17 @@ class StorageSettings(BaseModel):
     ``local`` these are directory names under ``paths.output_dir/storage``,
     where the prefix is merely harmless. The deployed pipeline does not rely
     on these defaults at all: ``.github/workflows/deploy.yml`` sets
-    ``LEMELY_STORAGE__BUCKET``/``__AVATAR_BUCKET`` per environment (project id
-    + environment suffix), which is what keeps staging and production from
-    sharing one bucket.
+    ``LEMELY_STORAGE__BUCKET``/``__AVATAR_BUCKET``/``__TUTOR_EVIDENCE_BUCKET``
+    per environment (project id + environment suffix), which is what keeps
+    staging and production from sharing one bucket.
+
+    The evidence bucket's default is the one a deploy must never use, because
+    whoever owned a bucket of that name would receive tutors' identity and
+    qualification documents: the gcs backend raises ``ConfigError`` for it
+    when it is built, and checks the configured bucket is private before its
+    first use. The check is in the backend, not here, because ``local`` keeps
+    the default and a settings-level refusal would also reject a ``gcs``
+    configuration that never touches tutoring.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1025,8 +1040,9 @@ class StorageSettings(BaseModel):
     # Tutor evidence documents (qualification scans for admin approval) live in
     # their own PRIVATE bucket: they are PII, are only ever opened by an admin
     # through a short-lived signed URL, and must never share a namespace with
-    # the public-ish avatars or the student scans. `lemely-` prefix: see above.
-    tutor_evidence_bucket: str = Field(default="lemely-tutor-evidence", min_length=1)
+    # the public-ish avatars or the student scans. `lemely-` prefix: see above;
+    # unlike the other two, the gcs backend refuses this default outright.
+    tutor_evidence_bucket: str = Field(default=DEFAULT_TUTOR_EVIDENCE_BUCKET, min_length=1)
     # TTL of the admin evidence signed URL. Far shorter than `signed_url_ttl_seconds`
     # on purpose: the link is minted per open, served as an attachment, and a
     # leaked one should die in minutes.

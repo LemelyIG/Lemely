@@ -314,7 +314,7 @@ jobs:
           #
           # --service-account runs the revision as the per-environment runtime
           # identity provisioned by scripts/gcp-bootstrap.sh, which holds
-          # object access on its own two buckets only — never a project-level
+          # object access on its own three buckets only — never a project-level
           # storage role; the deployer's project-level iam.serviceAccountUser
           # (also granted by that script) is the separate permission that lets
           # it deploy a revision running as that identity.
@@ -335,21 +335,31 @@ jobs:
           # Worker Custom Domains in web/wrangler.jsonc and the smoke-test
           # job below.
           #
-          # Object storage is Google Cloud Storage, and the two bucket names
+          # Object storage is Google Cloud Storage, and the three bucket names
           # are set explicitly per environment. They MUST differ between
           # staging and production — one shared bucket would let a staging
-          # test overwrite a real student's scan or avatar at the same object
-          # path.
+          # test overwrite a real student's scan or avatar, or a tutor's
+          # documents, at the same object path.
           #
           # The `||` fallbacks mean this works with no new GitHub variables:
           # unset `vars.` render as the empty string, which is falsy, so the
           # names default to `<project-id>-uploads-<env>` /
-          # `<project-id>-avatars-<env>` — globally unique because the GCS
-          # namespace is global and the project id already is. Set
-          # `GCS_UPLOADS_BUCKET`/`GCS_AVATAR_BUCKET` as environment variables
+          # `<project-id>-avatars-<env>` / `<project-id>-tutor-evidence-<env>`
+          # — globally unique because the GCS namespace is global and the
+          # project id already is. Set `GCS_UPLOADS_BUCKET`/`GCS_AVATAR_BUCKET`/
+          # `GCS_TUTOR_EVIDENCE_BUCKET` as environment variables
           # (Settings > Environments > staging|production) only to point an
           # environment at differently-named buckets. `scripts/gcp-bootstrap.sh`
           # derives the same defaults, so the pair agree by construction.
+          #
+          # The evidence bucket holds tutors' ID and qualification scans. Its
+          # settings default (`lemely-tutor-evidence`) is a name anyone can
+          # create in GCS's global namespace, so it must never reach a deploy,
+          # and this line always sets a project-scoped name instead (SC-22;
+          # lemely/io/storage_gcs.py refuses the default and checks the bucket
+          # is private). The bootstrap script must have created the bucket
+          # before the first deploy; tests/test_deploy_evidence_bucket.py
+          # checks that the two derive the same name.
           #
           # Web push (VAPID). The public key is handed to every browser and is
           # a repository VARIABLE; the private key is a repository SECRET; the
@@ -365,6 +375,7 @@ jobs:
             LEMELY_STORAGE__GCS_PROJECT=${{ vars.GCP_PROJECT_ID }}
             LEMELY_STORAGE__BUCKET=${{ vars.GCS_UPLOADS_BUCKET || format('{0}-uploads-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}
             LEMELY_STORAGE__AVATAR_BUCKET=${{ vars.GCS_AVATAR_BUCKET || format('{0}-avatars-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}
+            LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET=${{ vars.GCS_TUTOR_EVIDENCE_BUCKET || format('{0}-tutor-evidence-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}
             LEMELY_LOGGING__FORMAT=json
             LEMELY_GRADING__EQUIVALENCE_GATE=${{ vars.GRADING_EQUIVALENCE_GATE || 'false' }}
             LEMELY_GRADING__ECF_SUBSTITUTION=${{ vars.GRADING_ECF_SUBSTITUTION || 'false' }}
