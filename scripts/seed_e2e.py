@@ -2326,6 +2326,15 @@ def seed_tutoring_fixture(
                     user_id=who, safety_notice_acknowledged_at=now - timedelta(days=30)
                 )
             )
+        # The child signs up unverified like every student, but the tutoring routes a
+        # student uses (the directory, booking, sharing) all need a verified email, so
+        # the child's own journeys (share with a new tutor, shown to the parent on P-08)
+        # cannot start without it. Mark it verified, as the booking student already is.
+        session.execute(
+            sa.update(User)
+            .where(User.id == child_id, User.email_verified_at.is_(None))
+            .values(email_verified_at=now - timedelta(days=30))
+        )
         session.flush()
         rows: dict[str, TutorBooking] = {}
         for plan in TUTORING_BOOKING_PLAN:
@@ -3757,6 +3766,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Override the per-run unique tag (default: random 12 hex chars).",
     )
     args = parser.parse_args(argv)
+
+    # structlog's default logger prints to STDOUT. The tutoring repositories log
+    # (`tutor_grant_created`, ...), and this script's stdout is the JSON contract
+    # global setup writes to `e2e-seed.json` verbatim, so one log line in front of
+    # the JSON makes the whole file unparseable. Send every log line to stderr.
+    from lemely.runtime.logging import configure_logging
+
+    configure_logging(stream=sys.stderr)
 
     ensure_supabase_env()
     payload = seed(run_tag=args.run_tag)

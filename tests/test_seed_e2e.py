@@ -48,7 +48,7 @@ from lemely.db.models.tutoring import (
     TutoringReport,
     TutorProfile,
 )
-from lemely.db.models.users import ParentChildLink
+from lemely.db.models.users import ParentChildLink, User
 from lemely.db.tutor_outcomes_repo import TutorOutcomesRepository
 from lemely.db.tutoring_predicates import EFFECTIVE_STATE_SQL
 from scripts.seed_e2e import (
@@ -1240,10 +1240,10 @@ def sm(tutoring_db: Any) -> Any:
     yield from emptied_after(tutoring_db)
 
 
-def _account(sm: Any, role: Role, label: str) -> dict[str, Any]:
+def _account(sm: Any, role: Role, label: str, *, verified: bool = True) -> dict[str, Any]:
     from tests.tutoring_db import add_user
 
-    uid = add_user(sm, role, display_name=f"Seed {label}")
+    uid = add_user(sm, role, display_name=f"Seed {label}", verified=verified)
     return {
         "userId": str(uid),
         "email": f"{label}@e2e.lemely.local",
@@ -1254,7 +1254,8 @@ def _account(sm: Any, role: Role, label: str) -> dict[str, Any]:
 
 
 def _accounts(sm: Any) -> TutoringSeedAccounts:
-    child = _account(sm, Role.student, "child")
+    # Unverified, as `_signup_account` leaves every student: the fixture has to fix that.
+    child = _account(sm, Role.student, "child", verified=False)
     parent = _account(sm, Role.parent, "parent")
     with sm.begin() as session:
         session.add(
@@ -1573,3 +1574,61 @@ class TestTutoringContractLockstep:
             assert isinstance(node, expected) and not isinstance(node, bool), (path, node)
             if kind == "string":
                 assert node != "", path
+
+
+class TestChildIsVerifiedForTheStudentTutoringRoutes:
+    """T32: the directory, booking and sharing all need a verified email."""
+
+    def test_the_fixture_verifies_the_unverified_child(
+        self, sm: Any, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        _, accounts = seeded
+        with sm() as session:
+            verified_at = session.scalar(
+                sa.select(User.email_verified_at).where(
+                    User.id == uuid.UUID(accounts.child["userId"])
+                )
+            )
+        assert verified_at is not None
+
+
+class TestMainKeepsStdoutToTheJson:
+    """T32: a repository's log line in front of the JSON made `e2e-seed.json` unparseable."""
+
+    @pytest.fixture
+    def restore_logging(self) -> Any:
+        import logging
+
+        import structlog
+
+        root = logging.getLogger()
+        handlers, level = root.handlers[:], root.level
+        yield
+        structlog.reset_defaults()
+        root.handlers[:] = handlers
+        root.setLevel(level)
+
+    def test_a_log_line_goes_to_stderr_and_stdout_is_one_json_document(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        restore_logging: Any,
+    ) -> None:
+        import json
+
+        import structlog
+
+        from scripts import seed_e2e
+
+        def fake_seed(run_tag: str | None = None) -> dict[str, Any]:
+            structlog.get_logger("repo").info("tutor_grant_created", grant_id="g-1")
+            return {"runTag": "x"}
+
+        monkeypatch.setattr(seed_e2e, "ensure_supabase_env", lambda: None)
+        monkeypatch.setattr(seed_e2e, "seed", fake_seed)
+
+        assert seed_e2e.main([]) == 0
+
+        out, err = capsys.readouterr()
+        assert json.loads(out) == {"runTag": "x"}
+        assert "tutor_grant_created" in err
