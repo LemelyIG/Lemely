@@ -39,7 +39,12 @@ with no body (fail closed, SPEC §b.4 point 3).
 
 **T19** writes one ``list`` row per student on the page before it reads their
 names, in three statements whatever the page size (SPEC §e.3: validity and rows;
-one audit insert; names and upcoming-session counts).
+one audit insert; names and upcoming-session counts). Its cursor names the last
+grant served and nothing else (:class:`TutorStudentKey`); the page query reads
+that grant's place itself, on the caller's own grants only. A cursor that carried
+the sort key would hand the tutor the exact instant each page's last student
+shared, the time of day ID-9 keeps from them (F30-6, the review lists' pattern,
+SPEC §i.6).
 
 **Writes (S9, S10).** Create takes the tutor row ``FOR SHARE``, the student's
 ``users`` row ``FOR KEY SHARE``, then the pair lock
@@ -186,6 +191,19 @@ class AuditUnavailable(GrantError):
     code = "audit_unavailable"
 
 
+class StudentsCursorError(GrantError):
+    """T19: the cursor's anchor is not one of the caller's grants (O18, O21): a 422.
+
+    Another tutor's grant id and an id that names no grant are the same refusal,
+    so a cursor tells a tutor nothing about grants that are not theirs.
+    """
+
+    code = "invalid_cursor"
+
+    def __init__(self) -> None:
+        super().__init__("This page link is not valid.")
+
+
 # ---------------------------------------------------------------------------
 # Read models
 # ---------------------------------------------------------------------------
@@ -266,9 +284,12 @@ class GrantAccess:
 
 @dataclass(frozen=True, slots=True)
 class TutorStudentKey:
-    """T19's keyset position: ``grantedAt DESC, grantId``."""
+    """T19's keyset anchor (order ``grantedAt DESC, grantId``): the last grant served.
 
-    granted_at: datetime
+    Only its id: :meth:`TutorGrantRepository.students_page` reads where that grant
+    sits, so no cursor carries a grant's ``created_at`` (ID-9, F30-6).
+    """
+
     grant_id: uuid.UUID
 
 
@@ -323,16 +344,20 @@ class AccessLogPage:
 
 
 def tutor_students_cursor(endpoint: str, key: TutorStudentKey) -> str:
-    """The cursor for the page after ``key``: the grant's instant and id (both shown on T19)."""
-    return encode_cursor(endpoint, [key.granted_at, key.grant_id])
+    """The opaque cursor for the page after ``key``: the grant id only (shown on T19 already)."""
+    return encode_cursor(endpoint, [key.grant_id])
 
 
 def parse_tutor_students_cursor(token: str, endpoint: str) -> TutorStudentKey:
-    """Decode a T19 cursor; :class:`CursorError` unless minted for ``endpoint``."""
-    granted_at, grant_id = decode_cursor(token, endpoint=endpoint, types=(datetime, uuid.UUID))
-    if not isinstance(granted_at, datetime) or not isinstance(grant_id, uuid.UUID):
+    """Decode a T19 cursor; :class:`CursorError` unless minted for ``endpoint``.
+
+    Whether the id names one of the caller's grants is decided by the page query
+    (:class:`StudentsCursorError`), since only the database knows.
+    """
+    (grant_id,) = decode_cursor(token, endpoint=endpoint, types=(uuid.UUID,))
+    if not isinstance(grant_id, uuid.UUID):
         raise CursorError("cursor has the wrong value types")  # pragma: no cover - decoder-typed
-    return TutorStudentKey(granted_at=granted_at, grant_id=grant_id)
+    return TutorStudentKey(grant_id=grant_id)
 
 
 def access_log_cursor(endpoint: str, key: AccessLogKey) -> str:
@@ -738,19 +763,34 @@ class TutorGrantRepository:
 
         Writes one ``list`` audit row per student on the page, then reads their
         labels and upcoming-session counts: three statements whatever the page size
-        (one when the page is empty).
+        and on every page (one when the first page is empty; two when a later page
+        is, the second telling the end of the list from a bad cursor).
 
         Raises:
+            StudentsCursorError: ``cursor`` names no grant of the caller's (422).
             AuditUnavailable: the transaction failed; nothing may be shown (500).
         """
         _check_limit(limit)
         params: dict[str, object] = {"caller": caller_profile_id, "limit": limit + 1}
-        after = ""
+        anchor = after = ""
         if cursor is not None:
-            after = (
-                " AND (g.created_at < :after_at OR (g.created_at = :after_at AND g.id > :after_id))"
+            # The anchor's place is read here, never taken from the client (ID-9), and only
+            # among the caller's own grants (O18): another tutor's grant, or an id that
+            # names none, joins nothing, the page comes back empty and the look below
+            # answers 422. The anchor need not be valid: ``created_at`` and ``id`` never
+            # change, so a grant that left the list between pages (revoked, expired,
+            # blocked, the tutor suspended) still marks exactly where the next page
+            # starts, and no row is skipped or served twice. A grant row that is gone
+            # (its student's account was deleted, ON DELETE CASCADE) is an invalid
+            # cursor: the client starts again from the first page.
+            anchor = (
+                " JOIN tutor_data_grants anchor ON anchor.id = :after_id "
+                "AND anchor.tutor_profile_id = :caller"
             )
-            params["after_at"] = cursor.granted_at
+            after = (
+                " AND (g.created_at < anchor.created_at "
+                "OR (g.created_at = anchor.created_at AND g.id > anchor.id))"
+            )
             params["after_id"] = cursor.grant_id
         try:
             with self._sessionmaker.begin() as session:
@@ -758,13 +798,21 @@ class TutorGrantRepository:
                     sa.text(
                         "SELECT g.id, g.student_id, g.created_at, tp.public_first_name, "  # noqa: S608
                         "tp.public_last_initial FROM tutor_data_grants g "
-                        "JOIN tutor_profiles tp ON tp.id = g.tutor_profile_id "
+                        f"JOIN tutor_profiles tp ON tp.id = g.tutor_profile_id{anchor} "
                         "WHERE g.tutor_profile_id = :caller "
                         f"AND {grant_valid_sql('g', 'tp')}{after} "
                         "ORDER BY g.created_at DESC, g.id ASC LIMIT :limit"
                     ),
                     params,
                 ).all()
+                # A row came back only if the anchor is the caller's, so only an empty
+                # later page needs the second look.
+                if (
+                    cursor is not None
+                    and not rows
+                    and not _is_grant_of(session, cursor, caller_profile_id)
+                ):
+                    raise StudentsCursorError
                 page = rows[:limit]
                 if not page:
                     return TutorStudentsPage(items=(), next_key=None)
@@ -817,11 +865,7 @@ class TutorGrantRepository:
             )
             for row, grant_id, student in zip(page, grant_ids, student_ids, strict=True)
         )
-        next_key = (
-            TutorStudentKey(granted_at=items[-1].granted_at, grant_id=items[-1].grant_id)
-            if len(rows) > limit
-            else None
-        )
+        next_key = TutorStudentKey(grant_id=items[-1].grant_id) if len(rows) > limit else None
         return TutorStudentsPage(items=items, next_key=next_key)
 
     # -- S8, PA6, S11, PA7, studentShared ------------------------------------------
@@ -1037,6 +1081,18 @@ class TutorGrantRepository:
         return views
 
 
+def _is_grant_of(session: Session, key: TutorStudentKey, tutor_profile_id: uuid.UUID) -> bool:
+    """Whether ``key`` names a grant of ``tutor_profile_id``, valid or ended."""
+    found = session.execute(
+        sa.text(
+            "SELECT EXISTS (SELECT 1 FROM tutor_data_grants "
+            "WHERE id = :grant_id AND tutor_profile_id = :caller)"
+        ),
+        {"grant_id": key.grant_id, "caller": tutor_profile_id},
+    ).scalar_one()
+    return bool(found)
+
+
 def _optional_text(value: object) -> str | None:
     return None if value is None else str(value)
 
@@ -1065,6 +1121,7 @@ __all__ = [
     "GrantRow",
     "GrantView",
     "NoGrant",
+    "StudentsCursorError",
     "TutorBlocked",
     "TutorGrantRepository",
     "TutorNotFound",

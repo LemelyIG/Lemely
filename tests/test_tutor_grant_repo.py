@@ -13,7 +13,8 @@ What is proved here (ADR-T02, O2, O3):
   commits before any student data is read, and a failed audit write fails the
   request with no data (fail closed);
 * T19 writes exactly one ``list`` row per student on the page, in three
-  statements whatever the page size (no N+1);
+  statements whatever the page size (no N+1); its cursor names the anchor grant
+  by id only, and paging stays exact when that grant ends between pages (F30-6);
 * a 403 or a 404 writes no audit row; ``studentShared`` writes none either;
 * S8/PA6 read ``blocked`` only for the student's own block; a tutor's block reads
   ``tutor_unavailable`` (SPEC §i.7, SC-11);
@@ -35,7 +36,7 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
 from lemely.core.history import PaperRecord
-from lemely.core.keyset import CursorError
+from lemely.core.keyset import CursorError, encode_cursor
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db import booking_repo, tutor_grant_repo
 from lemely.db.at_risk_repo import AtRiskAckService
@@ -794,15 +795,70 @@ def test_t19_query_budget_three_statements_whatever_the_page(
     assert len(audit_rows(sm)) == 11
 
 
+def test_t19_paging_is_stable_when_the_anchor_grant_is_revoked_between_pages(
+    sm: sessionmaker[Session], repo: TutorGrantRepository, tutor: SeededTutor
+) -> None:
+    """F30-6: the cursor names its anchor grant by id, and the anchor keeps its place once it ends.
+
+    The order is ``created_at DESC, id ASC`` and neither value ever changes, so a grant
+    that left the list between pages (here: revoked by its student) still marks where
+    the next page starts: nothing is skipped and nothing is served twice. Two grants
+    share one instant across the page boundary, so the id tie-break is exercised too.
+    Every cursor goes through the wire codec. The query budget on later pages: three
+    statements when the page has rows, as on the first; at most two when it is empty
+    (the rows, then the look that tells the end of the list from a bad anchor).
+    """
+    students = [add_student(sm, display_name=f"Student {n}") for n in range(5)]
+    oldest = add_grant(sm, students[0], tutor, created_ago=timedelta(days=10))
+    older = add_grant(sm, students[1], tutor, created_ago=timedelta(days=9))
+    tied = sorted(add_grant(sm, students[n], tutor, created_ago=timedelta(days=8)) for n in (2, 3))
+    newest = add_grant(sm, students[4], tutor, created_ago=timedelta(days=7))
+
+    def wire(key: TutorStudentKey | None) -> TutorStudentKey:
+        assert key is not None
+        return parse_tutor_students_cursor(
+            tutor_students_cursor("tutor_students", key), "tutor_students"
+        )
+
+    first = repo.students_page(tutor.profile_id, None, 2)
+    assert [item.grant_id for item in first.items] == [newest, tied[0]]
+
+    # The anchor ends between pages: its student revokes it.
+    anchor_student = first.items[-1].student_id
+    assert repo.revoke(anchor_student, tied[0]).revoked_now
+
+    with count_statements(sm) as second_statements:
+        second = repo.students_page(tutor.profile_id, wire(first.next_key), 2)
+    assert [item.grant_id for item in second.items] == [tied[1], older]
+    assert len(second_statements) == 3
+
+    # The next anchor stays live, but every grant after it ends: an empty page, not a 422.
+    assert repo.revoke(students[0], oldest).revoked_now
+    with count_statements(sm) as third_statements:
+        third = repo.students_page(tutor.profile_id, wire(second.next_key), 2)
+    assert third.items == ()
+    assert third.next_key is None
+    assert len(third_statements) <= 2
+
+    # Each grant was served once, in order, and only served grants were logged.
+    served = [i.grant_id for page in (first, second) for i in page.items]
+    assert served == [newest, *tied, older]
+    assert sorted(r[0] for r in audit_rows(sm) if r[0] is not None) == sorted(served)
+
+
 def test_t19_cursor_round_trip_and_endpoint_tag() -> None:
-    key = TutorStudentKey(
-        granted_at=datetime(2026, 10, 1, 9, 30, 0, 123456, tzinfo=UTC), grant_id=uuid.uuid4()
-    )
+    key = TutorStudentKey(grant_id=uuid.uuid4())
     token = tutor_students_cursor("tutor_students", key)
     assert parse_tutor_students_cursor(token, "tutor_students") == key
     with pytest.raises(CursorError):
         parse_tutor_students_cursor(token, "student_tutor_access_log")
-    log_key = AccessLogKey(accessed_at=key.granted_at, entry_id=key.grant_id)
+    # A cursor in the old shape (the grant instant, then the id) is no longer accepted (F30-6).
+    accessed_at = datetime(2026, 10, 1, 9, 30, 0, 123456, tzinfo=UTC)
+    with pytest.raises(CursorError):
+        parse_tutor_students_cursor(
+            encode_cursor("tutor_students", [accessed_at, key.grant_id]), "tutor_students"
+        )
+    log_key = AccessLogKey(accessed_at=accessed_at, entry_id=key.grant_id)
     log_token = access_log_cursor("student_tutor_access_log", log_key)
     assert parse_access_log_cursor(log_token, "student_tutor_access_log") == log_key
     with pytest.raises(CursorError):

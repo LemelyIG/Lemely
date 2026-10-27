@@ -11,6 +11,8 @@ teacher route.
   (``grantedAt DESC, grantId``): the student's label, the grant date and the
   number of upcoming sessions, no analytics. Its repository call writes one
   ``list`` audit row per student on the page before it reads their names (O3).
+  ``nextCursor`` names the last grant served and nothing else; a cursor whose
+  grant is not one of the caller's is 422 ``invalid_cursor`` (O18, O21, F30-6).
 * **T20** checks the grant and writes the ``detail`` audit row in one transaction
   that commits before any of the student's data is read
   (``TutorGrantRepository.require_valid_grant``). An ended grant answers one 403
@@ -36,7 +38,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Final
 
 import structlog
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from lemely.core.history import HistoryStoreProtocol  # noqa: TC001 - FastAPI resolves it
 from lemely.core.keyset import CursorError
@@ -48,6 +50,7 @@ from lemely.db.tutor_grant_repo import (
     AccessEnded,
     AuditUnavailable,
     NoGrant,
+    StudentsCursorError,
     TutorGrantRepository,
     TutorStudentKey,
     parse_tutor_students_cursor,
@@ -73,13 +76,17 @@ STUDENTS_ENDPOINT: Final = "tutor_students"
 router = APIRouter(prefix="/api/tutor", tags=["tutoring"], route_class=TutoringRoute)
 
 
+def _invalid_cursor() -> HTTPException:
+    return tutoring_error(422, "invalid_cursor", "This page link is not valid.")
+
+
 def _decode_cursor(cursor: str | None) -> TutorStudentKey | None:
     if cursor is None:
         return None
     try:
         return parse_tutor_students_cursor(cursor, STUDENTS_ENDPOINT)
     except CursorError as exc:
-        raise tutoring_error(422, "invalid_cursor", "This page link is not valid.") from exc
+        raise _invalid_cursor() from exc
 
 
 def _audit_failed(route: str, profile: TutorProfileRow) -> Response:
@@ -99,6 +106,8 @@ def list_students(
     after = _decode_cursor(cursor)
     try:
         page = repo.students_page(profile.id, after, limit)
+    except StudentsCursorError as exc:
+        raise _invalid_cursor() from exc
     except AuditUnavailable:
         return _audit_failed("T19", profile)
     return TutorStudentPageDTO(

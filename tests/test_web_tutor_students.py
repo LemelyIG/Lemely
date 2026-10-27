@@ -14,10 +14,14 @@ parity test reads ``GET /api/teacher/students/{id}`` from the same app.
   to any nested DTO the route serialises through is a new key, and a red test.
 * Every ended grant answers one 403 ``access_ended`` with the same body (SC-11).
 * A teacher without a tutor profile gets 404 ``no_tutor_profile`` on both (O1).
+* T19's ``nextCursor`` names the last grant served and nothing else: no grant
+  instant, no time of day (ID-9, F30-6).
 """
 
 from __future__ import annotations
 
+import base64
+import json
 import re
 import uuid
 from datetime import UTC, datetime, time, timedelta
@@ -33,6 +37,7 @@ from lemely.db.class_repo import ClassService
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import GrantRevokeReason, Role
 from lemely.db.models.profiles import StudentSubjectEnrolment
+from lemely.web.routers.tutor_students import STUDENTS_ENDPOINT
 from lemely.web.schemas_analytics import StudentDetailDTO
 from lemely.web.student_detail_view import project_for_tutor
 from tests.test_tutor_grant_repo import (
@@ -496,6 +501,56 @@ def test_t19_lists_valid_grants_with_upcoming_counts_and_pages(
         assert refused.json()["detail"]["code"] == "invalid_cursor"
     assert len(audit_rows(sm)) == 2
     assert client.get("/api/tutor/students", params={"limit": 51}).status_code == 422
+
+
+def _decoded_cursor(token: str) -> str:
+    """The JSON text inside a cursor, read the way any client could read it."""
+    return base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode("utf-8")
+
+
+def test_t19_cursor_carries_no_timestamp(sm: sessionmaker[Session], client: TestClient) -> None:
+    """ID-9 (F30-6): every T19 ``nextCursor`` holds the endpoint tag and the last grant id only.
+
+    A cursor that carried the sort key would hand the tutor the exact instant of each
+    page's last grant (the hour a minor shared); the server reads the anchor's place
+    itself instead, as the review lists do (SPEC §i.6, "Reviews (T12)"). The grants
+    are made at 22:31:07.123456 UTC, so any clock time leaking into a cursor shows.
+    """
+    tutor = add_tutor(sm)
+    instants = [
+        datetime.combine((NOW - timedelta(days=days)).date(), time(22, 31, 7, 123456), tzinfo=UTC)
+        for days in range(1, 6)
+    ]
+    grants = [add_grant(sm, add_student(sm), tutor, created_ago=NOW - at) for at in instants]
+    act_as(client, tutor.user_id, Role.teacher)
+
+    served: list[str] = []
+    cursors: list[str] = []
+    cursor: str | None = None
+    while True:
+        params: dict[str, str | int] = {"limit": 2}
+        if cursor is not None:
+            params["cursor"] = cursor
+        response = client.get("/api/tutor/students", params=params)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        served += [item["grantId"] for item in body["items"]]
+        cursor = body["nextCursor"]
+        if cursor is None:
+            break
+        cursors.append(cursor)
+        decoded = _decoded_cursor(cursor)
+        assert not re.search(r"\d:\d", decoded), decoded  # no clock time of any form
+        assert not re.search(r"\d{4}-\d{2}-\d{2}", decoded), decoded  # no date, no ISO instant
+        for at in instants:
+            assert at.isoformat() not in decoded
+            assert str(int(at.timestamp())) not in decoded  # nor as epoch seconds
+        assert json.loads(decoded) == {"e": STUDENTS_ENDPOINT, "k": [served[-1]]}
+
+    # Non-vacuity: five grants at two a page hand out two cursors, and paging by
+    # id alone still serves every grant once, newest first (``instants`` runs newest first).
+    assert len(cursors) == 2
+    assert served == [str(grant) for grant in grants]
 
 
 def test_tutor_responses_never_reveal_parent_link_presence(

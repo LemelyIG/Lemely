@@ -15,8 +15,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from lemely.core.keyset import encode_cursor
 from lemely.db.class_repo import ClassService
 from lemely.db.models.enums import GrantRevokeReason, Role
+from lemely.web.routers import tutor_students
 from tests.test_tutor_grant_repo import (
     add_grant,
     add_student,
@@ -42,6 +44,7 @@ if TYPE_CHECKING:
 
 NO_STORE = "private, no-store"
 NOT_FOUND = {"detail": {"code": "not_found", "message": "Student not found."}}
+INVALID_CURSOR = {"detail": {"code": "invalid_cursor", "message": "This page link is not valid."}}
 
 
 @pytest.fixture(scope="module")
@@ -165,6 +168,48 @@ def test_idor_t20_unknown_and_never_granted_are_identical_404(
     assert all(r.headers["cache-control"] == NO_STORE for r in responses)
     assert len({r.content for r in responses}) == 1
     assert audit_rows(sm) == []
+
+
+def test_t19_cursor_of_another_tutors_grant_is_invalid_cursor(
+    sm: sessionmaker[Session], client: TestClient
+) -> None:
+    """O18, O21 (F30-6): a T19 cursor's anchor is read on the caller's own grants only.
+
+    The cursor names a grant id and the server reads that grant's place itself, so
+    the read must be scoped to the caller's profile: tutor A's cursor in tutor B's
+    hands is the same 422 as an id that names no grant at all, and never pages B's
+    list from A's grant (nor answers 404 or 500). B's own grants are older than A's
+    anchor, so an unscoped anchor read would serve them with a 200.
+    """
+    tutor_a = add_tutor(sm)
+    tutor_b = add_tutor(sm, first_name="Omar", initial="K")
+    for days in (1, 2, 3):
+        add_grant(sm, add_student(sm), tutor_a, created_ago=timedelta(days=days))
+    for days in (5, 6):
+        add_grant(sm, add_student(sm), tutor_b, created_ago=timedelta(days=days))
+
+    act_as(client, tutor_a.user_id, Role.teacher)
+    a_cursor = client.get("/api/tutor/students", params={"limit": 1}).json()["nextCursor"]
+    assert a_cursor is not None
+    audited = len(audit_rows(sm))
+    assert audited == 1
+
+    act_as(client, tutor_b.user_id, Role.teacher)
+    stolen = client.get("/api/tutor/students", params={"cursor": a_cursor})
+    unknown = client.get(
+        "/api/tutor/students",
+        params={"cursor": encode_cursor(tutor_students.STUDENTS_ENDPOINT, [uuid.uuid4()])},
+    )
+
+    for refused in (stolen, unknown):
+        assert refused.status_code == 422, refused.text
+        assert refused.json() == INVALID_CURSOR
+        assert refused.headers["cache-control"] == NO_STORE
+    assert stolen.content == unknown.content  # no oracle for whose grant an id is
+    assert len(audit_rows(sm)) == audited  # B's refused page wrote no row
+    # B's own first page still lists B's two students: the 422 was the cursor's, not B's.
+    own = client.get("/api/tutor/students")
+    assert len(own.json()["items"]) == 2
 
 
 # ---------------------------------------------------------------------------
