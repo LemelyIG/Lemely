@@ -78,7 +78,7 @@ test.describe("E2E 2: tutor onboarding, approval, sharing and the visit", () => 
     await page.context().close()
   })
 
-  test("the platform admin finds the profile in the queue and approves it with the documents box ticked", async ({
+  test("the platform admin finds the profile in the queue and approves it without the documents-seen mark (no files)", async ({
     browser,
     page: signedOut,
   }) => {
@@ -108,8 +108,10 @@ test.describe("E2E 2: tutor onboarding, approval, sharing and the visit", () => 
     await expect(page.locator("h1")).toHaveText(layla.publicName, { timeout: 15_000 })
 
     const approve = page.getByRole("button", { name: "Approve" })
-    await expect(approve, "Approve stays shut until the documents box is ticked").toBeDisabled()
-    await page.getByLabel("I looked at the documents").check()
+    await expect(
+      page.getByText("This tutor has not uploaded any files. They will be listed without the documents-seen mark."),
+    ).toBeVisible()
+    await expect(page.getByLabel("I looked at the documents"), "no documents box when there are no files").toHaveCount(0)
     await expect(approve).toBeEnabled()
     await approve.click()
     await expect(page.getByText(/Approved\. The tutor is listed\./)).toBeVisible({ timeout: 15_000 })
