@@ -434,6 +434,8 @@ def test_export_command_paths_exclude_reports(tmp_path: Path) -> None:
         "lemely.toml.example",
         # test_web_teacher and test_student_correct read the tracked scheme PDFs.
         "Sources/Physics/MarkingSchemes",
+        # test_deploy_evidence_bucket parses the deploy workflow (T30 F30-1).
+        ".github/workflows/deploy.yml",
     ]
     assert not [p for p in paths if "reports" in p]
     assert all((ROOT / p).exists() for p in paths), [p for p in paths if not (ROOT / p).exists()]
@@ -478,6 +480,7 @@ def mini_repo(tmp_path: Path) -> Path:
         "docs/design-canvas-notes.md": "# notes\n",
         "docs/COMPONENT_CATALOGUE.md": "# catalogue\n",
         ".github/workflows/ci.yml": "name: ci\n",
+        ".github/workflows/deploy.yml": "name: deploy\n",
     }
     for rel, text in files.items():
         path = repo / rel
