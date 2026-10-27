@@ -405,4 +405,23 @@ describe("focus order", () => {
     expect(access).toContain("function focusHeading(id: string)")
     expect(access).toMatch(/<h2 id=\{id\} tabIndex=\{-1\}/)
   })
+
+  /* T33 (S-38): Stop sharing removed the row whose button had opened the sheet, so focus fell to
+     the body. It now goes to the Sharing heading once the list has dropped the grant. */
+  it("stopping a grant unmounts the sheet and sends focus to the Sharing heading", () => {
+    const at = access.indexOf("function SharingSection")
+    const section = access.slice(at, access.indexOf("// ── 2 · Who looked", at))
+    expect(at).toBeGreaterThan(-1)
+    expect(section.length).toBeGreaterThan(200)
+    expect(section).toContain("useFocusWhenRowGone(")
+    expect(section).toContain("splitGrants(grants.data.items).live")
+    expect(section).toContain('"tutor-access-sharing"')
+    // Marked only after the call succeeded, and the sheet is unmounted in the same step.
+    const stop = section.slice(section.indexOf("async function stop()"), section.indexOf("return ("))
+    expect(stop.indexOf("await revoke.mutateAsync")).toBeGreaterThan(-1)
+    expect(stop.indexOf("markStopped(target.grantId)")).toBeGreaterThan(stop.indexOf("await revoke.mutateAsync"))
+    expect(stop).toContain("setTarget(null)")
+    // The id it names is a real heading that can take programmatic focus.
+    expect(access).toMatch(/<Section id="tutor-access-sharing" title="Sharing">/)
+  })
 })

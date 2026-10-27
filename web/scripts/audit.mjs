@@ -80,6 +80,13 @@
  *     below — which is why they cannot be collapsed onto one account, and the
  *     fourth is on a different account again because completing `active`'s
  *     sessions would destroy the populated-week capture.
+ *   - the tutoring marketplace (T33): every route on the SPEC §d "Accessibility
+ *     and performance gate routes" list, with its states (default, loading,
+ *     error, empty and the screen-specific ones, plus dark), is registered by
+ *     `audit_tutoring_registry.mjs`, which also adds the `platform_admin`
+ *     session (X-04..X-07) and the signed-out one (G-16, G-17). These entries
+ *     capture at 320/768/1280 and every `ready` is built from the state's own
+ *     content, so a login redirect or an error page can never satisfy it.
  * Deliberately still NOT in this registry: nothing. Every student route is
  * audited as of P5.11.
  *   (This note used to name four routes as "P5 screens still on mock data",
@@ -161,6 +168,7 @@ import puppeteer from "puppeteer"
 import lighthouse from "lighthouse"
 import { assertPortFree } from "./serve_guard.mjs"
 import { gotoWithRetry, withRetry } from "./nav_retry.mjs"
+import { buildTutoringRegistry } from "./audit_tutoring_registry.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
@@ -203,6 +211,17 @@ const RESPONSIVE_SUMMARY_PATH = path.join(REPORTS_DIR, "responsive-summary.json"
  * the run could not do, and so `check_ui_gates.py` can read it. */
 const ROUTE_FAILURES_PATH = path.join(REPORTS_DIR, "route-failures.json")
 const CONTACT_SHEET_PATH = path.join(REPORTS_DIR, "contact-sheet.html")
+
+/* T33. `LEMELY_AUDIT_SCOPE=tutoring` audits only the tutoring marketplace's registry entries
+ * (`audit_tutoring_registry.mjs`): no login journey, no student upload, none of the older
+ * routes. It exists so a fix to a tutoring screen can be re-measured in minutes. A gate run
+ * (`live_audit.sh`) leaves it unset and audits everything; the reports a scoped run writes are
+ * partial and are not evidence for the whole product. */
+const AUDIT_SCOPE = process.env.LEMELY_AUDIT_SCOPE ?? "all"
+if (AUDIT_SCOPE !== "all" && AUDIT_SCOPE !== "tutoring") {
+  throw new Error(`LEMELY_AUDIT_SCOPE must be "all" or "tutoring", got ${JSON.stringify(AUDIT_SCOPE)}`)
+}
+const TUTORING_ONLY = AUDIT_SCOPE === "tutoring"
 
 const BREAKPOINTS = [
   { width: 380, height: 844 },
@@ -522,12 +541,13 @@ async function pressCheckboxOnce(page, labelPattern, timeout = 15_000) {
   )
 }
 
-/** Full-page capture at `$LEMELY_REPORT_DIR/screens/<screenId>/<state>--<bp>.png`
- * — same path convention as web/e2e/screenshots.spec.ts's `shoot`. */
-async function shoot(page, screenId, state, bpWidth) {
+/** Full-page capture at `$LEMELY_REPORT_DIR/screens/<screenId>/<state>--<bp>[--dark].png`
+ * — same path convention as web/e2e/screenshots.spec.ts's `shoot`. `suffix` is `--dark` for a
+ * dark-theme capture of a state that also exists in the light theme (T33). */
+async function shoot(page, screenId, state, bpWidth, suffix = "") {
   const dir = path.join(SCREENS_DIR, screenId)
   fs.mkdirSync(dir, { recursive: true })
-  await page.screenshot({ path: path.join(dir, `${state}--${bpWidth}.png`), fullPage: true })
+  await page.screenshot({ path: path.join(dir, `${state}--${bpWidth}${suffix}.png`), fullPage: true })
 }
 
 /**
@@ -1144,13 +1164,18 @@ async function visitRoute(
         await st.setup(page)
       }
 
-      log(`${route.screenId} ${route.path} [${st.state}] — screenshots + responsive check (3 breakpoints)...`)
-      for (const bp of BREAKPOINTS) {
+      // T33: an entry or a state may name its own widths (the tutoring screens use 320/768/1280).
+      const breakpoints = st.breakpoints ?? route.breakpoints ?? BREAKPOINTS
+      log(
+        `${route.screenId} ${route.path} [${st.state}] — screenshots + responsive check ` +
+          `(${breakpoints.map((bp) => bp.width).join("/")})...`,
+      )
+      for (const bp of breakpoints) {
         await page.setViewport(bp)
         await gotoReady(page, url, ready, waitUntil)
         const violation = await checkNoHorizontalScroll(page, st.slug, bp.width)
         if (violation) responsiveViolations.push(violation)
-        await shoot(page, route.screenId, st.state, bp.width)
+        await shoot(page, route.screenId, st.state, bp.width, st.shotSuffix)
       }
 
       log(`${route.screenId} ${route.path} [${st.state}] — axe...`)
@@ -1333,6 +1358,11 @@ function buildRouteRegistry(seed) {
   const reviewItemReady = (page) => waitForLoadedHeading(page)
   const quizDetailUrl = `/teacher/quizzes/${seed.quiz.quizId}`
   const quizResultsUrl = `/teacher/quizzes/${seed.quiz.quizId}/assignments/${seed.quiz.assignmentId}/results`
+
+  // T33: the tutoring marketplace's screens (SPEC §d) live in their own module, so the
+  // registry for a feature that ships 23 gated routes does not bury this file further.
+  const tutoringEntries = buildTutoringRegistry(seed, { loadingStateHooks, errorStateHooks })
+  if (TUTORING_ONLY) return tutoringEntries
 
   return [
     // ── G-05 · Parent log in (phone + OTP) — unauthenticated ──────────────
@@ -2547,7 +2577,7 @@ function buildRouteRegistry(seed) {
         },
       ],
     },
-  ]
+  ].concat(tutoringEntries)
 }
 
 // ── Chromium lifecycle ────────────────────────────────────────────────────
@@ -2683,6 +2713,9 @@ async function main() {
     const page = await browser.newPage()
     watchConsole(page, consoleErrors)
 
+    // T33: with LEMELY_AUDIT_SCOPE=tutoring the older inline journeys below (G-04 through S-06,
+    // the real upload included) are skipped; the block is not re-indented so the diff stays small.
+    if (!TUTORING_ONLY) {
     // ── G-04 · Log in — unaudited/unauthenticated, must run before any
     // login so /login doesn't self-redirect away from an existing session
     // (App.tsx's LoginRoute navigates to the portal home if session is set).
@@ -3020,6 +3053,7 @@ async function main() {
     } finally {
       await page.emulateMediaFeatures([])
     }
+    } // end of the inline journeys (skipped when TUTORING_ONLY)
     // ── The 15 declaratively-registered routes (teacher/parent/G-05/
     // student-parents) — each role gets its own fresh page with a real
     // session injected (see `injectSession`), rather than re-driving 4

@@ -173,11 +173,21 @@ function SharingSection() {
   const [open, setOpen] = useState(false)
   const [showEnded, setShowEnded] = useState(false)
 
+  // Stopping removes the row whose button opened the sheet, so there is nothing to hand focus back
+  // to: it goes to this section's heading once the list has dropped the row (T33, was: the body).
+  const markStopped = useFocusWhenRowGone(
+    grants.data ? splitGrants(grants.data.items).live.map((grant) => grant.grantId) : undefined,
+    "tutor-access-sharing",
+  )
+
   async function stop() {
     if (!target) return
     try {
       await revoke.mutateAsync({ grantId: target.grantId })
+      markStopped(target.grantId)
       setOpen(false)
+      // Unmount the sheet now: its focus return then runs before the heading focus.
+      setTarget(null)
     } catch {
       // Shown inside the sheet from `revoke.error`.
     }

@@ -36,7 +36,13 @@ function Card({ tutorId }: { tutorId: string }) {
     <MarketingFrame>
       {robots === null ? null : <meta name="robots" content={robots} />}
       <div className="mx-auto flex w-full max-w-marketing flex-col gap-8 px-page-mobile py-section md:px-page-tablet md:py-section-lg lg:px-page-desktop">
-        {query.isPending ? <TutorProfileSkeleton /> : null}
+        {query.isPending ? (
+          <>
+            {/* The loaded card brings its own h1 (the tutor's name), and a failure brings TutorFailure's. */}
+            <h1 className="sr-only">Tutor profile</h1>
+            <TutorProfileSkeleton />
+          </>
+        ) : null}
         {query.isError ? (
           <TutorFailure
             error={query.error}
