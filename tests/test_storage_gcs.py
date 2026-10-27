@@ -508,3 +508,27 @@ def test_evidence_check_leaves_the_other_buckets_alone() -> None:
 
     client.get_bucket.assert_not_called()
     assert client.bucket.call_count == 3
+
+
+def test_get_storage_backend_hands_the_evidence_bucket_to_gcs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The deps getter passes the evidence bucket, so the GCS refusal and privacy check run in production.
+
+    With backend ``gcs`` and no evidence bucket set, the default global name is refused at
+    construction; with a project-owned name the backend is built (still offline).
+    """
+    from lemely.web.deps import get_storage_backend, reset_singletons
+
+    monkeypatch.setenv("LEMELY_STORAGE__BACKEND", "gcs")
+    monkeypatch.delenv("LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET", raising=False)
+    reset_singletons()
+    try:
+        with pytest.raises(ConfigError, match="LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET"):
+            get_storage_backend()
+        reset_singletons()
+        monkeypatch.setenv("LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET", _EVIDENCE)
+        assert isinstance(get_storage_backend(), GcsStorageBackend)
+    finally:
+        monkeypatch.undo()
+        reset_singletons()

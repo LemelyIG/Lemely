@@ -190,7 +190,10 @@ def get_storage_backend() -> StorageBackend:
     """
     settings = get_settings()
     if settings.storage.backend == "gcs":
-        return GcsStorageBackend(project=settings.storage.gcs_project)
+        return GcsStorageBackend(
+            project=settings.storage.gcs_project,
+            tutor_evidence_bucket=settings.storage.tutor_evidence_bucket,
+        )
     return LocalFileStorageBackend(settings.paths.output_dir / "storage")
 
 
