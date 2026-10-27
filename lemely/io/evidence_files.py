@@ -24,16 +24,31 @@ word:
   refused from the header, before any pixel is decoded: the lower of
   :data:`MAX_EVIDENCE_PX` and the scan path's per-mode ceiling
   (:func:`~lemely.io.scan_limits.decode_pixel_cap`, T10 review R2).
-* **PDFs are checked as scans are and stored as their pages** (T10 review R1).
-  :func:`~lemely.io.scan_limits.canonical_pdf_bytes` runs the bounded pre-scan
-  and content check, then writes MuPDF's pages-only rewrite, which is what is
-  stored: the catalog (``/OpenAction``, document JavaScript, embedded files),
-  page actions and links are not carried over. Annotations and form widgets
-  are, with what they hold, so a stored PDF that still names an additional
-  action (``/AA``), script (``/JS``, ``/JavaScript``), a program launch
-  (``/Launch``), an attached file (``/EF``, ``/EmbeddedFile``) or an XFA form
-  (``/XFA``) is refused with 415. The admin downloads the result as an
-  attachment and opens it in a local reader, which would honour all of these.
+* **PDFs are checked as scans are and stored flat** (T10 review R1, T30 F30-3).
+  The admin downloads the stored file as an attachment and opens it in a local
+  reader, which honours every action it finds: a button that submits the form
+  or imports data, a link to a phishing URL, a ``/GoToR`` to a UNC path (an
+  NTLM hash leak on Windows). So nothing interactive is stored:
+
+  1. :func:`~lemely.io.scan_limits.canonical_pdf_bytes` runs the bounded
+     pre-scan and content check, then writes MuPDF's pages-only rewrite: the
+     catalog (``/OpenAction``, ``/Names`` with document JavaScript and embedded
+     files, outlines), page actions and links are not carried over.
+     Annotations and form widgets are, with what they hold.
+  2. A rewrite that names an additional action (``/AA``), a script (``/JS``,
+     ``/JavaScript``), a program launch (``/Launch``), an attached file
+     (``/EF``, ``/EmbeddedFile``) or an XFA form (``/XFA``) is refused with
+     415: a file built to run something is not cleaned and kept.
+  3. Everything else interactive is flattened away (:func:`_flatten_pdf`):
+     MuPDF draws each annotation's and widget's appearance into its page and
+     removes it and the form, then any annotation it could not draw and every
+     page's ``/AA`` are deleted and the catalog keeps only its page tree and
+     optional-content configuration. Pages read and render as uploaded; a
+     link's text stays, the link does not.
+  4. The flattened bytes, which are what is stored, are scanned again
+     (:data:`_INTERACTIVE`): any annotation list, form, widget, open or
+     additional action, URI, name tree, outline or action dictionary left is
+     refused with 415.
 * **Sizes.** Both the upload and the stored bytes must fit
   :data:`MAX_EVIDENCE_BYTES` (10 MiB, the column CHECK), else 413.
 * **Filenames are display text, never a path.** :func:`sanitise_filename` keeps
@@ -64,6 +79,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING, ClassVar, Final
 from urllib.parse import quote
 
+import pymupdf.mupdf as _mupdf
 import structlog
 from PIL import Image, ImageOps
 
@@ -82,6 +98,8 @@ from lemely.runtime.errors import LemelyError
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Mapping
+
+    import pymupdf
 
 log = structlog.get_logger(__name__)
 
@@ -146,13 +164,57 @@ _MARKUP: Final = re.compile(
     re.IGNORECASE,
 )
 
-#: Names that, in a dictionary of the stored (rewritten) PDF, make it act or
-#: carry something besides its pages: see the module docstring. Matched only as
-#: whole names: the next character must end a PDF name (whitespace or a
-#: delimiter), so ``/AAAAAA+Arial``, a subset font's name, is not ``/AA``.
-_ACTIVE_CONTENT: Final = re.compile(
-    r"/(?:AA|JS|JavaScript|Launch|EF|EmbeddedFile|XFA)(?![^\s()<>\[\]{}/%])"
+#: Names are matched whole: the next character must end a PDF name (whitespace or
+#: a delimiter), so ``/AAAAAA+Arial``, a subset font's name, is not ``/AA``.
+_NAME_END: Final = r"(?![^\s()<>\[\]{}/%])"
+
+#: Names that, in a dictionary of the pages-only rewrite, mean the file was built
+#: to run or carry something: refused before anything is flattened (module
+#: docstring, step 2).
+_ACTIVE_CONTENT: Final = re.compile(rf"/(?:AA|JS|JavaScript|Launch|EF|EmbeddedFile|XFA){_NAME_END}")
+
+#: ISO 32000-2 Table 201: every action type. An action dictionary must name its
+#: type as ``/S``, so a reader acts on no dictionary without one of these.
+_ACTION_TYPES: Final = (
+    "GoTo",
+    "GoToR",
+    "GoToE",
+    "GoToDp",
+    "Launch",
+    "Thread",
+    "URI",
+    "Sound",
+    "Movie",
+    "Hide",
+    "Named",
+    "SubmitForm",
+    "ResetForm",
+    "ImportData",
+    "SetOCGState",
+    "Rendition",
+    "Trans",
+    "GoTo3DView",
+    "JavaScript",
+    "RichMediaExecute",
 )
+
+#: What may not be left anywhere in the stored (flattened) PDF (module docstring,
+#: step 4): the names of :data:`_ACTIVE_CONTENT`; an open action, a form, a page's
+#: annotation list, a widget, a URI, a name tree, an outline, rich media; and any
+#: action dictionary, by its ``/S``. ``/A``, the key that holds an annotation's
+#: or an outline item's action, is not matched as a name: glyph and resource
+#: names (``/Differences``, a Type 3 font's ``/CharProcs``, ``/Font << /A ...``)
+#: use it too, and the dictionary it holds is matched by its ``/S`` instead.
+_INTERACTIVE: Final = re.compile(
+    r"/(?:AA|JS|JavaScript|Launch|EF|EmbeddedFile|XFA|OpenAction|AcroForm|Annots|Widget|URI"
+    rf"|Names|Outlines|RichMedia){_NAME_END}"
+    rf"|/S\s*/(?:{'|'.join(_ACTION_TYPES)}){_NAME_END}"
+)
+
+#: The catalog entries a flattened PDF keeps: its page tree, and the
+#: optional-content configuration the rewrite carries so that a layer hidden by
+#: default stays hidden (:func:`~lemely.io.scan_limits.canonical_pdf_bytes`).
+_CATALOG_KEPT: Final = frozenset({"Type", "Pages", "OCProperties"})
 
 _JPEG_QUALITY: Final = 90
 #: Characters a filesystem or a ``Content-Disposition`` value treats specially.
@@ -301,28 +363,103 @@ def _pages_only(data: bytes) -> bytes:
         raise _unsupported() from exc
 
 
-def _refuse_active_content(pdf: bytes) -> None:
-    """415 when an object of the stored PDF ``pdf`` names an action, a script or a file.
+def _refuse_names(doc: pymupdf.Document, names: re.Pattern[str]) -> None:
+    """415 when an object of ``doc`` matches ``names``.
 
     Each object's dictionary is read as MuPDF prints it: names decoded (``/J#53``
     is ``/JS``) and stream data left out, so an image's bytes cannot match by
-    chance. A file MuPDF cannot reopen is refused too.
+    chance.
+    """
+    for xref in range(1, int(doc.xref_length())):  # type: ignore[no-untyped-call]
+        printed: str = doc.xref_object(xref, compressed=True)  # type: ignore[no-untyped-call]
+        if names.search(printed):
+            raise _unsupported()
+
+
+def _strip_interactive(doc: pymupdf.Document) -> None:
+    """Draw ``doc``'s annotations and widgets into their pages and remove what could act.
+
+    MuPDF's bake appends each annotation's and widget's appearance to its page's
+    content and removes the annotation, and the form (``/AcroForm``) once its
+    widgets are gone. An annotation it has no appearance for (a ``/Screen`` or
+    ``/RichMedia`` one) stays, so every page's ``/Annots`` and ``/AA`` are deleted
+    after it, and every catalog entry but :data:`_CATALOG_KEPT`.
+    """
+    doc.bake(annots=True, widgets=True)
+    document = _mupdf.pdf_document_from_fz_document(doc.this)  # type: ignore[no-untyped-call]
+    for index in range(int(doc.page_count)):
+        page = _mupdf.pdf_lookup_page_obj(document, index)  # type: ignore[no-untyped-call]
+        for key in ("Annots", "AA"):
+            _mupdf.pdf_dict_dels(page, key)  # type: ignore[no-untyped-call]
+    catalog = _mupdf.pdf_dict_gets(_mupdf.pdf_trailer(document), "Root")  # type: ignore[no-untyped-call]
+    for entry in reversed(range(int(_mupdf.pdf_dict_len(catalog)))):  # type: ignore[no-untyped-call]
+        key = _mupdf.pdf_to_name(_mupdf.pdf_dict_get_key(catalog, entry))  # type: ignore[no-untyped-call]
+        if key not in _CATALOG_KEPT:
+            _mupdf.pdf_dict_dels(catalog, key)  # type: ignore[no-untyped-call]
+
+
+def _flatten_pdf(pdf: bytes) -> bytes:
+    """The pages-only rewrite ``pdf`` with nothing interactive left: what is stored.
+
+    Module docstring, steps 2 and 3: :data:`_ACTIVE_CONTENT` is refused first,
+    then :func:`_strip_interactive` runs and the result is written with
+    ``garbage=1``, so the removed dictionaries, and the actions they held, are
+    not in the file. A file MuPDF cannot reopen, bake or write is refused too.
     """
     try:
         doc = open_checked_pdf(pdf)
     except Exception as exc:
         raise _unsupported() from exc
     try:
-        for xref in range(1, int(doc.xref_length())):  # type: ignore[no-untyped-call]
-            printed: str = doc.xref_object(xref, compressed=True)  # type: ignore[no-untyped-call]
-            if _ACTIVE_CONTENT.search(printed):
-                raise _unsupported()
+        _refuse_names(doc, _ACTIVE_CONTENT)
+        _strip_interactive(doc)
+        flat: bytes = doc.tobytes(garbage=1)  # type: ignore[no-untyped-call]
     except EvidenceFileError:
         raise
     except Exception as exc:
         raise _unsupported() from exc
     finally:
         doc.close()  # type: ignore[no-untyped-call]
+    return flat
+
+
+def _refuse_interactive(pdf: bytes) -> None:
+    """415 when the stored PDF ``pdf`` still holds anything a reader acts on (:data:`_INTERACTIVE`).
+
+    The last check before storing (module docstring, step 4), on the bytes as
+    they will be stored. A file MuPDF cannot reopen is refused too.
+    """
+    try:
+        doc = open_checked_pdf(pdf)
+    except Exception as exc:
+        raise _unsupported() from exc
+    try:
+        _refuse_names(doc, _INTERACTIVE)
+    except EvidenceFileError:
+        raise
+    except Exception as exc:
+        raise _unsupported() from exc
+    finally:
+        doc.close()  # type: ignore[no-untyped-call]
+
+
+def _check_stored_size(stored: bytes) -> None:
+    if not 1 <= len(stored) <= MAX_EVIDENCE_BYTES:
+        raise _too_large()
+
+
+def _stored_pdf(data: bytes) -> bytes:
+    """What is stored for the PDF upload ``data``: rewritten, flattened, checked again.
+
+    The size is checked on the rewrite, which the flatten opens, and on the
+    flattened file, which is stored.
+    """
+    rewrite = _pages_only(data)
+    _check_stored_size(rewrite)
+    flat = _flatten_pdf(rewrite)
+    _check_stored_size(flat)
+    _refuse_interactive(flat)
+    return flat
 
 
 def prepare_evidence(data: bytes, filename: str | None) -> PreparedEvidence:
@@ -333,22 +470,24 @@ def prepare_evidence(data: bytes, filename: str | None) -> PreparedEvidence:
     is how the web process calls it.
 
     Raises:
-        EvidenceTooLargeError: the upload or the stored bytes are over
-            :data:`MAX_EVIDENCE_BYTES`, an image has more pixels than its cap, or
-            a PDF is past the scan check's size bounds.
+        EvidenceTooLargeError: the upload, a PDF's rewrite or the stored bytes are
+            over :data:`MAX_EVIDENCE_BYTES`, an image has more pixels than its cap,
+            or a PDF is past the scan check's size bounds.
         UnsupportedEvidenceError: no allowed signature, a polyglot, an image that
-            does not decode, a PDF that cannot be checked or rewritten, or a
-            stored PDF that still names an action, a script or an attached file.
+            does not decode, a PDF that cannot be checked, rewritten or flattened,
+            a PDF that names a script, a program launch, an attached file or an
+            additional action, or a flattened PDF that still holds anything a
+            reader acts on.
     """
     if len(data) > MAX_EVIDENCE_BYTES:
         raise _too_large()
     content_type = sniff_content_type(data)
     _reject_polyglot(data, content_type)
-    stored = _pages_only(data) if content_type == PDF else _reencode(data, content_type)
-    if not 1 <= len(stored) <= MAX_EVIDENCE_BYTES:
-        raise _too_large()
     if content_type == PDF:
-        _refuse_active_content(stored)
+        stored = _stored_pdf(data)
+    else:
+        stored = _reencode(data, content_type)
+        _check_stored_size(stored)
     return PreparedEvidence(
         data=stored,
         content_type=content_type,
