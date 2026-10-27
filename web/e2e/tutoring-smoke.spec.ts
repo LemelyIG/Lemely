@@ -47,6 +47,12 @@ const ROWS: readonly SmokeRow[] = [
   { role: "teacher", path: "/teacher/tutoring/profile", heading: "Tutor profile" },
   { role: "teacher", path: "/teacher/tutoring/availability", heading: "Weekly availability" },
   { role: "teacher", path: "/teacher/tutoring/preview", heading: "Profile preview and reviews" },
+  // I7: T26 to T28. T-20, P-05, P-06, P-08 and the admin rows need seeded ids or a platform
+  // admin (T29).
+  { role: "teacher", path: "/teacher/tutoring/students", heading: "My students" },
+  { role: "parent", path: "/parent/tutors", heading: "Tutors" },
+  // I6b: T26. T-20 (`/teacher/tutoring/students/:studentId`) joins when T29 seeds a granted student.
+  { role: "teacher", path: "/teacher/tutoring/students", heading: "My students" },
 ]
 
 const ROLE_ACCOUNT: Record<SmokeRole, (seed: SeedContract) => SeedAccount> = {

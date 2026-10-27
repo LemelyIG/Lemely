@@ -1273,7 +1273,11 @@ export function useResolveTutoringReport(): UseMutationResult<
       // Only an entry that already exists: setQueryData would create one, with the
       // default gcTime, for a read that is meant to leave the cache when unmounted.
       const queryKey = tutoringKeys.adminReport(reportId)
-      queryClient.setQueriesData({ queryKey, exact: true }, report)
+      // A11 answers with no notes by design (A10 is the only logged path to them): keep the thread
+      // the admin already read instead of replacing it with an empty one.
+      queryClient.setQueriesData<ReportDetail>({ queryKey, exact: true }, (old) =>
+        old ? { ...report, notes: old.notes } : report,
+      )
       invalidateAll(queryClient, [tutoringKeys.adminReportListScope()])
     },
   })

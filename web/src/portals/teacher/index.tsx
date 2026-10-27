@@ -137,6 +137,13 @@ const TutorSessionDetail = lazy(() =>
 const PreviewReviews = lazy(() =>
   import("./screens/tutoring/PreviewReviews").then((m) => ({ default: m.PreviewReviews })),
 )
+// T-19 and T-20: the students who share their progress with this tutor.
+const MyStudents = lazy(() =>
+  import("./screens/tutoring/MyStudents").then((m) => ({ default: m.MyStudents })),
+)
+const TutorStudentDetail = lazy(() =>
+  import("./screens/tutoring/TutorStudentDetail").then((m) => ({ default: m.TutorStudentDetail })),
+)
 
 const NAV_ICON: Record<NavItem["icon"], Icon> = {
   overview: SquaresFour,
@@ -773,6 +780,16 @@ export const teacherRoute: RouteObject = {
       path: "tutoring/preview",
       element: <PreviewReviews />,
       handle: { title: "Profile preview and reviews", skeleton: "page-header" },
+    },
+    {
+      path: "tutoring/students",
+      element: <MyStudents />,
+      handle: { title: "My students", skeleton: "list" },
+    },
+    {
+      path: "tutoring/students/:studentId",
+      element: <TutorStudentDetail />,
+      handle: { title: "Student progress", skeleton: "page-header" },
     },
     {
       path: "announcements",

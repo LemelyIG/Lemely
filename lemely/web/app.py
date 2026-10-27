@@ -26,6 +26,7 @@ from lemely.web.routers import (
     admin,
     admin_tutor_sanctions,
     admin_tutoring_moderation,
+    admin_tutoring_reports,
     admin_tutors,
     announcements,
     auth,
@@ -70,6 +71,7 @@ from lemely.web.routers import (
     tutoring_directory,
     tutoring_outcomes,
     tutoring_public,
+    tutoring_reports,
     tutoring_reviews,
     widget,
     xp,
@@ -220,6 +222,8 @@ def create_app() -> FastAPI:
     app.include_router(parent_tutor_access.router)
     app.include_router(tutoring_blocks.router)
     app.include_router(admin_tutor_sanctions.router)
+    app.include_router(tutoring_reports.router)
+    app.include_router(admin_tutoring_reports.router)
 
     @app.exception_handler(EmptyGradeBoundaryStoreError)
     async def _thresholds_not_ingested(

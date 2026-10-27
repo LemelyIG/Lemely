@@ -73,10 +73,14 @@ ADMIN_ONLY_FIELD_OWNERS: dict[str, str] = {
     "snapshot": "ReportDetailDTO",
 }
 
-# SPEC §a.5: meeting link and location go to participants and linked parents
-# only (O16), and a student's name to their tutor, their parents and
-# themselves only. Neither reaches a platform admin.
-NEVER_ON_ADMIN_DTOS = frozenset({"meetingLink", "locationDetail", "displayName", "studentId"})
+# SPEC §a.5: the meeting link goes to participants and linked parents only
+# (O16), and a student's name to their tutor, their parents and themselves
+# only. Neither reaches a platform admin.
+NEVER_ON_ADMIN_DTOS = frozenset({"meetingLink", "displayName", "studentId"})
+# SPEC §a.5 (fix lane F7-25 #3): an in-person session's place reaches a
+# platform admin on a reported booking's summary only, and on no other admin
+# DTO.
+ADMIN_LOCATION_OWNERS = frozenset({"AdminBookingSummaryDTO"})
 
 # SC-9: the only non-admin DTO fields whose type can hold the value "parent".
 # BookingDTO reaches tutors, so its builder maps each to "student" for a tutor
@@ -490,6 +494,11 @@ def test_dto_literals_match_spec_a1_enum_values() -> None:
             enums["tutorlistingstate"],
         ),
         (
+            "ReportDetailDTO.tutorListingState",
+            _field_literal(a.ReportDetailDTO, "tutorListingState"),
+            enums["tutorlistingstate"],
+        ),
+        (
             "AdminApprovalEventDTO.decision",
             _field_literal(a.AdminApprovalEventDTO, "decision"),
             enums["tutorapprovaldecision"],
@@ -757,6 +766,8 @@ def test_admin_only_fields_live_only_on_their_admin_dto() -> None:
         if field in NEVER_ON_ADMIN_DTOS
     ]
     assert not leaked, leaked
+    placed = {cls.__name__ for cls in admin_closure if "locationDetail" in cls.model_fields}
+    assert placed == ADMIN_LOCATION_OWNERS, sorted(placed)
 
 
 def test_admin_tutor_detail_carries_every_own_profile_field() -> None:

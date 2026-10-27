@@ -76,8 +76,12 @@ export const TUTORING_ERROR_CODES = [
   "access_ended",
   // Moderation (A7)
   "text_changed",
+  // Blocks (B2) and notes on an admin decision (A4, A5, A12)
+  "invalid_counterpart",
+  "note_too_long",
   // Reports and admin (R1, A11, A12)
   "report_exists",
+  "invalid_target",
   "already_resolved",
   "resolution_not_applicable",
   "already_closed",
@@ -167,9 +171,12 @@ export const TUTORING_ERROR_COPY: Readonly<Record<TutoringErrorCode, string>> = 
   access_ended: "You no longer have access to this.",
   text_changed: "This text was changed after you opened the list. Reload it and read the new text.",
   report_exists:"You have already reported this.",
+  invalid_target: "Choose what to report from the page you were on.",
   already_resolved: "This report has already been resolved.",
   resolution_not_applicable: "That resolution does not apply to this report.",
   already_closed: "This tutor is already closed.",
+  invalid_counterpart: "That can't be blocked from here. Choose someone from your list.",
+  note_too_long: "That note is too long. Shorten it and try again.",
   email_unverified: "Confirm your email address to continue.",
   no_tutor_profile: "You don't have a tutor profile yet.",
   not_found: "We couldn't find that.",

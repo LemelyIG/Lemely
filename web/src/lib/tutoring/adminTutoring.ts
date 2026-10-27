@@ -547,22 +547,13 @@ const OPTION: Record<ReportResolution, ResolutionOption> = {
   },
 }
 
-type ResolutionContext = Pick<ReportDetail, "state" | "reason" | "targetType" | "bookingSummary">
+type ResolutionContext = Pick<ReportDetail, "state" | "reason" | "targetType" | "bookingSummary" | "tutorListingState">
 
-/**
- * The tutor's listing state as A10 reports it. The shared `ReportDetail` type
- * does not carry the field yet, so it is read through this narrow shape.
- */
-function tutorListingStateOf(context: ResolutionContext): string | null | undefined {
-  return (context as { tutorListingState?: string | null }).tutorListingState
-}
-
-/** A suspension is applied from these states; an unknown state is offered, and the server decides. */
+/** A suspension is applied from these states (SPEC §b.2 A11). */
 const SUSPENDABLE_FROM: ReadonlySet<string> = new Set(["pending_review", "listed", "rejected"])
 
 function canSuspend(context: ResolutionContext): boolean {
-  const state = tutorListingStateOf(context)
-  return state === undefined || state === null || SUSPENDABLE_FROM.has(state)
+  return SUSPENDABLE_FROM.has(context.tutorListingState)
 }
 
 const CONTENT_TARGETS: ReadonlySet<ReportTarget> = new Set(["review", "review_reply", "booking_note"])

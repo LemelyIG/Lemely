@@ -113,6 +113,7 @@ const NOT_IN_STATUS_COLUMN = [
   "invalid_cursor",
   "invalid_area",
   "invalid_day",
+  "invalid_target",
   "not_a_teacher",
   "invalid_profile",
   "invalid_public_name",
@@ -129,6 +130,9 @@ const NOT_IN_STATUS_COLUMN = [
   "invalid_starts_at",
   "invalid_window",
   "invalid_duration",
+  // B2 422 for a wrong field and A4/A5/A12 422 for a note past 2000 characters.
+  "invalid_counterpart",
+  "note_too_long",
 ] as const
 
 describe("SPEC §b.2 refusal codes (the spine)", () => {

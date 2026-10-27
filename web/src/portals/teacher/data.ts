@@ -162,6 +162,7 @@ export function resolveTrail(pathname: string): TrailCrumb[] {
     "/teacher/tutoring/profile": "Tutor profile",
     "/teacher/tutoring/availability": "Weekly availability",
     "/teacher/tutoring/preview": "Profile preview and reviews",
+    "/teacher/tutoring/students": "My students",
   }
   const tutoringPage = tutoringTitles[path]
   if (tutoringPage) {
@@ -169,6 +170,14 @@ export function resolveTrail(pathname: string): TrailCrumb[] {
   }
   if (/^\/teacher\/tutoring\/sessions\/[^/]+$/.test(path)) {
     return [root, { label: "Tutoring", to: "/teacher/tutoring" }, { label: "This session" }]
+  }
+  if (/^\/teacher\/tutoring\/students\/[^/]+$/.test(path)) {
+    return [
+      root,
+      { label: "Tutoring", to: "/teacher/tutoring" },
+      { label: "My students", to: "/teacher/tutoring/students" },
+      { label: "This student" },
+    ]
   }
 
   const classAnalytics = path.match(/^\/teacher\/classes\/([^/]+)\/analytics$/)

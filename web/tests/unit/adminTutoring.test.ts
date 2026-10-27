@@ -213,6 +213,10 @@ function summary(effectiveState: EffectiveState, startOffsetHours: number, base:
     effectiveState,
     completedBy: null,
     notesFrozen: true,
+    declineReason: null,
+    cancelReason: null,
+    locationDetail: null,
+    otherModeNote: null,
   }
 }
 
@@ -231,6 +235,7 @@ function report(
     details: null,
     tutorId: "t1",
     tutorName: "Dina A.",
+    tutorListingState: "listed",
     snapshot: {},
     bookingSummary,
     notes: [],
@@ -638,23 +643,22 @@ describe("X-07 resolutions: limited by what A11 can apply", () => {
     expect(values(resolutionOptions(report("tutor_profile", null), NOW))).toEqual(["dismissed", "tutor_suspended"])
   })
 
-  it("offers the suspension when the listing state is unknown or one the server can suspend from", () => {
-    const withListing = (state: string | null | undefined) =>
-      ({ ...report("tutor_profile", null), ...(state === undefined ? {} : { tutorListingState: state }) }) as ReportDetail
-    for (const state of [undefined, "pending_review", "listed", "rejected"] as const) {
-      expect(values(resolutionOptions(withListing(state), NOW)), String(state)).toContain("tutor_suspended")
+  it("offers the suspension from the states the server can suspend from", () => {
+    for (const state of ["pending_review", "listed", "rejected"] as const) {
+      const context = report("tutor_profile", null, { tutorListingState: state })
+      expect(values(resolutionOptions(context, NOW)), state).toContain("tutor_suspended")
     }
   })
 
   it("does not offer the suspension for a tutor who is suspended, closed or still a draft", () => {
-    for (const state of ["suspended", "closed", "draft"]) {
-      const context = { ...report("tutor_profile", null), tutorListingState: state } as ReportDetail
+    for (const state of ["suspended", "closed", "draft"] as const) {
+      const context = report("tutor_profile", null, { tutorListingState: state })
       expect(values(resolutionOptions(context, NOW)), state).toEqual(["dismissed"])
     }
   })
 
   it("still offers cancelling a booking whose tutor can no longer be suspended", () => {
-    const context = { ...report("booking", summary("accepted", 5)), tutorListingState: "closed" } as ReportDetail
+    const context = report("booking", summary("accepted", 5), { tutorListingState: "closed" })
     expect(values(resolutionOptions(context, NOW))).toEqual(["dismissed", "booking_cancelled"])
   })
 

@@ -73,6 +73,9 @@ STUDENT_OR_PARENT = frozenset({"student", "parent"})
 # Tutoring blocks B1-B3 (SPEC §c.1): a student or a tutor blocks the other side;
 # parents hold no blocks (O-18).
 STUDENT_OR_TEACHER = frozenset({"student", "teacher"})
+# Tutoring report R1 (SPEC §c.1): every party to a tutoring session may report;
+# no verified-email gate (SC-15 exception), and no admin role files reports.
+TUTORING_PARTY = frozenset({"student", "parent", "teacher"})
 
 ALL_ROLES = frozenset(role.value for role in Role)
 
@@ -135,7 +138,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/school/teachers"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/{teacher_id}/remove"): SCHOOL_ADMIN,
-    # ── PLATFORM_ADMIN (18) ────────────────────
+    # ── PLATFORM_ADMIN (21) ────────────────────
     # P4.7 (UI spec X-01/X-02/X-03), and the first routes in the product gated
     # to this role. Note what the 403 sweep below therefore proves here: a
     # `school_admin` is denied every one of them. There is no super-role, and
@@ -164,6 +167,11 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # sweep (grants, future sessions, school-less enrolments; SPEC §a.3).
     ("POST", "/api/admin/tutors/{tutor_id}/suspend"): PLATFORM_ADMIN,
     ("POST", "/api/admin/tutors/{tutor_id}/close"): PLATFORM_ADMIN,
+    # Tutoring A9-A11 (SPEC §c.1): the report queue, detail and resolution. A10 is the
+    # only admin path to notes, each view logged (O15, SC-23).
+    ("GET", "/api/admin/tutoring/reports"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/tutoring/reports/{report_id}"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/tutoring/reports/{report_id}/resolve"): PLATFORM_ADMIN,
     # Tutoring A6-A8 (SPEC §c.1): the review and reply moderation queue.
     ("GET", "/api/admin/tutoring/moderation"): PLATFORM_ADMIN,
     ("POST", "/api/admin/tutoring/reviews/{review_id}/moderate"): PLATFORM_ADMIN,
@@ -265,6 +273,9 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
     ("POST", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
     ("DELETE", "/api/tutoring/blocks/{counterpart_id}"): STUDENT_OR_TEACHER,
+    # ── TUTORING_PARTY (1) ────────────────────
+    # Tutoring R1 (SPEC §c.1): target visibility (O12, O19) is object-level.
+    ("POST", "/api/tutoring/reports"): TUTORING_PARTY,
     # ── AUTH_ANY (19) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
@@ -640,6 +651,7 @@ _REPRESENTATIVE = {
         STAFF,
         STUDENT_OR_PARENT,
         STUDENT_OR_TEACHER,
+        TUTORING_PARTY,
     )
 }
 _REAL_TOKEN_CASES = [
@@ -689,7 +701,7 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     # card, P3 areas).
     assert len(_NON_PUBLIC) == len(ROUTES) - 15
     assert len(_ROLE_GATED) > 300
-    assert len(_REPRESENTATIVE) == 8
+    assert len(_REPRESENTATIVE) == 9
     assert len(_REAL_TOKEN_CASES) >= 20
 
 
