@@ -377,7 +377,7 @@ export const appRoutes: RouteObject[] = [
     handle: {
       title: "Tutor directory",
       description:
-        "Browse tutors for Cambridge IGCSE subjects. Each card shows the subjects taught, how the tutor is rated and how past students did.",
+        "Browse tutors for Cambridge IGCSE subjects. Each card shows a tutor's name, headline, subjects, ways to meet, area and rating. Sign in to book.",
       skeleton: "page-header",
     } satisfies PageMeta,
     element: (
@@ -392,7 +392,7 @@ export const appRoutes: RouteObject[] = [
     handle: {
       title: "Tutor card",
       description:
-        "A tutor's subjects, rating, reviews and how past students did, with the choice to sign in and book a session.",
+        "A tutor's name, headline, subjects, ways to meet, area and rating, with the choice to sign in and book a session.",
       skeleton: "page-header",
     } satisfies PageMeta,
     element: (

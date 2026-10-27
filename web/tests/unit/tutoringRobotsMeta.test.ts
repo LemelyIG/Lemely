@@ -78,11 +78,14 @@ describe("which address a page may answer to", () => {
   it("serves the directory and a card only at their canonical paths", () => {
     expect(classifyTutorPath("/tutors")).toEqual({ kind: "directory" })
     expect(classifyTutorPath(`/tutors/${ID}`)).toEqual({ kind: "card", tutorId: ID })
-    // The worker accepts either case of the id, so the page does too.
-    expect(classifyTutorPath(`/tutors/${ID.toUpperCase()}`)).toEqual({
-      kind: "card",
-      tutorId: ID.toUpperCase(),
-    })
+  })
+
+  it("redirects an upper-case or mixed-case id to the lowercase one, so a card has one address", () => {
+    // The worker accepts either case, so two URLs would each render and index the same card.
+    for (const variant of [ID.toUpperCase(), "0B6A8D1E-52f3-4c1a-9a47-5d2f0e6c7b13"]) {
+      expect(classifyTutorPath(`/tutors/${variant}`), variant).toEqual({ kind: "redirect", to: `/tutors/${ID}` })
+    }
+    expect(classifyTutorPath(`/Tutors/${ID.toUpperCase()}/`)).toEqual({ kind: "redirect", to: `/tutors/${ID}` })
   })
 
   it("sends a variant spelling to the canonical path instead of rendering it", () => {
@@ -131,7 +134,12 @@ describe("which address a page may answer to", () => {
     for (const path of paths) {
       const isWorkerCard = isTutorPagePath(path) && tutorCardId(path) !== null
       if (isWorkerCard) cards += 1
-      expect(classifyTutorPath(path).kind === "card", path).toBe(isWorkerCard)
+      // The worker takes either case; the page renders a card only at the lowercase id and
+      // redirects the rest, so the two agree on which paths are cards modulo that redirect.
+      const page = classifyTutorPath(path)
+      const lowercaseId = path === path.toLowerCase()
+      expect(page.kind === "card", path).toBe(isWorkerCard && lowercaseId)
+      if (isWorkerCard && !lowercaseId) expect(page, path).toEqual({ kind: "redirect", to: path.toLowerCase() })
     }
     expect(cards).toBe(3)
   })

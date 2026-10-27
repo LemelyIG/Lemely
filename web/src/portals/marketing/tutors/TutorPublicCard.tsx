@@ -4,7 +4,9 @@ import { MarketingFrame } from "@/portals/marketing"
 import { NotFound } from "@/portals/misc/NotFound"
 import { buttonVariants } from "@/components/ui/button"
 import { TutorFailure, TutorProfileHeader, TutorProfileSkeleton } from "@/components/tutoring/tutor-profile-view"
+import { useAuth } from "@/lib/auth/AuthContext"
 import { usePublicTutor } from "@/lib/hooks/useTutoringApi"
+import { cardBookingFor } from "@/lib/tutoring/cardBooking"
 import { NOINDEX_ROBOTS, classifyTutorPath, robotsForCard } from "@/lib/tutoring/robotsMeta"
 import { cn } from "@/lib/utils"
 
@@ -31,6 +33,8 @@ const UNLISTED = "This tutor isn't listed."
 function Card({ tutorId }: { tutorId: string }) {
   const query = usePublicTutor(tutorId)
   const robots = robotsForCard({ status: query.status, data: query.data })
+  const { session } = useAuth()
+  const booking = cardBookingFor(session?.role, tutorId)
 
   return (
     <MarketingFrame>
@@ -55,16 +59,18 @@ function Card({ tutorId }: { tutorId: string }) {
           <div className="flex max-w-3xl flex-col gap-6">
             <TutorProfileHeader tutor={query.data} />
             <div className="flex flex-wrap items-center gap-3">
-              <Link
-                to={`/login?next=${encodeURIComponent(`/student/tutors/${query.data.tutorId}`)}`}
-                className={cn(buttonVariants({ variant: "primary" }))}
-              >
-                Sign in to book
-              </Link>
+              {booking.kind === "link" ? (
+                <Link to={booking.to} className={cn(buttonVariants({ variant: "primary" }))}>
+                  {booking.label}
+                </Link>
+              ) : null}
               <Link to="/tutors" className={cn(buttonVariants({ variant: "ghost" }))}>
                 All tutors
               </Link>
             </div>
+            {booking.kind === "note" ? (
+              <p className="m-0 max-w-prose text-body-md text-ink">{booking.sentence}</p>
+            ) : null}
             <p className="m-0 max-w-prose text-body-md text-ink-muted">
               Full profiles, availability, reviews and results are for people who sign in. Fees are agreed with the
               tutor, outside Lemely.

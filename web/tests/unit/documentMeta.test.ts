@@ -236,6 +236,39 @@ describe("the signup/verify/reset/join routes carry honest metadata — Task 19"
   })
 })
 
+/*
+ * G-16 / G-17 descriptions are what a search result shows. They sit outside
+ * check_copy's tutoring scope (the strings live in routes.tsx), and an earlier pair
+ * claimed reviews and "how past students did" that the public pages do not show,
+ * in a causal register. They may describe only the public fields and the way in.
+ */
+describe("the public tutor routes' descriptions", () => {
+  const BANNED = /\b(results?|reviews?|past students?|outcomes?|improv\w*|verified|guarantee\w*)\b/i
+  const descriptions = ["/tutors", "/tutors/:tutorId"].map((routePath) => {
+    const hit = leafRoutes().find(({ path }) => path === routePath)
+    expect(hit, routePath).toBeDefined()
+    const handle = hit!.route.handle
+    return { routePath, text: isPageMeta(handle) ? (handle.description ?? "") : "" }
+  })
+
+  it("finds both routes and a description on each (non-vacuity)", () => {
+    expect(descriptions).toHaveLength(2)
+    for (const d of descriptions) expect(d.text.length, d.routePath).toBeGreaterThan(40)
+  })
+
+  it("does not mention results, reviews or past students", () => {
+    for (const d of descriptions) expect(d.text, d.routePath).not.toMatch(BANNED)
+  })
+
+  it("names only the public fields and the sign-in step", () => {
+    for (const d of descriptions) {
+      expect(d.text, d.routePath).toMatch(/subjects/i)
+      expect(d.text, d.routePath).toMatch(/rating/i)
+      expect(d.text, d.routePath).toMatch(/sign in/i)
+    }
+  })
+})
+
 describe("resolving a title from a match chain", () => {
   it("takes the deepest handle, so a child overrides its layout", () => {
     const meta = pageMetaFromMatches([

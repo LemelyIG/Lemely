@@ -36,6 +36,33 @@ export const SAFETY_NOTICE_PARAGRAPHS: readonly string[] = [
 
 export const SAFETY_NOTICE_BUTTON = "I understand"
 
+/**
+ * A second, optional action on the sheet: leave without acknowledging. It is not
+ * in the SPEC's C-24 copy (which has one button), so the screens that offer it
+ * are listed in the hand-off. It records nothing; the server still refuses a
+ * booking until S15 has been called (O26).
+ */
+export const SAFETY_NOTICE_NOT_NOW = "Not now"
+
+/**
+ * The sentence of the first paragraph that is true only for a tutor an admin has
+ * looked at documents for (`documentsSeen`). Everything else in the notice is
+ * unconditional; `safetyNotice.test.ts` checks this sentence is in the SPEC's
+ * paragraph and that dropping it leaves the rest word for word.
+ */
+export const DOCUMENTS_SEEN_SENTENCE = "Lemely looked at documents they uploaded."
+
+/**
+ * The five paragraphs for one tutor. The sentence about documents is shown only
+ * when `documentsSeen` is exactly `true`; for a tutor with no files seen (or when
+ * the caller does not know) it is left out, because the notice must not say Lemely
+ * looked at something it did not.
+ */
+export function safetyNoticeParagraphs(documentsSeen: boolean): readonly string[] {
+  if (documentsSeen === true) return SAFETY_NOTICE_PARAGRAPHS
+  return SAFETY_NOTICE_PARAGRAPHS.map((paragraph) => paragraph.replace(` ${DOCUMENTS_SEEN_SENTENCE}`, ""))
+}
+
 // ── C-21 · the notes thread ────────────────────────────────────────────────
 
 export const NOTES_FIXED_LINE = "Notes can be reported. Lemely staff read notes only when one is reported."

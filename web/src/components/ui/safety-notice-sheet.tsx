@@ -3,9 +3,10 @@ import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/modal"
 import {
   SAFETY_NOTICE_BUTTON,
-  SAFETY_NOTICE_PARAGRAPHS,
+  SAFETY_NOTICE_NOT_NOW,
   SAFETY_NOTICE_TITLE,
   safetyActionError,
+  safetyNoticeParagraphs,
 } from "@/lib/tutoring/safetyNoticeCopy"
 
 /*
@@ -28,6 +29,16 @@ import {
  * press the button. (`Modal` wraps the description in a `<p>`, so the paragraphs
  * are spans that break lines, not list items.)
  *
+ * A screen may also give it `onNotNow`, a secondary "Not now" that leaves without
+ * acknowledging (a student who decides not to book would otherwise have no way
+ * out). It records nothing, so the rule stands: nobody books without the button,
+ * and the server still answers 409 until S15 has been called. Escape and the
+ * scrim still do nothing.
+ *
+ * `documentsSeen` is the tutor's own flag. "Lemely looked at documents they
+ * uploaded" is shown only when it is true; a sheet that does not know the tutor
+ * (S-37's first note) leaves the sentence out.
+ *
  * The title, the five paragraphs and the button are FIXED by the SPEC and live in
  * `lib/tutoring/safetyNoticeCopy.ts`, where a test parses them out of it. The
  * screen decides when to show the sheet (`safetyNoticeAcknowledgedAt` is null);
@@ -41,9 +52,20 @@ export interface SafetyNoticeSheetProps {
   pending?: boolean
   /** The error from the last attempt, as the hook gave it. */
   error?: unknown
+  /** Leaves the notice without acknowledging it. Omitted: the sheet has only the one button. */
+  onNotNow?: () => void
+  /** The tutor's `documentsSeen`. Anything but `true` leaves the documents sentence out. */
+  documentsSeen?: boolean
 }
 
-export function SafetyNoticeSheet({ open, onAcknowledge, pending = false, error }: SafetyNoticeSheetProps) {
+export function SafetyNoticeSheet({
+  open,
+  onAcknowledge,
+  pending = false,
+  error,
+  onNotNow,
+  documentsSeen = false,
+}: SafetyNoticeSheetProps) {
   const errorText = safetyActionError(error, "We couldn't save that. Try again.")
   return (
     <Modal
@@ -54,7 +76,7 @@ export function SafetyNoticeSheet({ open, onAcknowledge, pending = false, error 
       hideCloseButton
       description={
         <span className="mt-2 flex flex-col gap-3 text-ink">
-          {SAFETY_NOTICE_PARAGRAPHS.map((paragraph) => (
+          {safetyNoticeParagraphs(documentsSeen).map((paragraph) => (
             <span key={paragraph} className="block">
               {paragraph}
             </span>
@@ -62,9 +84,18 @@ export function SafetyNoticeSheet({ open, onAcknowledge, pending = false, error 
         </span>
       }
       footer={
-        <Button variant="primary" loading={pending} onClick={onAcknowledge}>
-          {SAFETY_NOTICE_BUTTON}
-        </Button>
+        // "I understand" comes first in the DOM, so `Modal` still focuses it on open; the row is
+        // reversed so "Not now" sits to its left, as a cancel does in `ConfirmModal`.
+        <div className="flex flex-row-reverse items-center gap-2">
+          <Button variant="primary" loading={pending} onClick={onAcknowledge}>
+            {SAFETY_NOTICE_BUTTON}
+          </Button>
+          {onNotNow ? (
+            <Button variant="secondary" disabled={pending} onClick={onNotNow}>
+              {SAFETY_NOTICE_NOT_NOW}
+            </Button>
+          ) : null}
+        </div>
       }
     >
       {errorText ? (

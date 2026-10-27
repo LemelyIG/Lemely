@@ -22,12 +22,18 @@ import type { TutorProfile } from "@/lib/tutoringTypes"
  * (the notice was read on another device a moment ago, or the settings read was
  * stale) the sheet opens again, so a request is never lost to it.
  *
+ * The sheet has a "Not now" beside the button: it goes back to the tutor's profile
+ * without acknowledging (replacing this page, so Back does not return to the
+ * sheet). Booking still needs the acknowledgement; the 409 gate is unchanged.
+ * The sheet's documents sentence follows the tutor's `documentsSeen`.
+ *
  * If the settings cannot be read the form is still shown, and the server's
  * answer is the backstop. The form itself is `BookingForm`; a request that goes
  * through lands on S-37 (`/student/sessions/:bookingId`).
  */
 
 function Booking({ tutor }: { tutor: TutorProfile }) {
+  const navigate = useNavigate()
   const settings = useStudentTutoringSettings()
   const acknowledge = useAcknowledgeTutoringSafetyNotice()
   const [serverWantsNotice, setServerWantsNotice] = useState(false)
@@ -59,6 +65,8 @@ function Booking({ tutor }: { tutor: TutorProfile }) {
         pending={acknowledge.isPending}
         error={acknowledge.error}
         onAcknowledge={() => acknowledge.mutate(undefined, { onSuccess: () => setServerWantsNotice(false) })}
+        onNotNow={() => navigate(`/student/tutors/${tutor.tutorId}`, { replace: true })}
+        documentsSeen={tutor.documentsSeen}
       />
     </div>
   )

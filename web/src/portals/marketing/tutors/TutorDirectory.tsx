@@ -3,8 +3,12 @@ import { Link, Navigate, useLocation, useSearchParams } from "react-router-dom"
 import { MarketingFrame } from "@/portals/marketing"
 import { NotFound } from "@/portals/misc/NotFound"
 import { DirectoryView } from "@/components/tutoring/directory-view"
+import { useAuth } from "@/lib/auth/AuthContext"
+import { directoryLinkFor } from "@/lib/tutoring/cardBooking"
 import {
   DIRECTORY_INTRO,
+  DIRECTORY_SIGNED_IN_LINE,
+  DIRECTORY_SIGNED_IN_LINK_TEXT,
   DIRECTORY_SIGN_IN_LINE,
   filtersFromSearchParams,
   filtersToSearchParams,
@@ -36,6 +40,7 @@ const SIGN_IN = "Sign in"
 export function TutorDirectory() {
   const { pathname, search } = useLocation()
   const [params, setParams] = useSearchParams()
+  const { session } = useAuth()
   const page = classifyTutorPath(pathname)
 
   if (page.kind === "redirect") return <Navigate to={`${page.to}${search}`} replace />
@@ -48,6 +53,10 @@ export function TutorDirectory() {
     )
   }
 
+  // `/login` sends a live session to its portal root, so a student or parent gets their own directory.
+  const link = directoryLinkFor(session?.role)
+  const linkText = link.signedIn ? DIRECTORY_SIGNED_IN_LINK_TEXT : DIRECTORY_SIGN_IN_LINE.slice(0, SIGN_IN.length)
+  const linkRest = (link.signedIn ? DIRECTORY_SIGNED_IN_LINE : DIRECTORY_SIGN_IN_LINE).slice(linkText.length)
   const filters = filtersFromSearchParams(params, "public")
   const change = (next: DirectoryFilterState) => setParams(filtersToSearchParams(next, "public"), { replace: true })
 
@@ -66,10 +75,10 @@ export function TutorDirectory() {
           onFiltersChange={change}
           aside={
             <p className="m-0 max-w-prose text-body-md text-ink-muted">
-              <Link to="/login" className="text-ink underline underline-offset-4">
-                {DIRECTORY_SIGN_IN_LINE.slice(0, SIGN_IN.length)}
+              <Link to={link.to} className="text-ink underline underline-offset-4">
+                {linkText}
               </Link>
-              {DIRECTORY_SIGN_IN_LINE.slice(SIGN_IN.length)}
+              {linkRest}
             </p>
           }
         />

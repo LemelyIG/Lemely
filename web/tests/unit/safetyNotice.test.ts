@@ -12,10 +12,13 @@ import {
   NOTES_TUTOR_PARENTS_LINE,
   REPORT_DETAILS_MAX,
   REPORT_REASONS,
+  DOCUMENTS_SEEN_SENTENCE,
   SAFETY_NOTICE_BUTTON,
+  SAFETY_NOTICE_NOT_NOW,
   SAFETY_NOTICE_PARAGRAPHS,
   SAFETY_NOTICE_TITLE,
   blockCopy,
+  safetyNoticeParagraphs,
   notesComposerState,
   reportReasonsFor,
   reportShowsHelpline,
@@ -63,6 +66,42 @@ describe("C-24 safety notice copy", () => {
     expect(SAFETY_NOTICE_TITLE).toBe(notice.title)
     expect([...SAFETY_NOTICE_PARAGRAPHS]).toEqual(notice.paragraphs)
     expect(SAFETY_NOTICE_BUTTON).toBe(notice.button)
+  })
+
+  /*
+   * "Lemely looked at documents they uploaded" is true only for a tutor an admin has
+   * looked at documents for (`documentsSeen`). The SPEC stays the source of the base
+   * text; the one sentence is conditional, so it is tested on its own.
+   */
+  it("shows the SPEC's five paragraphs unchanged when the tutor's documents were seen", () => {
+    expect([...safetyNoticeParagraphs(true)]).toEqual(notice.paragraphs)
+  })
+
+  it("takes the documents sentence from the SPEC's first paragraph and nowhere else", () => {
+    expect(notice.paragraphs[0]).toContain(DOCUMENTS_SEEN_SENTENCE)
+    expect(DOCUMENTS_SEEN_SENTENCE).toBe("Lemely looked at documents they uploaded.")
+    expect(notice.paragraphs.slice(1).filter((p) => p.includes(DOCUMENTS_SEEN_SENTENCE))).toEqual([])
+  })
+
+  it("drops only that sentence, and leaves the other four paragraphs verbatim, when documents were not seen", () => {
+    const without = safetyNoticeParagraphs(false)
+    expect(without).toHaveLength(5)
+    expect(without[0]).toBe(notice.paragraphs[0].replace(` ${DOCUMENTS_SEEN_SENTENCE}`, ""))
+    expect(without[0]).not.toMatch(/looked at documents/i)
+    expect(without[0]).toContain("Tutors on Lemely are adults you may not have met.")
+    expect(without[0]).toContain("That is not a criminal-records check.")
+    expect([...without.slice(1)]).toEqual(notice.paragraphs.slice(1))
+    expect(without.join(" ")).not.toContain(DOCUMENTS_SEEN_SENTENCE)
+  })
+
+  it("fails closed: no claim about documents unless documentsSeen is exactly true", () => {
+    for (const value of [undefined, null, false, 0, "true", 1] as unknown[]) {
+      expect(safetyNoticeParagraphs(value as boolean).join(" "), String(value)).not.toMatch(/looked at documents/i)
+    }
+  })
+
+  it("names the secondary action 'Not now'", () => {
+    expect(SAFETY_NOTICE_NOT_NOW).toBe("Not now")
   })
 
   it("keeps the Egyptian Child Helpline number the SPEC gives", () => {
@@ -324,6 +363,8 @@ describe("copy rule", () => {
       SAFETY_NOTICE_TITLE,
       ...SAFETY_NOTICE_PARAGRAPHS,
       SAFETY_NOTICE_BUTTON,
+      SAFETY_NOTICE_NOT_NOW,
+      ...safetyNoticeParagraphs(false),
       NOTES_FIXED_LINE,
       NOTES_TUTOR_PARENTS_LINE,
       NOTES_FROZEN_LINE,
@@ -366,13 +407,39 @@ describe("component sources", () => {
     expect(source).toContain("dismissible={false}")
     expect(source).toContain("hideCloseButton")
     expect(source).toContain("onAcknowledge")
-    expect(source).toContain("SAFETY_NOTICE_PARAGRAPHS")
+    // The paragraphs come from the shared copy module (`safetyNoticeParagraphs` maps SAFETY_NOTICE_PARAGRAPHS).
+    expect(source).toContain("safetyNoticeParagraphs(")
+    expect(source).not.toMatch(/^\s*["'`]Tutors on Lemely/m)
+  })
+
+  it("C-24 sheet offers 'Not now' only when the screen gives it a way out, and Not now never acknowledges", () => {
+    const source = read("components", "ui", "safety-notice-sheet.tsx")
+    expect(source).toContain("onNotNow")
+    expect(source).toContain("SAFETY_NOTICE_NOT_NOW")
+    expect(source).toMatch(/onNotNow\s*\?/)
+    // The extra button is wired to onNotNow and the primary one alone to onAcknowledge.
+    expect(source.match(/onClick=\{onAcknowledge\}/g)).toHaveLength(1)
+    expect(source).toMatch(/onClick=\{onNotNow\}/)
+    // Still not dismissible by Escape or the scrim: the button is the only way out.
+    expect(source).toContain("dismissible={false}")
+    expect(source).toContain("hideCloseButton")
+    expect(source).toContain("documentsSeen")
+    expect(source).toContain("safetyNoticeParagraphs(")
+  })
+
+  it("S-35 passes the tutor's documentsSeen and a Not now that leaves the page without acknowledging", () => {
+    const source = read("portals", "student", "screens", "tutoring", "BookSession.tsx")
+    expect(source).toContain("documentsSeen={tutor.documentsSeen}")
+    const notNow = /onNotNow=\{([\s\S]*?)\}\s*\n\s*(?:documentsSeen|onAcknowledge|\/>)/.exec(source)
+    expect(notNow, "onNotNow is not wired").not.toBeNull()
+    expect(notNow![1]).toContain("navigate(")
+    expect(notNow![1]).not.toContain("acknowledge")
   })
 
   it("C-24 sheet puts the five paragraphs in the Modal's description, so a screen reader hears them before the button", () => {
     const source = read("components", "ui", "safety-notice-sheet.tsx")
     const description = source.indexOf("description={")
-    const paragraphs = source.indexOf("SAFETY_NOTICE_PARAGRAPHS.map")
+    const paragraphs = source.indexOf("safetyNoticeParagraphs(documentsSeen).map")
     const footer = source.indexOf("footer={")
     expect(description).toBeGreaterThan(-1)
     expect(paragraphs).toBeGreaterThan(description)
@@ -407,7 +474,10 @@ describe("component sources", () => {
   it("the report sheet reports a failure in an alert, not on the optional field, and keeps the helpline on its receipt", () => {
     const source = read("components", "tutoring", "report-sheet.tsx")
     expect(source).toContain('role="alert"')
+    // Without this the slice below would be (-1, -1) and the next assertion would pass on an empty string.
+    expect(source.indexOf("<Textarea")).toBeGreaterThan(-1)
     const textarea = source.slice(source.indexOf("<Textarea"), source.indexOf("/>", source.indexOf("<Textarea")))
+    expect(textarea.length).toBeGreaterThan("<Textarea".length)
     expect(textarea).not.toMatch(/\berror=/)
     expect(source.match(/reportShowsHelpline\(/g)?.length).toBeGreaterThanOrEqual(2)
     // The receipt (the `sent` view) comes first in the file and must carry the line too.

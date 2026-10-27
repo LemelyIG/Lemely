@@ -577,6 +577,19 @@ describe("the tutoring sentences carry a source and match the code: SPEC f", () 
     expect(section("Notes between a student and a tutor").body).toContain(`${n} ${unit}`)
   })
 
+  it("pins the opt-out delay to the edge worker's PUBLIC_CACHE_TTL_SECONDS", () => {
+    const ttl = Number(
+      read("web/worker/robots.ts").match(/^export const PUBLIC_CACHE_TTL_SECONDS\s*=\s*(\d+)\s*;?\s*$/m)?.[1],
+    )
+    expect(Number.isInteger(ttl) && ttl > 0, "PUBLIC_CACHE_TTL_SECONDS not found in web/worker/robots.ts").toBe(true)
+    // The page promises "within a minute", which holds only while the edge keeps a card at most 60 seconds.
+    expect(ttl).toBeLessThanOrEqual(60)
+    const heading = "Tutors on the public directory"
+    expect(section(heading).body).toContain("within a minute")
+    // The source comment beside the sentence quotes the same number.
+    expect(sourceCommentsByHeading().get(heading)).toContain(`PUBLIC_CACHE_TTL_SECONDS\` (${ttl})`)
+  })
+
   it("says linked parents can read notes and that staff read them only on a report", () => {
     const body = section("Notes between a student and a tutor").body
     expect(body).toMatch(/linked parents can read/i)

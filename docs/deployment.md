@@ -137,9 +137,9 @@ field are ignored by pydantic-settings, so a typo'd *env var* is silent — chec
 | `LEMELY_STORAGE__BACKEND` | `local` | Set `gcs` for any deploy that isn't local dev/Compose/CI — see [§5.1](#51-the-single-replica-constraint-is-lifted). `local` writes under `paths.output_dir/storage` on the container's own disk. There is no Supabase Storage backend; that code was deleted (DS7). |
 | `LEMELY_STORAGE__BUCKET` | `lemely-uploads` | **Always on a real deploy.** The bucket (`gcs`) or directory name (`local`) for scans and mark schemes. `deploy.yml` sets it per environment to `<project-id>-uploads-<env>`; GCS bucket names are one global namespace, so the default is a placeholder no project owns. **The bucket must already exist** — no application code path creates it; `scripts/gcp-bootstrap.sh` does. Empty is rejected at startup. |
 | `LEMELY_STORAGE__AVATAR_BUCKET` | `lemely-avatars` | Same rules, for profile pictures — a separate bucket because avatars are meant to persist and the uploads bucket carries a 90-day delete rule. `deploy.yml` sets `<project-id>-avatars-<env>`. |
-| `LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET` | `lemely-tutor-evidence` | **Always on a real deploy that lets tutors upload documents.** A separate private bucket for tutor qualification documents (personal data, opened only by a platform admin through a `LEMELY_STORAGE__TUTOR_EVIDENCE_SIGNED_URL_TTL_SECONDS` (default `300`) link). Same rules as the other buckets: it must already exist, and the default is a placeholder no project owns. `deploy.yml` sets it per environment to `<project-id>-tutor-evidence-<env>` (override: the `GCS_TUTOR_EVIDENCE_BUCKET` environment variable) and `scripts/gcp-bootstrap.sh` creates that bucket private, but only when an operator runs the script. Unlike the other two, the `gcs` backend refuses the default name outright and checks that the bucket is private and owned by `LEMELY_STORAGE__GCS_PROJECT_NUMBER` before its first use; see §5.9. |
-| `LEMELY_STORAGE__GCS_PROJECT_NUMBER` | `None` | **Always on a `gcs` deploy that lets tutors upload documents.** This project's number (not its id): the `gcs` backend uses the evidence bucket only if this project owns it, and refuses it while this is unset (uploads and avatars are unaffected). `deploy.yml` derives it from the `GCP_WORKLOAD_IDENTITY_PROVIDER` variable (`projects/<number>/...`); by hand, `gcloud projects describe <project-id> --format='value(projectNumber)'`. Ignored by the `local` backend. See §5.9. |
-| `LEMELY_TUTORING__EMAIL_DAILY_CAP` | `60` | At most this many tutoring emails are sent in any 24 hours, because the free Resend tier allows 100 a day and shares them with sign-up mail. Sent rows beyond it are recorded as skipped. See §5.9 and `docs/email-delivery.md`. |
+| `LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET` | `lemely-tutor-evidence` | **Always on a real deploy that lets tutors upload documents.** A separate private bucket for tutor qualification documents (personal data, opened only by a platform admin through a `LEMELY_STORAGE__TUTOR_EVIDENCE_SIGNED_URL_TTL_SECONDS` (default `300`) link). Same rules as the other buckets: it must already exist, and the default is a placeholder no project owns. `deploy.yml` sets it per environment to `<project-id>-tutor-evidence-<env>` (override: the `GCS_TUTOR_EVIDENCE_BUCKET` environment variable) and `scripts/gcp-bootstrap.sh` creates that bucket private, but only when an operator runs the script. Unlike the other two, the `gcs` backend refuses the default name outright and checks that the bucket is private and owned by `LEMELY_STORAGE__GCS_PROJECT_NUMBER` before its first use; see §5.10. |
+| `LEMELY_STORAGE__GCS_PROJECT_NUMBER` | `None` | **Always on a `gcs` deploy that lets tutors upload documents.** This project's number (not its id): the `gcs` backend uses the evidence bucket only if this project owns it, and refuses it while this is unset (uploads and avatars are unaffected). `deploy.yml` derives it from the `GCP_WORKLOAD_IDENTITY_PROVIDER` variable (`projects/<number>/...`); by hand, `gcloud projects describe <project-id> --format='value(projectNumber)'`. Ignored by the `local` backend. See §5.10. |
+| `LEMELY_TUTORING__EMAIL_DAILY_CAP` | `60` | At most this many tutoring emails are sent in any 24 hours, because the free Resend tier allows 100 a day and shares them with sign-up mail. Sent rows beyond it are recorded as skipped. See §5.10 and `docs/email-delivery.md`. |
 | `LEMELY_STORAGE__SIGNED_URL_TTL_SECONDS` | `3600` | How long an avatar URL stays readable. Ignored by the `local` backend, which returns the bytes inline and so has nothing to expire. |
 | `LEMELY_STORAGE__GCS_PROJECT` | `None` | Only if Application Default Credentials cannot infer a project on their own (rare — a workload identity usually carries one). |
 | `LEMELY_GEMINI__TOTAL_USD_CEILING` | `8.0` | **CLI/Gradio only** — to change the hard spend cap those surfaces enforce (MISSION §8). The web process enforces no cap; see [§5.4](#54-performance-and-cost). |
@@ -701,7 +701,7 @@ retry_model = "gemini-3.8-flash"
 
 ---
 
-### 5.9 Tutoring marketplace: what a deploy needs
+### 5.10 Tutoring marketplace: what a deploy needs
 
 The feature ships as migrations `0044` to `0051` and adds no new service. What it
 asks of a deploy, in the order you will meet it:
@@ -785,11 +785,11 @@ curl -sI https://staging.lemelyig.com/tutors                       # expect X-Ro
 curl -sI https://staging.lemelyig.com/tutors/<indexable-tutor-id>  # expect no X-Robots-Tag; content-type: text/html
 curl -sI https://staging.lemelyig.com/tutors/<opted-out-tutor-id>  # expect X-Robots-Tag: noindex, nofollow
 curl -sI https://staging.lemelyig.com/tutors/not-a-uuid            # expect X-Robots-Tag: noindex, nofollow
-curl -s  https://staging.lemelyig.com/robots.txt                   # expect no Disallow line for /tutors
+curl -s  https://staging.lemelyig.com/robots.txt                   # expect no Disallow line for /tutors, and "Allow: /api/public/tutors/" above "Disallow: /api/"
 ```
 
 If the indexable card carries a `noindex` header, the worker lookup is failing and
-the card is failing closed; check the API's `GET /api/public/tutors/<id>` first. A
+the card is failing closed; check the API's `GET /api/public/tutors/<id>` first, and that `web/public/robots.txt` still allows `/api/public/tutors/` ahead of `Disallow: /api/` (a crawler that cannot fetch that lookup sees every card error). A
 `web/public/_headers` rule for `/tutors` would mark every card `noindex` and is
 deliberately absent. The self-hosted nginx deploy (`web/nginx.conf`) cannot look
 tutors up, so it marks every `/tutors` page `noindex, nofollow`. There is no
@@ -844,11 +844,11 @@ replaces it).
 [ ] Tutoring: gcp-bootstrap.sh run since the evidence bucket owner check was
     added, so <project-id>-tutor-evidence-<env> exists, private, readable by the
     deploy account, before the first deploy (deploy.yml sets
-    LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET to it, §5.9)
+    LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET to it, §5.10)
 [ ] Tutoring: LEMELY_STORAGE__GCS_PROJECT_NUMBER is this project's number
     (deploy.yml: GCP_WORKLOAD_IDENTITY_PROVIDER starts with projects/<number>/,
-    the number gcp-bootstrap.sh prints; §5.9)
-[ ] Tutoring: the staging curl -sI checklist in §5.9 run after the first worker deploy
+    the number gcp-bootstrap.sh prints; §5.10)
+[ ] Tutoring: the staging curl -sI checklist in §5.10 run after the first worker deploy
 [ ] Tutoring: a Cloudflare WAF rate-limit rule on /api/public/* (or accept the 60 s cache only)
 [ ] scripts/gcp-bootstrap.sh run once (creates the three buckets per
     environment, grants objectAdmin, grants serviceAccountTokenCreator for

@@ -123,6 +123,19 @@ const ROWS: readonly SmokeRow[] = [
     path: (s) => `/parent/children/${s.students.declining.userId}/tutor-access`,
     heading: (s) => `Who ${s.students.declining.displayName} shares progress with`,
   },
+  // The parent's tutor pages (P-07 and the booking step), the same tutor as S-34 and S-35.
+  {
+    role: "parent",
+    screen: "P-07",
+    path: (s) => `/parent/tutors/${tut(s).tutors.sufficient.tutorProfileId}`,
+    heading: AMIRA,
+  },
+  {
+    role: "parent",
+    screen: "P-07 book",
+    path: (s) => `/parent/tutors/${tut(s).tutors.sufficient.tutorProfileId}/book`,
+    heading: `Book a session with ${AMIRA}`,
+  },
   // The platform admin (X-04 to X-07).
   { role: "platform_admin", as: "admin", path: "/platform/tutors", heading: "Tutors" },
   {

@@ -29,7 +29,8 @@
  * without the tutor's choice having been asked, or would carry a header that
  * says something the page does not. `classifyTutorPath` therefore answers, for
  * the raw pathname: render, redirect to the canonical spelling, or do not
- * render. The id keeps the case it came with: the worker accepts either case.
+ * render. The worker accepts an id in either case, but the page answers only to
+ * the lowercase one (the form the API issues) and redirects any other case to it.
  */
 
 /** The directory's tag. Compared with the worker's in `tutoringRobotsMeta.test.ts`. */
@@ -79,7 +80,12 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export function classifyTutorPath(pathname: string): TutorPage {
   if (pathname === "/tutors") return { kind: "directory" }
   const card = /^\/tutors\/([^/]+)$/.exec(pathname)
-  if (card && UUID.test(card[1])) return { kind: "card", tutorId: card[1] }
+  if (card && UUID.test(card[1])) {
+    // One card, one address: the worker accepts either case of the id, so an upper-case spelling
+    // would render and index the same card a second time. It goes to the lowercase id.
+    const id = card[1].toLowerCase()
+    return id === card[1] ? { kind: "card", tutorId: id } : { kind: "redirect", to: `/tutors/${id}` }
+  }
 
   const trimmed = pathname.replace(/\/+$/, "")
   const segments = trimmed.split("/")
@@ -87,7 +93,7 @@ export function classifyTutorPath(pathname: string): TutorPage {
   if (segments[0] !== "" || segments[1]?.toLowerCase() !== "tutors") return { kind: "not_found" }
   if (segments.length === 2) return { kind: "redirect", to: "/tutors" }
   if (segments.length === 3 && UUID.test(segments[2])) {
-    return { kind: "redirect", to: `/tutors/${segments[2]}` }
+    return { kind: "redirect", to: `/tutors/${segments[2].toLowerCase()}` }
   }
   return { kind: "not_found" }
 }

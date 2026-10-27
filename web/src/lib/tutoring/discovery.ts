@@ -263,6 +263,9 @@ export const FEES_LINE = "Fees are agreed with the tutor, outside Lemely."
 /** G-16 */
 export const DIRECTORY_INTRO = `Find a tutor for IGCSE Maths, Additional Maths and Physics. ${FEES_LINE}`
 export const DIRECTORY_SIGN_IN_LINE = "Sign in to see full profiles, availability, reviews and results."
+/** G-16 for a reader who already has a student or parent session: the same promise, without asking them to sign in again. */
+export const DIRECTORY_SIGNED_IN_LINE = "Open your tutors page for full profiles, availability, reviews and results."
+export const DIRECTORY_SIGNED_IN_LINK_TEXT = "Open your tutors page"
 export const DIRECTORY_EMPTY_HEADING = "No tutors match these filters yet."
 export const PLATFORM_EMPTY_HEADING = "Tutors are being reviewed. Check back soon."
 
