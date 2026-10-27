@@ -60,7 +60,6 @@ const ROWS: readonly SmokeRow[] = [
   { role: "teacher", path: "/teacher/tutoring/availability", heading: "Weekly availability" },
   { role: "teacher", path: "/teacher/tutoring/preview", heading: "Profile preview and reviews" },
   // I7: T26 to T28, the screens that need no id.
-  { role: "teacher", path: "/teacher/tutoring/students", heading: "My students" },
   { role: "parent", path: "/parent/tutors", heading: "Tutors" },
 
   // T32: the rows that need a seeded id. The booking student, with the tutor's profile id.
@@ -85,7 +84,10 @@ const ROWS: readonly SmokeRow[] = [
     path: (s) => `/student/sessions/${tut(s).bookings.accepted}`,
     heading: sessionHeading,
   },
-  // The tutor's own side: Amira, the tutor of every seeded booking and grant.
+  // The tutor's own side: Amira, the tutor of every seeded booking and grant. A teacher with no
+  // class and no tutor profile gets T-19's error state, so T-15 and T-19 are checked as the tutor.
+  { role: "teacher", as: "tutor", path: "/teacher/tutoring", heading: "Tutoring" },
+  { role: "teacher", as: "tutor", path: "/teacher/tutoring/students", heading: "My students" },
   {
     role: "teacher",
     as: "tutor",

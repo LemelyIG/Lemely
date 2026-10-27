@@ -3726,6 +3726,16 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         child=declining,
         parent=parent,
     )
+    # The three tutoring students are signed up like every student, so their first
+    # navigation under /student/* would be sent to /student/onboard (the same gate
+    # the other seeded students were cleared of above). A student who books a tutor
+    # has been through it.
+    for tutoring_student in (
+        tutoring_accounts.student,
+        tutoring_accounts.discover,
+        tutoring_accounts.rival,
+    ):
+        student_profile_service.mark_onboarding_complete(uuid.UUID(tutoring_student["userId"]))
     tutoring_dict = seed_tutoring_fixture(
         get_sessionmaker(), run_tag=run_tag, now=now, accounts=tutoring_accounts
     )
