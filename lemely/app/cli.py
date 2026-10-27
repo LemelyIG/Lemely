@@ -688,10 +688,16 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # honours `--no-network`, which a bare `google.auth.default()` call here
     # would not — it would reach for credentials in the one mode that promises
     # not to.
-    from lemely.io.storage import check_storage
+    from lemely.io.storage import check_storage, check_tutor_evidence_storage
 
     storage_ok, storage_detail = check_storage(settings, no_network=no_network)
     record("storage_backend", storage_ok, detail=storage_detail)
+    # Advisory for the same reasons. The evidence bucket is its own line because
+    # it is judged by the backend's privacy-and-owner check, not by a reachable
+    # bucket: a deploy that skipped the bootstrap otherwise looks healthy here
+    # while every tutor document upload answers 503.
+    evidence_ok, evidence_detail = check_tutor_evidence_storage(settings, no_network=no_network)
+    record("tutor_evidence_storage", evidence_ok, detail=evidence_detail)
 
     # Advisory, like storage: this build ships without VAPID keys and that is
     # a supported state (D5.9 §4) — the inbox keeps working and push simply
@@ -754,6 +760,7 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         "claude_files_workspace",
         "gradio_extra_installed",
         "storage_backend",
+        "tutor_evidence_storage",
         "push_transport",
         "no_removed_config_keys",
         "gemini_promo_pricing_window",

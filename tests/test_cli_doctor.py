@@ -278,6 +278,106 @@ class DoctorTests(unittest.TestCase):
         push = next(c for c in payload["checks"] if c["name"] == "push_transport")
         self.assertTrue(push["ok"], msg=push)
 
+    # -- The tutor evidence bucket (review finding 5). Before this line the
+    # doctor probed uploads and avatars only, so a deploy whose bootstrap was
+    # never re-run looked healthy while every evidence upload answered 503.
+
+    def _evidence_check(
+        self, args: list[str], **extra: str | None
+    ) -> tuple[dict[str, object], dict[str, object], Path]:
+        """Run the doctor; return its payload, the evidence check and the output dir."""
+        from unittest.mock import patch
+
+        with TemporaryDirectory() as tmp:
+            # ADC is never consulted for real: the gcs storage line asks for it even
+            # with --no-network, and a developer machine may or may not have it.
+            with (
+                patch("google.auth.default", return_value=(None, "proj-1234")),
+                patch("lemely.io.gemini.GeminiClient.check_reachable", return_value=None),
+            ):
+                result = self.runner.invoke(
+                    cli, ["--json", "doctor", *args], env=self._doctor_env(tmp, **extra)
+                )
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+            payload = json.loads(result.output)
+            outputs = Path(tmp) / "outputs"
+            check = next(c for c in payload["checks"] if c["name"] == "tutor_evidence_storage")
+            directory_exists = (outputs / "storage" / "lemely-tutor-evidence").is_dir()
+        return payload, {**check, "directory_exists": directory_exists}, outputs
+
+    def test_doctor_reports_the_local_evidence_directory(self) -> None:
+        payload, check, outputs = self._evidence_check(["--no-network"])
+        self.assertTrue(check["ok"], msg=check)
+        self.assertEqual(check["detail"], str(outputs / "storage" / "lemely-tutor-evidence"))
+        self.assertTrue(check["directory_exists"])
+        self.assertTrue(payload["all_passed"])
+
+    def test_doctor_reports_a_gcs_evidence_bucket_without_a_project_number(self) -> None:
+        """Fail closed, and say which setting is missing; advisory, like the storage line."""
+        payload, check, _ = self._evidence_check(
+            ["--no-network"],
+            LEMELY_STORAGE__BACKEND="gcs",
+            LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET="proj-1234-tutor-evidence-staging",
+        )
+        self.assertFalse(check["ok"], msg=check)
+        self.assertIn("LEMELY_STORAGE__GCS_PROJECT_NUMBER", str(check["detail"]))
+        self.assertTrue(payload["all_passed"])
+
+    def test_doctor_reports_the_placeholder_evidence_bucket_under_gcs(self) -> None:
+        _, check, _ = self._evidence_check(
+            ["--no-network"],
+            LEMELY_STORAGE__BACKEND="gcs",
+            LEMELY_STORAGE__GCS_PROJECT_NUMBER="123456789012",
+        )
+        self.assertFalse(check["ok"], msg=check)
+        self.assertIn("LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET", str(check["detail"]))
+        self.assertFalse(check["directory_exists"])
+
+    def test_doctor_does_not_probe_the_evidence_bucket_with_no_network(self) -> None:
+        _, check, _ = self._evidence_check(
+            ["--no-network"],
+            LEMELY_STORAGE__BACKEND="gcs",
+            LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET="proj-1234-tutor-evidence-staging",
+            LEMELY_STORAGE__GCS_PROJECT_NUMBER="123456789012",
+        )
+        self.assertTrue(check["ok"], msg=check)
+        self.assertIn("gcs://proj-1234-tutor-evidence-staging", str(check["detail"]))
+        self.assertIn("not probed", str(check["detail"]))
+
+    def test_doctor_probes_the_evidence_bucket_owner_over_the_network(self) -> None:
+        """The probe reports the privacy-and-owner result, not merely that the bucket answers."""
+        from unittest.mock import MagicMock, patch
+
+        from google.cloud import storage
+
+        def _metadata(owner: str) -> storage.Bucket:
+            bucket = storage.Bucket(MagicMock(), name="proj-1234-tutor-evidence-staging")
+            bucket._set_properties(
+                {
+                    "projectNumber": owner,
+                    "iamConfiguration": {
+                        "publicAccessPrevention": "enforced",
+                        "uniformBucketLevelAccess": {"enabled": True},
+                    },
+                }
+            )
+            return bucket
+
+        env = {
+            "LEMELY_STORAGE__BACKEND": "gcs",
+            "LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET": "proj-1234-tutor-evidence-staging",
+            "LEMELY_STORAGE__GCS_PROJECT_NUMBER": "123456789012",
+        }
+        for owner, ok in (("123456789012", True), ("987654321098", False)):
+            client = MagicMock()
+            client.get_bucket.return_value = _metadata(owner)
+            with patch("google.cloud.storage.Client", return_value=client):
+                payload, check, _ = self._evidence_check([], **env)
+            self.assertIs(check["ok"], ok, msg=check)
+            client.get_bucket.assert_any_call("proj-1234-tutor-evidence-staging", timeout=30.0)
+            self.assertTrue(payload["all_passed"])
+        self.assertIn("belongs to project number 987654321098", str(check["detail"]))
+
     def test_doctor_warns_on_a_stale_key_in_dot_env_without_failing(self) -> None:
         """Spec 2026-09-26 §11 (#6): a removed key left in `.env` is reported
         the way a TOML one is (advisory, exit 0), instead of crashing

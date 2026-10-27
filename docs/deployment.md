@@ -137,7 +137,8 @@ field are ignored by pydantic-settings, so a typo'd *env var* is silent — chec
 | `LEMELY_STORAGE__BACKEND` | `local` | Set `gcs` for any deploy that isn't local dev/Compose/CI — see [§5.1](#51-the-single-replica-constraint-is-lifted). `local` writes under `paths.output_dir/storage` on the container's own disk. There is no Supabase Storage backend; that code was deleted (DS7). |
 | `LEMELY_STORAGE__BUCKET` | `lemely-uploads` | **Always on a real deploy.** The bucket (`gcs`) or directory name (`local`) for scans and mark schemes. `deploy.yml` sets it per environment to `<project-id>-uploads-<env>`; GCS bucket names are one global namespace, so the default is a placeholder no project owns. **The bucket must already exist** — no application code path creates it; `scripts/gcp-bootstrap.sh` does. Empty is rejected at startup. |
 | `LEMELY_STORAGE__AVATAR_BUCKET` | `lemely-avatars` | Same rules, for profile pictures — a separate bucket because avatars are meant to persist and the uploads bucket carries a 90-day delete rule. `deploy.yml` sets `<project-id>-avatars-<env>`. |
-| `LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET` | `lemely-tutor-evidence` | **Always on a real deploy that lets tutors upload documents.** A separate private bucket for tutor qualification documents (personal data, opened only by a platform admin through a `LEMELY_STORAGE__TUTOR_EVIDENCE_SIGNED_URL_TTL_SECONDS` (default `300`) link). Same rules as the other buckets: it must already exist, and the default is a placeholder no project owns. `deploy.yml` sets it per environment to `<project-id>-tutor-evidence-<env>` (override: the `GCS_TUTOR_EVIDENCE_BUCKET` environment variable) and `scripts/gcp-bootstrap.sh` creates that bucket private, but only when an operator runs the script. Unlike the other two, the `gcs` backend refuses the default name outright and checks that the bucket is private before its first use; see §5.9. |
+| `LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET` | `lemely-tutor-evidence` | **Always on a real deploy that lets tutors upload documents.** A separate private bucket for tutor qualification documents (personal data, opened only by a platform admin through a `LEMELY_STORAGE__TUTOR_EVIDENCE_SIGNED_URL_TTL_SECONDS` (default `300`) link). Same rules as the other buckets: it must already exist, and the default is a placeholder no project owns. `deploy.yml` sets it per environment to `<project-id>-tutor-evidence-<env>` (override: the `GCS_TUTOR_EVIDENCE_BUCKET` environment variable) and `scripts/gcp-bootstrap.sh` creates that bucket private, but only when an operator runs the script. Unlike the other two, the `gcs` backend refuses the default name outright and checks that the bucket is private and owned by `LEMELY_STORAGE__GCS_PROJECT_NUMBER` before its first use; see §5.9. |
+| `LEMELY_STORAGE__GCS_PROJECT_NUMBER` | `None` | **Always on a `gcs` deploy that lets tutors upload documents.** This project's number (not its id): the `gcs` backend uses the evidence bucket only if this project owns it, and refuses it while this is unset (uploads and avatars are unaffected). `deploy.yml` derives it from the `GCP_WORKLOAD_IDENTITY_PROVIDER` variable (`projects/<number>/...`); by hand, `gcloud projects describe <project-id> --format='value(projectNumber)'`. Ignored by the `local` backend. See §5.9. |
 | `LEMELY_TUTORING__EMAIL_DAILY_CAP` | `60` | At most this many tutoring emails are sent in any 24 hours, because the free Resend tier allows 100 a day and shares them with sign-up mail. Sent rows beyond it are recorded as skipped. See §5.9 and `docs/email-delivery.md`. |
 | `LEMELY_STORAGE__SIGNED_URL_TTL_SECONDS` | `3600` | How long an avatar URL stays readable. Ignored by the `local` backend, which returns the bytes inline and so has nothing to expire. |
 | `LEMELY_STORAGE__GCS_PROJECT` | `None` | Only if Application Default Credentials cannot infer a project on their own (rare — a workload identity usually carries one). |
@@ -675,28 +676,54 @@ two buckets (override with the `GCS_TUTOR_EVIDENCE_BUCKET` environment variable)
 uniform bucket-level access and public access prevention, enforces both settings
 again on every run (so a bucket made by hand earlier is brought into line), grants
 the runtime service account `roles/storage.objectAdmin` and
-`roles/storage.legacyBucketReader` on that bucket only, and leaves the 90-day delete rule on uploads only. Nothing runs the
-script for you: an operator runs it once per project, and again after this change
-on a project bootstrapped before it. If creating the bucket fails because the
-name is taken, another project owns it and the script stops there. Do not deploy:
-create a private bucket under another name by hand (the same settings and the two
-roles above), set `GCS_TUTOR_EVIDENCE_BUCKET` for that environment to its name,
-and expect the script to keep stopping at that step, because it does not read the
-override.
+`roles/storage.legacyBucketReader` on that bucket only, grants the deploy account
+(`lemely-deployer`) `roles/storage.legacyBucketReader` on that bucket only (for
+the deploy-time check below), and leaves the 90-day delete rule on uploads only.
+Nothing runs the script for you: an operator runs it once per project, and again
+after this change on a project bootstrapped before it. If creating the bucket
+fails because the name is taken, another project owns it and the script stops
+there. Do not deploy: create a private bucket under another name by hand in this
+project (the same settings and the three grants above), set
+`GCS_TUTOR_EVIDENCE_BUCKET` for that environment to its name, and expect the
+script to keep stopping at that step, because it does not read the override.
+
+**Confirm the project number before the first production deploy.** The backend
+uses the evidence bucket only if this project owns it, so it needs this project's
+number in `LEMELY_STORAGE__GCS_PROJECT_NUMBER`. `deploy.yml` reads the number out
+of the `GCP_WORKLOAD_IDENTITY_PROVIDER` variable
+(`projects/<number>/locations/global/workloadIdentityPools/...`), which the
+bootstrap prints, and stops before the rollout if the variable has another shape. The script also prints the
+project's number at the end: the variable must start with
+`projects/<that number>/`. No new variable is needed.
 
 The default name `lemely-tutor-evidence` is a bucket name anyone can create in
 GCS's global namespace, so a deploy that used it would send tutors' documents to
 that bucket's owner. The `gcs` backend therefore refuses it when it is built
 (`ConfigError`), and before its first use of the evidence bucket reads the
-bucket's settings and refuses it unless public access prevention is `enforced`
-and uniform bucket-level access is on. That read needs `storage.buckets.get`,
-which is why the script grants `legacyBucketReader`. A refusal makes document
-uploads answer 503 ("storage unavailable") and the admin's document links come
-back empty; scans and avatars are unaffected. A failed check is not remembered,
-so fixing the bucket takes effect on the next request. The `local` backend keeps
-the default, where it is only a directory name. The signed links use the same
-signing path as avatars, which the script already enables with
+bucket's settings and refuses it unless public access prevention is `enforced`,
+uniform bucket-level access is on, and the bucket's owning project number is
+`LEMELY_STORAGE__GCS_PROJECT_NUMBER`. The owner check matters because the other
+two settings are the owner's to set: a stranger who registered the
+per-environment name first could enforce both and grant our runtime account
+access. With the number unset the bucket is refused without a read. The read
+needs `storage.buckets.get`, which is why the script grants `legacyBucketReader`.
+A refusal makes document uploads answer 503 ("storage unavailable") and the
+admin's document links come back empty; scans and avatars are unaffected. A
+failed check is not remembered, so fixing the bucket or the setting takes effect
+on the next request. The `local` backend keeps the default, where it is only a
+directory name, and ignores the number. The signed links use the same signing
+path as avatars, which the script already enables with
 `roles/iam.serviceAccountTokenCreator` on the runtime account.
+
+**Two places show a bad evidence bucket before a tutor does.** The last step of
+`deploy.yml`'s `deploy-backend` job reads the bucket as the deploy account and
+fails the deploy unless it is private and owned by the number the service was
+given, so a deploy whose bootstrap was not re-run is red, not green with uploads
+answering 503. `lemely doctor` reports the same decision on its
+`tutor_evidence_storage` line (advisory, like `storage_backend`): with `local`,
+that the evidence directory is writable; with `gcs`, the placeholder name or an
+unset number offline, and otherwise the backend's own privacy-and-owner check
+(`--no-network` skips that read).
 
 **Email is in mock mode until a key is set.** Without `[email] api_key`
 (`RESEND_API_KEY` in the pipeline), queued tutoring emails are recorded as
@@ -773,9 +800,13 @@ replaces it).
 [ ] A spend guard exists on the Gemini project (a billing budget or equivalent) --
     the web process itself enforces no USD cap (§5.4)
 [ ] RESEND_API_KEY set (or accept the mock provider and no mail sent)
-[ ] Tutoring: gcp-bootstrap.sh run since the evidence bucket was added, so
-    <project-id>-tutor-evidence-<env> exists, private, before the first deploy
-    (deploy.yml sets LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET to it, §5.9)
+[ ] Tutoring: gcp-bootstrap.sh run since the evidence bucket owner check was
+    added, so <project-id>-tutor-evidence-<env> exists, private, readable by the
+    deploy account, before the first deploy (deploy.yml sets
+    LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET to it, §5.9)
+[ ] Tutoring: LEMELY_STORAGE__GCS_PROJECT_NUMBER is this project's number
+    (deploy.yml: GCP_WORKLOAD_IDENTITY_PROVIDER starts with projects/<number>/,
+    the number gcp-bootstrap.sh prints; §5.9)
 [ ] Tutoring: the staging curl -sI checklist in §5.9 run after the first worker deploy
 [ ] Tutoring: a Cloudflare WAF rate-limit rule on /api/public/* (or accept the 60 s cache only)
 [ ] scripts/gcp-bootstrap.sh run once (creates the three buckets per

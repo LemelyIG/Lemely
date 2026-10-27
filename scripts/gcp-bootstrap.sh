@@ -168,6 +168,16 @@ for ENV in staging production; do
     --member="serviceAccount:${RUNTIME_SA}" \
     --role="roles/storage.legacyBucketReader" \
     --quiet >/dev/null
+  # deploy.yml reads the same settings after each rollout, as the deploy
+  # account, and fails the deploy unless the bucket is private and owned by
+  # this project. Same read, this one bucket only; the deploy account already
+  # deploys revisions that run as the runtime account, so this adds no access
+  # it did not effectively have.
+  echo "== legacyBucketReader on gs://$EVIDENCE_BUCKET for $SERVICE_ACCOUNT_ID (deploy-time check) =="
+  gcloud storage buckets add-iam-policy-binding "gs://$EVIDENCE_BUCKET" \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="roles/storage.legacyBucketReader" \
+    --quiet >/dev/null
 
   # Needed for V4 signed URLs. A Cloud Run workload-identity credential has no
   # local signer, so google-cloud-storage signs through the IAM signBlob API —
@@ -208,6 +218,7 @@ gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
   --quiet >/dev/null
 
 PROVIDER_NAME="$(gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" --location=global --workload-identity-pool="$POOL_ID" --format='value(name)')"
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
 
 cat <<EOF
 
@@ -230,6 +241,11 @@ to these names, no new GitHub variable needed):
 
   gs://${PROJECT_ID}-tutor-evidence-staging
   gs://${PROJECT_ID}-tutor-evidence-production
+
+The backend uses an evidence bucket only if it is owned by project number
+${PROJECT_NUMBER}. deploy.yml reads that number from
+GCP_WORKLOAD_IDENTITY_PROVIDER, so confirm the value you set there starts with
+projects/${PROJECT_NUMBER}/ (no new variable is needed).
 
 Billing budget: ${BUDGET_SUMMARY}
 

@@ -73,6 +73,33 @@ def test_evidence_bucket_must_be_non_empty() -> None:
         StorageSettings(tutor_evidence_bucket="")
 
 
+def test_gcs_project_number_is_unset_by_default() -> None:
+    """Unset: the gcs backend cannot show the evidence bucket is ours, so it fails closed."""
+    assert StorageSettings().gcs_project_number is None
+    assert Settings().storage.gcs_project_number is None
+
+
+def test_gcs_project_number_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LEMELY_STORAGE__GCS_PROJECT_NUMBER", "123456789012")
+    assert Settings().storage.gcs_project_number == 123456789012
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_gcs_project_number_reads_as_unset(
+    monkeypatch: pytest.MonkeyPatch, blank: str
+) -> None:
+    """An unset GitHub Actions output renders as the empty string: that is "not set", not 0."""
+    monkeypatch.setenv("LEMELY_STORAGE__GCS_PROJECT_NUMBER", blank)
+    assert Settings().storage.gcs_project_number is None
+
+
+@pytest.mark.parametrize("bad", ["0", "-5", "my-project", "proj-1234"])
+def test_gcs_project_number_must_be_a_positive_number(bad: str) -> None:
+    """A project id or a non-positive value is refused at load, not compared at first use."""
+    with pytest.raises(ValidationError):
+        StorageSettings.model_validate({"gcs_project_number": bad})
+
+
 def test_example_file_contains_new_keys() -> None:
     text = _EXAMPLE.read_text(encoding="utf-8")
     assert "[tutoring]" in text

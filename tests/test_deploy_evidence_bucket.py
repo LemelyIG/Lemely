@@ -11,14 +11,29 @@ Two files decide the deployed name: ``.github/workflows/deploy.yml`` sets it and
 that they name the same bucket for each environment, that the name is never the
 default and never shared between environments, and that the script creates the
 bucket private and grants the runtime account access to that bucket only.
+
+A private bucket can still be a stranger's: whoever registers the name first
+can enforce both settings and grant our runtime account access. So the backend
+also requires the bucket's owning project number to equal
+``LEMELY_STORAGE__GCS_PROJECT_NUMBER`` (review finding 3), which deploy.yml
+derives from the workload identity provider's resource name, and the deploy job
+checks the bucket's privacy and owner itself after the rollout (finding 5).
+Both workflow steps are executed here with bash, the second against a fake
+``gcloud`` and ``curl``, so these tests judge what the steps do, not their text.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
+import pytest
 import yaml
 
 from lemely.runtime.config import StorageSettings
@@ -28,7 +43,15 @@ _DEPLOY = _ROOT / ".github" / "workflows" / "deploy.yml"
 _BOOTSTRAP = _ROOT / "scripts" / "gcp-bootstrap.sh"
 _PROJECT = "proj-1234"
 _EVIDENCE_VAR = "LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET"
+_NUMBER_VAR = "LEMELY_STORAGE__GCS_PROJECT_NUMBER"
 _OTHER_BUCKET_VARS = ("LEMELY_STORAGE__BUCKET", "LEMELY_STORAGE__AVATAR_BUCKET")
+_NUMBER = "123456789012"
+_PROVIDER = (
+    f"projects/{_NUMBER}/locations/global/workloadIdentityPools/github/providers/github-lemely"
+)
+_STEP_OUTPUT = re.compile(
+    r"^\$\{\{\s*steps\.(?P<id>[A-Za-z0-9_-]+)\.outputs\.(?P<output>[A-Za-z0-9_]+)\s*\}\}$"
+)
 
 # The one shape deploy.yml gives every bucket name: an optional per-environment
 # override variable, else a name formatted from the project id and environment.
@@ -47,13 +70,50 @@ def _environments() -> list[str]:
     return options
 
 
+def _deploy_steps() -> list[dict[str, Any]]:
+    """The steps of the ``deploy-backend`` job, in order."""
+    workflow = yaml.safe_load(_DEPLOY.read_text(encoding="utf-8"))
+    steps: list[dict[str, Any]] = workflow["jobs"]["deploy-backend"]["steps"]
+    return steps
+
+
 def _deploy_env_vars() -> dict[str, str]:
     """The ``env_vars`` block of the Cloud Run deploy step, as name -> expression."""
-    workflow = yaml.safe_load(_DEPLOY.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["deploy-backend"]["steps"]
-    deploy = next(step for step in steps if step.get("id") == "deploy")
+    deploy = next(step for step in _deploy_steps() if step.get("id") == "deploy")
     pairs = (line.split("=", 1) for line in deploy["with"]["env_vars"].splitlines() if line)
     return {name: value for name, value in pairs}
+
+
+def _step_index(step_id: str) -> int:
+    return next(i for i, step in enumerate(_deploy_steps()) if step.get("id") == step_id)
+
+
+def _run_step(
+    step: Mapping[str, Any], env: Mapping[str, str], tmp_path: Path
+) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+    """Run one ``run:`` step the way a GitHub-hosted runner does, with ``env``.
+
+    The runner's default shell is ``bash --noprofile --norc -eo pipefail {0}``.
+    Returns the process and what the step wrote to ``$GITHUB_OUTPUT``.
+    """
+    script = tmp_path / "step.sh"
+    script.write_text(step["run"], encoding="utf-8")
+    output = tmp_path / "github_output"
+    output.write_text("", encoding="utf-8")
+    bash = shutil.which("bash")
+    assert bash is not None
+    process = subprocess.run(  # noqa: S603 - fixed argv: bash and this repo's workflow step
+        [bash, "--noprofile", "--norc", "-eo", "pipefail", str(script)],
+        env={"PATH": os.environ["PATH"], **env, "GITHUB_OUTPUT": str(output)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    written = dict(
+        line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines() if line
+    )
+    return process, written
 
 
 def _render(expression: str, environment: str, overrides: Mapping[str, str]) -> str:
@@ -178,14 +238,28 @@ def test_gcp_bootstrap_creates_private_evidence_bucket() -> None:
 
     # The backend reads the bucket's settings before first use (SC-22), which
     # needs storage.buckets.get on that bucket. objectAdmin does not include it.
-    evidence_grants = [
-        command.split()
+    # The deploy job reads the same settings after the rollout (finding 5) as the
+    # deployer account, so that account gets the same read on this bucket, and
+    # on no other bucket.
+    def _grant(command: list[str]) -> tuple[str, str]:
+        member = next(a for a in command if a.startswith("--member="))
+        role = next(a for a in command if a.startswith("--role="))
+        return member, role
+
+    evidence_grants = {
+        _grant(command.split())
         for command in _commands(body, "add-iam-policy-binding")
         if '"gs://$EVIDENCE_BUCKET"' in command.split()
-    ]
-    assert len(evidence_grants) == 1
-    assert '--member="serviceAccount:${RUNTIME_SA}"' in evidence_grants[0]
-    assert '--role="roles/storage.legacyBucketReader"' in evidence_grants[0]
+    }
+    assert evidence_grants == {
+        ('--member="serviceAccount:${RUNTIME_SA}"', '--role="roles/storage.legacyBucketReader"'),
+        ('--member="serviceAccount:${SA_EMAIL}"', '--role="roles/storage.legacyBucketReader"'),
+    }
+    deployer_grants = [c for c in _commands(body, "add-iam-policy-binding") if "${SA_EMAIL}" in c]
+    assert len(deployer_grants) == 1
+    # ${SA_EMAIL} is the account deploy.yml authenticates as (GCP_SERVICE_ACCOUNT).
+    bootstrap_text = _BOOTSTRAP.read_text(encoding="utf-8")
+    assert re.search(r"^\s*GCP_SERVICE_ACCOUNT\s+= \$\{SA_EMAIL\}$", bootstrap_text, re.M)
 
     # Documents are kept until an admin or the tutor deletes them: the 90-day
     # delete rule stays on the uploads bucket alone.
@@ -198,3 +272,208 @@ def test_gcp_bootstrap_creates_private_evidence_bucket() -> None:
     assert project_roles
     assert len(project_roles["roles"].split()) == 3
     assert not any(role.startswith("roles/storage.") for role in project_roles["roles"].split())
+
+
+def _project_number_step() -> tuple[dict[str, Any], str, str]:
+    """The step that derives the project number: ``(step, provider env name, output name)``.
+
+    Found through the deploy step's own ``LEMELY_STORAGE__GCS_PROJECT_NUMBER`` reference,
+    and its provider input through the expression the auth step uses, so the test follows
+    the workflow's wiring instead of assuming step or variable names.
+    """
+    env_vars = _deploy_env_vars()
+    assert _NUMBER_VAR in env_vars, "deploy.yml does not set the project number"
+    reference = _STEP_OUTPUT.match(env_vars[_NUMBER_VAR])
+    assert reference, f"{_NUMBER_VAR} is not a step output: {env_vars[_NUMBER_VAR]}"
+    steps = _deploy_steps()
+    step = steps[_step_index(reference["id"])]
+    auth = next(
+        s for s in steps if str(s.get("uses", "")).startswith("google-github-actions/auth@")
+    )
+    provider_expression = auth["with"]["workload_identity_provider"]
+    names = [name for name, value in step.get("env", {}).items() if value == provider_expression]
+    assert len(names) == 1, "the step does not read the auth step's workload identity provider"
+    return step, names[0], reference["output"]
+
+
+def test_deploy_sets_the_project_number_for_both_environments(tmp_path: Path) -> None:
+    """Finding 3: the backend compares the evidence bucket's owner with this number.
+
+    Derived before the rollout, on every run of the job (no condition), from the
+    workload identity provider's resource name, which google-github-actions/auth
+    requires in its full ``projects/<number>/...`` form. One project hosts both
+    environments (gcp-bootstrap.sh creates staging and production in one
+    PROJECT_ID), so one number serves both.
+    """
+    step, provider_env, output = _project_number_step()
+    reference = _STEP_OUTPUT.match(_deploy_env_vars()[_NUMBER_VAR])
+    assert reference is not None
+    assert _step_index(reference["id"]) < _step_index("deploy")
+    assert "if" not in step
+    # Inputs arrive through `env`, never templated into the script text.
+    assert "${{" not in step["run"]
+
+    process, written = _run_step(step, {provider_env: _PROVIDER}, tmp_path)
+
+    assert process.returncode == 0, process.stderr
+    assert written == {output: _NUMBER}
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        "",  # an unset `vars.` reference renders as the empty string
+        _PROJECT,
+        _PROVIDER.replace(_NUMBER, _PROJECT),  # a project id where the number belongs
+        _PROVIDER.replace(_NUMBER, f"{_NUMBER}x"),
+        _PROVIDER.rsplit("/providers/", 1)[0],  # the pool, not the provider
+        f"{_PROVIDER}\nprojects/1/x",
+    ],
+)
+def test_deploy_stops_on_a_provider_without_a_project_number(tmp_path: Path, provider: str) -> None:
+    """No guessed or empty number reaches the service: the job fails before the rollout."""
+    step, provider_env, _ = _project_number_step()
+
+    process, written = _run_step(step, {provider_env: provider}, tmp_path)
+
+    assert process.returncode != 0
+    assert written == {}
+    assert "GCP_WORKLOAD_IDENTITY_PROVIDER" in process.stdout + process.stderr
+
+
+_PRIVATE_AND_OURS = {
+    "projectNumber": _NUMBER,
+    "iamConfiguration": {
+        "publicAccessPrevention": "enforced",
+        "uniformBucketLevelAccess": {"enabled": True},
+    },
+}
+
+
+def _with(**changes: Any) -> dict[str, Any]:
+    """:data:`_PRIVATE_AND_OURS` with top-level or ``iamConfiguration`` fields replaced."""
+    resource: dict[str, Any] = json.loads(json.dumps(_PRIVATE_AND_OURS))
+    for key, value in changes.items():
+        target = resource if key == "projectNumber" else resource["iamConfiguration"]
+        if value is None:
+            target.pop(key, None)
+        else:
+            target[key] = value
+    return resource
+
+
+def _evidence_check_step() -> tuple[int, dict[str, Any], str, str]:
+    """The deploy job's evidence bucket check: ``(index, step, bucket env, number env)``.
+
+    Found by its inputs: the exact bucket expression the service is given and the
+    exact project number the service is given, so the check cannot judge another bucket
+    or another number than the backend will use.
+    """
+    env_vars = _deploy_env_vars()
+    found = [
+        (index, step)
+        for index, step in enumerate(_deploy_steps())
+        if env_vars[_EVIDENCE_VAR] in step.get("env", {}).values()
+        and env_vars[_NUMBER_VAR] in step.get("env", {}).values()
+    ]
+    assert len(found) == 1, "no single deploy-backend step checks the evidence bucket"
+    index, step = found[0]
+    env = step["env"]
+    bucket_env = next(k for k, v in env.items() if v == env_vars[_EVIDENCE_VAR])
+    number_env = next(k for k, v in env.items() if v == env_vars[_NUMBER_VAR])
+    return index, step, bucket_env, number_env
+
+
+def _fake_gcloud_and_curl(tmp_path: Path) -> Path:
+    """A ``bin`` directory whose ``gcloud`` mints a token and whose ``curl`` answers buckets.get.
+
+    ``curl`` appends its arguments to ``$FAKE_CURL_ARGS``; it fails like ``curl --fail``
+    on a 403 when ``$FAKE_CURL_FAIL`` is set, and otherwise prints ``$FAKE_BUCKET_JSON``.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gcloud").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1 $2" = "auth print-access-token" ]; then echo fake-token; exit 0; fi\n'
+        'echo "unexpected: gcloud $*" >&2; exit 2\n',
+        encoding="utf-8",
+    )
+    (bin_dir / "curl").write_text(
+        "#!/bin/sh\n"
+        'printf "%s\\n" "$@" >> "$FAKE_CURL_ARGS"\n'
+        'if [ -n "$FAKE_CURL_FAIL" ]; then\n'
+        '  echo "curl: (22) The requested URL returned error: 403" >&2; exit 22\n'
+        "fi\n"
+        'printf "%s" "$FAKE_BUCKET_JSON"\n',
+        encoding="utf-8",
+    )
+    for tool in ("gcloud", "curl"):
+        (bin_dir / tool).chmod(0o755)
+    return bin_dir
+
+
+@pytest.mark.parametrize(
+    ("resource", "curl_fails", "passes", "said"),
+    [
+        (_PRIVATE_AND_OURS, False, True, ""),
+        (_with(projectNumber="987654321098"), False, False, "987654321098"),
+        (_with(projectNumber=None), False, False, _NUMBER),
+        (_with(publicAccessPrevention="inherited"), False, False, "inherited"),
+        (_with(publicAccessPrevention=None), False, False, "public access prevention"),
+        (_with(uniformBucketLevelAccess={"enabled": False}), False, False, "uniform"),
+        (_PRIVATE_AND_OURS, True, False, "gcp-bootstrap.sh"),
+    ],
+    ids=[
+        "private-and-ours",
+        "foreign-owner",
+        "no-owner",
+        "prevention-inherited",
+        "prevention-absent",
+        "not-uniform",
+        "unreadable",
+    ],
+)
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_deploy_checks_the_evidence_bucket_is_private_and_ours(
+    tmp_path: Path,
+    environment: str,
+    resource: dict[str, Any],
+    curl_fails: bool,
+    passes: bool,
+    said: str,
+) -> None:
+    """Finding 5: a deploy whose bootstrap was never re-run must not go green.
+
+    The check sits with the uploads-bucket health check, after the rollout, and judges
+    the privacy-and-owner result the backend's own first-use check judges, not mere
+    existence: public access prevention enforced, uniform access on, and the owning
+    project number equal to the one the service was given.
+    """
+    index, step, bucket_env, number_env = _evidence_check_step()
+    assert index > _step_index("deploy")
+    assert "if" not in step
+    assert not step.get("continue-on-error", False)
+    assert "${{" not in step["run"]
+    bucket = _render(_deploy_env_vars()[_EVIDENCE_VAR], environment, {})
+    curl_args = tmp_path / "curl_args"
+    env = {
+        "PATH": f"{_fake_gcloud_and_curl(tmp_path)}{os.pathsep}{os.environ['PATH']}",
+        bucket_env: bucket,
+        number_env: _NUMBER,
+        "FAKE_BUCKET_JSON": json.dumps(resource),
+        "FAKE_CURL_ARGS": str(curl_args),
+    }
+    if curl_fails:
+        env["FAKE_CURL_FAIL"] = "1"
+
+    process, _ = _run_step(step, env, tmp_path)
+
+    said_by_step = process.stdout + process.stderr
+    assert (process.returncode == 0) is passes, said_by_step
+    assert said in said_by_step
+    if not passes:
+        assert bucket in said_by_step
+    # The JSON API's buckets.get for exactly this bucket, as the deployer account.
+    args = curl_args.read_text(encoding="utf-8").splitlines()
+    assert any(a.startswith(f"https://storage.googleapis.com/storage/v1/b/{bucket}") for a in args)
+    assert "Authorization: Bearer fake-token" in args

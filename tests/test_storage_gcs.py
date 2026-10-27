@@ -24,7 +24,7 @@ from google.cloud.storage.retry import DEFAULT_RETRY_IF_GENERATION_SPECIFIED
 
 from lemely.io.storage import StorageObjectNotFoundError
 from lemely.io.storage_gcs import GcsStorageBackend
-from lemely.runtime.config import StorageSettings
+from lemely.runtime.config import Settings, StorageSettings
 from lemely.runtime.errors import ConfigError, ExternalServiceError
 
 
@@ -380,13 +380,18 @@ def test_signed_url_for_user_adc_raises_rather_than_attribute_error() -> None:
 # settings default `lemely-tutor-evidence` is a name anyone can create: the gcs
 # backend refuses it outright, and before its first use of whichever evidence
 # bucket it is given it reads that bucket's settings and refuses one that does
-# not enforce public access prevention and uniform bucket-level access. The
-# bucket metadata below is a real `storage.Bucket` parsed from a buckets.get
-# resource, so the attribute names are the SDK's, not a mock's.
+# not enforce public access prevention and uniform bucket-level access, or that
+# belongs to another project than `storage.gcs_project_number`. The bucket
+# metadata below is a real `storage.Bucket` parsed from a buckets.get resource,
+# so the attribute names are the SDK's, not a mock's.
 # ---------------------------------------------------------------------------
 
 _EVIDENCE = "proj-1234-tutor-evidence-staging"
 _EVIDENCE_PATH = "tutor-evidence/t/e.pdf"
+# This project's number, and a stranger's. The JSON API sends `projectNumber`
+# as a string; the setting is an int.
+_PROJECT_NUMBER = 123456789012
+_FOREIGN_PROJECT_NUMBER = 987654321098
 
 _EVIDENCE_OPS: dict[str, Callable[[GcsStorageBackend], object]] = {
     "upload": lambda b: b.upload(_EVIDENCE, _EVIDENCE_PATH, b"%PDF-1.4", "application/pdf"),
@@ -398,14 +403,35 @@ _EVIDENCE_OPS: dict[str, Callable[[GcsStorageBackend], object]] = {
 }
 
 
-def _bucket_metadata(public_access_prevention: str | None, *, uniform: bool) -> storage.Bucket:
-    """What ``Client.get_bucket`` returns for a bucket with these two settings, offline."""
+def _bucket_metadata(
+    public_access_prevention: str | None,
+    *,
+    uniform: bool,
+    project_number: int | None = _PROJECT_NUMBER,
+) -> storage.Bucket:
+    """What ``Client.get_bucket`` returns for a bucket with these settings, offline.
+
+    ``project_number`` is the owning project, sent as the JSON API sends it (a
+    string); ``None`` leaves the field out.
+    """
     iam_configuration: dict[str, object] = {"uniformBucketLevelAccess": {"enabled": uniform}}
     if public_access_prevention is not None:
         iam_configuration["publicAccessPrevention"] = public_access_prevention
+    properties: dict[str, object] = {"name": _EVIDENCE, "iamConfiguration": iam_configuration}
+    if project_number is not None:
+        properties["projectNumber"] = str(project_number)
     bucket = storage.Bucket(MagicMock(), name=_EVIDENCE)
-    bucket._set_properties({"name": _EVIDENCE, "iamConfiguration": iam_configuration})
+    bucket._set_properties(properties)
     return bucket
+
+
+def _evidence_backend(
+    client: MagicMock, *, project_number: int | None = _PROJECT_NUMBER
+) -> GcsStorageBackend:
+    """A backend whose evidence bucket is :data:`_EVIDENCE`, in project ``project_number``."""
+    return GcsStorageBackend(
+        tutor_evidence_bucket=_EVIDENCE, project_number=project_number, _client=client
+    )
 
 
 def _evidence_client(metadata: storage.Bucket) -> tuple[MagicMock, MagicMock]:
@@ -428,10 +454,22 @@ def test_gcs_backend_refuses_default_evidence_bucket(spell: Callable[[str], str]
     assert client.mock_calls == []
 
 
-def test_gcs_backend_accepts_a_project_owned_evidence_bucket_without_touching_it() -> None:
-    """Construction stays offline (``get_storage_backend`` relies on it): nothing is called."""
+@pytest.mark.parametrize("project_number", [_PROJECT_NUMBER, None])
+def test_gcs_backend_accepts_a_project_owned_evidence_bucket_without_touching_it(
+    project_number: int | None,
+) -> None:
+    """Construction stays offline (``get_storage_backend`` relies on it): nothing is called.
+
+    Not even without a project number: that refuses the evidence bucket at its first use,
+    never the backend, so scans and avatars keep working.
+    """
     client = MagicMock()
-    GcsStorageBackend(project="proj-1234", tutor_evidence_bucket=_EVIDENCE, _client=client)
+    GcsStorageBackend(
+        project="proj-1234",
+        tutor_evidence_bucket=_EVIDENCE,
+        project_number=project_number,
+        _client=client,
+    )
     assert client.mock_calls == []
 
 
@@ -444,7 +482,7 @@ def test_evidence_bucket_public_access_prevention_enforced(
     op: str, public_access_prevention: str | None, uniform: bool
 ) -> None:
     client, blob = _evidence_client(_bucket_metadata(public_access_prevention, uniform=uniform))
-    backend = GcsStorageBackend(tutor_evidence_bucket=_EVIDENCE, _client=client)
+    backend = _evidence_backend(client)
 
     with pytest.raises(
         ExternalServiceError, match=f"Refusing to use the tutor evidence bucket {_EVIDENCE}"
@@ -459,8 +497,9 @@ def test_evidence_bucket_public_access_prevention_enforced(
 
 @pytest.mark.parametrize("op", sorted(_EVIDENCE_OPS))
 def test_private_evidence_bucket_is_checked_once_then_used(op: str) -> None:
+    """Private and owned by this project (the JSON API's string number equals the setting)."""
     client, blob = _evidence_client(_bucket_metadata("enforced", uniform=True))
-    backend = GcsStorageBackend(tutor_evidence_bucket=_EVIDENCE, _client=client)
+    backend = _evidence_backend(client)
 
     _EVIDENCE_OPS[op](backend)
     _EVIDENCE_OPS[op](backend)
@@ -468,6 +507,87 @@ def test_private_evidence_bucket_is_checked_once_then_used(op: str) -> None:
     client.get_bucket.assert_called_once_with(_EVIDENCE, timeout=30.0)
     assert client.bucket.call_count == 2
     assert all(c.args == (_EVIDENCE,) for c in client.bucket.call_args_list)
+
+
+@pytest.mark.parametrize("owner", [_FOREIGN_PROJECT_NUMBER, None])
+@pytest.mark.parametrize("op", sorted(_EVIDENCE_OPS))
+def test_evidence_bucket_owned_by_another_project_is_refused(op: str, owner: int | None) -> None:
+    """Review finding 3: both settings enforced is not enough when a stranger owns the bucket.
+
+    Whoever registers ``<project>-tutor-evidence-<env>`` first can enforce public access
+    prevention and uniform access and grant our runtime account access to it. Only the owning
+    project number tells that bucket from ours, so a foreign number (or none at all) is refused
+    the same fail-closed way, and the refusal is not remembered.
+    """
+    client, blob = _evidence_client(
+        _bucket_metadata("enforced", uniform=True, project_number=owner)
+    )
+    backend = _evidence_backend(client)
+
+    for _ in range(2):
+        with pytest.raises(ExternalServiceError) as caught:
+            _EVIDENCE_OPS[op](backend)
+        message = str(caught.value)
+        assert message.startswith(f"Refusing to use the tutor evidence bucket {_EVIDENCE}")
+        if owner is None:
+            assert "reports no owning project number" in message
+        else:
+            assert f"belongs to project number {owner}" in message
+        assert f"this project's {_PROJECT_NUMBER}" in message
+        assert "LEMELY_STORAGE__GCS_PROJECT_NUMBER" in message
+
+    assert client.get_bucket.call_count == 2
+    client.bucket.assert_not_called()
+    assert blob.mock_calls == []
+
+
+@pytest.mark.parametrize("op", sorted(_EVIDENCE_OPS))
+def test_unset_project_number_refuses_the_evidence_bucket(op: str) -> None:
+    """Fail closed: with no project number, ownership cannot be shown, so nothing is read.
+
+    Refused before the settings read, and again on the next request, so setting
+    ``LEMELY_STORAGE__GCS_PROJECT_NUMBER`` and redeploying is the whole fix.
+    """
+    client, blob = _evidence_client(_bucket_metadata("enforced", uniform=True))
+    backend = _evidence_backend(client, project_number=None)
+
+    for _ in range(2):
+        with pytest.raises(
+            ExternalServiceError,
+            match=(
+                f"Refusing to use the tutor evidence bucket {_EVIDENCE}: "
+                "LEMELY_STORAGE__GCS_PROJECT_NUMBER is not set"
+            ),
+        ):
+            _EVIDENCE_OPS[op](backend)
+
+    client.get_bucket.assert_not_called()
+    client.bucket.assert_not_called()
+    assert blob.mock_calls == []
+
+
+def test_check_tutor_evidence_bucket_runs_the_first_use_check_now() -> None:
+    """The doctor's entry point: the same check, run on demand, remembered on a pass."""
+    client, blob = _evidence_client(_bucket_metadata("enforced", uniform=True))
+    backend = _evidence_backend(client)
+
+    backend.check_tutor_evidence_bucket()
+    _EVIDENCE_OPS["upload"](backend)
+
+    client.get_bucket.assert_called_once_with(_EVIDENCE, timeout=30.0)
+    blob.upload_from_string.assert_called_once()
+
+    foreign = _evidence_backend(
+        _evidence_client(_bucket_metadata("enforced", uniform=True, project_number=1))[0]
+    )
+    with pytest.raises(ExternalServiceError, match="belongs to project number 1"):
+        foreign.check_tutor_evidence_bucket()
+
+
+def test_check_tutor_evidence_bucket_without_an_evidence_bucket_checks_nothing() -> None:
+    client = MagicMock()
+    GcsStorageBackend(_client=client).check_tutor_evidence_bucket()
+    assert client.mock_calls == []
 
 
 @pytest.mark.parametrize(
@@ -487,7 +607,7 @@ def test_unreadable_evidence_bucket_fails_closed_and_is_checked_again(
     """
     client, blob = _client_with_blob()
     client.get_bucket.side_effect = error
-    backend = GcsStorageBackend(tutor_evidence_bucket=_EVIDENCE, _client=client)
+    backend = _evidence_backend(client)
 
     for _ in range(2):
         with pytest.raises(ExternalServiceError, match=message):
@@ -497,17 +617,167 @@ def test_unreadable_evidence_bucket_fails_closed_and_is_checked_again(
     client.bucket.assert_not_called()
 
 
-def test_evidence_check_leaves_the_other_buckets_alone() -> None:
-    """Regression guard: uploads and avatars are not checked (their routes are unchanged)."""
-    client, blob = _evidence_client(_bucket_metadata("unspecified", uniform=False))
-    backend = GcsStorageBackend(tutor_evidence_bucket=_EVIDENCE, _client=client)
+@pytest.mark.parametrize(
+    ("owner", "project_number"),
+    [
+        (None, _PROJECT_NUMBER),
+        (_FOREIGN_PROJECT_NUMBER, _PROJECT_NUMBER),
+        (_PROJECT_NUMBER, None),
+    ],
+)
+def test_evidence_check_leaves_the_other_buckets_alone(
+    owner: int | None, project_number: int | None
+) -> None:
+    """Regression guard: uploads and avatars are not checked (their routes are unchanged).
+
+    Not for privacy, not for ownership, and not for an unset project number: only the
+    evidence bucket is refused.
+    """
+    client, blob = _evidence_client(
+        _bucket_metadata("unspecified", uniform=False, project_number=owner)
+    )
+    backend = _evidence_backend(client, project_number=project_number)
 
     backend.upload("proj-1234-avatars-staging", "a.png", b"png", "image/png")
     backend.download("proj-1234-uploads-staging", "k/scan.pdf")
     backend.delete("proj-1234-uploads-staging", "k/scan.pdf")
+    backend.create_signed_url("proj-1234-avatars-staging", "a.png", 3600)
 
     client.get_bucket.assert_not_called()
-    assert client.bucket.call_count == 3
+    assert client.bucket.call_count == 4
+    assert {c.args[0] for c in client.bucket.call_args_list} == {
+        "proj-1234-avatars-staging",
+        "proj-1234-uploads-staging",
+    }
+
+
+# ---------------------------------------------------------------------------
+# `lemely doctor`'s evidence line (review finding 5): the gcs half of
+# `check_tutor_evidence_storage`, which runs the backend's own first-use check.
+# The local half is exercised through the doctor in tests/test_cli_doctor.py.
+# ---------------------------------------------------------------------------
+
+
+def _gcs_settings(**storage: object) -> Settings:
+    base = Settings()
+    update: dict[str, object] = {"backend": "gcs", "tutor_evidence_bucket": _EVIDENCE}
+    update.update(storage)
+    return base.model_copy(update={"storage": base.storage.model_copy(update=update)})
+
+
+def _client_must_not_be_built(*_: object, **__: object) -> None:
+    raise AssertionError("this doctor check must not construct a storage client")
+
+
+@pytest.mark.parametrize(
+    ("storage_update", "named"),
+    [
+        (
+            {"tutor_evidence_bucket": "lemely-tutor-evidence", "gcs_project_number": 1},
+            "LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET",
+        ),
+        ({"gcs_project_number": None}, "LEMELY_STORAGE__GCS_PROJECT_NUMBER"),
+    ],
+)
+@pytest.mark.parametrize("no_network", [True, False])
+def test_doctor_evidence_check_refuses_offline_misconfiguration(
+    monkeypatch: pytest.MonkeyPatch,
+    storage_update: dict[str, object],
+    named: str,
+    no_network: bool,
+) -> None:
+    """The placeholder name and an unset project number fail without any network call."""
+    from lemely.io.storage import check_tutor_evidence_storage
+
+    monkeypatch.setattr("google.cloud.storage.Client", _client_must_not_be_built)
+
+    ok, detail = check_tutor_evidence_storage(
+        _gcs_settings(**storage_update), no_network=no_network
+    )
+
+    assert ok is False
+    assert named in detail
+
+
+def test_doctor_evidence_check_no_network_skips_the_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lemely.io.storage import check_tutor_evidence_storage
+
+    monkeypatch.setattr("google.cloud.storage.Client", _client_must_not_be_built)
+
+    ok, detail = check_tutor_evidence_storage(
+        _gcs_settings(gcs_project_number=_PROJECT_NUMBER), no_network=True
+    )
+
+    assert ok is True
+    assert _EVIDENCE in detail
+    assert "not probed" in detail
+
+
+@pytest.mark.parametrize(
+    ("metadata", "ok_expected", "in_detail"),
+    [
+        (_bucket_metadata("enforced", uniform=True), True, f"project {_PROJECT_NUMBER}"),
+        (
+            _bucket_metadata("enforced", uniform=True, project_number=_FOREIGN_PROJECT_NUMBER),
+            False,
+            f"belongs to project number {_FOREIGN_PROJECT_NUMBER}",
+        ),
+        (_bucket_metadata("inherited", uniform=True), False, "public access prevention"),
+    ],
+)
+def test_doctor_evidence_check_reports_the_privacy_and_owner_result(
+    monkeypatch: pytest.MonkeyPatch,
+    metadata: storage.Bucket,
+    ok_expected: bool,
+    in_detail: str,
+) -> None:
+    """Not just existence: the doctor reports what the backend's first-use check decides."""
+    from lemely.io.storage import check_tutor_evidence_storage
+
+    client = MagicMock()
+    client.get_bucket.return_value = metadata
+    built: list[dict[str, object]] = []
+
+    def _client(**kwargs: object) -> MagicMock:
+        built.append(kwargs)
+        return client
+
+    monkeypatch.setattr("google.cloud.storage.Client", _client)
+
+    ok, detail = check_tutor_evidence_storage(
+        _gcs_settings(gcs_project_number=_PROJECT_NUMBER, gcs_project="proj-1234"),
+        no_network=False,
+    )
+
+    assert ok is ok_expected
+    assert _EVIDENCE in detail
+    assert in_detail in detail
+    assert built == [{"project": "proj-1234"}]
+    client.get_bucket.assert_called_once_with(_EVIDENCE, timeout=30.0)
+    # A probe, never an object operation.
+    client.bucket.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [Forbidden("caller lacks storage.buckets.get"), DefaultCredentialsError("no adc"), OSError()],
+)
+def test_doctor_evidence_check_reports_a_failed_probe(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """Any failure to read the bucket (or to build the client) is a failed check, not a crash."""
+    from lemely.io.storage import check_tutor_evidence_storage
+
+    client = MagicMock()
+    client.get_bucket.side_effect = error
+    monkeypatch.setattr("google.cloud.storage.Client", lambda **_: client)
+
+    ok, detail = check_tutor_evidence_storage(
+        _gcs_settings(gcs_project_number=_PROJECT_NUMBER), no_network=False
+    )
+
+    assert ok is False
+    assert _EVIDENCE in detail
 
 
 def test_get_storage_backend_hands_the_evidence_bucket_to_gcs(

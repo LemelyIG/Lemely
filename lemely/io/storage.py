@@ -124,4 +124,57 @@ def check_storage(settings: Settings, *, no_network: bool) -> tuple[bool, str]:
     return True, f"gcs://{' + '.join(buckets)}"
 
 
-__all__ = ["StorageBackend", "StorageObjectNotFoundError", "check_storage"]
+def check_tutor_evidence_storage(settings: Settings, *, no_network: bool) -> tuple[bool, str]:
+    """``lemely doctor``'s tutor evidence check: ``(passed, detail)``.
+
+    Separate from :func:`check_storage` because the evidence bucket is judged
+    differently: ``local``: its directory under the storage root is writable.
+    ``gcs``: the checks the backend runs before its first evidence operation
+    (:mod:`lemely.io.storage_gcs`, SC-22). The placeholder name and an unset
+    ``storage.gcs_project_number`` fail offline; unless ``no_network``, the
+    bucket must then enforce public access prevention and uniform access and
+    belong to that project. The result is the privacy-and-owner decision the
+    upload route would get, not merely that the bucket answers, so a deploy
+    whose bootstrap was never re-run shows here instead of as a 503 on upload.
+    """
+    bucket = settings.storage.tutor_evidence_bucket
+    if settings.storage.backend == "local":
+        directory = settings.paths.output_dir / "storage" / bucket
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return False, str(exc)
+        return os.access(directory, os.W_OK), str(directory)
+
+    from lemely.io.storage_gcs import GcsStorageBackend
+    from lemely.runtime.errors import ConfigError
+
+    number = settings.storage.gcs_project_number
+    try:
+        backend = GcsStorageBackend(
+            project=settings.storage.gcs_project,
+            tutor_evidence_bucket=bucket,
+            project_number=number,
+        )
+    except ConfigError as exc:
+        return False, str(exc)
+    if number is None:
+        return False, (
+            f"gcs://{bucket}: LEMELY_STORAGE__GCS_PROJECT_NUMBER is not set, so every "
+            "evidence upload is refused (the bucket cannot be shown to be this project's)"
+        )
+    if no_network:
+        return True, f"gcs://{bucket} (privacy and owner not probed: --no-network)"
+    try:
+        backend.check_tutor_evidence_bucket()
+    except Exception as exc:  # any probe failure (refusal, ADC, network) surfaces as the detail
+        return False, f"gcs://{bucket}: {exc}"
+    return True, f"gcs://{bucket} (private; owned by project {number})"
+
+
+__all__ = [
+    "StorageBackend",
+    "StorageObjectNotFoundError",
+    "check_storage",
+    "check_tutor_evidence_storage",
+]

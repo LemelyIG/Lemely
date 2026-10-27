@@ -1018,9 +1018,10 @@ class StorageSettings(BaseModel):
     The evidence bucket's default is the one a deploy must never use, because
     whoever owned a bucket of that name would receive tutors' identity and
     qualification documents: the gcs backend raises ``ConfigError`` for it
-    when it is built, and checks the configured bucket is private before its
-    first use. The check is in the backend, not here, because ``local`` keeps
-    the default and a settings-level refusal would also reject a ``gcs``
+    when it is built, and checks the configured bucket is private and owned by
+    project ``gcs_project_number`` before its first use. The check is in the
+    backend, not here, because ``local`` keeps the default (and ignores the
+    number) and a settings-level refusal would also reject a ``gcs``
     configuration that never touches tutoring.
     """
 
@@ -1052,6 +1053,18 @@ class StorageSettings(BaseModel):
     # this only when ADC's own inference is wrong or absent (e.g. a
     # user-account credential with no associated quota project).
     gcs_project: OptionalCredential = None
+    # This project's NUMBER (not its id). The gcs backend uses the tutor
+    # evidence bucket only if the bucket's owning project is this one: a
+    # stranger who registered `<project>-tutor-evidence-<env>` first could make
+    # it private and grant our runtime account access, and only the owner's
+    # number tells that bucket from ours (SC-22). Unset under gcs refuses the
+    # evidence bucket (fail closed) and leaves the other buckets alone; `local`
+    # ignores it. deploy.yml derives it from the workload identity provider's
+    # resource name. Blank reads as unset, like the credentials above, because
+    # an unset GitHub Actions output renders as the empty string.
+    gcs_project_number: Annotated[int | None, BeforeValidator(_blank_to_none)] = Field(
+        default=None, ge=1
+    )
 
 
 class PushSettings(BaseModel):

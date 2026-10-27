@@ -18,14 +18,21 @@ that. The settings default ``lemely-tutor-evidence`` is a name no Lemely
 project owns, so the backend refuses it when it is built (:class:`ConfigError`).
 And before the first operation on the evidence bucket, the backend reads that
 bucket's settings and refuses one that does not enforce public access
-prevention and uniform bucket-level access (:class:`ExternalServiceError`,
-which the evidence routes already turn into "storage unavailable"), so no
-document is written to or read from a bucket that has not been shown to be
-private. That second check needs the network, so it runs on first use and not
-in the constructor, which stays offline; it touches only the evidence bucket,
-so uploads and avatars behave exactly as before. A passed check is remembered
-for the life of the backend; a failed one is not, so the next request retries
-it once the operator has fixed the bucket.
+prevention and uniform bucket-level access, or that belongs to any project but
+``storage.gcs_project_number`` (:class:`ExternalServiceError`, which the
+evidence routes already turn into "storage unavailable"), so no document is
+written to or read from a bucket that has not been shown to be private and
+ours. The owner matters because the first two settings are the bucket owner's
+to set: a stranger who registers this environment's name first can enforce
+both and grant our runtime account access, and only the owning project number
+tells that bucket from ours. With no project number configured, ownership
+cannot be shown, so the evidence bucket is refused before any read. That second
+check needs the network, so it runs on first use and not in the constructor,
+which stays offline; it touches only the evidence bucket, so uploads and
+avatars behave exactly as before. A passed check is remembered for the life of
+the backend; a failed one is not, so the next request retries it once the
+operator has fixed the bucket or the setting. ``lemely doctor`` runs the same
+check on demand through :meth:`GcsStorageBackend.check_tutor_evidence_bucket`.
 """
 
 from __future__ import annotations
@@ -61,6 +68,7 @@ class GcsStorageBackend:
         *,
         project: str | None = None,
         tutor_evidence_bucket: str | None = None,
+        project_number: int | None = None,
         _client: Any = None,
     ) -> None:
         """Optionally inject a client (tests); otherwise one is built on first use.
@@ -71,10 +79,15 @@ class GcsStorageBackend:
         credential with no associated quota project).
 
         ``tutor_evidence_bucket`` is ``settings.storage.tutor_evidence_bucket``:
-        the bucket that must be shown to be private before first use (module
-        docstring). The settings default is refused here with
+        the bucket that must be shown to be private and ours before first use
+        (module docstring). The settings default is refused here with
         :class:`ConfigError`, before anything is built. ``None`` names no
         evidence bucket and checks nothing.
+
+        ``project_number`` is ``settings.storage.gcs_project_number``, the
+        project that must own the evidence bucket. ``None`` is accepted here, so
+        scans and avatars keep working, and refuses the evidence bucket at its
+        first use.
         """
         if (
             tutor_evidence_bucket is not None
@@ -91,20 +104,41 @@ class GcsStorageBackend:
         self._raw_client: Any = _client
         self._project = project
         self._evidence_bucket = tutor_evidence_bucket
+        self._project_number = project_number
         self._evidence_bucket_private = False
 
-    def _require_private_evidence_bucket(self, bucket: str) -> None:
-        """Refuse an operation on the evidence bucket until it is shown to be private.
+    def check_tutor_evidence_bucket(self) -> None:
+        """Run the evidence bucket's first-use check now (``lemely doctor``).
 
-        Reads the bucket's settings (``storage.buckets.get``, which
+        Raises exactly what the first evidence operation would, and a pass is
+        remembered the same way. With no evidence bucket configured there is
+        nothing to check.
+        """
+        if self._evidence_bucket is not None:
+            self._require_private_evidence_bucket(self._evidence_bucket)
+
+    def _require_private_evidence_bucket(self, bucket: str) -> None:
+        """Refuse an operation on the evidence bucket until it is shown to be private and ours.
+
+        Refuses at once, without a read, when no project number is configured.
+        Otherwise reads the bucket's settings (``storage.buckets.get``, which
         ``scripts/gcp-bootstrap.sh`` grants the runtime account on this bucket
         through ``roles/storage.legacyBucketReader``) and requires public access
-        prevention ``enforced`` and uniform bucket-level access on. Any other
-        bucket returns at once. See the module docstring for why this runs on
-        first use and why only a pass is remembered.
+        prevention ``enforced``, uniform bucket-level access on, and the owning
+        project number equal to the configured one. Any other bucket returns at
+        once. See the module docstring for why this runs on first use and why
+        only a pass is remembered.
         """
         if bucket != self._evidence_bucket or self._evidence_bucket_private:
             return
+        if self._project_number is None:
+            raise ExternalServiceError(
+                f"Refusing to use the tutor evidence bucket {bucket}: "
+                "LEMELY_STORAGE__GCS_PROJECT_NUMBER is not set, so the bucket cannot be "
+                "shown to belong to this project. Set it to this project's number "
+                "(`gcloud projects describe <project-id> --format='value(projectNumber)'`); "
+                "deploy.yml derives it from GCP_WORKLOAD_IDENTITY_PROVIDER."
+            )
         try:
             metadata = self._client().get_bucket(bucket, timeout=_TRANSFER_TIMEOUT_SECONDS)
         except NotFound as exc:
@@ -129,6 +163,20 @@ class GcsStorageBackend:
                 f"`gcloud storage buckets update gs://{bucket} "
                 "--uniform-bucket-level-access --public-access-prevention`, or "
                 "scripts/gcp-bootstrap.sh."
+            )
+        owner = metadata.project_number
+        if owner != self._project_number:
+            found = (
+                "reports no owning project number"
+                if owner is None
+                else f"belongs to project number {owner}"
+            )
+            raise ExternalServiceError(
+                f"Refusing to use the tutor evidence bucket {bucket}: it {found}, not this "
+                f"project's {self._project_number} (LEMELY_STORAGE__GCS_PROJECT_NUMBER). "
+                "Bucket names are global, so another project may have registered this name "
+                "first. Do not use it: create a private bucket under another name in this "
+                "project and point GCS_TUTOR_EVIDENCE_BUCKET at it (docs/deployment.md §5.9)."
             )
         self._evidence_bucket_private = True
 
