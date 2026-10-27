@@ -100,6 +100,14 @@ export interface SeedContract {
      * for journeys that need a returning, already-linked parent instead.
      */
     declining: SeedStudent & { parentInviteCode: string }
+    /**
+     * A student with a reusable parent code and NO linked parent, for
+     * `parent-journey.spec.ts` (a) to redeem. Redeeming `declining`'s code would
+     * link a second parent to the seeded parent's child and notify the seeded
+     * parent ("A parent was added"), which breaks `staff-inbox.spec.ts`'s
+     * empty-inbox assertion. Not on any roster, no attempts.
+     */
+    inviteOnly: SeedAccount & { parentInviteCode: string }
     inactive: SeedStudent
     control: SeedStudent
     correctedPaper: SeedStudent

@@ -50,8 +50,10 @@ scenario the Playwright/Puppeteer harnesses need across all 5 roles:
   this script's own single-purpose transaction since there is no invite
   redemption in the loop to piggyback on. The ``declining`` student's reusable
   parent code (:meth:`~lemely.db.invite_repo.InviteService.get_or_create_parent_code`)
-  is minted and emitted too, so ``web/e2e/parent-journey.spec.ts`` can drive
-  the real join-by-code flow rather than starting from an already-linked pair.
+  is minted and emitted too, as is the ``inviteOnly`` student's (a student with
+  no linked parent): ``web/e2e/parent-journey.spec.ts`` drives the real
+  join-by-code flow through the ``inviteOnly`` code, so the seeded parent is
+  never told that another parent was added to its child.
 * a **school_admin**, minted directly via :meth:`AuthService.signup` (self-
   service signup is student-only; teacher/school_admin only ever come from a
   direct service call — this is what P3.7 chunk d did).
@@ -133,6 +135,9 @@ path::
                       "displayName": "...", "accessToken": "...",
                       "expectedAtRiskReasons": ["declining_trend"],
                       "parentInviteCode": "ABC123"},
+        "inviteOnly": {"userId": "...", "email": "...", "password": "...",
+                       "displayName": "...", "accessToken": "...",
+                       "parentInviteCode": "ABC123"},
         "inactive":  {..., "expectedAtRiskReasons": ["inactive"]},
         "control":   {..., "expectedAtRiskReasons": []},
         "correctedPaper": {..., "expectedAtRiskReasons": [],
@@ -2718,6 +2723,17 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     _log("Minting the declining student's reusable parent invite code")
     declining_parent_invite = invite_service.get_or_create_parent_code(declining_uuid)
 
+    # A SECOND student whose only job is to be joined through its parent code by
+    # `parent-journey.spec.ts` (a). No parent is linked to it. Redeeming the
+    # `declining` code instead would link a second parent to the seeded parent's
+    # child, and the seeded parent is then told ("A parent was added", SPEC §b.4),
+    # which fills the inbox that `staff-inbox.spec.ts` asserts is empty.
+    _log("Signing up the invite-only student (a parent code, no linked parent)")
+    invite_only = _signup_account("invite-only", Role.student, run_tag)
+    invite_only_uuid = uuid.UUID(invite_only["userId"])
+    student_profile_service.mark_onboarding_complete(invite_only_uuid)
+    invite_only_parent_invite = invite_service.get_or_create_parent_code(invite_only_uuid)
+
     _log("Locating the review-queue row the inactive attempt's fan-out created (T-08)")
     review_rows = review_service.list_queue(
         uuid.UUID(teacher["userId"]),
@@ -3058,6 +3074,10 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
             **declining,
             "expectedAtRiskReasons": [AtRiskReason.DECLINING_TREND.value],
             "parentInviteCode": declining_parent_invite.code,
+        },
+        "inviteOnly": {
+            **invite_only,
+            "parentInviteCode": invite_only_parent_invite.code,
         },
         "inactive": {
             **inactive,

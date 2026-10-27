@@ -73,6 +73,8 @@ const SHAPE: Record<string, "string" | "number"> = {
 
   ...account("students.declining"),
   "students.declining.parentInviteCode": "string",
+  ...account("students.inviteOnly"),
+  "students.inviteOnly.parentInviteCode": "string",
   ...account("students.inactive"),
   ...account("students.control"),
   ...account("students.correctedPaper"),

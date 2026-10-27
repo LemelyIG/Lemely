@@ -1632,3 +1632,35 @@ class TestMainKeepsStdoutToTheJson:
         out, err = capsys.readouterr()
         assert json.loads(out) == {"runTag": "x"}
         assert "tutor_grant_created" in err
+
+
+_E2E_DIR = Path(__file__).resolve().parents[1] / "web" / "e2e"
+
+
+class TestInviteOnlyStudentKeepsTheSeededParentsInboxEmpty:
+    """T32: redeeming `declining`'s code notifies the seeded parent (SPEC §b.4)."""
+
+    def test_the_contract_declares_the_invite_only_students_code(self) -> None:
+        spec = (_E2E_DIR / "seed-contract.spec.ts").read_text(encoding="utf-8")
+        assert '"students.inviteOnly.parentInviteCode": "string"' in spec
+        assert 'account("students.inviteOnly")' in spec
+        assert "inviteOnly:" in (_E2E_DIR / "seed.ts").read_text(encoding="utf-8")
+
+    def test_the_seed_mints_a_code_for_a_student_no_parent_is_linked_to(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "seed_e2e.py").read_text(
+            encoding="utf-8"
+        )
+        assert '_signup_account("invite-only", Role.student, run_tag)' in source
+        assert "get_or_create_parent_code(invite_only_uuid)" in source
+        # The seeded parent is linked to exactly one student, and it is not this one.
+        assert source.count("link_in_session(") == 1
+        assert "link_in_session(link_session, parent_uuid, declining_uuid)" in source
+
+    def test_the_fresh_visitor_journey_redeems_that_code_and_not_the_declining_one(self) -> None:
+        text = (_E2E_DIR / "parent-journey.spec.ts").read_text(encoding="utf-8")
+        first = text.index('test("a fresh visitor joins')
+        second = text.index('test("the seeded parent sees')
+        fresh_visitor = text[first:second]
+        assert "seed.students.inviteOnly" in fresh_visitor
+        assert "declining" not in fresh_visitor.replace("`declining`", "")
+        assert "parentInviteCode" in fresh_visitor  # non-vacuity: the code is still redeemed

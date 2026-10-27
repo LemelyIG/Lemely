@@ -29,7 +29,10 @@ test("a fresh visitor joins via a child's invite code, signs up with an emailed 
 }, testInfo) => {
   const errors = watchConsole(page)
   const seed = readSeed()
-  const declining = seed.students.declining
+  // The `inviteOnly` student, not `declining`: redeeming `declining`'s code links a second
+  // parent to the seeded parent's child, and the seeded parent is then notified ("A parent was
+  // added"), which leaves `staff-inbox.spec.ts` an inbox that is no longer empty.
+  const invited = seed.students.inviteOnly
 
   // Run-tagged (seed_e2e.py mints a fresh `runTag` every seed run) so a
   // re-run of this suite against a re-seeded stack never collides with a
@@ -47,13 +50,13 @@ test("a fresh visitor joins via a child's invite code, signs up with an emailed 
 
   // G-08: a signed-out visitor opens the child's own invite link directly,
   // exactly as a parent would from a link their child shared with them.
-  await page.goto(`/join/${declining.parentInviteCode}`)
+  await page.goto(`/join/${invited.parentInviteCode}`)
   await expect(
-    page.getByText(`${declining.displayName} invited you to follow their progress on Lemely`),
+    page.getByText(`${invited.displayName} invited you to follow their progress on Lemely`),
   ).toBeVisible({ timeout: 15_000 })
 
   await page.getByRole("button", { name: "Create your parent account" }).click()
-  await expect(page).toHaveURL(new RegExp(`/signup/parent\\?code=${declining.parentInviteCode}$`), {
+  await expect(page).toHaveURL(new RegExp(`/signup/parent\\?code=${invited.parentInviteCode}$`), {
     timeout: 15_000,
   })
 
@@ -94,14 +97,14 @@ test("a fresh visitor joins via a child's invite code, signs up with an emailed 
   await page.getByRole("button", { name: "Create account" }).click()
 
   // `POST /auth/parent/signup` creates the account (email already verified),
-  // links it to `declining` and signs in, all in one call — Children.tsx's
+  // links it to the invited student and signs in, all in one call — Children.tsx's
   // own single-child redirect (P-01 -> P-02, `<Navigate replace>`) then sends
   // this brand-new parent straight past the children list onto the one child
   // they just gained access to.
-  await expect(page).toHaveURL(new RegExp(`/parent/children/${declining.userId}$`), {
+  await expect(page).toHaveURL(new RegExp(`/parent/children/${invited.userId}$`), {
     timeout: 15_000,
   })
-  await expect(page.getByRole("heading", { name: declining.displayName })).toBeVisible({
+  await expect(page.getByRole("heading", { name: invited.displayName })).toBeVisible({
     timeout: 15_000,
   })
 
