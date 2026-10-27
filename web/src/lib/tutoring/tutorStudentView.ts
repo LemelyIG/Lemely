@@ -99,6 +99,24 @@ export function isStudentNotFound(error: unknown): boolean {
   return known !== null && known.status === 404 && known.code === "not_found"
 }
 
+/** T-16, where a teacher starts a tutor profile. */
+export const TUTOR_PROFILE_PATH = "/teacher/tutoring/profile"
+
+/** T-19 and T-20, for a teacher who has not started a tutor profile (the API's 404 `no_tutor_profile`). */
+export const NO_TUTOR_PROFILE_HEADING = "You don't have a tutor profile yet"
+export const NO_TUTOR_PROFILE_BODY = "Students share their progress with tutors who have a profile. Create yours and they can find you."
+export const NO_TUTOR_PROFILE_ACTION = "Set up your profile"
+
+/**
+ * Whether the API refused because this teacher has no tutor profile: its 404
+ * `no_tutor_profile` and nothing else. That is a state to start from, not a
+ * failure; any other error keeps the failure state.
+ */
+export function isNoTutorProfile(error: unknown): boolean {
+  const known = tutoringErrorOf(error)
+  return known !== null && known.status === 404 && known.code === "no_tutor_profile"
+}
+
 // ── Dates ───────────────────────────────────────────────────────────────────
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const

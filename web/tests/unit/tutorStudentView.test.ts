@@ -12,11 +12,16 @@ import { TBody, TR } from "@/components/ui/table"
 import {
   MY_STUDENTS_INTRO,
   NO_STUDENTS_LINE,
+  NO_TUTOR_PROFILE_ACTION,
+  NO_TUTOR_PROFILE_BODY,
+  NO_TUTOR_PROFILE_HEADING,
+  TUTOR_PROFILE_PATH,
   TUTOR_STUDENTS_PATH,
   TUTOR_STUDENT_CRUMB,
   TUTOR_STUDENT_TITLE,
   accessEndedHeading,
   dayLabel,
+  isNoTutorProfile,
   isStudentNotFound,
   sharedLine,
   studentLoadFailureMessage,
@@ -592,10 +597,9 @@ describe("access_ended is one generic state", () => {
     expect(isStudentNotFound(new ApiError(500, "500"))).toBe(false)
     expect(isStudentNotFound(new Error("boom"))).toBe(false)
 
+    // Not "not found": no tutor profile gets its own onboarding state (below), never "no such student".
     harness.student = failure(new ApiError(404, "404", { code: "no_tutor_profile" }))
-    const noProfile = text(detailPage())
-    expect(noProfile).not.toContain("We couldn't find that student")
-    expect(noProfile).toContain("We couldn't load this student")
+    expect(text(detailPage())).not.toContain("We couldn't find that student")
 
     harness.student = failure(new ApiError(422, "422", [{ loc: ["path", "student_id"], msg: "bad uuid" }]))
     const badId = text(detailPage())
@@ -672,6 +676,69 @@ describe("the other T-20 states", () => {
 })
 
 // ── 4 · T-19 ────────────────────────────────────────────────────────────────
+
+/*
+ * A teacher with no tutor profile (the API's 404 `no_tutor_profile`) is not a
+ * failure: they have not started tutoring. T-19 and T-20 say so in one honest
+ * sentence and link to T-16. Only that code does this; every other error keeps
+ * the C-11 failure state.
+ */
+describe("no tutor profile yet", () => {
+  const noProfile = () => new ApiError(404, "404", { code: "no_tutor_profile" })
+  const COPY_PAGES: Array<[string, () => string, string]> = [
+    ["T-19", listPage, "list"],
+    ["T-20", detailPage, "student"],
+  ]
+
+  it("isNoTutorProfile is only the 404 with that code", () => {
+    expect(isNoTutorProfile(noProfile())).toBe(true)
+    expect(isNoTutorProfile(new ApiError(404, "404", { code: "not_found" }))).toBe(false)
+    expect(isNoTutorProfile(new ApiError(404, "404"))).toBe(false)
+    expect(isNoTutorProfile(new ApiError(403, "403", { code: "no_tutor_profile" }))).toBe(false)
+    expect(isNoTutorProfile(new ApiError(500, "500", { code: "no_tutor_profile" }))).toBe(false)
+    expect(isNoTutorProfile(new Error("no_tutor_profile"))).toBe(false)
+    expect(isNoTutorProfile(null)).toBe(false)
+  })
+
+  it("its copy is plain: no em dash, no exclamation mark, links to T-16", () => {
+    expect(TUTOR_PROFILE_PATH).toBe("/teacher/tutoring/profile")
+    for (const line of [NO_TUTOR_PROFILE_HEADING, NO_TUTOR_PROFILE_BODY, NO_TUTOR_PROFILE_ACTION]) {
+      expect(line.length).toBeGreaterThan(5)
+      expect(line).not.toMatch(/[\u2014\u2013!]/)
+    }
+  })
+
+  for (const [screen, page, key] of COPY_PAGES) {
+    it(`${screen} shows the onboarding state with a link to the profile, not the error`, () => {
+      harness[key as "list" | "student"] = failure(noProfile())
+      const markup = page()
+      const t = text(markup)
+      expect(t).toContain(NO_TUTOR_PROFILE_HEADING)
+      expect(t).toContain(NO_TUTOR_PROFILE_BODY)
+      expect(t).not.toContain("You don't have a tutor profile yet.")
+      expect(t).not.toMatch(/We couldn't load|Try again|offline/i)
+      expect(markup).toContain(`href="${TUTOR_PROFILE_PATH}"`)
+      expect(t).toContain(NO_TUTOR_PROFILE_ACTION)
+      expect(markup.match(/<h1\b/g)?.length).toBe(1)
+    })
+
+    it(`${screen} keeps the failure state for every other error`, () => {
+      for (const error of [
+        new ApiError(500, "500"),
+        new ApiError(404, "404", { code: "not_found" }),
+        new ApiError(403, "403", { code: "no_tutor_profile" }),
+        new ApiError(0, "Failed to fetch"),
+      ]) {
+        harness[key as "list" | "student"] = failure(error)
+        const markup = page()
+        expect(text(markup), String(error.status)).not.toContain(NO_TUTOR_PROFILE_ACTION)
+        // A 404 not_found is T-20's own "not found" page, which has no retry; the rest are failures.
+        if (error.status !== 404) expect(text(markup), String(error.status)).toMatch(/Try again/)
+        expect(markup, String(error.status)).not.toContain(`href="${TUTOR_PROFILE_PATH}"`)
+      }
+    })
+  }
+})
 
 describe("T-19 My students", () => {
   it("uses the SPEC's sentences", () => {

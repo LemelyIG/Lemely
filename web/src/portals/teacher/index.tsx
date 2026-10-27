@@ -41,6 +41,7 @@ import { useProfile } from "@/lib/hooks/useMeApi"
 import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
 import { useReviewQueueCount } from "@/lib/hooks/useReviewQueueCount"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
+import { skipsFirstClassRedirect } from "@/lib/tutoring/teacherRedirect"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
 
@@ -473,6 +474,8 @@ export function teacherFirstClassRedirect(
   if (status !== "success") return null
   if (classCount > 0) return null
   if (pathname === "/teacher/first-class") return null
+  // A tutor is a teacher with no class: the tutoring screens must open for them.
+  if (skipsFirstClassRedirect(pathname)) return null
   return "/teacher/first-class"
 }
 

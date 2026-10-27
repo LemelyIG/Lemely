@@ -10,9 +10,14 @@ import { useOwnTutorProfile, useTutorStudent } from "@/lib/hooks/useTutoringApi"
 import { isAccessEnded } from "@/lib/tutoring/apiErrors"
 import { SESSION_ZONE } from "@/lib/tutoring/sessionView"
 import {
+  NO_TUTOR_PROFILE_ACTION,
+  NO_TUTOR_PROFILE_BODY,
+  NO_TUTOR_PROFILE_HEADING,
+  TUTOR_PROFILE_PATH,
   TUTOR_STUDENTS_PATH,
   TUTOR_STUDENT_TITLE,
   accessEndedHeading,
+  isNoTutorProfile,
   isStudentNotFound,
   sharedLine,
   studentLoadFailureMessage,
@@ -52,7 +57,9 @@ import { StudentDetailView } from "../StudentDetail"
  *     ever existed for this pair, or the address is not a student's:
  *     "We couldn't find that student", with the way back;
  *   - failure: the C-11 error (or offline) state with a retry, for a 5xx, a
- *     dropped connection or any other refusal, such as `no_tutor_profile`.
+ *     dropped connection or any other refusal, such as a 403 other than `access_ended`.
+ *   - no tutor profile (404 `no_tutor_profile`): the teacher has not started tutoring,
+ *     so one honest sentence and a link to T-16 take the place of the failure state.
  *
  * The student's name for the ended sentence comes from the link on T-19 (router
  * state); opened by address it reads "This student's progress...". The one title
@@ -102,6 +109,19 @@ export function TutorStudentDetail() {
           kicker={null}
         >
           <BackToStudentsAction />
+        </EmptyState>
+      </div>
+    )
+  }
+
+  if (query.status === "error" && isNoTutorProfile(query.error)) {
+    return (
+      <div className="flex min-w-0 flex-col gap-8">
+        <h1 className="sr-only">{TUTOR_STUDENT_TITLE}</h1>
+        <EmptyState heading={NO_TUTOR_PROFILE_HEADING} body={NO_TUTOR_PROFILE_BODY}>
+          <Link to={TUTOR_PROFILE_PATH} className={buttonVariants({ variant: "secondary", size: "md" })}>
+            {NO_TUTOR_PROFILE_ACTION}
+          </Link>
         </EmptyState>
       </div>
     )

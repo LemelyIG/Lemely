@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 — one hairline list, the whole row a link, three facts per row and nothing that scores a student; the page is the consent sentence plus the list, so it stays quiet. */
 import { Link } from "react-router-dom"
 import { CaretLeft, CaretRight } from "@phosphor-icons/react"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { EmptyState } from "@/components/ui/state-views"
@@ -10,7 +10,12 @@ import { usePagedItems } from "@/lib/tutoring/sessionView"
 import {
   MY_STUDENTS_INTRO,
   NO_STUDENTS_LINE,
+  NO_TUTOR_PROFILE_ACTION,
+  NO_TUTOR_PROFILE_BODY,
+  NO_TUTOR_PROFILE_HEADING,
   TUTORING_HOME_PATH,
+  TUTOR_PROFILE_PATH,
+  isNoTutorProfile,
   studentLoadFailureMessage,
   studentRowView,
   type StudentRowView,
@@ -31,7 +36,8 @@ import type { TutorStudentItem, TutorStudentPage } from "@/lib/tutoringTypes"
  * was lost can be logged twice. "Show more students" asks for the next keyset
  * page.
  *
- * States: skeleton rows while loading; the C-11 error and offline states from
+ * States: skeleton rows while loading; for a teacher with no tutor profile yet
+ * (404 `no_tutor_profile`), one honest sentence and the way to T-16, not an error; the C-11 error and offline states from
  * `QueryState` with a retry; the SPEC's empty line; a line under the list when
  * a later page fails. The intro is shown in every one of them but loading and
  * failure, because it is the promise the students were given, not a decoration.
@@ -79,48 +85,56 @@ export function MyStudents() {
         <h1 className="m-0 text-display-md text-ink">My students</h1>
       </div>
 
-      <QueryState
-        query={paged.state}
-        skeleton={<ListSkeleton rows={3} />}
-        error={{ heading: "We couldn't load your students", body: studentLoadFailureMessage }}
-        isEmpty={(items) => items.length === 0}
-        empty={
-          <>
-            <p className="m-0 max-w-prose text-body-md text-ink-muted">{MY_STUDENTS_INTRO}</p>
-            <EmptyState heading={NO_STUDENTS_LINE} />
-          </>
-        }
-      >
-        {(items) => (
-          <>
-            <p className="m-0 max-w-prose text-body-md text-ink-muted">{MY_STUDENTS_INTRO}</p>
-            <div className="flex flex-col gap-4">
-              <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-rule bg-paper-raised p-0">
-                {items.map((student) => (
-                  <StudentRow key={student.grantId} row={studentRowView(student)} />
-                ))}
-              </ul>
-              {paged.moreFailed ? (
-                <p role="alert" className="m-0 text-body-sm text-err">
-                  We couldn't load more students. Press Show more students to try again.
-                </p>
-              ) : null}
-              {paged.hasMore ? (
-                <div>
-                  <Button
-                    variant="secondary"
-                    size="md"
-                    loading={paged.loadingMore}
-                    onClick={paged.moreFailed ? paged.retryMore : paged.loadMore}
-                  >
-                    Show more students
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          </>
-        )}
-      </QueryState>
+      {isNoTutorProfile(paged.state.error) ? (
+        <EmptyState heading={NO_TUTOR_PROFILE_HEADING} body={NO_TUTOR_PROFILE_BODY}>
+          <Link to={TUTOR_PROFILE_PATH} className={buttonVariants({ variant: "secondary", size: "md" })}>
+            {NO_TUTOR_PROFILE_ACTION}
+          </Link>
+        </EmptyState>
+      ) : (
+        <QueryState
+          query={paged.state}
+          skeleton={<ListSkeleton rows={3} />}
+          error={{ heading: "We couldn't load your students", body: studentLoadFailureMessage }}
+          isEmpty={(items) => items.length === 0}
+          empty={
+            <>
+              <p className="m-0 max-w-prose text-body-md text-ink-muted">{MY_STUDENTS_INTRO}</p>
+              <EmptyState heading={NO_STUDENTS_LINE} />
+            </>
+          }
+        >
+          {(items) => (
+            <>
+              <p className="m-0 max-w-prose text-body-md text-ink-muted">{MY_STUDENTS_INTRO}</p>
+              <div className="flex flex-col gap-4">
+                <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-rule bg-paper-raised p-0">
+                  {items.map((student) => (
+                    <StudentRow key={student.grantId} row={studentRowView(student)} />
+                  ))}
+                </ul>
+                {paged.moreFailed ? (
+                  <p role="alert" className="m-0 text-body-sm text-err">
+                    We couldn't load more students. Press Show more students to try again.
+                  </p>
+                ) : null}
+                {paged.hasMore ? (
+                  <div>
+                    <Button
+                      variant="secondary"
+                      size="md"
+                      loading={paged.loadingMore}
+                      onClick={paged.moreFailed ? paged.retryMore : paged.loadMore}
+                    >
+                      Show more students
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </>
+          )}
+        </QueryState>
+      )}
     </div>
   )
 }
