@@ -2855,6 +2855,26 @@ async function main() {
     if (!signupRes.ok) {
       throw new Error(`signup failed: ${signupRes.status} ${await signupRes.text()}`)
     }
+    // The journey needs a student who can mark a paper, and a fresh signup cannot: its email is
+    // unverified (D7.5 refuses a marking run) and it has not onboarded (D7.9 sends every page to
+    // /student/onboard). `web/e2e/screenshots.spec.ts` clears both through the API the UI itself
+    // calls, which captures no screen this audit does not own; so does this.
+    const { accessToken: journeyToken, devLink } = await signupRes.json()
+    const verifyRes = await fetch(`${BACKEND_URL}/api/auth/verify-email`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: String(devLink).split("/").pop() }),
+    })
+    if (!verifyRes.ok) {
+      throw new Error(`verify-email failed: ${verifyRes.status} ${await verifyRes.text()}`)
+    }
+    const onboardRes = await fetch(`${BACKEND_URL}/api/me/student-profile/complete-onboarding`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${journeyToken}` },
+    })
+    if (!onboardRes.ok) {
+      throw new Error(`complete-onboarding failed: ${onboardRes.status} ${await onboardRes.text()}`)
+    }
 
     log("Logging in through the real UI...")
     await page.setViewport(AUDIT_VIEWPORT)
