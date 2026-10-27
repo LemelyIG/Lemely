@@ -24,10 +24,13 @@ removed. This module touches none of those tables.
 **documents_seen_at (F14).** Every A3 call sets it from ``documentsSeen``:
 ``now()`` when true, NULL when false. An evidence upload or delete clears it
 (:mod:`lemely.db.tutor_evidence_repo`). ``documentsSeen=true`` is accepted only
-when every current evidence file has an ``evidence_open`` row (A2 issued its
-link) written at or after that file's upload; otherwise 409
-``documents_not_opened`` (T10 review R3). With no files it is accepted:
-evidence is optional. The files are read after the profile lock, which every
+when the profile has at least one current evidence file and every one has an
+``evidence_open`` row (A2 issued its link) written at or after that file's
+upload; otherwise 409 ``documents_not_opened`` (T10 review R3). With no files
+there is nothing to have seen, so ``true`` is refused with the same code (FF-1:
+the "Documents seen" mark families read must never stand for an empty set).
+Evidence stays optional: such a tutor is approved with ``documentsSeen=false``,
+which is never refused. The files are read after the profile lock, which every
 upload and delete also takes first, so none can arrive between the check and
 the decision.
 
@@ -114,7 +117,7 @@ class NoteTooLongError(ApprovalError):
 
 
 class DocumentsNotOpenedError(ApprovalError):
-    """``documentsSeen`` claimed for a file no admin has opened since its upload (409, R3)."""
+    """``documentsSeen`` claimed for an unopened file (R3) or with no files at all (FF-1); 409."""
 
     code = "documents_not_opened"
 
@@ -292,27 +295,34 @@ def _reinstated_state(profile: TutorProfile) -> TutorListingState:
     return TutorListingState.listed
 
 
-#: The evidence files of a profile that no admin has opened since they were
-#: uploaded: no ``evidence_open`` row for the file (A2 writes one per link it
-#: issues) created at or after the file's row. ``tutor_profile_id`` on the access
-#: row lets ``ix_tutoring_admin_access_tutor`` serve the probe.
-_UNOPENED_EVIDENCE_SQL: Final = (
-    "SELECT count(*) FROM tutor_evidence_files e WHERE e.tutor_profile_id = :p "
-    "AND NOT EXISTS (SELECT 1 FROM tutoring_admin_access a "
+#: A profile's current evidence files, and how many of them no admin has opened
+#: since they were uploaded: no ``evidence_open`` row for the file (A2 writes one
+#: per link it issues) created at or after the file's row. ``tutor_profile_id``
+#: on the access row lets ``ix_tutoring_admin_access_tutor`` serve the probe.
+_EVIDENCE_OPENED_SQL: Final = (
+    "SELECT count(*) AS files, count(*) FILTER (WHERE NOT EXISTS ("
+    "SELECT 1 FROM tutoring_admin_access a "
     "WHERE a.tutor_profile_id = e.tutor_profile_id AND a.evidence_id = e.id "
-    "AND a.action = 'evidence_open' AND a.created_at >= e.created_at)"
+    "AND a.action = 'evidence_open' AND a.created_at >= e.created_at)) AS unopened "
+    "FROM tutor_evidence_files e WHERE e.tutor_profile_id = :p"
 )
 
 
 def _check_documents_opened(session: Session, tutor_profile_id: uuid.UUID) -> None:
-    """Refuse ``documentsSeen=true`` while any current file is unopened (T10 review R3).
+    """Refuse ``documentsSeen=true`` unless there are files and every one was opened.
 
-    Run under the profile lock, which uploads and deletes also take first.
+    An unopened file is T10 review R3. No files at all is FF-1: there is nothing
+    to have seen, and a "Documents seen" mark on such a tutor would tell families
+    something false. One statement, run under the profile lock, which uploads and
+    deletes also take first.
     """
-    unopened = session.execute(
-        sa.text(_UNOPENED_EVIDENCE_SQL), {"p": tutor_profile_id}
-    ).scalar_one()
-    if unopened:
+    row = session.execute(sa.text(_EVIDENCE_OPENED_SQL), {"p": tutor_profile_id}).one()
+    if row.files == 0:
+        raise DocumentsNotOpenedError(
+            "This tutor has not uploaded any files, so there are no documents to have seen. "
+            "Approve without confirming that you looked at the documents."
+        )
+    if row.unopened:
         raise DocumentsNotOpenedError(
             "Open every document before you confirm that you looked at them."
         )
@@ -390,7 +400,7 @@ class TutorApprovalRepository:
 
         Raises :class:`TutorNotFoundError`, :class:`IllegalApprovalTransitionError`
         (any other state), :class:`DocumentsNotOpenedError` (``documents_seen``
-        with a file no admin has opened since its upload) or
+        with a file no admin has opened since its upload, or with no files) or
         :class:`NoteTooLongError`.
         """
         cleaned = _clean_note(note)

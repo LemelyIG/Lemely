@@ -157,7 +157,7 @@ def test_approve_sets_first_listed_once(
     assert _profile(sm, tutor.profile_id).listing_state is TutorListingState.pending_review
 
     # ... and the second approval keeps the first approval's instant.
-    repo.approve(tutor.profile_id, admin_user_id=admin, documents_seen=True, note=None)
+    repo.approve(tutor.profile_id, admin_user_id=admin, documents_seen=False, note=None)
 
     after_second = _profile(sm, tutor.profile_id)
     assert after_second.listing_state is TutorListingState.listed
@@ -291,6 +291,9 @@ def test_documents_seen_cleared_by_upload_delete_and_false_approval(
     def back_to_review() -> None:
         _set(sm, tutor.profile_id, listing_state=TutorListingState.pending_review)
 
+    # FF-1: "seen" needs a file to have seen, opened before the approval.
+    _upload(sm, tutor.profile_id, filename="kept.png")
+    _open_all(sm, tutor.profile_id, admin)
     repo.approve(tutor.profile_id, admin_user_id=admin, documents_seen=True, note=None)
     assert seen()
 
@@ -315,7 +318,7 @@ def test_documents_seen_cleared_by_upload_delete_and_false_approval(
     evidence.delete(tutor.profile_id, added.id)
     assert not seen()
 
-    back_to_review()
+    back_to_review()  # the kept file was opened after its upload, so "seen" is earned again
     repo.approve(tutor.profile_id, admin_user_id=admin, documents_seen=True, note=None)
     assert seen()
 
@@ -414,21 +417,45 @@ def test_documents_seen_refused_for_a_file_whose_link_could_not_be_signed(
     _assert_refused_unchanged(sm, repo, tutor.profile_id)
 
 
-def test_documents_seen_with_no_files_and_documents_unseen_stay_allowed(
+def test_documents_seen_refused_with_no_files_and_false_is_never_refused(
     sm: sessionmaker[Session], repo: TutorApprovalRepository
 ) -> None:
-    """Evidence is optional: nothing to open is not a refusal; ``false`` is never one."""
+    """FF-1: with no files there is nothing to have seen, so ``true`` is refused (409).
+
+    Evidence stays optional: such a tutor is approved with ``false`` and is listed
+    without the "Documents seen" mark. ``false`` is never refused, files or not.
+    """
     no_files = add_tutor(sm, state="pending_review")
     unopened = add_tutor(sm, state="pending_review")
     _upload(sm, unopened.profile_id)
     admin = _admin(sm)
 
-    repo.approve(no_files.profile_id, admin_user_id=admin, documents_seen=True, note=None)
+    _assert_refused_unchanged(sm, repo, no_files.profile_id)
+    assert _outbox(sm) == []
+
+    outcome = repo.approve(
+        no_files.profile_id, admin_user_id=admin, documents_seen=False, note=None
+    )
     repo.approve(unopened.profile_id, admin_user_id=admin, documents_seen=False, note=None)
 
-    assert _profile(sm, no_files.profile_id).documents_seen_at is not None
+    assert outcome.listing_state is TutorListingState.listed
+    assert _profile(sm, no_files.profile_id).documents_seen_at is None
+    assert [e.documents_seen for e in _events(sm, no_files.profile_id)] == [False]
     assert _profile(sm, unopened.profile_id).documents_seen_at is None
     assert _profile(sm, unopened.profile_id).listing_state is TutorListingState.listed
+
+
+def test_documents_seen_refused_once_every_file_is_deleted(
+    sm: sessionmaker[Session], repo: TutorApprovalRepository
+) -> None:
+    """Opens of files that are gone earn nothing: the current files are what was seen."""
+    tutor = add_tutor(sm, state="pending_review")
+    admin = _admin(sm)
+    evidence_id = _upload(sm, tutor.profile_id)
+    _open_all(sm, tutor.profile_id, admin)
+    TutorEvidenceRepository(sm).delete(tutor.profile_id, evidence_id)
+
+    _assert_refused_unchanged(sm, repo, tutor.profile_id)
 
 
 def test_documents_seen_rule_applies_to_a_reinstatement(
@@ -436,8 +463,10 @@ def test_documents_seen_rule_applies_to_a_reinstatement(
 ) -> None:
     tutor = add_tutor(sm, state="suspended", first_listed_at=NOW - timedelta(days=30))
     _upload_while_suspended(sm, tutor.profile_id)
+    no_files = add_tutor(sm, state="suspended", first_listed_at=NOW - timedelta(days=30))
 
     _assert_refused_unchanged(sm, repo, tutor.profile_id)
+    _assert_refused_unchanged(sm, repo, no_files.profile_id)
 
 
 def _upload_while_suspended(sm: sessionmaker[Session], profile_id: uuid.UUID) -> None:
@@ -539,7 +568,7 @@ def test_reinstate_never_approved_returns_to_pending_review(
     tutor = add_tutor(sm, state="suspended", first_listed_at=None)
 
     outcome = repo.approve(
-        tutor.profile_id, admin_user_id=_admin(sm), documents_seen=True, note=None
+        tutor.profile_id, admin_user_id=_admin(sm), documents_seen=False, note=None
     )
 
     profile = _profile(sm, tutor.profile_id)
@@ -818,6 +847,8 @@ def test_admin_facts_email_history_and_open_reports(
     admin = _admin(sm)
     repo.reject(tutor.profile_id, admin_user_id=admin, note="Upload your certificate.")
     _set(sm, tutor.profile_id, listing_state=TutorListingState.pending_review)
+    _upload(sm, tutor.profile_id)
+    _open_all(sm, tutor.profile_id, admin)
     repo.approve(tutor.profile_id, admin_user_id=admin, documents_seen=True, note=None)
 
     _cancelled_booking_and_revoked_grant(sm, tutor.profile_id, subject)

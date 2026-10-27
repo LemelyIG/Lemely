@@ -45,6 +45,7 @@ import {
   listingStateLabel,
   moderationDoneLine,
   moderationRequest,
+  noEvidenceLine,
   noteError,
   noteLabel,
   noteLength,
@@ -395,9 +396,24 @@ describe("X-05 Approve: disabled until the documents box is ticked and every fil
     expect(gate).toEqual({ enabled: true, reason: null, unopened: 0 })
   })
 
-  it("needs only the box when the tutor uploaded no files", () => {
-    expect(approveGate({ documentsSeen: true, evidence: [], opened: opened() }).enabled).toBe(true)
-    expect(approveGate({ documentsSeen: false, evidence: [], opened: opened() }).enabled).toBe(false)
+  // FF-1: with no files there is nothing to have looked at, so there is no box to tick and
+  // Approve is open; the approval then says documentsSeen: false (A3 refuses true, 409).
+  it("is open without the box when the tutor uploaded no files", () => {
+    const open = { enabled: true, reason: null, unopened: 0 }
+    expect(approveGate({ documentsSeen: false, evidence: [], opened: opened() })).toEqual(open)
+    expect(approveGate({ documentsSeen: true, evidence: [], opened: opened() })).toEqual(open)
+  })
+
+  it("never claims documentsSeen for a tutor with no files, whatever the box last said", () => {
+    expect(approveBody({ documentsSeen: false, evidence: [], opened: opened() }, "")).toEqual({
+      documentsSeen: false,
+      note: null,
+    })
+    // The box can be left ticked from before a reload that found every file deleted.
+    expect(approveBody({ documentsSeen: true, evidence: [], opened: opened("e1") }, " Fine. ")).toEqual({
+      documentsSeen: false,
+      note: "Fine.",
+    })
   })
 
   it("does not count a file that has no link as opened", () => {
@@ -908,6 +924,9 @@ describe("the module's own sentences follow the product rules", () => {
       THREAD_VIEW_NOTICE,
       MOCK_EMAIL_TITLE,
       emailDeliveryNotice("mock")?.body ?? "",
+      noEvidenceLine("pending_review"),
+      noEvidenceLine("suspended"),
+      adminFailureMessage(new ApiError(409, "x", { code: "documents_not_opened", message: "x" }), ""),
       ...(["approve", "reject", "suspend", "close"] as const).flatMap((d) => [decisionNoteError(d, "") ?? ""]),
       ...(["dismissed", "content_hidden", "tutor_suspended", "booking_cancelled", "booking_completed"] as const).flatMap(
         (r) => {
@@ -1065,11 +1084,36 @@ describe("X-05 screen", () => {
     expect(markup).not.toContain("Open file")
   })
 
-  it("says so when no files were uploaded, and needs only the box", () => {
+  it("with no files: no documents box, Approve open, and the approval says documentsSeen false", () => {
     hooks.tutor = ok({ ...DETAIL, evidence: [] })
     const markup = render(h(TutorApplication))
-    expect(markup).toContain("has not uploaded any files")
-    expect(markup).toContain('Tick &quot;I looked at the documents&quot; to continue.')
+    const line = noEvidenceLine("pending_review")
+    expect(line).toMatch(/not uploaded any files/)
+    expect(line).toMatch(/listed without the documents-seen mark/)
+    expect(markup).toContain(line)
+    expect(markup).not.toContain("I looked at the documents")
+    expect(markup).not.toContain('type="checkbox"')
+    expect(buttonHtml(markup, "Approve")).not.toContain("disabled")
+
+    expect(hooks.forms).toHaveLength(1)
+    ;(hooks.forms[0].onSubmit as (event: { preventDefault: () => void }) => void)({ preventDefault: vi.fn() })
+    expect(hooks.approve.mutate).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(hooks.approve.mutate).mock.calls[0][0]).toEqual({
+      tutorId: "t1",
+      body: { documentsSeen: false, note: null },
+    })
+  })
+
+  it("with no files on a reinstatement: does not promise a listing", () => {
+    hooks.tutor = ok({ ...DETAIL, listingState: "suspended", evidence: [] })
+    const markup = render(h(TutorApplication))
+    const line = noEvidenceLine("suspended")
+    expect(line).toMatch(/not uploaded any files/)
+    expect(line).toMatch(/documents-seen mark/)
+    expect(line).not.toMatch(/listed/)
+    expect(markup).toContain(line)
+    expect(markup).not.toContain("I looked at the documents")
+    expect(buttonHtml(markup, "Reinstate")).not.toContain("disabled")
   })
 
   it("offers each state only its own decisions", () => {

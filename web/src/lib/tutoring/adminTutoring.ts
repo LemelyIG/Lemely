@@ -100,7 +100,9 @@ const EXTRA_COPY: Readonly<Record<string, string>> = {
   note_required: "Write a note before you continue.",
   // No number: A4, A5 and A12 allow 2000 characters and A11 allows 1000.
   note_too_long: "That note is too long. Shorten it and try again.",
-  documents_not_opened: "Open every file before you approve. Reload the page to get new links.",
+  // A3 sends it for an unopened file, and for a tutor with no files at all (FF-1): reached from
+  // this page only when the files changed after it loaded, so the reload shows the current ones.
+  documents_not_opened: "Open every file before you approve. Reload the page to see the current files and get new links.",
 }
 
 function codeOf(error: unknown): string | null {
@@ -350,8 +352,15 @@ function filesPhrase(count: number): string {
   return count === 1 ? "1 file" : `${count} files`
 }
 
-/** Approve is open only when the box is ticked and every file was opened. A file with no link cannot have been. */
+/**
+ * Approve is open only when the box is ticked and every file was opened. A file with no link cannot have been.
+ *
+ * With no files there is nothing to have looked at, so there is no box and Approve is open (FF-1): the
+ * approval then says `documentsSeen: false`, the tutor is listed without the "Documents seen" mark, and
+ * A3 refuses `true` for a tutor with no files (409 `documents_not_opened`).
+ */
 export function approveGate(input: ApproveInput): ApproveGate {
+  if (input.evidence.length === 0) return { enabled: true, reason: null, unopened: 0 }
   const missingLink = input.evidence.filter((file) => file.signedUrl === null).length
   const unopened = input.evidence.filter(
     (file) => file.signedUrl === null || !input.opened.has(file.evidenceId),
@@ -372,10 +381,25 @@ export function approveGate(input: ApproveInput): ApproveGate {
   return { enabled: true, reason: null, unopened }
 }
 
-/** The A3 body, or null while the gate is shut: `documentsSeen: true` is never sent unearned. */
+/**
+ * The A3 body, or null while the gate is shut: `documentsSeen: true` is never sent unearned. It is
+ * true exactly when there were files and the gate (box ticked, every file opened) let it through; with
+ * no files it is false whatever the box last held, since the box may be left ticked from before a
+ * reload that found every file deleted.
+ */
 export function approveBody(input: ApproveInput, rawNote: string): AdminApprove | null {
   if (!approveGate(input).enabled) return null
-  return { documentsSeen: true, note: noteValue(rawNote) }
+  return { documentsSeen: input.evidence.length > 0, note: noteValue(rawNote) }
+}
+
+/**
+ * What X-05 shows in place of the "I looked at the documents" box when the tutor uploaded no files.
+ * A reinstatement can send the profile back to review rather than list it, so it promises no listing.
+ */
+export function noEvidenceLine(from: ListingState): string {
+  return from === "suspended"
+    ? "This tutor has not uploaded any files. Their profile will not show the documents-seen mark."
+    : "This tutor has not uploaded any files. They will be listed without the documents-seen mark."
 }
 
 /** Whole seconds left on links fetched at `loadedAtMs`; 0 once they are dead. */

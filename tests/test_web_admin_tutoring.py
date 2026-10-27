@@ -45,7 +45,16 @@ from tests.pdf_fakes import born_digital_text_pdf
 from tests.storage_fakes import FakeStorageBackend
 from tests.test_notify_email import spec_listing_copy
 from tests.tutoring_app import app_with_routers
-from tests.tutoring_db import NOW, act_as, add_subject, add_tutor, add_user, emptied_after
+from tests.tutoring_db import (
+    NOW,
+    act_as,
+    add_subject,
+    add_tutor,
+    add_user,
+    emptied_after,
+    json_keys,
+    tutoring_client,
+)
 from tests.tutoring_db import tutoring_database as _tutoring_database
 
 if TYPE_CHECKING:
@@ -488,6 +497,51 @@ def test_a3_documents_seen_needs_every_file_opened_409(
     accepted = client.post(approve, json={"documentsSeen": True})
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["documentsSeen"] is True
+
+
+def test_a3_documents_seen_with_no_files_409_and_false_lists_without_the_mark(
+    client: TestClient, sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """FF-1: with no files there is nothing to have seen; ``false`` is the only approval.
+
+    The public card (P2) never carries the flag, and the logged-in profile (SP2)
+    shows ``documentsSeen: false``, so no family reads a "Documents seen" claim
+    about a tutor who uploaded nothing.
+    """
+    tutor = add_tutor(sm, state="pending_review", subjects=(add_subject(sm),))
+    assert client.get(f"/api/admin/tutors/{tutor.profile_id}").json()["evidence"] == []
+    approve = f"/api/admin/tutors/{tutor.profile_id}/approve"
+
+    refused = client.post(approve, json={"documentsSeen": True})
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["code"] == "documents_not_opened"
+    assert refused.headers["cache-control"] == NO_STORE
+    with sm() as session:
+        profile = session.get(TutorProfile, tutor.profile_id)
+        assert profile is not None
+        assert profile.listing_state is TutorListingState.pending_review
+        assert profile.documents_seen_at is None
+        assert session.scalars(sa.select(EmailOutbox)).all() == []
+
+    accepted = client.post(approve, json={"documentsSeen": False})
+
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["listingState"] == "listed"
+    assert accepted.json()["documentsSeen"] is False
+    assert accepted.json()["history"][0]["documentsSeen"] is False
+
+    families = tutoring_client(sm)
+    try:
+        public = families.get(f"/api/public/tutors/{tutor.profile_id}")
+        assert public.status_code == 200, public.text
+        assert "documentsSeen" not in json_keys(public.json())
+        act_as(families, add_user(sm, Role.student), Role.student)
+        student_view = families.get(f"/api/tutors/{tutor.profile_id}")
+        assert student_view.status_code == 200, student_view.text
+        assert student_view.json()["documentsSeen"] is False
+    finally:
+        families.app.dependency_overrides.clear()  # type: ignore[attr-defined]
 
 
 def test_a3_reinstates_by_the_lead_ruling(

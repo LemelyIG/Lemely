@@ -38,6 +38,7 @@ import {
   formatAdminDay,
   formatFileSize,
   listingStateLabel,
+  noEvidenceLine,
   noteLength,
   type TutorDecision,
 } from "@/lib/tutoring/adminTutoring"
@@ -54,8 +55,11 @@ import type { AdminEvidence, AdminTutorDetail } from "@/lib/tutoringTypes"
  *
  * Approve is a claim that the admin looked at the documents. It stays shut until
  * the "I looked at the documents" box is ticked and every file was opened from
- * this page (`approveGate`). Reject and suspend need a note, which the tutor
- * reads. Close and suspend say what they cost before they run.
+ * this page (`approveGate`). A tutor with no files has nothing to look at: the
+ * box is not shown, Approve is open, and the approval says the documents were
+ * not seen, so the tutor is listed without the "Documents seen" mark (FF-1).
+ * Reject and suspend need a note, which the tutor reads. Close and suspend say
+ * what they cost before they run.
  *
  * Evidence links are 300 second downloads issued, and logged, by A2. They are
  * dead when the time is up, and the section says so and offers new ones rather
@@ -292,6 +296,8 @@ function ApproveForm({
   const [documentsSeen, setDocumentsSeen] = useState(false)
   const [note, setNote] = useState("")
   const input = { documentsSeen, evidence: detail.evidence, opened }
+  // No files, nothing to have looked at: no box, and the approval says so (`approveBody`).
+  const noFiles = detail.evidence.length === 0
   const gate = approveGate(input)
   const noteProblem = decisionNoteError("approve", note)
   const label = decisionLabel("approve", detail.listingState)
@@ -312,14 +318,18 @@ function ApproveForm({
         )
       }}
     >
-      <div className="flex items-center [&_label]:min-h-11">
-        <Checkbox
-          label="I looked at the documents"
-          checked={documentsSeen}
-          onChange={(event) => setDocumentsSeen(event.target.checked)}
-          aria-describedby={shown ? reasonId : undefined}
-        />
-      </div>
+      {noFiles ? (
+        <p className="m-0 max-w-prose text-body-md text-ink-muted">{noEvidenceLine(detail.listingState)}</p>
+      ) : (
+        <div className="flex items-center [&_label]:min-h-11">
+          <Checkbox
+            label="I looked at the documents"
+            checked={documentsSeen}
+            onChange={(event) => setDocumentsSeen(event.target.checked)}
+            aria-describedby={shown ? reasonId : undefined}
+          />
+        </div>
+      )}
       <Textarea
         label="Note (optional)"
         value={note}

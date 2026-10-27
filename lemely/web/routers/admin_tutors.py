@@ -17,9 +17,11 @@ refused like everyone else). Built with ``TutoringRoute``, so every response is
   ``signedUrl: null`` and logs nothing.
 * **A3** approve, or reinstate a suspended tutor (to ``listed`` if approved
   before with no edit waiting, else back to ``pending_review``: the lead's
-  ruling on decision row 5a, T10 review R4). ``documentsSeen: true`` needs every
-  file opened through A2 since its upload, else 409 ``documents_not_opened``
-  (R3). **A4** reject, with a note the tutor reads. Both answer with the A2
+  ruling on decision row 5a, T10 review R4). ``documentsSeen: true`` needs at
+  least one file and every file opened through A2 since its upload, else 409
+  ``documents_not_opened`` (R3; FF-1 for no files: nothing to have seen, so a
+  tutor with no files is approved with ``false`` and shows no "Documents seen"
+  mark). **A4** reject, with a note the tutor reads. Both answer with the A2
   shape and ``signedUrl: null`` on every file (only A2 issues URLs; T04
   hand-off), and tell the tutor through the inbox after the commit (D5.9 §1),
   with the copy for where the profile went (``listed``, SPEC §b.4); the email
