@@ -374,6 +374,9 @@ def render_example_toml() -> str:
         f"tutor_evidence_signed_url_ttl_seconds = {s.storage.tutor_evidence_signed_url_ttl_seconds}"
     )
     lines.append('# gcs_project = "my-gcp-project"  # only if ADC can\'t infer one')
+    lines.append("# The project NUMBER (not its id) that must own tutor_evidence_bucket. Required")
+    lines.append("# for evidence storage on gcs: unset, every evidence operation is refused.")
+    lines.append("# gcs_project_number = 123456789012")
     lines.append("")
 
     lines.append("[push]")

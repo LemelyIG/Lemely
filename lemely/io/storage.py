@@ -146,18 +146,17 @@ def check_tutor_evidence_storage(settings: Settings, *, no_network: bool) -> tup
             return False, str(exc)
         return os.access(directory, os.W_OK), str(directory)
 
-    from lemely.io.storage_gcs import GcsStorageBackend
-    from lemely.runtime.errors import ConfigError
+    from lemely.io.storage_gcs import GcsStorageBackend, placeholder_evidence_bucket_refusal
 
+    placeholder = placeholder_evidence_bucket_refusal(bucket)
+    if placeholder is not None:
+        return False, placeholder
     number = settings.storage.gcs_project_number
-    try:
-        backend = GcsStorageBackend(
-            project=settings.storage.gcs_project,
-            tutor_evidence_bucket=bucket,
-            project_number=number,
-        )
-    except ConfigError as exc:
-        return False, str(exc)
+    backend = GcsStorageBackend(
+        project=settings.storage.gcs_project,
+        tutor_evidence_bucket=bucket,
+        project_number=number,
+    )
     if number is None:
         return False, (
             f"gcs://{bucket}: LEMELY_STORAGE__GCS_PROJECT_NUMBER is not set, so every "

@@ -25,7 +25,7 @@ from google.cloud.storage.retry import DEFAULT_RETRY_IF_GENERATION_SPECIFIED
 from lemely.io.storage import StorageObjectNotFoundError
 from lemely.io.storage_gcs import GcsStorageBackend
 from lemely.runtime.config import Settings, StorageSettings
-from lemely.runtime.errors import ConfigError, ExternalServiceError
+from lemely.runtime.errors import ExternalServiceError
 
 
 def _client_with_blob() -> tuple[MagicMock, MagicMock]:
@@ -378,10 +378,11 @@ def test_signed_url_for_user_adc_raises_rather_than_attribute_error() -> None:
 # ---------------------------------------------------------------------------
 # The tutor evidence bucket (SC-22). GCS bucket names are global, so the
 # settings default `lemely-tutor-evidence` is a name anyone can create: the gcs
-# backend refuses it outright, and before its first use of whichever evidence
-# bucket it is given it reads that bucket's settings and refuses one that does
-# not enforce public access prevention and uniform bucket-level access, or that
-# belongs to another project than `storage.gcs_project_number`. The bucket
+# backend refuses every operation on it (never its construction), and before its
+# first use of any other evidence bucket it reads that bucket's settings and
+# refuses one that does not enforce public access prevention and uniform
+# bucket-level access, or that belongs to another project than
+# `storage.gcs_project_number`. The bucket
 # metadata below is a real `storage.Bucket` parsed from a buckets.get resource,
 # so the attribute names are the SDK's, not a mock's.
 # ---------------------------------------------------------------------------
@@ -442,16 +443,52 @@ def _evidence_client(metadata: storage.Bucket) -> tuple[MagicMock, MagicMock]:
     return client, blob
 
 
+_EVIDENCE_OPS_ON: dict[str, Callable[[GcsStorageBackend, str], object]] = {
+    "upload": lambda b, n: b.upload(n, _EVIDENCE_PATH, b"%PDF-1.4", "application/pdf"),
+    "download": lambda b, n: b.download(n, _EVIDENCE_PATH),
+    "delete": lambda b, n: b.delete(n, _EVIDENCE_PATH),
+    "create_signed_url": lambda b, n: b.create_signed_url(
+        n, _EVIDENCE_PATH, 300, disposition="attachment"
+    ),
+}
+
+
+@pytest.mark.parametrize("project_number", [_PROJECT_NUMBER, None])
+@pytest.mark.parametrize("op", sorted(_EVIDENCE_OPS_ON))
 @pytest.mark.parametrize("spell", [str, lambda name: f" {name} ", str.upper])
-def test_gcs_backend_refuses_default_evidence_bucket(spell: Callable[[str], str]) -> None:
-    """The settings default, however it is written, is refused when the backend is built."""
+def test_gcs_backend_refuses_default_evidence_bucket_on_first_use(
+    spell: Callable[[str], str], op: str, project_number: int | None
+) -> None:
+    """The settings default, however it is written, is refused at its first use, never at build.
+
+    Final review finding 2: a refusal in the constructor stopped the app from starting under
+    ``gcs`` (``get_storage_backend`` and ``get_sweeper`` build the backend at startup), which
+    broke scan uploads, avatars and the purge job too. Now construction never raises, the other
+    buckets work, and every evidence operation fails closed with the same
+    :class:`ExternalServiceError` the routes already turn into "storage unavailable". The
+    placeholder is named whether or not a project number is set, and nothing is read or cached.
+    """
     default = StorageSettings().tutor_evidence_bucket
-    client = MagicMock()
-    with pytest.raises(ConfigError, match="LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET") as caught:
-        GcsStorageBackend(tutor_evidence_bucket=spell(default), _client=client)
-    assert default in str(caught.value)
-    # Refused before anything is built or called.
-    assert client.mock_calls == []
+    name = spell(default)
+    client, blob = _evidence_client(_bucket_metadata("enforced", uniform=True))
+    backend = GcsStorageBackend(
+        tutor_evidence_bucket=name, project_number=project_number, _client=client
+    )
+    assert client.mock_calls == []  # built offline, nothing refused yet
+
+    backend.upload("proj-1234-uploads-staging", "k/scan.pdf", b"%PDF-1.4", "application/pdf")
+    blob.upload_from_string.assert_called_once()
+
+    for _ in range(2):
+        with pytest.raises(
+            ExternalServiceError, match="LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET"
+        ) as caught:
+            _EVIDENCE_OPS_ON[op](backend, name)
+        assert default in str(caught.value)
+        assert "placeholder" in str(caught.value)
+
+    client.get_bucket.assert_not_called()
+    assert [c.args for c in client.bucket.call_args_list] == [("proj-1234-uploads-staging",)]
 
 
 @pytest.mark.parametrize("project_number", [_PROJECT_NUMBER, None])
@@ -785,23 +822,40 @@ def test_get_storage_backend_hands_the_evidence_bucket_to_gcs(
 ) -> None:
     """The deps getter hands over the evidence bucket, so the GCS refusal and check run.
 
-    With backend ``gcs`` and no evidence bucket set, the default global name is refused at
-    construction; with a project-owned name the backend is built (still offline).
+    With backend ``gcs`` and no evidence bucket set, the app still starts: the getter (and the
+    sweeper built from it) returns a backend, scans upload, and only the evidence bucket, the
+    default global name, is refused at its first use. Rewritten on purpose by the final review
+    (finding 2): this test used to assert a ``ConfigError`` from the getter itself, which was the
+    startup failure the review reproduced.
     """
+    from lemely.web import deps
     from lemely.web.deps import get_storage_backend, reset_singletons
 
+    client, blob = _evidence_client(_bucket_metadata("enforced", uniform=True))
+    monkeypatch.setattr("google.cloud.storage.Client", lambda **_: client)
     monkeypatch.setenv("LEMELY_STORAGE__BACKEND", "gcs")
+    monkeypatch.setenv("LEMELY_STORAGE__GCS_PROJECT_NUMBER", str(_PROJECT_NUMBER))
     monkeypatch.delenv("LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET", raising=False)
     reset_singletons()
+    deps.get_sweeper.cache_clear()
     try:
-        with pytest.raises(ConfigError, match="LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET"):
-            get_storage_backend()
+        backend = get_storage_backend()
+        assert isinstance(backend, GcsStorageBackend)
+        assert deps.get_sweeper().storage is backend
+        settings = deps.get_settings().storage
+        backend.upload(settings.bucket, "k/scan.pdf", b"%PDF-1.4", "application/pdf")
+        blob.upload_from_string.assert_called_once()
+        with pytest.raises(ExternalServiceError, match="LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET"):
+            backend.upload(settings.tutor_evidence_bucket, _EVIDENCE_PATH, b"%PDF-1.4", None)
+        client.get_bucket.assert_not_called()
+
         reset_singletons()
         monkeypatch.setenv("LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET", _EVIDENCE)
         assert isinstance(get_storage_backend(), GcsStorageBackend)
     finally:
         monkeypatch.undo()
         reset_singletons()
+        deps.get_sweeper.cache_clear()
 
 
 def test_get_storage_backend_hands_the_project_number_to_gcs(

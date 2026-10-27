@@ -15,9 +15,12 @@ precondition failure is a bug and is surfaced as one.
 documents go to their own bucket. GCS bucket names are one global namespace, so
 a bucket name is only safe if this project created it. Two checks follow from
 that. The settings default ``lemely-tutor-evidence`` is a name no Lemely
-project owns, so the backend refuses it when it is built (:class:`ConfigError`).
-And before the first operation on the evidence bucket, the backend reads that
-bucket's settings and refuses one that does not enforce public access
+project owns, so every operation on it is refused at once, without a read
+(:class:`ExternalServiceError` naming ``LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET``).
+The refusal is at first use and never at construction, because the backend is
+built at app startup and serves the uploads and avatars buckets as well. For
+any other evidence bucket, before the first operation on it the backend reads
+that bucket's settings and refuses one that does not enforce public access
 prevention and uniform bucket-level access, or that belongs to any project but
 ``storage.gcs_project_number`` (:class:`ExternalServiceError`, which the
 evidence routes already turn into "storage unavailable"), so no document is
@@ -49,9 +52,28 @@ from google.cloud.storage.retry import DEFAULT_RETRY_IF_GENERATION_SPECIFIED
 
 from lemely.io.storage import StorageObjectNotFoundError
 from lemely.runtime.config import DEFAULT_TUTOR_EVIDENCE_BUCKET
-from lemely.runtime.errors import ConfigError, ExternalServiceError
+from lemely.runtime.errors import ExternalServiceError
 
 _TRANSFER_TIMEOUT_SECONDS = 30.0
+
+
+def placeholder_evidence_bucket_refusal(bucket: str) -> str | None:
+    """Why ``bucket`` must not hold tutor evidence, if it is the settings default; else ``None``.
+
+    Compared trimmed and case-folded, so no spelling of the default slips through. Offline: the
+    backend raises it at the evidence bucket's first use, and ``lemely doctor`` reports it.
+    """
+    if bucket.strip().lower() != DEFAULT_TUTOR_EVIDENCE_BUCKET:
+        return None
+    return (
+        "LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET is the placeholder default "
+        f"{DEFAULT_TUTOR_EVIDENCE_BUCKET!r}. GCS bucket names are global and no "
+        "Lemely project owns that one, so tutors' documents would go to whoever "
+        "creates it. Set it to this environment's private bucket: deploy.yml "
+        "sets <project-id>-tutor-evidence-<env>, which scripts/gcp-bootstrap.sh "
+        "creates."
+    )
+
 
 # The scope IAM signBlob demands. `storage.Client.SCOPE` is the three
 # `devstorage.*` scopes and nothing else, so the credential the client holds
@@ -80,27 +102,19 @@ class GcsStorageBackend:
 
         ``tutor_evidence_bucket`` is ``settings.storage.tutor_evidence_bucket``:
         the bucket that must be shown to be private and ours before first use
-        (module docstring). The settings default is refused here with
-        :class:`ConfigError`, before anything is built. ``None`` names no
+        (module docstring). The settings default is accepted here and refused
+        at its first use, like an unset ``project_number``. ``None`` names no
         evidence bucket and checks nothing.
 
         ``project_number`` is ``settings.storage.gcs_project_number``, the
         project that must own the evidence bucket. ``None`` is accepted here, so
         scans and avatars keep working, and refuses the evidence bucket at its
         first use.
+
+        Construction never raises: ``get_storage_backend`` and ``get_sweeper``
+        build this backend at startup, so a refusal here would stop the whole
+        app, scan uploads, avatars and the purge job included.
         """
-        if (
-            tutor_evidence_bucket is not None
-            and tutor_evidence_bucket.strip().lower() == DEFAULT_TUTOR_EVIDENCE_BUCKET
-        ):
-            raise ConfigError(
-                "LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET is the placeholder default "
-                f"{DEFAULT_TUTOR_EVIDENCE_BUCKET!r}. GCS bucket names are global and no "
-                "Lemely project owns that one, so tutors' documents would go to whoever "
-                "creates it. Set it to this environment's private bucket: deploy.yml "
-                "sets <project-id>-tutor-evidence-<env>, which scripts/gcp-bootstrap.sh "
-                "creates."
-            )
         self._raw_client: Any = _client
         self._project = project
         self._evidence_bucket = tutor_evidence_bucket
@@ -120,10 +134,12 @@ class GcsStorageBackend:
     def _require_private_evidence_bucket(self, bucket: str) -> None:
         """Refuse an operation on the evidence bucket until it is shown to be private and ours.
 
-        Refuses at once, without a read, when no project number is configured.
-        Otherwise reads the bucket's settings (``storage.buckets.get``, which
-        ``scripts/gcp-bootstrap.sh`` grants the runtime account on this bucket
-        through ``roles/storage.legacyBucketReader``) and requires public access
+        Refuses at once, without a read, when the bucket is the placeholder
+        default (:func:`placeholder_evidence_bucket_refusal`) or no project
+        number is configured. Otherwise reads the bucket's settings
+        (``storage.buckets.get``, which ``scripts/gcp-bootstrap.sh`` grants the
+        runtime account on this bucket through
+        ``roles/storage.legacyBucketReader``) and requires public access
         prevention ``enforced``, uniform bucket-level access on, and the owning
         project number equal to the configured one. Any other bucket returns at
         once. See the module docstring for why this runs on first use and why
@@ -131,6 +147,9 @@ class GcsStorageBackend:
         """
         if bucket != self._evidence_bucket or self._evidence_bucket_private:
             return
+        placeholder = placeholder_evidence_bucket_refusal(bucket)
+        if placeholder is not None:
+            raise ExternalServiceError(placeholder)
         if self._project_number is None:
             raise ExternalServiceError(
                 f"Refusing to use the tutor evidence bucket {bucket}: "
@@ -372,4 +391,4 @@ class GcsStorageBackend:
         return signed
 
 
-__all__ = ["GcsStorageBackend"]
+__all__ = ["GcsStorageBackend", "placeholder_evidence_bucket_refusal"]

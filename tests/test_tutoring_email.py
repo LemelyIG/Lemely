@@ -21,6 +21,7 @@ from lemely.db.models.users import User
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.io.notify_email import MockTransactionalEmailProvider
 from lemely.runtime.config import EmailSettings, Settings
+from lemely.web.scheduled_notifications import run_jobs
 from lemely.web.tutoring_email import (
     MOCK_WARNING,
     deliver_tutoring_email,
@@ -31,6 +32,8 @@ from tests import test_email_outbox_repo as _outbox
 from tests.test_email_outbox_repo import NOW, RecordingProvider, _enqueue, _rows, _user
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.orm import Session, sessionmaker
 
 PLACEHOLDER_DOMAIN = "@parents.lemely.local"
@@ -185,6 +188,139 @@ def test_the_sent_count_window_is_a_rolling_24_hours_from_now(
     # cap 1 reached by the earlier send at NOW; 25 hours later it has left the window.
     _run(pg_sessionmaker, provider, cap=1, now=NOW + timedelta(hours=25))
     assert len(provider.calls) == 1
+
+
+# -- one bad row never blocks the queue (final review finding 1) -----------------
+#
+# Before the fix, an unknown template raised ``KeyError`` from the preference lookup, the tick
+# rolled back, ``run_jobs`` logged ``sweep_job_failed``, and the same oldest row was claimed first
+# again on every tick: nothing behind it, safety mails included, was ever delivered.
+
+
+def _age(sm: sessionmaker[Session], key: str, *, hours: int) -> None:
+    with sm.begin() as session:
+        session.execute(
+            sa.update(EmailOutbox)
+            .where(EmailOutbox.dedupe_key == key)
+            .values(created_at=NOW - timedelta(hours=hours))
+        )
+
+
+def _tick(sm: sessionmaker[Session], provider: object) -> int | None:
+    """One sweeper tick's email job, through the same runner the sweeper uses."""
+    return run_jobs([("deliver_tutoring_email", lambda: _run(sm, provider))])[
+        "deliver_tutoring_email"
+    ]
+
+
+def test_an_unknown_template_row_fails_and_the_rows_behind_it_are_delivered(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A row left by a later release (after a rollback) or a manual insert: ``failed``, once."""
+    bad = _user(pg_sessionmaker, email="bad.row@example.org")
+    good = _user(pg_sessionmaker, email="good.row@example.org")
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            EmailOutbox(
+                recipient_user_id=bad,
+                template="booking_rescheduled_from_a_later_release",
+                context={"booking_id": str(uuid.uuid4())},
+                dedupe_key="bad",
+            )
+        )
+    _enqueue(pg_sessionmaker, good, key="good", template="parent_linked")
+    _age(pg_sessionmaker, "bad", hours=2)  # the oldest row, so it is claimed first
+    _age(pg_sessionmaker, "good", hours=1)
+    provider = RecordingProvider()
+
+    handled = [_tick(pg_sessionmaker, provider) for _ in range(3)]
+
+    rows = {r.dedupe_key: r for r in _rows(pg_sessionmaker)}
+    assert (rows["bad"].status, rows["bad"].last_error, rows["bad"].sent_at) == (
+        EmailOutboxStatus.failed,
+        "unknown_template",
+        None,
+    )
+    assert rows["good"].status is EmailOutboxStatus.sent
+    assert [call[0] for call in provider.calls] == ["good.row@example.org"]
+    assert handled == [2, 0, 0]  # never None: the job itself no longer throws
+
+
+def _first_call_raises(
+    monkeypatch: pytest.MonkeyPatch, name: str, make_error: Callable[..., object]
+) -> None:
+    """Replace ``lemely.web.tutoring_email.<name>`` with one whose first call fails."""
+    import lemely.web.tutoring_email as job
+
+    real = getattr(job, name)
+    calls: list[int] = []
+
+    def wrapper(*args: object, **kwargs: object) -> object:
+        calls.append(1)
+        if len(calls) == 1:
+            return make_error(*args, **kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(job, name, wrapper)
+
+
+def _two_rows_first_older(sm: sessionmaker[Session]) -> None:
+    _enqueue(sm, _user(sm, email="first.parent@example.org"), key="first")
+    _enqueue(sm, _user(sm, email="second.parent@example.org"), key="second")
+    _age(sm, "first", hours=2)
+    _age(sm, "second", hours=1)
+
+
+def test_a_failing_renderer_fails_only_its_row(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unexpected exception while rendering one row's mail fails that row and nothing else.
+
+    The reason is the exception's class name only: the message may carry the address.
+    """
+    _two_rows_first_older(pg_sessionmaker)
+
+    def renderer_crash(*_: object, **__: object) -> object:
+        raise RuntimeError("template engine crashed rendering for first.parent@example.org")
+
+    _first_call_raises(monkeypatch, "validate_context", renderer_crash)
+    provider = RecordingProvider()
+
+    with structlog.testing.capture_logs() as logs:
+        assert _tick(pg_sessionmaker, provider) == 2
+
+    rows = {r.dedupe_key: r for r in _rows(pg_sessionmaker)}
+    assert (rows["first"].status, rows["first"].last_error) == (
+        EmailOutboxStatus.failed,
+        "error:RuntimeError",
+    )
+    assert rows["second"].status is EmailOutboxStatus.sent
+    assert [call[0] for call in provider.calls] == ["second.parent@example.org"]
+    rendered = json.dumps(logs, default=str)
+    assert str(rows["first"].id) in rendered
+    assert "first.parent@example.org" not in rendered
+
+
+def test_a_database_error_inside_one_row_fails_only_that_row(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A SQL error aborts the transaction; the row is still marked and the next one delivered."""
+    _two_rows_first_older(pg_sessionmaker)
+
+    def broken_lookup(session: Session, *_: object) -> object:
+        return session.execute(sa.text("SELECT 1 / 0"))
+
+    _first_call_raises(monkeypatch, "recipient_in_session", broken_lookup)
+    provider = RecordingProvider()
+
+    assert _tick(pg_sessionmaker, provider) == 2
+
+    rows = {r.dedupe_key: r for r in _rows(pg_sessionmaker)}
+    assert rows["first"].status is EmailOutboxStatus.failed
+    assert rows["first"].last_error is not None
+    assert rows["first"].last_error.startswith("error:")
+    assert "@" not in rows["first"].last_error
+    assert rows["second"].status is EmailOutboxStatus.sent
 
 
 def test_email_delivery_mode_reports_mock_without_api_key() -> None:

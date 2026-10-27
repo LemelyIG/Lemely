@@ -9,13 +9,18 @@ Per tick, at most ``batch`` rows are handled, **each in its own transaction**:
 
 1. ``SELECT ... WHERE status = 'pending' ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED``
    (safe across replicas);
-2. decide: a placeholder address, an unverified recipient, or a recipient who has since switched
+2. decide: a template this release does not know is ``failed`` (``unknown_template``); a
+   placeholder address, an unverified recipient, or a recipient who has since switched
    the template's notification type off is ``skipped``; the mock provider is
    ``skipped`` with ``last_error='mock_provider'`` and never ``sent`` (SC-6); a 24 h sent count at
    or above ``[tutoring] email_daily_cap`` is ``skipped`` (counted under an advisory lock, so
    replicas cannot overshoot);
 3. send, and mark ``sent`` or ``failed`` with ``attempts = 1``. A ``skipped`` row keeps
    ``attempts = 0``: it was never handed to the provider.
+
+Any unexpected exception while one claimed row is handled marks **that row** ``failed``
+(``error:<exception class>``, no message, so no address) and the loop goes on: one bad row can
+never stop the rows behind it, which include the parent link and unlink safety mails.
 
 **First attempt only: a ``failed`` row is never retried** (decision log row 12); nothing selects
 anything but ``pending``. The send happens inside the transaction, so a crash between send and
@@ -41,7 +46,12 @@ from lemely.db.email_outbox_repo import (
     template_enabled_in_session,
 )
 from lemely.db.models.enums import EmailOutboxStatus
-from lemely.io.notify_email import InvalidEmailContext, scrub_error, validate_context
+from lemely.io.notify_email import (
+    EMAIL_TEMPLATES,
+    InvalidEmailContext,
+    scrub_error,
+    validate_context,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -49,6 +59,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session, sessionmaker
 
+    from lemely.db.email_outbox_repo import OutboxRow
     from lemely.io.notify_email import TransactionalEmailProvider
     from lemely.runtime.config import Settings
 
@@ -85,10 +96,41 @@ def _deliver_one(
     daily_cap: int,
     moment: datetime,
 ) -> EmailOutboxStatus | None:
-    """Claim and finish one row in the caller's transaction. ``None`` when nothing is pending."""
+    """Claim and finish one row in the caller's transaction. ``None`` when nothing is pending.
+
+    Whatever goes wrong while the claimed row is decided and sent is that row's failure, never
+    the job's: the work runs in a savepoint, so after an unexpected exception (a database error
+    included) the savepoint is rolled back and the row, still locked, is marked ``failed`` with
+    ``last_error='error:<exception class>'``. The class name only, because the message may carry
+    the address. Without this, the oldest bad row would be claimed first on every tick and block
+    every row behind it. Only a failure to claim or to mark propagates.
+    """
     row = claim_next_pending_in_session(session)
     if row is None:
         return None
+    try:
+        with session.begin_nested():
+            return _decide_and_send(
+                session, row, provider=provider, daily_cap=daily_cap, moment=moment
+            )
+    except Exception as exc:
+        reason = f"error:{type(exc).__name__}"
+        log.warning("tutoring_email_row_failed", outbox_id=str(row.id), reason=reason)
+        mark_in_session(
+            session, row.id, status=EmailOutboxStatus.failed, last_error=reason, sent_at=None
+        )
+        return EmailOutboxStatus.failed
+
+
+def _decide_and_send(
+    session: Session,
+    row: OutboxRow,
+    *,
+    provider: TransactionalEmailProvider,
+    daily_cap: int,
+    moment: datetime,
+) -> EmailOutboxStatus:
+    """Decide the claimed ``row``'s outcome, send it if it is due, and mark it."""
 
     def finish(status: EmailOutboxStatus, error: str | None = None) -> EmailOutboxStatus:
         mark_in_session(
@@ -99,6 +141,11 @@ def _deliver_one(
             sent_at=moment if status is EmailOutboxStatus.sent else None,
         )
         return status
+
+    if EMAIL_TEMPLATES.get(row.template) is None:
+        # A row a later release wrote before a rollback, or a manual insert: nothing here can
+        # render it or knows which preference gates it, and it must not block the queue.
+        return finish(EmailOutboxStatus.failed, "unknown_template")
 
     recipient = recipient_in_session(session, row.recipient_user_id)
     if recipient is None:

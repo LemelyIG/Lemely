@@ -1077,7 +1077,8 @@ class SandboxSettings(BaseModel):
 #: The placeholder default of ``StorageSettings.tutor_evidence_bucket``. A
 #: directory name for the ``local`` backend; for ``gcs`` it is a bucket name in
 #: Google's global namespace that no Lemely project owns, so
-#: :class:`~lemely.io.storage_gcs.GcsStorageBackend` refuses it (SC-22).
+#: :class:`~lemely.io.storage_gcs.GcsStorageBackend` refuses every operation on
+#: it, at first use rather than at startup (SC-22).
 DEFAULT_TUTOR_EVIDENCE_BUCKET = "lemely-tutor-evidence"
 
 
@@ -1110,8 +1111,9 @@ class StorageSettings(BaseModel):
 
     The evidence bucket's default is the one a deploy must never use, because
     whoever owned a bucket of that name would receive tutors' identity and
-    qualification documents: the gcs backend raises ``ConfigError`` for it
-    when it is built, and checks the configured bucket is private and owned by
+    qualification documents: the gcs backend refuses every evidence operation
+    on it (fail closed, at first use, so the app and its other buckets still
+    start), and checks any other configured bucket is private and owned by
     project ``gcs_project_number`` before its first use. The check is in the
     backend, not here, because ``local`` keeps the default (and ignores the
     number) and a settings-level refusal would also reject a ``gcs``
@@ -1135,7 +1137,7 @@ class StorageSettings(BaseModel):
     # their own PRIVATE bucket: they are PII, are only ever opened by an admin
     # through a short-lived signed URL, and must never share a namespace with
     # the public-ish avatars or the student scans. `lemely-` prefix: see above;
-    # unlike the other two, the gcs backend refuses this default outright.
+    # unlike the other two, the gcs backend refuses every operation on this default.
     tutor_evidence_bucket: str = Field(default=DEFAULT_TUTOR_EVIDENCE_BUCKET, min_length=1)
     # TTL of the admin evidence signed URL. Far shorter than `signed_url_ttl_seconds`
     # on purpose: the link is minted per open, served as an attachment, and a

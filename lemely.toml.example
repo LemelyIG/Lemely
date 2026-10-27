@@ -250,6 +250,9 @@ avatar_max_bytes = 5242880  # 5 MiB
 tutor_evidence_bucket = "lemely-tutor-evidence"
 tutor_evidence_signed_url_ttl_seconds = 300
 # gcs_project = "my-gcp-project"  # only if ADC can't infer one
+# The project NUMBER (not its id) that must own tutor_evidence_bucket. Required
+# for evidence storage on gcs: unset, every evidence operation is refused.
+# gcs_project_number = 123456789012
 
 [push]
 # Web push (VAPID, RFC 8292). All three absent is a SUPPORTED state (D5.9 §4):
