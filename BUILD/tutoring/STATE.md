@@ -22,8 +22,9 @@ Phases 0-2 DONE (recon, brainstorm LOCKED, ADRs, SPEC rev 3, threat model, plan 
 | W4 (T13, T14, T15) | DONE incl. review fixes; I4 hot patches `4ef4e0a8`; gate G4 green (see `handoffs/W4.md`) |
 | W5 (T17, T18, T19, T20) | DONE incl. review fixes and block-masking lanes F5-A/F5-A2; I5a hot patches `7c5e596a`; gate G5 green (STATIC all PASS; Python 1,980; SCAN-PY 472; web 3,847; RACE 5/5); see `handoffs/W5.md` |
 | W6 (T21, T22, T23, T24) | DONE incl. review fixes (F6-21..24); I6a hot patches `743d5ff0`; gate G6 green (STATIC all PASS; Python 2,134; SCAN-PY 472; web 4,193; RACE 5/5); see `handoffs/W6.md`; pushed |
-| W7 (T25, T26, T27, T28) | next (tell user: disk 99% full) |
-| W8, W9, IF | not started |
+| W7 (T25, T26, T27, T28) | DONE incl. review fixes (F7-25..28); I7a hot patches `4a2b2d23`; gate G7 green (STATIC all PASS; Python 1,804; SCAN-PY 472; web 4,449; RACE 5/5); see `handoffs/W7.md`; NOT PUSHED until the Wave 6 CI re-run (run 40422421462) finishes |
+| W8 (T29 seed, T30 security review, T31 docs) | next |
+| W9 (T32 e2e, T33 UI QA), IF | not started |
 
 Rules: every new task and review = fresh agent with a minimal brief (memory `lean-context-fresh-agents`); fix rounds = fresh agent with findings + SHA; resume only after a rate-limit stop.
 
