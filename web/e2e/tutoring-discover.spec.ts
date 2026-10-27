@@ -160,7 +160,8 @@ test.describe("E2E 1: a student discovers a tutor, books a session, the tutor ac
     await test.step("Omar's results are hidden, with the plain explanation", async () => {
       await page.goto(`/student/tutors/${omar.tutorProfileId}`)
       await expect(page.locator("h1")).toHaveText(omar.publicName, { timeout: 15_000 })
-      await expect(page.getByText("Results are hidden for now")).toBeVisible()
+      // One hidden notice per figure: the grade distribution and the change in grade.
+      await expect(page.getByText("Results are hidden for now")).toHaveCount(2)
       await expect(page.getByRole("button", { name: "Show as table" })).toHaveCount(0)
     })
 

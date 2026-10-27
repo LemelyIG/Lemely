@@ -167,7 +167,9 @@ test.describe("E2E 4: a parent books a session for their child", () => {
     await expect(page.locator("h1")).toContainText("Session with", { timeout: 15_000 })
     // A tutor never learns that a parent link exists (SC-9): whoever asked, it is "the student".
     await expect(page.getByText("the student", { exact: true })).toBeVisible()
-    await expect(page.getByRole("main").getByText(/parent/i)).toHaveCount(0)
+    // (The notes thread's fixed line "This student's parents can read these notes." is for every
+    // student and says nothing about this one; what must not appear is who made the request.)
+    await expect(page.getByRole("main").getByText(/A parent booked|Booked by|booked by a parent/i)).toHaveCount(0)
 
     expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
     await page.context().close()
