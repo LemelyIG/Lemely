@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test"
+import { test, expect, type APIRequest, type Page } from "@playwright/test"
 import { watchConsole } from "./console-errors"
 import { injectSession, readSeed } from "./seed"
 
@@ -38,12 +38,37 @@ async function openAs(
   return page
 }
 
-test.describe("E2E 1: a student discovers a tutor, books a session, the tutor accepts it", () => {
-  let bookingId = ""
+/**
+ * The student's earliest waiting or confirmed request with this tutor, read from the API. A failed
+ * test discards its worker, and module state with it, so the later tests find the booking again
+ * instead of reading a variable.
+ */
+async function earliestBooking(api: APIRequest, token: string, tutorId: string): Promise<string> {
+  const request = await api.newContext({
+    baseURL: BACKEND_URL,
+    extraHTTPHeaders: { Authorization: `Bearer ${token}` },
+  })
+  const response = await request.get("/api/student/bookings", { params: { when: "upcoming" } })
+  expect(response.status()).toBe(200)
+  const body = (await response.json()) as {
+    items: { bookingId: string; startsAt: string; effectiveState: string; tutor: { tutorId: string } }[]
+  }
+  await request.dispose()
+  const mine = body.items
+    .filter((b) => b.tutor.tutorId === tutorId && ["requested", "accepted"].includes(b.effectiveState))
+    .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))
+  return mine[0]?.bookingId ?? ""
+}
 
+test.describe("E2E 1: a student discovers a tutor, books a session, the tutor accepts it", () => {
   test.afterAll(async ({ playwright }) => {
-    if (bookingId === "") return
     const seed = readSeed()
+    const bookingId = await earliestBooking(
+      playwright.request,
+      seed.tutoring.discover.student.accessToken,
+      seed.tutoring.tutors.sufficient.tutorProfileId,
+    )
+    if (bookingId === "") return
     const request = await playwright.request.newContext({
       baseURL: BACKEND_URL,
       extraHTTPHeaders: { Authorization: `Bearer ${seed.tutoring.discover.student.accessToken}` },
@@ -58,7 +83,9 @@ test.describe("E2E 1: a student discovers a tutor, books a session, the tutor ac
 
   test("the student finds Amira in the directory, signs in, filters, reads her results and requests a session", async ({
     page,
+    playwright,
   }) => {
+    let bookingId = ""
     const seed = readSeed()
     const errors = watchConsole(page)
     const { tutors, discover, subjectName, outcomes } = seed.tutoring
@@ -100,8 +127,11 @@ test.describe("E2E 1: a student discovers a tutor, books a session, the tutor ac
 
       await page.getByLabel("Subject", { exact: true }).selectOption({ label: subjectName })
       // Saturday evening: Amira teaches every day 15:00-21:00, Omar weekdays 16:00-19:00 only.
-      await page.getByRole("checkbox", { name: "Saturday" }).check()
-      await page.getByRole("checkbox", { name: /^Evening/ }).check()
+      // The filters live in the address, so the box is checked a render after the click.
+      await page.getByRole("checkbox", { name: "Saturday" }).click()
+      await expect(page.getByRole("checkbox", { name: "Saturday" })).toBeChecked()
+      await page.getByRole("checkbox", { name: /^Evening/ }).click()
+      await expect(page.getByRole("checkbox", { name: /^Evening/ })).toBeChecked()
       await expect(page.getByRole("link", { name: omar.publicName })).toHaveCount(0, { timeout: 15_000 })
       await expect(page.getByRole("link", { name: amira.publicName })).toBeVisible()
     })
@@ -160,6 +190,7 @@ test.describe("E2E 1: a student discovers a tutor, books a session, the tutor ac
       await expect(page).toHaveURL(BOOKING_PATH, { timeout: 15_000 })
       bookingId = BOOKING_PATH.exec(page.url())?.[1] ?? ""
       expect(bookingId).not.toBe("")
+      expect(await earliestBooking(playwright.request, student.accessToken, amira.tutorProfileId)).toBe(bookingId)
       await expect(page.locator("h1")).toHaveText(`${subjectName} with ${amira.publicName}`, {
         timeout: 15_000,
       })
@@ -177,9 +208,14 @@ test.describe("E2E 1: a student discovers a tutor, books a session, the tutor ac
     expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
   })
 
-  test("the tutor sees the request and accepts it with a meeting link", async ({ browser }) => {
+  test("the tutor sees the request and accepts it with a meeting link", async ({ browser, playwright }) => {
     const seed = readSeed()
     const amira = seed.tutoring.tutors.sufficient
+    const bookingId = await earliestBooking(
+      playwright.request,
+      seed.tutoring.discover.student.accessToken,
+      amira.tutorProfileId,
+    )
     expect(bookingId, "the student's request from the first test").not.toBe("")
     const page = await openAs(browser, amira, "teacher")
     const errors = watchConsole(page)
@@ -209,9 +245,10 @@ test.describe("E2E 1: a student discovers a tutor, books a session, the tutor ac
     await page.context().close()
   })
 
-  test("the student sees the confirmed session with the meeting link", async ({ browser }) => {
+  test("the student sees the confirmed session with the meeting link", async ({ browser, playwright }) => {
     const seed = readSeed()
     const { discover, subjectName, tutors } = seed.tutoring
+    const bookingId = await earliestBooking(playwright.request, discover.student.accessToken, tutors.sufficient.tutorProfileId)
     expect(bookingId, "the student's request from the first test").not.toBe("")
     const page = await openAs(browser, discover.student, "student")
     const errors = watchConsole(page)

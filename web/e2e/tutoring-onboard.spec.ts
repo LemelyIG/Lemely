@@ -65,7 +65,7 @@ test.describe("E2E 2: tutor onboarding, approval, sharing and the visit", () => 
       await expect(page.getByText("Everything Lemely needs is in place.")).toBeVisible()
       await page.getByRole("button", { name: "Send for review" }).click()
       await expect(page.getByRole("heading", { name: "Sent for review" })).toBeVisible({ timeout: 15_000 })
-      await expect(page.getByText("Lemely is reviewing your profile.")).toBeVisible()
+      await expect(page.getByText("Lemely is reviewing your profile.").first()).toBeVisible()
     })
 
     await test.step("the tutoring home shows it as under review", async () => {

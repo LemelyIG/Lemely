@@ -1,4 +1,4 @@
-import { test, expect, type Browser, type Page } from "@playwright/test"
+import { test, expect, type APIRequest, type Browser, type Page } from "@playwright/test"
 import { watchConsole } from "./console-errors"
 import { injectSession, readSeed } from "./seed"
 
@@ -27,11 +27,33 @@ async function openAs(
   return page
 }
 
-test.describe("E2E 4: a parent books a session for their child", () => {
-  let bookingId = ""
+const BACKEND_URL = "http://127.0.0.1:8000"
 
+/**
+ * The child's earliest waiting request with this tutor, read from the API. A failed test
+ * discards its worker, and module state with it, so the later tests find the booking again.
+ */
+async function earliestRequest(api: APIRequest, token: string, tutorId: string): Promise<string> {
+  const request = await api.newContext({
+    baseURL: BACKEND_URL,
+    extraHTTPHeaders: { Authorization: `Bearer ${token}` },
+  })
+  const response = await request.get("/api/student/bookings", { params: { when: "upcoming" } })
+  expect(response.status()).toBe(200)
+  const body = (await response.json()) as {
+    items: { bookingId: string; startsAt: string; effectiveState: string; tutor: { tutorId: string } }[]
+  }
+  await request.dispose()
+  const mine = body.items
+    .filter((b) => b.tutor.tutorId === tutorId && b.effectiveState === "requested")
+    .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))
+  return mine[0]?.bookingId ?? ""
+}
+
+test.describe("E2E 4: a parent books a session for their child", () => {
   test("the parent finds Omar, books for the child without a first note, and lands on the read-only session", async ({
     browser,
+    playwright,
   }) => {
     const seed = readSeed()
     const { tutors, subjectName } = seed.tutoring
@@ -78,8 +100,9 @@ test.describe("E2E 4: a parent books a session for their child", () => {
       await expect(page).toHaveURL(SESSION_PATH, { timeout: 15_000 })
       const match = SESSION_PATH.exec(page.url())
       expect(match?.[1], "the session is under the child").toBe(child.userId)
-      bookingId = match?.[2] ?? ""
+      const bookingId = match?.[2] ?? ""
       expect(bookingId).not.toBe("")
+      expect(await earliestRequest(playwright.request, child.accessToken, omar.tutorProfileId)).toBe(bookingId)
     })
 
     await test.step("P-06 shows the request read-only: notes are the child's and the tutor's", async () => {
@@ -91,17 +114,21 @@ test.describe("E2E 4: a parent books a session for their child", () => {
       await expect(page.getByLabel("Write a note")).toHaveCount(0)
       await expect(page.getByRole("button", { name: "Send note" })).toHaveCount(0)
       // The parent made this request, so they may cancel it.
-      await expect(page.getByRole("button", { name: /^Cancel/ })).toBeVisible()
+      await expect(page.getByRole("button", { name: "Withdraw request" })).toBeVisible()
     })
 
     expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
     await page.context().close()
   })
 
-  test("the child sees the session under My sessions and is told a parent booked it", async ({ browser }) => {
+  test("the child sees the session under My sessions and is told a parent booked it", async ({
+    browser,
+    playwright,
+  }) => {
     const seed = readSeed()
     const { tutors, subjectName } = seed.tutoring
     const child = seed.students.declining
+    const bookingId = await earliestRequest(playwright.request, child.accessToken, tutors.insufficient.tutorProfileId)
     expect(bookingId, "the parent's request from the first test").not.toBe("")
     const page = await openAs(browser, child, "student")
     const errors = watchConsole(page)
@@ -121,9 +148,10 @@ test.describe("E2E 4: a parent books a session for their child", () => {
     await page.context().close()
   })
 
-  test("the tutor sees the request, as from the student", async ({ browser }) => {
+  test("the tutor sees the request, as from the student", async ({ browser, playwright }) => {
     const seed = readSeed()
     const omar = seed.tutoring.tutors.insufficient
+    const bookingId = await earliestRequest(playwright.request, seed.students.declining.accessToken, omar.tutorProfileId)
     expect(bookingId, "the parent's request from the first test").not.toBe("")
     const page = await openAs(browser, omar, "teacher")
     const errors = watchConsole(page)
