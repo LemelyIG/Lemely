@@ -33,6 +33,44 @@ export interface SeedStudent extends SeedAccount {
   selfReviewAttemptId?: string
 }
 
+/** A tutor of the `tutoring` group: a verified teacher account plus its profile. */
+export interface SeedTutor extends SeedAccount {
+  /** `tutor_profiles.id`: what the public card, booking and grant routes take. */
+  tutorProfileId: string
+  /** "Amira K." as the directory shows it. */
+  publicName: string
+  headline: string
+  /** `TutorListingState`: "listed" for two tutors, "draft" for the third. */
+  listingState: string
+  /** Whether search engines may index the public card (decision row 17). */
+  indexable: boolean
+}
+
+/**
+ * What a tutor's outcome figure reads, computed by `core.tutor_outcomes` over
+ * the seeded cohort (counts only). The two `*State` fields are "sufficient" or
+ * "insufficient"; every count is `null` exactly when its figure is
+ * insufficient, and `buckets` is empty then.
+ */
+export interface SeedOutcomeFigure {
+  distributionState: string
+  changeState: string
+  nGraded: number | null
+  /** Every ladder rung, "A*" to "U", with its count; empty when insufficient. */
+  buckets: Record<string, number>
+  nPaired: number | null
+  higher: number | null
+  same: number | null
+  lower: number | null
+}
+
+export interface SeedGrant {
+  grantId: string
+  /** `users.id` of the student who shared. */
+  studentUserId: string
+  tutorProfileId: string
+}
+
 export interface SeedContract {
   runTag: string
   generatedAt: string
@@ -266,6 +304,79 @@ export interface SeedContract {
       /** Highest XP first. */
       expectedOrderByStudentKey: string[]
     }
+  }
+  /**
+   * The tutoring marketplace (T29), written by `seed_tutoring_fixture` in
+   * `scripts/seed_e2e.py`. Everything here is time-relative to the seed run:
+   * the past students' windows closed weeks ago, and the bookings sit on the
+   * hour around "now" (upcoming ones days ahead, past ones days back).
+   */
+  tutoring: {
+    subjectCode: string
+    subjectName: string
+    /** The only `platform_admin` account (no signup route exists for one). */
+    platformAdmin: SeedAccount
+    tutors: {
+      /** Listed and indexable; five past students, so its outcome figure shows. */
+      sufficient: SeedTutor
+      /** Listed, opted out of indexing; three past students, so its figure is hidden. */
+      insufficient: SeedTutor
+      /** A complete draft the tutor can submit from their own screens. */
+      draft: SeedTutor
+    }
+    /**
+     * The booking student: verified, safety notice acknowledged. Holds one booking
+     * in every effective state with `tutors.sufficient`, the live grant in
+     * `grants.revocable`, and filed both reports. Consumed by journeys that change
+     * data (revoking the grant), so smoke rows that need a stable grant use
+     * `grants.live` instead.
+     */
+    student: SeedAccount
+    /** Fresh verified students with nothing booked and no safety notice acknowledged. */
+    discover: { student: SeedAccount; rival: SeedAccount }
+    /** Booking ids by effective state; all with `tutors.sufficient`. */
+    bookings: {
+      requested: string
+      accepted: string
+      awaitingOutcome: string
+      completed: string
+      noShow: string
+      declined: string
+      cancelledByStudent: string
+      /** Cancelled by the tutor inside 24 hours of the start, with a reason. */
+      cancelledByTutorLate: string
+      expired: string
+      /** The seeded parent's child (`students.declining`). */
+      child: {
+        /** A request the child made. */
+        childRequested: string
+        /** Booked by the parent (`parent`), accepted. */
+        parentAccepted: string
+        /** Booked by the parent, ended more than 48 hours ago, no outcome recorded. */
+        awaitingOutcome: string
+      }
+    }
+    grants: {
+      /** `students.declining` to `tutors.sufficient`, live, with `accessLogCount` audit rows. */
+      live: SeedGrant & { accessLogCount: number }
+      /** `students.declining` to `tutors.insufficient`, ended by the student. */
+      ended: SeedGrant
+      /** `tutoring.student` to `tutors.sufficient`, live: the one a journey may revoke. */
+      revocable: SeedGrant
+    }
+    reports: {
+      /** The one open `safety_concern`, on `bookings.completed` (notes frozen). */
+      openSafety: { reportId: string; bookingId: string }
+      /** A dismissed report on `tutors.insufficient`'s profile. */
+      resolved: { reportId: string; tutorProfileId: string }
+    }
+    reviews: {
+      /** Of `tutors.sufficient`: stars and approved text. */
+      approvedReviewId: string
+      /** Of `tutors.sufficient`: text still waiting in the moderation queue. */
+      pendingReviewId: string
+    }
+    outcomes: { sufficient: SeedOutcomeFigure; insufficient: SeedOutcomeFigure }
   }
 }
 

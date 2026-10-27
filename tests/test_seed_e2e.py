@@ -13,8 +13,14 @@ reports).
 
 from __future__ import annotations
 
+import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any, get_args
+
+import pytest
+import sqlalchemy as sa
 
 from lemely.core.at_risk import (
     AtRiskReason,
@@ -22,11 +28,29 @@ from lemely.core.at_risk import (
     TargetRuleStatus,
     assess_at_risk,
 )
+from lemely.core.booking import EffectiveState, effective_state, is_late_cancel
 from lemely.core.difficulty import allocate_difficulty
 from lemely.core.history import GRADE_ORDER, StudentHistory, is_grade_bearing
 from lemely.core.placement import MIN_QUESTIONS, MIN_TOPICS
 from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD, ConfidenceBand
-from lemely.db.models.enums import QuestionSource
+from lemely.core.tutor_outcomes import (
+    DURING_WINDOW,
+    OUTCOME_K_MIN,
+    close_instant,
+    outcome_for_subject,
+)
+from lemely.db.models.enums import QuestionSource, Role
+from lemely.db.models.tutoring import (
+    TutorAccessAudit,
+    TutorBooking,
+    TutorBookingNote,
+    TutorDataGrant,
+    TutoringReport,
+    TutorProfile,
+)
+from lemely.db.models.users import ParentChildLink
+from lemely.db.tutor_outcomes_repo import TutorOutcomesRepository
+from lemely.db.tutoring_predicates import EFFECTIVE_STATE_SQL
 from scripts.seed_e2e import (
     BELOW_TARGET_GRADE,
     BELOW_TARGET_POSITIONS_BELOW,
@@ -54,6 +78,11 @@ from scripts.seed_e2e import (
     RATIONALE_ONLY_REVIEW_SCORE,
     REVIEW_ITEM_CONFIDENCE_SCORE,
     SUBJECT_CODE,
+    TUTORING_BOOKING_PLAN,
+    TUTORING_INSUFFICIENT_COHORT,
+    TUTORING_SUBJECT_CODE,
+    TUTORING_SUFFICIENT_COHORT,
+    TutoringSeedAccounts,
     accuracy_report_for_score,
     below_target_recorded_at,
     build_email,
@@ -71,6 +100,11 @@ from scripts.seed_e2e import (
     legacy_review_recorded_at,
     legacy_review_scheme,
     paper_record_for_scenario,
+    seed_tutoring_fixture,
+    tutoring_booking_times,
+    tutoring_cohort_inputs,
+    tutoring_expected_outcome,
+    tutoring_session_start,
     wrong_mcq_answer,
 )
 
@@ -746,6 +780,10 @@ def _payload_kwargs(**overrides: object) -> dict[str, object]:
             "reviewItemId": "dqi1",
             "consolePaperId": "dcp1",
         },
+        "tutoring": {
+            "subjectCode": "0625",
+            "tutors": {"sufficient": {"tutorProfileId": "tp1"}},
+        },
     }
     base.update(overrides)
     return base
@@ -868,6 +906,10 @@ class TestBuildResultPayload:
                 "remarkStudent": {"userId": "dr1", "attemptIds": ["drm1", "drm2"]},
                 "reviewItemId": "dqi1",
                 "consolePaperId": "dcp1",
+            },
+            "tutoring": {
+                "subjectCode": "0625",
+                "tutors": {"sufficient": {"tutorProfileId": "tp1"}},
             },
         }
 
@@ -1054,3 +1096,480 @@ class TestRationaleOnlyReviewItem:
         # TestLegacyReviewItem/TestReviewItemVerdicts pin for the other rows.
         assert report.grade_prediction.percentage == RATIONALE_ONLY_REVIEW_SCORE[0]
         assert report.grade_prediction.grade == RATIONALE_ONLY_REVIEW_SCORE[1]
+
+
+# ---------------------------------------------------------------------------
+# Tutoring marketplace fixture (T29).
+# ---------------------------------------------------------------------------
+
+_REAL_NOW = datetime.now(UTC)
+
+
+class TestTutoringOutcomeFixture:
+    """The two cohorts, judged by `core.tutor_outcomes` itself (SPEC section e, ADR-T04)."""
+
+    def test_seed_tutoring_outcome_fixture_is_sufficient(self) -> None:
+        members, observations = tutoring_cohort_inputs(TUTORING_SUFFICIENT_COHORT, _REAL_NOW)
+        outcome = outcome_for_subject(members, observations, now=_REAL_NOW)
+
+        assert len(TUTORING_SUFFICIENT_COHORT) >= OUTCOME_K_MIN
+        assert outcome.distribution.state == "sufficient"
+        assert outcome.change.state == "sufficient"
+        assert outcome.distribution.n_graded == len(TUTORING_SUFFICIENT_COHORT)
+        assert outcome.change.n_paired == len(TUTORING_SUFFICIENT_COHORT)
+
+        # The four conditions the brief names, each read off the figure or the
+        # inputs, not off the fixture's own literals.
+        assert all(m.eligible for m in members)
+        assert all(close_instant(m) <= _REAL_NOW for m in members), "a window is still open"
+        counts = [b.count for b in outcome.distribution.buckets]
+        assert max(counts) <= outcome.distribution.n_graded - 2
+        assert not any(m.ever_granted for m in members)  # never-granted = n >= k
+        assert outcome.change.higher is not None
+        assert (
+            max(outcome.change.higher, outcome.change.same or 0, outcome.change.lower or 0)
+            <= (outcome.change.n_paired or 0) - 2
+        )
+
+    def test_sufficient_fixture_has_exactly_k_so_dropping_one_hides_it(self) -> None:
+        """Non-vacuity: the guard the fixture clears is the k floor, and it is live."""
+        assert len(TUTORING_SUFFICIENT_COHORT) == OUTCOME_K_MIN
+        members, observations = tutoring_cohort_inputs(TUTORING_SUFFICIENT_COHORT[:-1], _REAL_NOW)
+        outcome = outcome_for_subject(members, observations, now=_REAL_NOW)
+        assert outcome.distribution.state == "insufficient"
+        assert outcome.change.state == "insufficient"
+
+    def test_sufficient_fixture_windows_have_closed_with_room_to_spare(self) -> None:
+        """A run that starts a week late must still find every window closed."""
+        newest = max(tutoring_session_start(s, _REAL_NOW) for s in TUTORING_SUFFICIENT_COHORT)
+        assert _REAL_NOW - (newest + DURING_WINDOW) >= timedelta(days=7)
+
+    def test_seed_tutoring_insufficient_fixture(self) -> None:
+        members, observations = tutoring_cohort_inputs(TUTORING_INSUFFICIENT_COHORT, _REAL_NOW)
+        outcome = outcome_for_subject(members, observations, now=_REAL_NOW)
+
+        assert 0 < len(TUTORING_INSUFFICIENT_COHORT) < OUTCOME_K_MIN
+        assert all(m.eligible for m in members)  # it is the count that hides it, not exclusion
+        assert outcome.distribution.state == "insufficient"
+        assert outcome.change.state == "insufficient"
+        assert outcome.distribution.n_graded is None
+        assert outcome.distribution.buckets == ()
+        assert outcome.change.n_paired is None
+
+    def test_expected_outcome_matches_the_core_for_both_cohorts(self) -> None:
+        sufficient = tutoring_expected_outcome(TUTORING_SUFFICIENT_COHORT, _REAL_NOW)
+        insufficient = tutoring_expected_outcome(TUTORING_INSUFFICIENT_COHORT, _REAL_NOW)
+        assert sufficient.distribution.state == "sufficient"
+        assert insufficient.distribution.state == "insufficient"
+
+
+class TestTutoringBookingPlan:
+    def test_every_effective_state_is_planned(self) -> None:
+        seen = {
+            effective_state(
+                plan.state,
+                starts_at=tutoring_booking_times(plan, _REAL_NOW)[0],
+                ends_at=tutoring_booking_times(plan, _REAL_NOW)[1],
+                now=_REAL_NOW,
+            )
+            for plan in TUTORING_BOOKING_PLAN
+        }
+        # Expected side: the state names SPEC section a.3 lists, taken from the
+        # core's own literal, so a state added there fails here.
+        assert seen == set(get_args(EffectiveState))
+
+    def test_a_tutor_late_cancel_with_a_reason_is_planned(self) -> None:
+        late = [
+            plan
+            for plan in TUTORING_BOOKING_PLAN
+            if plan.cancelled_by == "tutor"
+            and plan.cancelled_hours_ago is not None
+            and is_late_cancel(
+                cancelled_by="tutor",
+                cancelled_at=_REAL_NOW - timedelta(hours=plan.cancelled_hours_ago),
+                starts_at=tutoring_booking_times(plan, _REAL_NOW)[0],
+            )
+        ]
+        assert len(late) == 1
+
+    def test_child_has_a_parent_requested_accepted_a_child_requested_and_an_awaiting_booking(
+        self,
+    ) -> None:
+        child = [p for p in TUTORING_BOOKING_PLAN if p.student == "child"]
+
+        def eff(plan_key: str) -> str:
+            plan = next(p for p in child if p.key == plan_key)
+            starts, ends = tutoring_booking_times(plan, _REAL_NOW)
+            return effective_state(plan.state, starts_at=starts, ends_at=ends, now=_REAL_NOW)
+
+        parent_requested = [p for p in child if p.requested_by == "parent"]
+        child_requested = [p for p in child if p.requested_by == "student"]
+        assert any(eff(p.key) == "accepted" for p in parent_requested)
+        assert any(eff(p.key) == "requested" for p in child_requested)
+        assert any(eff(p.key) == "awaiting_outcome" for p in child)
+
+    def test_no_two_active_bookings_of_one_tutor_or_student_overlap(self) -> None:
+        """The database's exclusion constraints would refuse the seed otherwise."""
+        active = [p for p in TUTORING_BOOKING_PLAN if p.state in {"requested", "accepted"}]
+        assert len(active) >= 6, "the overlap scan found nothing to compare"
+        for i, a in enumerate(active):
+            for b in active[i + 1 :]:
+                if a.tutor == b.tutor or a.student == b.student:
+                    a_start, a_end = tutoring_booking_times(a, _REAL_NOW)
+                    b_start, b_end = tutoring_booking_times(b, _REAL_NOW)
+                    assert a_end <= b_start or b_end <= a_start, (a.key, b.key)
+
+
+# ---------------------------------------------------------------------------
+# The writer, against a throwaway database.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def tutoring_db() -> Any:
+    from tests.tutoring_db import tutoring_database
+
+    with tutoring_database() as factory:
+        yield factory
+
+
+@pytest.fixture
+def sm(tutoring_db: Any) -> Any:
+    from tests.tutoring_db import emptied_after
+
+    yield from emptied_after(tutoring_db)
+
+
+def _account(sm: Any, role: Role, label: str) -> dict[str, Any]:
+    from tests.tutoring_db import add_user
+
+    uid = add_user(sm, role, display_name=f"Seed {label}")
+    return {
+        "userId": str(uid),
+        "email": f"{label}@e2e.lemely.local",
+        "password": "pw",
+        "displayName": f"Seed {label}",
+        "accessToken": f"tok-{label}",
+    }
+
+
+def _accounts(sm: Any) -> TutoringSeedAccounts:
+    child = _account(sm, Role.student, "child")
+    parent = _account(sm, Role.parent, "parent")
+    with sm.begin() as session:
+        session.add(
+            ParentChildLink(
+                parent_id=uuid.UUID(parent["userId"]), child_id=uuid.UUID(child["userId"])
+            )
+        )
+    return TutoringSeedAccounts(
+        platform_admin=_account(sm, Role.platform_admin, "admin"),
+        tutor_sufficient=_account(sm, Role.teacher, "tutor-a"),
+        tutor_insufficient=_account(sm, Role.teacher, "tutor-b"),
+        tutor_draft=_account(sm, Role.teacher, "tutor-draft"),
+        student=_account(sm, Role.student, "sam"),
+        discover=_account(sm, Role.student, "discover"),
+        rival=_account(sm, Role.student, "rival"),
+        child=child,
+        parent=parent,
+    )
+
+
+@pytest.fixture
+def seeded(sm: Any) -> tuple[dict[str, Any], TutoringSeedAccounts]:
+    accounts = _accounts(sm)
+    group = seed_tutoring_fixture(sm, run_tag="t29test", now=datetime.now(UTC), accounts=accounts)
+    return group, accounts
+
+
+class TestSeedTutoringFixtureInDatabase:
+    def test_the_database_agrees_the_sufficient_tutor_shows_a_figure_and_the_other_does_not(
+        self, sm: Any, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        group, accounts = seeded
+        repo = TutorOutcomesRepository(sm)
+        viewer = uuid.UUID(accounts.discover["userId"])
+
+        sufficient = repo.outcomes_for_viewer(
+            uuid.UUID(group["tutors"]["sufficient"]["tutorProfileId"]), viewer, Role.student
+        )
+        insufficient = repo.outcomes_for_viewer(
+            uuid.UUID(group["tutors"]["insufficient"]["tutorProfileId"]), viewer, Role.student
+        )
+
+        assert sufficient is not None and insufficient is not None
+        [physics] = sufficient.subjects
+        assert physics.subject.code == TUTORING_SUBJECT_CODE
+        assert physics.outcome.distribution.state == "sufficient"
+        assert physics.outcome.distribution.n_graded == len(TUTORING_SUFFICIENT_COHORT)
+        assert physics.outcome.change.state == "sufficient"
+        [other] = insufficient.subjects
+        assert other.outcome.distribution.state == "insufficient"
+        assert other.outcome.change.state == "insufficient"
+
+    def test_the_contract_states_the_expected_figure_the_database_reports(
+        self, sm: Any, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        group, _ = seeded
+        figure = group["outcomes"]["sufficient"]
+        expected = tutoring_expected_outcome(TUTORING_SUFFICIENT_COHORT, datetime.now(UTC))
+        assert figure["distributionState"] == "sufficient"
+        assert figure["nGraded"] == expected.distribution.n_graded
+        assert figure["buckets"] == {b.grade: b.count for b in expected.distribution.buckets}
+        assert (figure["higher"], figure["same"], figure["lower"]) == (
+            expected.change.higher,
+            expected.change.same,
+            expected.change.lower,
+        )
+        assert group["outcomes"]["insufficient"]["distributionState"] == "insufficient"
+
+    def test_tutor_listing_states_and_indexing(
+        self, sm: Any, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        group, accounts = seeded
+        with sm() as session:
+            rows = {
+                key: session.get(TutorProfile, uuid.UUID(group["tutors"][key]["tutorProfileId"]))
+                for key in ("sufficient", "insufficient", "draft")
+            }
+        assert all(row is not None for row in rows.values())
+        assert rows["sufficient"].listing_state.value == "listed"
+        assert rows["sufficient"].indexable is True
+        assert rows["insufficient"].listing_state.value == "listed"
+        assert rows["insufficient"].indexable is False
+        assert rows["draft"].listing_state.value == "draft"
+        assert rows["sufficient"].user_id == uuid.UUID(accounts.tutor_sufficient["userId"])
+        assert group["tutors"]["sufficient"]["listingState"] == "listed"
+        assert group["tutors"]["insufficient"]["indexable"] is False
+        assert group["tutors"]["draft"]["listingState"] == "draft"
+
+    def test_every_effective_state_is_present_in_the_database(
+        self, sm: Any, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        with sm() as session:
+            total = session.execute(sa.text("SELECT count(*) FROM tutor_bookings")).scalar_one()
+            per_state = {
+                name: session.execute(
+                    sa.text(f"SELECT count(*) FROM tutor_bookings WHERE {predicate}")  # noqa: S608
+                ).scalar_one()
+                for name, predicate in EFFECTIVE_STATE_SQL.items()
+            }
+        assert set(per_state) == set(get_args(EffectiveState))
+        assert all(count >= 1 for count in per_state.values()), per_state
+        assert sum(per_state.values()) == total  # the predicates partition the rows
+
+    def test_the_tutor_late_cancel_carries_its_reason(
+        self, sm: Any, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        group, _ = seeded
+        with sm() as session:
+            row = session.get(TutorBooking, uuid.UUID(group["bookings"]["cancelledByTutorLate"]))
+        assert row is not None
+        assert row.state.value == "cancelled"
+        assert row.cancelled_by_party is not None and row.cancelled_by_party.value == "tutor"
+        assert row.cancel_reason and row.cancel_reason.strip()
+        assert row.cancelled_at is not None
+        assert is_late_cancel(
+            cancelled_by="tutor", cancelled_at=row.cancelled_at, starts_at=row.starts_at
+        )
+
+    def test_the_childs_three_bookings(
+        self, sm: Any, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        group, accounts = seeded
+        with sm() as session:
+            child = {
+                key: session.get(TutorBooking, uuid.UUID(group["bookings"]["child"][key]))
+                for key in ("parentAccepted", "childRequested", "awaitingOutcome")
+            }
+        assert all(row is not None for row in child.values())
+        assert {r.student_id for r in child.values()} == {uuid.UUID(accounts.child["userId"])}
+        assert child["parentAccepted"].requested_by_party.value == "parent"
+        assert child["parentAccepted"].requested_by_user_id == uuid.UUID(accounts.parent["userId"])
+        assert child["parentAccepted"].state.value == "accepted"
+        assert child["childRequested"].requested_by_party.value == "student"
+        assert child["childRequested"].state.value == "requested"
+        now = datetime.now(UTC)
+        assert child["awaitingOutcome"].state.value == "accepted"
+        assert child["awaitingOutcome"].ends_at <= now
+
+    def test_one_live_grant_with_audit_rows_and_one_ended_grant(
+        self, sm: Any, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        group, accounts = seeded
+        child = uuid.UUID(accounts.child["userId"])
+        live = uuid.UUID(group["grants"]["live"]["grantId"])
+        ended = uuid.UUID(group["grants"]["ended"]["grantId"])
+        with sm() as session:
+            live_row = session.get(TutorDataGrant, live)
+            ended_row = session.get(TutorDataGrant, ended)
+            audit = session.scalars(
+                sa.select(TutorAccessAudit).where(TutorAccessAudit.grant_id == live)
+            ).all()
+            live_for_child = session.scalars(
+                sa.select(TutorDataGrant).where(
+                    TutorDataGrant.student_id == child, TutorDataGrant.revoked_at.is_(None)
+                )
+            ).all()
+        assert live_row is not None and live_row.revoked_at is None
+        assert live_row.student_id == child
+        assert ended_row is not None and ended_row.revoked_at is not None
+        assert ended_row.revoke_reason is not None and ended_row.revoke_reason.value == "student"
+        assert [g.id for g in live_for_child] == [live]
+        assert len(audit) == group["grants"]["live"]["accessLogCount"] >= 3
+        assert {a.tutor_profile_id for a in audit} == {
+            uuid.UUID(group["tutors"]["sufficient"]["tutorProfileId"])
+        }
+        assert all(a.accessed_at <= datetime.now(UTC) for a in audit)
+
+    def test_the_booking_student_has_a_second_live_grant_to_revoke(
+        self, sm: Any, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        group, accounts = seeded
+        with sm() as session:
+            row = session.get(TutorDataGrant, uuid.UUID(group["grants"]["revocable"]["grantId"]))
+        assert row is not None and row.revoked_at is None
+        assert row.student_id == uuid.UUID(accounts.student["userId"])
+        assert row.student_id != uuid.UUID(accounts.child["userId"])
+
+    def test_one_open_safety_concern_on_a_booking_and_one_resolved_report(
+        self, sm: Any, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        group, accounts = seeded
+        with sm() as session:
+            open_report = session.get(
+                TutoringReport, uuid.UUID(group["reports"]["openSafety"]["reportId"])
+            )
+            resolved = session.get(
+                TutoringReport, uuid.UUID(group["reports"]["resolved"]["reportId"])
+            )
+            booking = session.get(
+                TutorBooking, uuid.UUID(group["reports"]["openSafety"]["bookingId"])
+            )
+            notes = session.scalars(
+                sa.select(TutorBookingNote).where(TutorBookingNote.booking_id == booking.id)
+            ).all()
+            open_count = session.execute(
+                sa.text("SELECT count(*) FROM tutoring_reports WHERE state = 'open'")
+            ).scalar_one()
+        assert open_report is not None and resolved is not None and booking is not None
+        assert open_report.state.value == "open"
+        assert open_report.reason.value == "safety_concern"
+        assert open_report.target_type.value == "booking"
+        assert open_report.booking_id == booking.id
+        assert booking.notes_frozen_at is not None  # a safety concern freezes the thread
+        assert len(notes) >= 2  # there is a thread for the admin to read
+        assert resolved.state.value != "open"
+        assert resolved.resolved_by == uuid.UUID(accounts.platform_admin["userId"])
+        assert open_count == 1
+
+    def test_reviews_give_the_sufficient_tutor_a_rating_and_the_queue_a_pending_text(
+        self, sm: Any, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        group, _ = seeded
+        with sm() as session:
+            profile = session.get(
+                TutorProfile, uuid.UUID(group["tutors"]["sufficient"]["tutorProfileId"])
+            )
+            pending = session.execute(
+                sa.text("SELECT count(*) FROM tutor_reviews WHERE text_state = 'pending'")
+            ).scalar_one()
+            approved = session.execute(
+                sa.text("SELECT count(*) FROM tutor_reviews WHERE text_state = 'approved'")
+            ).scalar_one()
+        assert profile is not None
+        assert profile.rating_count >= 3  # the card shows a rating from three reviews
+        assert pending >= 1 and approved >= 1
+
+    def test_a_second_run_with_another_tag_does_not_collide(
+        self, sm: Any, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        first, _ = seeded
+        again = seed_tutoring_fixture(
+            sm, run_tag="t29again", now=datetime.now(UTC), accounts=_accounts(sm)
+        )
+        assert (
+            again["tutors"]["sufficient"]["tutorProfileId"]
+            != first["tutors"]["sufficient"]["tutorProfileId"]
+        )
+        assert again["outcomes"]["sufficient"]["distributionState"] == "sufficient"
+
+
+class TestTutoringSubject:
+    def test_an_existing_catalogue_subject_is_kept_and_its_name_reported(self, sm: Any) -> None:
+        from tests.tutoring_db import add_subject
+
+        add_subject(sm, TUTORING_SUBJECT_CODE, "Catalogue Physics")
+        group = seed_tutoring_fixture(
+            sm, run_tag="t29subj", now=datetime.now(UTC), accounts=_accounts(sm)
+        )
+        with sm() as session:
+            names = (
+                session.execute(
+                    sa.text("SELECT name FROM subjects WHERE code = :c"),
+                    {"c": TUTORING_SUBJECT_CODE},
+                )
+                .scalars()
+                .all()
+            )
+        assert names == ["Catalogue Physics"]
+        assert group["subjectName"] == "Catalogue Physics"
+
+
+_CONTRACT_SPEC = Path(__file__).resolve().parents[1] / "web" / "e2e" / "seed-contract.spec.ts"
+_ACCOUNT_LEAVES = ("userId", "email", "password", "displayName", "accessToken")
+_TUTOR_LEAVES = (*_ACCOUNT_LEAVES, "tutorProfileId", "publicName", "headline", "listingState")
+#: Leaves `seed-contract.spec.ts` checks in a test of their own instead of in SHAPE:
+#: booleans, the bucket map and the insufficient figure's null counts and empty buckets.
+_CHECKED_ELSEWHERE = re.compile(
+    r"tutoring\.tutors\.\w+\.indexable"
+    r"|tutoring\.outcomes\.sufficient\.buckets\.[A-Z*]+"
+    r"|tutoring\.outcomes\.insufficient\.(?:nGraded|nPaired|higher|same|lower|buckets)"
+)
+
+
+def _declared_tutoring_paths(spec_text: str) -> set[str]:
+    """Every ``tutoring.*`` path ``seed-contract.spec.ts``'s SHAPE declares, spreads expanded."""
+    paths = set(re.findall(r'"(tutoring\.[\w.]+)":\s*"(?:string|number)"', spec_text))
+    for prefix in re.findall(r'\.\.\.account\("(tutoring\.[\w.]+)"\)', spec_text):
+        paths |= {f"{prefix}.{leaf}" for leaf in _ACCOUNT_LEAVES}
+    for prefix in re.findall(r'\.\.\.tutor\("(tutoring\.[\w.]+)"\)', spec_text):
+        paths |= {f"{prefix}.{leaf}" for leaf in _TUTOR_LEAVES}
+    return paths
+
+
+def _leaf_paths(value: object, prefix: str) -> set[str]:
+    if isinstance(value, dict) and value:
+        return {p for k, v in value.items() for p in _leaf_paths(v, f"{prefix}.{k}")}
+    return {prefix}
+
+
+class TestTutoringContractLockstep:
+    """The TypeScript contract and the real ``tutoring`` group name the same leaves."""
+
+    def test_every_declared_path_exists_and_every_leaf_is_declared(
+        self, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        group, _ = seeded
+        declared = _declared_tutoring_paths(_CONTRACT_SPEC.read_text(encoding="utf-8"))
+        actual = {p for p in _leaf_paths(group, "tutoring") if not _CHECKED_ELSEWHERE.fullmatch(p)}
+        # Non-vacuity: the account spreads alone give 8 accounts x 5 + 3 tutors x 4 leaves.
+        assert len(declared) >= 80
+        assert declared - actual == set(), "declared in seed-contract.spec.ts, not seeded"
+        assert actual - declared == set(), "seeded, not declared in seed-contract.spec.ts"
+
+    def test_declared_types_match_the_values(
+        self, seeded: tuple[dict[str, Any], TutoringSeedAccounts]
+    ) -> None:
+        group, _ = seeded
+        spec_text = _CONTRACT_SPEC.read_text(encoding="utf-8")
+        typed = dict(re.findall(r'"(tutoring\.[\w.]+)":\s*"(string|number)"', spec_text))
+        assert typed, "no typed tutoring path found in seed-contract.spec.ts"
+        for path, kind in typed.items():
+            node: Any = {"tutoring": group}
+            for part in path.split("."):
+                node = node[part]
+            expected = str if kind == "string" else int
+            assert isinstance(node, expected) and not isinstance(node, bool), (path, node)
+            if kind == "string":
+                assert node != "", path

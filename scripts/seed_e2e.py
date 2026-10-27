@@ -287,6 +287,32 @@ flashcards' "nothing due today" — so no account wears two hats:
   empty deck list, and S-22's weakness-generate 409 (free — ``generate_deck``
   resolves the topic, and raises, before ever calling the generator).
 
+``tutoring`` (tutoring marketplace, T29) is additive on top of all of the
+above and is written by :func:`seed_tutoring_fixture`; its pure inputs
+(:data:`TUTORING_SUFFICIENT_COHORT`, :data:`TUTORING_INSUFFICIENT_COHORT`,
+:data:`TUTORING_BOOKING_PLAN`) are tested without a database:
+
+* ``tutors.sufficient`` -- listed and indexable, with five past students whose
+  windows have closed and exact-boundary grades, so its outcome figure shows;
+  ``tutors.insufficient`` -- listed, opted out of indexing, three past
+  students, so its figure stays hidden; ``tutors.draft`` -- a complete draft
+  the tutor can submit. All three are verified teacher accounts.
+* ``student`` -- the booking student (verified, safety notice acknowledged)
+  with one booking in every effective state with the sufficient tutor
+  (``bookings``), a live grant to revoke (``grants.revocable``) and the
+  reporter of ``reports``. ``discover.student`` and ``discover.rival`` are
+  fresh verified students with nothing booked, for the discovery and
+  double-booking journeys.
+* ``bookings.child`` -- the seeded parent's child (``students.declining``):
+  a request the child made, a parent-booked accepted session and a
+  parent-booked session awaiting its outcome. ``grants.live`` is the child's
+  live grant to the sufficient tutor with ``accessLogCount`` audit rows and
+  ``grants.ended`` an ended one to the other tutor.
+* ``reports.openSafety`` is the one open ``safety_concern`` (on
+  ``bookings.completed``, notes frozen) and ``reports.resolved`` a dismissed
+  one; ``platformAdmin`` is the account that resolved it. ``outcomes`` is what
+  each tutor's figure must read, computed by ``core.tutor_outcomes``.
+
 Usage::
 
     python scripts/seed_e2e.py [--json-out PATH] [--run-tag TAG]
@@ -305,13 +331,16 @@ import argparse
 import json
 import sys
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
+import sqlalchemy as sa
 from sqlalchemy import delete as sa_delete
 
 from lemely.core.analytics import summarize_weaknesses
 from lemely.core.at_risk import AtRiskReason
+from lemely.core.booking import AvailabilityRule
 from lemely.core.history import PaperRecord
 from lemely.core.loose_schemas import (
     AnswerPoint,
@@ -334,28 +363,60 @@ from lemely.core.schemas import (
     SourceBox,
     WeaknessReport,
 )
+from lemely.core.tutor_directory import public_name
+from lemely.core.tutor_outcomes import (
+    CohortMember,
+    GradeObservation,
+    is_member_eligible,
+    outcome_for_subject,
+)
+from lemely.db.attempt_repo import AttemptRepository
+from lemely.db.models.academic import Subject
 from lemely.db.models.attempts import Upload
 from lemely.db.models.engagement import XpEvent
 from lemely.db.models.enums import (
+    BookingParty,
+    BookingState,
     DifficultySource,
     QuestionSource,
     QuizQuestionStatus,
+    ReportReason,
+    ReportResolution,
+    ReportTargetType,
     Role,
+    TutorAccessAction,
+    TutoringMode,
     UploadStatus,
     XpSource,
 )
 from lemely.db.models.flashcards import DeckOrigin, ReviewGrade
 from lemely.db.models.quizzes import QuestionBank
-from lemely.db.models.users import Device
+from lemely.db.models.tutoring import (
+    StudentTutoringPreferences,
+    TutorAccessAudit,
+    TutorBooking,
+    TutorBookingNote,
+)
+from lemely.db.models.users import Device, User
 from lemely.db.practice_repo import PracticeRequest
 from lemely.db.question_bank_repo import NewBankQuestion
 from lemely.db.session import get_sessionmaker
+from lemely.db.tutor_approval_repo import TutorApprovalRepository
+from lemely.db.tutor_grant_repo import TutorGrantRepository
+from lemely.db.tutor_outcomes_repo import TutorOutcomesRepository
+from lemely.db.tutor_profile_repo import ProfileChanges, ProfileFields, TutorProfileRepository
+from lemely.db.tutor_review_repo import TutorReviewRepository, text_revision
+from lemely.db.tutoring_reports_repo import Reporter, TutoringReportsRepository
 from lemely.runtime.supabase_env import ensure_supabase_env
 from lemely.web import deps
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session, sessionmaker
+
     from lemely.auth.service import AuthResult
+    from lemely.core.booking import BookingStateLit
     from lemely.core.difficulty import Band
+    from lemely.core.tutor_outcomes import SubjectOutcome
 
 # ---------------------------------------------------------------------------
 # Scenario constants — the single source of truth for both the real seed and
@@ -1069,6 +1130,7 @@ def accuracy_report_for_score(
     point_notes: dict[str, str] | None = None,
     source_box: SourceBox | None = None,
     plagiarism_flagged: bool = False,
+    boundary_source: Literal["exact", "subject_default", "global_default"] = "subject_default",
 ) -> AccuracyReport:
     """Build a minimal, valid :class:`AccuracyReport` carrying ``score``.
 
@@ -1115,6 +1177,11 @@ def accuracy_report_for_score(
     D8 integrity hold: ``AttemptRepository._persist``'s real fan-out queues a
     genuine ``plagiarism_flag`` review item off this one flag, never a
     hand-inserted row — see the paper-deletion student's own seeding below.
+
+    ``boundary_source`` (T29) defaults to ``"subject_default"``, what every
+    scenario above has always carried. The tutoring fixture's past students pass
+    ``"exact"``: only an exact-boundary grade feeds a tutor's outcome figure
+    (``core.tutor_outcomes.is_outcome_eligible``).
     """
     percentage, grade = score
     awarded = round(percentage)
@@ -1150,7 +1217,7 @@ def accuracy_report_for_score(
         grade=grade,
         confidence=confidence,
         needs_teacher_review=needs_teacher_review,
-        boundary_source="subject_default",
+        boundary_source=boundary_source,
     )
     return AccuracyReport(correction=correction, weaknesses=weaknesses, grade_prediction=prediction)
 
@@ -1456,6 +1523,199 @@ def is_placement_seed_prompt(prompt: str) -> bool:
     return PLACEMENT_PROMPT_MARKER in prompt
 
 
+# ---------------------------------------------------------------------------
+# Tutoring marketplace fixture (T29) -- the pure half.
+#
+# `seed_tutoring_fixture` (below `_persist_attempts`) writes everything these
+# tables describe. They are plain data so `tests/test_seed_e2e.py` can prove,
+# without Postgres, that the outcome figure is sufficient where it must be and
+# that every effective booking state is present, using the same core functions
+# the product uses (`core.tutor_outcomes`, `core.booking`) rather than a literal.
+# ---------------------------------------------------------------------------
+
+#: The one subject every tutoring row is in (it is `SUBJECT_CODE`, IGCSE Physics).
+TUTORING_SUBJECT_CODE = SUBJECT_CODE
+TUTORING_SUBJECT_NAME = "Physics"
+
+#: Exact-boundary percentage written for each ladder rung a past student holds.
+TUTORING_GRADE_PERCENTAGES: dict[str, float] = {"A": 82.0, "B": 70.0, "C": 58.0, "D": 45.0}
+
+#: A past student's grade before the first session is recorded this long before it...
+TUTORING_BEFORE_DAYS = 45
+#: ...and the grade during is recorded this long after it. Both sit inside
+#: `core.tutor_outcomes`' lookback (180 d) and window (120 d) with room to spare.
+TUTORING_DURING_DAYS = 30
+#: A past student's account is this old at the first session, and verified this
+#: many days before it, so `is_member_eligible` holds with 30-day-rule margin.
+TUTORING_ACCOUNT_AGE_DAYS = 90
+TUTORING_VERIFIED_DAYS_BEFORE = 80
+#: Every past session lasts an hour (`ALLOWED_DURATIONS` holds 60).
+TUTORING_SESSION_MINUTES = 60
+
+
+@dataclass(frozen=True, slots=True)
+class PastStudentSpec:
+    """One past student of a tutor: when they started and the grades either side."""
+
+    key: str
+    first_session_days_ago: int
+    before_grade: str | None
+    during_grade: str | None
+
+
+#: Five eligible students whose 120-day windows have all closed (the newest
+#: first session is 130 days back), exact-boundary grades before and during,
+#: nobody ever granted (so the never-granted count is 5, at least k), during
+#: grades A,B,B,C,C (largest bucket 2 <= n - 2 = 3) and a change of two higher,
+#: two same, one lower. Exactly k students: dropping one turns the figure off.
+TUTORING_SUFFICIENT_COHORT: tuple[PastStudentSpec, ...] = (
+    PastStudentSpec("s1", 150, "B", "A"),
+    PastStudentSpec("s2", 145, "C", "B"),
+    PastStudentSpec("s3", 140, "B", "B"),
+    PastStudentSpec("s4", 135, "B", "C"),
+    PastStudentSpec("s5", 130, "C", "C"),
+)
+
+#: Three eligible, closed students: fewer than k, so both figures stay hidden.
+TUTORING_INSUFFICIENT_COHORT: tuple[PastStudentSpec, ...] = (
+    PastStudentSpec("i1", 160, "C", "B"),
+    PastStudentSpec("i2", 150, "D", "C"),
+    PastStudentSpec("i3", 140, "C", "C"),
+)
+
+
+def tutoring_session_start(spec: PastStudentSpec, now: datetime) -> datetime:
+    """S for ``spec``: the top of the hour ``first_session_days_ago`` days before ``now``."""
+    return now.replace(minute=0, second=0, microsecond=0) - timedelta(
+        days=spec.first_session_days_ago
+    )
+
+
+def tutoring_cohort_inputs(
+    cohort: tuple[PastStudentSpec, ...], now: datetime
+) -> tuple[list[CohortMember], list[GradeObservation]]:
+    """The inputs `outcome_for_subject` takes for ``cohort``, derived the way the product does.
+
+    Eligibility is `is_member_eligible`'s verdict on the instants the seed writes
+    (first verification, account creation), never a literal ``True``. ``ref`` is
+    the position in ``cohort``.
+    """
+    members: list[CohortMember] = []
+    observations: list[GradeObservation] = []
+    for ref, spec in enumerate(cohort):
+        start = tutoring_session_start(spec, now)
+        members.append(
+            CohortMember(
+                ref=ref,
+                first_session_start=start,
+                eligible=is_member_eligible(
+                    first_session_start=start,
+                    email_verified_at=start - timedelta(days=TUTORING_VERIFIED_DAYS_BEFORE),
+                    account_created_at=start - timedelta(days=TUTORING_ACCOUNT_AGE_DAYS),
+                    opted_out=False,
+                    ever_blocked_tutor=False,
+                ),
+                ever_granted=False,
+                recent_change=False,
+            )
+        )
+        if spec.before_grade is not None:
+            observations.append(
+                GradeObservation(
+                    ref=ref,
+                    grade=spec.before_grade,
+                    recorded_at=start - timedelta(days=TUTORING_BEFORE_DAYS),
+                )
+            )
+        if spec.during_grade is not None:
+            observations.append(
+                GradeObservation(
+                    ref=ref,
+                    grade=spec.during_grade,
+                    recorded_at=start + timedelta(days=TUTORING_DURING_DAYS),
+                )
+            )
+    return members, observations
+
+
+def tutoring_expected_outcome(cohort: tuple[PastStudentSpec, ...], now: datetime) -> SubjectOutcome:
+    """The figures `cohort` must produce at ``now`` (what the database must also report)."""
+    members, observations = tutoring_cohort_inputs(cohort, now)
+    return outcome_for_subject(members, observations, now=now)
+
+
+@dataclass(frozen=True, slots=True)
+class BookingPlan:
+    """One seeded booking, with times as whole hours from the top of the current hour.
+
+    ``student`` is ``"tutoring"`` (the booking student) or ``"child"`` (the
+    seeded parent's child, `students.declining`); ``tutor`` is ``"sufficient"`` or
+    ``"insufficient"``. ``cancelled_hours_ago`` is only for a cancelled booking.
+    """
+
+    key: str
+    student: Literal["tutoring", "child"]
+    tutor: Literal["sufficient", "insufficient"]
+    state: BookingStateLit
+    starts_in_hours: int
+    mode: Literal["virtual", "in_person"]
+    requested_by: Literal["student", "parent"] = "student"
+    cancelled_by: Literal["student", "tutor"] | None = None
+    cancelled_hours_ago: int | None = None
+
+
+#: Bookings in every effective state (SPEC section a.3). Hours are chosen so no two
+#: ACTIVE bookings of one tutor or one student come within a day of each other.
+TUTORING_BOOKING_PLAN: tuple[BookingPlan, ...] = (
+    # The booking student with the sufficient tutor: one of each effective state.
+    BookingPlan("requested", "tutoring", "sufficient", "requested", 150, "virtual"),
+    BookingPlan("accepted", "tutoring", "sufficient", "accepted", 72, "virtual"),
+    BookingPlan("awaitingOutcome", "tutoring", "sufficient", "accepted", -26, "in_person"),
+    BookingPlan("completed", "tutoring", "sufficient", "completed", -240, "in_person"),
+    BookingPlan("noShow", "tutoring", "sufficient", "no_show", -144, "virtual"),
+    BookingPlan("declined", "tutoring", "sufficient", "declined", 200, "virtual"),
+    BookingPlan(
+        "cancelledByStudent",
+        "tutoring",
+        "sufficient",
+        "cancelled",
+        220,
+        "virtual",
+        cancelled_by="student",
+        cancelled_hours_ago=5,
+    ),
+    # Cancelled two hours ago for a session eight hours away: inside the 24-hour
+    # window, so the row carries the tutor's reason (decision row 18).
+    BookingPlan(
+        "cancelledByTutorLate",
+        "tutoring",
+        "sufficient",
+        "cancelled",
+        8,
+        "virtual",
+        cancelled_by="tutor",
+        cancelled_hours_ago=2,
+    ),
+    BookingPlan("expired", "tutoring", "sufficient", "expired", -48, "virtual"),
+    # The seeded parent's child: a request the child made, a session the parent
+    # booked and the tutor accepted, and a parent-booked session that ended more
+    # than 48 hours ago with no outcome (the parent may now mark it done).
+    BookingPlan("childRequested", "child", "sufficient", "requested", 126, "virtual"),
+    BookingPlan(
+        "parentAccepted", "child", "sufficient", "accepted", 96, "virtual", requested_by="parent"
+    ),
+    BookingPlan(
+        "awaitingOutcome", "child", "sufficient", "accepted", -52, "virtual", requested_by="parent"
+    ),
+)
+
+
+def tutoring_booking_times(plan: BookingPlan, now: datetime) -> tuple[datetime, datetime]:
+    """``(starts_at, ends_at)`` for ``plan``, on the hour."""
+    starts = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=plan.starts_in_hours)
+    return starts, starts + timedelta(minutes=TUTORING_SESSION_MINUTES)
+
+
 def build_result_payload(
     *,
     run_tag: str,
@@ -1475,6 +1735,7 @@ def build_result_payload(
     study_plan: dict[str, Any],
     engagement: dict[str, Any],
     deletion: dict[str, Any],
+    tutoring: dict[str, Any],
 ) -> dict[str, Any]:
     """Assemble the documented output contract from already-computed pieces.
 
@@ -1492,7 +1753,10 @@ def build_result_payload(
     with a real quota, via `_provision_school_with_admin`. ``deletion`` is
     additive on top of ``engagement`` (Task 18 e2e) — the paper-deletion
     class and its three dedicated students back `paper-deletion.spec.ts`'s
-    eight design scenarios plus R7.
+    eight design scenarios plus R7. ``tutoring`` is additive on top of
+    ``deletion`` (tutoring marketplace, T29): the platform admin, three tutors,
+    the booking and discovery students and the ids of their bookings, grants,
+    reports and reviews, built by :func:`seed_tutoring_fixture`.
     """
     return {
         "runTag": run_tag,
@@ -1512,6 +1776,7 @@ def build_result_payload(
         "studyPlan": study_plan,
         "engagement": engagement,
         "deletion": deletion,
+        "tutoring": tutoring,
     }
 
 
@@ -1652,6 +1917,605 @@ def _persist_attempts(
         )
         attempt_ids.append(attempt_id)
     return attempt_ids
+
+
+@dataclass(frozen=True, slots=True)
+class TutoringSeedAccounts:
+    """The accounts `seed_tutoring_fixture` builds on: each is `_signup_account`'s dict.
+
+    All but ``child`` and ``parent`` are created for the tutoring fixture; those
+    two are the seed's existing linked pair (`students.declining`, `parent`).
+    """
+
+    platform_admin: dict[str, Any]
+    tutor_sufficient: dict[str, Any]
+    tutor_insufficient: dict[str, Any]
+    tutor_draft: dict[str, Any]
+    student: dict[str, Any]
+    discover: dict[str, Any]
+    rival: dict[str, Any]
+    child: dict[str, Any]
+    parent: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class _TutorSeed:
+    key: Literal["sufficient", "insufficient", "draft"]
+    first_name: str
+    last_initial: str
+    headline: str
+    bio: str
+    area_code: str
+    offers_in_person: bool
+    rules: tuple[AvailabilityRule, ...]
+
+
+_EVERY_DAY_AFTERNOON = tuple(AvailabilityRule(day, 15 * 60, 21 * 60) for day in range(1, 8))
+_WEEKDAY_EARLY_EVENING = tuple(AvailabilityRule(day, 16 * 60, 19 * 60) for day in range(1, 6))
+
+_TUTOR_SEEDS: tuple[_TutorSeed, ...] = (
+    _TutorSeed(
+        key="sufficient",
+        first_name="Amira",
+        last_initial="K",
+        headline="IGCSE Physics: exam technique, past papers and calm revision",
+        bio=(
+            "I teach IGCSE Physics to students who want to understand the topic and "
+            "still finish the paper on time. Sessions start from your last marked paper."
+        ),
+        area_code="cairo",
+        offers_in_person=True,
+        rules=_EVERY_DAY_AFTERNOON,
+    ),
+    _TutorSeed(
+        key="insufficient",
+        first_name="Omar",
+        last_initial="H",
+        headline="IGCSE Physics for students catching up before the mock exams",
+        bio="Patient, step-by-step help with forces, electricity and waves.",
+        area_code="giza",
+        offers_in_person=False,
+        rules=_WEEKDAY_EARLY_EVENING,
+    ),
+    _TutorSeed(
+        key="draft",
+        first_name="Layla",
+        last_initial="S",
+        headline="IGCSE Physics, small groups and one-to-one",
+        bio="",
+        area_code="new_cairo",
+        offers_in_person=False,
+        rules=_WEEKDAY_EARLY_EVENING,
+    ),
+)
+
+_TUTORING_LINK = "https://meet.google.com/lem-seed-tutor"
+_TUTORING_PLACE = "Maadi Library, reading room 2"
+_TUTORING_CANCEL_REASONS: dict[str, str] = {
+    "student": "A school exam was moved onto that afternoon.",
+    "tutor": "I am unwell and cannot teach today. Sorry for the short notice.",
+}
+_TUTORING_DECLINE_REASON = "I am not free at that time. Please pick another slot."
+_TUTORING_REVIEW_TEXTS: dict[str, str] = {
+    "first": "Explained circuits clearly and kept me calm before the exam.",
+    "third": "Good past-paper technique and useful feedback after every question.",
+}
+_TUTORING_SAFETY_DETAILS = "The tutor kept asking to continue our lessons on a private chat app."
+_TUTORING_SPAM_DETAILS = "This profile repeats the same sentence as another tutor's."
+_TUTORING_NOTES: tuple[tuple[Literal["student", "tutor"], str, int], ...] = (
+    ("student", "Could we spend the session on forces? My mock is on Thursday.", -2),
+    ("tutor", "Yes. Please bring your last two marked papers and a calculator.", -2),
+    ("student", "Thank you, see you at the library.", -1),
+)
+
+
+def _ensure_tutoring_subject(sm: sessionmaker[Session]) -> str:
+    """The one subject the fixture uses, created only when the catalogue lacks it.
+
+    Returns the name the database holds for it (a seeded catalogue's name wins
+    over ``TUTORING_SUBJECT_NAME``), because screens print that name.
+    """
+    with sm.begin() as session:
+        name = session.scalars(
+            sa.select(Subject.name).where(Subject.code == TUTORING_SUBJECT_CODE)
+        ).first()
+        if name is None:
+            session.add(Subject(code=TUTORING_SUBJECT_CODE, name=TUTORING_SUBJECT_NAME))
+            return TUTORING_SUBJECT_NAME
+        return name
+
+
+def _create_tutor(
+    sm: sessionmaker[Session],
+    approvals: TutorApprovalRepository,
+    spec: _TutorSeed,
+    user_id: uuid.UUID,
+    admin_id: uuid.UUID,
+) -> uuid.UUID:
+    """A tutor profile through the real services: create, availability, submit, approve.
+
+    The draft tutor stops after availability, complete enough that the tutor's own
+    first Submit works. ``indexable`` is switched off for the insufficient tutor
+    afterwards: it is not a moderated field, so the profile stays listed.
+    """
+    profiles = TutorProfileRepository(sm)
+    row = profiles.create(
+        user_id,
+        ProfileFields(
+            public_first_name=spec.first_name,
+            public_last_initial=spec.last_initial,
+            headline=spec.headline,
+            bio=spec.bio,
+            qualification_note=None,
+            subject_codes=(TUTORING_SUBJECT_CODE,),
+            offers_virtual=True,
+            offers_in_person=spec.offers_in_person,
+            offers_other=False,
+            other_mode_note=None,
+            area_code=spec.area_code,
+        ),
+    )
+    profiles.replace_availability(row.id, spec.rules)
+    if spec.key == "draft":
+        return row.id
+    profiles.submit(row.id)
+    approvals.approve(row.id, admin_user_id=admin_id, documents_seen=False, note=None)
+    if spec.key == "insufficient":
+        profiles.update(row.id, ProfileChanges(indexable=False))
+    return row.id
+
+
+def _seed_past_students(
+    sm: sessionmaker[Session],
+    attempts: AttemptRepository,
+    *,
+    run_tag: str,
+    tutor_key: str,
+    tutor_profile_id: uuid.UUID,
+    cohort: tuple[PastStudentSpec, ...],
+    now: datetime,
+) -> list[tuple[uuid.UUID, uuid.UUID]]:
+    """Each past student's account, completed session and graded attempts; ``(student, booking)``.
+
+    The accounts are rows in ``public.users`` only (no sign-in), created
+    ``TUTORING_ACCOUNT_AGE_DAYS`` before their first session and verified shortly
+    after, so `tutoring_cohort_inputs` and the SQL cohort agree they are eligible.
+    The grades go through `AttemptRepository.persist_correction` with an exact
+    boundary, the one writer every other seeded attempt uses.
+    """
+    written: list[tuple[uuid.UUID, uuid.UUID]] = []
+    for spec in cohort:
+        start = tutoring_session_start(spec, now)
+        student_id = uuid.uuid4()
+        booking_id = uuid.uuid4()
+        joined = start - timedelta(days=TUTORING_ACCOUNT_AGE_DAYS)
+        with sm.begin() as session:
+            session.add(
+                User(
+                    id=student_id,
+                    email=f"past-{tutor_key}-{spec.key}-{run_tag}@{EMAIL_DOMAIN}",
+                    role=Role.student,
+                    display_name=f"Past Student {spec.key.upper()}",
+                    email_verified_at=start - timedelta(days=TUTORING_VERIFIED_DAYS_BEFORE),
+                    created_at=joined,
+                    updated_at=joined,
+                )
+            )
+            session.flush()
+            session.add(
+                TutorBooking(
+                    id=booking_id,
+                    tutor_profile_id=tutor_profile_id,
+                    student_id=student_id,
+                    requested_by_user_id=student_id,
+                    requested_by_party=BookingParty.student,
+                    subject_code=TUTORING_SUBJECT_CODE,
+                    mode=TutoringMode.virtual,
+                    starts_at=start,
+                    ends_at=start + timedelta(minutes=TUTORING_SESSION_MINUTES),
+                    state=BookingState.completed,
+                    meeting_link=_TUTORING_LINK,
+                    accepted_at=start - timedelta(days=1),
+                    completed_at=start + timedelta(minutes=TUTORING_SESSION_MINUTES + 30),
+                    completed_by_party=BookingParty.tutor,
+                    created_at=start - timedelta(days=2),
+                    updated_at=start + timedelta(minutes=TUTORING_SESSION_MINUTES + 30),
+                )
+            )
+        for paper_number, grade, recorded_at in (
+            (1, spec.before_grade, start - timedelta(days=TUTORING_BEFORE_DAYS)),
+            (2, spec.during_grade, start + timedelta(days=TUTORING_DURING_DAYS)),
+        ):
+            if grade is None:
+                continue
+            attempts.persist_correction(
+                user_id=str(student_id),
+                report=accuracy_report_for_score(
+                    (TUTORING_GRADE_PERCENTAGES[grade], grade),
+                    paper_number=paper_number,
+                    boundary_source="exact",
+                ),
+                recorded_at=recorded_at.isoformat(),
+            )
+        written.append((student_id, booking_id))
+    return written
+
+
+def _tutoring_booking_row(
+    plan: BookingPlan,
+    now: datetime,
+    *,
+    tutor_profile_id: uuid.UUID,
+    tutor_user_id: uuid.UUID,
+    student_id: uuid.UUID,
+    requester_id: uuid.UUID,
+) -> TutorBooking:
+    """One planned booking with the timestamps its state needs (the table's CHECKs).
+
+    Times are derived from ``plan`` and ``now`` only, so a re-run on another day
+    produces the same shapes: a request made yesterday, an acceptance half an hour
+    ago, an outcome half an hour after the session.
+    """
+    starts, ends = tutoring_booking_times(plan, now)
+    created = min(now - timedelta(days=1), starts - timedelta(days=2))
+    was_accepted = plan.state in {"accepted", "completed", "no_show"} or (
+        plan.state == "cancelled" and plan.cancelled_by == "tutor"
+    )
+    accepted_at = min(now - timedelta(minutes=30), starts - timedelta(days=1))
+    outcome_at = ends + timedelta(minutes=30)
+    row = TutorBooking(
+        id=uuid.uuid4(),
+        tutor_profile_id=tutor_profile_id,
+        student_id=student_id,
+        requested_by_user_id=requester_id,
+        requested_by_party=BookingParty(plan.requested_by),
+        subject_code=TUTORING_SUBJECT_CODE,
+        mode=TutoringMode(plan.mode),
+        starts_at=starts,
+        ends_at=ends,
+        state=BookingState(plan.state),
+        created_at=created,
+    )
+    latest = created
+    if was_accepted:
+        row.accepted_at = accepted_at
+        latest = max(latest, accepted_at)
+        if plan.mode == "virtual":
+            row.meeting_link = _TUTORING_LINK
+        else:
+            row.location_detail = _TUTORING_PLACE
+    if plan.state == "completed":
+        row.completed_at = outcome_at
+        row.completed_by_party = BookingParty.tutor
+        latest = max(latest, outcome_at)
+    elif plan.state == "no_show":
+        row.no_show_marked_at = outcome_at
+        latest = max(latest, outcome_at)
+    elif plan.state == "declined":
+        row.declined_at = accepted_at
+        row.decline_reason = _TUTORING_DECLINE_REASON
+        latest = max(latest, accepted_at)
+    elif plan.state == "cancelled":
+        if plan.cancelled_by is None or plan.cancelled_hours_ago is None:
+            raise ValueError(f"cancelled plan {plan.key!r} needs cancelled_by and a time")
+        cancelled_at = now - timedelta(hours=plan.cancelled_hours_ago)
+        row.cancelled_at = cancelled_at
+        row.cancelled_by_party = BookingParty(plan.cancelled_by)
+        row.cancelled_by_user_id = tutor_user_id if plan.cancelled_by == "tutor" else student_id
+        row.cancel_reason = _TUTORING_CANCEL_REASONS[plan.cancelled_by]
+        latest = max(latest, cancelled_at)
+    elif plan.state == "expired":
+        row.expired_at = starts
+        latest = max(latest, starts)
+    row.updated_at = latest
+    return row
+
+
+def _tutor_view(
+    account: dict[str, Any], profile_id: uuid.UUID, spec: _TutorSeed, *, indexable: bool, state: str
+) -> dict[str, Any]:
+    return {
+        **account,
+        "tutorProfileId": str(profile_id),
+        "publicName": public_name(spec.first_name, spec.last_initial),
+        "headline": spec.headline,
+        "listingState": state,
+        "indexable": indexable,
+    }
+
+
+def _figure_payload(outcome: SubjectOutcome) -> dict[str, Any]:
+    """The expected figure as the contract states it (counts only, null when hidden)."""
+    distribution, change = outcome.distribution, outcome.change
+    return {
+        "distributionState": distribution.state,
+        "changeState": change.state,
+        "nGraded": distribution.n_graded,
+        "buckets": {b.grade: b.count for b in distribution.buckets},
+        "nPaired": change.n_paired,
+        "higher": change.higher,
+        "same": change.same,
+        "lower": change.lower,
+    }
+
+
+def seed_tutoring_fixture(
+    sm: sessionmaker[Session],
+    *,
+    run_tag: str,
+    now: datetime,
+    accounts: TutoringSeedAccounts,
+) -> dict[str, Any]:
+    """Seed the tutoring marketplace and return the contract's ``tutoring`` group.
+
+    ``accounts`` are already-created users (sign-in accounts need GoTrue, which
+    this function does not touch, so a test can pass plain ``users`` rows). What
+    is written, and how:
+
+    * Three tutor profiles through `TutorProfileRepository` and
+      `TutorApprovalRepository` (the real submit and approve, so approval events
+      and snapshots exist): ``sufficient`` (listed, indexable), ``insufficient``
+      (listed, opted out of indexing) and ``draft``.
+    * Past students and their grades for the two outcome cohorts, so the
+      sufficient tutor's figure shows and the other's does not
+      (`TUTORING_SUFFICIENT_COHORT`, `TUTORING_INSUFFICIENT_COHORT`). The seed
+      checks the database's own figures against `core.tutor_outcomes` and
+      raises when they disagree, rather than shipping a fixture that quietly
+      shows nothing.
+    * `TUTORING_BOOKING_PLAN`: bookings in every effective state, written
+      directly because the booking service refuses a start in the past.
+    * Three reviews of the sufficient tutor, one text approved and one left in
+      the moderation queue.
+    * Grants through `TutorGrantRepository` (the child's live grant with three
+      access-log rows, the child's ended grant, and a second live grant of the
+      booking student to revoke), reports through `TutoringReportsRepository`
+      (an open safety concern on a booking, a resolved one on a profile).
+
+    Everything is namespaced by ``run_tag`` and the accounts passed in, like the
+    rest of this seed; a second call with fresh accounts adds a second set.
+    """
+    subject_name = _ensure_tutoring_subject(sm)
+    admin_id = uuid.UUID(accounts.platform_admin["userId"])
+    student_id = uuid.UUID(accounts.student["userId"])
+    child_id = uuid.UUID(accounts.child["userId"])
+    parent_id = uuid.UUID(accounts.parent["userId"])
+    approvals = TutorApprovalRepository(sm)
+    attempts = AttemptRepository(sm)
+
+    tutor_accounts = {
+        "sufficient": accounts.tutor_sufficient,
+        "insufficient": accounts.tutor_insufficient,
+        "draft": accounts.tutor_draft,
+    }
+    profile_ids: dict[str, uuid.UUID] = {}
+    for spec in _TUTOR_SEEDS:
+        _log(f"Creating the {spec.key} tutor profile")
+        profile_ids[spec.key] = _create_tutor(
+            sm, approvals, spec, uuid.UUID(tutor_accounts[spec.key]["userId"]), admin_id
+        )
+    tutor_user_ids = {key: uuid.UUID(acct["userId"]) for key, acct in tutor_accounts.items()}
+
+    _log("Seeding the two outcome cohorts (past students, completed sessions, exact grades)")
+    cohort_a = _seed_past_students(
+        sm,
+        attempts,
+        run_tag=run_tag,
+        tutor_key="sufficient",
+        tutor_profile_id=profile_ids["sufficient"],
+        cohort=TUTORING_SUFFICIENT_COHORT,
+        now=now,
+    )
+    _seed_past_students(
+        sm,
+        attempts,
+        run_tag=run_tag,
+        tutor_key="insufficient",
+        tutor_profile_id=profile_ids["insufficient"],
+        cohort=TUTORING_INSUFFICIENT_COHORT,
+        now=now,
+    )
+
+    _log("Seeding bookings in every effective state")
+    students = {"tutoring": student_id, "child": child_id}
+    booking_ids: dict[str, str] = {}
+    child_booking_ids: dict[str, str] = {}
+    with sm.begin() as session:
+        for who in (student_id, child_id):
+            session.add(
+                StudentTutoringPreferences(
+                    user_id=who, safety_notice_acknowledged_at=now - timedelta(days=30)
+                )
+            )
+        session.flush()
+        rows: dict[str, TutorBooking] = {}
+        for plan in TUTORING_BOOKING_PLAN:
+            row = _tutoring_booking_row(
+                plan,
+                now,
+                tutor_profile_id=profile_ids[plan.tutor],
+                tutor_user_id=tutor_user_ids[plan.tutor],
+                student_id=students[plan.student],
+                requester_id=parent_id if plan.requested_by == "parent" else students[plan.student],
+            )
+            session.add(row)
+            rows[f"{plan.student}:{plan.key}"] = row
+            (booking_ids if plan.student == "tutoring" else child_booking_ids)[plan.key] = str(
+                row.id
+            )
+        session.flush()
+        completed = rows["tutoring:completed"]
+        for author, body, days in _TUTORING_NOTES:
+            at = completed.starts_at + timedelta(days=days)
+            session.add(
+                TutorBookingNote(
+                    booking_id=completed.id,
+                    author_user_id=student_id
+                    if author == "student"
+                    else tutor_user_ids["sufficient"],
+                    author_party=BookingParty(author),
+                    body=body,
+                    created_at=at,
+                    updated_at=at,
+                )
+            )
+
+    _log("Reviewing the sufficient tutor (one text approved, one left to moderate)")
+    reviews = TutorReviewRepository(sm)
+    first = reviews.create_review(
+        cohort_a[0][0], cohort_a[0][1], stars=5, text=_TUTORING_REVIEW_TEXTS["first"]
+    )
+    reviews.create_review(cohort_a[1][0], cohort_a[1][1], stars=4, text=None)
+    third = reviews.create_review(
+        cohort_a[2][0], cohort_a[2][1], stars=5, text=_TUTORING_REVIEW_TEXTS["third"]
+    )
+    reviews.moderate_review(
+        first.review_id,
+        admin_id,
+        "approved",
+        revision=text_revision(_TUTORING_REVIEW_TEXTS["first"]),
+    )
+
+    _log("Seeding grants and the tutor access log")
+    grants = TutorGrantRepository(sm)
+    tutor_a, tutor_b = profile_ids["sufficient"], profile_ids["insufficient"]
+    live = grants.create(child_id, tutor_a).grant
+    ended = grants.create(child_id, tutor_b).grant
+    grants.revoke(child_id, ended.id)
+    revocable = grants.create(student_id, tutor_a).grant
+    name_a = public_name(_TUTOR_SEEDS[0].first_name, _TUTOR_SEEDS[0].last_initial)
+    name_b = public_name(_TUTOR_SEEDS[1].first_name, _TUTOR_SEEDS[1].last_initial)
+    live_visits: tuple[tuple[TutorAccessAction, int], ...] = (
+        (TutorAccessAction.list, 9),
+        (TutorAccessAction.detail, 6),
+        (TutorAccessAction.detail, 2),
+    )
+    with sm.begin() as session:
+        for grant_id, created_days in ((live.id, 12), (ended.id, 20), (revocable.id, 3)):
+            session.execute(
+                sa.text(
+                    "UPDATE tutor_data_grants SET created_at = :created, updated_at = :created "
+                    "WHERE id = :grant_id"
+                ),
+                {"grant_id": grant_id, "created": now - timedelta(days=created_days)},
+            )
+        session.execute(
+            sa.text(
+                "UPDATE tutor_data_grants SET revoked_at = :revoked, updated_at = :revoked "
+                "WHERE id = :grant_id AND revoked_at IS NOT NULL"
+            ),
+            {"grant_id": ended.id, "revoked": now - timedelta(days=5)},
+        )
+        for grant_id, who, tutor_id, name, action, days in (
+            *((live.id, child_id, tutor_a, name_a, a, d) for a, d in live_visits),
+            (ended.id, child_id, tutor_b, name_b, TutorAccessAction.detail, 15),
+            (ended.id, child_id, tutor_b, name_b, TutorAccessAction.detail, 8),
+            (revocable.id, student_id, tutor_a, name_a, TutorAccessAction.detail, 1),
+        ):
+            at = now - timedelta(days=days)
+            session.add(
+                TutorAccessAudit(
+                    grant_id=grant_id,
+                    student_id=who,
+                    tutor_profile_id=tutor_id,
+                    tutor_public_name=name,
+                    action=action,
+                    accessed_at=at,
+                    created_at=at,
+                )
+            )
+
+    _log("Filing one open safety concern on a booking and one resolved report on a profile")
+    reports = TutoringReportsRepository(sm)
+    reporter = Reporter(user_id=student_id, party="student")
+    open_report = reports.file(
+        reporter,
+        target_type=ReportTargetType.booking,
+        target_id=uuid.UUID(booking_ids["completed"]),
+        reason=ReportReason.safety_concern,
+        details=_TUTORING_SAFETY_DETAILS,
+    )
+    resolved_report = reports.file(
+        reporter,
+        target_type=ReportTargetType.tutor_profile,
+        target_id=tutor_b,
+        reason=ReportReason.spam,
+        details=_TUTORING_SPAM_DETAILS,
+    )
+    reports.resolve(
+        resolved_report.report_id,
+        admin_user_id=admin_id,
+        resolution=ReportResolution.dismissed,
+        note="Checked the profile. Nothing to action.",
+    )
+
+    _log("Checking the database's outcome figures against core.tutor_outcomes")
+    outcomes_repo = TutorOutcomesRepository(sm)
+    expected = {
+        "sufficient": tutoring_expected_outcome(TUTORING_SUFFICIENT_COHORT, now),
+        "insufficient": tutoring_expected_outcome(TUTORING_INSUFFICIENT_COHORT, now),
+    }
+    for key, tutor_id in (("sufficient", tutor_a), ("insufficient", tutor_b)):
+        seen = outcomes_repo.outcomes_for_viewer(tutor_id, child_id, Role.student)
+        if seen is None or [f.outcome for f in seen.subjects] != [expected[key]]:
+            raise RuntimeError(
+                f"The {key} tutor's outcome figure in the database is not the one "
+                f"core.tutor_outcomes gives the seeded cohort ({expected[key]})."
+            )
+
+    def view(key: str, spec: _TutorSeed, state: str, indexable: bool) -> dict[str, Any]:
+        return _tutor_view(
+            tutor_accounts[key], profile_ids[key], spec, indexable=indexable, state=state
+        )
+
+    return {
+        "subjectCode": TUTORING_SUBJECT_CODE,
+        "subjectName": subject_name,
+        "platformAdmin": accounts.platform_admin,
+        "tutors": {
+            "sufficient": view("sufficient", _TUTOR_SEEDS[0], "listed", True),
+            "insufficient": view("insufficient", _TUTOR_SEEDS[1], "listed", False),
+            "draft": view("draft", _TUTOR_SEEDS[2], "draft", True),
+        },
+        "student": accounts.student,
+        "discover": {"student": accounts.discover, "rival": accounts.rival},
+        "bookings": {**booking_ids, "child": child_booking_ids},
+        "grants": {
+            "live": {
+                "grantId": str(live.id),
+                "studentUserId": str(child_id),
+                "tutorProfileId": str(tutor_a),
+                "accessLogCount": len(live_visits),
+            },
+            "ended": {
+                "grantId": str(ended.id),
+                "studentUserId": str(child_id),
+                "tutorProfileId": str(tutor_b),
+            },
+            "revocable": {
+                "grantId": str(revocable.id),
+                "studentUserId": str(student_id),
+                "tutorProfileId": str(tutor_a),
+            },
+        },
+        "reports": {
+            "openSafety": {
+                "reportId": str(open_report.report_id),
+                "bookingId": booking_ids["completed"],
+            },
+            "resolved": {
+                "reportId": str(resolved_report.report_id),
+                "tutorProfileId": str(tutor_b),
+            },
+        },
+        "reviews": {
+            "approvedReviewId": str(first.review_id),
+            "pendingReviewId": str(third.review_id),
+        },
+        "outcomes": {
+            "sufficient": _figure_payload(expected["sufficient"]),
+            "insufficient": _figure_payload(expected["insufficient"]),
+        },
+    }
 
 
 def seed(*, run_tag: str | None = None) -> dict[str, Any]:
@@ -2835,6 +3699,28 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         "consolePaperId": str(deletion_console_paper_id),
     }
 
+    _log("Creating the tutoring accounts and seeding the tutoring marketplace (T29)")
+    tutoring_accounts = TutoringSeedAccounts(
+        platform_admin=_signup_account(
+            "platform-admin", Role.platform_admin, run_tag, email_verified=True
+        ),
+        tutor_sufficient=_signup_account(
+            "tutor-sufficient", Role.teacher, run_tag, email_verified=True
+        ),
+        tutor_insufficient=_signup_account(
+            "tutor-insufficient", Role.teacher, run_tag, email_verified=True
+        ),
+        tutor_draft=_signup_account("tutor-draft", Role.teacher, run_tag, email_verified=True),
+        student=_signup_account("tutoring-student", Role.student, run_tag, email_verified=True),
+        discover=_signup_account("discover", Role.student, run_tag, email_verified=True),
+        rival=_signup_account("rival", Role.student, run_tag, email_verified=True),
+        child=declining,
+        parent=parent,
+    )
+    tutoring_dict = seed_tutoring_fixture(
+        get_sessionmaker(), run_tag=run_tag, now=now, accounts=tutoring_accounts
+    )
+
     _log("Seeding complete")
     return build_result_payload(
         run_tag=run_tag,
@@ -2854,6 +3740,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         study_plan=study_plan_dict,
         engagement=engagement_dict,
         deletion=deletion_dict,
+        tutoring=tutoring_dict,
     )
 
 
