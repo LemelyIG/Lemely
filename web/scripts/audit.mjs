@@ -2848,7 +2848,9 @@ async function main() {
     const signupRes = await fetch(`${BACKEND_URL}/api/auth/signup`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD, role: "student" }),
+      // `acceptedTerms` has been required since D7.11 (consent to /data); without it signup answers
+      // 422 and this journey, which every later audit step depends on, never starts.
+      body: JSON.stringify({ email, password: PASSWORD, role: "student", acceptedTerms: true }),
     })
     if (!signupRes.ok) {
       throw new Error(`signup failed: ${signupRes.status} ${await signupRes.text()}`)
