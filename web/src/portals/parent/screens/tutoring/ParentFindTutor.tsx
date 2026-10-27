@@ -163,11 +163,7 @@ export function ParentTutorProfile() {
   // answer; every other failure is `QueryState`'s ordinary error or offline state.
   if (query.isError && bookingRefusalOf(query.error) !== null) {
     return (
-      <>
-        {/* `TutorFailure`'s heading is not an h1, and this is the whole page. */}
-        <h1 className="sr-only">Tutor profile</h1>
-        <TutorFailure error={query.error} onRetry={() => void query.refetch()} directoryPath={directory} />
-      </>
+      <TutorFailure error={query.error} onRetry={() => void query.refetch()} directoryPath={directory} />
     )
   }
 
@@ -229,10 +225,11 @@ function BookingFor({ tutor, linked }: { tutor: TutorProfile; linked: readonly C
       audience="parent"
       tutor={tutor}
       student={chosen ? { id: chosen.childId, name: chosen.displayName } : undefined}
-      childPicker={
+      childPicker={(error) => (
         <Select
           label="Booking for"
           value={chosenId}
+          error={error}
           onChange={(event) => setChosenId(event.target.value)}
         >
           {linked.length === 1 ? null : <option value="">Choose a child</option>}
@@ -242,7 +239,7 @@ function BookingFor({ tutor, linked }: { tutor: TutorProfile; linked: readonly C
             </option>
           ))}
         </Select>
-      }
+      )}
       sessionsPath={chosen ? parentChildTutoringHref(chosen.childId) : "/parent"}
       directoryPath={PARENT_TUTORS_PATH}
       bookedPath={(booking) => parentSessionHref(booking.student.studentId, booking.bookingId)}
@@ -284,10 +281,12 @@ export function ParentBookSession() {
 
   if (profile.isError && bookingRefusalOf(profile.error) !== null) {
     return (
-      <>
-        <h1 className="sr-only">Book a session</h1>
-        <TutorFailure error={profile.error} onRetry={() => void profile.refetch()} directoryPath={PARENT_TUTORS_PATH} />
-      </>
+      <TutorFailure
+        error={profile.error}
+        onRetry={() => void profile.refetch()}
+        directoryPath={PARENT_TUTORS_PATH}
+        heading="Book a session"
+      />
     )
   }
 

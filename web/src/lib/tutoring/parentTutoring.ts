@@ -1,7 +1,11 @@
 import type { ChildSummary } from "@/lib/parentTypes"
 import type { Booking, EffectiveState, Grant } from "@/lib/tutoringTypes"
 import { GRANT_STATUS_VIEW, type GrantStatusView } from "./accessView"
+import { PARENT_TUTORS_PATH } from "./parentNext"
 import { formatTutorDate } from "./sessionView"
+
+// The sign-in screen needs these two without the rest of this file (see `parentNext.ts`).
+export { PARENT_TUTORS_PATH, parentNextTarget } from "./parentNext"
 
 /*
  * T27 · the pure half of the parent's tutoring screens (P-05 child's tutoring,
@@ -27,8 +31,6 @@ import { formatTutorDate } from "./sessionView"
  */
 
 // ── Addresses ──────────────────────────────────────────────────────────────
-
-export const PARENT_TUTORS_PATH = "/parent/tutors"
 
 const enc = encodeURIComponent
 
@@ -62,21 +64,6 @@ export function parentSessionHref(childId: string, bookingId: string): string {
 /** P-08. */
 export function parentTutorAccessHref(childId: string): string {
   return `/parent/children/${enc(childId)}/tutor-access`
-}
-
-/**
- * G-17's "Sign in to book" carries `?next=/student/tutors/{id}`, because the
- * public page cannot know who will sign in. `postLoginTarget` keeps a `next`
- * only when it sits inside the signed-in role's own portal, so a parent who
- * followed that link would land on the parent home and lose the tutor. A parent's
- * login maps the student tutor page to the parent's page for the same tutor;
- * every other address is returned as it came (the portal check still applies).
- * Only the exact tutor page maps: the student's booking step is not a parent's.
- */
-export function parentNextTarget(next: string | null): string | null {
-  if (next === null) return null
-  const match = /^\/student\/tutors\/([^/?#]+)$/.exec(next)
-  return match ? `${PARENT_TUTORS_PATH}/${match[1]}` : next
 }
 
 // ── The linked child ───────────────────────────────────────────────────────
@@ -114,9 +101,10 @@ export interface ParentTutorRow {
 /**
  * The tutors in these bookings, once each, in the order first seen (pass the
  * newest list first). A tutor whose only bookings were declined, expired or
- * cancelled is left out; a waiting request counts.
+ * cancelled is left out; a waiting request counts. `childId` rides on each link
+ * (`?child=`) so a parent of several children keeps the one they were looking at.
  */
-export function tutorsFromBookings(bookings: readonly Booking[]): ParentTutorRow[] {
+export function tutorsFromBookings(bookings: readonly Booking[], childId?: string | null): ParentTutorRow[] {
   const byTutor = new Map<string, { name: string; subjects: string[] }>()
   for (const booking of bookings) {
     if (NOT_A_TUTOR.includes(booking.effectiveState)) continue
@@ -127,7 +115,7 @@ export function tutorsFromBookings(bookings: readonly Booking[]): ParentTutorRow
   return [...byTutor].map(([tutorId, entry]) => ({
     tutorId,
     tutorName: entry.name,
-    href: parentTutorHref(tutorId),
+    href: parentTutorHref(tutorId, childId),
     subjectLine: entry.subjects.join(", "),
   }))
 }
@@ -197,7 +185,7 @@ function statusFor(grant: Pick<Grant, "status">, childName: string): ParentGrant
 }
 
 /** One of the child's grants as P-08 draws it: read-only, with no way to stop it. */
-export function parentGrantRowView(grant: Grant, childName: string): ParentGrantRowView {
+export function parentGrantRowView(grant: Grant, childName: string, childId?: string | null): ParentGrantRowView {
   const status = statusFor(grant, childName)
   const since = `Since ${formatTutorDate(grant.createdAt)}`
   const ended = grant.revokedAt !== null && !status.live ? `, ended ${formatTutorDate(grant.revokedAt)}` : ""
@@ -205,7 +193,7 @@ export function parentGrantRowView(grant: Grant, childName: string): ParentGrant
     grantId: grant.grantId,
     tutorId: grant.tutor.tutorId,
     tutorName: grant.tutor.publicName,
-    tutorHref: parentTutorHref(grant.tutor.tutorId),
+    tutorHref: parentTutorHref(grant.tutor.tutorId, childId),
     sinceLine: `${since}${ended}`,
     status,
     reportLabel: `Report ${grant.tutor.publicName}`,

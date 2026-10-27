@@ -8,7 +8,10 @@ import { ApiError } from "@/lib/api"
 import { postLoginTarget } from "@/lib/auth/postLoginTarget"
 import type { ChildSummary } from "@/lib/parentTypes"
 import { GRANT_STATUS_VIEW } from "@/lib/tutoring/accessView"
+import { TutorFailure } from "@/components/tutoring/tutor-profile-view"
+import { childErrorFor } from "@/components/tutoring/booking-form"
 import { TUTOR_UNAVAILABLE_MESSAGE, bookingRefusalOf } from "@/lib/tutoring/bookingErrors"
+import { PARENT_TUTORS_PATH as PARENT_TUTORS_PATH_FROM_NEXT, parentNextTarget as parentNextFromModule } from "@/lib/tutoring/parentNext"
 import {
   parentBookHref,
   parentChildTutoringHref,
@@ -324,6 +327,18 @@ describe("G-17 'Sign in to book' for a parent", () => {
     expect(parentNextTarget("/parent/children/c1")).toBe("/parent/children/c1")
     expect(parentNextTarget("//evil.example/student/tutors/x")).toBe("//evil.example/student/tutors/x")
   })
+
+  it("maps only a real tutor id, not any segment", () => {
+    for (const segment of ["x", "not-a-uuid", "..%2F..", "0f8fad5b-d9cb-469f-a165-70867728950", `${ID}x`]) {
+      expect(parentNextTarget(`/student/tutors/${segment}`), segment).toBe(`/student/tutors/${segment}`)
+    }
+    expect(parentNextTarget(`/student/tutors/${ID.toUpperCase()}`)).toBe(`/parent/tutors/${ID.toUpperCase()}`)
+  })
+
+  it("is the import-free module's function, re-exported here", () => {
+    expect(parentNextTarget).toBe(parentNextFromModule)
+    expect(PARENT_TUTORS_PATH_FROM_NEXT).toBe("/parent/tutors")
+  })
 })
 
 // ── 2 · the child comes from the linked list ───────────────────────────────
@@ -363,6 +378,11 @@ describe("tutorsFromBookings", () => {
     expect(rows[1]).toMatchObject({ tutorName: "Sami K.", subjectLine: "Physics" })
   })
 
+  it("keeps the chosen child on each tutor's link, so a parent of several stays on the same child", () => {
+    const rows = tutorsFromBookings([booking({ tutor: tutorOf("t1", "Nour A.") })], "c2")
+    expect(rows[0].href).toBe("/parent/tutors/t1?child=c2")
+  })
+
   it("does not count a tutor who only declined, expired or was cancelled", () => {
     const rows = tutorsFromBookings([
       booking({ tutor: tutorOf("t1", "A"), effectiveState: "declined" }),
@@ -397,7 +417,7 @@ describe("P-05 · child's tutoring", () => {
     mocks.upcoming = ok({ items: [booking()], nextCursor: null })
     const html = draw()
     expect(hrefs(html)).toContain("/parent/children/c1/sessions/b1")
-    expect(hrefs(html)).toContain("/parent/tutors/t1")
+    expect(hrefs(html)).toContain("/parent/tutors/t1?child=c1")
     expect(words(html)).not.toContain("has no tutoring sessions")
   })
 
@@ -470,7 +490,7 @@ describe("P-06 · session detail", () => {
     const props = mocks.seen.view.at(-1)
     expect(props, "the shared view was never drawn").toBeDefined()
     expect(props!.viewer).toBe("parent")
-    expect(props!.tutorHref).toBe("/parent/tutors/t1")
+    expect(props!.tutorHref).toBe("/parent/tutors/t1?child=c1")
     expect(props!.countingHref).toBeUndefined()
     expect(props!.reviews).toBeUndefined()
     expect(props!.safetyNotice).toBeUndefined()
@@ -644,6 +664,67 @@ describe("P-07 · the directory and a tutor's page", () => {
   })
 })
 
+describe("P-07 · the 'Booking for' error", () => {
+  const draw = (query = "") =>
+    renderAt(`/parent/tutors/t1/book${query}`, "/parent/tutors/:tutorId/book", h(ParentBookSession))
+
+  it("is shown only while no child is chosen, so a picked child clears 'Choose a child.'", () => {
+    expect(childErrorFor("Choose a child.", undefined)).toBe("Choose a child.")
+    expect(childErrorFor("Choose a child.", { id: "c1", name: "Maya R." })).toBeUndefined()
+    expect(childErrorFor(undefined, undefined)).toBeUndefined()
+  })
+
+  it("is handed to the child select, which links it with aria-invalid and aria-describedby", () => {
+    draw()
+    const picker = mocks.seen.form.at(-1)!.childPicker
+    expect(typeof picker, "the picker must take the error").toBe("function")
+    const plain = renderToStaticMarkup(picker(undefined))
+    expect(plain).not.toContain("aria-invalid")
+    const html = renderToStaticMarkup(picker("Choose a child."))
+    expect(html).toContain('aria-invalid="true"')
+    expect(html).toMatch(/aria-describedby="([^"]+-error)"/)
+    const id = /aria-describedby="([^"]+)"/.exec(html)![1]
+    expect(html).toContain(`id="${id}"`)
+    expect(words(html)).toContain("Choose a child.")
+  })
+})
+
+describe("a tutor page that failed has one h1", () => {
+  const draw = (heading?: string | false) =>
+    renderAt(
+      "/x",
+      "/x",
+      h(TutorFailure, {
+        error: new ApiError(404, "not found"),
+        onRetry: () => undefined,
+        directoryPath: "/parent/tutors",
+        ...(heading === undefined ? {} : { heading }),
+      }),
+    )
+
+  it("gives a stand-alone failure an sr-only h1", () => {
+    const html = draw()
+    expect(html.match(/<h1[ >]/g) ?? []).toHaveLength(1)
+    expect(html).toMatch(/<h1 class="sr-only">Tutor profile<\/h1>/)
+  })
+
+  it("takes the screen's own name, or none where the screen already has an h1", () => {
+    expect(draw("Book a session")).toMatch(/<h1 class="sr-only">Book a session<\/h1>/)
+    expect(draw(false).match(/<h1[ >]/g) ?? []).toHaveLength(0)
+  })
+
+  it("the booking form, which sits under the screen's own h1, adds none", () => {
+    const form = src("components/tutoring/booking-form.tsx")
+    const use = /<TutorFailure[\s\S]*?\n\s*\/>/.exec(form)
+    expect(use, "the form no longer draws TutorFailure").not.toBeNull()
+    expect(use![0]).toContain("heading={false}")
+  })
+
+  it("the parent screens do not wrap it in a second h1", () => {
+    expect(src("portals/parent/screens/tutoring/ParentFindTutor.tsx")).not.toMatch(/<h1 className="sr-only"/)
+  })
+})
+
 // ── 6 · P-08: read-only, third person ──────────────────────────────────────
 
 describe("P-08 · who the child shares progress with", () => {
@@ -671,7 +752,7 @@ describe("P-08 · who the child shares progress with", () => {
     expect(text).toContain("Nour A.")
     expect(text).toContain("Since")
     expect(text).toContain("Sharing")
-    expect(hrefs(html)).toContain("/parent/tutors/t1")
+    expect(hrefs(html)).toContain("/parent/tutors/t1?child=c1")
     expect(html).toContain('aria-label="Report Nour A."')
   })
 
@@ -710,14 +791,14 @@ describe("P-08 · a grant row, per status", () => {
   it("covers every status the API can send, in the third person", () => {
     expect(statuses).toHaveLength(7)
     for (const status of statuses) {
-      const row = parentGrantRowView(grant(status), "Maya R.")
+      const row = parentGrantRowView(grant(status), "Maya R.", "c1")
       const said = `${row.status.label} ${row.status.detail} ${row.sinceLine}`
       expect(said, status).not.toMatch(/\b(you|your|you're)\b/i)
       expect(row.status.label, status).not.toBe("")
       expect(row.status.detail, status).not.toBe("")
       expect(Object.keys(row), status).not.toContain("canStop")
       expect(Object.keys(row), status).not.toContain("stopLabel")
-      expect(row.tutorHref, status).toBe("/parent/tutors/t1")
+      expect(row.tutorHref, status).toBe("/parent/tutors/t1?child=c1")
       expect(row.reportLabel, status).toBe("Report Nour A.")
     }
   })
@@ -728,6 +809,14 @@ describe("P-08 · a grant row, per status", () => {
     )
     expect(a.status).toEqual(b.status)
     expect(b.status).toEqual(c.status)
+  })
+
+  it("never names a block when the tutor's side ended the sharing", () => {
+    for (const status of ["tutor_unavailable", "tutor_suspended", "tutor_closed"] as GrantStatus[]) {
+      const { label, detail } = parentGrantRowView(grant(status), "Maya R.", "c1").status
+      expect(label, status).not.toMatch(/block/i)
+      expect(detail, status).not.toMatch(/block/i)
+    }
   })
 
   it("names the child where the sentence is about what they did", () => {

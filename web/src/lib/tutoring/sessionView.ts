@@ -138,6 +138,12 @@ export function sessionActions(
 export const CANCEL_RULE_LINE = "You can cancel up to 24 hours before the start."
 export const COMPLETE_HINT =
   "Your tutor hasn't recorded this session. If it took place, you can mark it completed."
+/** The same hint for a parent, who is not the one whose tutor it is. */
+export const COMPLETE_HINT_PARENT =
+  "The tutor hasn't recorded this session yet. If it took place, you can mark it completed."
+export function completeHint(viewer: SessionViewer): string {
+  return viewer === "parent" ? COMPLETE_HINT_PARENT : COMPLETE_HINT
+}
 export const EXPIRED_LINE = "The tutor didn't reply before the start time."
 /** Said only when the server refuses a review with 409 `account_too_new`; never inferred from a missing Review action. */
 export const ACCOUNT_TOO_NEW_LINE = "You can review once your account is 14 days old."

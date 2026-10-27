@@ -217,7 +217,7 @@ function ChildTutoringBody({ child }: { child: ChildSummary }) {
 
   const loaded = upcoming.state.status === "success" && past.state.status === "success"
   const nothingAtAll = loaded && upcoming.items.length === 0 && past.items.length === 0
-  const tutors = tutorsFromBookings([...upcoming.items, ...past.items])
+  const tutors = tutorsFromBookings([...upcoming.items, ...past.items], child.childId)
 
   return (
     <div className="flex w-full max-w-160 flex-col gap-8">

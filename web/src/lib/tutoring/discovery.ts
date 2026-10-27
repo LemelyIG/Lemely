@@ -299,10 +299,13 @@ export const COUNTING_NOTICE_STUDENT =
  */
 export function countingNotice(audience: "student" | "parent", childName?: string): string {
   if (audience === "student") return COUNTING_NOTICE_STUDENT
-  const name = childName && childName.trim() !== "" ? childName.trim() : "your child"
+  const named = childName && childName.trim() !== "" ? childName.trim() : null
+  // Before a child is chosen the name is "your child", which opens the second sentence capitalised.
+  const name = named ?? "your child"
+  const subject = named ?? "Your child"
   return (
     `If ${name} has sessions with this tutor, ${name}'s grades in this subject are counted, without their name, in the tutor's results. ` +
-    `${name} can opt out under Tutors & your data in their own account.`
+    `${subject} can opt out under Tutors & your data in their own account.`
   )
 }
 

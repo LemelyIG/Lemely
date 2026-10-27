@@ -77,8 +77,12 @@ export interface BookingFormProps {
   tutor: TutorProfile
   /** Parent only: the child being booked for. */
   student?: { id: string; name: string }
-  /** Parent only: the required "Booking for" control, rendered first. */
-  childPicker?: ReactNode
+  /**
+   * Parent only: the required "Booking for" control, rendered first. A function receives the
+   * form's "Choose a child." error (gone as soon as a child is chosen) so the control can
+   * show it and link it to itself; a plain node is drawn with the error under it.
+   */
+  childPicker?: ReactNode | ((error: string | undefined) => ReactNode)
   /** Where the requests are listed, for "already waiting". */
   sessionsPath: string
   /** Where "Find a tutor" goes if the tutor turns out to be hidden. */
@@ -94,6 +98,11 @@ export interface BookingFormProps {
    */
   safetyNoticeOpen?: boolean
   className?: string
+}
+
+/** "Choose a child." shows only while no child is chosen: picking one answers it. */
+export function childErrorFor(error: string | undefined, student: { id: string; name: string } | undefined) {
+  return student ? undefined : error
 }
 
 /** The counting notice with its "Tutors & your data" phrase as a link, for the student. */
@@ -191,6 +200,7 @@ export function BookingForm({
         error={slots.error ?? create.error}
         onRetry={() => void slots.refetch()}
         directoryPath={directoryPath}
+        heading={false}
       />
     )
   }
@@ -252,16 +262,24 @@ export function BookingForm({
   const slotRefusal = refusal?.field === "slot" ? refusal : null
   const generalRefusal = refusal && refusal.field !== "note" && refusal.field !== "slot" ? refusal : null
 
+  const childError = childErrorFor(missing.child, student)
+
   return (
     <form onSubmit={submit} noValidate className={cn("flex flex-col gap-6", className)}>
       {childPicker ? (
         <div ref={childRef} className="flex flex-col gap-1.5">
-          {childPicker}
-          {missing.child ? (
-            <p role="alert" className="m-0 text-body-sm text-err">
-              {missing.child}
-            </p>
-          ) : null}
+          {typeof childPicker === "function" ? (
+            childPicker(childError)
+          ) : (
+            <>
+              {childPicker}
+              {childError ? (
+                <p role="alert" className="m-0 text-body-sm text-err">
+                  {childError}
+                </p>
+              ) : null}
+            </>
+          )}
         </div>
       ) : null}
 

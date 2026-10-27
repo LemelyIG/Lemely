@@ -130,7 +130,7 @@ function SharingSection({ childId, childName, onReport }: { childId: string; chi
         empty={<EmptyState compact heading={noGrantsLine(childName)} />}
       >
         {(data) => {
-          const rows = data.items.map((grant) => parentGrantRowView(grant, childName))
+          const rows = data.items.map((grant) => parentGrantRowView(grant, childName, childId))
           const live = rows.filter((row) => row.status.live)
           const ended = rows.filter((row) => !row.status.live)
           const drawRow = (row: ParentGrantRowView) => (

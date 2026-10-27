@@ -244,6 +244,17 @@ describe("fixed copy, parsed from the SPEC", () => {
     expect(parent).not.toContain("You can opt out")
   })
 
+  it("S-35 counting notice for a parent who has not chosen a child yet starts with a capital", () => {
+    for (const name of [undefined, "", "   "]) {
+      const text = countingNotice("parent", name)
+      expect(text, String(name)).toMatch(/^[A-Z]/)
+      expect(text, String(name)).toContain("Your child can opt out")
+      expect(text, String(name)).toContain("If your child has sessions with this tutor, your child's grades")
+    }
+    expect(countingNotice("parent", "Maya").startsWith("If Maya has sessions")).toBe(true)
+    expect(countingNotice("parent", "Maya")).toContain(" Maya can opt out under Tutors & your data")
+  })
+
   it("the share-progress explainer is S-38's, word for word", () => {
     const s38 = screen("S-38")
     expect(SHARE_EXPLAINER).toBe(quotedAfter(s38, "Explainer (F29): "))

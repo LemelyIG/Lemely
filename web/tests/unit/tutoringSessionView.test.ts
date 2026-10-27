@@ -6,6 +6,8 @@ import {
   ACCOUNT_TOO_NEW_LINE,
   CANCEL_RULE_LINE,
   COMPLETE_HINT,
+  COMPLETE_HINT_PARENT,
+  completeHint,
   COUNTING_NOTICE,
   REVIEW_EDIT_RECHECK_LINE,
   REVIEW_PRIVACY_LINE,
@@ -414,6 +416,13 @@ describe("stateNotice", () => {
 
   it("the complete hint is the SPEC's", () => {
     expect(COMPLETE_HINT).toBe(quotedAfter(S37, '"Mark as completed" when `awaiting_outcome` ≥ 48 h ('))
+  })
+
+  it("a parent is not told 'your tutor': the hint is the student's for a student and the parent's for a parent", () => {
+    expect(completeHint("student")).toBe(COMPLETE_HINT)
+    expect(completeHint("parent")).toBe(COMPLETE_HINT_PARENT)
+    expect(COMPLETE_HINT_PARENT).toBe("The tutor hasn't recorded this session yet. If it took place, you can mark it completed.")
+    expect(COMPLETE_HINT_PARENT).not.toMatch(/\b[Yy]our tutor\b/)
   })
 })
 

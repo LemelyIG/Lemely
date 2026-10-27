@@ -61,7 +61,7 @@ function LoadedSession({ childId, booking }: { childId: string; booking: Booking
     <SessionDetailView
       booking={booking}
       viewer="parent"
-      tutorHref={parentTutorHref(booking.tutor.tutorId)}
+      tutorHref={parentTutorHref(booking.tutor.tutorId, childId)}
       cancel={{
         run: () => cancel.mutateAsync({ childId, bookingId }),
         pending: cancel.isPending,

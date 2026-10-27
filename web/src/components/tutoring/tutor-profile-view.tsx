@@ -432,6 +432,12 @@ export interface TutorFailureProps {
   verifyPath?: string
   /** Replaces S-34's wording where a screen has its own (G-17: "This tutor isn't listed."). */
   unavailableHeading?: string
+  /**
+   * The screen-reader-only `<h1>` a failed page stands on: the failure states below draw a
+   * `div` heading, so on its own the page would have none. A screen that already has an `<h1>`
+   * passes `false`; one with a name of its own passes it.
+   */
+  heading?: string | false
 }
 
 /** Every way a tutor page can fail. A hidden tutor is one answer, never a hint of a block. */
@@ -441,7 +447,29 @@ export function TutorFailure({
   directoryPath,
   verifyPath = "/verify-email",
   unavailableHeading = TUTOR_UNAVAILABLE_MESSAGE,
+  heading = "Tutor profile",
 }: TutorFailureProps) {
+  return (
+    <>
+      {heading === false ? null : <h1 className="sr-only">{heading}</h1>}
+      <TutorFailureState
+        error={error}
+        onRetry={onRetry}
+        directoryPath={directoryPath}
+        verifyPath={verifyPath}
+        unavailableHeading={unavailableHeading}
+      />
+    </>
+  )
+}
+
+function TutorFailureState({
+  error,
+  onRetry,
+  directoryPath,
+  verifyPath,
+  unavailableHeading,
+}: Required<Omit<TutorFailureProps, "heading">>) {
   const navigate = useNavigate()
   const refusal = bookingRefusalOf(error)
   if (refusal?.action === "tutor_unavailable") {
