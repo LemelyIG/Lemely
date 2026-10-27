@@ -513,7 +513,7 @@ def test_evidence_check_leaves_the_other_buckets_alone() -> None:
 def test_get_storage_backend_hands_the_evidence_bucket_to_gcs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The deps getter passes the evidence bucket, so the GCS refusal and privacy check run in production.
+    """The deps getter hands over the evidence bucket, so the GCS refusal and check run.
 
     With backend ``gcs`` and no evidence bucket set, the default global name is refused at
     construction; with a project-owned name the backend is built (still offline).
