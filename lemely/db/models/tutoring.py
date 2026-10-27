@@ -1,6 +1,7 @@
 """ORM models for the tutoring marketplace (SPEC ``docs/tutoring/SPEC.md`` §a.2-§a.4).
 
-Seventeen tables, created by migrations ``0045``-``0050``. The ORM declares
+Eighteen tables, created by migrations ``0045``-``0051`` (``0051`` adds the T6
+upload-attempt log, T30 F30-5; SPEC §a.2 lists the other seventeen). The ORM declares
 every constraint and index those migrations create, including the three GiST
 exclusion constraints, so a database built with ``Base.metadata.create_all``
 (about 88 test files build theirs that way) enforces the same rules as a
@@ -27,9 +28,9 @@ user who owns a tutor profile or is the subject of a booking cannot be deleted
 
 **Timestamps.** Every table has ``created_at``/``updated_at`` through
 :class:`TimestampMixin` unless SPEC §a.2 says otherwise: ``tutor_subjects`` has
-none, and the four append-only logs (``tutor_approval_events``,
-``tutoring_admin_access``, ``parent_link_events``, ``tutor_access_audit``) have
-``created_at`` only.
+none, and the five append-only logs (``tutor_approval_events``,
+``tutoring_admin_access``, ``parent_link_events``, ``tutor_access_audit``,
+``tutor_evidence_uploads``) have ``created_at`` only.
 """
 
 from __future__ import annotations
@@ -1174,6 +1175,35 @@ class TutoringBlock(TimestampMixin, Base):
 
 
 # ---------------------------------------------------------------------------
+# 0051_tutor_evidence_uploads (T30 F30-5)
+# ---------------------------------------------------------------------------
+
+
+class TutorEvidenceUpload(Base):
+    """Append-only log of T6 upload attempts: the count behind T6's quota (T30 F30-5).
+
+    One row per attempt, committed before the file is checked, so an attempt the
+    check refuses still counts. T7 deletes ``tutor_evidence_files`` rows, never
+    these, so deleting a file gives no attempt back. Only the profile and the
+    instant are kept: no filename, no size, nothing a tutor wrote. Only
+    :mod:`lemely.db.tutor_evidence_repo` writes or reads it.
+    """
+
+    __tablename__ = "tutor_evidence_uploads"
+    __table_args__ = (
+        sa.Index("ix_tutor_evidence_uploads_profile_day", "tutor_profile_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tutor_profile_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("tutor_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = _created_at()
+
+
+# ---------------------------------------------------------------------------
 # btree_gist for create_all databases (SPEC §a.4, F2)
 # ---------------------------------------------------------------------------
 
@@ -1205,6 +1235,7 @@ __all__ = [
     "TutorBookingNote",
     "TutorDataGrant",
     "TutorEvidenceFile",
+    "TutorEvidenceUpload",
     "TutorProfile",
     "TutorReview",
     "TutorReviewReply",

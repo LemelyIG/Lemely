@@ -24,10 +24,12 @@ from fastapi.testclient import TestClient
 from PIL import Image, PngImagePlugin
 
 from lemely.db.models.enums import Role
-from lemely.db.models.tutoring import TutorEvidenceFile
+from lemely.db.models.tutoring import TutorEvidenceFile, TutorEvidenceUpload
 from lemely.db.tutor_evidence_repo import (
     MAX_EVIDENCE_FILES,
+    UPLOAD_ATTEMPT_QUOTA,
     EvidenceLimitError,
+    EvidenceQuotaError,
     TutorEvidenceRepository,
 )
 from lemely.db.tutor_profile_repo import TutorClosedError, TutorSuspendedError
@@ -45,7 +47,14 @@ from tests.test_evidence_files import (
     pdf_with_scripted_widget,
 )
 from tests.test_web_admin_tutoring import PDF, admin_tutoring_client, evidence_bucket
-from tests.tutoring_db import act_as, add_tutor, add_user, emptied_after, tutoring_database
+from tests.tutoring_db import (
+    act_as,
+    add_tutor,
+    add_user,
+    count_statements,
+    emptied_after,
+    tutoring_database,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -55,6 +64,10 @@ if TYPE_CHECKING:
 
 NO_STORE = "private, no-store"
 URL = "/api/tutor/profile/evidence"
+#: A GIF: the check refuses it with 415 (a PDF, JPEG or PNG only).
+GIF = b"GIF89a\x01\x00\x01\x00\x00\x00\x00;"
+#: The SC-15 quota window, 24 elapsed hours, in seconds.
+DAY_SECONDS = 24 * 60 * 60
 
 
 @pytest.fixture(scope="module")
@@ -121,6 +134,42 @@ def _tutor(client: TestClient, sm: sessionmaker[Session], state: str = "listed")
     tutor = add_tutor(sm, state=state)
     act_as(client, tutor.user_id, Role.teacher)
     return tutor.profile_id
+
+
+def _attempts(sm: sessionmaker[Session], profile_id: uuid.UUID) -> int:
+    """Committed T6 attempts of the profile (a fresh session sees committed rows only)."""
+    with sm() as session:
+        total = session.scalar(
+            sa.select(sa.func.count())
+            .select_from(TutorEvidenceUpload)
+            .where(TutorEvidenceUpload.tutor_profile_id == profile_id)
+        )
+        return int(total or 0)
+
+
+def _aged_attempts(
+    sm: sessionmaker[Session], profile_id: uuid.UUID, *, count: int, age_seconds: int
+) -> None:
+    """``count`` attempts made ``age_seconds`` of elapsed time before the database's ``now()``."""
+    with sm.begin() as session:
+        session.execute(
+            sa.text(
+                "INSERT INTO tutor_evidence_uploads (tutor_profile_id, created_at) "
+                "SELECT :p, now() - make_interval(secs => CAST(:age AS double precision)) "
+                "FROM generate_series(1, :n)"
+            ),
+            {"p": profile_id, "age": age_seconds, "n": count},
+        )
+
+
+def _assert_too_many_requests(response: Response) -> int:
+    """A 429 ``too_many_requests`` in the SPEC §0 shape; returns its ``Retry-After`` seconds."""
+    assert response.status_code == 429, response.text
+    assert response.json()["detail"]["code"] == "too_many_requests"
+    assert response.headers["cache-control"] == NO_STORE
+    retry_after = int(response.headers["retry-after"])
+    assert 1 <= retry_after <= DAY_SECONDS
+    return retry_after
 
 
 # ---------------------------------------------------------------------------
@@ -532,6 +581,154 @@ def test_repository_rechecks_the_listing_state_inside_the_write(
         )
     with pytest.raises(error):
         repo.delete(tutor.profile_id, uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
+# T6 upload-attempt quota (T30 F30-5)
+# ---------------------------------------------------------------------------
+
+
+def test_evidence_upload_quota_429(
+    client: TestClient,
+    sm: sessionmaker[Session],
+    storage: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Past 20 attempts in 24 elapsed hours T6 is 429 with ``Retry-After``, before any check.
+
+    The loop F30-5 closes: a draft tutor with an unverified email uploads, deletes and
+    uploads again, and every check holds the extraction worker that marking shares. A
+    T7 delete gives no attempt back, and an attempt the check refused (415) still
+    counts: each attempt is committed before its check runs (``seen`` below is read
+    from a fresh session inside the worker call).
+    """
+    tutor = add_tutor(sm, state="draft", verified=False)
+    act_as(client, tutor.user_id, Role.teacher)
+    assert UPLOAD_ATTEMPT_QUOTA == 20
+    original_call = sandbox.EXTRACTION_WORKER.call
+    seen: list[int] = []
+
+    def counting_call(target: str, *args: object, **kwargs: object) -> object:
+        seen.append(_attempts(sm, tutor.profile_id))
+        return original_call(target, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(sandbox.EXTRACTION_WORKER, "call", counting_call)
+
+    refused = _upload(client, GIF, filename="a.gif", declared="image/gif")
+    assert refused.status_code == 415
+    for index in range(UPLOAD_ATTEMPT_QUOTA - 1):
+        created = _upload(client, filename=f"{index}.pdf")
+        assert created.status_code == 201, created.text
+        assert client.delete(f"{URL}/{created.json()['evidenceId']}").status_code == 204
+    assert _rows(sm) == []  # every file was deleted again, so the five-file limit never bites
+    assert seen == list(range(1, UPLOAD_ATTEMPT_QUOTA + 1))
+
+    over = _upload(client, filename="over.pdf")
+
+    retry_after = _assert_too_many_requests(over)
+    assert retry_after > DAY_SECONDS - 600  # the first attempt was made moments ago
+    assert len(seen) == UPLOAD_ATTEMPT_QUOTA  # the 21st never reached the worker
+    assert _attempts(sm, tutor.profile_id) == UPLOAD_ATTEMPT_QUOTA  # a refusal is not recorded
+    assert _rows(sm) == []
+    assert _objects(storage) == {}
+
+
+def test_evidence_upload_quota_is_per_profile(
+    client: TestClient, sm: sessionmaker[Session], storage: FakeStorageBackend
+) -> None:
+    first = add_tutor(sm, state="draft")
+    second = add_tutor(sm, state="draft")
+    repo = TutorEvidenceRepository(sm)
+    for _ in range(UPLOAD_ATTEMPT_QUOTA):
+        repo.record_upload_attempt(first.profile_id)
+    with pytest.raises(EvidenceQuotaError):
+        repo.record_upload_attempt(first.profile_id)
+
+    act_as(client, first.user_id, Role.teacher)
+    _assert_too_many_requests(_upload(client))
+    act_as(client, second.user_id, Role.teacher)
+    admitted = _upload(client)
+
+    assert admitted.status_code == 201, admitted.text
+    assert _attempts(sm, first.profile_id) == UPLOAD_ATTEMPT_QUOTA
+    assert _attempts(sm, second.profile_id) == 1
+    assert [row.tutor_profile_id for row in _rows(sm)] == [second.profile_id]
+
+
+def test_evidence_upload_quota_window_is_elapsed_time(
+    client: TestClient, sm: sessionmaker[Session], storage: FakeStorageBackend
+) -> None:
+    """An attempt 24 h + 1 s old no longer counts; one 23 h 59 min old still does."""
+    profile_id = _tutor(client, sm, state="draft")
+    _aged_attempts(sm, profile_id, count=UPLOAD_ATTEMPT_QUOTA, age_seconds=DAY_SECONDS + 1)
+
+    admitted = _upload(client)
+
+    assert admitted.status_code == 201, admitted.text
+    # Non-vacuity: the same number of attempts inside the window does refuse, and
+    # Retry-After is when the oldest of them leaves it (60 s from now at most).
+    _aged_attempts(sm, profile_id, count=UPLOAD_ATTEMPT_QUOTA - 1, age_seconds=DAY_SECONDS - 60)
+    retry_after = _assert_too_many_requests(_upload(client))
+    assert retry_after <= 60
+    assert _attempts(sm, profile_id) == 2 * UPLOAD_ATTEMPT_QUOTA
+
+
+def test_evidence_upload_quota_holds_under_concurrent_attempts_at_nineteen(
+    sm: sessionmaker[Session],
+) -> None:
+    """Two attempts race at 19; the profile's advisory lock lets exactly one in (20 in all).
+
+    Each racer is held just before its commit until the other arrives (or 2 s pass).
+    With the lock the second racer cannot count until the first commits, so it never
+    arrives and then sees 20; without it both count 19 and both commit (21).
+    """
+    tutor = add_tutor(sm, state="draft")
+    repo = TutorEvidenceRepository(sm)
+    for _ in range(UPLOAD_ATTEMPT_QUOTA - 1):
+        repo.record_upload_attempt(tutor.profile_id)
+    start = threading.Barrier(2, timeout=10)
+    before_commit = threading.Barrier(2, timeout=2)
+    outcomes: dict[str, str] = {}
+
+    def hold(_session: Session) -> None:
+        if threading.current_thread().name.startswith("attempt-race"):
+            # Broken after 2 s when the other racer waits on the lock: commit alone.
+            with contextlib.suppress(threading.BrokenBarrierError):
+                before_commit.wait()
+
+    def race() -> None:
+        start.wait()
+        try:
+            repo.record_upload_attempt(tutor.profile_id)
+            outcomes[threading.current_thread().name] = "recorded"
+        except EvidenceQuotaError as exc:
+            outcomes[threading.current_thread().name] = exc.code
+
+    sa.event.listen(sm, "before_commit", hold)
+    try:
+        racers = [threading.Thread(target=race, name=f"attempt-race-{n}") for n in range(2)]
+        for racer in racers:
+            racer.start()
+        for racer in racers:
+            racer.join(timeout=30)
+    finally:
+        sa.event.remove(sm, "before_commit", hold)
+
+    assert sorted(outcomes.values()) == ["recorded", "too_many_requests"]
+    assert _attempts(sm, tutor.profile_id) == UPLOAD_ATTEMPT_QUOTA
+
+
+def test_evidence_upload_attempt_lock_is_the_first_statement(sm: sessionmaker[Session]) -> None:
+    """The quota transaction takes the profile's own advisory key before anything else."""
+    tutor = add_tutor(sm, state="draft")
+    with count_statements(sm) as statements:
+        TutorEvidenceRepository(sm).record_upload_attempt(tutor.profile_id)
+
+    assert len(statements) == 3  # lock, count, insert
+    assert "pg_advisory_xact_lock(hashtextextended('tutoring_evidence_upload:'" in statements[0]
+    assert statements[1].lstrip().upper().startswith("SELECT")
+    assert "tutor_evidence_uploads" in statements[1]
+    assert statements[2].lstrip().upper().startswith("INSERT INTO TUTOR_EVIDENCE_UPLOADS")
 
 
 # ---------------------------------------------------------------------------

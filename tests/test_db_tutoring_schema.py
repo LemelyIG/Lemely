@@ -5,7 +5,7 @@ Two databases per module, built two ways:
 * ``create_all``: ``Base.metadata.create_all`` on a fresh database, the way
   about 88 test files build theirs (SPEC §a.4, F2). This is what proves the
   ORM in ``lemely/db/models/tutoring.py`` and its ``btree_gist`` listener.
-* ``migrated``: ``alembic upgrade head`` (``0044``-``0050``).
+* ``migrated``: ``alembic upgrade head`` (``0044``-``0051``).
 
 Every behavioural constraint test runs against **both** (the ``schema_engine``
 fixture is parametrised), and
@@ -58,6 +58,11 @@ if TYPE_CHECKING:
 import_all_models()
 
 TUTORING_TABLES = spec_tutoring_tables()
+#: T30 F30-5's append-only T6 attempt log (migration ``0051``). SPEC §a.2 has no section
+#: for it, so it is named here once and joined to the SPEC tables wherever the ORM and the
+#: migrations are compared.
+EVIDENCE_UPLOADS = "tutor_evidence_uploads"
+SCHEMA_TABLES = tuple(dict.fromkeys((*TUTORING_TABLES, EVIDENCE_UPLOADS)))
 EXCLUSIONS = {
     "excl_tutor_availability_rules_no_overlap",
     "excl_tutor_bookings_tutor_slot",
@@ -317,9 +322,10 @@ def test_create_all_on_fresh_database_installs_btree_gist() -> None:
 
 
 def test_orm_registers_every_spec_table() -> None:
+    """The 17 SPEC §a.2 tables and F30-5's attempt log, and nothing else."""
     orm_tables = {getattr(tutoring_models, name).__tablename__ for name in tutoring_models.__all__}
-    assert orm_tables == set(TUTORING_TABLES)
-    assert len(orm_tables) == 17
+    assert orm_tables == set(SCHEMA_TABLES)
+    assert len(orm_tables) == 18
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +334,7 @@ def test_orm_registers_every_spec_table() -> None:
 
 
 def _catalogue(engine: sa.Engine) -> dict[str, set[tuple[object, ...]]]:
-    tables = list(TUTORING_TABLES)
+    tables = list(SCHEMA_TABLES)
     with engine.connect() as conn:
         columns = conn.execute(
             sa.text(
@@ -378,7 +384,7 @@ def test_create_all_and_migrations_build_identical_tutoring_schemas(
     orm = _catalogue(create_all_engine)
     migrated = _catalogue(migrated_engine)
     # Non-vacuity: every table, the 8 toggles and the 16 types are in both.
-    assert {row[0] for row in orm["columns"]} >= set(TUTORING_TABLES)
+    assert {row[0] for row in orm["columns"]} >= set(SCHEMA_TABLES)
     assert len(orm["enums"]) == len(spec_enum_types()) == 16
     assert len(orm["indexes"]) >= len([n for n in spec_names_for(TUTORING_TABLES) if "ix_" in n])
     for kind in ("columns", "constraints", "indexes", "enums"):
@@ -996,6 +1002,68 @@ def test_admin_access_log_has_partial_admin_user_index(schema_engine: sa.Engine)
     assert definition is not None
     assert "(admin_user_id)" in definition
     assert "WHERE (admin_user_id IS NOT NULL)" in definition
+
+
+def test_evidence_uploads_log_holds_no_personal_data(schema_engine: sa.Engine) -> None:
+    """F30-5: an attempt row is an id, the profile and an instant; no filename, no bytes."""
+    with schema_engine.connect() as conn:
+        columns = conn.execute(
+            sa.text(
+                "SELECT column_name, udt_name, is_nullable, column_default "
+                "FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = :t ORDER BY ordinal_position"
+            ),
+            {"t": EVIDENCE_UPLOADS},
+        ).all()
+        foreign_keys = conn.execute(
+            sa.text(
+                "SELECT c.conname, c.confrelid::regclass::text, c.confdeltype "
+                "FROM pg_constraint c WHERE c.conrelid = CAST(:t AS regclass) AND c.contype = 'f'"
+            ),
+            {"t": EVIDENCE_UPLOADS},
+        ).all()
+        indexes = dict(
+            conn.execute(
+                sa.text("SELECT indexname, indexdef FROM pg_indexes WHERE tablename = :t"),
+                {"t": EVIDENCE_UPLOADS},
+            ).all()
+        )
+    assert [(name, udt, nullable) for name, udt, nullable, _default in columns] == [
+        ("id", "uuid", "NO"),
+        ("tutor_profile_id", "uuid", "NO"),
+        ("created_at", "timestamptz", "NO"),
+    ]
+    defaults = {name: default for name, _udt, _nullable, default in columns}
+    assert defaults["id"] == "gen_random_uuid()"
+    assert defaults["created_at"] == "now()"
+    assert defaults["tutor_profile_id"] is None
+    assert foreign_keys == [
+        ("fk_tutor_evidence_uploads_tutor_profile_id_tutor_profiles", "tutor_profiles", "c")
+    ]
+    assert set(indexes) == {"pk_tutor_evidence_uploads", "ix_tutor_evidence_uploads_profile_day"}
+    assert indexes["ix_tutor_evidence_uploads_profile_day"].endswith(
+        "USING btree (tutor_profile_id, created_at)"
+    )
+
+
+def test_evidence_uploads_go_with_their_profile(schema_engine: sa.Engine) -> None:
+    """``ON DELETE CASCADE``: the attempt log never holds a profile's deletion back."""
+    with _rolled_back(schema_engine) as conn:
+        w = _world(conn)
+        for profile in (w.profile, w.profile, w.profile2):
+            _insert(conn, EVIDENCE_UPLOADS, {"tutor_profile_id": profile})
+        conn.execute(sa.text("DELETE FROM tutor_profiles WHERE id = :p"), {"p": w.profile})
+        left = conn.execute(
+            sa.text(f"SELECT tutor_profile_id FROM {EVIDENCE_UPLOADS}")  # noqa: S608 - constant
+        ).scalars()
+        assert list(left) == [w.profile2]
+        _insert_violates(
+            conn,
+            EVIDENCE_UPLOADS,
+            {"tutor_profile_id": uuid.uuid4()},
+            sqlstate="23503",
+            constraint="fk_tutor_evidence_uploads_tutor_profile_id_tutor_profiles",
+        )
 
 
 def test_indexable_defaults_true(schema_engine: sa.Engine) -> None:

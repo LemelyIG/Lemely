@@ -1,9 +1,19 @@
 """Tutor evidence files and the admin's evidence-open log (SPEC §a.2, §b.2 T6/T7/A2, SC-22, SC-23).
 
-The single writer of ``tutor_evidence_files`` and of the ``evidence_open`` rows
-of ``tutoring_admin_access`` (PLAN §1.4 #2). Bytes never pass through here: the
-route checks and re-encodes them (:mod:`lemely.io.evidence_files`) and stores the
-object; this module records it.
+The single writer of ``tutor_evidence_files``, of ``tutor_evidence_uploads`` and
+of the ``evidence_open`` rows of ``tutoring_admin_access`` (PLAN §1.4 #2). Bytes
+never pass through here: the route checks and re-encodes them
+(:mod:`lemely.io.evidence_files`) and stores the object; this module records it.
+
+* **Upload attempts are a quota (T30 F30-5).** Each T6 check holds the extraction
+  worker that marking shares, so :meth:`TutorEvidenceRepository.record_upload_attempt`
+  runs first and commits one ``tutor_evidence_uploads`` row before the check: an
+  attempt the check refuses still counts, and a T7 delete (which removes the
+  ``tutor_evidence_files`` row only) gives none back. Past
+  :data:`UPLOAD_ATTEMPT_QUOTA` attempts in 24 elapsed hours (the SC-15 window of
+  the booking and report quotas) T6 is 429 ``too_many_requests`` and nothing is
+  recorded. The transaction's first statement is the profile's advisory lock
+  (:func:`_lock_upload_attempts`), so two attempts never both count below the quota.
 
 * **Writes are one transaction each** and lock the profile row first
   (``SELECT ... FOR UPDATE``, SPEC §a.4b order), so the five-file limit and the
@@ -29,8 +39,14 @@ from typing import TYPE_CHECKING, Final
 import sqlalchemy as sa
 
 from lemely.core.contact_patterns import find_contact_details
+from lemely.db.booking_repo import QUOTA_BINDS, QUOTA_SINCE_SQL
 from lemely.db.models.enums import TutoringAdminAction, TutorListingState
-from lemely.db.models.tutoring import TutorEvidenceFile, TutoringAdminAccess, TutorProfile
+from lemely.db.models.tutoring import (
+    TutorEvidenceFile,
+    TutorEvidenceUpload,
+    TutoringAdminAccess,
+    TutorProfile,
+)
 from lemely.db.tutor_profile_repo import (
     EvidenceFile,
     ProfileNotFoundError,
@@ -49,6 +65,15 @@ if TYPE_CHECKING:
 MAX_EVIDENCE_FILES: Final = 5
 #: ``tutor_evidence_files.description`` is varchar(200).
 MAX_DESCRIPTION_LENGTH: Final = 200
+#: T30 F30-5: at most this many T6 upload attempts per tutor profile in 24 elapsed hours.
+UPLOAD_ATTEMPT_QUOTA: Final = 20
+#: Seconds until the oldest attempt in the window leaves it, rounded up. Bound like
+#: :data:`~lemely.db.booking_repo.QUOTA_SINCE_SQL` (elapsed seconds, never a ``timedelta``).
+_RETRY_AFTER_SQL: Final = (
+    "ceil(EXTRACT(EPOCH FROM (min(created_at) "
+    "+ make_interval(secs => CAST(:quota_window_s AS double precision)) - now())))"
+)
+_QUOTA_MESSAGE: Final = "That is happening too often. Try again in a little while."
 
 
 class EvidenceError(Exception):
@@ -71,6 +96,20 @@ class EvidenceNotFoundError(EvidenceError):
     """No such evidence file on the caller's profile (404, O20)."""
 
     code = "evidence_not_found"
+
+
+class EvidenceQuotaError(EvidenceError):
+    """Past :data:`UPLOAD_ATTEMPT_QUOTA` T6 attempts in 24 elapsed hours (429, F30-5).
+
+    ``retry_after`` is the whole seconds until the oldest counted attempt leaves
+    the window, so one more attempt is admitted then.
+    """
+
+    code = "too_many_requests"
+
+    def __init__(self, message: str, *, retry_after: int) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class EvidenceValidationError(EvidenceError):
@@ -161,6 +200,24 @@ def _lock_writable(session: Session, profile_id: uuid.UUID) -> TutorProfile:
     return profile
 
 
+def _lock_upload_attempts(session: Session, profile_id: uuid.UUID) -> None:
+    """The attempt transaction's first statement: the profile's advisory lock (F30-5).
+
+    ``pg_advisory_xact_lock(hashtextextended('tutoring_evidence_upload:' || tutor_profile_id,
+    0))`` serialises one profile's attempts, so the quota COUNT and the INSERT of two
+    of them never interleave. Only :meth:`TutorEvidenceRepository.record_upload_attempt`
+    takes this key, and its transaction takes no other tutoring lock first, so it
+    cannot form a cycle with the SPEC §a.4b order.
+    """
+    session.execute(
+        sa.text(
+            "SELECT pg_advisory_xact_lock(hashtextextended("
+            "'tutoring_evidence_upload:' || CAST(CAST(:p AS uuid) AS text), 0))"
+        ),
+        {"p": profile_id},
+    )
+
+
 def _files(session: Session, profile_id: uuid.UUID) -> list[TutorEvidenceFile]:
     return list(
         session.scalars(
@@ -187,6 +244,27 @@ class TutorEvidenceRepository:
                 .where(TutorEvidenceFile.tutor_profile_id == profile_id)
             )
             return int(total or 0)
+
+    def record_upload_attempt(self, profile_id: uuid.UUID) -> None:
+        """T6's first step: count this attempt and commit it before the file is checked.
+
+        Under the profile's advisory lock, counts the profile's
+        ``tutor_evidence_uploads`` rows newer than 24 elapsed hours before ``now()``.
+        At :data:`UPLOAD_ATTEMPT_QUOTA` raises :class:`EvidenceQuotaError` and records
+        nothing; otherwise inserts one row, committed when this returns.
+        """
+        with self._sessionmaker.begin() as session:
+            _lock_upload_attempts(session, profile_id)
+            held, retry_after = session.execute(
+                sa.text(
+                    f"SELECT count(*), {_RETRY_AFTER_SQL} FROM tutor_evidence_uploads "  # noqa: S608 - constants
+                    f"WHERE tutor_profile_id = :p AND created_at > {QUOTA_SINCE_SQL}"
+                ),
+                {**QUOTA_BINDS, "p": profile_id},
+            ).one()
+            if int(held) >= UPLOAD_ATTEMPT_QUOTA:
+                raise EvidenceQuotaError(_QUOTA_MESSAGE, retry_after=max(1, int(retry_after)))
+            session.execute(sa.insert(TutorEvidenceUpload).values(tutor_profile_id=profile_id))
 
     def add(
         self,
@@ -297,9 +375,11 @@ class TutorEvidenceRepository:
 __all__ = [
     "MAX_DESCRIPTION_LENGTH",
     "MAX_EVIDENCE_FILES",
+    "UPLOAD_ATTEMPT_QUOTA",
     "EvidenceError",
     "EvidenceLimitError",
     "EvidenceNotFoundError",
+    "EvidenceQuotaError",
     "EvidenceValidationError",
     "IssuedEvidence",
     "StoredEvidence",

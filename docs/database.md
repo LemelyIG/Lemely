@@ -85,8 +85,11 @@ profile belongs to a user, not to a school (`docs/tutoring/adr/ADR-T03-tenancy.m
 Existing school scoping is unchanged. A tutor reaches a student's data only
 through a student-issued grant (`tutor_data_grants`), never through a class
 roster, and the two gates are never combined. `school_admin` sees nothing of
-tutoring. The seven revisions are `0044` to `0050`; the `0049` downgrade destroys
+tutoring. The eight revisions are `0044` to `0051`; the `0049` downgrade destroys
 the tutor access audit log (see `docs/deployment.md` section 5.7).
+`0051_tutor_evidence_uploads` adds `tutor_evidence_uploads`, an append-only log of
+evidence upload attempts (profile and time only) that the 20-per-24-hours upload
+quota counts; deleting a file does not remove its attempt.
 
 ## Why Alembic owns `public`, not Supabase migrations
 

@@ -5,7 +5,11 @@ The caller's own profile only (O1): both routes resolve it through
 404 ``no_tutor_profile`` and a suspended or closed profile 409
 ``tutor_suspended`` / ``tutor_closed`` (CB-7). Neither is **V**.
 
-**T6 upload**, in this order: the five-file pre-check (cheap, before any bytes
+**T6 upload**, in this order: the attempt quota (T30 F30-5: the attempt is
+recorded and committed first, so one the check refuses still counts and a T7
+delete gives none back; past 20 attempts in 24 elapsed hours the answer is 429
+``too_many_requests`` with ``Retry-After``, before any bytes are read or checked),
+the five-file pre-check (cheap, before any bytes
 are stored), at most 10 MiB + 1 read from the spooled upload, the description
 (SC-7), :func:`~lemely.io.evidence_files.prepare_evidence_in_worker` (magic-byte
 sniff, polyglot refusal, image re-encode, the PDF scan check and pages-only
@@ -45,6 +49,7 @@ from lemely.db.tutor_evidence_repo import (
     EvidenceError,
     EvidenceLimitError,
     EvidenceNotFoundError,
+    EvidenceQuotaError,
     EvidenceValidationError,
     TutorEvidenceRepository,
     clean_description,
@@ -97,6 +102,13 @@ def get_tutor_evidence_repo() -> TutorEvidenceRepository:
 
 
 def _http(exc: TutorProfileError | EvidenceError) -> HTTPException:
+    if isinstance(exc, EvidenceQuotaError):
+        # The SPEC §0 body with the header a client waits on (``tutoring_error`` sets none).
+        return HTTPException(
+            status_code=429,
+            detail={"code": exc.code, "message": exc.message},
+            headers={"Retry-After": str(exc.retry_after)},
+        )
     if isinstance(exc, EvidenceError):
         return tutoring_error(_EVIDENCE_STATUS.get(type(exc), 409), exc.code, exc.message)
     return tutoring_error(_PROFILE_STATUS.get(type(exc), 409), exc.code, exc.message)
@@ -156,6 +168,10 @@ def upload_evidence(
     description: Annotated[str | None, Form()] = None,
 ) -> EvidenceDTO:
     """T6: add one evidence file (PDF, JPEG or PNG by its bytes; at most 5 x 10 MiB)."""
+    try:
+        repo.record_upload_attempt(profile.id)
+    except EvidenceQuotaError as exc:
+        raise _http(exc) from exc
     if repo.count(profile.id) >= MAX_EVIDENCE_FILES:
         raise _http(
             EvidenceLimitError(
