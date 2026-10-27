@@ -263,13 +263,17 @@ in all of these files.
   whole card. Shows only `TutorCard` fields, so it is safe on the open web.
 
 ## C-24 — Safety notice sheet
-`safety-notice-sheet.tsx` — `SafetyNoticeSheet({ open, onAcknowledge, pending, error })`
+`safety-notice-sheet.tsx` — `SafetyNoticeSheet({ open, onAcknowledge, pending, error, onNotNow?, documentsSeen? })`
 - The first-booking notice on `Modal`, not dismissible: no close control, no
   Escape, no scrim click; the one "I understand" button calls `onAcknowledge`
   (S15). Title, five paragraphs and button are fixed by the SPEC and parsed from
   it by `safetyNotice.test.ts`. The five paragraphs are the `Modal`
   `description` (the dialog's `aria-describedby`), because `Modal` focuses the
   button on open and a screen-reader user must hear the notice first.
+- A secondary "Not now" (`onNotNow`) closes the sheet and leaves S-35 for the
+  tutor's profile without acknowledging; booking still needs the acknowledgement
+  (the server answers 409 `safety_notice_required`). The sentence "Lemely looked
+  at documents they uploaded." shows only when `documentsSeen` is true.
 
 ## Report and block sheets (T15)
 - `web/src/components/tutoring/report-sheet.tsx` —

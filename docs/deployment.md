@@ -563,7 +563,7 @@ UPDATE review_queue SET status = 'dismissed' WHERE status = 'withdrawn';
 The safe path is always a forward fix on top of `0039`, not a rollback under it.
 
 **Rolling back past the tutoring marketplace (migrations `0044_tutoring_enums_ext` to
-`0050_tutoring_safety`) has the same shape.** Pre-0044 code cannot read the eight
+`0051_tutor_evidence_uploads`) has the same shape.** Pre-0044 code cannot read the eight
 tutoring notification types (`booking_request`, `booking_update`, `booking_note`,
 `tutor_access`, `tutor_review`, `tutor_listing`, `parent_link`, `tutoring_report`), so
 anyone holding one gets a `LookupError` (500) opening their inbox. If a Cloud Run
