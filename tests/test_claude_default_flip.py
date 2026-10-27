@@ -186,3 +186,15 @@ def test_an_empty_adjudication_model_renders_and_calls_nothing(
     correction_ai._warn_adjudication_without_pages(client)
     assert correction_ai._adjudication_without_pages_logged is False
     assert rendered == []
+
+
+def test_the_shipped_default_leaves_the_claude_binder_cap_at_32768() -> None:
+    """F4: Haiku second reads reached 19k tokens. The Gemini 16,384 in the default map is not
+    the Claude cap, and pinning the Gemini path must not turn it into one."""
+    from tests.gemini_fakes import pin_pre_flip
+
+    for settings in (Settings(), pin_pre_flip(Settings())):
+        g = settings.gemini
+        assert "max_output_tokens_for" not in g.model_fields_set
+        client = GeminiClient(settings, _genai_client=fake_genai_client(), ledger=None)
+        assert client._claude_output_cap("binding_second_read") == 32_768

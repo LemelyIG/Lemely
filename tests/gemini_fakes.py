@@ -116,10 +116,12 @@ def _pinned(settings: Settings, values: Mapping[str, object]) -> Settings:
     for dotted, value in values.items():
         section_name, _, field = dotted.partition(".")
         section = getattr(settings, section_name)
+        # Validate the new value, but keep the section's own fields-set: `model_validate` of a
+        # whole dump would mark every field as explicitly set, and `_claude_output_cap` treats
+        # an explicit `max_output_tokens_for` as the operator's, not the shipped default.
+        type(section).model_validate({**section.model_dump(), field: value})
         settings = settings.model_copy(
-            update={
-                section_name: type(section).model_validate({**section.model_dump(), field: value})
-            }
+            update={section_name: section.model_copy(update={field: value})}
         )
     return settings
 
