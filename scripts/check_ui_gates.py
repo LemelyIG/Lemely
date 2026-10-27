@@ -211,15 +211,15 @@ def main() -> int:
         return 1
 
     student_routes = [r for r in lighthouse if is_student_route(r)]
-    gated_teacher_routes = [
+    gated_named_routes = [
         r for r in lighthouse if is_perf_gated_route(r) and not is_student_route(r)
     ]
     print(
         f"UI gates clean: {len(axe)} route(s) zero serious/critical axe, "
         f"Lighthouse accessibility >= {ACCESSIBILITY_FLOOR} on all "
         f"({len(lighthouse)} route report(s)), performance >= {PERFORMANCE_FLOOR} on "
-        f"{len(student_routes)} student route(s) + {len(gated_teacher_routes)} teacher "
-        f"route(s), zero console errors, zero horizontal-scroll violations, "
+        f"{len(student_routes)} student route(s) + {len(gated_named_routes)} named "
+        f"teacher or tutoring route(s), zero console errors, zero horizontal-scroll violations, "
         f"zero routes that died mid-run."
     )
     return 0
