@@ -165,12 +165,19 @@ describe("component source (C-18), no colour-only encoding", () => {
   it("ties each segment of the bar to its icon, label and count with a swatch of the segment's own fill", () => {
     expect(source).toContain("partSwatch")
     // Every swatch class is the segment's fill under a background name.
-    expect(source).toMatch(/lower: "bg-rule-strong"/)
-    expect(source).toMatch(/same: "bg-ink-faint"/)
-    expect(source).toMatch(/higher: "bg-ink-muted"/)
-    expect(source).toMatch(/lower: "fill-rule-strong"/)
-    expect(source).toMatch(/same: "fill-ink-faint"/)
-    expect(source).toMatch(/higher: "fill-ink-muted"/)
+    expect(source).toMatch(/lower: "border-ink-faint bg-ink-faint"/)
+    expect(source).toMatch(/same: "border-ink-muted bg-paper-sunk"/)
+    expect(source).toMatch(/higher: "border-ink bg-ink"/)
+    expect(source).toMatch(/lower: "fill-ink-faint stroke-paper-raised"/)
+    expect(source).toMatch(/same: "fill-paper-sunk stroke-ink-muted"/)
+    expect(source).toMatch(/higher: "fill-ink stroke-paper-raised"/)
+  })
+
+  /* T33: the old ramp used the hairline token rule-strong as a fill (about 1.4:1 on the page in light,
+     1.6:1 in dark). A graphical object needs 3:1, so no segment may be filled with a rule token. */
+  it("fills no segment with a hairline token (graphical contrast, both themes)", () => {
+    const fills = source.slice(source.indexOf("const partFill"), source.indexOf("export interface"))
+    expect(fills).not.toMatch(/rule/)
   })
 
   it("keeps the icon, the word and the count in the same item as the swatch", () => {

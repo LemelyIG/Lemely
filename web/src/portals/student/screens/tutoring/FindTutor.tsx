@@ -40,7 +40,7 @@ export function FindTutor() {
         onFiltersChange={change}
         aside={
           <details className="max-w-prose">
-            <summary className="cursor-pointer rounded-md py-1 text-body-sm text-ink-muted underline underline-offset-4">
+            <summary className="cursor-pointer rounded-md py-3 text-body-sm text-ink-muted underline underline-offset-4">
               How tutors are ordered
             </summary>
             <p className="m-0 mt-2 text-body-sm text-ink-muted">{GRADE_RANKING_NOTE}</p>

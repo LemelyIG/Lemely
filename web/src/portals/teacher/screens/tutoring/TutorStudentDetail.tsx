@@ -76,7 +76,7 @@ function BackToStudents() {
   return (
     <Link
       to={TUTOR_STUDENTS_PATH}
-      className="inline-flex w-fit items-center gap-1 py-1 text-body-sm text-ink-muted transition-colors hover:text-ink"
+      className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-ink-muted transition-colors hover:text-ink"
     >
       <CaretLeft size={14} aria-hidden />
       My students

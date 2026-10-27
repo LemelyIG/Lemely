@@ -286,7 +286,7 @@ function AvailabilityEditor({ profile }: { profile: TutorOwnProfile }) {
       <div className="flex flex-col gap-2 border-b border-rule pb-5">
         <Link
           to="/teacher/tutoring/profile?step=availability"
-          className="inline-flex w-fit items-center gap-1 py-1 text-body-sm text-ink-muted transition-colors hover:text-ink"
+          className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-ink-muted transition-colors hover:text-ink"
         >
           <CaretLeft size={14} aria-hidden />
           Back to your profile
@@ -351,7 +351,7 @@ function AvailabilityEditor({ profile }: { profile: TutorOwnProfile }) {
             ) : null}
             <Link
               to="/teacher/tutoring"
-              className="py-2 text-body-sm text-ink-muted transition-colors hover:text-ink"
+              className="inline-flex min-h-11 items-center text-body-sm text-ink-muted transition-colors hover:text-ink"
             >
               Tutoring home
             </Link>

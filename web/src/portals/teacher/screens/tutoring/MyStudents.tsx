@@ -77,7 +77,7 @@ export function MyStudents() {
       <div className="flex flex-col gap-2">
         <Link
           to={TUTORING_HOME_PATH}
-          className="inline-flex w-fit items-center gap-1 py-1 text-body-sm text-ink-muted transition-colors hover:text-ink"
+          className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-ink-muted transition-colors hover:text-ink"
         >
           <CaretLeft size={14} aria-hidden />
           Back to tutoring

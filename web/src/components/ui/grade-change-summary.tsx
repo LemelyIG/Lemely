@@ -28,7 +28,7 @@ import type { OutcomeChange } from "@/lib/tutoringTypes"
  * student had this tutor, and does not say the tutor caused it (students choose
  * their tutors, so the figure cannot show that).
  *
- * Neutral on purpose. The three parts use a light-to-dark ink ramp, not the
+ * Neutral on purpose. The three parts use ink tones (two solid, one hollow), not the
  * grade-band colours and not green or red: a lower grade is a fact about a
  * student, not a mark against the tutor, and colouring it red would say
  * otherwise. Direction is carried by an arrow, an equals sign, and the words,
@@ -51,20 +51,24 @@ const partIcon: Record<GradeChangeKey, Icon> = {
   higher: ArrowUp,
 }
 
-/* A lightness ramp of the ink tokens: lower is the lightest, higher the darkest. */
+/* Lower and higher are solid ink tones, "same" is hollow. The ramp used to run rule-strong,
+   ink-faint, ink-muted, and rule-strong is a hairline colour: about 1.4:1 against the page in light
+   and 1.6:1 in dark, where the lower segment all but vanished (T33). Every tone here clears the 3:1
+   a graphical object needs in both themes, and "same" differs by shape, not by lightness, so the
+   three still tell apart in greyscale (and by the arrow, the word and the count beside them). */
 const partFill: Record<GradeChangeKey, string> = {
-  lower: "fill-rule-strong",
-  same: "fill-ink-faint",
-  higher: "fill-ink-muted",
+  lower: "fill-ink-faint stroke-paper-raised",
+  same: "fill-paper-sunk stroke-ink-muted",
+  higher: "fill-ink stroke-paper-raised",
 }
 
 /* The same three tokens as backgrounds: the swatch beside each part's icon, word
    and count in the list, which is what ties a segment of the bar to its name.
    Lightness alone never has to tell the segments apart. */
 const partSwatch: Record<GradeChangeKey, string> = {
-  lower: "bg-rule-strong",
-  same: "bg-ink-faint",
-  higher: "bg-ink-muted",
+  lower: "border-ink-faint bg-ink-faint",
+  same: "border-ink-muted bg-paper-sunk",
+  higher: "border-ink bg-ink",
 }
 
 export interface GradeChangeSummaryProps {
@@ -144,7 +148,7 @@ export function GradeChangeSummary({
               width={`${part.widthPct}%`}
               height={BAR_HEIGHT}
               strokeWidth={2}
-              className={cn(partFill[part.key], "stroke-paper-raised")}
+              className={partFill[part.key]}
             />
           ))}
         </svg>
@@ -157,7 +161,7 @@ export function GradeChangeSummary({
             <li key={part.key} className="flex items-center gap-2 text-body-md text-ink">
               <span
                 aria-hidden
-                className={cn("h-3 w-3 shrink-0 rounded-sm border border-rule-strong", partSwatch[part.key])}
+                className={cn("h-3 w-3 shrink-0 rounded-sm border", partSwatch[part.key])}
               />
               <PartIcon size={16} weight="bold" className="shrink-0 text-ink-muted" aria-hidden />
               <span>{part.label}</span>

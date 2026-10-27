@@ -544,10 +544,39 @@ async function pressCheckboxOnce(page, labelPattern, timeout = 15_000) {
 /** Full-page capture at `$LEMELY_REPORT_DIR/screens/<screenId>/<state>--<bp>[--dark].png`
  * — same path convention as web/e2e/screenshots.spec.ts's `shoot`. `suffix` is `--dark` for a
  * dark-theme capture of a state that also exists in the light theme (T33). */
-async function shoot(page, screenId, state, bpWidth, suffix = "") {
+async function shoot(page, screenId, state, bpWidth, suffix = "", { hideBottomChrome = false } = {}) {
   const dir = path.join(SCREENS_DIR, screenId)
   fs.mkdirSync(dir, { recursive: true })
-  await page.screenshot({ path: path.join(dir, `${state}--${bpWidth}${suffix}.png`), fullPage: true })
+  // T33. A full-page capture of a mobile page paints the fixed bottom navigation once, at the
+  // viewport's bottom, which lands in the middle of a tall page and covers its content. That is
+  // an artefact of the capture, not of the screen, so an entry can ask for those bars to be
+  // hidden for the shot. Anything inside or holding a dialog is never touched.
+  if (hideBottomChrome) {
+    await page.evaluate(() => {
+      for (const el of document.querySelectorAll("body *")) {
+        const position = getComputedStyle(el).position
+        if (position !== "fixed" && position !== "sticky") continue
+        if (el.closest('[role="dialog"]') || el.querySelector('[role="dialog"]')) continue
+        const rect = el.getBoundingClientRect()
+        if (rect.height === 0 || rect.top < window.innerHeight / 2) continue
+        if (rect.bottom < window.innerHeight - 1) continue
+        el.setAttribute("data-audit-hidden", "")
+        el.style.visibility = "hidden"
+      }
+    })
+  }
+  try {
+    await page.screenshot({ path: path.join(dir, `${state}--${bpWidth}${suffix}.png`), fullPage: true })
+  } finally {
+    if (hideBottomChrome) {
+      await page.evaluate(() => {
+        for (const el of document.querySelectorAll("[data-audit-hidden]")) {
+          el.removeAttribute("data-audit-hidden")
+          el.style.visibility = ""
+        }
+      })
+    }
+  }
 }
 
 /**
@@ -1173,9 +1202,14 @@ async function visitRoute(
       for (const bp of breakpoints) {
         await page.setViewport(bp)
         await gotoReady(page, url, ready, waitUntil)
+        // T33: a dialog or a toast is still fading in when `ready` resolves; the first
+        // screenshots showed S-38's confirm sheet half transparent. Axe already waits.
+        await settleAnimations(page)
         const violation = await checkNoHorizontalScroll(page, st.slug, bp.width)
         if (violation) responsiveViolations.push(violation)
-        await shoot(page, route.screenId, st.state, bp.width, st.shotSuffix)
+        await shoot(page, route.screenId, st.state, bp.width, st.shotSuffix, {
+          hideBottomChrome: route.hideBottomChrome === true,
+        })
       }
 
       log(`${route.screenId} ${route.path} [${st.state}] — axe...`)
@@ -3070,6 +3104,13 @@ async function main() {
     // actually unauthenticated, and it also removes the registry's implicit
     // dependency on route ordering for the authenticated roles.
     routes = buildRouteRegistry(seed)
+    // T33: `LEMELY_AUDIT_SCREENS=S-33,S-37` narrows a re-run to those screen ids. Like the scope, a
+    // narrowed run writes partial reports and is not evidence for the whole product.
+    const onlyScreens = (process.env.LEMELY_AUDIT_SCREENS ?? "").split(",").map((id) => id.trim()).filter(Boolean)
+    if (onlyScreens.length > 0) {
+      routes = routes.filter((route) => onlyScreens.includes(route.screenId))
+      if (routes.length === 0) throw new Error(`LEMELY_AUDIT_SCREENS=${onlyScreens.join(",")} matches no registry entry`)
+    }
     // The student journey above is finished with this page, and it is the
     // heaviest one in the run (a real upload + a full marking pass). Closing
     // it frees its renderer before the registry walk opens five more

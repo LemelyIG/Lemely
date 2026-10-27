@@ -408,7 +408,7 @@ export function SessionDetailView({
                   href={place.href}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex w-fit items-center gap-1.5 text-accent-ink underline"
+                  className="inline-flex min-h-11 w-fit items-center gap-1.5 text-accent-ink underline"
                 >
                   Open the meeting link
                   <ArrowSquareOut size={14} aria-hidden />

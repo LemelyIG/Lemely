@@ -67,6 +67,10 @@ export async function waitForExpectation(page, routePath, want, timeout = 20_000
       if (expected.h1 && !visible.some((h) => matches(expected.h1, h.textContent ?? ""))) return false
       if (expected.anyH1 && !headings.some((h) => matches(expected.anyH1, h.textContent ?? ""))) return false
       if (expected.text && !matches(expected.text, document.body.innerText)) return false
+      if (expected.status) {
+        const statuses = Array.from(document.querySelectorAll('[role="status"]'))
+        if (!statuses.some((r) => matches(expected.status, r.textContent ?? ""))) return false
+      }
       const alerts = Array.from(document.querySelectorAll('[role="alert"]'))
       if (expected.alert) {
         if (!alerts.some((a) => matches(expected.alert, a.textContent ?? ""))) return false
@@ -81,6 +85,29 @@ export async function waitForExpectation(page, routePath, want, timeout = 20_000
     want,
     LOADING_SELECTOR,
   )
+}
+
+/**
+ * `setup`/`teardown` for an offline state: the screen's own request fails the way a dropped
+ * connection fails (the request is aborted, so `fetch` rejects), which `lib/api.ts` reports as
+ * status 0 and the screen answers with C-11's offline panel instead of its error panel.
+ */
+function offlineStateHooks(urlSubstring) {
+  let handler
+  return {
+    setup: async (page) => {
+      await page.setRequestInterception(true)
+      handler = (req) => {
+        if (req.url().includes(urlSubstring)) req.abort("internetdisconnected").catch(() => {})
+        else req.continue().catch(() => {})
+      }
+      page.on("request", handler)
+    },
+    teardown: async (page) => {
+      page.off("request", handler)
+      await page.setRequestInterception(false)
+    },
+  }
 }
 
 /** Clicks the first enabled button whose label matches `pattern` (a RegExp source). */
@@ -168,7 +195,7 @@ export function buildTutoringRegistry(seed, hooks) {
   const sessionTitle = exactly(`${T.subjectName} with Amira K.`)
 
   /** loading + error + dark around a default state; `api` is the request the screen waits on. */
-  function around(base, defaultState, api, { errorWant, loadingWant, dark = true }) {
+  function around(base, defaultState, api, { errorWant, loadingWant, dark = true, offline = true }) {
     const { screenId, path: routePath, slug } = base
     const loadingHooks = loadingStateHooks(api, LOADING_HOLD_MS)
     const errorHooks = errorStateHooks(api)
@@ -181,6 +208,16 @@ export function buildTutoringRegistry(seed, hooks) {
       }),
       state("error", `${slug}-error`, routePath, errorWant, { lighthouse: false, ...errorHooks }),
     ]
+    if (offline) {
+      // The same screen, with the connection down: an offline panel, announced as a status, not an alert.
+      const { alert: _alert, ...kept } = errorWant
+      states.push(
+        state("offline", `${slug}-offline`, routePath, { ...kept, status: "^offline" }, {
+          lighthouse: false,
+          ...offlineStateHooks(api),
+        }),
+      )
+    }
     if (dark) {
       states.push(
         state("default", `${slug}-dark`, routePath, defaultState.expect, {
@@ -201,6 +238,7 @@ export function buildTutoringRegistry(seed, hooks) {
     session: sessionOf,
     authed: sessionOf !== null,
     breakpoints: TUTORING_BREAKPOINTS,
+    hideBottomChrome: true,
     states,
   })
 
@@ -209,6 +247,7 @@ export function buildTutoringRegistry(seed, hooks) {
     session: sessionOf,
     authed: sessionOf !== null,
     breakpoints: TUTORING_BREAKPOINTS,
+    hideBottomChrome: true,
   })
 
   const directoryError = { alert: "couldn.t load the tutors", anyH1: exactly("Tutors") }
@@ -271,7 +310,8 @@ export function buildTutoringRegistry(seed, hooks) {
         s33,
         state("default", s33.slug, s33.path, {
           h1: exactly("Tutors"),
-          text: "Usually available[\\s\\S]*Amira K\\.",
+          // At 320 px the filters sit behind a "Filters" button, so the card and the ranking note are what is always there.
+          text: "(?=[\\s\\S]*Amira K\\.)(?=[\\s\\S]*How tutors are ordered)",
         }),
         "/api/tutors",
         { errorWant: directoryError, loadingWant: directoryLoading },
@@ -430,6 +470,8 @@ export function buildTutoringRegistry(seed, hooks) {
           // The grants list fails on its own; the rest of the page still renders.
           errorWant: { h1: exactly("Tutors & your data"), text: "couldn.t load who you share with" },
           loadingWant: { loading: true, h1: exactly("Tutors & your data") },
+          // The grants list fails inline, in a compact panel that has no offline variant.
+          offline: false,
         },
       ),
       studentSession,
@@ -652,6 +694,7 @@ export function buildTutoringRegistry(seed, hooks) {
         {
           errorWant: { h1: p08Heading, text: "couldn.t load who .* shares with" },
           loadingWant: { loading: true, h1: p08Heading },
+          offline: false,
         },
       ),
       parentSession,

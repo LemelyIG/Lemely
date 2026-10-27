@@ -98,7 +98,7 @@ function GrantRow({ row, onReport }: { row: ParentGrantRowView; onReport: () => 
   return (
     <li className={ROW}>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <Link to={row.tutorHref} className="min-w-0 break-words text-body-lg font-medium text-ink underline">
+        <Link to={row.tutorHref} className="inline-flex min-h-11 min-w-0 items-center break-words text-body-lg font-medium text-ink underline">
           {row.tutorName}
         </Link>
         <Chip tone={row.status.tone} className="gap-1.5">

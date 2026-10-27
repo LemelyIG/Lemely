@@ -85,7 +85,7 @@ function fakeSeed() {
 interface State {
   state: string
   slug: string
-  expect: { h1?: string; anyH1?: string; text?: string; alert?: string; loading?: boolean }
+  expect: { h1?: string; anyH1?: string; text?: string; alert?: string; status?: string; loading?: boolean }
   ready: unknown
   lighthouse?: boolean
   colorScheme?: string
@@ -195,6 +195,20 @@ describe("states", () => {
     }
   })
 
+  it("registers an offline state wherever the screen has an offline panel, and it waits for a status, not an alert", () => {
+    const offline = states.filter(({ st }) => st.state === "offline")
+    expect(offline.length).toBeGreaterThanOrEqual(20)
+    for (const { entry, st } of offline) {
+      expect(st.expect.status, `${entry.screenId} offline`).toBeTruthy()
+      expect(st.expect.alert, `${entry.screenId} offline`).toBeFalsy()
+    }
+    // The two inline grant lists have no offline variant, and say so by having no state.
+    const screens = new Set(offline.map(({ entry }) => entry.screenId))
+    expect(screens.has("S-38")).toBe(false)
+    expect(screens.has("P-08")).toBe(false)
+    expect(screens.has("G-16")).toBe(true)
+  })
+
   it("registers the SPEC's screen-specific states", () => {
     const has = (screenId: string, state: string) =>
       states.some(({ entry, st }) => entry.screenId === screenId && st.state === state)
@@ -239,6 +253,25 @@ describe("states", () => {
       const want = st.expect
       expect(want.h1 || want.anyH1 || want.text || want.alert, `${label} expects nothing specific`).toBeTruthy()
     }
+  })
+
+  it("makes every ready wait on its own route's pathname, so a login redirect is never ready", async () => {
+    let checked = 0
+    for (const { entry, st } of states) {
+      const waitedOn: unknown[] = []
+      const page = {
+        waitForFunction: async (_fn: unknown, _options: unknown, ...args: unknown[]) => {
+          waitedOn.push(args[0])
+          return { asElement: () => null }
+        },
+        waitForSelector: async () => {},
+        evaluate: async () => false,
+      }
+      await (st.ready as (page: unknown) => Promise<void>)(page).catch(() => {})
+      expect(waitedOn[0], `${entry.screenId} [${st.state}] ${entry.path}`).toBe(pathnameOf(entry.path))
+      checked += 1
+    }
+    expect(checked).toBe(states.length)
   })
 
   it("makes a loaded default state require its own heading and forbid a skeleton and an alert", () => {
@@ -369,7 +402,8 @@ describe("the audit runner uses the registry", () => {
 
   it("reads each state's own widths and screenshot suffix", () => {
     expect(AUDIT).toMatch(/st\.breakpoints \?\? route\.breakpoints \?\? BREAKPOINTS/)
-    expect(AUDIT).toMatch(/shoot\(page, route\.screenId, st\.state, bp\.width, st\.shotSuffix\)/)
+    expect(AUDIT).toMatch(/shoot\(page, route\.screenId, st\.state, bp\.width, st\.shotSuffix, \{/)
+    expect(AUDIT).toMatch(/hideBottomChrome: route\.hideBottomChrome === true/)
   })
 
   it("gates performance on the slugs the registry writes", () => {

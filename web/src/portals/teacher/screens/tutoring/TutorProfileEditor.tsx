@@ -973,7 +973,7 @@ function Editor({ profile }: { profile: TutorOwnProfile | null }) {
       <div className="flex flex-col gap-2 border-b border-rule pb-5">
         <Link
           to="/teacher/tutoring"
-          className="inline-flex w-fit items-center gap-1 py-1 text-body-sm text-ink-muted transition-colors hover:text-ink"
+          className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-ink-muted transition-colors hover:text-ink"
         >
           Back to tutoring
         </Link>
