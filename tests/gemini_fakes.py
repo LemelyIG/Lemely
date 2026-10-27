@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 
 from google.genai import types
 
-from lemely.runtime.config import PathsSettings, Settings, load_settings
+from lemely.runtime.config import GeminiSettings, PathsSettings, Settings, load_settings
 
 
 @dataclass
@@ -85,6 +85,60 @@ def fake_genai_client() -> MagicMock:
     return client
 
 
+#: Sub-project C P4: the pre-flip default of every setting the flip changed. The
+#: fake-based tests, tests/test_llm_golden.py among them, pin the Gemini path with it.
+PRE_FLIP_DEFAULTS: dict[str, object] = {
+    "gemini.model": "gemini-2.5-flash",
+    "gemini.mark_scheme_model": "gemini-2.5-flash",
+    "gemini.extraction_model": "gemini-3.5-flash-lite",
+    "gemini.correction_model": "gemini-3.1-flash-lite",
+    "gemini.generation_model": "gemini-3.5-flash-lite",
+    "gemini.scan_metadata_model": "gemini-3.5-flash-lite",
+    "gemini.escalation_model": "gemini-3.8-flash",
+    "gemini.escalation_confidence_threshold": 0.80,
+    "gemini.correction_shared_prefix": False,
+    "gemini.claude_cache_for": {},
+    "gemini.claude_effort_for": {},
+    "gemini.review_confidence_threshold_for": {},
+    "gemini.adjudication_model": None,
+    "gemini.adjudication_max_leaves": 3,
+    "gemini.adjudication_confidence_threshold": 0.80,
+    "gemini.adjudication_drawing_leaves": False,
+    "gemini.adjudication_drawing_max_leaves": 3,
+    "gemini.adjudication_reread_disagreed": False,
+    "gemini.correction_retry_median": False,
+    "binding.read_model": "gemini-3.8-flash",
+    "binding.retry_model": "gemini-3.8-flash",
+}
+
+
+def _pinned(settings: Settings, values: Mapping[str, object]) -> Settings:
+    for dotted, value in values.items():
+        section_name, _, field = dotted.partition(".")
+        section = getattr(settings, section_name)
+        # Validate the new value, but keep the section's own fields-set: `model_validate` of a
+        # whole dump would mark every field as explicitly set, and `_claude_output_cap` treats
+        # an explicit `max_output_tokens_for` as the operator's, not the shipped default.
+        type(section).model_validate({**section.model_dump(), field: value})
+        settings = settings.model_copy(
+            update={section_name: section.model_copy(update={field: value})}
+        )
+    return settings
+
+
+def pre_flip_gemini(**overrides: Any) -> GeminiSettings:
+    """``GeminiSettings`` at the pre-flip defaults, with ``overrides`` on top."""
+    pinned = {
+        k.partition(".")[2]: v for k, v in PRE_FLIP_DEFAULTS.items() if k.startswith("gemini.")
+    }
+    return GeminiSettings(**{**pinned, **overrides})
+
+
+def pin_pre_flip(settings: Settings) -> Settings:
+    """``settings`` with the pre-flip Gemini defaults (:data:`PRE_FLIP_DEFAULTS`) put back."""
+    return _pinned(settings, PRE_FLIP_DEFAULTS)
+
+
 def make_settings(tmp: str) -> Settings:
     """Default settings with cache/output redirected into ``tmp`` (env-isolated)."""
     snap = dict(os.environ)
@@ -96,10 +150,15 @@ def make_settings(tmp: str) -> Settings:
     finally:
         os.environ.clear()
         os.environ.update(snap)
-    return s.model_copy(
-        update={
-            "paths": PathsSettings(cache_dir=Path(tmp) / ".cache", output_dir=Path(tmp) / "outputs")
-        }
+    return _pinned(
+        s.model_copy(
+            update={
+                "paths": PathsSettings(
+                    cache_dir=Path(tmp) / ".cache", output_dir=Path(tmp) / "outputs"
+                )
+            }
+        ),
+        PRE_FLIP_DEFAULTS,
     )
 
 

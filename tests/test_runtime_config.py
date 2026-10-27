@@ -81,7 +81,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(s.gradio.port, 7860)
         self.assertEqual(s.logging.level, "INFO")
         self.assertEqual(s.logging.format, "auto")
-        self.assertEqual(s.gemini.model, "gemini-2.5-flash")
+        self.assertEqual(s.gemini.model, "claude-haiku-5-5")
         self.assertIsNone(s.gemini_api_key)
 
     def test_extra_forbid_rejects_unknown_keys_in_toml(self) -> None:

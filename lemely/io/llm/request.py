@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 from lemely.io.providers import is_anthropic_model
 
-Effort = Literal["low", "medium", "high", "xhigh", "max"]
+Effort = Literal["none", "low", "medium", "high", "xhigh", "max"]
 CacheSpot = Literal["system", "documents", "images", "prefix"]
 #: Claude's server-side code-execution tool version (docs read 2026-10-20: latest).
 CODE_EXECUTION_TOOL = "code_execution_20260521"
@@ -27,6 +27,10 @@ CHARS_PER_TOKEN = 4
 #: Claude cache key for those requests. Why: with bare image blocks Haiku numbered a
 #: 19-page script 1..19 in 3 of 22 reads (.superpowers/sdd/binding-investigation.md).
 PAGE_LABEL_VERSION = "v1"
+#: Version of the page label that also states the image size, ``Page index {i} ({W} x {H}
+#: px):``, put before every image (one image too) of a request that asks for pixel boxes
+#: (``LLMRequest.box_convention``). Other multi-image Claude requests keep ``v1``.
+PAGE_LABEL_SIZED_VERSION = "v2"
 
 
 @dataclass(frozen=True)
@@ -89,6 +93,7 @@ def provider_fingerprint(
     image_enhance: bool,
     response_schema: type[BaseModel] | None = None,
     image_count: int = 0,
+    box_convention: str | None = None,
 ) -> str:
     """The provider part of a reply's cache key: the single source for it.
 
@@ -98,7 +103,9 @@ def provider_fingerprint(
     sent; ``image_enhance`` selects the fit version). When ``response_schema`` takes the
     prompt-JSON route, ``|pj=<PROMPT_JSON_VERSION>`` is appended, since the instruction
     wording is part of what is sent. A request with more than one image is sent with a
-    page-index label before each (``|pg_lbl=<PAGE_LABEL_VERSION>``).
+    page-index label before each (``|pg_lbl=<PAGE_LABEL_VERSION>``). A request that asks
+    for pixel boxes (``box_convention``) is labelled with the image sizes instead, and its
+    reply is converted, so it carries ``|pg_lbl=<PAGE_LABEL_SIZED_VERSION>|box=<version>``.
     """
     if not is_anthropic_model(model):
         return ""
@@ -114,7 +121,9 @@ def provider_fingerprint(
 
         if prompt_json_for(response_schema):
             fingerprint += f"|pj={PROMPT_JSON_VERSION}"
-    if image_count > 1:
+    if box_convention is not None:
+        fingerprint += f"|pg_lbl={PAGE_LABEL_SIZED_VERSION}|box={box_convention}"
+    elif image_count > 1:
         fingerprint += f"|pg_lbl={PAGE_LABEL_VERSION}"
     return fingerprint
 
@@ -125,8 +134,11 @@ class LLMRequest:
 
     ``effort`` is the provider's own effort value (Claude) or None. ``uploads`` is a
     provider's uploads handle (Gemini ``ImageUploads``, Claude ``ClaudeImageUploads``).
-    ``shared_prefix`` is a Gemini-only ``SharedPrefix`` for its explicit cache; on
-    Claude the prefix arrives split into ``system`` and ``cache_prefix``.
+    ``box_convention`` is a Claude-only version string: the request asks for pixel boxes,
+    labels each page with its size, and has its reply converted to the 0-1000 convention
+    (``lemely.io.llm.box_convention``). ``shared_prefix`` is a Gemini-only ``SharedPrefix``
+    for its explicit cache; on Claude the prefix arrives split into ``system`` and
+    ``cache_prefix``.
     """
 
     model: str
@@ -144,6 +156,7 @@ class LLMRequest:
     media_resolution: str | None = None
     uploads: Any = None
     shared_prefix: Any = None
+    box_convention: str | None = None
 
     def fingerprint(
         self, *, image_token_budget: int, image_floor_px: int, image_enhance: bool
@@ -157,4 +170,5 @@ class LLMRequest:
             image_enhance=image_enhance,
             response_schema=self.response_schema,
             image_count=len(self.images),
+            box_convention=self.box_convention,
         )

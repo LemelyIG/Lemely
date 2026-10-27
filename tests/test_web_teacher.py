@@ -134,6 +134,8 @@ def settings(tmp_path: Path) -> Settings:
         update={
             "paths": base.paths.model_copy(update={"output_dir": tmp_path / "outputs"}),
             "gemini_api_key": None,
+            # Every default task tag is claude- since sub-project C: its key gates detection.
+            "anthropic_api_key": None,
         }
     )
 
@@ -569,7 +571,9 @@ def _key_settings(settings: Settings) -> Settings:
     """
     from pydantic import SecretStr
 
-    return settings.model_copy(update={"gemini_api_key": SecretStr("test-key")})
+    return settings.model_copy(
+        update={"gemini_api_key": SecretStr("test-key"), "anthropic_api_key": SecretStr("test-key")}
+    )
 
 
 def test_upload_filename_cannot_escape_sandbox(
@@ -1101,6 +1105,7 @@ def test_upload_with_mark_scheme_grades_instead_of_stalling_at_queued(
 
     def _grade(mark_scheme: object, _extracted: object, **_kwargs: object) -> AccuracyReport:
         marked_with["scheme"] = mark_scheme
+        marked_with["scan_path"] = _kwargs.get("scan_path")
         return report
 
     monkeypatch.setattr(grading_service, "grade_paper", _grade)
@@ -1131,6 +1136,8 @@ def test_upload_with_mark_scheme_grades_instead_of_stalling_at_queued(
 
     # The resolved scheme is what actually reached the marker.
     assert marked_with["scheme"] is scheme
+    # The scan reaches grade_paper, which rasterises it for adjudication (sub-project C P4).
+    assert isinstance(marked_with["scan_path"], Path)
 
     # The paper left the queue, and the console's counters move with it.
     assert teacher._row_kind(row) == "graded"
@@ -1780,7 +1787,7 @@ def test_a_row_queued_for_the_run_slot_is_alive_and_not_lost_while_it_waits(
     from lemely.io import run_cap
     from lemely.runtime.events import bus
 
-    repo = TeacherPaperRepository(pg_sessionmaker, stale_after=timedelta(seconds=1.0))
+    repo = TeacherPaperRepository(pg_sessionmaker, stale_after=timedelta(seconds=2.0))
     pid = uuid.uuid4()
     repo.create(
         paper_id=pid,
@@ -1815,8 +1822,8 @@ def test_a_row_queued_for_the_run_slot_is_alive_and_not_lost_while_it_waits(
                 time.sleep(0.02)
                 row = repo.get(pid)
             assert row is not None and row.stage == "queued"
-            # Three stale windows of waiting: only a heartbeat keeps it alive.
-            end = time.monotonic() + 3.0
+            # Two stale windows of waiting: only a heartbeat keeps it alive.
+            end = time.monotonic() + 4.0
             while time.monotonic() < end:
                 row = repo.get(pid)
                 assert row is not None

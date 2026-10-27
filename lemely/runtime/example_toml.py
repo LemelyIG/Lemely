@@ -84,14 +84,14 @@ def render_example_toml() -> str:
     lines.append(f'model = "{s.gemini.model}"')
     lines.append("")
     lines.append("# Per-task model overrides (omit a key to use the global `model` above).")
-    lines.append("# F1 (Gemini 3.x migration, 2026-09-17): these are the shipped defaults, so")
-    lines.append("# they are commented out here purely as documentation of what you are")
-    lines.append("# overriding if you uncomment one. correction defaults to")
-    lines.append("# gemini-3.1-flash-lite and escalation to gemini-3.8-flash;")
-    lines.append("# extraction/generation/scan_metadata default to")
-    lines.append("# gemini-3.5-flash-lite; mark_scheme stays on gemini-2.5-flash (its chunked")
-    lines.append("# parser and thinking_budget tuning predate the 3.x migration, D20). Run")
-    lines.append("# `lemely doctor` to see what model_for() actually resolves for every tag.")
+    lines.append("# Sub-project C: every tag but mark_scheme defaults to claude-haiku-5-5 (needs")
+    lines.append(
+        "# ANTHROPIC_API_KEY); mark_scheme stays on gemini-2.5-flash (Haiku's parse failed"
+    )
+    lines.append("# parity with the deterministic parser). These are commented out here purely as")
+    lines.append("# documentation of what you are overriding if you uncomment one. A gemini- model")
+    lines.append("# needs GEMINI_API_KEY. Run `lemely doctor` to see what")
+    lines.append("# model_for() actually resolves for every tag.")
     lines.append(f'# mark_scheme_model    = "{s.gemini.mark_scheme_model}"')
     lines.append(f'# extraction_model     = "{s.gemini.extraction_model}"')
     lines.append(f'# correction_model     = "{s.gemini.correction_model}"')
@@ -100,9 +100,14 @@ def render_example_toml() -> str:
     lines.append("")
     lines.append("# Escalation: re-mark with a stronger/thinking-harder model when confidence <")
     lines.append("# threshold. Reachable even when escalation_model == correction_model (F1):")
-    lines.append("# the gate compares (model, thinking) tuples, not model names alone.")
-    lines.append(f'# escalation_model = "{s.gemini.escalation_model}"')
+    lines.append("# the gate compares (model, thinking) tuples, not model names alone. Unset")
+    lines.append("# (the default since sub-project C): no escalation.")
+    lines.append('# escalation_model = "claude-sonnet-5-5"')
     lines.append(f"# escalation_confidence_threshold = {s.gemini.escalation_confidence_threshold}")
+    lines.append(
+        "# At most this many escalations per script, most uncertain first (unset: no cap)."
+    )
+    lines.append("# escalation_cap_per_script = 2")
     lines.append("# Per-model human-review threshold: a final AI mark from a listed model is")
     lines.append("# flagged for teacher review below its value (unlisted models: 0.90). A table")
     lines.append("# you set REPLACES the shipped one (no merge). Applies to the marking step;")
@@ -157,15 +162,18 @@ def render_example_toml() -> str:
     lines.append("# prefix. Unlisted tags mark system and prefix (the A1 behaviour). A changed")
     lines.append("# effort or thinking setting invalidates the cached messages (docs, prompt")
     lines.append(
-        "# caching): both binder tags must send the same effort for the second read to hit."
+        "# caching): both binder tags must send the same effort for the second read to hit"
+        " (see binding.claude_cache_ignores_effort)."
     )
     lines.append(f"# claude_cache_for = {_toml_inline(s.gemini.claude_cache_for)}")
-    lines.append("# Claude effort (low | medium | high | xhigh | max) per tag or tag:kind,")
+    lines.append("# Claude effort (none | low | medium | high | xhigh | max) per tag or tag:kind;")
+    lines.append('# "none" turns thinking off for the call (levers a1/a2).')
     lines.append('# e.g. { "correction:extended" = "medium" }. Unlisted: thinking_level_for.')
     lines.append(
-        "# haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept every level (docs: effort);"
+        "# haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept low..max (docs: effort);"
     )
-    lines.append("# a model that rejects one fails the call. Higher effort spends more of")
+    lines.append('# "none" works on haiku-5-5 only: sonnet-5-5, opus-5-5 and fable-5-1 reject it.')
+    lines.append("# A model that rejects a level fails the call. Higher effort spends more of")
     lines.append("# max_output_tokens_for (thinking counts toward max_tokens).")
     lines.append(f"# claude_effort_for = {_toml_inline(s.gemini.claude_effort_for)}")
     lines.append("# The marker quotes the mark scheme for every awarded mark; an unquoted or")
@@ -175,6 +183,58 @@ def render_example_toml() -> str:
     lines.append(
         f"# correction_terse_rationale = {_toml_bool(s.gemini.correction_terse_rationale)}"
     )
+    lines.append("# false skips the borderline thinking retry (lever c1).")
+    lines.append(
+        f"# correction_borderline_enabled = {_toml_bool(s.gemini.correction_borderline_enabled)}"
+    )
+    lines.append("# Lever c2: a stronger model re-marks the least certain leaves of a script")
+    lines.append(
+        "# from their page crops. On by default (claude-haiku-5-5); needs the scan's pages."
+    )
+    lines.append(f'# adjudication_model = "{s.gemini.adjudication_model}"')
+    lines.append(f"# adjudication_max_leaves = {s.gemini.adjudication_max_leaves}")
+    lines.append(
+        f"# adjudication_confidence_threshold = {s.gemini.adjudication_confidence_threshold}"
+    )
+    lines.append(
+        "# Lever H2a: keep the higher of the first and the borderline-retry mark below this "
+        "confidence."
+    )
+    lines.append(
+        f"# correction_retry_keep_higher = {_toml_bool(s.gemini.correction_retry_keep_higher)}"
+    )
+    lines.append(
+        f"# correction_retry_keep_higher_below = {s.gemini.correction_retry_keep_higher_below}"
+    )
+    lines.append(
+        "# Lever H2b: per-point verdicts and rationale before the mark "
+        "(not with correction_citations)."
+    )
+    lines.append(f"# correction_reason_first = {_toml_bool(s.gemini.correction_reason_first)}")
+    lines.append("# Lever H2c: printed 0625 Paper 4 marking conventions in the marking prompt.")
+    lines.append(
+        f"# correction_syllabus_conventions = "
+        f"{_toml_bool(s.gemini.correction_syllabus_conventions)}"
+    )
+    lines.append(
+        "# Lever H2d: adjudicate the reader's Drawing: leaves from their crops "
+        "(needs adjudication_model)."
+    )
+    lines.append(
+        f"# adjudication_drawing_leaves = {_toml_bool(s.gemini.adjudication_drawing_leaves)}"
+    )
+    lines.append(f"# adjudication_drawing_max_leaves = {s.gemini.adjudication_drawing_max_leaves}")
+    lines.append(
+        "# Lever H4a: adjudicate leaves whose crop re-read disagreed with the first read "
+        "(needs adjudication_model)."
+    )
+    lines.append(
+        f"# adjudication_reread_disagreed = {_toml_bool(s.gemini.adjudication_reread_disagreed)}"
+    )
+    lines.append(f"# adjudication_reread_max_leaves = {s.gemini.adjudication_reread_max_leaves}")
+    lines.append("# Lever H4c: median of three marks below this confidence (not with keep_higher).")
+    lines.append(f"# correction_retry_median = {_toml_bool(s.gemini.correction_retry_median)}")
+    lines.append(f"# correction_retry_median_below = {s.gemini.correction_retry_median_below}")
     lines.append(
         "# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B)."
     )
@@ -412,9 +472,9 @@ def render_example_toml() -> str:
     lines.append("# exactly as it was before either existed.")
     lines.append(f'gate = "{s.binding.gate}"')
     lines.append("# The label binder's model, passed on every one of its calls. It is NOT")
-    lines.append("# gemini.extraction_model: only gemini-3.8-flash returned a usable list when")
-    lines.append("# this was measured, and the extraction default is a cheaper model that did")
-    lines.append("# not. COST: with the label binder every extraction makes its calls on this")
+    lines.append("# gemini.extraction_model: on Gemini only gemini-3.8-flash returned a usable")
+    lines.append("# list when this was measured; since sub-project C it is claude-haiku-5-5.")
+    lines.append("# COST: with the label binder every extraction makes its calls on this")
     lines.append("# model in place of one call on extraction_model.")
     lines.append(f'read_model = "{s.binding.read_model}"')
     lines.append("# Read the script a second time on the same model, at the thinking level")
@@ -451,6 +511,11 @@ def render_example_toml() -> str:
     lines.append("# cache defaults of its tag unless set. Chunk calls send their pages inline, not")
     lines.append("# through the Files API: input tokens are unchanged, bandwidth is higher.")
     lines.append(f"# claude_chunked_read = {_toml_bool(s.binding.claude_chunked_read)}")
+    lines.append("# Make the two claude- binder reads in turn even when their efforts differ")
+    lines.append("# (lever a3; the second read hits the first's cache only if the API allows).")
+    lines.append(
+        f"# claude_cache_ignores_effort = {_toml_bool(s.binding.claude_cache_ignores_effort)}"
+    )
     lines.append("# The model the legacy binder's one retry uses, when the gate is on.")
     lines.append(f'retry_model = "{s.binding.retry_model}"')
     lines.append("")

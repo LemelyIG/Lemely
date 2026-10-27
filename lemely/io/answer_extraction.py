@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import structlog
 from pydantic import BaseModel, GetJsonSchemaHandler, ValidationError
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema as pydantic_core_schema
@@ -20,6 +21,7 @@ from pydantic_core import core_schema as pydantic_core_schema
 from lemely.core.binding import BindingReport
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers, SourceBox
+from lemely.io.binding.label_binder import box_contract
 from lemely.io.binding.orchestrate import (
     MARKED_FROM_OTHER_READ,
     LegacyRead,
@@ -944,9 +946,12 @@ class GeminiAnswerExtractor:
         With no ``model`` this is the call extraction has always made, argument for
         argument. ``model`` is passed only by the binding gate's one retry.
         """
+        system_prompt, box_kwargs = box_contract(
+            self._client, EXTRACTOR_SYSTEM_PROMPT, model=model, task_tag="extraction"
+        )
         call = functools.partial(
             self._client.generate_structured,
-            system_prompt=EXTRACTOR_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=build_extractor_user_prompt(mark_scheme, page_count=len(page_bytes)),
             image_parts=page_bytes,
             image_uploads=uploads,
@@ -955,6 +960,7 @@ class GeminiAnswerExtractor:
             prompt_version=VERSION,
             extra_cache_key=extra_cache_key,
             task_tag="extraction",
+            **box_kwargs,
         )
         raw = call() if model is None else call(model=model)
         return _convert_reply(raw.answers, len(page_bytes))
@@ -968,8 +974,11 @@ class GeminiAnswerExtractor:
         model: str | None = None,
     ) -> str:
         """The key the reply of the ``_legacy_reply`` call these arguments make is cached under."""
+        system_prompt, box_kwargs = box_contract(
+            self._client, EXTRACTOR_SYSTEM_PROMPT, model=model, task_tag="extraction"
+        )
         return self._client.structured_cache_key(
-            system_prompt=EXTRACTOR_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=build_extractor_user_prompt(mark_scheme, page_count=len(page_bytes)),
             image_parts=page_bytes,
             media_resolution=EXTRACTION_MEDIA_RESOLUTION,
@@ -978,6 +987,7 @@ class GeminiAnswerExtractor:
             model=model,
             extra_cache_key=extra_cache_key,
             task_tag="extraction",
+            **box_kwargs,
         )
 
     def _gated_legacy(
@@ -1075,8 +1085,20 @@ class GeminiAnswerExtractor:
         (:func:`~lemely.io.run_cap.marking_run_slot`, #260, #271): a second
         call waits for the first to finish, and never fails for waiting.
         """
-        with marking_run_slot():
-            return self._extract(scan_path, mark_scheme)
+        started = time.monotonic()
+        outcome = "ok"
+        try:
+            with marking_run_slot():
+                return self._extract(scan_path, mark_scheme)
+        except BaseException as exc:
+            outcome = type(exc).__name__
+            raise
+        finally:
+            structlog.get_logger().bind(component="answer_extraction").info(
+                "extraction_stage_timing",
+                total_seconds=round(time.monotonic() - started, 3),
+                outcome=outcome,
+            )
 
     def _extract(self, scan_path: Path, mark_scheme: MarkScheme) -> ExtractedAnswers:
         """:meth:`__call__`'s work, under its run slot.
@@ -1096,7 +1118,13 @@ class GeminiAnswerExtractor:
         # PDF -- bounding boxes are documented for image inputs only, and one
         # call carrying every page keeps cross-page question context that a
         # per-page call would lose.
+        rasterise_started = time.monotonic()
         pages: list[RasterisedPage] = rasterise_scan_to_pages(scan_path)
+        structlog.get_logger().bind(component="answer_extraction").info(
+            "extraction_rasterised",
+            seconds=round(time.monotonic() - rasterise_started, 3),
+            pages=len(pages),
+        )
 
         # Carry-over from spec 2026-09-26 review: a page can be rendered
         # below EXTRACTION_DPI (lemely.io.scan_limits' downscale-on-oversize

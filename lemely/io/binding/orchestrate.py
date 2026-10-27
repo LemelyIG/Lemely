@@ -55,6 +55,7 @@ import difflib
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from itertools import chain
 from typing import TYPE_CHECKING, Literal, get_args
 
 import structlog
@@ -87,6 +88,7 @@ from lemely.core.text_agreement import text_agreement
 from lemely.io.binding.chunked_read import ChunkedLabelReader
 from lemely.io.binding.label_binder import BoundRead, LabelBinder, to_bound_read
 from lemely.io.binding.second_read_triggers import second_read_triggers
+from lemely.io.llm.pricing import claude_row
 from lemely.io.providers import is_anthropic_model
 from lemely.io.providers.anthropic_adapter import resolve_effort
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, LemelyError
@@ -129,11 +131,16 @@ LOST_ITEM_REASONS = ("malformed_item", "unknown_type")
 #: groups and never calls an honest partial script a stub
 #: (.superpowers/sdd/binding-investigation.md, Q1).
 #: A genuinely short script (a student who stopped early, coverage 0.26 say) also takes the
-#: stub path: one refresh, then a hold with ``stub_read`` and G5. Acceptable, as it is held
-#: either way.
+#: stub path: up to ``_STUB_RETRIES`` repeats, then a hold with ``stub_read`` and G5.
+#: Acceptable, as it is held either way.
 _MIN_READ_LABEL_COVERAGE = 0.3
-#: What the ``stub_read`` check says: a read that is still a stub after its one refresh.
-STUB_READ_DETAIL = "a read returned too few of the paper's question labels, twice"
+#: How many times a stub read is made again, each under its own cache key. Two, because
+#: about one s25_42 read in five is a stub: one retry held ~8% of papers, two hold ~1.6%
+#: (.superpowers/sdd/c-s25-stub.md, section 4). Each retry costs about $0.0015 when the
+#: prompt prefix is cached.
+_STUB_RETRIES = 2
+#: What the ``stub_read`` check says: a read that is still a stub after its retries.
+STUB_READ_DETAIL = "a read returned too few of the paper's question labels, on every attempt"
 
 # Each read's task tag and the suffix its cache key takes after the paper's own key.
 _FIRST_READ = ("extraction", "|bind1")
@@ -532,6 +539,24 @@ def _second_again(second: Callable[[], _Read], forget_second: Callable[[], objec
         raise ExternalServiceError(SECOND_READ_CRASH_MESSAGE) from crash
 
 
+def chunked_reader_for(client: GeminiClient, binding: BindingSettings) -> ChunkedLabelReader | None:
+    """The binder's chunked reader: on request, or as the tier guard (spec C P2.4).
+
+    With ``claude_chunked_read`` off, a reader is still built when a binder read runs on
+    a ``claude-`` model whose price has a tier (Haiku 5.5: 5x every rate past 100k
+    input tokens): a script still over the image token budget at the floor is then
+    read in chunks under the tier instead of being billed past it.
+    """
+    if binding.claude_chunked_read is True:
+        return ChunkedLabelReader(client)
+    for model in (binding.read_model, second_read_model(binding)):
+        if model is not None and is_anthropic_model(model):
+            row = claude_row(model)
+            if row is not None and row.tier_threshold_tokens is not None:
+                return ChunkedLabelReader(client, tier_guard=True)
+    return None
+
+
 def _reads_share_a_claude_cache(settings: Settings, first_model: str, second_model: str) -> bool:
     """Both reads on one claude- model, each with a breakpoint after the pages (spec §4 B1).
 
@@ -539,6 +564,7 @@ def _reads_share_a_claude_cache(settings: Settings, first_model: str, second_mod
     but only once the first response has begun: so the reads are made in turn. A
     different effort invalidates the cached messages, so both tags must also resolve to
     the same effort (B3); otherwise the in-turn read would pay the write and never hit.
+    With ``binding.claude_cache_ignores_effort`` (lever a3) the effort check is skipped.
     """
     if first_model != second_model or not is_anthropic_model(first_model):
         return False
@@ -546,6 +572,8 @@ def _reads_share_a_claude_cache(settings: Settings, first_model: str, second_mod
     tags = (_FIRST_READ[0], _SECOND_READ[0])
     if not all("images" in g.claude_cache_for.get(tag, []) for tag in tags):
         return False
+    if settings.binding.claude_cache_ignores_effort is True:
+        return True
     first, second = (resolve_effort(g.claude_effort_for, g.thinking_level_for, tag) for tag in tags)
     return first == second
 
@@ -838,13 +866,13 @@ def run_binding(
             "the label binder is not run on a scheme that is all multiple choice: "
             "binder_for keeps such a paper on the legacy binder"
         )
-    chunked = ChunkedLabelReader(client) if binding.claude_chunked_read is True else None
+    chunked = chunked_reader_for(client, binding)
     binder = LabelBinder(client, chunked=chunked)
     second_model = second_read_model(binding)
     model_for_read = {_FIRST_READ[0]: binding.read_model, _SECOND_READ[0]: second_model}
 
     def _attempt(
-        task_tag: str, suffix: str, cache_mode: Literal["refresh", "bypass"] | None
+        task_tag: str, suffix: str, cache_mode: Literal["bypass"] | None
     ) -> tuple[StreamRead, BoundStream]:
         stream = binder.read(
             pages,
@@ -857,6 +885,25 @@ def run_binding(
         )
         return stream, bind_stream(stream.items, mark_scheme)
 
+    def _stub_suffix(suffix: str, number: int) -> str:
+        return f"{suffix}|stub{number}"
+
+    def _key(task_tag: str, suffix: str) -> str:
+        return binder.cache_key(
+            pages,
+            mark_scheme,
+            model=model_for_read[task_tag],
+            extra_cache_key=manifest_key + suffix,
+            task_tag=task_tag,
+        )
+
+    def _stub_key(task_tag: str, suffix: str, number: int) -> str:
+        return _key(task_tag, _stub_suffix(suffix, number))
+
+    # The keys of the repeats actually made: they are cached beside the read, and go
+    # on the outcome with it.
+    made_stub_keys: list[str] = []
+
     def _read(task_tag: str, suffix: str) -> _Read:
         stream, bound = _attempt(task_tag, suffix, None)
         coverage = _label_coverage(bound)
@@ -868,13 +915,22 @@ def run_binding(
             log.warning(
                 "binding_read_stub", tag=task_tag, items=len(stream.items), coverage=coverage
             )
-            # A run that bypasses the cache must not start writing to it: the repeat
-            # is bypassed too, and refreshed only where the cache is in use.
+            # A run that bypasses the cache must not start writing to it: the repeats
+            # are bypassed too. Elsewhere each repeat is an ordinary call under its own
+            # key (``_stub_suffix``), so a replay of a pinned run serves the stub and
+            # then the repeats it recorded, with no live call.
             effective = settings.gemini.cache_mode_for.get(task_tag, client.default_cache_mode)
-            stream, bound = _attempt(
-                task_tag, suffix, "bypass" if effective == "bypass" else "refresh"
-            )
-            coverage = _label_coverage(bound)
+            for number in range(1, _STUB_RETRIES + 1):
+                stub_key = _stub_key(task_tag, suffix, number)
+                made_stub_keys.append(stub_key)
+                stream, bound = _attempt(
+                    task_tag,
+                    _stub_suffix(suffix, number),
+                    "bypass" if effective == "bypass" else None,
+                )
+                coverage = _label_coverage(bound)
+                if coverage >= _MIN_READ_LABEL_COVERAGE:
+                    break
             stub = coverage < _MIN_READ_LABEL_COVERAGE
             if stub:
                 log.warning(
@@ -895,14 +951,11 @@ def run_binding(
     reads = [_FIRST_READ, _SECOND_READ] if binding.second_read else [_FIRST_READ]
     # The keys the reads are cached under: taken out here for a paper held before
     # marking or a job that failed, and handed on for a paper held after marking.
-    read_cache_keys = tuple(
-        binder.cache_key(
-            pages,
-            mark_scheme,
-            model=model_for_read[task_tag],
-            extra_cache_key=manifest_key + suffix,
-            task_tag=task_tag,
-        )
+    read_cache_keys = tuple(_key(task_tag, suffix) for task_tag, suffix in reads)
+    # Every key a stub repeat of a read could be cached under, so that a hold forgets
+    # the repeats too; a key with no entry is passed over.
+    possible_stub_keys = tuple(
+        tuple(_stub_key(task_tag, suffix, n) for n in range(1, _STUB_RETRIES + 1))
         for task_tag, suffix in reads
     )
 
@@ -914,7 +967,10 @@ def run_binding(
 
     def _forget_reads() -> None:
         """Take the reads out of the response cache: the next run reads the scan afresh."""
-        client.forget_cached(read_cache_keys)
+        client.forget_cached((*read_cache_keys, *chain.from_iterable(possible_stub_keys)))
+
+    def _forget_second() -> None:
+        client.forget_cached((*read_cache_keys[1:], *chain.from_iterable(possible_stub_keys[1:])))
 
     on_trigger = binding.second_read and binding.second_read_mode == "on_trigger"
     triggers: tuple[SecondReadTrigger, ...] | None = None
@@ -924,9 +980,7 @@ def run_binding(
             first_read = _first()
             triggers = _first_read_triggers(first_read, mark_scheme)
             if triggers:
-                second_read = _read_second_after(
-                    _second, forget_second=lambda: client.forget_cached(read_cache_keys[1:])
-                )
+                second_read = _read_second_after(_second, forget_second=_forget_second)
         except CostCeilingError:
             raise
         except Exception:
@@ -936,17 +990,14 @@ def run_binding(
         if second_read is None:
             # Only the first read was made: only its key goes on.
             read_cache_keys = read_cache_keys[:1]
+            possible_stub_keys = possible_stub_keys[:1]
     elif binding.second_read:
         try:
             if _reads_share_a_claude_cache(settings, binding.read_model, second_model):
                 first_read = _first()
-                second_read = _read_second_after(
-                    _second, forget_second=lambda: client.forget_cached(read_cache_keys[1:])
-                )
+                second_read = _read_second_after(_second, forget_second=_forget_second)
             else:
-                first_read, second_read = _read_both(
-                    _first, _second, forget_second=lambda: client.forget_cached(read_cache_keys[1:])
-                )
+                first_read, second_read = _read_both(_first, _second, forget_second=_forget_second)
         except CostCeilingError:
             raise
         except Exception:
@@ -956,9 +1007,9 @@ def run_binding(
             raise
     else:
         first_read = _first()
-    # A read still a stub after its one refresh holds the paper. It is left out of the
-    # comparison: against a stub every leaf is unaligned, so the cross-read check would
-    # pass on nothing. The other read stays as the record.
+    # A read still a stub after its repeats (``_STUB_RETRIES``) holds the paper. It is left
+    # out of the comparison: against a stub every leaf is unaligned, so the cross-read check
+    # would pass on nothing. The other read stays as the record.
     stubbed = first_read.stub or (second_read is not None and second_read.stub)
     second_read_made = second_read is not None
     record_model = binding.read_model
@@ -1143,7 +1194,7 @@ def run_binding(
         review_only_ids=review_only,
         drops=dict(chosen.drops),
         review_reasons=review_reasons,
-        read_cache_keys=read_cache_keys,
+        read_cache_keys=(*read_cache_keys, *made_stub_keys),
         marked_from_other_read=_in_paper_order(mark_scheme, list(from_other)),
     )
 
@@ -1248,7 +1299,8 @@ def binding_models(settings: Settings) -> dict[str, str]:
     ``binding_read`` is the label binder's model, for both of its reads unless
     ``second_read_model`` is set: then the second read's model is listed as
     ``binding_second_read`` (when a second read is made), so that the Anthropic-key
-    and pricing checks see it. ``binding_retry`` is the gated legacy binder's retry.
+    and pricing checks see it. ``binding_retry`` is the gated legacy binder's retry, also listed
+    under the label binder (a multiple-choice scheme falls back to the legacy binder).
     The legacy binder's first call is the ordinary extraction call and is already in
     the table as ``extraction``.
     """
@@ -1260,6 +1312,10 @@ def binding_models(settings: Settings) -> dict[str, str]:
         if binding.claude_chunked_read is True:
             # The overview pass runs on the read model (chunked_read.py), under its own tag.
             models["binding_overview"] = binding.read_model
+        if binding.gate != "off":
+            # A scheme that is all multiple choice keeps the legacy binder (``binder_for``),
+            # whose one retry runs on this model, so the key and price checks must see it.
+            models["binding_retry"] = binding.retry_model
         return models
     if binding.gate != "off":
         return {"binding_retry": binding.retry_model}

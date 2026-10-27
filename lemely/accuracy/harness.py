@@ -1301,6 +1301,7 @@ def measure_accuracy(
                 f"a scan_path; missing for: {missing}"
             )
     from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers, marker_scored
+    from lemely.io.adjudication import adjudication_pages
     from lemely.io.correction_ai import correct_paper
     from lemely.io.gemini import process_token_totals_by_task
     from lemely.web.services.grading import extract_answers
@@ -1377,6 +1378,7 @@ def measure_accuracy(
                 extracted,
                 gemini_client=gemini_client,  # type: ignore[arg-type]
                 options=marking_options,
+                pages=adjudication_pages(gemini_client, case.scan_path),  # type: ignore[arg-type]
             )
         except CostCeilingError as exc:
             raise _ceiling_aborted_sweep(

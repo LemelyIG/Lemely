@@ -19,33 +19,34 @@ level = "INFO"
 format = "auto"
 
 [gemini]
-model = "gemini-2.5-flash"
+model = "claude-haiku-5-5"
 
 # Per-task model overrides (omit a key to use the global `model` above).
-# F1 (Gemini 3.x migration, 2026-09-17): these are the shipped defaults, so
-# they are commented out here purely as documentation of what you are
-# overriding if you uncomment one. correction defaults to
-# gemini-3.1-flash-lite and escalation to gemini-3.8-flash;
-# extraction/generation/scan_metadata default to
-# gemini-3.5-flash-lite; mark_scheme stays on gemini-2.5-flash (its chunked
-# parser and thinking_budget tuning predate the 3.x migration, D20). Run
-# `lemely doctor` to see what model_for() actually resolves for every tag.
+# Sub-project C: every tag but mark_scheme defaults to claude-haiku-5-5 (needs
+# ANTHROPIC_API_KEY); mark_scheme stays on gemini-2.5-flash (Haiku's parse failed
+# parity with the deterministic parser). These are commented out here purely as
+# documentation of what you are overriding if you uncomment one. A gemini- model
+# needs GEMINI_API_KEY. Run `lemely doctor` to see what
+# model_for() actually resolves for every tag.
 # mark_scheme_model    = "gemini-2.5-flash"
-# extraction_model     = "gemini-3.5-flash-lite"
-# correction_model     = "gemini-3.1-flash-lite"
-# generation_model     = "gemini-3.5-flash-lite"
-# scan_metadata_model  = "gemini-3.5-flash-lite"
+# extraction_model     = "claude-haiku-5-5"
+# correction_model     = "claude-haiku-5-5"
+# generation_model     = "claude-haiku-5-5"
+# scan_metadata_model  = "claude-haiku-5-5"
 
 # Escalation: re-mark with a stronger/thinking-harder model when confidence <
 # threshold. Reachable even when escalation_model == correction_model (F1):
-# the gate compares (model, thinking) tuples, not model names alone.
-# escalation_model = "gemini-3.8-flash"
+# the gate compares (model, thinking) tuples, not model names alone. Unset
+# (the default since sub-project C): no escalation.
+# escalation_model = "claude-sonnet-5-5"
 # escalation_confidence_threshold = 0.8
+# At most this many escalations per script, most uncertain first (unset: no cap).
+# escalation_cap_per_script = 2
 # Per-model human-review threshold: a final AI mark from a listed model is
 # flagged for teacher review below its value (unlisted models: 0.90). A table
 # you set REPLACES the shipped one (no merge). Applies to the marking step;
 # the review queue and teacher console still read the 0.90 constant.
-# review_confidence_threshold_for = {}
+# review_confidence_threshold_for = { "claude-haiku-5-5" = 0.72 }
 
 # LLM cost-ladder levers (all default to the pre-ladder behaviour).
 # Per-task cache mode: read_write | bypass | refresh (unlisted tags read_write).
@@ -70,7 +71,7 @@ model = "gemini-2.5-flash"
 # Escalate when the cheap pass leaves mark-scheme points unaddressed.
 # cascade_unaddressed_points = false
 # Put the question-invariant correction prompt first so it can be cached.
-# correction_shared_prefix = false
+# correction_shared_prefix = true
 # How the shared prefix is cached: implicit | explicit.
 # correction_prefix_cache = "implicit"
 # Claude page images: greyscaled, enhanced and stepped down from 2576 px until
@@ -87,19 +88,44 @@ model = "gemini-2.5-flash"
 # Claude prompt-cache breakpoints per task tag: system | documents | images |
 # prefix. Unlisted tags mark system and prefix (the A1 behaviour). A changed
 # effort or thinking setting invalidates the cached messages (docs, prompt
-# caching): both binder tags must send the same effort for the second read to hit.
-# claude_cache_for = {}
-# Claude effort (low | medium | high | xhigh | max) per tag or tag:kind,
+# caching): both binder tags must send the same effort for the second read to hit (see binding.claude_cache_ignores_effort).
+# claude_cache_for = { "extraction" = ["system", "images"], "binding_second_read" = ["system", "images"], "correction" = ["system", "prefix"], "correction_borderline" = ["system", "prefix"], "escalation" = ["system", "prefix"] }
+# Claude effort (none | low | medium | high | xhigh | max) per tag or tag:kind;
+# "none" turns thinking off for the call (levers a1/a2).
 # e.g. { "correction:extended" = "medium" }. Unlisted: thinking_level_for.
-# haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept every level (docs: effort);
-# a model that rejects one fails the call. Higher effort spends more of
+# haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept low..max (docs: effort);
+# "none" works on haiku-5-5 only: sonnet-5-5, opus-5-5 and fable-5-1 reject it.
+# A model that rejects a level fails the call. Higher effort spends more of
 # max_output_tokens_for (thinking counts toward max_tokens).
-# claude_effort_for = {}
+# claude_effort_for = { "correction:mcq" = "low", "correction:numeric" = "low", "correction:short" = "low", "correction:extended" = "medium" }
 # The marker quotes the mark scheme for every awarded mark; an unquoted or
 # misquoted mark goes to review as uncited_mark.
 # correction_citations = false
 # Ask the marker for a rationale of at most 25 words (cut at 300 chars).
 # correction_terse_rationale = false
+# false skips the borderline thinking retry (lever c1).
+# correction_borderline_enabled = true
+# Lever c2: a stronger model re-marks the least certain leaves of a script
+# from their page crops. On by default (claude-haiku-5-5); needs the scan's pages.
+# adjudication_model = "claude-haiku-5-5"
+# adjudication_max_leaves = 6
+# adjudication_confidence_threshold = 0.86
+# Lever H2a: keep the higher of the first and the borderline-retry mark below this confidence.
+# correction_retry_keep_higher = false
+# correction_retry_keep_higher_below = 0.86
+# Lever H2b: per-point verdicts and rationale before the mark (not with correction_citations).
+# correction_reason_first = false
+# Lever H2c: printed 0625 Paper 4 marking conventions in the marking prompt.
+# correction_syllabus_conventions = false
+# Lever H2d: adjudicate the reader's Drawing: leaves from their crops (needs adjudication_model).
+# adjudication_drawing_leaves = true
+# adjudication_drawing_max_leaves = 6
+# Lever H4a: adjudicate leaves whose crop re-read disagreed with the first read (needs adjudication_model).
+# adjudication_reread_disagreed = true
+# adjudication_reread_max_leaves = 3
+# Lever H4c: median of three marks below this confidence (not with keep_higher).
+# correction_retry_median = true
+# correction_retry_median_below = 0.86
 # Greyscale pages are enhanced for readability; false sends plain greyscale (A/B).
 # claude_image_enhance = true
 
@@ -315,11 +341,11 @@ binder = "label"
 # exactly as it was before either existed.
 gate = "enforce"
 # The label binder's model, passed on every one of its calls. It is NOT
-# gemini.extraction_model: only gemini-3.8-flash returned a usable list when
-# this was measured, and the extraction default is a cheaper model that did
-# not. COST: with the label binder every extraction makes its calls on this
+# gemini.extraction_model: on Gemini only gemini-3.8-flash returned a usable
+# list when this was measured; since sub-project C it is claude-haiku-5-5.
+# COST: with the label binder every extraction makes its calls on this
 # model in place of one call on extraction_model.
-read_model = "gemini-3.8-flash"
+read_model = "claude-haiku-5-5"
 # Read the script a second time on the same model, at the thinking level
 # [gemini.thinking_level_for] gives binding_second_read, so that the two
 # reads can be compared and a bad first read replaced. Doubles the cost of
@@ -352,8 +378,11 @@ second_read_mode = "always"
 # cache defaults of its tag unless set. Chunk calls send their pages inline, not
 # through the Files API: input tokens are unchanged, bandwidth is higher.
 # claude_chunked_read = false
+# Make the two claude- binder reads in turn even when their efforts differ
+# (lever a3; the second read hits the first's cache only if the API allows).
+# claude_cache_ignores_effort = false
 # The model the legacy binder's one retry uses, when the gate is on.
-retry_model = "gemini-3.8-flash"
+retry_model = "claude-sonnet-5-5"
 
 [integrity]
 # Plagiarism detection needs no Gemini key (stdlib difflib only). F4 removed

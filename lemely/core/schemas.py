@@ -929,10 +929,102 @@ class AIMarkResponseCitedTerse(AIMarkResponseCited):
         return _cut(value)
 
 
-def marker_response_schema(*, cited: bool, terse: bool = False) -> type[AIMarkResponse]:
+# H2b: a point verdict whose evidence and reason come before the verdict on the wire. A comment,
+# not a docstring: a docstring would become the schema's ``description`` (see the Critical B note
+# above ``PointVerdictWire``).
+class PointVerdictReasoned(PointVerdict):
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls,
+        core_schema: pydantic_core_schema.CoreSchema,
+        handler: GetJsonSchemaHandler,
+    ) -> JsonSchemaValue:
+        """The schema sent to the model: evidence, note, then verdict; ``ecf_applied`` left off."""
+        json_schema = handler(core_schema)
+        point_schema = handler.resolve_ref_schema(json_schema)
+        properties = point_schema["properties"]
+        # ``ecf_applied`` is CODE-set only (see ``mark_question``): the parse default stays
+        # False, but the model is never shown the field.
+        properties["note"]["description"] = (
+            "One sentence: does the evidence meet this point, and why. Written before the verdict."
+        )
+        order = ("point_id", "evidence_span", "note", "verdict")
+        point_schema["properties"] = {name: properties[name] for name in order}
+        point_schema["required"] = list(order)
+        return json_schema
+
+
+# H2b: verdicts, then the rationale, then the mark (lever correction_reason_first). Structured
+# outputs generate properties in schema order, so the wire schema lists ``point_verdicts`` first
+# and ``awarded_marks`` after ``feedback`` and the matched ids. A comment, not a docstring.
+class AIMarkResponseReasoned(AIMarkResponse):
+    point_verdicts: list[PointVerdictReasoned] = Field(  # type: ignore[assignment]  # pyright: ignore[reportIncompatibleVariableOverride]
+        default_factory=list
+    )
+    _stated_mark: int | None = PrivateAttr(default=None)
+
+    @model_validator(mode="after")
+    def _record_stated_mark(self) -> AIMarkResponseReasoned:
+        """The integer the model wrote, kept when code later makes it agree with the verdicts."""
+        if self._stated_mark is None:
+            self._stated_mark = self.awarded_marks
+        return self
+
+    @property
+    def stated_mark(self) -> int:
+        """The model's own ``awarded_marks``, before any verdict sum check (lever H2b)."""
+        return self.awarded_marks if self._stated_mark is None else self._stated_mark
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls,
+        core_schema: pydantic_core_schema.CoreSchema,
+        handler: GetJsonSchemaHandler,
+    ) -> JsonSchemaValue:
+        """The schema sent to the model: every property required, in the order decided in."""
+        json_schema = super().__get_pydantic_json_schema__(core_schema, handler)
+        reply_schema = handler.resolve_ref_schema(json_schema)
+        properties = reply_schema["properties"]
+        # Hard-coded, never from a docstring (see the Critical B note above ``PointVerdictWire``).
+        properties["point_verdicts"]["description"] = (
+            "One entry per mark point of the subtree, in scheme order, written before the "
+            "mark. Empty when the subtree has no answer points."
+        )
+        properties["awarded_marks"]["description"] = (
+            "The total of the points whose verdict is awarded, within the scheme's caps. "
+            "Decided by the verdicts above, never changed here."
+        )
+        order = (
+            "point_verdicts",
+            "feedback",
+            "matched_point_ids",
+            "awarded_marks",
+            "confidence",
+            "addresses_question",
+        )
+        reply_schema["properties"] = {name: properties[name] for name in order}
+        reply_schema["required"] = list(order)
+        return json_schema
+
+
+# H2b: the reasoned order with a capped rationale (spec §5.4).
+class AIMarkResponseReasonedTerse(AIMarkResponseReasoned):
+    feedback: str = Field(..., description=_TERSE_FEEDBACK_DESCRIPTION)
+
+    @field_validator("feedback")
+    @classmethod
+    def _cap_feedback(cls, value: str) -> str:
+        return _cut(value)
+
+
+def marker_response_schema(
+    *, cited: bool, terse: bool = False, reason_first: bool = False
+) -> type[AIMarkResponse]:
     """The correction reply schema for the flags in force."""
     if cited:
         return AIMarkResponseCitedTerse if terse else AIMarkResponseCited
+    if reason_first:
+        return AIMarkResponseReasonedTerse if terse else AIMarkResponseReasoned
     return AIMarkResponseTerse if terse else AIMarkResponse
 
 

@@ -33,6 +33,7 @@ from lemely.io.correction_ai import (
 )
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import GeminiSettings, PathsSettings, load_settings
+from tests.gemini_fakes import pin_pre_flip, pre_flip_gemini
 
 
 @pytest.fixture
@@ -112,7 +113,7 @@ class _FakeClient:
         self.calls.append(kwargs)
         return self._responses.pop(0)
 
-    def resolved_thinking(self, task_tag: str, model: str) -> str:
+    def resolved_thinking(self, task_tag: str, model: str, kind: str | None = None) -> str:
         return "low" if task_tag == "correction" else "high"
 
 
@@ -123,7 +124,7 @@ def _gemini(**overrides: Any) -> GeminiSettings:
         "escalation_confidence_threshold": 0.80,
         "review_confidence_threshold_for": {"cheap-model": 0.85},
     }
-    return GeminiSettings(**{**base, **overrides})
+    return pre_flip_gemini(**{**base, **overrides})
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +299,7 @@ def _sdk_reply(confidence: float) -> MagicMock:
 
 
 def _call_fingerprints(tmp: Path, table: dict[str, float]) -> list[tuple[str, str, str, str]]:
-    base = load_settings(toml_path=None, cwd=tmp)
+    base = pin_pre_flip(load_settings(toml_path=None, cwd=tmp))
     settings = base.model_copy(
         update={
             "paths": PathsSettings(cache_dir=tmp / ".cache", output_dir=tmp / "outputs"),
@@ -338,8 +339,8 @@ def test_threshold_is_in_no_prompt_or_cache_key(tmp_path: Path, isolated_env: No
 # ---------------------------------------------------------------------------
 
 
-def test_shipped_default_is_empty() -> None:
-    assert GeminiSettings().review_confidence_threshold_for == {}
+def test_shipped_default_is_the_fitted_haiku_threshold() -> None:
+    assert GeminiSettings().review_confidence_threshold_for == {"claude-haiku-5-5": 0.72}
 
 
 @pytest.mark.parametrize(
@@ -348,18 +349,22 @@ def test_shipped_default_is_empty() -> None:
         "gemini-3.8-flash",
         "gemini-3.1-flash-lite",
         "gemini-3.5-flash-lite",
-        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
         "claude-x",
     ],
 )
-def test_shipped_default_leaves_every_model_at_090(model: str) -> None:
+def test_shipped_default_leaves_every_other_model_at_090(model: str) -> None:
     assert review_threshold_for(GeminiSettings(), model) == REVIEW_CONFIDENCE_THRESHOLD
 
 
-def test_shipped_default_flags_a_default_model_mark_below_090() -> None:
+def test_shipped_default_gives_haiku_its_fitted_072() -> None:
+    assert review_threshold_for(GeminiSettings(), "claude-haiku-5-5") == 0.72
+
+
+def test_shipped_default_flags_a_default_model_mark_below_its_threshold() -> None:
     g = GeminiSettings()
-    assert g.correction_model == "gemini-3.1-flash-lite"
+    assert g.correction_model == "claude-haiku-5-5"
     passed, _ = _mark_paper(g, [_mark(0.90)])
     assert passed.needs_teacher_review is False
-    flagged, _ = _mark_paper(g, [_mark(0.89)])
+    flagged, _ = _mark_paper(g, [_mark(0.71)])
     assert flagged.needs_teacher_review is True

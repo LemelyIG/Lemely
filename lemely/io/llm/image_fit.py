@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import io
 import math
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -236,11 +237,14 @@ def fit(
     token_budget: int = DEFAULT_TOKEN_BUDGET,
     floor_px: int = DEFAULT_FLOOR_PX,
     enhance: bool = True,
+    workers: int = 1,
 ) -> FittedImages:
     """``images`` greyscaled and stepped down until under both limits, or at the floor.
 
     ``byte_limit`` None means the images go by Files API id: no inline limit. ``enhance``
     False sends plain greyscale pages; pair it with :func:`img_fit_version` in cache keys.
+    ``workers`` above 1 decodes and encodes pages on that many threads when there is no
+    byte limit (each page is independent then); the output bytes are the same.
 
     Raises:
         ProviderError: a page cannot be read or encoded (named by its 1-based number).
@@ -251,7 +255,35 @@ def fit(
     steps = steps_for(floor_px, len(images))
     # No inline limit means Files API upload: bytes do not matter, save time does.
     level = _FAST_PNG_LEVEL if byte_limit is None else _SMALL_PNG_LEVEL
-    pages = [_prepare(data, number, steps[0]) for number, data in enumerate(images, start=1)]
+    parallel = byte_limit is None and workers > 1 and len(images) > 1
+    pool = ThreadPoolExecutor(max_workers=min(workers, len(images))) if parallel else None
+    try:
+        return _fit_steps(
+            images, steps, pool, byte_limit, token_budget, enhance=enhance, level=level
+        )
+    finally:
+        if pool is not None:
+            pool.shutdown()
+
+
+def _fit_steps(
+    images: Sequence[bytes],
+    steps: tuple[int, ...],
+    pool: ThreadPoolExecutor | None,
+    byte_limit: int | None,
+    token_budget: int,
+    *,
+    enhance: bool,
+    level: int,
+) -> FittedImages:
+    """:func:`fit`'s step loop; ``pool`` (no byte limit only) runs the per-page work."""
+    numbers = range(1, len(images) + 1)
+    if pool is None:
+        pages = [
+            _prepare(data, number, steps[0]) for number, data in zip(numbers, images, strict=True)
+        ]
+    else:
+        pages = list(pool.map(_prepare, images, numbers, [steps[0]] * len(images)))
     for edge in steps:
         page_tokens = tuple(estimate_tokens(*_size_at(p.width, p.height, edge)) for p in pages)
         tokens = sum(page_tokens)
@@ -260,11 +292,21 @@ def fit(
             continue
         encoded_pages: list[bytes] = []
         b64 = 0
-        for n, p in enumerate(pages, start=1):
-            encoded_pages.append(_encode(p, edge, n, enhance=enhance, compress_level=level))
-            b64 += base64_len(len(encoded_pages[-1]))
-            if not last and byte_limit is not None and b64 > byte_limit:
-                break  # already over: the remaining pages cannot bring this step back under
+        if pool is not None:
+            encoded_pages = list(
+                pool.map(
+                    lambda p, n, e=edge: _encode(p, e, n, enhance=enhance, compress_level=level),
+                    pages,
+                    numbers,
+                )
+            )
+            b64 = sum(base64_len(len(e)) for e in encoded_pages)
+        else:
+            for n, p in enumerate(pages, start=1):
+                encoded_pages.append(_encode(p, edge, n, enhance=enhance, compress_level=level))
+                b64 += base64_len(len(encoded_pages[-1]))
+                if not last and byte_limit is not None and b64 > byte_limit:
+                    break  # already over: the remaining pages cannot bring this step back under
         encoded = tuple(encoded_pages)
         over_tokens = tokens > token_budget
         over_bytes = byte_limit is not None and b64 > byte_limit

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 import anthropic
@@ -30,6 +31,14 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 
+class _UploadFailedError(Exception):
+    """Internal: one page's upload failed; ``__cause__`` is the error, ``page`` is 1-based."""
+
+    def __init__(self, page: int) -> None:
+        super().__init__(page)
+        self.page = page
+
+
 class ClaudeImageUploads:
     """Fitted pages uploaded once, reused by every read and retry of the job."""
 
@@ -39,6 +48,9 @@ class ClaudeImageUploads:
     UPLOAD_ATTEMPTS = 3
     #: Seconds slept before try 2, 3, ... of one page.
     UPLOAD_BACKOFF_SECONDS = (0.5, 1.5)
+    #: Default pages uploaded at once (and fitted at once): uploads take ~2 s each, so serial
+    #: cost grew with the page count; a small pool stays well inside API rate limits.
+    UPLOAD_CONCURRENCY = 6
 
     def __init__(
         self,
@@ -48,6 +60,7 @@ class ClaudeImageUploads:
         token_budget: int,
         floor_px: int,
         enhance: bool = True,
+        concurrency: int | None = None,
     ) -> None:
         # ``raw_client`` is resolved on the first upload, never earlier: a cached
         # reply is replayed without an Anthropic key, so building this must not need one.
@@ -57,10 +70,15 @@ class ClaudeImageUploads:
         self._token_budget = token_budget
         self._floor_px = floor_px
         self._enhance = enhance
+        # The caller's bound (``gemini.upload_concurrency``); the class default otherwise.
+        self._concurrency = max(1, concurrency or self.UPLOAD_CONCURRENCY)
         self._lock = threading.Lock()
         self._fitted: FittedImages | None = None
         self._inline: FittedImages | None = None
+        #: Every id ever uploaded (what :meth:`delete` removes) and the ids of the
+        #: finished round, in page order (what :meth:`ensure` returns).
         self._file_ids: list[str] = []
+        self._page_ids: tuple[str, ...] = ()
         self._error: BaseException | None = None
         self._log = structlog.get_logger().bind(component="gemini_client", tool="claude_files_api")
 
@@ -88,7 +106,7 @@ class ClaudeImageUploads:
                     f"Claude Files API upload failed earlier: {self._error}"
                 ) from self._error
             if self._fitted is not None:
-                return self._fitted, tuple(self._file_ids)
+                return self._fitted, self._page_ids
             try:
                 if self._raw is None:
                     self._raw = self._raw_client()
@@ -98,16 +116,55 @@ class ClaudeImageUploads:
                     token_budget=self._token_budget,
                     floor_px=self._floor_px,
                     enhance=self._enhance,
+                    workers=self._concurrency,
                 )
-                for page, data in enumerate(fitted.images, start=1):
-                    self._file_ids.append(self._upload_page(self._raw, page, data))
+                self._page_ids = tuple(self._upload_all(self._raw, fitted.images))
+            except _UploadFailedError as exc:
+                self._error = exc.__cause__
+                raise ExternalServiceError(
+                    f"Claude Files API upload of page {exc.page} failed: {exc.__cause__}"
+                ) from exc.__cause__
             except (anthropic.AnthropicError, OSError, ExternalServiceError) as exc:
                 self._error = exc
-                raise ExternalServiceError(
-                    f"Claude Files API upload of page {len(self._file_ids) + 1} failed: {exc}"
-                ) from exc
+                raise ExternalServiceError(f"Claude Files API upload failed: {exc}") from exc
             self._fitted = fitted
-            return fitted, tuple(self._file_ids)
+            return fitted, self._page_ids
+
+    def _upload_all(self, raw: anthropic.Anthropic, images: Sequence[bytes]) -> list[str]:
+        """Upload every page on a bounded pool; the ids come back in page order.
+
+        On a failure every page that did upload stays in ``self._file_ids`` so
+        :meth:`delete` removes it (ids are only ever appended); once a page has failed,
+        pages not yet started are skipped; the failing page (lowest number) is named.
+        """
+        ids: list[str | None] = [None] * len(images)
+        failures: list[tuple[int, BaseException]] = []
+        bug: BaseException | None = None
+        stop = threading.Event()
+
+        def run(page: int) -> None:
+            nonlocal bug
+            if stop.is_set():
+                return
+            try:
+                ids[page - 1] = self._upload_page(raw, page, images[page - 1])
+            except (anthropic.AnthropicError, OSError, ExternalServiceError) as exc:
+                failures.append((page, exc))
+                stop.set()
+            except BaseException as exc:  # a programming error: surfaced as itself below
+                bug = bug or exc
+                stop.set()
+
+        with ThreadPoolExecutor(max_workers=min(self._concurrency, len(images) or 1)) as pool:
+            list(pool.map(run, range(1, len(images) + 1)))
+        uploaded = [i for i in ids if i is not None]
+        self._file_ids.extend(uploaded)
+        if bug is not None:
+            raise bug
+        if failures:
+            page, exc = min(failures, key=lambda f: f[0])
+            raise _UploadFailedError(page) from exc
+        return uploaded
 
     def _upload_page(self, raw: anthropic.Anthropic, page: int, data: bytes) -> str:
         """Upload one page, retrying a transient error; return its file id."""

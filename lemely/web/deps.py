@@ -76,7 +76,7 @@ from lemely.io.notify_email import build_transactional_provider
 from lemely.io.storage import StorageBackend
 from lemely.io.storage_gcs import GcsStorageBackend
 from lemely.io.storage_local import LocalFileStorageBackend
-from lemely.runtime.config import Settings, load_settings
+from lemely.runtime.config import Settings, llm_key_configured, load_settings
 from lemely.runtime.errors import AuthError
 from lemely.web.push import NotificationTransport, VapidPushTransport
 from lemely.web.ratelimit import SlidingWindowLimiter
@@ -467,7 +467,7 @@ def get_review_service() -> ReviewService:
 def build_self_review_judge(
     settings: Settings, gemini_client: GeminiClient
 ) -> EvidenceJudge | None:
-    """The lenient judge, or ``None`` when no Gemini key is configured.
+    """The lenient judge, or ``None`` when its model's provider key is not configured.
 
     ``None`` is a first-class state for :class:`SelfReviewService`: every
     evidence-backed challenge becomes a ``student_evidence_unjudged`` queue
@@ -475,7 +475,7 @@ def build_self_review_judge(
     instead would surface the same gap as a judge failure per call — noisier,
     and no more honest.
     """
-    if not settings.gemini_api_key or not settings.gemini_api_key.get_secret_value():
+    if not llm_key_configured(settings, "self_review_judge"):
         return None
     return GeminiEvidenceJudge(gemini_client)
 

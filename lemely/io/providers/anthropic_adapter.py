@@ -83,6 +83,7 @@ if TYPE_CHECKING:
         MessageParam,
         OutputConfigParam,
         TextBlockParam,
+        ThinkingConfigParam,
     )
 
 _T = TypeVar("_T", bound=BaseModel)
@@ -134,8 +135,12 @@ MAX_PAUSE_CONTINUATIONS = 3
 MAX_LEG_RETRIES = 2
 LEG_RETRY_BACKOFF_SECONDS = 1.0
 
-EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
-Effort = Literal["low", "medium", "high", "xhigh", "max"]
+EFFORTS: tuple[str, ...] = ("none", "low", "medium", "high", "xhigh", "max")
+Effort = Literal["none", "low", "medium", "high", "xhigh", "max"]
+#: An effort the API accepts: every effort but "none", which is not sent.
+SentEffort = Literal["low", "medium", "high", "xhigh", "max"]
+#: The effort that turns thinking off (sub-project C levers a1/a2).
+NO_THINKING: Effort = "none"
 
 #: Reply budget per call. A marking reply is a few hundred tokens plus
 #: thinking; 16k keeps a non-streaming request well inside the SDK's
@@ -175,6 +180,21 @@ _MediaType = Literal["image/png", "image/jpeg"]
 def _as_effort(value: str) -> Effort:
     """An effort passes as it is; a Lemely thinking level maps through effort_for."""
     return cast("Effort", value) if value in EFFORTS else effort_for(value)
+
+
+def _thinking_and_effort(thinking: str | None) -> tuple[ThinkingConfigParam, SentEffort | None]:
+    """The request's ``thinking`` block and ``output_config.effort`` for *thinking*.
+
+    "none" disables thinking and asks for the lowest effort on the visible reply (with
+    no effort the API applies its own default); every other value keeps adaptive
+    thinking at that effort.
+    """
+    if thinking is None:
+        return {"type": "adaptive"}, None
+    effort = _as_effort(thinking)
+    if effort == NO_THINKING:
+        return {"type": "disabled"}, "low"
+    return {"type": "adaptive"}, cast("SentEffort", effort)
 
 
 def resolve_effort(
@@ -316,19 +336,36 @@ def file_image_blocks(file_ids: Sequence[str]) -> list[ImageBlockParam]:
 _EPHEMERAL: CacheControlEphemeralParam = {"type": "ephemeral"}
 
 
-def labelled_pictures(pictures: Sequence[ImageBlockParam]) -> list[ContentBlockParam]:
+def labelled_pictures(
+    pictures: Sequence[ImageBlockParam], sizes: Sequence[tuple[int, int]] | None = None
+) -> list[ContentBlockParam]:
     """``pictures`` with a ``Page index {i}:`` text block (0-based) before each image.
 
     Only when there is more than one picture: a lone image has no index to confuse.
     The labels sit with the images, ahead of the per-call text, so the cached
     system+images prefix is the same for every read of the same pages. The request's
     cache key carries ``PAGE_LABEL_VERSION`` for these requests (``provider_fingerprint``).
+
+    With ``sizes`` (the (width, height) in pixels of each picture, in order) every
+    picture is labelled, a lone one too, and the label states its size:
+    ``Page index {i} ({W} x {H} px):``. The reader is asked for boxes in those pixels
+    (``lemely.io.llm.box_convention``); the key then carries ``PAGE_LABEL_SIZED_VERSION``.
+
+    Raises:
+        ProviderError: ``sizes`` does not have one entry per picture.
     """
-    if len(pictures) < 2:
+    if sizes is not None:
+        if len(sizes) != len(pictures):
+            raise ProviderError(f"{len(sizes)} image sizes for {len(pictures)} images")
+    elif len(pictures) < 2:
         return list(pictures)
     labelled: list[ContentBlockParam] = []
     for index, picture in enumerate(pictures):
-        labelled.append({"type": "text", "text": f"Page index {index}:"})
+        label = f"Page index {index}:"
+        if sizes is not None:
+            width, height = sizes[index]
+            label = f"Page index {index} ({width} x {height} px):"
+        labelled.append({"type": "text", "text": label})
         labelled.append(picture)
     return labelled
 
@@ -347,6 +384,7 @@ def _request_parts(
     images: Sequence[bytes],
     image_file_ids: Sequence[str],
     cache_plan: CachePlan | None,
+    page_sizes: Sequence[tuple[int, int]] | None = None,
 ) -> tuple[list[TextBlockParam], MessageParam]:
     """System blocks and the user message, with breakpoints where the plan and size allow.
 
@@ -373,7 +411,7 @@ def _request_parts(
     running += sum(_image_tokens(i) for i in images) + CACHE_MIN_TOKENS * len(image_file_ids)
     if pictures and "images" in spots and running >= CACHE_MIN_TOKENS:
         pictures[-1]["cache_control"] = _EPHEMERAL
-    content: list[ContentBlockParam] = [*docs, *labelled_pictures(pictures)]
+    content: list[ContentBlockParam] = [*docs, *labelled_pictures(pictures, page_sizes)]
     if cache_prefix:
         running += len(cache_prefix) // CHARS_PER_TOKEN
         prefix: TextBlockParam = {"type": "text", "text": cache_prefix}
@@ -450,8 +488,12 @@ class AnthropicAdapter:
         documents: Sequence[DocumentBlockParam] = (),
         max_tokens: int = MAX_OUTPUT_TOKENS,
         cache_plan: CachePlan | None = None,
+        page_sizes: Sequence[tuple[int, int]] | None = None,
     ) -> AnthropicReply:
         """Send one request; return the unvalidated reply.
+
+        ``page_sizes`` is the pixel size of each image sent, by order; with it every
+        page label states its size (:func:`labelled_pictures`).
 
         ``documents`` are ``document`` blocks and go before everything else.
         ``images`` are already fitted (``lemely.io.llm.image_fit``) and go first, as
@@ -476,8 +518,9 @@ class AnthropicAdapter:
                 "type": "json_schema",
                 "schema": copy.deepcopy(sendable_schema(response_schema)),
             }
-        if thinking is not None:
-            output_config["effort"] = _as_effort(thinking)
+        thinking_block, effort = _thinking_and_effort(thinking)
+        if effort is not None:
+            output_config["effort"] = effort
         system, message = _request_parts(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -486,13 +529,14 @@ class AnthropicAdapter:
             images=images,
             image_file_ids=image_file_ids,
             cache_plan=cache_plan,
+            page_sizes=page_sizes,
         )
         response = self._send(
             model=model,
             max_tokens=max_tokens,
             system=system,
             messages=[message],
-            thinking={"type": "adaptive"},
+            thinking=thinking_block,
             output_config=output_config,
         )
         text = "".join(block.text for block in response.content if block.type == "text")
@@ -514,8 +558,9 @@ class AnthropicAdapter:
         from lemely.io.llm.request import CODE_EXECUTION_TOOL
 
         extra: dict[str, object] = {}
-        if thinking is not None:
-            extra["output_config"] = {"effort": _as_effort(thinking)}
+        thinking_block, effort = _thinking_and_effort(thinking)
+        if effort is not None:
+            extra["output_config"] = {"effort": effort}
         messages: list[MessageParam] = [{"role": "user", "content": prompt}]
         usage = Usage(0, 0, 0, 0)
         ran_code = False
@@ -531,7 +576,7 @@ class AnthropicAdapter:
                     max_tokens=max_tokens,
                     messages=messages,
                     tools=[{"type": CODE_EXECUTION_TOOL, "name": "code_execution"}],
-                    thinking={"type": "adaptive"},
+                    thinking=thinking_block,
                     **extra,
                 )
             except ProviderTransientError:
@@ -589,6 +634,7 @@ class AnthropicAdapter:
         image_file_ids: Sequence[str] = (),
         documents: Sequence[DocumentBlockParam] = (),
         cache_plan: CachePlan | None = None,
+        page_sizes: Sequence[tuple[int, int]] | None = None,
     ) -> int:
         """Input tokens the request would bill, from the free count endpoint.
 
@@ -603,6 +649,7 @@ class AnthropicAdapter:
             images=images,
             image_file_ids=image_file_ids,
             cache_plan=cache_plan,
+            page_sizes=page_sizes,
         )
         try:
             counted = self._client.messages.count_tokens(

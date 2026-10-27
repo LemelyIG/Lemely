@@ -1,0 +1,22 @@
+[gemini]
+model = "claude-haiku-5-5"
+mark_scheme_model = "claude-haiku-5-5"
+extraction_model = "claude-haiku-5-5"
+correction_model = "claude-haiku-5-5"
+escalation_model = "claude-sonnet-5-5"
+generation_model = "claude-haiku-5-5"
+scan_metadata_model = "claude-haiku-5-5"
+study_plan_model = "claude-haiku-5-5"
+self_review_judge_model = "claude-haiku-5-5"
+correction_shared_prefix = true
+claude_files_api = true
+claude_image_enhance = true
+claude_cache_for = { extraction = ["system", "images"], binding_second_read = ["system", "images"], correction = ["system", "prefix"], correction_borderline = ["system", "prefix"], escalation = ["system", "prefix"] }
+claude_effort_for = { "correction:mcq" = "low", "correction:numeric" = "low", "correction:short" = "low", "correction:extended" = "medium" }
+correction_citations = false
+correction_terse_rationale = false
+
+[binding]
+read_model = "claude-haiku-5-5"
+retry_model = "claude-sonnet-5-5"
+claude_chunked_read = false

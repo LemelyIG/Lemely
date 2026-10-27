@@ -34,6 +34,7 @@ from lemely.io.prompts.correction_ai import (
     VERSION,
 )
 from lemely.runtime.config import MarkingOptions, PathsSettings, load_settings
+from tests.gemini_fakes import pin_pre_flip
 
 OFF_TOPIC_REASON = "binding unverified: answer appears to address a different question"
 UNVERIFIED_REASON = (
@@ -216,7 +217,7 @@ def _fake_client_and_sdk(
     with patch.dict(os.environ):
         for key in lemely_env:
             del os.environ[key]
-        settings = load_settings(toml_path=None, cwd=tmp_path)
+        settings = pin_pre_flip(load_settings(toml_path=None, cwd=tmp_path))
     settings = settings.model_copy(
         update={
             "paths": PathsSettings(cache_dir=tmp_path / ".cache", output_dir=tmp_path / "out"),

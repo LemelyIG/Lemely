@@ -127,8 +127,8 @@ field are ignored by pydantic-settings, so a typo'd *env var* is silent — chec
 | `LEMELY_SUPABASE__JWT_SECRET` | the well-known local-dev secret | **Always outside local dev.** See the warning below. |
 | `LEMELY_SUPABASE__ANON_KEY` | `None` | Any real Supabase project. |
 | `LEMELY_SUPABASE__SERVICE_ROLE_KEY` | `None` | Any real Supabase project (server-side admin: user creation, Storage). |
-| `GEMINI_API_KEY` | `None` | To enable marking/extraction at all. Absent is a *documented* state — `/api/health` reports `apiKeyConfigured: false` rather than crashing (`lemely/web/routers/meta.py:17-19`). |
-| `ANTHROPIC_API_KEY` | `None` | Required only when a task tag resolves to a `claude-` model (development option; not used by default: `gemini.correction_model` defaults to `gemini-3.1-flash-lite`). Every `claude-` call goes through `lemely/io/providers/anthropic_adapter.py` behind the same cache, retry and spend ledger as Gemini. Absent, a call to a `claude-` model fails with `ExternalServiceError` (not retried). `lemely doctor` fails and the web process logs an error at startup when any configured `claude-` model lacks a key: both check one table (`lemely/io/model_table.py`), which covers every `model_for` tag (`correction`, `correction_borderline`, `escalation`, `extraction`, `generation`, `mark_scheme`, `scan_metadata`, `study_plan`), `gemini.cascade_strong_model` when the cascade is on, and the binding step's models. With default settings it can be omitted. Secret, env-only like `GEMINI_API_KEY` — never put it in `lemely.toml`. Student work goes only through the synchronous Messages API; the Message Batches API is not used (data-protection decision). A file call on a `claude-` model raises `ValueError`; page images are supported. **Claude Files API (page images).** With `gemini.claude_files_api` on (the default), page images for `claude-` calls are uploaded to Anthropic's Files API once per job, with a one-hour expiry, and deleted when the job ends. Files API storage is not covered by zero data retention, and any API key of the workspace can read an uploaded file, so the Anthropic key must belong to a dedicated Lemely workspace. Claude code execution (any task tag, by user decision 2026-10-20) is likewise not covered by zero data retention. Turn the flag off to send pages inline instead (limited to 30 MB of base64 per request). |
+| `GEMINI_API_KEY` | `None` | Required only when a task tag resolves to a `gemini-` model (`lemely doctor` fails when one does and no key is set). Every default task tag except `mark_scheme` is a `claude-` model since sub-project C; `gemini.mark_scheme_model` stays `gemini-2.5-flash` (Haiku's parse failed parity with the deterministic parser), so a Claude deployment still needs this key for the schemes the deterministic parser rejects. The web gates for scan-metadata detection, the self-review judge, quiz generation and `/api/health` `apiKeyConfigured` read the key of the provider their task tag's model needs (`llm_key_configured`). Absent is a *documented* state — `/api/health` reports `apiKeyConfigured: false` rather than crashing (`lemely/web/routers/meta.py:17-19`). |
+| `ANTHROPIC_API_KEY` | `None` | Required: every task tag except `mark_scheme` defaults to a `claude-` model since sub-project C (`BUILD/accuracy-runs/claude-c-2026-10-26-live3/FLIP.md`): `claude-haiku-5-5` for `gemini.model` and every per-task model but `mark_scheme_model`, the binder's `read_model` and the adjudication model, and `claude-sonnet-5-5` for the binder's `retry_model`; there is no default escalation model. A tag moved back to a `gemini-` model by config is the only way a deployment can leave it out. Every `claude-` call goes through `lemely/io/providers/anthropic_adapter.py` behind the same cache, retry and spend ledger as Gemini. Absent, a call to a `claude-` model fails with `ExternalServiceError` (not retried). `lemely doctor` fails and the web process logs an error at startup when any configured `claude-` model lacks a key: both check one table (`lemely/io/model_table.py`), which covers every `model_for` tag (`correction`, `correction_borderline`, `escalation`, `extraction`, `generation`, `mark_scheme`, `scan_metadata`, `study_plan`), `gemini.cascade_strong_model` when the cascade is on, and the binding step's models. Secret, env-only like `GEMINI_API_KEY` — never put it in `lemely.toml`. Student work goes only through the synchronous Messages API; the Message Batches API is not used (data-protection decision). A file call on a `claude-` model raises `ValueError`; page images are supported. **Claude Files API (page images).** With `gemini.claude_files_api` on (the default), page images for `claude-` calls are uploaded to Anthropic's Files API once per job, with a one-hour expiry, and deleted when the job ends. Files API storage is not covered by zero data retention, and any API key of the workspace can read an uploaded file, so the Anthropic key must belong to a dedicated Lemely workspace. Claude code execution (any task tag, by user decision 2026-10-20) is likewise not covered by zero data retention. Turn the flag off to send pages inline instead (limited to 30 MB of base64 per request). |
 | `LEMELY_WEB_HOST` / `LEMELY_WEB_PORT` | `0.0.0.0` / `8000` **in the image** | Already correct in the Dockerfile. The *application* default is `127.0.0.1`, right for a bare-metal dev run and unreachable from outside a container — the image overrides it (`Dockerfile:51-52`). |
 | `LEMELY_PUSH__VAPID_PUBLIC_KEY` / `__VAPID_PRIVATE_KEY` / `__VAPID_SUBJECT` | `None` | To enable web push. All three absent is a **supported** state (D5.9 §4): the transport reports itself unavailable and the notification inbox keeps working. Generate with `lemely push-keygen`; `deploy.yml` reads the public key from the `VAPID_PUBLIC_KEY` repository variable and the private key from the `VAPID_PRIVATE_KEY` secret. Rotating the pair invalidates every stored subscription — see `docs/push-notifications.md`. |
 | `LEMELY_NOTIFICATIONS__SWEEPER_ENABLED` | `true` | Set `false` to run an API instance that never sweeps (a second replica behind a load balancer, or a one-off maintenance container). The test suite sets it. See §5.2 for the Cloud Run caveat; `__SWEEP_POLL_SECONDS` (60), `__STREAK_WARNING_HOUR` (19) and `__STUDY_PLAN_REMINDER_HOUR` (8) are its companions. |
@@ -660,6 +660,45 @@ whether it was held before marking or after, is read afresh on a re-run: its rea
 are removed from the response cache when it is held, so the same reads cannot bring
 the same hold back (the marker's cached replies are kept).
 
+### 5.9 Roll back to Gemini (config only)
+
+Since sub-project C every task tag defaults to `claude-haiku-5-5`. To run the pre-flip
+Gemini configuration with no code change and no Anthropic key, put this in `lemely.toml`
+(or set the same keys as `LEMELY_GEMINI__*` / `LEMELY_BINDING__*` variables). TOML cannot
+write `None`, so `adjudication_model = ""` is how adjudication is turned off (and
+escalation is back on, as it was). `lemely doctor` then passes without `ANTHROPIC_API_KEY`
+and needs `GEMINI_API_KEY`. `tests/test_claude_default_flip.py` loads this exact block.
+
+```toml
+[gemini]
+model = "gemini-2.5-flash"
+mark_scheme_model = "gemini-2.5-flash"
+extraction_model = "gemini-3.5-flash-lite"
+correction_model = "gemini-3.1-flash-lite"
+generation_model = "gemini-3.5-flash-lite"
+scan_metadata_model = "gemini-3.5-flash-lite"
+escalation_model = "gemini-3.8-flash"
+escalation_confidence_threshold = 0.80
+correction_shared_prefix = false
+claude_cache_for = {}
+claude_effort_for = {}
+review_confidence_threshold_for = {}
+adjudication_model = ""
+adjudication_max_leaves = 3
+adjudication_confidence_threshold = 0.80
+adjudication_drawing_leaves = false
+adjudication_drawing_max_leaves = 3
+adjudication_reread_disagreed = false
+correction_retry_median = false
+
+[binding]
+read_model = "gemini-3.8-flash"
+retry_model = "gemini-3.8-flash"
+```
+
+`correction_retry_keep_higher = true` now also needs `correction_retry_median = false`
+(median is on by default); a config with only the first fails at startup.
+
 ---
 
 ### 5.9 Tutoring marketplace: what a deploy needs
@@ -792,9 +831,10 @@ replaces it).
 [ ] LEMELY_SUPABASE__URL set to the project URL
 [ ] LEMELY_SUPABASE__JWT_SECRET set to the REAL secret  <-- nothing warns you
 [ ] LEMELY_SUPABASE__ANON_KEY + __SERVICE_ROLE_KEY set
-[ ] GEMINI_API_KEY set (or accept apiKeyConfigured:false and no marking)
-[ ] ANTHROPIC_API_KEY set ONLY if any configured model is a claude- model
-    (development option; not used by default); if so, a spend limit exists on the Anthropic workspace
+[ ] ANTHROPIC_API_KEY set (every task tag defaults to a claude- model); a spend limit exists on the
+    Anthropic workspace, and the key belongs to a dedicated workspace (Files API storage and code
+    execution are not ZDR-eligible)
+[ ] GEMINI_API_KEY set (mark_scheme parsing stays on a gemini- model by default)
 [ ] LEMELY_STORAGE__BACKEND=gcs -- the "local" default writes to per-container
     disk, invisible across instances (§5.1)
 [ ] A spend guard exists on the Gemini project (a billing budget or equivalent) --

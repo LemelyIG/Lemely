@@ -18,7 +18,12 @@ from typing import TYPE_CHECKING
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
-from lemely.io.binding.label_binder import StreamRead, _StreamOutput, parse_stream_items
+from lemely.io.binding.label_binder import (
+    StreamRead,
+    _StreamOutput,
+    box_contract,
+    parse_stream_items,
+)
 from lemely.io.llm.image_fit import FittedImages, estimate_floor_tokens, fit, thumbnails
 from lemely.io.prompts.label_binding import (
     CHUNK_VERSION,
@@ -28,7 +33,7 @@ from lemely.io.prompts.label_binding import (
     build_chunk_user_prompt,
     build_overview_user_prompt,
 )
-from lemely.io.providers import is_anthropic_model
+from lemely.io.providers import ProviderError, is_anthropic_model
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -108,8 +113,11 @@ def merge_chunk_reads(reads: Sequence[StreamRead]) -> StreamRead:
 class ChunkedLabelReader:
     """Reads a long script as an overview plus chunks; shared by both binder reads."""
 
-    def __init__(self, client: GeminiClient) -> None:
+    def __init__(self, client: GeminiClient, *, tier_guard: bool = False) -> None:
         self._client = client
+        #: True when the reader exists only as the tier guard, with
+        #: ``binding.claude_chunked_read`` off.
+        self.tier_guard = tier_guard
         self._lock = threading.Lock()
         self._maps: dict[str, PageMap] = {}
         self._fit_locks: dict[str, threading.Lock] = {}
@@ -153,9 +161,15 @@ class ChunkedLabelReader:
         if model is None or not is_anthropic_model(model):
             return False
         g = self._client._settings.gemini
-        floor_tokens = estimate_floor_tokens(
-            [p.png_bytes for p in pages], floor_px=g.claude_image_floor_px
-        )
+        try:
+            floor_tokens = estimate_floor_tokens(
+                [p.png_bytes for p in pages], floor_px=g.claude_image_floor_px
+            )
+        except ProviderError:
+            if not self.tier_guard:
+                raise
+            # The guard adds no failure of its own: the single call's own fit reports it.
+            return False
         return floor_tokens > g.claude_image_token_budget
 
     def _page_map(
@@ -199,8 +213,12 @@ class ChunkedLabelReader:
         overlap = chunk.start > 0
         first = chunk.start - 1 if overlap else chunk.start
         sent = pages[first : chunk.stop]
+        # A chunk read is always a claude- read (``applies``), so it always asks for pixels.
+        system_prompt, box_kwargs = box_contract(
+            self._client, LABEL_BINDING_SYSTEM_PROMPT, model=model, task_tag=task_tag
+        )
         raw = self._client.generate_structured(
-            system_prompt=LABEL_BINDING_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=build_chunk_user_prompt(
                 mark_scheme,
                 page_count=len(sent),
@@ -218,6 +236,7 @@ class ChunkedLabelReader:
             extra_cache_key=f"{extra_cache_key}|chunk{number}",
             task_tag=task_tag,
             cache_mode="bypass",
+            **box_kwargs,
         )
         local = parse_stream_items(raw.model_dump()["items"], page_count=len(sent))
         skip = 1 if overlap else 0
