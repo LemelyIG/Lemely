@@ -214,7 +214,7 @@ function Documents({
 
 // ── Decisions ───────────────────────────────────────────────────────────────
 
-function DecisionDialog({
+export function DecisionDialog({
   decision,
   tutorName,
   pending,

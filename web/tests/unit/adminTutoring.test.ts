@@ -9,7 +9,7 @@ import { ApiError } from "@/lib/api"
 import { Moderation } from "@/portals/admin/screens/tutoring/Moderation"
 import { ReportDetail as ReportDetailScreen } from "@/portals/admin/screens/tutoring/ReportDetail"
 import { Reports } from "@/portals/admin/screens/tutoring/Reports"
-import { TutorApplication } from "@/portals/admin/screens/tutoring/TutorApplication"
+import { DecisionDialog, TutorApplication } from "@/portals/admin/screens/tutoring/TutorApplication"
 import { TutorQueue } from "@/portals/admin/screens/tutoring/TutorQueue"
 import { TUTORING_ERROR_COPY } from "@/lib/tutoring/apiErrors"
 import {
@@ -28,6 +28,8 @@ import {
   approveDoneLine,
   approveGate,
   availableDecisions,
+  cancelWindowMs,
+  completedByLabel,
   decisionBody,
   decisionLabel,
   decisionNoteError,
@@ -38,6 +40,7 @@ import {
   formatAdminInstant,
   formatAdminRange,
   formatFileSize,
+  isAlreadyResolved,
   isSafetyConcern,
   listingStateLabel,
   moderationDoneLine,
@@ -49,6 +52,9 @@ import {
   queueEmpty,
   reporterLabel,
   reportReasonLabel,
+  resolveReadiness,
+  resolutionStillOffered,
+  threadNotes,
   reportTargetLabel,
   resolutionConfirm,
   resolutionNoteError,
@@ -77,7 +83,7 @@ import type {
 // can be made by calling the handler the screen gave it) and the online flag.
 
 const hooks = vi.hoisted(() => {
-  const idle = () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false, error: null })
+  const idle = () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false, error: null as unknown })
   return {
     tutors: null as unknown,
     tutor: null as unknown,
@@ -87,6 +93,9 @@ const hooks = vi.hoisted(() => {
     idle,
     review: idle(),
     reply: idle(),
+    approve: idle(),
+    resolve: idle(),
+    forms: [] as Array<Record<string, unknown>>,
     clicks: [] as Array<{ label: string; onClick: (() => void) | undefined; disabled: boolean }>,
   }
 })
@@ -94,7 +103,7 @@ const hooks = vi.hoisted(() => {
 vi.mock("@/lib/hooks/useTutoringApi", () => ({
   useAdminTutors: () => hooks.tutors,
   useAdminTutor: () => hooks.tutor,
-  useApproveTutor: () => hooks.idle(),
+  useApproveTutor: () => hooks.approve,
   useRejectTutor: () => hooks.idle(),
   useSuspendTutor: () => hooks.idle(),
   useCloseTutor: () => hooks.idle(),
@@ -103,7 +112,7 @@ vi.mock("@/lib/hooks/useTutoringApi", () => ({
   useModerateReply: () => hooks.reply,
   useAdminTutoringReports: () => hooks.reports,
   useAdminTutoringReport: () => hooks.report,
-  useResolveTutoringReport: () => hooks.idle(),
+  useResolveTutoringReport: () => hooks.resolve,
 }))
 
 vi.mock("@/components/ui/modal", () => ({
@@ -119,7 +128,7 @@ vi.mock("@/components/ui/button", async (importOriginal) => {
     ...original,
     Button: (props: Record<string, unknown>) => {
       hooks.clicks.push({
-        label: String(props["aria-label"] ?? ""),
+        label: String(props["aria-label"] ?? (typeof props.children === "string" ? props.children : "")),
         onClick: props.onClick as (() => void) | undefined,
         disabled: Boolean(props.disabled),
       })
@@ -130,6 +139,27 @@ vi.mock("@/components/ui/button", async (importOriginal) => {
       )
     },
   }
+})
+
+// A submit cannot be fired in a node renderer, so the props of every <form> the
+// screens create are kept and the test calls the `onSubmit` the screen gave.
+vi.mock("react/jsx-dev-runtime", async (importOriginal) => {
+  const original = await importOriginal<typeof import("react/jsx-dev-runtime")>()
+  return {
+    ...original,
+    jsxDEV: (type: unknown, props: Record<string, unknown>, ...rest: unknown[]) => {
+      if (type === "form") hooks.forms.push(props)
+      return (original.jsxDEV as (...args: unknown[]) => unknown)(type, props, ...rest)
+    },
+  }
+})
+vi.mock("react/jsx-runtime", async (importOriginal) => {
+  const original = await importOriginal<typeof import("react/jsx-runtime")>()
+  const wrap = (make: (...args: unknown[]) => unknown) => (type: unknown, props: Record<string, unknown>, ...rest: unknown[]) => {
+    if (type === "form") hooks.forms.push(props)
+    return make(type, props, ...rest)
+  }
+  return { ...original, jsx: wrap(original.jsx as never), jsxs: wrap(original.jsxs as never) }
 })
 
 vi.mock("@/lib/online", () => ({ useOnlineStatus: () => true, isOnline: () => true }))
@@ -323,6 +353,18 @@ describe("X-05 decisions: reject and suspend need a note", () => {
     expect(SUSPEND_CONSEQUENCE).toMatch(/sharing/)
     expect(SUSPEND_CONSEQUENCE).toMatch(/Reinstating/)
   })
+
+  it("says that closing removes students from the tutor's classes outside a school, after the SPEC sentence", () => {
+    const { consequence } = DECISION_COPY.close
+    expect(consequence.startsWith(CLOSE_CONFIRM)).toBe(true)
+    expect(consequence).toContain("It also removes students from the classes this tutor teaches outside a school.")
+  })
+
+  it("says that suspending removes the students who booked or shared, from those classes", () => {
+    expect(SUSPEND_CONSEQUENCE).toMatch(/It also removes students who have booked or shared with this tutor from the classes this tutor teaches outside a school\./)
+    expect(DECISION_COPY.suspend.consequence).toBe(SUSPEND_CONSEQUENCE)
+    expect(resolutionConfirm("tutor_suspended")?.body).toBe(SUSPEND_CONSEQUENCE)
+  })
 })
 
 // ── X-05 approve gate ───────────────────────────────────────────────────────
@@ -507,7 +549,10 @@ describe("admin failures: the API's code picks the sentence", () => {
 
   it("covers the codes the admin routes send that the shared list does not carry yet", () => {
     expect(adminFailureMessage(refusal(422, "note_required"), "f")).toMatch(/note/i)
-    expect(adminFailureMessage(refusal(422, "note_too_long"), "f")).toMatch(/2000|shorten/i)
+    // A4/A5/A12 allow 2000 and A11 allows 1000, so the sentence names no number.
+    const tooLong = adminFailureMessage(refusal(422, "note_too_long"), "f")
+    expect(tooLong).toBe("That note is too long. Shorten it and try again.")
+    expect(tooLong).not.toMatch(/\d/)
     expect(adminFailureMessage(refusal(409, "documents_not_opened"), "f")).toMatch(/open/i)
   })
 
@@ -593,6 +638,43 @@ describe("X-07 resolutions: limited by what A11 can apply", () => {
     expect(values(resolutionOptions(report("tutor_profile", null), NOW))).toEqual(["dismissed", "tutor_suspended"])
   })
 
+  it("offers the suspension when the listing state is unknown or one the server can suspend from", () => {
+    const withListing = (state: string | null | undefined) =>
+      ({ ...report("tutor_profile", null), ...(state === undefined ? {} : { tutorListingState: state }) }) as ReportDetail
+    for (const state of [undefined, "pending_review", "listed", "rejected"] as const) {
+      expect(values(resolutionOptions(withListing(state), NOW)), String(state)).toContain("tutor_suspended")
+    }
+  })
+
+  it("does not offer the suspension for a tutor who is suspended, closed or still a draft", () => {
+    for (const state of ["suspended", "closed", "draft"]) {
+      const context = { ...report("tutor_profile", null), tutorListingState: state } as ReportDetail
+      expect(values(resolutionOptions(context, NOW)), state).toEqual(["dismissed"])
+    }
+  })
+
+  it("still offers cancelling a booking whose tutor can no longer be suspended", () => {
+    const context = { ...report("booking", summary("accepted", 5)), tutorListingState: "closed" } as ReportDetail
+    expect(values(resolutionOptions(context, NOW))).toEqual(["dismissed", "booking_cancelled"])
+  })
+
+  it("checks a choice again at submit time: cancelling stops being offered once the session starts", () => {
+    const booking = report("booking", summary("accepted", 1))
+    const beforeStart = new Date(NOW.getTime())
+    const afterStart = new Date(NOW.getTime() + 2 * HOUR)
+    expect(resolutionStillOffered(booking, "booking_cancelled", beforeStart)).toBe(true)
+    expect(resolutionStillOffered(booking, "booking_cancelled", afterStart)).toBe(false)
+    expect(resolutionStillOffered(booking, "dismissed", afterStart)).toBe(true)
+  })
+
+  it("says how long until the session starts while cancelling is offered, and nothing otherwise", () => {
+    expect(cancelWindowMs(report("booking", summary("accepted", 1)), NOW)).toBe(HOUR)
+    expect(cancelWindowMs(report("booking", summary("accepted", -1)), NOW)).toBeNull()
+    expect(cancelWindowMs(report("booking", summary("completed", 1)), NOW)).toBeNull()
+    expect(cancelWindowMs(report("tutor_profile", null), NOW)).toBeNull()
+    expect(cancelWindowMs(report("booking", summary("accepted", 1), { state: "actioned" }), NOW)).toBeNull()
+  })
+
   it("lets review and reply reports hide the content", () => {
     for (const target of ["review", "review_reply"] as const) {
       expect(values(resolutionOptions(report(target, null), NOW))).toEqual([
@@ -630,6 +712,26 @@ describe("X-07 resolutions: limited by what A11 can apply", () => {
     expect(resolutionNoteError("a".repeat(RESOLUTION_NOTE_MAX + 1))).not.toBeNull()
   })
 
+  it("is ready only with a choice, a note within the limit, and a connection", () => {
+    const choice = resolutionOptions(report("tutor_profile", null), NOW)[0]
+    expect(resolveReadiness({ choice, note: "Checked.", online: true })).toEqual({ ready: true, hint: null })
+    // A resolution is chosen and the note is blank: Resolve stays shut and says why.
+    expect(resolveReadiness({ choice, note: "   ", online: true })).toEqual({
+      ready: false,
+      hint: "A note is needed before this can be recorded.",
+    })
+    expect(resolveReadiness({ choice: null, note: "Checked.", online: true })).toEqual({
+      ready: false,
+      hint: "Choose what should happen.",
+    })
+    expect(resolveReadiness({ choice, note: "Checked.", online: false })).toEqual({
+      ready: false,
+      hint: "You're offline. Reconnect to resolve.",
+    })
+    expect(resolveReadiness({ choice, note: "x".repeat(RESOLUTION_NOTE_MAX + 1), online: true }).ready).toBe(false)
+    expect(resolveReadiness({ choice, note: "x".repeat(RESOLUTION_NOTE_MAX), online: true }).ready).toBe(true)
+  })
+
   it("builds the A11 body from the choice and the trimmed note", () => {
     expect(resolveBody("content_hidden", "  Contact details.  ")).toEqual({
       resolution: "content_hidden",
@@ -643,6 +745,26 @@ describe("X-07 resolutions: limited by what A11 can apply", () => {
     expect(resolutionConfirm("booking_cancelled")?.body).toMatch(/cancel/i)
     expect(resolutionConfirm("booking_completed")).not.toBeNull()
     expect(resolutionConfirm("content_hidden")).not.toBeNull()
+  })
+})
+
+describe("X-07 who completed a booking, and the already-resolved refusal", () => {
+  it("names each party in words, never the raw value", () => {
+    expect(completedByLabel("student")).toBe("The student")
+    expect(completedByLabel("parent")).toBe("The parent")
+    expect(completedByLabel("tutor")).toBe("The tutor")
+    expect(completedByLabel("platform_admin")).toBe("Lemely")
+    for (const value of ["student", "parent", "tutor", "platform_admin"] as const) {
+      expect(completedByLabel(value)).not.toMatch(/_|^[a-z]/)
+    }
+  })
+
+  it("recognises only the 409 already_resolved", () => {
+    const refusal = (status: number, code: string) => new ApiError(status, "x", { code, message: "x" })
+    expect(isAlreadyResolved(refusal(409, "already_resolved"))).toBe(true)
+    expect(isAlreadyResolved(refusal(409, "resolution_not_applicable"))).toBe(false)
+    expect(isAlreadyResolved(new Error("already_resolved"))).toBe(false)
+    expect(isAlreadyResolved(null)).toBe(false)
   })
 })
 
@@ -670,6 +792,23 @@ describe("X-07 labels and ordering", () => {
 
   it("tells the admin the thread view is logged", () => {
     expect(THREAD_VIEW_NOTICE).toMatch(/logged/i)
+  })
+})
+
+describe("X-07 notes after a resolution", () => {
+  const loaded: Note[] = [
+    { noteId: "n1", authorParty: "student", authorName: "Sara Hassan", body: "Can we move to 5?", hidden: false, createdAt: "2026-10-28T10:00:00Z" },
+  ]
+
+  it("keeps the notes of the last read when A11 answers with none, because it never carries the thread", () => {
+    expect(threadNotes(loaded, [], true)).toBe(loaded)
+  })
+
+  it("shows what the server sent whenever the report was read rather than resolved here", () => {
+    expect(threadNotes(loaded, [], false)).toEqual([])
+    const fresh: Note[] = [{ ...loaded[0], noteId: "n2" }]
+    expect(threadNotes(loaded, fresh, false)).toBe(fresh)
+    expect(threadNotes(loaded, fresh, true)).toBe(fresh)
   })
 })
 
@@ -728,6 +867,21 @@ describe("X-07 snapshot and times", () => {
     ])
   })
 
+  it("shows the name of a {code, name} value, alone or in a list, never its JSON", () => {
+    expect(
+      snapshotRows({
+        area: { code: "maadi", name: "Maadi" },
+        subjects: [
+          { code: "0580", name: "Mathematics" },
+          { code: "0625", name: "Physics" },
+        ],
+      }),
+    ).toEqual([
+      { label: "Area", value: "Maadi" },
+      { label: "Subjects", value: "Mathematics, Physics" },
+    ])
+  })
+
   it("shows an empty snapshot value honestly", () => {
     expect(snapshotRows({ headline: null })).toEqual([{ label: "Headline", value: "Not set" }])
   })
@@ -745,6 +899,7 @@ describe("the module's own sentences follow the product rules", () => {
   it("has no em dash, no exclamation mark and neither banned tutoring word", () => {
     const sentences = [
       CLOSE_CONFIRM,
+      DECISION_COPY.close.consequence,
       SUSPEND_CONSEQUENCE,
       THREAD_VIEW_NOTICE,
       MOCK_EMAIL_TITLE,
@@ -804,8 +959,11 @@ function buttonHtml(markup: string, label: string): string {
 
 beforeEach(() => {
   hooks.clicks.length = 0
+  hooks.forms.length = 0
   hooks.review = hooks.idle()
   hooks.reply = hooks.idle()
+  hooks.approve = hooks.idle()
+  hooks.resolve = hooks.idle()
 })
 
 const DETAIL: AdminTutorDetail = {
@@ -934,11 +1092,41 @@ describe("X-05 screen", () => {
     expect(markup).toContain("2 open reports")
   })
 
+  it("sends nothing when the form is submitted while the gate is shut", () => {
+    hooks.tutor = ok(DETAIL)
+    render(h(TutorApplication))
+    expect(hooks.forms).toHaveLength(1)
+    const preventDefault = vi.fn()
+    ;(hooks.forms[0].onSubmit as (event: { preventDefault: () => void }) => void)({ preventDefault })
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(hooks.approve.mutate).not.toHaveBeenCalled()
+  })
+
   it("fails with a retry when the profile cannot load", () => {
     hooks.tutor = failed(new ApiError(404, "x", { code: "not_found", message: "x" }))
     const markup = render(h(TutorApplication))
     expect(markup).toContain("We couldn&#x27;t load this tutor")
     expect(markup).toContain(TUTORING_ERROR_COPY.not_found.replace("'", "&#x27;"))
+  })
+})
+
+describe("X-05 confirm sheet: the confirm button follows the note rule", () => {
+  const dialog = (decision: "reject" | "suspend" | "close") =>
+    render(h(DecisionDialog, { decision, tutorName: "Dina A.", pending: false, error: null, onConfirm: vi.fn(), onClose: vi.fn() }))
+
+  it("keeps the confirm button disabled while a required note is blank", () => {
+    for (const decision of ["reject", "suspend"] as const) {
+      expect(buttonHtml(dialog(decision), DECISION_COPY[decision].confirmLabel), decision).toContain("disabled")
+    }
+  })
+
+  it("leaves the confirm button enabled for a close, whose note is optional", () => {
+    expect(buttonHtml(dialog("close"), DECISION_COPY.close.confirmLabel)).not.toContain("disabled")
+  })
+
+  it("says the close and suspend costs in the sheet", () => {
+    expect(dialog("close")).toContain("outside a school")
+    expect(dialog("suspend")).toContain("booked or shared with this tutor")
   })
 })
 
@@ -1047,6 +1235,61 @@ describe("X-07 screens", () => {
     expect(markup).toContain("Opening this report is logged")
     expect(markup).not.toContain("Sara")
     expect(markup).not.toContain("Hassan")
+  })
+
+  it("shows the notes of a resolved booking report and never says there are none", () => {
+    const notes: Note[] = [
+      { noteId: "n1", authorParty: "student", authorName: "Sara Hassan", body: "Can we move to 5?", hidden: false, createdAt: "2026-10-28T10:00:00Z" },
+    ]
+    hooks.report = ok(
+      report("booking_note", summary("accepted", 5, Date.now()), {
+        state: "actioned",
+        resolution: "dismissed",
+        resolutionNote: "Fine.",
+        resolvedAt: "2026-10-30T09:00:00Z",
+        notes,
+      }),
+    )
+    const markup = render(h(ReportDetailScreen))
+    expect(markup).toContain("Can we move to 5?")
+    expect(markup).not.toContain("There are no notes on this booking.")
+    expect(markup).toContain("Fine.")
+    // and the honest empty state is still there for a thread that is empty
+    hooks.report = ok(report("booking_note", summary("accepted", 5, Date.now()), { notes: [] }))
+    expect(render(h(ReportDetailScreen))).toContain("There are no notes on this booking.")
+  })
+
+  it("says who completed the booking in words", () => {
+    hooks.report = ok(report("booking", { ...summary("completed", -3, Date.now()), completedBy: "platform_admin" }))
+    const markup = render(h(ReportDetailScreen))
+    expect(markup).toContain("Marked completed by")
+    expect(markup).toContain("Lemely")
+    expect(markup).not.toContain("platform admin")
+  })
+
+  it("offers to reload the report after an already-resolved refusal, and only then", () => {
+    const refetch = vi.fn()
+    hooks.report = ok(report("tutor_profile", null), { refetch })
+    hooks.resolve = {
+      ...hooks.idle(),
+      isError: true,
+      error: new ApiError(409, "x", { code: "already_resolved", message: "x" }),
+    }
+    const markup = render(h(ReportDetailScreen))
+    expect(markup).toContain(TUTORING_ERROR_COPY.already_resolved)
+    expect(buttonHtml(markup, "Reload this report")).not.toContain("disabled")
+    hooks.clicks.find((click) => click.label === "Reload this report")?.onClick?.()
+    expect(refetch).toHaveBeenCalledTimes(1)
+
+    hooks.clicks.length = 0
+    hooks.resolve = {
+      ...hooks.idle(),
+      isError: true,
+      error: new ApiError(409, "x", { code: "resolution_not_applicable", message: "x" }),
+    }
+    const other = render(h(ReportDetailScreen))
+    expect(other).toContain(TUTORING_ERROR_COPY.resolution_not_applicable)
+    expect(other).not.toContain("Reload this report")
   })
 
   it("shows the outcome of a resolved report instead of the form", () => {

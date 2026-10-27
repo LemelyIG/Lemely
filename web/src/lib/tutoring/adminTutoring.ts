@@ -4,6 +4,7 @@ import type { ListingState } from "@/lib/tutoring/profileSteps"
 import type { AdminTutorState } from "@/lib/tutoring/queryKeys"
 import type {
   AdminApprove,
+  AdminBookingSummary,
   AdminNote,
   AdminTutorPage,
   ModerationItem,
@@ -97,7 +98,8 @@ const EXTRA_COPY: Readonly<Record<string, string>> = {
   // the tutor's listing state no longer allows the decision, usually because another admin acted.
   illegal_transition: "Someone has already decided this, or the profile has changed. Reload the page to see where it stands.",
   note_required: "Write a note before you continue.",
-  note_too_long: `That note is too long. Shorten it to ${DECISION_NOTE_MAX} characters or fewer.`,
+  // No number: A4, A5 and A12 allow 2000 characters and A11 allows 1000.
+  note_too_long: "That note is too long. Shorten it and try again.",
   documents_not_opened: "Open every file before you approve. Reload the page to get new links.",
 }
 
@@ -230,8 +232,15 @@ export type TutorDecision = "approve" | "reject" | "suspend" | "close"
 /** Close is final, so it sits last. */
 export const CLOSE_CONFIRM = "Closing cancels future sessions, ends every student's sharing and can't be undone."
 
+/**
+ * `CLOSE_CONFIRM` is SPEC's sentence, word for word. A close also takes every
+ * enrolment the tutor has in a class outside a school, including students who
+ * never used tutoring, so the sheet says so in a second sentence.
+ */
+export const CLOSE_CONSEQUENCE = `${CLOSE_CONFIRM} It also removes students from the classes this tutor teaches outside a school.`
+
 export const SUSPEND_CONSEQUENCE =
-  "Suspending cancels the tutor's future sessions, ends every student's sharing and takes them out of the directory. Students and their parents are told. Reinstating doesn't bring any of that back."
+  "Suspending cancels the tutor's future sessions, ends every student's sharing and takes them out of the directory. Students and their parents are told. It also removes students who have booked or shared with this tutor from the classes this tutor teaches outside a school. Reinstating doesn't bring any of that back."
 
 /** The decisions SPEC §a.3 allows from each listing state, in the order the page lays them out. */
 export function availableDecisions(state: ListingState): TutorDecision[] {
@@ -300,7 +309,7 @@ export const DECISION_COPY: Readonly<Record<Exclude<TutorDecision, "approve">, D
   },
   close: {
     title: "Close this tutor?",
-    consequence: CLOSE_CONFIRM,
+    consequence: CLOSE_CONSEQUENCE,
     noteLabel: "Note (optional)",
     noteHint: "Kept in the approval history.",
     confirmLabel: "Close tutor",
@@ -465,6 +474,23 @@ export function isSafetyConcern(item: Pick<ReportItem, "reason">): boolean {
   return item.reason === "safety_concern"
 }
 
+const COMPLETED_BY_LABEL: Record<NonNullable<AdminBookingSummary["completedBy"]>, string> = {
+  student: "The student",
+  parent: "The parent",
+  tutor: "The tutor",
+  platform_admin: "Lemely",
+}
+
+/** Who marked a booking completed, in words. */
+export function completedByLabel(value: NonNullable<AdminBookingSummary["completedBy"]>): string {
+  return COMPLETED_BY_LABEL[value]
+}
+
+/** The 409 for a report someone else resolved first: the page should offer to reload it. */
+export function isAlreadyResolved(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 409 && codeOf(error) === "already_resolved"
+}
+
 /** The reporter by party, never by name. */
 export function reporterLabel(party: ReportDetail["reporterParty"]): string {
   if (party === "student") return "A student"
@@ -523,6 +549,22 @@ const OPTION: Record<ReportResolution, ResolutionOption> = {
 
 type ResolutionContext = Pick<ReportDetail, "state" | "reason" | "targetType" | "bookingSummary">
 
+/**
+ * The tutor's listing state as A10 reports it. The shared `ReportDetail` type
+ * does not carry the field yet, so it is read through this narrow shape.
+ */
+function tutorListingStateOf(context: ResolutionContext): string | null | undefined {
+  return (context as { tutorListingState?: string | null }).tutorListingState
+}
+
+/** A suspension is applied from these states; an unknown state is offered, and the server decides. */
+const SUSPENDABLE_FROM: ReadonlySet<string> = new Set(["pending_review", "listed", "rejected"])
+
+function canSuspend(context: ResolutionContext): boolean {
+  const state = tutorListingStateOf(context)
+  return state === undefined || state === null || SUSPENDABLE_FROM.has(state)
+}
+
 const CONTENT_TARGETS: ReadonlySet<ReportTarget> = new Set(["review", "review_reply", "booking_note"])
 const BOOKING_TARGETS: ReadonlySet<ReportTarget> = new Set(["booking", "booking_note"])
 
@@ -533,8 +575,9 @@ function hasStarted(context: ResolutionContext, now: Date): boolean {
 
 /**
  * The resolutions A11 can apply to this report now (SPEC §b.2 row A11, §a.3):
- * dismiss always; hide for review, reply and note targets; suspend for any;
- * cancel only a requested or accepted booking that has not started (for a
+ * dismiss always; hide for review, reply and note targets; suspend for any
+ * tutor who is pending review, listed or rejected (not one already suspended,
+ * closed or a draft; A10's `tutorListingState`); cancel only a requested or accepted booking that has not started (for a
  * booking or a note's booking); mark completed only on a disputed-outcome
  * report about the booking itself, ended and awaiting its outcome or marked
  * no-show. Nothing once resolved. Mirrors `tutoring_reports_repo` (T25).
@@ -543,7 +586,7 @@ export function resolutionOptions(context: ResolutionContext, now: Date): Resolu
   if (context.state !== "open") return []
   const options: ResolutionOption[] = [OPTION.dismissed]
   if (CONTENT_TARGETS.has(context.targetType)) options.push(OPTION.content_hidden)
-  options.push(OPTION.tutor_suspended)
+  if (canSuspend(context)) options.push(OPTION.tutor_suspended)
   const summary = context.bookingSummary
   if (summary !== null && BOOKING_TARGETS.has(context.targetType)) {
     const active = summary.effectiveState === "requested" || summary.effectiveState === "accepted"
@@ -554,6 +597,19 @@ export function resolutionOptions(context: ResolutionContext, now: Date): Resolu
     }
   }
   return options
+}
+
+/** Is `resolution` still among the choices at `now`? Checked again at submit, because the page was opened earlier. */
+export function resolutionStillOffered(context: ResolutionContext, resolution: ReportResolution, now: Date): boolean {
+  return resolutionOptions(context, now).some((option) => option.value === resolution)
+}
+
+/** Milliseconds until the booking starts while cancelling it is offered, else null: when the page must look again. */
+export function cancelWindowMs(context: ResolutionContext, now: Date): number | null {
+  if (!resolutionStillOffered(context, "booking_cancelled", now)) return null
+  const summary = context.bookingSummary
+  if (summary === null) return null
+  return Math.max(0, new Date(summary.startsAt).getTime() - now.getTime())
 }
 
 /** Why the booking can no longer be cancelled, when that is the reason a choice is missing. */
@@ -567,6 +623,25 @@ export function resolutionUnavailable(context: ResolutionContext, now: Date): st
 
 export function resolutionNoteError(raw: string): string | null {
   return noteError(raw, { required: true, max: RESOLUTION_NOTE_MAX })
+}
+
+export interface ResolveReadiness {
+  ready: boolean
+  /** The reason Resolve is shut, when the reader cannot see it; null when ready or when the field itself explains. */
+  hint: string | null
+}
+
+/** Resolve opens with a choice, a note within the limit and a connection. */
+export function resolveReadiness(input: {
+  choice: ResolutionOption | null
+  note: string
+  online: boolean
+}): ResolveReadiness {
+  if (!input.online) return { ready: false, hint: "You're offline. Reconnect to resolve." }
+  if (input.choice === null) return { ready: false, hint: "Choose what should happen." }
+  const problem = resolutionNoteError(input.note)
+  if (problem === null) return { ready: true, hint: null }
+  return { ready: false, hint: noteValue(input.note) === null ? "A note is needed before this can be recorded." : null }
 }
 
 /** The A11 body. */
@@ -634,6 +709,15 @@ export function adminNoteRows(notes: readonly Note[]): AdminNoteRow[] {
   }))
 }
 
+/**
+ * The notes to show. A11 answers `notes: []` by design and the cache keeps its
+ * answer, so after a resolution made here the notes of the last read stand. Any
+ * other read of the report is the server's word.
+ */
+export function threadNotes(loaded: readonly Note[], current: readonly Note[], resolvedHere: boolean): readonly Note[] {
+  return resolvedHere && current.length === 0 ? loaded : current
+}
+
 function humanise(key: string): string {
   const words = key
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
@@ -643,12 +727,24 @@ function humanise(key: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
+/** A `{ code, name }` reference such as an area or a subject: the name is the words. */
+function namedOf(value: unknown): string | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null
+  const name = (value as { name?: unknown }).name
+  return typeof name === "string" && name !== "" ? name : null
+}
+
 function snapshotValue(value: unknown): string {
   if (value === null || value === undefined || value === "") return "Not set"
   if (typeof value === "string") return value
   if (typeof value === "number" || typeof value === "boolean") return String(value)
-  if (Array.isArray(value) && value.every((item) => typeof item === "string" || typeof item === "number")) {
-    return value.join(", ")
+  const named = namedOf(value)
+  if (named !== null) return named
+  if (Array.isArray(value)) {
+    const parts = value.map((item) =>
+      typeof item === "string" || typeof item === "number" ? String(item) : namedOf(item),
+    )
+    if (parts.every((part): part is string => part !== null)) return parts.join(", ")
   }
   return JSON.stringify(value)
 }

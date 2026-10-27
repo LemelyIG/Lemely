@@ -20,9 +20,12 @@ import {
   THREAD_VIEW_NOTICE,
   adminFailureMessage,
   adminNoteRows,
+  cancelWindowMs,
+  completedByLabel,
   formatAdminDay,
   formatAdminInstant,
   formatAdminRange,
+  isAlreadyResolved,
   isSafetyConcern,
   noteLength,
   reportReasonLabel,
@@ -33,12 +36,15 @@ import {
   resolutionLabel,
   resolutionNoteError,
   resolutionOptions,
+  resolutionStillOffered,
   resolutionUnavailable,
   resolveBody,
+  resolveReadiness,
   snapshotRows,
+  threadNotes,
 } from "@/lib/tutoring/adminTutoring"
 import { MODE_OPTIONS } from "@/lib/tutoring/discovery"
-import type { ReportDetail as ReportDetailData, ReportResolution } from "@/lib/tutoringTypes"
+import type { Note, ReportDetail as ReportDetailData, ReportResolution } from "@/lib/tutoringTypes"
 
 /*
  * X-07 · Report detail (`/platform/reports/:reportId`, SPEC §d, rows A10, A11).
@@ -54,9 +60,15 @@ import type { ReportDetail as ReportDetailData, ReportResolution } from "@/lib/t
  * A resolution is one of the choices A11 can apply to this report right now
  * (`resolutionOptions`), with a note of at most 1000 characters. When the
  * booking has started, the missing "Cancel the booking" is explained instead of
- * silently absent. Choices that cannot be taken back ask first, and say what
- * they do. A refusal from the server (somebody resolved it first, the booking
- * moved on) is shown in its own words.
+ * silently absent. The page was opened at some earlier moment, so the choices
+ * are worked out again when the session starts and again at submit: a
+ * cancellation is never sent for a session that has begun. Choices that cannot
+ * be taken back ask first, and say what they do. A refusal from the server
+ * (somebody resolved it first, the booking moved on) is shown in its own words,
+ * and after "already resolved" the page offers to reload the report.
+ *
+ * A11 answers without the notes thread, and the cache keeps its answer, so the
+ * page keeps the notes of the last read for the report it has just resolved.
  *
  * States: loading, error and offline (through `QueryState`; a bad id is the
  * 404 sentence with a way back), a report with no thread, a frozen thread, hidden
@@ -82,6 +94,9 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
+/** `setTimeout` takes at most 2^31 - 1 ms; a later start is reached in steps. */
+const MAX_TIMER_MS = 2_147_483_647
+
 const TEXT = "m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-ink"
 
 function BookingSummary({ report }: { report: ReportDetailData }) {
@@ -97,15 +112,15 @@ function BookingSummary({ report }: { report: ReportDetailData }) {
         <Fact label="State">
           <BookingStatus state={booking.effectiveState} />
         </Fact>
-        {booking.completedBy ? <Fact label="Marked completed by">{booking.completedBy.replace("_", " ")}</Fact> : null}
+        {booking.completedBy ? <Fact label="Marked completed by">{completedByLabel(booking.completedBy)}</Fact> : null}
       </dl>
     </Section>
   )
 }
 
-function Thread({ report }: { report: ReportDetailData }) {
+function Thread({ report, notes }: { report: ReportDetailData; notes: readonly Note[] }) {
   if (report.bookingSummary === null) return null
-  const rows = adminNoteRows(report.notes)
+  const rows = adminNoteRows(notes)
   const frozen = report.bookingSummary.notesFrozen
   return (
     <Section title="Notes">
@@ -165,16 +180,28 @@ function ResolveForm({
   report,
   resolve,
   onDone,
+  onReload,
+  reloading,
 }: {
   report: ReportDetailData
   resolve: ReturnType<typeof useResolveTutoringReport>
   onDone: (line: string) => void
+  onReload: () => void
+  reloading: boolean
 }) {
   const online = useOnlineStatus()
-  const [now] = useState(() => new Date())
+  const [now, setNow] = useState(() => new Date())
   const [choice, setChoice] = useState<ReportResolution | null>(null)
   const [note, setNote] = useState("")
   const [confirming, setConfirming] = useState(false)
+
+  // The page wakes when the session starts, so "Cancel the booking" leaves with it.
+  useEffect(() => {
+    const wait = cancelWindowMs(report, now)
+    if (wait === null) return
+    const timer = setTimeout(() => setNow(new Date()), Math.min(wait + 50, MAX_TIMER_MS))
+    return () => clearTimeout(timer)
+  }, [report, now])
 
   const options = resolutionOptions(report, now)
   const selected = options.find((option) => option.value === choice) ?? null
@@ -182,10 +209,20 @@ function ResolveForm({
   const noteProblem = resolutionNoteError(note)
   const blank = note.trim() === ""
   const confirm = selected ? resolutionConfirm(selected.value) : null
-  const ready = selected !== null && noteProblem === null && online
+  const confirmOpen = confirming && confirm !== null
+  const { ready, hint } = resolveReadiness({ choice: selected, note, online })
+
+  /** True when the choice is still on offer at this moment; otherwise the page looks again and says why. */
+  function stillOffered(resolution: ReportResolution): boolean {
+    const current = new Date()
+    if (resolutionStillOffered(report, resolution, current)) return true
+    setNow(current)
+    setConfirming(false)
+    return false
+  }
 
   function send() {
-    if (selected === null || !ready) return
+    if (selected === null || !ready || !stillOffered(selected.value)) return
     resolve.mutate(
       { reportId: report.reportId, body: resolveBody(selected.value, note) },
       {
@@ -204,7 +241,7 @@ function ResolveForm({
         className="flex max-w-prose flex-col gap-5"
         onSubmit={(event) => {
           event.preventDefault()
-          if (!ready) return
+          if (!ready || selected === null || !stillOffered(selected.value)) return
           if (confirm) setConfirming(true)
           else send()
         }}
@@ -231,25 +268,26 @@ function ResolveForm({
           error={!blank && noteProblem !== null ? noteProblem : undefined}
         />
         <div className="flex flex-col items-start gap-2">
-          <Button className="min-h-11" type="submit" variant="primary" loading={resolve.isPending && !confirming} disabled={!ready}>
+          <Button className="min-h-11" type="submit" variant="primary" loading={resolve.isPending && !confirmOpen} disabled={!ready}>
             Resolve report
           </Button>
-          {!online ? (
-            <p className="m-0 text-body-sm text-ink-muted">You're offline. Reconnect to resolve.</p>
-          ) : selected === null ? (
-            <p className="m-0 text-body-sm text-ink-muted">Choose what should happen.</p>
-          ) : blank ? (
-            <p className="m-0 text-body-sm text-ink-muted">A note is needed before this can be recorded.</p>
-          ) : null}
-          {resolve.isError && !confirming ? (
-            <p role="alert" className="m-0 text-body-sm text-err">
-              {adminFailureMessage(resolve.error, "That didn't go through. Try again.")}
-            </p>
+          {hint ? <p className="m-0 text-body-sm text-ink-muted">{hint}</p> : null}
+          {resolve.isError && !confirmOpen ? (
+            <div role="alert" className="flex flex-col items-start gap-2">
+              <p className="m-0 text-body-sm text-err">
+                {adminFailureMessage(resolve.error, "That didn't go through. Try again.")}
+              </p>
+              {isAlreadyResolved(resolve.error) ? (
+                <Button className="min-h-11" size="sm" loading={reloading} onClick={onReload}>
+                  Reload this report
+                </Button>
+              ) : null}
+            </div>
           ) : null}
         </div>
       </form>
 
-      {confirming && confirm ? (
+      {confirmOpen && confirm ? (
         <Modal
           open
           onClose={() => setConfirming(false)}
@@ -275,11 +313,23 @@ function ResolveForm({
   )
 }
 
-function Report({ report }: { report: ReportDetailData }) {
+function Report({
+  report,
+  onReload,
+  reloading,
+}: {
+  report: ReportDetailData
+  onReload: () => void
+  reloading: boolean
+}) {
   const resolve = useResolveTutoringReport()
   const [done, setDone] = useState<string | null>(null)
   const doneRef = useRef<HTMLParagraphElement>(null)
   const rows = snapshotRows(report.snapshot)
+  // Notes of the last read of this report; a read after our own resolution replaces nothing (see `threadNotes`).
+  const [loadedNotes, setLoadedNotes] = useState<readonly Note[]>(report.notes)
+  if (!resolve.isSuccess && loadedNotes !== report.notes) setLoadedNotes(report.notes)
+  const notes = threadNotes(loadedNotes, report.notes, resolve.isSuccess)
 
   useEffect(() => {
     if (done) doneRef.current?.focus()
@@ -348,9 +398,13 @@ function Report({ report }: { report: ReportDetailData }) {
       </Section>
 
       <BookingSummary report={report} />
-      <Thread report={report} />
+      <Thread report={report} notes={notes} />
 
-      {report.state === "open" ? <ResolveForm report={report} resolve={resolve} onDone={setDone} /> : <Outcome report={report} />}
+      {report.state === "open" ? (
+        <ResolveForm report={report} resolve={resolve} onDone={setDone} onReload={onReload} reloading={reloading} />
+      ) : (
+        <Outcome report={report} />
+      )}
     </div>
   )
 }
@@ -378,7 +432,9 @@ export function ReportDetail() {
           body: (error) => adminFailureMessage(error, "Something went wrong loading this report. Try again."),
         }}
       >
-        {(report) => <Report report={report} />}
+        {(report) => (
+          <Report report={report} onReload={() => void query.refetch()} reloading={query.isFetching} />
+        )}
       </QueryState>
     </div>
   )
