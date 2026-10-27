@@ -1,24 +1,29 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { createElement as h, type ReactElement } from "react"
+import { createElement as h, isValidElement, type ReactElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@/lib/api"
 import { MyStudents } from "@/portals/teacher/screens/tutoring/MyStudents"
 import { TutorStudentDetail } from "@/portals/teacher/screens/tutoring/TutorStudentDetail"
-import { StudentDetail as TeacherStudentDetail } from "@/portals/teacher/screens/StudentDetail"
+import { StudentDetail as TeacherStudentDetail, StudentDetailView } from "@/portals/teacher/screens/StudentDetail"
+import { TBody, TR } from "@/components/ui/table"
 import {
   MY_STUDENTS_INTRO,
   NO_STUDENTS_LINE,
   TUTOR_STUDENTS_PATH,
+  TUTOR_STUDENT_CRUMB,
+  TUTOR_STUDENT_TITLE,
   accessEndedHeading,
   dayLabel,
+  isStudentNotFound,
   sharedLine,
   studentLoadFailureMessage,
   studentNameFromState,
   studentRowView,
   tutorStudentDates,
+  tutorStudentDatesIn,
   tutorStudentPath,
 } from "@/lib/tutoring/tutorStudentView"
 import type { StudentDetail } from "@/lib/teacherTypes"
@@ -50,6 +55,7 @@ const harness = vi.hoisted(() => ({
   student: undefined as unknown,
   list: undefined as unknown,
   teacher: undefined as unknown,
+  profile: undefined as unknown,
   studentCalls: [] as string[],
   listCalls: [] as unknown[],
 }))
@@ -63,6 +69,7 @@ vi.mock("@/lib/hooks/useTutoringApi", () => ({
     harness.listCalls.push(params)
     return harness.list
   },
+  useOwnTutorProfile: () => harness.profile,
 }))
 
 vi.mock("@/lib/hooks/useTeacherApi", () => ({ useStudentDetail: () => harness.teacher }))
@@ -206,6 +213,7 @@ beforeEach(() => {
   harness.student = success(dto())
   harness.list = success({ items: [item()], nextCursor: null })
   harness.teacher = success(teacherDetail())
+  harness.profile = success({ zone: "Africa/Cairo", zoneLabel: "Cairo time" })
   harness.studentCalls.length = 0
   harness.listCalls.length = 0
 })
@@ -265,11 +273,90 @@ describe("T-20 removes five things from T-05", () => {
     for (const href of hrefs) expect(href).toBe(TUTOR_STUDENTS_PATH)
   })
 
-  it("renders two same-day attempts of one paper without a duplicate React key", () => {
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {})
-    detailPage()
-    const keyWarnings = errors.mock.calls.filter((call) => String(call[0]).includes("same key"))
-    expect(keyWarnings).toEqual([])
+  it("gives two same-day attempts and two same-day trend points distinct React keys", () => {
+    // `renderToStaticMarkup` never warns about a repeated key, so the keys are read
+    // off the element tree itself: every row of every table the composition draws.
+    const tables = rowKeysOfTables(
+      StudentDetailView({ student: tutorDetail(), dates: tutorStudentDates, back: null }),
+    )
+    // Non-vacuity: the trend table and the attempt table, two rows each, all on one day.
+    expect(tables.map((keys) => keys.length)).toEqual([2, 2])
+    for (const keys of tables) {
+      expect(keys.every((key) => typeof key === "string" && key.length > 0)).toBe(true)
+      expect(new Set(keys).size, keys.join(" | ")).toBe(keys.length)
+    }
+  })
+})
+
+/** The row keys of each `TBody` under `node`, expanding the one inner component that holds a table. */
+function rowKeysOfTables(node: ReactNode): Array<Array<string | null>> {
+  const tables: Array<Array<string | null>> = []
+  const rowsOf = (children: ReactNode): ReactElement[] => {
+    if (Array.isArray(children)) return children.flatMap(rowsOf)
+    return isValidElement(children) && children.type === TR ? [children] : []
+  }
+  const visit = (value: ReactNode): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    if (!isValidElement(value)) return
+    const element = value as ReactElement<{ children?: ReactNode }>
+    if (element.type === TBody) {
+      tables.push(rowsOf(element.props.children).map((row) => row.key))
+      return
+    }
+    if (typeof element.type === "function" && element.type.name === "StudentTrendPanel") {
+      visit((element.type as (props: unknown) => ReactNode)(element.props))
+      return
+    }
+    visit(element.props.children)
+  }
+  visit(node)
+  return tables
+}
+
+describe("the teacher's T-05 page is the page it was before T-20 shared its composition", () => {
+  const HEADERS = /<th\b[^>]*>(.*?)<\/th>/g
+  const attemptTable = (markup: string) => {
+    const from = markup.indexOf("Full attempt history, newest first")
+    expect(from, "attempt table caption").toBeGreaterThan(-1)
+    return markup.slice(from, markup.indexOf("</table>", from))
+  }
+  const headersOf = (table: string) => [...table.matchAll(HEADERS)].map((m) => text(m[1]).trim())
+
+  it("keeps the seven teacher-only markers, counted", () => {
+    const markup = teacherPage()
+    const count = (pattern: RegExp) => markup.match(pattern)?.length ?? 0
+    expect(count(/View \/ remark/g), "remark control per attempt").toBe(2)
+    expect(count(/Coming soon/g), "two attempt tags and the practice tag").toBe(3)
+    expect(count(/Assign practice/g), "assign practice").toBe(1)
+    expect(count(/Acknowledged/g), "acknowledged tag on the flag").toBe(1)
+    expect(count(/<th[^>]*>\s*<span class="sr-only">Actions<\/span>/g), "Actions column header").toBe(1)
+    expect(count(/\bdisabled=""/g), "disabled controls: two remarks and practice").toBe(3)
+    expect(count(/aria-disabled="true"/g), "aria-disabled on the same three").toBe(3)
+    expect(markup).toContain('aria-label="Attempt history, scrollable horizontally"')
+    expect(markup).toMatch(/<button[^>]*type="button"[^>]*>[^<]*(<svg[\s\S]*?<\/svg>)?\s*Back<\/button>/)
+  })
+
+  it("keeps the attempt table's column headers and their order", () => {
+    expect(headersOf(attemptTable(teacherPage()))).toEqual(["Paper", "Marks", "Percentage", "Grade", "Recorded", "Actions"])
+    // The tutor's table is the same table without the last column.
+    expect(headersOf(attemptTable(detailPage()))).toEqual(["Paper", "Marks", "Percentage", "Grade", "Recorded"])
+  })
+
+  it("keeps the teacher's row cells in the same order as the headers", () => {
+    const rows = attemptTable(teacherPage()).split("<tr").slice(2)
+    expect(rows.length).toBe(2)
+    for (const row of rows) {
+      const cells = [...row.matchAll(/<td\b[^>]*>(.*?)<\/td>/g)].map((m) => text(m[1]).trim())
+      expect(cells.length).toBe(6)
+      expect(cells[0]).toBe("0580 \u00b7 Paper 2 Variant 2")
+      expect(cells[1]).toMatch(/^\d+\/90$/)
+      expect(cells[2]).toMatch(/^\d+%$/)
+      expect(cells[4]).toMatch(RELATIVE_TIME)
+      expect(cells[5]).toContain("View / remark")
+    }
   })
 })
 
@@ -330,6 +417,69 @@ describe("the tutor sees dates, never times", () => {
   it("says plainly when there is no activity", () => {
     expect(tutorStudentDates.activeSummary(null)).toBe("never active")
     expect(tutorStudentDates.lastActive(null)).toBe("Never")
+  })
+
+  it("shows a dash, not 'Never', when the projection could not place the last activity", () => {
+    // The projection sends "" for an instant it cannot put on a day; the student was active.
+    for (const unplaced of ["", "soon", "2026-02-30"]) {
+      expect(tutorStudentDates.lastActive(unplaced), unplaced).toBe("\u2014")
+      expect(tutorStudentDates.activeSummary(unplaced), unplaced).not.toMatch(/never/i)
+      expect(tutorStudentDates.activeSummary(unplaced), unplaced).toContain("\u2014")
+    }
+    harness.student = success(
+      dto(tutorDetail({ engagement: { totalPapers: 3, lastActiveAt: "", daysSinceLastSubmission: null } })),
+    )
+    const t = text(detailPage())
+    expect(t).not.toMatch(/never/i)
+    expect(t).toMatch(/Last active \u2014/)
+  })
+
+  it("a day in a non-Cairo zone is cut in that zone, not Cairo's", () => {
+    // 22:30 UTC on 8 Jan is 00:30 on the 9th in Cairo and 14:30 on the 8th in Los Angeles.
+    const instant = "2026-01-08T22:30:00Z"
+    expect(dayLabel(instant)).toBe("9 Jan 2026")
+    expect(dayLabel(instant, { zone: "America/Los_Angeles" })).toBe("8 Jan 2026")
+    expect(dayLabel(instant, { zone: "America/Los_Angeles", year: false })).toBe("8 Jan")
+    expect(tutorStudentDatesIn("America/Los_Angeles").tableDate(instant)).toBe("8 Jan 2026")
+    expect(tutorStudentDatesIn("America/Los_Angeles").lastActive(instant)).toBe("8 Jan 2026")
+    expect(tutorStudentDates.tableDate(instant)).toBe("9 Jan 2026")
+  })
+
+  it("the page cuts every date it draws in the profile's zone", () => {
+    // If an instant ever arrives it is cut where the tutor is: 23:30 UTC on the 20th is the 20th in Los Angeles.
+    const base = tutorDetail()
+    const instant = "2026-10-20T23:30:00Z"
+    harness.student = success(
+      dto(
+        tutorDetail({
+          attempts: base.attempts.map((a) => ({ ...a, recordedAt: instant })),
+          trend: base.trend.map((p) => ({ ...p, recordedAt: instant })),
+          engagement: { ...base.engagement, lastActiveAt: instant },
+        }),
+      ),
+    )
+    harness.profile = success({ zone: "America/Los_Angeles", zoneLabel: "Los Angeles time" })
+    const inLosAngeles = text(detailPage())
+    expect(inLosAngeles).toContain("active 20 Oct 2026")
+    expect(inLosAngeles).not.toContain("21 Oct")
+    harness.profile = success({ zone: "Africa/Cairo", zoneLabel: "Cairo time" })
+    const inCairo = text(detailPage())
+    expect(inCairo).toContain("active 21 Oct 2026")
+    expect(inCairo).not.toContain("20 Oct")
+  })
+
+  it("the sharing line is cut in the tutor's zone like every other date on the page", () => {
+    const instant = "2026-01-08T22:30:00Z"
+    expect(sharedLine("Maya R.", instant, "America/Los_Angeles")).toContain("on 8 Jan 2026.")
+    expect(sharedLine("Maya R.", instant)).toContain("on 9 Jan 2026.")
+    harness.student = success({ ...dto(), grantedAt: instant })
+    harness.profile = success({ zone: "America/Los_Angeles", zoneLabel: "Los Angeles time" })
+    expect(text(detailPage())).toContain("on 8 Jan 2026.")
+    // Until the tutor's profile is known (or if it never loads) the v1 zone is used: the page still reads.
+    harness.profile = pending()
+    expect(text(detailPage())).toContain("on 9 Jan 2026.")
+    harness.profile = failure(new ApiError(500, "500"))
+    expect(text(detailPage())).toContain("on 9 Jan 2026.")
   })
 
   it("the sharing date comes from the grant, as a date", () => {
@@ -417,10 +567,51 @@ describe("access_ended is one generic state", () => {
     expect(t).not.toMatch(/try again/i)
   })
 
+  it("only the API's not_found (or a malformed id) is 'not found'; any other 404 is a failure", () => {
+    expect(isStudentNotFound(new ApiError(404, "404", { code: "not_found" }))).toBe(true)
+    // FastAPI's validation list for an :studentId that is not a UUID.
+    expect(isStudentNotFound(new ApiError(422, "422", [{ loc: ["path", "student_id"], msg: "bad uuid" }]))).toBe(true)
+    expect(isStudentNotFound(new ApiError(404, "404", { code: "no_tutor_profile" }))).toBe(false)
+    expect(isStudentNotFound(new ApiError(404, "404"))).toBe(false)
+    expect(isStudentNotFound(new ApiError(403, "403", { code: "not_found" }))).toBe(false)
+    expect(isStudentNotFound(new ApiError(500, "500"))).toBe(false)
+    expect(isStudentNotFound(new Error("boom"))).toBe(false)
+
+    harness.student = failure(new ApiError(404, "404", { code: "no_tutor_profile" }))
+    const noProfile = text(detailPage())
+    expect(noProfile).not.toContain("We couldn't find that student")
+    expect(noProfile).toContain("We couldn't load this student")
+
+    harness.student = failure(new ApiError(422, "422", [{ loc: ["path", "student_id"], msg: "bad uuid" }]))
+    const badId = text(detailPage())
+    expect(badId).toContain("We couldn't find that student")
+    expect(badId).not.toMatch(/try again/i)
+  })
+
   it("studentNameFromState reads only a plain, non-empty string", () => {
     expect(studentNameFromState({ studentName: "Maya R." })).toBe("Maya R.")
     for (const bad of [null, undefined, "Maya", {}, { studentName: "" }, { studentName: 4 }, { studentName: "x".repeat(200) }]) {
       expect(studentNameFromState(bad), String(bad)).toBeNull()
+    }
+  })
+})
+
+describe("T-20 has one title", () => {
+  it("is 'Student progress' in the route title, the hidden h1 of every state and the crumb is 'This student'", () => {
+    expect(TUTOR_STUDENT_TITLE).toBe("Student progress")
+    expect(TUTOR_STUDENT_CRUMB).toBe("This student")
+    const h1 = new RegExp(`<h1[^>]*class="sr-only"[^>]*>${TUTOR_STUDENT_TITLE}</h1>`)
+    const states: Array<[string, unknown]> = [
+      ["pending", pending()],
+      ["access ended", failure(accessEnded())],
+      ["not found", failure(new ApiError(404, "404", { code: "not_found" }))],
+      ["server failure", failure(new ApiError(500, "500"))],
+    ]
+    for (const [name, query] of states) {
+      harness.student = query
+      const markup = detailPage()
+      expect(markup, name).toMatch(h1)
+      expect(markup, name).not.toContain("Student detail")
     }
   })
 })
@@ -430,7 +621,7 @@ describe("the other T-20 states", () => {
     harness.student = pending()
     const markup = detailPage()
     expect(markup).toContain('aria-label="Loading"')
-    expect(markup).toContain("Student detail")
+    expect(markup).toMatch(new RegExp(`<h1[^>]*>${TUTOR_STUDENT_TITLE}</h1>`))
     expect(text(markup)).not.toContain("Maya R.")
   })
 

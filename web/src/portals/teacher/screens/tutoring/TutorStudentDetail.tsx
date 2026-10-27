@@ -1,20 +1,23 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 — the T-05 page the teacher already knows, with the consent line as a quiet strip under the name and nothing the tutor cannot act on; the ended state is one sentence and one way out. */
+import { useMemo } from "react"
 import { Link, useLocation, useParams } from "react-router-dom"
 import { CaretLeft, LockSimple } from "@phosphor-icons/react"
 import { buttonVariants } from "@/components/ui/button"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { EmptyState } from "@/components/ui/state-views"
-import { useTutorStudent } from "@/lib/hooks/useTutoringApi"
+import { useOwnTutorProfile, useTutorStudent } from "@/lib/hooks/useTutoringApi"
 import { isAccessEnded } from "@/lib/tutoring/apiErrors"
+import { SESSION_ZONE } from "@/lib/tutoring/sessionView"
 import {
   TUTOR_STUDENTS_PATH,
+  TUTOR_STUDENT_TITLE,
   accessEndedHeading,
   isStudentNotFound,
   sharedLine,
   studentLoadFailureMessage,
   studentNameFromState,
-  tutorStudentDates,
+  tutorStudentDatesIn,
 } from "@/lib/tutoring/tutorStudentView"
 import { StudentDetailView } from "../StudentDetail"
 
@@ -29,9 +32,12 @@ import { StudentDetailView } from "../StudentDetail"
  * from the SPEC sits under the name.
  *
  * Opening this page is an audited read: the API records the visit before it
- * sends data, and the student can see it. So the page never asks twice. A 4xx is
- * the server's answer and is not retried (`useTutorStudent`), and there is no
- * "Try again" on the ended or not-found states.
+ * sends data, and the student can see it. So the page never asks again on its
+ * own account: it never refetches or clears the cache itself, a 4xx is the
+ * server's answer and is not retried (`useTutorStudent`), and there is no "Try
+ * again" on the ended or not-found states. The hook does retry a network drop or
+ * a 5xx once (`retryUnlessRefused`), so a visit can be logged twice when the
+ * first try reached the server and its answer was lost.
  *
  * States:
  *   - loading: a skeleton, under a heading for screen readers;
@@ -42,13 +48,21 @@ import { StudentDetailView } from "../StudentDetail"
  *     cached detail is cleared by the guard `useTutorStudent` installs
  *     (`installAccessEndedGuard`); this screen does not touch the cache, because
  *     removing the query would rebuild it on the next render and read it again;
- *   - not found (404): no grant ever existed for this pair, or the id is not a
- *     student: "We couldn't find that student", with the way back;
- *   - failure: the C-11 error (or offline) state with a retry, for a 5xx or a
- *     dropped connection.
+ *   - not found (404 `not_found`, or 422 for an id that is not an id): no grant
+ *     ever existed for this pair, or the address is not a student's:
+ *     "We couldn't find that student", with the way back;
+ *   - failure: the C-11 error (or offline) state with a retry, for a 5xx, a
+ *     dropped connection or any other refusal, such as `no_tutor_profile`.
  *
  * The student's name for the ended sentence comes from the link on T-19 (router
- * state); opened by address it reads "This student's progress...".
+ * state); opened by address it reads "This student's progress...". The one title
+ * of the route is `TUTOR_STUDENT_TITLE`: the hidden h1 of every state and the
+ * loading heading use it, and the route's title and crumb read it from there.
+ *
+ * Dates are cut in the tutor's zone, from their own profile (the same read
+ * the tutor's session page makes). The page does not wait for it: until
+ * it is known, or if it fails, the v1 zone is used, which is the only zone a
+ * profile can have today.
  */
 
 function BackToStudents() {
@@ -75,11 +89,13 @@ export function TutorStudentDetail() {
   const { studentId = "" } = useParams<{ studentId: string }>()
   const knownName = studentNameFromState(useLocation().state)
   const query = useTutorStudent(studentId)
+  const zone = useOwnTutorProfile().data?.zone ?? SESSION_ZONE
+  const dates = useMemo(() => tutorStudentDatesIn(zone), [zone])
 
   if (query.status === "error" && isAccessEnded(query.error)) {
     return (
       <div className="flex min-w-0 flex-col gap-8">
-        <h1 className="sr-only">Student detail</h1>
+        <h1 className="sr-only">{TUTOR_STUDENT_TITLE}</h1>
         <EmptyState
           icon={<LockSimple size={28} aria-hidden />}
           heading={accessEndedHeading(knownName)}
@@ -94,7 +110,7 @@ export function TutorStudentDetail() {
   if (query.status === "error" && isStudentNotFound(query.error)) {
     return (
       <div className="flex min-w-0 flex-col gap-8">
-        <h1 className="sr-only">Student detail</h1>
+        <h1 className="sr-only">{TUTOR_STUDENT_TITLE}</h1>
         <EmptyState
           heading="We couldn't find that student"
           body="Only students who are sharing their progress with you can be opened from My students."
@@ -109,7 +125,7 @@ export function TutorStudentDetail() {
     <div className="flex min-w-0 flex-col gap-8">
       <QueryState
         query={query}
-        srHeading="Student detail"
+        srHeading={TUTOR_STUDENT_TITLE}
         skeleton={
           <>
             <PanelSkeleton />
@@ -121,12 +137,12 @@ export function TutorStudentDetail() {
         {({ detail, grantedAt }) => (
           <StudentDetailView
             student={detail}
-            dates={tutorStudentDates}
+            dates={dates}
             showAcknowledged={false}
             back={<BackToStudents />}
             intro={
               <p className="m-0 max-w-prose rounded-lg border border-rule bg-paper-sunk px-4 py-3 text-body-md text-ink-muted">
-                {sharedLine(detail.displayName, grantedAt)}
+                {sharedLine(detail.displayName, grantedAt, zone)}
               </p>
             }
           />

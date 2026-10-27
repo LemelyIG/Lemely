@@ -25,9 +25,11 @@ import type { TutorStudentItem, TutorStudentPage } from "@/lib/tutoringTypes"
  * page; that is T-20, one visit at a time. Each row is the whole link to T-20.
  *
  * Every page of this list is an audited read (T19 writes one `list` row per
- * student shown), so the hook never serves it from cache and a failed page is
- * not retried behind the tutor's back. "Show more students" asks for the next
- * keyset page.
+ * student shown), so the hook never serves it from cache and never refetches it
+ * on its own (no focus or reconnect refetch). A 4xx is not retried; a network
+ * drop or a 5xx is retried once (`retryUnlessRefused`), so a page whose answer
+ * was lost can be logged twice. "Show more students" asks for the next keyset
+ * page.
  *
  * States: skeleton rows while loading; the C-11 error and offline states from
  * `QueryState` with a retry; the SPEC's empty line; a line under the list when

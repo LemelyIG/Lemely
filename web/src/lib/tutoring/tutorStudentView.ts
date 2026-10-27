@@ -24,15 +24,25 @@
  * Nothing here takes the reason, so nothing here can say it.
  */
 
+import { ApiError } from "@/lib/api"
 import type { TutorStudentItem } from "@/lib/tutoringTypes"
 import { tutoringErrorOf } from "./apiErrors"
 import { tutorLoadFailureMessage } from "./tutorSessionActions"
-import { formatTutorDate } from "./sessionView"
+import { SESSION_ZONE, formatTutorDate } from "./sessionView"
 
 // ── Paths and copy ──────────────────────────────────────────────────────────
 
 export const TUTORING_HOME_PATH = "/teacher/tutoring"
 export const TUTOR_STUDENTS_PATH = "/teacher/tutoring/students"
+
+/**
+ * T-20's one name (SPEC §d): the route title, the hidden h1 of every state and
+ * the screen's own wording agree on it. The visible h1 of a loaded page is the
+ * student's name; the crumb stands in for that name where a breadcrumb needs a
+ * label before the student is known.
+ */
+export const TUTOR_STUDENT_TITLE = "Student progress"
+export const TUTOR_STUDENT_CRUMB = "This student"
 
 /** T-20 for one student. */
 export function tutorStudentPath(studentId: string): string {
@@ -47,8 +57,8 @@ export const MY_STUDENTS_INTRO =
 export const NO_STUDENTS_LINE = "No students are sharing their progress with you yet."
 
 /** T-20, the consent line under the student's name (SPEC §d). */
-export function sharedLine(name: string, grantedAt: string): string {
-  return `${name} shared this with you on ${dayLabel(grantedAt)}. They can stop sharing at any time. Each visit is recorded and they can see it.`
+export function sharedLine(name: string, grantedAt: string, zone: string = SESSION_ZONE): string {
+  return `${name} shared this with you on ${dayLabel(grantedAt, { zone })}. They can stop sharing at any time. Each visit is recorded and they can see it.`
 }
 
 /**
@@ -57,7 +67,7 @@ export function sharedLine(name: string, grantedAt: string): string {
  * the sentence says "This student".
  */
 export function accessEndedHeading(name: string | null): string {
-  return `${name ?? "This student"}'s progress is no longer shared with you.`
+  return `${name ?? TUTOR_STUDENT_CRUMB}'s progress is no longer shared with you.`
 }
 
 /** Longest name taken from the link's state; a student label is a first name and an initial. */
@@ -77,9 +87,16 @@ export function studentLoadFailureMessage(error: unknown): string {
   return tutorLoadFailureMessage(error)
 }
 
-/** Whether a failure is the API saying it does not know this pair at all (T20 404). */
+/**
+ * Whether a failure is the API saying it does not know this student: its own
+ * `not_found`, or a 422 because the address's id is not an id at all (FastAPI's
+ * validation list, which carries no code). Any other 404, such as
+ * `no_tutor_profile`, is a different problem and gets the failure state.
+ */
 export function isStudentNotFound(error: unknown): boolean {
-  return tutoringErrorOf(error)?.status === 404
+  if (error instanceof ApiError && error.status === 422) return true
+  const known = tutoringErrorOf(error)
+  return known !== null && known.status === 404 && known.code === "not_found"
 }
 
 // ── Dates ───────────────────────────────────────────────────────────────────
@@ -90,10 +107,13 @@ const DAY = /^(\d{4})-(\d{2})-(\d{2})$/
 /**
  * A calendar date as "20 Oct 2026" (or "20 Oct" with `year: false`), and never a
  * time. A `YYYY-MM-DD` day is read as written. An instant is cut to its day in
- * the tutor's zone. Anything else, including a day that is not on the calendar,
- * gives "".
+ * the tutor's zone (`zone`, the v1 zone unless the profile says otherwise).
+ * Anything else, including a day that is not on the calendar, gives "".
  */
-export function dayLabel(value: string, { year = true }: { year?: boolean } = {}): string {
+export function dayLabel(
+  value: string,
+  { year = true, zone = SESSION_ZONE }: { year?: boolean; zone?: string } = {},
+): string {
   const match = DAY.exec(value)
   if (match) {
     const [, y, m, d] = match
@@ -107,7 +127,7 @@ export function dayLabel(value: string, { year = true }: { year?: boolean } = {}
   }
   // Only a full ISO instant is cut to a day; "20 Oct" would parse as a date in 2001.
   if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) return ""
-  const full = formatTutorDate(value)
+  const full = formatTutorDate(value, zone)
   if (full === "") return ""
   return year ? full : full.replace(/ \d{4}$/, "")
 }
@@ -125,19 +145,35 @@ export interface TutorStudentDates {
   recorded(recordedAt: string): string
 }
 
-export const tutorStudentDates: TutorStudentDates = {
-  activeSummary: (lastActiveAt) => {
-    const day = lastActiveAt ? dayLabel(lastActiveAt) : ""
-    return day === "" ? "never active" : `active ${day}`
-  },
-  lastActive: (lastActiveAt) => {
-    const day = lastActiveAt ? dayLabel(lastActiveAt) : ""
-    return day === "" ? "Never" : day
-  },
-  chartLabel: (recordedAt) => dayLabel(recordedAt, { year: false }),
-  tableDate: (recordedAt) => dayLabel(recordedAt),
-  recorded: (recordedAt) => dayLabel(recordedAt),
+/** Shown where the projection had an activity it could not place on a day. Not "Never": the student was active. */
+const UNPLACED = "\u2014"
+
+/**
+ * The tutor's date slots, cut in `zone`. `null` is a student who has never been
+ * active; any other value `dayLabel` cannot place (the projection sends "" for an
+ * instant it could not put on a day) is a dash, because saying "Never" would be false.
+ */
+export function tutorStudentDatesIn(zone: string): TutorStudentDates {
+  const day = (value: string) => dayLabel(value, { zone })
+  return {
+    activeSummary: (lastActiveAt) => {
+      if (lastActiveAt === null) return "never active"
+      const label = day(lastActiveAt)
+      return label === "" ? `last active ${UNPLACED}` : `active ${label}`
+    },
+    lastActive: (lastActiveAt) => {
+      if (lastActiveAt === null) return "Never"
+      const label = day(lastActiveAt)
+      return label === "" ? UNPLACED : label
+    },
+    chartLabel: (recordedAt) => dayLabel(recordedAt, { year: false, zone }),
+    tableDate: day,
+    recorded: day,
+  }
 }
+
+/** The v1 zone; T-20 passes the tutor's own when the profile is known. */
+export const tutorStudentDates: TutorStudentDates = tutorStudentDatesIn(SESSION_ZONE)
 
 // ── T-19 rows ───────────────────────────────────────────────────────────────
 
