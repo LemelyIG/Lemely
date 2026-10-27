@@ -464,6 +464,7 @@ export interface TutorStudentItem {
   studentId: string
   displayName: string
   grantId: string
+  /** The day the student shared, in the tutor's zone (`YYYY-MM-DD`); never a time (ID-9). */
   grantedAt: string
   upcomingSessions: number
 }
@@ -478,6 +479,7 @@ export interface TutorStudentPage {
 export interface TutorStudentDetail {
   detail: StudentDetail
   grantId: string
+  /** The day the student shared, in the tutor's zone (`YYYY-MM-DD`); never a time (ID-9). */
   grantedAt: string
   accessRecordedAt: string
 }

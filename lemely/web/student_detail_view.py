@@ -130,6 +130,19 @@ def project_for_tutor(dto: StudentDetailDTO, *, zone: str, now: datetime) -> Stu
     )
 
 
+def tutor_zone_day(instant: datetime, zone: str) -> str:
+    """The ISO calendar day of ``instant`` in ``zone``: how T19 and T20 send ``grantedAt``.
+
+    The hour a student shared their data is theirs (ID-9, F30-4), so the tutor gets the day.
+
+    Raises:
+        ValueError: ``instant`` has no offset (its day in ``zone`` would be a guess).
+    """
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise ValueError(f"instant must be a timezone-aware datetime, got naive {instant!r}")
+    return instant.astimezone(ZoneInfo(zone)).date().isoformat()
+
+
 def tutor_day(value: str, tz: ZoneInfo) -> str:
     """The ISO calendar day of instant ``value`` in ``tz``; ``""`` when it cannot be placed."""
     instant = _instant(value)
@@ -202,4 +215,5 @@ __all__ = [
     "calendar_days_between",
     "project_for_tutor",
     "tutor_day",
+    "tutor_zone_day",
 ]

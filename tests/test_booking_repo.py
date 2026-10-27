@@ -934,6 +934,44 @@ def test_cancel_quota_429_after_10_per_day(
     assert stored(sm, booking).state is BookingState.requested
 
 
+QUOTA_LOCK = re.compile(r"\s*SELECT pg_advisory_xact_lock\(hashtextextended\('([a-z_]+):'")
+
+
+def test_cancel_and_create_take_the_actor_quota_lock_first(
+    sm: sessionmaker[Session], service: BookingService, w: World
+) -> None:
+    """SC-15 (F30-2): a cancel's and a create's first statement is the actor's quota lock.
+
+    Taken first, before any §a.4b lock, it cannot close a cycle; other writes never take it.
+    The races themselves are in ``tests/test_tutoring_concurrency_bookings.py``.
+    """
+    cancelled = add_booking(sm, w, state="requested", starts_in=timedelta(days=2))
+    with count_statements(sm) as cancel:
+        service.transition(booking_id=cancelled, actor=w.student_actor, action="cancel")
+    with count_statements(sm) as create:
+        made = request(service, w, starts_at=slot(timedelta(days=4)))
+    with count_statements(sm) as accept:
+        service.transition(
+            booking_id=made.id,
+            actor=w.tutor_actor,
+            action="accept",
+            accept=AcceptDetails(meeting_link=LINK),
+        )
+
+    first_cancel, first_create = QUOTA_LOCK.match(cancel[0]), QUOTA_LOCK.match(create[0])
+    assert first_cancel is not None, cancel[0]
+    assert first_cancel.group(1) == "tutoring_cancel"
+    assert first_create is not None, create[0]
+    assert first_create.group(1) == "tutoring_booking_create"
+    # Non-vacuity: each path still takes its pair lock afterwards, and an accept takes no key.
+    for statements in (cancel, create, accept):
+        assert sum("pg_advisory_xact_lock" in s for s in statements) == (
+            1 if statements is accept else 2
+        )
+    assert not any(QUOTA_LOCK.match(statement) for statement in accept)
+    assert stored(sm, cancelled).state is BookingState.cancelled
+
+
 def test_accept_virtual_needs_an_allowlisted_link(
     sm: sessionmaker[Session], service: BookingService, w: World
 ) -> None:

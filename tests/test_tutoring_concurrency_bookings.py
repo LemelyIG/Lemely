@@ -16,13 +16,16 @@ Two kinds of proof, as in ``tests/test_tutoring_concurrency_reviews.py``:
 proves both orders of a parent's request and the child unlinking them (BK-3, SPEC §i.6).
 ``test_race_sweep_vs_create_for_the_same_student_never_deadlocks`` proves that a suspension's or a
 block's cancellations take the affected students' rows before touching a booking (§a.4b step 2).
+The ``*_quota_*`` races prove the SC-15 actor locks (F30-2): one canceller's cancels, and one
+requester's requests, are counted one at a time even when no §a.4b lock is shared.
 """
 
 from __future__ import annotations
 
 import threading
+import time
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -30,7 +33,15 @@ import sqlalchemy as sa
 
 from lemely.core.booking import MAX_PENDING_PER_STUDENT
 from lemely.db import booking_repo, parent_repo
-from lemely.db.booking_repo import AcceptDetails, Actor, BookingRefused, BookingService
+from lemely.db.booking_repo import (
+    BOOKING_CREATE_QUOTA,
+    CANCEL_QUOTA,
+    AcceptDetails,
+    Actor,
+    BookingRefused,
+    BookingService,
+)
+from lemely.db.models.enums import BookingParty
 from lemely.db.models.tutoring import TutorBooking
 from lemely.db.parent_repo import ParentLinkService
 from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
@@ -329,6 +340,249 @@ def test_race_sweep_vs_create_for_the_same_student_never_deadlocks(
             .all()
         )
     assert states == ["cancelled"]
+
+
+# ---------------------------------------------------------------------------
+# SC-15 quotas: the actor's own lock (F30-2)
+# ---------------------------------------------------------------------------
+
+
+def _wait_until_queued_on_key(sm: sessionmaker[Session], key: str) -> None:
+    """Block until a backend waits, ungranted, on ``hashtextextended(key, 0)``'s advisory lock.
+
+    Narrower than ``_wait_until_a_backend_waits_on_a_lock``: the second transaction must be
+    queued on the actor's own key, not on a pair lock, a row or a constraint check. A bigint
+    advisory key shows in ``pg_locks`` as its high half (``classid``) and low half (``objid``).
+    """
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        with sm() as session:
+            waiting = session.scalar(
+                sa.text(
+                    "SELECT count(*) FROM pg_locks l "
+                    "CROSS JOIN (SELECT hashtextextended(CAST(:key AS text), 0) AS k) h "
+                    "WHERE l.locktype = 'advisory' AND NOT l.granted AND l.objsubid = 1 "
+                    "AND l.database = (SELECT oid FROM pg_database "
+                    "WHERE datname = current_database()) "
+                    "AND l.classid::bigint = (h.k >> 32) & 4294967295 "
+                    "AND l.objid::bigint = h.k & 4294967295"
+                ),
+                {"key": key},
+            )
+        if waiting:
+            return
+        time.sleep(0.05)
+    pytest.fail(f"the second transaction never queued on the advisory key {key!r}")
+
+
+def cancels_in_window(sm: sessionmaker[Session], user_id: uuid.UUID) -> int:
+    """Cancellations by ``user_id`` in the last 24 elapsed hours (SC-15)."""
+    with sm() as session:
+        return int(
+            session.execute(
+                sa.text(
+                    "SELECT count(*) FROM tutor_bookings WHERE cancelled_by_user_id = :u "
+                    "AND cancelled_at > now() - make_interval(hours => 24)"
+                ),
+                {"u": user_id},
+            ).scalar_one()
+        )
+
+
+def requests_in_window(sm: sessionmaker[Session], user_id: uuid.UUID) -> int:
+    """Booking requests made by ``user_id`` in the last 24 elapsed hours (SC-15)."""
+    with sm() as session:
+        return int(
+            session.execute(
+                sa.text(
+                    "SELECT count(*) FROM tutor_bookings WHERE requested_by_user_id = :u "
+                    "AND created_at > now() - make_interval(hours => 24)"
+                ),
+                {"u": user_id},
+            ).scalar_one()
+        )
+
+
+def state_of(sm: sessionmaker[Session], booking_id: uuid.UUID) -> str:
+    with sm() as session:
+        return str(
+            session.execute(
+                sa.text("SELECT state::text FROM tutor_bookings WHERE id = :b"), {"b": booking_id}
+            ).scalar_one()
+        )
+
+
+def _cancel_race(
+    sm: sessionmaker[Session],
+    service: BookingService,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    actor: Actor,
+    first_booking: uuid.UUID,
+    second_booking: uuid.UUID,
+) -> None:
+    """Two cancels by ``actor``; the first paused at its outbox write, after its count and UPDATE.
+
+    The second must queue on the canceller's key; once the first commits it counts the quota
+    full and is refused, and its booking is untouched.
+    """
+    pause = PauseFirstCall(booking_repo.enqueue_in_session)
+    monkeypatch.setattr(booking_repo, "enqueue_in_session", pause)
+    first = _Paused(
+        lambda: service.transition(booking_id=first_booking, actor=actor, action="cancel")
+    )
+    assert pause.reached.wait(timeout=30), "the first cancel never reached its outbox write"
+    second = _Paused(
+        lambda: service.transition(booking_id=second_booking, actor=actor, action="cancel")
+    )
+    try:
+        _wait_until_queued_on_key(sm, f"tutoring_cancel:{actor.user_id}")
+    finally:
+        pause.release()
+        first.join()
+        second.join()
+
+    assert first.error is None, first.error
+    assert isinstance(second.error, BookingRefused), second.error
+    assert second.error.code == "too_many_requests"
+    assert cancels_in_window(sm, actor.user_id) == CANCEL_QUOTA
+    assert state_of(sm, first_booking) == "cancelled"
+    assert state_of(sm, second_booking) != "cancelled"
+
+
+def test_race_cancel_quota_two_tutors_at_most_10(
+    sm: sessionmaker[Session],
+    service: BookingService,
+    w: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A student with nine cancellations today cancels two sessions with two tutors at once.
+
+    The two cancels take different pair locks and only ``KEY SHARE`` on the student's row, so
+    without the canceller's own lock (F30-2a) neither waits, both count nine, and an eleventh
+    cancellation commits.
+    """
+    for day in range(CANCEL_QUOTA - 1):
+        add_booking(
+            sm,
+            w,
+            state="cancelled",
+            starts_in=timedelta(days=5 + day),
+            cancelled_at=datetime.now(UTC) - timedelta(hours=2),
+            cancelled_by_user_id=w.student,
+        )
+    second_tutor = another_tutor(sm, w.subject)
+    first_booking = add_booking(sm, w, state="requested", starts_in=timedelta(days=2))
+    second_booking = add_booking(
+        sm, w, tutor=second_tutor, state="requested", starts_in=timedelta(days=3)
+    )
+    assert cancels_in_window(sm, w.student) == CANCEL_QUOTA - 1  # non-vacuity: one below
+
+    _cancel_race(
+        sm,
+        service,
+        monkeypatch,
+        actor=w.student_actor,
+        first_booking=first_booking,
+        second_booking=second_booking,
+    )
+
+
+def test_race_tutor_cancel_quota_two_students_at_most_10(
+    sm: sessionmaker[Session],
+    service: BookingService,
+    w: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tutor's burst: two students' sessions cancelled at once (F30-2a, a notice to each).
+
+    The tutor row is only ``FOR SHARE`` and the pair locks differ, so without the canceller's
+    lock both cancels count nine.
+    """
+    other_student = add_student(sm)
+    for day in range(CANCEL_QUOTA - 1):
+        add_booking(
+            sm,
+            w,
+            state="cancelled",
+            starts_in=timedelta(days=5 + day),
+            cancelled_at=datetime.now(UTC) - timedelta(hours=2),
+            cancelled_by_user_id=w.tutor.user_id,
+            cancelled_by_party=BookingParty.tutor,
+        )
+    first_booking = add_booking(sm, w, state="accepted", starts_in=timedelta(days=2))
+    second_booking = add_booking(
+        sm, w, student=other_student, state="accepted", starts_in=timedelta(days=3)
+    )
+    assert cancels_in_window(sm, w.tutor.user_id) == CANCEL_QUOTA - 1  # non-vacuity
+
+    _cancel_race(
+        sm,
+        service,
+        monkeypatch,
+        actor=w.tutor_actor,
+        first_booking=first_booking,
+        second_booking=second_booking,
+    )
+
+
+def test_race_parent_create_quota_two_children_at_most_10(
+    sm: sessionmaker[Session],
+    service: BookingService,
+    w: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A parent with nine requests today asks two tutors for two children at once (F30-2b).
+
+    Each create holds its own child's row ``FOR UPDATE``, its own pair lock and its own link, so
+    without the requester's lock neither waits, both count nine and an eleventh request commits.
+    The first is paused at its outbox write, after its count and its INSERT; the second must
+    queue on the requester's key, then count ten and be refused.
+    """
+    second_child = add_student(sm)
+    parent = add_parent(sm, w.student, second_child)
+    for day in range(BOOKING_CREATE_QUOTA - 1):
+        add_booking(
+            sm,
+            w,
+            state="cancelled",
+            starts_in=timedelta(days=5 + day),
+            requested_by=parent,
+            party="parent",
+        )
+    assert requests_in_window(sm, parent) == BOOKING_CREATE_QUOTA - 1  # non-vacuity
+    second_tutor = another_tutor(sm, w.subject)
+    as_parent = Actor(user_id=parent, party="parent")
+    pause = PauseFirstCall(booking_repo.enqueue_in_session)
+    monkeypatch.setattr(booking_repo, "enqueue_in_session", pause)
+
+    first = _Paused(
+        lambda: request(service, w, requester=as_parent, starts_at=slot(timedelta(days=2)))
+    )
+    assert pause.reached.wait(timeout=30), "the first request never reached its outbox write"
+    second = _Paused(
+        lambda: request(
+            service,
+            w,
+            requester=as_parent,
+            student_id=second_child,
+            tutor=second_tutor,
+            starts_at=slot(timedelta(days=4)),
+        )
+    )
+    try:
+        _wait_until_queued_on_key(sm, f"tutoring_booking_create:{parent}")
+    finally:
+        pause.release()
+        first.join()
+        second.join()
+
+    assert first.error is None, first.error
+    assert isinstance(second.error, BookingRefused), second.error
+    assert second.error.code == "too_many_requests"
+    assert requests_in_window(sm, parent) == BOOKING_CREATE_QUOTA
+    assert live_requests(sm, w.student) == 1
+    assert live_requests(sm, second_child) == 0
 
 
 @pytest.fixture

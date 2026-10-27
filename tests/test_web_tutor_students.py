@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import pytest
 import sqlalchemy as sa
@@ -44,6 +45,7 @@ from tests.test_tutor_grant_repo import (
 )
 from tests.test_tutor_review_repo import add_booking
 from tests.tutoring_db import (
+    NOW,
     act_as,
     add_block,
     add_subject,
@@ -401,7 +403,52 @@ def test_t20_success_shape_and_one_detail_row(
             sa.text("SELECT accessed_at FROM tutor_access_audit")
         ).scalar_one()
     assert body["accessRecordedAt"] == accessed.astimezone(UTC).isoformat()
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T.*\+00:00", body["grantedAt"])
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", body["grantedAt"])  # a day (ID-9, F30-4)
+
+
+def test_privacy_t19_t20_granted_at_is_tutor_zone_day(
+    sm: sessionmaker[Session], client: TestClient
+) -> None:
+    """ID-9 (F30-4): T19 and T20 send the day the student shared, in the tutor's zone, no time.
+
+    The grant is made at 22:30 UTC: already the next day in Cairo, still the same day in Los
+    Angeles. So the day sent must follow ``tutor_profiles.zone``: not UTC, not a fixed zone.
+    """
+    add_subject(sm, code="0625", name="Physics")
+    tutor = add_tutor(sm)
+    student = add_student(sm)
+    seed_history(sm, student)
+    shared = datetime.combine((NOW - timedelta(days=3)).date(), time(22, 30), tzinfo=UTC)
+    add_grant(sm, student, tutor, created_ago=NOW - shared)
+    act_as(client, tutor.user_id, Role.teacher)
+
+    def granted_days() -> tuple[str, str]:
+        listing = client.get("/api/tutor/students")
+        detail = client.get(f"/api/tutor/students/{student}")
+        assert listing.status_code == 200, listing.text
+        assert detail.status_code == 200, detail.text
+        days = (listing.json()["items"][0]["grantedAt"], detail.json()["grantedAt"])
+        for day in days:
+            assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", day), day  # no "T", no clock time
+        for response in (listing, detail):
+            assert shared.isoformat() not in response.text
+            assert shared.strftime("T%H:%M") not in response.text
+        return days
+
+    def day_in(zone: str) -> str:
+        return shared.astimezone(ZoneInfo(zone)).date().isoformat()
+
+    # Non-vacuity: the zone moves the day, and Cairo's day is not the UTC day.
+    assert day_in("Africa/Cairo") != day_in("America/Los_Angeles")
+    assert day_in("Africa/Cairo") != shared.date().isoformat()
+
+    assert granted_days() == (day_in("Africa/Cairo"),) * 2
+    with sm.begin() as session:
+        session.execute(
+            sa.text("UPDATE tutor_profiles SET zone = 'America/Los_Angeles' WHERE id = :t"),
+            {"t": tutor.profile_id},
+        )
+    assert granted_days() == (day_in("America/Los_Angeles"),) * 2
 
 
 def test_t19_lists_valid_grants_with_upcoming_counts_and_pages(

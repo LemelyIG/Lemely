@@ -31,7 +31,11 @@ from lemely.db.at_risk_repo import AtRiskAcknowledgementRow
 from lemely.db.class_repo import RosterEntry
 from lemely.web.routers.teacher import _student_detail_dto
 from lemely.web.schemas_analytics import StudentDetailDTO
-from lemely.web.student_detail_view import build_student_detail_for_tutor, project_for_tutor
+from lemely.web.student_detail_view import (
+    build_student_detail_for_tutor,
+    project_for_tutor,
+    tutor_zone_day,
+)
 from tests.test_tutor_grant_repo import paper
 
 CAIRO = "Africa/Cairo"
@@ -329,3 +333,17 @@ def test_inactive_flag_follows_the_tutor_day_across_spring_forward() -> None:
     assert views[0]["engagement"]["daysSinceLastSubmission"] == 15
     [inactive] = [f for f in views[0]["atRiskFlags"] if f["reason"] == "inactive"]
     assert inactive["evidence"] == {"daysInactive": 15, "lastActiveAt": "2026-04-15"}
+
+
+def test_tutor_zone_day_cuts_an_instant_to_its_day_in_the_zone() -> None:
+    """The grant date T19/T20 send (F30-4): the day in the tutor's zone, never the hour.
+
+    23:40 UTC on 8 January is 01:40 on the 9th in Cairo and 15:40 on the 8th in Los Angeles.
+    """
+    instant = datetime(2026, 1, 8, 23, 40, 12, 345678, tzinfo=UTC)
+    assert tutor_zone_day(instant, CAIRO) == "2026-01-09"
+    assert tutor_zone_day(instant, "America/Los_Angeles") == "2026-01-08"
+    assert tutor_zone_day(instant.astimezone(CAIRO_TZ), "America/Los_Angeles") == "2026-01-08"
+    assert _TIME_OF_DAY.search(tutor_zone_day(instant, CAIRO)) is None
+    with pytest.raises(ValueError, match="aware"):
+        tutor_zone_day(instant.replace(tzinfo=None), CAIRO)

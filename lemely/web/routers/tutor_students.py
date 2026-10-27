@@ -19,6 +19,10 @@ teacher route.
   builder's output through the tutor projection (``student_detail_view``, SPEC
   §e.2): days, not times, in the tutor's zone; no question ids; no teacher
   acknowledgements.
+* **The grant date is a day.** Both routes send ``grantedAt`` as the grant's
+  calendar day in the tutor's zone (``YYYY-MM-DD``, like every tutor-projection
+  timestamp), never the instant: the hour a student shared is theirs (ID-9,
+  F30-4).
 * **Fail closed.** When the audit row cannot be written the request fails with
   a 500 and an empty body: no read without its record (SPEC §b.4 point 3).
 
@@ -58,7 +62,7 @@ from lemely.web.schemas_tutoring import (
     TutorStudentItemDTO,
     TutorStudentPageDTO,
 )
-from lemely.web.student_detail_view import build_student_detail_for_tutor
+from lemely.web.student_detail_view import build_student_detail_for_tutor, tutor_zone_day
 from lemely.web.tutoring_http import TutoringRoute, iso_instant, tutoring_error
 
 log = structlog.get_logger(__name__)
@@ -103,7 +107,7 @@ def list_students(
                 studentId=str(item.student_id),
                 displayName=item.display_name,
                 grantId=str(item.grant_id),
-                grantedAt=iso_instant(item.granted_at),
+                grantedAt=tutor_zone_day(item.granted_at, profile.zone),
                 upcomingSessions=item.upcoming_sessions,
             )
             for item in page.items
@@ -149,7 +153,7 @@ def student_detail(
     return TutorStudentDetailDTO(
         detail=detail,
         grantId=str(access.grant.id),
-        grantedAt=iso_instant(access.grant.created_at),
+        grantedAt=tutor_zone_day(access.grant.created_at, profile.zone),
         accessRecordedAt=iso_instant(access.accessed_at),
     )
 

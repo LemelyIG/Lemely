@@ -155,7 +155,8 @@ function teacherDetail(): StudentDetail {
   }
 }
 
-const GRANTED_AT = "2026-01-08T10:15:00Z"
+/** T19 and T20 send the grant's day in the tutor's zone, never an instant (ID-9, F30-4). */
+const GRANTED_AT = "2026-01-08"
 
 function dto(detail: StudentDetail = tutorDetail()): TutorStudentDetailDTO {
   return { detail, grantId: "g1", grantedAt: GRANTED_AT, accessRecordedAt: "2026-10-27T09:00:00Z" }
@@ -493,6 +494,20 @@ describe("the tutor sees dates, never times", () => {
     const row = studentRowView(item())
     expect(row.sinceLine).toBe("Sharing since 8 Jan 2026")
     expect(text(listPage())).not.toMatch(CLOCK_TIME)
+  })
+
+  it("the grant's day as the API sends it is kept as it is, whatever the tutor's zone", () => {
+    // The server already cut it in the tutor's zone; a second cut here would move it a day.
+    for (const zone of ["Africa/Cairo", "America/Los_Angeles", "Pacific/Kiritimati", "Etc/GMT+12"]) {
+      expect(sharedLine("Maya R.", "2026-01-08", zone), zone).toContain("on 8 Jan 2026.")
+      expect(sharedLine("Maya R.", "2026-12-31", zone), zone).toContain("on 31 Dec 2026.")
+    }
+    expect(studentRowView(item({ grantedAt: "2026-12-31" })).sinceLine).toBe("Sharing since 31 Dec 2026")
+    harness.student = success({ ...dto(), grantedAt: "2026-12-31" })
+    harness.profile = success({ zone: "America/Los_Angeles", zoneLabel: "Los Angeles time" })
+    const page = text(detailPage())
+    expect(page).toContain("on 31 Dec 2026.")
+    expect(page).not.toMatch(CLOCK_TIME)
   })
 })
 

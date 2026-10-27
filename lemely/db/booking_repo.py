@@ -15,6 +15,11 @@ states, live pending requests, listing visibility and blocks are the fragments o
 
 **Lock order (SPEC §a.4b, §i.6).** Every write takes, in this order and only these:
 
+0. a cancel or a create only, as its first statement: the actor's SC-15 quota lock
+   (:func:`_lock_quota_actor`), so one canceller's cancels, or one requester's requests, are
+   counted one at a time even when they share no lock below (two tutors, a parent's two
+   children; F30-2). Only these two paths take these keys and nothing is held when they do, so
+   no holder of a lock below ever waits for one: no cycle;
 1. the ``tutor_profiles`` row ``FOR SHARE`` (a block, suspension or close holds it
    ``FOR UPDATE``, so none of them can interleave with a booking write);
 2. the subject student's ``users`` row: ``FOR UPDATE`` for a booking create, which serialises the
@@ -840,6 +845,35 @@ def lock_pair_in_session(
     )
 
 
+#: The SC-15 quota lock of each counted action, keyed on the acting user (SPEC §a.4b step 0).
+_QUOTA_LOCK_SQL: Final[Mapping[Literal["cancel", "create"], str]] = MappingProxyType(
+    {
+        "cancel": (
+            "SELECT pg_advisory_xact_lock(hashtextextended("
+            "'tutoring_cancel:' || CAST(CAST(:u AS uuid) AS text), 0))"
+        ),
+        "create": (
+            "SELECT pg_advisory_xact_lock(hashtextextended("
+            "'tutoring_booking_create:' || CAST(CAST(:u AS uuid) AS text), 0))"
+        ),
+    }
+)
+
+
+def _lock_quota_actor(
+    session: Session, action: Literal["cancel", "create"], actor_id: uuid.UUID
+) -> None:
+    """The first statement of a cancel or a create: the actor's SC-15 quota lock.
+
+    The pair lock and the student row serialise one pair or one student, not one actor, so
+    without it two cancels with two tutors, or a parent's requests for two children, would each
+    count the quota before the other committed (F30-2). The count runs in a later statement, so
+    it sees the previous holder's row. Deadlock-free: only these two paths take these keys, and
+    they take them before any other lock, so a waiter for one holds nothing.
+    """
+    session.execute(sa.text(_QUOTA_LOCK_SQL[action]), {"u": actor_id})
+
+
 def live_pending_count_in_session(session: Session, student_id: uuid.UUID) -> int:
     """The student's live requests (``LIVE_PENDING_SQL``), as ``MAX_PENDING_PER_STUDENT`` caps them.
 
@@ -1165,7 +1199,11 @@ class BookingService:
         ends_at: datetime,
         other_note: str | None,
     ) -> uuid.UUID:
-        """Locks 1-4, every SP6 guard on fresh reads, lazy expiry, then the insert (§a.4b)."""
+        """Quota lock, locks 1-4, every SP6 guard on fresh reads, lazy expiry, insert (§a.4b).
+
+        Runs as the transaction's first statement: the requester's quota lock is step 0.
+        """
+        _lock_quota_actor(session, "create", requester.user_id)
         if not _lock_tutor(session, tutor_profile_id):
             raise _refuse("not_found", "Tutor not found.")
         if _lock_user(session, student_id, "UPDATE") != "student":
@@ -1265,6 +1303,8 @@ class BookingService:
         resolved = self._resolve_action(actor, action)
         clean_reason = _clean_text(reason, limit=MAX_REASON_LENGTH, what="A reason")
         with self._sessionmaker.begin() as session:
+            if resolved == "cancel":
+                _lock_quota_actor(session, "cancel", actor.user_id)  # §a.4b step 0, first
             tutor_profile_id, student_id = self._locate(session, booking_id, actor)
             self._lock_for_change(
                 session,
@@ -1396,6 +1436,7 @@ class BookingService:
 
     @staticmethod
     def _check_cancel_quota(session: Session, user_id: uuid.UUID) -> None:
+        """SC-15, counted under the canceller's quota lock (step 0), so after the last holder's."""
         count = session.execute(
             sa.text(
                 "SELECT count(*) FROM tutor_bookings WHERE cancelled_by_user_id = :u "  # noqa: S608 - constant
