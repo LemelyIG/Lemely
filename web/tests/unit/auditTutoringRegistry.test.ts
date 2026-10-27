@@ -395,7 +395,7 @@ describe("waitForExpectation (the predicate behind every ready)", () => {
 
 describe("the audit runner uses the registry", () => {
   it("imports it and appends its entries to the registry", () => {
-    expect(AUDIT).toMatch(/import \{ buildTutoringRegistry \} from "\.\/audit_tutoring_registry\.mjs"/)
+    expect(AUDIT).toMatch(/import \{ buildTutoringRegistry, offlineStateHooks \} from "\.\/audit_tutoring_registry\.mjs"/)
     expect(AUDIT).toMatch(/buildTutoringRegistry\(seed, \{ loadingStateHooks, errorStateHooks \}\)/)
     expect(AUDIT).toMatch(/\]\.concat\(tutoringEntries\)/)
   })

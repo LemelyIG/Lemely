@@ -92,7 +92,7 @@ export async function waitForExpectation(page, routePath, want, timeout = 20_000
  * connection fails (the request is aborted, so `fetch` rejects), which `lib/api.ts` reports as
  * status 0 and the screen answers with C-11's offline panel instead of its error panel.
  */
-function offlineStateHooks(urlSubstring) {
+export function offlineStateHooks(urlSubstring) {
   let handler
   return {
     setup: async (page) => {

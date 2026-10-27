@@ -135,7 +135,7 @@
  * actual UI. `empty` (a genuinely empty seeded account, never a stubbed
  * payload) needs its own session, so it is a *separate* registry entry
  * sharing the primary route's `screenId`, not a `states[]` entry — see the
- * `emptyTeacher`/`emptyParent` entries below. `offline` (CDP) is a `states[]`
+ * `emptyTeacher`/`emptyParent` entries below. `offline` (an aborted request) is a `states[]`
  * entry (same session, same context) on T-01.
  *
  * Usage: `npm run audit` (from web/), or `node scripts/audit.mjs` directly.
@@ -168,7 +168,7 @@ import puppeteer from "puppeteer"
 import lighthouse from "lighthouse"
 import { assertPortFree } from "./serve_guard.mjs"
 import { gotoWithRetry, withRetry } from "./nav_retry.mjs"
-import { buildTutoringRegistry } from "./audit_tutoring_registry.mjs"
+import { buildTutoringRegistry, offlineStateHooks } from "./audit_tutoring_registry.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
@@ -969,18 +969,6 @@ async function gotoReady(page, url, ready, waitUntil = "networkidle0") {
   )
 }
 
-/** Races `promise` against a plain timer — `page.evaluate()` has no timeout
- * of its own, so a promise that never resolves (e.g. a service worker that
- * never activates) would otherwise hang the whole run rather than surfacing
- * as the diagnostic route failure it actually is. */
-function withTimeout(promise, ms, label) {
-  let timer
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), ms)
-  })
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
-}
-
 /** `setup`/`teardown` pair for a `loading` state: holds the route's own API
  * request open for `delayMs` before letting it through, so the screen's real
  * pending UI (its `isPending` render, not a stub) is what gets captured.
@@ -1399,15 +1387,10 @@ function buildRouteRegistry(seed) {
   if (TUTORING_ONLY) return tutoringEntries
 
   return [
-    // ── G-05 · Parent log in (phone + OTP) — unauthenticated ──────────────
-    {
-      screenId: "G-05",
-      slug: "parent-login",
-      path: "/login/parent",
-      session: null,
-      ready: (page) => waitForText(page, "Check on your child"),
-      authed: false,
-    },
+    // ── G-05 · Parent log in (phone + OTP) — REMOVED (T33) ─────────────────
+    // `/login/parent` was retired with phone login (f7fa3283, "retire phone login"): the route now
+    // answers the 404 page, and this entry could only ever wait 15 s for "Check on your child"
+    // and fail the whole audit. A parent signs in on `/login`, which has its own entry (G-04).
     // ── P6.5 · How your data is handled — unauthenticated ─────────────────
     // The second public content page in the product (D6.8 option A). Its
     // `screenId` is not a UI-spec id, because this page answers no line of the
@@ -1502,21 +1485,13 @@ function buildRouteRegistry(seed) {
           slug: "teacher-overview-offline",
           lighthouse: false,
           ready: (page) => waitForText(page, "Couldn't load the overview"),
-          setup: async (page) => {
-            // Wait for the service worker to be active before flipping
-            // offline — `vite.config.ts`'s `navigateFallback` only serves
-            // the app shell offline once a worker controls navigations for
-            // this origin, and this session's page has already navigated
-            // here once (the `default` state above), giving it time to
-            // install.
-            await withTimeout(
-              page.evaluate(() => navigator.serviceWorker.ready),
-              15_000,
-              "service worker ready (T-01 offline capture)",
-            )
-            await page.setOfflineMode(true)
-          },
-          teardown: (page) => page.setOfflineMode(false),
+          // T33. This used to flip CDP offline mode and reload through the service worker's
+          // navigation fallback. Current Chromium applies that emulation to a service-worker
+          // navigation too (`net::ERR_INTERNET_DISCONNECTED` on the goto itself, 3 times), so the
+          // route could not be reached at all. Aborting the screen's own request is the same
+          // failure the screen sees (`fetch` rejects, `lib/api.ts` reports status 0) and leaves
+          // the navigation alone.
+          ...offlineStateHooks("/api/teacher/overview"),
         },
       ],
     },
@@ -1808,11 +1783,9 @@ function buildRouteRegistry(seed) {
           state: "empty",
           slug: "teacher-overview-empty",
           lighthouse: false,
-          // P3.2: the teacher header greets by the reader's real local time
-          // now, so a fixed "Good morning" gate would fail this audit for
-          // sixteen hours a day. `waitForText` compiles its argument as a
-          // case-insensitive RegExp, so the alternation works as-is.
-          ready: (page) => waitForText(page, "Good (morning|afternoon|evening)"),
+          // A teacher with no class is sent on from /teacher to /teacher/first-class, so the
+          // greeting this used to wait for (the populated overview's) is never on screen (T33).
+          ready: (page) => waitForText(page, "Create your first class"),
         },
       ],
     },
@@ -1878,7 +1851,7 @@ function buildRouteRegistry(seed) {
       slug: "student-parents",
       path: "/student/parents",
       session: decliningStudentSession,
-      ready: (page) => waitForText(page, "Your parents"),
+      ready: (page) => waitForText(page, "Parent access"),
       authed: true,
     },
     // ── Student onboarding + placement (P4.8 chunk C · S-01..S-05) ────────
@@ -2539,7 +2512,9 @@ function buildRouteRegistry(seed) {
       slug: "student-landing",
       path: "/student/landing",
       session: practiceActiveSession,
-      ready: (page) => waitForText(page, "Thirty papers marked"),
+      // `/student/landing` redirects to the public `/landing` (routes.tsx); the page that
+      // answers is the marketing landing page, whose h1 is the one stable thing on it.
+      ready: (page) => waitForText(page, "Marking you can check, line by line"),
       authed: true,
     },
     // ── DEV-01 · Result-header design gallery — REMOVED P4.10 (D4.8) ──────
