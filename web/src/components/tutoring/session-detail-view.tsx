@@ -17,7 +17,7 @@ import { useOnlineStatus } from "@/lib/online"
 import { isTutoringError } from "@/lib/tutoring/apiErrors"
 import {
   CANCEL_RULE_LINE,
-  COMPLETE_HINT,
+  completeHint,
   COUNTING_NOTICE,
   MODE_LABEL,
   REASON_LABEL,
@@ -448,7 +448,7 @@ export function SessionDetailView({
                   Mark as completed
                 </Button>
               </div>
-              <p className="m-0 max-w-prose text-body-sm text-ink-muted">{COMPLETE_HINT}</p>
+              <p className="m-0 max-w-prose text-body-sm text-ink-muted">{completeHint(viewer)}</p>
             </div>
           ) : null}
           {offlineReason ? <p className="m-0 text-body-sm text-ink-muted">{offlineReason}</p> : null}
