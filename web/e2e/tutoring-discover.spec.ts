@@ -179,7 +179,11 @@ test.describe("E2E 1: a student discovers a tutor, books a session, the tutor ac
       await expect(notice).toBeHidden()
 
       await page.getByRole("radio", { name: "Virtual" }).check()
-      // The first day with times, its first time.
+      // The third day's first time: always more than 24 hours away, so the cancel rule (S-37) is
+      // the one that applies, whatever time of day this runs. (E2E 5 races for the fourth day.)
+      const days = page.getByRole("group", { name: "Day" }).getByRole("radio")
+      await expect(days.nth(2)).toBeAttached({ timeout: 15_000 })
+      await days.nth(2).check({ force: true })
       const times = page.getByRole("group", { name: /^Times on/ }).getByRole("radio")
       await expect(times.first()).toBeAttached({ timeout: 15_000 })
       await times.first().check({ force: true })
