@@ -1,0 +1,358 @@
+{
+  "marking": [
+    {
+      "selector": ":scope > div > :nth-child(2) > :nth-child(2) > :nth-child(1)",
+      "animation": "faDraw .35s ease-out .3s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(2) > :nth-child(3)",
+      "animation": "faPop .35s ease-out .55s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(3) > :nth-child(2) > :nth-child(1)",
+      "animation": "faDraw .35s ease-out .9s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(3) > :nth-child(3)",
+      "animation": "faPop .35s ease-out 1.15s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(4) > :nth-child(2) > :nth-child(1)",
+      "animation": "faDraw .45s ease-out 1.5s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(4) > :nth-child(3)",
+      "animation": "faPop .35s ease-out 1.75s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(5)",
+      "animation": "faUp .4s ease-out 2.1s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    }
+  ],
+  "confidence": [
+    {
+      "selector": ":scope > div > :nth-child(1) > :nth-child(1) > :nth-child(2)",
+      "animation": null,
+      "count": "96",
+      "prefix": "",
+      "suffix": "%",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(1) > :nth-child(2) > :nth-child(1)",
+      "animation": "faGrow 1s cubic-bezier(.2,.8,.2,1) .2s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(2) > :nth-child(1) > :nth-child(2)",
+      "animation": null,
+      "count": "91",
+      "prefix": "",
+      "suffix": "%",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(2) > :nth-child(2) > :nth-child(1)",
+      "animation": "faGrow 1s cubic-bezier(.2,.8,.2,1) .35s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(3) > :nth-child(1) > :nth-child(1) > :nth-child(1)",
+      "animation": "faPop .35s ease-out 1.3s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(3) > :nth-child(1) > :nth-child(2)",
+      "animation": null,
+      "count": "72",
+      "prefix": "",
+      "suffix": "%",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(3) > :nth-child(2) > :nth-child(1)",
+      "animation": "faGrow 1s cubic-bezier(.2,.8,.2,1) .5s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    }
+  ],
+  "predicted": [
+    {
+      "selector": ":scope > div > :nth-child(1) > :nth-child(1)",
+      "animation": "faSlot 2.2s cubic-bezier(.5,0,.2,1.3) .2s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    }
+  ],
+  "clusters": [
+    {
+      "selector": ":scope > div > :nth-child(1) > :nth-child(2)",
+      "animation": "faMagnet .9s cubic-bezier(.3,1.3,.5,1) .2s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "70px",
+      "dy": "60px",
+      "rotate": "12deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(1) > :nth-child(3)",
+      "animation": "faMagnet .9s cubic-bezier(.3,1.3,.5,1) .4s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "110px",
+      "dy": "-20px",
+      "rotate": "-10deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(1) > :nth-child(4)",
+      "animation": "faMagnet .9s cubic-bezier(.3,1.3,.5,1) .6s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "40px",
+      "dy": "-60px",
+      "rotate": "8deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(2) > :nth-child(2)",
+      "animation": "faMagnet .9s cubic-bezier(.3,1.3,.5,1) .3s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "-90px",
+      "dy": "50px",
+      "rotate": "-14deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(2) > :nth-child(3)",
+      "animation": "faMagnet .9s cubic-bezier(.3,1.3,.5,1) .5s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "-60px",
+      "dy": "-40px",
+      "rotate": "10deg"
+    }
+  ],
+  "trends": [
+    {
+      "selector": ":scope > div > :nth-child(1) > :nth-child(1)",
+      "animation": null,
+      "count": "18",
+      "prefix": "+",
+      "suffix": "%",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(2) > :nth-child(1)",
+      "animation": "faDraw 1.4s ease-out .2s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(2) > :nth-child(3)",
+      "animation": "faPop .35s ease-out 1.5s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    }
+  ],
+  "plan": [
+    {
+      "selector": ":scope > div > :nth-child(1) > :nth-child(1) > :nth-child(2)",
+      "animation": "faDraw .3s ease-out .3s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(2) > :nth-child(1) > :nth-child(2)",
+      "animation": "faDraw .3s ease-out .8s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(3) > :nth-child(1) > :nth-child(2)",
+      "animation": "faDraw .3s ease-out 1.3s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    }
+  ],
+  "xp": [
+    {
+      "selector": ":scope > div > :nth-child(2) > :nth-child(1) > :nth-child(2)",
+      "animation": null,
+      "count": "120",
+      "prefix": "+",
+      "suffix": " XP",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(2) > :nth-child(2) > :nth-child(1)",
+      "animation": "faGrow 1.2s cubic-bezier(.2,.8,.2,1) .3s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > svg > g:last-child > g",
+      "animation": "faFlame .7s ease-in-out 0s infinite",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    }
+  ],
+  "content": [
+    {
+      "selector": ":scope > div > :nth-child(1) > :nth-child(2)",
+      "animation": "faPop .35s ease-out 1.6s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(2) > :nth-child(2)",
+      "animation": "faGrow .5s ease-out .2s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(3) > :nth-child(2)",
+      "animation": "faGrow .5s ease-out .5s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(4) > :nth-child(2)",
+      "animation": "faGrow .5s ease-out .8s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    },
+    {
+      "selector": ":scope > div > :nth-child(5) > :nth-child(2)",
+      "animation": "faGrow .5s ease-out 1.1s forwards",
+      "count": null,
+      "prefix": "",
+      "suffix": "",
+      "dx": "0px",
+      "dy": "0px",
+      "rotate": "0deg"
+    }
+  ]
+}

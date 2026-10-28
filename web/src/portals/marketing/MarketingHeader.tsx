@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { List } from '@phosphor-icons/react'
 import { BrandLockup } from '@/components/ui/brand-lockup'
@@ -23,15 +23,57 @@ export const sectionLinks = [
 
 export function MarketingHeader() {
   const [open, setOpen] = useState(false)
+  const [active, setActive] = useState('')
+  const progress = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    let frame = 0
+    const measure = () => {
+      frame = 0
+      const doc = document.documentElement
+      const max = Math.max(1, doc.scrollHeight - window.innerHeight)
+      if (progress.current)
+        progress.current.style.transform = `scaleX(${Math.min(1, window.scrollY / max)})`
+      let current = ''
+      for (const id of ['teachers', 'how', 'features']) {
+        const section = document.getElementById(id)
+        if (!section) continue
+        const bounds = section.getBoundingClientRect()
+        if (bounds.top < 140 && bounds.bottom > 140) current = id
+      }
+      setActive(current)
+    }
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(measure)
+    }
+    measure()
+    window.addEventListener('scroll', schedule, { passive: true })
+    window.addEventListener('resize', schedule)
+    return () => {
+      window.removeEventListener('scroll', schedule)
+      window.removeEventListener('resize', schedule)
+      cancelAnimationFrame(frame)
+    }
+  }, [])
   return (
     <header className="brand-header lm-app-header lm-nav-chrome">
+      <div
+        ref={progress}
+        className="brand-reading-progress"
+        aria-hidden="true"
+      />
       <div className="brand-wrap brand-nav">
         <Link to="/landing" aria-label="Lemely home">
           <BrandLockup as="span" identity="clip" />
         </Link>
         <nav className="brand-desktop-nav" aria-label="Main">
           {sectionLinks.map((x) => (
-            <a key={x.href} href={x.href}>
+            <a
+              key={x.href}
+              href={x.href}
+              aria-current={
+                x.href.endsWith(`#${active}`) ? 'location' : undefined
+              }
+            >
               {x.label}
             </a>
           ))}

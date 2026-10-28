@@ -29,8 +29,16 @@ export function TeacherFeatures() {
                   <span className="brand-label">0{i + 1}</span>
                 </div>
                 {x.soon && <span className="brand-coming">COMING SOON</span>}
-                <h3>{x.title}</h3>
-                <p>{x.description}</p>
+                <h3>
+                  <span className="brand-desktop-copy">{x.title}</span>
+                  <span className="brand-mobile-copy">{x.mobileTitle}</span>
+                </h3>
+                <p>
+                  <span className="brand-desktop-copy">{x.description}</span>
+                  <span className="brand-mobile-copy">
+                    {x.mobileDescription}
+                  </span>
+                </p>
               </article>
             )
           })}

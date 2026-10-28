@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-/* Supplied workshop artwork, converted to inert React markup. */
+/* Supplied workshop artwork, with original geometry and semantic tokens. */
 export function HeroChartArt() {
   return (
     <svg
@@ -25,7 +25,7 @@ export function HeroChartArt() {
           ></stop>
         </linearGradient>
         <clipPath id="hcClip">
-          <rect x="0" y="0" width="640" height="400"></rect>
+          <rect data-hc="clip" x="0" y="0" width="640" height="400"></rect>
         </clipPath>
       </defs>
       <g fontFamily="var(--brand-mono)" fontSize="13" fill="var(--brand-art-3)">
@@ -108,7 +108,7 @@ export function HeroChartArt() {
           strokeLinejoin="round"
           clipPath="url(#hcClip)"
         ></path>
-        <g transform="translate(90 320) scale(1)">
+        <g data-hc="pt" transform="translate(90 320) scale(1)">
           <circle
             r="9"
             fill="var(--brand-art-6)"
@@ -135,7 +135,7 @@ export function HeroChartArt() {
             {'C'}
           </text>
         </g>
-        <g transform="translate(210 250) scale(1)">
+        <g data-hc="pt" transform="translate(210 250) scale(1)">
           <circle
             r="9"
             fill="var(--brand-art-6)"
@@ -162,7 +162,7 @@ export function HeroChartArt() {
             {'B'}
           </text>
         </g>
-        <g transform="translate(330 250) scale(1)">
+        <g data-hc="pt" transform="translate(330 250) scale(1)">
           <circle
             r="9"
             fill="var(--brand-art-6)"
@@ -189,7 +189,7 @@ export function HeroChartArt() {
             {'B'}
           </text>
         </g>
-        <g transform="translate(450 170) scale(1)">
+        <g data-hc="pt" transform="translate(450 170) scale(1)">
           <circle
             r="9"
             fill="var(--brand-art-6)"
@@ -216,7 +216,7 @@ export function HeroChartArt() {
             {'A'}
           </text>
         </g>
-        <g transform="translate(570 90) scale(1)">
+        <g data-hc="pt" transform="translate(570 90) scale(1)">
           <circle
             r="9"
             fill="var(--brand-art-6)"
@@ -243,7 +243,7 @@ export function HeroChartArt() {
             {'A*'}
           </text>
         </g>
-        <g transform="translate(570 40)" opacity="1">
+        <g data-hc="spark" transform="translate(570 40)" opacity="1">
           <path
             d="M0 -22 Q0 0 22 0 Q0 0 0 22 Q0 0 -22 0 Q0 0 0 -22Z"
             fill="var(--brand-art-11)"
@@ -257,8 +257,8 @@ export function HeroChartArt() {
             fill="var(--brand-art-11)"
           ></path>
         </g>
-        <g transform="translate(528 0)" style={{}}>
-          <g opacity="0" style={{ pointerEvents: 'none' }}>
+        <g data-hc="binny" transform="translate(528 0)" role="button" tabIndex={0} aria-label="Celebrate with Binny">
+          <g data-hc="lvl" opacity="0" style={{ pointerEvents: 'none' }}>
             <g transform="translate(42 -14)">
               <path
                 d="M-18 8 L-20 -10 L-9 -2 L0 -15 L9 -2 L20 -10 L18 8Z"
@@ -290,7 +290,7 @@ export function HeroChartArt() {
               </text>
             </g>
           </g>
-          <g>
+          <g data-hc="squash">
             <g transform="scale(0.42)">
               <rect
                 x="54"
@@ -310,7 +310,7 @@ export function HeroChartArt() {
                 strokeLinecap="round"
                 transform="rotate(-3 100 192)"
               ></path>
-              <g transform="rotate(-6 75 100)">
+              <g data-hc="earL" transform="rotate(-6 75 100)">
                 <path
                   d="M66 102 L62 40 Q62 16 75 16 Q88 16 88 40 L84 102"
                   fill="none"
@@ -327,7 +327,7 @@ export function HeroChartArt() {
                   opacity="0.7"
                 ></path>
               </g>
-              <g transform="rotate(6 125 100)">
+              <g data-hc="earR" transform="rotate(6 125 100)">
                 <path
                   d="M116 102 L112 40 Q112 16 125 16 Q138 16 138 40 L134 102"
                   fill="none"
@@ -379,7 +379,7 @@ export function HeroChartArt() {
                 fill="var(--brand-art-18)"
                 opacity="0.55"
               ></ellipse>
-              <g>
+              <g data-hc="eyes">
                 <ellipse
                   cx="78"
                   cy="140"
@@ -394,7 +394,7 @@ export function HeroChartArt() {
                   ry="12"
                   fill="var(--brand-art-6)"
                 ></ellipse>
-                <g>
+                <g data-hc="pupils">
                   <circle
                     cx="78"
                     cy="141"
@@ -421,7 +421,7 @@ export function HeroChartArt() {
                   ></circle>
                 </g>
               </g>
-              <g style={{ display: 'none' }}>
+              <g data-hc="happy" style={{ display: 'none' }}>
                 <path
                   d="M68 143 Q78 130 88 143"
                   fill="none"
@@ -438,13 +438,13 @@ export function HeroChartArt() {
                 ></path>
               </g>
               <path
-                d="M90 163 Q100 172 110 163"
+                data-hc="smile" d="M90 163 Q100 172 110 163"
                 fill="none"
                 stroke="var(--brand-art-6)"
                 strokeWidth="4.5"
                 strokeLinecap="round"
               ></path>
-              <g style={{ display: 'none' }}>
+              <g data-hc="open" style={{ display: 'none' }}>
                 <path
                   d="M86 160 H114 Q113 180 100 180 Q87 180 86 160Z"
                   fill="var(--brand-art-19)"

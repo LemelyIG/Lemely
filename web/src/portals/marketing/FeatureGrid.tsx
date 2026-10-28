@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { features } from './content'
+import { FeatureMotion } from './FeatureMotion'
 import { FeatureArt } from './ReferenceArt'
 import { ResponsiveDeck } from './ResponsiveDeck'
 
@@ -17,14 +18,20 @@ export function FeatureGrid() {
             <article
               key={x.key}
               className={
-                i === 0 ? 'brand-feature brand-feature-core' : 'brand-feature'
+                i === 0
+                  ? 'brand-feature brand-feature-core'
+                  : x.key === 'content'
+                    ? 'brand-feature brand-feature-content'
+                    : 'brand-feature'
               }
             >
               {i === 0 && <span className="brand-label">THE CORE</span>}
               <h3>{x.title}</h3>
               <p>{x.description}</p>
               <div className="brand-feature-art" aria-hidden="true">
-                <FeatureArt name={x.key} />
+                <FeatureMotion name={x.key}>
+                  <FeatureArt name={x.key} />
+                </FeatureMotion>
               </div>
             </article>
           ))}

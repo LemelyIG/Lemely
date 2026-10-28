@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { proofMetrics } from './content'
 import { ResponsiveDeck } from './ResponsiveDeck'
+import { ProofMetric } from './ProofMetric'
 
 export function Proof() {
   return (
@@ -13,11 +14,13 @@ export function Proof() {
           <span>Proven paper by paper.</span>
         </h2>
         <ResponsiveDeck label="Marking results" className="brand-metrics">
-          {proofMetrics.map((x) => (
-            <div className="brand-metric" key={x.value}>
-              <strong>{x.value}</strong>
-              <span>{x.label}</span>
-            </div>
+          {proofMetrics.map((x, index) => (
+            <ProofMetric
+              key={x.value}
+              value={x.value}
+              label={x.label}
+              index={index}
+            />
           ))}
         </ResponsiveDeck>
         <div className="brand-accuracy">

@@ -1,8 +1,10 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { ConversionActions } from './ConversionActions'
+import { useHeroArtMotion } from './useHeroArtMotion'
 import { HeroChartArt } from './ReferenceArt'
 
 export function Hero() {
+  const motion = useHeroArtMotion()
   return (
     <section id="top" className="brand-hero brand-section">
       <div className="brand-wrap brand-hero-grid">
@@ -11,9 +13,14 @@ export function Hero() {
             Every mark, <br />
             <span>explained.</span>
           </h1>
-          <p>
-            Hand-written past papers, marked against the official mark scheme in
-            minutes. See every lost mark, and what to do next.
+          <p className="brand-hero-description">
+            <span className="brand-hero-description-full">
+              Hand-written past papers, marked against the official mark scheme
+              in minutes. See every lost mark, and what to do next.
+            </span>
+            <span className="brand-hero-description-short">
+              Snap a past paper. Get every mark explained.
+            </span>
           </p>
           <ConversionActions />
           <p className="brand-fine">
@@ -21,6 +28,9 @@ export function Hero() {
           </p>
         </div>
         <figure
+          ref={motion.ref}
+          data-art-scene="hero"
+          data-motion={motion.enabled ? 'running' : 'static'}
           className="brand-hero-art"
           aria-label="Illustrative student progress from C to A star across five Physics papers"
         >
@@ -38,7 +48,7 @@ export function Hero() {
                 <b>A*</b>
               </div>
             </div>
-            <div aria-hidden="true">
+            <div>
               <HeroChartArt />
             </div>
             <div className="brand-chart-foot">
