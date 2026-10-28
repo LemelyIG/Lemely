@@ -389,7 +389,7 @@ const CHROME_FILES = [
   "portals/student/index.tsx",
   "portals/teacher/index.tsx",
   "portals/admin/index.tsx",
-  "portals/marketing/index.tsx",
+  "portals/marketing/MarketingHeader.tsx",
 ]
 
 function checkLmNavChrome(files) {

@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils"
 export function BrandLockup({
   size = "sm",
   casing = "title",
+  identity = "notebook",
   animated,
   as = "div",
   className,
@@ -35,12 +36,17 @@ export function BrandLockup({
 }: {
   size?: "sm" | "md"
   casing?: "title" | "lower"
+  identity?: "notebook" | "clip"
   animated?: boolean
   as?: "div" | "span"
   className?: string
   children?: ReactNode
 }) {
   const Wrapper = as as ElementType
+  if (identity === 'clip') {
+    const clip = <svg aria-hidden="true" width="12" height="29" viewBox="28 4 46 94"><path d="M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round" /></svg>
+    return <Wrapper className={cn('clip-wordmark', className)} aria-label="Lemely">{clip}<span aria-hidden="true">eme</span>{clip}<span aria-hidden="true">y</span>{children}</Wrapper>
+  }
   return (
     <Wrapper className={cn("flex items-center gap-2.5", className)}>
       {/* `aria-hidden`: the wordmark right beside it already says "Lemely" (or
